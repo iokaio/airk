@@ -886,7 +886,7 @@ gates at the deadline.
 | Phase | Exit evidence | Work that can start independently |
 | --- | --- | --- |
 | Close Windows FP32 | Corrected Large unprofiled cold-load and warm timing with the existing resource and settlement rules. | Read-only FP16 receipt reconciliation and preparation design. |
-| Windows CUDA FP16 | Compact-first prerequisite validation, confirmed efficient attention, frozen numerical checks, measured fit and latency, and the FP16-only Auto and recovery gates. Complete Large and include Focus GPU only if selected for this release. | Prepare independent references and same-user WSL2 CPU build work outside Windows timing or other exclusive-resource windows. |
+| Windows CUDA FP16 | Compact-first prerequisite validation, confirmed efficient attention, matching-recipe parity and approved Context task quality, measured fit and latency, and the FP16-only Auto and recovery gates. Complete Large and include Focus GPU only if selected for this release. | Prepare independent references and same-user WSL2 CPU build work outside Windows timing or other exclusive-resource windows. |
 | Linux CUDA FP16 on WSL2 | Sealed Linux build and the applicable Windows-equivalent numerical, resource, service and recovery cases on the WSL2 configuration. | Rehearse the macOS build and operator probe on Neo when the work can run independently and fits the host. |
 | macOS Core ML FP16 | Neo preflight reviewed before booking. Dedicated Mac run records placement, numerical results, peak unified memory and user-facing latency, with retained receipts. | Prepare the Azure image, driver and provider checks without booking compute. |
 | Azure Radeon FP16 | Qualify Windows DirectML, then Linux ROCm, with separate provider receipts and the experimental opt-in and fallback controls. | Review only the model and provider combinations that remain release candidates. |
@@ -1539,8 +1539,8 @@ selected model, stage consent, input width and shared budget.
    including padding holes, all-masked/edge cases and17/128/8192 boundaries.
    If an efficient kernel cannot represent an input, declare/refuse that shape
    or use a predeclared qualified alternative before dispatch; do not drop masks.
-3. Apply the frozen G5 limits below for matching-FP16 parity and precision
-   loss against independent FP32. Freeze confirmation cases before tuning.
+3. Apply the G5 limits below for matching-FP16 parity, cross-precision
+   drift and Context task quality. Freeze confirmation cases before tuning.
    Include near-boundary cases, full output comparisons and exact-artifact
    CAL, task and terminal evidence.
 4. Repeat actual placement, host/VRAM peaks, load/cold/warm twenty-sample p95,
@@ -1588,17 +1588,25 @@ over-budget receipts are refused before conversion.
 The reviewed Compact conversion, independent graph and weight comparison,
 and native metadata passed on 18 November. At the exact T32/N8 input, the
 independent FP16 and original FP32 references differed by 0.012271881 raw.
-The allowed raw error for each comparison is 0.001. This candidate cannot
-satisfy both comparisons. Separately, Windows CUDA session creation refused
-CPU-assigned nodes under strict placement before any forward or observed
+The original rule allowed 0.001 raw error for each comparison, so this candidate
+could not satisfy both under that rule. Windows CUDA session creation also
+refused CPU-assigned nodes under strict placement before any forward or observed
 FlashAttention dispatch. The child and native resources settled naturally.
 
-The first blocking gate remains Windows Compact. Preserve this candidate
-and its receipts and use a revised candidate under the existing numerical
-and placement requirements. Windows full-width measurement and dependent
-FP16 platform qualification require passing evidence.
+The first blocking gate remains Windows Compact strict CUDA placement.
+The acceptance on 19 November makes the original-FP32 raw difference
+diagnostic for new Context FP16 runs. Preserve the prior receipts under
+their original criteria. Diagnose placement and verify the native small
+probe before Windows full-width measurement and dependent FP16 qualification.
+[Accepted Context FP16 task-quality rule](#accepted-context-fp16-task-quality-qualification)
 [Independent Compact precision evidence](../simplify/one-process-ledger.md#2026-11-18--compact-fp16-conversion-and-independent-t32-precision-blocker) ·
 [Strict CUDA diagnostic](../simplify/one-process-ledger.md#2026-11-18--compact-fp16-native-metadata-passed-and-strict-t32-load-refused)
+
+Strict load under the accepted rule still refused before a forward. The
+19 November bounded startup log retained 227 CUDA-capable nodes that ORT
+preferred on CPU, including rotary and attention-shape operations. The log
+omitted 148 selected messages. Complete the placement census and verify a
+correction under the strict load and FlashAttention gates.
 
 ### FP16 implementation and validation sequence
 
@@ -1674,24 +1682,19 @@ native execution.
 
 ### Numerical limits and calibration by provider
 
-The frozen exporter limits apply to this FP16 campaign. Evaluate the
-maximum absolute raw score error and the existing normalized-mass metric
-on complete score vectors. Require finite outputs and identical argmax
-under the contract for both comparisons.
+Evaluate maximum absolute raw score error, normalized-mass error and
+argmax on complete finite score vectors. Use the accepted Context rule
+prospectively. The Focus and historical FP32 comparisons retain their
+original criteria.
 
 | Comparison | Context Compact and Large | Focus |
 | --- | --- | --- |
-| Native versus independent matching-recipe FP16 | Raw error ≤ 0.001 and mass error ≤ 0.05 | Raw error ≤ 0.001 and mass error ≤ 0.00001 |
-| Native FP16 versus independent original FP32 | Raw error ≤ 0.001 and mass error ≤ 0.05 | Raw error ≤ 0.25 and mass error ≤ 0.05 |
+| Native versus independent matching-recipe FP16 | Raw error ≤ 0.001, mass error ≤ 0.05 and identical argmax | Raw error ≤ 0.001, mass error ≤ 0.00001 and identical argmax |
+| Native FP16 versus independent original FP32 | Mass error ≤ 0.05 and the accepted task-quality rule. Record raw error and argmax changes. | Raw error ≤ 0.25, mass error ≤ 0.05 and identical argmax |
 
-The 0.25 approximate-export limit elsewhere in the plan applies only where
-the owning recipe explicitly uses it. Context's limit remains 0.001. The
-observed Large 0.000328064 error at 8,192 tokens is an FP32 comparison.
-Treat FP16 drift as an unmeasured risk. A different Context tolerance would
-require an explicit, prospective contract decision and separate result
-identity before the affected confirmation. Retain any result under the
-criteria frozen for its run.
-[Frozen FP16 exporter limits](../../scripts/arbiter-fp16-export/CONTRACT.md)
+The observed Large 0.000328064 error at 8,192 tokens is an FP32 comparison.
+Retain each result under the criteria frozen for its run.
+[FP16 exporter limits](../../scripts/arbiter-fp16-export/CONTRACT.md)
 
 Use the pinned independent original FP32 scores as the cross-provider
 anchor, with the same loss budget and request population. Use an independent
@@ -1709,6 +1712,53 @@ transfer would require a separately approved protocol frozen before
 confirmation, with full-population bounded drift, stable decisions and
 the existing risk and coverage checks. Until such a protocol is approved,
 each promoted identity needs its own CAL and task evidence.
+
+### Accepted Context FP16 task-quality qualification
+
+The user approved this rule on 19 November 2026 for prospective Context FP16
+qualification across providers. The Windows Compact probe found a raw difference
+of 0.012271881 between the independent FP16 and original FP32 scores on T32/N8,
+with the same winner. The evidence supports investigating how score drift
+affects decisions across the workload. The strict CUDA placement refusal
+still blocks native scoring.
+[Compact FP16 first probe](#windows-compact-fp16-first-probe)
+
+1. **Preserve the matching-recipe implementation check.** Require native
+   Context FP16 to match its independent reference within 0.001 maximum raw
+   error and 0.05 normalized-mass error, with finite scores and identical
+   argmax. Use a fresh matching reference when the precision recipe changes.
+   Against original FP32, the judged task-quality gate replaces the
+   fixed 0.001 raw-error cutoff and identical-winner requirement. Retain the
+   0.05 normalized-mass limit. Report raw and mass drift on complete score
+   vectors to explain quality and calibration effects.
+2. **Require at least 98% of FP32's judged evidence success rate.** Use the
+   same answerable requests, corpus, candidate inputs, output budget and
+   human judgments for both variants. Count a request as a success when the
+   evidence delivered to Answer contains an acceptable evidence set under the
+   frozen judgments. Apply the ratio to the measured FP32 rate. For example,
+   a baseline of 80% sets a target of 78.4%. Report both rates, denominators,
+   paired regressions and improvements, and a one-sided 95% paired confidence
+   bound for the FP16 rate minus 0.98 times the FP32 rate. The gate passes
+   when the lower bound is at least zero. An unresolved bound or
+   insufficient applicable judgments leaves task quality unconfirmed.
+3. **Inspect consequential changes and freeze the confirmation rules.**
+   On a development slice at 32, 128, 1,024 and 8,192 tokens, measure maximum,
+   median and p95 raw and mass drift, winner and evidence-set changes, and
+   decisions that cross the acceptance threshold. Inspect near ties,
+   confident decision reversals and losses of necessary evidence. Report
+   8,192-token outcomes separately. Before held-out confirmation, freeze the
+   eligible judgments, paired analysis, limits for consequential regressions
+   and long-context acceptance. Apply the existing exact-artifact calibration,
+   risk, coverage and task requirements to the candidate. If the development
+   evidence points to a sensitive operation, test protecting it in FP32 under
+   a fresh candidate identity and measure the latency and memory cost.
+4. **Measure the benefit after native execution is proved.** Resolve strict
+   CUDA placement and verify actual efficient-attention dispatch before the
+   full-width native qualification. Reuse authenticated preparation evidence
+   wherever its identity still applies. Record each new result under its
+   actual artifact, runtime and approved criteria. Apply the existing
+   latency, memory headroom, Auto selection and same-model CPU fallback
+   requirements before release confirmation.
 
 ### Developer memory fit and shipping Auto
 
@@ -1757,9 +1807,9 @@ the blocker and revisit its GPU release scope. Show the GPU precision available
 in the installed release and keep CPU selection and the service-wide GPU opt-out
 available.
 
-Use zero non-finite valid results, zero argmax changes on the frozen parity
-population, the existing task risk and coverage gates, and the 120-second
-request and warm p95 limits. Report complete Answer improvement as both
+Require finite valid results, identical argmax on matching-recipe parity,
+the applicable cross-precision and task gates, and the 120-second request
+and warm p95 limits. Report complete Answer improvement as both
 seconds saved and percentage reduction against a matched CPU control where
 one can be measured. The user approved two release targets on
 18 November. Where there is a comparable CPU path, complete Answer warm

@@ -496,6 +496,30 @@ fn observe_t32_input_refusals(
     Ok(())
 }
 
+fn t32_reference_bounds(
+    (matching_raw, matching_mass, matching_argmax): (f64, f64, bool),
+    original_mass: f64,
+) -> bool {
+    matching_raw <= 0.001 && matching_mass <= 0.05 && matching_argmax && original_mass <= 0.05
+}
+
+#[test]
+fn compact_fp16_t32_limits_matching_parity_and_original_mass() -> Result<()> {
+    let actual = [0.02, 0.0];
+    let matching = comparison(&actual, &actual)?;
+    let (original_raw, original_mass, original_argmax) = comparison(&actual, &[0.0, 0.02])?;
+    assert!(original_raw > 0.001);
+    assert!(!original_argmax);
+    assert!(t32_reference_bounds(matching, original_mass));
+
+    assert!(t32_reference_bounds((0.001, 0.05, true), 0.05));
+    assert!(!t32_reference_bounds((0.0011, 0.05, true), 0.05));
+    assert!(!t32_reference_bounds((0.001, 0.051, true), 0.05));
+    assert!(!t32_reference_bounds((0.001, 0.05, false), 0.05));
+    assert!(!t32_reference_bounds((0.001, 0.05, true), 0.051));
+    Ok(())
+}
+
 fn read_t32_profile(scorer: &Scorer, prefix: &Path) -> Result<Value> {
     let path = scorer.finish_profiling()?;
     let leaf = prefix
@@ -628,7 +652,7 @@ fn cuda_compact_fp16_t32_component() -> Result<()> {
         .create_new(true)
         .open(&output)?;
     let mut receipt = json!({
-        "schema": "airk.private.compact-fp16-t32-component/1",
+        "schema": "airk.private.compact-fp16-t32-component/2",
         "complete": false, "qualified": false, "product_admission": false,
         "request": request_pin, "native_input": gpu_input, "profile": profile.manifest,
         "source_manifest": input.source_manifest, "runtime_manifest": runtime_manifest,
@@ -636,7 +660,7 @@ fn cuda_compact_fp16_t32_component() -> Result<()> {
         "pid": std::process::id(), "native_binary_sha256": binary, "execution_user": execution_user,
         "default_owner": default_owner, "bounds": bounds, "actual_job": actual_job,
         "native_host_reservation_bytes": charge.bytes(), "resource_snapshot": resources.snapshot(),
-        "original_expires_monotonic_ns": expires_ns, "runtime_profile": null, "rows": [],
+        "original_expires_monotonic_ns": expires_ns, "runtime_profile": null, "load_logs": null, "rows": [],
         "input_refusals": [], "numeric_forward_attempts": 0, "session_teardown_observed": false,
         "device_teardown_observed": false,
         "native_forward_returned": false, "forward_synchronized": false,
@@ -678,12 +702,18 @@ fn cuda_compact_fp16_t32_component() -> Result<()> {
             flush_graph_diagnostic(&mut file, &receipt)?;
             let catalog = airk_kernel::inference_owner::evaluation_catalog(lease.clone(), vec![profile.clone()])?;
             let execution = catalog.execution_profile(profile.manifest)?.bind_cuda_probe(device, capacity, deadline)?;
+            let observer = execution.cuda_compact_fp16_load_observer()?;
             let loaded = journal.observe(operation::Kind::Load, 0, None, || {
                 Scorer::open_profiled(execution, files, &prefix)
             })?;
             receipt["load_us"] = json!(loaded.elapsed_us);
             receipt["load_native_call_us"] = json!(loaded.native_call_elapsed_us);
+            let logs = observer.snapshot();
+            if let Ok(snapshot) = &logs {
+                receipt["load_logs"] = json!(snapshot.logs);
+            }
             custody.scorer = Some(loaded.value?);
+            logs?;
             ensure!(loaded.within_deadline, "original Compact FP16 load expiry exceeded");
             let scorer = custody.scorer.as_ref().context("Compact FP16 scorer missing")?;
             receipt["execution_identity"] = json!(scorer.execution_identity()?);
@@ -711,9 +741,8 @@ fn cuda_compact_fp16_t32_component() -> Result<()> {
             flush_graph_diagnostic(&mut file, &receipt)?;
             ensure!(
                 scored.within_deadline
-                    && half_raw <= 0.001 && half_mass <= 0.05 && half_winner
-                    && original_raw <= 0.001 && original_mass <= 0.05 && original_winner,
-                "original Compact FP16 T32 numerical/time bounds refused"
+                    && t32_reference_bounds((half_raw, half_mass, half_winner), original_mass),
+                "Compact FP16 T32 matching parity, original mass or time bound refused"
             );
             Ok(())
         })();

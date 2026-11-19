@@ -255,6 +255,32 @@ impl super::super::ExecutionProfile {
         self.diagnostic_observer()
     }
 
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    pub fn cuda_compact_fp16_load_observer(&self) -> Result<LoadObserver> {
+        use airk_core::arbiter::{ModelChoice, device::PlacementPolicy};
+
+        crate::native_inference::require_service_compute()?;
+        self.validate_native_source()?;
+        authority(
+            self.execution_authorized() && self.evaluation(),
+            self.release,
+            self.description.qualification.is_none()
+                && self.description.qualified_targets.is_empty(),
+            self.description.model == ModelChoice::ContextQwenCompact,
+            self.description
+                .device_execution
+                .as_ref()
+                .is_some_and(|device| {
+                    device.precision == DevicePrecision::Float16
+                        && device.placement == PlacementPolicy::StrictGpu
+                }),
+            self.gpu
+                .as_ref()
+                .is_some_and(|binding| binding.evidence.is_none()),
+        )?;
+        self.diagnostic_observer()
+    }
+
     fn diagnostic_observer(&self) -> Result<LoadObserver> {
         Ok(LoadObserver(
             self.gpu
@@ -271,12 +297,12 @@ pub(crate) fn authority(
     release: bool,
     unqualified: bool,
     allowed_model: bool,
-    fp32: bool,
+    matching_device: bool,
     binding: bool,
 ) -> Result<()> {
     ensure!(
-        evaluation && !release && unqualified && allowed_model && fp32 && binding,
-        "CUDA diagnostic requires an approved model with unqualified native evaluation FP32 binding"
+        evaluation && !release && unqualified && allowed_model && matching_device && binding,
+        "CUDA diagnostic requires an approved model and matching unqualified native evaluation binding"
     );
     Ok(())
 }

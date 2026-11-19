@@ -295,3 +295,13 @@ pins, profile bytes and URLs stay bound. The existing source row schema stays
 /1. The current runtime and transition owner hashes produce a fresh row and
 fresh input-binding provenance. Historical numeric, calibration, resource and
 task evidence retain their original identities.
+
+### Strict Compact FP16 load observer
+
+The Windows x64, test-support-only observer advances diagnostic.rs from
+2cd6337af1832e09e623b099d7b74b8c4b3da3af6d379f53674eb834aa79f33d to
+29c8598610103915823b9b047fd4c6728cfb361b97b6d4ca13defdd9fed662d3.
+Removing the new method and restoring the shared authority parameter and
+error text reproduces the preceding LF-normalized source. The FP32 diagnostic
+retains its matching-precision predicate. The legacy CPU runtime and
+descriptor keep their exact source and profile identities.

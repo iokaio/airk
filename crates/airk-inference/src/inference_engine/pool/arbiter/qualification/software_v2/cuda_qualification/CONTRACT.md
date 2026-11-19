@@ -375,13 +375,20 @@ does not consume mask values. The canonical native FP16 input guard accepts
 only all-live masks with original sequential positions for this model. The
 validation-only scorer entry checks that wrong positions, a mask hole and an
 all-zero mask refuse before any forward. One accepted T32/N8 input uses the
-unchanged reference tensors. Matching FP16 and original FP32 each require
-raw error <=0.001, mass error <=0.05 and exact argmax. FP32 fixtures and
-selectors keep their original identities.
+unchanged reference tensors. Require finite scores, matching FP16 raw error
+<=0.001, matching mass error <=0.05 and matching argmax. Against original
+FP32, require mass error <=0.05 and retain raw error and the argmax verdict
+as diagnostics. The accepted Context task-quality gate uses a separate paired
+judged workload. Retained results, FP32 fixtures and FP32 selectors keep
+their original criteria and identities.
 
-The private `airk.private.compact-fp16-t32-component/1` receipt retains
-partial rows, actual identity/placement, refusal evidence, native journal
-and settlement facts. Device settlement is observed separately when a
+The private `airk.private.compact-fp16-t32-component/2` receipt identifies
+the 19 November rule and retains partial rows, actual identity/placement,
+refusal evidence, native journal and settlement facts. Version 1 identifies
+the prior numerical rule. On Windows x64, a bounded strict-load observer
+retains selected ORT logs and discloses truncation even when session creation
+refuses. The log captures diagnostic evidence before the final placement map
+is available. Device settlement is observed separately when a
 refused load never returns a live scorer. The journal contains one `load` and at most one
 `numeric` operation. The actual bounded ORT profile is pinned separately
 from the expected attention plan and validated by the owner with the

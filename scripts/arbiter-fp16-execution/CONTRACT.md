@@ -190,7 +190,16 @@ Job settlement. It retains full bounded stdout and native outputs under the
 fresh checked child. The T32 invocation inherits GEMM2 and attention debug
 logging before ORT initialization. A passing T32 result requires all 28 named
 FP16 FlashAttention records, the durable returned operation and native
-synchronization, strict placement, both reference comparisons and teardown.
+synchronization, strict placement and teardown. The matching FP16 reference
+requires finite scores, raw error at most 0.001, mass error at most 0.05 and
+identical argmax. Against original FP32, mass error is limited to 0.05 and the
+finite raw error and argmax verdict are retained as diagnostics. A fresh
+receipt binds the actual native image and parent source. Retained outcomes
+use the policy under which they ran. The T32 component supplies engineering
+evidence for the accepted Context qualification rule. Task quality needs
+paired judged requests.
+[Accepted Context FP16 rule](../../docs/arbiter/final-plan.md#accepted-context-fp16-task-quality-qualification)
+
 The receipt records failures and retained raw evidence when any check refuses.
 Device capacity limits and adapter observations support the component receipt.
 Measured device peak and product qualification require separate evidence.

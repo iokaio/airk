@@ -598,6 +598,12 @@ control and files. Teardown.poisoned records that device state. The separate
 process_cuda_poisoned field remains the actual global runtime-loader observation;
 per-device poison does not fabricate global loader poison. Neither can pass.
 
+The Compact FP16 Windows x64 test-support probe may clone the bounded log
+observer for its native evaluation lease with strict GPU placement and an
+unqualified same-device FP16 binding. It uses ordinary strict Scorer open.
+The observer returns selected startup data even when session creation refuses.
+A passing scorer still requires the complete final placement check.
+
 ## Final graph metadata observation
 
 A separate test-support graph-only diagnostic collects

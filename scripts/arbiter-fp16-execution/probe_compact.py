@@ -25,7 +25,7 @@ MODEL = "arbiter-context-qwen3-17b"
 PREPARE_SHA = "850cf966a73bc5ecb0aa79cc3d22559cdd3ad855fbc38f73e361f136ea88c953"
 T32_DIGEST = "ec7b4845c37fb7cbe2a64a866f8b6cdc03479d65593cdb0a1d01102fe56fc335"
 METADATA_SCHEMA = "airk.private.compact-fp16-probe-metadata/1"
-T32_SCHEMA = "airk.private.compact-fp16-t32-component/1"
+T32_SCHEMA = "airk.private.compact-fp16-t32-component/2"
 INDEPENDENT_SCHEMA = "airk.private.compact-fp16-independent-proof/1"
 HOST = 32 << 30
 WALL = 120
@@ -149,6 +149,7 @@ def linked_image(build, image, base, audit):
         "crates/airk-retrieval/src/arbiter/runtime.rs",
         "crates/airk-retrieval/src/arbiter/runtime/cuda.rs",
         "crates/airk-retrieval/src/arbiter/runtime/cuda/fp16.rs",
+        "crates/airk-retrieval/src/arbiter/runtime/cuda/diagnostic.rs",
     )
     sources = {relative: exact_pin(ROOT / relative, native[relative], base) for relative in relevant}
     return log_pin, artifact, sources
@@ -205,6 +206,17 @@ def validate_metadata(value, paths, request, evidence, manifest, base):
     return pins
 
 
+def validate_t32_comparisons(row):
+    require(finite(row["matching_fp16_raw_error"], 0, .001)
+            and finite(row["matching_fp16_mass_error"], 0, .05)
+            and row["matching_fp16_argmax_matches"] is True,
+            "native T32 matching FP16 comparison refused")
+    require(finite(row["original_fp32_mass_error"], 0, .05)
+            and finite(row["original_fp32_raw_error"], 0, math.inf)
+            and type(row["original_fp32_argmax_matches"]) is bool,
+            "native T32 original FP32 mass or diagnostic evidence refused")
+
+
 def validate_t32(value, paths, owned, request, evidence, metadata, manifest, image, component, base):
     require(value["schema"] == T32_SCHEMA and value["complete"] is True
             and value["qualified"] is value["product_admission"] is value["native_backend_attested"] is False
@@ -236,9 +248,7 @@ def validate_t32(value, paths, owned, request, evidence, metadata, manifest, ima
             and finite(row["elapsed_us"], 0, 120_000_000)
             and finite(row["native_call_elapsed_us"], 0, row["elapsed_us"]),
             "complete finite T32 scores and timing required")
-    for lane in ("matching_fp16", "original_fp32"):
-        require(finite(row[lane + "_raw_error"], 0, .001) and finite(row[lane + "_mass_error"], 0, .05)
-                and row[lane + "_argmax_matches"] is True, "native T32 reference comparison refused: " + lane)
+    validate_t32_comparisons(row)
     refusal = value["input_refusals"]
     require([item["case"] for item in refusal] == ["wrong_native_positions", "mask_hole", "mask_all_zero"]
             and all(item["refused"] is True and item["native_forward_dispatched"] is False for item in refusal),

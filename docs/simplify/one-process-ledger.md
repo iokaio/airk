@@ -11106,3 +11106,92 @@ identities and the limits as measured. Windows FP16 qualification requires
 a revised candidate that can satisfy both independent numerical lanes and
 strict placement, followed by its fresh evidence. Full-width measurement
 and the dependent Linux CUDA and Core ML gates remain pending.
+
+### 2026-11-19 — Accepted Context FP16 qualification and strict startup diagnosis
+
+The user accepted the prospective Context Compact/Large FP16 gate of 98% of
+FP32 judged evidence success with the paired one-sided 95% lower bound.
+Fresh probes require matching-recipe raw <=0.001, mass <=0.05 and identical
+argmax, and original-FP32 mass <=0.05. Original-FP32 raw error and argmax
+are diagnostic. The corresponding private T32 result advances to /2.
+FP32 prerequisites, Focus rules, original candidate bytes and retained
+receipts keep their frozen identities. The retained T32/N8 references have
+a maximum normalized-mass difference of 0.00002560491, recomputed from
+the two pinned vectors. This is a reference-to-reference observation.
+
+The existing evidence grader checks complete original human evidence
+alternatives on verified source spans. ContextBench and TechQA source
+inventories can support development and label admission. The current
+checkout has no admitted fresh held-out matched Context evidence cohort.
+The 98% decision awaits eligible judgments and sufficient paired evidence.
+Independent review covered the numerical lanes, historical consumers,
+and evidence-cohort requirements.
+
+The bounded strict-load observer records selected ORT startup logs before
+the Scorer consumes the execution binding. Its inverse source check
+reproduced the historical diagnostic source 2cd6337a from 29c85986. The
+first Nextest run found the old literal pin (42/43 passed). Correcting the
+pin after that inverse proof preserved the CPU descriptor, FP32 predicate
+and qualification-transfer checks. Initial Clippy starts exposed separate
+preflight wiring errors: the CPU static-environment verifier refused the
+CUDA archive layout, then the bundled model path was absent. The successful
+run authenticated the retained cu15 aggregate archive and both original
+bundled profiles and passed their exact inputs through the checked owner.
+
+With Rust 1.98.0, warm Windows target/, incremental=1, source group
+60284ae0e6b8cb7835ed2098213208186ae5167956f321b4facbfda7fea048b7,
+scoped all-feature Clippy passed in 4.497 s
+(8d12a3a92d76302a23feafd8d5a214c7edb26b3bac1f0747c0f48d39b8b94f8d).
+Nextest CI passed 43 with 473 filtered across two binaries in 9.360 s
+(76872b7a16bd7c697580979a6749a5c6632339f4f5f560a3017a9e1a9b942bfd).
+The manifest-bound image build passed in 1.085 s
+(56a779f08dfe3162f25c44741c261e263124291f1ebcfd77fea9fa8f817a4afd).
+The commands, timing HTML, logs and JUnit are under
+windows-cuda-g5-accepted-rule-r1. The 61 focused Python controls,
+pinned Rust formatting, repository and whitespace checks passed.
+
+The exclusive RTX A6000 T32 diagnostic reused the exact authenticated
+Compact graph, weights, input and metadata. With the original 120-second
+deadline, 32/32 GiB process/Job and 24 GiB device envelope, the single
+Load returned the strict CPU EP refusal after 8.480400 s. The bounded
+log saw 1,327 messages, selected 375, retained 227 (65,382 bytes) and
+disclosed 148 omitted. All retained rows are explicit ORT
+GetCpuPreferredNodes decisions for CUDA-capable nodes. Examples include
+rotary Gather/Where, per-layer shape arithmetic, and the G5 length helpers.
+The partial log leaves the full residual roster unverified.
+
+No forward or FlashAttention dispatch occurred. The owned process ran
+29.887 s, exited 101 and left an empty Job without forced termination.
+Peak Job commit was 8,235,884,544 B, and native peak RSS was
+7,910,174,720 B. Native device, control and host ownership settled.
+The effective human and default owner were TYAI\tdotn, SID ending 1002.
+The checked outputs are under compact-fp16-t32-accepted-strict-diagnostic-r1:
+execution f3ff3c176fa3722f6f7b98a0a777b8115e3bc7d95480e7cc33207fddbda9398c,
+native result ac6b62351a5327aaff84f2f4b40940008436d108340c339aec620700671d0975,
+journal b314a787978358fa93a9fa00acbb527a9b82e56cbb6a0e80d60a83778b916f83,
+linked image 92b45c1c8be1bb84f93a3fc4ed8c3f850ffd00b24f97060c603986df5c298fea.
+
+Next action is to complete the small startup placement census and isolate
+CPU-preferred CUDA-capable nodes from any unsupported nodes. Use the
+result to choose and review a correction that preserves strict placement
+and actual FlashAttention verification. Native Compact scores, the
+four-width profile, held-out task qualification and the dependent platform
+gates remain pending.
+
+The user then requested Cargo cleanup because D: was critically low. The
+checked shell found an idle Cargo target and audited 7,678 directories
+under the resolved D:\code\Github\airk\target path. Pinned Cargo 1.98.0
+initially refused because CACHEDIR.TAG was absent. The retained successful
+image-build receipt proved this path was the actual Cargo target, and the
+top-level inventory contained only build, timing, test and temporary
+outputs. The checked shell restored the standard signature found in the
+installed Cargo binary and verified the dry-run before executing
+
+```powershell
+cargo clean --locked --offline --manifest-path D:\code\Github\airk\Cargo.toml --target-dir D:\code\Github\airk\target
+```
+
+Cargo exited 0 and removed 208,679 files totaling 266.1 GiB. The drive
+reported 425.521 GiB free after cleanup, up from 170.181 GiB. The target
+directory is gone. The diagnostic receipt and its exact preserved test
+image independently retained their hashes outside target/.

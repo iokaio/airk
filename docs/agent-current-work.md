@@ -47,8 +47,8 @@ Active campaign: Arbiter final implementation (execution start 2026-11-16T05:29:
   performance and memory gates on target developer machines.
 - On 18 November the user approved an exact 32 GiB Windows Compact host
   process cap. Use a 32 GiB aggregate Job cap so the process can use that
-  allowance. The 24 GiB device budget, original 120-second deadline and all
-  numerical/placement criteria still apply. Keep the earlier 16/24 GiB
+  allowance. Preserve the 24 GiB device budget, original 120-second deadline
+  and strict placement. Keep the earlier 16/24 GiB
   attempt evidence under its own identity.
 - The approved FP32 Context matrix for Compact and Large is 32, 128, 1024
   and 8192 tokens. Reuse exact independent results for unchanged 128 and
@@ -116,14 +116,18 @@ Use the existing deadline when resuming in a new context.
   [Windows Large Resource20 ledger](simplify/one-process-ledger.md#2026-11-18--windows-large-fp32-resource20-passed)
 - Windows G5 readiness, Compact conversion, independent graph and weight
   verification, and native metadata passed. The exact Compact T32 candidate
-  has a 0.012271881 raw difference between independent FP16 and FP32 references,
-  with 0.001 allowed per comparison. Strict CUDA load independently refused
-  CPU-assigned nodes before a forward. Preserve the receipts and the frozen
-  limits. A revised candidate needs new numerical and strict-placement proof
-  before the Windows full-width gate and the dependent FP16 platform sequence.
+  has a 0.012271881 raw difference between independent FP16 and FP32 references.
+  The 19 November acceptance makes that comparison's raw error and argmax
+  diagnostic on fresh Context FP16 runs. Require matching-recipe parity,
+  original-FP32 mass error at most 0.05, and the accepted 98% task-quality
+  gate for qualification. Preserve the original receipts. The strict startup
+  log on 19 November confirmed CUDA-capable, CPU-preferred nodes and reached
+  its cap. Complete the placement census, then prove strict placement and
+  actual efficient attention on the small probe before the full-width gate
+  and dependent FP16 platform sequence.
   Leave Focus GPU off the critical path. The 25% plus one-second warm Answer p95
   improvement target and the 2 GiB discrete-VRAM reserve are approved for
-  release confirmation where applicable. [FP16 plan](arbiter/final-plan.md#fp16-conversion-prerequisites)
+  release confirmation where applicable. [Accepted FP16 rule](arbiter/final-plan.md#accepted-context-fp16-task-quality-qualification)
 
 ## Scoped ownership exceptions
 
@@ -151,9 +155,12 @@ Use the existing deadline when resuming in a new context.
   target/; an explicitly selected artifacts/v190/p10-target clean affects that
   target only. Never delete all artifacts/ as a build cleanup. Preserve exact
   research outputs and use reviewed build-output cleanup when space requires it.
-- Build target for this execution: target/ (human-owned warm checkout target).
-  The designated artifacts/v190/p10-target root is foreign-owned and remains
-  preserved. Do not clean targets or share them across concurrent checkouts.
+- Build target for this execution: target/ (human-owned checkout target).
+  The user requested Cargo cleanup on 19 November due to low D: space. The
+  target was removed after the retained build and diagnostic receipts were
+  verified. The next necessary Rust build will recreate it. Preserve the
+  designated foreign-owned artifacts/v190/p10-target root and keep one Cargo
+  owner per target.
 - Mac Neo: existing SSH setup, POSIX sh batches, checkout ~/code/airk;
   connection details in ignored artifacts/v190/neo-connection.local.json.
   Verify the host's logged-in user before any batch. Preserve evidence outside

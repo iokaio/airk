@@ -131,6 +131,42 @@ class IndependentReferenceImportControls(unittest.TestCase):
             reference.loaded_runtime({}, lambda file, check: real_pin, lambda: None, [real])
 
 
+class CompactT32ComparisonControls(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        path = ROOT / "scripts/arbiter-fp16-execution/probe_compact.py"
+        spec = importlib.util.spec_from_file_location("compact_t32_probe", path)
+        cls.probe = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.probe)
+
+    def comparison_row(self):
+        return {
+            "matching_fp16_raw_error": .001,
+            "matching_fp16_mass_error": .05,
+            "matching_fp16_argmax_matches": True,
+            "original_fp32_raw_error": .012271881,
+            "original_fp32_mass_error": .05,
+            "original_fp32_argmax_matches": False,
+        }
+
+    def test_original_score_drift_and_winner_changes_are_diagnostic(self):
+        self.probe.validate_t32_comparisons(self.comparison_row())
+
+    def test_matching_parity_original_mass_and_diagnostic_types_remain_required(self):
+        for name, value in {
+            "matching_fp16_raw_error": .0011,
+            "matching_fp16_mass_error": .051,
+            "matching_fp16_argmax_matches": False,
+            "original_fp32_raw_error": float("inf"),
+            "original_fp32_mass_error": .051,
+            "original_fp32_argmax_matches": 0,
+        }.items():
+            invalid = self.comparison_row()
+            invalid[name] = value
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                self.probe.validate_t32_comparisons(invalid)
+
+
 class FinalProofControls(unittest.TestCase):
     def callbacks(self, events):
         return {name: lambda name=name: (events.append(name), row(name))[1] for name in M.PROOFS}
