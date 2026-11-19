@@ -269,7 +269,13 @@ def graph_invariants(original, candidate, config, focus, onnx, original_director
             attention = add('MultiHeadAttention', [q, k, v, '', packed], target + 'efficient', outputs=[NS + target + 'raw16'], domain='com.microsoft', num_heads=heads, unidirectional=1, scale=scale)
             attention = add('Where', [live_queries, attention, zero], target + 'zero_padded_queries')
         else:
-            attention = add('GroupQueryAttention', [q, k, v, '', '', seqlens, length32], target + 'efficient', outputs=[NS + target + 'raw16'], domain='com.microsoft', num_heads=heads, kv_num_heads=kv, causal=1, local_window_size=-1, do_rotary=0, scale=scale)
+            # ORT's CUDA GQA requires present outputs even without past inputs.
+            outputs = [NS + target + label for label in ('raw16', 'present_key', 'present_value')]
+            attention = add(
+                'GroupQueryAttention', [q, k, v, '', '', seqlens, length32], target + 'efficient',
+                outputs=outputs, domain='com.microsoft', num_heads=heads, kv_num_heads=kv,
+                causal=1, local_window_size=-1, do_rotary=0, scale=scale,
+            )
         del expected[sink]
         add('Cast', [attention], target + 'output32', outputs=list(source[sink][3]), to=1)
     outputs = [v.name for v in original.graph.output]

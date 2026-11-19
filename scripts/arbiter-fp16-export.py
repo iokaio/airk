@@ -204,7 +204,9 @@ def rewrite(model, key, onnx):
             added.append(h.make_node('MultiHeadAttention',[q,k,v,'',packed],[out],name=NS+tag+'efficient',domain='com.microsoft',num_heads=heads,unidirectional=1,scale=scale))
             out=node('Where',[livequeries,out,zero16],tag+'zero_padded_queries')
         else:
-            added.append(h.make_node('GroupQueryAttention',[q,k,v,'','',seqlens,total32],[out],name=NS+tag+'efficient',domain='com.microsoft',num_heads=heads,kv_num_heads=kv,causal=1,local_window_size=-1,do_rotary=0,scale=scale))
+            # CUDA GQA materializes both present tensors even with empty past inputs.
+            outputs=[out,NS+tag+'present_key',NS+tag+'present_value']
+            added.append(h.make_node('GroupQueryAttention',[q,k,v,'','',seqlens,total32],outputs,name=NS+tag+'efficient',domain='com.microsoft',num_heads=heads,kv_num_heads=kv,causal=1,local_window_size=-1,do_rotary=0,scale=scale))
         added.append(h.make_node('Cast',[out],list(sink.output),name=NS+tag+'output32',to=T.FLOAT)); removed.add(sink.name)
     known={x.name for x in g.input}|{x.name for x in g.initializer}|{x.name for x in constants}
     ordered=reachable([n for n in g.node if n.name not in removed]+added,[x.name for x in g.output],known)

@@ -383,6 +383,7 @@ def run(path, expected):
 
 
 SOURCE_PLAN_SHA = 'cdf57c6c86b490cf2b6656fa8c48fbb4ff3b6ccb4d5c5be9705a71a2866b735c'
+CONTEXT_PRESENT_EXPORTER_SHA = '1fa0a8d546877a8d82ca44c45ba920d14fae0c0b66ebfac6e0c33e9c2f09b8f0'
 RUNTIME_BASELINE_SHA = '23f9fbfa770d18ee2549dbd6c1b553e204ab8e387ba51b92b620dd24c10189cb'
 G5_TESTS = frozenset(
     'arbiter::runtime::cuda::fp16::tests::' + name for name in (
@@ -400,7 +401,9 @@ G5_TESTS = frozenset(
         'all_f32_and_overlap_are_not_half_weight_closure',
         'large_half_metadata_is_additive_and_never_allocates_tensor_bytes',
         'unknown_quantized_half_closure_refuses',
-        'focus_unwritten_padded_queries_require_explicit_sanitization')) | frozenset(
+        'focus_unwritten_padded_queries_require_explicit_sanitization',
+        'context_present_outputs_are_required_in_exact_order',
+        'context_present_outputs_cannot_collide_escape_or_be_consumed')) | frozenset(
     'arbiter::runtime::cpu_source_transition::tests::' + name for name in (
         'closed_profile_refuses_neural_metadata_fit_and_source_drift',
         'cuda_bridge_and_driver_closure_preserve_closed_cpu_runtime_source',
@@ -792,8 +795,10 @@ def authenticate_prerequisites(plan, by_path, check=lambda: None):
     require(plan['source_graph'] == selected['original_graph'] and plan['source_closure'] == selected['source_closure']
             and plan['expected_weights_bytes'] == selected['expected_weights_bin_bytes']
             and plan['expected_attention_count'] == len(selected['expected_attention_nodes'])
-            and plan['python'] == original['python'] and plan['exporter']['sha256'] == original['reviewed_library']['sha256'],
+            and plan['python'] == original['python'],
             'conversion differs from authentic original source data')
+    require(plan['exporter']['sha256'] == CONTEXT_PRESENT_EXPORTER_SHA,
+            'exact reviewed Context present-output exporter required')
     evidence = read(pinned(plan['prerequisites_manifest'], check))
     require(evidence.get('schema') == 'airk.private.fp16-prerequisites/2' and evidence.get('model') == plan['model']
             and {key: evidence[key] for key in ('first_fp32', 'native_g5')} == plan['prerequisite_evidence'],
@@ -852,7 +857,8 @@ def prepare(args):
             'source_plan': source, 'runtime_baseline': pin(args.runtime_baseline, check),
             'helpers': {name: pin(helper_root / name, check) for name in HELPERS},
             'prerequisite_evidence': {'first_fp32': evidence['first_fp32'], 'native_g5': evidence['native_g5']}}
-    require(plan['exporter']['sha256'] == original['reviewed_library']['sha256'], 'original reviewed exporter differs')
+    require(plan['exporter']['sha256'] == CONTEXT_PRESENT_EXPORTER_SHA,
+            'exact reviewed Context present-output exporter required')
     rows = merge_input_pins(runtime['files'], outside, prerequisite_rows)
     for row in [source, plan['runtime_baseline'], selected['source_closure_authority'], *plan['helpers'].values()]:
         rows[row['path']] = row

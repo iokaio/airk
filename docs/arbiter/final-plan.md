@@ -1593,7 +1593,7 @@ could not satisfy both under that rule. Windows CUDA session creation also
 refused CPU-assigned nodes under strict placement before any forward or observed
 FlashAttention dispatch. The child and native resources settled naturally.
 
-The first blocking gate remains Windows Compact strict CUDA placement.
+Windows Compact first stopped at strict CUDA placement.
 The acceptance on 19 November makes the original-FP32 raw difference
 diagnostic for new Context FP16 runs. Preserve the prior receipts under
 their original criteria. Diagnose placement and verify the native small

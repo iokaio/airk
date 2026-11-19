@@ -25,7 +25,7 @@ REFERENCE_OWNER = "scripts/arbiter-fp16-reference.py"
 PUBLISHER_OWNER = "scripts/arbiter/export/qwen/qwen3-challengers-r1/qwen3_reference_r2.py"
 REFERENCES = {
     REFERENCE_OWNER: "fec5e8b9ed661d91103f62977374bc5c42b4b1f70a433b1b13210e7bad857bd6",
-    "scripts/arbiter-fp16-reference/graph.py": "8cabb036064b060cc1fdf5d48c4a8540fa7fca5f631292caca81a86b01fd6574",
+    "scripts/arbiter-fp16-reference/graph.py": "698c779c16a6bc768d260669c1daf0840bc2512ea9d56e2df7660f43f6909f72",
     PUBLISHER_OWNER: "4c6f43d0d81539cfc6bf7b6ddf5ae69273e61508d0db3d22a5e7488c60560b6b",
 }
 MAX_WALL_SECONDS = 600

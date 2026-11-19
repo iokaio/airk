@@ -606,7 +606,7 @@ class PreparationControls(unittest.TestCase):
             M.validate_junit(b'<testsuites/>', 1)
 
     def test_g5_supplement_is_mandatory_and_independent_of_fp32(self):
-        self.assertEqual(len(M.G5_TESTS), 25)
+        self.assertEqual(len(M.G5_TESTS), 27)
         self.assertIn('arbiter::runtime::cpu_source_transition::tests::g5_supplement_binds_exact_current_source_without_relabelling_old_row', M.G5_TESTS)
         self.assertIn('arbiter::runtime::cpu_source_transition::tests::cuda_bridge_and_driver_closure_preserve_closed_cpu_runtime_source', M.G5_TESTS)
         self.assertIn('crates/airk-retrieval/src/arbiter/runtime/cuda/windows.rs', M.G5_SOURCES)
@@ -656,16 +656,18 @@ class G5EvidenceControls(unittest.TestCase):
                'transition_never_admits_context_or_relabels_a_current_profile',
                'witness_rechecks_the_exact_descriptor_and_keeps_new_input_provenance',
                'g5_supplement_binds_exact_current_source_without_relabelling_old_row']
+        external += ['context_present_outputs_are_required_in_exact_order',
+                     'context_present_outputs_cannot_collide_escape_or_be_consumed']
         names = ['arbiter::runtime::cuda::fp16::tests::' + x for x in fp16]
         names += ['arbiter::external_data::g5::tests::' + x for x in external]
         names += ['arbiter::runtime::cpu_source_transition::tests::' + x for x in cpu]
         def document(values):
             return ('<testsuites>' + ''.join('<testcase classname="airk-retrieval" name="' + name + '"/>' for name in values) + '</testsuites>').encode()
-        M.validate_junit(document(names), 25)
+        M.validate_junit(document(names), 27)
         for omitted in names:
             remaining = [name for name in names if name != omitted]
             with self.subTest(omitted=omitted), self.assertRaisesRegex(ValueError, 'identities absent'):
-                M.validate_junit(document(remaining), 24)
+                M.validate_junit(document(remaining), 26)
 
 class FP32ProcessProofControls(unittest.TestCase):
     def fixture(self, model='compact'):

@@ -104,7 +104,12 @@ def literal(focus, half):
             node('MultiHeadAttention', [q, k, v, '', packed], A + 'attention/0/efficient', [raw], domain='com.microsoft', num_heads=2, unidirectional=1, scale=2 ** -.5)
             raw = extra('Where', [live_queries, raw, A + 'half_zero'], 'attention/0/zero_padded_queries')
         else:
-            node('GroupQueryAttention', [q, k, v, '', '', seqlens, total32], A + 'attention/0/efficient', [raw], domain='com.microsoft', num_heads=2, kv_num_heads=1, causal=1, local_window_size=-1, do_rotary=0, scale=2 ** -.5)
+            node(
+                'GroupQueryAttention', [q, k, v, '', '', seqlens, total32], A + 'attention/0/efficient',
+                [raw, A + 'attention/0/present_key', A + 'attention/0/present_value'],
+                domain='com.microsoft', num_heads=2, kv_num_heads=1, causal=1,
+                local_window_size=-1, do_rotary=0, scale=2 ** -.5,
+            )
         out = node('Cast', [raw], A + 'attention/0/output32', [sink + '_output_0'], to=1)
     w = weight('learned_o_proj', [4, 2]); out = consumer('MatMul', [out, w], att + 'o_proj/MatMul')
     residual = node('Add', [x, out], root + 'residual')
@@ -174,6 +179,35 @@ class WholeGraphControls(unittest.TestCase):
             elif kind == 'cache': node.input[3] = 'input_ids'
             else: next(a for a in node.attribute if a.name == kind).f = .5 if kind == 'scale' else 0
             with self.subTest(kind=kind), self.assertRaises(ValueError): self.audit(literal(False, False), candidate)
+    def test_context_present_output_slots_refuse_missing_swap_or_alias(self):
+        source = literal(False, False)
+        for mutation in ('missing_key', 'missing_value', 'swapped', 'aliased'):
+            candidate = literal(False, True)
+            outputs = next(n.output for n in candidate.graph.node if n.op_type == 'GroupQueryAttention')
+            if mutation == 'missing_key':
+                del outputs[1]
+            elif mutation == 'missing_value':
+                del outputs[2]
+            elif mutation == 'swapped':
+                outputs[1], outputs[2] = outputs[2], outputs[1]
+            else:
+                outputs[2] = outputs[1]
+            with self.subTest(mutation=mutation), self.assertRaisesRegex(ValueError, 'DAG differs|duplicate tensor producer'):
+                self.audit(source, candidate)
+
+    def test_context_present_outputs_refuse_public_exposure_or_consumer(self):
+        source = literal(False, False)
+        candidate = literal(False, True)
+        candidate.graph.output.append(h.make_tensor_value_info(A + 'attention/0/present_key', T.FLOAT16, [1, 1, 2, 2]))
+        with self.assertRaisesRegex(ValueError, 'ABI changed'):
+            self.audit(source, candidate)
+
+        candidate = literal(False, True)
+        cast = next(n for n in candidate.graph.node if n.name == A + 'attention/0/output32')
+        cast.input[0] = A + 'attention/0/present_value'
+        with self.assertRaisesRegex(ValueError, 'DAG differs'):
+            self.audit(source, candidate)
+
     def test_focus_packed_mask_repetition_and_sanitizer_refuse(self):
         for kind in ['packed', 'indices', 'condition', 'zero', 'multiply']:
             candidate = literal(True, True)

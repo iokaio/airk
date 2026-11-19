@@ -11340,3 +11340,35 @@ launcher Python suites passed 66 and 137 checks before the A6000 run.
 After improving failure reporting, the two suites passed 70 and 137.
 A read-only replay of the exact failed execution reported 0xC0000005
 separately from timeout and lingering Job members.
+
+### 2026-11-19 — Context FP16 graph emits both private GQA present tensors
+
+The maintained exporter adds exact layer-local present key and value
+outputs at slots 1 and 2 for Compact and Large. The public scores-only
+output, mathematical edges, empty past inputs and Focus attention are
+preserved. The independent whole-graph verifier and native G5 metadata
+audit require the exact private output names and order and reject
+missing slots, overlap, graph exposure and consumption. The owned
+conversion plan authenticates the original immutable source data and
+separately pins the corrected reviewed exporter and independent verifier.
+
+The checked Windows account and default owner matched the human SID
+ending 1002. The 18 focused exporter controls, 16 in-memory independent
+ONNX graph controls, 70 FP16 launcher controls and 137 shared CUDA
+launcher controls passed. Scoped Rust formatting, Clippy and Nextest
+used Rust 1.98.0, Nextest 0.9.148 and the warm target/ with incremental=1.
+Native source group 002b5614a6cac9d396ef57c586f6a837cd37610fc54700ff2186438823ea6314.
+Clippy passed in 13.034 s
+(c5b1c31932e7e00e668c77aa9579d5a88962462983e1704c73f2f80fa902e374).
+Nextest passed 54 with 470 filtered in 19.191 s
+(1b82028c1122925c3817988e0d26c649c1959c97c26f19005d637b97fe789871),
+including both new native ABI regressions. The image stage passed in
+1.078 s (8817d38d6308cd6162c1c9fa35681c37ba82f1931b7a14ca8f5930fe8aec0784).
+Exact commands, Cargo timings and JUnit are under
+windows-cuda-g5-context-present-checks-r2. The preserved Inference image
+is 873dd464123a8726443f9dfa1ee2dfe7defd6135a9cb544cc9a06c4dec6cee0a.
+
+Proceed with the corrected owned Compact conversion, independent T32
+proof, metadata and disposable typed final graph. Review the fresh final
+placement before the next bounded T32 forward. None of the source-stage
+checks establishes native CUDA execution or qualification.

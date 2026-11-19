@@ -25,7 +25,7 @@ The private `airk.private.fp16-prerequisites/2` manifest binds model, scoring,
 timing, current readiness and the maintained validator sources. The conversion
 plan's schema and original limits are preserved.
 G5 receipts must identify the same native group, unchanged successful inputs,
-current required G5/provider/CPU-transition sources and all15 literal G5 tests,
+current required G5/provider/CPU-transition sources and all 17 literal G5 tests,
 all9 current CPU controls and the new G5 transition control in passing JUnit.
 An FP32 receipt cannot substitute for either native-G5 readiness receipt.
 These are developer prerequisites, never native profile or product admission.
@@ -34,7 +34,10 @@ The generated prerequisite manifest pins all source helpers used to interpret
 these records and all consumed evidence. Authentication repeats these predicates
 before execution and in final input proof, using the original conversion clock.
 Original source-plan and runtime-baseline SHA256 identities are fixed, not supplied
-as freely replaceable expected values. Every retained baseline file must remain
+as freely replaceable expected values. The current reviewed exporter has its
+own fixed pin because Context GQA needs two private present outputs. The
+historical source plan still authenticates the original graph, weights and
+runtime prerequisites. Every retained baseline file must remain
 present and byte-identical. A fresh complete runtime census explicitly includes
 additional files; no roster or metadata-size cap is increased.
 

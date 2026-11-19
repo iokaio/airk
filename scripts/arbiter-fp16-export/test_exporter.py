@@ -101,10 +101,20 @@ class GraphControls(unittest.TestCase):
     def test_context_all_layers_and_preserved_abi(self):
         for key,count,qheads in [('compact',28,16),('large',36,32)]:
             m=fixture(key);original=copy.deepcopy(m);report=e.rewrite(m,key,onnx)
-            attention=[n for n in m.graph.node if n.op_type=='GroupQueryAttention']
-            self.assertEqual(len(attention),count)
-            for n in attention:
-                self.assertEqual(len(n.input),7);attrs=e.attributes(n,onnx)
+            nodes={n.name:n for n in m.graph.node}
+            attention={n.name for n in m.graph.node if n.op_type=='GroupQueryAttention'}
+            self.assertEqual(attention,{f'/airk_g5/attention/{i}/efficient' for i in range(count)})
+            consumers={name for n in m.graph.node for name in n.input}
+            graph_boundary={v.name for v in [*m.graph.input,*m.graph.output]}
+            for i in range(count):
+                prefix=f'/airk_g5/attention/{i}/'
+                n=nodes[prefix+'efficient']
+                self.assertEqual(len(n.input),7)
+                self.assertEqual(list(n.input[3:5]),['',''])
+                self.assertEqual(list(n.output),[prefix+'raw16',prefix+'present_key',prefix+'present_value'])
+                self.assertEqual(list(nodes[prefix+'output32'].input),[prefix+'raw16'])
+                self.assertTrue(set(n.output[1:]).isdisjoint(consumers | graph_boundary))
+                attrs=e.attributes(n,onnx)
                 self.assertEqual(attrs,{'num_heads':qheads,'kv_num_heads':8,'causal':1,'local_window_size':-1,'do_rotary':0,'scale':.125})
                 self.assertNotIn('sdpa_kernel',attrs)
             self.assertEqual(report['required_native_sdpa_kernel'],1)
@@ -118,6 +128,7 @@ class GraphControls(unittest.TestCase):
         for n in m.graph.node:
             if n.op_type=='MultiHeadAttention':
                 self.assertEqual(len(n.input),5);self.assertEqual(n.input[3],'')
+                self.assertEqual(list(n.output),[n.name.removesuffix('efficient')+'raw16'])
                 self.assertEqual(e.attributes(n,onnx),{'num_heads':16,'unidirectional':1,'scale':.125})
         indices=onnx.numpy_helper.to_array(initial[e.NS+'attention/0/kv_indices']).tolist()
         self.assertEqual(indices,[0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7])

@@ -70,6 +70,7 @@ struct Config {
     half: bool,
     overlap: bool,
     sanitize: bool,
+    present_outputs: &'static [&'static str],
 }
 fn config(focus: bool, layers: usize, heads: i64) -> Config {
     Config {
@@ -84,9 +85,17 @@ fn config(focus: bool, layers: usize, heads: i64) -> Config {
         half: true,
         overlap: false,
         sanitize: true,
+        present_outputs: if focus {
+            &[]
+        } else {
+            &["present_key", "present_value"]
+        },
     }
 }
 fn graph(c: &Config) -> (Vec<u8>, BTreeMap<String, u64>) {
+    graph_with_extra(c, &[])
+}
+fn graph_with_extra(c: &Config, extra: &[u8]) -> (Vec<u8>, BTreeMap<String, u64>) {
     let mut g = Vec::new();
     let halfwidth = if c.half { 2 } else { 4 };
     g.extend(bytes(
@@ -143,6 +152,9 @@ fn graph(c: &Config) -> (Vec<u8>, BTreeMap<String, u64>) {
             n.extend(bytes(1, v.as_bytes()));
         }
         n.extend(bytes(2, format!("{stem}raw16").as_bytes()));
+        for suffix in c.present_outputs {
+            n.extend(bytes(2, format!("{stem}{suffix}").as_bytes()));
+        }
         n.extend(bytes(3, format!("{stem}efficient").as_bytes()));
         n.extend(bytes(
             4,
@@ -182,6 +194,7 @@ fn graph(c: &Config) -> (Vec<u8>, BTreeMap<String, u64>) {
             g.extend(bytes(1, &n));
         }
     }
+    g.extend_from_slice(extra);
     (
         bytes(7, &g),
         BTreeMap::from([("weights.bin".into(), halfwidth + 4)]),
@@ -294,4 +307,97 @@ fn focus_unwritten_padded_queries_require_explicit_sanitization() {
     };
     let (g, f) = graph(&c);
     assert!(audit(&g, &f, ModelChoice::FocusQwenReranker06B).is_err());
+}
+
+#[test]
+fn context_present_outputs_are_required_in_exact_order() {
+    for (model, layers, heads) in [
+        (ModelChoice::ContextQwenCompact, 28, 16),
+        (ModelChoice::ContextQwenLarge, 36, 32),
+    ] {
+        for present_outputs in [
+            &[][..],
+            &["present_key"][..],
+            &["present_value", "present_key"][..],
+            &["present_key", "present_key"][..],
+            &["present_key", "foreign"][..],
+        ] {
+            let (g, f) = graph(&Config {
+                present_outputs,
+                ..config(false, layers, heads)
+            });
+            assert_eq!(
+                audit(&g, &f, model).unwrap_err().to_string(),
+                "G5 attention output catalog differs"
+            );
+        }
+    }
+    let (g, f) = graph(&Config {
+        present_outputs: &["present_key", "present_value"],
+        ..config(true, 28, 16)
+    });
+    assert_eq!(
+        audit(&g, &f, ModelChoice::FocusQwenReranker06B)
+            .unwrap_err()
+            .to_string(),
+        "G5 attention output catalog differs"
+    );
+}
+
+#[test]
+fn context_present_outputs_cannot_collide_escape_or_be_consumed() -> Result<()> {
+    let c = config(false, 28, 16);
+    let model = ModelChoice::ContextQwenCompact;
+    let name = "/airk_g5/attention/0/present_value";
+    let value_info = bytes(1, name.as_bytes());
+    let initializer = [
+        int(1, 1),
+        int(2, 10),
+        bytes(8, name.as_bytes()),
+        bytes(9, &[0, 0]),
+    ]
+    .concat();
+    let nested = [
+        bytes(2, b"nested-node"),
+        bytes(4, b"PrivateGraph"),
+        bytes(5, &bytes(6, &bytes(12, &value_info))),
+    ]
+    .concat();
+    for (extra, expected) in [
+        (
+            bytes(1, &nested),
+            "G5 Context present outputs require one graph scope",
+        ),
+        (
+            bytes(1, &cast("consumer", 10, name)),
+            "G5 Context present output has a node consumer",
+        ),
+        (
+            bytes(1, &cast(name, 10, "literal-parent")),
+            "G5 Context present output collides with another node output",
+        ),
+        (
+            bytes(5, &initializer),
+            "G5 Context present output collides with a graph endpoint or initializer",
+        ),
+        (
+            bytes(15, &bytes(1, &initializer)),
+            "G5 Context present output collides with a graph endpoint or initializer",
+        ),
+        (
+            bytes(11, &value_info),
+            "G5 Context present output collides with a graph endpoint or initializer",
+        ),
+        (
+            bytes(12, &value_info),
+            "G5 Context present output collides with a graph endpoint or initializer",
+        ),
+    ] {
+        let (g, f) = graph_with_extra(&c, &extra);
+        assert_eq!(audit(&g, &f, model).unwrap_err().to_string(), expected);
+    }
+    // A private value may have optional metadata without becoming an endpoint.
+    let (g, f) = graph_with_extra(&c, &bytes(13, &value_info));
+    audit(&g, &f, model)?;
+    Ok(())
 }
