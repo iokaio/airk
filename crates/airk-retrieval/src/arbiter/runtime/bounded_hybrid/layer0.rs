@@ -75,6 +75,55 @@ impl std::error::Error for CompactFp16Layer0GraphRefusal {
     }
 }
 
+impl Scorer {
+    /// Captures one disposable observation of a separately reviewed Compact FP16
+    /// graph whose Q, K and V projections are under diagnostic review.
+    pub fn load_private_compact_fp32_qkv_projection_diagnostic(
+        profile: ExecutionProfile,
+        source: &dyn AssetSource,
+        baseline_graph_sha: Sha256Digest,
+        reviewed_graph_sha: Sha256Digest,
+    ) -> Result<()> {
+        use airk_core::arbiter::device::DevicePrecision;
+
+        cuda::diagnostic::require_graph_diagnostic_profile(&profile)?;
+        let description = profile.description();
+        let device = description
+            .device_execution
+            .as_ref()
+            .context("Compact QKV projection diagnostic CUDA profile missing")?;
+        ensure!(
+            description.model == ModelChoice::ContextQwenCompact
+                && device.precision == DevicePrecision::Float16
+                && device.graph == reviewed_graph_sha
+                && reviewed_graph_sha != baseline_graph_sha,
+            "Compact QKV projection diagnostic requires a distinct reviewed graph identity"
+        );
+        let session = Self::open_internal(
+            profile,
+            source,
+            |builder| {
+                Ok(builder
+                    .with_config_entry(
+                        "optimization.constant_folding_max_output_size_in_bytes",
+                        "1048576",
+                    )?
+                    .with_config_entry("optimization.enable_cast_chain_elimination", "0")?
+                    .with_config_entry(
+                        "optimization.disable_specified_optimizers",
+                        "FuseFp16InitializerToFp32NodeTransformer",
+                    )?)
+            },
+            OpenMode::GraphMetadataDiagnostic,
+        )?;
+        ensure!(
+            session.is_none(),
+            "QKV projection diagnostic unexpectedly returned a scorer"
+        );
+        Ok(())
+    }
+}
+
 pub(super) fn validate_input(input: &CompiledInput) -> Result<()> {
     ensure!(
         input.input_digest == T32_INPUT.parse()?

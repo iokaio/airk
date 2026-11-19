@@ -1648,10 +1648,17 @@ FP32 pedantic. Retaining FP32 outputs through a host half cast reduced
 the mismatch counts to 1,182 for GEMM2 and 92 for pedantic. The pinned
 ONNX Runtime half MatMul emits half outputs. The stock CUDA FP32 call
 with TF32 disabled missed 176 exact half results on upcast half operands.
-Carry that option into a separate Compact graph and matching reference,
-with FP16 storage and the same half output boundary. Observe actual
-optimized CUDA types before another full scoring attempt. The original
-numerical and performance gates still apply.
+The separate Compact graph promotes 84 Q/K/V matmuls with the same
+FP16 sidecar and half output boundary. Its first CUDA load showed that
+a Level 4 initializer optimizer expands the half weights independently
+of ordinary constant folding. Exclude that optimizer from the private
+session. The corrected native observation retained all 84 CUDA FP32
+Q/K/V matmuls and each weight upcast and result downcast. The independent
+matching CPU recipe completed one T32 run on the exact frozen input.
+Compare the full A6000 score vector against it under the original
+numerical gate before scheduling wider scoring or performance runs.
+[Corrected CUDA observation and matching CPU reference](../simplify/one-process-ledger.md#2026-11-19--corrected-compact-qkv-cuda-load-and-matching-cpu-reference-pass)
+[Projection candidate staging and first CUDA observation](../simplify/one-process-ledger.md#2026-11-19--compact-fp32-qkv-graph-is-staged-and-the-first-native-load-finds-initializer-expansion)
 [Stock FP32 projection comparison](../simplify/one-process-ledger.md#2026-11-19--stock-cuda-fp32-projection-is-a-compact-candidate)
 [FP32 projection output comparison](../simplify/one-process-ledger.md#2026-11-19--fp32-projection-output-improves-half-rounding)
 [Full projection rounding audit](../simplify/one-process-ledger.md#2026-11-19--exact-projection-rounding-rules-out-cublas-pedantic)

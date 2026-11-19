@@ -21,11 +21,23 @@ PREFIX = "inference_engine::pool::arbiter::qualification::software_v2::cuda_qual
 SELECTORS = {
     "metadata": PREFIX + "emit_cuda_compact_fp16_probe_metadata",
     "graph": PREFIX + "cuda_compact_fp16_load_only_graph_diagnostic",
+    "projection-metadata": PREFIX + "emit_cuda_compact_fp32_qkv_projection_probe_metadata",
+    "projection-graph": PREFIX + "cuda_compact_fp32_qkv_projection_load_only_graph_diagnostic",
     "t32": PREFIX + "cuda_compact_fp16_t32_component",
     "bounded-t32": PREFIX + "cuda_compact_fp16_bounded_t32_component",
     "layer0-t32": PREFIX + "cuda_compact_fp16_layer0_taps",
     "layer0-projection-t32": PREFIX + "cuda_compact_fp16_layer0_projection_taps",
 }
+PROJECTION_MODES = ("projection-metadata", "projection-graph")
+METADATA_MODES = ("metadata", "projection-metadata")
+GRAPH_MODES = ("graph", "projection-graph")
+PROJECTION_METADATA_SCHEMA = "airk.private.compact-fp32-qkv-probe-metadata/1"
+PROJECTION_GRAPH_SCHEMA = "airk.private.compact-fp32-qkv-graph-diagnostic/1"
+PROJECTION_STAGE_SHA = "87ec206416eda607ff1585809d085e37fc4f8b99a5fc029308b5c78218cefcc2"
+PROJECTION_BASELINE_SHA = "971cf2d22d8bb7c874f3e5f5ce014bf2c494d1fb7245126d27d722223ac1577f"
+PROJECTION_GRAPH_SHA = "e621cf6bffad1f0a27e3cc1ecba5b4379949295498f6585963620d71cfe4ff14"
+PROJECTION_WEIGHTS_SHA = "0c4bd89d032e7dd821071c3559776cd3da50d54d84b6e575373fd8cf7003a7c3"
+PROJECTION_WEIGHTS_BYTES = 3_441_397_760
 MODEL = "arbiter-context-qwen3-17b"
 PREPARE_SHA = "850cf966a73bc5ecb0aa79cc3d22559cdd3ad855fbc38f73e361f136ea88c953"
 T32_DIGEST = "ec7b4845c37fb7cbe2a64a866f8b6cdc03479d65593cdb0a1d01102fe56fc335"
@@ -211,21 +223,73 @@ def linked_image(build, image, base, audit, mode):
     )
     if mode in REVIEWED_MODES:
         relevant += (BOUNDED_SOURCE, inference + "/cuda_qualification/hybrid_profile_trace.rs")
+    if mode in TAP_SCOPES or mode == "projection-graph":
+        relevant += ("crates/airk-retrieval/src/arbiter/runtime/bounded_hybrid/layer0.rs",)
     if mode in TAP_SCOPES:
-        relevant += ("crates/airk-retrieval/src/arbiter/runtime/bounded_hybrid/layer0.rs",
-                     "crates/airk-retrieval/src/arbiter/runtime/cuda/run.rs")
+        relevant += ("crates/airk-retrieval/src/arbiter/runtime/cuda/run.rs",)
     sources = {relative: exact_pin(ROOT / relative, native[relative], base) for relative in relevant}
     return log_pin, artifact, sources
 
 
-def validate_request(mode, request, request_pin, evidence, manifest):
+def projection_stage(path, expected, base, audit):
+    require(path.is_absolute() and path.parent.parent == CAMPAIGN and path.name == "stage.json"
+            and expected == PROJECTION_STAGE_SHA, "exact retained Compact Q/K/V stage required")
+    audit([path])
+    pin = exact_pin(path, expected, base)
+    value = base.read(pin["path"], 1 << 20)
+    require(value["schema"] == "airk.private.compact-fp32-qkv-projection-candidate/1"
+            and value["complete"] is True
+            and value["qualification"] is value["product_admission"] is False
+            and all(type(value[key]) is int and value[key] == 0
+                    for key in ("native_load_attempts", "native_forward_attempts"))
+            and value["graph_proof"]["projection_count"] == 84
+            and value["graph_proof"]["added_cast_count"] == 252,
+            "reviewed Compact Q/K/V stage scope differs")
+    graph, weights = value["candidate_graph"], value["candidate_weights"]
+    require(set(graph) == set(weights) == {"path", "bytes", "sha256"}
+            and graph["path"] == str(path.with_name("model.onnx"))
+            and graph["sha256"] == PROJECTION_GRAPH_SHA and type(graph["bytes"]) is int
+            and 0 < graph["bytes"] <= 16 << 20
+            and weights == {"path": str(path.with_name("weights.bin")),
+                            "bytes": PROJECTION_WEIGHTS_BYTES, "sha256": PROJECTION_WEIGHTS_SHA}
+            and value["baseline_graph"]["sha256"] == PROJECTION_BASELINE_SHA
+            and value["baseline_weights"]["sha256"] == weights["sha256"]
+            and value["baseline_weights"]["bytes"] == weights["bytes"],
+            "reviewed Compact Q/K/V graph or same-half sidecar identity differs")
+    audit([Path(graph["path"]), Path(weights["path"])])
+    base.pinned(graph)
+    base.pinned(weights)
+    return pin, value
+
+
+def validate_projection_baseline(stage, independent):
+    require(independent["candidate"] == {"graph": stage["baseline_graph"], "weights": stage["baseline_weights"]},
+            "Q/K/V projection stage does not bind the original independent baseline")
+
+
+def validate_projection_artifacts(pins, profile, projection, base):
+    pin, stage = projection
+    source = base.read(pins["source_manifest"]["path"])
+    native = base.read(pins["native_input"]["path"])
+    require(profile["device_execution"]["graph"] == PROJECTION_GRAPH_SHA
+            and source["schema"] == "airk.private.compact-fp32-qkv-source/1"
+            and source["projection_stage"] == core(pin)
+            and source["candidate"] == {"graph": stage["candidate_graph"], "weights": stage["candidate_weights"]}
+            and native["files"]["model.onnx"] == stage["candidate_graph"]["path"]
+            and native["files"]["weights.bin"] == stage["candidate_weights"]["path"],
+            "emitted Compact Q/K/V profile or candidate assets differ")
+
+
+def validate_request(mode, request, request_pin, evidence, manifest, *, projection=None):
+    require((projection is not None) == (mode in PROJECTION_MODES), "Q/K/V projection stage scope differs")
+    metadata_mode = mode in METADATA_MODES
     require(request["schema"] == "airk.private.cuda-component-probe-request/1"
-            and request["kind"] == ("prepare" if mode == "metadata" else "probe")
+            and request["kind"] == ("prepare" if metadata_mode else "probe")
             and request["runtime_manifest"] == core(manifest)
             and request["bounds"] == BOUNDS and request["job_limit_bytes"] == HOST
             and (request["cold_bytes"], request["warm_bytes"], request["headroom_bytes"])
                 == (16 << 30, 8 << 30, 2 << 30), "reviewed Compact request, runtime or phase bounds differ")
-    if mode == "metadata":
+    if metadata_mode:
         require(request_pin["sha256"] == PREPARE_SHA, "original reviewed Compact Prepare input required")
         require(evidence["schema"] == INDEPENDENT_SCHEMA and evidence["complete"] is True
                 and evidence["model"] == MODEL and evidence["model_inference"] is True
@@ -233,13 +297,18 @@ def validate_request(mode, request, request_pin, evidence, manifest):
                 and evidence["reference"]["input"]["input_digest"] == T32_DIGEST,
                 "reviewed independent Compact candidate/T32 proof required")
     else:
-        require(evidence["schema"] == METADATA_SCHEMA and evidence["probe_request"] == core(request_pin)
+        schema = PROJECTION_METADATA_SCHEMA if projection is not None else METADATA_SCHEMA
+        require(evidence["schema"] == schema and evidence["probe_request"] == core(request_pin)
                 and evidence["native_input"] == request["gpu_input"]
                 and evidence["runtime_manifest"] == core(manifest), "metadata does not bind this Probe")
+        if projection is not None:
+            require(evidence.get("projection_stage") == core(projection[0]),
+                    "Q/K/V projection metadata stage differs")
 
 
-def validate_metadata(value, paths, request, evidence, manifest, base):
-    require(value["schema"] == METADATA_SCHEMA and value["request"] == core(request)
+def validate_metadata(value, paths, request, evidence, manifest, base, *, projection=None):
+    schema = PROJECTION_METADATA_SCHEMA if projection is not None else METADATA_SCHEMA
+    require(value["schema"] == schema and value["request"] == core(request)
             and value["independent_proof"] == core(evidence) and value["runtime_manifest"] == core(manifest)
             and value["execution_user"] == base.SID and value["reference_input_digest"] == T32_DIGEST
             and value["qualified"] is value["model_requests_dispatched"] is value["runtime_admission_dispatched"] is False
@@ -266,6 +335,9 @@ def validate_metadata(value, paths, request, evidence, manifest, base):
             and (request["cold_bytes"], request["warm_bytes"], request["headroom_bytes"])
                 == (16 << 30, 8 << 30, 2 << 30),
             "emitted Compact FP16 profile or Probe shape differs")
+    if projection is not None:
+        require(value.get("projection_stage") == core(projection[0]), "Q/K/V projection metadata stage differs")
+        validate_projection_artifacts(pins, profile, projection, base)
     return pins
 
 
@@ -357,6 +429,81 @@ def validate_graph(value, events, component):
     component["validate_operations"](events, value, load_only=True)
     require(events[-1]["native_call_elapsed_us"] == value["load_native_call_us"],
             "native graph Load duration and independent returned marker differ")
+
+
+def validate_projection_graph(graph):
+    """Prove the widened projection arithmetic in the validated final SessionState graph."""
+    rows = [row for row in graph["rows"] if row["graph"] == 0]
+    nodes = {row["node"]: row for row in rows if row["kind"] == "node"}
+    values = {row["value"]: row for row in rows if row["kind"] == "value"}
+    dimensions = {(row["value"], row["index"]): row["number"] for row in rows if row["kind"] == "dimension"}
+    edges, consumers = {}, {}
+    for row in rows:
+        if row["kind"] != "edge" or row["node"] is None:
+            continue
+        edges.setdefault((row["node"], row["role"]), []).append(row["value"])
+        if row["role"] in (0, 1):
+            consumers.setdefault(row["value"], []).append(row["node"])
+
+    widths = {"k": 1024, "v": 1024, "q": 2048}
+    roster = {f"/scorer/layers.{layer}/self_attn/{name}_proj/MatMul": (layer, width)
+              for layer in range(28) for name, width in widths.items()}
+    suffixes = tuple(f"/self_attn/{name}_proj/MatMul" for name in widths)
+    projections = [row for row in nodes.values() if row["name"].endswith(suffixes)]
+    require(len(projections) == len(roster) and {row["name"] for row in projections} == set(roster),
+            "exact 84 named root Q/K/V projections required")
+
+    def cuda_node(index, op, name):
+        row = nodes.get(index)
+        require(row is not None and row["op"] == op and row["domain"] == "" and row["ep"] == CUDA,
+                f"Q/K/V projection requires CUDA {op}: {name}")
+        return row
+
+    def typed_values(index, role, types, name):
+        tensors = [values.get(value) for value in edges.get((index, role), ())]
+        require(len(tensors) == len(types)
+                and all(row is not None and row["type_state"] == "tensor" and row["element_type"] == dtype
+                        for row, dtype in zip(tensors, types)),
+                f"Q/K/V projection typed edge differs: {name}")
+        return tensors
+
+    def one_cast_source(output, dtype, name):
+        node = cuda_node(output["producer"], "Cast", name)
+        source, = typed_values(node["node"], 0, (dtype,), name)
+        output_row, = typed_values(node["node"], 2, (output["element_type"],), name)
+        require(output["value"] == output_row["value"], f"Q/K/V cast output edge differs: {name}")
+        return source, node["name"]
+
+    input_casts = set()
+    for row in projections:
+        name, index = row["name"], row["node"]
+        layer, width = roster[name]
+        cuda_node(index, "MatMul", name)
+        a32, b32 = typed_values(index, 0, (1, 1), name)
+        c32, = typed_values(index, 2, (1,), name)
+        stem = "/airk_compact_qkv_fp32" + name
+        a16, a_cast = one_cast_source(a32, 10, name)
+        b16, b_cast = one_cast_source(b32, 10, name)
+        # ORT can share the activation Cast pair across Q, K and V within a layer.
+        activation_stems = {f"/scorer/layers.{layer}/self_attn/{p}_proj/MatMul" for p in widths}
+        require(a_cast in {"/airk_compact_qkv_fp32" + label + "/input32" for label in activation_stems}
+                and b_cast == stem + "/weight32" and b16["provenance"] == "immutable_session_initializer"
+                and b16["rank"] == 2 and [dimensions.get((b16["value"], axis)) for axis in (0, 1)] == [2048, width],
+                f"Q/K/V activation or compressed weight cast differs: {name}")
+        normal, half_cast = one_cast_source(a16, 1, name)
+        require(half_cast in {"/airk_g5/weight/" + label + "/input16" for label in activation_stems}
+                and normal["name"] == f"/scorer/layers.{layer}/input_layernorm/Mul_1_output_0",
+                f"Q/K/V original activation narrowing differs: {name}")
+        output_users = consumers.get(c32["value"], ())
+        require(len(output_users) == 1, f"Q/K/V FP32 result must narrow once: {name}")
+        output = cuda_node(output_users[0], "Cast", name)
+        c16, = typed_values(output["node"], 2, (10,), name)
+        require(output["name"] == stem + "/output16"
+                and c16["name"] == "/airk_g5/weight/" + name + "/output16",
+                f"Q/K/V original half output binding differs: {name}")
+        input_casts.add(a_cast)
+    return {"cuda_fp32_matmuls": len(projections), "weight_upcasts": len(projections),
+            "activation_upcasts": len(input_casts), "output_downcasts": len(projections)}
 
 
 def reviewed_graph(receipt, request, evidence, metadata, manifest, parent, component, base, audit):
@@ -562,21 +709,35 @@ def run(args):
     build = exact_pin(args.build_receipt, args.build_receipt_sha256, base)
     manifest = base.pin(manifest_path)
     request_value, evidence_value = base.read(request["path"]), base.read(evidence["path"])
-    validate_request(args.mode, request_value, request, evidence_value, manifest)
+    metadata_mode = args.mode in METADATA_MODES
+    graph_mode = args.mode in GRAPH_MODES
+    projection = (projection_stage(args.projection_stage, args.projection_stage_sha256, base, audit)
+                  if args.mode in PROJECTION_MODES else None)
+    validate_request(args.mode, request_value, request, evidence_value, manifest, projection=projection)
     log, artifact, sources = linked_image(build, image, base, audit, args.mode)
     dependencies = {}
-    if args.mode == "metadata":
-        dependencies = evidence_value["candidate"]
-        require(set(dependencies) == {"graph", "weights"}, "complete candidate graph and sidecar pins required")
-        audit([Path(pin["path"]) for pin in dependencies.values()])
-        for pin in dependencies.values():
-            base.pinned(pin)
+    if metadata_mode:
+        if projection is not None:
+            validate_projection_baseline(projection[1], evidence_value)
+        else:
+            dependencies = evidence_value["candidate"]
+            require(set(dependencies) == {"graph", "weights"}, "complete candidate graph and sidecar pins required")
+            audit([Path(pin["path"]) for pin in dependencies.values()])
+            for pin in dependencies.values():
+                base.pinned(pin)
     else:
         for name in ("profile_pin", "native_input", "source_manifest", "independent_proof"):
             pin = evidence_value[name]
             audit([Path(pin["path"])])
             dependencies[name] = retained_core(pin, base)
     inputs = [request, evidence, image, build, manifest, log, artifact, *sources.values(), *dependencies.values()]
+    if projection is not None:
+        stage_pin, stage = projection
+        inputs.extend((stage_pin, stage["candidate_graph"], stage["candidate_weights"]))
+        if graph_mode:
+            profile = base.read(dependencies["profile_pin"]["path"])
+            validate_projection_artifacts(dependencies, profile, projection, base)
+            validate_projection_baseline(stage, base.read(dependencies["independent_proof"]["path"]))
     graph_receipt = graph = graph_operations = reviewed_placement = None
     if args.mode in REVIEWED_MODES:
         audit([args.graph_receipt])
@@ -597,18 +758,21 @@ def run(args):
     }
     if graph is not None:
         receipt["reviewed_graph"] = {"owned": graph_receipt, "native": graph, "operations": graph_operations}
+    if projection is not None:
+        receipt["projection_stage"] = core(stage_pin)
+        receipt["projection_assets"] = {name: stage[name] for name in ("candidate_graph", "candidate_weights")}
     component["mkdir"](guard, out, deadline=expires)
     temp = out / "temp"
     metadata = out / "metadata"
     common = {"stdin": out / "stdin.txt", "stdout": out / "stdout-stderr.log"}
-    paths = dict(common, metadata=metadata / "metadata-receipt.json") if args.mode == "metadata" else dict(
+    paths = dict(common, metadata=metadata / "metadata-receipt.json") if metadata_mode else dict(
         common, native=out / "native-result.json", operations=out / "native-result.operations.jsonl",
     )
     receipt_path = out / "execution.json"
     try:
         component["mkdir"](guard, temp, deadline=expires)
         planned = [receipt_path, *common.values()]
-        if args.mode == "metadata":
+        if metadata_mode:
             planned.append(metadata)
         else:
             planned.extend((paths["native"], paths["operations"]))
@@ -620,7 +784,10 @@ def run(args):
         env.update(PATH=r"C:\Windows\System32;C:\Windows", TEMP=str(temp), TMP=str(temp), TMPDIR=str(temp),
                    AIRK_PRIVATE_CENSUS_BASE=str(temp), CUDA_CACHE_PATH=str(temp),
                    AIRK_CUDA_QUALIFICATION_INPUT=request["path"], AIRK_CUDA_QUALIFICATION_INPUT_SHA256=request["sha256"])
-        if args.mode == "metadata":
+        if projection is not None:
+            env.update(AIRK_CUDA_FP16_PROJECTION_STAGE=stage_pin["path"],
+                       AIRK_CUDA_FP16_PROJECTION_STAGE_SHA256=stage_pin["sha256"])
+        if metadata_mode:
             env.update(AIRK_CUDA_FP16_INDEPENDENT_PROOF=evidence["path"],
                        AIRK_CUDA_FP16_INDEPENDENT_PROOF_SHA256=evidence["sha256"],
                        AIRK_CUDA_METADATA_DIRECTORY=str(metadata))
@@ -662,7 +829,7 @@ def run(args):
             if len(traces) == 1:
                 paths["profile"] = traces[0]
         value = None
-        if args.mode != "metadata" and paths["native"].is_file():
+        if not metadata_mode and paths["native"].is_file():
             value = base.read(paths["native"])
             if value.get("error"):
                 raise ValueError(value["error"])
@@ -670,14 +837,20 @@ def run(args):
         require(parent.settled(receipt["owned"])
                 and finite(receipt["owned"]["peak_host_committed_bytes"], 1, HOST),
                 "successful native child Job or peak host proof differs")
-        if args.mode == "metadata":
+        if metadata_mode:
             value = base.read(paths["metadata"])
-            receipt["metadata_artifacts"] = validate_metadata(value, paths, request, evidence, manifest, base)
-        elif args.mode == "graph":
+            receipt["metadata_artifacts"] = validate_metadata(
+                value, paths, request, evidence, manifest, base, projection=projection,
+            )
+        elif graph_mode:
             require(value is not None, "native graph diagnostic result missing")
-            validate_native_identity(value, GRAPH_SCHEMA, receipt["owned"], request, evidence,
+            schema = PROJECTION_GRAPH_SCHEMA if projection is not None else GRAPH_SCHEMA
+            validate_native_identity(value, schema, receipt["owned"], request, evidence,
                                      evidence_value, manifest, image, base)
             validate_graph(value, read_operations(paths["operations"]), component)
+            if projection is not None:
+                require(value.get("projection_stage") == core(stage_pin), "Q/K/V projection graph stage differs")
+                receipt["projection_graph"] = validate_projection_graph(value["graph_observation"]["graph_metadata"])
         else:
             require(value is not None and "profile" in paths, "native T32 result or actual profile trace missing")
             receipt["flash_attention_records"] = validate_t32(
@@ -713,7 +886,7 @@ def run(args):
                 for path in retained:
                     if path.is_file():
                         limit = (component["DIAGNOSTIC_PROOFS"]["native_result"]
-                                 if args.mode in ("graph", *TAP_SCOPES) and path == paths["native"] else LOG_CAP)
+                                 if args.mode in (*GRAPH_MODES, *TAP_SCOPES) and path == paths["native"] else LOG_CAP)
                         size = path.stat().st_size
                         pin = (base.pin(path) if size <= limit else
                                {"path": str(path), "bytes": size, "digest_refused_beyond_bound": True})
@@ -733,7 +906,14 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--graph-receipt", type=Path)
     parser.add_argument("--graph-receipt-sha256")
+    parser.add_argument("--projection-stage", type=Path)
+    parser.add_argument("--projection-stage-sha256")
     args = parser.parse_args()
+    if args.mode in PROJECTION_MODES:
+        if args.projection_stage is None or args.projection_stage_sha256 != PROJECTION_STAGE_SHA:
+            parser.error(f"{args.mode} requires --projection-stage and the exact reviewed --projection-stage-sha256")
+    elif args.projection_stage is not None or args.projection_stage_sha256 is not None:
+        parser.error("--projection-stage and --projection-stage-sha256 require a Q/K/V projection mode")
     if args.mode in REVIEWED_MODES:
         if args.graph_receipt is None or args.graph_receipt_sha256 != REVIEWED_RECEIPT_SHA:
             parser.error(f"{args.mode} requires --graph-receipt and the exact reviewed --graph-receipt-sha256")

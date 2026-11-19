@@ -332,3 +332,40 @@ Use the original isolated Python and absent bytecode prefix from the corrected
 conversion plan. Supply `--owned-output` with a fresh absolute campaign child.
 The parent uses one 120-second deadline, a 32 GiB Job and bounded log. It reuses
 the existing owned subprocess and exact staged input checks.
+
+## Private Compact FP32 Q/K/V graph and load observation
+
+Run the isolated checked Python with the original absent cache prefix and
+scripts/arbiter-fp16-execution/stage_projection_candidate.py. Pass a fresh
+direct campaign --output, the reviewed --transform-sha256 and the independent
+--verifier-sha256. The stager preserves the baseline graph and copies the
+authenticated half sidecar byte for byte. The reviewed change covers 84
+Q/K/V MatMuls and 252 Casts. Each projection keeps its original activation
+and result half boundaries and expands the rounded operands for stock FP32
+MatMul. The source graph, external range descriptors and public inputs and
+scores are independently compared. Staging runs ONNX checks only.
+
+The Compact probe accepts two private modes, projection-metadata and
+projection-graph. Both require --projection-stage and the exact reviewed
+--projection-stage-sha256. The first consumes the original Prepare and
+independent baseline proof. It emits unqualified metadata for the distinct
+graph and same sidecar. The second consumes that metadata's exact Probe.
+It observes the final CUDA graph, including CUDA placement and FP32 operands
+and output on every reviewed Q/K/V MatMul. It validates the live activation,
+weight and result casts. The disposable session also disables
+FuseFp16InitializerToFp32NodeTransformer so the Level 4 initializer
+optimizer cannot expand the half sidecar at load. The existing Windows Job,
+host, device, ownership, deadline and settlement checks apply. The native operation census allows
+one Load and zero scoring requests.
+
+The dedicated verify_projection_candidate_t32.py worker requires the
+exact private --stage-receipt and --stage-receipt-sha256 and a fresh
+--owned-output campaign child. Use the same isolated pinned Python and
+original absent cache prefix. It reauthenticates the baseline conversion,
+publisher weights, staged FP16 sidecar and independent staged graph proof.
+It runs one CPU T32 reference on the frozen input and promotes only the
+84 Q/K/V projection multiplies. It applies the source-derived single-tile
+Flash attention reference and retains all eight scores for the matching
+recipe and original FP32. The 32 GiB Job, original 600-second deadline and
+verified account and default file owner apply. No GPU output feeds the
+independent vector.

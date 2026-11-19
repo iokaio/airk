@@ -11829,3 +11829,95 @@ at 2,165,411,840 B. Whole elapsed time was 15.250811 s under the original
 120-second and 32 GiB bounds. Isolated CUDA calls took 0.339085 s. These
 calls did not run within an ONNX graph and carry no latency, resource
 qualification or matching raw score claim.
+
+### 2026-11-19 — Compact FP32 QKV graph is staged and the first native load finds initializer expansion
+
+The R1 candidate adds three casts to each of the 84 original Q/K/V
+MatMuls. The candidate graph has 4,790 nodes versus 4,538. The independent
+metadata verifier and ONNX checker accepted the complete stored graph,
+including unchanged non-projection nodes, public ABI and initializer
+descriptors. The exact copied 3,441,397,760 B half weights retain SHA
+0c4bd89d032e7dd821071c3559776cd3da50d54d84b6e575373fd8cf7003a7c3.
+The staged graph SHA is
+e621cf6bffad1f0a27e3cc1ecba5b4379949295498f6585963620d71cfe4ff14.
+The 13.946907 s staging receipt under compact-fp16-qkv-fp32-staged-r1
+is 87ec206416eda607ff1585809d085e37fc4f8b99a5fc029308b5c78218cefcc2.
+All outputs were checked under the default owner SID ending 1002.
+
+The exact private metadata emitted a separate unqualified profile and
+matched the same staged weight seal. Its owned receipt
+d2877d284c0899370e2d4f69798359ec3f193c7082b5b80963ca8595ab70bab8
+records 26.007560 s, natural empty Job settlement, and zero forwards.
+Pinned image f5fe7afa429ff6895986ffb055911fbf9765fd9bf42c45ed07e3eff0cf44473e
+was built in the warm target with native Clippy and 56 focused Nextest
+tests passing (474 filtered). The first Clippy attempt stopped on a
+missing bundled MiniLM environment value. The next run verified and used
+the existing exact bundled-model-v3 files.
+
+The A6000 R1 session completed Load and returned a full typed graph with
+zero forwards. The owned graph verdict refused a missing explicitly
+typed CUDA weight Cast. The selected K projection had a FP32
+FusedBack_ initializer, produced by the pinned Level 4
+FuseFp16InitializerToFp32NodeTransformer. Its source is separate from
+ordinary ConstantFolding and bypasses that transformer's 1 MiB output
+cap. The explicit half activation and result boundaries survived. The
+independent CPU placement audit found 374 CPU controls, 526 fixed values
+totalling 9,443 B, a 32 B largest value and zero implicit inputs. The
+existing controls and limits were preserved.
+
+Under compact-fp16-qkv-fp32-native-graph-r1, execution
+51357a9e31972730d3fb63613d71730aab638e4b2ccdd953b681d85eea97efbc
+and native result
+528c0fdac01450625f32117072ae6447dceac0f2837e5175ac64db5c359c7cb9
+retain this nonpassing typed result. The child itself exited 0 and the
+Job settled naturally in 38.497513 s, peaking at 9,870,180,352 B.
+Exclude the single named optimizer through the pinned private session
+option, retain the other settings and require live typed CUDA weight
+casts before authorizing T32 scoring.
+
+### 2026-11-19 — Corrected Compact QKV CUDA load and matching CPU reference pass
+
+The R2 A6000 load passed typed verification after excluding the single
+Level 4 initializer optimizer. It retained 84 CUDA FP32 Q/K/V MatMuls,
+84 CUDA weight upcasts, 28 shared CUDA activation upcasts and 84 CUDA
+output downcasts. CUDA owns 1,568 of 1,942 final nodes. The 374 CPU
+shape controls stay within the existing bounded policy. Load took
+9.445163 s and dispatched zero forwards. The original Job and process
+budget held, with 9,142,870,016 B peak Job commit, native exit 0 and
+natural empty settlement after 40.075463 s. The run reused the
+unchanged passed Q/K/V metadata.
+
+Under compact-fp16-qkv-fp32-native-graph-r2:
+execution 9271976d11b3882f4636badb321cdd817e64c3ce87bfb8197c3c5b1bb67509d8,
+native 42a273598b5c8678535691426ed725041a5d9565ff1fbaf535a43938894f07a4,
+operations 43a8df1f600407e75808c911a5560fedf234daeed0f80c088b92db64a40f71f7,
+image 4144f2b0bd14d1d80a32be4390883302499318b2c46c3720a468d647eec37019.
+The distinct unqualified profile is
+dabbc7e062f4f5a350ed486c43c4af2a5cfe5db9dd6c1693739c03a70a5603cf.
+
+The CPU worker independently verified baseline publisher parameters,
+the staged graph, identical half weight bytes and the original input.
+It promoted only the exact 84 Q/K/V projection routes and used the
+source-derived single-tile Flash reference. Its one full CPU forward
+returned all eight finite matching-recipe raw scores alongside the
+separate original FP32 reference. No captured GPU scores or tensors
+were inputs. Under compact-fp16-qkv-fp32-reference-r1, execution
+9388842a664e5c60ae19c988297f6c74d28758c4779056259c956ca6c7bada39,
+proof 304d9b16922ce88f9db181c1e1956d9c0aa99ab29c5ef4dff26f2c37f5b0fa28,
+and worker fcf723d4fa26bc0c1b94c5c2f3a7d51aeaab13f121c3b82c7bb1a8e707e3961e.
+The original Job settled naturally with exit 0 in 104.307812 s,
+peaking at 15,556,407,296 B under the 32 GiB and 600 s envelope.
+Both owned runs used the verified human and default owner SID ending 1002.
+
+The corrected native checks use pinned Rust 1.98.0 and Nextest 0.9.148,
+warm target/ and incremental=1. Under windows-cuda-g5-qkv-projection-graph-checks-r1,
+Clippy R3 passed in 14.219840 s
+(595fbe97949e43936caa12b94a39bea5baeb85e86295b7d82f140227c807c544),
+Nextest R3 passed 56 with 474 filtered in 20.265365 s
+(f1d856becde84017e59a2ad109742e317d90808d3ecbad10ae65db79b6b1c2f6),
+and exact image pin R3 passed in 1.110777 s
+(d3439e5fc4f1f35347826791e97cc230a61aa003115c544c5e5da78bb6cceb14).
+Focused Python passed 82 execution controls and nine ONNX controls.
+Freeze this exact graph and reference for the owned Windows CUDA T32
+scoring comparison. Wider scoring, timing and task qualification remain
+pending.

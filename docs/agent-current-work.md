@@ -148,9 +148,16 @@ Use the existing deadline when resuming in a new context.
   Keeping FP32 projection outputs until a host half cast reduced
   misses to 1,182 with GEMM2 and 92 with pedantic. The stock CUDA float
   MatMul call with TF32 disabled missed 176 exact half results using
-  upcast half operands. Build a distinct Compact projection candidate
-  with FP16 storage and stock FP32 MatMul. Independently verify its
-  graph and observe actual optimized CUDA types before T32 scoring.
+  upcast half operands. The independently verified Compact candidate
+  promotes 84 Q/K/V MatMuls with byte-identical FP16 storage. The first
+  A6000 load retained the FP32 matmuls but exposed the Level 4 initializer
+  optimizer expanding half weights. Disable that specific optimizer for
+  this private probe. The corrected A6000 load passed with all 84
+  FP32 projections, explicit CUDA weight casts and 374 bounded CPU
+  shape controls. The distinct independent CPU reference completed
+  one full T32 forward. Run the owned A6000 T32 comparison against
+  this exact graph and reference before advancing to wider widths.
+  [Corrected CUDA observation and matching CPU reference](simplify/one-process-ledger.md#2026-11-19--corrected-compact-qkv-cuda-load-and-matching-cpu-reference-pass)
   Matching raw parity still gates wider Windows scoring.
   [Stock FP32 projection comparison](simplify/one-process-ledger.md#2026-11-19--stock-cuda-fp32-projection-is-a-compact-candidate)
   [FP32 projection output comparison](simplify/one-process-ledger.md#2026-11-19--fp32-projection-output-improves-half-rounding)

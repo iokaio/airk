@@ -459,3 +459,16 @@ The same owned T32 input, original cutoffs and complete placement apply.
 Compare the independent normalized half input with the captured input, and
 replay the projections with the captured bytes before attributing the score
 difference to normalization or projection.
+
+## Private Compact FP32 Q/K/V graph observation
+
+The metadata and load-only selectors bind one independently staged exact
+Compact graph with promoted Q/K/V projections and byte-identical half weight
+storage. The original independent proof authenticates the baseline and
+frozen input. A separate private stage receipt binds the graph change to
+that proof and becomes part of metadata, source and observation receipts.
+The disposable session caps constant-fold outputs at 1 MiB, disables lossy
+cast-chain elimination and excludes the Level 4 FP16-initializer-to-FP32
+fusion. The parent verifies the complete final typed
+graph, including the 84 CUDA FP32 Q/K/V MatMuls and their half boundaries.
+The selectors retain zero forwards and emit an unqualified device profile.

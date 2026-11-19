@@ -27,3 +27,11 @@ Context probe calibration binds the converted model and weight assets and the
 unchanged tokenizer. The separate unavailable action dispositions remain raw
 probe metadata. The test-support scorer input entry checks the live FP16
 geometry gate without submitting a native forward.
+
+The private Windows x64 test-support Q/K/V projection diagnostic accepts a
+distinct reviewed unqualified Compact FP16 graph and the ordinary CUDA
+evaluation authority. It sets a 1 MiB constant-fold output cap and disables
+lossy Cast-chain elimination for the disposable graph metadata observation.
+It also excludes FuseFp16InitializerToFp32NodeTransformer to retain explicit
+weight Casts. It returns no scorer. The caller binds the baseline, candidate, original half
+sidecar and final typed CUDA projection placements.
