@@ -21,9 +21,12 @@ Active campaign: Arbiter final implementation (execution start 2026-11-16T05:29:
   merge, publication or deployment is authorized.
 - Current task: implement all steps of docs/arbiter/final-plan.md, authorized
   by the user on 15 November 2026. Execution T0 is recorded in the ledger.
-  On 18 November the user authorized continuing past the 72-hour checkpoint
-  at 10:29:42 p.m. America/Denver. Continue the campaign across sessions
-  unless the user changes direction. Original T0 and per-run limits apply.
+  The user authorized continuing past the earlier 72-hour checkpoint.
+  The current 48-hour FP16 deadline is **Friday, 20 November 2026 at
+  9:27 p.m. America/Denver** (`2026-11-21T04:27:11Z`). It runs across the
+  extension restart and includes time spent closing the Windows Large FP32
+  prerequisite. Original T0 and per-run limits apply.
+  [FP16 schedule](arbiter/final-plan.md#5-time-budget-and-unattended-scheduling)
 - The final plan supersedes the old advanced-split execution deadline and
   campaign ordering. Preserve prior ledger entries as historical evidence.
 - Finish the current Windows Large FP32 CUDA run, then qualify efficient
@@ -85,6 +88,9 @@ Active campaign: Arbiter final implementation (execution start 2026-11-16T05:29:
   owner per host/target and primary review before expensive integrated runs. A failing model
   or unavailable host does not stop independent product checks.
 ## 18 November extension restart checkpoint
+
+The FP16 deadline is Friday, 20 November at 9:27 p.m. America/Denver.
+Use the existing deadline when resuming in a new context.
 
 - Resume on `feat/arbiter-final` with verified Windows user and default
   owner, using the checked execution procedure. The existing desktop

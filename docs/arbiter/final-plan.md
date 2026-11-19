@@ -8,9 +8,9 @@ attention and automatic CPU fallback. Begin with Windows CUDA, then Linux CUDA
 on WSL2, macOS Core ML, Azure Windows Radeon DirectML, and Azure Linux
 Radeon ROCm. Linux GPU qualification is FP16-only. The release goal is FP16
 as the sole GPU precision if it meets the quality, performance and memory
-gates on target developer machines. See section 11. The user authorizes
-continuing beyond the original 72-hour checkpoint with T0 and per-run
-limits preserved.
+gates on target developer machines. See section 11. The current deadline
+for finishing FP16 work is **Friday, 20 November 2026 at 9:27 p.m.
+America/Denver**. See section 5 for the exact cutoff.
 The original planning request authorized this runbook only. The user authorized
 implementation on 15 November 2026; public publication requires separate
 authorization. Current execution evidence and blockers are in section 10.
@@ -872,7 +872,16 @@ goal. Original T0 remains
 2026-11-16T05:29:42.2081757Z. The 72-hour checkpoint is
 **2026-11-19T05:29:42.2081757Z (Wednesday, 18 November at 10:29:42 p.m.
 America/Denver)**. On 18 November the user authorized continuing beyond it.
-Keep the original campaign clock, acceptance rules and per-run limits.
+The user set a new **48-hour deadline for finishing FP16** on
+18 November at 9:27 p.m. America/Denver (`2026-11-19T04:27:11Z`).
+FP16 is due **Friday, 20 November 2026 at 9:27 p.m. America/Denver**
+(`2026-11-21T04:27:11Z`). The 48 hours run through the extension restart
+and include time spent on the remaining Windows Large FP32 prerequisite.
+Keep original campaign T0 for evidence and retain the per-run limits,
+acceptance criteria, platform order, and booking prerequisites. If a
+dependency threatens the deadline, record the affected gate, the blocker
+and what can still finish on time. Report completed evidence and any open
+gates at the deadline.
 
 | Phase | Exit evidence | Work that can start independently |
 | --- | --- | --- |
@@ -1485,16 +1494,11 @@ only if they pass. Nonconflicting CPU/Linux/Mac repairs continue, with one Cargo
 owner per host/target and one GPU-heavy job at a time. The R154 fresh CPU route retains its
 original fixture identity; it is not retrospectively a GPU comparison.
 
-The prior 72-hour deadline was 2026-11-19T05:29:42Z. At the dual-precision
-scope decision (approximately17 November03:05Z), the engineering estimate is
-36–48 additional hours of work; the extension provides roughly50 calendar hours.
-Target both implemented paths, applicable native qualification and a reviewed
-Windows candidate by Wednesday18 November10:29p.m. Denver. This is an estimate,
-not a claim of future passes or a guarantee that external label/rights/platform
-blockers disappear. The user authorized continuing beyond that checkpoint on
-18 November. The current sequence closes Windows FP32 with the Large run,
-then follows the FP16 platform order above for native, recovery and release
-candidate evidence.
+The earlier dual-precision schedule had a 72-hour checkpoint at
+`2026-11-19T05:29:42Z`. The current FP16 deadline is
+`2026-11-21T04:27:11Z`, as recorded in section 5. Close Windows FP32 with the
+Large run, then follow the FP16 platform order above for native, recovery
+and release candidate evidence.
 Do not promise universal GPU support or the attachment's unmeasured10–50x
 speedups, few-second latency or12–16GB fit. If a gate cannot finish, retain its
 evidence and exact unmet criterion rather than weakening it.
