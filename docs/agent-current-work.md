@@ -30,14 +30,18 @@ Active campaign: Arbiter final implementation (execution start 2026-11-16T05:29:
   instance and Mac Neo. Complete Windows qualification before beginning the
   authorized Linux FP32 and FP16 gates on WSL2. Start those gates directly
   once Windows is complete and report genuine blockers.
-- The Datagram weekend has a separate manual kickoff after Windows
-  qualification under the final plan addendum. Current execution remains local.
-  No cloud teachers are authorized.
+- The Datagram weekend has a separate manual kickoff after the Windows and
+  Linux CUDA campaigns. If CUDA FP16 passes on both on this workstation, test
+  FP16 only on macOS using Core ML. Azure is the sole provider for the future
+  Radeon FP16 campaign, after Windows and Linux CUDA and macOS qualification
+  are complete. Current execution remains local. No cloud teachers are authorized.
 ## Models and qualification
 
-- D08 now includes FP32 GPU execution first, then FP16 with efficient attention,
-  both available for 1.9.0 with automatic admitted CPU fallback. Keep each variant's
-  identity and qualification separate; no relaxed gates or silent model switch.
+- Finish the current CUDA FP32 work to inform CUDA FP16, then qualify FP16 with
+  efficient attention and automatic admitted CPU fallback. Keep each variant's
+  identity, evidence and qualification separate. The future release decision may
+  select FP16 as its only GPU precision if the measured value is sufficient.
+  Radeon evaluation is deferred to that FP16 plan after successful CUDA FP16.
 - On 18 November the user approved an exact 32 GiB Windows Compact host
   process cap. Use a 32 GiB aggregate Job cap so the process can use that
   allowance. The 24 GiB device budget, original 120-second deadline and all
