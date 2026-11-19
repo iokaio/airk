@@ -873,35 +873,23 @@ goal. Original T0 remains
 **2026-11-19T05:29:42.2081757Z (Wednesday, 18 November at 10:29:42 p.m.
 America/Denver)**. On 18 November the user authorized continuing beyond it.
 Keep the original campaign clock, acceptance rules and per-run limits.
-The early rows below remain historical scheduling targets, not completed outcomes.
 
-| Elapsed target | Main outcome | Parallel independent work |
+| Phase | Exit evidence | Work that can start independently |
 | --- | --- | --- |
-| 0–4h | Steps 1–4 contracts, focused failures and timeout repair | UI Steps 5, source/rights inventory, download preflight |
-| 4–6h | Steps 6–8 baseline/input census and audited pilot freeze | UI completion; Windows candidate preparation if reviewed |
-| 6–12h | First M1, F1/F2, C1 pilots with early exports | Label audits, refusal/recovery tests; Large export preparation |
-| 12–15h | Finalist seeds and exact artifact/resource freeze | Windows candidate checks and maintained qualification harnesses |
-| 15–20h | CAL, fit, composed and held-out runs that fit their frozen caps | Documentation and available noncompeting platform preparation |
-| 20–24h | Windows delivery, integrated gates and status at target | Report remaining qualification blockers and justified extension work |
-| 24–36h, updated | Native FP32 GPU integration, actual model/placement/Auto-fallback proof and grouped technical gates | Complete independent CPU/platform repairs and candidate checks |
-| 36–48h, updated | FP16 graph/initializer path and genuinely efficient attention after FP32 works | Static mask/equivalence controls and generated device/precision consumers |
-| 48–60h, updated | Separate precision numerical/resource/recovery and composed gates; CAL/task work only with admitted inputs | Measured joint residency and applicable hardware/provider checks |
-| 60–68h, updated | Integrated workspace/real transports, signed packages and applicable installed/platform gates | Review current source, rights/notices and exact artifacts |
-| 68–72h, updated | Final justified checks, settlement and review handoff | Reserve time to report every unmet criterion honestly |
+| Close Windows FP32 | Corrected Large unprofiled cold-load and warm timing with the existing resource and settlement rules. | Read-only FP16 receipt reconciliation and preparation design. |
+| Windows CUDA FP16 | Compact-first prerequisite validation, confirmed efficient attention, frozen numerical checks, measured fit and latency, and the FP16-only Auto and recovery gates. Complete Large and include Focus GPU only if selected for this release. | Prepare independent references and same-user WSL2 CPU build work outside Windows timing or other exclusive-resource windows. |
+| Linux CUDA FP16 on WSL2 | Sealed Linux build and the applicable Windows-equivalent numerical, resource, service and recovery cases on the WSL2 configuration. | Rehearse the macOS build and operator probe on Neo when the work can run independently and fits the host. |
+| macOS Core ML FP16 | Neo preflight reviewed before booking. Dedicated Mac run records placement, numerical results, peak unified memory and user-facing latency, with retained receipts. | Prepare the Azure image, driver and provider checks without booking compute. |
+| Azure Radeon FP16 | Qualify Windows DirectML, then Linux ROCm, with separate provider receipts and the experimental opt-in and fallback controls. | Review only the model and provider combinations that remain release candidates. |
 
-These are scheduling targets, not claims that a six-hour CAL allowance or human
-labeling fits automatically. Before each long run, estimate measured duration
-plus recovery/settlement and confirm it fits both its own protocol and remaining
-campaign time. Review the entire inventory at least every four hours. Every
-two hours ask: am I completing final-plan.md, or getting sidetracked? Report
-actual progress against the plan and the next critical outcomes to the user.
-
-At hour 12, stop optional exploration if it threatens core export/qualification.
-At hour 24 and beyond the 72-hour checkpoint, continue toward unfulfilled
-acceptance criteria under the user's 18 November authorization. Finish the
-Windows Large FP32 CUDA run, then advance to the FP16 sequence in section 11.
-Missing human labels, unavailable hosts or a failing profile cause a local
-blocker and continued independent work, not a weaker claim.
+The table gives completion criteria for the current GPU sequence. Estimate
+each expensive batch from a measured probe, sorted by the gate it can close.
+Account for setup, recovery, settlement and result export under the original
+per-run limits. Keep CPU-only builds and reference preparation outside any
+Windows or WSL2 timing window where they affect the results. Preserve serial
+GPU use and host headroom on the shared workstation. Hold the macOS and Azure
+qualification starts to the order in section 11. Record missing data, capacity
+or tooling against the affected gate and continue independent work.
 
 ## 6. Frozen acceptance rules
 
@@ -1547,11 +1535,10 @@ selected model, stage consent, input width and shared budget.
    including padding holes, all-masked/edge cases and17/128/8192 boundaries.
    If an efficient kernel cannot represent an input, declare/refuse that shape
    or use a predeclared qualified alternative before dispatch; do not drop masks.
-3. Preserve the FP32 numerical gates. Freeze matching-precision reference-to-
-   native parity and FP32-to-FP16 precision-loss comparisons independently,
-   using the existing applicable approximate-export/task rules before observing
-   results. New near-boundary cases, full output comparisons and exact-artifact
-   CAL/task/terminal constraints remain. No tolerance is loosened after failure.
+3. Apply the frozen G5 limits below for matching-FP16 parity and precision
+   loss against independent FP32. Freeze confirmation cases before tuning.
+   Include near-boundary cases, full output comparisons and exact-artifact
+   CAL, task and terminal evidence.
 4. Repeat actual placement, host/VRAM peaks, load/cold/warm twenty-sample p95,
    joint residency, cancellation/device settlement, memory pressure/OOM recovery,
    Auto/explicit-precision/CPU fallback and real composed120-second behavior.
@@ -1571,6 +1558,28 @@ selected model, stage consent, input width and shared budget.
    notice. Package the precision variants selected for that release with
    truthful fit, availability and notices. Keep the three selected model slots
    and the existing promotion and publication requirements.
+
+### FP16 conversion prerequisites
+
+The maintained conversion owner currently accepts only Compact and
+authenticates an earlier 17-token receipt under a 24 GiB host commit bound.
+Update its validators and owning contract as the first G5 implementation
+milestone. Bind the following model-specific evidence to its original
+command, input, graph and runtime identities, recorded caps, numerical rows,
+and actual process, Job and reservation settlement. Retain the existing
+requirement for fresh, separately reviewed native G5 Clippy and focused
+test receipts. Exercise refusals for wrong-model, incomplete and
+over-budget evidence before a conversion launch.
+[Current conversion contract](../../scripts/arbiter-fp16-execution/CONTRACT.md)
+
+| Model | FP32 evidence to bind | Effect on FP16 |
+| --- | --- | --- |
+| Context Compact | Windows A6000 bounded-hybrid R2 four-width scoring receipt `1abbd515e534f4056e3c48380fffd290654e0b92dea67088ae291512f02cf2a2` under its original 32 GiB Job and 24 GiB device budget. Use its separate unprofiled Resource20 receipt for the timing baseline. | First conversion and native G5 target after the Windows FP32 stopping point. |
+| Context Large | Corrected batch-view scoring receipt `ea9aefbf7e9cefb91bca8384924237f95655131cb49ac571e6900e55f3d6d820` at all four widths under its original 48 GiB Job and 44 GiB device reservation. Bind the separately retained unprofiled Large result when it passes the remaining Windows FP32 gate. | Extend the validator for this model before its conversion. Derive candidate weights from the authenticated original export and retain the proved correction lineage for the Windows CUDA comparison. |
+| Focus | Use the current CPU execution to measure Focus's contribution to complete Answer latency. If Focus GPU is selected, review a model-specific conversion prerequisite using its authenticated original FP32 export, independent references and exact native evidence required by the amended validator. | Keep Focus on CPU until its separate prerequisite and GPU gates pass. Keep any new Focus GPU evidence off the Context critical path. |
+
+[Compact FP32 evidence](../simplify/one-process-ledger.md#18-november-americadenver--compact-fp32-cuda-resource20-passed) ·
+[Large FP32 scoring evidence](../simplify/one-process-ledger.md#2026-11-18--corrected-large-fp32-passed-all-four-cuda-scoring-widths)
 
 ### FP16 implementation and validation sequence
 
@@ -1611,7 +1620,16 @@ native execution.
    distinct candidate, and measure the latency and memory cost of retaining
    that operation in FP32. Freeze thresholds and confirmation cases before
    tuning, and apply the exact-artifact CAL and task gates to the final
-   candidate.
+   candidate. Before full conversion, use an instrumented FP32 diagnostic
+   on a frozen development slice spanning the four widths, near ties and
+   varied real requests. Measure finite activation ranges at tensors that
+   will actually be cast, including values near the binary16 finite ceiling
+   of 65,504. Exclude intentional mask sentinels from overflow counts.
+   Extend the census only if the first slice leaves a concrete precision
+   question. Keep it outside the timed baseline. For the paired scored
+   population, report maximum, p50 and p95 drift, decision flips and
+   non-finite counts by width, with denominators. Freeze the batch cost
+   using measured calls and setup time.
    [Independent graph and reference contract](../../scripts/arbiter-fp16-reference/CONTRACT.md)
 
 3. **Measure user-facing speed and memory fit.** After numerical and placement
@@ -1629,11 +1647,84 @@ native execution.
 4. **Carry the same test cases and acceptance rules across providers.** After
    Windows CUDA FP16 passes, run Linux CUDA on WSL2, macOS Core ML, Azure
    Windows Radeon DirectML and Azure Linux Radeon ROCm in that order. Reuse
-   the inputs and independent score references. Pin the actual graph,
-   weights, runtime, driver and provider on each target. Allow a
+   the inputs and independent original FP32 score references. Pin the actual
+   graph, weights, runtime, driver and provider on each target. Allow a
    provider-specific attention implementation with independently verified
    masks, positions, scores, kernel placement, peak memory and fallback.
    [Platform qualification order](#verified-starting-point-and-backend-order)
+
+### Numerical limits and calibration by provider
+
+The frozen exporter limits apply to this FP16 campaign. Evaluate the
+maximum absolute raw score error and the existing normalized-mass metric
+on complete score vectors. Require finite outputs and identical argmax
+under the contract for both comparisons.
+
+| Comparison | Context Compact and Large | Focus |
+| --- | --- | --- |
+| Native versus independent matching-recipe FP16 | Raw error ≤ 0.001 and mass error ≤ 0.05 | Raw error ≤ 0.001 and mass error ≤ 0.00001 |
+| Native FP16 versus independent original FP32 | Raw error ≤ 0.001 and mass error ≤ 0.05 | Raw error ≤ 0.25 and mass error ≤ 0.05 |
+
+The 0.25 approximate-export limit elsewhere in the plan applies only where
+the owning recipe explicitly uses it. Context's limit remains 0.001. The
+observed Large 0.000328064 error at 8,192 tokens is an FP32 comparison.
+Treat FP16 drift as an unmeasured risk. A different Context tolerance would
+require an explicit, prospective contract decision and separate result
+identity before the affected confirmation. Retain any result under the
+criteria frozen for its run.
+[Frozen FP16 exporter limits](../../scripts/arbiter-fp16-export/CONTRACT.md)
+
+Use the pinned independent original FP32 scores as the cross-provider
+anchor, with the same loss budget and request population. Use an independent
+matching-FP16 reference for each distinct precision recipe. Reuse it across
+providers only where the protected operations, rounding boundaries and
+attention semantics are equivalent and reviewed.
+
+Budget CAL, fit and disjoint confirmation per candidate execution identity.
+Inventory eligible labels before scheduling full provider runs. Freeze
+and reuse the input populations, judgments and FP32 references where their
+identities apply. Run cheap numerical, placement and fit probes before
+committing held-out labels and compute to a candidate. Prioritize the
+variants that pass those checks and are candidates for shipment. Calibration
+transfer would require a separately approved protocol frozen before
+confirmation, with full-population bounded drift, stable decisions and
+the existing risk and coverage checks. Until such a protocol is approved,
+each promoted identity needs its own CAL and task evidence.
+
+### Developer memory fit and shipping Auto
+
+Use an owned A6000 memory-pressure sweep at **6, 8, 12, 16 and 24 GiB of
+measured available device memory**. Use a bounded resident ballast between
+runs and verify actual free memory and ballast residency during the test.
+Probe near the expected model boundary first and use short pass/refusal
+probes to bracket it before running the full warm population at the
+candidate floor. Record adapter, driver mode, observed memory budget,
+provider, arena cap and growth strategy as part of the measurement identity.
+Keep these results labeled as A6000 capacity emulation. Claims for actual
+RTX classes, their drivers and the smaller cards require tests on those
+configurations.
+
+Retain the 20 fixed-width warm measurements for the comparison, and add
+an independently timed mixed-length soak in one loaded session. Cycle the
+approved Context widths in a fixed order that includes both growth and
+return to short inputs. Record per-cycle latency, allocator high-water
+mark, dedicated and shared GPU memory, host working set and commit.
+Sample before load, after load, at steady state under the representative
+competing workload, and after release. Watch for continuing arena growth
+and for paging or a latency cliff at the boundary. Verify the actual
+Windows driver mode and fallback behavior under pressure. Treat completion
+through host-memory spill as a separate observation from dedicated-VRAM
+fit. This is distinct from AIRK's qualified CPU fallback.
+[NVIDIA CUDA system-memory fallback](https://nvidia.custhelp.com/app/answers/detail/a_id/5490)
+
+Test Auto on the installed **FP16-only candidate**. On a supported, fitting
+device it must select FP16 and report that device. For ineligible hardware,
+GPU opt-out, or a recoverable and settled GPU failure, it must select a
+qualified fitting CPU variant for the same model within the original
+budget when available. For Large, exercise typed unavailability when no
+same-model CPU path is admitted and preserve MiniLM and unrelated stages.
+A passing unavailability test proves the required safe behavior for that
+case. A CPU fallback claim requires its own applicable evidence.
 
 ### Future GPU release precision
 
@@ -1647,11 +1738,27 @@ the blocker and revisit its GPU release scope. Show the GPU precision available
 in the installed release and keep CPU selection and the service-wide GPU opt-out
 available.
 
-For the release decision, require stable Arbiter decisions, a meaningful
-improvement in complete Answer latency, and enough measured memory headroom
-for a developer's other work. Publish measured Compact and Large fit
-requirements separately. Auto uses the qualified GPU path when the selected
-model fits and can use that model's admitted CPU path otherwise.
+Use zero non-finite valid results, zero argmax changes on the frozen parity
+population, the existing task risk and coverage gates, and the 120-second
+request and warm p95 limits. Report complete Answer improvement as both
+seconds saved and percentage reduction against a matched CPU control where
+one can be measured. Freeze the model-specific product targets and
+representative workloads before release confirmation. For review, start
+with a proposed complete Answer warm p95 improvement of **at least 25% and
+1 second** where there is a comparable CPU path, and **2 GiB of measured
+dedicated memory remaining** under the agreed competing workload for
+discrete GPU fit. These are proposed release targets. A model without a
+comparable CPU path needs a separately frozen absolute latency target, and
+a unified-memory target needs a system-specific reserve. Technical gates
+and preparation can proceed under their existing criteria. Approve the
+product targets before the affected release-confirmation runs.
+
+Report the time spent in Focus on matched Answer runs. Choose whether to
+package Focus GPU based on its measured contribution to end-to-end benefit
+and the memory cost of joint residency. Publish measured Compact and Large
+fit separately, including available device memory, host RAM peak and
+reserve, tested GPU or unified-memory configuration, and observed cold and
+warm latency.
 
 Provisional efficient-FP16 planning targets remain about4GB for Focus,8GB for
 Compact and12–16GB for Large, not measured hardware minima. Without genuinely
@@ -1697,6 +1804,30 @@ pass on a dedicated Apple Silicon Mac Studio with M4 Max, a 40-core GPU and
 128 GB of unified memory.
 [Datagram weekend pass](https://datagram.net/day-pass)
 
+Before the user books the 72-hour pass, rehearse the arm64 build, model
+conversion, provider startup and diagnostics on Neo with small synthetic
+graphs under the existing same-user rules. Preserve operator domains,
+ranks, causal and padding masks, and precision boundaries in those probes.
+Use the same approach on WSL2 and the available Intel DirectML adapter when
+it answers a concrete operator-coverage question. These preparatory checks
+can run independently of the platform order for full qualification. Use
+reduced fixtures to verify translation and actual placement. Retest kernel
+eligibility at representative head dimensions and the real maximum
+sequence width before claiming fit or acceleration.
+
+Check the pinned Core ML provider's supported operators. Plan a native
+Core ML lowering if the CUDA contrib attention graph cannot be consumed.
+Apple's scaled dot-product attention is one candidate. Prove the input
+mask reproduces the required causal and padding behavior. Define efficient
+attention on the Mac as verified accelerator dispatch at the intended width
+with bounded temporary storage and no full per-head score or mask matrix.
+Validate the actual compute plan and device telemetry, peak unified memory,
+and FP32 scoring ABI. Go to booking when the Neo build and representative
+operator probe are reproducible, the candidate lowering has an identified
+path, and the pinned inputs and receipt export are rehearsed.
+[ONNX Runtime Core ML provider](https://onnxruntime.ai/docs/execution-providers/CoreML-ExecutionProvider.html) ·
+[Apple Core ML attention operator](https://apple.github.io/coremltools/docs/_modules/coremltools/converters/mil/mil/ops/defs/iOS18/transformers.html)
+
 Datagram confirmed full access to the dedicated Mac. We can install Xcode
 or ask Datagram to do so during setup. At kickoff, verify SSH access in
 the same authorized human account, record the macOS, Xcode and SDK builds,
@@ -1716,6 +1847,13 @@ checks and 120-second p95 target. Apply the G5 FP16 precision-loss and
 memory checks. Exercise Auto, explicit selection for each tested GPU
 precision, and admitted CPU fallback. Preserve and report each graph
 coverage, fit, numerical or latency failure with its exact variant identity.
+
+Use three go/no-go checkpoints during the pass. At startup, confirm the
+pinned build and instrumentation with the Neo probe. After the first
+Compact native probe, proceed to the full matrix only with the expected
+placement, parity and memory behavior and enough time for the remaining
+checks. Start Large only with enough measured time for its runs, recovery
+and receipt export. Reserve time at the end for the evidence transfer.
 
 Before the pass ends, copy the permitted receipts, traces and results to
 the local campaign evidence root. Record the qualification scope and any
@@ -1756,8 +1894,12 @@ and record the specific capacity or compatibility constraint.
 
 Freeze the FP16 model, scoring ABI, inputs and independent references.
 Use the same cases on both platforms, including 32, 128, 1,024 and 8,192
-tokens for Context. Pin each actual execution graph and provider. If a
-provider needs a different attention implementation, qualify that graph
+tokens for Context. Pin each actual execution graph and provider. Before renting, review the
+exact provider versions, operator support and architecture. Use small
+operator probes locally where the applicable provider is available. On
+each rented configuration, check the actual adapter, then run the small
+mask and placement probes before loading the full model. If a provider
+needs a different attention implementation, qualify that graph
 against the same numerical and semantic criteria. Record actual GPU
 placement, device memory, cold and warm timings, component and
 end-to-end latency, and the fallback outcome. Apply the 120-second
