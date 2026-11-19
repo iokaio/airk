@@ -5,6 +5,7 @@ import importlib.util
 import json
 from pathlib import Path
 import unittest
+import sys
 
 HERE=Path(__file__).resolve().parent
 ROOT=HERE.parents[3]
@@ -41,7 +42,7 @@ class Preservation(unittest.TestCase):
                 self.assertIn(prefix,(b'# SPDX-License-Identifier: Apache-2.0\n',b'// SPDX-License-Identifier: Apache-2.0\n'))
                 self.assertTrue(raw.startswith(prefix));raw=raw[len(prefix):];prefixed.add(r['destination'])
             self.assertEqual(hashlib.sha256(raw).hexdigest(),r['original_sha256'])
-            self.assertEqual(raw,(ROOT/r['source']).read_bytes())
+            self.assertEqual(len(raw),r['original_bytes'])
             unique[r['destination']]=r
         self.assertEqual(len(unique),654)
         self.assertEqual(len(prefixed),226)
@@ -56,4 +57,7 @@ class Preservation(unittest.TestCase):
             for e in row['evidence']:
                 raw=(ROOT/e['path']).read_bytes()
                 self.assertEqual((hashlib.sha256(raw).hexdigest(),len(raw)),(e['sha256'],e['bytes']))
-if __name__=='__main__':unittest.main(verbosity=2)
+if __name__=='__main__':
+    sys.path.insert(0,str(ROOT/'scripts/arbiter/analysis/source_cleanup'))
+    from custody import custody_cli
+    if not custody_cli([HERE/'source-map.json'],sys.argv[1:]):unittest.main(verbosity=2)

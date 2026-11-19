@@ -5,6 +5,7 @@ import importlib.util
 import json
 from pathlib import Path
 import unittest
+import sys
 HERE=Path(__file__).resolve().parent
 ROOT=HERE.parents[3]
 spec=importlib.util.spec_from_file_location('operational_preserve',HERE/'preserve.py')
@@ -26,10 +27,9 @@ class Preservation(unittest.TestCase):
         rows=json.loads((HERE/'source-map.json').read_bytes())['files']
         self.assertEqual(len(rows),2413)
         for r in rows:
-            kept=(ROOT/r['destination']).read_bytes();raw=(ROOT/r['source']).read_bytes()
+            kept=(ROOT/r['destination']).read_bytes();raw=owner.inverse(kept,r['transformations'])
             self.assertEqual((hashlib.sha256(kept).hexdigest(),len(kept)),(r['maintained_sha256'],r['maintained_bytes']))
             self.assertEqual((hashlib.sha256(raw).hexdigest(),len(raw)),(r['original_sha256'],r['original_bytes']))
-            self.assertEqual(owner.inverse(kept,r['transformations']),raw)
             self.assertIn(b'SPDX-License-Identifier: Apache-2.0',kept.split(b'\n',1)[0])
     def test_receiving_folder_has_no_unmapped_source(self):
         rows=json.loads((HERE/'source-map.json').read_bytes())['files']
@@ -49,4 +49,7 @@ class Preservation(unittest.TestCase):
     def test_three_requested_historical_sources_have_literal_pins(self):
         rows={r['source']:r for r in json.loads((HERE/'source-map.json').read_bytes())['files']}
         for name,pin in [('p8-frozen-replay.py','623baa3081a755bbf991c4ff6a55b61440d4fb93d88c85fbf573ed74242036d8'),('p9-frozen-replay.py','ae3d0a5e97e9b5ae10024074b31ef16d6e3cdcf876b284d9bd0425c4b03ea887'),('build-p6f-guarded-qualification-pair.py','1c1ff94b2e23ca38c42e996c79ac5a59a97e8c279f814052f77661154155eae8')]:self.assertEqual(rows['artifacts/v190/'+name]['original_sha256'],pin)
-if __name__=='__main__':unittest.main(verbosity=2)
+if __name__=='__main__':
+    sys.path.insert(0,str(ROOT/'scripts/arbiter/analysis/source_cleanup'))
+    from custody import custody_cli
+    if not custody_cli([HERE/'source-map.json'],sys.argv[1:]):unittest.main(verbosity=2)

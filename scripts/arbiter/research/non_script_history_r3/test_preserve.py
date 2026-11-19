@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import unittest
+import sys
 import preserve
 
 HERE=Path(__file__).resolve().parent
@@ -30,10 +31,9 @@ class PreservationTests(unittest.TestCase):
         data=json.loads((HERE/'source-map.json').read_bytes());rows=data['files']
         self.assertEqual(len(rows),1788);self.assertEqual(len({r['destination'] for r in rows}),957)
         for row in rows:
-            original=(ROOT/row['source']).read_bytes();kept=(ROOT/row['destination']).read_bytes()
+            kept=(ROOT/row['destination']).read_bytes();original=preserve.owner.inverse(kept,row['transformations'])
             self.assertEqual((hashlib.sha256(original).hexdigest(),len(original)),(row['original_sha256'],row['original_bytes']))
             self.assertEqual((hashlib.sha256(kept).hexdigest(),len(kept)),(row['maintained_sha256'],row['maintained_bytes']))
-            self.assertEqual(preserve.owner.inverse(kept,row['transformations']),original)
             self.assertIn(b'SPDX-License-Identifier: Apache-2.0',kept.split(b'\n',1)[0])
         self.assertEqual(hashlib.sha256((ROOT/data['selection']['path']).read_bytes()).hexdigest(),data['selection']['sha256'])
         self.assertEqual(hashlib.sha256(preserve.HELPER.read_bytes()).hexdigest(),data['prefix_helper']['sha256'])
@@ -49,4 +49,7 @@ class PreservationTests(unittest.TestCase):
         self.assertEqual(len(extras),36);self.assertTrue(set(extras)<=selected)
         self.assertFalse(any('/p10-target/' in p or '/security-rustix-' in p or '/editor-qualification/' in p for p in selected))
 
-if __name__=='__main__':unittest.main(verbosity=2)
+if __name__=='__main__':
+    sys.path.insert(0,str(ROOT/'scripts/arbiter/analysis/source_cleanup'))
+    from custody import custody_cli
+    if not custody_cli([HERE/'source-map.json'],sys.argv[1:]):unittest.main(verbosity=2)

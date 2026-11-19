@@ -10,7 +10,7 @@ import subprocess
 ROOT=Path(__file__).resolve().parents[4]
 SID='S-1-5-21-3678370870-3858642417-826968105-1002'
 LIMIT=16<<20
-EXTENSIONS={'.py','.ps1','.sh','.cmd','.bat','.js','.cjs','.mjs','.ts','.tsx','.rs','.cpp','.cc','.c','.h','.hpp','.cu','.cuh','.patch'}
+EXTENSIONS={'.py','.ps1','.sh','.cmd','.bat','.js','.cjs','.mjs','.ts','.tsx','.rs','.cpp','.cc','.c','.h','.hpp','.cu','.cuh','.patch','.css'}
 PREFIXES=(b'# SPDX-License-Identifier: Apache-2.0\n',b'# SPDX-License-Identifier: Apache-2.0\r\n',b'// SPDX-License-Identifier: Apache-2.0\n',b'// SPDX-License-Identifier: Apache-2.0\r\n',b'REM SPDX-License-Identifier: Apache-2.0\n',b'REM SPDX-License-Identifier: Apache-2.0\r\n')
 
 def digest(raw):return hashlib.sha256(raw).hexdigest()

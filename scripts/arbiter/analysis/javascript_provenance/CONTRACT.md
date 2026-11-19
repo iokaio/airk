@@ -62,3 +62,5 @@ Current product source and build recipes remain canonical. Obsolete bundle
 output/source-version gaps are reported honestly rather than bulk-copied into
 the maintained tree. Concrete authored gaps are preserved separately, with
 exact reversible byte maps and owning purpose documentation.
+
+Historical JS capture tests reconstruct the exact original body and verify original and maintained hashes/lengths for all three maps without reading artifact originals. Their explicit --audit-originals path is a custody audit, requiring the actual original or an authenticated successful removal/pre-removal chain through the shared source_cleanup owner. An unrecorded missing original remains a refusal. Parsing retained JS through vm.Script remains syntax-only; captured code is not executed.

@@ -49,3 +49,5 @@ using the maintained output guard and CreateNew. It includes only exact proved
 TypeScript generation rows; role-only observations never become exact proof.
 Use the source inventory verifier to consume those private shards, not directory
 names or an unchecked success flag. Full alias data remains private evidence.
+
+Permanent `test_capture.py` checks now reconstruct every original from maintained bytes and verify the recorded original SHA256/length, maintained SHA256/length, transformations and literal roster. They do not require artifact originals. Run the same script with `--audit-originals` for a separate strict custody audit: each actual original must match, or its absence must be justified by a SHA/length-pinned successful removal receipt and bound pre-removal proof. Missing files never become skips. An optional `--removal-roster <private-json> --removal-roster-sha256 <SHA256> --removal-roster-bytes <length>` supplies the explicit removal lookup defined by the source_cleanup contract. This transition preserves source identities and historical evidence; it does not delete anything or qualify recovered programs.
