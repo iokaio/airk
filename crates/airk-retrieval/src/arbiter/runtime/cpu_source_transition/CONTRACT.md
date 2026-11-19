@@ -305,3 +305,18 @@ Removing the new method and restoring the shared authority parameter and
 error text reproduces the preceding LF-normalized source. The FP32 diagnostic
 retains its matching-precision predicate. The legacy CPU runtime and
 descriptor keep their exact source and profile identities.
+
+### Compact FP16 load-only graph diagnostic
+
+The Windows x64 test-support graph diagnostic shares the exact existing
+Compact FP16 authority with the strict-load observer. It requires unqualified
+native evaluation, StrictGpu FP16 Compact and a binding without release
+evidence. It enters the existing disposable GraphMetadataDiagnostic mode.
+The FP32 observer predicate and strict execution path retain their behavior.
+
+The LF-normalized diagnostic.rs source advances from
+29c8598610103915823b9b047fd4c6728cfb361b97b6d4ca13defdd9fed662d3 to
+02823087575662de75f8fe531bcbda7304c0dc274b775c8cf4303fc26be73174.
+Moving the shared authority back into the strict observer and removing the
+Windows FP16 graph predicate reproduces the preceding source bytes. The
+legacy CPU descriptor, historical evidence and row identity stay bound.

@@ -357,6 +357,18 @@ proof. Creation dispatches zero sessions or model requests. Actual native
 attention backend dispatch, scores, teardown, resources, product admission
 and qualification remain separate checks.
 
+## Private Compact FP16 load-only placement diagnostic
+
+The ignored Windows x64 selector
+`fp16_compact::cuda_compact_fp16_load_only_graph_diagnostic` uses the same
+pinned Probe, independent graph, metadata and bounds as T32. It uses the
+existing disposable native graph collector to capture typed final graph
+data and the complete placement inventory. Native custody proves a single
+Load, synchronized session disposal, device settlement and host release.
+The distinct private result `airk.private.compact-fp16-graph-diagnostic/1`
+has zero forward attempts and returns only observations. The ordinary
+strict FP16 T32 scorer checks placement with CPU EP fallback disabled.
+
 ## Private Compact FP16 T32 component probe
 
 `fp16_compact::cuda_compact_fp16_t32_component` is a separate ignored Windows

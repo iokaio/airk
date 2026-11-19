@@ -11223,3 +11223,61 @@ input. Matching FP32 GPU speed sets the engineering comparison at 3.245899 s
 on that exact workload. The 25x CPU-relative comparison corresponds to
 3.441965 s. These are comparison points for future measurements under the
 existing qualification criteria. Measure complete Answer latency separately.
+
+### 2026-11-19 — Complete Compact FP16 placement observed
+
+The checked Windows x64 load-only graph diagnostic reused the authenticated
+Compact FP16 graph, weights, emitted Probe and metadata from the strict T32
+work. This separate private selector opens a disposable ORT session, crosses
+the whole optimized graph and exact final placement, and settles the session
+before return. It retains the original 32/32 GiB process/Job, 24 GiB device and
+120-second cutoff. The strict scoring selector and product device selection
+retain their separate paths.
+
+On the A6000, native Load, capture and disposal took 10.349817 s. The single
+owned child exited 0 after 34.850598 s, with a naturally empty Job, no forced
+termination, complete host and control release, and observed session/device
+settlement. Peak Job commit was 8,940,703,744 B and native peak RSS was
+7,900,213,248 B. The sole operation was the successful Load start and return.
+The run dispatched zero forwards and establishes no kernel execution or
+scoring time.
+
+The complete typed root graph includes 1,746 nodes, with 1,372 assigned
+to CUDA, including all 28 exact GroupQueryAttention names. The 374 CPU
+nodes touch 526 distinct values: 523 INT64, two INT32 and one Boolean. All
+are fixed scalars or short vectors within the prior five-element engineering
+bound, at most 32 bytes per value and 9,443 bytes summed over distinct values.
+There are zero implicit CPU input edges and 173 distinct cross-provider
+values. The CPU map includes the four G5 length helpers. Startup log counts
+were 374 selected, 227 retained and 147 omitted; completeness comes from
+the typed graph and final SessionState, which matched in full. The graph
+counts measure static dataflow, not traffic, allocated peaks or elapsed work.
+
+Retained under compact-fp16-disposable-final-graph-r1:
+execution 0b12892cf62e5586eca5a3d79ad1e4f9b17d43e8b724cc03fa86841537e0d841,
+native 0375d26d8fa2e92f6670a28c55d3ffaad43c3ac10326886b40c968e13fa67a00,
+journal 8b9da85473de784e7107e8a40a98dc4621ee928e86d03b5bec8eb469198de536,
+linked image 1003edfe4e445313da95bfcbfacea83345c13cabeb4a198cfbb43b4d8e08872f.
+The Windows account and default owner were the verified human SID ending 1002.
+
+Rust 1.98.0, Nextest 0.9.148, cold checkout target/ and incremental=1.
+Source group a0fdf6a83ce16eca045626c525519d85373496f506cdc917b0ac800263b2b358.
+Scoped all-feature Clippy passed in 87.603 s
+(a33cac1225dc2fc5273dac187f78171b987de3a40c8d92f4c1ddafb4dc17f27e).
+Nextest passed 43 with 474 filtered across two binaries in 101.747 s
+(ed7d45ae97b289179982ad5a22dd155e9b79c552372cf72a751ee3a1d91f12ba).
+The exact image stage passed in 1.124 s
+(bfb48c90cc6671aaf83e2c967deb0a150cec3456507cf63ba7e26a823e80bace).
+Exact commands, JUnit and Cargo timings are under
+windows-cuda-g5-graph-diagnostic-checks-r1.
+The two focused Python suites passed 63 and 137 checks. Pinned Rust
+formatting, repository and whitespace checks and independent native and
+launcher source review passed.
+
+The exact FP16 graph now supports review of a bounded placement candidate
+using the FP32 graph-gate machinery under a new FP16-specific identity.
+Allow only the observed small control-tensor shapes and types, bind the whole
+optimized graph before scoring, and require real typed profiler coverage,
+matching-recipe numerical parity, original-FP32 mass bounds and all
+28 actual synchronized FlashAttention records. Same-model CPU fallback
+remains an independent Auto decision under the original budget.

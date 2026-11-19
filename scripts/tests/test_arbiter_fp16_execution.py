@@ -3,6 +3,7 @@
 import copy
 import importlib.util
 from pathlib import Path
+import runpy
 import types
 import unittest
 from unittest.mock import patch
@@ -165,6 +166,82 @@ class CompactT32ComparisonControls(unittest.TestCase):
             invalid[name] = value
             with self.subTest(name=name), self.assertRaises(ValueError):
                 self.probe.validate_t32_comparisons(invalid)
+
+
+class CompactGraphControls(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.probe = runpy.run_path(str(ROOT / "scripts/arbiter-fp16-execution/probe_compact.py"))
+        cls.component = runpy.run_path(str(ROOT / "scripts/cuda-component-execution.py"))
+
+    def graph_evidence(self):
+        identity = {"input_sha256": "a" * 64, "profile": "b" * 64, "process_id": 23,
+                    "native_binary_sha256": "c" * 64}
+        events = [
+            {"schema": "airk.arbiter.native-operation/1", "sequence": sequence,
+             "identity": dict(identity), "kind": "load", "ordinal": 0, "phase": phase,
+             "clock": "windows_performance_counter", "operation_input_digest": None,
+             "started_monotonic_ns": 1, "observed_monotonic_ns": observed, "expires_monotonic_ns": 10,
+             "native_success": success, "native_call_elapsed_us": duration}
+            for sequence, phase, observed, success, duration in
+            [(1, "started", 1, None, None), (2, "returned", 2, True, 5)]
+        ]
+        placement = {"scope": "onnxruntime-final-session-state-ep-placement", "complete": True,
+                     "shim_status": 0, "ort_error_code": 0, "reported_nodes": 1, "reported_string_bytes": 30,
+                     "nodes": [{"subgraph_index": 0, "name": "shape", "domain": "", "op": "Shape",
+                                "ep": "CPUExecutionProvider"}]}
+        graph = {
+            "schema": "airk.private.ort-final-graph-metadata/1", "complete": True, "failure": None,
+            "shim_status": 0, "ort_error_code": 0, "encoded_bytes": 435, "reported_counts": [1, 0, 0, 30, 0, 3],
+            "rows": [
+                {"kind": "graph", "graph": 0, "parent_graph": None, "parent_node": None,
+                 "attribute": "", "outer_bindings": "not_applicable"},
+                {"kind": "node", "graph": 0, "node": 0, "name": "shape", "domain": "", "op": "Shape",
+                 "ep": "CPUExecutionProvider", "version": 19},
+                {"kind": "end", "graph": 0},
+            ],
+        }
+        value = {
+            "numeric_forward_attempts": 0, "native_forward_returned": False, "forward_synchronized": False,
+            "rows": [], "input_refusals": [], "runtime_profile": None, "load_us": 6, "load_native_call_us": 5,
+            "elapsed_us_to_final_report_start": 11, "original_expires_monotonic_ns": 10,
+            "request": {"sha256": identity["input_sha256"]}, "profile": identity["profile"],
+            "pid": identity["process_id"], "native_binary_sha256": identity["native_binary_sha256"],
+            "graph_observation": {
+                "session_created": True, "placement": placement, "graph_metadata": graph,
+                "logs": {"seen": 0, "selected": 0, "retained": 0, "omitted": 0,
+                         "bytes": 0, "truncated": False, "rows": []},
+                "teardown": {"pre_sync_observed": True, "session_drop_attempted": True,
+                             "session_drop_returned": True, "post_sync_observed": True,
+                             "pending_claims": 0, "poisoned": False, "errors": []},
+            },
+        }
+        return value, events
+
+    def test_load_only_graph_accepts_observed_cpu_placement_without_forward(self):
+        value, events = self.graph_evidence()
+        self.probe["validate_graph"](value, events, self.component)
+        with self.assertRaisesRegex(ValueError, "load/numeric"):
+            self.component["validate_operations"](events, value)
+
+    def test_load_only_graph_requires_zero_forward_complete_graph_and_settled_load(self):
+        changes = [
+            ("scorer work", lambda value, events: value.update(numeric_forward_attempts=1)),
+            ("did not settle", lambda value, events: value["graph_observation"]["teardown"].update(pending_claims=1)),
+            ("placement required", lambda value, events: value["graph_observation"]["placement"].update(complete=False)),
+            ("full node cross-map", lambda value, events:
+                value["graph_observation"]["placement"]["nodes"][0].update(ep="CUDAExecutionProvider")),
+            ("bounded graph Load", lambda value, events:
+                value.update(final_report_retention_exceeded_original_deadline=True)),
+            ("Load-only start-return", lambda value, events: events.pop()),
+            ("native return proof", lambda value, events: events[1].update(native_success=False)),
+            ("independent returned marker", lambda value, events: events[1].update(native_call_elapsed_us=4)),
+        ]
+        for message, change in changes:
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                value, events = self.graph_evidence()
+                change(value, events)
+                self.probe["validate_graph"](value, events, self.component)
 
 
 class FinalProofControls(unittest.TestCase):

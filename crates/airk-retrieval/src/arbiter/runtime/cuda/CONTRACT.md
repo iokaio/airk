@@ -619,7 +619,12 @@ truncation. Neither mode grants a Scorer, forward or placement-policy exception.
 On Windows x64, the graph-only diagnostic also accepts the unqualified
 Large FP32 evaluation binding. It uses the same authenticated model load,
 full graph collection and settlement checks. The graph observer returns
-data only.
+data only. The graph-only mode also accepts an unqualified Windows x64
+Context Compact FP16 binding under the same exact strict-profile authority
+as the Compact FP16 load observer. It opens a disposable session to
+capture the whole typed graph and final assignments, synchronizes and
+releases it before returning. The ordinary FP16 Scorer still enforces
+strict final placement.
 
 Metadata JSON is compact and at most8MiB within the existing16MiB native result;
 new native graph-only reports use bounded compact serialization. Limits are65536

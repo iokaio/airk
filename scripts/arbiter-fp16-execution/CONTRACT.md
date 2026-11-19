@@ -175,7 +175,7 @@ independent proof. The second consumes the emitted Probe request and native
 `metadata/metadata-receipt.json` from the passing first invocation.
 
 ```text
-python -I -B -S scripts/arbiter-fp16-execution/probe_compact.py {metadata|t32}
+python -I -B -S scripts/arbiter-fp16-execution/probe_compact.py {metadata|graph|t32}
   --request ABSOLUTE_REQUEST --request-sha256 SHA
   --evidence ABSOLUTE_EVIDENCE --evidence-sha256 SHA
   --image ABSOLUTE_STAGED_IMAGE --image-sha256 SHA
@@ -203,3 +203,11 @@ paired judged requests.
 The receipt records failures and retained raw evidence when any check refuses.
 Device capacity limits and adapter observations support the component receipt.
 Measured device peak and product qualification require separate evidence.
+
+The graph mode consumes the exact same emitted Probe and metadata as T32.
+It records one Load operation and retains the complete typed, optimized
+graph and final placement with observed disposal and synchronization.
+Its private result schema is airk.private.compact-fp16-graph-diagnostic/1.
+The result contains zero scorer forwards and serves as input to the FP16
+placement review. T32 continues to require strict execution and all
+original FlashAttention evidence.

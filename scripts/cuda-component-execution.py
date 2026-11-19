@@ -901,8 +901,11 @@ def validate_native(value, plan, pid, native, profile, fixture):
             and finite(row.get('native_call_elapsed_us'), 0, row['elapsed_us']), 'native row timing absent')
 
 
-def validate_operations(events, value):
-    require(len(events) == 4, 'exact load/numeric start-return journal required')
+def validate_operations(events, value, *, load_only=False):
+    if load_only:
+        require(len(events) == 2, 'exact Load-only start-return journal required')
+    else:
+        require(len(events) == 4, 'exact load/numeric start-return journal required')
     identity = {'input_sha256': value['request']['sha256'], 'profile': value['profile'],
                 'process_id': value['pid'], 'native_binary_sha256': value['native_binary_sha256']}
     previous = 0

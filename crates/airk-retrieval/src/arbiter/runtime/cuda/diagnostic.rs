@@ -257,27 +257,7 @@ impl super::super::ExecutionProfile {
 
     #[cfg(all(windows, target_arch = "x86_64"))]
     pub fn cuda_compact_fp16_load_observer(&self) -> Result<LoadObserver> {
-        use airk_core::arbiter::{ModelChoice, device::PlacementPolicy};
-
-        crate::native_inference::require_service_compute()?;
-        self.validate_native_source()?;
-        authority(
-            self.execution_authorized() && self.evaluation(),
-            self.release,
-            self.description.qualification.is_none()
-                && self.description.qualified_targets.is_empty(),
-            self.description.model == ModelChoice::ContextQwenCompact,
-            self.description
-                .device_execution
-                .as_ref()
-                .is_some_and(|device| {
-                    device.precision == DevicePrecision::Float16
-                        && device.placement == PlacementPolicy::StrictGpu
-                }),
-            self.gpu
-                .as_ref()
-                .is_some_and(|binding| binding.evidence.is_none()),
-        )?;
+        require_compact_fp16_profile(self)?;
         self.diagnostic_observer()
     }
 
@@ -319,6 +299,15 @@ pub(crate) fn require_graph_diagnostic_profile(
     profile: &super::super::ExecutionProfile,
 ) -> Result<()> {
     use airk_core::arbiter::ModelChoice;
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    if profile
+        .description
+        .device_execution
+        .as_ref()
+        .is_some_and(|device| device.precision == DevicePrecision::Float16)
+    {
+        return require_compact_fp16_profile(profile);
+    }
     let model = profile.description.model;
     require_profile(
         profile,
@@ -328,6 +317,32 @@ pub(crate) fn require_graph_diagnostic_profile(
     )
 }
 
+#[cfg(all(feature = "test-support", windows, target_arch = "x86_64"))]
+fn require_compact_fp16_profile(profile: &super::super::ExecutionProfile) -> Result<()> {
+    use airk_core::arbiter::{ModelChoice, device::PlacementPolicy};
+
+    crate::native_inference::require_service_compute()?;
+    profile.validate_native_source()?;
+    authority(
+        profile.execution_authorized() && profile.evaluation(),
+        profile.release,
+        profile.description.qualification.is_none()
+            && profile.description.qualified_targets.is_empty(),
+        profile.description.model == ModelChoice::ContextQwenCompact,
+        profile
+            .description
+            .device_execution
+            .as_ref()
+            .is_some_and(|device| {
+                device.precision == DevicePrecision::Float16
+                    && device.placement == PlacementPolicy::StrictGpu
+            }),
+        profile
+            .gpu
+            .as_ref()
+            .is_some_and(|binding| binding.evidence.is_none()),
+    )
+}
 #[cfg(feature = "test-support")]
 fn require_profile(profile: &super::super::ExecutionProfile, allowed_model: bool) -> Result<()> {
     crate::native_inference::require_service_compute()?;

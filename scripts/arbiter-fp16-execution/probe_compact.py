@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Run one reviewed Compact FP16 native metadata or T32 test in a Windows Job."""
+"""Run one reviewed Compact FP16 metadata, graph diagnostic, or T32 test in a Windows Job."""
 
 import argparse
 import ctypes
@@ -19,12 +19,14 @@ CAMPAIGN = ROOT / "artifacts/v190/final-plan/exec-20261116T052942Z"
 PREFIX = "inference_engine::pool::arbiter::qualification::software_v2::cuda_qualification::fp16_compact::"
 SELECTORS = {
     "metadata": PREFIX + "emit_cuda_compact_fp16_probe_metadata",
+    "graph": PREFIX + "cuda_compact_fp16_load_only_graph_diagnostic",
     "t32": PREFIX + "cuda_compact_fp16_t32_component",
 }
 MODEL = "arbiter-context-qwen3-17b"
 PREPARE_SHA = "850cf966a73bc5ecb0aa79cc3d22559cdd3ad855fbc38f73e361f136ea88c953"
 T32_DIGEST = "ec7b4845c37fb7cbe2a64a866f8b6cdc03479d65593cdb0a1d01102fe56fc335"
 METADATA_SCHEMA = "airk.private.compact-fp16-probe-metadata/1"
+GRAPH_SCHEMA = "airk.private.compact-fp16-graph-diagnostic/1"
 T32_SCHEMA = "airk.private.compact-fp16-t32-component/2"
 INDEPENDENT_SCHEMA = "airk.private.compact-fp16-independent-proof/1"
 HOST = 32 << 30
@@ -217,8 +219,8 @@ def validate_t32_comparisons(row):
             "native T32 original FP32 mass or diagnostic evidence refused")
 
 
-def validate_t32(value, paths, owned, request, evidence, metadata, manifest, image, component, base):
-    require(value["schema"] == T32_SCHEMA and value["complete"] is True
+def validate_native_identity(value, schema, owned, request, evidence, metadata, manifest, image, base):
+    require(value["schema"] == schema and value["complete"] is True
             and value["qualified"] is value["product_admission"] is value["native_backend_attested"] is False
             and value.get("error") is None and value["request"] == core(request)
             and value["runtime_manifest"] == core(manifest) and value["profile"] == metadata["profile"]
@@ -227,18 +229,79 @@ def validate_t32(value, paths, owned, request, evidence, metadata, manifest, ima
             and value["pid"] == owned["owned_leader_pid"]
             and value["native_binary_sha256"] == image["sha256"]
             and value["execution_user"] == value["default_owner"] == base.SID,
-            "native T32 execution identity or scope differs")
+            "native Compact execution identity or scope differs")
     require(value["actual_job"] == JOB and value["bounds"] == BOUNDS
             and value["native_host_reservation_bytes"] == HOST
             and finite(value["peak_process_rss_bytes"], 1, HOST)
-            and value["native_forward_returned"] is value["forward_synchronized"] is True
             and value["session_teardown_observed"] is value["device_teardown_observed"] is True
-            and value["numeric_forward_attempts"] == 1 and value["measured_peak_device_bytes"] is None
+            and value["measured_peak_device_bytes"] is None
             and finite(value["elapsed_us_to_final_report_start"], 0, 119_999_999)
             and value["native_control_cleanup_observed"] is value["native_host_charge_release_observed"] is True
             and value["process_cuda_poisoned"] is value["native_control_retained_for_unknown_cuda"] is False
             and value["native_control_cleanup_error"] is None,
-            "native T32 Job, original host charge or synchronized settlement differs")
+            "native Compact Job, original host charge or synchronized settlement differs")
+    before, after = value["adapter_before"], value["adapter_after"]
+    fixed = ("uuid", "ordinal", "compute_major", "compute_minor", "driver_api_version",
+             "driver_image_sha256", "physical_total_bytes")
+    require(len(before["uuid"]) == 16 and any(before["uuid"])
+            and all(before[key] == after[key] for key in fixed)
+            and all(0 <= row["free_bytes"] <= row["total_bytes"] <= row["physical_total_bytes"]
+                    and row["total_bytes"] > 0 for row in (before, after)),
+            "actual matching adapter observations required")
+
+
+def read_operations(path):
+    with path.open("rb") as source:
+        raw = source.read((128 << 10) + 1)
+    require(0 < len(raw) <= 128 << 10 and raw.endswith(b"\n"), "complete bounded operation journal required")
+    return [json.loads(line) for line in raw.splitlines()]
+
+
+def validate_graph(value, events, component):
+    require(type(value["numeric_forward_attempts"]) is int and value["numeric_forward_attempts"] == 0
+            and value["native_forward_returned"] is value["forward_synchronized"] is False
+            and value["rows"] == value["input_refusals"] == [] and value["runtime_profile"] is None,
+            "graph diagnostic performed scorer work")
+    require(value.get("final_report_retention_exceeded_original_deadline", False) is False
+            and finite(value["load_us"], 0, 119_999_999)
+            and finite(value["load_native_call_us"], 0, value["load_us"])
+            and value["load_us"] <= value["elapsed_us_to_final_report_start"],
+            "bounded graph Load timing required")
+    snapshot = value["graph_observation"]
+    require(isinstance(snapshot, dict) and snapshot["session_created"] is True
+            and isinstance(snapshot["logs"], dict),
+            "graph diagnostic did not create a disposable session")
+    teardown = snapshot["teardown"]
+    require(isinstance(teardown, dict)
+            and all(teardown[key] is True for key in ("pre_sync_observed", "session_drop_attempted",
+                                                     "session_drop_returned", "post_sync_observed"))
+            and type(teardown["pending_claims"]) is int and teardown["pending_claims"] == 0
+            and teardown["poisoned"] is False and teardown["errors"] == [],
+            "graph diagnostic disposable session did not settle")
+    place = snapshot["placement"]
+    require(isinstance(place, dict)
+            and place["scope"] == "onnxruntime-final-session-state-ep-placement"
+            and place["complete"] is True
+            and all(type(place[key]) is int and place[key] == 0 for key in ("shim_status", "ort_error_code"))
+            and isinstance(place["nodes"], list) and 0 < len(place["nodes"]) <= 65_536
+            and type(place["reported_nodes"]) is int and place["reported_nodes"] == len(place["nodes"]),
+            "complete final diagnostic placement required")
+    graph = snapshot["graph_metadata"]
+    component["validate_graph_metadata"](graph, place)
+    # The shared graph validator independently bounds and cross-maps every placement span.
+    placed_bytes = sum(len(node[key].encode("utf-8")) for node in place["nodes"]
+                       for key in ("name", "domain", "op", "ep"))
+    require(type(place["reported_string_bytes"]) is int and placed_bytes == place["reported_string_bytes"],
+            "diagnostic placement byte coverage differs")
+    component["validate_operations"](events, value, load_only=True)
+    require(events[-1]["native_call_elapsed_us"] == value["load_native_call_us"],
+            "native graph Load duration and independent returned marker differ")
+
+
+def validate_t32(value, paths, owned, request, evidence, metadata, manifest, image, component, base):
+    validate_native_identity(value, T32_SCHEMA, owned, request, evidence, metadata, manifest, image, base)
+    require(value["native_forward_returned"] is value["forward_synchronized"] is True
+            and value["numeric_forward_attempts"] == 1, "native T32 return and synchronization required")
     rows = value["rows"]
     require(len(rows) == 1 and rows[0]["name"] == "diagnostic-all-live-32"
             and rows[0]["tokens"] == 32 and rows[0]["input_digest"] == T32_DIGEST,
@@ -273,17 +336,7 @@ def validate_t32(value, paths, owned, request, evidence, metadata, manifest, ima
     require(len(attention) == 28 and {node["name"] for node in attention} == NAMES
             and all(node["domain"] == "com.microsoft" and node["subgraph_index"] == 0 for node in attention),
             "complete native CUDA GQA placement required")
-    before, after = value["adapter_before"], value["adapter_after"]
-    fixed = ("uuid", "ordinal", "compute_major", "compute_minor", "driver_api_version",
-             "driver_image_sha256", "physical_total_bytes")
-    require(len(before["uuid"]) == 16 and any(before["uuid"])
-            and all(before[key] == after[key] for key in fixed)
-            and all(0 <= row["free_bytes"] <= row["total_bytes"] <= row["physical_total_bytes"]
-                    and row["total_bytes"] > 0 for row in (before, after)),
-            "actual matching adapter observations required")
-    raw = paths["operations"].read_bytes()
-    require(0 < len(raw) <= 128 << 10 and raw.endswith(b"\n"), "complete bounded operation journal required")
-    events = [json.loads(line) for line in raw.splitlines()]
+    events = read_operations(paths["operations"])
     component["validate_operations"](events, value)
     require(events[-1]["native_call_elapsed_us"] == row["native_call_elapsed_us"],
             "native numeric duration and independent returned marker differ")
@@ -366,7 +419,9 @@ def run(args):
         if args.mode == "metadata":
             planned.append(metadata)
         else:
-            planned.extend((paths["native"], paths["operations"], out / "ort-profile"))
+            planned.extend((paths["native"], paths["operations"]))
+            if args.mode == "t32":
+                planned.append(out / "ort-profile")
         audit(planned, False)
         env = {key: value for key, value in os.environ.items()
                if not key.upper().startswith(("AIRK_", "ORT_", "PYTHON", "CUDA_", "CUDNN_"))}
@@ -381,8 +436,9 @@ def run(args):
             env.update(AIRK_CUDA_FP16_METADATA_RECEIPT=evidence["path"],
                        AIRK_CUDA_FP16_METADATA_RECEIPT_SHA256=evidence["sha256"],
                        AIRK_CUDA_QUALIFICATION_OUTPUT=str(paths["native"]),
-                       AIRK_CUDA_FP16_PROFILE_PREFIX=str(out / "ort-profile"),
                        ORT_CUDA_GEMM_OPTIONS="2", ORT_ENABLE_ATTENTION_KERNEL_DEBUG_INFO="1")
+            if args.mode == "t32":
+                env["AIRK_CUDA_FP16_PROFILE_PREFIX"] = str(out / "ort-profile")
             receipt["inherited_math_environment"] = {key: env[key] for key in
                 ("ORT_CUDA_GEMM_OPTIONS", "ORT_ENABLE_ATTENTION_KERNEL_DEBUG_INFO")}
 
@@ -409,8 +465,10 @@ def run(args):
             traces = list(out.glob("ort-profile*.json"))
             if len(traces) == 1:
                 paths["profile"] = traces[0]
-            value = base.read(paths["native"]) if paths["native"].is_file() else None
-            if value is not None and value.get("error"):
+        value = None
+        if args.mode != "metadata" and paths["native"].is_file():
+            value = base.read(paths["native"])
+            if value.get("error"):
                 raise ValueError(value["error"])
         require(parent.settled(receipt["owned"])
                 and finite(receipt["owned"]["peak_host_committed_bytes"], 1, HOST),
@@ -418,6 +476,11 @@ def run(args):
         if args.mode == "metadata":
             value = base.read(paths["metadata"])
             receipt["metadata_artifacts"] = validate_metadata(value, paths, request, evidence, manifest, base)
+        elif args.mode == "graph":
+            require(value is not None, "native graph diagnostic result missing")
+            validate_native_identity(value, GRAPH_SCHEMA, receipt["owned"], request, evidence,
+                                     evidence_value, manifest, image, base)
+            validate_graph(value, read_operations(paths["operations"]), component)
         else:
             require(value is not None and "profile" in paths, "native T32 result or actual profile trace missing")
             receipt["flash_attention_records"] = validate_t32(value, paths, receipt["owned"], request, evidence,
@@ -446,11 +509,15 @@ def run(args):
             try:
                 if retained:
                     audit(retained, deadline=None)
-                receipt["failure_outputs"] = [
-                    base.pin(path) if path.stat().st_size <= LOG_CAP else
-                    {"path": str(path), "bytes": path.stat().st_size, "digest_refused_beyond_bound": True}
-                    for path in retained if path.is_file()
-                ]
+                receipt["failure_outputs"] = []
+                for path in retained:
+                    if path.is_file():
+                        limit = (component["DIAGNOSTIC_PROOFS"]["native_result"]
+                                 if args.mode == "graph" and path == paths["native"] else LOG_CAP)
+                        size = path.stat().st_size
+                        pin = (base.pin(path) if size <= limit else
+                               {"path": str(path), "bytes": size, "digest_refused_beyond_bound": True})
+                        receipt["failure_outputs"].append(pin)
             except BaseException as error:
                 receipt["retention_audit_error"] = str(error)
         component["write_new"](guard, receipt_path, receipt)

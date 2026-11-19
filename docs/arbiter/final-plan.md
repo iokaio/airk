@@ -1605,8 +1605,15 @@ probe before Windows full-width measurement and dependent FP16 qualification.
 Strict load under the accepted rule still refused before a forward. The
 19 November bounded startup log retained 227 CUDA-capable nodes that ORT
 preferred on CPU, including rotary and attention-shape operations. The log
-omitted 148 selected messages. Complete the placement census and verify a
-correction under the strict load and FlashAttention gates.
+omitted 148 selected messages. A separate load-only diagnostic captured the
+complete optimized graph and final placement. All 28 attention nodes were
+assigned to CUDA. The 374 CPU nodes touched only fixed-size INT32, INT64 and
+Boolean values, with a 32-byte maximum value and 9,443 bytes across distinct
+CPU-connected values. The diagnostic dispatched zero forwards. Use the
+verified graph to review an explicit FP16 bounded placement candidate under
+the existing placement rules. Confirm actual FlashAttention dispatch and
+scores on the resulting scoring session.
+[Complete Compact FP16 graph evidence](../simplify/one-process-ledger.md#2026-11-19--complete-compact-fp16-placement-observed)
 
 ### FP16 implementation and validation sequence
 

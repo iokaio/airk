@@ -543,6 +543,16 @@ fn read_t32_profile(scorer: &Scorer, prefix: &Path) -> Result<Value> {
 #[test]
 #[ignore = "owned strict Compact FP16 T32 probe with a reviewed artifact, independent reference and actual CUDA runtime"]
 fn cuda_compact_fp16_t32_component() -> Result<()> {
+    observe_compact_fp16_t32(false)
+}
+
+#[test]
+#[ignore = "disposable Windows Compact FP16 final graph with the reviewed T32 Probe; no scorer or forward"]
+fn cuda_compact_fp16_load_only_graph_diagnostic() -> Result<()> {
+    observe_compact_fp16_t32(true)
+}
+
+fn observe_compact_fp16_t32(graph_only: bool) -> Result<()> {
     let started_ns = airk_process::monotonic::now_ns()?;
     let started = Instant::now();
     let execution_user = airk_ipc::endpoint::current_user()?;
@@ -615,16 +625,25 @@ fn cuda_compact_fp16_t32_component() -> Result<()> {
     );
 
     let output = output()?;
-    let prefix = PathBuf::from(text("AIRK_CUDA_FP16_PROFILE_PREFIX")?);
-    ensure!(
-        output.is_absolute()
-            && prefix.is_absolute()
-            && prefix.parent() == output.parent()
-            && prefix.file_name().is_some()
-            && prefix != output
-            && !prefix.exists(),
-        "fresh absolute output and guarded Compact FP16 profile prefix required"
-    );
+    let prefix = if graph_only {
+        ensure!(
+            output.is_absolute(),
+            "absolute Compact FP16 diagnostic output required"
+        );
+        None
+    } else {
+        let prefix = PathBuf::from(text("AIRK_CUDA_FP16_PROFILE_PREFIX")?);
+        ensure!(
+            output.is_absolute()
+                && prefix.is_absolute()
+                && prefix.parent() == output.parent()
+                && prefix.file_name().is_some()
+                && prefix != output
+                && !prefix.exists(),
+            "fresh absolute output and guarded Compact FP16 profile prefix required"
+        );
+        Some(prefix)
+    };
     let binary = file_hash(&std::env::current_exe()?)?;
     let actual_job = job_limits(bounds.host_limit_bytes, job_limit_bytes)?;
     let mut resources = airk_kernel::service_resources::Resources::detect(ResourceConfiguration {
@@ -652,7 +671,11 @@ fn cuda_compact_fp16_t32_component() -> Result<()> {
         .create_new(true)
         .open(&output)?;
     let mut receipt = json!({
-        "schema": "airk.private.compact-fp16-t32-component/2",
+        "schema": if graph_only {
+            "airk.private.compact-fp16-graph-diagnostic/1"
+        } else {
+            "airk.private.compact-fp16-t32-component/2"
+        },
         "complete": false, "qualified": false, "product_admission": false,
         "request": request_pin, "native_input": gpu_input, "profile": profile.manifest,
         "source_manifest": input.source_manifest, "runtime_manifest": runtime_manifest,
@@ -672,6 +695,9 @@ fn cuda_compact_fp16_t32_component() -> Result<()> {
         },
         "measured_peak_device_bytes": null, "native_backend_attested": false,
     });
+    if graph_only {
+        receipt["graph_observation"] = Value::Null;
+    }
     flush_graph_diagnostic(&mut file, &receipt)?;
     let mut journal = operation::Journal::create_until(
         &output,
@@ -702,9 +728,27 @@ fn cuda_compact_fp16_t32_component() -> Result<()> {
             flush_graph_diagnostic(&mut file, &receipt)?;
             let catalog = airk_kernel::inference_owner::evaluation_catalog(lease.clone(), vec![profile.clone()])?;
             let execution = catalog.execution_profile(profile.manifest)?.bind_cuda_probe(device, capacity, deadline)?;
+            let Some(profile_prefix) = prefix.as_deref() else {
+                let observer = execution.cuda_graph_observer()?;
+                let loaded = journal.observe(operation::Kind::Load, 0, None, || {
+                    Scorer::diagnose_cuda_graph_metadata(execution, files)
+                })?;
+                receipt["load_us"] = json!(loaded.elapsed_us);
+                receipt["load_native_call_us"] = json!(loaded.native_call_elapsed_us);
+                let snapshot = observer.snapshot()?;
+                receipt["graph_observation"] = serde_json::to_value(&snapshot)?;
+                receipt["session_teardown_observed"] = json!(snapshot
+                    .teardown
+                    .as_ref()
+                    .is_some_and(|teardown| teardown.validate().is_ok()));
+                flush_graph_diagnostic(&mut file, &receipt)?;
+                loaded.value?;
+                ensure!(loaded.within_deadline, "original Compact FP16 graph load expiry exceeded");
+                return snapshot.validate_graph_metadata();
+            };
             let observer = execution.cuda_compact_fp16_load_observer()?;
             let loaded = journal.observe(operation::Kind::Load, 0, None, || {
-                Scorer::open_profiled(execution, files, &prefix)
+                Scorer::open_profiled(execution, files, profile_prefix)
             })?;
             receipt["load_us"] = json!(loaded.elapsed_us);
             receipt["load_native_call_us"] = json!(loaded.native_call_elapsed_us);
@@ -753,7 +797,10 @@ fn cuda_compact_fp16_t32_component() -> Result<()> {
             let profile_capture = scorer.synchronize(deadline).and_then(|()| {
                 ensure!(scorer.device_settled(), "Compact FP16 score remains unsettled");
                 receipt["forward_synchronized"] = json!(receipt["native_forward_returned"] == true);
-                read_t32_profile(&scorer, &prefix)
+                read_t32_profile(
+                    &scorer,
+                    prefix.as_deref().context("Compact FP16 scorer profile prefix missing")?,
+                )
             });
             match profile_capture {
                 Ok(trace) => receipt["runtime_profile"] = trace,
@@ -767,8 +814,12 @@ fn cuda_compact_fp16_t32_component() -> Result<()> {
         if let Some(device) = custody.device.as_ref() {
             let release = device.synchronize(deadline).and_then(|()| {
                 ensure!(!device.poisoned() && !cuda::process_poisoned(), "Compact FP16 teardown remains unknown");
+                if graph_only {
+                    ensure!(device.pending_claims() == Some(0), "Compact FP16 graph device claims remain unsettled");
+                } else {
+                    receipt["session_teardown_observed"] = json!(session_opened);
+                }
                 receipt["device_teardown_observed"] = json!(true);
-                receipt["session_teardown_observed"] = json!(session_opened);
                 receipt["adapter_after"] = json!(device.observation(deadline)?);
                 Ok(())
             });
