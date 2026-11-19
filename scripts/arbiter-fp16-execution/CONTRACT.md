@@ -170,6 +170,27 @@ contains the conversion/output pins, complete graph and parameter proof, and
 both score arrays. Native dispatch, placement, resources and qualification
 require their own later observations.
 
+## Wider independent Compact references
+
+After corrected T32 verification for the same conversion, add `--wider` and use
+`--owned-output` with a fresh campaign child. This mode authenticates the reviewed
+conversion, corrected graph and publisher parameters once, then runs the unchanged
+CPU reference serially on the exact retained T128, T1024 and T8192 all-live inputs.
+The retained fixture supplies T128 and T8192, and the supplemental fixture supplies
+T1024. The two pinned producers must agree on the original publisher source files,
+compiler, resource policy and original asset lineage.
+
+The same process and aggregate 32 GiB Job limits, single 600-second deadline,
+64 MiB log and five-second cleanup apply to the whole run. Each result has eight
+finite scores from the matching FP16 recipe, the retained original FP32 vector,
+and the complete pinned native input. The parent accepts all three rows in order
+only after checking the exact input and lineage and observing natural settlement.
+The proof is `compact-wider-independent-proof.json` with schema
+`airk.private.compact-fp16-wider-independent-proof/1`. Its `references` array
+contains the three rows and `torch_forward_invocations` is three. The worker
+uses the `AIRK_FP16_COMPACT_WIDER_REFERENCE ` marker. The default T32 mode retains
+its own original marker, schema, and output file.
+
 ## Owned Compact metadata and T32 probe
 
 The [native probe parent](probe_compact.py) owns one exact test invocation.

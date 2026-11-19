@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Read-only CPU worker for the first independently verified Compact FP16 row."""
+"""Read-only CPU worker for independently verified Compact FP16 references."""
 
 import argparse
 import hashlib
@@ -15,12 +15,23 @@ import time
 ROOT = Path(__file__).resolve().parents[2]
 CAMPAIGN = ROOT / "artifacts/v190/final-plan/exec-20261116T052942Z"
 FP32_ROOT = CAMPAIGN / "fp32-expanded-reference-preflight-r1/compact-current-supplemental-reference"
+RETAINED_FP32_ROOT = (
+    ROOT / "artifacts/advanced-split/models/weights-v2/software-v2-independent-numeric-r1"
+    / "runs-native-r1/revision-r2/assembled-compact"
+)
 PUBLISHER_ROOT = ROOT / "artifacts/advanced-split/models/qwen3-challenger-assets-r1"
 MODEL = "arbiter-context-qwen3-17b"
 ORIGINAL_GRAPH = "c79c672513b874ab773ee7df8d4518e110d1e6196ae45076ce718f5b5dc6f7b4"
 FIXTURE_SHA = "c4360d8a759c68c305fba0df7bd04001a6b043d8a2a57b36f0d8ef0f898519b9"
 PRODUCER_SHA = "b3849443d0d4d737d5c3f88b323b9eaffbd1045500d97f1487c56be639884bbe"
 INPUT_DIGEST = "ec7b4845c37fb7cbe2a64a866f8b6cdc03479d65593cdb0a1d01102fe56fc335"
+RETAINED_FIXTURE_SHA = "3962186640b42648b345fa200516ed44a3de4ccab0d783e671c9c22c3b8b1bbd"
+RETAINED_PRODUCER_SHA = "c48e88b5d6bd8dff20b052bedebf0a4a48354d57caa1d2944b2dda16281805b2"
+WIDER_CASES = (
+    (128, "all-live-1", "791067affc1eeba53660a0044369f22f1f463535656419c5da9a486517222c7a"),
+    (1024, "native-all-live-1024", "948a46156a129e61b5beadce977e6314b6e96c9570a439724813fe9592fa6357"),
+    (8192, "native-all-live-8192", "ca9d34d962e308e6e53af8e14101058e8f02fbb4151bcc65eda2ad88be3de1f0"),
+)
 REFERENCE_OWNER = "scripts/arbiter-fp16-reference.py"
 PUBLISHER_OWNER = "scripts/arbiter/export/qwen/qwen3-challengers-r1/qwen3_reference_r2.py"
 REFERENCES = {
@@ -31,6 +42,9 @@ REFERENCES = {
 MAX_WALL_SECONDS = 600
 MAX_JSON_BYTES = 32 << 20
 RESULT_MARKER = "AIRK_FP16_COMPACT_REFERENCE "
+WIDER_RESULT_MARKER = "AIRK_FP16_COMPACT_WIDER_REFERENCE "
+PROOF_SCHEMA = "airk.private.compact-fp16-independent-proof/1"
+WIDER_PROOF_SCHEMA = "airk.private.compact-fp16-wider-independent-proof/1"
 
 
 def require(condition, message):
@@ -186,9 +200,9 @@ def authenticated_conversion(args, check):
     return conversion, plan, plan_pin, receipt_pin, proofs, token
 
 
-def exact_reference(check):
-    fixture, fixture_pin = read_pinned_json(FP32_ROOT / "numeric-fixture.json", FIXTURE_SHA, check)
-    producer, producer_pin = read_pinned_json(FP32_ROOT / "reference-producer.json", PRODUCER_SHA, check)
+def reference_pair(root, fixture_sha, producer_sha, check):
+    fixture, fixture_pin = read_pinned_json(root / "numeric-fixture.json", fixture_sha, check)
+    producer, producer_pin = read_pinned_json(root / "reference-producer.json", producer_sha, check)
     require(fixture["schema"] == "airk.arbiter.native-numeric/2"
             and producer["schema"] == "airk.arbiter.independent-native-numeric-reference/2"
             and fixture["reference_producer"] == {key: producer_pin[key] for key in ("path", "sha256")}
@@ -197,6 +211,25 @@ def exact_reference(check):
             and fixture["resource_policy"] == producer["resource_policy_digest"]
             and fixture["original_reference_assets"] == producer["original_reference_assets"],
             "retained independent original FP32 lineage differs")
+    return fixture, fixture_pin, producer, producer_pin
+
+
+def finite_scores(scores):
+    return isinstance(scores, list) and len(scores) == 8 and all(
+        type(value) in (int, float) and math.isfinite(value) for value in scores
+    )
+
+
+def reference_row(row, fixture, fixture_pin, producer_pin):
+    scores = row["reference_original_fp32"]
+    require(finite_scores(scores), "complete finite original FP32 scores required")
+    return {"fixture": fixture_pin, "producer": producer_pin, "name": row["name"], "input": row["input"],
+            "model": MODEL, "compiler": fixture["compiler"], "resource_policy": fixture["resource_policy"],
+            "original_fp32": scores}
+
+
+def exact_reference(check):
+    fixture, fixture_pin, producer, producer_pin = reference_pair(FP32_ROOT, FIXTURE_SHA, PRODUCER_SHA, check)
     rows = [row for row in fixture["rows"] if row["name"] == "diagnostic-all-live-32"]
     require(len(rows) == 1, "exact retained T32 row required")
     row = rows[0]
@@ -206,13 +239,49 @@ def exact_reference(check):
         "candidate_positions": list(range(32, 40)), "option_mask": [True] * 8,
         "input_digest": INPUT_DIGEST,
     }, "retained T32/N8 native input differs")
-    scores = row["reference_original_fp32"]
-    require(len(scores) == 8 and all(type(x) in (int, float) and math.isfinite(x) for x in scores),
-            "complete finite original FP32 scores required")
-    proof = {"fixture": fixture_pin, "producer": producer_pin, "name": row["name"], "input": row["input"],
-             "model": MODEL, "compiler": fixture["compiler"], "resource_policy": fixture["resource_policy"],
-             "original_fp32": scores}
-    return proof, producer["original_source_files"]
+    return reference_row(row, fixture, fixture_pin, producer_pin), producer["original_source_files"]
+
+
+def wider_references(check):
+    retained, retained_pin, predecessor, predecessor_pin = reference_pair(
+        RETAINED_FP32_ROOT, RETAINED_FIXTURE_SHA, RETAINED_PRODUCER_SHA, check,
+    )
+    supplemental, supplemental_pin, current, current_pin = reference_pair(
+        FP32_ROOT, FIXTURE_SHA, PRODUCER_SHA, check,
+    )
+    require(all(retained[key] == supplemental[key] for key in
+                ("compiler", "resource_policy", "original_reference_assets"))
+            and predecessor["original_source_files"] == current["original_source_files"],
+            "wider Compact original FP32 lineage differs")
+    require([len(row["input"]["input_ids"]) for row in retained["rows"]] == [17, 128, 8192]
+            and [len(row["input"]["input_ids"]) for row in supplemental["rows"]] == [32, 1024],
+            "exact retained and supplemental width rosters required")
+    rows = (
+        (retained["rows"][1], retained, retained_pin, predecessor_pin),
+        (supplemental["rows"][1], supplemental, supplemental_pin, current_pin),
+        (retained["rows"][2], retained, retained_pin, predecessor_pin),
+    )
+    references = []
+    for (width, name, digest), (row, fixture, fixture_pin, producer_pin) in zip(WIDER_CASES, rows):
+        source = row["input"]
+        require(row["name"] == name and source["input_digest"] == digest
+                and source["decision_position"] == width - 1
+                and source["attention_mask"] == [1] * width
+                and source["position_ids"] == list(range(width))
+                and len(source["candidate_positions"]) == 8 and source["option_mask"] == [True] * 8,
+                "exact wider Compact native input differs")
+        references.append(reference_row(row, fixture, fixture_pin, producer_pin))
+    return references, predecessor["original_source_files"]
+
+
+def validate_wider_observation(observed, expected):
+    require(isinstance(observed, list) and len(observed) == len(expected) == 3,
+            "exact wider Compact reference roster required")
+    for actual, source in zip(observed, expected):
+        require(isinstance(actual, dict) and set(actual) == source.keys() | {"matching_fp16"}
+                and all(actual[key] == value for key, value in source.items())
+                and finite_scores(actual["matching_fp16"]),
+                "wider Compact matching-half row or source identity differs")
 
 
 def verify(args):
@@ -249,7 +318,11 @@ def verify(args):
     original_files, closure_pin = read_pinned_json(plan["source_closure"]["path"], plan["source_closure"]["sha256"], check)
     require(closure_pin == plan["source_closure"], "original source closure length differs")
 
-    reference, publisher_files = exact_reference(check)
+    if args.wider:
+        references, publisher_files = wider_references(check)
+    else:
+        reference, publisher_files = exact_reference(check)
+        references = [reference]
     publisher_directory = PUBLISHER_ROOT / "candidate-assets/Qwen--Qwen3-1.7B"
     for name, row in publisher_files.items():
         require(Path(name).name == name and row["path"] == str(publisher_directory / name),
@@ -293,28 +366,35 @@ def verify(args):
         original_graph=original_graph, original_files=original_files,
     )
     check()
-    scores = independent.forward(reference["input"])
-    require(scores.dtype == torch.float32 and scores.device.type == "cpu" and tuple(scores.shape) == (1, 8)
-            and not torch.cuda.is_initialized(), "one CPU-only FP32-ABI T32 reference vector required")
-    reference["matching_fp16"] = scores[0].tolist()
-    require(all(math.isfinite(item) for item in reference["matching_fp16"]), "nonfinite matching-half scores")
+    for reference in references:
+        check()
+        scores = independent.forward(reference["input"])
+        check()
+        require(scores.dtype == torch.float32 and scores.device.type == "cpu" and tuple(scores.shape) == (1, 8)
+                and not torch.cuda.is_initialized(), "CPU-only FP32-ABI Compact reference vector required")
+        reference["matching_fp16"] = scores[0].tolist()
+        require(finite_scores(reference["matching_fp16"]), "nonfinite matching-half scores")
 
+    reference_pins = {reference[key]["path"]: reference[key]
+                      for reference in references for key in ("fixture", "producer")}
     for row in (plan_pin, receipt_pin, plan["source_graph"], closure_pin, *candidate.values(),
-                *publisher_files.values(), *sources.values(), reference["fixture"], reference["producer"]):
+                *publisher_files.values(), *sources.values(), *reference_pins.values()):
         conversion.pinned(row, check)
     for name, row in original_files.items():
         conversion.pinned(dict(row, path=str(original_graph.parent / name)), check)
     loaded = loaded_runtime(source_and_runtime, conversion.pin, check)
     check()
     return {
-        "schema": "airk.private.compact-fp16-independent-proof/1", "model": MODEL, "complete": True,
+        "schema": WIDER_PROOF_SCHEMA if args.wider else PROOF_SCHEMA, "model": MODEL, "complete": True,
         "conversion_receipt": receipt_pin, "conversion_plan": plan_pin, "candidate": candidate,
         "original_graph": plan["source_graph"], "original_closure": closure_pin,
         "publisher": publisher, "publisher_files": publisher_files, "verification": verification,
-        "reference": reference, "reference_sources": sources, "loaded_runtime": loaded,
+        **({"references": references} if args.wider else {"reference": references[0]}),
+        "reference_sources": sources, "loaded_runtime": loaded,
         "execution_token": token, "pid": os.getpid(), "reference_device": "cpu",
         "original_deadline_monotonic": args.deadline_monotonic, "elapsed_seconds": time.monotonic() - started,
-        "model_inference": True, "torch_forward_invocations": 1, "native_execution": False, "qualification": False,
+        "model_inference": True, "torch_forward_invocations": len(references),
+        "native_execution": False, "qualification": False,
     }
 
 
@@ -366,7 +446,7 @@ def run_owned(args):
     conversion.guard(plan, temporary, True, deadline=deadline)
     stdin = out / "stdin.txt"
     stdout = out / "stdout-stderr.log"
-    proof = out / "compact-independent-proof.json"
+    proof = out / ("compact-wider-independent-proof.json" if args.wider else "compact-independent-proof.json")
     receipt_path = out / "execution.json"
     for path in (stdin, stdout, proof, receipt_path):
         conversion.guard(plan, path, deadline=deadline)
@@ -375,6 +455,8 @@ def run_owned(args):
             worker_pin["path"], "--conversion-receipt", prior_pin["path"],
             "--conversion-receipt-sha256", prior_pin["sha256"], "--conversion-plan", plan_pin["path"],
             "--conversion-plan-sha256", plan_pin["sha256"], "--deadline-monotonic", repr(deadline)]
+    if args.wider:
+        argv.append("--wider")
     environment = {key: value for key, value in os.environ.items()
                    if not key.upper().startswith(("AIRK_", "ORT_", "PYTHON", "CUDA_", "CUDNN_", "TORCH_", "TRITON_",
                                                   "HF_", "HUGGINGFACE_"))}
@@ -383,7 +465,8 @@ def run_owned(args):
                        TORCHINDUCTOR_CACHE_DIR=str(temporary), TRITON_CACHE_DIR=str(temporary),
                        TEMP=str(temporary), TMP=str(temporary), TMPDIR=str(temporary))
     host_bytes = 32 << 30
-    receipt = {"schema": "airk.private.owned-compact-fp16-independent-proof/1", "complete": False,
+    receipt = {"schema": ("airk.private.owned-compact-fp16-wider-independent-proof/1" if args.wider
+                          else "airk.private.owned-compact-fp16-independent-proof/1"), "complete": False,
                "qualification": False, "failure": None, "original_deadline_monotonic": deadline,
                "host_bytes": host_bytes, "command": argv, "execution_token": token,
                "conversion_plan": plan_pin, "conversion_receipt": prior_pin, "worker": worker_pin}
@@ -415,21 +498,28 @@ def run_owned(args):
         for path in temporary.rglob("*"):
             conversion.guard(plan, path, True, deadline=deadline)
         require(not any(temporary.iterdir()), "read-only reference worker created unexpected cache outputs")
-        marker = RESULT_MARKER.encode("ascii")
+        marker = (WIDER_RESULT_MARKER if args.wider else RESULT_MARKER).encode("ascii")
         with stdout.open("rb") as stream:
             results = [line[len(marker):] for line in stream if line.startswith(marker)]
         require(len(results) == 1 and 0 < len(results[0]) <= 16 << 20,
                 "exact bounded independent worker observation missing")
         observed = json.loads(results[0])
-        require(observed["schema"] == "airk.private.compact-fp16-independent-proof/1"
+        require(observed["schema"] == (WIDER_PROOF_SCHEMA if args.wider else PROOF_SCHEMA)
                 and observed["complete"] is observed["model_inference"] is True
                 and observed["native_execution"] is observed["qualification"] is False
                 and observed["conversion_plan"] == plan_pin and observed["conversion_receipt"] == prior_pin
                 and observed["original_deadline_monotonic"] == deadline
                 and observed["pid"] == owned["owned_leader_pid"] and observed["execution_token"] == token
-                and observed["reference_device"] == "cpu" and observed["torch_forward_invocations"] == 1
-                and observed["reference"]["input"]["input_digest"] == INPUT_DIGEST,
+                and observed["reference_device"] == "cpu"
+                and type(observed["torch_forward_invocations"]) is int
+                and observed["torch_forward_invocations"] == (3 if args.wider else 1),
                 "independent worker output differs from the owned request")
+        if args.wider:
+            expected, _ = wider_references(check)
+            validate_wider_observation(observed["references"], expected)
+        else:
+            require(observed["reference"]["input"]["input_digest"] == INPUT_DIGEST,
+                    "independent worker output differs from the owned request")
         check()
         with proof.open("xb") as stream:
             stream.write(results[0])
@@ -474,6 +564,7 @@ def main():
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--deadline-monotonic", type=float)
     mode.add_argument("--owned-output", type=Path)
+    parser.add_argument("--wider", action="store_true", help="verify exact retained T128, T1024, and T8192")
     args = parser.parse_args()
     if args.owned_output is not None:
         print(json.dumps({"proof": run_owned(args), "qualification": False}))
@@ -481,7 +572,7 @@ def main():
     encoded = json.dumps(verify(args), separators=(",", ":"), allow_nan=False)
     require(len(encoded.encode("utf-8")) <= 16 << 20, "independent proof output exceeds its bound")
     require(time.monotonic() < args.deadline_monotonic, "original reference deadline expired before retention")
-    print(RESULT_MARKER + encoded, flush=True)
+    print((WIDER_RESULT_MARKER if args.wider else RESULT_MARKER) + encoded, flush=True)
 
 
 if __name__ == "__main__":

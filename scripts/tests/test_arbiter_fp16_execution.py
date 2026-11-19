@@ -132,6 +132,96 @@ class IndependentReferenceImportControls(unittest.TestCase):
             reference.loaded_runtime({}, lambda file, check: real_pin, lambda: None, [real])
 
 
+class WiderCompactReferenceControls(unittest.TestCase):
+    CASES = (
+        (128, "all-live-1", "791067affc1eeba53660a0044369f22f1f463535656419c5da9a486517222c7a"),
+        (1024, "native-all-live-1024", "948a46156a129e61b5beadce977e6314b6e96c9570a439724813fe9592fa6357"),
+        (8192, "native-all-live-8192", "ca9d34d962e308e6e53af8e14101058e8f02fbb4151bcc65eda2ad88be3de1f0"),
+    )
+
+    @classmethod
+    def setUpClass(cls):
+        path = ROOT / "scripts/arbiter-fp16-execution/verify_compact.py"
+        spec = importlib.util.spec_from_file_location("compact_wider_reference", path)
+        cls.reference = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.reference)
+
+    def source_row(self, width, name, digest):
+        return {
+            "name": name,
+            "input": {"prompt": "", "input_ids": [1] * width, "attention_mask": [1] * width,
+                      "position_ids": list(range(width)), "decision_position": width - 1,
+                      "candidate_positions": list(range(8)), "option_mask": [True] * 8, "input_digest": digest},
+            "reference_original_fp32": [-1.0, 2.0, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0],
+        }
+
+    def pairs(self):
+        short, middle, longest = [self.source_row(*case) for case in self.CASES]
+        fixture = {"compiler": "literal", "resource_policy": "120", "original_reference_assets": {"graph": "fp32"}}
+        retained = dict(fixture, rows=[self.source_row(17, "retained-t17", "d" * 64), short, longest])
+        supplemental = dict(fixture, rows=[self.source_row(32, "existing-t32", "e" * 64), middle])
+        publisher = {"weights.bin": row("publisher")}
+        return [
+            (retained, row("retained-fixture"), {"original_source_files": publisher}, row("retained-producer")),
+            (supplemental, row("supplemental-fixture"), {"original_source_files": publisher}, row("supplemental-producer")),
+        ]
+
+    def select(self, pairs):
+        with patch.object(self.reference, "reference_pair", side_effect=pairs):
+            return self.reference.wider_references(lambda: None)
+
+    def test_exact_wider_roster_reuses_the_two_original_sources(self):
+        references, publisher = self.select(self.pairs())
+        self.assertEqual([(len(item["input"]["input_ids"]), item["name"], item["input"]["input_digest"])
+                          for item in references], list(self.CASES))
+        self.assertEqual([item["fixture"] for item in references],
+                         [row("retained-fixture"), row("supplemental-fixture"), row("retained-fixture")])
+        self.assertEqual(publisher, {"weights.bin": row("publisher")})
+
+    def test_fixture_lineage_and_native_input_drift_refuse(self):
+        def remove(pairs):
+            pairs[0][0]["rows"].pop()
+        def swap(pairs):
+            pairs[0][0]["rows"][1:] = reversed(pairs[0][0]["rows"][1:])
+        def move_digest(pairs):
+            pairs[1][0]["rows"][1]["input"]["input_digest"] = self.CASES[2][2]
+        def change_geometry(pairs):
+            pairs[1][0]["rows"][1]["input"]["option_mask"][0] = False
+        def change_publisher(pairs):
+            pairs[1][2]["original_source_files"] = {"weights.bin": row("foreign")}
+
+        for edit in (remove, swap, move_digest, change_geometry, change_publisher):
+            pairs = self.pairs()
+            edit(pairs)
+            with self.subTest(edit=edit.__name__), self.assertRaises(ValueError):
+                self.select(pairs)
+
+    def test_owned_result_rejects_missing_misbound_and_invalid_score_rows(self):
+        expected, _ = self.select(self.pairs())
+        actual = [dict(item, matching_fp16=[0.25] * 8) for item in expected]
+        self.reference.validate_wider_observation(actual, expected)
+        for bad in (actual[1:], actual[::-1], [actual[0]] * 3,
+                    [dict(actual[0], fixture=row("wrong")), *actual[1:]],
+                    [dict(actual[0], matching_fp16=[0.25] * 7), *actual[1:]],
+                    [dict(actual[0], matching_fp16=[float("nan")] * 8), *actual[1:]],
+                    [dict(actual[0], matching_fp16=[True] * 8), *actual[1:]]):
+            with self.assertRaises(ValueError):
+                self.reference.validate_wider_observation(bad, expected)
+
+    def test_cli_preserves_default_and_uses_a_separate_wider_marker(self):
+        for args, wider, marker in (([], False, "AIRK_FP16_COMPACT_REFERENCE "),
+                                    (["--wider"], True, "AIRK_FP16_COMPACT_WIDER_REFERENCE ")):
+            argv = ["verify_compact.py", "--conversion-plan", "plan", "--conversion-plan-sha256", "a",
+                    "--conversion-receipt", "receipt", "--conversion-receipt-sha256", "b",
+                    "--deadline-monotonic", str(self.reference.time.monotonic() + 600), *args]
+            with self.subTest(wider=wider), patch.object(self.reference.sys, "argv", argv), \
+                    patch.object(self.reference, "verify", return_value={"complete": True}) as verify, \
+                    patch("builtins.print") as emit:
+                self.reference.main()
+                self.assertIs(verify.call_args.args[0].wider, wider)
+                emit.assert_called_once_with(marker + '{"complete":true}', flush=True)
+
+
 class CompactT32ComparisonControls(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

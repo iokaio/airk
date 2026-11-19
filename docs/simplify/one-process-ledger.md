@@ -11372,3 +11372,23 @@ Proceed with the corrected owned Compact conversion, independent T32
 proof, metadata and disposable typed final graph. Review the fresh final
 placement before the next bounded T32 forward. None of the source-stage
 checks establishes native CUDA execution or qualification.
+
+### 2026-11-19 — Compact wider independent reference preparation
+
+The CPU reference owner now has an explicit wider mode for the exact N8
+T128, T1024 and T8192 inputs. It reopens both original FP32 fixture and
+producer pairs, requires identical compiler, policy and publisher source
+lineage, authenticates the corrected candidate graph and parameters once,
+and runs the existing independent half recipe serially. The wider result
+has its own private receipt. The T32 selector, result marker and proof
+format are preserved. Both modes retain the existing CPU-only Job,
+600-second absolute deadline, 32 GiB process and Job limits, 64 MiB log
+and five-second cleanup.
+
+On the verified Windows human account, all 74 focused launcher controls
+passed. A model-free admission check authenticated the two exact fixture
+and producer pairs and their four input digests. Worker SHA-256
+890776574ac427a133632766d69f1bcf5cfac31e09d9c3645d7266e49df7af47.
+No wider forward, timing, memory measurement or pass is established.
+After corrected Compact T32 clears, run the wider independent CPU proof
+on the exact same converted candidate before the four-width CUDA probe.
