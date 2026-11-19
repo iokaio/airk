@@ -283,3 +283,17 @@ The migration index uses the extracted body's SHA256, retaining the container pi
 separately; capturing a source fragment never claims preservation of the whole
 surrounding report. Malformed ranges, reordered operations or extra prefix code
 refuse.
+
+Reconciliation uses the selected 8 or 16 workers for independent disposition
+proof rows as well as fresh candidate checks. Results merge in input order on
+the main thread. Maps containing recovery imports, JavaScript AST fixtures or
+literal/template proofs remain serial. Each row still checks its current source
+and ancestry and validates its declared pins. A per-key memo loads shared proof
+inputs once without serializing unrelated keys; failed loads release the key
+and are never cached. All shared file evidence is freshly rehashed after workers
+settle. Immutable Git commit/path cache entries retain raw blob validation and
+per-row declared-pin checks.
+
+Use `--progress` to emit phase and map boundaries plus each 1,000 completed rows
+to stderr. Reports retain phase timings. This does not renew the caller's total
+deadline, suppress failures or turn input-role evidence into exact reproduction.

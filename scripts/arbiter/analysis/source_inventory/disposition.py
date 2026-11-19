@@ -6,6 +6,7 @@ import hashlib
 import json
 import subprocess
 from pathlib import Path
+from audit_memo import cached
 
 
 def lane(row):
@@ -141,11 +142,11 @@ def verify_disposition_row(row, repo, observe, checked_path, observe_evidence=No
         document_cache=git_cache if git_cache is not None else {}
         def document(item):
             key=('fixture-document',item['path'],item['sha256'])
-            if key not in document_cache:
+            def load_document():
                 raw=checked_path(repo,item['path'],'artifacts/').read_bytes()
                 if hashlib.sha256(raw).hexdigest()!=item['sha256']:raise ValueError('fixture metadata changed during read')
-                document_cache[key]=json.loads(raw)
-            return document_cache[key]
+                return json.loads(raw)
+            return cached(document_cache,key,load_document)
         inputs=document(input_pin);summary=document(summary_pin);label=fixture.get('label')
         choices=[r for r in inputs.get('workspaces',[]) if r.get('label')==label]
         if not isinstance(label,str) or not label or len(choices)!=1:raise ValueError('fixture input label is not unique')
@@ -332,15 +333,15 @@ def verify_disposition_row(row, repo, observe, checked_path, observe_evidence=No
             head=version['reachable_head'];oid=version['git_blob_oid']
             if re.fullmatch('[0-9a-f]{40}|[0-9a-f]{64}',head) is None or re.fullmatch('[0-9a-f]{40}|[0-9a-f]{64}',oid) is None:
                 raise ValueError('invalid reachable source Git identity')
-            if ('reachable',head) not in cache:
+            def load_reachable():
                 listing=subprocess.check_output(['git','-C',str(repo),'rev-list','--objects',head])
-                cache[('reachable',head)]={line.split(b' ',1)[0].decode('ascii') for line in listing.splitlines()}
-            if oid not in cache[('reachable',head)]:raise ValueError('source blob not reachable from recorded head')
-            if ('blob',oid) not in cache:
+                return {line.split(b' ',1)[0].decode('ascii') for line in listing.splitlines()}
+            if oid not in cached(cache,('reachable',head),load_reachable):raise ValueError('source blob not reachable from recorded head')
+            def load_blob():
                 raw=subprocess.check_output(['git','-C',str(repo),'cat-file','blob',oid])
                 if len(raw)>16 << 20:raise ValueError('TypeScript source blob exceeds16MiB')
-                cache[('blob',oid)]={'sha256':hashlib.sha256(raw).hexdigest(),'bytes':len(raw)}
-            actual=cache[('blob',oid)]
+                return {'sha256':hashlib.sha256(raw).hexdigest(),'bytes':len(raw)}
+            actual=cached(cache,('blob',oid),load_blob)
             if actual['sha256']!=version.get('sha256') or actual['bytes']!=version.get('bytes'):
                 raise ValueError('reachable TypeScript blob content differs')
             version_pin={'sha256':actual['sha256'],'bytes':actual['bytes']}
@@ -357,7 +358,7 @@ def verify_disposition_row(row, repo, observe, checked_path, observe_evidence=No
             if re.fullmatch('[0-9a-f]{40}|[0-9a-f]{64}',commit) is None or not isinstance(git_path,str) or ':' in git_path or '\\' in git_path or any(p in ('','..','.') for p in git_path.split('/')):
                 raise ValueError('invalid Git source locator')
             cache=git_cache if git_cache is not None else {};key=('commit_path',str(repo),commit,git_path)
-            if key not in cache:
+            def load_commit_path():
                 oid=subprocess.check_output(['git','-C',str(repo),'rev-parse','--verify',commit+':'+git_path]).decode('ascii').strip()
                 if re.fullmatch('[0-9a-f]{40}|[0-9a-f]{64}',oid) is None:raise ValueError('invalid resolved source blob identity')
                 size_raw=subprocess.check_output(['git','-C',str(repo),'cat-file','-s',oid]).decode('ascii').strip()
@@ -366,8 +367,8 @@ def verify_disposition_row(row, repo, observe, checked_path, observe_evidence=No
                 if len(raw)!=int(size_raw):raise ValueError('historical TypeScript source size differs')
                 blob=(hashlib.sha1 if len(oid)==40 else hashlib.sha256)(b'blob '+str(len(raw)).encode('ascii')+b'\0'+raw).hexdigest()
                 if blob!=oid:raise ValueError('resolved Git blob bytes differ')
-                cache[key]=(raw,oid)
-            raw,oid=cache[key]
+                return raw,oid
+            raw,oid=cached(cache,key,load_commit_path)
             if version.get('git_blob_oid') is not None and version['git_blob_oid']!=oid:raise ValueError('declared source Git blob identity differs')
             retained=checked_path(repo,version['path'],'artifacts/').read_bytes()
             if hashlib.sha256(raw).hexdigest()!=version_pin['sha256']:

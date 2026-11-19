@@ -10,6 +10,7 @@ import sys
 import time
 import datetime
 from concurrent.futures import ThreadPoolExecutor
+from audit_memo import VerifiedMemo, cached
 sys.dont_write_bytecode=True
 import inventory as scanner
 from disposition import verify_disposition_row, parse_map_pin
@@ -53,6 +54,13 @@ def observe_tracked_owners(repo, rows, tracked_names, object_format, observe=sca
     return current,observations
 
 
+def register_evidence(cache,path,identity):
+    first=cached(cache,str(path),lambda:identity)
+    if any(first[key]!=identity[key] for key in ['source_sha256','bytes']):
+        raise ValueError('shared evidence changed before map registration')
+    return first
+
+
 def recheck_evidence(cache, object_format, observe=scanner.evidence_hashes):
     errors=[]
     for path,previous in cache.items():
@@ -82,29 +90,45 @@ def merge_inventories(values):
     return merged
 
 
+SERIAL_PROOF_KINDS=frozenset({'observed_source_recovery','generated_javascript_fixture','generated_literal','generated_template'})
+
+
+def ordered_proof_results(pool,rows,verify):
+    if any(not isinstance(row,dict) for row in rows):raise ValueError('disposition rows must be objects')
+    if any(row.get('disposition') in SERIAL_PROOF_KINDS for row in rows):return map(verify,rows)
+    return pool.map(verify,rows)
+
+
 def main():
     started=datetime.datetime.now(datetime.timezone.utc).isoformat();clock=time.monotonic()
-    source_files=[Path(__file__),Path(scanner.__file__),Path(__file__).with_name('disposition.py')]
+    source_files=[Path(__file__),Path(scanner.__file__),Path(__file__).with_name('disposition.py'),Path(__file__).with_name('audit_memo.py')]
     source_pins={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in source_files}
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('inventory',type=Path)
     p.add_argument('--disposition-map',action='append',default=[],help='Pinned external map PATH=SHA256; repeat as needed')
     p.add_argument('--hash-workers',type=int,choices=[8,16],default=8)
     p.add_argument('--additional-inventory',type=Path,action='append',default=[],help='Frozen compatible inventory; merge exact candidate paths without traversal')
-    args=p.parse_args();inputs=[];values=[]
+    p.add_argument('--progress',action='store_true',help='Bounded phase/map and1000-row progress on stderr')
+    args=p.parse_args();inputs=[];values=[];phase_times={};phase_state=['load_inputs',time.monotonic()]
+    def progress(phase,**fields):
+        if args.progress:print(json.dumps({'phase':phase,'elapsed_seconds':round(time.monotonic()-clock,3),**fields}),file=sys.stderr,flush=True)
+    def phase(name):
+        now=time.monotonic();phase_times[phase_state[0]]=now-phase_state[1];phase_state[:]=[name,now];progress(name)
+    progress('load_inputs')
     for path in [args.inventory,*args.additional_inventory]:
         raw=path.read_bytes();value=json.loads(raw);values.append(value)
         inputs.append({'path':str(path),'sha256':hashlib.sha256(raw).hexdigest(),'bytes':len(raw),'candidates':len(value.get('candidates',[]))})
     old=merge_inventories(values)
     repo=Path(old['repository']);errors=[]
+    phase('reachable_git_and_tracked_owners')
     committed=scanner.reachable_blobs(repo,old['head'])
     tracked_names={p.decode('utf-8').replace('\\','/') for p in scanner.git(repo,'ls-files','-z').split(b'\0') if p}
     tracked_current,tracked_observations=observe_tracked_owners(repo,old['candidates'],tracked_names,old['object_format'])
+    phase('maintained_migration_maps')
     migrations,maps=scanner.migration_index(repo,old['object_format'],set(),set(),errors)
-    excluded={};documents=[];evidence_cache={};git_proof_cache={}
+    excluded={};documents=[];evidence_cache=VerifiedMemo();git_proof_cache=VerifiedMemo()
     def observe_evidence(path,fmt):
         key=str(path)
-        if key not in evidence_cache:evidence_cache[key]=scanner.evidence_hashes(path,fmt)
-        return evidence_cache[key]
+        return cached(evidence_cache,key,lambda:scanner.evidence_hashes(path,fmt))
     discovered={p for p in (repo/'scripts/arbiter').rglob('*disposition.json') if p.name in ['source-disposition.json','generated-disposition.json']}
     explicit_pins={}
     for supplied in args.disposition_map:
@@ -112,19 +136,31 @@ def main():
         if path in explicit_pins and explicit_pins[path]!=digest:raise ValueError('conflicting external map pins')
         explicit_pins[path]=digest
     discovered.update(explicit_pins)
-    for path in sorted(discovered):
-        try:
-            value,identity=scanner.verified_json(path,old['object_format'])
-            evidence_cache[str(path)]=identity
-            if path in explicit_pins and identity['source_sha256']!=explicit_pins[path]:raise ValueError('external disposition document pin differs')
-            if value.get('schema')!='airk.source-disposition/1' or not isinstance(value.get('files'),list):raise ValueError('unsupported disposition map')
-            document={'path':path.relative_to(repo).as_posix(),'sha256':identity['source_sha256'],'rows':0};documents.append(document)
-            for row in value['files']:
-                verified=verify_disposition_row(row,repo,scanner.source_hashes,scanner.checked_relative,observe_evidence,git_proof_cache)
-                key=(row['source'],row['source_sha256'])
-                if key in excluded and excluded[key]['disposition']!=row['disposition']:raise ValueError('conflicting disposition evidence')
-                excluded[key]={**verified,'map':document['path'],'map_sha256':document['sha256']};document['rows']+=1
-        except (OSError,ValueError,KeyError,TypeError,subprocess.SubprocessError) as error:scanner.record_error(errors,path,'disposition_map',error)
+    phase('disposition_proofs')
+    def verify_one(row):
+        try:return row,verify_disposition_row(row,repo,scanner.source_hashes,scanner.checked_relative,observe_evidence,git_proof_cache),None
+        except (OSError,ValueError,KeyError,TypeError,subprocess.SubprocessError) as error:return row,None,error
+    with ThreadPoolExecutor(max_workers=args.hash_workers) as proof_pool:
+        for path in sorted(discovered):
+            try:
+                value,identity=scanner.verified_json(path,old['object_format'])
+                register_evidence(evidence_cache,path,identity)
+                if path in explicit_pins and identity['source_sha256']!=explicit_pins[path]:raise ValueError('external disposition document pin differs')
+                if not isinstance(value,dict) or value.get('schema')!='airk.source-disposition/1' or not isinstance(value.get('files'),list):raise ValueError('unsupported disposition map')
+                if any(not isinstance(row,dict) for row in value['files']):raise ValueError('disposition rows must be objects')
+                document={'path':path.relative_to(repo).as_posix(),'sha256':identity['source_sha256'],'rows':0};documents.append(document)
+                progress('disposition_map_start',path=document['path'],total=len(value['files']),serial=any(r.get('disposition') in SERIAL_PROOF_KINDS for r in value['files']))
+                for completed,(row,verified,error) in enumerate(ordered_proof_results(proof_pool,value['files'],verify_one),1):
+                    if error is not None:
+                        scanner.record_error(errors,path,'disposition_row',error);errors[-1]['source']=row.get('source')
+                    else:
+                        key=(row['source'],row['source_sha256'])
+                        if key in excluded and excluded[key]['disposition']!=row['disposition']:scanner.record_error(errors,path,'disposition_row',ValueError('conflicting disposition evidence'))
+                        else:excluded[key]={**verified,'map':document['path'],'map_sha256':document['sha256']};document['rows']+=1
+                    if completed%1000==0:progress('disposition_rows',path=document['path'],completed=completed,total=len(value['files']))
+                progress('disposition_map_complete',path=document['path'],verified=document['rows'],total=len(value['files']))
+            except (OSError,ValueError,KeyError,TypeError,subprocess.SubprocessError) as error:scanner.record_error(errors,path,'disposition_map',error)
+    phase('candidate_rechecks')
     rows=[]
     def recheck(row):
         try:
@@ -134,17 +170,21 @@ def main():
         except (OSError,ValueError,KeyError,TypeError,subprocess.SubprocessError) as error:
             return None,{'path':row['path'],'stage':'candidate_recheck','type':type(error).__name__,'message':str(error)}
     with ThreadPoolExecutor(max_workers=args.hash_workers) as pool:
-        for row,error in pool.map(recheck,old['candidates']):
+        for completed,(row,error) in enumerate(pool.map(recheck,old['candidates']),1):
             if row is not None:rows.append(row)
             if error is not None:errors.append(error)
-    errors.extend(recheck_evidence(evidence_cache,old['object_format']))
+            if completed%1000==0:progress('candidate_rows',completed=completed,total=len(old['candidates']))
+    phase('shared_evidence_final_recheck')
+    errors.extend(recheck_evidence(evidence_cache.snapshot(),old['object_format']))
+    phase('source_final_recheck')
     counts=Counter(row['status'] for row in rows)
     for p in source_files:
         if hashlib.sha256(p.read_bytes()).hexdigest()!=source_pins[p.name]:
             scanner.record_error(errors,p,'verifier_source_changed',ValueError('verifier changed during reconciliation'))
+    phase('report_serialization')
     report={'schema':'airk.private.source-rescue-reconciliation/1','inventory':str(args.inventory),
             'inventory_sha256':inputs[0]['sha256'],'input_inventories':inputs,'scope':old['roots'],
-            'hash_workers':args.hash_workers,'shared_evidence_start_end_rechecked':len(evidence_cache),
+            'hash_workers':args.hash_workers,'phase_elapsed_seconds':phase_times,'shared_evidence_start_end_rechecked':len(evidence_cache),
             'started_utc':started,'elapsed_seconds':time.monotonic()-clock,
             'source_pins':source_pins,
             'input_errors':old['errors'],'input_exclusions':old['excluded'],'prior_limitations':old['reported_prior_scan_notes'],
@@ -153,7 +193,7 @@ def main():
             'zero_unclassified_accessible_candidates':not errors and not counts['unresolved'] and len(rows)==len(old['candidates']),
             'all_artifacts_or_all_embedded_code_complete':False,
             'qualification':False,'commit_status':'Must be verified separately after authorized commit.'}
-    print(json.dumps(report,indent=2,ensure_ascii=True))
+    print(json.dumps(report,indent=2,ensure_ascii=True));sys.stdout.flush();progress('complete',rows=len(rows),errors=len(errors))
     return 0 if report['zero_unclassified_accessible_candidates'] else 1
 
 

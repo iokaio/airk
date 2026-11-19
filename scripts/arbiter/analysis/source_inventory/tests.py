@@ -412,7 +412,8 @@ class EvidenceDisposition(unittest.TestCase):
         self.row['disposition']='generated_from_maintained_typescript'
         version={'path':'artifacts/build/source.ts','sha256':hashlib.sha256(retained).hexdigest(),'bytes':len(retained),'git_commit':'c'*40,'git_path':'packages/source.ts','normalization':'CRLF to LF only','git_blob_oid':oid}
         self.row['generated']={'compiler':{'path':'packages/typescript.js','sha256':'a'*64,'bytes':10},'source_version':version,'options':{},'method':'exact retained replay','reproduced_js_sha256':'a'*64}
-        cache={};calls=[]
+        from audit_memo import VerifiedMemo
+        cache=VerifiedMemo();calls=[]
         def observe(path,fmt):
             return {'source_sha256':hashlib.sha256(retained).hexdigest(),'bytes':len(retained)} if path.name=='source.ts' else self.observe(path,fmt)
         oversized=False
@@ -627,7 +628,97 @@ class EvidenceDisposition(unittest.TestCase):
         with self.assertRaises(ValueError):self.verify()
 
 
+class ParallelMemo(unittest.TestCase):
+    def test_same_key_single_load_under_concurrency(self):
+        from audit_memo import VerifiedMemo
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier,Event,Lock
+        memo=VerifiedMemo();barrier=Barrier(3);entered=Event();release=Event();calls=[];guard=Lock();value=object()
+        def load():
+            with guard:calls.append(1)
+            entered.set()
+            if not release.wait(2):raise RuntimeError('test release deadline')
+            return value
+        def work():barrier.wait(timeout=2);return memo.get_or_compute('same',load)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            a=pool.submit(work);b=pool.submit(work)
+            try:barrier.wait(timeout=2);self.assertTrue(entered.wait(2))
+            finally:release.set()
+            self.assertIs(a.result(timeout=2),value);self.assertIs(b.result(timeout=2),value)
+        self.assertEqual(calls,[1]);self.assertEqual(len(memo),1)
+
+    def test_failure_unlocks_without_caching_failure(self):
+        from audit_memo import VerifiedMemo
+        from threading import Event,Thread
+        memo=VerifiedMemo()
+        def fail():raise ValueError('expected failure')
+        with self.assertRaises(ValueError):memo.get_or_compute('key',fail)
+        self.assertEqual(len(memo),0);done=Event();results=[]
+        def next_load():results.append(memo.get_or_compute('key',lambda:'valid'));done.set()
+        thread=Thread(target=next_load,daemon=True);thread.start()
+        self.assertTrue(done.wait(2));self.assertEqual(results,['valid'])
+
+    def test_unrelated_keys_do_not_share_compute_lock(self):
+        from audit_memo import VerifiedMemo
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Event
+        memo=VerifiedMemo();entered=Event();release=Event()
+        def slow():
+            entered.set()
+            if not release.wait(2):raise RuntimeError('test release deadline')
+            return 'a'
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            a=pool.submit(memo.get_or_compute,'a',slow)
+            try:
+                self.assertTrue(entered.wait(2));b=pool.submit(memo.get_or_compute,'b',lambda:'b');self.assertEqual(b.result(timeout=1),'b')
+            finally:release.set()
+            self.assertEqual(a.result(timeout=2),'a')
+
+
 class Reconciliation(unittest.TestCase):
+    def test_map_registration_preserves_first_evidence_observation(self):
+        import sys
+        from audit_memo import VerifiedMemo
+        rs=importlib.util.spec_from_file_location('reconcile',Path(__file__).with_name('reconcile.py'));r=importlib.util.module_from_spec(rs)
+        with patch.dict(sys.modules,{'inventory':m}):rs.loader.exec_module(r)
+        memo=VerifiedMemo();first={'source_sha256':'a'*64,'bytes':10}
+        r.register_evidence(memo,'proof.json',first)
+        self.assertIs(r.register_evidence(memo,'proof.json',{**first,'git_blob_oid':'b'*40}),first)
+        for changed in [{**first,'source_sha256':'c'*64},{**first,'bytes':11}]:
+            with self.assertRaises(ValueError):r.register_evidence(memo,'proof.json',changed)
+        self.assertIs(memo['proof.json'],first)
+
+    def test_parallel_proofs_merge_in_order_and_dynamic_modes_stay_serial(self):
+        import sys
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Event,get_ident
+        rs=importlib.util.spec_from_file_location('reconcile',Path(__file__).with_name('reconcile.py'));r=importlib.util.module_from_spec(rs)
+        with patch.dict(sys.modules,{'inventory':m}):rs.loader.exec_module(r)
+        signal=Event();finished=[];main=get_ident();worker_ids=[]
+        def verify(row):
+            worker_ids.append(get_ident())
+            if row['i']==0:
+                if not signal.wait(2):raise RuntimeError('test ordering deadline')
+            else:signal.set()
+            finished.append(row['i']);return row['i']
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            result=list(r.ordered_proof_results(pool,[{'i':0,'disposition':'upstream_build_input'},{'i':1,'disposition':'upstream_build_input'}],verify))
+        self.assertEqual(result,[0,1]);self.assertTrue(all(i!=main for i in worker_ids))
+        class NoParallel:
+            def map(self,*args):raise AssertionError('dynamic mode dispatched to worker')
+        for kind in ['observed_source_recovery','generated_javascript_fixture','generated_literal','generated_template']:
+            ids=list(r.ordered_proof_results(NoParallel(),[{'disposition':kind}],lambda row:get_ident()));self.assertEqual(ids,[main])
+        with self.assertRaises(ValueError):list(r.ordered_proof_results(NoParallel(),[None],lambda row:row))
+
+    def test_final_recheck_rejects_changed_shared_memo_input(self):
+        import sys
+        from audit_memo import VerifiedMemo
+        rs=importlib.util.spec_from_file_location('reconcile',Path(__file__).with_name('reconcile.py'));r=importlib.util.module_from_spec(rs)
+        with patch.dict(sys.modules,{'inventory':m}):rs.loader.exec_module(r)
+        memo=VerifiedMemo();memo.get_or_compute('proof.json',lambda:{'source_sha256':'a'*64,'bytes':10});snapshot=memo.snapshot()
+        errors=r.recheck_evidence(snapshot,'sha1',lambda path,fmt:{'source_sha256':'b'*64,'bytes':10})
+        self.assertEqual(len(errors),1);self.assertEqual(errors[0]['stage'],'evidence_final_recheck')
+
     def test_frozen_inventory_union_preserves_evidence_and_refuses_conflicts(self):
         import sys,copy
         ds=importlib.util.spec_from_file_location('disposition',Path(__file__).with_name('disposition.py'));d=importlib.util.module_from_spec(ds);ds.loader.exec_module(d)
