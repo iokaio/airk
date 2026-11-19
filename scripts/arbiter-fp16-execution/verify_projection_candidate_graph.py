@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Independently verify the private Compact FP32 Q/K/V MatMul graph delta."""
+"""Independently verify the private Compact FP32 Q/K/V or Q/K/V/O graph delta."""
 
 import re
 
@@ -56,7 +56,7 @@ def require_external_half(tensor, width, onnx):
             and storage["length"] == str(2 * 2048 * width), label)
 
 
-def baseline_census(model, onnx):
+def baseline_census(model, onnx, projections, output_projection):
     graph = model.graph
     require(tuple(item.name for item in graph.input) == _CONTEXT_INPUTS
             and tuple(item.type.tensor_type.elem_type for item in graph.input)
@@ -83,26 +83,31 @@ def baseline_census(model, onnx):
     require(not any(name.startswith(_NAMESPACE) for name in (*nodes, *values))
             and not any(item.name.startswith(_NAMESPACE) for item in graph.value_info),
             "baseline already uses the private projection namespace")
+    roles = "qkvo" if output_projection else "qkv"
     require("scores" in values
-            and {name for name in nodes if re.fullmatch(r"/scorer/layers\.[0-9]+/self_attn/[qkv]_proj/MatMul", name)}
-                == set(_PROJECTIONS), "baseline Compact Q/K/V projection census differs")
+            and {name for name in nodes if re.fullmatch(fr"/scorer/layers\.[0-9]+/self_attn/[{roles}]_proj/MatMul", name)}
+                == projections.keys(), "baseline Compact projection census differs")
     return nodes, initializers
 
 
-def verify_projection_candidate_graph(baseline, candidate, onnx):
-    """Verify two parsed ModelProtos. The caller authenticates and holds the baseline and sidecar bytes."""
+def verify_projection_candidate_graph(baseline, candidate, onnx, *, output_projection=False):
+    """Verify two parsed models over caller-authenticated baseline and sidecar bytes."""
+    require(type(output_projection) is bool, "explicit O projection selection required")
     require(isinstance(baseline, onnx.ModelProto) and isinstance(candidate, onnx.ModelProto)
             and baseline.HasField("graph") and candidate.HasField("graph"), "two complete ONNX models required")
     require(without_nodes(baseline, onnx) == without_nodes(candidate, onnx),
             "model metadata, graph declarations, or initializer storage changed")
-    nodes, initializers = baseline_census(baseline, onnx)
+    roster = dict(_PROJECTIONS)
+    if output_projection:
+        roster.update({f"/scorer/layers.{layer}/self_attn/o_proj/MatMul": 2048 for layer in range(28)})
+    nodes, initializers = baseline_census(baseline, onnx, roster, output_projection)
     actual = candidate.graph.node
-    require(len(actual) == len(nodes) + 3 * len(_PROJECTIONS), "exactly three added Casts per projection required")
+    require(len(actual) == len(nodes) + 3 * len(roster), "exactly three added Casts per projection required")
 
     index = 0
     projections = set()
     for original in baseline.graph.node:
-        if original.name not in _PROJECTIONS:
+        if original.name not in roster:
             require(serialized(original) == serialized(actual[index]),
                     "protected node changed or moved: " + original.name)
             index += 1
@@ -118,10 +123,26 @@ def verify_projection_candidate_graph(baseline, candidate, onnx):
                 and activation in nodes and len(nodes[activation].input) == 1
                 and weight in initializers and weight not in projections,
                 "baseline half operand or output boundary differs: " + original.name)
-        layer = original.name.split("/self_attn/", 1)[0]
-        require_cast(nodes[activation], activation, layer + "/input_layernorm/Mul_1_output_0", activation,
-                     onnx.TensorProto.FLOAT16, onnx)
-        require_external_half(initializers[weight], _PROJECTIONS[original.name], onnx)
+        layer, role = original.name.split("/self_attn/", 1)
+        original_source = layer + "/input_layernorm/Mul_1_output_0"
+        if role == "o_proj/MatMul":
+            layer_index = layer.rsplit(".", 1)[1]
+            attention = f"/airk_g5/attention/{layer_index}"
+            raw = attention + "/raw16"
+            restored = layer + "/self_attn/Reshape_7_output_0"
+            gqa = nodes.get(attention + "/efficient")
+            require(gqa is not None and gqa.op_type == "GroupQueryAttention" and gqa.domain == "com.microsoft"
+                    and list(gqa.output[:1]) == [raw] and attention + "/output32" in nodes,
+                    "baseline O attention source differs: " + original.name)
+            require_cast(nodes[attention + "/output32"], attention + "/output32", raw, restored,
+                         onnx.TensorProto.FLOAT, onnx)
+            result_restore = original_stem + "/output32"
+            require(result_restore in nodes, "baseline O result restoration missing: " + original.name)
+            require_cast(nodes[result_restore], result_restore, half_output, original.name + "_output_0",
+                         onnx.TensorProto.FLOAT, onnx)
+            original_source = restored
+        require_cast(nodes[activation], activation, original_source, activation, onnx.TensorProto.FLOAT16, onnx)
+        require_external_half(initializers[weight], roster[original.name], onnx)
         projections.add(weight)
 
         stem = _NAMESPACE[:-1] + original.name

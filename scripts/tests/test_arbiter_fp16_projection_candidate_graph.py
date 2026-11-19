@@ -23,7 +23,7 @@ class ProjectionCandidateGraphControls(unittest.TestCase):
     def setUpClass(cls):
         cls.verify = staticmethod(runpy.run_path(str(VERIFY))["verify_projection_candidate_graph"])
 
-    def fixture(self):
+    def fixture(self, *, output_projection=False):
         helper, tensor = onnx.helper, onnx.TensorProto
         inputs = [helper.make_tensor_value_info(name, tensor.INT64, [1, 32])
                   for name in ("input_ids", "attention_mask", "position_ids",
@@ -40,7 +40,20 @@ class ProjectionCandidateGraphControls(unittest.TestCase):
             normalize = helper.make_node("Cast", [previous], [norm], name=root + "/norm", to=tensor.FLOAT)
             baseline.append(normalize)
             proposed.append(normalize)
-            for kind, width in (("q", 2048), ("k", 1024), ("v", 1024)):
+            projections = (("q", 2048), ("k", 1024), ("v", 1024))
+            if output_projection:
+                projections += (("o", 2048),)
+            for kind, width in projections:
+                activation = norm
+                if kind == "o":
+                    gqa = f"/airk_g5/attention/{layer}"
+                    raw = gqa + "/raw16"
+                    activation = stem + "Reshape_7_output_0"
+                    attention = helper.make_node("GroupQueryAttention", [previous] * 3, [raw],
+                                                  name=gqa + "/efficient", domain="com.microsoft")
+                    restore = helper.make_node("Cast", [raw], [activation], name=gqa + "/output32", to=tensor.FLOAT)
+                    baseline.extend((attention, restore))
+                    proposed.extend((attention, restore))
                 name = stem + f"{kind}_proj/MatMul"
                 old = "/airk_g5/weight/" + name
                 new = "/airk_compact_qkv_fp32" + name
@@ -55,7 +68,7 @@ class ProjectionCandidateGraphControls(unittest.TestCase):
                 weights.append(weight)
                 offset += length
 
-                narrow_input = helper.make_node("Cast", [norm], [a16], name=a16, to=tensor.FLOAT16)
+                narrow_input = helper.make_node("Cast", [activation], [a16], name=a16, to=tensor.FLOAT16)
                 baseline.extend((narrow_input, helper.make_node("MatMul", [a16, b16], [out16], name=name)))
                 proposed.append(narrow_input)
                 proposed.extend((
@@ -65,6 +78,11 @@ class ProjectionCandidateGraphControls(unittest.TestCase):
                     helper.make_node("Cast", [out32], [out16], name=new + "/output16", to=tensor.FLOAT16),
                 ))
                 previous = out16
+                if kind == "o":
+                    previous = name + "_output_0"
+                    result_cast = helper.make_node("Cast", [out16], [previous], name=old + "/output32", to=tensor.FLOAT)
+                    baseline.append(result_cast)
+                    proposed.append(result_cast)
         final_node = helper.make_node("Cast", [previous], ["scores"], name="readout", to=tensor.FLOAT)
         baseline.append(final_node)
         proposed.append(final_node)
@@ -79,6 +97,22 @@ class ProjectionCandidateGraphControls(unittest.TestCase):
         self.assertEqual(self.verify(source, proposal, onnx),
                          {"projection_count": 84, "added_cast_count": 252,
                           "baseline_node_count": 197, "candidate_node_count": 449})
+
+    def test_opt_in_o_delta_preserves_original_attention_and_result_casts(self):
+        source, proposal = self.fixture(output_projection=True)
+        self.assertEqual(self.verify(source, proposal, onnx, output_projection=True),
+                         {"projection_count": 112, "added_cast_count": 336,
+                          "baseline_node_count": 337, "candidate_node_count": 673})
+        with self.assertRaisesRegex(ValueError, "exactly three added Casts"):
+            self.verify(source, proposal, onnx)
+
+    def test_opt_in_rejects_a_changed_original_attention_restoration(self):
+        source, proposal = self.fixture(output_projection=True)
+        for graph in (source.graph, proposal.graph):
+            restore = next(node for node in graph.node if node.name == "/airk_g5/attention/0/output32")
+            restore.attribute[0].i = onnx.TensorProto.FLOAT16
+        with self.assertRaisesRegex(ValueError, "exact Cast /airk_g5/attention/0/output32"):
+            self.verify(source, proposal, onnx, output_projection=True)
 
     def test_alias_type_and_edge_changes_refuse(self):
         def mutate(model, suffix, change):

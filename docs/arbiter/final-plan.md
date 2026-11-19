@@ -1662,10 +1662,14 @@ gate is numerical parity. The independent RMSNorm and QuickGelu
 source-order replay reached 0.0201478004 raw error against the same
 CUDA scores. The separate attention output-projection comparison on
 retained half operands found 823 mismatches from exact half rounding
-with GEMM2 and 117 with stock FP32 MatMul. Reuse the Q/K/V result and
-review a distinct candidate that also promotes the output projection
-with an independent matching reference. Wider widths, Resource20 and
-the fresh judged task cohort remain pending.
+with GEMM2 and 117 with stock FP32 MatMul. A full forward of the
+distinct Q/K/V/O candidate against its independent matching reference
+increased raw error from 0.0085411072 to 0.0263910294. Both mass
+checks and winner agreement passed. Keep Q/K/V as the development
+candidate. The current same-recipe 0.001 limit remains unmet.
+Near ties, threshold-adjacent decisions, wider widths, Resource20
+and the fresh judged task cohort remain pending.
+[Full output-projection comparison](../simplify/one-process-ledger.md#2026-11-19--compact-qkvo-t32-increases-matching-raw-error)
 [Output projection comparison](../simplify/one-process-ledger.md#2026-11-19--compact-output-projection-benefits-from-stock-fp32-matmul)
 [Source-order CPU comparison](../simplify/one-process-ledger.md#2026-11-19--source-order-compact-cpu-reference-does-not-close-raw-parity)
 [Scored Q/K/V result and blocker](../simplify/one-process-ledger.md#2026-11-19--compact-qkv-t32-raw-error-improves-and-still-exceeds-the-gate)

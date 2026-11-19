@@ -53,23 +53,70 @@ struct CandidateProof {
     weights: ProofFile,
 }
 
-const QKV_STAGE_SHA256: &str = "87ec206416eda607ff1585809d085e37fc4f8b99a5fc029308b5c78218cefcc2";
-const QKV_GRAPH_SHA256: &str = "e621cf6bffad1f0a27e3cc1ecba5b4379949295498f6585963620d71cfe4ff14";
-const QKV_METADATA_SCHEMA: &str = "airk.private.compact-fp32-qkv-probe-metadata/1";
-const QKV_GRAPH_SCHEMA: &str = "airk.private.compact-fp32-qkv-graph-diagnostic/1";
-const QKV_NATIVE_GRAPH_SHA256: &str =
-    "42a273598b5c8678535691426ed725041a5d9565ff1fbaf535a43938894f07a4";
-const QKV_T32_SCHEMA: &str = "airk.private.compact-fp32-qkv-t32-component/1";
-const QKV_REFERENCE_SHA256: &str =
-    "304d9b16922ce88f9db181c1e1956d9c0aa99ab29c5ef4dff26f2c37f5b0fa28";
+struct ProjectionSpec {
+    artifact: Option<(&'static str, &'static str)>,
+    stage_schema: &'static str,
+    source_schema: &'static str,
+    metadata_schema: &'static str,
+    graph_schema: &'static str,
+    native_graph_sha: Option<&'static str>,
+    t32_schema: &'static str,
+    reference_schema: &'static str,
+    reference_sha: Option<&'static str>,
+    recipe_routes: &'static str,
+    matching_scores: &'static str,
+    projections: usize,
+}
 
-fn qkv_projection_stage(proof: &IndependentProof) -> Result<(ResourceFilePin, CandidateProof)> {
+const QKV: ProjectionSpec = ProjectionSpec {
+    artifact: Some((
+        "87ec206416eda607ff1585809d085e37fc4f8b99a5fc029308b5c78218cefcc2",
+        "e621cf6bffad1f0a27e3cc1ecba5b4379949295498f6585963620d71cfe4ff14",
+    )),
+    stage_schema: "airk.private.compact-fp32-qkv-projection-candidate/1",
+    source_schema: "airk.private.compact-fp32-qkv-source/1",
+    metadata_schema: "airk.private.compact-fp32-qkv-probe-metadata/1",
+    graph_schema: "airk.private.compact-fp32-qkv-graph-diagnostic/1",
+    native_graph_sha: Some("42a273598b5c8678535691426ed725041a5d9565ff1fbaf535a43938894f07a4"),
+    t32_schema: "airk.private.compact-fp32-qkv-t32-component/1",
+    reference_schema: "airk.private.compact-fp32-qkv-t32-reference/1",
+    reference_sha: Some("304d9b16922ce88f9db181c1e1956d9c0aa99ab29c5ef4dff26f2c37f5b0fa28"),
+    recipe_routes: "qkv_fp32_routes",
+    matching_scores: "matching_qkv_fp32",
+    projections: 84,
+};
+
+const QKVO: ProjectionSpec = ProjectionSpec {
+    artifact: Some((
+        "dbf3a746b8ec66d81ba68798988cdc4068d99841c538cbb2963a37125bd3fb5b",
+        "0f2407345000cb244674238eead6178bc711238f2a4ddc5b61eef603d87be0b1",
+    )),
+    stage_schema: "airk.private.compact-fp32-qkvo-projection-candidate/1",
+    source_schema: "airk.private.compact-fp32-qkvo-source/1",
+    metadata_schema: "airk.private.compact-fp32-qkvo-probe-metadata/1",
+    graph_schema: "airk.private.compact-fp32-qkvo-graph-diagnostic/1",
+    native_graph_sha: Some("ef46663525337868d8a47fe440b9199bc927cf1625e4b4caa3abeb764e93a1f1"),
+    t32_schema: "airk.private.compact-fp32-qkvo-t32-component/1",
+    reference_schema: "airk.private.compact-fp32-qkvo-t32-reference/1",
+    reference_sha: Some("768ef122dff10af1cddb887650d6231f65817a8c7138e4294953cb4a95a044a6"),
+    recipe_routes: "qkvo_fp32_routes",
+    matching_scores: "matching_qkvo_fp32",
+    projections: 112,
+};
+
+fn projection_stage(
+    spec: &ProjectionSpec,
+    proof: &IndependentProof,
+) -> Result<(ResourceFilePin, CandidateProof)> {
+    let (stage_sha, graph_sha) = spec
+        .artifact
+        .context("reviewed Compact projection artifact pins unavailable")?;
     let pin = env_pin(
         "AIRK_CUDA_FP16_PROJECTION_STAGE",
         "AIRK_CUDA_FP16_PROJECTION_STAGE_SHA256",
     )?;
     ensure!(
-        pin.sha256 == QKV_STAGE_SHA256.parse::<Sha256Digest>()?,
+        pin.sha256 == stage_sha.parse::<Sha256Digest>()?,
         "reviewed Compact FP32 Q/K/V projection stage required"
     );
     let fact: Value = serde_json::from_slice(&pinned(&pin, 1 << 20)?)?;
@@ -79,7 +126,7 @@ fn qkv_projection_stage(proof: &IndependentProof) -> Result<(ResourceFilePin, Ca
     };
     let directory = Path::new(&pin.path).parent();
     ensure!(
-        fact["schema"] == "airk.private.compact-fp32-qkv-projection-candidate/1"
+        fact["schema"] == spec.stage_schema
             && fact["complete"] == true
             && fact["qualification"] == false
             && fact["product_admission"] == false
@@ -87,9 +134,9 @@ fn qkv_projection_stage(proof: &IndependentProof) -> Result<(ResourceFilePin, Ca
             && fact["native_forward_attempts"] == 0
             && fact["baseline_graph"] == json!(proof.candidate.graph)
             && fact["baseline_weights"] == json!(proof.candidate.weights)
-            && fact["graph_proof"]["projection_count"] == 84
-            && fact["graph_proof"]["added_cast_count"] == 252
-            && candidate.graph.sha256 == QKV_GRAPH_SHA256.parse::<Sha256Digest>()?
+            && fact["graph_proof"]["projection_count"] == spec.projections
+            && fact["graph_proof"]["added_cast_count"] == spec.projections * 3
+            && candidate.graph.sha256 == graph_sha.parse::<Sha256Digest>()?
             && candidate.graph.sha256 != proof.candidate.graph.sha256
             && candidate.weights.sha256 == proof.candidate.weights.sha256
             && candidate.weights.bytes == proof.candidate.weights.bytes
@@ -130,7 +177,8 @@ struct IndependentProof {
     reference: ReferenceProof,
 }
 
-fn qkv_projection_reference(
+fn projection_reference(
+    spec: &ProjectionSpec,
     stage: &ResourceFilePin,
     candidate: &CandidateProof,
     baseline: &IndependentProof,
@@ -140,12 +188,16 @@ fn qkv_projection_reference(
         "AIRK_CUDA_FP16_PROJECTION_REFERENCE_SHA256",
     )?;
     ensure!(
-        pin.sha256 == QKV_REFERENCE_SHA256.parse::<Sha256Digest>()?,
+        pin.sha256
+            == spec
+                .reference_sha
+                .context("reviewed Compact projection reference pin unavailable")?
+                .parse::<Sha256Digest>()?,
         "exact independent Compact FP32 Q/K/V T32 reference required"
     );
     let mut proof: Value = serde_json::from_slice(&pinned(&pin, PROOF_BYTES)?)?;
     ensure!(
-        proof["schema"] == "airk.private.compact-fp32-qkv-t32-reference/1"
+        proof["schema"] == spec.reference_schema
             && proof["complete"] == true
             && proof["reference_device"] == "cpu"
             && proof["model_inference"] == true
@@ -158,9 +210,9 @@ fn qkv_projection_reference(
             && proof["original_graph"] == json!(baseline.original_graph)
             && proof["stage_receipt"]["path"] == json!(stage.path)
             && proof["stage_receipt"]["sha256"] == json!(stage.sha256)
-            && proof["recipe"]["qkv_fp32_routes"]
+            && proof["recipe"][spec.recipe_routes]
                 .as_array()
-                .is_some_and(|routes| routes.len() == 84)
+                .is_some_and(|routes| routes.len() == spec.projections)
             && proof["recipe"]["context_flash_single_tile"] == true,
         "independent Compact FP32 Q/K/V recipe or source differs"
     );
@@ -168,7 +220,7 @@ fn qkv_projection_reference(
         .as_object_mut()
         .context("missing Q/K/V reference row")?;
     let matching = reference
-        .remove("matching_qkv_fp32")
+        .remove(spec.matching_scores)
         .context("missing matching Q/K/V scores")?;
     ensure!(
         reference.insert("matching_fp16".into(), matching).is_none(),
@@ -191,6 +243,18 @@ fn exact_reference_score_words(actual: &[f32; 8], expected: &[f32; 8]) -> bool {
         .iter()
         .zip(expected)
         .all(|(a, b)| a.to_bits() == b.to_bits())
+}
+
+#[test]
+fn compact_fp16_qkvo_projection_scope_has_distinct_native_and_reference_contracts() {
+    assert_eq!(QKV.projections, 84);
+    assert_eq!(QKVO.projections, 112);
+    assert_ne!(QKV.stage_schema, QKVO.stage_schema);
+    assert_ne!(QKV.graph_schema, QKVO.graph_schema);
+    assert_ne!(QKV.t32_schema, QKVO.t32_schema);
+    assert_ne!(QKV.reference_schema, QKVO.reference_schema);
+    assert_eq!(QKVO.recipe_routes, "qkvo_fp32_routes");
+    assert_eq!(QKVO.matching_scores, "matching_qkvo_fp32");
 }
 
 #[test]
@@ -330,16 +394,22 @@ fn compact_fp16_metadata_requires_original_windows_probe_envelope() -> Result<()
 #[test]
 #[ignore = "data-only metadata for the actual reviewed Compact FP16 artifact and T32 reference"]
 fn emit_cuda_compact_fp16_probe_metadata() -> Result<()> {
-    emit_compact_fp16_probe_metadata(false)
+    emit_compact_fp16_probe_metadata(None)
 }
 
 #[test]
 #[ignore = "owned unqualified metadata only for the reviewed Compact FP32 Q/K/V projection experiment"]
 fn emit_cuda_compact_fp32_qkv_projection_probe_metadata() -> Result<()> {
-    emit_compact_fp16_probe_metadata(true)
+    emit_compact_fp16_probe_metadata(Some(&QKV))
 }
 
-fn emit_compact_fp16_probe_metadata(qkv_projection: bool) -> Result<()> {
+#[test]
+#[ignore = "owned unqualified metadata only for the reviewed Compact FP32 Q/K/V/O projection experiment"]
+fn emit_cuda_compact_fp32_qkvo_projection_probe_metadata() -> Result<()> {
+    emit_compact_fp16_probe_metadata(Some(&QKVO))
+}
+
+fn emit_compact_fp16_probe_metadata(projection_spec: Option<&ProjectionSpec>) -> Result<()> {
     let started = Instant::now();
     let execution_user = airk_ipc::endpoint::current_user()?;
     ensure!(
@@ -419,8 +489,8 @@ fn emit_compact_fp16_probe_metadata(qkv_projection: bool) -> Result<()> {
         Instant::now() < deadline,
         "original Compact FP16 metadata expiry reached"
     );
-    let projection = qkv_projection
-        .then(|| qkv_projection_stage(&proof))
+    let projection = projection_spec
+        .map(|spec| projection_stage(spec, &proof))
         .transpose()?;
     let candidate = projection
         .as_ref()
@@ -489,8 +559,8 @@ fn emit_compact_fp16_probe_metadata(qkv_projection: bool) -> Result<()> {
         "candidate": candidate, "independent_proof": proof_pin,
         "attention_plan": prepared.attention_plan, "assets": prepared.profile.assets,
     });
-    if let Some((stage, _)) = &projection {
-        source_manifest["schema"] = json!("airk.private.compact-fp32-qkv-source/1");
+    if let (Some(spec), Some((stage, _))) = (projection_spec, &projection) {
+        source_manifest["schema"] = json!(spec.source_schema);
         source_manifest["projection_stage"] = json!(stage);
     }
     input.source_manifest = write_json(&directory.join("source-manifest.json"), &source_manifest)?;
@@ -532,8 +602,8 @@ fn emit_compact_fp16_probe_metadata(qkv_projection: bool) -> Result<()> {
             "model_requests_dispatched": false, "runtime_admission_dispatched": false,
             "forward_count_observed": null, "elapsed_us": started.elapsed().as_micros(),
     });
-    if let Some((stage, _)) = &projection {
-        receipt["schema"] = json!(QKV_METADATA_SCHEMA);
+    if let (Some(spec), Some((stage, _))) = (projection_spec, &projection) {
+        receipt["schema"] = json!(spec.metadata_schema);
         receipt["projection_stage"] = json!(stage);
     }
     write_json(&directory.join("metadata-receipt.json"), &receipt)?;
@@ -689,6 +759,8 @@ enum CompactFp16Probe {
     GraphOnly,
     QkvProjectionGraphOnly,
     QkvProjectionT32,
+    QkvoProjectionGraphOnly,
+    QkvoProjectionT32,
     BoundedT32,
     Layer0Taps,
     Layer0ProjectionTaps,
@@ -736,11 +808,27 @@ fn cuda_compact_fp32_qkv_projection_t32_component() -> Result<()> {
     observe_compact_fp16_t32(CompactFp16Probe::QkvProjectionT32)
 }
 
+#[test]
+#[ignore = "owned load-only CUDA graph observation for the distinct Compact FP32 Q/K/V/O projection experiment"]
+fn cuda_compact_fp32_qkvo_projection_load_only_graph_diagnostic() -> Result<()> {
+    observe_compact_fp16_t32(CompactFp16Probe::QkvoProjectionGraphOnly)
+}
+
+#[test]
+#[ignore = "owned Compact FP32 Q/K/V/O T32 scoring with exact typed graph and native CUDA profiling"]
+fn cuda_compact_fp32_qkvo_projection_t32_component() -> Result<()> {
+    observe_compact_fp16_t32(CompactFp16Probe::QkvoProjectionT32)
+}
+
 fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
-    let qkv_t32 = mode == CompactFp16Probe::QkvProjectionT32;
-    let qkv_graph_only = mode == CompactFp16Probe::QkvProjectionGraphOnly;
-    let qkv_projection = qkv_graph_only || qkv_t32;
-    let graph_only = mode == CompactFp16Probe::GraphOnly || qkv_graph_only;
+    let (projection_spec, projection_t32, graph_only) = match mode {
+        CompactFp16Probe::QkvProjectionGraphOnly => (Some(&QKV), false, true),
+        CompactFp16Probe::QkvProjectionT32 => (Some(&QKV), true, false),
+        CompactFp16Probe::QkvoProjectionGraphOnly => (Some(&QKVO), false, true),
+        CompactFp16Probe::QkvoProjectionT32 => (Some(&QKVO), true, false),
+        CompactFp16Probe::GraphOnly => (None, false, true),
+        _ => (None, false, false),
+    };
     let projection_taps = mode == CompactFp16Probe::Layer0ProjectionTaps;
     let layer0_taps = mode == CompactFp16Probe::Layer0Taps || projection_taps;
     let started_ns = airk_process::monotonic::now_ns()?;
@@ -790,11 +878,8 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
     let metadata: Value = serde_json::from_slice(&pinned(&metadata_pin, 1 << 20)?)?;
     ensure!(
         metadata["schema"]
-            == if qkv_projection {
-                QKV_METADATA_SCHEMA
-            } else {
-                "airk.private.compact-fp16-probe-metadata/1"
-            }
+            == projection_spec.map_or("airk.private.compact-fp16-probe-metadata/1", |spec| spec
+                .metadata_schema)
             && metadata["probe_request"] == json!(request_pin)
             && metadata["native_input"] == json!(gpu_input)
             && metadata["profile"] == json!(profile.manifest)
@@ -811,8 +896,8 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
     let proof: IndependentProof = serde_json::from_slice(&pinned(&proof_pin, PROOF_BYTES)?)?;
     validate_independent_proof(&proof)?;
     validate_reference(&proof.reference, &profile, &input.policy)?;
-    let projection = qkv_projection
-        .then(|| qkv_projection_stage(&proof))
+    let projection = projection_spec
+        .map(|spec| projection_stage(spec, &proof))
         .transpose()?;
     let candidate = projection
         .as_ref()
@@ -823,11 +908,12 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
             "Compact FP32 Q/K/V metadata stage differs"
         );
     }
-    let matching_projection = if qkv_t32 {
+    let matching_projection = if projection_t32 {
+        let spec = projection_spec.context("missing Compact projection scope")?;
         let (stage, candidate) = projection
             .as_ref()
-            .context("missing Q/K/V projection stage")?;
-        let matching = qkv_projection_reference(stage, candidate, &proof)?;
+            .context("missing Compact projection stage")?;
+        let matching = projection_reference(spec, stage, candidate, &proof)?;
         validate_reference(&matching.1, &profile, &input.policy)?;
         Some(matching)
     } else {
@@ -837,13 +923,16 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
         .as_ref()
         .map_or(&proof.reference, |(_, reference)| reference);
     bind_t32_candidate(&input, &profile, &metadata, reference, candidate)?;
-    let reviewed_graph = if mode == CompactFp16Probe::BoundedT32 || layer0_taps || qkv_t32 {
+    let reviewed_graph = if mode == CompactFp16Probe::BoundedT32 || layer0_taps || projection_t32 {
         let pin = env_pin(
             "AIRK_CUDA_FP16_REVIEWED_GRAPH",
             "AIRK_CUDA_FP16_REVIEWED_GRAPH_SHA256",
         )?;
-        let expected = if qkv_t32 {
-            QKV_NATIVE_GRAPH_SHA256
+        let expected = if projection_t32 {
+            projection_spec
+                .context("missing Compact projection scope")?
+                .native_graph_sha
+                .context("reviewed Compact projection native graph pin unavailable")?
         } else {
             REVIEWED_FP16_GRAPH_SHA256
         };
@@ -913,8 +1002,10 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
         "schema": match mode {
             CompactFp16Probe::StrictT32 => "airk.private.compact-fp16-t32-component/2",
             CompactFp16Probe::GraphOnly => "airk.private.compact-fp16-graph-diagnostic/1",
-            CompactFp16Probe::QkvProjectionGraphOnly => QKV_GRAPH_SCHEMA,
-            CompactFp16Probe::QkvProjectionT32 => QKV_T32_SCHEMA,
+            CompactFp16Probe::QkvProjectionGraphOnly => QKV.graph_schema,
+            CompactFp16Probe::QkvProjectionT32 => QKV.t32_schema,
+            CompactFp16Probe::QkvoProjectionGraphOnly => QKVO.graph_schema,
+            CompactFp16Probe::QkvoProjectionT32 => QKVO.t32_schema,
             CompactFp16Probe::BoundedT32 => "airk.private.compact-fp16-bounded-t32-component/1",
             CompactFp16Probe::Layer0Taps => "airk.private.compact-fp16-layer0-taps/1",
             CompactFp16Probe::Layer0ProjectionTaps => "airk.private.compact-fp16-layer0-projection-taps/1",
@@ -989,7 +1080,7 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
             let Some(profile_prefix) = prefix.as_deref() else {
                 let observer = execution.cuda_graph_observer()?;
                 let loaded = journal.observe(operation::Kind::Load, 0, None, || {
-                    if qkv_projection {
+                    if projection_spec.is_some() {
                         Scorer::load_private_compact_fp32_qkv_projection_diagnostic(
                             execution, files, proof.candidate.graph.sha256, candidate.graph.sha256,
                         )
@@ -1013,7 +1104,11 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
             let observer = execution.cuda_compact_fp16_load_observer()?;
             let loaded = journal.observe(operation::Kind::Load, 0, None, || {
                 if let Some((pin, graph_bytes)) = &reviewed_graph {
-                    if qkv_t32 {
+                    if mode == CompactFp16Probe::QkvoProjectionT32 {
+                        Scorer::open_private_compact_fp32_qkvo_projection_profiled(
+                            execution, files, profile_prefix, graph_bytes, pin.sha256,
+                        )
+                    } else if mode == CompactFp16Probe::QkvProjectionT32 {
                         Scorer::open_private_compact_fp32_qkv_projection_profiled(
                             execution, files, profile_prefix, graph_bytes, pin.sha256,
                         )
@@ -1061,7 +1156,11 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
             receipt["numeric_forward_attempts"] = json!(1);
             flush_graph_diagnostic(&mut file, &receipt)?;
             let scored = journal.observe(operation::Kind::Numeric, 1, Some(reference.input.input_digest), || {
-                if qkv_t32 {
+                if mode == CompactFp16Probe::QkvoProjectionT32 {
+                    scorer
+                        .score_private_compact_fp32_qkvo_projection_t32(&reference.input, deadline)
+                        .map(|scores| (scores, None))
+                } else if mode == CompactFp16Probe::QkvProjectionT32 {
                     scorer
                         .score_private_compact_fp32_qkv_projection_t32(&reference.input, deadline)
                         .map(|scores| (scores, None))
@@ -1128,8 +1227,17 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
                     receipt["runtime_profile"] = trace;
                     if reviewed_graph.is_some() {
                         let profile_summary = scorer.compact_fp16_bounded_hybrid_evidence().and_then(|(graph, _)| {
+                            let expected_nodes = match mode {
+                                CompactFp16Probe::QkvProjectionT32 => 1942,
+                                // Native admission already matched every typed row and counter
+                                // to the exact reviewed load-only receipt.
+                                CompactFp16Probe::QkvoProjectionT32 => graph.rows.iter()
+                                    .filter(|row| matches!(row, cuda::GraphMetadataRow::Node { .. }))
+                                    .count(),
+                                _ => 1746,
+                            };
                             super::hybrid_profile_trace::compact_fp16_t32_profiled_run(
-                                &bytes, &graph.rows, if qkv_t32 { 1942 } else { 1746 },
+                                &bytes, &graph.rows, expected_nodes,
                             )
                         });
                         match profile_summary {

@@ -164,9 +164,13 @@ Use the existing deadline when resuming in a new context.
   raw error to 0.0201478004 against the sealed GPU vector. Keep the
   0.0085411072 candidate result. The isolated attention output projection
   showed 823 half-rounding mismatches with GEMM2 and 117 with stock
-  FP32 MatMul on its retained half operands. Carry the output projection
-  into a separately reviewed candidate and matching CPU reference before
-  another full T32 forward.
+  FP32 MatMul on its retained half operands. The separate Q/K/V/O
+  candidate completed one synchronized A6000 T32 forward. Matching
+  raw error increased to 0.0263910294 while both mass checks and the
+  winner check passed. Retain Q/K/V as the lead development candidate.
+  The authorized additional comparison is complete. Near ties,
+  threshold-adjacent decisions and 8,192-token quality remain unmeasured.
+  [Full output-projection comparison](simplify/one-process-ledger.md#2026-11-19--compact-qkvo-t32-increases-matching-raw-error)
   [Output projection comparison](simplify/one-process-ledger.md#2026-11-19--compact-output-projection-benefits-from-stock-fp32-matmul)
   [Source-order CPU comparison](simplify/one-process-ledger.md#2026-11-19--source-order-compact-cpu-reference-does-not-close-raw-parity)
   [Scored Q/K/V result and blocker](simplify/one-process-ledger.md#2026-11-19--compact-qkv-t32-raw-error-improves-and-still-exceeds-the-gate)

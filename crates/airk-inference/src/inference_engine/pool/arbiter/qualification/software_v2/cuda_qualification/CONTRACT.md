@@ -479,3 +479,17 @@ eight-score forward with the independent matching and original FP32
 vectors. It enforces the existing matching raw, both mass and matching
 winner criteria. The complete typed profiler must cover all reviewed
 1,942 nodes and the 374 bounded CPU controls.
+
+## Private Compact FP32 Q/K/V/O graph observation and T32
+
+The separate Q/K/V/O metadata, graph-only and scoring selectors require
+their own exact stage and graph pins. The stage records all 112 widened
+projections and 336 added Cast nodes while retaining the original half
+weights. Metadata and disposable graph observations dispatch zero forwards.
+
+The T32 selector requires the pinned independent Q/K/V/O CPU reference
+and its exact passing typed load receipt before opening a scorer. The native
+session matches that receipt's full rows and counters. The profiler uses the
+reviewed session's operator count and requires the existing 374 bounded CPU
+controls. The original scoring limits, input, deadline and release
+observations apply. Both scoring evidence pins must be present to dispatch.

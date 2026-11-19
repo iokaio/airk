@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Stage a distinct, unqualified Compact Q/K/V FP32 projection candidate."""
+"""Stage a distinct, unqualified Compact Q/K/V or Q/K/V/O FP32 projection candidate."""
 
 import argparse
 import importlib.util
@@ -14,6 +14,9 @@ HERE = Path(__file__).resolve().parent
 PROJECTION_PROBE_SHA = "aa47ae8ba52c27ff38e9ac13a1ffdd0737bfa21a264bc04074d885e8525158ec"
 R11_RECEIPT_SHA = "789277ec76b57fe1ae7a30a47ea90da1a9e9ae2d8f68eddff8d164f6246e494e"
 SCHEMA = "airk.private.compact-fp32-qkv-projection-candidate/1"
+OUTPUT_SCHEMA = "airk.private.compact-fp32-qkvo-projection-candidate/1"
+OUTPUT_RECEIPT_SHA = "355c354af9e55f36e6be41fbfd8b89719e13d5c6d5193cbb8bc03e2359ebd97e"
+OUTPUT_CAPTURE_SHA = "9705db75efa3e84fc955c3edeaf03e1aef70e5362161087f24250e14b75aeac6"
 
 
 def load_owner(check):
@@ -29,6 +32,24 @@ def load_owner(check):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def reviewed_output_experiment(owner, verifier, converter, check):
+    receipt, pin = verifier.read_pinned_json(
+        owner.CAMPAIGN / "compact-fp16-layer0-output-cublas-r1/execution.json", OUTPUT_RECEIPT_SHA, check)
+    converter.windows_owner(pin["path"])
+    schema = "airk.private.compact-fp16-output-projection-gemm/1"
+    result = receipt["result"]
+    modes = result["modes"]
+    owner.require(receipt["schema"] == result["schema"] == schema and receipt["complete"] is True
+                  and receipt["qualification"] is result["qualification"] is result["product_admission"] is False
+                  and result["native_model_forward"] is result["captured_original_onnx_projection_output"] is False
+                  and result["capture_sha256"] == OUTPUT_CAPTURE_SHA and result["words"] == 65_536
+                  and result["candidate_graph_sha256"] == owner.GRAPH_SHA and result["weights_sha256"] == owner.WEIGHTS_SHA
+                  and modes["GEMM2"]["half_mismatches"] == 823 and modes["ORT_FP32_PROJECTION"]["half_mismatches"] == 117
+                  and receipt["owned"]["exit_code"] == 0 and receipt["owned"]["owned_descendants_settled"] is True,
+                  "reviewed standalone O projection experiment differs")
+    return pin
 
 
 def stage(args):
@@ -55,6 +76,7 @@ def stage(args):
             and r11["result"]["weights_sha256"] == owner.WEIGHTS_SHA
             and r11["owned"]["exit_code"] == 0 and r11["owned"]["owned_descendants_settled"],
             "reviewed stock FP32 projection experiment differs")
+    output_pin = reviewed_output_experiment(owner, verifier, converter, check) if args.output_projection else None
     graph, weights = owner.CANDIDATE / "model.onnx", owner.CANDIDATE / "weights.bin"
     for path in (graph, weights):
         converter.windows_owner(path)
@@ -89,8 +111,13 @@ def stage(args):
     imported = verifier.loaded_runtime(runtime["files"], pin, check,
                                        (sys.modules[name] for name in sys.modules.keys() - before))
     baseline = onnx.load_model(graph, load_external_data=False)
-    candidate = transform.rewrite_compact_qkv_fp32(onnx, baseline)
-    graph_proof = check_graph.verify_projection_candidate_graph(baseline, candidate, onnx)
+    candidate = transform.rewrite_compact_qkv_fp32(onnx, baseline, output_projection=args.output_projection)
+    graph_proof = check_graph.verify_projection_candidate_graph(
+        baseline, candidate, onnx, output_projection=args.output_projection,
+    )
+    projections = 112 if args.output_projection else 84
+    require(graph_proof["projection_count"] == projections and graph_proof["added_cast_count"] == projections * 3,
+            "wrong reviewed projection graph scope")
     with graph_path.open("xb") as destination:
         destination.write(candidate.SerializeToString())
     with weights.open("rb") as source, weights_path.open("xb") as destination:
@@ -104,19 +131,24 @@ def stage(args):
             and (candidate_weights["sha256"], candidate_weights["bytes"])
             == (weights_pin["sha256"], weights_pin["bytes"]), "candidate graph or storage identity differs")
     written = onnx.load_model(graph_path, load_external_data=False)
-    require(check_graph.verify_projection_candidate_graph(baseline, written, onnx) == graph_proof,
-            "written candidate graph proof differs")
+    require(check_graph.verify_projection_candidate_graph(
+        baseline, written, onnx, output_projection=args.output_projection,
+    ) == graph_proof, "written candidate graph proof differs")
     onnx.checker.check_model(os.fspath(graph_path))
     self_pin = pin(Path(__file__).resolve(), check)
     experiment_pin = pin(HERE / "probe_projection_gemm.py", check)
-    for row in (graph_pin, weights_pin, r11_pin, plan_pin, runtime_pin, *sources):
+    input_pins = (graph_pin, weights_pin, r11_pin, plan_pin, runtime_pin, *sources)
+    if output_pin is not None:
+        input_pins += (output_pin,)
+    for row in input_pins:
         require(pin(Path(row["path"]), check) == row, "staging input changed")
     require(experiment_pin["sha256"] == PROJECTION_PROBE_SHA, "projection owner changed")
     receipt = {
-        "schema": SCHEMA, "complete": True, "qualification": False, "product_admission": False,
+        "schema": OUTPUT_SCHEMA if output_pin is not None else SCHEMA,
+        "complete": True, "qualification": False, "product_admission": False,
         "native_load_attempts": 0, "native_forward_attempts": 0, "baseline_graph": graph_pin,
         "baseline_weights": weights_pin, "candidate_graph": candidate_graph, "candidate_weights": candidate_weights,
-        "graph_proof": graph_proof, "projection_experiment": r11_pin, "conversion_plan": plan_pin,
+        "graph_proof": graph_proof, "projection_experiment": output_pin or r11_pin, "conversion_plan": plan_pin,
         "staging_source": self_pin, "projection_sources": sources, "verified_onnx_imports": len(imported),
         "execution_token": token, "command": [sys.executable, *sys.orig_argv[1:]],
         "elapsed_seconds": time.monotonic() - started,
@@ -135,6 +167,7 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--transform-sha256", required=True)
     parser.add_argument("--verifier-sha256", required=True)
+    parser.add_argument("--output-projection", action="store_true")
     stage(parser.parse_args())
 
 

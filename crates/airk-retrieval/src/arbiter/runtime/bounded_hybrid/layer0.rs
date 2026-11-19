@@ -75,10 +75,23 @@ impl std::error::Error for CompactFp16Layer0GraphRefusal {
     }
 }
 
-const REVIEWED_QKV_PROJECTION_GRAPH: &str =
-    "e621cf6bffad1f0a27e3cc1ecba5b4379949295498f6585963620d71cfe4ff14";
-const REVIEWED_QKV_PROJECTION_LOAD: &str =
-    "42a273598b5c8678535691426ed725041a5d9565ff1fbaf535a43938894f07a4";
+#[derive(Clone, Copy)]
+struct ReviewedProjection {
+    graph_sha: &'static str,
+    load_sha: &'static str,
+    load_schema: &'static str,
+}
+
+const REVIEWED_QKV: ReviewedProjection = ReviewedProjection {
+    graph_sha: "e621cf6bffad1f0a27e3cc1ecba5b4379949295498f6585963620d71cfe4ff14",
+    load_sha: "42a273598b5c8678535691426ed725041a5d9565ff1fbaf535a43938894f07a4",
+    load_schema: "airk.private.compact-fp32-qkv-graph-diagnostic/1",
+};
+const REVIEWED_QKVO: Option<ReviewedProjection> = Some(ReviewedProjection {
+    graph_sha: "0f2407345000cb244674238eead6178bc711238f2a4ddc5b61eef603d87be0b1",
+    load_sha: "ef46663525337868d8a47fe440b9199bc927cf1625e4b4caa3abeb764e93a1f1",
+    load_schema: "airk.private.compact-fp32-qkvo-graph-diagnostic/1",
+});
 
 fn qkv_projection_options(
     builder: ort::session::builder::SessionBuilder,
@@ -95,20 +108,24 @@ fn qkv_projection_options(
         )?)
 }
 
-fn reviewed_qkv_projection_gate(raw: &[u8], evidence_sha: Sha256Digest) -> Result<GraphGate> {
+fn reviewed_projection_gate(
+    raw: &[u8],
+    evidence_sha: Sha256Digest,
+    review: ReviewedProjection,
+) -> Result<GraphGate> {
     ensure!(
-        evidence_sha == REVIEWED_QKV_PROJECTION_LOAD.parse()?,
+        evidence_sha == review.load_sha.parse()?,
         "exact reviewed Compact QKV graph receipt required"
     );
     let result = GraphGate::read_result(raw, evidence_sha)?;
     let snapshot = &result["graph_observation"];
     let teardown = &snapshot["teardown"];
     ensure!(
-        result["schema"] == "airk.private.compact-fp32-qkv-graph-diagnostic/1"
+        result["schema"] == review.load_schema
             && result["complete"] == true
             && result["qualified"] == false
             && result["product_admission"] == false
-            && result["source_mask"]["verified_candidate_graph"] == REVIEWED_QKV_PROJECTION_GRAPH
+            && result["source_mask"]["verified_candidate_graph"] == review.graph_sha
             && result["numeric_forward_attempts"] == 0
             && result["native_forward_returned"] == false
             && result["forward_synchronized"] == false
@@ -193,7 +210,42 @@ impl Scorer {
         reviewed_graph_result: &[u8],
         reviewed_graph_sha: Sha256Digest,
     ) -> Result<Self> {
-        require_qkv_projection_profile(&profile, REVIEWED_QKV_PROJECTION_GRAPH.parse()?)?;
+        Self::open_private_compact_fp32_projection_profiled(
+            profile,
+            source,
+            profiling_prefix,
+            reviewed_graph_result,
+            reviewed_graph_sha,
+            REVIEWED_QKV,
+        )
+    }
+
+    pub fn open_private_compact_fp32_qkvo_projection_profiled(
+        profile: ExecutionProfile,
+        source: &dyn AssetSource,
+        profiling_prefix: &Path,
+        reviewed_graph_result: &[u8],
+        reviewed_graph_sha: Sha256Digest,
+    ) -> Result<Self> {
+        Self::open_private_compact_fp32_projection_profiled(
+            profile,
+            source,
+            profiling_prefix,
+            reviewed_graph_result,
+            reviewed_graph_sha,
+            REVIEWED_QKVO.context("reviewed Compact Q/K/V/O load receipt unavailable")?,
+        )
+    }
+
+    fn open_private_compact_fp32_projection_profiled(
+        profile: ExecutionProfile,
+        source: &dyn AssetSource,
+        profiling_prefix: &Path,
+        reviewed_graph_result: &[u8],
+        reviewed_graph_sha: Sha256Digest,
+        review: ReviewedProjection,
+    ) -> Result<Self> {
+        require_qkv_projection_profile(&profile, review.graph_sha.parse()?)?;
         let binding = profile
             .gpu
             .as_ref()
@@ -207,7 +259,7 @@ impl Scorer {
             "Compact QKV projection CUDA reservation differs"
         );
         let deadline = binding.load_deadline;
-        let gate = reviewed_qkv_projection_gate(reviewed_graph_result, reviewed_graph_sha)?;
+        let gate = reviewed_projection_gate(reviewed_graph_result, reviewed_graph_sha, review)?;
         gate.verify_profile(profile.description(), binding.device.observation(deadline)?)?;
         let scorer = Self::open_internal(
             profile,
@@ -227,7 +279,28 @@ impl Scorer {
         input: &CompiledInput,
         deadline: Instant,
     ) -> Result<Vec<f32>> {
-        require_qkv_projection_profile(&self.profile, REVIEWED_QKV_PROJECTION_GRAPH.parse()?)?;
+        self.score_private_compact_fp32_projection_t32(input, deadline, REVIEWED_QKV)
+    }
+
+    pub fn score_private_compact_fp32_qkvo_projection_t32(
+        &self,
+        input: &CompiledInput,
+        deadline: Instant,
+    ) -> Result<Vec<f32>> {
+        self.score_private_compact_fp32_projection_t32(
+            input,
+            deadline,
+            REVIEWED_QKVO.context("reviewed Compact Q/K/V/O load receipt unavailable")?,
+        )
+    }
+
+    fn score_private_compact_fp32_projection_t32(
+        &self,
+        input: &CompiledInput,
+        deadline: Instant,
+        review: ReviewedProjection,
+    ) -> Result<Vec<f32>> {
+        require_qkv_projection_profile(&self.profile, review.graph_sha.parse()?)?;
         let binding = self
             .profile
             .gpu

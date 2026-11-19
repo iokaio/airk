@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Private Compact Q/K/V projection experiment over authenticated graph metadata."""
+"""Private Compact Q/K/V and optional O projection graph experiment."""
 
 
 _NAMESPACE = "/airk_compact_qkv_fp32"
@@ -46,8 +46,8 @@ def _external_half_span(onnx, tensor, width):
     return int(offset), int(fields["length"])
 
 
-def rewrite_compact_qkv_fp32(onnx, baseline):
-    """Clone metadata and widen just the exact 84 Compact Q/K/V MatMul computations.
+def rewrite_compact_qkv_fp32(onnx, baseline, *, output_projection=False):
+    """Clone metadata and widen Compact Q/K/V and, optionally, O MatMuls.
 
     The caller authenticates the baseline graph and its complete external sidecar.
     This function does not open files, load tensors or alter the supplied model.
@@ -74,25 +74,40 @@ def rewrite_compact_qkv_fp32(onnx, baseline):
     names.update(item.name for item in (*graph.input, *graph.output, *graph.value_info))
     _require(not any(name.startswith(_NAMESPACE) for name in names), "private projection namespace already present")
 
+    _require(type(output_projection) is bool, "explicit Compact O projection selection required")
+    widths = {**_PROJECTION_WIDTHS, "o": 2048} if output_projection else _PROJECTION_WIDTHS
     roster = {
-        f"/scorer/layers.{layer}/self_attn/{projection}_proj/MatMul": (layer, width)
-        for layer in range(28) for projection, width in _PROJECTION_WIDTHS.items()
+        f"/scorer/layers.{layer}/self_attn/{projection}_proj/MatMul": (layer, projection, width)
+        for layer in range(28) for projection, width in widths.items()
     }
-    suffixes = tuple(f"/self_attn/{name}_proj/MatMul" for name in _PROJECTION_WIDTHS)
+    suffixes = tuple(f"/self_attn/{name}_proj/MatMul" for name in widths)
     _require({name for name in positions if name.endswith(suffixes)} == set(roster),
-             "expected exactly the named Compact Q/K/V projection roster")
+             "expected exactly the named Compact projection roster")
 
     consumers = {}
     for node in graph.node:
         for index, value in enumerate(node.input):
             consumers.setdefault(value, []).append((node.name, index))
     spans = []
-    for name, (layer, width) in roster.items():
+    for name, (layer, projection, width) in roster.items():
         matmul = graph.node[positions[name]]
         stem = _BOUNDARY + name
         input16, output16 = stem + "/input16", stem + "/output16"
         output_cast = stem + "/output32"
-        normalized = f"/scorer/layers.{layer}/input_layernorm/Mul_1_output_0"
+        layer_root = f"/scorer/layers.{layer}"
+        normalized = layer_root + "/input_layernorm/Mul_1_output_0"
+        if projection == "o":
+            attention = f"/airk_g5/attention/{layer}"
+            normalized = layer_root + "/self_attn/Reshape_7_output_0"
+            gqa_index = positions.get(attention + "/efficient")
+            restore = positions.get(attention + "/output32")
+            _require(gqa_index is not None and restore is not None and gqa_index < restore,
+                     "Compact O must preserve the original attention topology: " + name)
+            gqa = graph.node[gqa_index]
+            _require(gqa.op_type == "GroupQueryAttention" and gqa.domain == "com.microsoft"
+                     and list(gqa.output[:1]) == [attention + "/raw16"]
+                     and _cast_matches(onnx, graph.node[restore], attention + "/raw16", normalized, types.FLOAT),
+                     "Compact O must preserve the original half attention restoration: " + name)
         _require(matmul.domain == "" and matmul.op_type == "MatMul" and not matmul.attribute
                  and len(matmul.input) == 2 and matmul.input[0] == input16 and list(matmul.output) == [output16],
                  "Compact projection MatMul boundary differs: " + name)

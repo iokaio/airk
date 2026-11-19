@@ -399,3 +399,21 @@ old graph's exact external O matrix. The same checked Windows Job
 runs five cuBLAS modes for one [32,2048] by [2048,2048] projection.
 The receipt compares each result with exact integer-dot rounding
 and carries no native full-model or performance claim.
+
+## Compact FP32 Q/K/V/O comparison
+
+The opt-in --output-projection argument to the stager and the independent
+T32 reference includes the per-layer attention output projection. The
+stored graph proof covers 112 named MatMuls and 336 added Casts, and the
+half weights, public score interface and remaining arithmetic retain their
+individual proofs. The stage also binds the separate measured O receipt.
+The independent CPU worker applies the matching recipe to the same frozen
+input and emits a distinct Q/K/V/O reference without the optional
+source-order experiment.
+
+Use qkvo-metadata, qkvo-graph and qkvo-t32 to bind the exact stage, observe
+a disposable native graph and score the covered T32 case once. Typed
+validation proves that each FP32 CUDA O projection widens the same layer's
+half GQA output and preserves the result narrowing. The scoring selector
+requires the exact passing typed load and independent reference, as well
+as complete profiling, settlement and the established numerical limits.

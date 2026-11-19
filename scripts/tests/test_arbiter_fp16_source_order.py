@@ -50,6 +50,50 @@ class SourceOrderControls(unittest.TestCase):
         self.assertGreater(torch.sigmoid(values)[0].item(), 0)
         self.assertEqual((result[1] + result[3]).item(), 1.0)
 
+    def test_output_projection_owns_a_separate_recipe_and_exact_operand_route_census(self):
+        projected = tuple(f"layers.{layer}.self_attn.{kind}_proj.weight"
+                          for layer in range(28) for kind in ("q", "k", "v", "o"))
+        self.assertEqual(self.owner.OUTPUT_ROUTES, projected)
+        self.assertEqual(self.owner.source_order_recipe(False, True),
+                         {"qkvo_fp32_routes": list(projected), "context_flash_single_tile": True})
+        self.assertEqual(self.owner.reference_identity(False, True)[3:],
+                         ("compact-qkvo-fp32-t32-reference.json", "matching_qkvo_fp32"))
+        self.assertEqual(self.owner.reference_identity(False, False)[3:],
+                         ("compact-qkv-fp32-t32-reference.json", "matching_qkv_fp32"))
+        with self.assertRaisesRegex(ValueError, "only one"):
+            self.owner.reference_identity(True, True)
+
+        class Literal:
+            layers, hidden, qheads, kvheads, dim, device = 28, 2048, 16, 8, 128, "cpu"
+
+            def __init__(self):
+                self.torch = torch
+                self.weights = dict.fromkeys(projected, torch.tensor([[1, 2], [3, 4]], dtype=torch.float16))
+                self.route_calls = projected
+                self.delegated = []
+
+            def _linear_half(self, value, name):
+                self.delegated.append(name)
+                return value
+
+            def forward(self, row, *, context_flash_single_tile):
+                assert row == "literal" and context_flash_single_tile is True
+                value = torch.tensor([[2, 3]], dtype=torch.float16)
+                for name in self.route_calls:
+                    result = self._linear_half(value, name)
+                    assert result.dtype == torch.float16 and result.tolist() == [[8, 18]]
+                assert self._linear_half(value, "layers.0.mlp.gate_proj.weight") is value
+                return torch.full((1, 8), 1.25, dtype=torch.float32)
+
+        literal = Literal()
+        scores = self.owner.projection_scores(literal, "literal", lambda: None, routes=projected)
+        self.assertEqual(scores, [1.25] * 8)
+        self.assertEqual(literal.delegated, ["layers.0.mlp.gate_proj.weight"])
+        self.assertNotIn("_linear_half", literal.__dict__)
+        literal.route_calls = projected[:-1]
+        with self.assertRaisesRegex(ValueError, "112"):
+            self.owner.projection_scores(literal, "literal", lambda: None, routes=projected)
+
     def test_exact_census_and_scope_restoration(self):
         shapes = {(1, 32, 2048): 57, (1, 32, 16, 128): 28, (1, 32, 8, 128): 28}
         helper = SimpleNamespace(rms=lambda *_: None)

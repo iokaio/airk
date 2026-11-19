@@ -12151,3 +12151,78 @@ The original 120-second, 32 GiB Job settled naturally in 14.033830 s with
 2,113,765,376 B peak commit, child exit 0 and zero remaining processes.
 Native isolated calls totalled 0.333244 s. Two simulated CUDA ABI routes,
 five pre-load refusals and five operand-loader refusals also passed.
+
+### 2026-11-19 — Compact QKVO T32 increases matching raw error
+
+The additional user-authorized T32 comparison added the 28 attention
+output projections to the earlier 84 Q/K/V projections. The independently
+checked graph preserved the public score interface and exact half weights.
+Staging proved 112 widened MatMuls and 336 Casts. It completed in 15.748783 s
+without a native load or forward. Stage receipt
+dbf3a746b8ec66d81ba68798988cdc4068d99841c538cbb2963a37125bd3fb5b,
+candidate graph
+0f2407345000cb244674238eead6178bc711238f2a4ddc5b61eef603d87be0b1.
+
+One independent CPU forward on the same input produced eight finite scores.
+It applied the Q/K/V/O recipe with the same Flash reference. The owned Job
+settled naturally in 138.988 s with no active processes and 15,557,750,784 B
+peak host commit against the 32 GiB cap. Its output-name variable collision
+published JSON as reference_worker.py. The original bytes and execution
+receipt were preserved. The verified human copied those exact bytes into
+the expected .json leaf and corrected the maintained launcher. The proof
+was never executed as code. One CPU forward supplied both byte-identical
+proof paths. CPU execution
+35a1f08dd1f892f7333c6bf0928219af2ffd95eb6f0bbe032b2085f94e4f613e,
+proof 768ef122dff10af1cddb887650d6231f65817a8c7138e4294953cb4a95a044a6.
+
+The disposable A6000 load validated 2,026 typed final nodes, 112 CUDA
+FP32 MatMuls, 112 weight upcasts, 56 activation upcasts, 112 output
+downcasts and 374 bounded CPU shape controls. It dispatched zero forwards.
+Metadata execution
+0c161b974b92739900b8f6560a3e16e773bc90732e4617bdb20cb4d42ac37fe1,
+typed-load execution
+665de6f08b4d65db6ed8d0b3257c440f88a5d42924640cb4f453a8ff16f386ab,
+typed native result
+ef46663525337868d8a47fe440b9199bc927cf1625e4b4caa3abeb764e93a1f1.
+
+The scoring run performed one synchronized CUDA forward, verified all 28
+named FP16 FlashAttention dispatches and profiled the entire typed graph.
+The 374 CPU shape controls used at most 32 B per tensor.
+
+| T32 comparison | Previous Q/K/V | Q/K/V/O | Limit |
+| --- | ---: | ---: | ---: |
+| Maximum raw error versus matching CPU recipe | 0.008541107177734375 | 0.026391029357910156 | 0.001 |
+| Maximum normalized-mass error versus matching CPU recipe | 0.00008143699270950384 | 0.00007398309253048296 | 0.05 |
+| Maximum normalized-mass error versus original FP32 | 0.00006774523027230916 | 0.00003296517572271007 | 0.05 |
+| Winner agreement with matching CPU recipe and original FP32 | Yes | Yes | Matching recipe requires agreement |
+
+The raw error was 3.09 times the prior Q/K/V result and exceeded the
+current limit. The Q/K/V/O CUDA top-two score margin was 4.809185, so
+this fixture gives limited evidence about near ties or threshold crossings.
+The isolated output projection's rounding improvement did not carry over
+to full-model raw agreement on this input. Retain Q/K/V as the stronger
+development result. No additional scoring forward ran. Near ties,
+threshold-adjacent decisions, 8,192-token performance or quality, and
+the 98% paired judged-evidence criterion are unmeasured in this comparison.
+
+The synchronized numeric call took 0.275247 s. The entire run took
+39.022587 s and exited 101 at the numerical gate after CUDA settlement,
+with no forced termination and zero remaining processes. Peak Job commit
+was 9,386,635,264 B. The verified Windows human and default owner SID ended
+in 1002. Under compact-fp16-qkvo-fp32-native-t32-r1:
+execution be1a80373c213654f77bf34c9cab3ae49b4aa44f26a8cffcd73665f1509f6455,
+native 28e3743ea77d55cb6aac3295f2128a110f2ebc44d9c6c841bb0ace1ae0c243fc,
+profile 3e725d44618c0209212166658cd84700d8de089147d629c17fee3f9264876c93,
+operation journal 30594a7dec4cf65b3adc9536790e6ec984eac9a52fb33109a537d3d7c9faefc2,
+and image 47dca1b7aa0fefc47f9cd19da79a0b7863183162c94c6aebd571e9f1751d209e.
+
+The final scoped Windows checks used pinned Rust 1.98.0 and Nextest 0.9.148,
+warm target/ and incremental=1. Clippy R2 passed in 13.932804 s
+(2f470f4138c6d7a17406fc85e9945fad4d0c30eef7fa1c350ad9077933613edd).
+Nextest R2 passed 58 with 478 filtered in 20.568531 s
+(2cf4635cc24d7317572102dd9711fb9f9b095e2d5328f180ac0dbbefe9257547).
+The image stage passed in 1.173921 s
+(402e3d5199a9a30bb7fc7f046282c8e45302adaf6712c759eb5c6812d761d735).
+The exact commands, Cargo timings and JUnit are under
+windows-cuda-g5-qkvo-checks-r1. The 82 existing launcher checks, six
+independent graph cases and five pinned Torch controls passed.

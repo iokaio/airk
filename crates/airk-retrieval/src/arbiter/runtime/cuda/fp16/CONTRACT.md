@@ -42,3 +42,10 @@ It uses the bounded Compact CPU control policy and exact final graph row
 comparison before permitting the frozen T32 forward. Device provenance,
 attention proof, capacity and the original deadline apply at both entry
 points.
+
+The separate Q/K/V/O test-support stage shares the disposable graph loader
+and optimizer settings. Scoring requires its own exact passing typed load
+receipt and current profile and adapter. The bounded gate compares all
+session rows and counters under the existing 374 CPU controls and original
+payload bounds. The native scorer remains limited to the frozen T32 input
+and deadline. Its diagnostic result grants no product admission.
