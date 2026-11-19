@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Isolate the Compact T32 layer-0 CUDA half projections on sealed operands."""
+"""Isolate Compact T32 CUDA projections on sealed operands."""
 
 import ctypes
 import os
@@ -26,6 +26,7 @@ _MODES = {
 _TOKENS = 32
 _HIDDEN = 2048
 _WIDTHS = {"k": 1024, "v": 1024, "q": 2048}
+_OUTPUT_PROJECTION_WIDTHS = {"o": 2048}
 _HALF_BYTES = 2
 _FLOAT32_BYTES = 4
 
@@ -80,14 +81,21 @@ def run_modes(
     input_half: bytes,
     weights_by_name: dict[str, tuple[int, bytes]],
     float_operands: tuple[bytes, dict[str, bytes]],
+    *,
+    output_projection: bool = False,
 ) -> dict[str, dict[str, bytes]]:
-    """Return row-major K/V/Q bytes in each mode's little-endian storage type."""
+    """Return row-major K/V/Q or O bytes in each mode's little-endian storage type."""
+    if type(output_projection) is not bool:
+        raise ValueError("Compact output projection selection must be boolean")
+    widths = _OUTPUT_PROJECTION_WIDTHS if output_projection else _WIDTHS
     input_length = _TOKENS * _HIDDEN * _HALF_BYTES
     if not isinstance(input_half, bytes) or len(input_half) != input_length:
         raise ValueError("Compact T32 activation must contain exactly [32,2048] half words")
-    if not isinstance(weights_by_name, dict) or set(weights_by_name) != _WIDTHS.keys():
+    if not isinstance(weights_by_name, dict) or set(weights_by_name) != widths.keys():
+        if output_projection:
+            raise ValueError("exact Compact O projection weights required")
         raise ValueError("exact Compact K, V and Q weights required")
-    for name, expected_width in _WIDTHS.items():
+    for name, expected_width in widths.items():
         width, raw = weights_by_name[name]
         if (type(width) is not int or width != expected_width or not isinstance(raw, bytes)
                 or len(raw) != _HIDDEN * width * _HALF_BYTES):
@@ -96,9 +104,9 @@ def run_modes(
     input_float, float_weights = float_operands
     float_input_length = _TOKENS * _HIDDEN * _FLOAT32_BYTES
     if (not isinstance(input_float, bytes) or len(input_float) != float_input_length
-            or set(float_weights) != _WIDTHS.keys()):
+            or set(float_weights) != widths.keys()):
         raise ValueError("exact upcast Compact projection operands required")
-    for name, width in _WIDTHS.items():
+    for name, width in widths.items():
         data = float_weights[name]
         if not isinstance(data, bytes) or len(data) != _HIDDEN * width * _FLOAT32_BYTES:
             raise ValueError(f"Compact {name} upcast projection weight size differs")
@@ -147,7 +155,7 @@ def run_modes(
             raise RuntimeError("cublasCreate_v2 returned a null handle")
         _checked(blas.cublasSetPointerMode_v2, handle, _CUBLAS_POINTER_MODE_HOST)
         device_input = _allocate(runtime, buffers, float_input_length)
-        max_width = max(_WIDTHS.values())
+        max_width = max(widths.values())
         device_weight = _allocate(runtime, buffers, _HIDDEN * max_width * _FLOAT32_BYTES)
         device_output = _allocate(runtime, buffers, _TOKENS * max_width * _FLOAT32_BYTES)
         _checked(runtime.cudaMemcpy, device_input, ctypes.c_char_p(input_half),
@@ -168,7 +176,7 @@ def run_modes(
                 _checked(runtime.cudaMemcpy, device_input, ctypes.c_char_p(input_float),
                          float_input_length, _HOST_TO_DEVICE)
             results[mode] = result = {}
-            for name in _WIDTHS:
+            for name in widths:
                 width, weights = weights_by_name[name]
                 if compute_type is None:
                     weights = float_weights[name]

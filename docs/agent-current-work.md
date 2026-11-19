@@ -162,7 +162,12 @@ Use the existing deadline when resuming in a new context.
   the remaining arithmetic before another full GPU forward. The completed
   CPU replay of CUDA RMSNorm and QuickGelu ordering increased matching
   raw error to 0.0201478004 against the sealed GPU vector. Keep the
-  0.0085411072 candidate result and isolate the remaining half projections.
+  0.0085411072 candidate result. The isolated attention output projection
+  showed 823 half-rounding mismatches with GEMM2 and 117 with stock
+  FP32 MatMul on its retained half operands. Carry the output projection
+  into a separately reviewed candidate and matching CPU reference before
+  another full T32 forward.
+  [Output projection comparison](simplify/one-process-ledger.md#2026-11-19--compact-output-projection-benefits-from-stock-fp32-matmul)
   [Source-order CPU comparison](simplify/one-process-ledger.md#2026-11-19--source-order-compact-cpu-reference-does-not-close-raw-parity)
   [Scored Q/K/V result and blocker](simplify/one-process-ledger.md#2026-11-19--compact-qkv-t32-raw-error-improves-and-still-exceeds-the-gate)
   [Corrected CUDA observation and matching CPU reference](simplify/one-process-ledger.md#2026-11-19--corrected-compact-qkv-cuda-load-and-matching-cpu-reference-pass)

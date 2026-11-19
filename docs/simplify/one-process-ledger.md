@@ -12111,3 +12111,43 @@ human work should fill remaining coverage or power gaps after that
 audit. The 98% judged gate and Windows matching-recipe raw gate remain
 open. Next engineering discriminator is the isolated layer-0 O
 projection using the retained raw half attention operand.
+
+### 2026-11-19 — Compact output projection benefits from stock FP32 MatMul
+
+The owned Windows A6000 worker used the retained R4 raw binary16
+attention output as the original layer-0 O projection's activation.
+The candidate graph proves that the raw output reaches O through
+unmodified half-to-FP32-to-half casts. Its original 8,388,608 B
+binary16 matrix is the verified external slice at offset 639,602,688.
+The A6000 compared five modes on those same operands. The oracle used
+exact integer dots and direct half rounding on all 65,536 results.
+Two words differed between ideal direct half and ideal FP32-to-half.
+
+| Mode | Half mismatches from the oracle | Maximum absolute half error |
+| --- | ---: | ---: |
+| GEMM2 half output | 823 | 0.001953125 |
+| Pedantic half output | 29,908 | 0.00390625 |
+| GEMM2 FP32 output then half | 823 | 0.001953125 |
+| Pedantic FP32 output then half | 55 | 0.00048828125 |
+| Stock FP32 MatMul on upcast half operands then half | 117 | 0.0001220703125 |
+
+Comparable stock MatMul arithmetic reduces rounding discrepancies on
+both this output projection and the previously measured Q/K/V shapes
+with TF32 disabled. This test used the original graph's retained input
+and has no captured native O output for parity. It supplies evidence
+for promoting the output projection in the next separately identified
+candidate. Use a fresh matching reference and typed CUDA load evidence
+before full T32 scoring. No change to product precision, matching limits
+or release acceptance resulted from the isolated trial.
+
+Under compact-fp16-layer0-output-cublas-r1:
+execution 355c354af9e55f36e6be41fbfd8b89719e13d5c6d5193cbb8bc03e2359ebd97e,
+log 47ffe60a309268cdd1cdb8f607ca18365612ac803099b05195cb55838d472dd8,
+worker 6c0774b90ac0855df993d2e6f0012c2422bfc9e1dd7a2d7aed08af267a8a4240,
+CUDA helper c227310f2efcc9afe5fbb6c3c7b00ec4f3824ab844d4976edfaf9fc7058bee09,
+operand loader 67f0efd23d041485fec2a16645c393d46b500ef23dd9f98b514fef234fc5e46e.
+The worker used the verified account and default owner SID ending 1002.
+The original 120-second, 32 GiB Job settled naturally in 14.033830 s with
+2,113,765,376 B peak commit, child exit 0 and zero remaining processes.
+Native isolated calls totalled 0.333244 s. Two simulated CUDA ABI routes,
+five pre-load refusals and five operand-loader refusals also passed.

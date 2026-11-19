@@ -387,3 +387,15 @@ the elementary operations. Use compare_projection_source_order.py only
 after the independent proof is retained. Pass its path and exact SHA
 with --reference and --reference-sha256. The comparison binds the sealed
 native and regular CPU proofs and reports the three complete-vector deltas.
+
+## Standalone Compact attention output projection
+
+Use probe_projection_output.py with the reviewed isolated Python,
+--owned-output for the fresh campaign child and three --helper-sha256
+values in CUDA helper, input custody and output operand order. The
+loader authenticates the retained R4 half attention output, original
+Compact graph, the precision casts between attention and O, and the
+old graph's exact external O matrix. The same checked Windows Job
+runs five cuBLAS modes for one [32,2048] by [2048,2048] projection.
+The receipt compares each result with exact integer-dot rounding
+and carries no native full-model or performance claim.
