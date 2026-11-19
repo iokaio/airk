@@ -236,6 +236,29 @@ class WiderCompactReferenceControls(unittest.TestCase):
                 emit.assert_called_once_with(marker + '{"complete":true}', flush=True)
 
 
+class ProjectionGemmRoundingControls(unittest.TestCase):
+    def test_exact_binary16_rounding_uses_bits_below_float64_at_halfway(self):
+        path = ROOT / 'scripts/arbiter-fp16-execution/probe_projection_gemm.py'
+        spec = importlib.util.spec_from_file_location('projection_gemm_rounding', path)
+        gemm = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gemm)
+        one = 1 << 48
+        halfway = 1 << 37
+        controls = (
+            (one, 0x3c00),
+            (one + halfway, 0x3c00),
+            (one + halfway + 1, 0x3c01),
+            (one + 3 * halfway, 0x3c02),
+            (-(one + halfway + 1), 0xbc01),
+            (1 << 24, 0x0001),
+            (1 << 23, 0x0000),
+            (-(1 << 23), 0x8000),
+        )
+        for dot, word in controls:
+            with self.subTest(dot=dot):
+                self.assertEqual(gemm.rounded_half_word(dot), word)
+
+
 class CompactT32ComparisonControls(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

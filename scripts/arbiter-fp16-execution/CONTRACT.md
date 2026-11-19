@@ -307,3 +307,21 @@ maximum numerical error and count of differing binary16 words. It uses the
 sealed Torch/runtime manifest and independent reference sources. This diagnostic
 measures one intermediate tensor for one input. Qualification and admission
 require separate evidence.
+
+## Standalone Compact projection GEMM experiment
+
+The owned `probe_projection_gemm.py` experiment reuses the exact CUDA capture,
+three authenticated FP16 weight matrices and the preserved CUDA 12 libraries.
+It compares the active GEMM2 configuration with FP32 pedantic cuBLAS arithmetic
+on identical operands in a separate worker. The fixed GPU allocation requests
+cover only the T32 input, three direct projection matrices and their outputs.
+The diagnostic retains the dedicated reader and runtime source identities,
+actual child settlement, exact full-projection rounding counts and integer dot
+witnesses. An exact GEMM2 reproduction is required before extrapolating to the
+saved ONNX Runtime projection result. This experiment does not run the full
+model or grant admission.
+
+Use the original isolated Python and absent bytecode prefix from the corrected
+conversion plan. Supply `--owned-output` with a fresh absolute campaign child.
+The parent uses one 120-second deadline, a 32 GiB Job and bounded log. It reuses
+the existing owned subprocess and exact staged input checks.

@@ -11708,3 +11708,47 @@ Exact image stage passed in 1.117 s
 Exact commands, JUnit and Cargo timings are under
 windows-cuda-g5-projection-capture-checks-r5. Focused Python suites
 passed 80, 137 and 15, including the literal exact-dot witness.
+
+### 2026-11-19 — Exact projection rounding rules out cuBLAS pedantic
+
+The standalone Windows A6000 worker loaded the pinned CUDA 12 libraries
+and used the retained T32 activation, verified external K/V/Q half
+weights and ONNX Runtime capture. GEMM2 mode 16 with compute type 68
+reproduced all 131,072 captured projection words bit for bit. Pedantic
+mode 2 with compute type 69 changed 12,613 K, 17,176 V and 23,368 Q words
+relative to GEMM2. It matched the CPU and exact rounding at the three
+retained maximum-error witnesses.
+
+R9 independently decoded each finite half operand as an integer in
+units of 2^-24. It bounded every signed integer accumulation before
+multiplying and rounded each completed dot directly to half using
+ties-to-even. Exact rounded mismatches were:
+
+| Projection | Words | GEMM2 | FP32 pedantic |
+| --- | ---: | ---: | ---: |
+| K | 32,768 | 394 | 12,623 |
+| V | 32,768 | 582 | 17,184 |
+| Q | 65,536 | 657 | 23,334 |
+| Total | 131,072 | 1,633 | 53,141 |
+
+The isolated result rules out pedantic as the corrective projection
+recipe. Keep the current G5 provider arithmetic and acceptance gates.
+Use the same half inputs and FP32 output in the next standalone
+comparison to isolate sensitivity to the output type. Full T32
+scoring remains blocked by matching-half raw error of 0.0248556137
+against 0.001. Wider scoring, Resource20 performance, installed
+fallback and task qualification remain pending.
+
+R8 under compact-fp16-layer0-cublas-compare-r8 records
+execution bd92912f961653720786448c172e01e44c663a7e6c2431ccb1a268528e2439f0,
+log 43224bc4659ec967e5f6aef39d0628085b75182d7df16fc1c049ee1dc663d2d5,
+and elapsed 13.697673 s. R9 under compact-fp16-layer0-cublas-compare-r9
+records execution 71b0b6f6a6ec9e1be0472a18eb17b67e81a34225fd4d021c22c3e651a86f0c3d,
+log 786a207f9ee8837b3d325761882dd3f85fc54a2c992f23d13780cd70932061a6,
+and source 6ed3e15dd657897d50ef7cd3aef8e8954e743ddb73a7066015725fec7e117e31.
+The owned R9 worker used the verified human user and default owner
+SID ending 1002, elapsed 15.204232 s, peaked at 1,996,873,728 B Job
+commit, and exited 0 with natural empty Job settlement under the original
+120-second and 32 GiB bounds. Its isolated CUDA calls took 0.290743 s.
+This timing covers the projection experiment and carries no model
+latency claim.

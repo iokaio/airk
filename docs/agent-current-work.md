@@ -142,9 +142,13 @@ Use the existing deadline when resuming in a new context.
   identical Q/K/V inputs. Independent prefix Q, K and V all differ before
   attention. With identical captured input and verified weights, the
   direct K/V/Q projections still differ. The shared normalized input
-  differed in five of 65,536 values. Test the stricter pinned CUDA FP32
-  GEMM arithmetic in a separate projection experiment. Matching raw
-  parity still gates wider Windows scoring.
+  differed in five of 65,536 values. Standalone GEMM2 reproduced all
+  131,072 CUDA projection values. Exact integer dot products found
+  1,633 half-rounding mismatches for GEMM2 and 53,141 for FP32 pedantic.
+  Keep GEMM2 as the baseline. Check whether retaining FP32 projection
+  outputs through accumulation reduces the discrepancy with the same
+  half operands. Matching raw parity still gates wider Windows scoring.
+  [Full projection rounding audit](simplify/one-process-ledger.md#2026-11-19--exact-projection-rounding-rules-out-cublas-pedantic)
   [Identical-input projection comparison](simplify/one-process-ledger.md#2026-11-19--identical-half-inputs-isolate-compact-projection-rounding)
   [Independent operand comparison](simplify/one-process-ledger.md#2026-11-19--independent-compact-prefix-differs-before-attention)
   [Layer-0 capture and replay](simplify/one-process-ledger.md#2026-11-19--compact-cuda-layer-0-capture-and-identical-operand-replay)

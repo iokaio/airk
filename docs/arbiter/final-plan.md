@@ -1641,9 +1641,13 @@ bit for bit. The independent prefix differs in Q, K and V before attention.
 The shared half input differed in five of 65,536 values. With identical
 captured input and verified weights, direct K, V and Q differed at 400,
 587 and 658 half words. Exact dot witnesses put the CPU result closer at
-each projection's maximum-error sample. Isolate the stricter pinned
-CUDA FP32 GEMM mode before another full scoring attempt. The original
-numerical and performance gates still apply.
+each projection's maximum-error sample. Standalone cuBLAS GEMM2
+reproduced all 131,072 captured ONNX Runtime values. The full exact dot
+comparison counted 1,633 half-rounding mismatches in GEMM2 and 53,141 in
+FP32 pedantic. Keep GEMM2 as the baseline and compare FP32 output
+accumulation on the same half operands before another full scoring
+attempt. The original numerical and performance gates still apply.
+[Full projection rounding audit](../simplify/one-process-ledger.md#2026-11-19--exact-projection-rounding-rules-out-cublas-pedantic)
 [Identical-input projection comparison](../simplify/one-process-ledger.md#2026-11-19--identical-half-inputs-isolate-compact-projection-rounding)
 [Independent operand comparison](../simplify/one-process-ledger.md#2026-11-19--independent-compact-prefix-differs-before-attention)
 [Layer-0 capture and replay](../simplify/one-process-ledger.md#2026-11-19--compact-cuda-layer-0-capture-and-identical-operand-replay)
