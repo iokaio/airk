@@ -12060,3 +12060,26 @@ aggregate techqa-validation-metadata-r1.json
 Both aggregate outputs were checked with the logged-in human default
 owner SID ending 1002. No model execution, scoring or new labels for
 this inventory.
+
+### 2026-11-19 — Original TechQA DEV yields a provisional technical-support pool
+
+The 25.295 s metadata-only scan of the original pinned archive opened
+the 560,864 B publisher DEV metadata member without decoding text.
+It confirmed 310 rows, 160 answerable, 150 unanswerable, 308 ordered
+nonempty duplicate-free menus and 158 answerable rows with in-menu
+gold and ordered numeric offsets. The union of 12,355 menu documents
+matches the prior frozen DEV fence exactly. It intersects 134 of 388
+original TRAIN gold source IDs. Seventy-seven of the 158 structurally
+usable rows have zero menu document-ID overlap against original
+TRAIN gold. Clone, chronology, model exposure, archived document
+coverage and native-visible judgment acceptance remain separate.
+
+The exact archived DEV source is
+df62a05619b07b386159bcbaaf3e0e50be93eaf983aea8a5f8ed1513a3c2ec6f.
+Audit source
+014563f2f1f2c801ff512f95ed3c77a0522e1e4650a81a54353e890dd006e626,
+private techqa-original-dev-metadata-r1.json receipt
+8d595e5c963bd838991282b66332b930fe169184de5cf9b6150c9e221ec98a75.
+Five literal tests passed. The original 291,957,707 B shared corpus
+had header-only coverage in this run. Next check membership by parsing
+the exact pinned corpus map keys under a bounded metadata-only scan.

@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Read the held local TechQA validation metadata and print one private aggregate JSON receipt.
+"""Read held local TechQA metadata and print one private aggregate JSON receipt.
 
 Use isolated Windows Python -I -B -S through the checked human shell. The caller
 owns the private output path and captures stdout. No files are written here.
 """
 
+import argparse
 import hashlib
 import json
 import os
@@ -28,6 +29,10 @@ MEMBERS = {
     VALIDATION + "validation_reference.json": "references",
     VALIDATION + "validation_technotes.json": "corpus",
     VALIDATION + "validation_example_output.json": "example",
+}
+ORIGINAL_DEV_MEMBERS = {
+    "TechQA/training_and_dev/dev_Q_A.json": "references",
+    "TechQA/training_and_dev/training_dev_technotes.json": "corpus",
 }
 MAX_MEMBER_BYTES = 64 << 20
 MAX_ROWS = 20_000
@@ -223,6 +228,13 @@ def numeric_offset(value):
     return None
 
 
+def has_gold_metadata(reference, menu):
+    start = numeric_offset(reference.get("START_OFFSET"))
+    end = numeric_offset(reference.get("END_OFFSET"))
+    return (reference.get("ANSWERABLE") == "Y" and reference.get("DOCUMENT") in menu
+            and start is not None and end is not None and start < end)
+
+
 def paired_counts(questions, references, docs, dev, train_gold):
     paired = questions.keys() & references.keys()
     result = {"questions": len(questions), "references": len(references), "matched_question_ids": len(paired),
@@ -247,23 +259,57 @@ def paired_counts(questions, references, docs, dev, train_gold):
         same_roster = bool(menu) and len(menu_set) == len(menu) == len(other) and menu_set == set(other)
         same_order = same_roster and menu == other
         complete = same_order and menu_set <= docs
-        start = numeric_offset(reference.get("START_OFFSET"))
-        end = numeric_offset(reference.get("END_OFFSET"))
         result["matched_menu_rosters"] += same_roster
         result["matched_menu_orders"] += same_order
         result["matched_complete_menus"] += complete
-        result["answerable_matched_complete_menus_with_offsets"] += (
-            complete and reference.get("ANSWERABLE") == "Y" and reference.get("DOCUMENT") in menu_set
-            and start is not None and end is not None and start < end)
+        result["answerable_matched_complete_menus_with_offsets"] += complete and has_gold_metadata(reference, menu_set)
     result.update(unique_menu_documents=len(question_docs), menu_documents_missing_in_corpus=len(question_docs - docs),
                   menu_documents_overlapping_dev_menu_ids=len(question_docs & dev),
                   menu_documents_overlapping_train_gold_ids=len(question_docs & train_gold))
     return result
 
 
+def original_dev_counts(references, corpus, frozen_dev, train_gold):
+    source_ids = set()
+    result = {
+        "rows": len(references), "answerable_rows": 0, "unanswerable_rows": 0,
+        "other_answerability_rows": 0, "valid_ordered_menus": 0,
+        "answerable_with_gold_in_menu_and_ordered_offsets": 0,
+        "answerable_with_gold_in_menu_and_ordered_offsets_without_train_gold_menu_overlap": 0,
+        "ordered_menus_with_complete_corpus": None if corpus is None else 0,
+        "answerable_structural_rows_with_complete_corpus": None if corpus is None else 0,
+    }
+    for row in references.values():
+        menu = row["DOC_IDS"]
+        roster = set(menu)
+        source_ids.update(roster)
+        valid = bool(menu) and len(roster) == len(menu) and all(roster)
+        gold = valid and has_gold_metadata(row, roster)
+        label = row.get("ANSWERABLE")
+        category = "answerable" if label == "Y" else "unanswerable" if label == "N" else "other_answerability"
+        result[category + "_rows"] += 1
+        result["valid_ordered_menus"] += valid
+        result["answerable_with_gold_in_menu_and_ordered_offsets"] += gold
+        result["answerable_with_gold_in_menu_and_ordered_offsets_without_train_gold_menu_overlap"] += (
+            gold and roster.isdisjoint(train_gold))
+        if corpus is not None:
+            available = valid and roster <= corpus
+            result["ordered_menus_with_complete_corpus"] += available
+            result["answerable_structural_rows_with_complete_corpus"] += gold and available
+    result.update(
+        distinct_menu_document_ids=len(source_ids),
+        prior_original_train_gold_document_ids=len(train_gold),
+        menu_document_ids_overlapping_prior_original_train_gold=len(source_ids & train_gold),
+        missing_frozen_dev_menu_document_ids=len(frozen_dev - source_ids),
+        added_dev_menu_document_ids=len(source_ids - frozen_dev),
+        menu_document_ids_missing_in_corpus=None if corpus is None else len(source_ids - corpus),
+    )
+    return result
+
+
 def read_checked_json(path, expected):
     with path.open("rb") as stream:
-        raw = stream.read(8 << 20 | 1)
+        raw = stream.read((8 << 20) + 1)
     require(len(raw) <= 8 << 20 and hashlib.sha256(raw).hexdigest() == expected,
             "retained TechQA metadata provenance differs")
     return json.loads(raw), {"path": str(path), "bytes": len(raw), "sha256": expected}
@@ -274,8 +320,9 @@ def archive_state(source):
     return (observed.st_dev, observed.st_ino, observed.st_size, observed.st_mtime_ns)
 
 
-def audit():
+def audit(*, original_dev=False):
     started = time.monotonic()
+    requested_members = ORIGINAL_DEV_MEMBERS if original_dev else MEMBERS
 
     def check():
         if time.monotonic() >= started + 300:
@@ -301,21 +348,26 @@ def audit():
                 check()
                 require(not PurePosixPath(member.name).is_absolute() and ".." not in PurePosixPath(member.name).parts,
                         "unsafe archive member path")
-                if member.name not in MEMBERS:
+                if member.name not in requested_members:
                     continue
-                kind = MEMBERS[member.name]
-                require(kind not in members and member.isfile() and 0 < member.size <= MAX_MEMBER_BYTES,
-                        "duplicate, nonregular, empty or oversized validation member")
-                identity = {"member": member.name, "bytes": member.size, "content_read": kind != "example"}
-                if kind != "example":
+                kind = requested_members[member.name]
+                oversized_corpus = original_dev and kind == "corpus" and member.size > MAX_MEMBER_BYTES
+                require(kind not in members and member.isfile() and 0 < member.size
+                        and (member.size <= MAX_MEMBER_BYTES or oversized_corpus),
+                        "duplicate, nonregular, empty or oversized audit member")
+                content_read = kind != "example" and not oversized_corpus
+                identity = {"member": member.name, "bytes": member.size, "content_read": content_read}
+                if oversized_corpus:
+                    identity["parsed_member_limit_bytes"] = MAX_MEMBER_BYTES
+                if content_read:
                     with archive.extractfile(member) as entry:
                         reader = MetadataReader(entry, check)
                         results[kind] = (parse_corpus(reader) if kind == "corpus"
                                          else parse_roster(reader, reference=kind == "references"))
                         identity.update(reader.finish(member.size))
                 members[kind] = identity
-        require(set(members) == set(MEMBERS.values()) and archive_state(source) == before,
-                "incomplete validation archive roster or publisher input changed")
+        require(set(members) == set(requested_members.values()) and archive_state(source) == before,
+                "incomplete audit archive roster or publisher input changed")
 
     fence, fence_pin = read_checked_json(ARCHIVE_ROOT / "full-original-DEV-source-fence-r5.json", DEV_FENCE_SHA)
     caveat, caveat_pin = read_checked_json(ARCHIVE_ROOT / "r4-scope-caveat.json", DEV_CAVEAT_SHA)
@@ -324,10 +376,20 @@ def audit():
             and caveat["r4_not_clean_exposure_proof"] is True, "retained DEV/TRAIN scope proof differs")
     dev = set(fence["entire_DEV_source_id_closure"])
     train = {row["original_gold_document_id"] for row in fence["records"] if row["answerable"] is True}
-    counts = paired_counts(results["questions"], results["references"], results["corpus"], dev, train)
+    if original_dev:
+        counts = original_dev_counts(results["references"], results.get("corpus"), dev, train)
+        require(counts["rows"] == fence["original_DEV_rows_DOC_IDS_only"]
+                and counts["distinct_menu_document_ids"] == len(dev)
+                and counts["missing_frozen_dev_menu_document_ids"] == counts["added_dev_menu_document_ids"] == 0
+                and counts["menu_document_ids_overlapping_prior_original_train_gold"]
+                    == fence["full_heldout_overlap_ids_count"], "actual DEV metadata differs from the prior source fence")
+        schema = "airk.private.techqa-publisher-original-dev-metadata/1"
+    else:
+        counts = paired_counts(results["questions"], results["references"], results["corpus"], dev, train)
+        schema = "airk.private.techqa-publisher-validation-metadata/1"
     check()
     return {
-        "schema": "airk.private.techqa-publisher-validation-metadata/1", "complete": True,
+        "schema": schema, "complete": True,
         "archive": {"path": str(ARCHIVE), "bytes": ARCHIVE_BYTES, "sha256": ARCHIVE_SHA},
         "source": source_pin, "members": members, "counts": counts,
         "metadata_only": True, "question_or_answer_text_decoded": False,
@@ -342,7 +404,9 @@ def audit():
 def main():
     require(sys.platform == "win32" and sys.flags.isolated and sys.flags.no_site and sys.dont_write_bytecode,
             "use checked Windows Python -I -B -S")
-    print(json.dumps(audit(), allow_nan=False, separators=(",", ":")))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--original-dev", action="store_true")
+    print(json.dumps(audit(original_dev=parser.parse_args().original_dev), allow_nan=False, separators=(",", ":")))
 
 
 if __name__ == "__main__":

@@ -48,6 +48,27 @@ class TechqaValidationMetadataControls(unittest.TestCase):
                           result["menu_documents_missing_in_corpus"], result["menu_documents_overlapping_dev_menu_ids"],
                           result["menu_documents_overlapping_train_gold_ids"]), (1, 1, 1, 2, 1))
 
+    def test_original_dev_structural_denominator_and_uncensused_corpus(self):
+        rows = {"a": {"DOC_IDS": ("A", "B"), "ANSWERABLE": "Y", "DOCUMENT": "B",
+                      "START_OFFSET": 0, "END_OFFSET": "1"},
+                "b": {"DOC_IDS": ("C",), "ANSWERABLE": "N"},
+                "c": {"DOC_IDS": ("D", "D"), "ANSWERABLE": "Y", "DOCUMENT": "D",
+                      "START_OFFSET": 0, "END_OFFSET": 2}}
+        expected = {"rows": 3, "answerable_rows": 2, "unanswerable_rows": 1,
+                    "valid_ordered_menus": 2, "answerable_with_gold_in_menu_and_ordered_offsets": 1,
+                    "answerable_with_gold_in_menu_and_ordered_offsets_without_train_gold_menu_overlap": 0,
+                    "menu_document_ids_overlapping_prior_original_train_gold": 1,
+                    "added_dev_menu_document_ids": 1, "missing_frozen_dev_menu_document_ids": 1}
+        count = AUDIT["original_dev_counts"]
+        result = count(rows, None, {"A", "B", "C", "E"}, {"B", "X"})
+        self.assertEqual({key: result[key] for key in expected}, expected)
+        self.assertIsNone(result["ordered_menus_with_complete_corpus"])
+        self.assertIsNone(result["menu_document_ids_missing_in_corpus"])
+        checked = count(rows, {"A", "B", "D"}, {"A", "B", "C", "E"}, {"B", "X"})
+        self.assertEqual(checked["ordered_menus_with_complete_corpus"], 1)
+        self.assertEqual(checked["answerable_structural_rows_with_complete_corpus"], 1)
+        self.assertEqual(checked["menu_document_ids_missing_in_corpus"], 1)
+
     def test_selected_unknown_types_duplicate_ids_and_corrupt_skips_refuse(self):
         for raw in (b'[{"QUESTION_ID":"q","QUESTION_ID":"r","DOC_IDS":["a"]}]',
                     b'[{"QUESTION_ID":"q","DOC_IDS":[{"TEXT":"never decode"}]}]',

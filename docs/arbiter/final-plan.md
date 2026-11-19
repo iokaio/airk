@@ -1854,8 +1854,12 @@ complement rows share a known TRAIN repository or have an unresolved
 repository identity. TechQA validation has 20 complete menus and 11
 answerable rows with offsets. Its 994 candidate documents all also
 appear in original DEV menus. Use both small groups to check the
-evaluation mechanics. Audit original TechQA DEV and determine how
-many suitable code and long-context judgments still need review.
+evaluation mechanics. Original TechQA DEV has 158 answerable rows
+with a complete ordered menu and publisher offsets. Of those, 77
+have no menu document-ID overlap with original TRAIN gold. Verify
+archived document coverage, source exposure and native-visible spans
+for that provisional technical-support pool. Determine how many code
+and long-context judgments still need review.
 [Local confirmation-source inventory](software-v2-data-audit.md#initial-context-fp16-confirmation-source-inventory)
 
 For confirmation, use the same revision-pinned corpus, complete candidate

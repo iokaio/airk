@@ -24,6 +24,8 @@ The family-root source-provenance.json maps original and maintained SHA-256 valu
   verifies the original archive and streams only selected metadata from its
   validation members. It reports question/menu/corpus agreement and exposure
   against previous DEV and TRAIN gold source IDs without decoding answer text.
+  The --original-dev mode audits the larger publisher DEV member and retains
+  the original training/DEV corpus identity and any unavailable scope.
 
 Run the pinned interpreter locally under the verified human identity. Redirect
 the one-line aggregate only to a new audited private campaign path. These

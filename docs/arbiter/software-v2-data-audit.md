@@ -279,3 +279,26 @@ The ContextBench inventory is
 The TechQA validation inventory is
 4b9dc72722ee4a33c1b882871d8963001abd2e073a2370454fdbba86cfd641aa.
 Neither inventory admits a judged cohort or reports FP16 task quality.
+
+### Original TechQA DEV confirmation candidates
+
+The structural audit verified 310 publisher DEV questions. Of the 160
+answerable rows, 158 have a nonempty duplicate-free ordered candidate
+menu, an in-menu publisher gold document and ordered offsets. The valid
+ordered-menu count across all rows is 308. Seventy-seven of the 158
+answerable candidates have no menu document ID in the complete set of
+388 original TRAIN gold IDs. All 12,355 distinct DEV menu document
+IDs match the earlier frozen metadata fence. Of those, 134 overlap
+original TRAIN gold. Use the 77 as the first provisional
+technical-support candidates. Document ID separation still requires
+clone, product-family, chronology and actual model exposure review.
+
+The shared training/DEV document member is 291,957,707 bytes. The
+structural run retained its header. The next bounded metadata scan
+will determine menu document availability. Before paired scoring,
+verify source versions, native-visible gold spans, independent held-out
+reservation and paired sample size. The original DEV member pin is
+df62a05619b07b386159bcbaaf3e0e50be93eaf983aea8a5f8ed1513a3c2ec6f.
+The exact aggregate under techqa-original-dev-metadata-r1.json is
+8d595e5c963bd838991282b66332b930fe169184de5cf9b6150c9e221ec98a75.
+No question, answer or document text was decoded.
