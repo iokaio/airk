@@ -301,3 +301,14 @@ private profile and source manifest. The raw all-unsupported calibration
 rebinds its model entry to the new ONNX bytes. The original weights and
 other assets keep their held logical paths. The existing Probe, resource
 limits, action availability and execution authority apply.
+
+## Corrected Large FP32 scoring references
+
+The batch-view profile selector binds the exact corrected placement, original
+Large Probe, retained independent producers, and independent inverse proof.
+The proof checks the complete 36-region shape-only transformation, unchanged
+operand order and all other model bytes. The immutable predecessor artifact
+and publisher arrays are compared independently against the corrected native
+scores at all four widths. The receipt labels the first lane as an equivalent
+predecessor reference. Both numerical criteria, the CPU payload and placement
+checks, the original deadline, and the actual process/Job limits stay binding.

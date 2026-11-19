@@ -737,3 +737,8 @@ inputs, 40 bytes per tensor and 43,819 distinct payload bytes. The Compact
 34,131-byte limit remains model-specific. The two profiling experiments have
 distinct policy identities. The scorer uses the original deadline and the
 reviewed 40/8/4 GiB device configuration for Large.
+
+The corrected Large FP32 batch-view graph has its own exact final placement
+digest. The profiling entry binds each Large graph to its corresponding
+placement proof. Both Large candidates use the same reviewed CPU-incident
+tensor types, byte limits and 40/8/4 GiB device configuration.

@@ -17,6 +17,9 @@ const MAX_CPU_VALUE_BYTES: u64 = 40;
 const COMPACT_CPU_PAYLOAD_BYTES: u64 = 34_131;
 const LARGE_CPU_PAYLOAD_BYTES: u64 = 43_819;
 const LARGE_GRAPH_SHA: &str = "1892e5b040d8c51969f1d3361d0929950fa98f0ef4079060e48d00458635488a";
+const BATCH_VIEW_GRAPH: &str = "5c9a26693eec8522bbfb4d5c4445fa0b60684449a5ea2e1098ec71cca96405b1";
+const BATCH_VIEW_PLACEMENT: &str =
+    "d4ccefff117a11c68b92c3f9c08b145a4fbb5a470114af5a23107c73a26bc431";
 const APPROVED_WIDTHS: [usize; 4] = [32, 128, 1024, 8192];
 
 pub(super) struct GraphGate {
@@ -369,9 +372,19 @@ impl Scorer {
             .gpu
             .as_ref()
             .context("Large bounded hybrid CUDA binding missing")?;
+        let candidate = profile
+            .description()
+            .device_execution
+            .as_ref()
+            .context("Large bounded hybrid device policy missing")?;
+        let placement = if candidate.graph == BATCH_VIEW_GRAPH.parse()? {
+            BATCH_VIEW_PLACEMENT
+        } else {
+            LARGE_GRAPH_SHA
+        };
         ensure!(
             profile.description().model == ModelChoice::ContextQwenLarge
-                && reviewed_graph_sha == LARGE_GRAPH_SHA.parse()?
+                && reviewed_graph_sha == placement.parse()?
                 && (
                     binding.plan.cold_peak_bytes(),
                     binding.plan.warm_extra_bytes(),

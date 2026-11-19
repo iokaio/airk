@@ -21,6 +21,7 @@ struct Experiment {
     retained: &'static str,
     supplemental: &'static str,
     receipt_schema: &'static str,
+    equivalent_predecessor: bool,
 }
 
 const COMPACT: Experiment = Experiment {
@@ -31,6 +32,7 @@ const COMPACT: Experiment = Experiment {
     retained: RETAINED_SHA,
     supplemental: SUPPLEMENTAL_SHA,
     receipt_schema: "airk.private.cuda-compact-bounded-hybrid-profile/1",
+    equivalent_predecessor: false,
 };
 
 const LARGE: Experiment = Experiment {
@@ -41,6 +43,14 @@ const LARGE: Experiment = Experiment {
     retained: "c87c4edcdec2ab5e98b41bfc186c3bb7d60791e7b9efd0aea186b731eecc3dd2",
     supplemental: "020669f0c44a959a0d95798eb3cc52925513e7e549496368017e0827a398aaef",
     receipt_schema: "airk.private.cuda-large-bounded-hybrid-profile/1",
+    equivalent_predecessor: false,
+};
+
+const BATCH_VIEW: Experiment = Experiment {
+    graph: "d4ccefff117a11c68b92c3f9c08b145a4fbb5a470114af5a23107c73a26bc431",
+    receipt_schema: "airk.private.cuda-large-batch-view-bounded-hybrid-profile/1",
+    equivalent_predecessor: true,
+    ..LARGE
 };
 
 #[derive(Deserialize)]
@@ -134,6 +144,84 @@ fn validate_reference_producer(
     Ok(pin)
 }
 
+struct ReferenceLineage {
+    request: ResourceFilePin,
+    equivalence: ResourceFilePin,
+    native_input: ResourceFilePin,
+    profile_pin: ResourceFilePin,
+    profile: Profile,
+}
+
+fn equivalent_predecessor(current: &Profile, input: &ResourceRunInput) -> Result<ReferenceLineage> {
+    const ORIGINAL_GRAPH: &str = "f8ba5d3ea8a4269739ec5e517e61e4ec1f2f94560ea60014a4f5a9476c32fd94";
+    const CORRECTED_GRAPH: &str =
+        "5c9a26693eec8522bbfb4d5c4445fa0b60684449a5ea2e1098ec71cca96405b1";
+    let request = exact_pin(
+        "AIRK_CUDA_HYBRID_REFERENCE_REQUEST",
+        "9a7daee2c118030c979852efc6780f011356af320e0c3fe0a6d1d9a2a0ab33b0",
+    )?;
+    let equivalence = exact_pin(
+        "AIRK_CUDA_HYBRID_REFERENCE_EQUIVALENCE",
+        "404a486500b1c3955cc5616554ccf2f7c55cd4855981d4477265688db41278d1",
+    )?;
+    let proof: Value = serde_json::from_slice(&pinned(&equivalence, 4096)?)?;
+    let predecessor: Request = serde_json::from_slice(&pinned(&request, 1 << 20)?)?;
+    let Request::Probe { gpu_input, .. } = predecessor else {
+        anyhow::bail!("the retained original Large reference Probe is required");
+    };
+    let (old_input, original, _, _) = inputs_from(&gpu_input)?;
+    ensure!(
+        proof["schema"] == "airk.private.large-fp32-batch-view-reference-lineage/1"
+            && proof["predecessor_graph"] == ORIGINAL_GRAPH
+            && proof["candidate_graph"] == CORRECTED_GRAPH
+            && proof["comparison_basis"] == "equivalent_predecessor"
+            && proof["exact_inverse"] == true
+            && proof["operand_order_unchanged"] == true
+            && proof["verified_mask_adds"] == 36
+            && proof["native_scoring_dispatched"] == false
+            && original.manifest.to_string()
+                == "eb467966e528b3b34f0c95d26bdcb0e3f404267b5dcaa673cc6c56755b85905b"
+            && current.manifest.to_string()
+                == "7e4481caaf7034a70779702edad73a0eb08321418d1b785a4b7f4f891522bdac"
+            && original.model == current.model
+            && original.compiler == current.compiler
+            && original.abi == current.abi
+            && old_input.policy_digest == input.policy_digest,
+        "batch-view input, original reference identity or exact inverse differs"
+    );
+    let preserved = |profile: &Profile| {
+        profile
+            .assets
+            .iter()
+            .filter(|asset| !matches!(asset.role, AssetRole::Model | AssetRole::Calibration))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    ensure!(
+        preserved(&original) == preserved(current)
+            && original
+                .device_execution
+                .as_ref()
+                .map(|d| d.graph.to_string())
+                .as_deref()
+                == Some(ORIGINAL_GRAPH)
+            && current
+                .device_execution
+                .as_ref()
+                .map(|d| d.graph.to_string())
+                .as_deref()
+                == Some(CORRECTED_GRAPH),
+        "batch-view comparison requires unchanged external weights, tokenizer and other assets"
+    );
+    Ok(ReferenceLineage {
+        request,
+        equivalence,
+        native_input: gpu_input,
+        profile_pin: old_input.profile,
+        profile: original,
+    })
+}
+
 fn score_rows(
     scorer: &mut airk_retrieval::arbiter::runtime::BoundedHybridScorer,
     rows: [&NumericCase; 4],
@@ -141,6 +229,7 @@ fn score_rows(
     receipt: &mut Value,
     file: &mut File,
     deadline: Instant,
+    equivalent_predecessor: bool,
 ) -> Result<()> {
     for (index, row) in rows.into_iter().enumerate() {
         let [same, original] = reference_arrays(row)?;
@@ -153,13 +242,23 @@ fn score_rows(
         let actual = timed.value?;
         let (same_raw, same_mass, same_argmax) = comparison(&actual, same)?;
         let (original_raw, original_mass, original_argmax) = comparison(&actual, original)?;
-        receipt["rows"].as_array_mut().unwrap().push(json!({
+        let mut observed = json!({
             "name": row.name, "tokens": row.input.input_ids.len(), "input_digest": row.input.input_digest,
             "raw_scores": actual, "elapsed_us": timed.elapsed_us, "native_call_elapsed_us": timed.native_call_elapsed_us,
-            "same_artifact_raw_error": same_raw, "same_artifact_mass_error": same_mass,
             "original_fp32_raw_error": original_raw, "original_fp32_mass_error": original_mass,
             "argmax_matches": same_argmax && original_argmax,
-        }));
+        });
+        let (raw, mass) = if equivalent_predecessor {
+            (
+                "equivalent_predecessor_raw_error",
+                "equivalent_predecessor_mass_error",
+            )
+        } else {
+            ("same_artifact_raw_error", "same_artifact_mass_error")
+        };
+        observed[raw] = json!(same_raw);
+        observed[mass] = json!(same_mass);
+        receipt["rows"].as_array_mut().unwrap().push(observed);
         flush_graph_diagnostic(file, receipt)?;
         ensure!(
             timed.within_deadline
@@ -186,6 +285,12 @@ fn cuda_compact_fp32_bounded_hybrid_profile() -> Result<()> {
 #[ignore = "owned Windows 48 GiB job, reviewed Large graph, and exact independent references"]
 fn cuda_large_fp32_bounded_hybrid_profile() -> Result<()> {
     profile_context(LARGE)
+}
+
+#[test]
+#[ignore = "owned Windows 48 GiB job, reviewed corrected graph and independent predecessor references"]
+fn cuda_large_fp32_batch_view_bounded_hybrid_profile() -> Result<()> {
+    profile_context(BATCH_VIEW)
 }
 
 fn profile_context(experiment: Experiment) -> Result<()> {
@@ -272,8 +377,14 @@ fn profile_context(experiment: Experiment) -> Result<()> {
         "supplemental Context references use a different native scoring identity"
     );
     numeric_rows(&supplementary.rows, &[(32, 8), (1024, 8)], false)?;
-    let retained_producer = validate_reference_producer(&retained, &profile)?;
-    let supplementary_producer = validate_reference_producer(&supplementary, &profile)?;
+    let lineage = if experiment.equivalent_predecessor {
+        Some(equivalent_predecessor(&profile, &input)?)
+    } else {
+        None
+    };
+    let reference_profile = lineage.as_ref().map_or(&profile, |proof| &proof.profile);
+    let retained_producer = validate_reference_producer(&retained, reference_profile)?;
+    let supplementary_producer = validate_reference_producer(&supplementary, reference_profile)?;
     let rows = [
         &supplementary.rows[0],
         &retained.rows[1],
@@ -342,6 +453,11 @@ fn profile_context(experiment: Experiment) -> Result<()> {
         "rows": [], "session_teardown_observed": false, "measured_peak_device_bytes": null,
         "measured_transfer_bytes": null,
     });
+    if let Some(lineage) = &lineage {
+        receipt["reference_basis"] = json!("equivalent_predecessor");
+        receipt["reference_request"] = json!(lineage.request);
+        receipt["reference_equivalence"] = json!(lineage.equivalence);
+    }
     flush_graph_diagnostic(&mut file, &receipt)?;
     let mut operations = operation::Journal::create_until(
         &out,
@@ -424,6 +540,7 @@ fn profile_context(experiment: Experiment) -> Result<()> {
                 &mut receipt,
                 &mut file,
                 deadline,
+                experiment.equivalent_predecessor,
             )?;
             scorer.synchronize(deadline)?;
             ensure!(
@@ -477,6 +594,16 @@ fn profile_context(experiment: Experiment) -> Result<()> {
             }
             if let Some(pin) = &capacity_pin {
                 pinned(pin, 4096)?;
+            }
+            if let Some(lineage) = &lineage {
+                for pin in [
+                    &lineage.request,
+                    &lineage.equivalence,
+                    &lineage.native_input,
+                    &lineage.profile_pin,
+                ] {
+                    pinned(pin, 1 << 20)?;
+                }
             }
             ensure!(
                 Instant::now() < deadline,

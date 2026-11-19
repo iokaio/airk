@@ -86,8 +86,7 @@ value for each. Only CPU and CUDA placement in a single root graph is
 accepted. CPU incident values must be fixed INT64 or BOOL, within 40 bytes
 each, with no implicit CPU inputs. The receipt reports their distinct static
 payload size and whether it fits the predecessor's 43,819-byte envelope.
-The graph-only result carries no scoring or product authority, and the
-candidate arguments are exclusive with the scoring arguments below.
+The graph-only result carries no scoring or product authority.
 
 ## Windows Large FP32 four-width profiling
 
@@ -109,3 +108,20 @@ caps are 48 GiB each. The 44 GiB device plan includes a 40 GiB arena and 4 GiB
 headroom. The warm admission increment is 8 GiB. The trace reports per-run
 CPU tensor sizes and placement. Endpoint latency, allocation peaks and
 cold/warm qualification have separate evidence requirements.
+
+For corrected batch-view scoring, combine the candidate metadata arguments
+with the scoring arguments and pass the candidate's exact completed native
+graph result as `--graph`. Use an image containing
+`cuda_large_fp32_batch_view_bounded_hybrid_profile` and include the reviewed
+reference lineage.
+
+```text
+  --reference-equivalence LARGE_BATCH_VIEW_REFERENCE_LINEAGE
+  --reference-equivalence-sha256 404a486500b1c3955cc5616554ccf2f7c55cd4855981d4477265688db41278d1
+```
+
+The native and owned scoring receipts identify the reference basis as
+`equivalent_predecessor`. The independent fixtures retain their original
+graph identity. Each candidate forward must produce a complete trace of
+3,643 nodes, including 1,663 CPU nodes, under the same limits and score
+thresholds.

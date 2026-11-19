@@ -17,6 +17,9 @@ PROFILE = "eb467966e528b3b34f0c95d26bdcb0e3f404267b5dcaa673cc6c56755b85905b"
 REQUEST_SHA = "9a7daee2c118030c979852efc6780f011356af320e0c3fe0a6d1d9a2a0ab33b0"
 BATCH_VIEW_GRAPH_SHA = "5c9a26693eec8522bbfb4d5c4445fa0b60684449a5ea2e1098ec71cca96405b1"
 BATCH_VIEW_PREPARATION_SHA = "ea6ebdadacf0b776e00281172edc4c756ee396ae03eb8db0596c420218315039"
+BATCH_VIEW_OBSERVATION_SHA = "d4ccefff117a11c68b92c3f9c08b145a4fbb5a470114af5a23107c73a26bc431"
+REFERENCE_EQUIVALENCE_SHA = "404a486500b1c3955cc5616554ccf2f7c55cd4855981d4477265688db41278d1"
+REFERENCE_BASIS = "equivalent_predecessor"
 CPU = "CPUExecutionProvider"
 CUDA = "CUDAExecutionProvider"
 PARENT_CPU_STATIC_BYTES = 43819
@@ -27,6 +30,10 @@ SELECTOR = (
 SCORING_SELECTOR = (
     "inference_engine::pool::arbiter::qualification::software_v2::"
     "cuda_qualification::bounded_hybrid::cuda_large_fp32_bounded_hybrid_profile"
+)
+BATCH_VIEW_SCORING_SELECTOR = (
+    "inference_engine::pool::arbiter::qualification::software_v2::"
+    "cuda_qualification::bounded_hybrid::cuda_large_fp32_batch_view_bounded_hybrid_profile"
 )
 SCORING_INPUTS = {
     "reviewed_graph": ("GRAPH", "1892e5b040d8c51969f1d3361d0929950fa98f0ef4079060e48d00458635488a"),
@@ -135,12 +142,13 @@ def validate_candidate_graph(observed, require):
                 + row["name"])
 
 
-def scoring_inputs(paths, base, guard, require):
+def scoring_inputs(paths, base, guard, require, *, candidate=False):
     guard(paths, True)
     pins = {}
     for (label, (_variable, digest)), path in zip(SCORING_INPUTS.items(), paths):
+        expected = BATCH_VIEW_OBSERVATION_SHA if candidate and label == "reviewed_graph" else digest
         pin = base.pin(path)
-        require(pin["sha256"] == digest, "reviewed Large input differs: " + label)
+        require(pin["sha256"] == expected, "reviewed Large input differs: " + label)
         pins[label] = pin
     fixtures = [base.read(pin["path"]) for label, pin in pins.items() if label.endswith("_fixture")]
     producers = [fixture["reference_producer"] for fixture in fixtures]
@@ -153,8 +161,31 @@ def scoring_inputs(paths, base, guard, require):
     return pins, validators["selected_rows"](*fixtures), validators["journal"]
 
 
-def validate_scoring(native, owned, pins, rows, journal, out, base, guard, require):
-    require(native["schema"] == "airk.private.cuda-large-bounded-hybrid-profile/1"
+def candidate_scoring_references(path, expected_sha, metadata, candidate_pins, scoring_pins, base, guard, require):
+    guard([path], True)
+    proof = base.pin(path)
+    require(proof["sha256"] == expected_sha == REFERENCE_EQUIVALENCE_SHA,
+            "reviewed Large batch-view reference equivalence differs")
+    lineage = base.read(path)
+    require(lineage["schema"] == "airk.private.large-fp32-batch-view-reference-lineage/1"
+            and lineage["comparison_basis"] == REFERENCE_BASIS
+            and lineage["predecessor_graph"] == "f8ba5d3ea8a4269739ec5e517e61e4ec1f2f94560ea60014a4f5a9476c32fd94"
+            and lineage["candidate_graph"] == metadata["graph"]["sha256"]
+            and lineage["exact_inverse"] is lineage["operand_order_unchanged"] is True
+            and lineage["verified_mask_adds"] == 36 and lineage["native_scoring_dispatched"] is False,
+            "Large batch-view reference lineage does not establish equivalent predecessor comparison")
+    graph = base.read(scoring_pins["reviewed_graph"]["path"])
+    require(graph["request"] == metadata["probe_request"] and graph["profile"] == metadata["profile"]
+            and graph["source_manifest"] == metadata["source_manifest"]
+            and graph["model_requests_dispatched"] is graph["qualification"] is False,
+            "reviewed Large batch-view observation differs from the selected candidate")
+    return {"reference_request": candidate_pins["parent_request"], "reference_equivalence": proof}
+
+
+def validate_scoring(native, owned, pins, rows, journal, out, base, guard, require, *, candidate=False):
+    schema = ("airk.private.cuda-large-batch-view-bounded-hybrid-profile/1" if candidate
+              else "airk.private.cuda-large-bounded-hybrid-profile/1")
+    require(native["schema"] == schema
             and native["complete"] is True and native.get("error") is None
             and native["qualified"] is native["product_admission"] is native["process_cuda_poisoned"] is False
             and native["native_host_reservation_bytes"] == HOST_BYTES
@@ -166,9 +197,14 @@ def validate_scoring(native, owned, pins, rows, journal, out, base, guard, requi
     for label, pin in pins.items():
         require(native[label] == {key: pin[key] for key in ("path", "sha256")},
                 "native Large evidence pin differs: " + label)
+    if candidate:
+        require(native["reference_basis"] == REFERENCE_BASIS,
+                "native Large batch-view scoring did not use equivalent predecessor references")
+    node_count = 3643 if candidate else 3570
+    reference_field = REFERENCE_BASIS if candidate else "same_artifact"
     require(len(native["rows"]) == 4
             and [run["tokens"] for run in native["profiled_runs"]] == [32, 128, 1024, 8192]
-            and all(run["node_count"] == 3570 and run["cpu_nodes"] == 1663
+            and all(run["node_count"] == node_count and run["cpu_nodes"] == 1663
                     and run["cpu_max_tensor_bytes"] <= 40 for run in native["profiled_runs"]),
             "four complete ordered Large forward traces required")
     for expected, observed in zip(rows, native["rows"]):
@@ -179,8 +215,8 @@ def validate_scoring(native, owned, pins, rows, journal, out, base, guard, requi
                 and all(math.isfinite(score) for score in observed["raw_scores"])
                 and observed["argmax_matches"] is True
                 and all(0 <= observed[key] <= limit for key, limit in (
-                    ("same_artifact_raw_error", .001), ("original_fp32_raw_error", .001),
-                    ("same_artifact_mass_error", .05), ("original_fp32_mass_error", .05))),
+                    (f"{reference_field}_raw_error", .001), ("original_fp32_raw_error", .001),
+                    (f"{reference_field}_mass_error", .05), ("original_fp32_mass_error", .05))),
                 "Large score rows differ from reviewed input or acceptance")
     trace = Path(native["runtime_profile"]["path"])
     operations = out / "native-result.operations.jsonl"
@@ -211,6 +247,8 @@ def main():
     parser.add_argument("--supplemental", type=Path)
     parser.add_argument("--candidate-metadata", type=Path)
     parser.add_argument("--candidate-metadata-sha256")
+    parser.add_argument("--reference-equivalence", type=Path)
+    parser.add_argument("--reference-equivalence-sha256")
     args = parser.parse_args()
     score_paths = (args.graph, args.retained, args.supplemental)
     if any(score_paths) and not all(score_paths):
@@ -219,8 +257,12 @@ def main():
     candidate = args.candidate_metadata is not None
     if candidate != (args.candidate_metadata_sha256 is not None):
         parser.error("batch-view mode requires --candidate-metadata and --candidate-metadata-sha256 together")
-    if candidate and scoring:
-        parser.error("batch-view graph observation and scoring cannot be combined")
+    candidate_scoring = candidate and scoring
+    has_equivalence = args.reference_equivalence is not None
+    if has_equivalence != (args.reference_equivalence_sha256 is not None):
+        parser.error("reference equivalence requires its path and SHA256 together")
+    if candidate_scoring != has_equivalence:
+        parser.error("reference equivalence is required for batch-view scoring and is exclusive to that mode")
 
     component = runpy.run_path(str(ROOT / "scripts/cuda-component-execution.py"))
     base = component["base"]()
@@ -270,17 +312,22 @@ def main():
             "a fresh private campaign output is required")
     guard(base_guard, [args.request, args.image, args.build_receipt, manifest], True)
     require(parent.worker.windows_sid() == base.SID, "parent SID differs")
+    def guard_inputs(paths, created):
+        return guard(base_guard, paths, created)
+
+    candidate_pins = {}
+    scoring_pins = {}
     if candidate:
-        metadata, input_pins = candidate_inputs(
-            args.candidate_metadata, args.candidate_metadata_sha256, request, probe, base,
-            lambda paths, created: guard(base_guard, paths, created), require,
+        metadata, candidate_pins = candidate_inputs(
+            args.candidate_metadata, args.candidate_metadata_sha256, request, probe, base, guard_inputs, require,
         )
-    elif scoring:
-        input_pins, rows, journal = scoring_inputs(
-            score_paths, base, lambda paths, created: guard(base_guard, paths, created), require,
-        )
-    else:
-        input_pins = {}
+    if scoring:
+        scoring_pins, rows, journal = scoring_inputs(score_paths, base, guard_inputs, require, candidate=candidate)
+    if candidate_scoring:
+        scoring_pins.update(candidate_scoring_references(
+            args.reference_equivalence, args.reference_equivalence_sha256,
+            metadata, candidate_pins, scoring_pins, base, guard_inputs, require,
+        ))
 
     start = time.monotonic()
     started_utc = datetime.datetime.now(datetime.timezone.utc)
@@ -298,22 +345,28 @@ def main():
     guard(base_guard, planned_outputs, deadline=deadline)
 
     selector = SCORING_SELECTOR if scoring else SELECTOR
+    schema = ("airk.private.owned-large-cuda-scoring/1" if scoring
+              else "airk.private.owned-large-cuda-graph-observation/1")
+    if candidate_scoring:
+        selector = BATCH_VIEW_SCORING_SELECTOR
+        schema = "airk.private.owned-large-cuda-batch-view-scoring/1"
     command = [str(args.image), "--ignored", "--exact", selector, "--test-threads=1"]
     receipt = {
-        "schema": ("airk.private.owned-large-cuda-scoring/1" if scoring
-                   else "airk.private.owned-large-cuda-graph-observation/1"),
+        "schema": schema,
         "complete": False, "qualification": False,
         "model_requests_dispatched": None if scoring else False,
         "started_utc": started_utc.isoformat(), "wall_seconds": 120, "host_bytes": HOST_BYTES,
         "command": command, "request": request, "image": image, "build": build, "build_log": log_pin,
         "execution_user_sid": base.SID, "failure": None,
     }
+    if candidate or scoring:
+        receipt["runtime_manifest"] = manifest_pin
     if candidate:
-        receipt["candidate_inputs"] = input_pins
-        receipt["runtime_manifest"] = manifest_pin
-    elif scoring:
-        receipt["scoring_inputs"] = input_pins
-        receipt["runtime_manifest"] = manifest_pin
+        receipt["candidate_inputs"] = candidate_pins
+    if scoring:
+        receipt["scoring_inputs"] = scoring_pins
+    if candidate_scoring:
+        receipt["reference_basis"] = REFERENCE_BASIS
 
     def authenticate(api, job, info, child_deadline):
         proof = parent.suspended_authentication(api, info, deadline, child_deadline, base.SID,
@@ -337,10 +390,15 @@ def main():
             AIRK_CUDA_QUALIFICATION_OUTPUT=str(native_path),
         )
         if scoring:
-            for label, (variable, digest) in SCORING_INPUTS.items():
-                env[f"AIRK_CUDA_HYBRID_{variable}"] = input_pins[label]["path"]
-                env[f"AIRK_CUDA_HYBRID_{variable}_SHA256"] = digest
+            for label, (variable, _) in SCORING_INPUTS.items():
+                env[f"AIRK_CUDA_HYBRID_{variable}"] = scoring_pins[label]["path"]
+                env[f"AIRK_CUDA_HYBRID_{variable}_SHA256"] = scoring_pins[label]["sha256"]
             env["AIRK_CUDA_HYBRID_ORT_PROFILE_PREFIX"] = str(args.output / "ort-profile")
+        if candidate_scoring:
+            for label in ("reference_request", "reference_equivalence"):
+                variable = f"AIRK_CUDA_HYBRID_{label.upper()}"
+                env[variable] = scoring_pins[label]["path"]
+                env[f"{variable}_SHA256"] = scoring_pins[label]["sha256"]
         with stdin_path.open("xb"):
             pass
         with stdin_path.open("rb") as stdin, stdout_path.open("xb") as stdout:
@@ -376,14 +434,18 @@ def main():
                     "flags": 0x2308,
                 }, "native Large identity, reservation or actual Job differs")
         if scoring:
-            require(native["request"] == {"path": request["path"], "sha256": REQUEST_SHA}
+            require(native["request"] == {key: request[key] for key in ("path", "sha256")}
                     and native["native_input"] == probe["gpu_input"]
                     and native["runtime_manifest"] == probe["runtime_manifest"]
                     and native["bounds"] == probe["bounds"],
                     "native Large scoring did not consume the exact request")
+            if candidate_scoring:
+                require(native["source_manifest"] == metadata["source_manifest"],
+                        "native Large scoring source does not match candidate metadata")
             trace, operations = validate_scoring(
-                native, owned, input_pins, rows, journal, args.output, base,
+                native, owned, scoring_pins, rows, journal, args.output, base,
                 lambda paths, created: guard(base_guard, paths, created, deadline=deadline), require,
+                candidate=candidate_scoring,
             )
             receipt.update(runtime_profile=trace, operations=operations, model_requests_dispatched=True)
         else:
@@ -411,7 +473,7 @@ def main():
                 validate_candidate_graph(observed, require)
         outputs = (receipt.get("runtime_profile"), receipt.get("operations"))
         for pin in (request, image, build, log_pin, manifest_pin, receipt["native_result"], receipt["stdout"],
-                    *input_pins.values(), *(pin for pin in outputs if pin)):
+                    *candidate_pins.values(), *scoring_pins.values(), *(pin for pin in outputs if pin)):
             base.pinned(pin)
         require(time.monotonic() < deadline, "original Large deadline expired")
         receipt["complete"] = True

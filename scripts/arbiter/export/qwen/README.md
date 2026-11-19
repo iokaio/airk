@@ -43,3 +43,9 @@ broadcasting at 17, 32 and 128 tokens, then writes only the candidate graph.
 The tensor metadata retain the original external weights. Before native use,
 bind the exact original external data in a separately authenticated asset
 closure and collect new placement and scoring evidence for the new graph.
+
+Use `verify_large_fp32_batch_view.py` in the same checked environment with
+`--original`, `--corrected`, `--onnx-site-packages` and a fresh private
+`--output`. It independently checks all 36 emitted changes, reconstructs the
+full original protobuf, and writes a reference lineage receipt for the owned
+scoring probe. The original reference files retain their own identities.
