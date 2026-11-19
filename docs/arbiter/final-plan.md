@@ -2,10 +2,13 @@
 
 Planning date: 15 November 2026 (America/Denver).
 Status: execution underway on feat/arbiter-final; D01–D08 recorded.
-Scope update: finish CUDA FP32 qualification first, then qualify CUDA FP16
-with efficient attention and automatic CPU fallback. Use the FP32 evidence
-to inform FP16. A future release may ship FP16 as its only GPU precision
-if it delivers sufficient value. See section 11. The user authorizes
+Finish the Windows Large FP32 CUDA run and retain the Windows
+FP32 results as engineering evidence. Then qualify FP16 with efficient
+attention and automatic CPU fallback. Begin with Windows CUDA, then Linux CUDA
+on WSL2, macOS Core ML, Azure Windows Radeon DirectML, and Azure Linux
+Radeon ROCm. Linux GPU qualification is FP16-only. The release goal is FP16
+as the sole GPU precision if it meets the quality, performance and memory
+gates on target developer machines. See section 11. The user authorizes
 continuing beyond the original 72-hour checkpoint with T0 and per-run
 limits preserved.
 The original planning request authorized this runbook only. The user authorized
@@ -45,7 +48,7 @@ contract encodings must be recorded before implementation; see section 11.
 | D05 | Context terminal-class contract extension | APPROVED: include the extension; leave Sufficient, Clarify and NoJustifiedRead unavailable unless each class's evidence passes. | Steps 2, 11, 13 |
 | D06 | Shipping read budget | APPROVED: qualify 8192 tokens / 120 seconds as the new default, including all client timeouts. The 2048/30 configuration remains a historical/control population. Focus stays a static 512-token pair unless separately re-exported. | Steps 2, 4, 7, 12–15 |
 | D07 | p95 latency limit for the new profile | APPROVED: set the new profile's measured p95 qualification limit to 120 seconds and report actual component and end-to-end latency. Historical 30-second measurements remain historical. | New resource-policy freeze and qualification |
-| D08 | Automatic local GPU execution and CPU fallback | APPROVED during execution: detect whether each user's GPU can safely run the selected model, use a qualified GPU variant when it can, otherwise automatically select a qualified fitting CPU variant for that same model. Report the device/reason; preserve consent, budgets and qualification gates. LATEST APPROVED: finish CUDA FP32 first to inform CUDA FP16 with genuinely efficient attention. Qualify each precision independently with admitted CPU fallback. A future release may ship FP16 as the only GPU precision if it delivers sufficient value. CUDA first on available NVIDIA hardware. DirectML/CoreML capability and applicable platform evidence follow section 11. Users can disable GPU use service-wide across all backends. Defer Radeon acceleration to a future FP16-only opt-in after successful CUDA FP16 and separate platform qualification, with qualified same-model CPU fallback. | Additional Step 2 contracts; Steps 6–7, 12–18; G1–G4 |
+| D08 | Automatic local GPU execution and CPU fallback | APPROVED during execution: detect whether each user's GPU can safely run the selected model, use a qualified GPU variant when it can, otherwise automatically select a qualified fitting CPU variant for that same model. Report the device/reason; preserve consent, budgets and qualification gates. LATEST APPROVED: close the Windows FP32 campaign after the current Large run passes. Use its evidence to inform efficient FP16 qualification on Windows CUDA, Linux CUDA, macOS Core ML, Azure Windows Radeon DirectML, and Azure Linux Radeon ROCm, in that order. Target an FP16-only GPU release if it passes the measured gates and fits target developer machines. Users can disable GPU use service-wide across all backends. Radeon is a future experimental FP16 opt-in with qualified same-model CPU fallback. | Additional Step 2 contracts; Steps 6–7, 12–18; G1–G5 |
 
 ### Settled rules; do not ask again
 
@@ -863,9 +866,9 @@ A packaged file without installed checks is a candidate, not a qualified release
 
 The original planning allocation was 24 hours with a 48-hour maximum, followed
 by a user-approved 36-hour total deadline. On 17 November UTC, the user approves
-**72 hours total** for FP32 GPU execution first and then FP16 with efficient
-attention, both available for version 1.9.0. Use the same Windows machine and
-Mac Neo, with quality prioritized. Original T0 remains
+**72 hours total** for the earlier dual-precision schedule. That schedule
+preceded the current Windows FP32 stopping point and FP16-only GPU release
+goal. Original T0 remains
 2026-11-16T05:29:42.2081757Z. The 72-hour checkpoint is
 **2026-11-19T05:29:42.2081757Z (Wednesday, 18 November at 10:29:42 p.m.
 America/Denver)**. On 18 November the user authorized continuing beyond it.
@@ -895,8 +898,8 @@ actual progress against the plan and the next critical outcomes to the user.
 
 At hour 12, stop optional exploration if it threatens core export/qualification.
 At hour 24 and beyond the 72-hour checkpoint, continue toward unfulfilled
-acceptance criteria under the user's 18 November authorization. Finish FP32,
-then advance to the separately qualified FP16 path.
+acceptance criteria under the user's 18 November authorization. Finish the
+Windows Large FP32 CUDA run, then advance to the FP16 sequence in section 11.
 Missing human labels, unavailable hosts or a failing profile cause a local
 blocker and continued independent work, not a weaker claim.
 
@@ -1176,12 +1179,13 @@ Added during execution on 17 November 2026 UTC at the user's request.
 D08 expands implementation scope; the subsequent instruction explicitly requires
 AIRK to choose a usable GPU for each user's machine and otherwise use CPU.
 This section supersedes CPU-only execution assumptions for optional Arbiter
-profiles. The user's latest instruction supersedes the intervening FP32-only
-direction: **FP32 working first, then FP16 with efficient attention, with both
-options available for version 1.9.0**. These are separately identified and
-qualified variants. Existing MiniLM CPU INT8 paths remain. Native device-selection and CPU-fallback source are implemented; selected GPU
-model execution and qualification remain unproven. Efficient-FP16 native policy
-is still unapplied; source preparation and cheap tests do not qualify a model.
+profiles. The Windows FP32 campaign closes when the current Large run passes.
+Retain its separately identified native results for engineering comparison,
+then qualify efficient FP16 in the platform order below. The corrected Windows
+Large graph has passed the four profiled scoring widths. The unprofiled Large cold-load and warm timing
+run is the remaining FP32 gate before moving to Windows FP16. Existing MiniLM CPU INT8 paths remain. Native device
+selection and CPU fallback have implementation evidence. FP16 still requires
+actual native qualification on each target.
 
 ### Required user behavior and scope
 
@@ -1193,9 +1197,10 @@ The service, CLI, Admin and Workbench expose the actual selected device and the
 reason for CPU selection. A GPU being present is not evidence of model fit.
 
 Keep MiniLM's existing CPU U8/S8 paths and vector identity unchanged in this
-extension. First establish FP32 with TF32 disabled, then the separate FP16
-efficient-attention variants. Prioritize Context Compact/Large, where CPU time
-and GPU memory are consequential; measure Focus variants independently.
+extension. Finish the Windows CUDA FP32 engineering baseline with TF32
+disabled, then qualify the separate FP16 efficient-attention variants.
+Prioritize Context Compact/Large, where CPU time and GPU memory are
+consequential. Measure Focus variants independently.
 Preserve independent Focus/Context selection; Focus keeps its CPU path unless a
 separately qualified GPU variant offers a measured benefit. Do not silently
 substitute Compact for Large, change precision, reduce input width or reset the
@@ -1253,12 +1258,12 @@ and actual native execution remain unverified. Mac Neo has an Apple A18 Pro and
 
 | Priority | Platform/backend | Work and acceptance limit |
 | --- | --- | --- |
-| 1 | Windows NVIDIA / CUDA | First bounded compatibility and native qualification target on the actual A6000. Pin compatible runtime, driver requirements and dependent libraries. |
-| 2 | Linux x86_64 / CUDA on WSL2 | Qualify FP32 and efficient FP16 on the existing same-user WSL2 instance after Windows qualification. Verify device access and the compatible Linux stack. CPU Linux gates continue independently. |
-| 2 | Windows DX12 / DirectML | Evaluate available Intel hardware after a bounded graph-coverage probe. Scope results to the tested adapter and driver. |
-| 3 | macOS / Core ML | After Windows and Linux CUDA, use the native macOS path. Qualify FP16 only if CUDA FP16 passes on both; confirm actual placement and unified-memory fit. |
-| Future | Azure Linux Radeon / ROCm | After Windows and Linux CUDA and macOS qualification are complete, test FP16 on the full Radeon PRO V620. See [Linux Radeon evidence](#linux-radeon-evidence). |
-| Future | Azure Windows Radeon / DirectML | After those same prerequisites, qualify the FP16 opt-in on the full Radeon PRO V620. See [Windows Radeon evidence](#windows-radeon-evidence). |
+| First | Windows NVIDIA / CUDA | Complete the current Large FP32 run on the A6000, retain the Windows FP32 engineering evidence, then qualify efficient FP16. Pin the compatible runtime, driver requirements and dependent libraries. |
+| Second | Linux x86_64 / CUDA on WSL2 | Qualify efficient FP16 only, on the existing same-user WSL2 instance after Windows FP16 passes. Verify device access and the compatible Linux stack. Linux CPU gates continue independently. |
+| Third | macOS / Core ML | After Windows and Linux CUDA FP16 pass, qualify FP16 through the native macOS path and confirm actual placement and unified-memory fit. |
+| Fourth, future | Azure Windows Radeon / DirectML | After Windows and Linux CUDA and macOS FP16 pass, qualify the experimental FP16 opt-in on the full Radeon PRO V620. See [Windows Radeon evidence](#windows-radeon-evidence). |
+| Fifth, future | Azure Linux Radeon / ROCm | Follow the Windows Radeon gate with separate FP16 qualification on the same full Radeon PRO V620 SKU. See [Linux Radeon evidence](#linux-radeon-evidence). |
+| Independent probe | Windows DX12 / DirectML | Evaluate available Intel hardware after a bounded graph-coverage probe. Scope results to the tested adapter and driver. |
 
 DirectML remains supported but is in sustained engineering, with new development
 directed to WinML. Its sessions require sequential execution and disabled memory
@@ -1337,8 +1342,9 @@ pass within its original deadline. Preserve
 causal/padding masks, positions, projections, decision rows and the FP32 output
 ABI. This first milestone does not change precision or use FP16 to conceal an
 FP32 failure. Preserve a failed FP32 result under its original identity.
-After actual FP32 native success and demonstrated Auto/CPU fallback, implement
-the separately registered FP16/efficient-attention milestone below. Do not block
+After the current Windows Large FP32 CUDA run passes, begin the separately
+registered FP16 efficient-attention milestone below. Verify the existing
+Auto and CPU fallback requirements in the applicable native gates. Do not block
 independent FP16 preparation on unrelated missing scientific labels, but neither
 variant is promoted without its own complete gates. Any necessary alternative
 FP32 operator decomposition needs a reviewed identity and unchanged gates.
@@ -1445,12 +1451,13 @@ the installed candidate, including a supported class with insufficient memory,
 an unavailable class and GPU use disabled. Include experimental support in the future Radeon gate.
 Mocked capability results establish decision logic only.
 
-For every supported model/backend/precision/OS/architecture combination:
-run actual numerical checks at 32, 128, 1024 and 8192 tokens for FP32 Context,
-the G5 matrix for FP16 Context, and 512 tokens for Focus. Collect actual
+For combinations in the platform table, run actual numerical checks at 32,
+128, 1024 and 8192 tokens for Windows FP32 Context, the G5 matrix for FP16
+Context, and 512 tokens for Focus. Collect actual
 placement tracing, cold/load and twenty-sample warm resource measurements with
 the existing nearest-rank p95 <=120 seconds, device/host memory and coexistence.
-Measure composed Answer end-to-end latency separately. Preserve original
+For FP16 qualification, measure composed Answer end-to-end latency
+separately. Preserve original
 8192/120000 and 125000ms transport delivery limits and actual settlement.
 Exercise cancellation, device failure/OOM, disable/Remove/restart and CPU
 recovery with native owners. Report unsupported combinations explicitly.
@@ -1496,9 +1503,10 @@ scope decision (approximately17 November03:05Z), the engineering estimate is
 Target both implemented paths, applicable native qualification and a reviewed
 Windows candidate by Wednesday18 November10:29p.m. Denver. This is an estimate,
 not a claim of future passes or a guarantee that external label/rights/platform
-blockers disappear. FP32 integration is the next milestone; FP16 efficient
-attention follows, then both-variant selection/recovery/package qualification.
-The user authorized continuing beyond that checkpoint on 18 November.
+blockers disappear. The user authorized continuing beyond that checkpoint on
+18 November. The current sequence closes Windows FP32 with the Large run,
+then follows the FP16 platform order above for native, recovery and release
+candidate evidence.
 Do not promise universal GPU support or the attachment's unmeasured10–50x
 speedups, few-second latency or12–16GB fit. If a gate cannot finish, retain its
 evidence and exact unmet criterion rather than weakening it.
@@ -1516,15 +1524,16 @@ Existing CPU results retain their original identities.
 
 ### G5 — FP16 with efficient attention, after FP32 works
 
-Qualify FP16 as part of the current work. Keep the FP32 variant and its
-evidence available throughout qualification. During qualification, the GPU
-setting offers Auto, FP32 and FP16 precision. Explicit CPU remains a separate
-device choice. Initial Auto preference is a
-qualified fitting FP32 GPU variant, then a qualified fitting FP16 GPU variant
-of the same selected model, then its separately admitted CPU path. An explicit
-GPU precision preference restricts GPU candidates only; CPU fallback uses the
-existing admitted CPU precision and reports it plainly. Never silently substitute
-a model, turn on a stage, narrow input or reset the shared budget.
+Qualify FP16 in the platform order above. Retain the Windows FP32 model and
+evidence as a separate engineering baseline. Keep explicit CPU as a separate
+device choice. Auto uses a qualified, fitting GPU variant exposed by the
+installed build, then the separately admitted CPU path for the same model.
+The Windows engineering build can exercise explicit FP32 and FP16 where each
+has been admitted. Its Auto order is FP32, then FP16, then CPU. FP16-only
+builds expose Auto and FP16 for GPU precision.
+An explicit GPU precision preference constrains GPU candidates. CPU fallback
+uses its existing admitted precision and reports it separately. Preserve the
+selected model, stage consent, input width and shared budget.
 
 1. Register the exact half-precision conversion, protected FP32 operations,
    output FP32 ABI, native initializer loading and attention algorithm before
@@ -1565,15 +1574,15 @@ a model, turn on a stage, narrow input or reset the shared budget.
 
 ### Future GPU release precision
 
-After CUDA FP16 is qualified, decide whether it delivers sufficient value to
-ship as the sole GPU precision in a future release. Use independent score
-parity and precision-loss evidence, measured latency and memory fit on the
-target developer GPUs, efficient attention, and working same-model CPU
-fallback. Where FP16 meets those needs, a single GPU precision reduces the
-build, packaging, staging and maintenance burden on GPU-equipped developer
-machines. Keep the CUDA FP32 implementation and reproducible evidence for
-comparison and debugging. Show the GPU precisions available in the installed
-release and keep CPU selection and the service-wide GPU opt-out available.
+Target FP16 as the sole GPU precision in a future release to reduce memory,
+storage and packaging demands on developer machines. Base the release decision
+on independent score parity and precision-loss evidence, measured latency and
+memory fit on target developer GPUs, efficient attention, and working same-model
+CPU fallback. Preserve the Windows CUDA FP32 implementation and reproducible
+evidence for comparison and debugging. If an FP16 target misses a gate, record
+the blocker and revisit its GPU release scope. Show the GPU precision available
+in the installed release and keep CPU selection and the service-wide GPU opt-out
+available.
 
 Provisional efficient-FP16 planning targets remain about4GB for Focus,8GB for
 Compact and12–16GB for Large, not measured hardware minima. Without genuinely
@@ -1583,10 +1592,10 @@ The actual available-memory and qualified per-variant policy decides Auto.
 
 ## Addendum — Linux CUDA qualification on WSL2
 
-After Windows qualification is complete, proceed directly to FP32 and FP16
-Linux qualification in the existing WSL2 instance on this machine. This step
-can start without another kickoff. Run Windows and WSL2 GPU-heavy jobs in
-sequence on the shared NVIDIA GPU.
+After Windows CUDA FP16 passes, proceed directly to FP16-only Linux CUDA
+qualification in the existing WSL2 instance on this machine. This step can
+start without another kickoff. Run Windows and WSL2 GPU-heavy jobs in sequence
+on the shared NVIDIA GPU. Linux CPU checks continue on their own scope.
 
 Verify the Windows human account and the corresponding WSL2 Linux UID before
 the batch. Record the distribution, WSL kernel, mapped NVIDIA driver, GPU,
@@ -1598,10 +1607,10 @@ access or dependencies with the exact affected gate.
 
 Build and seal the Linux x86_64 runtime and its CUDA provider in an isolated,
 same-user WSL2 target. Use the reviewed source revision and exact model graph
-and weight identities. Run the existing Compact and Large FP32 graphs at 17
-and 128 tokens, then at 8,192 tokens after the initial probes pass. Repeat
-with the separately pinned FP16 variants and verify efficient attention,
-required mask behavior and the FP32 output ABI.
+and weight identities. Run the separately pinned Compact and Large FP16
+variants with the G5 matrix, including the 8,192-token boundary after the
+initial probes pass. Verify efficient attention, required mask behavior and
+the FP32 output ABI.
 
 Apply the existing G4 and G5 gates for each applicable variant, including
 actual placement, numerical parity and precision loss, peak memory, cold and
@@ -1612,13 +1621,11 @@ configuration and preserve any variant-specific refusal or failure.
 
 ## Addendum — Datagram macOS qualification weekend
 
-Start macOS qualification after the Windows and Linux CUDA campaigns on this
-workstation have completed. If CUDA FP16 passes on both Windows and Linux,
-limit the Mac qualification to FP16. If either FP16 gate falls short, record
-the blocker and reassess the Mac precision scope before kickoff. The user
-will manually book and kick off a 72-hour Datagram weekend pass on a
-dedicated Apple Silicon Mac Studio with M4 Max, a 40-core GPU and 128 GB
-of unified memory.
+Start FP16-only macOS qualification after Windows and Linux CUDA FP16 pass
+on this workstation. If either gate falls short, record the blocker before
+kickoff. The user will manually book and kick off a 72-hour Datagram weekend
+pass on a dedicated Apple Silicon Mac Studio with M4 Max, a 40-core GPU and
+128 GB of unified memory.
 [Datagram weekend pass](https://datagram.net/day-pass)
 
 Datagram confirmed full access to the dedicated Mac. We can install Xcode
@@ -1647,24 +1654,13 @@ remaining blockers in the ledger. Datagram wipes the machine after the
 pass. [Datagram weekend pass](https://datagram.net/day-pass)
 
 
-## Addendum — Experimental Windows Radeon GPU support
+## Addendum — Experimental Radeon FP16 qualification
 
-Finish the current CUDA FP32 work to inform CUDA FP16 and retain its evidence.
-For the future Radeon FP16 campaign, use Azure for both operating systems
-after Windows and Linux CUDA and native macOS qualification are complete.
-Begin Azure work only after the current qualification shows sufficient FP16
-value under the numerical, resource, latency and fallback gates. Start with
-Context Compact and qualify each additional model separately.
-
-### Linux Radeon evidence
-
-Use the same full-GPU Azure Radeon PRO V620 SKU planned for Windows.
-Azure documents an Ubuntu 24.04 driver path for NGads V620 and ROCm
-support for the series. Confirm the region, subscription quota, exact
-image, driver, ROCm and ONNX Runtime/MIGraphX combination before booking.
-If the needed Azure configuration is unavailable, defer the affected gate
-and record the specific capacity or compatibility constraint.
-[Azure Linux AMD drivers](https://learn.microsoft.com/en-us/azure/virtual-machines/linux/azure-n-series-amd-gpu-driver-linux-installation-guide) · [Azure ROCm support](https://learn.microsoft.com/en-us/azure/virtual-machines/accelerator-technologies/rocm-overview)
+Use Azure for both operating systems after FP16 passes on Windows CUDA,
+Linux CUDA and macOS Core ML. Begin with Windows DirectML, then qualify Linux
+ROCm separately. Begin Azure work only after the current qualification shows
+sufficient FP16 value under the numerical, resource, latency and fallback
+gates. Start with Context Compact and qualify each additional model separately.
 
 ### Windows Radeon evidence
 
@@ -1676,6 +1672,16 @@ candidate to test native device selection, operator placement, memory fit,
 performance, packaging and CPU fallback. Scope results to the VM's
 adapter, driver and provider.
 [Azure V620 sizes](https://learn.microsoft.com/en-us/azure/virtual-machines/sizes/gpu-accelerated/ngadsv620-series) · [Azure AMD drivers for Windows](https://learn.microsoft.com/en-us/azure/virtual-machines/windows/n-series-amd-driver-setup) · [Windows DirectML provider](https://onnxruntime.ai/docs/execution-providers/DirectML-ExecutionProvider.html)
+
+### Linux Radeon evidence
+
+Use the same full-GPU Azure Radeon PRO V620 SKU as the Windows run.
+Azure documents an Ubuntu 24.04 driver path for NGads V620 and ROCm
+support for the series. Confirm the region, subscription quota, exact
+image, driver, ROCm and ONNX Runtime/MIGraphX combination before booking.
+If the needed Azure configuration is unavailable, defer the affected gate
+and record the specific capacity or compatibility constraint.
+[Azure Linux AMD drivers](https://learn.microsoft.com/en-us/azure/virtual-machines/linux/azure-n-series-amd-gpu-driver-linux-installation-guide) · [Azure ROCm support](https://learn.microsoft.com/en-us/azure/virtual-machines/accelerator-technologies/rocm-overview)
 
 ### Shared FP16 qualification and controls
 

@@ -26,22 +26,22 @@ Active campaign: Arbiter final implementation (execution start 2026-11-16T05:29:
   unless the user changes direction. Original T0 and per-run limits apply.
 - The final plan supersedes the old advanced-split execution deadline and
   campaign ordering. Preserve prior ledger entries as historical evidence.
-- For the current implementation, use this Windows machine, its existing WSL2
-  instance and Mac Neo. Complete Windows qualification before beginning the
-  authorized Linux FP32 and FP16 gates on WSL2. Start those gates directly
-  once Windows is complete and report genuine blockers.
-- The Datagram weekend has a separate manual kickoff after the Windows and
-  Linux CUDA campaigns. If CUDA FP16 passes on both on this workstation, test
-  FP16 only on macOS using Core ML. Azure is the sole provider for the future
-  Radeon FP16 campaign, after Windows and Linux CUDA and macOS qualification
-  are complete. Current execution remains local. No cloud teachers are authorized.
+- Finish the current Windows Large FP32 CUDA run, then qualify efficient
+  FP16 on Windows CUDA first. After Windows FP16 passes, start FP16-only
+  Linux CUDA qualification directly on the existing WSL2 instance and
+  report genuine blockers. Linux CPU checks continue independently.
+- After both CUDA FP16 gates pass, qualify FP16 only on macOS using native
+  Core ML. The Datagram weekend has a separate manual kickoff. The future
+  Radeon FP16 campaign uses Azure exclusively after those three gates pass,
+  in order of Windows DirectML and Linux ROCm. The current execution remains
+  local. No cloud teachers are authorized.
 ## Models and qualification
 
-- Finish the current CUDA FP32 work to inform CUDA FP16, then qualify FP16 with
-  efficient attention and automatic admitted CPU fallback. Keep each variant's
-  identity, evidence and qualification separate. The future release decision may
-  select FP16 as its only GPU precision if the measured value is sufficient.
-  Radeon evaluation is deferred to that FP16 plan after successful CUDA FP16.
+- Retain the Windows FP32 implementation and measured evidence to inform FP16.
+  Keep each variant's identity, evidence and qualification separate, and
+  qualify efficient attention and automatic admitted CPU fallback. The release
+  goal is FP16 as the sole GPU precision if it passes the measured quality,
+  performance and memory gates on target developer machines.
 - On 18 November the user approved an exact 32 GiB Windows Compact host
   process cap. Use a 32 GiB aggregate Job cap so the process can use that
   allowance. The 24 GiB device budget, original 120-second deadline and all
