@@ -28,6 +28,8 @@ VERIFIER_SHA = "50d5c7237cd057a1d08ea79794bbdda0f1e141438a2d22580a760e418f9e3d75
 LIBRARIES = ("cublaslt64_12.dll", "cudart64_12.dll", "cublas64_12.dll")
 HELPERS = ("projection_gemm_cuda.py", "projection_gemm_inputs.py")
 MODES = ("GEMM2", "FP32_PEDANTIC")
+FLOAT_MODES = ("GEMM2_FP32_OUTPUT", "FP32_PEDANTIC_FP32_OUTPUT")
+ALL_MODES = MODES + FLOAT_MODES
 PROJECTIONS = ("k", "v", "q")
 MARKER = b"AIRK_COMPACT_PROJECTION_GEMM "
 SCHEMA = "airk.private.compact-fp16-projection-gemm-experiment/1"
@@ -149,18 +151,27 @@ def compare(verifier, source, weights, observed, outputs, cpu_proof):
     }
 
 
-def rounded_half_word(dot):
-    """Round an exact signed dot in units of 2**-48 to binary16."""
+def rounded_dot(dot, precision, minimum_shift):
+    """Round an exact signed dot in units of 2**-48 to the requested precision."""
     magnitude = abs(dot)
-    shift = max(24, magnitude.bit_length() - 11)
-    quotient, remainder = divmod(magnitude, 1 << shift)
-    midpoint = 1 << (shift - 1)
-    if remainder > midpoint or remainder == midpoint and quotient & 1:
-        quotient += 1
+    shift = max(minimum_shift, magnitude.bit_length() - precision)
+    quotient = magnitude
+    if shift:
+        quotient, remainder = divmod(magnitude, 1 << shift)
+        midpoint = 1 << (shift - 1)
+        if remainder > midpoint or remainder == midpoint and quotient & 1:
+            quotient += 1
     rounded = math.ldexp(float(quotient), shift - 48)
-    if dot < 0:
-        rounded = -rounded
-    return struct.unpack("<H", struct.pack("<e", rounded))[0]
+    return -rounded if dot < 0 else rounded
+
+
+def rounded_half_word(dot):
+    return struct.unpack("<H", struct.pack("<e", rounded_dot(dot, 11, 24)))[0]
+
+
+def rounded_float_word(dot):
+    # The smallest nonzero input unit, 2**-48, is already normal in binary32.
+    return struct.unpack("<I", struct.pack("<f", rounded_dot(dot, 24, 0)))[0]
 
 
 def half_array_units(np, data):
@@ -172,10 +183,10 @@ def half_array_units(np, data):
     return np.where(half_bits & 0x8000, -magnitude, magnitude)
 
 
-def exact_projection_rounding(np, source, weights, outputs, check):
+def exact_projection_rounding(np, source, weights, raw_outputs, half_outputs, check):
     activation = half_array_units(np, source).reshape(32, 2048)
     largest_activation = int(np.abs(activation).max())
-    summary = {}
+    half_summary, float_summary = {}, {}
     for name in PROJECTIONS:
         check()
         width, data = weights[name]
@@ -183,14 +194,45 @@ def exact_projection_rounding(np, source, weights, outputs, check):
         bound = 2048 * largest_activation * int(np.abs(matrix).max())
         require(bound < 1 << 63, "checked projection integer dot exceeds signed accumulation")
         dots = (activation @ matrix).reshape(-1)
-        reference = np.fromiter((rounded_half_word(int(value)) for value in dots),
-                                dtype=np.uint16, count=dots.size)
-        summary[name] = {
-            mode: int(np.count_nonzero(reference != np.frombuffer(outputs[mode][name], dtype="<u2")))
-            for mode in MODES
+        half_reference = np.fromiter((rounded_half_word(int(value)) for value in dots),
+                                     dtype="<u2", count=dots.size)
+        float_reference = np.fromiter((rounded_float_word(int(value)) for value in dots),
+                                      dtype="<u4", count=dots.size)
+        via_float = float_reference.view("<f4").astype("<f2").view("<u2")
+        half_summary[name] = {
+            mode: int(np.count_nonzero(half_reference != np.frombuffer(half_outputs[mode][name], dtype="<u2")))
+            for mode in ALL_MODES
+        }
+        float_summary[name] = {
+            "ideal_fp32_then_half_vs_ideal_half": int(np.count_nonzero(via_float != half_reference)),
+            "fp32_output_vs_exact_rounded_fp32": {
+                mode: int(np.count_nonzero(float_reference != np.frombuffer(raw_outputs[mode][name], dtype="<u4")))
+                for mode in FLOAT_MODES
+            },
+            "fp32_output_cast_vs_ideal_fp32_cast": {
+                mode: int(np.count_nonzero(via_float != np.frombuffer(half_outputs[mode][name], dtype="<u2")))
+                for mode in FLOAT_MODES
+            },
         }
     check()
-    return summary
+    return half_summary, float_summary
+
+
+def half_outputs_for_comparison(np, raw_outputs, weights):
+    require(set(raw_outputs) == set(ALL_MODES)
+            and all(set(raw_outputs[mode]) == set(PROJECTIONS) for mode in ALL_MODES),
+            "exact projection modes and roster required")
+    half_outputs = {mode: raw_outputs[mode] for mode in MODES}
+    for mode in FLOAT_MODES:
+        half_outputs[mode] = projected = {}
+        for name in PROJECTIONS:
+            output = np.frombuffer(raw_outputs[mode][name], dtype="<f4")
+            require(output.size == 32 * weights[name][0] and np.all(np.isfinite(output)),
+                    "finite FP32 projection experiment output with exact shape required")
+            half = output.astype("<f2")
+            require(np.all(np.isfinite(half)), "FP32 projection output must fit finite binary16")
+            projected[name] = half.tobytes()
+    return half_outputs
 
 
 def worker(deadline, expected_source):
@@ -230,8 +272,11 @@ def worker(deadline, expected_source):
     with os.add_dll_directory(str(root)):
         outputs = gpu.run_modes(root / "cudart64_12.dll", root / "cublas64_12.dll", activation, weights)
     native_seconds = time.monotonic() - started
-    result = compare(verifier, activation, weights, observed, outputs, cpu_proof)
-    result["exact_rounded_word_mismatches"] = exact_projection_rounding(np, activation, weights, outputs, check)
+    half_outputs = half_outputs_for_comparison(np, outputs, weights)
+    result = compare(verifier, activation, weights, observed, {mode: half_outputs[mode] for mode in MODES}, cpu_proof)
+    require(result["baseline_reproduces_ort"], "GEMM2 no longer reproduces the sealed ONNX Runtime projections")
+    result["exact_rounded_word_mismatches"], result["fp32_output_rounding"] = exact_projection_rounding(
+        np, activation, weights, outputs, half_outputs, check)
     for path, digest in ((CAPTURE, CAPTURE_SHA), (CANDIDATE / "model.onnx", GRAPH_SHA),
                          (CANDIDATE / "weights.bin", WEIGHTS_SHA)):
         require(pinned(path, check)["sha256"] == digest, "projection operand file changed")

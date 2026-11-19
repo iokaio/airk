@@ -237,11 +237,14 @@ class WiderCompactReferenceControls(unittest.TestCase):
 
 
 class ProjectionGemmRoundingControls(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        path = ROOT / "scripts/arbiter-fp16-execution/probe_projection_gemm.py"
+        spec = importlib.util.spec_from_file_location("projection_gemm_rounding", path)
+        cls.gemm = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.gemm)
+
     def test_exact_binary16_rounding_uses_bits_below_float64_at_halfway(self):
-        path = ROOT / 'scripts/arbiter-fp16-execution/probe_projection_gemm.py'
-        spec = importlib.util.spec_from_file_location('projection_gemm_rounding', path)
-        gemm = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(gemm)
         one = 1 << 48
         halfway = 1 << 37
         controls = (
@@ -256,7 +259,18 @@ class ProjectionGemmRoundingControls(unittest.TestCase):
         )
         for dot, word in controls:
             with self.subTest(dot=dot):
-                self.assertEqual(gemm.rounded_half_word(dot), word)
+                self.assertEqual(self.gemm.rounded_half_word(dot), word)
+
+    def test_exact_binary32_rounding_and_half_double_rounding(self):
+        one = 1 << 48
+        halfway_float = 1 << 24
+        self.assertEqual(self.gemm.rounded_float_word(one + halfway_float), 0x3f800000)
+        self.assertEqual(self.gemm.rounded_float_word(one + halfway_float + 1), 0x3f800001)
+        self.assertEqual(self.gemm.rounded_float_word(-(one + 3 * halfway_float)), 0xbf800002)
+        above_half_midpoint = one + (1 << 37) + 1
+        self.assertEqual(self.gemm.rounded_float_word(above_half_midpoint), 0x3f801000)
+        self.assertEqual(self.gemm.rounded_half_word(above_half_midpoint), 0x3c01)
+        self.assertEqual(self.gemm.rounded_half_word(above_half_midpoint - 1), 0x3c00)
 
 
 class CompactT32ComparisonControls(unittest.TestCase):

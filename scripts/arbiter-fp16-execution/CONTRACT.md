@@ -317,7 +317,11 @@ on identical operands in a separate worker. The fixed GPU allocation requests
 cover only the T32 input, three direct projection matrices and their outputs.
 The diagnostic retains the dedicated reader and runtime source identities,
 actual child settlement, exact full-projection rounding counts and integer dot
-witnesses. An exact GEMM2 reproduction is required before extrapolating to the
+witnesses. Each mode also runs with a separate FP32 output type. The worker
+compares the FP32 values and their host half conversions with integer dot
+references rounded directly to each precision. It counts double rounding
+separately. Changing the output type can change cuBLAS kernel selection.
+An exact GEMM2 reproduction is required before extrapolating to the
 saved ONNX Runtime projection result. This experiment does not run the full
 model or grant admission.
 

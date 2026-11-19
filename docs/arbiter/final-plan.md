@@ -1644,9 +1644,12 @@ captured input and verified weights, direct K, V and Q differed at 400,
 each projection's maximum-error sample. Standalone cuBLAS GEMM2
 reproduced all 131,072 captured ONNX Runtime values. The full exact dot
 comparison counted 1,633 half-rounding mismatches in GEMM2 and 53,141 in
-FP32 pedantic. Keep GEMM2 as the baseline and compare FP32 output
-accumulation on the same half operands before another full scoring
-attempt. The original numerical and performance gates still apply.
+FP32 pedantic. Retaining FP32 outputs through a host half cast reduced
+the mismatch counts to 1,182 for GEMM2 and 92 for pedantic. The pinned
+ONNX Runtime half MatMul emits half outputs. Test a separate projection
+recipe using stock FP32 MatMul on upcast half operands before another full
+scoring attempt. The original numerical and performance gates still apply.
+[FP32 projection output comparison](../simplify/one-process-ledger.md#2026-11-19--fp32-projection-output-improves-half-rounding)
 [Full projection rounding audit](../simplify/one-process-ledger.md#2026-11-19--exact-projection-rounding-rules-out-cublas-pedantic)
 [Identical-input projection comparison](../simplify/one-process-ledger.md#2026-11-19--identical-half-inputs-isolate-compact-projection-rounding)
 [Independent operand comparison](../simplify/one-process-ledger.md#2026-11-19--independent-compact-prefix-differs-before-attention)

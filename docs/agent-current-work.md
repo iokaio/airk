@@ -145,9 +145,12 @@ Use the existing deadline when resuming in a new context.
   differed in five of 65,536 values. Standalone GEMM2 reproduced all
   131,072 CUDA projection values. Exact integer dot products found
   1,633 half-rounding mismatches for GEMM2 and 53,141 for FP32 pedantic.
-  Keep GEMM2 as the baseline. Check whether retaining FP32 projection
-  outputs through accumulation reduces the discrepancy with the same
-  half operands. Matching raw parity still gates wider Windows scoring.
+  Keeping FP32 projection outputs until a host half cast reduced
+  misses to 1,182 with GEMM2 and 92 with pedantic. The pinned ONNX
+  Runtime half MatMul writes half outputs. Check whether its stock FP32
+  MatMul can reproduce the improvement from upcast half operands.
+  Matching raw parity still gates wider Windows scoring.
+  [FP32 projection output comparison](simplify/one-process-ledger.md#2026-11-19--fp32-projection-output-improves-half-rounding)
   [Full projection rounding audit](simplify/one-process-ledger.md#2026-11-19--exact-projection-rounding-rules-out-cublas-pedantic)
   [Identical-input projection comparison](simplify/one-process-ledger.md#2026-11-19--identical-half-inputs-isolate-compact-projection-rounding)
   [Independent operand comparison](simplify/one-process-ledger.md#2026-11-19--independent-compact-prefix-differs-before-attention)

@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 
 # CUDA 12.8 headers: library_types.h, driver_types.h, and cublas_api.h.
+_CUDA_R_32F = 0
 _CUDA_R_16F = 2
 _HOST_TO_DEVICE = 1
 _DEVICE_TO_HOST = 2
@@ -13,13 +14,18 @@ _CUBLAS_OP_N = 0
 _CUBLAS_POINTER_MODE_HOST = 0
 _CUBLAS_GEMM_DEFAULT = -1
 _MODES = {
-    "GEMM2": (16, 68),  # DISALLOW_REDUCED_PRECISION_REDUCTION, COMPUTE_32F
-    "FP32_PEDANTIC": (2, 69),  # PEDANTIC_MATH, COMPUTE_32F_PEDANTIC
+    # DISALLOW_REDUCED_PRECISION_REDUCTION, COMPUTE_32F
+    "GEMM2": (16, 68, _CUDA_R_16F),
+    # PEDANTIC_MATH, COMPUTE_32F_PEDANTIC
+    "FP32_PEDANTIC": (2, 69, _CUDA_R_16F),
+    "GEMM2_FP32_OUTPUT": (16, 68, _CUDA_R_32F),
+    "FP32_PEDANTIC_FP32_OUTPUT": (2, 69, _CUDA_R_32F),
 }
 _TOKENS = 32
 _HIDDEN = 2048
 _WIDTHS = {"k": 1024, "v": 1024, "q": 2048}
 _HALF_BYTES = 2
+_FLOAT32_BYTES = 4
 
 
 def _load_dll(path, signatures):
@@ -72,7 +78,7 @@ def run_modes(
     input_half: bytes,
     weights_by_name: dict[str, tuple[int, bytes]],
 ) -> dict[str, dict[str, bytes]]:
-    """Return row-major binary16 K/V/Q results from CUDA device 0 for both modes."""
+    """Return row-major K/V/Q bytes in each mode's little-endian storage type."""
     input_length = _TOKENS * _HIDDEN * _HALF_BYTES
     if not isinstance(input_half, bytes) or len(input_half) != input_length:
         raise ValueError("Compact T32 activation must contain exactly [32,2048] half words")
@@ -126,13 +132,14 @@ def run_modes(
         device_input = _allocate(runtime, buffers, input_length)
         max_width = max(_WIDTHS.values())
         device_weight = _allocate(runtime, buffers, _HIDDEN * max_width * _HALF_BYTES)
-        device_output = _allocate(runtime, buffers, _TOKENS * max_width * _HALF_BYTES)
+        device_output = _allocate(runtime, buffers, _TOKENS * max_width * _FLOAT32_BYTES)
         _checked(runtime.cudaMemcpy, device_input, ctypes.c_char_p(input_half),
                  input_length, _HOST_TO_DEVICE)
 
         alpha, beta = ctypes.c_float(1.0), ctypes.c_float(0.0)
         results = {}
-        for mode, (math_mode, compute_type) in _MODES.items():
+        for mode, (math_mode, compute_type, output_type) in _MODES.items():
+            output_bytes = _HALF_BYTES if output_type == _CUDA_R_16F else _FLOAT32_BYTES
             _checked(blas.cublasSetMathMode, handle, math_mode)
             observed = integer()
             _checked(blas.cublasGetMathMode, handle, ctypes.byref(observed))
@@ -149,10 +156,10 @@ def run_modes(
                     width, _TOKENS, _HIDDEN, ctypes.byref(alpha),
                     device_weight, _CUDA_R_16F, width,
                     device_input, _CUDA_R_16F, _HIDDEN, ctypes.byref(beta),
-                    device_output, _CUDA_R_16F, width, compute_type, _CUBLAS_GEMM_DEFAULT,
+                    device_output, output_type, width, compute_type, _CUBLAS_GEMM_DEFAULT,
                 )
                 _checked(runtime.cudaDeviceSynchronize)
-                length = _TOKENS * width * _HALF_BYTES
+                length = _TOKENS * width * output_bytes
                 host_output = (ctypes.c_ubyte * length)()
                 _checked(runtime.cudaMemcpy, host_output, device_output, length, _DEVICE_TO_HOST)
                 result[name] = bytes(host_output)

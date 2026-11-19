@@ -11752,3 +11752,46 @@ commit, and exited 0 with natural empty Job settlement under the original
 120-second and 32 GiB bounds. Its isolated CUDA calls took 0.290743 s.
 This timing covers the projection experiment and carries no model
 latency claim.
+
+### 2026-11-19 — FP32 projection output improves half rounding
+
+The R10 owned worker repeated both original half-output matmuls and
+added two FP32-output cases on the same authenticated half activation
+and K/V/Q weight bytes. GEMM2 again matched all 131,072 ONNX Runtime
+half values. The FP32-output cases used an explicit host rounding to
+half. The independent integer oracle rounded every dot directly to
+FP32 and directly to half.
+
+| Projection | Half output GEMM2 | Half output pedantic | FP32 output GEMM2 then half | FP32 output pedantic then half |
+| --- | ---: | ---: | ---: | ---: |
+| K | 394 | 12,623 | 212 | 15 |
+| V | 582 | 17,184 | 313 | 40 |
+| Q | 657 | 23,334 | 657 | 37 |
+| Total mismatches from ideal half | 1,633 | 53,141 | 1,182 | 92 |
+
+Ideal FP32 followed by ideal half rounding differed from direct ideal
+half rounding at 7 words. Raw GPU FP32 words differed from directly
+rounded exact FP32 at 130,273 positions with GEMM2 and 97,319 with
+pedantic. Host half rounding landed close to exact despite those FP32
+word differences. This shows sensitivity to cuBLAS output type, which can
+also change its kernel selection. It establishes neither raw Context score
+parity nor numerical equivalence of a different ONNX MatMul.
+
+The pinned ORT CUDA MatMul uses one type for input and output, so the
+existing half path always stores half. Before changing a candidate graph,
+isolate the existing FP32 MatMul arithmetic using upcast half operands.
+That comparison can determine whether a stock CUDA provider can take
+advantage of the improved half rounding. Keep the existing provider
+identity and acceptance thresholds.
+
+Receipt root compact-fp16-layer0-cublas-compare-r10:
+execution 2ebd241bdcba967ef0decf65bdef4cde0030a0c6b4aceeab8a911edec33a6882,
+log 86d219fc188b98ae8b1df3da7abd6d28563dd1165cc80b132ca8f022ba896930,
+worker 7c880211f4d904acd054f3128c494123ee346fd9d4e5ffdddbd7c5aedfa1668f,
+CUDA helper d1be4edfef0fa17a9e4204e1c727745f5d10db34daaaaf4bf6e8b85135e3c15f.
+The original verified account and owner SID ended in 1002. Child exit 0
+and natural empty Job settlement held in 15.494917 s, with 2,060,156,928 B
+peak commit against the existing 32 GiB and 120 s limits. Isolated CUDA
+calls took 0.312465 s. The focused Python suite passed 82 controls and
+the delegated CUDA ABI and cleanup mock passed ten. The experiment
+did not execute full-model scoring, held-out task checks or Resource20.
