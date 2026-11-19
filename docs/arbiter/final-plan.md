@@ -1637,9 +1637,11 @@ CPU reference passed a literal arithmetic control but yielded 0.0303249359
 raw error against the same GPU scores. The disposable layer-0 capture
 then reproduced all eight GPU scores exactly. On its actual Q/K/V inputs,
 the source-derived replay matched 65,288 of 65,536 half output values
-bit for bit. Compare independently generated Q/K/V against the captured
-operands before the next scoring attempt. The original numerical and
-performance gates still apply.
+bit for bit. The independent prefix differs in Q, K and V before attention.
+Compare the shared half projection input and the direct Q/K/V projection
+outputs to distinguish normalization and cast effects from projection
+arithmetic. The original numerical and performance gates still apply.
+[Independent operand comparison](../simplify/one-process-ledger.md#2026-11-19--independent-compact-prefix-differs-before-attention)
 [Layer-0 capture and replay](../simplify/one-process-ledger.md#2026-11-19--compact-cuda-layer-0-capture-and-identical-operand-replay)
 [Corrected T32 execution and numerical blocker](../simplify/one-process-ledger.md#2026-11-19--corrected-compact-fp16-cuda-forward-settles-and-matching-raw-parity-fails)
 

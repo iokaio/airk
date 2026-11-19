@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tiny CPU literals only; no selected model/checkpoint, ONNX, native or GPU."""
 import copy,hashlib,json,math,pathlib,struct,tempfile,unittest
+from unittest.mock import patch
 import torch as t
 import importlib.util
 spec=importlib.util.spec_from_file_location('airk_fp16_reference',pathlib.Path(__file__).resolve().parents[1]/'arbiter-fp16-reference.py')
@@ -95,6 +96,59 @@ class LiteralControls(unittest.TestCase):
   ref.device='cuda'
   with self.assertRaisesRegex(ValueError,'Context Flash single tile'):
    ref.forward(row,context_flash_single_tile=True)
+  self.assertFalse(t.cuda.is_initialized())
+ def test_layer0_operands_literal_rounding_layout_and_forward_reuse(self):
+  c=dict(config(),head_dim=128,num_attention_heads=16,num_key_value_heads=8)
+  weights=state(c)
+  weights['embed_tokens.weight'][1]=t.tensor([1.,1.])
+  root='layers.0.'
+  weights[root+'input_layernorm.weight'][:]=t.tensor([2.,1.])
+  weights[root+'self_attn.q_proj.weight'][7*128]=t.tensor([.5,0.])
+  weights[root+'self_attn.k_proj.weight'][6*128]=t.tensor([0.,-1.])
+  weights[root+'self_attn.v_proj.weight'][3*128+7]=t.tensor([.5,.25])
+  weights[root+'self_attn.q_norm.weight'][0]=.5
+  weights[root+'self_attn.k_norm.weight'][0]=.25
+  ref=r.HalfReference(t,c,weights,False,'cpu')
+  row=dict(native(),input_ids=[1]*32,attention_mask=[1]*32,position_ids=list(range(32)),decision_position=31)
+  before=copy.deepcopy(row)
+  with patch.object(r,'causal_half_attention',wraps=r.causal_half_attention) as attention, \
+       patch.object(ref,'linear',wraps=ref.linear) as linear:
+   q,k,v=ref.layer0_operands(row)
+   attention.assert_not_called()
+   self.assertEqual([call.args[1] for call in linear.call_args_list],
+                    [root+'self_attn.q_proj.weight',root+'self_attn.k_proj.weight',root+'self_attn.v_proj.weight'])
+   ref.forward(row)
+  self.assertEqual(row,before)
+  self.assertEqual([tuple(x.shape) for x in (q,k,v)],[(1,16,32,128),(1,8,32,128),(1,8,32,128)])
+  for operand,forwarded in zip((q,k,v),attention.call_args.args[1:4]):
+   self.assertEqual((operand.device.type,operand.dtype,operand.is_contiguous()),('cpu',t.float16,True))
+   self.assertTrue(t.equal(operand.view(t.int16),forwarded.view(t.int16)))
+  # Layer input RMS and its scale narrow to [2, 1] before the projections.
+  # The Q and K head RMS denominators are sqrt(1/128 + 1e-6).
+  # Rotating lane 0 to lanes 0 and 64 at positions 0 and 1 gives these IEEE words.
+  def bits(value):return struct.unpack('<H',struct.pack('<e',value.item()))[0]
+  self.assertEqual([bits(q[0,7,0,0]),bits(q[0,7,1,0]),bits(q[0,7,1,64])],[0x45a8,0x421d,0x44c3])
+  self.assertEqual([bits(k[0,6,0,0]),bits(k[0,6,1,0]),bits(k[0,6,1,64])],[0xc1a8,0xbe1d,0xc0c3])
+  self.assertEqual([bits(v[0,3,0,7]),bits(v[0,3,31,7]),bits(v[0,0,31,7])],[0x3d00,0x3d00,0x0000])
+ def test_layer0_operands_refuse_outside_compact_cpu_t32(self):
+  c=dict(config(),head_dim=128,num_attention_heads=16,num_key_value_heads=8)
+  ref=r.HalfReference(t,c,state(c),False,'cpu')
+  row=dict(native(),input_ids=[1]*32,attention_mask=[1]*32,position_ids=list(range(32)),decision_position=31)
+  bad_mask=dict(row,attention_mask=[0]+[1]*31)
+  small=r.HalfReference(t,config(),state(config()),False,'cpu')
+  for reference,item,error in [
+   (ref,native(),'exactly 32'),
+   (ref,bad_mask,'Context all-live'),
+   (small,row,'16/8 heads'),
+  ]:
+   with self.subTest(error=error),self.assertRaisesRegex(ValueError,error):
+    reference.layer0_operands(item)
+  ref.focus=True
+  with self.assertRaisesRegex(ValueError,'Compact layer-zero'):
+   ref.layer0_operands(native(True))
+  ref.focus=False;ref.device='cuda'
+  with self.assertRaisesRegex(ValueError,'require CPU'):
+   ref.layer0_operands(row)
   self.assertFalse(t.cuda.is_initialized())
  def test_candidate_ids_are_vocabulary_ids(self):
   row=native();row['candidate_positions']=[9999];row['option_mask']=[True];r.validate_native(t,config(),False,row)

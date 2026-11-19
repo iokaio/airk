@@ -10,5 +10,13 @@ Context uses causal GQA with the original scale, Q/K post-RoPE, V projection, co
 
 The default independent forward computes causal attention with FP32 softmax over half inputs, followed by a half output. Context also has an explicit CPU-only diagnostic via HalfReference.forward with context_flash_single_tile=True. It requires all-live input of at most 32 tokens and head width 128. It follows the pinned ORT CUDA FlashAttention single-key-tile arithmetic. Compute FP32 QK scores and row maxima, multiply the original FP32 scale by log2(e) with FP32 rounding, and form the max-shifted exp2 arguments with the rounded scaled maximum and a fused multiply-subtract. Sum the unrounded exponentials in FP32, round the same unnormalized exponentials to nearest-even FP16 for the PV products, accumulate the PV products in FP32 and divide by the FP32 sum before the final nearest-even FP16 output. Torch CPU arithmetic supplies the reference, and GPU instruction approximations and reduction order can differ.
 
+The CPU layer-zero diagnostic calls HalfReference.layer0_operands(row) with
+the caller-authenticated native input. It requires an all-live Context T32 row
+and the Compact 16-query-head, eight-KV-head, head-width-128 geometry. It shares
+the ordinary forward's embedding, input RMSNorm, half projections, Q/K RMSNorm,
+RoPE and final narrowing. It returns contiguous FP16 CPU Q, K and V in
+[1, heads, 32, 128] order before attention. The caller authenticates the original
+publisher configuration and the frozen native input identity.
+
 Original and candidate learned initializer byte proof, whole graph proof, independent half/original numerical comparisons, native strict CUDA placement, actual Flash/MEA dispatch and synchronized return, resource populations, original model deadlines, task/CAL and public admission are separate requirements. Source tests establish only the independent graph/rounding/reference mechanics on literal CPU fixtures. Existing numerical limits do not change. No exporter self-comparison, matching names/counts, metadata hash or requested provider option qualifies an execution.
 Default namespace controls use a self-contained literal Scorer.text / ModuleList model with independent IEEE byte expectations and all embedding/norm/projection names. The genuine pinned publisher-wrapper witness remains only in frozen historical private R2 evidence. Maintained controls require declared Torch/ONNX dependencies, never an ignored campaign source path. Model header semantics and all graph roots are checked in addition to the complete DAG.

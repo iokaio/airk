@@ -213,6 +213,7 @@ class WiderCompactReferenceControls(unittest.TestCase):
             ([], "t32", "AIRK_FP16_COMPACT_REFERENCE "),
             (["--wider"], "wider", "AIRK_FP16_COMPACT_WIDER_REFERENCE "),
             (["--flash-t32"], "flash-t32", "AIRK_FP16_COMPACT_FLASH_T32_REFERENCE "),
+            (["--layer0-operands"], "layer0-operands", "AIRK_FP16_COMPACT_LAYER0_OPERANDS "),
         )
         for args, kind, marker in cases:
             argv = ["verify_compact.py", "--conversion-plan", "plan", "--conversion-plan-sha256", "a",

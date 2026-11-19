@@ -147,24 +147,48 @@ class HalfReference:
   t=self.torch;need(value.dtype==t.float32,'projection source island must be FP32')
   half=value.to(t.float16);checked_finite(t,half,'half projection input')
   return checked_finite(t,t.nn.functional.linear(half,self.weights[name]),'half projection output').float()
+ def _embed_inputs(self,ids,positions):
+  t=self.torch
+  token=t.tensor([ids],dtype=t.int64,device=self.device)
+  position=t.tensor([positions],dtype=t.int64,device=self.device)
+  hidden=t.nn.functional.embedding(token,self.weights['embed_tokens.weight']).float()
+  return hidden,position
+ def _attention_operands(self,hidden,position,root):
+  t=self.torch;tokens=hidden.shape[1]
+  normal=rms(t,hidden,self.weights[root+'input_layernorm.weight'],self.eps)
+  q=self.linear(normal,root+'self_attn.q_proj.weight').reshape(1,tokens,self.qheads,self.dim)
+  k=self.linear(normal,root+'self_attn.k_proj.weight').reshape(1,tokens,self.kvheads,self.dim)
+  v=self.linear(normal,root+'self_attn.v_proj.weight').reshape(1,tokens,self.kvheads,self.dim).transpose(1,2)
+  q=rms(t,q,self.weights[root+'self_attn.q_norm.weight'],self.eps).transpose(1,2)
+  k=rms(t,k,self.weights[root+'self_attn.k_norm.weight'],self.eps).transpose(1,2)
+  q,k=rotary(t,q,k,position,self.config['rope_theta'])
+  return q.to(t.float16),k.to(t.float16),v.to(t.float16)
+ def layer0_operands(self,row):
+  """Return the first Context Compact T32 attention operands in CPU head order."""
+  t=self.torch
+  need(not self.focus and self.layers>0 and (self.qheads,self.kvheads,self.dim)==(16,8,128)
+       and t.device(self.device).type=='cpu','Compact layer-zero operands require CPU and 16/8 heads of width 128')
+  ids,_,positions,_,_=validate_native(t,self.config,self.focus,row)
+  need(len(ids)==32,'Compact layer-zero operands require exactly 32 all-live tokens')
+  with t.inference_mode(),t.autocast(device_type='cpu',enabled=False):
+   hidden,position=self._embed_inputs(ids,positions)
+   q,k,v=self._attention_operands(hidden,position,'layers.0.')
+   return (
+    checked_finite(t,q,'layer-zero Q').contiguous(),
+    checked_finite(t,k,'layer-zero K').contiguous(),
+    checked_finite(t,v,'layer-zero V').contiguous(),
+   )
  def forward(self,row,*,context_flash_single_tile=False):
-  t=self.torch;c=self.config;ids,mask,positions,candidates,options=validate_native(t,c,self.focus,row)
+  t=self.torch;ids,mask,positions,candidates,options=validate_native(t,self.config,self.focus,row)
   if context_flash_single_tile:
    need(not self.focus and len(ids)<=32 and self.dim==128 and t.device(self.device).type=='cpu',
         'Context Flash single tile requires all-live CPU T<=32 and head width 128')
   with t.inference_mode(),t.autocast(device_type=t.device(self.device).type,enabled=False):
-   token=t.tensor([ids],dtype=t.int64,device=self.device);position=t.tensor([positions],dtype=t.int64,device=self.device)
-   hidden=t.nn.functional.embedding(token,self.weights['embed_tokens.weight']).float()
+   hidden,position=self._embed_inputs(ids,positions)
    for i in range(self.layers):
-    root=f'layers.{i}.';residual=hidden;normal=rms(t,hidden,self.weights[root+'input_layernorm.weight'],self.eps)
-    q=self.linear(normal,root+'self_attn.q_proj.weight').reshape(1,len(ids),self.qheads,self.dim)
-    k=self.linear(normal,root+'self_attn.k_proj.weight').reshape(1,len(ids),self.kvheads,self.dim)
-    v=self.linear(normal,root+'self_attn.v_proj.weight').reshape(1,len(ids),self.kvheads,self.dim).transpose(1,2)
-    q=rms(t,q,self.weights[root+'self_attn.q_norm.weight'],self.eps).transpose(1,2)
-    k=rms(t,k,self.weights[root+'self_attn.k_norm.weight'],self.eps).transpose(1,2)
-    q,k=rotary(t,q,k,position,c['rope_theta'])
-    attention=causal_half_attention(t,q.to(t.float16),k.to(t.float16),v.to(t.float16),mask,
-                                    context_flash_single_tile=context_flash_single_tile)
+    root=f'layers.{i}.';residual=hidden
+    q,k,v=self._attention_operands(hidden,position,root)
+    attention=causal_half_attention(t,q,k,v,mask,context_flash_single_tile=context_flash_single_tile)
     attention=attention.float().transpose(1,2).reshape(1,len(ids),self.qheads*self.dim)
     hidden=residual+self.linear(attention,root+'self_attn.o_proj.weight')
     residual=hidden;normal=rms(t,hidden,self.weights[root+'post_attention_layernorm.weight'],self.eps)

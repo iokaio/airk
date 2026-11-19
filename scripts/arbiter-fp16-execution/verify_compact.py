@@ -25,6 +25,14 @@ ORIGINAL_GRAPH = "c79c672513b874ab773ee7df8d4518e110d1e6196ae45076ce718f5b5dc6f7
 FIXTURE_SHA = "c4360d8a759c68c305fba0df7bd04001a6b043d8a2a57b36f0d8ef0f898519b9"
 PRODUCER_SHA = "b3849443d0d4d737d5c3f88b323b9eaffbd1045500d97f1487c56be639884bbe"
 INPUT_DIGEST = "ec7b4845c37fb7cbe2a64a866f8b6cdc03479d65593cdb0a1d01102fe56fc335"
+LAYER0_CAPTURE = CAMPAIGN / "compact-fp16-layer0-native-capture-r4/native-result.json"
+LAYER0_CAPTURE_SHA = "9705db75efa3e84fc955c3edeaf03e1aef70e5362161087f24250e14b75aeac6"
+LAYER0_CANDIDATE_SHA = "971cf2d22d8bb7c874f3e5f5ce014bf2c494d1fb7245126d27d722223ac1577f"
+LAYER0_OPERANDS = (
+    ("/airk_g5/attention/0/q16", 2048),
+    ("/airk_g5/attention/0/k16", 1024),
+    ("/airk_g5/weight//scorer/layers.0/self_attn/v_proj/MatMul/output16", 1024),
+)
 RETAINED_FIXTURE_SHA = "3962186640b42648b345fa200516ed44a3de4ccab0d783e671c9c22c3b8b1bbd"
 RETAINED_PRODUCER_SHA = "c48e88b5d6bd8dff20b052bedebf0a4a48354d57caa1d2944b2dda16281805b2"
 WIDER_CASES = (
@@ -35,7 +43,7 @@ WIDER_CASES = (
 REFERENCE_OWNER = "scripts/arbiter-fp16-reference.py"
 PUBLISHER_OWNER = "scripts/arbiter/export/qwen/qwen3-challengers-r1/qwen3_reference_r2.py"
 REFERENCES = {
-    REFERENCE_OWNER: "2db3e6fa599633534418785fe0dc38941a4de0b869d980d16effdad174f45406",
+    REFERENCE_OWNER: "d3afac6ed511ea50a86a00d378f4627470b06ffc8468fabe539587bef5675fa3",
     "scripts/arbiter-fp16-reference/graph.py": "698c779c16a6bc768d260669c1daf0840bc2512ea9d56e2df7660f43f6909f72",
     PUBLISHER_OWNER: "4c6f43d0d81539cfc6bf7b6ddf5ae69273e61508d0db3d22a5e7488c60560b6b",
 }
@@ -59,6 +67,12 @@ REFERENCE_OUTPUTS = {
         "airk.private.owned-compact-fp16-flash-t32-independent-proof/1",
         "AIRK_FP16_COMPACT_FLASH_T32_REFERENCE ",
         "compact-flash-t32-independent-proof.json",
+    ),
+    "layer0-operands": (
+        "airk.private.compact-fp16-layer0-operands/1",
+        "airk.private.owned-compact-fp16-layer0-operands/1",
+        "AIRK_FP16_COMPACT_LAYER0_OPERANDS ",
+        "compact-layer0-operands.json",
     ),
 }
 
@@ -300,6 +314,55 @@ def validate_wider_observation(observed, expected):
                 "wider Compact matching-half row or source identity differs")
 
 
+def captured_layer0_operands(check):
+    capture, pin = read_pinned_json(LAYER0_CAPTURE, LAYER0_CAPTURE_SHA, check)
+    require(capture["schema"] == "airk.private.compact-fp16-layer0-taps/1"
+            and capture["complete"] is capture["native_forward_returned"] is capture["forward_synchronized"] is True
+            and capture["qualified"] is capture["product_admission"] is False
+            and len(capture["rows"]) == 1 and capture["rows"][0]["input_digest"] == INPUT_DIGEST
+            and capture["source_mask"]["verified_candidate_graph"] == LAYER0_CANDIDATE_SHA
+            and len(capture["layer0_taps"]) == 4, "reviewed exact CUDA layer-0 capture required")
+    operands = capture["layer0_taps"][:3]
+    for row, (name, width) in zip(operands, LAYER0_OPERANDS):
+        check()
+        require(row["name"] == name and row["width"] == width and len(row["bits"]) == 32 * width
+                and all(type(word) is int and 0 <= word <= 0xffff and word & 0x7c00 != 0x7c00
+                        for word in row["bits"]), "reviewed layer-0 half operand differs")
+    return operands, pin
+
+
+def compare_layer0_operands(torch, operands, captured):
+    require(len(operands) == len(captured) == 3, "exact Q, K and V operands required")
+    result = []
+    for operand, observed, (name, width) in zip(operands, captured, LAYER0_OPERANDS):
+        require(operand.dtype == torch.float16 and operand.device.type == "cpu"
+                and tuple(operand.shape) == (1, width // 128, 32, 128)
+                and torch.isfinite(operand).all().item(), "finite independent layer-0 operand geometry differs")
+        actual = torch.tensor(observed["bits"], dtype=torch.uint16, device="cpu").view(torch.float16)
+        expected = operand.transpose(1, 2).reshape(-1)
+        result.append({
+            "name": name, "elements": 32 * width,
+            "max_abs_error": (expected.float() - actual.float()).abs().amax().item(),
+            "exact_bit_mismatches": (expected.view(torch.int16) != actual.view(torch.int16)).count_nonzero().item(),
+        })
+    return result
+
+
+def validate_layer0_operand_observation(observed, capture_pin):
+    require(observed["layer0_capture"] == capture_pin
+            and type(observed["layer0_prefix_invocations"]) is int and observed["layer0_prefix_invocations"] == 1,
+            "independent layer-0 capture or execution count differs")
+    comparisons = observed["layer0_operands"]
+    require(isinstance(comparisons, list) and len(comparisons) == 3, "exact layer-0 operand comparisons required")
+    for row, (name, width) in zip(comparisons, LAYER0_OPERANDS):
+        require(isinstance(row, dict) and set(row) == {"name", "elements", "max_abs_error", "exact_bit_mismatches"}
+                and row["name"] == name and type(row["elements"]) is int and row["elements"] == 32 * width
+                and type(row["max_abs_error"]) in (int, float) and math.isfinite(row["max_abs_error"])
+                and 0 <= row["max_abs_error"] <= 131008
+                and type(row["exact_bit_mismatches"]) is int and 0 <= row["exact_bit_mismatches"] <= 32 * width,
+                "independent layer-0 operand observation differs")
+
+
 def verify(args):
     started = time.monotonic()
     prefix = sys.pycache_prefix
@@ -336,7 +399,11 @@ def verify(args):
 
     wider = args.reference_kind == "wider"
     flash_t32 = args.reference_kind == "flash-t32"
+    layer0 = args.reference_kind == "layer0-operands"
     proof_schema, _, _, _ = REFERENCE_OUTPUTS[args.reference_kind]
+    if layer0:
+        conversion.windows_owner(path=LAYER0_CAPTURE)
+        captured, capture_pin = captured_layer0_operands(check)
     if wider:
         references, publisher_files = wider_references(check)
     else:
@@ -385,14 +452,27 @@ def verify(args):
         original_graph=original_graph, original_files=original_files,
     )
     check()
-    for reference in references:
+    layer0_evidence = {}
+    if layer0:
+        require(candidate["graph"]["sha256"] == LAYER0_CANDIDATE_SHA, "layer-0 candidate graph differs")
+        operands = independent.layer0_operands(references[0]["input"])
         check()
-        scores = independent.forward(reference["input"], context_flash_single_tile=flash_t32)
-        check()
-        require(scores.dtype == torch.float32 and scores.device.type == "cpu" and tuple(scores.shape) == (1, 8)
-                and not torch.cuda.is_initialized(), "CPU-only FP32-ABI Compact reference vector required")
-        reference["matching_fp16"] = scores[0].tolist()
-        require(finite_scores(reference["matching_fp16"]), "nonfinite matching-half scores")
+        layer0_evidence = {
+            "layer0_prefix_invocations": 1,
+            "layer0_capture": capture_pin,
+            "layer0_operands": compare_layer0_operands(torch, operands, captured),
+        }
+        require(not torch.cuda.is_initialized(), "CPU layer-0 reference initialized CUDA")
+        conversion.pinned(capture_pin, check)
+    else:
+        for reference in references:
+            check()
+            scores = independent.forward(reference["input"], context_flash_single_tile=flash_t32)
+            check()
+            require(scores.dtype == torch.float32 and scores.device.type == "cpu" and tuple(scores.shape) == (1, 8)
+                    and not torch.cuda.is_initialized(), "CPU-only FP32-ABI Compact reference vector required")
+            reference["matching_fp16"] = scores[0].tolist()
+            require(finite_scores(reference["matching_fp16"]), "nonfinite matching-half scores")
 
     reference_pins = {reference[key]["path"]: reference[key]
                       for reference in references for key in ("fixture", "producer")}
@@ -412,8 +492,8 @@ def verify(args):
         "reference_sources": sources, "loaded_runtime": loaded,
         "execution_token": token, "pid": os.getpid(), "reference_device": "cpu",
         "original_deadline_monotonic": args.deadline_monotonic, "elapsed_seconds": time.monotonic() - started,
-        "model_inference": True, "torch_forward_invocations": len(references),
-        "native_execution": False, "qualification": False,
+        "model_inference": True, "torch_forward_invocations": 0 if layer0 else len(references),
+        "native_execution": False, "qualification": False, **layer0_evidence,
     }
 
 
@@ -441,6 +521,10 @@ def run_owned(args):
             and conversion.pin(sys.executable, check) == plan["python"]
             and sys.flags.isolated and sys.flags.no_site and sys.dont_write_bytecode,
             "reviewed Compact conversion and actual isolated parent required")
+    layer0 = args.reference_kind == "layer0-operands"
+    if layer0:
+        conversion.windows_owner(path=LAYER0_CAPTURE)
+        _, capture_pin = captured_layer0_operands(check)
     helper_root = ROOT / "scripts/cuda-native-execution/helpers"
     for key, expected in conversion.HELPERS.items():
         pin = plan["helpers"][key]
@@ -532,7 +616,7 @@ def run_owned(args):
                 and observed["pid"] == owned["owned_leader_pid"] and observed["execution_token"] == token
                 and observed["reference_device"] == "cpu"
                 and type(observed["torch_forward_invocations"]) is int
-                and observed["torch_forward_invocations"] == (3 if wider else 1),
+                and observed["torch_forward_invocations"] == (0 if layer0 else 3 if wider else 1),
                 "independent worker output differs from the owned request")
         if wider:
             expected, _ = wider_references(check)
@@ -540,6 +624,9 @@ def run_owned(args):
         else:
             require(observed["reference"]["input"]["input_digest"] == INPUT_DIGEST,
                     "independent worker output differs from the owned request")
+        if layer0:
+            validate_layer0_operand_observation(observed, capture_pin)
+            conversion.pinned(capture_pin, check)
         check()
         with proof.open("xb") as stream:
             stream.write(results[0])
@@ -548,6 +635,8 @@ def run_owned(args):
         receipt["stdout"] = conversion.pin(stdout, check)
         for pin in (plan_pin, prior_pin, worker_pin):
             conversion.pinned(pin, check)
+        if layer0:
+            conversion.pinned(capture_pin, check)
         require({path.name for path in out.iterdir()} == {"temp", stdin.name, stdout.name, proof.name},
                 "unexpected owned reference output")
         receipt["complete"] = True
@@ -589,6 +678,8 @@ def main():
                         help="verify exact retained T128, T1024, and T8192")
     recipe.add_argument("--flash-t32", dest="reference_kind", action="store_const", const="flash-t32",
                         help="compare the exact T32 input with pinned single-tile Context Flash arithmetic")
+    recipe.add_argument("--layer0-operands", dest="reference_kind", action="store_const", const="layer0-operands",
+                        help="compare independent CPU layer-0 Q, K and V with their exact CUDA capture")
     parser.set_defaults(reference_kind="t32")
     args = parser.parse_args()
     if args.owned_output is not None:

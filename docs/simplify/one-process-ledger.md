@@ -11599,3 +11599,35 @@ The exact image stage passed in 1.152 s
 Exact commands, Cargo timings and JUnit are under
 windows-cuda-g5-layer0-capture-checks-r4. The two focused launcher suites
 passed 78 and 137. The CPU replay suite passed five in-memory controls.
+
+### 2026-11-19 — Independent Compact prefix differs before attention
+
+The independent CPU owner reopens the exact corrected conversion, publisher
+weights and sealed R4 native capture. Its separate --layer0-operands route
+uses the same independent operand preparation as the full reference and
+runs just one T32 prefix, with zero complete forwards. Thirteen literal
+Torch controls passed, including independent rounding and RoPE bits,
+whole-forward operand identity and out-of-scope refusal. Seventy-eight
+focused launcher checks and live capture admission passed.
+
+The checked run, compact-fp16-layer0-operand-reference-r6, completed in
+93.728 s under the original CPU-only 600-second and 32 GiB process/Job
+bounds. Peak Job commit was 15,563,685,888 B. The child exited 0, emptied
+the Job naturally and required no forced termination. The verified Windows
+execution user and default owner matched the human SID ending 1002.
+Execution d7bbe58012883eb809dd035a7e066ecaf081f9da8cdcf800d0339419966d0431
+retains exact commands and sources. Its proof is
+992381248732f69a8794b3efc7b6672e535cee9a1d68fe451a467274649a7d6c,
+using worker 280ef84a591ea1f48fe1a4d26bf0b3d4b6915ad709f04518e51cb5d1f39a922d
+and reference d3afac6ed511ea50a86a00d378f4627470b06ffc8468fabe539587bef5675fa3.
+
+Against the exact R4 capture, Q differed in 1,140 of 65,536 half words
+with maximum absolute error 0.015625. K differed in 570 of 32,768 with
+maximum 0.125. V differed in 812 of 32,768 with maximum 0.001953125.
+V is the unmodified half projection output before attention, Q/K
+normalization and rotation. This proves an upstream difference and does
+not distinguish the shared RMSNorm/cast input from the projection
+reduction. Capture the exact symbolic-shape shared input and direct
+projection outputs in a separate private diagnostic, then replay the
+projections on identical inputs and the same verified weights.
+Retain the original T32 logit, full-width, Resource20 and quality gates.

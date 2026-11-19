@@ -203,6 +203,17 @@ marker and receipt identities. Compare the independent result against the sealed
 prior CUDA scores before another native probe. Multi-tile widths require
 separate verification of the running max, sum and output rescaling.
 
+## Independent Compact layer-0 operands
+
+Use `--layer0-operands` with the original owned reference flags. The worker
+authenticates the corrected candidate and the exact retained CUDA layer-0
+capture, then executes the independent CPU prefix through Q, K and V for the
+same frozen T32 row. It compares every finite half operand value in the native
+token and head order and reports maximum absolute error and exact bit mismatch
+count. The separate `compact-layer0-operands.json` proof records one prefix
+and zero complete forwards. The 600-second clock, host Job, library census,
+file custody and natural settlement checks are the same as for T32.
+
 ## Owned Compact metadata and T32 probe
 
 The [native probe parent](probe_compact.py) owns one exact test invocation.
