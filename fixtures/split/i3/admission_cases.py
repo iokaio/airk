@@ -701,6 +701,7 @@ def operations():
         ("recovery.plan_cancel", "PlanCancel", MGMT, "mutation", "natural", natural),
         ("storage.purge", "StoragePurge", MGMT, "destructive", "operation_digest", digest),
         ("service.configure_resources", "ConfigureResources", MGMT, "mutation", "natural", natural),
+        ("service.allow_gpu", "SetGpuAllowed", MGMT, "mutation", "natural", natural),
         ("service.stop", "Lifecycle.Stop", MGMT, "mutation", "request_key", keyed),
         # Admin Restart (plan §7.3, P0 decision): the handler restarts through the OS login
         # manager when login startup is registered; otherwise it refuses with guidance.

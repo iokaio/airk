@@ -150,6 +150,7 @@ function catalogPage(
 export const body = {
   health: () => 'health',
   resources: () => 'resources',
+  allowGpu: (update: import('../../vscode/src/generated/i3').SetGpuAllowed) => ({ set_gpu_allowed: update }),
   workers: (projects: string[]) => ({ workers: { projects } }),
   /** Registered indexes, 1..=32 per page; a continuation names the page's `revision`. */
   indexesList: (after: string | null, limit: number, revision: number | null = null) => ({

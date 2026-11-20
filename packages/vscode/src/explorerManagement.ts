@@ -359,6 +359,8 @@ export function managementView(state: ServiceConsoleState): ManagementView {
             ['Service (airk)', typeof health.version === 'string' ? `${health.version} · ${state.health.state} health observation${typeof health.process_id === 'number' ? ` · PID ${health.process_id}` : ''}` : undefined],
         ]),
         resources: [observed('Resources', state.resources), observed('Source work', state.sources), ...rows([['Preset', configuration.preset],
+            ['Service-wide GPU use', state.resources.value?.configuration_error === false && typeof configuration.allow_gpu === 'boolean'
+                ? (configuration.allow_gpu ? 'Allowed' : 'Disabled') : 'Unavailable'],
             ['Concurrent evidence requests', configuration.query_concurrency],
             ['Resident workers / limit', resources.resident_workers === undefined ? undefined : `${scalar(resources.resident_workers)} / ${scalar(resources.resident_limit)}`],
             ['Running jobs', resources.running_jobs], ['Waiting projects', resources.waiting_projects], ['Logical CPUs', resources.logical_cpus],

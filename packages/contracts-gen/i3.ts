@@ -218,6 +218,13 @@ export type ReviewedCall = {
 };
 
 /**
+ * Change only the service-wide GPU policy, preserving all other settings.
+ */
+export type SetGpuAllowed = {
+    allow_gpu: boolean;
+};
+
+/**
  * One NDJSON line of `/admin/api/v1/events`. Cursors are opaque and scoped
  * to the service instance and the session.
  */

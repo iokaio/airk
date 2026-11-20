@@ -2131,6 +2131,27 @@
    ]
   },
   {
+   "operation": "service.allow_gpu",
+   "method": "SetGpuAllowed",
+   "plane": "management",
+   "surfaces": [
+    "pipe",
+    "airkctl",
+    "admin"
+   ],
+   "authorization": [
+    "owner_pipe",
+    "admin_session_csrf"
+   ],
+   "effect": "mutation",
+   "idempotency": "natural",
+   "conformance": [
+    "P2",
+    "P3",
+    "P5"
+   ]
+  },
+  {
    "operation": "service.stop",
    "method": "Lifecycle.Stop",
    "plane": "management",

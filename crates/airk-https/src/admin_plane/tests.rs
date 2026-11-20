@@ -957,6 +957,34 @@ async fn mutations_answer_with_a_server_generated_request() {
 }
 
 #[tokio::test]
+async fn gpu_policy_mutation_dispatches_only_the_requested_boolean() {
+    let (plane, sent, _) = scripted_plane(vec![Some(ControlResponse::ClientErrorRecorded {})]);
+    let (cookie, csrf) = sign_in(&plane).await;
+    let operation = "service.allow_gpu";
+    for body in [
+        json!({"set_gpu_allowed": {"allow_gpu": false, "preset": "balanced"}}),
+        json!({"set_gpu_allowed": {"allow_gpu": "false"}}),
+        json!({"configure_resources": {"allow_gpu": false}}),
+    ] {
+        let (status, reply) = envelope(
+            &plane,
+            api_call(&cookie, &csrf, operation, &body.to_string()),
+        )
+        .await;
+        assert_eq!(status, 400, "{reply}");
+        assert_eq!(error_code(&reply), "admin_malformed_request");
+    }
+    let body = json!({"set_gpu_allowed": {"allow_gpu": false}});
+    let (status, reply) = envelope(
+        &plane,
+        api_call(&cookie, &csrf, operation, &body.to_string()),
+    )
+    .await;
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(*sent.lock().unwrap(), [body]);
+}
+
+#[tokio::test]
 async fn keyed_mutations_fill_the_key_from_the_service_epoch() {
     let (plane, sent, _) = scripted_plane(vec![
         Some(ControlResponse::RequestEpoch {

@@ -5,8 +5,8 @@ import test from 'node:test';
 import {build} from 'esbuild';
 import {fileURLToPath} from 'node:url';
 const root=fileURLToPath(new URL('../',import.meta.url));
-const built=await build({absWorkingDir:root,stdin:{contents:"export {resourceSummaryOf} from './src/pages';",resolveDir:root,sourcefile:'resources-summary-test.ts'},bundle:true,write:false,format:'esm',platform:'node',jsx:'automatic',jsxImportSource:'preact'});
-const {resourceSummaryOf}=await import(`data:text/javascript;base64,${Buffer.from(built.outputFiles[0].text).toString('base64')}`);
+const built=await build({absWorkingDir:root,stdin:{contents:"export {resourceSummaryOf,gpuAllowedOf} from './src/pages';",resolveDir:root,sourcefile:'resources-summary-test.ts'},bundle:true,write:false,format:'esm',platform:'node',jsx:'automatic',jsxImportSource:'preact'});
+const {resourceSummaryOf,gpuAllowedOf}=await import(`data:text/javascript;base64,${Buffer.from(built.outputFiles[0].text).toString('base64')}`);
 const gib=1024**3;
 test('resource summary keeps observed memory separate from policy reservation and query capacity',()=>{
  const rows=Object.fromEntries(resourceSummaryOf({status:'resources',observation:{configuration:{query_concurrency:16},logical_cpus:8,resident_workers:1,resident_limit:4,observed_rss_bytes:2*gib,available_memory_bytes:8*gib,detected_memory_bytes:16*gib,memory_reserved_bytes:3*gib,memory_limit_bytes:6*gib,query_headroom_bytes:gib,running_jobs:2,waiting_projects:3,telemetry_complete:true,pressure:false,provider_drain_error:false}}));
@@ -19,6 +19,14 @@ test('missing, invalid and unsafe measurements remain unavailable rather than gu
  assert.deepEqual(resourceSummaryOf({status:'health'}),[]);
  const rows=Object.fromEntries(resourceSummaryOf({status:'resources',observation:{configuration:{query_concurrency:4.5},logical_cpus:-1,observed_rss_bytes:Number.MAX_SAFE_INTEGER+1}}));
  assert.equal(rows['Concurrent evidence requests'],'Unavailable');assert.equal(rows['Service memory in use'],'Unavailable');assert.match(rows['CPU and workers'],/^Unavailable logical CPUs/);assert.equal(rows.Resources,'Resource observations incomplete or unavailable');
+});
+test('GPU permission requires the persisted native value from a successful resources read',()=>{
+ const result={status:'resources',configuration_error:false,observation:{configuration:{allow_gpu:false}}};
+ assert.equal(gpuAllowedOf(result),false);
+ assert.equal(gpuAllowedOf({...result,observation:{configuration:{allow_gpu:true}}}),true);
+ assert.equal(gpuAllowedOf({...result,configuration_error:true}),null);
+ assert.equal(gpuAllowedOf({...result,observation:{configuration:{}}}),null);
+ assert.equal(gpuAllowedOf({...result,status:'refused'}),null);
 });
 test('provider failures and memory pressure remain explicit even with complete telemetry',()=>{
  const snapshot={telemetry_complete:true,pressure:true,provider_drain_error:false};

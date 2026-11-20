@@ -339,6 +339,17 @@ test('in-service inference keeps identity, complete counters and failures withou
 });
 
 
+test('copied resource diagnostics retain each observed GPU permission and omit unrelated resource data',()=>{
+    const value=state();
+    for(const allowed of [false,true]){
+        value.resources.value={observation:{configuration:{preset:'balanced',allow_gpu:allowed,private_path:'/unexported'}}};
+        const report=diagnosticPreview(value,false);
+        assert.deepEqual(JSON.parse(report).resourceConfiguration,{preset:'balanced',allow_gpu:allowed});
+        assert.ok(!report.includes('/unexported'));
+    }
+    assert.ok(!Object.hasOwn(JSON.parse(diagnosticPreview(state(),false)).resourceConfiguration,'allow_gpu'));
+});
+
 test('unavailable historical semantics are disclosed in health and complete copied details',()=>{
     const current=state(),semantic={state:'unavailable',failure:'legacy_saved_semantic_conversion_unavailable',future:{preserved:true}};
     const row=current.page!.projects[0] as any;row.inspection.snapshot.semantic=semantic;row.pending_job=null;row.progress=undefined;

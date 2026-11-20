@@ -636,6 +636,19 @@
       ],
       "type": "object"
     },
+    "SetGpuAllowed": {
+      "additionalProperties": false,
+      "description": "Change only the service-wide GPU policy, preserving all other settings.",
+      "properties": {
+        "allow_gpu": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "allow_gpu"
+      ],
+      "type": "object"
+    },
     "StreamLine": {
       "description": "One NDJSON line of `/admin/api/v1/events`. Cursors are opaque and scoped\nto the service instance and the session.",
       "oneOf": [
@@ -765,6 +778,7 @@
     "StreamLine",
     "EventStreamRequest",
     "OperationRow",
+    "SetGpuAllowed",
     "ReviewedCall",
     "MutationPreparation",
     "PreparedMutationCall",

@@ -265,6 +265,13 @@ function LoginStartup(): JSX.Element {
   );
 }
 
+/** Only a current persisted resource configuration can authorize editing. */
+export function gpuAllowedOf(value: unknown): boolean | null {
+  if (field(value, 'status') !== 'resources' || field(value, 'configuration_error') !== false) return null;
+  const configured = field(field(field(value, 'observation'), 'configuration'), 'allow_gpu');
+  return typeof configured === 'boolean' ? configured : null;
+}
+
 /** Presentation-only native field projection; the complete ResourceSnapshot stays in Details. */
 export function resourceSummaryOf(value: unknown): readonly [string, string][] {
   if (field(value, 'status') !== 'resources') return [];
@@ -304,12 +311,40 @@ function ResourceSummary(props: { state: CallState }): JSX.Element {
 export function Service(props: { onLifecycle: (action: 'stop' | 'restart') => void }): JSX.Element {
   const visible = useContext(PageVisible);
   const [resources, runResources] = useCall();
+  const [gpuOutcome, runGpu] = useCall();
+  const [outcomeSession, setOutcomeSession] = useState<ReturnType<typeof currentSession>>(null);
+  const [observedSession, setObservedSession] = useState<ReturnType<typeof currentSession>>(null);
+  const [gpuReview, setGpuReview] = useState<{ observation: CallState; desired: boolean } | null>(null);
+  const readNumber = useRef(0);
+  const gpuBusy = useRef(false);
+  const refreshResources = async () => {
+    const origin = currentSession();
+    const ticket = ++readNumber.current;
+    setObservedSession(null);
+    setGpuReview(null);
+    await runResources(OPS.resources, body.resources());
+    if (ticket === readNumber.current && origin === currentSession()) setObservedSession(origin);
+  };
   const [trust, runTrust] = useCall();
   const [rotation, runRotation] = useCall();
   const [lifecycle, runLifecycle] = useCall();
   const [, changed] = useState(0);
   const session = currentSession();
-  useEffect(() => { if (visible && session !== null) void runResources(OPS.resources, body.resources()); }, [visible, session]);
+  useEffect(() => { if (visible && session !== null) void refreshResources(); }, [visible, session]);
+  const allowed = session && session === observedSession ? gpuAllowedOf(resultOf(resources)) : null;
+  const reviewed = gpuReview?.observation === resources && allowed !== null && gpuReview.desired === !allowed;
+  const applyGpu = async () => {
+    if (!reviewed || !visible || currentSession() !== observedSession || gpuBusy.current) return;
+    gpuBusy.current = true;
+    setOutcomeSession(observedSession);
+    setGpuReview(null);
+    try {
+      await runGpu(OPS.allowGpu, body.allowGpu({ allow_gpu: !allowed }));
+    } finally {
+      gpuBusy.current = false;
+      if (session === currentSession()) await refreshResources();
+    }
+  };
   const lifetime = useRef<{ session: unknown; owner: ReturnType<typeof generatedAction> | null } | null>(null);
   if (lifetime.current?.session !== session) {
     lifetime.current?.owner?.dispose();
@@ -337,11 +372,21 @@ export function Service(props: { onLifecycle: (action: 'stop' | 'restart') => vo
     <>
       <p>Check current resources, manage optional Arbiter models, or choose a service task below.</p>
       <Panel title="Resources">
-        <button type="button" onClick={() => void runResources(OPS.resources, body.resources())}>
+        <button type="button" onClick={() => void refreshResources()}>
           {resources.phase === 'pending' ? 'Reading resources...' : 'Refresh resources'}
         </button>
         {resources.phase === 'done' ? <p class="muted">Last observed {new Date(resources.at).toLocaleTimeString()}. Refresh after changing models or service settings.</p> : null}
         <ResourceSummary state={resources} />
+        <p>Service-wide GPU use: <strong>{allowed === null ? 'Unavailable' : allowed ? 'Allowed' : 'Disabled'}</strong></p>
+        {allowed !== null && (reviewed ? <div>
+          <p>{allowed ? 'Disable GPU use for this service?' : 'Allow this service to use an eligible GPU?'}</p>
+          <button type="button" disabled={gpuBusy.current || !visible} onClick={() => void applyGpu()}>Confirm change</button>
+          <button type="button" onClick={() => setGpuReview(null)}>Cancel</button>
+        </div> : <button type="button" disabled={gpuBusy.current || !visible}
+          onClick={() => setGpuReview({ observation: resources, desired: !allowed })}>
+          {allowed ? 'Disable GPU use' : 'Allow GPU use'}
+        </button>)}
+        {outcomeSession === session && gpuOutcome.phase !== 'idle' && <details open><summary>GPU setting result</summary><Outcome state={gpuOutcome} /></details>}
         <details><summary>Details: complete resource result</summary><Outcome state={resources} /></details>
       </Panel>
       <details><summary>HTTPS and certificate trust</summary>

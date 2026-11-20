@@ -51,7 +51,7 @@ const MANAGE_PAGES: Readonly<Record<string, { page: AdminPage; title: string; te
     overview: { page: 'overview', title: 'Overview', text: 'Service health, indexes and work in progress.' },
     storage: { page: 'storage', title: 'Storage', text: 'Index storage, quotas and cleanup.' },
     repair: { page: 'recovery', title: 'Recovery', text: 'Recovery plans for indexes that need repair.' },
-    service: { page: 'service', title: 'Service', text: 'Start, stop and restart the AIRK Service and review its runtime.' },
+    service: { page: 'service', title: 'Service', text: 'Manage service-wide GPU use, review the runtime, and stop or restart the AIRK Service.' },
     agents: { page: 'agents', title: 'Agents', text: 'Coding-agent connections and their access.' },
     logs: { page: 'logs', title: 'Logs', text: 'Service and extension logs.' },
 };
