@@ -140,7 +140,16 @@ def worker(replay, wider, deadline, decision_rows=False):
             "scores": scores, "independent_reference": False, "qualification": False}
 
 
-def run_owned(replay, wider, out, decision_rows=False, *, representative=None, down_projection=False):
+def run_owned(replay, wider, out, decision_rows=False, *, representative=None, down_projection=False,
+              train_batch=None, full_projection=False, full_cuts=False, full_cuts_cal_pid=None, cutlass_projection=False):
+    if cutlass_projection:
+        require(representative is not None and not any((decision_rows, down_projection, full_projection, full_cuts))
+                and train_batch is None, "CUTLASS publisher projection requires its own authenticated representative row")
+    require(full_cuts_cal_pid is None or ((full_cuts or cutlass_projection) and full_cuts_cal_pid > 0), "CAL affinity is only supported by the full-cut worker here")
+    if full_cuts:
+        require(representative is not None and representative[0] == "ENGINEERING_FIXED"
+                and not decision_rows and not down_projection and not full_projection and train_batch is None,
+                "full-projection cuts require the isolated fixed engineering admission")
     legacy, _ = wider.load_base()
     deadline = time.monotonic() + legacy.MAX_WALL_SECONDS
     def check():
@@ -177,6 +186,17 @@ def run_owned(replay, wider, out, decision_rows=False, *, representative=None, d
     if down_projection:
         require(representative is not None and not decision_rows, "down projection requires a frozen admission")
         script = HERE / "compact_down_projection_reference.py"
+    if full_projection:
+        require(representative is not None and not decision_rows and not down_projection and train_batch is None,
+                "full projection requires its own frozen representative mode")
+        script = HERE / "compact_full_projection_reference.py"
+    if full_cuts:
+        script = HERE / "compact_full_cut_reference.py"
+    if cutlass_projection:
+        script = HERE / "compact_cutlass_reference.py"
+    if train_batch is not None:
+        require(representative is None and not decision_rows and not down_projection, "TRAIN batch requires its own reference mode")
+        script = HERE / "compact_train_batch_reference.py"
     source = replay.file_pin(script)
     env = {key: val for key, val in os.environ.items()
            if not key.upper().startswith(("AIRK_", "ORT_", "PYTHON", "CUDA_", "CUDNN_", "TORCH_", "HF_", "TRITON_"))}
@@ -190,6 +210,14 @@ def run_owned(replay, wider, out, decision_rows=False, *, representative=None, d
     if representative is not None:
         case, census_sha, ordinal = representative
         argv.extend(["--case", case, "--census-sha256", census_sha, "--ordinal", str(ordinal)])
+    if full_cuts_cal_pid is not None:
+        argv.extend(["--cal-pid", str(full_cuts_cal_pid)])
+    if train_batch is not None:
+        census_sha, batch_number, *placement = train_batch
+        argv.extend(["--census-sha256", census_sha, "--batch", str(batch_number)])
+        if placement:
+            cal_pid, = placement
+            argv.extend(["--cal-pid", str(cal_pid)])
     def suspended(api, job, info, child_deadline):
         observed = parent.suspended_authentication(api, info, deadline, child_deadline, conversion.SID,
                                                   plan["python"], owner.image_proof)
@@ -198,7 +226,8 @@ def run_owned(replay, wider, out, decision_rows=False, *, representative=None, d
         return observed
     with open(os.devnull, "rb") as stdin, log.open("xb") as output:
         conversion.guard(plan, log, True, deadline=deadline)
-        owned = owner.run_windows_owned_training(argv, ROOT, output, deadline-time.monotonic(), env, stdin, 32 << 30,
+        owned = owner.run_windows_owned_training(argv, ROOT, output, deadline-time.monotonic(), env, stdin,
+                                               (22 if full_cuts or cutlass_projection else 32) << 30,
                                                before_resume=suspended, absolute_deadline=deadline, cleanup_seconds=5)
     conversion.guard(plan, log, True, deadline=time.monotonic()+10)
     require(log.stat().st_size <= 16 << 20, "unexpected log extent")

@@ -120,3 +120,10 @@ On the campaign Windows host, observe_cal_thread_affinity.py samples CAL service
 
 Run compare_engineering_recipes.py with the checked Python interpreter and bytecode disabled to compare the original seven-option, 1,014-token engineering request under its three measured CUDA graphs. It reopens the pinned run and native receipts, requires the same compiled input, roster and original FP32 vector, and recomputes per-option raw and normalized-mass drift. Output includes median, nearest-rank p95, maximum and changed pairwise ordering relative to each graph's matching reference. With seven options the nearest-rank p95 equals the maximum. This is one development request and supplies no judged paired outcome.
 Run `python -I -B -S scripts/arbiter/analysis/development_margins/compare_qkv_widths.py` to reproduce the fixed-width Compact Q/K/V measurements at 32, 128, 1,024 and 8,192 tokens. It authenticates each execution, reference and native receipt and joins all eight original scores by input and fixture name. The T32 process exited 101 after synchronized scoring; the report retains that refusal alongside its returned scores. Median and nearest-rank p95 describe the eight options within one fixture at each width.
+
+The original Focus1024 TRAIN census already seals ordinal 12 (TRAIN_Q543).
+The bounded CPU reference owner accepts its original prefix digest for batch 5
+to score only that capture in the separate q543 directory. The margin collector
+accepts its execution digest via `--q543-sha256` after the first four shards.
+The two remaining requests keep their original unmeasured slots until the final
+census authenticates them. These are exposed development reference scores.

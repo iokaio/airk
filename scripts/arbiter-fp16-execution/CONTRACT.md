@@ -596,3 +596,5 @@ FP32 rows carry pairs of unsigned 16-bit words, low word first.
 `compact_full_cut_reference.py` compares the eleven distinct boundaries
 against the independent reference. It reconstructs the two dense products,
 Flash attention and the final embedding readout using native operands.
+
+`compact_cutlass_reference.py` produces an independent scientific reference for the staged Compact graph with 196 widened dense projections and 28 causal FP32-input attention operators. Its SM80 CUTLASS treatment represents FP32 operands with three compensated TF32 products, FP32 accumulation, 32-query blocks and 128-key tiles. The original FP16 Flash policy describes a different arithmetic. `compact_full_cut_reference.py` replays frozen boundary observations, and `compact_train_batch_reference.py` reads the chronological exposed TRAIN roster through `replay_compact_t1024_suffix.py`. Both model-bearing CPU runs verify their source and input receipts. `summarize_train_reference.py` retains missing and zero-admission cases when comparing reference margins.
