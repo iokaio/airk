@@ -27,11 +27,16 @@ SELECTORS = {
     "projection-t32": PREFIX + "cuda_compact_fp32_qkv_projection_t32_component",
     "qkv-resource20": PREFIX + "cuda_compact_fp16_resource20",
     "qkv-mixed": PREFIX + "cuda_compact_fp16_mixed_timing",
+    "qkv-scientific-cal": PREFIX + "cal::compact_qkv_scientific_cal_original_readout",
     "qkv-observed-development": PREFIX + "cuda_compact_fp16_observed_development",
     "qkv-fit-probe": PREFIX + "cuda_compact_fp16_fit_probe",
     "qkv-development": PREFIX + "cuda_compact_fp32_qkv_projection_development_batch",
     "qkv-decision-t1024": PREFIX + "cuda_compact_fp32_qkv_decision_t1024",
     "qkv-layer0-t1024": PREFIX + "cuda_compact_fp32_qkv_layer0_t1024",
+    "full-cuts": PREFIX + "full::observe_full_cuts",
+    "full-observed": PREFIX + "full::observe_full_scores",
+    "full-metadata": PREFIX + "full::emit_full_metadata",
+    "full-graph": PREFIX + "full::observe_full_graph",
     "down-metadata": PREFIX + "down::emit_down_metadata",
     "down-graph": PREFIX + "down::observe_down_graph",
     "down-observed": PREFIX + "down::observe_down_scores",
@@ -43,6 +48,16 @@ SELECTORS = {
     "layer0-t32": PREFIX + "cuda_compact_fp16_layer0_taps",
     "layer0-projection-t32": PREFIX + "cuda_compact_fp16_layer0_projection_taps",
 }
+FULL_SCORE = "full-observed"
+FULL_CUT = "full-cuts"
+FULL_OBSERVED = (FULL_SCORE, FULL_CUT)
+FULL_MODES = ("full-metadata", "full-graph", *FULL_OBSERVED)
+FULL_NATIVE_SHA = "492da42c6b55364d79daa2b20b1d17373039acc5c43995c4df11031fa82e4c54"
+FULL_GRAPH_RECEIPT_SHA = "606ca745e9ba145826694fa2aa5633aab5bd567538e00f98fe9e81cd0079015f"
+FULL_REFERENCE_SHA = "0995832e12ef5a84af11562187281c86b96304693053272b3b1fbd091026afc7"
+FULL_STAGE_SHA = "6486768c16820bc09f11c2dfbbbdd1d0ddf896e3a10b2315ec9f5d798ae9add1"
+FULL_GRAPH_SHA = "fe94664a4addf797feaa54235e07f484f4e72051a894a154e5aff7f2c1c11ea6"
+FULL_STAGE_SCHEMA = "airk.private.compact-full-projection-candidate/1"
 DOWN_STAGE_SCHEMA = "airk.private.compact-fp32-qkv-down-projection-candidate/1"
 DOWN_STAGE_SHA = "95e81ed4222c4cfdfc57e7e5f4600f135fe9bee9cbc7f7439b6111543476a737"
 DOWN_GRAPH_SHA = "a583cbd0906a9801461ac0678d1607ecfe73398b637c19c97ea072c5750a33a1"
@@ -59,12 +74,13 @@ WIDE_CAPTURES = (WIDER_TAP_MODE, DECISION_MODE)
 DECISION_ROSTER = tuple((f"/airk_g5/weight//scorer/layers.{layer}/{site}/MatMul/input16", 2048)
                         for layer in (0, 9, 18, 27) for site in ("self_attn/k_proj",))
 TIMING_MODES = ("qkv-resource20", "qkv-mixed", "qkv-fit-probe")
+CAL_MODE = "qkv-scientific-cal"
 OBSERVED_MODE = "qkv-observed-development"
 OBSERVED_REFERENCES = {"f657bbcdc9dac88829376c639bf2f20b6e4ae4c40f796f6305c1ec044bb59b91",
                        "89b5a289b66ce93ac314c583cadff2112fda185081152d3f6a7886bae8b8d169"}
 WIDER_REFERENCE_MODES = (OBSERVED_MODE, DEVELOPMENT_MODE, *WIDE_CAPTURES, *TIMING_MODES)
-PROJECTION_SCORE_MODES = ("projection-t32", "qkvo-t32", DOWN_SCORE, *WIDER_REFERENCE_MODES)
-PROJECTION_MODES = ("projection-metadata", "projection-graph", "projection-t32", *WIDER_REFERENCE_MODES, *QKVO_MODES, *DOWN_MODES)
+PROJECTION_SCORE_MODES = (CAL_MODE, "projection-t32", "qkvo-t32", DOWN_SCORE, *FULL_OBSERVED, *WIDER_REFERENCE_MODES)
+PROJECTION_MODES = (CAL_MODE, "projection-metadata", "projection-graph", "projection-t32", *WIDER_REFERENCE_MODES, *QKVO_MODES, *DOWN_MODES, *FULL_MODES)
 WIDER_TAP_SCHEMA = "airk.private.compact-fp32-qkv-layer0-t1024/1"
 WIDER_TAP_POLICY = b"airk.private.compact-fp32-qkv-cuda-layer0-t1024/1"
 SEALED_T1024_BATCH = "compact-fp16-qkv-fp32-native-development-r1"
@@ -78,8 +94,8 @@ DEVELOPMENT_WIDTHS = (128, 1024, 8192)
 RELEASE_RAW_LIMIT = .007
 DEVELOPMENT_RAW_LIMIT = .070
 DEVELOPMENT_NEAR_TIE = .020
-METADATA_MODES = ("metadata", "projection-metadata", "qkvo-metadata", "down-metadata")
-GRAPH_MODES = ("graph", "projection-graph", "qkvo-graph", "down-graph")
+METADATA_MODES = ("metadata", "projection-metadata", "qkvo-metadata", "down-metadata", "full-metadata")
+GRAPH_MODES = ("graph", "projection-graph", "qkvo-graph", "down-graph", "full-graph")
 QKVO_STAGE_SCHEMA = "airk.private.compact-fp32-qkvo-projection-candidate/1"
 QKVO_STAGE_SHA = "dbf3a746b8ec66d81ba68798988cdc4068d99841c538cbb2963a37125bd3fb5b"
 QKVO_GRAPH_SHA = "0f2407345000cb244674238eead6178bc711238f2a4ddc5b61eef603d87be0b1"
@@ -134,6 +150,7 @@ SCORING_MODES = ("t32", *REVIEWED_MODES)
 REVIEWED_RECEIPT_SHA = "6d5e8434a350ef1a1f11decd9c6a38bf374fc11fedffb86878cc738806899d34"
 REVIEWED_GRAPH_SHA = "47a7cd6f9e0ddf50911cc7a745bcbec4ca2a963772aad5e2e6acc663e26ec104"
 BOUNDED_SOURCE = "crates/airk-retrieval/src/arbiter/runtime/bounded_hybrid.rs"
+CPU_VALUES_SOURCE = "crates/airk-retrieval/src/arbiter/runtime/cuda/graph_metadata/cpu_values.rs"
 CPU = "CPUExecutionProvider"
 BOUNDED_CPU_NODES = 374
 BOUNDED_TOTAL_NODES = 1746
@@ -184,7 +201,7 @@ def attention_logs(raw, mode="t32"):
     return list(rows.values())
 
 
-def job_limits(api, job):
+def job_limits(api, job, memory=HOST):
     """Read the already assigned Job without mutating its original limits."""
     from ctypes import wintypes as w
 
@@ -208,7 +225,8 @@ def job_limits(api, job):
         raise ctypes.WinError(ctypes.get_last_error())
     actual = {"process_memory_limit_bytes": observed.process, "job_memory_limit_bytes": observed.job,
               "flags": observed.basic.flags}
-    require(actual == JOB and observed.basic.active_limit == 2, "actual suspended 32/32 GiB Job differs")
+    expected=dict(JOB,process_memory_limit_bytes=memory,job_memory_limit_bytes=memory)
+    require(actual == expected and observed.basic.active_limit == 2, "actual suspended Job limits differ")
     return actual
 
 
@@ -317,14 +335,26 @@ def linked_image(build, image, base, audit, mode, *, source_snapshot=None, cargo
     )
     if mode in REVIEWED_MODES:
         relevant += (BOUNDED_SOURCE, inference + "/cuda_qualification/hybrid_profile_trace.rs")
-    if mode in TAP_SCOPES or mode in ("projection-graph", "qkvo-graph", "down-graph", *PROJECTION_SCORE_MODES):
+    if mode in TAP_SCOPES or mode in ("projection-graph", "qkvo-graph", "down-graph", "full-graph", *PROJECTION_SCORE_MODES):
         relevant += ("crates/airk-retrieval/src/arbiter/runtime/bounded_hybrid/layer0.rs",)
     if mode in TAP_SCOPES or mode in WIDE_CAPTURES:
         relevant += ("crates/airk-retrieval/src/arbiter/runtime/cuda/run.rs",)
+    if mode == FULL_CUT:
+        relevant += ("crates/airk-retrieval/src/arbiter/runtime/bounded_hybrid/layer0/full_cut.rs",
+                     "crates/airk-retrieval/src/arbiter/runtime/cuda/run.rs")
+    if mode in FULL_MODES:
+        relevant += (inference + "/cuda_qualification/fp16_compact/full.rs",)
     if mode in DOWN_MODES:
         relevant += (inference + "/cuda_qualification/fp16_compact/down.rs",)
-    if mode in (OBSERVED_MODE, DOWN_SCORE):
+    if mode in (OBSERVED_MODE, DOWN_SCORE, *FULL_OBSERVED):
         relevant += (inference + "/cuda_qualification/fp16_compact/observed.rs",)
+    if mode == CAL_MODE:
+        if CPU_VALUES_SOURCE in native:
+            relevant += (CPU_VALUES_SOURCE,)
+        registration = "crates/airk-retrieval/src/arbiter/scientific_cal.rs"
+        if registration in native:
+            relevant += (registration,)
+        relevant += (inference + "/cuda_qualification/fp16_compact/cal.rs", inference + "/cuda_qualification/fp16_compact/observed.rs")
     if mode in TIMING_MODES:
         relevant += (inference + "/cuda_qualification/fp16_compact/timing.rs",)
     if source_snapshot is None:
@@ -377,17 +407,21 @@ def has_output_projection(projection):
 
 
 def projection_schema(projection, qkv_schema):
+    if projection is not None and projection[1]["schema"] == FULL_STAGE_SCHEMA:
+        return qkv_schema.replace("fp32-qkv-", "fp32-full-")
     if projection is not None and projection[1]["schema"] == DOWN_STAGE_SCHEMA:
         return qkv_schema.replace("fp32-qkv-", "fp32-qkv-down-")
     return qkv_schema.replace("fp32-qkv-", "fp32-qkvo-") if has_output_projection(projection) else qkv_schema
 
 
-def projection_stage(path, expected, base, audit, *, output_projection=False, down=False):
+def projection_stage(path, expected, base, audit, *, output_projection=False, down=False, full=False):
     stage_sha = QKVO_STAGE_SHA if output_projection else PROJECTION_STAGE_SHA
     graph_sha = QKVO_GRAPH_SHA if output_projection else PROJECTION_GRAPH_SHA
     stage_schema = (QKVO_STAGE_SCHEMA if output_projection
                     else "airk.private.compact-fp32-qkv-projection-candidate/1")
     count = 112 if output_projection or down else 84
+    if full:
+        stage_sha, graph_sha, stage_schema, count = FULL_STAGE_SHA, FULL_GRAPH_SHA, FULL_STAGE_SCHEMA, 196
     if down:
         stage_sha, graph_sha, stage_schema = DOWN_STAGE_SHA, DOWN_GRAPH_SHA, DOWN_STAGE_SCHEMA
     require(path.is_absolute() and path.parent.parent == CAMPAIGN and path.name == "stage.json"
@@ -403,7 +437,7 @@ def projection_stage(path, expected, base, audit, *, output_projection=False, do
             and value["graph_proof"]["projection_count"] == count
             and (value["graph_proof"]["prior_qkv_routes"] == 84 and value["graph_proof"]["new_input_and_weight_casts"] == 56
                  and value["graph_proof"]["removed_half_output_casts"] == 28 and value["graph_proof"]["source_graph_recovered_byte_for_byte"] is True
-                 if down else value["graph_proof"]["added_cast_count"] == 3 * count),
+                 if down else full_stage_proof(value["graph_proof"]) if full else value["graph_proof"]["added_cast_count"] == 3 * count),
             "reviewed Compact projection stage scope differs")
     if output_projection:
         require(value["projection_experiment"]["sha256"] == QKVO_EXPERIMENT_SHA,
@@ -423,6 +457,12 @@ def projection_stage(path, expected, base, audit, *, output_projection=False, do
     base.pinned(graph)
     base.pinned(weights)
     return pin, value
+
+
+def full_stage_proof(proof):
+    return (proof["fp32_weight_upcasts"] == 196 and proof["removed_activation_and_output_half_boundaries"] == 392
+            and proof["attention_nodes"] == 28 and proof["source_graph_recovered_byte_for_byte"] is True
+            and proof["retained_sidecar"] is True)
 
 
 def validate_projection_baseline(stage, independent):
@@ -535,7 +575,13 @@ def validate_request(mode, request, request_pin, evidence, manifest, *, projecti
             and (request["cold_bytes"], request["warm_bytes"], request["headroom_bytes"])
                 == (16 << 30, 8 << 30, 2 << 30), "reviewed Compact request, runtime or phase bounds differ")
     if metadata_mode:
-        require(request_pin["sha256"] == PREPARE_SHA, "original reviewed Compact Prepare input required")
+        expected_prepare = PREPARE_SHA
+        if mode == "full-metadata":
+            expected_prepare = "71eb0865b26801447283c2c186748bdfa464f341ef792c5a9478b8e8d03c5fa5"
+            require(Path(request["runtime_manifest"]["path"]) == CAMPAIGN / "windows-cu15-scientific-provider-stage-r1/airk-cuda-runtime.json"
+                    and request["runtime_manifest"]["sha256"] == "9433753580c8a370bbea42119aa67ac81306229bcf6876514213f3e2979083b5",
+                    "full diagnostic requires the original CU15 runtime in the D: stage")
+        require(request_pin["sha256"] == expected_prepare, "exact reviewed Compact Prepare input required")
         require(evidence["schema"] == INDEPENDENT_SCHEMA and evidence["complete"] is True
                 and evidence["model"] == MODEL and evidence["model_inference"] is True
                 and evidence["native_execution"] is evidence["qualification"] is False
@@ -831,7 +877,8 @@ def reviewed_graph(receipt, request, evidence, metadata, manifest, parent, compo
     historical = base.read(receipt["path"])
     owned = historical["owned"]
     down = projection is not None and projection[1]["schema"] == DOWN_STAGE_SCHEMA
-    mode = "down-graph" if down else "qkvo-graph" if has_output_projection(projection) else "projection-graph" if projection is not None else "graph"
+    full = projection is not None and projection[1]["schema"] == FULL_STAGE_SCHEMA
+    mode = "full-graph" if full else "down-graph" if down else "qkvo-graph" if has_output_projection(projection) else "projection-graph" if projection is not None else "graph"
     require(historical["schema"] == "airk.private.owned-compact-fp16-probe/1"
             and historical["mode"] == mode and historical["complete"] is True
             and historical["qualification"] is False and historical["failure"] is None
@@ -842,7 +889,7 @@ def reviewed_graph(receipt, request, evidence, metadata, manifest, parent, compo
             "reviewed owned graph does not bind this Probe, metadata, runtime and settled Job")
     source = historical["outputs"]["native"]
     operations = historical["outputs"]["operations"]
-    expected = (DOWN_NATIVE_SHA if down else QKVO_REVIEWED_GRAPH_SHA if has_output_projection(projection) else
+    expected = (FULL_NATIVE_SHA if full else DOWN_NATIVE_SHA if down else QKVO_REVIEWED_GRAPH_SHA if has_output_projection(projection) else
                 PROJECTION_REVIEWED_GRAPH_SHA if projection is not None else REVIEWED_GRAPH_SHA)
     require(source["sha256"] == expected
             and 0 < source["bytes"] <= component["DIAGNOSTIC_PROOFS"]["native_result"]
@@ -862,13 +909,13 @@ def reviewed_graph(receipt, request, evidence, metadata, manifest, parent, compo
     if projection is not None:
         pin, stage = projection
         typed = validate_projection_graph(graph["graph_observation"]["graph_metadata"],
-                                          output_projection=has_output_projection(projection), down=down)
+                                          output_projection=has_output_projection(projection), down=down, full=full)
         require(graph.get("projection_stage") == historical.get("projection_stage") == core(pin)
                 and historical["projection_assets"] == {name: stage[name] for name in ("candidate_graph", "candidate_weights")}
                 and typed == historical["projection_graph"], "reviewed Q/K/V graph stage or typed summary differs")
     placement = graph["graph_observation"]["placement"]
     roster = placement_roster(placement)
-    total = (placement["reported_nodes"] if has_output_projection(projection) or down else
+    total = (placement["reported_nodes"] if has_output_projection(projection) or down or full else
              PROJECTION_TOTAL_NODES if projection is not None else BOUNDED_TOTAL_NODES)
     require(len(roster) == total and sum(row[-1] == CPU for row in roster) == BOUNDED_CPU_NODES
             and all(row[0] == 0 and row[-1] in (CPU, CUDA) for row in roster),
@@ -882,6 +929,23 @@ def placement_roster(placement):
             "untyped final placement roster")
     return sorted((node["subgraph_index"], node["name"], node["domain"], node["op"], node["ep"])
                   for node in nodes)
+
+
+def scientific_validator_source(sources):
+    original = sources[BOUNDED_SOURCE]
+    source = Path(original["path"]).read_bytes()
+    require(hashlib.sha256(source).hexdigest() == original["sha256"], "compiled graph validator source differs")
+    if b"airk.private.cuda.bounded-hybrid-validator/2" not in source:
+        return original
+    child = sources.get(CPU_VALUES_SOURCE)
+    require(child is not None, "split validator lacks compiled CPU value checks")
+    cpu = Path(child["path"]).read_bytes()
+    require(hashlib.sha256(cpu).hexdigest() == child["sha256"], "compiled CPU value validator differs")
+    digest = hashlib.sha256(b"AIRK-DIGEST-1\0")
+    for field in (b"airk.private.cuda.bounded-hybrid-validator/2", source, cpu):
+        digest.update(len(field).to_bytes(8, "big"))
+        digest.update(field)
+    return {"sha256": digest.hexdigest()}
 
 
 def bounded_policy_identity(graph_sha, profile_sha, source_sha, *, domain=BOUNDED_POLICY):
@@ -1180,14 +1244,55 @@ def validate_development_operations(events, value, component, timing_mode=None):
                 "development Numeric operation timing or completion differs")
 
 
-def validate_development_placement(value, placement, graph, source):
+FULL_CUT_GROUPS = {
+    "head": {
+        "/scorer/layers.0/input_layernorm/Mul_1_output_0": 2048,
+        "/scorer/layers.13/input_layernorm/Mul_1_output_0": 2048,
+        "/scorer/layers.27/input_layernorm/Mul_1_output_0": 2048,
+        "/scorer/norm/Mul_1_output_0": 2048,
+    },
+    "attention": {
+        "/airk_g5/attention/13/q16": 2048,
+        "/airk_g5/attention/13/k16": 1024,
+        "/airk_g5/attention/13/v16": 1024,
+        "/airk_g5/attention/13/raw16": 2048,
+    },
+    "dense": {
+        "/airk_g5/attention/13/raw16": 2048,
+        "/scorer/layers.13/self_attn/o_proj/MatMul_output_0": 2048,
+        "/scorer/layers.13/mlp/Mul_output_0": 6144,
+        "/scorer/layers.13/mlp/down_proj/MatMul_output_0": 2048,
+    },
+}
+
+
+def validate_full_cut(value, base, group):
+    sealed = exact_pin(CAMPAIGN / "compact-fp16-full-engineering-score-r1/native-result.json",
+                       "735c77839099adf75426cf3ef9884ad69a99b60bb73e5fdf6247b7f321b12ded", base)
+    prior = base.read(sealed["path"])
+    require(value["rows"][0]["raw_scores"] == prior["rows"][0]["raw_scores"]
+            and value["rows"][0]["compiled"] == prior["rows"][0]["compiled"],
+            "full-projection diagnostic perturbed the sealed score or input")
+    require(group in FULL_CUT_GROUPS and value["full_cut_group"] == group, "full diagnostic group identity differs")
+    names = FULL_CUT_GROUPS[group]
+    rows = value["full_cut_rows"]
+    require(len(rows) == len(names) and {row["name"] for row in rows} == set(names), "full cut roster differs")
+    for row in rows:
+        name = row["name"]
+        tokens = 1014 if name in ("/airk_g5/attention/13/k16", "/airk_g5/attention/13/v16") else 1
+        require(row["width"] == names[name] and row["tokens_retained"] == tokens
+                and len(row["words"]) == tokens * names[name] * (2 if name.startswith("/scorer/") else 1)
+                and all(type(word) is int and 0 <= word <= 65535 for word in row["words"]), "invalid cut payload")
+
+
+def validate_development_placement(value, placement, graph, source, *, policy=BOUNDED_POLICY):
     actual_placement = value["final_placement"]
     require(actual_placement["complete"] is True
             and actual_placement["shim_status"] == actual_placement["ort_error_code"] == 0
             and placement_roster(actual_placement) == placement_roster(placement)
             and value["reviewed_graph"] == core(graph)
             and value["bounded_policy_identity"] == bounded_policy_identity(
-                graph["sha256"], value["profile"], source["sha256"]),
+                graph["sha256"], value["profile"], source["sha256"], domain=policy),
             "development placement or reviewed graph policy differs")
     plan = value["attention_plan"]
     expected_math = {"gemm": "2", "debug": "1", "unicode": True}
@@ -1306,7 +1411,7 @@ def run(args, *, capacity_gate=None):
     metadata_mode = args.mode in METADATA_MODES
     graph_mode = args.mode in GRAPH_MODES
     projection = (projection_stage(args.projection_stage, args.projection_stage_sha256, base, audit,
-                                   output_projection=args.mode in QKVO_MODES, down=args.mode in DOWN_MODES)
+                                   output_projection=args.mode in QKVO_MODES, down=args.mode in DOWN_MODES, full=args.mode in FULL_MODES)
                   if args.mode in PROJECTION_MODES else None)
     validate_request(args.mode, request_value, request, evidence_value, manifest, projection=projection)
     retained = cargo_chain = None
@@ -1333,7 +1438,7 @@ def run(args, *, capacity_gate=None):
     inputs = [request, evidence, image, build, manifest, log, artifact, *sources.values(), *dependencies.values()]
     if retained is not None:
         inputs.append(retained)
-    approvals = decision_build_approvals(log, artifact, manifest, base, audit, cargo_chain=cargo_chain) if args.mode in (DECISION_MODE, OBSERVED_MODE, *TIMING_MODES, *DOWN_MODES) else []
+    approvals = decision_build_approvals(log, artifact, manifest, base, audit, cargo_chain=cargo_chain) if args.mode in (CAL_MODE, DECISION_MODE, OBSERVED_MODE, *TIMING_MODES, *DOWN_MODES, *FULL_MODES) else []
     inputs.extend(approvals)
     projection_reference = development_reference = None
     if projection is not None:
@@ -1356,18 +1461,24 @@ def run(args, *, capacity_gate=None):
                             audit([Path(pin["path"])])
                             base.pinned(pin)
                             inputs.append(pin)
-            elif args.mode == DOWN_SCORE:
+            elif args.mode in (DOWN_SCORE, *FULL_OBSERVED):
+                full = args.mode in FULL_OBSERVED
+                reference_sha = FULL_REFERENCE_SHA if full else DOWN_REFERENCE_SHA
+                reference_schema = ("airk.private.compact-full-projection-reference/1" if full
+                                    else "airk.private.compact-mlp-down-projection-reference/1")
+                recipe = ("c073724d2f98ac90a944718a055d8326691e569c29731243cf305eb41fb9bd5f" if full
+                          else "762f3da4ab62a3b52a528e7aa238c3749aed4af5db7318d777746947eaec58b0")
                 audit([args.projection_reference])
-                projection_reference = exact_pin(args.projection_reference, DOWN_REFERENCE_SHA, base)
+                projection_reference = exact_pin(args.projection_reference, reference_sha, base)
                 down_closure = base.read(projection_reference["path"])
                 down_reference = down_closure["result"]
                 require(parent.settled(down_closure["owned"]) and down_closure["complete"] is True
-                        and down_reference["schema"] == "airk.private.compact-mlp-down-projection-reference/1"
+                        and down_reference["schema"] == reference_schema
                         and down_reference["qualification"] is False and down_reference["native_candidate_scoring"] is False
-                        and down_reference["recipe_sha256"] == "762f3da4ab62a3b52a528e7aa238c3749aed4af5db7318d777746947eaec58b0",
+                        and down_reference["recipe_sha256"] == recipe,
                         "protected reference original CPU custody or recipe differs")
                 inputs.append(projection_reference)
-            elif args.mode in PROJECTION_SCORE_MODES:
+            elif args.mode in PROJECTION_SCORE_MODES and args.mode != CAL_MODE:
                 projection_reference = read_projection_reference(
                     args.projection_reference, args.projection_reference_sha256, projection, independent, base, audit,
                 )
@@ -1375,7 +1486,7 @@ def run(args, *, capacity_gate=None):
     graph_receipt = graph = graph_operations = reviewed_placement = None
     if args.mode in REVIEWED_MODES:
         audit([args.graph_receipt])
-        expected = (DOWN_GRAPH_RECEIPT_SHA if args.mode == DOWN_SCORE else QKVO_REVIEWED_RECEIPT_SHA if has_output_projection(projection) else
+        expected = (FULL_GRAPH_RECEIPT_SHA if args.mode in FULL_OBSERVED else DOWN_GRAPH_RECEIPT_SHA if args.mode == DOWN_SCORE else QKVO_REVIEWED_RECEIPT_SHA if has_output_projection(projection) else
                     PROJECTION_REVIEWED_RECEIPT_SHA if projection is not None else REVIEWED_RECEIPT_SHA)
         graph_receipt = exact_pin(args.graph_receipt, expected, base)
         graph, graph_operations, reviewed_placement = reviewed_graph(
@@ -1383,7 +1494,7 @@ def run(args, *, capacity_gate=None):
             projection=projection,
         )
         inputs.extend((graph_receipt, graph, graph_operations))
-    representative = args.mode in (OBSERVED_MODE, DOWN_SCORE)
+    representative = args.mode in (OBSERVED_MODE, DOWN_SCORE, *FULL_OBSERVED)
     if representative:
         require(args.observed_reference_sha256 in OBSERVED_REFERENCES, "unreviewed engineering reference")
         audit([args.observed_reference])
@@ -1393,18 +1504,30 @@ def run(args, *, capacity_gate=None):
         require(closure["complete"] is True and parent.settled(closure["owned"])
                 and reference["reference_basis"]["sha256"] == DEVELOPMENT_REFERENCE_SHA,
                 "original CPU source or Job settlement differs")
-        if args.mode == DOWN_SCORE:
+        if args.mode in (DOWN_SCORE, *FULL_OBSERVED):
+            full = args.mode in FULL_OBSERVED
+            prior = down_reference["sealed_qkv"] if full else down_reference["baseline"]["scores"]
+            match = down_reference["matching_fp16"] if full else down_reference["all_down_fp32"]["scores"]
             require(down_reference["original_cpu"] == reference_pin and down_reference["compiled"] == reference["compiled"]
-                    and down_reference["roster"] == reference["roster"] and down_reference["baseline"]["scores"] == reference["matching_fp16"]
+                    and down_reference["roster"] == reference["roster"] and prior == reference["matching_fp16"]
                     and down_reference["original_fp32"] == reference["original_fp32"], "protected reference original input differs")
-            reference = dict(reference, matching_fp16=down_reference["all_down_fp32"]["scores"])
+            reference = dict(reference, matching_fp16=match)
         inputs.append(reference_pin)
         for file in (reference["census"], reference["capture"]):
             audit([Path(file["path"])])
             inputs.append(exact_pin(Path(file["path"]), file["sha256"], base))
     sealed_t1024 = None
     timing = args.mode in TIMING_MODES
-    monitor = timing or representative
+    scientific = args.mode == CAL_MODE
+    cal_pins = {}
+    if scientific:
+        for name in ("preflight", "original_compiled", "references"):
+            path = getattr(args, "cal_" + name)
+            audit([path])
+            require(path.is_absolute() and path.resolve() == path and path.is_relative_to(CAMPAIGN), "foreign CAL input")
+            cal_pins[name] = exact_pin(path, getattr(args, "cal_" + name + "_sha256"), base)
+        inputs.extend(cal_pins.values())
+    monitor = timing or representative or scientific
     if args.mode in WIDE_CAPTURES or timing:
         sealed_pins, sealed_t1024 = read_sealed_t1024(
             request, stage_pin, graph, projection_reference, parent, base, audit,
@@ -1473,7 +1596,7 @@ def run(args, *, capacity_gate=None):
             planned.append(metadata)
         else:
             planned.extend((paths["native"], paths["operations"]))
-            if args.mode in SCORING_MODES and not timing and not representative:
+            if args.mode in SCORING_MODES and not timing and not representative and not scientific:
                 planned.append(out / "ort-profile")
         audit(planned, False)
         env = {key: value for key, value in os.environ.items()
@@ -1481,6 +1604,16 @@ def run(args, *, capacity_gate=None):
         env.update(PATH=r"C:\Windows\System32;C:\Windows", TEMP=str(temp), TMP=str(temp), TMPDIR=str(temp),
                    AIRK_PRIVATE_CENSUS_BASE=str(temp), CUDA_CACHE_PATH=str(temp),
                    AIRK_CUDA_QUALIFICATION_INPUT=request["path"], AIRK_CUDA_QUALIFICATION_INPUT_SHA256=request["sha256"])
+        if scientific:
+            env["AIRK_CUDA_CAL_ORDINAL"] = str(args.cal_ordinal)
+            for name, pin in cal_pins.items():
+                key = "AIRK_CUDA_CAL_" + name.upper()
+                env[key], env[key + "_SHA256"] = pin["path"], pin["sha256"]
+            receipt["cal_inputs"] = cal_pins
+        if args.mode == FULL_CUT:
+            require(args.full_cut_group in FULL_CUT_GROUPS, "one declared four-output group required")
+            env["AIRK_CUDA_COMPACT_FULL_CUT_GROUP"] = args.full_cut_group
+            receipt["full_cut_group"] = args.full_cut_group
         if representative:
             env.update(AIRK_CUDA_OBSERVED_REFERENCE=reference_pin["path"],
                        AIRK_CUDA_OBSERVED_REFERENCE_SHA256=reference_pin["sha256"])
@@ -1500,7 +1633,7 @@ def run(args, *, capacity_gate=None):
                        AIRK_CUDA_FP16_METADATA_RECEIPT_SHA256=evidence["sha256"],
                        AIRK_CUDA_QUALIFICATION_OUTPUT=str(paths["native"]),
                        ORT_CUDA_GEMM_OPTIONS="2", ORT_ENABLE_ATTENTION_KERNEL_DEBUG_INFO="1")
-            if args.mode in SCORING_MODES and not timing and not representative:
+            if args.mode in SCORING_MODES and not timing and not representative and not scientific:
                 env["AIRK_CUDA_FP16_PROFILE_PREFIX"] = str(out / "ort-profile")
             if graph is not None:
                 env.update(AIRK_CUDA_FP16_REVIEWED_GRAPH=graph["path"],
@@ -1554,7 +1687,7 @@ def run(args, *, capacity_gate=None):
         observed = list(out.rglob("*"))
         audit(observed)
         require(paths["stdout"].stat().st_size <= LOG_CAP, "actual stdout exceeded its retained bound")
-        if args.mode in SCORING_MODES and not timing and not representative:
+        if args.mode in SCORING_MODES and not timing and not representative and not scientific:
             traces = list(out.glob("ort-profile*.json"))
             if len(traces) == 1:
                 paths["profile"] = traces[0]
@@ -1586,10 +1719,33 @@ def run(args, *, capacity_gate=None):
                         "Compact reviewed CPU node count differs")
                 receipt["projection_graph"] = validate_projection_graph(
                     value["graph_observation"]["graph_metadata"], output_projection=has_output_projection(projection),
-                    down=args.mode in DOWN_MODES,
+                    down=args.mode in DOWN_MODES, full=args.mode in FULL_MODES,
                 )
+        elif scientific:
+            validate_native_identity(value, "airk.private.compact-qkv-scientific-cal-row/1", receipt["owned"], request, evidence, evidence_value, manifest, image, base)
+            validate_development_placement(value, reviewed_placement, graph, scientific_validator_source(sources))
+            events = read_operations(paths["operations"])
+            validate_development_operations(events, value, component)
+            witness = value["scientific_cal"]
+            compiled = base.read(cal_pins["original_compiled"]["path"], 256 << 20)["rows"][args.cal_ordinal]
+            actual = value["cal_row"]
+            require(all(witness["independent_references" if name == "references" else name] == core(pin) for name, pin in cal_pins.items()) and witness["ordinal"] == args.cal_ordinal
+                    and value["native_forward_returned"] is value["forward_synchronized"] is True
+                    and value["numeric_forward_attempts"] == len(value["rows"]) == 1
+                    and actual["status"] == "raw_scores_only" and compiled["status"] == "compiled_original_input"
+                    and all(actual[k] == compiled[k] for k in ("id", "source_group", "split", "roster", "compiled"))
+                    and value["rows"][0]["input_digest"] == compiled["compiled"]["input_digest"]
+                    and len(actual["scores"]) == len(compiled["roster"]["cards"]) and all(math.isfinite(v) for v in actual["scores"]),
+                    "scientific original input, return or complete card scores differ")
+            timing_owner["same_adapter"](receipt["before_load_adapter"], receipt["after_release_adapter"], value)
+            series = receipt["owned"]["before_GO"]["wddm"]
+            require(series["pid"] == value["pid"] and series["adapter_luid"] == luid and
+                    series["observed_exit_monotonic_ns"] >= events[-1]["observed_monotonic_ns"], "foreign CAL WDDM observation")
+            receipt["flash_attention_records"] = attention_logs(paths["stdout"].read_bytes(), args.mode)
         elif representative:
-            schema = ("airk.private.compact-qkv-down-observed-development/1" if args.mode == DOWN_SCORE
+            schema = ("airk.private.compact-full-t1014-cut/1" if args.mode == FULL_CUT else
+                      "airk.private.compact-full-observed-development/1" if args.mode in FULL_OBSERVED
+                      else "airk.private.compact-qkv-down-observed-development/1" if args.mode == DOWN_SCORE
                       else "airk.private.compact-qkv-observed-development/1")
             validate_native_identity(value, schema, receipt["owned"],
                                      request, evidence, evidence_value, manifest, image, base)
@@ -1626,7 +1782,11 @@ def run(args, *, capacity_gate=None):
                     and row["near_tie_ambiguous"] is (matching["reference_margin"] <= DEVELOPMENT_NEAR_TIE)
                     and row["raw_ceiling_winner_at_risk"] is (matching["reference_margin"] <= 2 * DEVELOPMENT_RAW_LIMIT),
                     "development decision or margin differs")
-            validate_development_placement(value, reviewed_placement, graph, sources[BOUNDED_SOURCE])
+            policy = BOUNDED_POLICY
+            if args.mode == FULL_CUT:
+                policy = b"airk.private.compact-full-fp32-cuda-t1014-cuts/1"
+                validate_full_cut(value, base, args.full_cut_group)
+            validate_development_placement(value, reviewed_placement, graph, sources[BOUNDED_SOURCE], policy=policy)
             events = read_operations(paths["operations"])
             validate_development_operations(events, value, component)
             timing_owner["same_adapter"](receipt["before_load_adapter"], receipt["after_release_adapter"], value)
@@ -1662,7 +1822,11 @@ def run(args, *, capacity_gate=None):
                     and value["timing_score_sources"] == [core(short), core(sealed_pins[1])]
                     and value["native_forward_returned"] is value["forward_synchronized"] is True
                     and value["numeric_forward_attempts"] == len(value["rows"]), "unprofiled score custody differs")
-            validate_development_placement(value, reviewed_placement, graph, sources[BOUNDED_SOURCE])
+            policy = BOUNDED_POLICY
+            if args.mode == FULL_CUT:
+                policy = b"airk.private.compact-full-fp32-cuda-t1014-cuts/1"
+                validate_full_cut(value, base, args.full_cut_group)
+            validate_development_placement(value, reviewed_placement, graph, sources[BOUNDED_SOURCE], policy=policy)
             events = read_operations(paths["operations"])
             validate_development_operations(events, value, component, args.mode)
             receipt["timing"] = timing_owner["timing_rows"](args.mode, value["rows"], sealed_rows)
@@ -1750,29 +1914,39 @@ def main():
     parser.add_argument("--source-snapshot", type=Path)
     parser.add_argument("--observed-reference", type=Path)
     parser.add_argument("--observed-reference-sha256")
+    parser.add_argument("--full-cut-group", choices=tuple(FULL_CUT_GROUPS))
+    parser.add_argument("--cal-ordinal", type=int, choices=range(100))
+    for name in ("preflight", "original-compiled", "references"):
+        parser.add_argument("--cal-" + name, type=Path)
+        parser.add_argument("--cal-" + name + "-sha256")
     args = parser.parse_args()
+    require((args.full_cut_group is not None) == (args.mode == FULL_CUT), "full cut group and selector must agree")
+    cal_options = [args.cal_ordinal, args.cal_preflight, args.cal_preflight_sha256, args.cal_original_compiled,
+                   args.cal_original_compiled_sha256, args.cal_references, args.cal_references_sha256]
+    if (args.mode == CAL_MODE and any(v is None for v in cal_options)) or (args.mode != CAL_MODE and any(v is not None for v in cal_options)):
+        parser.error("scientific CAL requires ordinal and all three independently pinned inputs")
     if (args.retained_cargo_proof is None) != (args.retained_cargo_proof_sha256 is None):
         parser.error("retained Cargo lineage requires the exact prior closure and its SHA256")
-    if args.mode in (OBSERVED_MODE, DOWN_SCORE):
+    if args.mode in (OBSERVED_MODE, DOWN_SCORE, *FULL_OBSERVED):
         if args.observed_reference is None or args.observed_reference_sha256 not in OBSERVED_REFERENCES:
             parser.error("observed development requires one exact reviewed original reference")
     elif args.observed_reference is not None or args.observed_reference_sha256 is not None:
         parser.error("an observed reference requires the observed development mode")
     if args.mode in PROJECTION_MODES:
-        expected = DOWN_STAGE_SHA if args.mode in DOWN_MODES else QKVO_STAGE_SHA if args.mode in QKVO_MODES else PROJECTION_STAGE_SHA
+        expected = FULL_STAGE_SHA if args.mode in FULL_MODES else DOWN_STAGE_SHA if args.mode in DOWN_MODES else QKVO_STAGE_SHA if args.mode in QKVO_MODES else PROJECTION_STAGE_SHA
         if args.projection_stage is None or args.projection_stage_sha256 != expected:
             parser.error(f"{args.mode} requires --projection-stage and the exact reviewed --projection-stage-sha256")
     elif args.projection_stage is not None or args.projection_stage_sha256 is not None:
         parser.error("--projection-stage and --projection-stage-sha256 require a Q/K/V projection mode")
-    if args.mode in PROJECTION_SCORE_MODES:
-        expected = (DOWN_REFERENCE_SHA if args.mode == DOWN_SCORE else DEVELOPMENT_REFERENCE_SHA if args.mode in WIDER_REFERENCE_MODES else
+    if args.mode in PROJECTION_SCORE_MODES and args.mode != CAL_MODE:
+        expected = (FULL_REFERENCE_SHA if args.mode in FULL_OBSERVED else DOWN_REFERENCE_SHA if args.mode == DOWN_SCORE else DEVELOPMENT_REFERENCE_SHA if args.mode in WIDER_REFERENCE_MODES else
                     QKVO_REFERENCE_SHA if args.mode == "qkvo-t32" else PROJECTION_REFERENCE_SHA)
         if args.projection_reference is None or args.projection_reference_sha256 != expected:
             parser.error(f"{args.mode} requires --projection-reference and the exact --projection-reference-sha256")
     elif args.projection_reference is not None or args.projection_reference_sha256 is not None:
         parser.error("--projection-reference and --projection-reference-sha256 require projection-t32")
     if args.mode in REVIEWED_MODES:
-        expected = (DOWN_GRAPH_RECEIPT_SHA if args.mode == DOWN_SCORE else QKVO_REVIEWED_RECEIPT_SHA if args.mode == "qkvo-t32" else
+        expected = (FULL_GRAPH_RECEIPT_SHA if args.mode in FULL_OBSERVED else DOWN_GRAPH_RECEIPT_SHA if args.mode == DOWN_SCORE else QKVO_REVIEWED_RECEIPT_SHA if args.mode == "qkvo-t32" else
                     PROJECTION_REVIEWED_RECEIPT_SHA if args.mode in PROJECTION_SCORE_MODES else REVIEWED_RECEIPT_SHA)
         if args.graph_receipt is None or args.graph_receipt_sha256 != expected:
             parser.error(f"{args.mode} requires --graph-receipt and the exact reviewed --graph-receipt-sha256")

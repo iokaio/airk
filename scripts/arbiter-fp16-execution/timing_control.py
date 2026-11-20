@@ -49,7 +49,7 @@ def same_adapter(before, after, native):
             == bytes(native["adapter_before"]["uuid"]), "WDDM adapter identity differs")
 
 
-def memory_coverage(mode, series, events, pid, luid):
+def memory_coverage(mode, series, events, pid, luid, *, load_recorded=True):
     require(time.get_clock_info("monotonic").implementation == "QueryPerformanceCounter()"
             and all(e["clock"] == "windows_performance_counter" for e in events),
             "memory and operation observations need the same Windows counter epoch")
@@ -58,7 +58,7 @@ def memory_coverage(mode, series, events, pid, luid):
             "WDDM samples disagree with native PID, adapter or completion")
     samples = series["samples"]
     cycles = {}
-    for i, (_, cycle, _) in enumerate(schedule(mode), 1):
+    for i, (_, cycle, _) in enumerate(schedule(mode), int(load_recorded)):
         start, stop = events[2*i]["observed_monotonic_ns"], events[2*i+1]["observed_monotonic_ns"]
         first, _ = cycles.get(cycle, (start, stop))
         cycles[cycle] = (first, stop)

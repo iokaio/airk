@@ -607,3 +607,29 @@ The whole CPU job has a 22 GiB limit and the original 600-second deadline.
 Each output retains the complete selected input, publisher scores and original
 source. For Q543 it also binds the actual action roster, offered choices and
 remaining request budget. Historical model scores retain their own graph identity.
+
+`probe_compact_cutlass.py` authenticates the native executable, source snapshots
+and immutable Cargo lineage. Run `--mode graph` once for each new native image,
+then pass that receipt and its SHA to `--mode score`. The `--case` argument
+selects the original `fixed`, `q543`, `32`, `128`, `1024` or `8192` input.
+The four width controls and Q543 require the independent matching receipt and
+its SHA. Receipts include complete scores, separate publisher and matching
+comparisons, backend observations and OS Job limits. Q543 preserves the
+ranked actions and records whether the service applied a certificate.
+
+Modes `fixed` and `mixed` consume the same-image graph and the sealed T8192
+receipt SHA via `--maximum-receipt-sha256`. The timing owner authenticates
+the original scores at all four widths. The native selector runs one
+T8192 warmup plus 20 samples, or three cycles of T32, T128, T1024, T8192
+and T32, in one session. It verifies every returned score word with profiling
+and attention debug logging disabled. The original outer deadline is 120
+seconds. The parent records the actual 16 GiB process and aggregate Job caps,
+the campaign's original 32 GiB host ceiling, adapter and process memory samples
+and the original native operation journal. Service Answer timing and certificate
+decisions have separate evaluation owners.
+
+`verify_shared_onnx_weights.py` creates two literal sibling ONNX graphs and a
+single four-byte external `weights.bin` in a new checked campaign directory.
+It opens each by filename with the pinned ONNX Runtime CPU provider and verifies
+both expected outputs. The scientific candidate's selected model path and
+sidecar SHA remain bound by its native stage.
