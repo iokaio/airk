@@ -706,6 +706,20 @@ The Windows service indexed all 75 remaining original menus under distinct scope
 
 The original publisher defines a human-found answer by document and half-open text offsets. Each of these 75 questions now has a verified singleton positive evidence set under that extractive rubric. Other possible evidence remains unjudged. The 75 requests form 32 document-linked components, the largest with 36 requests. None shares an exact document with the 15 TRAIN menus. Seventy-four share a literal product ID or name with TRAIN; DEV_Q122 alone was clear on both recorded product proxies with complete metadata. These facts do not establish 75 independent families. The previously exposed DEV_Q002 and the publisher offset mismatch stay outside this roster. Judgment receipt 833224dabc575645b5216ffd50e784a026d25c45d2cb89d6a93a076fc647a37f. No held-out FP16/FP32 outcome has been measured.
 
+### Blinded human review packet disposition, 20 November 2026
+
+The retained evidence supports **zero blinded confirmation packets**. No packet was generated or shared.
+
+| Pool | Evidence checked and remaining dependency |
+| --- | --- |
+| MultiLang, 50 selected and nine reserves | Each case has a pinned base locator. A reviewer still needs a rights-cleared pre-fix source corpus and a complete frozen menu verified in the native index. The publisher provides no independent source-span judgments. |
+| ContextBench, 14 cases | Six cases matched all publisher spans in the upstream source. Native reads covered 24 staged spans across these six revisions. Five cases have full native publisher-span coverage. Tailwind still lacks rights-cleared native visibility for 16 lockfile spans. The other eight cases have partial publisher-source alignment and no complete frozen native menu. Both whole-source fd fixtures have prior development exposure and existing publisher judgments. |
+| TechQA, 75 remaining original menus | The native census covers all 3,750 memberships. The human publisher already identifies a verified positive set per question under the extractive rubric. Alternatives remain unannotated. The exposed pilot and the separately withheld offset mismatch stay outside this roster. |
+| IBM Cloud, 25 cases | Sixty documented positive passage pointers join to 49 documents. Still needed are source-family exposure and rights checks, complete frozen native menus, and exact native coordinates for reviewing support sufficiency. |
+| AWS, 41 active cases | Each has a verified unique source range. The 24 ambiguous selectors remain excluded. |
+
+The exact pre-fix source and native menu for a rights-cleared, unexposed repository case would permit a fresh packet eligibility check. The 98% paired Answer comparison remains unmeasured.
+
 ### Replacement repository source screen, 20 November 2026
 
 The retained publisher shards contain commit links for all 50 selected repository cases and nine reserves. Across all 59, the tree URL identifies the same base commit independently resolved in the original screen. For the 35 selected cases whose bases were dated later, the retained ancestry evidence connects each base to its merge. None of the 35 recorded merge IDs appears in its case's publisher commit list. These locators supply neither file-level state at the judgment point nor an independent judgment identifying acceptable supporting spans. The screen added zero cases to the eligible confirmation roster. The 24 ambiguous AWS cases remain excluded, and the 98% paired Answer comparison remains unmeasured. [Publisher commit check and reproduction](../../scripts/arbiter/analysis/public_source_admission/README.md)
