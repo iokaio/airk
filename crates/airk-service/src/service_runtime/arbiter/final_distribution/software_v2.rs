@@ -171,8 +171,8 @@ fn compiled_shape(input: &CompiledInput, profile: &Profile, policy: &ResourcePol
                     .iter()
                     .filter(|value| **value == 1)
                     .count()
-                    >= 480,
-            "actual Focus near-cap static512 pair absent"
+                    >= policy.focus_qualification_workload()?.minimum_live_tokens,
+            "actual Focus pair lacks the approved live-token workload"
         );
     } else {
         ensure!(
@@ -743,7 +743,13 @@ fn numeric(
         .context("actual numeric observations absent")?;
     let focus = profile.declared_stage() == Some(Stage::Focus);
     ensure!(
-        fixtures.len() == if focus { 12 } else { 3 } && observed.len() == fixtures.len(),
+        fixtures.len()
+            == if focus {
+                policy.focus_qualification_workload()?.numeric_rows
+            } else {
+                3
+            }
+            && observed.len() == fixtures.len(),
         "partial numeric population"
     );
     let mut names = BTreeSet::new();
@@ -755,7 +761,7 @@ fn numeric(
         );
         let compiled: CompiledInput = serde_json::from_value(case["input"].clone())?;
         let (tokens, options) = if focus {
-            (512, 2)
+            (policy.focus_pair_input_tokens, 2)
         } else {
             [(17, 3), (128, 8), (8192, 8)][index]
         };

@@ -62,6 +62,16 @@ fn complete_software_v2_resources_recompute_twenty_samples_and_real_shape() -> R
     compiled_shape(&input, &focus, &policy)?;
     input.attention_mask[0..33].fill(0);
     assert!(compiled_shape(&input, &focus, &policy).is_err());
+    let current = ResourcePolicy::focus_static1024();
+    focus.max_tokens = 1024;
+    assert!(compiled_shape(&input, &focus, &current).is_err());
+    input.input_ids.resize(1024, 1);
+    input.attention_mask = vec![1; 1024];
+    input.position_ids = (0..1024).collect();
+    input.decision_position = 1023;
+    compiled_shape(&input, &focus, &current)?;
+    input.attention_mask[0] = 0;
+    assert!(compiled_shape(&input, &focus, &current).is_err());
     Ok(())
 }
 #[test]

@@ -26,7 +26,31 @@ pub struct ResourcePolicy {
     pub quantile: ResourceQuantile,
     pub stop_on_first_overrun: bool,
 }
+/// Frozen original Focus qualification workloads; these values are not serialized.
+pub struct FocusQualificationWorkload {
+    pub numeric_rows: usize,
+    pub maximum_pair_id: &'static str,
+    pub minimum_live_tokens: usize,
+}
+
 impl ResourcePolicy {
+    pub fn focus_qualification_workload(&self) -> Result<FocusQualificationWorkload> {
+        self.validate()?;
+        Ok(match self.focus_pair_input_tokens {
+            512 => FocusQualificationWorkload {
+                numeric_rows: 12,
+                maximum_pair_id: "long-maintenance-synthetic",
+                minimum_live_tokens: 480,
+            },
+            1024 => FocusQualificationWorkload {
+                numeric_rows: 14,
+                maximum_pair_id: "synthetic-1024",
+                minimum_live_tokens: 1024,
+            },
+            _ => anyhow::bail!("unknown Focus qualification width"),
+        })
+    }
+
     pub fn software_v2() -> Self {
         Self {
             schema: "airk.arbiter.resource-policy/2".into(),

@@ -11,6 +11,7 @@ struct ComposedLimits {
     deadline_ms: u64,
     shared_input_tokens: usize,
     context_input_tokens: usize,
+    focus_pair_input_tokens: usize,
     current: bool,
 }
 impl ComposedLimits {
@@ -21,6 +22,7 @@ impl ComposedLimits {
                 deadline_ms: policy.deadline_ms,
                 shared_input_tokens: policy.shared_input_tokens,
                 context_input_tokens: policy.context_input_tokens,
+                focus_pair_input_tokens: policy.focus_pair_input_tokens,
                 current: true,
             })
         } else {
@@ -28,6 +30,7 @@ impl ComposedLimits {
                 deadline_ms: 30_000,
                 shared_input_tokens: 8192,
                 context_input_tokens: 2048,
+                focus_pair_input_tokens: 512,
                 current: false,
             })
         }
@@ -41,7 +44,7 @@ impl ComposedLimits {
     }
     fn profile(self, profile: &Profile) -> Result<()> {
         let expected = if profile.declared_stage() == Some(Stage::Focus) {
-            512
+            self.focus_pair_input_tokens
         } else {
             self.context_input_tokens
         };
@@ -2215,6 +2218,13 @@ mod tests {
             .context("Focus fixture absent")?;
         historical.profile(focus)?;
         current.profile(focus)?;
+        let selected = ComposedLimits::from_policy(Some(&ResourcePolicy::focus_static1024()))?;
+        assert!(selected.profile(focus).is_err());
+        let mut wider = focus.clone();
+        wider.max_tokens = 1024;
+        selected.profile(&wider)?;
+        assert!(historical.profile(&wider).is_err());
+        assert!(current.profile(&wider).is_err());
         let mut context = catalog
             .iter()
             .find(|profile| profile.model == ModelChoice::ContextQwenCompact)

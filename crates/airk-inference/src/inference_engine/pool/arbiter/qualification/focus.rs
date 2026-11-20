@@ -542,3 +542,64 @@ fn focus_static1024_compiles_original_dev_pair_without_dispatch() -> Result<()> 
     file.flush()?;
     Ok(())
 }
+
+/// Project the exact private 1024 profile into the existing native measurement request.
+/// The distribution verifier separately checks the source manifest against its reviewed build.
+#[test]
+#[ignore = "requires authenticated Focus1024 candidate and native build source manifest; no model execution"]
+fn emit_focus_static1024_software_v2_run_input() -> Result<()> {
+    use airk_core::arbiter::resource_policy::{ResourceFilePin, ResourcePolicy, ResourceRunInput};
+
+    let (focus, _profile, profile_bytes, _, _) = inputs(STATIC1024)?;
+    let source_manifest = ResourceFilePin {
+        path: std::env::var("AIRK_SOFTWARE_V2_SOURCE_MANIFEST")?,
+        sha256: std::env::var("AIRK_SOFTWARE_V2_SOURCE_MANIFEST_SHA256")?.parse()?,
+    };
+    let manifest: Value =
+        serde_json::from_slice(&super::software_v2::pinned(&source_manifest, 16 << 20)?)?;
+    let build: ResourceFilePin = serde_json::from_value(manifest["native_build_receipt"].clone())?;
+    let files: Vec<ResourceFilePin> = serde_json::from_value(manifest["source_files"].clone())?;
+    ensure!(!files.is_empty(), "native source manifest is empty");
+    build.validate()?;
+    for file in &files {
+        file.validate()?;
+    }
+    let policy = ResourcePolicy::focus_static1024();
+    let request = ResourceRunInput {
+        schema: "airk.arbiter.resource-run/2".into(),
+        policy_digest: policy.digest()?,
+        policy,
+        source_manifest,
+        profile: ResourceFilePin {
+            path: focus
+                .profile
+                .to_str()
+                .context("UTF-8 native profile path")?
+                .into(),
+            sha256: Sha256Digest::from_bytes(Sha256::digest(&profile_bytes).into()),
+        },
+        files: focus
+            .files
+            .into_iter()
+            .map(|(name, path)| {
+                Ok((
+                    name,
+                    path.to_str().context("UTF-8 native asset path")?.to_owned(),
+                ))
+            })
+            .collect::<Result<_>>()?,
+        numeric_fixture: None,
+    };
+    request.validate()?;
+    let output = PathBuf::from(std::env::var("AIRK_SOFTWARE_V2_NATIVE_OUTPUT")?);
+    ensure!(
+        output.is_absolute(),
+        "absolute fresh native resource request required"
+    );
+    let file = std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(output)?;
+    serde_json::to_writer_pretty(file, &request)?;
+    Ok(())
+}

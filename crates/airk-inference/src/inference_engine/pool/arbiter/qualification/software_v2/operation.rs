@@ -65,6 +65,7 @@ fn native_clock() -> ReadClock {
 }
 struct Attempt<'a> {
     identity: &'a Identity,
+    max_numeric_ordinal: usize,
     kind: Kind,
     ordinal: usize,
     input: Option<Sha256Digest>,
@@ -80,6 +81,7 @@ fn observe<T>(
 ) -> Result<Returned<T>> {
     let Attempt {
         identity,
+        max_numeric_ordinal,
         kind,
         ordinal,
         input,
@@ -94,7 +96,7 @@ fn observe<T>(
         match kind {
             Kind::Load | Kind::Warmup => ordinal == 0,
             Kind::Sample => (1..=20).contains(&ordinal),
-            Kind::Numeric => (1..=12).contains(&ordinal),
+            Kind::Numeric => (1..=max_numeric_ordinal).contains(&ordinal),
         },
         "native operation ordinal differs"
     );
@@ -193,6 +195,7 @@ fn observe<T>(
 }
 pub(super) struct Journal {
     file: File,
+    max_numeric_ordinal: usize,
     identity: Identity,
     deadline_ms: u64,
     sequence: u64,
@@ -200,7 +203,16 @@ pub(super) struct Journal {
 }
 impl Journal {
     pub fn create(output: &Path, identity: Identity, deadline_ms: u64) -> Result<Self> {
+        Self::with_numeric_roster(output, identity, deadline_ms, 12)
+    }
+    pub fn with_numeric_roster(
+        output: &Path,
+        identity: Identity,
+        deadline_ms: u64,
+        max_numeric_ordinal: usize,
+    ) -> Result<Self> {
         Ok(Self {
+            max_numeric_ordinal,
             file: OpenOptions::new()
                 .write(true)
                 .create_new(true)
@@ -288,6 +300,7 @@ impl Journal {
         observe(
             Attempt {
                 identity: &self.identity,
+                max_numeric_ordinal: self.max_numeric_ordinal,
                 kind,
                 ordinal,
                 input,

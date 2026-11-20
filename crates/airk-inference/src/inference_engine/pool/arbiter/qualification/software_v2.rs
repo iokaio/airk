@@ -68,7 +68,7 @@ fn small(path: &Path, maximum: u64) -> Result<Vec<u8>> {
     );
     Ok(bytes)
 }
-fn pinned(pin: &ResourceFilePin, maximum: u64) -> Result<Vec<u8>> {
+pub(super) fn pinned(pin: &ResourceFilePin, maximum: u64) -> Result<Vec<u8>> {
     pin.validate()?;
     let bytes = small(Path::new(&pin.path), maximum)?;
     ensure!(
@@ -142,7 +142,7 @@ fn inputs_from(pin: &ResourceFilePin) -> Result<(ResourceRunInput, Profile, File
         .stage()
         .context("only selected native stage models")?;
     let (width, reservation) = match profile.model {
-        ModelChoice::FocusQwenReranker06B => (512, 4u64 << 30),
+        ModelChoice::FocusQwenReranker06B => (input.policy.focus_pair_input_tokens, 4u64 << 30),
         ModelChoice::ContextQwenCompact => (8192, 16u64 << 30),
         ModelChoice::ContextQwenLarge => (8192, 40u64 << 30),
         _ => anyhow::bail!("historical model cannot inherit software-v2 evidence"),
@@ -207,11 +207,13 @@ fn isa() -> Value {
     }
 }
 fn resource_input(
+    policy: &ResourcePolicy,
     profile: &Profile,
     files: &Files,
     mut compile: impl FnMut(&str, &str, &[Candidate]) -> Result<CompiledInput>,
 ) -> Result<CompiledInput> {
     if profile.model == ModelChoice::FocusQwenReranker06B {
+        let workload = policy.focus_qualification_workload()?;
         for asset in profile
             .assets
             .iter()
@@ -227,7 +229,7 @@ fn resource_input(
                 .and_then(Value::as_array)
                 .and_then(|rows| {
                     rows.iter()
-                        .find(|row| row["id"] == "long-maintenance-synthetic")
+                        .find(|row| row["id"] == workload.maximum_pair_id)
                 })
             {
                 let option = Candidate {
@@ -248,10 +250,11 @@ fn resource_input(
                     &[option],
                 )?;
                 ensure!(
-                    input.input_ids.len() == 512
-                        && input.attention_mask.iter().sum::<i64>() >= 480
+                    input.input_ids.len() == policy.focus_pair_input_tokens
+                        && input.attention_mask.iter().sum::<i64>()
+                            >= workload.minimum_live_tokens as i64
                         && input.candidate_positions == [2152, 9693],
-                    "actual full static512 near-cap Focus source required"
+                    "actual near-cap Focus source for selected static width required"
                 );
                 return Ok(input);
             }
@@ -374,9 +377,12 @@ fn software_v2_selected_native_resources() -> Result<()> {
         );
         let scorer = loaded.value?;
         receipt["execution_identity"] = serde_json::to_value(scorer.execution_identity()?)?;
-        let compiled = resource_input(&profile, &files, |state, question, candidates| {
-            scorer.compile(state, question, candidates)
-        })?;
+        let compiled = resource_input(
+            &input.policy,
+            &profile,
+            &files,
+            |state, question, candidates| scorer.compile(state, question, candidates),
+        )?;
         receipt["input"] = serde_json::to_value(&compiled)?;
         let warmed = operations.observe(
             operation::Kind::Warmup,
@@ -549,12 +555,12 @@ fn numeric_shape(
         "numeric fixture is not the exact current compiler/model/resource identity"
     );
     let focus = profile.model == ModelChoice::FocusQwenReranker06B;
-    let shapes = if focus {
-        &[(512, 2); 12][..]
-    } else {
-        &[(17, 3), (128, 8), (8192, 8)][..]
-    };
-    numeric_rows(&fixture.rows, shapes, focus)
+    if focus {
+        let workload = policy.focus_qualification_workload()?;
+        let shapes = vec![(policy.focus_pair_input_tokens, 2); workload.numeric_rows];
+        return numeric_rows(&fixture.rows, &shapes, true);
+    }
+    numeric_rows(&fixture.rows, &[(17, 3), (128, 8), (8192, 8)], false)
 }
 
 fn numeric_rows(rows: &[NumericCase], shapes: &[(usize, usize)], focus: bool) -> Result<()> {
@@ -658,7 +664,7 @@ fn software_v2_selected_native_numeric() -> Result<()> {
         "measurement_identity":"native-original-operation-start-to-post-end-retention/1",
         "rows":[],"scope":"Actual native raw-logit/mass/argmax comparisons with separately pinned independent references; no semantic/calibration/composed-path/publication qualification."});
     flush(&mut file, &receipt)?;
-    let mut operations = operation::Journal::create(
+    let mut operations = operation::Journal::with_numeric_roster(
         &output,
         operation::Identity {
             input_sha256: input_hash,
@@ -667,6 +673,7 @@ fn software_v2_selected_native_numeric() -> Result<()> {
             native_binary_sha256: binary_sha256,
         },
         input.policy.deadline_ms,
+        fixture.rows.len(),
     )?;
     let (_parent, control) = private_control()?;
     let owner = airk_kernel::inference_owner::NativeInferenceOwner::admit(Arc::new(
@@ -781,9 +788,12 @@ fn emit_software_v2_native_numeric_template() -> Result<()> {
                 }
                 rows.push(NumericCase {
                     name: "native-all-live-8192".into(),
-                    input: resource_input(&profile, &files, |state, question, options| {
-                        compiler.compile(state, question, options)
-                    })?,
+                    input: resource_input(
+                        &input.policy,
+                        &profile,
+                        &files,
+                        |state, question, options| compiler.compile(state, question, options),
+                    )?,
                     reference_same_artifact: None,
                     reference_original_fp32: None,
                 });

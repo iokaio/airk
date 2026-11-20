@@ -168,6 +168,33 @@ fn numeric_fixture(model: ModelChoice) -> Result<(Profile, NumericFixture, Resou
     Ok((profile, fixture, policy))
 }
 #[test]
+fn focus1024_numeric_shape_requires_fourteen_original_rows_and_selected_width() -> Result<()> {
+    let (profile, mut fixture, _) = numeric_fixture(ModelChoice::FocusQwenReranker06B)?;
+    let policy = ResourcePolicy::focus_static1024();
+    fixture.resource_policy = policy.digest()?;
+    let template = fixture.rows[0].clone();
+    fixture.rows = (0..14)
+        .map(|ordinal| {
+            let mut row = template.clone();
+            row.name = format!("independent-{ordinal}");
+            row.input.input_ids = vec![1; 1024];
+            row.input.input_ids[0] = 151644;
+            row.input.attention_mask = vec![1; 1024];
+            row.input.position_ids = (0..1024).collect();
+            row.input.decision_position = 1023;
+            row.input.candidate_positions = vec![2152, 9693];
+            row
+        })
+        .collect();
+    numeric_shape(&fixture, &profile, &policy)?;
+    fixture.rows[0].input.input_ids.truncate(512);
+    assert!(numeric_shape(&fixture, &profile, &policy).is_err());
+    fixture.rows[0].input.input_ids.resize(1024, 1);
+    fixture.rows.pop();
+    assert!(numeric_shape(&fixture, &profile, &policy).is_err());
+    Ok(())
+}
+#[test]
 fn software_v2_numeric_shape_rejects_the_historical2048_resource_row() -> Result<()> {
     let (profile, mut fixture, policy) = numeric_fixture(ModelChoice::ContextQwenCompact)?;
     numeric_shape(&fixture, &profile, &policy)?;

@@ -15,6 +15,7 @@ fn identity() -> Identity {
 fn attempt(identity: &Identity, kind: Kind, ordinal: usize) -> Attempt<'_> {
     Attempt {
         identity,
+        max_numeric_ordinal: 12,
         kind,
         ordinal,
         input: (kind != Kind::Load).then_some(Sha256Digest::from_bytes([4; 32])),
@@ -226,6 +227,37 @@ fn native_operation_exact_boundary_end_succeeds_and_end_observer_failure_refuses
     assert!(result.is_err());
     assert_eq!(called.get(), 1);
     Ok(())
+}
+#[test]
+fn native_numeric_journal_limits_each_original_roster_before_dispatch() {
+    let identity = identity();
+    for (maximum, ordinal, accepted) in [
+        (3, 4, false),
+        (12, 12, true),
+        (12, 13, false),
+        (14, 13, true),
+        (14, 14, true),
+        (14, 15, false),
+    ] {
+        let attempted = Attempt {
+            max_numeric_ordinal: maximum,
+            ..attempt(&identity, Kind::Numeric, ordinal)
+        };
+        let called = Cell::new(false);
+        let mut sequence = 0;
+        let result = observe(
+            attempted,
+            &mut sequence,
+            &mut || Ok(100),
+            &mut |_| Ok(()),
+            || {
+                called.set(true);
+                Ok(())
+            },
+        );
+        assert_eq!(result.is_ok(), accepted);
+        assert_eq!(called.get(), accepted);
+    }
 }
 #[test]
 fn native_operation_wrong_ordinals_and_backwards_clocks_never_gain_time() {
