@@ -156,6 +156,17 @@ retained source descriptors. Run checked Python -I -B -S and redirect stdout
 to a fresh private receipt. The result distinguishes each answer document
 from its full menu and reports missing fields independently of equality.
 
+Run `audit_repository_publisher_commits.py --directory <retained-screen-directory>`
+with the provisioned PyArrow interpreter to reproduce the publisher locator
+check. It authenticates the eight original shards and joins only repository,
+case, base and commit locator fields to the selected 50 cases and nine reserves.
+All 59 publisher tree URLs identify their independently resolved base. Each
+publisher commit list uses same-repository commit URLs. None includes the base,
+and none of the 35 available merge OIDs appears in its case's list. The exact
+per-case results are retained in `publisher-commit-links-r2.private.json` (SHA-256
+`91ca6a7a507853b5bb634f952d836374052696d7a679c49a896936119a2594a7`).
+File-level state and independent accepted source judgments remain unverified.
+
 The [repository annotation schema audit](audit_repository_label_schema.py)
 accepts the original absolute roster directory via --directory. Run the
 provisioned PyArrow interpreter with -I -B. It authenticates all eight
