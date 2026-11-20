@@ -81,13 +81,28 @@ def read_document_text(reader):
         escaped = not escaped and char == 92
 
 
-def inspect_corpus(reader, menu_ids, gold):
+def freeze_document(freeze, identifier, body, annotations):
+    raw = body.encode("utf-8")
+    freeze["documents"][identifier] = {"bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
+    for start, end, answer, case_id in annotations:
+        case = freeze["cases"][case_id]
+        if not (0 <= start < end <= len(body)) or body[start:end] != answer:
+            case["source_status"] = "withheld_publisher_span_mismatch"
+            continue
+        answer_bytes = answer.encode("utf-8")
+        offset = len(body[:start].encode("utf-8"))
+        case.update(source_status="exact_publisher_span", byte_start=offset,
+                    byte_end_exclusive=offset + len(answer_bytes),
+                    span_sha256=hashlib.sha256(answer_bytes).hexdigest())
+
+
+def inspect_corpus(reader, menu_ids, gold, freeze=None):
     def field():
         name = reader.string()
         reader.expect(58)
         if name == "id":
             return name, reader.string()
-        if name == "text" and key in gold:
+        if name == "text" and (key in gold or freeze is not None):
             return name, read_document_text(reader)
         reader.skip_opaque_value()
         return None
@@ -105,10 +120,13 @@ def inspect_corpus(reader, menu_ids, gold):
         fields = dict(data)
         require(len(fields) == len(data) and fields.get("id") == key, "provisional menu document ID differs")
         visited.add(key)
+        if freeze is not None:
+            require("text" in fields, "publisher menu document text missing")
+            freeze_document(freeze, key, fields["text"], gold.get(key, []))
         if key in gold:
             require("text" in fields, "publisher gold document text missing")
             body = fields["text"]
-            for start, end, answer in gold[key]:
+            for start, end, answer, *_ in gold[key]:
                 if not 0 <= start < end <= len(body):
                     counts["out_of_range"] += 1
                 elif body[start:end] != answer:
@@ -126,7 +144,7 @@ def inspect_corpus(reader, menu_ids, gold):
     return entries, dict(counts)
 
 
-def audit():
+def audit(*, freeze_menus=False):
     started = time.monotonic()
 
     def check():
@@ -190,16 +208,23 @@ def audit():
         answer_reader = owner["MetadataReader"](io.BytesIO(raw_dev), check)
         answers = selected_answers(answer_reader, raw_dev, selected)
         answer_reader.finish(len(raw_dev))
+        freeze = {"cases": {}, "documents": {}} if freeze_menus else None
         gold = {}
         for identifier, row in selected.items():
             gold.setdefault(row["DOCUMENT"], []).append(
                 (owner["numeric_offset"](row["START_OFFSET"]), owner["numeric_offset"](row["END_OFFSET"]),
-                 answers[identifier]))
+                 answers[identifier], identifier))
+            if freeze is not None:
+                freeze["cases"][identifier] = {"ordered_document_ids": row["DOC_IDS"],
+                                               "publisher_document_id": row["DOCUMENT"],
+                                               "publisher_start": owner["numeric_offset"](row["START_OFFSET"]),
+                                               "publisher_end": owner["numeric_offset"](row["END_OFFSET"])}
+
         require(len(gold) == 71, "provisional TechQA gold document count differs")
 
         def corpus_member(stream, size):
             reader = owner["MetadataReader"](stream, check, maximum_bytes=size)
-            entries, counts = inspect_corpus(reader, menu_ids, gold)
+            entries, counts = inspect_corpus(reader, menu_ids, gold, freeze)
             require(reader.finish(size)["sha256"] == CORPUS_SHA, "TechQA corpus member digest differs")
             return entries, counts
 
@@ -207,8 +232,13 @@ def audit():
         require(owner["archive_state"](source) == before, "TechQA archive changed during audit")
     require(entries == 28482 and sum(counts.values()) == len(selected), "TechQA audit denominator differs")
     check()
+    if freeze is not None:
+        require(len(freeze["documents"]) == len(menu_ids)
+                and all("source_status" in case for case in freeze["cases"].values()), "incomplete menu freeze")
     return {
-        "schema": "airk.private.techqa-publisher-dev-source-span-audit/1",
+        "schema": ("airk.private.techqa-publisher-dev-menu-freeze/1" if freeze_menus
+                   else "airk.private.techqa-publisher-dev-source-span-audit/1"),
+        **({"menu_freeze": freeze} if freeze_menus else {}),
         "source_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "metadata_owner_sha256": OWNER_SHA,
         "archive_sha256": owner["ARCHIVE_SHA"],
@@ -233,10 +263,12 @@ def main():
             "use checked Windows Python -I -B -S")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True, type=Path)
-    output = parser.parse_args().output
+    parser.add_argument("--freeze-menus", action="store_true", help="retain ordered publisher menus and original byte pins")
+    args = parser.parse_args()
+    output = args.output
     require(output.is_absolute() and not output.exists() and output.parent.resolve(strict=True) == output.parent,
             "fresh absolute checked private output path required")
-    result = audit()
+    result = audit(freeze_menus=args.freeze_menus)
     with output.open("x", encoding="utf-8", newline="\n") as stream:
         stream.write(json.dumps(result, allow_nan=False, separators=(",", ":")) + "\n")
 

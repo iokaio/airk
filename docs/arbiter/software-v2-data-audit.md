@@ -502,3 +502,33 @@ replacement-screen-16-r1.private.json
 (96c939368ad6ac79cfc91a1f309f9887aa6ef22e1be82033f4a91a5774d3f8aa)
 and replacement-screen-16-r2.private.json
 (0b6fdcde3a79efddd4b64b8dc2a1989de9564f01635c163ff077b11d6d415e42).
+
+### Active source cohort after the AWS exclusions
+
+The user excluded all 24 ambiguous AWS selectors from the current comparison.
+Keep their receipts for provenance. The 41 remaining selectors map to 27
+unmodified Markdown documents totaling 162,383 bytes in nine guide families.
+The private corpus preserves the five documents shared with excluded cases.
+Its sibling manifest binds the 29 literal and 12 Markdown-projected spans,
+including one with fenced code, and retains the source notices separately.
+The source subset does not establish a complete retrieval menu.
+
+The original TechQA DEV freeze retains all 77 ordered publisher menus and
+3,527 document hashes. Among the 76 exact publisher matches, the 3,800 menu
+slots resolve to 3,526 distinct documents. Each verified case retains its
+publisher scalar offsets, UTF-8 byte range and answer digest. One mismatch
+is explicitly withheld. These are original source coordinates. Neither
+native token budgets nor the delivered evidence sets have been measured.
+
+For the 35 later MultiLang bases, 23 are direct parents of the linked
+merge. The other 12 reach the merge over two to 43 verified parent edges.
+All 35 have a different root tree from the merge, and their base dates
+fall after the issue and no later than the merge. A tree change somewhere
+in a repository cannot establish the state of an individual evidence file.
+
+| Private evidence | SHA-256 |
+| --- | --- |
+| aws-unique-source-corpus-r1/manifest.private.json | ef2844ba2406de3b57ac1f5a6b13e582320bacae27779b704d38d4786375e882 |
+| techqa-original-dev-ordered-menu-freeze-r1.json | 50f876ebb9cf3a8328314e7be3e01f343b2d1b67cd7979fe2aaceeb2c82064f7 |
+| repository-confirmation-multilang-r1/premerge-topology-r1.private.json | 69dd8e32d8d2a6a034f1db870617eb52942abfbab19daf8095dc951f9144ad65 |
+| repository-confirmation-multilang-r1/premerge-extended-history-r1.private.json | ccf73de8c7afe837baf9a486afe9e5687a16c028bc2a1b9ecd17ed0a05a47b4c |

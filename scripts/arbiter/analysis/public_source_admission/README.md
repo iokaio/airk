@@ -119,3 +119,21 @@ Run the pinned interpreter locally under the verified human identity. Redirect
 the one-line aggregate only to a new audited private campaign path. These
 checks establish metadata scope. Native visibility, rights, independent
 judgments, paired comparison and product qualification have their own checks.
+
+The original TechQA DEV span audit also accepts `--freeze-menus` with a fresh
+private output. It stores each original question ID, its ordered 50-document
+menu, the digests and byte extents of those documents, and the exact publisher
+range in UTF-8 bytes when verified. Refused cases remain identifiable.
+The metadata supports reconstruction from the pinned archive before native capture.
+
+- [Stage unique AWS source ranges](stage-aws-unique-source-corpus.ps1) runs
+  under checked PowerShell with `-Run`. It reauthenticates the 27 source
+  documents for the 41 unique cases. Only original Markdown appears under
+  the private corpus root. The sibling manifest retains spans, source notices
+  and selectors. The timed Compact Answer harness expects flat inputs.
+- [Verify repository merge ancestry](audit_repository_premerge_topology.py)
+  takes the absolute private roster directory via `--directory` and the pinned
+  CLI via `--gh`, under isolated Python with bytecode disabled. The first
+  receipt covers all 35 later bases. Run again with `--extend-history` against
+  its sealed receipt to check missing paths in the merge history. The evidence
+  covers observed Git parent edges and tree identities.

@@ -12453,3 +12453,25 @@ digests. No case was admitted and the paired 98% result remains unmeasured.
 The exact CUDA candidate still has zero active calibration rules and
 exceeds 0.001 matching-reference raw error. No model run was repeated.
 [Audit and receipt hashes](../arbiter/software-v2-data-audit.md#replacement-screening-and-repeated-aws-answers)
+
+### 2026-11-19 — Active cohort after excluding the 24 ambiguous AWS cases
+
+Verified the active TYAI\tdotn interactive Windows session, effective SID
+and default owner ending 1002. The user excluded the 24 ambiguous AWS cases.
+The checked private stage retained 27 documents and 41 unique ranges in
+35.1352859 s. The ordered TechQA DEV freeze replayed the authenticated archive
+in 65.18095 s, retaining 76 exact ranges and one refusal. The original
+50-document order is retained per case. A separate read verified every
+matched case has its gold document in the menu and its byte end within
+that document. No judged or model arm ran.
+
+The initial MultiLang Git traversal proved 23 of 35 paths in 12.4519847 s.
+The extended traversal proved the remaining 12 in 5.8935168 s. Both receipts
+retain the actual GraphQL batches and raw observed parent edges.
+Run audit_repository_premerge_topology.py with -I -B -S, the original
+absolute roster directory and pinned gh as documented in the collector README.
+Run the TechQA audit with -I -B -S --freeze-menus --output <fresh-private-file>.
+The AWS command is pwsh -NoProfile -File stage-aws-unique-source-corpus.ps1 -Run.
+Two TechQA, five AWS and six topology controls passed. File-level repository
+evidence, native capture, exact-artifact calibration and the paired result remain open.
+[Verified counts and SHA-256 receipts](../arbiter/software-v2-data-audit.md#active-source-cohort-after-the-aws-exclusions)

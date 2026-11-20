@@ -216,9 +216,13 @@ Use the existing deadline when resuming in a new context.
   Replacement screening yielded 20 passes across 32 repositories. Keep
   the first 11 passes with the original 39 and the other nine as reserves.
   Of those 50, 35 have bases later than the issue and need pre-fix review.
-  All 485 repeated AWS occurrences are mapped. Hold the 24 affected cases
-  for independent judgments on their source passages. The publisher CSV
+  All 485 repeated AWS occurrences are mapped. Exclude the 24 affected cases
+  from the active comparison per user direction. The publisher CSV
   provides no occurrence offsets. The 98% comparison remains unmeasured.
+  The remaining 41 AWS cases have an authenticated private corpus. The 76
+  verified TechQA cases have their complete ordered publisher menus frozen.
+  Git parent paths place all 35 later repository bases before the linked merge.
+  [Active source cohort](arbiter/software-v2-data-audit.md#active-source-cohort-after-the-aws-exclusions)
   [Replacement screening and repeated AWS answers](arbiter/software-v2-data-audit.md#replacement-screening-and-repeated-aws-answers)
   [Local confirmation-source inventory](arbiter/software-v2-data-audit.md#initial-context-fp16-confirmation-source-inventory)
   [Stock FP32 projection comparison](simplify/one-process-ledger.md#2026-11-19--stock-cuda-fp32-projection-is-a-compact-candidate)
