@@ -1,0 +1,9 @@
+# Focus static 1,024 CPU candidate
+
+Run `python -I -B -S scripts/arbiter/export/qwen/focus1024/run.py --output <fresh-absolute-campaign-root>/focus1024-cpu-export-rN` with the campaign's checked human owner. Preflight the destination, CPU headroom, and cache parents, then audit the created files. The launcher uses the retained training environment, a 32 GiB Windows process and Job cap and a 600-second deadline. CPU inference uses four threads.
+
+The exporter authenticates the selected static-512 weight8 artifact, its external weight bytes, the prior quantization and FP32 export receipts, and the original Qwen publisher checkpoint. It builds a new fixed-width model with 1,024 positions, the causal-mask grid, the grouped-query attention broadcast shapes and every layer's reshape constants at that width. The quantized learned weights, embedding, two trained output rows, three integer inputs and FP32 output retain their original identities and types.
+
+The independent publisher run builds original untruncated input IDs from the official local tokenizer and evaluates the complete publisher model against the resulting CPU ONNX Runtime logits. Its 14 cases comprise the original 12 controls and fixed synthetic 513- and 1,024-token pairs. A separate 1,025-token control must refuse compilation. The previous weight8 acceptance limits are 0.25 maximum raw difference, 0.05 maximum relevance difference and identical argmax on every comparison.
+
+The private output includes the graph and weights under `assets`, the graph lineage, the independent publisher tensors and reference values, the complete native-runtime fixture, a numerical summary and the original owned-process result. Native compiler identity, service profile admission, actual service warming and evaluation of the held-out and calibration populations are separate campaign results.

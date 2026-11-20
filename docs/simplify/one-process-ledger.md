@@ -12923,3 +12923,28 @@ The 8,045,328,384-byte FP16 weights digest is
 `5b053f02795e72ff88123b28f89d3f2c89da055e9ed2228bc60809dd0a2b4270`.
 Owned execution `85b927e9ea3746995eaf57c6777d777a9c3879c6750c121dcf42c6bb54fc0e87`
 consumed Large plan `d09ee0900ae7b13f251272170ef27d5de3181ea6b7ca16612f33e364a77ece0b`.
+
+### Focus at 1,024 positions, exported graph and CPU publisher verification
+
+The separate CPU candidate's three integer inputs now use 1,024 positions.
+The graph retained the original 508 initializer declarations and 197
+MatMulNBits nodes. The 168 reshape and 56 grouped-query attention broadcast
+operands use the new width. The 5,046,780-byte graph is
+`a16fcaa1bf2d67b019b30cda56d76ba23d589c346ef2ae76d75c229ebe866810`.
+The 1,117,980,672-byte external weights retained digest
+`1c819b7781fbf9b811f6ec1453e91d7f32a1bd6e5489168e0612d4fcf015b143`.
+
+The independent CPU publisher comparison loaded the 310-weight checkpoint.
+All fourteen cases kept the same winner. Maximum raw-logit difference
+was 0.234480858 against the Focus weight8 limit of 0.25. Maximum
+relevance difference was 0.006104095 against the 0.05 limit. The full
+513- and 1,024-token cases compiled and the 1,025-token case refused.
+The owned CPU run settled in 129.569 s at 4,962,160,640 bytes peak Job
+commit. This is an export and CPU numerical result. AIRK native activation,
+1,024-width timing and a fresh CAL population are separate.
+
+| Proof | SHA-256 |
+| --- | --- |
+| Owned execution | 5a4595b76225b46d395e44f6ced5e1d24ebe8007d31e889a0d7e9851e62713c0 |
+| Independent numerical comparison | dd6d22fb2f17bb18b05b396b5e378405da6d53872e5fcff565c46ed08c7feed4 |
+| Fourteen-row native qualification input | 061ab415af64d540fc4100621c6b950e8856465ad0d3cf663646d9a41914663a |
