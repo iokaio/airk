@@ -34,6 +34,8 @@ SELECTOR = "service_runtime::evaluation_fixture_tests::actual_private_arbiter_fi
 PLAN_SCHEMA = "airk.private.cal100-r7-two-lifetime-plan/1"
 FIXTURE_SCHEMA = "airk.private.cal100-r7-two-lifetime-fixture/1"
 LIFETIMES = (tuple(range(7)), tuple(range(7, 13)))
+TERMINAL_KEYS = ("outer", "fixture", "mutex")
+FAILED_TERMINAL_KEYS = ("outer", "mutex", "first_lifetime", "phase", "request", "closed")
 SAMPLE_SECONDS = 10
 BELOW_NORMAL = 0x4000
 STILL_RUNNING = 0x102
@@ -233,15 +235,65 @@ def lifetime_receipts(support, plan, anchor, group, *, request_pin=None):
     return start, ready, ready_ms, pin
 
 
+def original_owner_argv(outer):
+    argv = outer["argv"]
+    return (argv[1:5] == ["-I", "-B", "-S", str(OWNER)]
+            and argv[5:7] == ["--output", str(R7)] and argv.count("--resume-r6") == 1
+            and argv.count("--owned-plan-sha256") == 1
+            and argv[argv.index("--owned-plan-sha256") + 1:][:1] == [PLAN_SHA])
+
+
+def naturally_failed(owner):
+    return (type(owner.get("exit_code")) is int and owner["exit_code"] == 1
+            and owner.get("timed_out") is False and owner.get("log_oversized") is False
+            and owner.get("child_assigned_before_resume") is True and owner.get("owned_descendants_settled") is True
+            and owner.get("owned_job_forced_termination") is False and owner.get("owned_job_final_active_processes") == 0
+            and owner.get("owned_job_final_member_pids") == [] and "cleanup_refusal" not in owner)
+
+
+def native_closed(native, ready):
+    return (native["schema"] == "airk.private-arbiter-fixture-closed/1"
+            and native["shutdown_completed"] is True and native["service_lease_reacquired"] is True
+            and native["control_root"] == ready["control_root"]
+            and native["instance"] == ready["health"]["instance"])
+
+
+def failed_terminal_receipts(support, plan, plan_pin, anchor, terminal):
+    outer, _, outer_ms = support.receipt(R7 / "outer-owned.json", sha=terminal["outer"])
+    require(naturally_failed(outer) and original_owner_argv(outer),
+            "naturally failed original R7 outer Job required")
+    first = R7 / "lifetime-00"
+    lifetime, _, _ = support.receipt(first / "lifetime-closure.json", sha=terminal["first_lifetime"])
+    require(lifetime["plan"] == plan_pin and lifetime["prior"] == plan["installation"]["closed"]
+            and lifetime["end_ms"] < plan["deadline_ms"], "original first R7 lifetime differs")
+    support.check_group(first, lifetime, 0, plan, plan["start_ms"])
+    start0, ready0, ready0_ms, _ = lifetime_receipts(support, plan, anchor, 0, request_pin=lifetime["live_request"])
+    native0, _, _ = support.receipt(first / "fixture/closed.json", pin=lifetime["closed"])
+    require(native_closed(native0, ready0) and start0["start_ms"] == lifetime["start_ms"]
+            and ready0_ms <= lifetime["end_ms"] and native0["instance"] == lifetime["instance"],
+            "first R7 native fixture did not close before its next lifetime")
+
+    last = R7 / "lifetime-01"
+    failed, _, _ = support.receipt(last / "phase-12.owned.json", sha=terminal["phase"])
+    request, request_pin, _ = support.receipt(last / "live-request.json", sha=terminal["request"])
+    start1, ready1, ready1_ms, _ = lifetime_receipts(support, plan, anchor, 1, request_pin=request_pin)
+    native1, _, native1_ms = support.receipt(last / "fixture/closed.json", sha=terminal["closed"])
+    require(naturally_failed(failed) and failed["phase"] == 12 and failed["request_sha256"] == request_pin["sha256"]
+            and request["fixture_root"] == start1["fixture_root"] and failed["deadline_ms"] == plan["deadline_ms"]
+            and lifetime["end_ms"] <= start1["start_ms"] <= ready1_ms <= failed["start_ms"] < failed["end_ms"]
+            <= native1_ms <= outer_ms <= plan["deadline_ms"] and native_closed(native1, ready1)
+            and native1["instance"] != native0["instance"],
+            "failed R7 phase or its native cleanup differs")
+    support.receipt(R7 / "control-mutex-released.json", sha=terminal["mutex"])
+    support.check_mutex(R7, plan, terminal["outer"], terminal["mutex"], outer_ms)
+    return [(start0, ready0_ms), (start1, ready1_ms)]
+
+
 def terminal_receipts(support, plan, plan_pin, anchor, terminal):
     outer, _, _ = support.receipt(R7 / "outer-owned.json", sha=terminal["outer"])
     fixture, _, _ = support.receipt(R7 / "fixture-closure.json", sha=terminal["fixture"])
     support.receipt(R7 / "control-mutex-released.json", sha=terminal["mutex"])
-    argv = outer["argv"]
-    require(support.settled(outer) and argv[1:5] == ["-I", "-B", "-S", str(OWNER)]
-            and argv[5:7] == ["--output", str(R7)] and argv.count("--resume-r6") == 1
-            and argv.count("--owned-plan-sha256") == 1
-            and argv[argv.index("--owned-plan-sha256") + 1] == PLAN_SHA
+    require(support.settled(outer) and original_owner_argv(outer)
             and fixture["schema"] == FIXTURE_SCHEMA and fixture["plan"] == plan_pin
             and fixture["ordered_questions"] == 100 and len(fixture["lifetimes"]) == len(LIFETIMES),
             "successful original R7 outer Job and full fixture closure required")
@@ -256,10 +308,7 @@ def terminal_receipts(support, plan, plan_pin, anchor, terminal):
         start, ready, ready_ms, _ = lifetime_receipts(support, plan, anchor, group, request_pin=lifetime["live_request"])
         native, _, _ = support.receipt(directory / "fixture/closed.json", pin=lifetime["closed"])
         require(start["start_ms"] == lifetime["start_ms"] and ready_ms <= lifetime["end_ms"]
-                and native["schema"] == "airk.private-arbiter-fixture-closed/1"
-                and native["shutdown_completed"] is True and native["service_lease_reacquired"] is True
-                and native["control_root"] == ready["control_root"]
-                and native["instance"] == lifetime["instance"] == ready["health"]["instance"]
+                and native_closed(native, ready) and native["instance"] == lifetime["instance"]
                 and native["instance"] not in instances, "R7 native service or exclusive lease did not settle")
         instances.add(native["instance"])
         starts.append((start, ready_ms))
@@ -305,13 +354,16 @@ def cal_custody(support, plan, plan_pin, cal_pid, terminal, deadline):
     require(acquisition["name"] == name and type(acquisition["owner_pid"]) is int and acquisition["owner_pid"] > 0
             and 0 < acquisition["at_ms"] <= plan["start_ms"], "original R7 installation acquisition differs")
     if terminal is not None:
-        starts = terminal_receipts(support, plan, plan_pin, anchor, terminal)
+        failed = "first_lifetime" in terminal
+        receipt_reader = failed_terminal_receipts if failed else terminal_receipts
+        mode = "failed_terminal" if failed else "settled"
         with mutex():
+            starts = receipt_reader(support, plan, plan_pin, anchor, terminal)
             def check(reserve=0):
                 require(time.monotonic() + reserve < deadline, "original reference worker deadline expired")
                 require_retired(support, starts)
             check()
-            yield None, {"mode": "settled", "plan": plan_pin, "terminal": dict(terminal)}, check
+            yield None, {"mode": mode, "plan": plan_pin, "terminal": dict(terminal)}, check
         return
 
     candidates = [group for group in range(len(LIFETIMES)) if unclosed(group)
@@ -442,9 +494,9 @@ def validate_args(cal_pid, count, deadline, terminal):
     require(count == 2 and type(count) is int and type(deadline) in (float, int) and math.isfinite(deadline),
             "original two-core worker placement and finite deadline required")
     if cal_pid is None:
-        require(isinstance(terminal, dict) and set(terminal) == {"outer", "fixture", "mutex"}
+        require(isinstance(terminal, dict) and set(terminal) in (set(TERMINAL_KEYS), set(FAILED_TERMINAL_KEYS))
                 and all(isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{64}", sha) for sha in terminal.values()),
-                "exact original R7 terminal outer, fixture and mutex hashes required")
+                "exact original R7 successful or failed terminal custody hashes required")
     else:
         require(type(cal_pid) is int and 0 < cal_pid <= 0xffffffff and terminal is None,
                 "one exact original R7 live CAL PID is required")

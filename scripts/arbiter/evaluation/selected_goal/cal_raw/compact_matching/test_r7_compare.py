@@ -9,6 +9,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import r7_compare as comparison
 
 
+class ReferenceSourceCompatibility(unittest.TestCase):
+    def test_old_live_runner_still_requires_the_identical_scoring_sources(self):
+        directory = Path(comparison.__file__).resolve().parent
+        previous = {str(directory / name): pin for name, pin in comparison.LIVE_SOURCE_PINS.items()}
+        scoring = str(directory / "science.py")
+        current = {path: "new implementation" for path in previous} | {scoring: "unchanged scoring"}
+        historical = previous | {scoring: current[scoring]}
+        self.assertTrue(comparison.compatible_sources(current, current))
+        self.assertTrue(comparison.compatible_sources(historical, current))
+        self.assertFalse(comparison.compatible_sources(historical | {scoring: "other scoring"}, current))
+        self.assertFalse(comparison.compatible_sources(previous, current))
+
+
 class ProtectedGpuJoin(unittest.TestCase):
     def setUp(self):
         self.proof = {"model_sha256": "m", "weight_sha256": "w", "typed_graph_sha256": "t",

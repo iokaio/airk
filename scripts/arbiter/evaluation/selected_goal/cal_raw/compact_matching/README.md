@@ -22,6 +22,13 @@ First-lifetime ordinals remain original and independent of the R5 population.
 For a real reference, replace `--check-only` with `--output <new checked D:
 campaign directory>`. Choose either `--cal-pid <original active R7 service
 pid>` or `--terminal <outer SHA> <whole fixture SHA> <mutex release SHA>`.
+For the original phase-12 failure, use
+`--failed-terminal <outer SHA> <mutex release SHA> <first lifetime SHA> <failed phase owner SHA> <last live request SHA> <last native shutdown SHA>`.
+This mode checks both original service retirements and acquires the shared
+mutex for the affinity observation. It only admits the already verified
+first-lifetime rows. The failed phase and full panel retain their original
+status.
+
 When the CAL service is active, authenticate the retained process and observe
 CPU utilization before placing the new worker. Terminal placement requires
 the natural original settlement. The new same-human worker uses two distinct

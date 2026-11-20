@@ -11,6 +11,20 @@ from inputs import CAMPAIGN, SCIENCE, digest, require
 from r7_inputs import COMPILER, GRAPH, PROJECTION, canonical, checked, parent, read, reference, selected
 
 NUMERICAL = SCIENCE / "score_comparison.py"
+LIVE_SOURCE_PINS = {
+    "r7_reference.py": "c540fc1257f5baea2e13001cf3c6897e60defec12c0bc1b5a05990298cbe377b",
+    "r7_affinity.py": "66211bb41ef81605f6935557fa6233de52370c4c93ed90fe9de7778e4c0d46c0",
+}
+
+
+def compatible_sources(observed, current):
+    if observed == current:
+        return True
+    # The original live workers used these exact pre-recovery runner revisions.
+    # Every scoring dependency must still equal the current reviewed source seal.
+    directory = Path(__file__).resolve().parent
+    original = current | {str(directory / name): sha for name, sha in LIVE_SOURCE_PINS.items()}
+    return observed == original
 
 
 def native_vectors(report, rows, phase, provenance, graph, model_input):
@@ -46,7 +60,8 @@ def verify_cpu(receipt, rows, provenance, role, sources):
     require(path.parent.parent == CAMPAIGN and path.name == "execution.json", "R7 CPU Job path is outside the campaign")
     observed = read(receipt)
     require(observed["schema"] == SCHEMA and observed["complete"] is True and observed["role"] == role
-            and observed["input"] == provenance and observed["sources"] == sources and parent.settled(observed["owned"])
+            and observed["input"] == provenance and compatible_sources(observed["sources"], sources)
+            and parent.settled(observed["owned"])
             and observed["first"] == rows[0]["ordinal"] and observed["count"] == len(rows),
             "R7 independent CPU Job does not match original rows or owner")
     checked(reference(path.with_name("worker.log"), observed["log_sha256"]), limit=16 << 20)

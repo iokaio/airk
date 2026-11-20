@@ -18,6 +18,7 @@ PID = 1234
 OWNER_PID = 4321
 SID = "same-human"
 TERMINAL = dict(outer="a"*64, fixture="b"*64, mutex="c"*64)
+FAILED = dict(outer="a"*64, mutex="c"*64, first_lifetime="d"*64, phase="e"*64, request="f"*64, closed="1"*64)
 DEADLINE = time.monotonic() + 1000
 
 
@@ -25,6 +26,9 @@ class ConfigurationTests(unittest.TestCase):
     def test_two_explicit_operating_modes(self):
         affinity.validate_args(PID, 2, DEADLINE, None)
         affinity.validate_args(None, 2, DEADLINE, TERMINAL)
+        affinity.validate_args(None, 2, DEADLINE, FAILED)
+        with self.assertRaises(ValueError):
+            affinity.validate_args(None, 2, DEADLINE, FAILED | {"fixture": "b"*64})
         invalid = [(None, 2, DEADLINE, None), (0, 2, DEADLINE, None), (True, 2, DEADLINE, None),
                    (PID, 2, DEADLINE, TERMINAL), (PID, 1, DEADLINE, None), (PID, 2, float("nan"), None),
                    (None, 2, DEADLINE, dict(outer="a"*64, fixture="b"*64))]
@@ -112,7 +116,9 @@ class R7ReceiptTests(unittest.TestCase):
     def read(self, path, *, pin=None, sha=None):
         if sha is not None:
             expected = {"outer-owned.json": TERMINAL["outer"], "fixture-closure.json": TERMINAL["fixture"],
-                        "control-mutex-released.json": TERMINAL["mutex"]}
+                        "control-mutex-released.json": TERMINAL["mutex"], "lifetime-closure.json": FAILED["first_lifetime"],
+                        "phase-12.owned.json": FAILED["phase"], "live-request.json": FAILED["request"],
+                        "closed.json": FAILED["closed"]}
             if expected[path.name] != sha:
                 raise ValueError("invalid pinned terminal hash")
         return self.files[path]
@@ -144,6 +150,48 @@ class R7ReceiptTests(unittest.TestCase):
         record["prior"] = {"path": "different lifetime"}
         with self.assertRaisesRegex(ValueError, "terminal lifetime custody"):
             self.terminal()
+
+    def failed_fixture(self):
+        natural_failure = {
+            "exit_code": 1, "timed_out": False, "log_oversized": False, "child_assigned_before_resume": True,
+            "owned_descendants_settled": True, "owned_job_forced_termination": False,
+            "owned_job_final_active_processes": 0, "owned_job_final_member_pids": [],
+        }
+        outer = self.files[affinity.R7 / "outer-owned.json"][0]
+        outer.update(natural_failure)
+        del self.files[affinity.R7 / "fixture-closure.json"]
+        last = affinity.R7 / "lifetime-01"
+        del self.files[last / "lifetime-closure.json"]
+        native, pin, _ = self.files[last / "fixture/closed.json"]
+        self.files[last / "fixture/closed.json"] = native, pin, 300
+        request, pin, stamp = self.files[last / "live-request.json"]
+        self.files[last / "live-request.json"] = request, pin | {"sha256": FAILED["request"]}, stamp
+        failed = natural_failure | {"phase": 12, "request_sha256": FAILED["request"],
+                                    "start_ms": 280, "end_ms": 290, "deadline_ms": self.plan["deadline_ms"]}
+        self.files[last / "phase-12.owned.json"] = failed, {}, 291
+        return failed, native
+
+    def test_failed_terminal_proves_retirement_without_a_full_capture(self):
+        self.failed_fixture()
+        starts = affinity.failed_terminal_receipts(self.support, self.plan, self.pin, self.anchor, FAILED)
+        self.assertEqual([(start["pid"], stamp) for start, stamp in starts], [(PID, 120), (PID+1, 220)])
+        self.support.check_group.assert_called_once()
+        self.support.check_mutex.assert_called_once_with(
+            affinity.R7, self.plan, FAILED["outer"], FAILED["mutex"], 320)
+
+    def test_failed_terminal_refuses_changed_request_or_unclean_teardown(self):
+        failed, native = self.failed_fixture()
+        for change in ({"request_sha256": "wrong"}, {"owned_job_forced_termination": True},
+                       {"end_ms": 301}, {"exit_code": 0}):
+            with self.subTest(change=change):
+                saved = failed.copy()
+                failed.update(change)
+                with self.assertRaisesRegex(ValueError, "failed R7 phase or its native cleanup"):
+                    affinity.failed_terminal_receipts(self.support, self.plan, self.pin, self.anchor, FAILED)
+                failed.update(saved)
+        native["service_lease_reacquired"] = False
+        with self.assertRaisesRegex(ValueError, "failed R7 phase or its native cleanup"):
+            affinity.failed_terminal_receipts(self.support, self.plan, self.pin, self.anchor, FAILED)
 
     def test_live_retained_ready_must_match_token_and_pid(self):
         start, ready, ready_ms, _ = affinity.lifetime_receipts(self.support, self.plan, self.anchor, 1)

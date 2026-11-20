@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from inputs import CAMPAIGN, HERE, ORIGINAL, RAW, SCIENCE, STAGE, STAGE_SHA, digest, ref, require, row_key
 from panel import reference_identity
 from phase_reference import ROOT
-from r7_affinity import place_optional_worker, source_paths as placement_sources
+from r7_affinity import FAILED_TERMINAL_KEYS, TERMINAL_KEYS, place_optional_worker, source_paths as placement_sources
 from r7_inputs import selected
 from run import LIMIT, MARKER, source_set as historical_sources, verify_result
 from science import owners
@@ -184,8 +184,10 @@ def owned(args, rows, provenance, sources):
         argv.extend(["--" + name, provenance[name]["path"], "--" + name + "-sha256", provenance[name]["sha256"]])
     if args.cal_pid is not None:
         argv.extend(["--cal-pid", str(args.cal_pid)])
-    else:
+    elif args.terminal is not None:
         argv.extend(["--terminal", *args.terminal])
+    else:
+        argv.extend(["--failed-terminal", *args.failed_terminal])
 
     def suspended(api, handle, info, child_deadline):
         evidence = parent.suspended_authentication(api, info, deadline, child_deadline,
@@ -241,13 +243,15 @@ def main():
     parser.add_argument("--role", choices=ROLES, required=True)
     affinity = parser.add_mutually_exclusive_group()
     affinity.add_argument("--cal-pid", type=int)
-    affinity.add_argument("--terminal", nargs=3)
+    affinity.add_argument("--terminal", nargs=len(TERMINAL_KEYS), metavar=TERMINAL_KEYS)
+    affinity.add_argument("--failed-terminal", nargs=len(FAILED_TERMINAL_KEYS), metavar=FAILED_TERMINAL_KEYS)
     parser.add_argument("--source-set")
     args = parser.parse_args()
     require(sys.platform == "win32" and sys.flags.isolated and sys.flags.no_site and sys.dont_write_bytecode,
             "use the original checked Windows Python -I -B -S")
     if not args.check_only:
-        require(args.cal_pid is not None or args.terminal is not None, "explicit live CAL PID or original terminal custody required")
+        require(any(value is not None for value in (args.cal_pid, args.terminal, args.failed_terminal)),
+                "explicit live CAL PID or original terminal custody required")
     rows, provenance = inputs(args)
     sources = source_set()
     if args.check_only:
@@ -260,7 +264,11 @@ def main():
         require(0 < args.worker_deadline - time.monotonic() <= 600 and sources == json.loads(args.source_set),
                 "foreign parent source proof or worker deadline")
         _, _, plan, _, _ = verified_runtime(args.worker_deadline)
-        terminal = dict(zip(("outer", "fixture", "mutex"), args.terminal, strict=True)) if args.terminal else None
+        terminal = None
+        if args.terminal is not None:
+            terminal = dict(zip(TERMINAL_KEYS, args.terminal, strict=True))
+        elif args.failed_terminal is not None:
+            terminal = dict(zip(FAILED_TERMINAL_KEYS, args.failed_terminal, strict=True))
         result = checked_science(rows, args.role, provenance, args.worker_deadline,
                                  args.cal_pid, terminal, plan["python"], sources)
         verify_result(result, rows, provenance["mode"], args.role)
