@@ -182,3 +182,48 @@ capacity, tmpfs use and swap. Reserve 4 GiB for tmpfs and 8 GiB for the native
 processes. A failed request retains the instance for diagnosis for up to 180
 seconds. Lifecycle settlement releases the service. The native standalone
 `install.sh` journey and model execution each require separate evidence.
+
+### Experimental GNU R7 overlays
+
+These four sources belong to the signed `f3978a12` CPU-only Retrieval check.
+The campaign currently holds Ubuntu startup because the configured 16 GiB
+swap file could be allocated on C: before a guest process can observe it.
+
+When guest startup is authorized, run `python3 -B -S target_overlay.py` as
+the verified native UID 1000 for the small private XDG copy-up control.
+The historical receipt `linux-same-uid-overlay-r1.json` (SHA-256
+`4306e8e36836a9c1f6fed52eba13d836163c6b6960f6f6fe12ae40600262b062`)
+covers its earlier source. It observed unchanged lower bytes and inode, four
+UID fields equal to 1000, cleared capabilities and zero VHD length growth.
+
+`overlay_target.py` checks the real target/cache mount topology in a fresh
+private namespace. `overlay_confinement.py` makes every inherited mount
+read-only, restores the private tmpfs and checks the writable mounts before
+dropping namespace capabilities. `python3 -B -S overlay_target.py` requires
+the original guest and host volume budgets, spare RAM and executable user
+tmpfs. Its real-target control still needs a successful native run.
+
+`overlay_nextest.py` additionally requires disabled guest swap and an
+original-user test namespace with only the private XDG tmpfs writable. It
+checks these prerequisites before compiling. The runner uses the original
+signed R7 source/static inputs and warm target, a 1.5 GiB tmpfs upper, one
+Cargo worker and an 8 GiB address-space cap. It exports the checked test ELF
+into user tmpfs so runtime tests can inspect the true system file owners.
+The normal Ubuntu mount layout does not meet the original-namespace write
+constraint. Windows host commit, pagefile and physical backing admission
+remain separate prerequisites. The disabled-swap check belongs only to this
+experimental zero-write diagnostic. A separately authorized Ubuntu run with
+bounded D:-backed swap can use the ordinary native gate under its own approved
+volume and memory budgets. Verify the actual backing location and allocation
+before admission. R7 Nextest still needs native execution.
+
+The retained host inventory identifies kernel
+`5.15.167.4-microsoft-standard-WSL2`. Microsoft's matching configuration
+enables Landlock; the tagged implementation supplies ABI 1. A read-only ABI
+query in the actual guest remains pending. This ABI lacks file-truncation
+control, and Landlock leaves some inode metadata changes unrestricted. An
+original-UID per-process policy would preserve real system file owners, but
+needs separate enforcement for those writes and genuine native validation.
+See the [WSL kernel configuration](https://github.com/microsoft/WSL2-Linux-Kernel/blob/linux-msft-wsl-5.15.167.4/arch/x86/configs/config-wsl#L3412-L3416),
+the [tagged ABI implementation](https://github.com/microsoft/WSL2-Linux-Kernel/blob/linux-msft-wsl-5.15.167.4/security/landlock/syscalls.c#L133)
+and the [kernel's filesystem access documentation](https://docs.kernel.org/userspace-api/landlock.html#filesystem-flags).
