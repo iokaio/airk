@@ -172,6 +172,58 @@ class ServiceClientTests(unittest.TestCase):
                                                                "arch": "x86_64", "files": inventory}), encoding="utf-8")
         return runtime, metadata
 
+    def test_original_pair_flag_reaches_full_fixture_and_both_cold_modes(self):
+        import sys
+        class FixtureReached(Exception):
+            pass
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            pair, _ = self.original_c7_pair(root)
+            with patch.object(CLIENTS, "qualify_cold", return_value={}) as cold, \
+                    patch.object(CLIENTS, "owned_client_fixture", side_effect=lambda: tempfile.TemporaryDirectory(dir=root)), \
+                    patch.object(CLIENTS, "Fixture", side_effect=FixtureReached) as fixture:
+                with self.assertRaises(FixtureReached):
+                    CLIENTS.qualify(pair, 1, False, preserve_pair_metadata=True)
+                cold.assert_called_once_with(pair, preserve_pair_metadata=True)
+                self.assertTrue(fixture.call_args.kwargs["preserve_pair_metadata"])
+            for flag in (True,False):
+                with self.subTest(flag=flag), patch.object(CLIENTS,"Fixture") as fixture, \
+                        patch.object(CLIENTS,"cold_first_status",return_value={}), \
+                        patch.object(CLIENTS,"owned_client_fixture",side_effect=lambda: tempfile.TemporaryDirectory(dir=root)):
+                    CLIENTS.qualify_cold(pair,preserve_pair_metadata=flag)
+                    self.assertEqual([c.kwargs["preserve_pair_metadata"] for c in fixture.call_args_list],[flag,flag])
+            for cold_only,entry in ((False,"qualify"),(True,"qualify_cold")):
+                argv=["check-service-clients.py","--runtime-dir",str(pair),"--preserve-pair-metadata"]
+                if cold_only:
+                    argv.append("--cold-clients-only")
+                with self.subTest(entry=entry), patch.object(sys,"argv",argv), \
+                        patch.object(CLIENTS,entry,return_value={}) as target, \
+                        contextlib.redirect_stdout(io.StringIO()) as text:
+                    CLIENTS.main()
+                    self.assertTrue(target.call_args.kwargs["preserve_pair_metadata"])
+                    self.assertEqual(json.loads(text.getvalue())["original_pair_manifest_sha256"],
+                                     CLIENTS.file_sha256(pair/"airk-install.json"))
+
+    def test_client_smoke_rejects_replaced_original_pair_manifest(self):
+        import sys
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            pair, _ = self.original_c7_pair(root)
+            manifest = pair / "airk-install.json"
+            report = root / "report.json"
+
+            def replace_manifest(*args, **kwargs):
+                manifest.write_bytes(manifest.read_bytes() + b"\n")
+                return {}
+
+            argv = ["check-service-clients.py", "--runtime-dir", str(pair),
+                    "--preserve-pair-metadata", "--report", str(report)]
+            with patch.object(sys, "argv", argv), patch.object(CLIENTS, "qualify", replace_manifest):
+                with self.assertRaisesRegex(ValueError, "manifest changed"):
+                    CLIENTS.main()
+            self.assertFalse(report.exists())
+
     def test_split_pair_classification_and_images(self):
         with tempfile.TemporaryDirectory() as temporary:
             runtime, metadata = self.split_pair(Path(temporary))

@@ -1713,7 +1713,7 @@ def cold_first_status(fixture, admission, *, case_deadline=None):
                 raise cleanup_errors[0]
 
 
-def qualify_cold(runtime):
+def qualify_cold(runtime, *, preserve_pair_metadata=False):
     runtime = runtime_root(runtime)
     results = []
     for admission in ("sequential", "concurrent"):
@@ -1723,7 +1723,7 @@ def qualify_cold(runtime):
             owner = Path(temporary)
             root, data = owner / "source", owner / "data"
             root.mkdir(); data.mkdir()
-            with Fixture(runtime, owner) as fixture:
+            with Fixture(runtime, owner, preserve_pair_metadata=preserve_pair_metadata) as fixture:
                 fixture.register("cold", root, data)
                 remaining(case_deadline, 240)
                 result = cold_first_status(fixture, admission, case_deadline=case_deadline)
@@ -1734,13 +1734,13 @@ def qualify_cold(runtime):
             "cold_first_status": results}
 
 
-def qualify(runtime, files, model, answer_validator=None):
+def qualify(runtime, files, model, answer_validator=None, *, preserve_pair_metadata=False):
     runtime = runtime_root(runtime)
     started = time.monotonic()
     if answer_validator is not None:
         current_answer_arguments("polaronlymarker")
         assert Path(answer_validator).is_file(), "Prebuilt native Answer validator is missing"
-    cold = (qualify_cold(runtime) if classify_runtime(runtime)["topology"] in ("single_image", "split_pair")
+    cold = (qualify_cold(runtime, preserve_pair_metadata=preserve_pair_metadata) if classify_runtime(runtime)["topology"] in ("single_image", "split_pair")
             and classify_runtime(runtime)["authority"] == "catalog" else {"cold_first_status": None})
     with owned_client_fixture() as temporary:
         owner = Path(temporary)
@@ -1761,7 +1761,7 @@ def qualify(runtime, files, model, answer_validator=None):
                         f"    return {number}\n")
                 path.write_text(text, encoding="utf-8")
                 original[path] = hashlib.sha256(path.read_bytes()).hexdigest()
-        fixture = Fixture(runtime, owner)
+        fixture = Fixture(runtime, owner, preserve_pair_metadata=preserve_pair_metadata)
         fixture.answer_validator = answer_validator
         try:
             fixture.start()
@@ -1853,6 +1853,8 @@ def main():
     parser.add_argument("--files", type=int, default=16)
     parser.add_argument("--model", action="store_true")
     parser.add_argument("--answer-validator", type=Path, help="Prebuilt current combined_reads integration test binary for full /2 unassessed Answer transport parity; never invokes Cargo")
+    parser.add_argument("--preserve-pair-metadata", action="store_true",
+                        help="Stage the original verified split pair, including its original manifest and build receipt")
     parser.add_argument("--cold-clients-only", action="store_true", help="Fresh sequential and concurrent four-client HTTPS first-status checks")
     parser.add_argument("--report", type=Path)
     args = parser.parse_args()
@@ -1861,7 +1863,17 @@ def main():
     if not 1 <= args.files <= 2048:
         parser.error("files must be 1..2048")
     runtime = args.runtime_dir.resolve(strict=True)
-    report = qualify_cold(runtime) if args.cold_clients_only else qualify(runtime, args.files, args.model, args.answer_validator)
+    pair_manifest = runtime_root(runtime) / "airk-install.json" if args.preserve_pair_metadata else None
+    original_manifest = file_sha256(pair_manifest) if pair_manifest is not None else None
+    if args.cold_clients_only:
+        report = qualify_cold(runtime, preserve_pair_metadata=args.preserve_pair_metadata)
+    else:
+        report = qualify(runtime, args.files, args.model, args.answer_validator,
+                         preserve_pair_metadata=args.preserve_pair_metadata)
+    if pair_manifest is not None:
+        if file_sha256(pair_manifest) != original_manifest:
+            raise ValueError("Original split-pair manifest changed during client smoke")
+        report["original_pair_manifest_sha256"] = original_manifest
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)
         args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
