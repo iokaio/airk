@@ -39,7 +39,19 @@ def main():
     pilot, inputs, engineering, focus1024, zero = (checked(path) for path in OWNERS)
     require, pin = pilot["require"], pilot["pin"]
     case_id = args.case
-    if case_id == engineering["CASE"]:
+    source_pins = dict(OWNERS)
+    active_fd = case_id in ("FD_1394", "FD_1162")
+    if active_fd:
+        require(args.focus_width == 1024, "the two fd issue inputs use the active Focus profile")
+        source = SHARED.parent / "contextbench_fd_issue_inputs.py"
+        source_pins[source] = "c26a319ddbb1bc80a7c6f6ae4d41e4b4651291411d7ecd3a0b923051d2aeaf48"
+        pin(source, source_pins[source])
+        fd = runpy.run_path(str(source))
+        key, expected = fd["STAGED_SHA"][case_id]
+        directory = fd["STAGED"] / key
+        read_input = lambda: fd["validate_staged"](case_id)
+        source_name = "ContextBench exposed repository " + key
+    elif case_id == engineering["CASE"]:
         directory = engineering["OUTPUT"]
         expected = "3dd3af9254b59c84792afce8ea6040c26a2789b7d78fb037b09ae7ed26c4860f"
         read_input = engineering["validate_one"]
@@ -64,7 +76,9 @@ def main():
     def validate():
         descriptor = read_input()
         require(inputs["digest"](inputs["encode"](descriptor)) == original_sha, "case roster changed")
-        return focus1024["bind"](descriptor, original_sha) if args.focus_width == 1024 else descriptor
+        if args.focus_width == 1024 and not active_fd:
+            return focus1024["bind"](descriptor, original_sha)
+        return descriptor
 
     variant = ""
     if args.focus_width == 1024:
@@ -105,9 +119,9 @@ def main():
     result["source_sha256"] = before
     result["focus_width"] = args.focus_width
     result["capture_descriptor_sha256"] = expected
-    result["support_sha256"] = {path.name: sha for path, sha in OWNERS.items()}
+    result["support_sha256"] = {path.name: sha for path, sha in source_pins.items()}
     result["source_seals_unchanged"] = (pin(handler) == before and pin(pilot["NATIVE"]) == pilot["NATIVE_SHA"]
-                                        and all(pin(path) == sha for path, sha in OWNERS.items()))
+                                        and all(pin(path) == sha for path, sha in source_pins.items()))
     native["write_json"](output / "owned.json", result)
     require(owner.successful(result) and result["source_seals_unchanged"] and result["owned_job_final_active_processes"] == 0
             and result["owned_job_final_member_pids"] == [] and (output / "capture.private.json").is_file(),

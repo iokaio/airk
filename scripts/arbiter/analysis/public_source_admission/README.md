@@ -255,3 +255,11 @@ source revision and file census, and preserves the original native request
 budgets under the selected static 1,024 Focus profile. Audit the three
 generated files per case and verify with `--check-only`. Both cases were
 previously exposed. Scoring and native action menus need separate receipts.
+
+Use the checked development runner with `-CaseId FD_1394` or `FD_1162`,
+`-FocusWidth 1024` and a fresh attempt to capture each native offered-action
+menu. The runner verifies all original source bytes, both license-bound tree
+identities through the manifest, the frozen native inventory, the issue
+request and original budgets before and after the actual Answer request.
+
+Pass `--focus-width 1024` to verify the exposed widened pilot against the same source span. This consumes its own native Answer, admission observation, publication and settled Job receipt.

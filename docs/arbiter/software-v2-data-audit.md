@@ -689,3 +689,5 @@ Private inventory digest
 ### Delivered evidence on the exposed DEV_Q002 pilot
 
 The static-512 pilot returned 24 hits in six records. One hit cited the publisher's gold document (lines 1–27). Its delivered excerpt covered bytes [0,749), overlapping 43 of the 154 required bytes [706,860). The exact-span rubric therefore records incomplete evidence on this Answer. This observation concerns the original width-selection pilot only. It supplies no held-out or paired estimate for the revised Focus profile.
+
+On the exposed static-1024 DEV_Q002 run, Focus forwarded and the native compiler admitted a Context input. The Answer returned 20 hits in five records. It again delivered only [0,749) of the publisher document, covering the same 43 of 154 required bytes. This run observed the Context input before a forward. Increasing Focus width resolved the admission failure on this case; the delivered evidence remained incomplete. Receipt f43aa0c9f1ec6b870de18dd1b6f09f000536b9f368cb123eb55d26ee2c619565.

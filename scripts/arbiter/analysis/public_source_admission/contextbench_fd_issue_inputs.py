@@ -5,7 +5,6 @@ import hashlib
 from pathlib import Path
 import runpy
 
-import pyarrow.parquet as parquet
 
 
 HERE = Path(__file__).resolve().parent
@@ -24,7 +23,45 @@ CASES = {
 FIELDS = ["original_inst_id", "instance_id", "repo", "base_commit"]
 
 
+STAGED = CAMPAIGN / "contextbench-fd-issue-inputs-r1"
+STAGED_SHA = {
+    "FD_1394": ("sharkdp__fd-1394", "5c1ba7c0a8f22d2b130251175934f8ac2621bb12d2986cb203cc9826cdb8f84c"),
+    "FD_1162": ("sharkdp__fd-1162", "14465587cf604e7b6607ddb7fc917b0f21a203a37944d8a57ae521c914e964ad"),
+}
+
+
+def validate_staged(case):
+    """Recheck all staged source and native inputs without reopening publisher annotations."""
+    key, seal = STAGED_SHA[case]
+    directory = STAGED / key
+    active = load(directory / "pilot.private.json", seal)
+    require(active["question_id"] == key and active["cpu_focus_manifest"] == focus["FOCUS"], "unexpected issue identity")
+    for name, sha in active["private_files"].items():
+        base["pin"](directory / name, sha)
+    revision, receipt_sha = CASES[key]
+    census = load(CAMPAIGN / ("fd-" + revision[:8] + "-native-source-reads-r1/native-reads.private.json"), receipt_sha)
+    require(census["cases"][0]["native_inventory_order"] == active["publisher_order"], "ordered native corpus differs")
+    tree, = [row for row in load(TREE_ROOT / "manifest.private.json", TREE_SHA)["revisions"] if row["base"] == revision]
+    root = TREE_ROOT / revision
+    require(str(root) == active["source_root"] and {p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file()}
+            == set(active["complete_source_paths"]) == {r["path"] for r in tree["files"]}, "complete source coverage differs")
+    for member in tree["files"]:
+        base["pin"](root / member["path"], member["sha256"])
+    shared, template = base["settings"]()
+    request = load(directory / "request.private.json", active["private_files"]["request.private.json"])
+    require(request == dict(template, question=request["question"]) and digest(request["question"].encode()) == active["question_sha256"],
+            "source question or original native envelope differs")
+    original_sha = active["original_focus512_descriptor_sha256"]
+    original = dict(active, **shared)
+    for key in ("original_focus512_descriptor_sha256", "focus1024_launch_audit_sha256", "focus1024_resource_policy_digest"):
+        del original[key]
+    require(digest(encode(original)) == original_sha and focus["bind"](original, original_sha) == active,
+            "unverified active runtime or source binding")
+    return active
+
+
 def selected_requests():
+    import pyarrow.parquet as parquet
     selection = load(CAMPAIGN / "repository-confirmation-multilang-r1/contextbench-14-selection-r1.private.json", SELECT_SHA)
     ids = {r["original_inst_id"]: {k: r[k] for k in FIELDS} for r in selection["rows"] if r["original_inst_id"] in CASES}
     require(ids.keys() == CASES.keys(), "the selected issue pair differs")

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidatePattern('^(TRAIN_Q[0-9]{3}|ENGINEERING_FIXED|DEV_Q002_EXPOSED)$')][string]$CaseId,
+    [Parameter(Mandatory)][ValidatePattern('^(TRAIN_Q[0-9]{3}|ENGINEERING_FIXED|DEV_Q002_EXPOSED|FD_1394|FD_1162)$')][string]$CaseId,
     [Parameter(Mandatory)][ValidateRange(1, 9999)][int]$Attempt,
     [ValidateSet(512, 1024)][int]$FocusWidth = 512
 )

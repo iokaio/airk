@@ -80,3 +80,8 @@ every case in the frozen TRAIN roster in its original order. The separate
 `compare_focus_q111.py` checks that both actual admissions have identical full
 compiler tensors and equivalent ordered native choices, retains both scopes
 and original budgets, and binds the independent publisher-reference scores.
+
+Run `collect_focus1024_train.py` with isolated Python to emit the whole frozen
+TRAIN roster and the state of its first capture attempts. It rehashes original
+and active input descriptors, checks native admission records and preserves
+every zero, unqualified or pending case in the denominator. Keep stdout private.
