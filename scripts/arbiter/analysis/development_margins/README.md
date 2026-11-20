@@ -111,3 +111,5 @@ fresh-run output root. Historical imported model copies removed by the
 approved cleanup remain historical. Prospective native captures must
 reserve the three exact independent asset copies and native graph-overlay
 headroom. Their canonical source model bytes remain independently checked.
+
+Run compare_engineering_recipes.py with the checked Python interpreter and bytecode disabled to compare the original seven-option, 1,014-token engineering request under its three measured CUDA graphs. It reopens the pinned run and native receipts, requires the same compiled input, roster and original FP32 vector, and recomputes per-option raw and normalized-mass drift. Output includes median, nearest-rank p95, maximum and changed pairwise ordering relative to each graph's matching reference. With seven options the nearest-rank p95 equals the maximum. This is one development request and supplies no judged paired outcome.
