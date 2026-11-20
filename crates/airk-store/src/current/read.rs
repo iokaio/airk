@@ -294,17 +294,29 @@ impl CurrentRead {
         &self,
         embedding_key: airk_core::identity::Sha256Digest,
     ) -> Result<Option<VectorBinding>> {
-        let Some(bytes) = self.map_get(map::MapDomain::Vector, embedding_key.as_bytes())? else {
+        let Some(binding) = self.mapped_vector_binding(embedding_key)? else {
             return Ok(None);
         };
-        let binding = VectorBinding::decode(&bytes, &self.head, embedding_key)?;
-        let record = self.read(binding.graph_id)?;
+        Self::verify_vector_record(&binding, &self.read(binding.graph_id)?)?;
+        Ok(Some(binding))
+    }
+
+    fn mapped_vector_binding(
+        &self,
+        key: airk_core::identity::Sha256Digest,
+    ) -> Result<Option<VectorBinding>> {
+        self.map_get(map::MapDomain::Vector, key.as_bytes())?
+            .map(|bytes| VectorBinding::decode(&bytes, &self.head, key))
+            .transpose()
+    }
+
+    fn verify_vector_record(binding: &VectorBinding, record: &GraphRecord) -> Result<()> {
         ensure!(
-            record.embedding_key == Some(embedding_key)
+            record.embedding_key == Some(binding.embedding_key)
                 && record.live == !binding.occurrence_ids.is_empty(),
             "current vector binding differs from graph record"
         );
-        Ok(Some(binding))
+        Ok(())
     }
 
     /// Resolve an ANN candidate by physical ID. A live graph node without an
@@ -316,13 +328,24 @@ impl CurrentRead {
             .embedding_key
             .context("current graph candidate has no key")?;
         let binding = self
-            .vector_binding(embedding_key)?
+            .mapped_vector_binding(embedding_key)?
             .context("live graph candidate has no current vector binding")?;
+        if binding.graph_id == graph_id {
+            Self::verify_vector_record(&binding, &record)?;
+        } else {
+            // Preserve validation of the graph row named by a mismatched binding.
+            Self::verify_vector_record(&binding, &self.read(binding.graph_id)?)?;
+        }
         ensure!(
             binding.graph_id == graph_id,
             "current graph candidate ID mismatch"
         );
         Ok(binding)
+    }
+
+    /// Resolve pointers under this reader's original publication and access scope.
+    pub fn graph_candidate_pointers(&self, graph_id: u32) -> Result<Vec<OccurrencePointer>> {
+        self.pointers_from_binding(self.vector_for_graph_id(graph_id)?)
     }
 
     /// Returns bounded authenticated pointers only. The caller must load and
@@ -334,6 +357,11 @@ impl CurrentRead {
         let Some(binding) = self.vector_binding(embedding_key)? else {
             return Ok(None);
         };
+        self.pointers_from_binding(binding).map(Some)
+    }
+
+    fn pointers_from_binding(&self, binding: VectorBinding) -> Result<Vec<OccurrencePointer>> {
+        let embedding_key = binding.embedding_key;
         let mut pointers = Vec::with_capacity(binding.occurrence_ids.len());
         for occurrence_id in binding.occurrence_ids {
             let bytes = self
@@ -357,7 +385,8 @@ impl CurrentRead {
             );
             pointers.push(pointer);
         }
-        Ok(Some(pointers))
+        self.live()?;
+        Ok(pointers)
     }
 
     /// Authenticates the compact record and path. Call FileStore's verified

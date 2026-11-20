@@ -683,12 +683,13 @@ fn vector_candidates(
         }
     } else {
         let ranked = graph.search(&vector, wanted)?;
+        #[cfg(feature = "test-support")]
+        let pointer_timing = (std::env::var_os("AIRK_PRIVATE_VECTOR_POINTER_TIMING").as_deref()
+            == Some(std::ffi::OsStr::new("1")))
+        .then(|| (std::time::Instant::now(), ranked.hits.len()));
         incomplete |= ranked.partial || (ranked.hits.len() as u64) < graph.counts()?.live_nodes;
         'nodes: for (id, _) in ranked.hits {
-            let binding = read.vector_for_graph_id(id)?;
-            let mut pointers = read
-                .vector_occurrence_pointers(binding.embedding_key)?
-                .context("current candidate occurrences missing")?;
+            let mut pointers = read.graph_candidate_pointers(id)?;
             pointers.sort_by(|a, b| {
                 a.path
                     .cmp(&b.path)
@@ -701,6 +702,14 @@ fn vector_candidates(
                 }
                 selected.push(Arc::new(pointer));
             }
+        }
+        #[cfg(feature = "test-support")]
+        if let Some((start, ranked_count)) = pointer_timing {
+            eprintln!(
+                "AIRK_VECTOR_POINTER_TIMING wanted={wanted} ranked={ranked_count} pointer_count={} elapsed_ns={}",
+                selected.len(),
+                start.elapsed().as_nanos()
+            );
         }
     }
     let mut seen = BTreeSet::new();

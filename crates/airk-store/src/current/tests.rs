@@ -20,6 +20,7 @@ use std::{
 };
 
 mod grants_tests;
+mod graph_candidates;
 mod postings_tests;
 mod recent_tests;
 mod service_publication_tests;
@@ -699,6 +700,14 @@ fn changed_artifact_attaches_and_replaces_exact_vector_occurrence() -> Result<()
     let read = fixture.store.current_read(&fixture.scope)?;
     let mut expected = vec![replacement.pointer, additional.pointer];
     expected.sort_by_key(|pointer| pointer.occurrence_id);
+    assert_eq!(
+        read.graph_candidate_pointers(
+            read.vector_binding(key)?
+                .context("live shared vector missing")?
+                .graph_id
+        )?,
+        expected
+    );
     assert_eq!(read.vector_occurrence_pointers(key)?, Some(expected));
     assert_eq!(read.counts()?.live_nodes, 1);
     let base = read.head().clone();
