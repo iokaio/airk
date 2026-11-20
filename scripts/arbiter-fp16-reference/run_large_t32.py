@@ -27,6 +27,7 @@ SUPPORT_SHA = "50d5c7237cd057a1d08ea79794bbdda0f1e141438a2d22580a760e418f9e3d75"
 HOST = 32 << 30
 SECONDS = 600
 MARKER = "AIRK_LARGE_FP16_T32 "
+FLASH_RECIPE = "baseline-half-sm86-causal-flash-single-tile"
 
 
 def require(value, message):
@@ -210,7 +211,7 @@ def reference(args):
     observe("graph_and_learned_bytes_verified")
     row = meta["rows"][0]
     require(len(row["input"]["input_ids"]) == 32, "T32 reference required")
-    scores = independent.forward(row["input"])
+    scores = independent.forward(row["input"], context_flash_single_tile=args.recipe == FLASH_RECIPE)
     require(scores.dtype == torch.float32 and scores.device.type == "cpu" and tuple(scores.shape) == (1, 8)
             and not torch.cuda.is_initialized(), "CPU-only T32 score ABI differs")
     observe("t32_forward_completed")
@@ -228,7 +229,7 @@ def reference(args):
     for root, fixture, producer in prep["PAIRS"]:
         support["read_pinned_json"](root / "numeric-fixture.json", fixture, check)
         support["read_pinned_json"](root / "reference-producer.json", producer, check)
-    return {"model": "large", "recipe": "baseline-half", "conversion_plan": pp, "conversion_receipt": rp,
+    return {"model": "large", "recipe": args.recipe, "conversion_plan": pp, "conversion_receipt": rp,
             "source_inputs": mp, "graph": proofs["graph"], "weights": proofs["weights"], "verification": verification,
             "publisher": publisher, "streamed_loader": inputs[str(STREAM)], "input_digest": row["input"]["input_digest"], "original_fp32": row["reference_original_fp32"],
             "matching_fp16": vector, "loaded_runtime": support["loaded_runtime"](inputs, c["pin"], check),
@@ -253,7 +254,8 @@ def run(args):
     source = c["pin"](HERE, check)
     argv = [sys.executable, "-I", "-B", "-S", "-X", "pycache_prefix=" + plan["cache_prefix"], str(HERE),
             "--worker", "--plan", str(args.plan), "--plan-sha256", pp["sha256"], "--conversion", str(args.conversion),
-            "--conversion-sha256", rp["sha256"], "--deadline", repr(deadline), "--worker-sha256", source["sha256"]]
+            "--conversion-sha256", rp["sha256"], "--deadline", repr(deadline), "--worker-sha256", source["sha256"],
+            "--recipe", args.recipe]
     env = {k: v for k, v in os.environ.items() if not k.upper().startswith(
         ("AIRK_", "ORT_", "PYTHON", "CUDA_", "CUDNN_", "TORCH_", "TRITON_", "HF_", "HUGGINGFACE_"))}
     env.update(CUDA_VISIBLE_DEVICES="", HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1", TOKENIZERS_PARALLELISM="false",
@@ -284,7 +286,7 @@ def run(args):
         require(obs["conversion_plan"] == pp and obs["conversion_receipt"] == rp and obs["source_inputs"] == mp
                 and obs["graph"] == proofs["graph"] and obs["weights"] == proofs["weights"]
                 and obs["pid"] == owned["owned_leader_pid"] and obs["token"] == token and obs["deadline"] == deadline
-                and obs["model"] == "large" and obs["recipe"] == "baseline-half" and obs["device"] == "cpu"
+                and obs["model"] == "large" and obs["recipe"] == args.recipe and obs["device"] == "cpu"
                 and obs["job"] == {"process_bytes": HOST, "job_bytes": HOST, "active_limit": 2}
                 and obs["forward_count"] == 1 and obs["original_fp32"] == meta["rows"][0]["reference_original_fp32"]
                 and obs["input_digest"] == meta["rows"][0]["input"]["input_digest"] and support["finite_scores"](obs["matching_fp16"])
@@ -323,6 +325,7 @@ if __name__ == "__main__":
     mode.add_argument("--worker", action="store_true")
     parser.add_argument("--deadline", type=float)
     parser.add_argument("--worker-sha256")
+    parser.add_argument("--recipe", choices=("baseline-half", FLASH_RECIPE), default="baseline-half")
     args = parser.parse_args()
     require(sys.flags.isolated and sys.flags.no_site and sys.dont_write_bytecode, "run with -I -B -S")
     if args.worker:

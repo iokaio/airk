@@ -76,3 +76,27 @@ for the CPU launcher controls. The Windows suspension test uses a tensor-free
 child to check the actual caps and natural settlement. Use the provisioned
 Torch environment to run `test_large_publisher.py` for the dense-versus-streamed
 source census and complete literal forward comparison.
+
+For Windows SM86 Context Large, retain the original all-FP32 softmax/PV baseline.
+The distinct `baseline-half-sm86-causal-flash-single-tile` T32 recipe uses the
+committed CPU operand computation in `arbiter-fp16-reference.py`. For T128,
+T1024 and T8192, `large_flash.py` follows the causal 64-by-64 SM86 H128
+kernel, scanning keys right to left. QK uses half operands and FP32 accumulation.
+Compute base-two exponentials in FP32, retain the original denominator and
+narrow the unnormalized exponent tile to FP16 for PV. Rescale the previous
+FP32 numerator and four denominator lane sums at each tile boundary, combine
+the four sums by XOR-2 then XOR-1, normalize once and narrow the result to FP16.
+CPU matrix products and exponential instructions can round differently from
+the device. The CPU recipe supports the frozen all-live inputs only. These
+mathematical choices apply before inspecting any full-model score.
+
+The independent two-tile operand controls in `test_large_flash.py` cover causal
+key count, denominator precision, exponent narrowing and online rescaling.
+The provider source authority is the CU15 configured ORT source inventory
+`e66d54941f57a37882d099c32f2087b5f6b391f592655fca192b493c347c8b9c`.
+Its `flash_fwd_launch_template.h`, `flash_fwd_kernel.h`, `softmax.h`,
+`kernel_traits.h` and `utils.h` own the selected block traits, iteration,
+narrowing and normalization. The linked CUTLASS SM80 C-layout definition in
+`mma_traits_sm80.hpp` has SHA-256
+`6c39df1b65facd9322bfdf4a74dfb0bf97f1694892ac9b43a61e1590191a364e`.
+Qualify each model, width and native execution identity separately.
