@@ -410,3 +410,17 @@ service image before inference. Historical serial timings put the final
 pace. A concurrent two-role run would need separate memory admission and
 disjoint observed core placement. Neither release is ready, and no artifact
 was published.
+
+### Isolated Windows phase 11 completed, 20 November 2026 at 19:31 UTC
+
+The same-image 8-question timing replay closed naturally with all 56 ordered
+native calls matching. The 787.790-second worker was 398.896 seconds faster
+than the original. Fresh setup through closure took 837.948 seconds. Treat
+this as sufficient timing evidence and proceed to the next full Windows
+capture. Use the newest timing retirement linked in the ledger as physical
+handoff evidence alongside the original R3 restart anchor. Bind a distinct
+full-capture launcher and volume monitoring for the complete original
+10,800-second common budget, and reserve Windows against competing heavy
+work. Review completion after all four final questions and fixture shutdown.
+R7 remains at 96 closed rows. The timing run has settled and no full
+successor is running.

@@ -116,3 +116,25 @@ active resource trials. Either mode describes the failed R7 attempt and
 leaves its scientific capture incomplete. A new launch and common-clock
 decision are outside this preflight. Run the model-free cases with
 `python -I -B -S -m unittest discover -s . -p test_r8_predecessor.py`.
+
+### Isolated phase 11 timing
+
+In the checked Windows shell, prepare the fresh campaign directory
+`cal100-r8-phase11-isolated-timing-r1` and its checked D: scratch directory.
+With the original pinned Node binary, run
+`python -I -B -S r8_phase_timing.py --output <absolute campaign directory> --node <absolute pinned Node>`.
+The launcher authenticates R7's failed custody and hashes the shared control
+tree under its mutex before starting the timing clock. The owned 32 GiB Job
+uses the same R7 image, request template, and phase 11 eight-question
+population. It retains the 1,800-second phase limit, 120-second service
+operation budget, and five-second delivery allowance.
+
+The timing proof requires the same 56 ordered native operations and full
+arguments as the original phase, including 40 probes. It writes a diagnostic
+closure under `timing-run/phase-11-timing-closure.json` and reports original
+and diagnostic elapsed times on stdout. The service starts fresh and its
+previous cache or warm state has no equivalence claim. The trial changes the
+latest native retirement of the shared installation. Retain its closure and
+mutex receipts for any later restart. This timing evidence does not qualify
+capture or calibration. Run the model-free controls with
+`python -I -B -S -m unittest discover -s . -p test_r8_phase_timing.py`.
