@@ -13238,3 +13238,17 @@ All seven phase Jobs completed on the Windows A6000 in the retained scientific C
 | 04 | 15:54:44.818 | 7803817984 | `f5e5b4c28bffbe8f078ad799a4f6fc5d19c48f507aa56c690aa3ff9c554f82e2` |
 | 05 | 15:56:09.673 | 7268257792 | `eabebbdecd2b08d0df39c3aaeb81266d58830b72399c4b5d5dc2ca89ff07e148` |
 | 06 | 15:57:34.208 | 7812608000 | `dc8be457da2f91e1ed52466e9ec3be4a27c2acf5d7fa01ce9caabe1c8d9da58a` |
+
+### 20 November 2026 at 16:05 UTC — delivery target lifted and R7 reference path
+
+Tyler removed the overall 10:10 a.m. Denver delivery target and asked to continue. This changes the scheduling target. Preserve the original R7 capture deadline, the per-Job resource and time limits, provider order, and all existing exact receipts. The R4 volume watcher still has its scheduled end and remains authoritative while active. Before writes beyond that settlement, reopen the original baselines and observe a checked successor watcher with the same approved disk and swap budgets.
+
+The second CAL R7 lifetime has closed phases 07 and 08, bringing total capture to 72 questions. Phase 08 closed at 16:00:34.347 UTC. Continue the live capture under its original owner. The first 56 original inputs, compiler and raw Compact scores are closed and can drive the two independent CPU references. Keep historical R5 consumers intact while adding a guarded R7 reader, CPU placement and reference execution path. This supplies the next inputs for independent numerical comparison and later fitting. It does not establish native calibration or release readiness.
+
+### 20 November 2026 at 16:18 UTC — R7 independent CPU reference admission
+
+The second R7 lifetime closed phase 09 at 16:15:14.123 UTC, for 80 of the 100 questions under its original owner and common clock. The independent Compact reader reopened all first56 rows with the original compiler and protected graph, and the comparison reader authenticated the exact captured original tensors, ordered cards and 56 GPU score vectors in all seven receipts. It issued no new scores in that check.
+
+The combined Windows model-free suite selected and passed 30 controls. A separate owned native affinity observation sampled the authenticated live R7 service, then placed only its disposable worker on two distinct physical cores 30 and 26 at BelowNormal priority. Its 10-second observation and Job finished naturally with one process, no remaining members and peak commit 83660800 bytes. The terminal mode has model-free coverage and awaits actual capture closure. This admits the next representative one-row protected and publisher attempts under the existing 22 GiB Jobs and 600-second clocks. Refitting and qualifying require the full applicable population.
+
+The R5 volume observer started at 16:16 UTC and independently reopened the same original D, C and VHD baselines with the approved allowances. R4 remains authoritative to its scheduled end. The original CU18 R2 remains settled and failed. A future distinct CU18 attempt needs representative owned CL/NVCC natural-closure evidence, a newly reviewed recipe and bounded clock, and Python and native provenance admission separate from the existing CU15 authority.

@@ -9,3 +9,37 @@ For R5 pass `--input <absolute projection-receipt.json> --input-sha256 <sha>`. T
 For a measured result, select `--output <fresh private D: campaign child>` instead of `--check-only` and select `--role publisher_fp32` or `protected_matching`. While CAL runs, pass its actual current native `--cal-pid` so the independent worker can select two quiet physical CPU cores and BelowNormal priority. Once CAL and other owners settle, the worker can sample its own process on the host. The isolated, same-human suspended worker runs in a 22 GiB Job for at most 600 seconds. The original on-device time allowance stays in the row. The offline CPU oracle has its own engineering clock. A complete `execution.json` requires a naturally settled Job, unchanged pinned code and inputs, and an ordered finite score for every eligible original card.
 
 Assemble both reference vectors with `python -I -B -S panel.py --descriptor <private-json> --sha256 <digest> --output <fresh private panel.json>` after the full R5 projection closes. The descriptor contains the final `projection` receipt and ordered lists of `publisher_jobs` and `matching_jobs`. Each entry contains its absolute path and SHA-256. The reader validates all 100 original rows and their independent reference Jobs, including the source and image closure from the native graph proof. Its JSON output includes both score vectors for each eligible card roster, with zero candidate forwards. Candidate qualification and profile promotion require separate evidence.
+
+## R7 first-lifetime references
+
+Run `r7_reference.py` with both `--projection` and `--projection-sha256`,
+`--compiler` and `--compiler-sha256`, and `--graph` and `--graph-sha256`.
+Use the exact first56 R7 receipts in the campaign ledger. Start with
+`--check-only --first 0 --count 1 --role protected_matching`; it checks the
+original row and its graph and compiler custody without loading a model.
+First-lifetime ordinals remain original and independent of the R5 population.
+
+For a real reference, replace `--check-only` with `--output <new checked D:
+campaign directory>`. Choose either `--cal-pid <original active R7 service
+pid>` or `--terminal <outer SHA> <whole fixture SHA> <mutex release SHA>`.
+When the CAL service is active, authenticate the retained process and observe
+CPU utilization before placing the new worker. Terminal placement requires
+the natural original settlement. The new same-human worker uses two distinct
+physical cores at BelowNormal priority. Keep the 22 GiB Job, 600-second whole
+attempt clock and original row allowances. Reserve shared host and volume
+headroom before each measured Job. Run the two roles as separate Jobs.
+
+A successful receipt links the exact graph, compiler, original input rows,
+owner, source pins and measured complete vectors. The protected and publisher
+scorers use the existing independently verified mathematics and reference
+artifacts. Compare score vectors only against exact same-row, same-graph GPU
+evidence. Keep the development comparison separate from fitting or release
+qualification. A full100 reference requires verified terminal R7 inputs.
+
+For a comparison within one captured phase, pass the two successful CPU Job
+receipts and the raw GPU receipt to `r7_compare.py` with `--protected`,
+`--publisher` and `--native`, their corresponding `-sha256` flags, and the
+same `--first` and `--count`. Redirect its stdout only to a fresh checked
+private path. It checks both workers and every original card order and input
+against the GPU receipt, then reports matching and publisher raw error, mass
+drift and winner agreement separately.

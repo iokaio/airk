@@ -26,9 +26,10 @@ The user resumed the Windows and Linux FP16 campaign after D: cleanup. Keep new 
   9:27 p.m. America/Denver** (`2026-11-21T04:27:11Z`). It runs across the
   extension restart and includes time spent closing the Windows Large FP32
   prerequisite. Original T0 and per-run limits apply.
-  The user now requests release-ready Windows and Linux CUDA FP16 within 15
-  hours, approximately Friday, 20 November at 10:10 a.m. America/Denver
-  (17:10 UTC). Retain the qualification gates and sequence in the plan.
+  The previous overall delivery target was Friday, 20 November at 10:10 a.m.
+  America/Denver (17:10 UTC). Tyler set that target aside on 20 November and
+  authorized continuing. Preserve the qualification gates, sequence, approved
+  storage limits, and the original clocks and receipts of individual attempts.
   [FP16 schedule](arbiter/final-plan.md#5-time-budget-and-unattended-scheduling)
 - The final plan supersedes the old advanced-split execution deadline and
   campaign ordering. Preserve prior ledger entries as historical evidence.
