@@ -379,17 +379,18 @@ AWS R5 verified all 27 positive files and 41 eligible source ranges in the origi
 
 R7 calibration resumed under the original common clock with plan SHA
 `c04be2262a32d8318f9aa222e73ea9bf078ad80d7975d907eebefe486895a2eb`.
-Four phases and 32 questions closed. Reobserve the actual R7 owner and
-terminal before opening either population. The 16:59:12.847 UTC common
-deadline includes the original setup debit. Inspect the current R4 volume
-watcher before starting writers. Keep the original cutoffs.
+The first R7 lifetime closed naturally, and its exact native compiler
+replayed all 56 captured inputs for both Context models with zero forwards.
+Reobserve the second native lifetime and eventual outer terminal before
+opening the full population. The 16:59:12.847 UTC common deadline includes
+the original setup debit. Inspect the R4 volume watcher before starting
+writers and retain the original cutoffs.
 
-After natural lifetime 00 closure, use the R7 chronological population and
-same-image native compiler entrypoints in the [CAL readout](../scripts/arbiter/evaluation/selected_goal/cal_raw/README.md#r7-chronological-original-inputs).
-The exact image and both build/Job receipts are in the ledger. Reuse the
-authenticated zero-forward same-image Compact graph receipt for subsequent
-scientific phase scoring. The original CAL R5 rows remain historical and
-the R6 attempt still has zero questions.
+First56 projection and compiler receipt identities are in the ledger. Run
+one guarded phase-00 Compact score using the same-image graph receipt and
+the [protected Compact R7 readout](../scripts/arbiter-fp16-execution/README.md).
+Then review observed custody and scoring before scheduling the remaining
+phases. The original CAL R5 rows remain historical and R6 has zero questions.
 
 The CU18 R2 build is settled and failed after an MSVC helper prevented the
 original configure tree from closing. It retained the generated graph and

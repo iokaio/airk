@@ -23,7 +23,7 @@ SERVICE = "77e70341e1da84688c8b16bc992e25b3afed32d2d3e07639a6a5c69176eb0dfa"
 PROJECTION = "airk.private.cal100-r7-chronological-projection/1"
 PLAN = "airk.private.cal100-r7-two-lifetime-plan/1"
 FIXTURE = "airk.private.cal100-r7-two-lifetime-fixture/1"
-LAYOUT = {"r7-first56": ("first56", 56), "r7-full100": ("full100", 100)}
+LAYOUT = {"r7-first56": ("first56", 56, 2), "r7-full100": ("full100", 100, 1)}
 REGRESSION_SOURCES = (
     "985b906b4a59cc6a642c88387a2e47fc5ffdc84172e371782bf96486e447e9cb",
     "c660904b548ba1b41d11f996834f8c816dbf19f53231806911bb957521d28cec",
@@ -90,12 +90,12 @@ def validate_capture(cap, row, published, focus, pipeline):
 
 def inputs(args, campaign, base, exact, *, audit):
     require(args.cal_epoch in LAYOUT and type(args.cal_phase) is int, "R7 CAL epoch and ordinal phase required")
-    epoch, count = LAYOUT[args.cal_epoch]
+    epoch, count, projection_attempt = LAYOUT[args.cal_epoch]
     phase = args.cal_phase
     require(0 <= phase * 8 < count and args.cal_projection_receipt_sha256 and args.cal_compiler_sha256,
             "R7 phase is outside the sealed projection or is missing its compiler pin")
     scorer_sources(base.read(str(args.build), 32 << 20))
-    projection_root = campaign / f"r7-chronological-{epoch}-r1"
+    projection_root = campaign / f"r7-chronological-{epoch}-r{projection_attempt}"
     compiler_root = campaign / f"r7-chronological-native-{epoch}-r1"
     capture = campaign / "cal100-focus1024-capture-r7"
     refs = {}

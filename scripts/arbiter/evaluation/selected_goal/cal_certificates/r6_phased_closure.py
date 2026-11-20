@@ -62,14 +62,14 @@ def _verified_events(root, lifetimes, audit, audit_sha, ids, sources, index_root
     require(anchor["custody"]["sha256"]=="6fe3f0a9ef5d88c7d3ccda9791165ffd5d055252db8b95ac2ab6d91277ac4f1e" and
             read(anchor["custody"],CAMPAIGN/"cal100-focus1024-capture-r3-custody.json")["changed_input_count"]==0,
             "original installation input custody changed")
-    terminal, original_ready, original_closed = values["terminal"],values["ready"],values["closed"]
-    require(terminal["exit_code"]==1 and terminal["owned_descendants_settled"] is True and
-            terminal["owned_job_final_member_pids"]==[] and terminal["owned_job_forced_termination"] is False and
+    anchor_terminal, original_ready, original_closed = values["terminal"],values["ready"],values["closed"]
+    require(anchor_terminal["exit_code"]==1 and anchor_terminal["owned_descendants_settled"] is True and
+            anchor_terminal["owned_job_final_member_pids"]==[] and anchor_terminal["owned_job_forced_termination"] is False and
             original_closed["service_lease_reacquired"] is True and original_closed["shutdown_completed"] is True and
             original_ready["health"]["instance"]==original_closed["instance"]==base_binding["instance"] and
             original_ready["inputs_sha256"]==audit["inputs"]["inputs"]["sha256"] and
             original_ready["health"]["executable_sha256"]==r6["anchor_service"],"unclosed anchor installation")
-    debit = math.ceil(terminal["elapsed_seconds"]*1000)
+    debit = math.ceil(anchor_terminal["elapsed_seconds"]*1000)
     require(debit==plan["setup_elapsed_ms"] and 0<debit<10800000 and
             plan["deadline_ms"]==plan["start_ms"]+10800000-debit,"campaign clock changed")
     proof = HERE.parent/"cal_capture/dispatch_proof.py"

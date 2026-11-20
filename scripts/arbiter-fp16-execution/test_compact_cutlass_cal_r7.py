@@ -94,7 +94,7 @@ class R7Inputs(unittest.TestCase):
         campaign = HERE/"synthetic-campaign"
         capture = campaign/"cal100-focus1024-capture-r7"
         life = capture/"lifetime-00"
-        projection = campaign/"r7-chronological-first56-r1"
+        projection = campaign/"r7-chronological-first56-r2"
         compilation = campaign/"r7-chronological-native-first56-r1"
         build = campaign/"build/large-image-r1.json"
         image = campaign/"build/native.exe"

@@ -8,7 +8,7 @@ Protected Compact R7 calibration uses `probe_compact_cutlass.py --mode cal
 --cal-epoch r7-first56 --cal-phase N` for phases 0–6 after the first native
 lifetime settles. Select `r7-full100` for phases 0–12 from the complete
 capture and terminal receipts. Pass the SHA-256 values of
-`r7-chronological-first56-r1/projection-receipt.json` and
+`r7-chronological-first56-r2/projection-receipt.json` and
 `r7-chronological-native-first56-r1/native.json` with
 `--cal-projection-receipt-sha256` and `--cal-compiler-sha256`. For the
 terminal capture use the corresponding `full100` directories. Keep the
