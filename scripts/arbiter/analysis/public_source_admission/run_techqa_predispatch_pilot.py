@@ -73,11 +73,19 @@ def confirmed_census(record, answer, request, binding):
             and record["actual_Focus_profile"] == binding["focus"] and record["MiniLM_pipeline"] == binding["pipeline"],
             "observer identity or non-dispatch changed")
     require(native["question"] == answer["question"] == request["question"]
-            and native["read_attempt"]["request_id"] == answer["request_id"]
+            and re.fullmatch(r"[a-f0-9]{32}", native["read_attempt"]["request_id"])
+            and re.fullmatch(r"[a-f0-9]{32}", answer["request_id"])
             and native["scope"] == answer["assessment"]["scope"] and native["scope"]["publication"] == binding["publication"],
             "captured request or scope differs from canonical Answer")
     require(answer["scope_observation"] == binding["scope_observation"]
             and answer["read_scope"] == {"source": "named", "index_ids": [binding["index_id"]]}, "delivered scope differs")
+    # MCP adds its telemetry span ID to the delivered body. The native service
+    # owns a distinct read-attempt incarnation. Join on exact source records,
+    # ordinal, source binding, roster basis and the planned input digest.
+    delivered = answer["records"]
+    require(len({entry["id"] for entry in delivered}) == len(delivered) and native["records"]
+            and native["records"] == delivered[:len(native["records"])],
+            "native evidence differs from the delivered source records")
     matches = [event for event in answer["assessment_history"] if event["ordinal"] == native["ordinal"]]
     require(len(matches) == 1 and matches[0]["basis"] == native["roster"]["basis"], "ambiguous assessment association")
     advice = matches[0]["result"]["advice"]
@@ -209,7 +217,7 @@ def execute(native, owner, output, capture=PILOT):
                     return repeat(status_call, read, logs, label, args, observation_deadline)
 
                 status = native["wait_semantic"](status_cli, index_id)
-                require(status["files"] == 50 and status["read_scope"] == {"source": "named", "index_ids": [index_id]}
+                require(status["files"] == len(pilot["publisher_order"]) and status["read_scope"] == {"source": "named", "index_ids": [index_id]}
                         and status["scope_observation"]["selection"]["owner"] == "agent", "pilot native source count/scope differs")
                 publication_token = status["publication"]["token"]
                 search = native["tool_body"](cli("pipeline", "tools", "call", "airk_search", "--index", index_id,

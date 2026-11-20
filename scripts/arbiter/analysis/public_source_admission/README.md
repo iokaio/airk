@@ -235,3 +235,23 @@ modes and child IDs. Blob lengths are publisher metadata until their bytes
 are materialized and authenticated. This stage only inventories revisions.
 
 Run `python -IB scripts/arbiter/analysis/public_source_admission/verify_techqa_delivered_evidence.py` to check the original DEV_Q002 pilot Answer against its publisher span. It verifies the private source and Answer receipts, locates each literal snippet within its cited lines, and checks coverage across the returned byte intervals. Ambiguous snippets leave a missing span unresolved.
+
+The two smallest fd base revisions have separate whole-source engineering
+fixtures. Run `contextbench_fd_sources.py` to authenticate all tar members
+against the pinned recursive Git trees and inspect the applicable notices.
+`stage_contextbench_fd_sources.py` verifies the copied lscolors material
+against each Cargo.lock-pinned package, retains its license notices outside
+the indexed roots and stages every verified source blob. Each script requires
+its checked private output parents. `verify_fd_native_inventory.py` uses the
+native cohort fixture to list the entire publication and verifies per-file
+hashes and sizes, recording every omitted source path. These lists describe
+source coverage before ranking.
+
+`contextbench_fd_issue_inputs.py` uses the provisioned PyArrow interpreter
+with `-I -B` and the checked output directories
+`contextbench-fd-issue-inputs-r1/{sharkdp__fd-1394,sharkdp__fd-1162}`. It
+extracts each original issue question by its exact publisher ID, binds its
+source revision and file census, and preserves the original native request
+budgets under the selected static 1,024 Focus profile. Audit the three
+generated files per case and verify with `--check-only`. Both cases were
+previously exposed. Scoring and native action menus need separate receipts.

@@ -30,7 +30,7 @@ class PilotTests(unittest.TestCase):
         self.binding = {"context": "compact", "focus": "focus", "pipeline": "mini", "publication": {"token": "rev"},
                         "scope_observation": {"selection": {"owner": "agent"}}, "index_id": "idx"}
         scope = {"publication": self.binding["publication"]}
-        self.answer = {"question": "Original question", "request_id": "q", "assessment": {"scope": scope},
+        self.answer = {"question": "Original question", "request_id": "1" * 32, "records": [{"id": "item", "value": 3}], "assessment": {"scope": scope},
                        "scope_observation": self.binding["scope_observation"], "read_scope": {"source": "named", "index_ids": ["idx"]},
                        "assessment_history": [{"ordinal": 1, "basis": {"r": 1}, "result": {"advice": {
                            "input_digest": "input", "observed_input_tokens": 0, "work": {"input_tokens": 0},
@@ -39,7 +39,8 @@ class PilotTests(unittest.TestCase):
                        "Focus_configuration": "ON", "actual_Context_profile": {"manifest": "compact"},
                        "actual_Focus_profile": "focus", "MiniLM_pipeline": "mini", "known_Focus_input_tokens": 100,
                        "planned_input_digest": "input", "verified_probe_requests": [], "actual_Focus_forward_observed": True,
-                       "request": {"question": "Original question", "read_attempt": {"request_id": "q"}, "scope": scope,
+                       "request": {"question": "Original question", "read_attempt": {"request_id": "2" * 32}, "scope": scope,
+                                   "records": [{"id": "item", "value": 3}],
                                    "ordinal": 1, "parent_budget": self.request["budget"], "remaining_input_tokens": 8092,
                                    "roster": {"basis": {"r": 1}, "cards": ["c"]}, "choices": [1, 2]},
                        "compiler_census": [{"profile": "compact", "input_tokens": 2, "NN_invocations": 0,
@@ -64,6 +65,11 @@ class PilotTests(unittest.TestCase):
                     audit["confirmed_census"](self.record | change, self.answer, self.request, self.binding)
         self.answer["request_id"] = "not-this-request"
         with self.assertRaisesRegex(ValueError, "request"):
+            self.census()
+
+    def test_crossed_evidence_rejected_with_valid_distinct_telemetry_and_attempt_ids(self):
+        self.answer["records"][0]["value"] = 4
+        with self.assertRaisesRegex(ValueError, "delivered source records"):
             self.census()
 
     def test_budget_or_observed_scoring_cannot_be_credited(self):
