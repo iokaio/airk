@@ -61,6 +61,53 @@ class Epoch(unittest.TestCase):
         self.assertTrue(handoff.equivalent(body,body))
         self.assertFalse(handoff.equivalent(body,body|{"hits":[]}))
 
+    def test_r7_named_scope_uses_only_the_retired_native_selection(self):
+        import r7_restart as restart
+        evidence = {name: epoch.read(epoch.reference(path, sha)) for name, (path, sha) in restart.INPUTS.items()
+                    if name in ("bindings", "ready")}
+        compared_path = restart.CAMPAIGN/"cal100-fused-canonical-search-r1/fixture/enable-context.bindings.json"
+        compared = epoch.read(epoch.reference(compared_path,
+            "216bfe2464aeaf5d54cea45a8c68cba47b72cb6cc8d6aae5da189e3fb18867ff"))
+        baseline, ready = evidence["bindings"], evidence["ready"]
+        anchor = epoch.read(self.original["installation"]["bindings"])
+        restart.validate_binding(baseline, compared, ready, anchor)
+        for field, value in (("catalog_revision", 4), ("scope_identity", "0"*64)):
+            changed = copy.deepcopy(baseline)
+            changed["bindings"][0]["status_result"]["structuredContent"]["scope_observation"]["selection"][field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "revision-eight"):
+                restart.validate_binding(changed, compared, ready, anchor)
+
+    def test_r7_control_requires_only_the_observed_mutable_changes(self):
+        import r7_restart as restart
+        modified = ("http-1/endpoint.json", "logs-1.4/current.jsonl", "service-1.4.sqlite3")
+        base = {"control_root": "control", "directories": ["http-1", "logs-1.4"],
+                "files": dict.fromkeys((*modified, "model"), "0"*64)}
+        previous = base | {"immutable": {"model": "0"*64}}
+        current = base | {"files": base["files"] | dict.fromkeys(modified, "1"*64)}
+        restart.validate_control(current, previous)
+        current["files"]["model"] = "2"*64
+        with self.assertRaisesRegex(ValueError, "unexpected changed bytes"):
+            restart.validate_control(current, previous)
+
+    def test_r7_projection_reverses_the_single_scope_baseline_change(self):
+        group = HERE.parent/"cal_capture/grouped"
+        sys.path.insert(0, str(group))
+        import r6_candidate, r6_effective_sources
+        digest = "aa2dea22544689e785426e03d4fa4f657cfda6d5dbc86b682a8594be7bb680e1"
+        target = epoch.R7_ROOT/"candidate-sources"
+        files = r6_candidate.projected({"audit": {"sha256": digest}}, target)
+        old = b'linked(original["bindings"])'
+        new = b'linked(plan["scope_baseline"])'
+        self.assertEqual(files["group_service.py"].count(old), 1)
+        resumed = files | {"group_service.py": files["group_service.py"].replace(old, new)}
+        legacy = epoch.read(self.original["input_audit"])
+        args = (HERE.parents[4], group.parent, target, digest, Path(legacy["inputs"]["service"]["path"]).parent)
+        r6_effective_sources.verify(*args, resumed, resume_r6=True)
+        with self.assertRaises(ValueError):
+            r6_effective_sources.verify(*args, files, resume_r6=True)
+        with self.assertRaises(ValueError):
+            r6_effective_sources.verify(*args, resumed)
+
     def test_foreign_service_does_not_inherit_original_audit(self):
         with self.assertRaisesRegex(ValueError,"unbound service"):
             epoch.audit_for_epoch(self.original["input_audit"],"0"*64)

@@ -79,3 +79,22 @@ and effective hashes of two generated source snapshots under `candidate-sources`
 Those snapshots bind the new audit, service DLL search directory and actual
 worker filename, while preserving the original operation, phase and lifetime
 clocks. Actual speed and authorization to launch remain external inputs.
+
+### R7 restart after the closed R6
+
+Use the same checked Windows launcher with `--resume-r6`, the fresh
+`cal100-focus1024-capture-r7` directory, and the exact successful Search
+comparison and candidate provenance arguments from the retired R6 Job.
+The launcher authenticates R6's zero-dispatch closure, released Job and mutex,
+native idle status, and candidate service and scope. It hashes the stopped
+control tree under the installation mutex. Only the native endpoint, current
+log and registry database digests may differ from the preceding Search tree.
+The native restart still reopens the verified physical R3 control anchor.
+
+R7 checks the exact revision-8 scope identity from R6 and the completed
+candidate Search comparison before issuing a question. Every live Answer and
+probe retains its fresh native grant and full observed scope. R7 preserves the
+original setup debit, 10,800-second common clock and two lifetime populations.
+It has separate plan and terminal schemas. Use the independent R7 certificate
+option documented in the [certificate reader](../../cal_certificates/README.md)
+after the complete capture and natural closure.

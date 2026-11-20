@@ -12,6 +12,7 @@ NEW_AUDIT = CAMPAIGN/"cal100-fused-candidate-launch-r1/cal100-launch-audit.json"
 R5 = CAMPAIGN/"cal100-focus1024-capture-r5/lifetime-plan.json"
 R5_SHA = "55a89e5219cf6de0c3b59cbaa8a4a8a43dc0d097276368cfb5a28ee2fe6536bf"
 ROOT = CAMPAIGN/"cal100-focus1024-capture-r6"
+R7_ROOT = CAMPAIGN/"cal100-focus1024-capture-r7"
 
 
 def audit_for_epoch(pin, service_sha):
@@ -57,18 +58,20 @@ def original_clock(plan, original, question_ids):
 
 
 def preflight(root, plan_pin, audit_pin, service_sha):
-    require(root==ROOT, "R6 dedicated physical receipt root required")
+    require(root in (ROOT, R7_ROOT), "dedicated R6 or R7 physical receipt root required")
     plan=read(plan_pin,root/"lifetime-plan.json")
-    context,audit=verify_plan(plan,audit_pin,service_sha)
+    context,audit=verify_plan(plan,audit_pin,service_sha,root=root)
     return dict(context,plan_pin=plan_pin),audit
 
 
-def verify_plan(plan,audit_pin,service_sha):
+def verify_plan(plan,audit_pin,service_sha,*,root=ROOT):
+    resume_r6 = root == R7_ROOT
+    attempt = "r7" if resume_r6 else "r6"
     original=read(reference(R5,R5_SHA))
     audit=audit_for_epoch(audit_pin,service_sha)
     require(plan["input_audit"]==audit_pin and plan["census"]==audit["census"], "R6 launch and plan differ")
     original_clock(plan,original,read(plan["census"])["question_ids"])
-    require(plan["schema"]=="airk.private.cal100-r6-two-lifetime-plan/1" and plan["common_ms"]==10800000
+    require(plan["schema"]==f"airk.private.cal100-{attempt}-two-lifetime-plan/1" and plan["common_ms"]==10800000
             and plan["clock_decision"] is None and plan["predecessor_plan"]==reference(R5,R5_SHA),
             "unregistered R6 clock or predecessor")
     outer=read(plan["prior_attempt"],R5.parent/"outer-owned.json")
@@ -81,12 +84,25 @@ def verify_plan(plan,audit_pin,service_sha):
     group=HERE.parent/"cal_capture/grouped"
     sys.path.insert(0,str(group))
     successor="comparison" in handoff
+    idle_pin = handoff["idle"]
+    require(not resume_r6 or successor and "candidate_service" in plan,
+            "R7 requires the optimized service and original successful Search")
     if successor:
         import r6_search_handoff
         lookup=read(handoff["plan"],r6_search_handoff.RUN/"plan.json")
-        r6_search_handoff.verify(handoff,plan["installation"],lookup["audit"],live=False)
-        require(read(handoff["mutex"])["at_ms"] <= plan["start_ms"],"Search still owned installation at R6 start")
+        search_installation = plan["installation"] | {"status": idle_pin}
+        r6_search_handoff.verify(handoff,search_installation,lookup["audit"],live=False)
+        require(read(handoff["mutex"])["at_ms"] <= plan["start_ms"],"Search still owned installation at CAL start")
         idle_path=r6_search_handoff.RUN/"commands/stage-after.stdout"
+        if resume_r6:
+            from r7_restart import INPUTS, validate_restart
+            comparison = read(handoff["comparison"],r6_search_handoff.RUN/"comparison.json")
+            named = read(comparison["fixture"]["enable-context.bindings.json"],
+                         r6_search_handoff.RUN/"fixture/enable-context.bindings.json")
+            stable_control = read(handoff["control_after"],r6_search_handoff.RUN/"control-after.json")
+            validate_restart(plan,audit,named,stable_control)
+            idle_path = INPUTS["idle"][0]
+            idle_pin = plan["restart_handoff"]["idle"]
     else:
         retired=read(handoff["retired"],CAMPAIGN/"compact-development-TRAIN_Q598-focus1024-run-r2/owned.json")
         require(handoff["retired"]["sha256"]=="f45abb479f15087f860e0a0de0261f7ac7ff4044e88947fb0f2378a5ee4bc771" and
@@ -94,10 +110,10 @@ def verify_plan(plan,audit_pin,service_sha):
                 "physical retirement differs")
         idle_path=CAMPAIGN/"cal100-search-mode-timing-r1/commands/stage-after.stdout"
         require(handoff["idle"]["sha256"]=="30dacd28b6d15f240791d29fdbf42734be68dc9bdb85674780bb2d4d3298b84d","original Search idle changed")
-    idle=read(handoff["idle"],idle_path)
+    idle=read(idle_pin,idle_path)
     prior=read(original["installation"]["status"])
     config=idle["configuration"]
-    require(plan["installation"]["status"]==handoff["idle"] and
+    require(plan["installation"]["status"]==idle_pin and
             config["revision"]==13 and prior["configuration"]|{"revision":13}==config and
             all(idle[k]["running"]==idle[k]["queued"]==0 and idle[k]["availability"]=="ready" and
                 idle[k]["selected_profile"]==idle[k]["active_profile"]==prior[k]["active_profile"] for k in ("focus","context")),
@@ -106,6 +122,8 @@ def verify_plan(plan,audit_pin,service_sha):
     group=HERE.parent/"cal_capture/grouped"
     owner=group/"r6_capture.py"
     extras={owner,group/"r6_handoff.py",group/"r6_preflight.py"}
+    if resume_r6:
+        extras.add(group/"r7_handoff.py")
     expected_handoff={HERE.parents[2]/"analysis/development_margins"/name for name in
                       ("reuse_installation.py","q598_closed_restart.py","q598_search_handoff.py")}
     worker=group.parent/"worker.cjs"
@@ -119,12 +137,15 @@ def verify_plan(plan,audit_pin,service_sha):
         require(successor,"candidate has no successful real Search retirement")
         candidate=plan["candidate_service"]
         epoch=r6_candidate.checked_epoch(candidate["provenance"]["sha256"],r6_search_handoff.seal)
-        target=ROOT/"candidate-sources"
-        projected=r6_candidate.snapshots(epoch,target,r6_search_handoff.seal,create=False)
+        target=root/"candidate-sources"
+        projected=candidate["sources"]
+        require(set(projected)=={"worker.cjs","group_service.py"} and
+                all(Path(ref["path"])==target/name for name,ref in projected.items()) and
+                {p.name for p in target.iterdir()}==set(projected),"unexpected projected sources")
         from r6_effective_sources import verify as verify_source_bytes
         legacy_directory=Path(read(original["input_audit"])["inputs"]["service"]["path"]).parent
         verify_source_bytes(HERE.parents[4],group.parent,target,epoch["audit"]["sha256"],legacy_directory,
-                            {name:checked(ref) for name,ref in projected.items()})
+                            {name:checked(ref) for name,ref in projected.items()},resume_r6=resume_r6)
         require(candidate==dict(epoch,sources=projected) and epoch["audit"]==audit_pin==lookup["audit"]
                 and epoch["image"]==audit["inputs"]["service"],"different native candidate or projected worker")
         expected.update({group/"r6_candidate.py",target/"worker.cjs",target/"group_service.py"})
@@ -136,5 +157,6 @@ def verify_plan(plan,audit_pin,service_sha):
             {Path(p["path"]) for p in sources}==expected,"incorrect R6 source owner roster")
     for source in sources:
         checked(source)
-    return {"plan_schema":plan["schema"], "fixture_schema":"airk.private.cal100-r6-two-lifetime-fixture/1",
-            "source":owner,"worker":worker,"status_path":idle_path, "anchor_service":read(original["input_audit"])["inputs"]["service"]["sha256"]},audit
+    return {"plan_schema":plan["schema"], "fixture_schema":f"airk.private.cal100-{attempt}-two-lifetime-fixture/1",
+            "source":owner,"worker":worker,"status_path":idle_path,"resume_r6":resume_r6,
+            "anchor_service":read(original["input_audit"])["inputs"]["service"]["sha256"]},audit

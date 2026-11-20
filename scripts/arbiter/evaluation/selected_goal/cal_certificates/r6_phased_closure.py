@@ -6,15 +6,16 @@ import runpy
 
 from capture_closure import settled
 from r6_questions import question_events
-from reference_inputs import CAMPAIGN, HERE, checked, digest, parsed, read, reference, require
+from reference_inputs import CAMPAIGN, HERE, digest, parsed, read, reference, require
+from r6_epoch import ROOT, R7_ROOT
 
 
 from phased_closure import ANCHOR, ANCHOR_FILES, installation_identity, check_warm
 
 
 def phased_events(root, outer_sha, fixture_sha, audit, audit_sha, ids, sources, index_root, tasks, *, release_sha, r6):
-    require(root.parent == CAMPAIGN and root.name == "cal100-focus1024-capture-r6",
-            "foreign phased campaign root")
+    resume_r6 = r6["resume_r6"]
+    require(root == (R7_ROOT if resume_r6 else ROOT), "foreign phased campaign root")
     outer = read(reference(root/"outer-owned.json",outer_sha))
     closure = read(reference(root/"fixture-closure.json",fixture_sha))
     plan = read(closure["plan"], root/"lifetime-plan.json")
@@ -22,7 +23,8 @@ def phased_events(root, outer_sha, fixture_sha, audit, audit_sha, ids, sources, 
     shape = groups.TWO_GROUPS
     require(closure["schema"] == r6["fixture_schema"] and closure["plan"] == r6["plan_pin"] and
             str(r6["source"]) in outer["argv"], "wrong R6 original owner or fixture")
-    require(settled(outer) and "--owned-plan-sha256" in outer["argv"] and str(root) in outer["argv"]
+    require(settled(outer) and outer["argv"].count("--resume-r6") == int(resume_r6)
+            and "--owned-plan-sha256" in outer["argv"] and str(root) in outer["argv"]
             and closure["plan"]["sha256"] in outer["argv"] and plan["schema"]==r6["plan_schema"]
             and plan["input_audit"]["sha256"]==audit_sha
             and read(plan["input_audit"])==audit and plan["census"]==audit["census"] and read(plan["census"])["question_ids"]==ids
@@ -72,6 +74,14 @@ def phased_events(root, outer_sha, fixture_sha, audit, audit_sha, ids, sources, 
             and warm_end["dropped"]==0 and warm_end["error"] is None,"anchor warm ledger differs")
     identity, initial_fingerprint = installation_identity(base_binding)
     fingerprints, instances = {initial_fingerprint},{original_ready["health"]["instance"]}
+    if resume_r6:
+        from r7_restart import INPUTS
+        baseline = read(plan["scope_baseline"], INPUTS["bindings"][0])
+        identity, retired_fingerprint = installation_identity(baseline)
+        require(retired_fingerprint not in fingerprints and baseline["instance"] not in instances,
+                "retired R6 reused the initial native instance or fingerprint")
+        fingerprints.add(retired_fingerprint)
+        instances.add(baseline["instance"])
     prior = anchor["closed"]
     last = plan["start_ms"]
     sums = {"probes":0,"pipeline_searches":0}
@@ -127,6 +137,7 @@ def phased_events(root, outer_sha, fixture_sha, audit, audit_sha, ids, sources, 
             sums[k] += lifetime[k]
         last, prior = lifetime["end_ms"],ref
     groups.check_mutex(root,plan,outer_sha,release_sha,plan["start_ms"]+closure["elapsed_ms"]-debit)
-    require(all(closure[k]==n for k,n in sums.items()) and sums["pipeline_searches"]>0 and len(instances)==len(shape)+1 and
-            len(fingerprints)==len(ids)+len(shape)+1 and last-plan["start_ms"]+debit<=closure["elapsed_ms"]<=10800000,
+    seeds = 2 if resume_r6 else 1
+    require(all(closure[k]==n for k,n in sums.items()) and sums["pipeline_searches"]>0 and len(instances)==len(shape)+seeds and
+            len(fingerprints)==len(ids)+len(shape)+seeds and last-plan["start_ms"]+debit<=closure["elapsed_ms"]<=10800000,
             "incomplete phased census, unique scopes or common wall clock")

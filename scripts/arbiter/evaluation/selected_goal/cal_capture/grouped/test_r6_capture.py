@@ -75,7 +75,8 @@ class NativeOwner(unittest.TestCase):
     def test_short_or_refused_handoff_never_reaches_model_service(self):
         plan = {"installation_mutex": {}, "start_ms": 1, "deadline_ms": 126_000,
                 "physical_handoff": {}, "installation": {}}
-        with (patch.object(r6.r5, "linked", side_effect=lambda row: row),
+        with (patch.object(r6.policy, "CAMPAIGN", r6.OUTPUT / "model-free-test"),
+              patch.object(r6.r5, "linked", side_effect=lambda row: row),
               patch.object(r6.r5, "require_parent_owns"), patch.object(r6, "make_plan", return_value=plan),
               patch.object(r6.r5, "now_ms", return_value=1000), patch.object(r6.time, "monotonic", return_value=1),
               patch.object(r6.r6_handoff, "verify", side_effect=ValueError("physical retirement differs")) as check,

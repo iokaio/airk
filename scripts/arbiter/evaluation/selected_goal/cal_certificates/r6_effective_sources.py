@@ -13,7 +13,7 @@ def restore(data, substitutions, original_sha):
         raise ValueError("extra logic in candidate service or phase worker")
 
 
-def verify(root, capture, folder, audit_sha, legacy_directory, projected):
+def verify(root, capture, folder, audit_sha, legacy_directory, projected, *, resume_r6=False):
     old="87731282ecd121eaf08d5074d1bc421c5753bc65f7126f9578b31c6f9303d661"
     restore(projected["worker.cjs"],[
         ("require("+json.dumps(str(capture/"phase.cjs"))+")","require('./phase.cjs')"),
@@ -22,7 +22,7 @@ def verify(root, capture, folder, audit_sha, legacy_directory, projected):
         (audit_sha,old),("'cal100-fused-candidate-launch-r1'","'cal100-focus1024-launch-r1'"),
         (json.dumps(str(capture/"controller.py")),"path.join(__dirname, 'controller.py')"),
     ],"22216d4262e25e24f2c5c53138dbc77a486f8373b6e55d70c850f45fb4d40b51")
-    restore(projected["group_service.py"],[
+    group_substitutions = [
         ("from controller import ","from controller import AUDIT_SHA, "),
         ("from prepare import SELECTOR, pin\n\nAUDIT_SHA = "+repr(audit_sha)+"\nWORKER = Path("+repr(str(folder/"worker.cjs"))+")",
          "from prepare import SELECTOR, pin"),
@@ -30,4 +30,8 @@ def verify(root, capture, folder, audit_sha, legacy_directory, projected):
         ("[node, WORKER,",'[node, HERE/"worker.cjs",'),
         ('env.update(audit["fixture_environment"])\n    env["PATH"] = '+repr(str(legacy_directory))+' + os.pathsep + env["PATH"]',
          'env.update(audit["fixture_environment"])'),
-    ],"d4c6acb3dc9b091127c97ba13932fcf3ad8bb95282cac92778a2b1c3970b9533")
+    ]
+    if resume_r6:
+        group_substitutions.append(('linked(plan["scope_baseline"])', 'linked(original["bindings"])'))
+    restore(projected["group_service.py"], group_substitutions,
+            "d4c6acb3dc9b091127c97ba13932fcf3ad8bb95282cac92778a2b1c3970b9533")

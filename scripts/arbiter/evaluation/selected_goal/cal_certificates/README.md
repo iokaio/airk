@@ -83,3 +83,13 @@ certificates only after the terminal custody and entire census have verified.
 The model-free checks are in `test_r6_epoch.py`. An alternate service audit
 must bind the exact observed service, the unchanged original input assets
 and the corresponding launch source and physical handoff.
+
+Use `certify_r6.py --resume-r6` with the R7 receipts to check the successor.
+The verifier authenticates the exact unsuccessful R6 Job, native shutdown,
+installation lease and mutex release before accepting R7. Each R7 lifetime
+must bind the original CAL publication, members and policy and match R6's
+native revision-eight selection. Each named lifetime fingerprint and every
+question window fingerprint remain distinct. The R3 setup debit and all
+operation clocks still apply. The retired R6 supplies custody evidence only.
+All 100 question and probe records must come from the two completed R7
+lifetimes.
