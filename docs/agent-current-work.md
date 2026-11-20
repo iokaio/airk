@@ -324,3 +324,11 @@ Windows and Linux CUDA target under Authority and deadline.
   belong in separate fresh package directories.
 
 On 20 November UTC the user approved binding exact graph, optimizer settings and measured GPU/CPU placement for Windows Compact, Windows Large, Linux Compact and Linux Large wherever mixed execution is needed. Each model and OS requires independent qualification. The versioned service-wide allow_gpu setting defaults to enabled for existing configurations. Both decisions are recorded in the final plan.
+
+### Windows and Ubuntu checkpoint, 20 November 2026 at 10:17 UTC
+
+Windows Compact completed genuine CUDA scoring at 32, 128, 1024 and 8192 tokens, plus three development examples. On the original R4 calibration example at 1408 tokens the maximum matching-reference error was 0.00018311, against the release limit of 0.007. At 8192 tokens the 20 warm model forwards had a p95 of 1.7721 s. Complete installed Answer latency has its own workload. The original R5 calibration has six naturally closed phases (48/100 requests). Continue with the native chronological projection after the first 56, and preserve both original lifetime and final closure. No production rule or paired Answer quality result has been established.
+
+Windows Large improved the 32-token maximum matching-reference error from 0.026579 with widened dense projections and FlashAttention to 0.011554 with compensated attention. Both are above 0.007. Its measured layer-17 attention operator agreed with the independent CPU result within 0.00000275 across 131072 values. Trace the earliest remaining full-model difference before spending on wider inputs. Windows CPU Focus completed formal original and matching comparisons on 14/14 cases and 20 full-width resource samples at 1024 tokens. The 98% matched, judged evidence requirement remains open.
+
+Ubuntu completed the installed-service GPU opt-out control and compiler checks for the frozen retrieval source. Native model qualification on Linux follows Windows. Ubuntu's backing VHD is on C:. At 10:15 UTC it remained at 79086747648 bytes, and C: had 2644481175552 bytes free. Monitor the difference against the original host-wide budget as well as free space before any further Linux build. Windows work uses D:.

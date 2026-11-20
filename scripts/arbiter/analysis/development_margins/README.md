@@ -184,3 +184,5 @@ existing `--control` and the `--registrations` folder containing the original
 and an authentic individual finalized receipt are accepted. The builder checks
 the real enrollment source roots, schema, current installed images and native
 profile calibration before writing its JSON to stdout.
+
+The Windows native resource policy check exercises the original compiled service fixture and its private foreground worker on a fresh D: control. Run windows_native_resource_policy.py with isolated Python and a new windows-native-resource-policy-private-rN output path. The checked six-GiB Windows Job retains service policy results separately from installed and model execution evidence.
