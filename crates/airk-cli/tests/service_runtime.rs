@@ -49,6 +49,13 @@ fn configured_query_capacity_updates_live_worker_and_reads_through_matching_chan
             let configuration = ResourceConfiguration { query_concurrency: concurrency, ..Default::default() };
             let configured = airk_cli::service_runtime::request(&runtime, Method::ConfigureResources { configuration }).await?;
             ensure!(matches!(configured, Response::Resources { ref observation, configuration_error:false, .. } if observation.configuration.query_concurrency == concurrency), "capacity update was not acknowledged");
+            for allow_gpu in [false, true] {
+                let setting = airk_core::service_resources::SetGpuAllowed { allow_gpu };
+                let changed = airk_cli::service_runtime::request(&runtime, Method::SetGpuAllowed(setting)).await?;
+                ensure!(matches!(changed, Response::Resources { observation, configuration_error: false, .. }
+                    if observation.configuration.allow_gpu == allow_gpu && observation.configuration.query_concurrency == concurrency),
+                    "GPU policy change lost the current concurrency setting");
+            }
             let mut requests = tokio::task::JoinSet::new();
             for _ in 0..concurrency {
                 let backend = backend.clone();

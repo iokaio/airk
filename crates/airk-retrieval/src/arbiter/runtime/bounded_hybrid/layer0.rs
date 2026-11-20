@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Private layer-0 outputs for authenticated Compact FP16 experiments.
 
+mod answer;
+
 use super::*;
 
 pub const COMPACT_FP16_LAYER0_TAPS: &[(&str, usize)] = &[
@@ -315,6 +317,29 @@ impl Scorer {
             reviewed_graph_result,
             reviewed_graph_sha,
             REVIEWED_QKVO.context("reviewed Compact Q/K/V/O load receipt unavailable")?,
+            None,
+        )
+    }
+
+    /// Opens the exact protected MLP graph after its original typed placement proof.
+    pub fn open_private_compact_down_unprofiled(
+        profile: ExecutionProfile,
+        source: &dyn AssetSource,
+        reviewed_graph_result: &[u8],
+        reviewed_graph_sha: Sha256Digest,
+    ) -> Result<Self> {
+        let review = ReviewedProjection {
+            graph_sha: "a583cbd0906a9801461ac0678d1607ecfe73398b637c19c97ea072c5750a33a1",
+            load_sha: "295f0c79716cba2ec3da993e4a2659a7a67b6daec8bb473185c5818413d6daa4",
+            load_schema: "airk.private.compact-fp32-qkv-down-graph-diagnostic/1",
+        };
+        Self::open_private_compact_fp32_projection_profiled(
+            profile,
+            source,
+            None,
+            reviewed_graph_result,
+            reviewed_graph_sha,
+            review,
             None,
         )
     }

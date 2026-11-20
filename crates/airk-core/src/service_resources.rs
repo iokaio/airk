@@ -63,6 +63,8 @@ pub enum ResourcePreset {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResourceConfiguration {
+    #[serde(default = "default_allow_gpu")]
+    pub allow_gpu: bool,
     #[serde(default = "default_query_concurrency")]
     pub query_concurrency: usize,
     pub preset: ResourcePreset,
@@ -71,9 +73,20 @@ pub struct ResourceConfiguration {
     pub memory_bytes: Option<u64>,
     pub background_io_bytes_per_second: Option<u64>,
 }
+/// Change only the service-wide GPU policy, preserving all other settings.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetGpuAllowed {
+    pub allow_gpu: bool,
+}
+
+const fn default_allow_gpu() -> bool {
+    true
+}
 impl Default for ResourceConfiguration {
     fn default() -> Self {
         Self {
+            allow_gpu: default_allow_gpu(),
             query_concurrency: DEFAULT_QUERY_CONCURRENCY,
             preset: Default::default(),
             extraction_threads: None,
@@ -162,6 +175,18 @@ pub struct ResourceSnapshot {
 #[cfg(test)]
 mod concurrency_tests {
     use super::*;
+    #[test]
+    fn legacy_policy_allows_gpu_and_explicit_opt_out_round_trips() {
+        let mut legacy = serde_json::to_value(ResourceConfiguration::default()).unwrap();
+        legacy.as_object_mut().unwrap().remove("allow_gpu");
+        let loaded: ResourceConfiguration = serde_json::from_value(legacy).unwrap();
+        assert!(loaded.allow_gpu);
+        let disabled = ResourceConfiguration { allow_gpu: false, ..loaded };
+        let bytes = serde_json::to_vec(&disabled).unwrap();
+        assert!(!serde_json::from_slice::<ResourceConfiguration>(&bytes).unwrap().allow_gpu);
+        assert!(serde_json::from_str::<SetGpuAllowed>(r#"{"allow_gpu":false,"preset":"balanced"}"#).is_err());
+    }
+
     #[test]
     fn saved_legacy_policy_defaults_to_sixteen_and_only_listed_values_are_valid() {
         let mut legacy = serde_json::to_value(ResourceConfiguration::default()).unwrap();

@@ -230,7 +230,7 @@ enum WarmRoute {
         feature = "test-support",
         feature = "gpu-cuda"
     ))]
-    EvaluationAnswer(EvaluationAnswerGraph),
+    EvaluationAnswer(EvaluationAnswerWarm),
 }
 #[cfg(all(
     windows,
@@ -250,7 +250,29 @@ pub struct EvaluationAnswerGraph {
     feature = "test-support",
     feature = "gpu-cuda"
 ))]
+pub struct EvaluationAnswerWarm {
+    graph: EvaluationAnswerGraph,
+    gpu_current: Arc<dyn Fn() -> bool + Send + Sync>,
+}
+
+#[cfg(all(
+    windows,
+    target_arch = "x86_64",
+    feature = "test-support",
+    feature = "gpu-cuda"
+))]
 impl EvaluationAnswerGraph {
+    pub fn admit(
+        &self,
+        gpu_current: Arc<dyn Fn() -> bool + Send + Sync>,
+    ) -> Result<EvaluationAnswerWarm> {
+        ensure!(gpu_current(), "private CUDA Answer GPU grant expired");
+        Ok(EvaluationAnswerWarm {
+            graph: self.clone(),
+            gpu_current,
+        })
+    }
+
     pub fn new(
         reviewed_result: Arc<[u8]>,
         expected_sha256: Sha256Digest,
@@ -261,6 +283,13 @@ impl EvaluationAnswerGraph {
             expected_sha256,
             expires,
         }
+    }
+
+    pub fn capacity_plan(
+        &self,
+        profile: &ExecutionProfile,
+    ) -> Result<airk_retrieval::arbiter::runtime::cuda::DeviceCapacityPlan> {
+        Scorer::private_compact_answer_capacity(profile, self.expected_sha256)
     }
 
     pub fn expires(&self) -> Instant {
@@ -808,7 +837,7 @@ impl Handle {
         reservation: Arc<Reservation>,
         deadline: Instant,
         authority: Arc<dyn Fn() -> bool + Send + Sync>,
-        graph: EvaluationAnswerGraph,
+        admission: EvaluationAnswerWarm,
     ) -> Result<oneshot::Receiver<Result<()>>> {
         let now = Instant::now();
         ensure!(
@@ -817,7 +846,8 @@ impl Handle {
                 && profile.description().declared_stage() == Some(Stage::Context)
                 && profile.cuda_device().is_some()
                 && now < deadline
-                && deadline <= graph.expires
+                && deadline <= admission.graph.expires
+                && (admission.gpu_current)()
                 && deadline.duration_since(now) <= Duration::from_secs(120),
             "private GPU Answer requires an exact evaluation binding and original warm deadline"
         );
@@ -827,7 +857,7 @@ impl Handle {
             reservation,
             Some(deadline),
             Some(authority),
-            WarmRoute::EvaluationAnswer(graph),
+            WarmRoute::EvaluationAnswer(admission),
         )
     }
     fn warm_inner(

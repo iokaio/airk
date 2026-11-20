@@ -1014,7 +1014,8 @@ enum Envelope {
         reply: SyncSender<Result<catalog::Response>>,
     },
     ConfigureResources {
-        configuration: airk_core::service_resources::ResourceConfiguration,
+        update: ResourceUpdate,
+        gpu_change: Option<GpuPolicyChange>,
         reply: oneshot::Sender<ControlResponse>,
     },
     Connect {
@@ -1038,6 +1039,13 @@ enum Envelope {
         reply: oneshot::Sender<ControlResponse>,
     },
 }
+pub enum ResourceUpdate {
+    Replace(airk_core::service_resources::ResourceConfiguration),
+    Gpu(airk_core::service_resources::SetGpuAllowed),
+}
+
+pub type GpuPolicyChange = Arc<dyn Fn(bool) -> Result<()> + Send + Sync>;
+
 pub struct Supervisor {
     checkpoint_closed: Arc<std::sync::atomic::AtomicBool>,
     resources: Arc<Mutex<ResourceCache>>,
@@ -2476,11 +2484,32 @@ WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref(), hooks }
                             };
                             let _ = reply.send(result);
                         },
-                        Ok(Envelope::ConfigureResources {
-                            configuration,
-                            reply,
-                        }) => {
+                        Ok(Envelope::ConfigureResources { update, gpu_change, reply }) => {
                             let previous = resources.snapshot().configuration;
+                            let configuration = match update {
+                                ResourceUpdate::Replace(configuration) => configuration,
+                                ResourceUpdate::Gpu(setting) => {
+                                    if configuration_error {
+                                        let _ = reply.send(ControlResponse::Failure {
+                                            code: "resource_configuration_requires_repair".into(),
+                                        });
+                                        continue;
+                                    }
+                                    if setting.allow_gpu == previous.allow_gpu {
+                                        let _ = reply.send(ControlResponse::Resources {
+                                            observation: Box::new(resources.snapshot()),
+                                            age_ms: 0,
+                                            configuration_error: false,
+                                        });
+                                        continue;
+                                    }
+                                    airk_core::service_resources::ResourceConfiguration {
+                                        allow_gpu: setting.allow_gpu,
+                                        ..previous.clone()
+                                    }
+                                }
+                            };
+                            let mut gpu_transition = false;
                             let result = (|| -> Result<()> {
                                 configuration.validate()?;
                                 for worker in workers.values_mut() {
@@ -2493,6 +2522,12 @@ WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref(), hooks }
                                 if let Some(pool) = pool.as_mut() {
                                     pool.configure_threads(resources.snapshot().inference_threads_limit)?;
                                 }
+                                if let Some(change) = &gpu_change
+                                    && (configuration.allow_gpu != previous.allow_gpu || configuration_error)
+                                {
+                                    gpu_transition = true;
+                                    change(configuration.allow_gpu)?;
+                                }
                                 airk_host::service_resource_policy::save(&root, &configuration)
                             })();
                             if result.is_err() {
@@ -2503,6 +2538,9 @@ WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref(), hooks }
                                     if let (Some(identity), Ok(mut policy)) = (worker.identity, policy.lock()) {
                                         let _ = policy.configure_queries(identity, previous.query_concurrency, Instant::now());
                                     }
+                                }
+                                if gpu_transition && let Some(change) = &gpu_change {
+                                    let _ = change(previous.allow_gpu && !configuration_error);
                                 }
                                 let _ = resources.reconfigure(previous);
                                 if let Some(pool) = pool.as_mut() {
@@ -3251,11 +3289,21 @@ WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref(), hooks }
         &self,
         configuration: airk_core::service_resources::ResourceConfiguration,
     ) -> ControlResponse {
+        self.update_resources(ResourceUpdate::Replace(configuration), None)
+            .await
+    }
+
+    pub async fn update_resources(
+        &self,
+        update: ResourceUpdate,
+        gpu_change: Option<GpuPolicyChange>,
+    ) -> ControlResponse {
         let (reply, receiver) = oneshot::channel();
         if self.sender.as_ref().is_none_or(|queue| {
             queue
                 .try_send(Envelope::ConfigureResources {
-                    configuration,
+                    update,
+                    gpu_change,
                     reply,
                 })
                 .is_err()

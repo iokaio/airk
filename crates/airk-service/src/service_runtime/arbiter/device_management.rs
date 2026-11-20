@@ -43,6 +43,7 @@ pub(super) struct Readiness {
 #[derive(Default)]
 pub(super) struct Shared {
     pub state: Mutex<DeviceState>,
+    gpu_disabled: std::sync::atomic::AtomicBool,
     pub generation: std::sync::atomic::AtomicU64,
 }
 #[cfg(feature = "local-inference")]
@@ -77,6 +78,10 @@ pub(super) struct ReadDiagnosticStamp {
 }
 #[cfg(feature = "local-inference")]
 impl Shared {
+    pub(super) fn gpu_allowed(&self) -> bool {
+        !self.gpu_disabled.load(std::sync::atomic::Ordering::Acquire)
+    }
+
     /// Data-only before/after fence; no Store mutation, native call or permit.
     pub(super) fn read_diagnostic_stamp(&self) -> Result<ReadDiagnosticStamp> {
         let state = self
@@ -125,6 +130,9 @@ impl Shared {
                         .selected
                         .iter()
                         .filter(|(stage, _)| previous.stage(**stage) == current.stage(**stage))
+                        .filter(|(_, profile)| {
+                            self.gpu_allowed() || profile.device_execution.is_none()
+                        })
                         .map(|(_, profile)| profile.clone())
                         .collect()
                 } else {
@@ -141,7 +149,15 @@ impl Shared {
                 "native device epoch changed or settlement unknown"
             );
         }
-        NativeConfiguration::device(current, state.selected.values().cloned().collect())
+        NativeConfiguration::device(
+            current,
+            state
+                .selected
+                .values()
+                .filter(|profile| self.gpu_allowed() || profile.device_execution.is_none())
+                .cloned()
+                .collect(),
+        )
     }
     #[allow(
         clippy::too_many_arguments,
@@ -161,6 +177,10 @@ impl Shared {
             .state
             .lock()
             .map_err(|_| anyhow::anyhow!("native device selection unavailable"))?;
+        ensure!(
+            self.gpu_allowed() || device.is_none(),
+            "service GPU policy changed before selection"
+        );
         let mut selected = state.selected.clone();
         let mut ready = state.ready.clone();
         let mut eligibilities = state.eligibilities.clone();
@@ -202,8 +222,14 @@ impl Shared {
             warm_extra.insert(stage, extra);
         }
         // Validate the complete proposed policy BEFORE changing any owner state.
-        let policy =
-            NativeConfiguration::device(document.clone(), selected.values().cloned().collect())?;
+        let policy = NativeConfiguration::device(
+            document.clone(),
+            selected
+                .values()
+                .filter(|profile| self.gpu_allowed() || profile.device_execution.is_none())
+                .cloned()
+                .collect(),
+        )?;
         state.circuits.retain(|key| {
             key.configuration_revision == document.revision
                 && key.device_catalog == document.device_catalog.catalog
@@ -235,7 +261,8 @@ impl Shared {
             .lock()
             .map_err(|_| anyhow::anyhow!("native ready observation unavailable"))?;
         ensure!(
-            state.document.as_ref() == Some(document)
+            (profile.device_execution.is_none() || self.gpu_allowed())
+                && state.document.as_ref() == Some(document)
                 && state
                     .selected
                     .get(&stage)
@@ -363,13 +390,16 @@ impl StageOwner {
         resident: &ResidentPermit,
     ) -> Result<airk_kernel::service_resources::OptionalReuse> {
         let extra = {
-            self.devices
+            let state = self
+                .devices
                 .state
                 .lock()
-                .map_err(|_| anyhow::anyhow!("native device selection unavailable"))?
-                .warm_extra
-                .get(&self.stage)
-                .copied()
+                .map_err(|_| anyhow::anyhow!("native device selection unavailable"))?;
+            ensure!(
+                self.devices.gpu_allowed() || !state.devices.contains_key(&self.stage),
+                "GPU residency disabled by service policy"
+            );
+            state.warm_extra.get(&self.stage).copied()
         };
         match extra {
             Some(extra) => {
@@ -445,6 +475,68 @@ fn catalog_live(
 }
 #[cfg(feature = "local-inference")]
 impl Owner {
+    pub(in crate::service_runtime) fn set_gpu_allowed(
+        &self,
+        allowed: bool,
+        supervisor: &airk_supervisor::project_supervisor::Supervisor,
+    ) -> Result<()> {
+        use std::sync::atomic::Ordering;
+
+        let shared = &self.context.devices;
+        let active: Vec<_> = {
+            let state = shared
+                .state
+                .lock()
+                .map_err(|_| anyhow::anyhow!("GPU policy unavailable"))?;
+            if shared.gpu_disabled.swap(!allowed, Ordering::AcqRel) == !allowed {
+                return Ok(());
+            }
+            shared.generation.fetch_add(1, Ordering::AcqRel);
+            [Stage::Focus, Stage::Context]
+                .into_iter()
+                .filter(|stage| {
+                    state.runners.contains(stage)
+                        || state.ready.contains(stage)
+                        || state.devices.contains_key(stage)
+                })
+                .collect()
+        };
+        #[cfg(all(windows, target_arch = "x86_64", feature = "test-support", feature = "gpu-cuda"))]
+        self.apply_evaluation_gpu_policy(allowed)?;
+        if active.is_empty() {
+            return Ok(());
+        }
+        let document = self.current_device_configuration()?;
+        for stage in active {
+            if !document.stage(stage).enabled
+                || document.stage(stage).device_policy != DevicePolicy::Auto
+            {
+                continue;
+            }
+            let owner = self.stage(stage);
+            {
+                let mut life = owner
+                    .lifecycle
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("GPU lifecycle unavailable"))?;
+                cancel_device_stage(&mut life, shared, stage)?;
+                if let Some(handle) = &life.handle {
+                    let observation = handle.observation_for(stage)?;
+                    let profiles: std::collections::BTreeSet<_> =
+                        [observation.active_profile, observation.warming_profile]
+                            .into_iter()
+                            .flatten()
+                            .collect();
+                    for profile in profiles {
+                        handle.release_profile(profile)?;
+                    }
+                }
+            }
+            owner.launch_device(document.clone(), supervisor, None, DeviceAction::Warm)?;
+        }
+        Ok(())
+    }
+
     pub(super) fn current_device_configuration(&self) -> Result<DeviceConfiguration> {
         let profiles = runtime::catalog_profiles()?;
         let binding = binding()?;
@@ -1314,7 +1406,9 @@ impl Launch {
         cancel: &CancellationToken,
     ) -> Result<()> {
         self.current(Some(cancel))?;
-        if self.document.stage(self.stage).device_policy == DevicePolicy::Cpu {
+        if self.document.stage(self.stage).device_policy == DevicePolicy::Cpu
+            || !self.devices.gpu_allowed()
+        {
             return Ok(());
         }
         let actual = [Stage::Focus, Stage::Context]
@@ -1664,7 +1758,8 @@ impl Launch {
         };
         let mut candidates = Vec::new();
         let mut rejections = Vec::new();
-        if requested.device_policy == DevicePolicy::Cpu {
+        let gpu_allowed = self.devices.gpu_allowed();
+        if requested.device_policy == DevicePolicy::Cpu || !gpu_allowed {
             rejections.push(CandidateRejection {
                 manifest: None,
                 adapter_key: None,
@@ -1675,7 +1770,7 @@ impl Launch {
             Arc<airk_kernel::service_resources::OptionalReservation>,
         > = None;
         let mut probed = None;
-        if requested.device_policy == DevicePolicy::Auto {
+        if requested.device_policy == DevicePolicy::Auto && gpu_allowed {
             let mut eligible = runtime::catalog_profiles()?
                 .into_iter()
                 .filter(|profile| {
@@ -1772,7 +1867,11 @@ impl Launch {
                             eligible.iter().map(|profile| profile.manifest).collect(),
                             host.clone(),
                             self.deadline,
-                            probe_live.clone(),
+                            {
+                                let live = probe_live.clone();
+                                let devices = self.devices.clone();
+                                Arc::new(move || devices.gpu_allowed() && live())
+                            },
                         )?;
                         probed = Some(
                             tokio::time::timeout_at(
@@ -1891,6 +1990,14 @@ impl Launch {
                 anyhow::bail!("native device epoch changed or settlement unknown");
             }
             let profile = candidate.execution.description().clone();
+            let probe_live = if candidate.device.is_some() {
+                let devices = self.devices.clone();
+                let live = probe_live.clone();
+                Arc::new(move || devices.gpu_allowed() && live())
+                    as Arc<dyn Fn() -> bool + Send + Sync>
+            } else {
+                probe_live.clone()
+            };
             if let Some(device) = &candidate.device {
                 let key = airk_inference::inference_engine::pool::arbiter::circuit_key(
                     &profile,
@@ -2116,6 +2223,8 @@ impl Launch {
                         Availability::Ready,
                         if profile.device_execution.is_some() {
                             "Authenticated GPU execution is active for the selected model on the single metadata-selected compatible dedicated CUDA adapter; other adapters were not initialized."
+                        } else if !self.devices.gpu_allowed() {
+                            "FP32 CPU execution is active because GPU use is disabled in service resources."
                         } else if requested.device_policy == DevicePolicy::Cpu {
                             "FP32 CPU execution is active by request."
                         } else {
@@ -2207,6 +2316,10 @@ pub(super) struct Delivery {
 #[cfg(feature = "local-inference")]
 impl Delivery {
     pub fn live(&self) -> Result<()> {
+        ensure!(
+            self.devices.is_empty() || self.shared.gpu_allowed(),
+            "GPU delivery disabled by service policy"
+        );
         ensure!(
             self.shared
                 .generation

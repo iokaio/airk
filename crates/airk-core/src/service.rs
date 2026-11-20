@@ -502,6 +502,7 @@ pub enum ControlMethod {
     },
     SourceStatus,
     Resources,
+    SetGpuAllowed(crate::service_resources::SetGpuAllowed),
     ConfigureResources {
         configuration: crate::service_resources::ResourceConfiguration,
     },
@@ -952,7 +953,8 @@ impl ControlMethod {
             | Self::StopEmbedding { .. }
             | Self::SourceStatus
             | Self::Resources
-            | Self::ConfigureResources { .. } => {}
+            | Self::ConfigureResources { .. }
+            | Self::SetGpuAllowed(_) => {}
         }
         None
     }

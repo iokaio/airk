@@ -31,3 +31,11 @@ counts. Read actual CLI round-trip time from answer_round_trip_ns and
 guarded inference time from the work receipts. Keep the complete CLI
 envelopes for interpretation. This comparison measures the all-unavailable
 calibration path and retains the real Answer abstentions.
+
+## Private protected-QKV Answer roster
+
+Run `stage_compact_qkv_answer.ps1 -ExpectedSid <verified-human-SID> -OutputName compact-qkv-answer-roster-r<N>` in the checked Windows shell. It authenticates the frozen three-model role list, the private Compact descriptor, and the original final-graph load receipt. The generated `inputs.json` uses the original static-1024 Focus and Large profiles plus seven byte-verified Compact assets. The staging command reads model descriptors and payloads only.
+
+Use `prepare_compact_qkv_answer_plan.ps1 -ExpectedSid <SID> -ServiceImage <checked-sibling-image> -ServiceSha256 <sha256> -OutputName compact-qkv-answer-plan-r<N>.json` to bind the original synthetic workload to a newly sealed service. Validate the result using `run_compact_answer.py --check` and the plan SHA-256. For the private CUDA Answer selector, pin this roster through `AIRK_ARBITER_EVALUATION_INPUTS` and `AIRK_ARBITER_EVALUATION_INPUTS_SHA256`. Supply the original QKV load receipt through `AIRK_ARBITER_EVALUATION_CUDA_GRAPH` and its SHA-256 through `AIRK_ARBITER_EVALUATION_CUDA_GRAPH_SHA256`, along with the leased fixture's exact adapter UUID and normal resource consent. Place the service test image beside the exact reviewed `airk-cuda-runtime.json` payload. Inherit `ORT_CUDA_GEMM_OPTIONS=2` and `ORT_ENABLE_ATTENTION_KERNEL_DEBUG_INFO=1` in that process before ORT initializes. The source-verified recipe requires 16 GiB cold, 8 GiB warm and 2 GiB headroom, checks the live final graph, and retains the service GPU grant and operation deadline through dispatch. Disabling GPU use drains the fixed private Compact variant. A new attempt requires a current lease and eligible variant.
+
+This roster authenticates the original engineering profile with zero active calibration rules. A scored comparison and an installed release each require their own qualified inputs and receipts.

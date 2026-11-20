@@ -139,11 +139,13 @@ mod tests {
         };
         save(&root, &first)?;
         let second = ResourceConfiguration {
+            allow_gpu: false,
             query_concurrency: 64,
             extraction_threads: Some(3),
             ..Default::default()
         };
         save(&root, &second)?;
+        assert!(!load(&root)?.allow_gpu);
         assert_eq!(load(&root)?.extraction_threads, Some(3));
         assert_eq!(load(&root)?.query_concurrency, 64);
         for query_concurrency in [0, 2, 5, 63, 66] {

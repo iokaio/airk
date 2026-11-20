@@ -7,6 +7,131 @@ use std::{
     io::{Read, Seek, SeekFrom, Write},
 };
 
+#[cfg(all(windows, target_arch = "x86_64", feature = "gpu-cuda"))]
+impl Owner {
+    pub(super) fn apply_evaluation_gpu_policy(&self, allowed: bool) -> Result<()> {
+        if allowed {
+            return Ok(());
+        }
+        let lifecycle = self.context.lifecycle.clone();
+        let mut state = lifecycle
+            .lock()
+            .map_err(|_| anyhow::anyhow!("private GPU lifecycle unavailable"))?;
+        let Some(manifest) = state.cuda_answer.as_ref().map(|answer| answer.manifest) else {
+            return Ok(());
+        };
+        let selected = state.profile == Some(manifest);
+        let in_progress = selected && (state.busy || state.phase == Availability::Ready);
+        let native = state
+            .handle
+            .as_ref()
+            .map(|handle| handle.observation_for(Stage::Context))
+            .transpose()?;
+        let resident = native.is_some_and(|snapshot| {
+            snapshot.active_profile == Some(manifest) || snapshot.warming_profile == Some(manifest)
+        });
+        if !in_progress && !resident {
+            return Ok(());
+        }
+        if selected {
+            super::lifecycle::cancel_current(&mut state);
+            state.cancel.cancel();
+            state.phase = Availability::Draining;
+            state.reason = "GPU use disabled; waiting for the private CUDA operation and memory reservation to settle.".into();
+        }
+        if let Some(handle) = &state.handle {
+            handle.release_profile(manifest)?;
+        }
+        state.device_tasks = state
+            .device_tasks
+            .checked_add(1)
+            .context("private GPU lifecycle count exhausted")?;
+        let serial = state.serial;
+        let settled = state.settled.clone();
+        drop(state);
+        tokio::spawn(async move {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            let result = async {
+                let (handle, charges) = loop {
+                    let changed = settled.notified();
+                    tokio::pin!(changed);
+                    changed.as_mut().enable();
+                    {
+                        let state = lifecycle
+                            .lock()
+                            .map_err(|_| anyhow::anyhow!("private GPU lifecycle unavailable"))?;
+                        if !selected || state.serial != serial || !state.busy {
+                            break (
+                                state.handle.clone(),
+                                state
+                                    .charges
+                                    .iter()
+                                    .filter(|(profile, _)| *profile == manifest)
+                                    .map(|(_, charge)| charge.clone())
+                                    .collect::<Vec<_>>(),
+                            );
+                        }
+                    }
+                    tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), changed)
+                        .await
+                        .context("private GPU activation did not settle")?;
+                };
+                if let Some(handle) = handle {
+                    handle.wait_profile_released(manifest, deadline).await?;
+                }
+                for charge in charges {
+                    tokio::time::timeout_at(
+                        tokio::time::Instant::from_std(deadline),
+                        charge.wait(),
+                    )
+                    .await
+                    .context("private GPU host memory did not settle")??;
+                }
+                Ok::<_, anyhow::Error>(())
+            }
+            .await;
+            let mut state = lifecycle
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state.device_tasks -= 1;
+            if state.serial == serial && state.profile == Some(manifest) {
+                match result {
+                    Ok(()) => {
+                        // The isolated fixture authenticates exactly one variant per model.
+                        state.phase = Availability::Constrained;
+                        state.reason = "The private CUDA profile was released. This fixture has no same-model CPU variant.".into();
+                    }
+                    Err(error) => {
+                        state.phase = Availability::Draining;
+                        state.reason =
+                            bounded_reason(format!("Private CUDA drain is incomplete: {error:#}"));
+                    }
+                }
+            }
+            state.settled.notify_waiters();
+        });
+        Ok(())
+    }
+}
+
+#[cfg(all(windows, target_arch = "x86_64", feature = "gpu-cuda"))]
+pub(super) fn private_gpu_grant(
+    devices: &std::sync::Weak<super::device_management::Shared>,
+) -> Result<Arc<dyn Fn() -> bool + Send + Sync>> {
+    use std::sync::atomic::Ordering;
+    let owner = devices
+        .upgrade()
+        .context("private CUDA Answer service stopped")?;
+    let generation = owner.generation.load(Ordering::Acquire);
+    ensure!(owner.gpu_allowed(), "service GPU use is disabled");
+    let devices = devices.clone();
+    Ok(Arc::new(move || {
+        devices.upgrade().is_some_and(|current| {
+            current.gpu_allowed() && current.generation.load(Ordering::Acquire) == generation
+        })
+    }))
+}
+
 #[cfg(test)]
 type FixtureDescriptorSource<'a> = &'a mut (dyn FnMut(&Asset) -> Result<File> + 'a);
 
@@ -52,6 +177,7 @@ pub struct EvaluationOwner {
     feature = "gpu-cuda"
 ))]
 pub(super) struct CudaAnswerEvaluation {
+    pub(super) devices: std::sync::Weak<super::device_management::Shared>,
     pub(super) lease: Arc<airk_store::service::ServiceLease>,
     pub(super) gate: airk_catalog_control::catalog_admission::NativeCatalogAdmission,
     pub(super) manifest: Sha256Digest,
@@ -250,6 +376,7 @@ impl EvaluationOwner {
             "private CUDA Answer must be attached to an idle, isolated evaluation owner"
         );
         state.cuda_answer = Some(Arc::new(CudaAnswerEvaluation {
+            devices: Arc::downgrade(&self.owner.context.devices),
             lease: self.owner.ownership.clone(),
             gate: self.owner.gate.clone(),
             manifest,
@@ -402,6 +529,28 @@ impl EvaluationOwner {
 #[cfg(test)]
 mod execution_observer_tests {
     use super::*;
+
+    #[cfg(all(windows, target_arch = "x86_64", feature = "gpu-cuda"))]
+    #[test]
+    fn private_gpu_grant_expires_without_retaining_service_or_reauthorizing_old_generation()
+    -> Result<()> {
+        let owner = Arc::new(super::super::device_management::Shared::default());
+        let weak = Arc::downgrade(&owner);
+        let original = private_gpu_grant(&weak)?;
+        assert!(original());
+        assert_eq!(Arc::strong_count(&owner), 1);
+        owner
+            .generation
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        assert!(!original());
+        let current = private_gpu_grant(&weak)?;
+        assert!(current());
+        drop(owner);
+        assert!(!current());
+        assert!(private_gpu_grant(&weak).is_err());
+        Ok(())
+    }
+
     #[test]
     fn private_execution_observer_attachment_still_requires_actual_startup_lease_and_gate()
     -> Result<()> {

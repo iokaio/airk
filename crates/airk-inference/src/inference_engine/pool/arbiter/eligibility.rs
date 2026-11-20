@@ -683,15 +683,18 @@ pub(super) fn warm(
             feature = "test-support",
             feature = "gpu-cuda"
         ))]
-        WarmRoute::EvaluationAnswer(graph) => {
-            let (scorer, proof) = Scorer::open_compact_bounded_hybrid_answer(
+        WarmRoute::EvaluationAnswer(admission) => {
+            let graph = admission.graph;
+            let (scorer, proof) = Scorer::open_private_compact_answer(
                 warm.profile,
                 warm.source.as_ref(),
                 &graph.reviewed_result,
                 graph.expected_sha256,
                 graph.expires,
             )?;
+            let authority = admission.gpu_current;
             evaluation_answer_deadline = Some(Box::new(move |deadline| {
+                ensure!(authority(), "private CUDA Answer authority revoked");
                 proof.require_operation_deadline(deadline)
             }));
             Ok(scorer)

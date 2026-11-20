@@ -1031,7 +1031,18 @@ fn canonical_control(
             },
             ControlMethod::Resources => state.supervisor.resource_status(),
             ControlMethod::ConfigureResources { configuration } => {
-                state.supervisor.configure_resources(configuration).await
+                update_resources(
+                    &state,
+                    airk_supervisor::project_supervisor::ResourceUpdate::Replace(configuration),
+                )
+                .await
+            }
+            ControlMethod::SetGpuAllowed(setting) => {
+                update_resources(
+                    &state,
+                    airk_supervisor::project_supervisor::ResourceUpdate::Gpu(setting),
+                )
+                .await
             }
             ControlMethod::ToolsCatalog {
                 detail,
@@ -1475,6 +1486,29 @@ fn canonical_control(
 }
 
 /// Accepted shutdown belongs to the service, independently of reply delivery.
+async fn update_resources(
+    state: &Arc<State>,
+    update: airk_supervisor::project_supervisor::ResourceUpdate,
+) -> ControlResponse {
+    #[cfg(feature = "local-inference")]
+    let change = state.arbiter.as_ref().map(|_| {
+        let state = Arc::downgrade(state);
+        let runtime = tokio::runtime::Handle::current();
+        Arc::new(move |allowed| {
+            let state = state.upgrade().context("service has stopped")?;
+            let _entered = runtime.enter();
+            state
+                .arbiter
+                .as_ref()
+                .context("GPU policy owner unavailable")?
+                .set_gpu_allowed(allowed, &state.supervisor)
+        }) as airk_supervisor::project_supervisor::GpuPolicyChange
+    });
+    #[cfg(not(feature = "local-inference"))]
+    let change = None;
+    state.supervisor.update_resources(update, change).await
+}
+
 async fn deliver_control_response(
     shutdown: &Notify,
     requested_shutdown: bool,
@@ -1803,6 +1837,13 @@ async fn serve_owned(
         admin: Arc::new(admin),
         agents: Mutex::new(agents(instance, catalog_gate_for_agents)),
     });
+    #[cfg(feature = "local-inference")]
+    if let Some(owner) = &state.arbiter {
+        let allowed = matches!(state.supervisor.resource_status(),
+            ControlResponse::Resources { observation, configuration_error: false, .. }
+            if observation.configuration.allow_gpu);
+        owner.set_gpu_allowed(allowed, &state.supervisor)?;
+    }
     let _ = reader_state.set(Arc::downgrade(&state));
     #[cfg(feature = "local-inference")]
     if let Some(owner) = &state.arbiter {

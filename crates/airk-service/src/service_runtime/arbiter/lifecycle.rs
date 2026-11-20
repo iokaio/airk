@@ -444,10 +444,12 @@ async fn warm(
         .map_err(|_| anyhow::anyhow!("private CUDA Answer lifecycle unavailable"))?
         .cuda_answer.as_ref()
         .filter(|answer| answer.manifest == manifest)
-        .cloned();
+        .cloned()
+        .map(|answer| -> Result<_> { let grant = super::evaluation::private_gpu_grant(&answer.devices)?; Ok((answer, grant)) })
+        .transpose()?;
     let host_bytes = profile.description().memory_reservation_bytes;
     #[cfg(all(windows, target_arch = "x86_64", feature = "test-support", feature = "gpu-cuda"))]
-    let host_bytes = if let Some(answer) = &cuda_answer {
+    let host_bytes = if let Some((answer, _)) = &cuda_answer {
         ensure!(Instant::now() < answer.graph.expires(), "private CUDA Answer fixture expired");
         32 << 30
     } else {
@@ -567,27 +569,27 @@ async fn warm(
     #[cfg(all(windows, target_arch = "x86_64", feature = "test-support", feature = "gpu-cuda"))]
     let local_test = local_test || cuda_answer.is_some();
     #[cfg(all(windows, target_arch = "x86_64", feature = "test-support", feature = "gpu-cuda"))]
-    let receiver = if let Some(answer) = cuda_answer.as_ref() {
+    let receiver = if let Some((answer, gpu_current)) = cuda_answer.as_ref() {
         let deadline = (Instant::now() + Duration::from_secs(120)).min(answer.graph.expires());
         let authority = {
             let expected = expected.clone();
             let configuration = configuration.clone();
             let cancel = cancel.clone();
             let gate = answer.gate.clone();
+            let gpu_current = gpu_current.clone();
             Arc::new(move || {
-                Instant::now() < deadline
+                gpu_current()
                     && !cancel.is_cancelled()
                     && gate.catalog_clock().is_some_and(|clock| clock.namespace == expected.catalog)
                     && configuration.load().is_ok_and(|current| current == expected)
             })
         };
         let host = Arc::new(reservation);
+        let plan = answer.graph.capacity_plan(&profile)?;
         let probe = handle.probe_evaluation_device(
             answer.lease.clone(),
             profile,
-            airk_retrieval::arbiter::runtime::cuda::DeviceCapacityPlan::probe(
-                22 << 30, 16 << 30, 2 << 30,
-            )?,
+            plan,
             answer.adapter,
             host.clone(),
             airk_core::arbiter::device::GpuProbeReservation {
@@ -617,7 +619,7 @@ async fn warm(
             host,
             deadline,
             authority,
-            answer.graph.clone(),
+            answer.graph.admit(gpu_current.clone())?,
         )?
     } else {
         handle.warm(profile, source, reservation)?

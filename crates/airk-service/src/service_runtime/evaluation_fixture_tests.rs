@@ -626,7 +626,19 @@ async fn run_actual_private_arbiter_fixture(
     });
     let source = prepared.clone();
     let (seeded, seed_ready) = tokio::sync::oneshot::channel();
+    #[cfg(all(windows, target_arch = "x86_64", feature = "gpu-cuda"))]
+    let lease_witness = cuda_answer
+        .as_ref()
+        .map(|_| Arc::new(std::sync::OnceLock::new()));
+    #[cfg(all(windows, target_arch = "x86_64", feature = "gpu-cuda"))]
+    let capture_lease = lease_witness.clone();
     let factory: EvaluationFactory = Box::new(move |lease, gate| {
+        #[cfg(all(windows, target_arch = "x86_64", feature = "gpu-cuda"))]
+        if let Some(witness) = capture_lease {
+            witness
+                .set(Arc::downgrade(&lease))
+                .map_err(|_| anyhow::anyhow!("private original lease observed twice"))?;
+        }
         let namespace = gate
             .catalog_clock()
             .context("actual fixture catalog clock missing")?
@@ -877,6 +889,21 @@ async fn run_actual_private_arbiter_fixture(
     }
     // Actual lease reacquisition proves no model/session still retains its
     // service ownership capability. Work, assets and receipts remain private.
+    #[cfg(all(windows, target_arch = "x86_64", feature = "gpu-cuda"))]
+    if let Some(witness) = lease_witness {
+        let original = witness
+            .get()
+            .context("original private CUDA service lease unobserved")?;
+        write(
+            &work,
+            "cuda-custody-before-reacquisition.json",
+            &serde_json::json!({
+                "schema": "airk.private.cuda-answer-shutdown-custody/1",
+                "original_lease_strong_count": original.strong_count(),
+                "native_cuda_poisoned": airk_retrieval::arbiter::runtime::cuda::process_poisoned(),
+            }),
+        )?;
+    }
     let released = airk_store::service::ServiceLease::acquire(&control)?;
     drop(released);
     write(

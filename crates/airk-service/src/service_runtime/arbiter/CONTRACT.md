@@ -688,3 +688,5 @@ checks continue to govern Ready. No legacy or device asset receipt is
 created for that GPU manifest. Legacy seeding for the other profiles keeps
 its existing Store contract. Private CUDA failures retain their original
 result without a legacy cached continuation.
+
+The service resource policy owns global GPU eligibility. A change to allow_gpu applies to both stages while preserving their stored selections and revision. At startup, missing values in valid legacy resource configurations allow GPU use. A configuration error closes GPU admission until the resource policy is repaired. A disable transition fences pending GPU probes, activation, resident reuse and delivery, revokes device readiness and schedules same-model CPU selection for active automatic stages. A stage without active work stays idle. The ordinary warm, drain, fit, permission and deadline checks apply on each transition.
