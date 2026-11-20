@@ -33,6 +33,22 @@ WIDE = HERE.with_name("large_flash.py")
 WIDE_SHA = "24d551de98080eb338f602a725161ed35a95456646860575e1bf16a28d3284cb"
 
 
+QKV_RECIPE = "large-qkv-fp32-sm86-causal-flash-single-tile"
+QKV = HERE.with_name("large_qkv_reference.py")
+QKV_SHA = "70d2a406c8fc42de7059c2d5ed15d5a5a9af53a00d9915fe780438109fe5d7ce"
+
+
+def candidate_inputs(c, args, proofs, check):
+    if args.recipe != QKV_RECIPE:
+        return None
+    owner = checked_module(QKV, QKV_SHA)
+    stage, descriptor = owner["stage"](CAMPAIGN,c["pin"],check)
+    require(descriptor["weights"] == proofs["weights"] and descriptor["original_graph"] == proofs["graph"]
+            and args.affinity_mask.bit_count() == 2, "exact original Large assets and two CPU threads required")
+    return {"source":c["pin"](QKV,check),"stage":stage,"graph":descriptor["graph"],
+            "verification":descriptor["verification"],"protected_routes_in_model_order":108}
+
+
 def selected_row(meta, args):
     rows = [row for row in meta["rows"] if len(row["input"]["input_ids"]) == args.tokens]
     require(len(rows) == 1 and (args.recipe == WIDE_RECIPE) == (args.tokens != 32),
@@ -50,7 +66,11 @@ def checked_module(path, digest):
     return runpy.run_path(str(path))
 
 
-def own_job():
+def host_limit(recipe):
+    return (22 << 30) if recipe == QKV_RECIPE else HOST
+
+
+def own_job(requested=HOST):
     import ctypes
     from ctypes import wintypes
 
@@ -70,7 +90,7 @@ def own_job():
         raise ctypes.WinError(ctypes.get_last_error())
     required_flags = 0x2000 | 0x100 | 0x200 | 0x8
     require(limits.basic.flags & required_flags == required_flags and limits.basic.active_limit == 2
-            and limits.process == limits.job == HOST, "original reference Job flags, two process slots and 32 GiB caps required")
+            and limits.process == limits.job == requested, "reference Job flags, two process slots and exact requested caps required")
     return {"process_bytes": limits.process, "job_bytes": limits.job, "active_limit": limits.basic.active_limit}
 
 
@@ -176,7 +196,10 @@ def authenticate(args, deadline):
 
 
 def reference(args):
-    limits = own_job()
+    limits = own_job(host_limit(args.recipe))
+    placement = None
+    if args.recipe == QKV_RECIPE:
+        placement = checked_module(QKV,QKV_SHA)["cpu_limits"](args.affinity_mask)
     require(0 < args.deadline - time.monotonic() <= SECONDS and os.environ.get("CUDA_VISIBLE_DEVICES") == ""
             and sys.pycache_prefix and not Path(sys.pycache_prefix).exists(), "bounded CPU-only worker required")
     c, support, plan, pp, rp, proofs, meta, mp, _, _, token, check = authenticate(args, args.deadline)
@@ -187,6 +210,7 @@ def reference(args):
     c["windows_owner"](cache)
     sys.addaudithook(lambda event, arguments: support["read_only"](event, arguments, cache))
     inputs = {r["path"]: r for r in plan["input_files"]}
+    variant = candidate_inputs(c,args,proofs,check)
     runtime = c["read"](c["pinned"](plan["runtime_manifest"], check))
     original, selected = c["source_facts"](plan["source_plan"], "large", check)
     require(selected["original_graph"] == plan["source_graph"] and selected["source_closure"] == plan["source_closure"],
@@ -223,6 +247,8 @@ def reference(args):
     if args.recipe == WIDE_RECIPE:
         inputs[str(WIDE)] = c["pin"](WIDE, check)
         scores = checked_module(WIDE, WIDE_SHA)["forward"](independent, row["input"], check)
+    elif variant is not None:
+        scores = checked_module(QKV,QKV_SHA)["score"](independent,row["input"],check)
     else:
         scores = independent.forward(row["input"], context_flash_single_tile=args.recipe == FLASH_RECIPE)
     require(scores.dtype == torch.float32 and scores.device.type == "cpu" and tuple(scores.shape) == (1, 8)
@@ -245,8 +271,8 @@ def reference(args):
     if args.recipe == WIDE_RECIPE:
         c["pinned"](inputs[str(WIDE)], check)
     return {"model": "large", "recipe": args.recipe, "tokens": args.tokens,
-            "multi_tile_source": inputs.get(str(WIDE)), "conversion_plan": pp, "conversion_receipt": rp,
-            "source_inputs": mp, "graph": proofs["graph"], "weights": proofs["weights"], "verification": verification,
+            "multi_tile_source": inputs.get(str(WIDE)), "candidate": variant, "cpu_placement": placement, "conversion_plan": pp, "conversion_receipt": rp,
+            "source_inputs": mp, "graph": variant["graph"] if variant else proofs["graph"], "weights": proofs["weights"], "verification": verification,
             "publisher": publisher, "streamed_loader": inputs[str(STREAM)], "input_digest": row["input"]["input_digest"], "original_fp32": row["reference_original_fp32"],
             "matching_fp16": vector, "loaded_runtime": support["loaded_runtime"](inputs, c["pin"], check),
             "forward_count": 1, "job": limits, "device": "cpu", "pid": os.getpid(), "token": token, "deadline": args.deadline,
@@ -258,6 +284,7 @@ def run(args):
     deadline = start + SECONDS
     c, support, plan, pp, rp, proofs, meta, mp, parent, owner, token, check = authenticate(args, deadline)
     row = selected_row(meta, args)
+    variant = candidate_inputs(c,args,proofs,check)
     wide_source = c["pin"](WIDE, check) if args.recipe == WIDE_RECIPE else None
     require(wide_source is None or wide_source["sha256"] == WIDE_SHA, "multi-tile source changed")
     out = args.owned_output
@@ -271,17 +298,18 @@ def run(args):
     for path in (log, evidence, receipt):
         c["guard"](plan, path, deadline=deadline)
     source = c["pin"](HERE, check)
+    memory_cap = host_limit(args.recipe)
     argv = [sys.executable, "-I", "-B", "-S", "-X", "pycache_prefix=" + plan["cache_prefix"], str(HERE),
             "--worker", "--plan", str(args.plan), "--plan-sha256", pp["sha256"], "--conversion", str(args.conversion),
             "--conversion-sha256", rp["sha256"], "--deadline", repr(deadline), "--worker-sha256", source["sha256"],
-            "--recipe", args.recipe, "--tokens", str(args.tokens)]
+            "--recipe", args.recipe, "--tokens", str(args.tokens), "--affinity-mask", str(args.affinity_mask)]
     env = {k: v for k, v in os.environ.items() if not k.upper().startswith(
         ("AIRK_", "ORT_", "PYTHON", "CUDA_", "CUDNN_", "TORCH_", "TRITON_", "HF_", "HUGGINGFACE_"))}
     env.update(CUDA_VISIBLE_DEVICES="", HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1", TOKENIZERS_PARALLELISM="false",
                TORCH_HOME=str(temp), TORCHINDUCTOR_CACHE_DIR=str(temp), TRITON_CACHE_DIR=str(temp),
                TEMP=str(temp), TMP=str(temp), TMPDIR=str(temp))
     result = {"schema": "airk.private.owned-large-fp16-t32-reference/1", "complete": False, "qualification": False, "failure": None,
-              "plan": pp, "conversion": rp, "worker": source, "command": argv, "host_bytes": HOST, "deadline": deadline}
+              "plan": pp, "conversion": rp, "worker": source, "command": argv, "host_bytes": memory_cap, "deadline": deadline}
 
     def suspended(api, job, info, child_deadline):
         observation = parent.suspended_authentication(api, info, deadline, child_deadline, c["SID"], plan["python"], owner.image_proof)
@@ -292,9 +320,9 @@ def run(args):
     try:
         with open(os.devnull, "rb") as stdin, log.open("xb") as stdout:
             result["owned"] = owner.run_windows_owned_training(argv, ROOT, stdout, deadline-time.monotonic(), env,
-                stdin, HOST, before_resume=suspended, absolute_deadline=deadline, cleanup_seconds=5)
+                stdin, memory_cap, before_resume=suspended, absolute_deadline=deadline, cleanup_seconds=5)
         owned = result["owned"]
-        require(parent.settled(owned) and 0 < owned["peak_host_committed_bytes"] <= HOST, "unsettled/failed Large CPU reference")
+        require(parent.settled(owned) and 0 < owned["peak_host_committed_bytes"] <= memory_cap, "unsettled/failed Large CPU reference")
         c["guard"](plan, log, True, deadline=deadline)
         require(0 < log.stat().st_size <= 64 << 20 and not any(temp.iterdir()), "log, output or cache bound differs")
         require({path.name for path in out.iterdir()} == {"temp", "stdout.log"}, "unexpected Large reference output")
@@ -303,14 +331,18 @@ def run(args):
         require(len(matches) == 1 and len(matches[0]) <= 16 << 20, "one bounded private score observation required")
         obs = json.loads(matches[0])
         require(obs["conversion_plan"] == pp and obs["conversion_receipt"] == rp and obs["source_inputs"] == mp
-                and obs["graph"] == proofs["graph"] and obs["weights"] == proofs["weights"]
+                and obs["graph"] == (variant["graph"] if variant else proofs["graph"]) and obs["weights"] == proofs["weights"]
+                and obs["candidate"] == variant and (not variant or obs["cpu_placement"] == {
+                    "process_affinity": hex(args.affinity_mask), "priority_class": "below_normal", "torch_intraop_threads": 2,
+                    "torch_interop_threads":1,"pid":owned["owned_leader_pid"]})
                 and obs["pid"] == owned["owned_leader_pid"] and obs["token"] == token and obs["deadline"] == deadline
                 and obs["model"] == "large" and obs["recipe"] == args.recipe and obs["device"] == "cpu"
                 and obs["tokens"] == args.tokens and obs["multi_tile_source"] == wide_source
-                and obs["job"] == {"process_bytes": HOST, "job_bytes": HOST, "active_limit": 2}
+                and obs["job"] == {"process_bytes": memory_cap, "job_bytes": memory_cap, "active_limit": 2}
                 and obs["forward_count"] == 1 and obs["original_fp32"] == row["reference_original_fp32"]
                 and obs["input_digest"] == row["input"]["input_digest"] and support["finite_scores"](obs["matching_fp16"])
                 and obs["native_execution"] is obs["qualification"] is False, "Large CPU proof differs from owned request")
+        require(candidate_inputs(c,args,proofs,check) == variant, "protected candidate changed during CPU reference")
         for entry in [pp, rp, mp, source] + ([wide_source] if wide_source else []):
             c["pinned"](entry, check)
         with evidence.open("xb") as file:
@@ -345,7 +377,8 @@ if __name__ == "__main__":
     mode.add_argument("--worker", action="store_true")
     parser.add_argument("--deadline", type=float)
     parser.add_argument("--worker-sha256")
-    parser.add_argument("--recipe", choices=("baseline-half", FLASH_RECIPE, WIDE_RECIPE), default="baseline-half")
+    parser.add_argument("--recipe", choices=("baseline-half", FLASH_RECIPE, WIDE_RECIPE,QKV_RECIPE), default="baseline-half")
+    parser.add_argument("--affinity-mask", type=lambda value: int(value,0), default=0)
     parser.add_argument("--tokens", choices=(32, 128, 1024, 8192), type=int, default=32)
     args = parser.parse_args()
     require(sys.flags.isolated and sys.flags.no_site and sys.dont_write_bytecode, "run with -I -B -S")
