@@ -43,11 +43,14 @@ class FlashTiles(unittest.TestCase):
         actual = BLOCK(torch, query, keys, values, 64, lambda: None)
         level = half(math.sqrt(128)) / math.sqrt(128)
         low, carried = math.exp(-2 * level), math.exp(-level)
-        for row in (0, 17, 63):
+        for row in (0, 17, 38, 63):
             count = row + 1
             numerator = 32 * (-21 * half(low) + 3) + count * carried * 7
             denominator = 32 * (low + 1) + count * carried
             self.assertEqual(actual[0, 0, row, 0].item(), half(numerator / denominator))
+        # At 39 live right-tile keys, rounding the denominator inputs would
+        # instead produce 2.080078125. The kernel keeps the original FP32 sum.
+        self.assertEqual(actual[0, 0, 38, 0].item(), 2.08203125)
 
 
 if __name__ == "__main__":

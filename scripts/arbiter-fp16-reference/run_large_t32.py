@@ -28,6 +28,16 @@ HOST = 32 << 30
 SECONDS = 600
 MARKER = "AIRK_LARGE_FP16_T32 "
 FLASH_RECIPE = "baseline-half-sm86-causal-flash-single-tile"
+WIDE_RECIPE = "baseline-half-sm86-causal-flash-multi-tile"
+WIDE = HERE.with_name("large_flash.py")
+WIDE_SHA = "24d551de98080eb338f602a725161ed35a95456646860575e1bf16a28d3284cb"
+
+
+def selected_row(meta, args):
+    rows = [row for row in meta["rows"] if len(row["input"]["input_ids"]) == args.tokens]
+    require(len(rows) == 1 and (args.recipe == WIDE_RECIPE) == (args.tokens != 32),
+            "one declared input of the requested width and its applicable recipe required")
+    return rows[0]
 
 
 def require(value, message):
@@ -209,12 +219,15 @@ def reference(args):
         original_files=c["read"](plan["source_closure"]["path"]))
     check()
     observe("graph_and_learned_bytes_verified")
-    row = meta["rows"][0]
-    require(len(row["input"]["input_ids"]) == 32, "T32 reference required")
-    scores = independent.forward(row["input"], context_flash_single_tile=args.recipe == FLASH_RECIPE)
+    row = selected_row(meta, args)
+    if args.recipe == WIDE_RECIPE:
+        inputs[str(WIDE)] = c["pin"](WIDE, check)
+        scores = checked_module(WIDE, WIDE_SHA)["forward"](independent, row["input"], check)
+    else:
+        scores = independent.forward(row["input"], context_flash_single_tile=args.recipe == FLASH_RECIPE)
     require(scores.dtype == torch.float32 and scores.device.type == "cpu" and tuple(scores.shape) == (1, 8)
-            and not torch.cuda.is_initialized(), "CPU-only T32 score ABI differs")
-    observe("t32_forward_completed")
+            and not torch.cuda.is_initialized(), "CPU-only Large score ABI differs")
+    observe(f"t{args.tokens}_forward_completed")
     vector = scores[0].tolist()
     require(support["finite_scores"](vector), "nonfinite CPU reference")
     for key in ("graph", "weights", "manifest"):
@@ -229,7 +242,10 @@ def reference(args):
     for root, fixture, producer in prep["PAIRS"]:
         support["read_pinned_json"](root / "numeric-fixture.json", fixture, check)
         support["read_pinned_json"](root / "reference-producer.json", producer, check)
-    return {"model": "large", "recipe": args.recipe, "conversion_plan": pp, "conversion_receipt": rp,
+    if args.recipe == WIDE_RECIPE:
+        c["pinned"](inputs[str(WIDE)], check)
+    return {"model": "large", "recipe": args.recipe, "tokens": args.tokens,
+            "multi_tile_source": inputs.get(str(WIDE)), "conversion_plan": pp, "conversion_receipt": rp,
             "source_inputs": mp, "graph": proofs["graph"], "weights": proofs["weights"], "verification": verification,
             "publisher": publisher, "streamed_loader": inputs[str(STREAM)], "input_digest": row["input"]["input_digest"], "original_fp32": row["reference_original_fp32"],
             "matching_fp16": vector, "loaded_runtime": support["loaded_runtime"](inputs, c["pin"], check),
@@ -241,6 +257,9 @@ def run(args):
     start = time.monotonic()
     deadline = start + SECONDS
     c, support, plan, pp, rp, proofs, meta, mp, parent, owner, token, check = authenticate(args, deadline)
+    row = selected_row(meta, args)
+    wide_source = c["pin"](WIDE, check) if args.recipe == WIDE_RECIPE else None
+    require(wide_source is None or wide_source["sha256"] == WIDE_SHA, "multi-tile source changed")
     out = args.owned_output
     require(out.parent == CAMPAIGN and out.resolve(strict=False) == out and not out.exists(), "fresh private output required")
     temp = out / "temp"
@@ -255,7 +274,7 @@ def run(args):
     argv = [sys.executable, "-I", "-B", "-S", "-X", "pycache_prefix=" + plan["cache_prefix"], str(HERE),
             "--worker", "--plan", str(args.plan), "--plan-sha256", pp["sha256"], "--conversion", str(args.conversion),
             "--conversion-sha256", rp["sha256"], "--deadline", repr(deadline), "--worker-sha256", source["sha256"],
-            "--recipe", args.recipe]
+            "--recipe", args.recipe, "--tokens", str(args.tokens)]
     env = {k: v for k, v in os.environ.items() if not k.upper().startswith(
         ("AIRK_", "ORT_", "PYTHON", "CUDA_", "CUDNN_", "TORCH_", "TRITON_", "HF_", "HUGGINGFACE_"))}
     env.update(CUDA_VISIBLE_DEVICES="", HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1", TOKENIZERS_PARALLELISM="false",
@@ -287,11 +306,12 @@ def run(args):
                 and obs["graph"] == proofs["graph"] and obs["weights"] == proofs["weights"]
                 and obs["pid"] == owned["owned_leader_pid"] and obs["token"] == token and obs["deadline"] == deadline
                 and obs["model"] == "large" and obs["recipe"] == args.recipe and obs["device"] == "cpu"
+                and obs["tokens"] == args.tokens and obs["multi_tile_source"] == wide_source
                 and obs["job"] == {"process_bytes": HOST, "job_bytes": HOST, "active_limit": 2}
-                and obs["forward_count"] == 1 and obs["original_fp32"] == meta["rows"][0]["reference_original_fp32"]
-                and obs["input_digest"] == meta["rows"][0]["input"]["input_digest"] and support["finite_scores"](obs["matching_fp16"])
+                and obs["forward_count"] == 1 and obs["original_fp32"] == row["reference_original_fp32"]
+                and obs["input_digest"] == row["input"]["input_digest"] and support["finite_scores"](obs["matching_fp16"])
                 and obs["native_execution"] is obs["qualification"] is False, "Large CPU proof differs from owned request")
-        for entry in (pp, rp, mp, source):
+        for entry in [pp, rp, mp, source] + ([wide_source] if wide_source else []):
             c["pinned"](entry, check)
         with evidence.open("xb") as file:
             file.write(matches[0])
@@ -325,7 +345,8 @@ if __name__ == "__main__":
     mode.add_argument("--worker", action="store_true")
     parser.add_argument("--deadline", type=float)
     parser.add_argument("--worker-sha256")
-    parser.add_argument("--recipe", choices=("baseline-half", FLASH_RECIPE), default="baseline-half")
+    parser.add_argument("--recipe", choices=("baseline-half", FLASH_RECIPE, WIDE_RECIPE), default="baseline-half")
+    parser.add_argument("--tokens", choices=(32, 128, 1024, 8192), type=int, default=32)
     args = parser.parse_args()
     require(sys.flags.isolated and sys.flags.no_site and sys.dont_write_bytecode, "run with -I -B -S")
     if args.worker:

@@ -100,3 +100,14 @@ narrowing and normalization. The linked CUTLASS SM80 C-layout definition in
 `mma_traits_sm80.hpp` has SHA-256
 `6c39df1b65facd9322bfdf4a74dfb0bf97f1694892ac9b43a61e1590191a364e`.
 Qualify each model, width and native execution identity separately.
+
+`compare_large_flash.py --per-slot` joins the fixed native Large T32 score
+to the original FP32, simple CPU FP16 and single-tile CPU Flash score vectors.
+It checks shared graph, weights, numerical input and both owned execution
+receipts before reporting signed errors. `large_projection_control.py` checks
+the CPU first-layer K, V and Q projection words at frozen T32 token positions
+0, 15 and 31 against exact signed fixed-point dot products with ties-to-even
+rounding. The input activation uses the same FP32 RMS norm and FP16 cast as
+the reference. Each consumed external tensor is matched to the independent
+publisher digest. A native intermediate capture is needed to localize any
+CPU-versus-CUDA discrepancy.
