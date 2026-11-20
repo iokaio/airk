@@ -69,18 +69,18 @@ def wait_until(event, deadline, why):
     require(left > 0 and event.wait(left), why)
 
 
-def pressure_headroom(host, reservation, candidate, private_resident):
+def pressure_headroom(host, reservation, candidate, private_resident, candidate_limit=16*GIB):
     private_commit = candidate["private_commit_bytes"]
-    require(type(private_commit) is int and 0 <= private_commit <= 16*GIB
+    require(candidate_limit in (12*GIB,16*GIB) and type(private_commit) is int and 0 <= private_commit <= candidate_limit
             and type(private_resident) is int and 0 <= private_resident <= min(private_commit,candidate["working_set_bytes"])
-            and reservation >= 16*GIB, "unverified suspended host charge")
+            and reservation >= candidate_limit, "unverified suspended host charge")
     pending_commit = reservation - private_commit
     pending_physical = reservation - private_resident
     available_commit = host["commit_limit_bytes"] - host["commit_bytes"]
     require(available_commit >= pending_commit + 8*GIB and
             host["physical_available_bytes"] >= pending_physical + 8*GIB,
             "insufficient pre-resume physical or commit reserve")
-    return {"host":host, "outstanding_other_bytes":reservation-16*GIB, "candidate_private_commit_bytes":private_commit,
+    return {"host":host, "candidate_limit_bytes":candidate_limit, "outstanding_other_bytes":reservation-candidate_limit, "candidate_private_commit_bytes":private_commit,
             "candidate_private_working_set_bytes":private_resident,"pending_commit_bytes":pending_commit,
             "pending_physical_bytes":pending_physical,"minimum_spare_bytes":8*GIB}
 
@@ -93,6 +93,7 @@ class Gate:
         self.lock = threading.Lock()
         self.latest = self.held = self.baseline = self.error = self.admission = None
         self.host_accounting = self.host_reservation = None
+        self.candidate_limit = 16*GIB
         self.attempt = None
         self.rows = []
         self.sizing = []
@@ -114,7 +115,7 @@ class Gate:
                 # includes shareable image pages; credit only proven private resident bytes.
                 reserve_evidence["pre_resume_host"] = pressure_headroom(
                     self.host_accounting["host"](), self.host_reservation, baseline,
-                    baseline.get("private_working_set_bytes", 0))
+                    baseline.get("private_working_set_bytes", 0), self.candidate_limit)
             self.attempt = {"candidate_pid":candidate_pid, "observed_monotonic_ns":time.monotonic_ns(),
                             "snapshot":captured, "sample":self.latest, "cuda_held":self.held, **reserve_evidence}
             self.admission = {**reserve_evidence, "candidate_pid":candidate_pid, "child_deadline":child_deadline, "observed_monotonic_ns": time.monotonic_ns(), "snapshot": captured,
@@ -239,14 +240,14 @@ def monitor(api, info, deadline, gate, events, log, set_event, channel, nonce):
         raise
 
 
-def run(out, tier, maximum, *, small=False, trial=None, calibration=False, pressure_host_reserve=None):
+def run(out, tier, maximum, *, small=False, trial=None, calibration=False, pressure_host_reserve=None, candidate_limit=16*GIB):
     require(os.name == "nt" and sys.flags.isolated and sys.flags.no_site and sys.dont_write_bytecode and
             Path(sys.executable) in PINS, "checked isolated Windows Python required")
     require(not calibration or (small and maximum == 2*GIB), "bounded 2 GiB allocation calibration required")
     pressure = pressure_host_reserve is not None
     if pressure:
         require(not small and not calibration and type(pressure_host_reserve) is int
-                and pressure_host_reserve >= 16*GIB, "original model trial and pending host reservation required")
+                and candidate_limit in (12*GIB,16*GIB) and pressure_host_reserve >= candidate_limit, "original model trial and pending host reservation required")
         calibration_file = CAMPAIGN/"compact-capacity-commit-calibration-r1/execution.json"
         verify(calibration_file, "4b5716f0ef4f97e74148994554260f7b48b1b2f76d3c74748cc46d15849ff997")
         host_limit = maximum + 2*GIB
@@ -279,7 +280,7 @@ def run(out, tier, maximum, *, small=False, trial=None, calibration=False, press
     luid = initial["dxgi"]["luid"]
     gate = Gate(tier, small, deadline, luid)
     if pressure:
-        gate.host_accounting, gate.host_reservation = accounting, pressure_host_reserve
+        gate.host_accounting, gate.host_reservation, gate.candidate_limit = accounting, pressure_host_reserve, candidate_limit
         # A host sample accompanies each of at most 168 bounded allocation chunks.
         gate.log_limit += 512 * ((maximum + 256*MIB - 1) // (256*MIB))
     nonce = str(uuid.uuid4())
@@ -300,7 +301,7 @@ def run(out, tier, maximum, *, small=False, trial=None, calibration=False, press
     if calibration:
         args.append("--commit-calibration")
     if pressure:
-        args.extend(["--pressure-host-reserve", pressure_host_reserve])
+        args.extend(["--pressure-host-reserve", pressure_host_reserve, "--candidate-limit", candidate_limit])
     args = list(map(str, args))
     image = pin(Path(sys.executable))
     result = {"complete": False, "tier_gib": tier, "small_model_free": small, "maximum_bytes": maximum,

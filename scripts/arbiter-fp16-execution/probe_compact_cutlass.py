@@ -121,28 +121,21 @@ def original_input(case, base, exact, require):
     return dict(row,compiled=row["input"]), [pin]
 
 
+SCORE_COMPARISON = HERE / "score_comparison.py"
+SCORE_COMPARISON_SHA = "24f264d1989c105c9b284f8eccb104f4f786398c5605ef23be59b0e4bd5428c1"
+
 def numerical(result, matching, original):
-    import math
-    def compare(reference):
-        if len(reference)!=len(result) or not all(math.isfinite(x) for x in (*reference,*result)):
-            raise ValueError("finite complete numerical vectors required")
-        def mass(x):
-            ex=[math.exp(v-max(x)) for v in x]
-            return [v/sum(ex) for v in ex]
-        return {"max_raw_abs":max(abs(x-y) for x,y in zip(result,reference,strict=True)),
-                "max_mass_abs":max(abs(x-y) for x,y in zip(mass(result),mass(reference),strict=True)),
-                "winner_agrees":result.index(max(result))==reference.index(max(reference))}
-    m,o=compare(matching),compare(original)
-    winner=m["winner_agrees"] and m["max_mass_abs"]<=0.05 and o["max_mass_abs"]<=0.05
-    return {"matching":m,"original":o,"release_numerical_case_pass":winner and m["max_raw_abs"]<=0.007,
-            "development_numerical_case_pass":winner and m["max_raw_abs"]<=0.07,
-            "candidate_scores":result,"matching_scores":matching,"original_scores":original}
+    return runpy.run_path(str(SCORE_COMPARISON))["numerical"](result, matching, original)
 
 
-def host_cap(mode, case):
+def host_cap(mode, case, cal_epoch=None):
+    if mode == "cal" and cal_epoch in ("r5-first56","r5-full100"):
+        return 16 << 30
+    if mode == "pressure-fit":
+        return 12 << 30
     if mode=="operand":
         return HOST
-    if mode in ("graph","fixed","mixed","pressure-fit","pressure-fixed") or (mode=="score" and case in {"32","128","1024"}):
+    if mode in ("graph","fixed","mixed","pressure-fixed") or (mode=="score" and case in {"32","128","1024"}):
         return 16<<30
     return 32<<30
 
@@ -172,6 +165,7 @@ def run(args, *, pressure=None):
     prep = exact(PREP, PREP_SHA, base)
     prep_value = base.read(str(PREP))
     inputs = [prep_value[k] for k in ("graph", "operands", "reference")]
+    inputs.append(exact(SCORE_COMPARISON, SCORE_COMPARISON_SHA, base))
     audit([Path(p["path"]) for p in inputs])
     for item in inputs:
         base.pinned(item)
@@ -235,7 +229,7 @@ def run(args, *, pressure=None):
             path = args.snapshot / (files[key] + ".source")
             audit([path])
             sources[key] = exact(path, files[key], base)
-    memory = host_cap(mode,args.case)
+    memory = host_cap(mode,args.case,args.cal_epoch if cal_mode else None)
     selector = SELECTOR if mode=="operand" else SELECTOR.rsplit("::",1)[0]+"::compact_cutlass_protected_"+({"fixed":"fixed_timing","mixed":"mixed_timing","graph":"graph"}.get(mode,"fixed_score"))
     if pressure_trial:
         selector = SELECTOR.rsplit("::", 1)[0] + "::compact_cutlass_" + mode.replace("-", "_")
@@ -303,6 +297,9 @@ def run(args, *, pressure=None):
                "sources":sources,"preparation":prep,"mode":mode,"case":args.case,"model_inputs":inputs,"original_limits":{"seconds":120,"host_bytes":memory,"campaign_host_ceiling_bytes":HOST if mode=="operand" else 32<<30,"ort_arena_bytes":256<<20 if mode=="operand" else 24<<30},
                "checked_launcher":base.pin(Path(__file__).resolve()),"backend_sources":recipe,"result":None}
     if pressure_trial:
+        sampler_source = base.pin(ROOT / "scripts/cuda-component-execution/wddm_process_samples.py")
+        inputs.append(sampler_source)
+        receipt["pressure_sampler_source"] = sampler_source
         receipt["original_limits"]["ort_arena_bytes"] = pressure.tier * (1 << 30)
     component["mkdir"](guard,out,deadline=deadline)
     temp, stdin, stdout, output = (out / n for n in ("temp","stdin.txt","stdout-stderr.log","execution.json"))
@@ -337,7 +334,7 @@ def run(args, *, pressure=None):
             proof = parent.suspended_authentication(api, info, deadline, child_deadline, base.SID, image, owner.image_proof)
             require(component["token_owner"](info.process) == base.SID and owner.job_snapshot(api, job) == ([info.pid],1,1),
                     "unexpected suspended owner or Job membership")
-            with wddm["ProcessSampler"](info,luid) as sampler:
+            with wddm["ProcessSampler"](info,luid,segment_fields=pressure_trial) as sampler:
                 baseline = sampler.sample()
             limits = shared["job_limits"](api,job,memory)
             if pressure_trial:
@@ -346,9 +343,18 @@ def run(args, *, pressure=None):
                 component["write_new"](guard, path, grant)
                 receipt["pressure_grant"] = base.pin(path)
                 inputs.append(receipt["pressure_grant"])
+                host_path = temp / "pressure-host-admission.json"
+                audit([host_path],False)
+                host_grant = {"schema":"airk.private.cuda-pressure-host-admission/1",
+                              "device_grant_sha256":receipt["pressure_grant"]["sha256"], "candidate_pid":info.pid,
+                              "executable_sha256":image["sha256"], "mode":mode, "limits":limits,
+                              "campaign_host_ceiling_bytes":32<<30}
+                component["write_new"](guard,host_path,host_grant)
+                receipt["pressure_host_grant"] = base.pin(host_path)
+                inputs.append(receipt["pressure_host_grant"])
             return dict(proof, default_owner_sid=base.SID, observed_limits=limits)
         def observe(api, job, info, expiry):
-            return {"wddm":wddm["observe_process"](api,info,expiry,luid,baseline)}, []
+            return {"wddm":wddm["observe_process"](api,info,expiry,luid,baseline,segment_fields=pressure_trial)}, []
         with stdin.open("xb"):
             pass
         with stdin.open("rb") as source, stdout.open("xb") as sink:

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Measure a protected Compact CUDA candidate on the existing A6000 under verified WDDM pressure."""
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import runpy
@@ -12,7 +13,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from capacity_ballast import CAMPAIGN, ROOT, pin, run
 from capacity_ballast_worker import GIB, TIERS, UUID, WINDOW, require, verify
-from capacity_sweep import candidate_samples, receipt, require_proof
+from capacity_sweep import candidate_samples, receipt, require_proof, segment_evidence
 
 PROBE = ROOT / "scripts/arbiter-fp16-execution/probe_compact_cutlass.py"
 GRAPH = "6142500349b0c9e72ef97e6c1f06ab5a81eb519942fe35d936a9d29020542581"
@@ -61,6 +62,20 @@ class PressureTrial:
                         "observed_monotonic_ns", "expires_monotonic_ns")), "native pressure grant differs")
 
 
+def verify_host_grant(grant, native, host_limit):
+    owned = native["owned"]
+    limits = owned["suspended_assignment"]["observed_limits"]
+    require(grant["schema"] == "airk.private.cuda-pressure-host-admission/1"
+            and grant["device_grant_sha256"] == native["pressure_grant"]["sha256"]
+            and grant["candidate_pid"] == owned["owned_leader_pid"] and grant["mode"] == native["mode"]
+            and grant["executable_sha256"] == native["image"]["sha256"]
+            and grant["campaign_host_ceiling_bytes"] == native["original_limits"]["campaign_host_ceiling_bytes"] == 32*GIB
+            and grant["limits"] == limits and limits["process_memory_limit_bytes"] == limits["job_memory_limit_bytes"]
+            == native["original_limits"]["host_bytes"] == host_limit
+            and 0 < owned["peak_host_committed_bytes"] <= host_limit,
+            "actual host grant, enforced Job bounds or measured peak differs")
+
+
 def launch(args):
     verify(PROBE, args.probe_source_sha256)
     original = runpy.run_path(str(PROBE))
@@ -81,6 +96,7 @@ def launch(args):
                 and trial["capacity_admitted"] is True and trial["observed_outcome"] == "admitted"
                 and prior["admission"]["pre_resume_host"]["minimum_spare_bytes"] == 8*GIB
                 and trial["candidate_wddm"]["unknown_shared_samples"] == 0
+                and trial["candidate_wddm"].get("nonlocal_conflict") is False
                 and trial["image"] == image and trial["build"] == build
                 and trial["probe_source_sha256"] == args.probe_source_sha256, "different capacity fit")
     else:
@@ -92,6 +108,7 @@ def launch(args):
         graph_sha256=args.graph_sha256, lineage=args.lineage, lineage_sha256=args.lineage_sha256,
         powershell=powershell, powershell_sha256="e94166ed9f376559c1359bafb08bc49e463a494c330f67644ec1d9f1ffeb5ee5",
         maximum_receipt_sha256=MAXIMUM_PROOF)
+    host_limit = (12 if args.mode == "pressure-fit" else 16)*GIB
     def candidate(authorize):
         pressure = PressureTrial(args.tier, authorize)
         destination = options.output/"execution.json"
@@ -108,13 +125,27 @@ def launch(args):
                 and owned.get("owned_job_final_member_pids") == [] and not owned["owned_job_forced_termination"]
                 and not owned["timed_out"] and actual["mode"] == args.mode and actual["image"] == image
                 and actual["build"] == build, "native pressure process or retained evidence differs")
-        memory = candidate_samples(actual, pressure.admission, limit_field="observed_limits", host_limit=16*GIB, require_shared_clock=True)
+        host_pin = actual["pressure_host_grant"]
+        require(Path(host_pin["path"]) == options.output/"temp"/"pressure-host-admission.json",
+                "unexpected pressure host admission path")
+        host_path = Path(host_pin["path"])
+        require(host_path.is_file() and not host_path.is_symlink() and not host_path.parent.is_junction()
+                and host_path.stat().st_nlink == 1 and host_path.stat().st_size <= 8192,
+                "foreign pressure host grant")
+        host_raw = host_path.read_bytes()
+        require(hashlib.sha256(host_raw).hexdigest() == host_pin["sha256"], "changed pressure host grant")
+        verify_host_grant(json.loads(host_raw),actual,host_limit)
+        memory = candidate_samples(actual, pressure.admission, limit_field="observed_limits", host_limit=host_limit, require_shared_clock=True)
+        memory.update(segment_evidence(owned["before_GO"]["wddm"]))
+        memory["verified"] = memory["verified"] and not memory["nonlocal_conflict"]
         complete = actual["complete"] is True and owned["exit_code"] == 0
         admitted = complete and memory["verified"] and memory["peak_dedicated_bytes"] <= args.tier*GIB
         if admitted:
             outcome = "admitted"
         elif complete and memory.get("peak_shared_bytes") is not None and memory["peak_shared_bytes"] > 0:
             outcome = "observed_shared_usage"
+        elif complete and memory["nonlocal_conflict"]:
+            outcome = "observed_nonlocal_usage"
         elif complete and memory.get("peak_dedicated_bytes") is not None and memory["peak_dedicated_bytes"] > args.tier*GIB:
             outcome = "observed_dedicated_usage_exceeded_tier"
         elif complete:
@@ -126,10 +157,11 @@ def launch(args):
                 "capacity_admitted":admitted, "observed_outcome":outcome,
                 "candidate_wddm":memory, "native_execution":actual_pin, "image":image, "build":build,
                 "probe_source_sha256":args.probe_source_sha256, "failure":actual.get("error"),
+                "host_limit_bytes":host_limit, "pressure_host_grant":host_pin,
                 "prior_fit":pin(args.prior_fit) if args.prior_fit else None}
     require(args.concurrent_host_bytes >= 0, "negative concurrent reservation")
     run(args.output, args.tier, (48-args.tier)*GIB, trial=candidate,
-        pressure_host_reserve=16*GIB+args.concurrent_host_bytes)
+        pressure_host_reserve=host_limit+args.concurrent_host_bytes, candidate_limit=host_limit)
 
 
 if __name__ == "__main__":

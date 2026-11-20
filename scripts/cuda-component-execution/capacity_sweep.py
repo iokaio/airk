@@ -86,6 +86,48 @@ def candidate_samples(proof, admission, *, limit_field="job_limits", host_limit=
             "observations":len(values),"continuous_samples":fresh}
 
 
+def segment_evidence(observation):
+    """Evaluate both supplemental segment groups across the full owned process lifetime."""
+    rows = ([observation["before_resume"]] if observation.get("before_resume") else []) + observation["samples"]
+    evidence = {"segment_observations":len(rows)}
+    for field, label in (("Local Usage","local"),("Non Local Usage","nonlocal")):
+        values = []
+        unknown = stale = 0
+        confirmed_peak = None
+        previous = None
+        for row in rows:
+            amount = row.get("segment_bytes",{}).get(field)
+            status = row.get("segment_counter_status",{}).get(field)
+            if amount is None and status == 0x800007d1 and all(
+                    row.get("process_counter_status",{}).get(key) == 0x800007d1
+                    for key in ("Dedicated Usage","Shared Usage","Total Committed")):
+                values.append(0)
+                continue
+            if type(amount) is not int or amount < 0:
+                unknown += 1
+                continue
+            values.append(amount)
+            ticks = row["counter_filetime_100ns"].get("segment_bytes/"+field)
+            reference = row["counter_filetime_100ns"].get("process/Dedicated Usage")
+            if (type(ticks) is not int or type(reference) is not int or ticks <= 0
+                    or abs(ticks-reference)*100 > SAMPLE_NS or (previous is not None and ticks <= previous)):
+                stale += 1
+            else:
+                confirmed_peak = amount if confirmed_peak is None else max(confirmed_peak,amount)
+            if type(ticks) is int:
+                previous = ticks
+        evidence["peak_"+label+"_bytes"] = max(values,default=None)
+        evidence["peak_fresh_"+label+"_bytes"] = confirmed_peak
+        evidence["unknown_"+label+"_samples"] = unknown
+        evidence["stale_"+label+"_samples"] = stale
+    evidence["nonlocal_conflict"] = (evidence["peak_fresh_nonlocal_bytes"] or 0)>0
+    evidence["dedicated_segment_evidence"] = (evidence["peak_nonlocal_bytes"] == 0
+        and (evidence["peak_local_bytes"] or 0)>0
+        and all(evidence[key]==0 for key in ("unknown_local_samples","unknown_nonlocal_samples",
+                                             "stale_local_samples","stale_nonlocal_samples")))
+    return evidence
+
+
 def trial_options(args, master):
     paths = {"request": master["request"], "evidence": master["reviewed_evidence"],
              "graph_receipt": master["reviewed_graph"]["owned"], "projection_stage": master["projection_stage"],

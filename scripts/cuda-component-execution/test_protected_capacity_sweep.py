@@ -48,6 +48,45 @@ class ProtectedPressureControls(unittest.TestCase):
 
 
 class PressureResidencyControls(unittest.TestCase):
+    def test_tight_single_host_grant_binds_actual_caps_and_rejects_overrun(self):
+        from capacity_ballast import pressure_headroom
+        from protected_capacity_sweep import verify_host_grant
+        from runpy import run_path
+        cap = run_path(str(Path(__file__).resolve().parents[1]/"arbiter-fp16-execution/probe_compact_cutlass.py"))["host_cap"]
+        limit = 12*GIB
+        self.assertEqual(cap("pressure-fit","8192"),limit)
+        probe = run_path(str(Path(__file__).resolve().parents[1]/"arbiter-fp16-execution/probe_compact_cutlass.py"))
+        original = dict(schema="airk.private.compact-protected-cutlass-model/1",
+                        model_sha256="147be075a73ff81ca17b6c2fb965ec8f887e10908fbd33cf47a919d1694aa3d9",
+                        weight_sha256="0c4bd89d032e7dd821071c3559776cd3da50d54d84b6e575373fd8cf7003a7c3",
+                        placement={"complete":True},graph=None,score=None,timing={"profiled":False})
+        import json
+        from capacity_ballast_worker import require
+        stdout = ("AIRK_COMPACT_CUTLASS_MODEL="+json.dumps(original)+"\n1 passed; 0 failed\n").encode()
+        self.assertEqual(probe["model_output"](stdout,"pressure-fit",{"require":require})[0],original)
+        with self.assertRaisesRegex(ValueError,"uninstrumented"):
+            probe["model_output"](b"Operator=unexpected\n"+stdout,"pressure-fit",{"require":require})
+        self.assertEqual([cap(mode,"8192") for mode in ("pressure-fixed","fixed","mixed")],[16*GIB]*3)
+        limits = dict(process_memory_limit_bytes=limit,job_memory_limit_bytes=limit)
+        native = {"owned":{"suspended_assignment":{"observed_limits":limits},"owned_leader_pid":41,
+                          "peak_host_committed_bytes":limit},"mode":"pressure-fit","image":{"sha256":"b"*64},
+                  "pressure_grant":{"sha256":"a"*64},"original_limits":{"host_bytes":limit,"campaign_host_ceiling_bytes":32*GIB}}
+        grant = {"schema":"airk.private.cuda-pressure-host-admission/1","candidate_pid":41,"mode":"pressure-fit",
+                 "limits":limits,"device_grant_sha256":"a"*64,"executable_sha256":"b"*64,"campaign_host_ceiling_bytes":32*GIB}
+        verify_host_grant(grant,native,limit)
+        for changed in (dict(grant,candidate_pid=42),dict(grant,device_grant_sha256="c"*64),
+                        dict(grant,limits=dict(limits,job_memory_limit_bytes=16*GIB))):
+            with self.assertRaisesRegex(ValueError,"host grant"):
+                verify_host_grant(changed,native,limit)
+        native["owned"]["peak_host_committed_bytes"] += 1
+        with self.assertRaisesRegex(ValueError,"host grant"):
+            verify_host_grant(grant,native,limit)
+        host = dict(commit_bytes=0,commit_limit_bytes=20*GIB,physical_available_bytes=20*GIB)
+        pre = dict(private_commit_bytes=0,working_set_bytes=0)
+        self.assertEqual(pressure_headroom(host,limit,pre,0,limit)["minimum_spare_bytes"],8*GIB)
+        with self.assertRaisesRegex(ValueError,"reserve"):
+            pressure_headroom(dict(host,physical_available_bytes=20*GIB-1),limit,pre,0,limit)
+
     def coverage(self, rows):
         from capacity_sweep import candidate_samples
         series = []
@@ -60,6 +99,28 @@ class PressureResidencyControls(unittest.TestCase):
                    "before_GO":{"wddm":{"pid":1,"adapter_luid":"luid","samples":series}}}}
         admission = {"candidate_pid":1,"snapshot":{"dxgi":{"luid":"luid"}}}
         return candidate_samples(native,admission,limit_field="observed_limits",host_limit=16*GIB,require_shared_clock=True)
+
+    def test_shared_zero_cannot_mask_nonlocal_or_missing_segment_measurements(self):
+        from capacity_sweep import segment_evidence
+        def observed(amount, tick):
+            return {"process":{"Shared Usage":0}, "segment_bytes":{"Local Usage":GIB,"Non Local Usage":amount},
+                    "counter_filetime_100ns":{"process/Dedicated Usage":tick,"segment_bytes/Local Usage":tick,
+                                             "segment_bytes/Non Local Usage":tick}}
+        clean = {"samples":[observed(0,1),observed(0,2)]}
+        self.assertTrue(segment_evidence(clean)["dedicated_segment_evidence"])
+        self.assertFalse(segment_evidence(clean)["nonlocal_conflict"])
+        self.assertTrue(segment_evidence({"samples":[observed(0,1),observed(GIB,2)]})["nonlocal_conflict"])
+        stale = segment_evidence({"samples":[observed(0,1),observed(GIB,1)]})
+        self.assertFalse(stale["nonlocal_conflict"])
+        self.assertEqual(stale["stale_nonlocal_samples"],1)
+        for first,last in ((observed(GIB,1),observed(0,2)),(observed(0,1),observed(GIB,2)),
+                           (observed(None,1),observed(0,2)),(observed(0,1),observed(0,1))):
+            with self.subTest(first=first,last=last):
+                self.assertFalse(segment_evidence({"before_resume":first,"samples":[last]})["dedicated_segment_evidence"])
+        missing = segment_evidence({"samples":[{"counter_filetime_100ns":{}}]})
+        self.assertEqual(missing["unknown_nonlocal_samples"],1)
+        self.assertFalse(missing["nonlocal_conflict"])
+        self.assertFalse(missing["dedicated_segment_evidence"])
 
     def test_shared_peak_and_unknown_survive_outside_dedicated_interval(self):
         live = [(GIB,0),(GIB,0)]

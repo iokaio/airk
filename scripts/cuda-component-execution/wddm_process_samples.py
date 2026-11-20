@@ -35,7 +35,7 @@ def check(status, operation):
 
 
 class ProcessSampler:
-    def __init__(self, info, adapter_luid):
+    def __init__(self, info, adapter_luid, *, segment_fields=False):
         if os.name != "nt" or not re.fullmatch(r"luid_0x[0-9a-f]{8}_0x[0-9a-f]{8}", adapter_luid):
             raise ValueError("verified Windows adapter LUID required")
         system = Path(os.environ["SystemRoot"]) / "System32"
@@ -58,6 +58,8 @@ class ProcessSampler:
                    ct.c_size_t, ct.POINTER(wt.HANDLE))
         self.query = wt.HANDLE()
         self.counters = []
+        self.segment_fields = segment_fields
+        self.segment_unavailable = {}
         check(open_query(None, 0, ct.byref(self.query)), "PdhOpenQuery")
         try:
             instance = adapter_luid + "_phys_0"
@@ -68,6 +70,15 @@ class ProcessSampler:
                     path = f"\\{obj}({key})\\{field}"
                     check(add(self.query, path, 0, ct.byref(counter)), f"PdhAddEnglishCounter {path}")
                     self.counters.append((group, field, counter))
+            if segment_fields:
+                for field in ("Local Usage", "Non Local Usage"):
+                    counter = wt.HANDLE()
+                    path = f"\\GPU Process Memory(pid_{self.pid}_{instance})\\{field}"
+                    code = add(self.query, path, 0, ct.byref(counter))
+                    if code:
+                        self.segment_unavailable[field] = code
+                    else:
+                        self.counters.append(("segment_bytes", field, counter))
         except BaseException:
             self.close()
             raise
@@ -86,6 +97,9 @@ class ProcessSampler:
     def sample(self):
         row = {"start_monotonic_ns": time.monotonic_ns(), "utc_unix_ns": time.time_ns(),
                "adapter": {}, "process": {}, "counter_filetime_100ns": {}}
+        if self.segment_fields:
+            row["segment_bytes"] = {"Local Usage":None, "Non Local Usage":None}
+            row["segment_counter_status"] = self.segment_unavailable.copy()
         check(self.collect(self.query), "PdhCollectQueryData")
         for group, field, counter in self.counters:
             raw = RawCounter()
@@ -93,10 +107,15 @@ class ProcessSampler:
             code = status or raw.status
             if code in (0, 1):
                 if raw.first < 0:
+                    if group == "segment_bytes":
+                        row.setdefault("segment_invalid_raw", {})[field] = raw.first
+                        continue
                     raise ValueError("invalid negative memory counter")
                 row[group][field] = raw.first
                 row["counter_filetime_100ns"][group + "/" + field] = (
                     raw.timestamp.dwHighDateTime << 32) | raw.timestamp.dwLowDateTime
+            elif group == "segment_bytes":
+                row["segment_counter_status"][field] = code
             elif group == "process" and code in (0x800007d1, 0xc0000bba, 0xc0000bc6):
                 # PDH reports no instance or invalid data before allocation/after release.
                 row[group][field] = None
@@ -112,9 +131,9 @@ class ProcessSampler:
         return row
 
 
-def observe_process(api, info, deadline, adapter_luid, baseline=None):
+def observe_process(api, info, deadline, adapter_luid, baseline=None, *, segment_fields=False):
     rows = []
-    with ProcessSampler(info, adapter_luid) as sampler:
+    with ProcessSampler(info, adapter_luid, segment_fields=segment_fields) as sampler:
         while True:
             remaining_ms = math.floor((deadline - time.monotonic()) * 1000)
             if remaining_ms <= 0:

@@ -46,6 +46,13 @@ class OriginalCal(unittest.TestCase):
     def test_local_journal_and_global_source_ordinals_survive_refusal(self):
         self.assertEqual(verify(*sample())[0]["cal"]["rows"][1]["ordinal"],9)
 
+    def test_actual_r5_cap_keeps_historical_r4_limit(self):
+        parent = Path(__file__).resolve().parents[1]/"arbiter-fp16-execution/probe_compact_cutlass.py"
+        cap = runpy.run_path(str(parent))["host_cap"]
+        self.assertEqual(cap("cal","fixed","r4-prefix64"),32 << 30)
+        for epoch in ("r5-first56","r5-full100"):
+            self.assertEqual(cap("cal","fixed",epoch),16 << 30)
+
     def test_fully_refused_phase_uses_empty_journal_and_no_kernel(self):
         rows,env,native,_,_ = sample()
         native["cal"]["rows"] = native["cal"]["rows"][:1]
