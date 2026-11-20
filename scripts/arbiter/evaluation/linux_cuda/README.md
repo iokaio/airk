@@ -102,3 +102,32 @@ Windows timing window. The control records the stopped census and resumes at its
 deadline. Preserve both its output and the cross-host observations. For the
 static targets and final archive, start the same host watcher with `-Stage core`
 and `-Stage archive` respectively. Both retain the original volume baseline.
+
+## Native source and package preparation
+
+`maintained_gate.py --gate inspect` records the maintained Rust checkout inputs.
+Pass this receipt via `--freeze <path> --freeze-sha256 <digest>` to the
+`--gate clippy` and `--gate nextest` commands when the reviewed single-worker
+reservation is available. These run on GNU against the existing CPU static archive.
+Their source and process receipts describe compilation and CPU controls.
+
+Use `finish_ort.py --phase provider` with the shared/provider command receipts
+and attempt number after the authenticated provider has linked. Use the `core`
+phase after the canonical static component targets finish. `stage_payload.py`
+joins the native Rust-emitted payload roster with observed ELF, original package
+notices and retained source and build evidence. The scientific assembly and native
+product projection each require their own Rust observation and original process
+record. Use `observe_scientific.py` to obtain the scientific descriptor, then
+`link_scientific.py` with the core SHA, assembly receipt and passing GNU source
+gate to link the audit image against the native static aggregate. Its image proof
+ties the four exported ABIs to that archive and the scientific descriptor.
+`stage_product.py` consumes the image proof and the Rust provenance example from
+its original successful Cargo producer receipt. Run `product_projection.py` on
+the staged product descriptor and audit image to retain both Rust observations.
+The empty-requirements product descriptor enables packaging before model fits.
+`../../../cuda-linux-package.py` reopens the native product and the
+original static GNU build for `build-service-runtime.py`, `package-native.py`
+and `package-standalone-linux.py`. The three paired path/digest arguments identify
+the static handoff, native product projection and actual native execution evidence.
+The product layout puts the verified manifest, native ELF images and projected
+notice files next to `service/airk`.
