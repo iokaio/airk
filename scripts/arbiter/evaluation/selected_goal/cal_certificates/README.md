@@ -72,3 +72,14 @@ two-lifetime execution. The final verifier authenticates its 17 capture
 sources, original setup debit, per-phase clocks, and whole-installation mutex.
 
 A grouped capture also requires `--mutex-release-sha256` from its final `control-mutex-released.json`. This post-exit receipt binds the original acquire record, parent PID, original outer Job closure and the release time after all groups settle.
+
+`certify_r6.py` is the independent reader for the original 10,800-second R6
+protocol. Use isolated Python with `-I -B -S`, the actual launch audit path
+and SHA, service SHA, and the original plan, outer, fixture-closure and mutex
+release SHA values (`--help` lists the arguments). It reopens 13 completed
+phase Jobs within two naturally closed service lifetimes, 100 new W4 windows
+and the original human-support scoring inputs. Its standard output contains
+certificates only after the terminal custody and entire census have verified.
+The model-free checks are in `test_r6_epoch.py`. An alternate service audit
+must bind the exact observed service, the unchanged original input assets
+and the corresponding launch source and physical handoff.
