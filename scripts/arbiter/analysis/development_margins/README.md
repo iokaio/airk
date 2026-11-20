@@ -135,3 +135,52 @@ owner. Successful two-group custody ends at lifetime-01; a naturally failed
 partial group requires its own genuine pre-shutdown status. The original R3
 physical installation, exclusive mutex, source custody and reader clearance
 remain required for either handoff.
+
+### Installed complete Answer timing
+
+`measure-installed-answer.ps1 -Arm <private arm.json> -ArmSha256 <digest> -Run
+windows-installed-compact-cuda-answer-r1` uses the verified human shell and a
+fresh private output under the campaign. Each arm specification points to a
+preexisting, ready product service and contains:
+
+- `provider` (cpu or cuda), `model` (context_compact or context_large), selected
+  `runtime`, `context_manifest`, current installed `install_record_sha256`
+  and canonical existing `control` path.
+- `profile_path`, `profile_sha256`, `calibration_path` and
+  `calibration_sha256` for the qualified native descriptor and actual enrolled
+  joint calibration with operative rules. Model weights stay in place.
+- `indexes` mapping each frozen TRAIN case to its original 50-file index, and
+  `registrations` mapping each case to a sealed native registration receipt
+  with `path` and `sha256`; each receipt must name that case's source root.
+
+The runner checks the installed image and running identity, current device
+status and selection, native publication, grant and MiniLM search pipeline,
+and all 650 member bytes by native file information. It issues the original
+Answer arguments via the installed CLI. A single uncounted warm-up precedes
+20 full round trips. Native search Focus receipts and Context assessments
+retain work, timing, selection, abstentions and scope. An interrupted cohort
+keeps every remaining ordinal as deferred. Each CLI timeout keeps its original
+elapsed time. Warm-up is a separate observation; service installation and cold
+model load precede this harness and need separate native measurement.
+
+Use `compare_installed_answer_timings.py --cpu <arm.json> --cpu-sha256 <seal>
+--cpu-spec <private-spec> --cuda <arm.json> --cuda-sha256 <seal> --cuda-spec
+<private-spec>` after both matching runs. This reopens actual commands and
+Answers and reports end-to-end nearest-rank p95, time saved and count of
+matched selected Context inference inputs. Zero-selection rows count in the
+20-request workload and yield no matched Context speed finding. A deadline
+overrun or timeout prevents a passing latency conclusion, including when the
+nineteenth elapsed duration would otherwise pass. Use `--large-absolute`
+with the CUDA arm arguments only to inspect Large's 120-second fallback.
+The collector reopens both native status receipts and reports this path as
+inapplicable when the installed catalog lists a qualified same-model CPU
+variant. A CUDA Context latency finding also requires actual selected CUDA
+inference. Task-quality and release confirmation remain separate.
+
+`prepare_installed_answer_arm.py` builds the private arm specification from
+`--profile`, `--profile-sha256`, `--calibration`, `--install-sha256`, the
+existing `--control` and the `--registrations` folder containing the original
+`TRAIN_QNNN-register.stdout` outputs. Both ordinary two-record setup stdout
+and an authentic individual finalized receipt are accepted. The builder checks
+the real enrollment source roots, schema, current installed images and native
+profile calibration before writing its JSON to stdout.
