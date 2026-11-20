@@ -36,3 +36,32 @@ and tool/object digests. It never invokes the compiled kernel. The probe expects
 the provisioned user-owned GCC wrapper under the build parent's `toolchain/bin`.
 Run `/usr/bin/python3 -B -S -m unittest -v test_preparation` here for the
 six focused Ubuntu controls.
+
+## Offline ORT build and validation
+
+Use the registered non-root Ubuntu human and the campaign's original private
+receipts. Invoke the tools below from this folder with `/usr/bin/python3 -B -S`.
+The guest build parent is `/home/tyler/airk-builds/arbiter-final-linux-r1`.
+Capture each JSON result to a fresh checked private receipt.
+
+- `configure_ort.py --output <fresh-build-root>` verifies the source archives and
+  offline mirrors, projects the protected loader bootstrap, gives the provider
+  an ELF SONAME, and records the CMake/Ninja graph and compiler identities.
+- `build_ort.py --configure <receipt> --sha256 <reviewed-receipt-sha256> --target shared --jobs 2`
+  compiles the shared ELF. Select `provider` for the CUDA module or `core` for
+  static archives. Use `--attempt <fresh-number>` to preserve earlier logs.
+  `graph_proof.py` verifies included Ninja files, expanded commands and actual
+  tools before and after compilation. Worker counts are two or four, at low
+  priority, with one NVCC thread and a 12 GiB address-space limit per process.
+- `staged_elf.py --inputs <unpacked-root> --shared <compiled-shared-ELF>`
+  hashes the staged vendor images and their host dependencies with readelf.
+- `compile_bootstrap.py --output <fresh-directory>` compiles the protected
+  initial mapping in `ort_bootstrap.inc` with the genuine ORT Env compilation
+  command. `bootstrap_projection.py` owns the source and linker transformations.
+- `notices.py --output <fresh-directory>` collects the original source and
+  NVIDIA notice bytes. The private inventory identifies their package, original
+  location, staged name, byte count and hash.
+
+Run `/usr/bin/python3 -B -S -m unittest -v test_ort_build` for the focused
+producer controls. These use the original frozen r3 translation unit and do
+not initialize a GPU or load the compiled provider.
