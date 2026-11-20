@@ -2218,3 +2218,7 @@ the installed build exposes the experiment. Label the Radeon entries
 **Experimental** and show opt-in state, detected adapter, tested scope,
 actual availability and any reason for CPU selection. Use the same
 service metadata as the NVIDIA compatibility entries.
+
+### Approved service-wide GPU setting
+
+The user approved `allow_gpu` in the versioned service resource configuration and public API for the live GPU switch. Existing installations default to enabled. Disabling it preserves saved stage device choices, prevents further GPU initialization and handles pending and resident work. Re-enabling it restores eligibility under the existing fit and runtime admission checks.
