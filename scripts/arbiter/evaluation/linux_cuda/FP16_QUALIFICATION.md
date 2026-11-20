@@ -112,6 +112,32 @@ T32, T128, T1024 and T8192. The command reads the pinned original execution,
 producer and fixture for each width and prints the eight matching scores,
 original FP32 scores, argmax and compiled input digest. It reads no CUDA device.
 
+The GNU test-support selector `gnu_cutlass::compact_gnu_cutlass_graph` opens
+the separately approved scientific ELF descriptor and the protected model
+and weights under the original native owner. It requires a bounded parent,
+a 120-second absolute monotonic deadline and the actual GNU compiled image.
+Its load-only result records typed graph rows, placement and CPU shape refusal.
+Add GNU bounds only after reviewing the complete GNU observation. The four
+CPU references alone establish no GNU kernel, matching, fit or paired result.
+
+After the Windows acceptance and original CPU/GPU capacity checks, use
+`cutlass_graph.py --image PATH --image-proof PATH --image-proof-sha256 SHA
+--directory FRESH_PRIVATE_DIR` for the load-only GNU observation. This parent
+uses the native ext4 runtime staging directory, original static aggregate,
+scientific ELF manifest, fixed physical A6000, 32 GiB host and 24 GiB device
+ceilings, a single 120-second deadline and the private process guard. Retain
+both `parent.json` and `native.json`, including any CPU shape refusal, before
+requesting a scored run. `python -B -m unittest -v test_cutlass_observation`
+exercises the parser with the archived Windows graph and a synthetic custody
+envelope. Its checks make no GPU calls.
+
+For Large, supply `--model large` to run `gnu_cutlass::large_gnu_cutlass_graph`
+with a 48 GiB host ceiling and 44 GiB device limit. The selector authenticates
+the direct FP32-activation graph, the 8,045,328,384-byte half-weight file and
+the 36-attention/252-projection placement under its original GNU owner. The
+parent rejects Compact receipts, altered graph bytes or any model score. The
+portable parser suite covers both original Windows graph structures.
+
 To check retained Large CPU inputs, run `python -E -B -S
 scripts/arbiter/evaluation/linux_cuda/large_direct_references.py --row WIDTH
 EXECUTION_SHA256` with one `--row` for each original, independently completed
