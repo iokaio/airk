@@ -168,6 +168,9 @@ capture stdout in a fresh private receipt. It links overlapping menus and
 sources within each publisher pool, retaining alternate document and family
 groupings, incomplete annotations and screening-only rows. These groups
 support prospective sizing. They do not establish independent outcomes.
+The [paired feasibility analysis](paired-confirmation-feasibility.md) reconciles
+the exposed pilot, dependence assumptions, request weights, missing deliveries
+and long-context coverage using source aggregates and hypothetical outcomes.
 
 [Stage exact TechQA gold sources](stage_techqa_exact_gold_corpus.py) takes
 --output pointing to a fresh checked techqa-exact-gold-source-corpus-rN
