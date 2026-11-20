@@ -42,10 +42,10 @@ def inputs(root, reviewed_graph, maximum_receipt_sha, base, exact):
     return score_words,custody
 
 
-def confirm_journal(events,rows,expiry,env,image_sha):
-    if len(events)!=len(rows)*2 or len(events)==0 or expiry!=int(env["AIRK_COMPACT_CUTLASS_EXPIRES_NS"]):
+def confirm_journal(events,rows,expiry,env,image_sha,*,prefix="AIRK_COMPACT_CUTLASS"):
+    if len(events)!=len(rows)*2 or len(events)==0 or expiry!=int(env[prefix+"_EXPIRES_NS"]):
         raise ValueError("incomplete or renewed original timing journal")
-    source=hashlib.sha256(env["AIRK_COMPACT_CUTLASS_EXPECTED_WORDS"].encode()).hexdigest()
+    source=hashlib.sha256(env[prefix+"_EXPECTED_WORDS"].encode()).hexdigest()
     pid=events[0]["identity"]["process_id"]
     if type(pid) is not int or pid<=0:
         raise ValueError("invalid native process identifier")
@@ -58,7 +58,7 @@ def confirm_journal(events,rows,expiry,env,image_sha):
                     and event["clock"]=="windows_performance_counter" and event["operation_input_digest"]==row["input_digest"]
                     and event["expires_monotonic_ns"]==expiry and event["observed_monotonic_ns"]<expiry
                     and identity["process_id"]==pid and identity["native_binary_sha256"]==image_sha
-                    and identity["input_sha256"]==source and identity["profile"]==env["AIRK_COMPACT_CUTLASS_TYPED_GRAPH"]):
+                    and identity["input_sha256"]==source and identity["profile"]==env[prefix+"_TYPED_GRAPH"]):
                 raise ValueError("warm operation source, order, clock or deadline differs")
         if not (start["started_monotonic_ns"]==start["observed_monotonic_ns"]==stop["started_monotonic_ns"]
                 and stop["observed_monotonic_ns"]>=start["observed_monotonic_ns"]

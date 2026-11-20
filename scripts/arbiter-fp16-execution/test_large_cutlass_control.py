@@ -32,5 +32,11 @@ class LargeDispatch(unittest.TestCase):
             with self.assertRaises(ValueError):
                 observe(data, mode)
 
+    def test_unprofiled_populations_reject_operator_traces(self):
+        for mode in ("fixed", "mixed"):
+            self.assertEqual(observe(sample([]), mode)[1:], ([], []))
+            with self.assertRaises(ValueError):
+                observe(sample(["/airk_large_cutlass/0/efficient"]), mode)
+
 if __name__ == "__main__":
     unittest.main()

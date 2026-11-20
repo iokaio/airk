@@ -159,7 +159,7 @@ fn check_gpu_nodes(placement: &super::super::super::PlacementObservation) -> Res
     Ok(())
 }
 
-type Measure<'a> = dyn FnMut(
+pub(super) type Measure<'a> = dyn FnMut(
         &mut dyn FnMut(usize) -> Result<Vec<f32>>,
         &mut dyn FnMut() -> Result<Value>,
     ) -> Result<Value>

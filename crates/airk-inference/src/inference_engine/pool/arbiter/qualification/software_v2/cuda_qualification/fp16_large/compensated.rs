@@ -6,6 +6,7 @@ enum Profile {
     Operand,
     Rounded,
     Direct,
+    Timing(super::super::fp16_compact::timing::Population),
 }
 fn observe(profile: Profile, scored: bool) -> Result<()> {
     let operand = matches!(profile, Profile::Operand);
@@ -47,7 +48,24 @@ fn observe(profile: Profile, scored: bool) -> Result<()> {
         let selected = gate
             .as_ref()
             .map(|(width, digest)| (*width, digest.as_str()));
-        if matches!(profile, Profile::Direct) {
+        if let Profile::Timing(population) = profile {
+            let (_, gate) = selected.context("Large timing requires a typed graph")?;
+            let digests = [
+                "ec7b4845c37fb7cbe2a64a866f8b6cdc03479d65593cdb0a1d01102fe56fc335",
+                "896894042a04d02773bf5a48c8b557d60156b58d503cb47728539c32c4bd2994",
+                "948a46156a129e61b5beadce977e6314b6e96c9570a439724813fe9592fa6357",
+                "ca9d34d962e308e6e53af8e14101058e8f02fbb4151bcc65eda2ad88be3de1f0",
+            ];
+            use super::super::fp16_compact::full::{TimingModel, protected_timing};
+            protected_timing(
+                &runtime,
+                campaign,
+                gate,
+                deadline,
+                population,
+                TimingModel::Large(digests),
+            )
+        } else if matches!(profile, Profile::Direct) {
             runtime.observe_large_direct(campaign, selected, deadline)
         } else {
             runtime.observe_large_compensated(campaign, operand, selected, deadline)
@@ -91,4 +109,22 @@ fn large_direct_graph() -> Result<()> {
 #[ignore = "owned Windows A6000 direct FP32 score measurement"]
 fn large_direct_score() -> Result<()> {
     observe(Profile::Direct, true)
+}
+
+#[test]
+#[ignore = "owned Large direct fixed20"]
+fn large_direct_fixed() -> Result<()> {
+    observe(
+        Profile::Timing(super::super::fp16_compact::timing::Population::Fixed),
+        true,
+    )
+}
+
+#[test]
+#[ignore = "owned Large direct mixed widths"]
+fn large_direct_mixed() -> Result<()> {
+    observe(
+        Profile::Timing(super::super::fp16_compact::timing::Population::Mixed),
+        true,
+    )
 }

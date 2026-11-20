@@ -3,9 +3,9 @@
 use super::*;
 mod cal;
 mod down;
-mod full;
+pub(super) mod full;
 mod observed;
-mod timing;
+pub(super) mod timing;
 use airk_core::arbiter::device::{DevicePrecision, PlacementPolicy};
 
 const ORIGINAL_GRAPH: &str = "c79c672513b874ab773ee7df8d4518e110d1e6196ae45076ce718f5b5dc6f7b4";

@@ -6,7 +6,7 @@ const T32_NATIVE: &str = "217431438d1bf79bbffa071c9d69d62f4dcb73c44cdee458c19cc5
 const WIDER_NATIVE: &str = "4da43ecdfaeba452cc65009bcadfb82de942253c89a7d544c6285ad90855993a";
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) enum Population {
+pub(in super::super) enum Population {
     Fit,
     Fixed,
     Mixed,

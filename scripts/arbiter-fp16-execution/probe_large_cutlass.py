@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Owned Windows Large compensated-attention operand, final graph and four frozen numerical controls."""
 import argparse
+from contextlib import ExitStack
 import ctypes
 import json
 import os
@@ -60,8 +61,27 @@ def observation(raw, mode):
         "actual efficient FP32 dispatches or bounded attention workspace differ")
     return values[0], kernels, scratch
 
-def run(args):
-    end=time.monotonic()+120
+def hold_read_only(paths, stack):
+    """Retain Windows handles denying writes and deletion for all named custody inputs."""
+    from ctypes import wintypes
+    api = ctypes.WinDLL("kernel32", use_last_error=True)
+    create = api.CreateFileW
+    create.argtypes = (wintypes.LPCWSTR,wintypes.DWORD,wintypes.DWORD,ctypes.c_void_p,wintypes.DWORD,wintypes.DWORD,wintypes.HANDLE)
+    create.restype = wintypes.HANDLE
+    close = api.CloseHandle
+    close.argtypes = (wintypes.HANDLE,)
+    for path in sorted(set(paths)):
+        handle = create(path,0x80000000,1,None,3,0x80,None)
+        if handle == ctypes.c_void_p(-1).value:
+            raise ctypes.WinError(ctypes.get_last_error(), "read-only custody handle refused: " + path)
+        stack.callback(close, handle)
+
+
+def run(args, retained):
+    started = time.monotonic()
+    end=started+120
+    split = args.separate_native_window
+    require(not split or (args.mode=="fixed" and args.direct), "separate native clock only for direct Large fixed20")
     shared=runpy.run_path(str(HERE/"probe_compact.py"))
     components=runpy.run_path(str(ROOT/"scripts/cuda-component-execution.py"))
     capacity=runpy.run_path(str(ROOT/"scripts/cuda-component-execution/wddm_capacity_snapshot.py"))
@@ -72,8 +92,9 @@ def run(args):
     require(os.name=="nt" and sys.flags.isolated and sys.flags.no_site and sys.dont_write_bytecode
             and parent.worker.windows_sid()==base.SID==components["token_owner"](ctypes.c_void_p(-1)),"verified isolated human required")
     guard={"checked_guard":base.pin(ROOT/"scripts/dev/assert-human-execution.ps1"),"powershell":exact(args.powershell,args.powershell_sha256)}
-    def audit(paths,created=True,*,end=end):
-        components["guard_many"](guard,list(paths),created,deadline=end)
+    audit_end = end
+    def audit(paths,created=True,*,end=None):
+        components["guard_many"](guard,list(paths),created,deadline=audit_end if end is None else end)
     out=args.output
     require(out.is_absolute() and out.parent==CAMPAIGN and out.parent.resolve(strict=True)==out.parent and not out.exists(),"fresh private output required")
     manifest_path=args.image.with_name("airk-cuda-runtime.json")
@@ -91,6 +112,10 @@ def run(args):
     retrieval="crates/airk-retrieval/src/arbiter/runtime/cuda/diagnostic/cutlass"
     inference="crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/cuda_qualification/fp16_large"
     required_native = [retrieval+".rs", retrieval+"/large.rs", retrieval+"/model.rs", inference+".rs", inference+"/compensated.rs"]
+    timing = args.mode in ("fixed", "mixed")
+    if timing:
+        required_native += [inference.replace("fp16_large", "fp16_compact") + suffix
+                            for suffix in (".rs", "/full.rs", "/timing.rs")]
     if retrieval+"/large_routes.rs" in files:
         required_native.append(retrieval+"/large_routes.rs")
     for key in required_native:
@@ -127,19 +152,42 @@ def run(args):
                 and control["build"]==build and control["image"]==image and control["result"]["result"]["values"]==131072
                 and control["operand_matches"],"same-image genuine operand control required")
         pins.append(control_pin)
-    if mode=="score":
+    if mode=="score" or timing:
         gp=exact(args.graph_receipt,args.graph_sha256)
         g=base.read(gp["path"],64<<20)
         require(g["mode"]=="graph" and g["complete"] and parent.settled(g["owned"]) and g["build"]==build and g["image"]==image
                 and g.get("direct",False)==args.direct and g["typed_graph_validation"]==reviewed(g["result"],shared,args.direct),"same-image measured Large graph required")
         gate=g["result"]["result"]["typed_graph_sha256"]
+        pins.append(gp)
+    if timing:
+        require(args.direct and args.width == 8192, "warm timing requires the direct Large maximum-width control")
+        timing_path = HERE / "compact_cutlass_timing.py"
+        width_path = HERE / "large_width_results.py"
+        lifecycle_path = HERE / "timing_control.py"
+        pins.extend(base.pin(p) for p in (timing_path, width_path, lifecycle_path))
+        timing_owner = runpy.run_path(str(timing_path))
+        cases = runpy.run_path(str(width_path))["CASES"]
+        expected_words, input_digests = [], []
+        for w, (revision, sha) in cases.items():
+            source = exact(CAMPAIGN / f"windows-large-direct-fp32-score-t{w}-{revision}/execution.json", sha)
+            v = base.read(source["path"])
+            observed = v["result"]["result"]
+            require(v["width"] == w and v["complete"] and parent.settled(v["owned"]) and v["direct"]
+                    and len(v["kernel_records"]) == 36 and v["numerical"]["release_numerical_case_pass"]
+                    and observed["typed_graph_sha256"] == gate and observed["model_sha256"] == arm["graph"]["sha256"]
+                    and observed["weight_sha256"] == arm["weights"]["sha256"]
+                    and observed["score"]["raw_scores"] == v["numerical"]["candidate_scores"], "wrong original Large warm input")
+            expected_words.append(timing_owner["words"](observed["score"]["raw_scores"]))
+            input_digests.append(observed["score"]["compiled_input_digest"])
+            pins.append(source)
+    if mode == "score":
         refp=exact(args.reference,args.reference_sha256)
         closure=base.read(refp["path"])
         require(closure["complete"] and parent.settled(closure["owned"]) and not closure["whole_phase_expired"],"matching independent Job not closed")
         ref=base.read(closure["proof"]["path"])
         if args.width == 1588:
             require(args.direct and ref.get("train_phase")=="matching", "original Large TRAIN protected reference required")
-            case_source=exact(HERE.parent/"arbiter-fp16-reference/large_train_case.py","722baf8ad63976edea9c389f16a06be8ebf33d185ff96b4e3fd6a06e6dd6aa3b")
+            case_source=exact(HERE.parent/"arbiter-fp16-reference/large_train_case.py","53f61c7ee10561afcc269e9b482ef32cad89530b15fe721dfb1f010fe995e79f")
             case=runpy.run_path(case_source["path"])["original"](CAMPAIGN)
             retained=ref["case_pins"]
             require(len(retained)==4 and retained[:2]==case["pins"], "original TRAIN source or publisher closure differs")
@@ -182,8 +230,15 @@ def run(args):
         require(pin==unique.setdefault(pin["path"],pin),"inconsistent custody for shared source")
     pins=list(unique.values())
     audit([Path(p["path"]) for p in pins])
-    for pin in pins:
-        base.pinned(pin)
+    custody = [image,build,manifest,log,linked,guard["powershell"],*approvals,*sources.values(),*pins]
+    if split:
+        hold_read_only([str(pin["path"]) for pin in custody], retained)
+        for item in custody:
+            require(time.monotonic()<end, "original prelaunch custody expired")
+            base.pinned(item)
+    else:
+        for pin in pins:
+            base.pinned(pin)
     selector=PREFIX.replace("::large_compensated_","::large_direct_") if args.direct else PREFIX
     command=[str(args.image),"--exact",selector+mode,"--ignored","--nocapture"]
     receipt={"schema":"airk.private.large-compensated-cuda/1","complete":False,"qualification":False,"mode":mode,"direct":args.direct,"width":args.width,
@@ -199,6 +254,12 @@ def run(args):
                    CUDA_CACHE_PATH=str(temp),ORT_CUDA_GEMM_OPTIONS="2",ORT_ENABLE_ATTENTION_KERNEL_DEBUG_INFO="1")
         if gate is not None:
             env.update(AIRK_LARGE_CUTLASS_TYPED_GRAPH=gate,AIRK_LARGE_CUTLASS_WIDTH=str(args.width))
+        if timing:
+            env.update(ORT_ENABLE_ATTENTION_KERNEL_DEBUG_INFO="0",
+                       AIRK_LARGE_CUTLASS_EXPIRES_NS=str(int(end*1_000_000_000)),
+                       AIRK_LARGE_CUTLASS_TEST_IMAGE_SHA=image["sha256"],
+                       AIRK_LARGE_CUTLASS_EXPECTED_WORDS=json.dumps(expected_words,separators=(",",":")))
+            audit([temp/"protected.operations.jsonl"],False)
         begin=capacity["snapshot"](None)
         luid=begin["dxgi"]["luid"]
         receipt["before_load_adapter"]=begin
@@ -216,8 +277,23 @@ def run(args):
             pass
         with stdin.open("rb") as src,stdout.open("xb") as sink:
             audit([stdin,stdout])
+            if split:
+                native_start = time.monotonic()
+                require(native_start < end, "prelaunch custody exceeds 120 seconds")
+                end = native_start + 120
+                audit_end = end
+                env["AIRK_LARGE_CUTLASS_EXPIRES_NS"] = str(int(end*1_000_000_000))
+                receipt["clock_protocol"] = {"prelaunch_limit_s":120,"native_job_limit_s":120,"post_custody_limit_s":60,
+                    "all_inputs_held_deny_write_delete":len({str(pin["path"]) for pin in custody}),
+                    "started_monotonic":started,"prelaunch_seconds":native_start-started,"native_started_monotonic":native_start,
+                    "native_deadline_monotonic":end}
             receipt["owned"]=owner.run_windows_owned_training(command,ROOT,sink,end-time.monotonic(),env,src,host,
                     before_resume=suspended,after_resume=observing,absolute_deadline=end,cleanup_seconds=5)
+        if split:
+            finished = time.monotonic()
+            receipt["clock_protocol"]["native_returned_monotonic"] = finished
+            receipt["clock_protocol"]["parent_observed_job_seconds"] = finished - native_start
+            audit_end = min(started+300,finished+60)
         require(parent.settled(receipt["owned"]),"native Large lifetime did not settle successfully")
         payload,records,scratch=observation(stdout.read_bytes(),mode)
         native=payload["native"]
@@ -230,6 +306,23 @@ def run(args):
             receipt["operand_matches"]=result["maximum_absolute_error"]<=0.00001
         elif mode=="graph":
             receipt["typed_graph_validation"]=reviewed(native,shared,args.direct)
+        elif timing:
+            measured = result["timing"]
+            require(result["typed_graph_sha256"] == gate and result["route_refusal"] is None and result["cpu_refusal"] is None
+                    and measured["input_digests"] == input_digests and not measured["population"]["profiled"], "wrong measured timing graph/input")
+            rows = measured["population"]["rows"]
+            require(measured["calls"] == len(rows) and all(row["input_digest"] == input_digests[(32,128,1024,8192).index(row["tokens"])] for row in rows),
+                    "Large real dispatch count or operation input differs")
+            receipt["timing_summary"] = timing_owner["summarize"](mode, rows, expected_words)
+            journal = temp/"protected.operations.jsonl"
+            audit([journal])
+            events = [json.loads(line) for line in journal.read_text().splitlines()]
+            timing_owner["confirm_journal"](events, rows, measured["population"]["expires_monotonic_ns"], env,
+                                             image["sha256"], prefix="AIRK_LARGE_CUTLASS")
+            receipt["operations"] = base.pin(journal)
+            receipt["memory_by_cycle"] = runpy.run_path(str(lifecycle_path))["memory_coverage"](
+                {"fixed":"qkv-resource20","mixed":"qkv-mixed"}[mode], receipt["owned"]["before_GO"]["wddm"],
+                events, receipt["owned"]["owned_leader_pid"], luid, load_recorded=False)
         else:
             require(result["typed_graph_sha256"]==gate and result["score"]["compiled_input_digest"]==ref["input_digest"],"scored wrong original input")
             receipt["numerical"]=runpy.run_path(str(HERE/"score_comparison.py"))["numerical"](
@@ -247,8 +340,15 @@ def run(args):
                     "rankings":{k:ranking(receipt["numerical"][k]) for k in ("candidate_scores","matching_scores","original_scores")}}
         receipt["after_release_adapter"]=capacity["snapshot"](None)
         require(receipt["after_release_adapter"]["dxgi"]["luid"]==luid,"physical adapter changed")
-        for item in [image,build,manifest,log,linked,guard["powershell"],*approvals,*sources.values(),*pins]:
+        for item in custody:
+            if split:
+                require(time.monotonic() < audit_end, "post-custody budget expired")
             base.pinned(item)
+        if split:
+            closed = time.monotonic()
+            require(closed < audit_end and finished < end, "fixed native Job or post-custody deadline missed")
+            receipt["clock_protocol"].update(post_custody_seconds=closed-finished, overall_seconds=closed-started,
+                                             combined_120_seconds_pass=closed-started<=120)
         receipt["complete"]=True
     except Exception as exc:
         receipt["error"]=type(exc).__name__+": "+str(exc)
@@ -264,7 +364,7 @@ def run(args):
 
 if __name__=="__main__":
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--mode",choices=("operand","graph","score"),required=True)
+    p.add_argument("--mode",choices=("operand","graph","score","fixed","mixed"),required=True)
     p.add_argument("--direct",action="store_true")
     p.add_argument("--width",type=int,choices=(32,128,1024,1588,8192),default=32)
     for field in ("image","build","powershell","lineage","operand-receipt","graph-receipt","reference"):
@@ -273,4 +373,6 @@ if __name__=="__main__":
         p.add_argument("--"+field.replace("-receipt","")+"-sha256",required=required)
     for field in ("snapshot","output"):
         p.add_argument("--"+field,type=Path,required=True)
-    run(p.parse_args())
+    p.add_argument("--separate-native-window",action="store_true")
+    with ExitStack() as retained:
+        run(p.parse_args(), retained)

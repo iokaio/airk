@@ -195,7 +195,7 @@ impl CudaRuntime {
         case: Option<(usize, &str)>,
         deadline: Instant,
     ) -> Result<Value> {
-        self.observe_large_arithmetic(campaign, operand, case, false, deadline)
+        self.observe_large_arithmetic(campaign, operand, case, false, deadline, None)
     }
 
     /// Observe the direct FP32-activation model backed by the original immutable half weights.
@@ -206,7 +206,29 @@ impl CudaRuntime {
         case: Option<(usize, &str)>,
         deadline: Instant,
     ) -> Result<Value> {
-        self.observe_large_arithmetic(campaign, false, case, true, deadline)
+        self.observe_large_arithmetic(campaign, false, case, true, deadline, None)
+    }
+
+    /// Time the authenticated direct graph on one retained session with synchronized outputs.
+    #[cfg(windows)]
+    pub fn time_large_direct(
+        &self,
+        campaign: &Path,
+        gate: &str,
+        deadline: Instant,
+        mut measure: impl FnMut(
+            &mut dyn FnMut(usize) -> Result<Vec<f32>>,
+            &mut dyn FnMut() -> Result<Value>,
+        ) -> Result<Value>,
+    ) -> Result<Value> {
+        self.observe_large_arithmetic(
+            campaign,
+            false,
+            Some((8192, gate)),
+            true,
+            deadline,
+            Some(&mut measure),
+        )
     }
 
     /// Retain the complete GNU final graph and placement before any numerical use.
@@ -216,7 +238,7 @@ impl CudaRuntime {
         campaign: &Path,
         deadline: Instant,
     ) -> Result<Value> {
-        self.observe_large_arithmetic(campaign, false, None, true, deadline)
+        self.observe_large_arithmetic(campaign, false, None, true, deadline, None)
     }
 
     fn observe_large_arithmetic(
@@ -226,6 +248,7 @@ impl CudaRuntime {
         case: Option<(usize, &str)>,
         direct: bool,
         deadline: Instant,
+        measure: Option<&mut super::model::Measure<'_>>,
     ) -> Result<Value> {
         #[cfg(target_os = "linux")]
         ensure!(
@@ -247,7 +270,8 @@ impl CudaRuntime {
             !self.is_product()
                 && (!operand || case.is_none())
                 && Instant::now() < deadline
-                && std::env::var("ORT_ENABLE_ATTENTION_KERNEL_DEBUG_INFO").as_deref() == Ok("1")
+                && std::env::var("ORT_ENABLE_ATTENTION_KERNEL_DEBUG_INFO").as_deref()
+                    == Ok(if measure.is_some() { "0" } else { "1" })
                 && std::env::var("ORT_CUDA_GEMM_OPTIONS").as_deref() == Ok("2"),
             "scientific Large environment required"
         );
@@ -330,6 +354,7 @@ impl CudaRuntime {
                 .session(builder)?
             }
         };
+        let session_ready_us = train_start.elapsed().as_micros();
         let placement = self.loaded.placement(&session)?;
         let result = if operand {
             placement.validate_strict()?;
@@ -359,32 +384,74 @@ impl CudaRuntime {
                 .validate_bounded_fp16_cpu_values(12_067)
                 .map_err(|e| e.to_string());
             let digest = format!("{:x}", Sha256::digest(serde_json::to_vec(&meta.rows)?));
+            let mut timing = None;
             let score = if let Some((width, expected)) = case {
                 ensure!(
                     digest == expected && routes.is_ok() && cpu.is_ok(),
                     "Large typed graph, real projection or bounded shape controls differ"
                 );
-                let x = if width == TRAIN_WIDTH {
-                    ensure!(direct, "TRAIN Q543 requires the direct FP32 candidate");
-                    train_input(campaign)?
-                } else {
-                    input(campaign, width)?
-                };
-                let input_digest = x.input_digest.to_string();
-                let values = super::model::score(&mut session, x)?;
-                if width == TRAIN_WIDTH {
+                if let Some(bench) = measure {
                     ensure!(
-                        train_start.elapsed().as_nanos() <= u128::from(TRAIN_REMAINING_NS),
-                        "original TRAIN request allowance expired"
+                        direct && width == 8192,
+                        "timing requires authenticated direct Large"
                     );
+                    let widths = [32, 128, 1024, 8192];
+                    let inputs = widths
+                        .map(|w| input(campaign, w))
+                        .into_iter()
+                        .collect::<Result<Vec<_>>>()?;
+                    let input_digests: Vec<_> =
+                        inputs.iter().map(|x| x.input_digest.to_string()).collect();
+                    let mut calls = 0;
+                    let population = bench(
+                        &mut |index| {
+                            ensure!(
+                                calls < 21 && Instant::now() < deadline,
+                                "Large timing limit reached"
+                            );
+                            let x = inputs.get(index).context("unknown Large width")?;
+                            calls += 1;
+                            let output = super::model::score(&mut session, x.clone())?;
+                            self.loaded.synchronize(&context)?;
+                            ensure!(Instant::now() < deadline, "Large timed forward expired");
+                            Ok(output)
+                        },
+                        &mut || {
+                            Ok(serde_json::to_value(self.loaded.observe(
+                                adapter.ordinal,
+                                &context,
+                                deadline,
+                            )?)?)
+                        },
+                    )?;
+                    timing = Some(
+                        json!({"input_digests":input_digests, "population":population, "calls":calls,
+                               "cold_open_us":session_ready_us}),
+                    );
+                    None
+                } else {
+                    let x = if width == TRAIN_WIDTH {
+                        ensure!(direct, "TRAIN Q543 requires the direct FP32 candidate");
+                        train_input(campaign)?
+                    } else {
+                        input(campaign, width)?
+                    };
+                    let input_digest = x.input_digest.to_string();
+                    let values = super::model::score(&mut session, x)?;
+                    if width == TRAIN_WIDTH {
+                        ensure!(
+                            train_start.elapsed().as_nanos() <= u128::from(TRAIN_REMAINING_NS),
+                            "original TRAIN request allowance expired"
+                        );
+                    }
+                    Some(
+                        json!({"compiled_input_digest":input_digest,"raw_scores":values,"width":width}),
+                    )
                 }
-                Some(
-                    json!({"compiled_input_digest":input_digest,"raw_scores":values,"width":width}),
-                )
             } else {
                 None
             };
-            json!({"typed_graph_sha256":digest,"graph":case.is_none().then_some(meta),"score":score,
+            json!({"typed_graph_sha256":digest,"graph":case.is_none().then_some(meta),"score":score,"timing":timing,
                    "route_refusal":routes.err(),"cpu_refusal":cpu.err(),"model_sha256":graph_digest,"weight_sha256":WEIGHT})
         };
         self.loaded.synchronize(&context)?;
