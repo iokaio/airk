@@ -4,6 +4,21 @@ These tools stage Compact and Large candidate graphs from retained model assets 
 
 For Compact, `probe_compact_cutlass.py` measures attention operands, graph placement, raw scores, warm timings and original calibration inputs. Its score receipts preserve both independent references and the winner for each complete vector. For Large, `large_cutlass_candidate.py` stages the compensated-attention graph with the original external weight file. `large_cutlass_operands.py` prepares the original layer-17 inputs, and `probe_large_cutlass.py` collects native measurements. The CPU reference tools are in the adjacent `arbiter-fp16-reference` directory.
 
+Protected Compact R7 calibration uses `probe_compact_cutlass.py --mode cal
+--cal-epoch r7-first56 --cal-phase N` for phases 0–6 after the first native
+lifetime settles. Select `r7-full100` for phases 0–12 from the complete
+capture and terminal receipts. Pass the SHA-256 values of
+`r7-chronological-first56-r1/projection-receipt.json` and
+`r7-chronological-native-first56-r1/native.json` with
+`--cal-projection-receipt-sha256` and `--cal-compiler-sha256`. For the
+terminal capture use the corresponding `full100` directories. Keep the
+same-image graph receipt, the original 120-second clock, the 16 GiB host Job
+and 24 GiB device arena. Use the [R7 chronological preparation](../arbiter/evaluation/selected_goal/cal_raw/README.md#r7-chronological-original-inputs)
+to produce both exact-model compiler inputs. The scorer retains only this
+phase's original R7 rows, native local operation ordinals and synchronized
+raw vectors. Reference comparison, calibration fitting and product admission
+require separate evidence.
+
 `probe_large_cutlass.py --mode fixed` uses one warm-up and 20 measured T8192 calls. `--mode mixed` runs three cycles of T32, T128, T1024, T8192 and T32. Both require `--direct --width 8192`, the current image’s operand and graph receipts, and the exact previously measured native score words for every width. The timing journal measures synchronized model calls within one session and records cold open, per-call resource observations and release. For fixed20, `--separate-native-window` retains deny-write/delete handles after original input verification and records the prelaunch, native and post-verification clocks separately. The 120-second native clock includes cold open and every call. The receipt also gives the overall elapsed time against the original combined 120-second screen.
 
 Run a selected program with `--help` for its exact arguments. Use the checked campaign execution path and a fresh receipt destination on D:. See the [execution contract](CONTRACT.md) for graph identities, input requirements and run modes, and the [capacity sweep procedure](../cuda-component-execution/CAPACITY-SWEEP.md) for pressure admission.
