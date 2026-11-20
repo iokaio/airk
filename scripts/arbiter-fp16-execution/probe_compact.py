@@ -676,7 +676,35 @@ def validate_graph(value, events, component):
             "native graph Load duration and independent returned marker differ")
 
 
-def validate_projection_graph(graph, *, output_projection=False, down=False):
+def validate_full_routes(nodes, dimensions, cuda_node, typed_values, one_cast_source):
+    sites = {
+        "self_attn/k_proj": ("input_layernorm/Mul_1_output_0", [2048, 1024]),
+        "self_attn/q_proj": ("input_layernorm/Mul_1_output_0", [2048, 2048]),
+        "self_attn/v_proj": ("input_layernorm/Mul_1_output_0", [2048, 1024]),
+        "self_attn/o_proj": ("self_attn/Reshape_7_output_0", [2048, 2048]),
+        "mlp/gate_proj": ("post_attention_layernorm/Mul_1_output_0", [2048, 6144]),
+        "mlp/up_proj": ("post_attention_layernorm/Mul_1_output_0", [2048, 6144]),
+        "mlp/down_proj": ("mlp/Mul_output_0", [6144, 2048]),
+    }
+    names = {row["name"]: idx for idx, row in nodes.items()}
+    for layer in range(28):
+        root = f"/scorer/layers.{layer}/"
+        for site, (source, shape) in sites.items():
+            name = root + site + "/MatMul"
+            idx = names[name]
+            cuda_node(idx, "MatMul", name)
+            activation, weight = typed_values(idx, 0, (1, 1), name)
+            product, = typed_values(idx, 2, (1,), name)
+            original, cast = one_cast_source(weight, 10, name)
+            require(activation["name"] == root + source and product["name"] == name + "_output_0"
+                    and cast == f"/airk_compact_full_projection/layers.{layer}/{site}/weight32"
+                    and original["provenance"] == "immutable_session_initializer" and original["rank"] == 2
+                    and [dimensions[(original["value"], axis)] for axis in (0, 1)] == shape,
+                    f"full FP32 projection activation, weight storage or product differs: {name}")
+    return {"cuda_fp32_matmuls": 196, "weight_upcasts": 196, "activation_upcasts": 0, "output_downcasts": 0}
+
+
+def validate_projection_graph(graph, *, output_projection=False, down=False, full=False, large_qkv=False):
     """Prove the widened projection arithmetic in the validated final SessionState graph."""
     rows = [row for row in graph["rows"] if row["graph"] == 0]
     nodes = {row["node"]: row for row in rows if row["kind"] == "node"}
@@ -690,11 +718,15 @@ def validate_projection_graph(graph, *, output_projection=False, down=False):
         if row["role"] in (0, 1):
             consumers.setdefault(row["value"], []).append(row["node"])
 
-    widths = {"k": 1024, "v": 1024, "q": 2048}
+    require(not large_qkv or not (output_projection or down or full),
+            "Large projection diagnostic requires its Q/K/V-only candidate")
+    layers, hidden, qwidth, stem_prefix = ((36, 2560, 4096, "/airk_large_qkv_fp32") if large_qkv
+                                          else (28, 2048, 2048, "/airk_compact_qkv_fp32"))
+    widths = {"k": 1024, "v": 1024, "q": qwidth}
     if output_projection:
         widths["o"] = 2048
     roster = {f"/scorer/layers.{layer}/self_attn/{name}_proj/MatMul": (layer, width, name)
-              for layer in range(28) for name, width in widths.items()}
+              for layer in range(layers) for name, width in widths.items()}
     suffixes = tuple(f"/self_attn/{name}_proj/MatMul" for name in widths)
     projections = [row for row in nodes.values() if row["name"].endswith(suffixes)]
     require(len(projections) == len(roster) and {row["name"] for row in projections} == set(roster),
@@ -721,6 +753,9 @@ def validate_projection_graph(graph, *, output_projection=False, down=False):
         require(output["value"] == output_row["value"], f"Q/K/V cast output edge differs: {name}")
         return source, node["name"]
 
+    if full:
+        return validate_full_routes(nodes, dimensions, cuda_node, typed_values, one_cast_source)
+
     input_casts = set()
     for row in projections:
         name, index = row["name"], row["node"]
@@ -728,11 +763,11 @@ def validate_projection_graph(graph, *, output_projection=False, down=False):
         cuda_node(index, "MatMul", name)
         a32, b32 = typed_values(index, 0, (1, 1), name)
         c32, = typed_values(index, 2, (1,), name)
-        stem = "/airk_compact_qkv_fp32" + name
+        stem = stem_prefix + name
         a16, a_cast = one_cast_source(a32, 10, name)
         b16, b_cast = one_cast_source(b32, 10, name)
         require(b_cast == stem + "/weight32" and b16["provenance"] == "immutable_session_initializer"
-                and b16["rank"] == 2 and [dimensions.get((b16["value"], axis)) for axis in (0, 1)] == [2048, width],
+                and b16["rank"] == 2 and [dimensions.get((b16["value"], axis)) for axis in (0, 1)] == [hidden, width],
                 f"compressed weight cast differs: {name}")
         if kind == "o":
             # A binary16 value survives the original round trip exactly. ORT may
@@ -754,7 +789,7 @@ def validate_projection_graph(graph, *, output_projection=False, down=False):
             # ORT can share the activation Cast pair across Q, K and V within a layer.
             activation_stems = {f"/scorer/layers.{layer}/self_attn/{p}_proj/MatMul" for p in ("k", "v", "q")}
             normal, half_cast = one_cast_source(a16, 1, name)
-            require(a_cast in {"/airk_compact_qkv_fp32" + label + "/input32" for label in activation_stems}
+            require(a_cast in {stem_prefix + label + "/input32" for label in activation_stems}
                     and half_cast in {"/airk_g5/weight/" + label + "/input16" for label in activation_stems}
                     and normal["name"] == f"/scorer/layers.{layer}/input_layernorm/Mul_1_output_0",
                     f"Q/K/V original activation narrowing differs: {name}")

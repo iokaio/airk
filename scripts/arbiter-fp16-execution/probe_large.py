@@ -17,6 +17,9 @@ CAMPAIGN = ROOT / "artifacts/v190/final-plan/exec-20261116T052942Z"
 PREFIX = "inference_engine::pool::arbiter::qualification::software_v2::cuda_qualification::"
 SELECTORS = {"metadata": PREFIX + "fp16_large::emit_cuda_large_fp16_probe_metadata",
              "graph": PREFIX + "fp16_large::cuda_large_fp16_load_only_graph_diagnostic",
+             "qkv-metadata": PREFIX + "fp16_large::emit_cuda_large_qkv_fp32_probe_metadata",
+             "qkv-graph": PREFIX + "fp16_large::cuda_large_qkv_fp32_load_only_graph_diagnostic",
+             "qkv-t32": PREFIX + "bounded_hybrid::cuda_large_qkv_fp32_scientific_t32",
              "t32": PREFIX + "bounded_hybrid::cuda_large_fp16_scientific_t32",
              "projection-t32": PREFIX + "bounded_hybrid::cuda_large_fp16_projection_taps_t32"}
 PREPARE = "8e69df4aedb85c556330262051d46c610ab48cec3c2a71aba60039458b6db348"
@@ -37,11 +40,17 @@ def core(pin):
     return {key: pin[key] for key in ("path", "sha256")}
 
 
-def metadata_contract(value, reference):
+QKV_STAGE = "0ae64faa17aecc33642c3245b3bf55b6f44a961de50128114ecf5ad8442e295c"
+QKV_GRAPH = "1448e83dcd209b120bd22e1dec084092f56adc7e8eec5dcd323e179b800467aa"
+
+
+def metadata_contract(value, reference, stage=None):
+    require(value.get("protected_graph_stage") == (core(stage) if stage else None),
+            "Large graph stage differs from the selected recipe")
     require(value["schema"] == "airk.private.large-fp16-probe-metadata/1"
             and value["request"]["sha256"] == PREPARE and value["independent_proof"]["sha256"] == REFERENCE
             and value["reference_input_digest"] == reference["input_digest"]
-            and value["graph"] == GRAPH and value["weights"] == WEIGHTS
+            and value["graph"] == (QKV_GRAPH if stage else GRAPH) and value["weights"] == WEIGHTS
             and value["model_requests_dispatched"] is value["qualified"] is False,
             "Large metadata lineage, numerical basis or scope differs")
 
@@ -56,7 +65,8 @@ def validate_large_attention(placement):
 
 
 def scoring_result(value, reference, log, shared, *, mode="t32"):
-    schema = "airk.private.large-fp16-layer0-projection-t32/1" if mode == "projection-t32" else "airk.private.large-fp16-scientific-t32/1"
+    schema = {"projection-t32":"airk.private.large-fp16-layer0-projection-t32/1",
+              "qkv-t32":"airk.private.large-qkv-fp32-scientific-t32/1"}.get(mode, "airk.private.large-fp16-scientific-t32/1")
     require(value["schema"] == schema and value["complete"] is True
             and value["qualified"] is value["product_admission"] is False and value["session_teardown_observed"] is True
             and value["native_host_charge_release_observed"] is value["native_control_cleanup_observed"] is True
@@ -64,7 +74,7 @@ def scoring_result(value, reference, log, shared, *, mode="t32"):
             "Large scientific scoring or natural settlement evidence differs")
     row, trace = value["rows"][0], value["profiled_runs"][0]
     require(row["tokens"] == trace["tokens"] == 32 and row["input_digest"] == reference["input_digest"]
-            and trace["node_count"] == 2234 and trace["cpu_nodes"] == 478 and trace["cpu_max_tensor_bytes"] <= 32,
+            and trace["node_count"] == (2486 if mode == "qkv-t32" else 2234) and trace["cpu_nodes"] == 478 and trace["cpu_max_tensor_bytes"] <= 32,
             "Large scientific T32 input or typed ORT profile differs")
     metrics = {}
     for label, reference_key in [("matching_fp16", "matching_fp16"), ("original_fp32", "original_fp32")]:
@@ -96,8 +106,10 @@ def scoring_result(value, reference, log, shared, *, mode="t32"):
 
 
 def run(args):
+    protected = args.mode in ("qkv-metadata", "qkv-graph", "qkv-t32")
     capture = args.mode == "projection-t32"
-    numerical = capture or args.mode == "t32"
+    numerical = capture or args.mode in ("t32", "qkv-t32")
+    hard_cap = {"qkv-metadata": 16 << 30, "qkv-graph": 22 << 30, "qkv-t32": 22 << 30}.get(args.mode, HOST)
     started = time.monotonic()
     deadline = started + 120
     require(os.name == "nt" and sys.flags.isolated and sys.flags.no_site and sys.dont_write_bytecode,
@@ -132,7 +144,7 @@ def run(args):
     manifest = shared["exact_pin"](args.image.with_name("airk-cuda-runtime.json"), MANIFEST, base)
     probe = base.read(request["path"])
     original_runtime = probe["runtime_manifest"]
-    if capture:
+    if capture or args.mode == "qkv-metadata":
         require(args.image.parent == CAMPAIGN / "windows-cu15-scientific-provider-stage-r1"
                 and original_runtime["sha256"] == MANIFEST
                 and core(shared["exact_pin"](Path(original_runtime["path"]), MANIFEST, base)) == original_runtime,
@@ -144,8 +156,26 @@ def run(args):
             and probe["bounds"]["deadline_ms"] == 120000
             and (probe["cold_bytes"], probe["warm_bytes"], probe["headroom_bytes"]) == (40 << 30, 8 << 30, 4 << 30),
             "Large request process/Job, adapter, arena or expiry differs")
-    snapshot = args.build_receipt.parent / "retained-native-sources" if numerical else None
-    log_pin, linked, sources = shared["linked_image"](build, image, base, audit, "metadata", source_snapshot=snapshot)
+    snapshot = args.build_receipt.parent / "retained-native-sources" if numerical or protected else None
+    cargo_chain = None
+    if args.mode == "qkv-graph":
+        direct = CAMPAIGN / "windows-large-protected-qkv-metadata-r1/execution.json"
+        audit([direct])
+        pin = shared["exact_pin"](direct, "a91f80a6a569c9db1f7cb07063e9778796de833e34da01b4d0e3ec7550b9aa46", base)
+        previous = base.read(pin["path"])
+        custody = previous["owned"]["suspended_assignment"]
+        require(previous["mode"] == "qkv-metadata" and previous["complete"] is True
+                and previous["failure"] is None and previous["whole_phase_expired"] is False
+                and parent.settled(previous["owned"]) and previous["inputs"]["build_receipt"] == build
+                and previous["inputs"]["image"] == image and previous["runtime_manifest"] == manifest
+                and previous["native"] == evidence and custody["image"] == core(image)
+                and custody["execution_user_sid"] == custody["default_owner_sid"] == base.SID,
+                "protected graph requires its directly authenticated original Cargo image and metadata")
+        inputs["direct_cargo_proof"] = pin
+        cargo_chain = {"build":build, "build_log":previous["build_log"], "linked_image":previous["linked"],
+                       "compile_time_cuda_approvals":previous["build_approvals"]}
+    log_pin, linked, sources = shared["linked_image"](build, image, base, audit, "metadata",
+                                                      source_snapshot=snapshot, cargo_chain=cargo_chain)
     native_sources = base.read(build["path"], 32 << 20)["groups"]["native"]["files"]
 
     def source_pin(relative):
@@ -159,7 +189,7 @@ def run(args):
         for relative in (SOURCE.replace("fp16_large.rs", "bounded_hybrid.rs"), SOURCE.replace("fp16_large.rs", "hybrid_profile_trace.rs"),
                          "crates/airk-retrieval/src/arbiter/runtime/bounded_hybrid.rs"):
             sources[relative] = source_pin(relative)
-    approvals = shared["decision_build_approvals"](log_pin, linked, manifest, base, audit)
+    approvals = shared["decision_build_approvals"](log_pin, linked, manifest, base, audit, cargo_chain=cargo_chain)
     if capture:
         for leaf in ("bounded_hybrid/layer0.rs", "cuda/run.rs"):
             relative = "crates/airk-retrieval/src/arbiter/runtime/" + leaf
@@ -170,7 +200,17 @@ def run(args):
         inputs["capture_preflight"] = preflight
         baseline, original_native = capture_owner["read"](Path(intended["original_native"]["path"]), capture_owner["NATIVE"])
         inputs["original_native"] = baseline
-    metadata = args.mode == "metadata"
+    stage = None
+    if protected:
+        stage_file = CAMPAIGN / "large-fp32-qkv-stage-r1/stage.json"
+        audit([stage_file])
+        stage = shared["exact_pin"](stage_file, QKV_STAGE, base)
+        inputs["protected_stage"] = stage
+        for relative in (SOURCE.replace("/cuda_qualification/fp16_large.rs", "/cuda_qualification.rs"),
+                         "crates/airk-retrieval/src/arbiter/runtime/bounded_hybrid/layer0.rs",
+                         "crates/airk-retrieval/src/arbiter/runtime/cuda/diagnostic.rs"):
+            sources[relative] = source_pin(relative)
+    metadata = args.mode in ("metadata", "qkv-metadata")
     evidence_value = base.read(evidence["path"])
     if metadata:
         require(request["sha256"] == PREPARE and evidence["sha256"] == REFERENCE and probe["kind"] == "prepare",
@@ -183,10 +223,22 @@ def run(args):
         audit([Path(ref["path"])])
         shared["exact_pin"](Path(ref["path"]), REFERENCE, base)
         reference = base.read(ref["path"])
-        metadata_contract(evidence_value, reference)
+        metadata_contract(evidence_value, reference, stage)
     require(reference["graph"]["sha256"] == GRAPH and reference["weights"]["sha256"] == WEIGHTS
             and reference["verification"]["graph"]["layers"] == 36 and reference["forward_count"] == 1,
             "Large independent reference geometry differs")
+    if args.mode == "qkv-t32":
+        path = CAMPAIGN / "large-fp32-qkv-independent-t32-r1/reference.json"
+        audit([path])
+        matching = shared["exact_pin"](path, "bc91621b62faeec0963caec75321c34b76e36f4bd66bbb7df6746d2872ab6191", base)
+        specific = base.read(matching["path"])
+        require(specific["graph"]["sha256"] == QKV_GRAPH and specific["weights"] == reference["weights"]
+                and specific["input_digest"] == reference["input_digest"] and specific["original_fp32"] == reference["original_fp32"]
+                and specific["candidate"]["protected_routes_in_model_order"] == 108
+                and specific["forward_count"] == 1 and specific["device"] == "cpu",
+                "protected Large scientific reference lineage differs")
+        inputs["matching_reference"] = matching
+        ref, reference = core(matching), specific
     if numerical:
         source_inputs = reference["source_inputs"]
         audit([Path(source_inputs["path"])])
@@ -195,10 +247,15 @@ def run(args):
         selected = [row for row in candidates if row["input"]["input_digest"] == reference["input_digest"]]
         require(len(selected) == 1 and len(selected[0]["input"]["input_ids"]) == 32
                 and selected[0]["reference_original_fp32"] == reference["original_fp32"], "Large reference input pairing differs")
-        graph = shared["exact_pin"](args.graph, "fff6dbe2f0c2fac4b9ba215da7d5029421d2706ee48c01c2485b9f157ee15ca6", base)
+        graph_sha = ("0d00e2fabdb5fe54474041fb1f2787502349b78ce40436b955cd4433633a4462" if protected
+                     else "fff6dbe2f0c2fac4b9ba215da7d5029421d2706ee48c01c2485b9f157ee15ca6")
+        graph = shared["exact_pin"](args.graph, graph_sha, base)
         inputs["reviewed_graph"] = graph
         audit([args.graph])
         graph_value = base.read(graph["path"])
+        if protected:
+            require(graph_value["optimizer_profile"] == "protected_qkv_fp32", "protected optimizer differs")
+            shared["validate_projection_graph"](graph_value["graph_metadata"], large_qkv=True)
         controls = runpy.run_path(str(HERE / "large_placement.py"))["cpu_controls"](graph_value["graph_metadata"])
         require(controls["maximum_vector_elements"] == 4 and controls["maximum_value_bytes"] == 32
                 and controls["summed_unique_payload_bytes"] == 12067 and controls["unique_cpu_values"] == 670,
@@ -209,7 +266,8 @@ def run(args):
     result = {"schema": "airk.private.owned-large-fp16-native/1", "mode": args.mode, "complete": False,
               "qualification": False, "failure": None, "command": cmd, "inputs": inputs, "runtime_manifest": manifest,
               "linked": linked, "build_log": log_pin, "build_approvals": approvals, "sources": sources, "wrappers": wrapper_pins,
-              "original_deadline": deadline, "host_before_job": large["host_preflight"](require)}
+              "original_deadline": deadline, "requested_host_reservation_bytes": HOST, "actual_hard_cap_bytes": hard_cap,
+              "host_before_job": large["host_preflight"](require)}
     c["mkdir"](guard, out, deadline=deadline)
     temp, stdout, native, directory, receipt = (out / leaf for leaf in ("temp", "stdout.log", "native.json", "metadata", "execution.json"))
     try:
@@ -222,6 +280,8 @@ def run(args):
                    AIRK_PRIVATE_CENSUS_BASE=str(temp), CUDA_CACHE_PATH=str(temp),
                    AIRK_CUDA_QUALIFICATION_INPUT=request["path"], AIRK_CUDA_QUALIFICATION_INPUT_SHA256=request["sha256"],
                    AIRK_CUDA_QUALIFICATION_OUTPUT=str(native))
+        if stage:
+            env.update(AIRK_LARGE_QKV_STAGE=stage["path"], AIRK_LARGE_QKV_STAGE_SHA256=stage["sha256"])
         if metadata:
             env.update(AIRK_CUDA_METADATA_DIRECTORY=str(directory), AIRK_CUDA_FP16_INDEPENDENT_PROOF=evidence["path"],
                        AIRK_CUDA_FP16_INDEPENDENT_PROOF_SHA256=evidence["sha256"])
@@ -241,9 +301,9 @@ def run(args):
 
         with open(os.devnull, "rb") as stdin, stdout.open("xb") as log:
             result["owned"] = owner.run_windows_owned_training(cmd, ROOT, log, deadline - time.monotonic(), env,
-                stdin, HOST, before_resume=suspended, absolute_deadline=deadline)
+                stdin, hard_cap, before_resume=suspended, absolute_deadline=deadline)
         owned = result["owned"]
-        require(parent.settled(owned) and 0 < owned["peak_host_committed_bytes"] <= HOST, "Large native child failed or remained active")
+        require(parent.settled(owned) and 0 < owned["peak_host_committed_bytes"] <= hard_cap, "Large native child failed or remained active")
         audit(list(out.rglob("*")))
         require(not any(temp.iterdir()) and 0 < stdout.stat().st_size <= 64 << 20
                 and "1 passed; 0 failed" in stdout.read_text(encoding="utf-8"), "one successful selector required")
@@ -251,11 +311,13 @@ def run(args):
         require(value["pid"] == owned["owned_leader_pid"] and value["native_binary_sha256"] == image["sha256"]
                 and value["request"] == core(request) and value["runtime_manifest"] == original_runtime
                 and (not capture or value["installed_runtime_manifest"] == core(manifest))
-                and value["execution_user"] == base.SID and value["actual_job"]["process_memory_limit_bytes"] == HOST
-                and value["actual_job"]["job_memory_limit_bytes"] == HOST,
+                and value["execution_user"] == base.SID and value["actual_job"]["process_memory_limit_bytes"] == hard_cap
+                and value["actual_job"]["job_memory_limit_bytes"] == hard_cap,
                 "native Large CPU, process/Job, image or manifest differs")
         if metadata:
-            metadata_contract(value, reference)
+            metadata_contract(value, reference, stage)
+            if stage:
+                require(value["probe_runtime_manifest"] == core(manifest), "protected graph runtime locator differs")
             for key in ("probe_request", "native_input", "profile_pin", "source_manifest", "calibration"):
                 file = Path(value[key]["path"])
                 require(file.parent == directory, "metadata output escaped planned directory")
@@ -286,7 +348,10 @@ def run(args):
             report = runpy.run_path(str(ROOT / "scripts/cuda-component-execution/placement_report.py"))
             result["graph_summary"] = report["summarize"](value["graph_metadata"])
             result["cpu_controls"] = runpy.run_path(str(HERE / "large_placement.py"))["cpu_controls"](value["graph_metadata"])
-        for row in (image, build, evidence, request, manifest, *sources.values(), *wrapper_pins):
+        if args.mode == "qkv-graph":
+            require(value["optimizer_profile"] == "protected_qkv_fp32", "protected session optimizer differs")
+            result["protected_routes"] = shared["validate_projection_graph"](value["graph_metadata"], large_qkv=True)
+        for row in (*inputs.values(), manifest, *sources.values(), *wrapper_pins):
             base.pinned(row)
         require(time.monotonic() < deadline, "Large owned diagnostic exceeded original deadline")
         result.update(complete=True, native=base.pin(native), stdout=base.pin(stdout))
