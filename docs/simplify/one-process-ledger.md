@@ -12571,3 +12571,33 @@ screened cases, zero have judged paired deliveries or confirmed paired
 pool to 142 against the prospective planning target of 154. The nine-family
 AWS grouping gives 124 provisional source groups across the five pools.
 [Population evidence](../arbiter/software-v2-data-audit.md#active-source-dependence-before-paired-measurement)
+
+### 2026-11-19 — Native source visibility for all 76 exact TechQA DEV spans
+
+Reauthenticated the 2.96 GB publisher archive and its 291,957,707-byte
+corpus member before staging 71 gold documents (478,195 UTF-8 bytes).
+The stage took 38.7269194 s. Its manifest.private.json in the private
+techqa-exact-gold-source-corpus-r1 directory has digest
+a670e02fe6abdaab184a6950c33d74caf4ef4b972530a1aff300d68dd51b44c8.
+
+The first native run refused when semantic backfill changed publication
+at case 60. Its owner receipt is a6afd10adc70ac7c391e4ab29d6ffde6411003b0e68f26efaa83e3d9ee030bb8.
+The second observed full readiness and received a typed retryable
+publication_busy response. Its owner receipt is
+60ee70107db259bf2c1d2355ab61fe1d06eed92168e41a4fb1597c062c27ce26.
+The shared native cohort reader now recognizes only the native
+repeat_same_request instruction within the original deadline.
+The third run returned 76/76 ranges on one fully ready publication, including
+34 multiline cases. It needed no retries, exited normally in 165.888 s,
+and left zero Job members. All 1,369 private descendant outputs were
+audited under the verified human. Four TechQA and three AWS controls passed.
+The source read diagnostic used the gold documents only. Its outputs
+cannot be scored as full-menu Answer results.
+
+Private techqa-native-source-reads-r3/native-reads.private.json is
+ffc6dfad39b3c809deb6c0434969df9afb19b08ab61228319106602be0a1eb73
+and owned.json is d87f46e14ca2facf33afdab53fdbee584fae32c1442f70ad14092c3ad386dd95.
+The collector README gives the checked Python -I -B -S staging and read
+commands. After the run, the stage CLI was broadened to accept a fresh
+numbered directory for reproduction. The measured manifest retains the
+actual stage source identity.

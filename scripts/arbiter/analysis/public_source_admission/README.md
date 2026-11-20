@@ -168,3 +168,14 @@ capture stdout in a fresh private receipt. It links overlapping menus and
 sources within each publisher pool, retaining alternate document and family
 groupings, incomplete annotations and screening-only rows. These groups
 support prospective sizing. They do not establish independent outcomes.
+
+[Stage exact TechQA gold sources](stage_techqa_exact_gold_corpus.py) takes
+--output pointing to a fresh checked techqa-exact-gold-source-corpus-rN
+directory in the private campaign root. Precreate and audit the empty corpus
+subdirectory. It rereads the authenticated publisher archive and materializes
+the 71 original documents used by the 76 verified spans. The
+[TechQA native line-read check](verify_techqa_native_source_reads.py) uses the
+sealed r1 manifest and the common native cohort reader with checked Python
+-I -B -S --output <fresh absolute private directory>. It waits for a ready
+native publication, verifies each citation and source digest, and preserves
+typed refusals. The publisher's full 50-document menus are separately pinned.

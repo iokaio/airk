@@ -1962,7 +1962,9 @@ source evidence without model outputs or precision identities.
 The initial recruitment roster contains 25 IBM Cloud, 65 AWS
 documentation and 50 SWE-bench-Live MultiLang candidates. The 65 AWS
 rows fill the gap left after screening IBM Cloud standalone questions.
-All 140 stay in the private screening pool pending admission. See the
+The user later excluded 24 ambiguous AWS cases. Keep 41 active AWS cases
+and preserve the exclusions in the historical roster. The 50 current
+MultiLang candidates include 11 replacements. See the
 [supplemental source audit](software-v2-data-audit.md#supplemental-90-and-50-candidate-roster)
 for exact revisions, counts and judgment scope.
 

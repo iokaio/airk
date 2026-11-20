@@ -4,7 +4,7 @@ from pathlib import Path
 import runpy
 import unittest
 
-audit = runpy.run_path(str(Path(__file__).resolve().parents[1] / "arbiter/analysis/public_source_admission/verify_aws_native_source_reads.py"))
+audit = runpy.run_path(str(Path(__file__).resolve().parents[1] / "arbiter/analysis/public_source_admission/verify_aws_native_source_reads.py"))["reader"]
 
 
 class NativeSourceReadTests(unittest.TestCase):
