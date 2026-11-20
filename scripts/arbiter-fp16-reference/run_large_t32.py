@@ -73,6 +73,9 @@ def candidate_inputs(c, args, proofs, check):
     return result
 
 
+LAYER_JOB = HERE.with_name("large_layer_job.py")
+LAYER_JOB_SHA = "bfffc8fa720d74e10732d75103bdb24d6920931bc4d7081e1615ed80ad394875"
+
 TRAIN = HERE.with_name("large_train_case.py")
 TRAIN_SHA = "722baf8ad63976edea9c389f16a06be8ebf33d185ff96b4e3fd6a06e6dd6aa3b"
 
@@ -263,7 +266,14 @@ def reference(args):
     cache = Path(os.environ["TORCHINDUCTOR_CACHE_DIR"])
     require(cache.is_relative_to(CAMPAIGN) and cache.is_dir() and cache.resolve(strict=True) == cache, "private cache required")
     c["windows_owner"](cache)
-    sys.addaudithook(lambda event, arguments: support["read_only"](event, arguments, cache))
+    layers = checked_module(LAYER_JOB,LAYER_JOB_SHA) if args.layers else None
+    boundary_path = cache.parent/"residual.f32"
+    if layers:
+        require(args.recipe == DIRECT_RECIPE and boundary_path.parent.parent == CAMPAIGN and not boundary_path.exists(),
+                "fresh guarded Large residual destination required")
+        sys.addaudithook(layers["audit_hook"](support["read_only"],cache,boundary_path))
+    else:
+        sys.addaudithook(lambda event, arguments: support["read_only"](event, arguments, cache))
     inputs = {r["path"]: r for r in plan["input_files"]}
     variant = candidate_inputs(c,args,proofs,check)
     runtime = c["read"](c["pinned"](plan["runtime_manifest"], check))
@@ -316,7 +326,12 @@ def reference(args):
     check()
     observe("graph_and_learned_bytes_verified")
     hidden = None
-    if args.capture_hidden:
+    study = None
+    if layers:
+        vector,study = layers["execute"](args,CAMPAIGN,c,row,variant,independent,check,boundary_path)
+        require(not torch.cuda.is_initialized(), "offline layer calculation cannot use CUDA")
+        observe("layer_interval_completed", args.layers)
+    elif args.capture_hidden:
         require(variant is not None and args.tokens == 32, "hidden control requires original QKV T32")
         inputs[str(HIDDEN)] = c["pin"](HIDDEN,check)
         scores, hidden = checked_module(HIDDEN,HIDDEN_SHA)["capture"](
@@ -329,11 +344,12 @@ def reference(args):
         scores = checked_module(script,digest)["score"](independent,row["input"],check)
     else:
         scores = independent.forward(row["input"], context_flash_single_tile=args.recipe == FLASH_RECIPE)
-    require(scores.dtype == torch.float32 and scores.device.type == "cpu" and tuple(scores.shape) == (1, len(row["input"]["option_mask"]))
-            and not torch.cuda.is_initialized(), "CPU-only Large score ABI differs")
-    observe(f"t{args.tokens}_forward_completed")
-    vector = scores[0].tolist()
-    require(all(math.isfinite(v) for v in vector), "nonfinite CPU reference")
+    if not layers:
+        require(scores.dtype == torch.float32 and scores.device.type == "cpu" and tuple(scores.shape) == (1, len(row["input"]["option_mask"]))
+                and not torch.cuda.is_initialized(), "CPU-only Large score ABI differs")
+        observe(f"t{args.tokens}_forward_completed")
+        vector = scores[0].tolist()
+        require(all(math.isfinite(v) for v in vector), "nonfinite CPU reference")
     for key in ("graph", "weights", "manifest"):
         c["pinned"](proofs[key], check)
     # Repeat source and candidate custody after the actual forward on the same deadline.
@@ -348,14 +364,14 @@ def reference(args):
         support["read_pinned_json"](root / "reference-producer.json", producer, check)
     if args.recipe == WIDE_RECIPE:
         c["pinned"](inputs[str(WIDE)], check)
-    return {**({"train_phase":args.train_phase,"case_pins":row["pins"]} if args.train_phase else {}),
+    return {**({"layer_study":study} if layers else {}), **({"train_phase":args.train_phase,"case_pins":row["pins"]} if args.train_phase else {}),
             **({"hidden":hidden,"hidden_source":inputs[str(HIDDEN)]} if hidden is not None else {}),
             "model": "large", "recipe": args.recipe, "tokens": args.tokens,
             "multi_tile_source": inputs.get(str(WIDE)), "candidate": variant, "cpu_placement": placement, "conversion_plan": pp, "conversion_receipt": rp,
             "source_inputs": mp, "graph": variant["graph"] if variant else proofs["graph"], "weights": proofs["weights"], "verification": verification,
             "publisher": publisher, "streamed_loader": inputs[str(STREAM)], "input_digest": row["input"]["input_digest"], "original_fp32": row["reference_original_fp32"],
             "matching_fp16": vector, "loaded_runtime": support["loaded_runtime"](inputs, c["pin"], check),
-            "forward_count": 1, "job": limits, "device": "cpu", "pid": os.getpid(), "token": token, "deadline": args.deadline,
+            "forward_count": 0 if layers else 1, "job": limits, "device": "cpu", "pid": os.getpid(), "token": token, "deadline": args.deadline,
             "native_execution": False, "qualification": False}
 
 
@@ -363,6 +379,12 @@ def valid_scores(obs, row, args):
     count = len(row["input"]["option_mask"])
     def finite(values):
         return isinstance(values,list) and len(values) == count and all(type(v) in (int,float) and math.isfinite(v) for v in values)
+    if getattr(args,"layers",None):
+        study = obs["layer_study"]
+        return (obs["forward_count"] == 0 and obs["original_fp32"] == row["reference_original_fp32"]
+                and study["interval"] == args.layers and study["single_forward"] is False
+                and [r["layer"] for r in study["all_layers"]] == list(range(args.layers[1]))
+                and (finite(obs["matching_fp16"]) if args.layers[1] == 36 else obs["matching_fp16"] is None))
     if args.train_phase:
         require(obs["train_phase"] == args.train_phase and obs["case_pins"] == row["pins"], "wrong TRAIN phase or source")
     if args.train_phase == "publisher":
@@ -380,6 +402,13 @@ def run(args):
     variant = candidate_inputs(c,args,proofs,check)
     wide_source = c["pin"](WIDE, check) if args.recipe == WIDE_RECIPE else None
     require(wide_source is None or wide_source["sha256"] == WIDE_SHA, "multi-tile source changed")
+    layer_owner = checked_module(LAYER_JOB,LAYER_JOB_SHA) if args.layers else None
+    if layer_owner:
+        require(args.recipe == DIRECT_RECIPE, "segmented original direct arithmetic required")
+        custody,history,_,baseline = layer_owner["predecessor"](args,CAMPAIGN,c,row,variant,check)
+    else:
+        require(all(v is None for v in (args.prior_layers,args.prior_layers_sha256,args.layer_control,args.layer_control_sha256)),
+                "layer custody requires declared layer interval")
     out = args.owned_output
     require(out.parent == CAMPAIGN and out.resolve(strict=False) == out and not out.exists(), "fresh private output required")
     temp = out / "temp"
@@ -390,12 +419,20 @@ def run(args):
     log, evidence, receipt = (out / name for name in ("stdout.log", "reference.json", "execution.json"))
     for path in (log, evidence, receipt):
         c["guard"](plan, path, deadline=deadline)
+    if layer_owner:
+        c["guard"](plan,out/"residual.f32",deadline=deadline)
     source = c["pin"](HERE, check)
     memory_cap = host_limit(args.recipe)
     argv = [sys.executable, "-I", "-B", "-S", "-X", "pycache_prefix=" + plan["cache_prefix"], str(HERE),
             "--worker", "--plan", str(args.plan), "--plan-sha256", pp["sha256"], "--conversion", str(args.conversion),
             "--conversion-sha256", rp["sha256"], "--deadline", repr(deadline), "--worker-sha256", source["sha256"],
             "--recipe", args.recipe, "--tokens", str(args.tokens), "--affinity-mask", str(args.affinity_mask)]
+    if layer_owner:
+        argv += ["--layers",*map(str,args.layers)]
+        for flag,path,digest in (("prior-layers",args.prior_layers,args.prior_layers_sha256),
+                                 ("layer-control",args.layer_control,args.layer_control_sha256)):
+            if path is not None:
+                argv += ["--"+flag,str(path),"--"+flag+"-sha256",digest]
     if args.train_phase:
         argv += ["--train-phase",args.train_phase]
         if args.publisher_execution is not None:
@@ -425,7 +462,10 @@ def run(args):
         require(parent.settled(owned) and 0 < owned["peak_host_committed_bytes"] <= memory_cap, "unsettled/failed Large CPU reference")
         c["guard"](plan, log, True, deadline=deadline)
         require(0 < log.stat().st_size <= 64 << 20 and not any(temp.iterdir()), "log, output or cache bound differs")
-        require({path.name for path in out.iterdir()} == {"temp", "stdout.log"}, "unexpected Large reference output")
+        expected_files = {"temp","stdout.log","residual.f32"} if layer_owner else {"temp","stdout.log"}
+        require({path.name for path in out.iterdir()} == expected_files, "unexpected Large reference output")
+        if layer_owner:
+            c["guard"](plan,out/"residual.f32",True,deadline=deadline)
         with log.open("rb") as stream:
             matches = [line[len(MARKER):] for line in stream if line.startswith(MARKER.encode())]
         require(len(matches) == 1 and len(matches[0]) <= 16 << 20, "one bounded private score observation required")
@@ -442,6 +482,22 @@ def run(args):
                 and obs["input_digest"] == row["input"]["input_digest"]
                 and valid_scores(obs, row, args)
                 and obs["native_execution"] is obs["qualification"] is False, "Large CPU proof differs from owned request")
+        if layer_owner:
+            study = obs["layer_study"]
+            require(study["custody"] == custody and study["all_layers"][:args.layers[0]] == history
+                    and all(r["shape"] == [1,args.tokens,2560] and r["bytes"] == args.tokens*2560*4 and r["seconds"] > 0
+                            and len(r["sha256"]) == 64 and r["process_memory"]["samples"] >= 2
+                            and r["process_memory"]["sampled_peak_private"] >= r["process_memory"]["start_private"] > 0
+                            and r["max_one_fp32_attention_score_tile_bytes"] == 262144 for r in study["all_layers"])
+                    and c["pinned"](study["residual"],check) == out/"residual.f32"
+                    and study["residual"]["sha256"] == study["all_layers"][-1]["sha256"]
+                    and checked_module(LAYER_JOB,LAYER_JOB_SHA)["LAYER_SHA"] == custody[0]["sha256"],
+                    "owned layer boundary, math source or recorded history changed")
+            if args.layers[1] == 36 and args.tokens == 1024:
+                require(study["uninterrupted_words_equal"] is True and obs["matching_fp16"] == baseline,
+                        "final layer control differs from uninterrupted T1024")
+            for p in custody:
+                c["pinned"](p,check)
         if args.train_phase:
             require(selected_row(meta,args) == row and c["pin"](TRAIN,check)["sha256"] == TRAIN_SHA,
                     "original TRAIN case or publisher changed during worker execution")
@@ -489,6 +545,10 @@ if __name__ == "__main__":
     parser.add_argument("--recipe", choices=("baseline-half", FLASH_RECIPE, WIDE_RECIPE,QKV_RECIPE,BODY_RECIPE,MHA_RECIPE,DIRECT_RECIPE), default="baseline-half")
     parser.add_argument("--capture-hidden", action="store_true")
     parser.add_argument("--affinity-mask", type=lambda value: int(value,0), default=0)
+    parser.add_argument("--layers",nargs=2,type=int,metavar=("BEGIN","END"))
+    for flag in ("prior-layers","layer-control"):
+        parser.add_argument("--"+flag,type=Path)
+        parser.add_argument("--"+flag+"-sha256")
     parser.add_argument("--train-phase", choices=("publisher","matching"))
     parser.add_argument("--publisher-execution", type=Path)
     parser.add_argument("--publisher-sha256")

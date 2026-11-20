@@ -106,7 +106,7 @@ def run(args):
                          ROOT/"scripts/cuda-component-execution/wddm_process_samples.py"]
     pins += [base.pin(path) for path in sources_to_reopen]
     pins += [exact(base.MAINTAINED_HELPER_ROOT/name, sha) for name,sha in base.HELPERS.items()]
-    pins.extend(guard.values())
+    pins.append(guard["checked_guard"])
     prep=exact(CAMPAIGN/"large-cutlass-t32-operands-r1/prepare.json","f9a45a949357610f6a7310b8df2b87ae07225382422fcc56f375fba00df8ccea")
     original=base.read(prep["path"])
     pins += [prep,*original["assets"].values()]
@@ -164,7 +164,23 @@ def run(args):
                 and ref["candidate"]["graph"]==arm["graph"] and ref["candidate"]["protected_routes_in_model_order"]==252
                 and ref["recipe"]==("large-weight-only-fp32-sm86-compensated-causal-mha" if args.direct else "large-body252-fp32-sm86-compensated-causal-mha") and ref["original_fp32"]==row["reference_original_fp32"]
                 and ref["cpu_placement"]["torch_intraop_threads"]==2,"frozen Large reference/input differs")
+        layer_study = ref.get("layer_study")
+        if layer_study is not None:
+            require(args.direct and args.width == 8192 and ref["forward_count"] == 0 and layer_study["complete_chain"]
+                    and layer_study["single_forward"] is False and layer_study["interval"][1] == 36
+                    and [r["layer"] for r in layer_study["all_layers"]] == list(range(36))
+                    and all(r["shape"]==[1,8192,2560] and r["bytes"]==8192*2560*4 and r["seconds"]>0
+                            for r in layer_study["all_layers"])
+                    and layer_study["residual"]["sha256"] == layer_study["all_layers"][-1]["sha256"],
+                    "complete original T8192 offline layer chain required")
+            pins.extend([*layer_study["custody"],layer_study["residual"]])
+        else:
+            require(ref["forward_count"]==1, "one original independent forward required")
         pins += [gp,refp,closure["proof"]]
+    unique={}
+    for pin in pins:
+        require(pin==unique.setdefault(pin["path"],pin),"inconsistent custody for shared source")
+    pins=list(unique.values())
     audit([Path(p["path"]) for p in pins])
     for pin in pins:
         base.pinned(pin)
@@ -172,7 +188,7 @@ def run(args):
     command=[str(args.image),"--exact",selector+mode,"--ignored","--nocapture"]
     receipt={"schema":"airk.private.large-compensated-cuda/1","complete":False,"qualification":False,"mode":mode,"direct":args.direct,"width":args.width,
              "command":command,"image":image,"build":build,"linked_image":linked,"compile_time_cuda_approvals":approvals,"build_log":log,
-             "runtime_manifest":manifest,"sources":sources,"backend_sources":backend,"inputs":pins,"host_bytes":host,"seconds":120}
+             "runtime_manifest":manifest,"powershell":guard["powershell"],"sources":sources,"backend_sources":backend,"inputs":pins,"host_bytes":host,"seconds":120}
     components["mkdir"](guard,out,deadline=end)
     temp,stdin,stdout,dst=(out/n for n in ("temp","stdin.txt","stdout-stderr.log","execution.json"))
     try:
@@ -218,6 +234,9 @@ def run(args):
             require(result["typed_graph_sha256"]==gate and result["score"]["compiled_input_digest"]==ref["input_digest"],"scored wrong original input")
             receipt["numerical"]=runpy.run_path(str(HERE/"score_comparison.py"))["numerical"](
                 result["score"]["raw_scores"],ref["matching_fp16"],ref["original_fp32"])
+            if layer_study is not None:
+                receipt["independent_offline_layers"]={"single_forward":False,"completed_layers":36,
+                        "positive_control_width":1024,"last_residual":layer_study["residual"],"source":closure["proof"]}
             if args.width == 1588:
                 def ranking(values):
                     first,second = sorted(range(len(values)), key=values.__getitem__, reverse=True)[:2]
@@ -228,7 +247,7 @@ def run(args):
                     "rankings":{k:ranking(receipt["numerical"][k]) for k in ("candidate_scores","matching_scores","original_scores")}}
         receipt["after_release_adapter"]=capacity["snapshot"](None)
         require(receipt["after_release_adapter"]["dxgi"]["luid"]==luid,"physical adapter changed")
-        for item in [image,build,manifest,log,linked,*approvals,*sources.values(),*pins]:
+        for item in [image,build,manifest,log,linked,guard["powershell"],*approvals,*sources.values(),*pins]:
             base.pinned(item)
         receipt["complete"]=True
     except Exception as exc:
