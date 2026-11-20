@@ -138,6 +138,20 @@ remain required for either handoff.
 
 ### Installed complete Answer timing
 
+New Windows campaign runs use the preverified D installation. In the optional
+`--managed-install` JSON accepted by `prepare_installed_answer_arm.py`, set
+`variant` to `cpu` or `cuda`, `record` to the original installer record,
+`install_dir` to the native managed installation and
+`native_install_manifest_sha256` to its approved manifest. Bind the original
+installer build receipt with `installer_receipt.path` and
+`installer_receipt.sha256`, and pass the specification's own SHA-256 with
+`--managed-install-sha256`. The corresponding campaign roots are
+`windows-managed-cpu-r1` and `windows-managed-cuda-r1`. The collector reopens
+the original installer, control and native current executable, then retains the
+actual `runtime inspect --install-dir` command and stdout. Both selections in
+a same-release comparison use the same CUDA-capable installation. The original
+personal install record remains available for historical read-only checks.
+
 `measure-installed-answer.ps1 -Arm <private arm.json> -ArmSha256 <digest> -Run
 windows-installed-compact-cuda-answer-r1` uses the verified human shell and a
 fresh private output under the campaign. Each arm specification points to a

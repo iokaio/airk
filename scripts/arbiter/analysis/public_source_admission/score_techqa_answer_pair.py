@@ -276,8 +276,14 @@ def arm(descriptor, freeze, role, normal, target, source, question):
 
 
 def paired_population(descriptor,freeze):
-    require(freeze["native_issuer"]=="private_service_fixture_through_cli",
-            "an installed claim needs independently authenticated installed service provenance")
+    issuer = freeze["native_issuer"]
+    require(issuer in ("private_service_fixture_through_cli","installed_windows_public_cli"), "unknown native issuer")
+    if issuer == "installed_windows_public_cli":
+        from installed_techqa_answer import installed_arm
+        def evaluate(*args):
+            return installed_arm(*args,scorer=globals())
+    else:
+        evaluate = arm
     require(freeze["judgment_sha256"]==JUDGMENT_SHA and freeze["rubric_sha256"]==RUBRIC_SHA
             and freeze["fp16"]["weights_sha256"]!=freeze["fp32"]["weights_sha256"],"foreign frozen evidence or comparison")
     judgment = read({"path":str(CAMPAIGN/"techqa-normal-publisher-judgment-roster-r1.private.json"),"sha256":JUDGMENT_SHA})
@@ -302,7 +308,7 @@ def paired_population(descriptor,freeze):
         member, = [m for m in members if m["path"]==singleton["original_path"]]
         source = bound_body(Path(normal["source_root"]),member)
         question = publisher.original_question(owner,case,truth["original_menu"])
-        arms = [arm(inputs[role],freeze,role,normal,singleton,source,question) for role in ("fp16","fp32")]
+        arms = [evaluate(inputs[role],freeze,role,normal,singleton,source,question) for role in ("fp16","fp32")]
         results.append({"case":case,"source_component":truth["shared_document_component"],**compare(*arms)})
     count = len(results)
     return {"denominator":count,"fp16_successes":sum(r["fp16"] for r in results),
@@ -310,7 +316,7 @@ def paired_population(descriptor,freeze):
             "fp16_rate":sum(r["fp16"] for r in results)/count,"fp32_rate":sum(r["fp32"] for r in results)/count,
             "paired_regressions":sum(r["paired_regression"] for r in results),
             "paired_improvements":sum(r["paired_improvement"] for r in results),"rows":results,
-            "native_issuer":"private_service_fixture_through_cli","installed_service_verified":False,
+            "native_issuer":issuer,"installed_service_verified":issuer=="installed_windows_public_cli",
             "interval_computed":False,"release_qualified":False,"judgments":JUDGMENT_SHA,"rubric":RUBRIC_SHA}
 
 

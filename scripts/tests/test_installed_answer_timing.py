@@ -18,6 +18,52 @@ def rows(ns):
 
 
 class Timing(unittest.TestCase):
+    def test_only_authorized_campaign_roots_or_original_personal_record(self):
+        owner = compare["owner"]
+        campaign = owner["E"]
+        personal = owner["INSTALL"]
+        resolve = owner["managed"]["record_path"]
+        self.assertEqual(resolve({},campaign,personal), personal)
+        for wrong in (personal, campaign/"other"/"install-record.json",campaign/"windows-managed-cuda-r1"/"install-record.json"):
+            with self.subTest(wrong=wrong), self.assertRaises(ValueError):
+                resolve({"managed_install":{"variant":"cpu","record":str(wrong)}},campaign,personal)
+
+    def test_native_managed_inspection_requires_original_payload_and_current_image(self):
+        from unittest.mock import patch
+        verify = compare["owner"]["managed"]["validate_inspection"]
+        root = HERE
+        source,install,control = (root/n for n in ("program","managed","control"))
+        approval = {"manifest_sha256":"manifest","version":"1.8.207"}
+        policy = {"source":str(source),"install":str(install),"approval":approval,"executable_sha256":"image"}
+        native = {"payload_verified":True,"state_error":None,"selection":{"active":"manifest"},"approval":approval,
+                  "managed_policy":policy,"executable":str(source/"airk.exe"),"control_dir":str(control)}
+        with patch.dict(verify.__globals__,path_in=lambda p,_:Path(p),sha=lambda p:"image" if p.name=="airk.exe" else "manifest"):
+            check = lambda n: verify(n,root,install,control,"image",{"version":"1.8.207"},"manifest")
+            self.assertEqual(check(native),source)
+            for changed in ({"managed_policy":None},{"state_error":"foreign"},{"selection":{"active":"another"}},
+                            {"executable":str(control/"airk.exe")},{"control_dir":str(root)},{"payload_verified":False}):
+                with self.subTest(changed=changed), self.assertRaises(ValueError):
+                    check(native | changed)
+
+    def test_inspection_retains_exact_selection_and_control(self):
+        import hashlib
+        helper = compare["owner"]["managed"]
+        native = {"payload_verified":True,"selection":{"active":"digest"},"approval":{},"executable":"main",
+                  "managed_policy":{"source":"current"},"control_dir":"owned","state_error":None}
+        def obs(obj):
+            text = json.dumps(obj)
+            return {"argv":["real","runtime","inspect"],"original_record":"record","record_sha256":"record-hash",
+                    "source":"current","variant":"cpu","installer_sha256":"package","stdout":text,
+                    "stdout_sha256":hashlib.sha256(text.encode()).hexdigest()}
+        original = obs(native)
+        helper["same_inspection"](original,obs(native | {"lifecycle":{"status":"reported"}}))
+        for field,value in (("managed_policy",None),("executable","fixture"),("control_dir","foreign"),
+                            ("payload_verified",False),("selection",{"active":"other"})):
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                helper["same_inspection"](original,obs(native | {field:value}))
+        with self.assertRaises(ValueError):
+            helper["same_inspection"](original | {"stdout":"{}"},original)
+
     def test_native_disposition_and_elapsed_deadline(self):
         state = m["native_state"]
         req = {"budget":{"deadline_ms":120000}}

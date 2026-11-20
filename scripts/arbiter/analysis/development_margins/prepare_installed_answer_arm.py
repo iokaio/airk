@@ -11,7 +11,7 @@ timing = runpy.run_path(str(HERE / "installed_answer_timing.py"))
 require = timing["require"]
 
 
-def prepare(profile_path, profile_sha256, calibration_path, control, registrations, install_sha256):
+def prepare(profile_path, profile_sha256, calibration_path, control, registrations, install_sha256, managed_install=None):
     profile = timing["pin"](profile_path, profile_sha256)
     model = {"arbiter-context-qwen3-17b":"context_compact", "arbiter-context-qwen3-4b":"context_large"}[profile["model"]]
     provider = {"onnxruntime-cpu/1.30.0":"cpu","onnxruntime-cuda/1.30.0":"cuda"}[profile["runtime"]]
@@ -32,6 +32,8 @@ def prepare(profile_path, profile_sha256, calibration_path, control, registratio
            "control":str(control), "install_record_sha256":install_sha256, "profile_path":str(profile_path),
            "profile_sha256":profile_sha256, "calibration_path":str(calibration_path), "calibration_sha256":profile["calibration"],
            "registrations":reg_refs, "indexes":indices}
+    if managed_install is not None:
+        arm["managed_install"] = managed_install
     timing["bind_arm"](arm,roster)
     timing["installed"](arm)
     return arm
@@ -45,6 +47,10 @@ if __name__ == "__main__":
     parser.add_argument("--control", required=True, type=Path)
     parser.add_argument("--registrations", required=True, type=Path)
     parser.add_argument("--install-sha256", required=True)
+    parser.add_argument("--managed-install",type=Path)
+    parser.add_argument("--managed-install-sha256")
     args = parser.parse_args()
-    print(json.dumps(prepare(args.profile,args.profile_sha256,args.calibration,args.control,args.registrations,args.install_sha256),
+    require(bool(args.managed_install) == bool(args.managed_install_sha256), "pin the managed install specification")
+    spec = timing["pin"](args.managed_install,args.managed_install_sha256) if args.managed_install else None
+    print(json.dumps(prepare(args.profile,args.profile_sha256,args.calibration,args.control,args.registrations,args.install_sha256,spec),
                      sort_keys=True,allow_nan=False))

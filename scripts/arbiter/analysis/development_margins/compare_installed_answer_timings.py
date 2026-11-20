@@ -19,7 +19,12 @@ def reopen(path, seal, spec_path, expected_provider):
             and result["model"] == arm["model"] and result["context_manifest"] == arm["context_manifest"]
             and result["calibration_sha256"] == arm["calibration_sha256"], "paired arm identity differs")
     install = pin(path.parent / "install-record.json", arm["install_record_sha256"])
-    cli = str(owner["INSTALL"].parent / install["executables"]["airkctl"]["path"])
+    cli = str(owner["install_record"](arm).parent / install["executables"]["airkctl"]["path"])
+    if "managed_install" in arm:
+        live = {}
+        owner["installed"](arm,live)
+        original = json.loads((path.parent / "runtime-inspect.json").read_bytes())
+        owner["managed"]["same_inspection"](original,live)
     if "active" in result:
         def status(label):
             meta = json.loads((path.parent / (label + ".command.json")).read_bytes())

@@ -41,15 +41,27 @@ def classify_stdout(raw, scope, index, request, focus_profile, arm, elapsed_ns):
         return {"state":"invalid_native","error":str(exc)}
 
 
-def installed(arm):
-    record = pin(INSTALL, arm["install_record_sha256"])
+managed = runpy.run_path(str(HERE / "managed_windows_install.py"))
+
+
+def install_record(arm):
+    return managed["record_path"](arm,E,INSTALL)
+
+
+def installed(arm, observation=None):
+    original = install_record(arm)
+    record = pin(original, arm["install_record_sha256"])
     images = {}
     for name in ("airk", "airkctl"):
         image = record["executables"][name]
-        path = (INSTALL.parent / image["path"]).resolve(strict=True)
-        require(path.is_relative_to(INSTALL.parent) and path.stat().st_size == image["bytes"], "foreign installed image")
+        path = (original.parent / image["path"]).resolve(strict=True)
+        require(path.is_relative_to(original.parent) and path.stat().st_size == image["bytes"], "foreign installed image")
         freeze["sealed"](path, image["sha256"])
         images[name] = path
+    if "managed_install" in arm:
+        proof = managed["verify"](arm,E,record,original.parent,images)
+        if observation is not None:
+            observation.update(proof)
     return images["airkctl"], record["executables"]["airk"]["sha256"]
 
 
@@ -171,8 +183,11 @@ def run(arm, arm_sha, output):
     roster = pin(ROSTER, ROSTER_SHA)
     require(roster == freeze["freeze"](), "original question or source freeze changed")
     control = bind_arm(arm, roster)
-    cli_image, service_sha = installed(arm)
-    install_bytes, _ = freeze["sealed"](INSTALL, arm["install_record_sha256"])
+    require("managed_install" in arm, "a Windows campaign run requires the approved D installation")
+    installation = {}
+    cli_image, service_sha = installed(arm,installation)
+    write(output / "runtime-inspect.json", installation)
+    install_bytes, _ = freeze["sealed"](install_record(arm), arm["install_record_sha256"])
     with (output / "install-record.json").open("xb") as retained:
         retained.write(install_bytes)
     cli = CurrentCLI(cli_image, control, output)

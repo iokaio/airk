@@ -92,6 +92,34 @@ class PairedDeliveredEvidence(unittest.TestCase):
         self.assertEqual(result["fp16_trajectory"],a["trajectory"])
         self.assertEqual(result["fp32_trajectory"],b["trajectory"])
 
+    def test_installed_collection_rejects_fixture_before_opening_population(self):
+        live = runpy.run_path(str(ROOT/"scripts/arbiter/analysis/public_source_admission/collect_installed_techqa_answer.py"))
+        with self.assertRaisesRegex(ValueError,"unfrozen installed issuer"):
+            live["collect"]({"native_issuer":"private_service_fixture_through_cli"},"unused","fp16",Path("."))
+
+    def test_installed_command_replay_refuses_fixture_incomplete_or_crossed_calls(self):
+        installed = runpy.run_path(str(ROOT/"scripts/arbiter/analysis/public_source_admission/installed_techqa_answer.py"))
+        native = Path("installed")/"airkctl.exe"
+        command, stdout = Path("commands/a.command.json"), Path("commands/a.stdout")
+        argv = [str(native),"--output","json","--service-runtime-dir","control","arbiter","status"]
+        original = {"argv":argv,"state":"observed","exit_code":0,"pid":11,"start_ns":5,"end_ns":8,
+                    "elapsed_ns":3,"stdout":str(stdout),"stdout_sha256":"digest"}
+        def replay(row):
+            def read(pin):
+                if pin == {"path":str(command)}:
+                    return row
+                self.assertEqual(pin, {"path":str(stdout),"sha256":"digest"})
+                return {"native":"original"}
+            return installed["OriginalCommands"]([{"path":str(command)}],native,"control",read)
+        actual = replay(original)
+        self.assertEqual(actual.call("a",["arbiter","status"]),{"native":"original"})
+        with self.assertRaises(ValueError):
+            actual.call("a",["arbiter","status"])
+        for delta in ({"argv":["fixture.exe",*argv[1:]]},{"state":"timeout"},{"pid":0},{"elapsed_ns":1},
+                      {"stdout":str(Path("foreign")/"a.stdout")}):
+            with self.subTest(delta=delta), self.assertRaises(ValueError):
+                replay(original | delta).call("a",["arbiter","status"])
+
     def test_initial_search_order_and_terminal_refusal(self):
         identity = self.owner["initial_search_identity"]
         a,b = hit("one"),hit("two")
