@@ -12621,3 +12621,29 @@ scripts/tests/test_arbiter_fp16_execution.py. The r2 attempt refused in
 Resume with reviewed current Windows G5 Clippy and Nextest/JUnit identities
 after the running diagnostic source change. Large CUDA execution still
 follows the Compact gate.
+
+### 2026-11-19 — Linux CUDA build inputs and compiler probe on WSL2
+
+The verified Windows user and the registered Ubuntu user tyler (UID/GID 1000)
+ran separate checked batches. Ubuntu 24.04.4 LTS on WSL2 5.15.167.4 exposed
+/dev/dxg and the mapped libcuda.so.1. No AIRK CUDA provider or cuDNN payload
+was found in the approved existing input roots. The initial inventory took
+1.889 s. Do not use Ollama-private libraries as AIRK dependencies.
+
+All 17 retained ORT 1.30.0 source/dependency archives matched the reviewed
+source closure. Twelve publisher-pinned CUDA 12.8 Update 1 and cuDNN 9.10.2.21
+Linux redistribution archives totaled 2,744,133,764 bytes. The user-owned
+guest extraction took 205.2104 s and produced 6,756,105,954 expanded bytes.
+One nvcc 12.8.93 compile emitted a real sm_86 FP16 object with the expected
+cuDNN headers in 1.955 s. The object has 11,192 bytes and SHA-256
+e9f7e26bafd3834205aa10c3541543edeef738e00bad259324abbe21ccb85c50.
+Six Linux preparation tests passed. No CUDA initialization or model run
+took place. The [Linux preparation README](../../scripts/arbiter/evaluation/linux_cuda/README.md)
+records exact commands, identity, inputs, output roots and source roles.
+
+| Private evidence | SHA-256 |
+| --- | --- |
+| linux-cuda-user-inventory-r1.json | c688217952236ce4a849bfede3ea30c84a6b61366a229b72faf3754067e2b231 |
+| linux-cuda-redistributions-r1/acquisition.json | 07f177d5faf4b365d1d1a9351b62b8123e96572cc6a2362fb1cec44375fb6b5c |
+| linux-cuda-build-inputs-r1.json | b24ddaa3c8c69f731cc1a6c79d2026eff01c9f9f62bb9c73652c84219954ab3a |
+| linux-cuda-sm86-compiler-r1.json | 8d4c07a7c6b7a57e4d0f718118f9420faa136c769738f5bda2a5457652812d60 |
