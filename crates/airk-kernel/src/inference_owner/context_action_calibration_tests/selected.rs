@@ -159,70 +159,14 @@ fn fit_selected_context_generic_read_calibration() -> Result<()> {
     std::fs::create_dir(&output)?;
     let mut reports = Vec::new();
     for (model, (input, original, cases, uncaptured)) in prepared {
-        let policy = context_action::policy_digest()?;
-        let mut binding = original.clone();
-        binding.qualification = None;
-        binding.qualified_targets.clear();
-        binding.downloads.clear();
-        let template = calibration(&binding, policy, 0.0);
-        template.validate(&binding, policy)?;
         let directory = output.join(
             serde_json::to_value(model)?
                 .as_str()
                 .context("model name")?,
         );
-        std::fs::create_dir(&directory)?;
-        let report = if let Some((margin, outcomes)) = fit(&template, &cases)? {
-            let mut value = template;
-            value.rules = vec![generic_rule(margin)];
-            let mut bytes = serde_json::to_vec_pretty(&value)?;
-            bytes.push(b'\n');
-            let asset_sha = sha(&bytes);
-            let name = "context-action-calibration.json";
-            binding
-                .assets
-                .retain(|asset| asset.role != AssetRole::Calibration);
-            binding.assets.push(Asset {
-                name: name.into(),
-                role: AssetRole::Calibration,
-                bytes: bytes.len() as u64,
-                sha256: asset_sha,
-            });
-            binding.calibration = asset_sha;
-            binding.profile_id = format!(
-                "private-selected-generic-read-{}",
-                serde_json::to_value(model)?.as_str().context("model")?
-            );
-            binding.manifest = Sha256Digest::from_bytes([0; 32]);
-            binding.manifest = framed_digest(
-                b"airk.private.context-action-evaluation-profile/1",
-                &[
-                    input.profile_sha256.as_bytes(),
-                    &serde_json::to_vec(&binding)?,
-                ],
-            );
-            binding.validate()?;
-            let decoded = JointCalibration::parse_and_validate(&bytes, &binding, policy)?;
-            let (positive, unknown, replayed) = replay(&decoded, &cases)?;
-            ensure!(
-                positive > 0 && unknown == 0 && replayed == outcomes,
-                "serialized same-owner safe replay changed"
-            );
-            std::fs::write(directory.join(name), &bytes)?;
-            std::fs::write(
-                directory.join("experimental-profile.json"),
-                serde_json::to_vec_pretty(&binding)?,
-            )?;
-            json!({"model":model,"status":"independent_reference_utility_rule_fitted","minimum_raw_margin":margin,
-                "certified_admitted_questions":positive,"uncertified_admitted_questions":unknown,"calibration_sha256":asset_sha,
-                "experimental_profile":binding,"asset_overlay":{"base":input.base_assets,"generated":directory},"outcomes":outcomes})
-        } else {
-            let (_, _, diagnostic) = replay(&template, &cases)?;
-            json!({"model":model,"status":"unsupported_no_positive_safe_margin","calibration":null,"experimental_profile":null,
-                "diagnostic_zero_margin_replay":diagnostic})
-        };
-        reports.push(json!({"result":report,"cal_population":100,"native_rosters":cases.len(),"uncaptured_outcomes":uncaptured,
-            "human_semantic_gold":false,"task_qualified":false,"release_qualified":false}));
+        reports.push(fit_artifact(
+            &directory, input, original, cases, uncaptured,
+        )?);
     }
     std::fs::write(
         output.join("fit-report.private.json"),
@@ -235,3 +179,76 @@ fn fit_selected_context_generic_read_calibration() -> Result<()> {
     )?;
     Ok(())
 }
+
+fn fit_artifact(
+    directory: &Path,
+    input: ModelInput,
+    original: Profile,
+    cases: Vec<Case>,
+    uncaptured: Vec<Value>,
+) -> Result<Value> {
+    let model = original.model;
+    let policy = context_action::policy_digest()?;
+    let mut binding = original.clone();
+    binding.qualification = None;
+    binding.qualified_targets.clear();
+    binding.downloads.clear();
+    let template = calibration(&binding, policy, 0.0);
+    template.validate(&binding, policy)?;
+    std::fs::create_dir(directory)?;
+    let report = if let Some((margin, outcomes)) = fit(&template, &cases)? {
+        let mut value = template;
+        value.rules = vec![generic_rule(margin)];
+        let mut bytes = serde_json::to_vec_pretty(&value)?;
+        bytes.push(b'\n');
+        let asset_sha = sha(&bytes);
+        let name = "context-action-calibration.json";
+        binding
+            .assets
+            .retain(|asset| asset.role != AssetRole::Calibration);
+        binding.assets.push(Asset {
+            name: name.into(),
+            role: AssetRole::Calibration,
+            bytes: bytes.len() as u64,
+            sha256: asset_sha,
+        });
+        binding.calibration = asset_sha;
+        binding.profile_id = format!(
+            "private-selected-generic-read-{}",
+            serde_json::to_value(model)?.as_str().context("model")?
+        );
+        binding.manifest = Sha256Digest::from_bytes([0; 32]);
+        binding.manifest = framed_digest(
+            b"airk.private.context-action-evaluation-profile/1",
+            &[
+                input.profile_sha256.as_bytes(),
+                &serde_json::to_vec(&binding)?,
+            ],
+        );
+        binding.validate()?;
+        let decoded = JointCalibration::parse_and_validate(&bytes, &binding, policy)?;
+        let (positive, unknown, replayed) = replay(&decoded, &cases)?;
+        ensure!(
+            positive > 0 && unknown == 0 && replayed == outcomes,
+            "serialized same-owner safe replay changed"
+        );
+        std::fs::write(directory.join(name), &bytes)?;
+        std::fs::write(
+            directory.join("experimental-profile.json"),
+            serde_json::to_vec_pretty(&binding)?,
+        )?;
+        json!({"model":model,"status":"independent_reference_utility_rule_fitted","minimum_raw_margin":margin,
+            "certified_admitted_questions":positive,"uncertified_admitted_questions":unknown,"calibration_sha256":asset_sha,
+            "experimental_profile":binding,"asset_overlay":{"base":input.base_assets,"generated":directory},"outcomes":outcomes})
+    } else {
+        let (_, _, diagnostic) = replay(&template, &cases)?;
+        json!({"model":model,"status":"unsupported_no_positive_safe_margin","calibration":null,"experimental_profile":null,
+            "diagnostic_zero_margin_replay":diagnostic})
+    };
+    Ok(
+        json!({"result":report,"cal_population":100,"native_rosters":cases.len(),"uncaptured_outcomes":uncaptured,
+        "human_semantic_gold":false,"task_qualified":false,"release_qualified":false}),
+    )
+}
+
+mod compact;

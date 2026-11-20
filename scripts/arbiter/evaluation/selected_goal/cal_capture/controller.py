@@ -37,13 +37,16 @@ def owned_module():
     return module
 
 
-def summary(log, phase, expected_ids, instance, publication):
+def summary(log, phase, expected_ids, instance, publication, fingerprints):
     require(log.stat().st_size <= 64 << 20, "phase transcript exceeds owner limit")
     rows, closes, probes, pipeline_searches = [], [], 0, 0
+    question_events = []
     with log.open("rb") as stream:
         for line in stream:
             event = json.loads(line)
-            if event["kind"] == "cal_question":
+            if event["kind"] in ("window_grant","window_release"):
+                question_events.append((event["kind"],event["question_id"]))
+            elif event["kind"] == "cal_question":
                 evidence = event["evidence"]
                 rows.append(evidence["id"])
                 require(len(evidence["probes"]) <= 5, "more than five counterfactuals")
@@ -51,11 +54,18 @@ def summary(log, phase, expected_ids, instance, publication):
                 require(type(evidence["pipeline_searches"]) is int and evidence["pipeline_searches"] >= 0,
                         "invalid observed Search count")
                 pipeline_searches += evidence["pipeline_searches"]
+                fingerprint = evidence["scope"]["scope_observation"]["fingerprint"]
+                require(fingerprint not in fingerprints, "one window authority was reused across questions")
+                fingerprints.add(fingerprint)
+                question_events.append(("cal_question",evidence["id"]))
             elif event["kind"] == "phase_complete":
                 closes.append(event)
     require(rows == expected_ids and len(closes) == 1 and closes[0] == {
         "kind": "phase_complete", "phase": phase, "ids": expected_ids,
         "instance": instance, "publication": publication}, "incomplete original census")
+    require(question_events == [(kind, key) for key in expected_ids
+                                for kind in ("window_grant","cal_question","window_release")],
+            "missing or misordered question window closure")
     return probes, pipeline_searches
 
 
@@ -86,10 +96,11 @@ def capture(request_path, request_sha, output, node):
     instance, publication = bindings["instance"], bindings["bindings"][0]["publication"]
     pin(node, NODE_SHA)
     owner = owned_module()
-    source = [link(HERE / n) for n in ("worker.cjs", "phase.cjs", "controller.py", "prepare.py")]
+    source = [link(HERE / n) for n in ("worker.cjs", "phase.cjs", "window_scope.cjs", "controller.py", "prepare.py")]
     source.append(link(Path(owner.__file__)))
     closures = []
     total_probes = total_searches = 0
+    fingerprints = set()
     for phase in range(13):
         for ref in source:
             pin(Path(ref["path"]), ref["sha256"])
@@ -107,7 +118,7 @@ def capture(request_path, request_sha, output, node):
             json.dump(result, stream, sort_keys=True)
         require(owner.successful(result) and result["owned_job_final_active_processes"] == 0 and
                 result["owned_job_final_member_pids"] == [], "phase failed or did not settle; retained original result")
-        probes, searches = summary(log, phase, ids[8*phase:8*phase+8], instance, publication)
+        probes, searches = summary(log, phase, ids[8*phase:8*phase+8], instance, publication, fingerprints)
         total_probes += probes
         total_searches += searches
         closures.append(link(closure))

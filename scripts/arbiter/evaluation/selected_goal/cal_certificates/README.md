@@ -12,8 +12,17 @@ Run in the checked human Windows shell from the repository root.
 ```powershell
 python -I -B -S scripts/arbiter/evaluation/selected_goal/cal_certificates/test_certificates.py
 python -I -B -S scripts/arbiter/evaluation/selected_goal/cal_certificates/certify.py --preflight
-python -I -B -S scripts/arbiter/evaluation/selected_goal/cal_certificates/certify.py --capture <absolute-capture-directory> --outer-sha256 <outer-owned.json-sha256> --closure-sha256 <fixture-closure.json-sha256>
+python -I -B -S scripts/arbiter/evaluation/selected_goal/cal_certificates/certify.py --active-audit <absolute-1024-audit-path> --audit-sha256 <audit-sha256> --focus-manifest <active-focus-manifest> --capture <absolute-capture-directory> --outer-sha256 <outer-owned.json-sha256> --closure-sha256 <fixture-closure.json-sha256>
 ```
+
+Source-only preflight reports the retained 512-token epoch by default. Supply
+the three active-audit arguments to verify the new 1024-token Focus epoch.
+Live certificate generation requires the new launch audit and exact Focus
+manifest, original CAL census, corpus, rubric, manifest and scopes, plus the
+authenticated 1024-token compiler. Every delivered Search observed inside an
+Answer or a probe must identify the original ready MiniLM publication and a
+complete hybrid or vector result. Its observed count must match the per-question
+and total search counts retained by the closed fixture.
 
 The last command emits a private, single-line selected Context CAL reference
 preflight to stdout. Retain it at a fresh checked campaign path and verify its
@@ -29,6 +38,12 @@ actual record order, question, scope, assessment ordinal, roster basis and
 planned prompt digest. The capture identity in the native reference format
 is the fixture-closure digest. The output also retains the outer-owner and
 phase-census digests.
+
+For static Focus 1024, every question starts with a new native window grant.
+Its Status, Answer and probes must identify the same grant fingerprint, original
+publication, repository roots, revision and policy. The verifier checks the
+single project membership and the ready 753-file, 767-vector collection. It
+accepts a question only after its window release and rejects fingerprint reuse.
 
 Each counterfactual starts from the same source-authenticated baseline. The
 maintained goal_sources owner matches returned excerpts to the exact source

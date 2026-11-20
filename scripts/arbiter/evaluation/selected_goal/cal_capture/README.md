@@ -16,7 +16,7 @@ Run `python -B -S launch.py --output <fresh-empty-campaign-directory>
 --node <pinned-node.exe>` for CPU setup and shutdown. The checked Windows
 shell must own the output parent and audit the generated service control
 state, index, semantic drafts, command logs, image copies and receipts.
-The launcher requires 24,130,011,529 bytes of profile assets before index
+The launcher requires 24,133,544,673 bytes of profile assets before index
 and runtime overhead. It uses the service's 64 GiB/four-thread preset
 inside the retained 32 GiB process and aggregate Job limits.
 
@@ -26,14 +26,16 @@ Each phase uses the retained Windows suspended-launch Job owner to run the
 pinned SDK and CLI. The output gains private `phases/phase-NN.jsonl`
 transcripts, per-phase Job receipts, an aggregate, and the fixture's
 native shutdown and reacquired lease. Preserve failed attempts in place.
-The current worker accepts the explicit one-index agent selection.
+The worker verifies the original one-index selection, then requests a native
+window grant for each question. All calls for that question use the same
+grant. Successful release precedes the next grant.
 Terminal judgments, reference certificates, model scores and fitted
 policies each need their own measured steps.
 
 Run the focused controls with `node --test test_phase.cjs` and
 `python -B -S test_owner.py` and `python -B -S test_dispatch_proof.py`.
-The controls use synthetic records. A full run pins each question to the
-original native scope observation. The final fixture closure links the
+The controls use synthetic records. A full run binds the native per-question authorization to the original
+source roots, index revision, policy and publication. The final fixture closure links the
 ordered phase receipts and complete warm and dispatch journals. A missing
 or dropped record, a Context dispatch or a missing native charge release
 invalidates the capture.
@@ -50,3 +52,9 @@ inputs. Run `stage_focus1024.py --metadata <native-profile-directory>
 under checked Python to stage the authenticated Rust asset overlay. The
 current capture controllers pin the resulting native roster and audit.
 Earlier 512-token fixture receipts retain their original identities.
+
+The status-only `window_scope_dry.py --output <fresh-directory> --node <node>`
+checks two grants against the settled 1024 source using the native same-owner
+restart procedure. It retains both scope observations and compares source,
+publication, vector coverage and active-stage configuration. Dry checks issue
+zero scoring requests.

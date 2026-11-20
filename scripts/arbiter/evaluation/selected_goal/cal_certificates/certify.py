@@ -12,12 +12,11 @@ import sys
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from capture_closure import question_events, verify_fixture
-from reference_inputs import AUDIT, digest, load_inputs, require
+from reference_inputs import digest, load_inputs, reference, require
 
 
 def real_scope(result, binding):
-    require(result["read_scope"]["source"] == "named" and result["read_scope"]["index_ids"] == [binding.index_id]
-            and result["scope_observation"] == binding.row["status_result"]["structuredContent"]["scope_observation"],
+    require("read_scope" not in result and result["scope_observation"] == binding.observation,
             "canonical result or selected source revision differs")
 
 
@@ -124,21 +123,30 @@ def main():
     parser.add_argument("--capture", type=Path)
     parser.add_argument("--outer-sha256")
     parser.add_argument("--closure-sha256")
+    parser.add_argument("--active-audit", type=Path)
+    parser.add_argument("--audit-sha256")
+    parser.add_argument("--focus-manifest")
     args = parser.parse_args()
     require(sys.flags.isolated and sys.dont_write_bytecode and sys.flags.no_site, "use checked Python -I -B -S")
-    audit, ids, tasks, ledger, utility, policy, sources, index_root = load_inputs()
+    epoch = (args.active_audit, args.audit_sha256, args.focus_manifest)
+    require(all(epoch) or not any(epoch), "supply all active audit and Focus identity arguments")
+    active = reference(args.active_audit, args.audit_sha256) if all(epoch) else None
+    audit, ids, tasks, ledger, utility, policy, sources, index_root = load_inputs(active, args.focus_manifest)
     if args.preflight:
         require(not any((args.capture, args.outer_sha256, args.closure_sha256)), "preflight is source-only")
         print(json.dumps({"ordered_cal_questions": len(ids), "source_files": len(ledger().files),
                           "source_groups": len({t["source_component"] for t in tasks.values()}),
-                          "task_policy": policy, "reference_certificates_issued": 0}))
+                          "task_policy": policy, "focus_tokens": 1024 if active else 512,
+                          "focus_profile": audit["profiles"]["arbiter-focus-qwen3-reranker-06b"],
+                          "reference_certificates_issued": 0}))
         return
+    require(active is not None, "live certificates require the active static-1024 Focus launch audit")
     if not all((args.capture, args.outer_sha256, args.closure_sha256)):
         parser.error("supply a complete capture plus outer and fixture-closure SHA-256")
     closure, census, binding, answer = verify_fixture(args.capture, args.outer_sha256, args.closure_sha256,
-                                                      audit, sources, index_root)
-    events = question_events(args.capture, closure, census, ids, binding, answer, tasks)
-    rows = [certificate(e, tasks[e["id"]], audit, binding, policy, ledger, utility) for e in events]
+                                                      audit, sources, index_root, args.audit_sha256)
+    events = question_events(args.capture, closure, census, ids, binding, answer, tasks, audit["pipeline"])
+    rows = [certificate(e, tasks[e["id"]], audit, window, policy, ledger, utility) for e, window in events]
     require([r["id"] for r in rows] == ids, "incomplete CAL100")
     binding.verify()
     refs = audit["inputs"]
@@ -149,7 +157,7 @@ def main():
                       "capture_sha256": args.closure_sha256, "source_manifest_sha256": refs["manifest"]["sha256"],
                       "rubric_sha256": refs["rubric"]["sha256"], "task_policy": policy, "human_semantic_gold_count": 0,
                       "outer_owned_sha256": args.outer_sha256, "phase_census_sha256": closure["phase_census"]["sha256"],
-                      "launch_audit_sha256": AUDIT, "source_sha256": {p.name: digest(p.read_bytes()) for p in
+                      "launch_audit_sha256": args.audit_sha256, "focus_tokens": 1024, "source_sha256": {p.name: digest(p.read_bytes()) for p in
                           (HERE/"certify.py", HERE/"capture_closure.py", HERE/"reference_inputs.py")},
                       "native_capture_status_counts": Counter(r["native_capture_status"] for r in rows),
                       "scope": "Original human support gain from additional verified reads only. Terminal labels unavailable.",

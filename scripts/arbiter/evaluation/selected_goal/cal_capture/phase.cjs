@@ -2,6 +2,7 @@
 'use strict';
 
 const { isDeepStrictEqual: equal } = require('node:util');
+const {windowStatus} = require('./window_scope.cjs');
 
 function requireFact(condition, message) {
     if (!condition) throw new Error(message);
@@ -17,8 +18,8 @@ function phaseRows(questions, ids, phase) {
 
 function selected(body, binding) {
     const obs = body.scope_observation;
-    requireFact(body.read_scope?.source === 'named' && equal(body.read_scope.index_ids, [binding.index_id]) &&
-        obs?.selection?.owner === 'agent' && equal(obs, binding.scope_observation),
+    requireFact(!Object.hasOwn(body,'read_scope') && obs?.selection?.owner === 'window' &&
+        equal(obs, binding.scope_observation),
         'canonical result lost fixed U110 selection');
 }
 
@@ -52,17 +53,8 @@ function associate(record, answer, question, binding) {
     return probes;
 }
 
-function scopeBinding(status, binding) {
-    const observation = status.scope_observation;
-    requireFact(status.read_scope?.source === 'named' && equal(status.read_scope.index_ids, [binding.index_id]) &&
-        equal(observation, binding.scope_observation) && observation?.selection?.owner === 'agent' &&
-        observation.qualifier === 'selected_subset' &&
-        observation.members.length === 1 && observation.members[0].index_id === binding.index_id &&
-        equal(observation.members[0].source_root_ids, binding.source_root_ids) &&
-        typeof observation.fingerprint === 'string' && /^[a-f0-9]{64}$/.test(observation.fingerprint) &&
-        status.collection === binding.publication.collection && status.publication?.token === binding.publication.token,
-        'native status did not authorize original source revision');
-    return { ...binding, scope_observation: observation };
+function scopeBinding(status, binding, grant) {
+    return { ...binding, scope_observation: windowStatus(status,binding,grant) };
 }
 
 // The outer worker keeps its original absolute phase/fixture clocks and owns the
@@ -70,8 +62,7 @@ function scopeBinding(status, binding) {
 // Require the full 120 s call window plus the native 5 s delivery grace.
 async function invoke(owner, binding, tool, args) {
     owner.checkRemaining(125000);
-    const argv = ['tools', 'call', tool, '--index', binding.index_id,
-        '--args', JSON.stringify(args), '--output', 'json'];
+    const argv = ['tools', 'call', tool, '--args', JSON.stringify(args), '--output', 'json'];
     const result = await owner.session.invoke(argv, { deadlineMs: 125000 });
     await owner.retainExchange(argv, result); // retain even unparseable or refused calls
     owner.checkRemaining(0);
@@ -109,10 +100,14 @@ async function capturePhase(owner, binding, inputs, phase) {
     // The owner checks process identity, fresh observer mode and warmed stages
     // before any dispatch. It refuses retries of a started phase.
     await owner.beginPhase(phase, binding);
+    const fingerprints = new Set();
     for (const row of rows) {
+        const grant = await owner.beginQuestion(row.id);
         const status = await invoke(owner, binding, 'status', { response_mode: 'full', include_status: true });
         requireFact(!status.refused, 'scope status refused');
-        const pinned = scopeBinding(status.body, binding);
+        const pinned = scopeBinding(status.body, binding, grant);
+        requireFact(!fingerprints.has(pinned.scope_observation.fingerprint), 'previous native question grant was reused');
+        fingerprints.add(pinned.scope_observation.fingerprint);
         const before = await owner.observationCursor();
         const answer = await invoke(owner, binding, 'answer', { ...template, question: row.question });
         const captured = await owner.observationsAfter(before);
@@ -143,6 +138,7 @@ async function capturePhase(owner, binding, inputs, phase) {
             }
         }
         await owner.completeQuestion(evidence);
+        await owner.endQuestion(row.id);
     }
     await owner.closePhase(phase, rows.map(q => q.id));
 }

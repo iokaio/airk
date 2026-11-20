@@ -6,6 +6,7 @@ const crypto = require('node:crypto');
 const {spawn, execFile, execFileSync} = require('node:child_process');
 const {promisify, isDeepStrictEqual:equal} = require('node:util');
 const {capturePhase} = require('./phase.cjs');
+const {acquire,release} = require('./window_scope.cjs');
 const exec = promisify(execFile);
 const ROOT = path.resolve(__dirname,'../../../../..');
 const E = path.join(ROOT,'artifacts/v190/final-plan/exec-20261116T052942Z');
@@ -57,7 +58,8 @@ async function run(request, phase, ticket, originalSeconds) {
     need(fs.statSync(admitted).isDirectory() && fs.realpathSync.native(admitted).toLowerCase()===admitted.toLowerCase() &&
         !fs.existsSync(path.join(work,'closed.json')),'original observer fixture unavailable');
     const binding={index_id:row.index_id,instance:ready.health.instance,publication:row.publication,
-        scope_observation:row.status_result.structuredContent.scope_observation,
+        scope_observation:row.status_result.structuredContent.scope_observation,window_selection:row.window_scope_selection,
+        files:row.status_result.structuredContent.files,indexed_vectors:row.status_result.structuredContent.indexed_vectors,
         source_root_ids:row.source_roots.map(r=>r.id),pipeline:audit.pipeline,
         focus_manifest:audit.profiles['arbiter-focus-qwen3-reranker-06b'],
         context_manifest:audit.profiles['arbiter-context-qwen3-17b']};
@@ -112,6 +114,14 @@ async function run(request, phase, ticket, originalSeconds) {
     function names(){return fs.readdirSync(admitted).filter(n=>/^record-\d{4}\.json$/.test(n)).sort();}
     const owner={session,checkRemaining:check,
         async beginPhase(){originalState=await stages();},
+        async beginQuestion(id){
+            check(125000);
+            return acquire(session,row.window_scope_selection,binding.instance,event=>log({...event,question_id:id}));
+        },
+        async endQuestion(id){
+            check(0);
+            await release(session,event=>log({...event,question_id:id}));
+        },
         async observationCursor(){return names();},
         async observationsAfter(before){
             const after=names();need(before.every(n=>after.includes(n)),'native record disappeared');

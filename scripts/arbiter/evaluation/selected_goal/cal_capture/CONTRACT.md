@@ -20,5 +20,10 @@ each delivered Answer and every delivered Search probe. At least one verified
 Search must appear in the complete census. Check active stages and retained source hashes, preserve
 scope identities and errors, and retain every supplied counterfactual up to
 five per question and 500 total. Verification-budget refusals remain unknown.
+Each question owns a fresh native window grant for the fixture's registered
+index and project. Check the catalog revision, membership and exact source
+policy on its first Status. Compare the complete per-question scope on every
+delivered Answer and probe. Release the grant after the completed question
+and before the next grant. Retain each grant, observed fingerprint and release.
 An uncertain exchange ends the attempt. Require natural session, Job and
 fixture closures before claiming their respective evidence.

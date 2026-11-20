@@ -65,8 +65,19 @@ def scoring_owners():
     return runpy.run_path(str(source_path)), runpy.run_path(str(rubric_path))["next_read_utility"]
 
 
-def load_inputs():
-    audit = read(reference(CAMPAIGN / "cal100-launch-input-audit-r1.json", AUDIT))
+def load_inputs(active_audit=None, focus_manifest=None):
+    legacy = read(reference(CAMPAIGN / "cal100-launch-input-audit-r1.json", AUDIT))
+    audit = legacy
+    if active_audit is not None:
+        require(Path(active_audit["path"]) == CAMPAIGN / "cal100-focus1024-launch-r1/cal100-launch-audit.json" and
+                active_audit["sha256"] == "87731282ecd121eaf08d5074d1bc421c5753bc65f7126f9578b31c6f9303d661",
+                "fresh active launch audit required")
+        audit = read(active_audit)
+        require(audit["profiles"]["arbiter-focus-qwen3-reranker-06b"] == focus_manifest and
+                focus_manifest != legacy["profiles"]["arbiter-focus-qwen3-reranker-06b"] and
+                audit["census"] == legacy["census"] and all(audit["inputs"][role] == legacy["inputs"][role]
+                for role in ("corpus", "rubric", "manifest", "scopes")) and audit["pipeline"] == legacy["pipeline"],
+                "static-1024 epoch or original preregistered population differs")
     refs = audit["inputs"]
     corpus, rubric, manifest, scopes = (read(refs[n]) for n in ("corpus", "rubric", "manifest", "scopes"))
     ids = read(audit["census"])["question_ids"]
@@ -96,11 +107,20 @@ def load_inputs():
     def ledger():
         return sources["SourceLedger"](fixture, index_root, refs["manifest"]["sha256"], metadata_cache=metadata)
     policies = set()
+    focus_widths = []
     for descriptor in read(refs["inputs"]):
         path = Path(descriptor["profile"])
         profile = read(reference(path, descriptor["profile_sha256"]))
         require(profile["manifest"] == audit["profiles"][profile["model"]], "bootstrap profile differs")
+        if profile["model"] == "arbiter-focus-qwen3-reranker-06b":
+            compiler, = (asset for asset in profile["assets"] if asset["role"] == "compiler")
+            require(compiler["name"] == "compiler.json" and compiler["sha256"] == profile["compiler"],
+                    "Focus compiler asset differs")
+            desc = read({"path": str(Path(descriptor["assets"]) / compiler["name"]),
+                         "bytes": compiler["bytes"], "sha256": compiler["sha256"]})
+            focus_widths.append(desc["max_tokens"])
         if "airk.context_action.v1" in profile["task_policies"]:
             policies.add(profile["task_policies"]["airk.context_action.v1"])
+    require(focus_widths == ([1024] if active_audit is not None else [512]), "wrong Focus token width")
     require(len(policies) == 1, "one exact native Context task policy required")
     return audit, ids, tasks, ledger, utility, policies.pop(), sources, index_root

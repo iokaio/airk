@@ -7,11 +7,15 @@ const { phaseRows, selected, associate, scopeBinding, invoke, verifySearch, capt
 const ids = Array.from({length: 100}, (_, i) => 'q' + i);
 const questions = ids.map(id => ({id, split: 'calibration', question: 'question ' + id}));
 const publication = {collection:'a', token:'p'};
-const obs = {selection:{owner:'agent'}, qualifier:'selected_subset', fingerprint:'1'.repeat(64),
-    members:[{index_id:'i',source_root_ids:['r']}]};
+const grant = {scope_identity:'a'.repeat(64),catalog_revision:1};
+const member = {index_id:'i',source_root_ids:['r'],source_revision:2,policy_epoch:0,policy_digest:null,memberships:[]};
+const obs = {schema:1,selection:{owner:'agent',catalog_revision:1}, qualifier:'selected_subset', fingerprint:'1'.repeat(64),
+    members:[member]};
+const windowObs = {...obs,selection:{...grant,owner:'window'},members:[{...member,
+    memberships:[{project_id:'p',membership_revision:1}]}]};
 const binding = {instance:'s', index_id:'i', source_root_ids:['r'], publication, scope_observation:obs,
-    focus_manifest:'f', context_manifest:'c', pipeline:'sem'};
-const status = {read_scope:{source:'named',index_ids:['i']}, scope_observation:obs,
+    focus_manifest:'f', context_manifest:'c', pipeline:'sem',window_selection:{project_ids:['p']},files:753,indexed_vectors:767};
+const status = {scope_observation:windowObs,files:753,indexed_vectors:767,semantic_readiness:{state:'ready'},
     collection:'a', publication:{token:'p'}};
 const template = {question:'orig', budget:{input_tokens:8192,deadline_ms:120000},include_status:true,response_mode:'full'};
 
@@ -20,11 +24,12 @@ test('matches all thirteen frozen phase ranges and refuses membership drift', ()
     assert.throws(()=>phaseRows(questions,ids.toReversed(),0),/CAL order/);
     assert.throws(()=>phaseRows(questions,ids,13),/phase ordinal/);
 });
-test('checks token-only status with its collection, member and bound U110 fingerprint', () => {
-    const bound = scopeBinding(status,binding);
+test('checks native window status against the original publication, member and source policy', () => {
+    const bound = scopeBinding(status,binding,grant);
     selected(status,bound);
-    assert.throws(()=>scopeBinding({...status,scope_observation:{...obs,fingerprint:'2'.repeat(64)}},binding),/authorize/);
-    assert.throws(()=>scopeBinding({...status,collection:'b'},binding),/authorize/);
+    assert.throws(()=>scopeBinding({...status,scope_observation:obs},binding,grant),/window/);
+    assert.throws(()=>scopeBinding({...status,files:9},binding,grant),/coverage/);
+    assert.throws(()=>scopeBinding({...status,collection:'b'},binding,grant),/publication/);
     assert.throws(()=>selected({...status,scope_observation:{...obs,fingerprint:'wrong'}},bound),/selection/);
 });
 test('requires the full served MiniLM publication on every delivered Search', () => {
@@ -60,12 +65,13 @@ test('retains all four refused questions and orphans on the final phase; no prob
     const events=[], persisted=[];
     const owner = {
         session:{ hello:{serviceInstance:'s'},async invoke(argv,opts){
-            assert.equal(opts.deadlineMs,125000); assert.equal(argv[4],'i');
-            if(argv[2]==='status') return reply(status);
+            assert.equal(opts.deadlineMs,125000); assert.equal(argv[3],'--args');
+            if(argv[2]==='status') return reply({...status,scope_observation:{...windowObs,
+                fingerprint:(events.length+1).toString(16).padStart(64,'0')}});
             assert.equal(argv[2],'answer');
             return reply({error:{code:'verification_reply_budget',retryable:false,verification_performed:false}},true);
         }},
-        checkRemaining(){},async retainExchange(argv){events.push(argv[2])},async beginPhase(){},
+        checkRemaining(){},async beginQuestion(){return grant},async endQuestion(){},async retainExchange(argv){events.push(argv[2])},async beginPhase(){},
         async observationCursor(){return 0},async observationsAfter(){return [{orphan:true}]},
         async completeQuestion(row){persisted.push(row)},async closePhase(phase,ids){assert.deepEqual(ids,['q96','q97','q98','q99'])}
     };

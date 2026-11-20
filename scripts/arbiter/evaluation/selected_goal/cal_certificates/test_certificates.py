@@ -8,9 +8,9 @@ import unittest
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from capture_closure import exchange, question_events, settled
+from capture_closure import exchange, observed_searches, question_events, settled, window_binding
 from certify import certificate, original_gains
-from reference_inputs import HERE, scoring_owners
+from reference_inputs import AUDIT, CAMPAIGN, HERE, load_inputs, reference, scoring_owners
 
 
 class MemoryLedger:
@@ -33,10 +33,10 @@ class CertificateTests(unittest.TestCase):
     def setUp(self):
         self.pub = {"token": "published", "collection": "cal"}
         self.obs = {"fingerprint": "scope"}
-        self.binding = Mock(index_id="idx", publication=self.pub,
+        self.binding = Mock(index_id="idx", publication=self.pub, observation=self.obs, namespace="catalog",
                             row={"status_result": {"structuredContent": {"scope_observation": self.obs}}})
         self.scope = {"index_id": "idx", "publication": self.pub}
-        self.basis = {"read_scope": {"source": "named", "index_ids": ["idx"]}, "scope_observation": self.obs,
+        self.basis = {"scope_observation": self.obs,
                       "collection": "cal", "publication": self.pub}
         self.task = {"id": "q", "source_component": "group", "question": "Q", "alternatives": [
             {"human_annotation_id": "human-1", "facts": [{"locations": [self.span(0, 10)]}]},
@@ -131,10 +131,28 @@ class CertificateTests(unittest.TestCase):
         ids = [str(i) for i in range(100)]
         root = Path("/nonexistent-unused-fixture")
         closure = {"instance": "service", "live_request": {"sha256": "request"}}
-        census = {"phase_closures": list(range(13)), "probes": 0, "request_sha256": "request"}
+        census = {"phase_closures": list(range(13)), "probes": 0, "pipeline_searches": 100, "request_sha256": "request"}
         template = {"budget": "pinned"}
         tasks = {i: {"question": i} for i in ids}
-        sources = [HERE.parent / "cal_capture" / n for n in ("worker.cjs","phase.cjs","controller.py","prepare.py")]
+        selection={"expected_catalog_revision":4,"index_ids":["idx"],"namespace":"catalog","project_ids":["project"]}
+        self.binding.row["window_scope_selection"]=selection
+        member={"index_id":"idx","source_root_ids":["root"],"source_revision":2,
+                "policy_epoch":0,"policy_digest":None,"memberships":[]}
+        original={"selection":{"owner":"agent","catalog_revision":4,"scope_identity":"a"*64},
+                  "qualifier":"selected_subset","schema":1,"members":[member],"fingerprint":"f"*64}
+        self.binding.row["status_result"]["structuredContent"]["scope_observation"]=original
+        def status(i):
+            obs=dict(original,fingerprint=f"{int(i)+1:064x}",selection={"owner":"window","catalog_revision":4,
+                "scope_identity":"a"*64},members=[dict(member,memberships=[{"project_id":"project","membership_revision":1}])])
+            return dict(self.basis, scope_observation=obs,files=753,indexed_vectors=767,semantic_readiness={"state":"ready"})
+        def grant(i):
+            return {"kind":"window_grant","question_id":i,"selection":selection,"result":{"status":"scope",
+                    "scope_identity":"a"*64,"catalog_revision":4,"expires_at_ms":987654321}}
+        fingerprints=set()
+        window_binding(self.binding,grant("0"),status("0"),fingerprints)
+        with self.assertRaisesRegex(ValueError,"reused"):
+            window_binding(self.binding,grant("1"),status("0"),fingerprints)
+        sources = [HERE.parent / "cal_capture" / n for n in ("worker.cjs","phase.cjs","window_scope.cjs","controller.py","prepare.py")]
         sources.append(HERE.parents[3] / "provision-static-onnx-runtime.py")
         def owner(phase, path):
             return {"exit_code": 0, "timed_out": False, "log_oversized": False, "child_assigned_before_resume": True,
@@ -143,10 +161,10 @@ class CertificateTests(unittest.TestCase):
                     "phase": phase, "request_sha256": "request", "sources": [{"path": str(p)} for p in sources],
                     "transcript": {"path": str(root / "phases" / f"phase-{phase:02}.jsonl")}}
         def call(tool, args, body):
-            return {"kind": "native_exchange", "argv": ["tools","call",tool,"--index","idx","--args",
+            return {"kind": "native_exchange", "argv": ["tools","call",tool,"--args",
                     json.dumps(args),"--output","json"], "result": {"exitCode": 0, "class": "success",
                     "stdout": json.dumps({"structuredContent": body})}}
-        reject = False
+        reject = missing_release = False
         def transcript(ref):
             path = Path(ref["path"])
             if path.suffix != ".jsonl":
@@ -155,31 +173,62 @@ class CertificateTests(unittest.TestCase):
             chunk = ids[8*phase:8*(phase+1)]
             rows = []
             for key in chunk:
-                response = {"question": key}
-                rows.extend([call("status", {"response_mode":"full", "include_status":True}, self.basis),
+                response = {"question": key, "records": [{"operation": "search", "canonical_result": {
+                    "publication": self.pub, "semantic_readiness": {"state": "ready", "pipeline_digest": "pipeline"},
+                    "execution": {"served_mode": "hybrid", "incomplete": False}}}]}
+                rows.extend([grant(key),call("status", {"response_mode":"full", "include_status":True}, status(key)),
                              call("answer", dict(template, question=key), response),
-                             {"kind":"cal_question", "evidence":{"id":key,"scope":self.basis,"probes":[],
-                               "captured":[],"answer":{"refused":False,"body":response}}}])
+                             {"kind":"cal_question", "evidence":{"id":key,"scope":status(key),"probes":[],
+                               "captured":[],"pipeline_searches":1,"answer":{"refused":False,"body":response}}},
+                             {"kind":"window_release","question_id":key,"result":{"status":"scope_released"}}])
+            if missing_release and phase == 12:
+                rows.pop()
             if not (reject and phase == 12):
                 rows.append({"kind":"phase_complete","phase":phase,"ids":chunk,"instance":"service","publication":self.pub})
             return b"\n".join(json.dumps(r).encode() for r in rows)
         with patch("capture_closure.read", side_effect=owner), patch("capture_closure.checked", side_effect=transcript):
-            args = root, closure, census, ids, self.binding, template, tasks
-            self.assertEqual([r["id"] for r in question_events(*args)], ids)
+            args = root, closure, census, ids, self.binding, template, tasks, "pipeline"
+            self.assertEqual([r["id"] for r, _ in question_events(*args)], ids)
+            missing_release = True
+            with self.assertRaisesRegex(ValueError, "phase close"):
+                list(question_events(*args))
+            missing_release = False
             reject = True
             with self.assertRaisesRegex(ValueError, "missing close"):
                 list(question_events(*args))
 
+    def test_original_512_audit_cannot_issue_active_certificates(self):
+        legacy = reference(CAMPAIGN / "cal100-launch-input-audit-r1.json", AUDIT)
+        with self.assertRaisesRegex(ValueError, "fresh active"):
+            load_inputs(legacy, "unrelated")
+
+    def test_native_window_exchange_refuses_a_named_index_selector(self):
+        event = {"argv":["tools","call","status","--index","idx","--args","{}","--output","json"]}
+        with self.assertRaisesRegex(ValueError,"canonical call arguments"):
+            exchange(event,"status",{})
+
+    def test_delivered_probe_requires_original_semantic_pipeline(self):
+        result = {"publication": self.pub, "semantic_readiness": {"state": "ready", "pipeline_digest": "original"},
+                  "execution": {"served_mode": "vector", "incomplete": False}}
+        event = {"answer": {"refused": False, "body": {"records": []}}, "pipeline_searches": 1,
+                 "probes": [{"probe": {"tool": "search"}, "result": {"refused": False, "body": result}}]}
+        self.assertEqual(observed_searches(event, self.pub, "original"), 1)
+        with self.assertRaisesRegex(ValueError, "pipeline"):
+            observed_searches(event, self.pub, "different")
+        result["execution"]["incomplete"] = True
+        with self.assertRaisesRegex(ValueError, "pipeline"):
+            observed_searches(event, self.pub, "original")
+
     def test_unavailable_answer_or_failed_job_cannot_complete_a_capture(self):
         args = {"foo": "bar"}
-        frame = {"argv": ["tools", "call", "context", "--index", "idx", "--args", json.dumps(args), "--output","json"],
+        frame = {"argv": ["tools", "call", "context", "--args", json.dumps(args), "--output","json"],
                  "result": {"class": "refused", "exitCode": 1, "stdout": json.dumps({"isError": True,
                  "structuredContent": {"error": {"code": "verification_reply_budget", "retryable": False,
                                                  "verification_performed": False}}})}}
-        self.assertTrue(exchange(frame, "context", args, "idx")["refused"])
+        self.assertTrue(exchange(frame, "context", args)["refused"])
         frame["result"]["class"] = "busy"
         with self.assertRaisesRegex(ValueError, "missing or failed"):
-            exchange(frame, "context", args, "idx")
+            exchange(frame, "context", args)
         self.assertFalse(settled({"exit_code": 1}))
         self.assertFalse(settled({"exit_code": 0, "timed_out": False, "log_oversized": False,
                                  "child_assigned_before_resume": True, "owned_descendants_settled": True,

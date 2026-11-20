@@ -18,19 +18,24 @@ class OwnerTests(unittest.TestCase):
 
     def test_summary_keeps_refusals_in_denominator(self):
         ids = [f"q{i}" for i in range(4)]
-        rows = [{"kind": "cal_question", "evidence": {"id": i, "probes": [], "pipeline_searches": 0}} for i in ids]
+        rows = []
+        for key in ids:
+            rows += [{"kind":"window_grant","question_id":key},
+                     {"kind":"cal_question","evidence":{"id":key,"probes":[],"pipeline_searches":0,
+                       "scope":{"scope_observation":{"fingerprint":key}}}},
+                     {"kind":"window_release","question_id":key}]
         rows.append({"kind": "phase_complete", "phase": 12, "ids": ids,
                      "instance": "original", "publication": {"token":"p"}})
-        self.assertEqual(summary(self.make_log(rows), 12, ids, "original", {"token":"p"}), (0, 0))
+        self.assertEqual(summary(self.make_log(rows), 12, ids, "original", {"token":"p"}, set()), (0, 0))
         with self.assertRaisesRegex(ValueError, "incomplete"):
-            summary(self.make_log(rows[:-1]), 12, ids, "original", {"token":"p"})
+            summary(self.make_log(rows[:-1]), 12, ids, "original", {"token":"p"}, set())
         with self.assertRaisesRegex(ValueError, "incomplete"):
-            summary(self.make_log(rows), 12, ids, "changed", {"token":"p"})
+            summary(self.make_log(rows), 12, ids, "changed", {"token":"p"}, set())
 
     def test_counterfactual_limit_preserves_all_five_not_six(self):
         item = {"kind":"cal_question", "evidence":{"id":"q","probes":[{}]*6}}
         with self.assertRaisesRegex(ValueError, "five"):
-            summary(self.make_log([item]),0,["q"],"s",{})
+            summary(self.make_log([item]),0,["q"],"s",{},set())
 
     def test_wait_stage_uses_matching_observer_and_original_revision(self):
         from unittest.mock import patch
