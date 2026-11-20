@@ -152,6 +152,26 @@ class Receipts(unittest.TestCase):
             with self.subTest(error=error), patch.object(Path, 'stat', side_effect=error):
                 self.assertEqual(RUNNER.command_input_files(['nonpath-argument']), {})
 
+    @unittest.skipUnless(sys.platform == "win32", "Windows Cargo proxy precedence")
+    def test_explicit_native_cargo_and_rustc_precede_proxy(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            toolchain = root / "toolchain"
+            toolchain.mkdir()
+            cargo, rustc = toolchain / "cargo.exe", toolchain / "rustc.exe"
+            cargo.touch()
+            rustc.touch()
+            args = RUNNER.parse(["--groups", "", "native-tools", sys.executable, "-c", "pass"])
+            with patch.dict(RUNNER.os.environ, {"CARGO": str(cargo), "RUSTC": str(rustc)}):
+                selected = RUNNER.environment(args, root)
+            self.assertTrue(cargo.samefile(RUNNER.shutil.which("cargo.exe", path=selected["PATH"])))
+            self.assertTrue(rustc.samefile(RUNNER.shutil.which("rustc.exe", path=selected["PATH"])))
+            other = root / "rustc.exe"
+            other.touch()
+            with patch.dict(RUNNER.os.environ, {"CARGO": str(cargo), "RUSTC": str(other)}):
+                ordinary = RUNNER.environment(args, root)
+            self.assertEqual(Path(ordinary["PATH"].split(RUNNER.os.pathsep)[0]), Path.home() / ".cargo" / "bin")
+
     def test_child_tempfile_uses_owned_base_instead_of_inherited_tmpdir(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary).resolve()

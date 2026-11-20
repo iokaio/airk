@@ -347,6 +347,13 @@ def parse(argv):
 def environment(args, out):
     env = os.environ.copy()
     paths = [str(Path.home() / ".cargo" / "bin")]
+    if os.name == "nt" and env.get("CARGO") and env.get("RUSTC"):
+        cargo, rustc = Path(env["CARGO"]), Path(env["RUSTC"])
+        if (cargo.is_absolute() and rustc.is_absolute() and cargo.name.lower() == "cargo.exe"
+                and rustc.name.lower() == "rustc.exe" and cargo.is_file() and rustc.is_file()
+                and cargo.resolve().name.lower() == "cargo.exe" and rustc.resolve().name.lower() == "rustc.exe"
+                and cargo.resolve().parent == rustc.resolve().parent):
+            paths.insert(0, str(cargo.resolve().parent))
     if args.node:
         paths.insert(0, str(args.node.resolve(strict=True).parent))
     env["PATH"] = os.pathsep.join(paths + [env.get("PATH", "")])
