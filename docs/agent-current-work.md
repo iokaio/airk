@@ -424,3 +424,12 @@ full-capture launcher and volume monitoring for the complete original
 work. Review completion after all four final questions and fixture shutdown.
 R7 remains at 96 closed rows. The timing run has settled and no full
 successor is running.
+
+### Full Windows R8 capture completed, 20 November 2026 at 23:08 UTC
+
+The full isolated capture closed all 100 original questions across the 56/44
+native lifetimes. Both leases returned and the outer Job settled naturally.
+The disk observer remained healthy. Use the [terminal receipt checkpoint](simplify/one-process-ledger.md#20-november-2026-at-2308-utc--full-windows-r8-calibration-capture-closed)
+for the exact 100-row input identities. Continue with the independent R8
+certificate and projection, then fitting and the remaining Windows FP16
+qualification gates.
