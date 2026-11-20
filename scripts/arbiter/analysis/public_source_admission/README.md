@@ -211,3 +211,8 @@ request and 50 sources. Run
 to verify the sealed inputs. Under the campaign's checked Windows owner,
 supply `--output <absolute-fresh-campaign-pilot-directory>` to run the native
 observer and retain its offered actions, prompt census and dispatch journal.
+
+The first DEV_Q002 Answer produced zero native assessment observations.
+`reconcile_techqa_predispatch_pilot.py` verifies the original r2 files and
+writes the observed zero census to a fresh checked private destination.
+The run ended after its eight-call budget. No compiled prompt was available.

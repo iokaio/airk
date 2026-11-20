@@ -12761,3 +12761,15 @@ gaps exceed 0.14. These cases supply no near-tie or paired evidence.
 The focused wrapper suite passed 87 tests. The final Rust batch ran after
 the native source inventory settled. Input sealing in a previous batch
 detected concurrently added Linux source.
+
+DEV_Q002's separate native fixture settled after 142.573 seconds, with
+zero admissions. The retained Answer recorded a failed optional Focus
+task and exhausted its eight-call budget. The 15 development TRAIN menus
+are frozen separately. Their ordered source census
+`eef3f7c896e5d147236402941ed56d7e4c118c1f4ea8f9477b8b585bf6d9c56c`
+precedes any model outcomes. Canonical per-case roots cover all 750 menu
+slots and 698 distinct documents, digest
+`39fe28355b0ea98e970794607db0f7d8052f0e484eae781006744fbfcc31cdf9`.
+The sealed native request roster is
+`586f4d2d22c2cc4daef0c6b71bef5035f8165f9f8bde546a093d08d474049d67`.
+[Observed native outcome](../arbiter/software-v2-data-audit.md#first-techqa-offered-action-pilot)

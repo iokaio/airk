@@ -647,3 +647,16 @@ separate measurements.
 | 93cdb262 | 046c3272278d00c815db741ce80d7c1ee6228f4700046a6580b894fd73025ccc | 54.733 |
 | daea6623 | fcf18d49bd64cf553cd300e9ecfb6c02e6b2284b97ebe64874fcc605478cd340 | 50.833 |
 | f7997256 | d9997ae2dbc03e4feea3d423f9cb38395c42afc1bd795ae90a61fd30829e10ce | 62.236 |
+
+### First TechQA offered-action pilot
+
+DEV_Q002 returned its native Answer in 14.802 seconds with six records, eight
+candidates, eight operations and no assessment. The first optional Focus
+task failed with unknown observed work after reserving 2,048 tokens. Four
+subsequent searches declined Focus while the request still counted that
+work as unsettled. The native admission directory and dispatch journal both
+had zero records. Both compiler prompt lengths and paired precision
+outcomes remain unobserved. The positive-capture wrapper reported failure
+after the native service and its Job settled. Reconciliation of the original
+bytes preserved this zero-admission case. The private census SHA-256 is
+`196c0f35e6eb5444b4e18837197f2156583a05fcd42c20865260c365ae28d8b8`.

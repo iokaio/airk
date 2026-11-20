@@ -177,16 +177,37 @@ def execute(native, owner, output):
                 native["wait_job"](cli, job["id"], "configure")
                 job = cli("index", "--service-project", project, "index")["job"]
                 native["wait_job"](cli, job["id"], "index")
-                status = native["wait_semantic"](cli, index_id)
+                retry_helper = HERE / "native_cohort_source_reads.py"
+                pin(retry_helper, "3201675f6dde0f1f81436f71faa17410828802898791985ffc87eb24554bc847")
+                repeat = runpy.run_path(str(retry_helper))["publication_read"]
+                observation_deadline = min(deadline, time.monotonic() + BUDGET)
+                status_calls = 0
+
+                def status_call(label, *args):
+                    nonlocal status_calls
+                    require(status_calls < 240, "native status observation count exceeded")
+                    status_calls += 1
+                    result = native["run_logged"](
+                        [cli_image, "--output", "json", "--service-runtime-dir", work / "control", *args],
+                        logs, label, env, observation_deadline,
+                    )[0]
+                    return read(result)
+
+                def status_cli(label, *args):
+                    return repeat(status_call, read, logs, label, args, observation_deadline)
+
+                status = native["wait_semantic"](status_cli, index_id)
                 require(status["files"] == 50 and status["read_scope"] == {"source": "named", "index_ids": [index_id]}
                         and status["scope_observation"]["selection"]["owner"] == "agent", "pilot native source count/scope differs")
-                publication = status["publication"]
+                publication_token = status["publication"]["token"]
                 search = native["tool_body"](cli("pipeline", "tools", "call", "airk_search", "--index", index_id,
                                                "--args", json.dumps({"query": "source", "limit": 1, "max_bytes": 4096,
                                                                     "full_chunks": True, "response_mode": "full", "include_status": True})))
                 require(search["semantic_readiness"]["pipeline_digest"] == pilot["required_minilm_pipeline"]
-                        and search["publication"] == publication and search["execution"]["incomplete"] is False
+                        and search["publication"]["token"] == publication_token and search["scope_observation"] == status["scope_observation"]
+                        and search["semantic_readiness"]["state"] == "ready" and search["execution"]["incomplete"] is False
                         and search["execution"]["served_mode"] in ("hybrid", "vector"), "pilot MiniLM publication differs")
+                publication = search["publication"]
                 selected = {"focus": pilot["cpu_focus_manifest"], "context": pilot["cpu_context_bootstrap_manifest"]}
                 for stage, manifest in selected.items():
                     prefix = "enable-" + stage
@@ -208,7 +229,8 @@ def execute(native, owner, output):
                 require(not any(admissions.iterdir()), "unexpected admission before original request")
                 current = native["tool_body"](cli("request-scope", "tools", "call", "airk_status", "--index", index_id,
                                                   "--args", '{"response_mode":"full","include_status":true}'))
-                require(current["publication"] == publication and current["scope_observation"] == status["scope_observation"],
+                require(current["publication"]["token"] == publication_token and current["collection"] == publication["collection"]
+                        and current["scope_observation"] == status["scope_observation"],
                         "held-out source scope or publication changed")
                 answer = native["tool_body"](cli("answer", "tools", "call", "airk_answer", "--index", index_id,
                                                  "--args-file", INPUT / "request.private.json"))
