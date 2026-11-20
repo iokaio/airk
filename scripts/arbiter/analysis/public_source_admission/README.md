@@ -348,3 +348,5 @@ The job uses at most 2 GiB and four below-normal logical CPUs. Each index
 boundary measures cluster-rounded case and control storage against the
 2 GiB reservation. A failed or partial run retains its per-case evidence.
 Verify the final owned Job receipt before counting the full population.
+
+Run prepare_techqa_publisher_judgments.py with isolated Python and bytecode disabled after the 75-menu normal-source census closes. It joins each original human extractive answer range to the independent native line-range read and the identical full-menu source bytes without reopening question/answer text. The private roster retains the original ordered menu, published scalar and byte coordinates, native publication/scope, matched span digests, license notice, singleton exclusion, shared-document components and literal product overlap. Positive coverage of this one documented set can be measured prospectively. Other answers are unannotated. Cross-role family reservation, measured token widths, locked paired inputs and paired outcome measurement remain separate. No additional blind reviewer packet is generated for these documented positive sets.

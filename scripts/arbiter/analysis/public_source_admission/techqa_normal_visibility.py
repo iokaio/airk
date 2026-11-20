@@ -14,7 +14,9 @@ import time
 HERE = Path(__file__).resolve().parent
 AWS = HERE / "aws_normal_service.py"
 AWS_SHA = "bf2850980a395de97a9cae888f910fe7e95f1f9f679a72641c32940a8ac497f1"
+AFFINITY = "../development_margins/observe_cal_thread_affinity.py"
 DEPENDENCIES = {
+    AFFINITY: "7f37dcc3f9be734a964f561d9afc68b54ede19d036094b7fb7dab697f7d3f57f",
     "aws_normal_service.py": AWS_SHA,
     "verify_aws_natural_menu.py": "0d779cb66f28416c6e1b3d23f88b8026b3b3f07bff0be89aaa325160981f6618",
     "aws_publication_setup.py": "7b87f3d242ff50d183603ef90dd4d80e195e37bef35aee01e723f2310a42bb2d",
@@ -228,6 +230,7 @@ if __name__ == "__main__":
     parser.add_argument("--check-only", action="store_true")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--worker", action="store_true")
+    parser.add_argument("--cal-pid", type=int)
     args = parser.parse_args()
     check_dependencies()
     normal = runpy.run_path(str(AWS))
@@ -247,8 +250,16 @@ if __name__ == "__main__":
                 "fresh D campaign target required")
         if args.worker:
             require(os.environ["AIRK_TECHQA_SOURCE_OWNER"] == str(output), "owned worker required")
+            placement = None
+            if args.cal_pid is not None:
+                placement = runpy.run_path(str(HERE / AFFINITY))["place_optional_worker"](args.cal_pid, 4)
+                w["write_json"](output / "placement.private.json", placement)
             with normal["capped"](w, output, HOST) as (member, _sample):
                 execute(normal, w, owner, output, args.mode, float(os.environ["AIRK_TECHQA_SOURCE_DEADLINE"]), member)
+            if placement is not None:
+                limits = json.loads((output / "limits.json").read_bytes())
+                require(limits["below_normal"] and limits["cpu_mask"] == int(placement["worker_mask"], 16),
+                        "native Job CPU placement differs from selected physical cores")
         else:
             require(not output.exists(), "fresh output required")
             output.mkdir()
