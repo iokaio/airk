@@ -41,8 +41,9 @@ FP32 input identities. The 128-token digest differs from Compact. The weight
 and attention-tile byte counts describe allocations in the recipe. Measure
 process and Job peaks during an admitted run.
 
-After Compact passes and Large has a reviewed, completed baseline FP16
-conversion, invoke the T32 reference under the checked human shell.
+After the Compact development attention checks pass and Large has its own
+reviewed, completed baseline FP16 conversion, invoke the T32 reference under
+the checked human shell. Keep the final task-quality decision separate.
 
 ```powershell
 python -I -B -S scripts/arbiter-fp16-reference/run_large_t32.py `
@@ -54,12 +55,16 @@ python -I -B -S scripts/arbiter-fp16-reference/run_large_t32.py `
 Supply canonical absolute paths for the private conversion plan, the actual
 conversion execution receipt and a fresh direct child of the campaign root.
 Review the SHA-256 digests before invocation. The launcher authenticates the
-current G5 prerequisites, the source and conversion receipts, process
+conversion-time G5 source group and JUnit, the source and conversion receipts, process
 settlement, graph, sidecar and original FP32 input. The Windows owner starts
 the pinned interpreter suspended under the original 32 GiB process and Job
 limits and 600-second clock. The helper allows two process slots for the
 interpreter shim and requires one observed process for this base-Python
-launch. The worker disables CUDA, observes the actual Job limits, checks
+launch. The worker authenticates all three original BF16 shards, then reads
+one indexed parameter at a time as logical FP32 to derive the independent
+weights and digests. The Large profile has 398 parameters and shares the
+embedding with the readout. The worker records each shard boundary, whole-graph
+verification and forward completion. It disables CUDA, observes the actual Job limits, checks
 the Large graph and learned bytes independently and returns one eight-score
 T32 vector. Runtime, ownership, refusal and settlement evidence stay private.
 The development graph with promoted projections has a separate arithmetic
@@ -68,4 +73,6 @@ recipe. Wider forwards require their own owned execution and review.
 Run `python -I -B -S scripts/arbiter-fp16-reference/test_prepare_large.py`
 for metadata controls and `python -I -B -S scripts/arbiter-fp16-reference/test_large_launch.py`
 for the CPU launcher controls. The Windows suspension test uses a tensor-free
-child to check the actual caps and natural settlement.
+child to check the actual caps and natural settlement. Use the provisioned
+Torch environment to run `test_large_publisher.py` for the dense-versus-streamed
+source census and complete literal forward comparison.

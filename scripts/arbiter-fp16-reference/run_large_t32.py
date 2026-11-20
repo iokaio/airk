@@ -20,6 +20,8 @@ PREP_SHA = "cab3b893416bfe13467864de81836c8692c996178345a6361a4adeec2352144c"
 RECEIPT_SHA = "c01cd56af84f90a6b842c5318f0c3e8eb757f14a9ce3387752c928c2f835c8c7"
 CONVERSION = ROOT / "scripts/arbiter-fp16-execution.py"
 CONVERSION_SHA = "025b36292593f6fc944c1774d3faf2e720e3dbd2adbf1c902163b77f84ea3f8f"
+STREAM = HERE.with_name("large_publisher.py")
+STREAM_SHA = "75df989310931603b3a1fd55cc70dca2e34543638c94ce9520284c1b4eec1c75"
 SUPPORT = ROOT / "scripts/arbiter-fp16-execution/verify_compact.py"
 SUPPORT_SHA = "50d5c7237cd057a1d08ea79794bbdda0f1e141438a2d22580a760e418f9e3d75"
 HOST = 32 << 30
@@ -61,6 +63,29 @@ def own_job():
     return {"process_bytes": limits.process, "job_bytes": limits.job, "active_limit": limits.basic.active_limit}
 
 
+def retained_prerequisites(c, plan, check):
+    """Bind this CPU comparison to the source epoch that produced the retained conversion."""
+    evidence = c["read"](c["pinned"](plan["prerequisites_manifest"], check))
+    require(evidence["schema"] == "airk.private.fp16-prerequisites/2" and evidence["model"] == "large"
+            and evidence["first_fp32"]["sha256"] == c["FP32"]["large"]["scoring"]
+            and evidence["resource_fp32"]["sha256"] == c["FP32"]["large"]["resource"],
+            "Large conversion-time FP32 prerequisites differ")
+    groups = []
+    for key, kind in (("native_g5", "tests"), ("native_g5_clippy", "clippy")):
+        proof = c["read"](c["pinned"](evidence[key], check))
+        c["successful_readiness"](proof, kind)
+        groups.append(proof["groups"]["native"])
+        if kind == "tests":
+            junit = proof["junit"]
+            require(Path(junit["path"]).name == junit["path"], "retained G5 JUnit must be a sibling leaf")
+            path = Path(evidence[key]["path"]).parent / junit["path"]
+            require(c["pin"](path, check)["sha256"] == junit["sha256"], "retained G5 JUnit drift")
+            c["validate_junit"](path.read_bytes(), proof["selected_tests"])
+    inputs = {r["path"]: r["sha256"] for r in plan["input_files"]}
+    require(groups[0] == groups[1] and all(groups[0]["files"][key] == inputs.get(str(ROOT / key))
+            for key in c["G5_SOURCES"]), "G5 source epoch differs from the sealed Large inputs")
+
+
 def authenticate(args, deadline):
     def check():
         if time.monotonic() >= deadline:
@@ -96,7 +121,7 @@ def authenticate(args, deadline):
             and receipt["whole_phase_expired"] is False and receipt["limits"] == plan["limits"]
             and 0 <= receipt["elapsed_seconds"] < plan["limits"]["wall_seconds"]
             and receipt["plan"] == pp, "completed Large conversion required")
-    c["authenticate_prerequisites"](plan, {row["path"]: row for row in plan["input_files"]}, check)
+    retained_prerequisites(c, plan, check)
     proof = receipt["final_proofs"]
     require(set(proof) == set(c["PROOFS"]) and proof["inputs"] == pp
             and receipt["observed_proofs"] == {k: v for k, v in proof.items() if k != "inputs"},
@@ -161,7 +186,7 @@ def reference(args):
             "sealed runtime closure differs")
     prep = checked_module(PREP, PREP_SHA)
     require(prep["prepare"]() == meta, "Large publisher or reference input observation changed")
-    for p in (HERE, PREP, SUPPORT, *(ROOT / path for path in prep["SOURCES"])):
+    for p in (HERE, PREP, SUPPORT, STREAM, *(ROOT / path for path in prep["SOURCES"])):
         inputs[str(p)] = c["pin"](p, check)
     sys.path.extend(runtime["import_paths"])
     import onnx
@@ -170,18 +195,25 @@ def reference(args):
     torch.set_num_threads(2)
     torch.set_num_interop_threads(1)
     half = support["load_module"](ROOT / "scripts/arbiter-fp16-reference.py", "large_independent_half")
-    independent, publisher = half.from_authenticated_original(torch, "large", ROOT / prep["OWNER"], prep["PUBLISHER"], "cpu")
+    def observe(stage, detail=None):
+        print("AIRK_LARGE_REFERENCE_PHASE " + json.dumps({"stage": stage, "detail": detail}), flush=True)
+        check()
+    streamer = checked_module(STREAM, STREAM_SHA)
+    independent, publisher = streamer["build"](half, torch, prep, observe)
+    observe("publisher_parameters_ready")
     graph = Path(proofs["graph"]["path"])
     weight = Path(proofs["weights"]["path"])
     verification = half.verify_actual_half_parameters(independent, graph, onnx, {weight.name: weight},
         candidate_sha256=proofs["graph"]["sha256"], original_graph=Path(plan["source_graph"]["path"]),
         original_files=c["read"](plan["source_closure"]["path"]))
     check()
+    observe("graph_and_learned_bytes_verified")
     row = meta["rows"][0]
     require(len(row["input"]["input_ids"]) == 32, "T32 reference required")
     scores = independent.forward(row["input"])
     require(scores.dtype == torch.float32 and scores.device.type == "cpu" and tuple(scores.shape) == (1, 8)
             and not torch.cuda.is_initialized(), "CPU-only T32 score ABI differs")
+    observe("t32_forward_completed")
     vector = scores[0].tolist()
     require(support["finite_scores"](vector), "nonfinite CPU reference")
     for key in ("graph", "weights", "manifest"):
@@ -198,7 +230,7 @@ def reference(args):
         support["read_pinned_json"](root / "reference-producer.json", producer, check)
     return {"model": "large", "recipe": "baseline-half", "conversion_plan": pp, "conversion_receipt": rp,
             "source_inputs": mp, "graph": proofs["graph"], "weights": proofs["weights"], "verification": verification,
-            "publisher": publisher, "input_digest": row["input"]["input_digest"], "original_fp32": row["reference_original_fp32"],
+            "publisher": publisher, "streamed_loader": inputs[str(STREAM)], "input_digest": row["input"]["input_digest"], "original_fp32": row["reference_original_fp32"],
             "matching_fp16": vector, "loaded_runtime": support["loaded_runtime"](inputs, c["pin"], check),
             "forward_count": 1, "job": limits, "device": "cpu", "pid": os.getpid(), "token": token, "deadline": args.deadline,
             "native_execution": False, "qualification": False}
