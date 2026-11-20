@@ -33,11 +33,11 @@ def order(a, b):
     return (a > b) - (a < b)
 
 
-def compare(actual, reference):
-    require(len(actual) == len(reference) == 7 and all(math.isfinite(s) for s in actual + reference),
-            "complete finite seven-option vectors required")
+def compare(actual, reference, *, options=7):
+    require(len(actual) == len(reference) == options and all(math.isfinite(s) for s in actual + reference),
+            "complete finite option vectors required")
     delta = [a - r for a, r in zip(actual, reference, strict=True)]
-    changed = [[i, j] for i, j in itertools.combinations(range(7), 2)
+    changed = [[i, j] for i, j in itertools.combinations(range(options), 2)
                if order(actual[i], actual[j]) != order(reference[i], reference[j])]
     return {"signed_raw_by_slot": delta, "raw": summary(delta),
             "normalized_mass": summary([a - r for a, r in zip(mass(actual), mass(reference), strict=True)]),
