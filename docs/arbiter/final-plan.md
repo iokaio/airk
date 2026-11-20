@@ -2222,3 +2222,7 @@ service metadata as the NVIDIA compatibility entries.
 ### Approved service-wide GPU setting
 
 The user approved `allow_gpu` in the versioned service resource configuration and public API for the live GPU switch. Existing installations default to enabled. Disabling it preserves saved stage device choices, prevents further GPU initialization and handles pending and resident work. Re-enabling it restores eligibility under the existing fit and runtime admission checks.
+
+### Approved Windows Compact FP16 execution identity
+
+The user approved a separate Windows Compact FP16 identity binding the exact graph, optimizer settings and observed final GPU/CPU placement. Authenticate the optimized graph's complete node placement through the native runtime and bind the approved result using the bounded-hybrid policy. A changed graph, optimizer policy or placement requires a new identity and fresh qualification. Catalog admission remains subject to the numerical, task-quality, fit and installed runtime gates.
