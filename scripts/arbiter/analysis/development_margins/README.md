@@ -82,6 +82,32 @@ compiler tensors and equivalent ordered native choices, retains both scopes
 and original budgets, and binds the independent publisher-reference scores.
 
 Run `collect_focus1024_train.py` with isolated Python to emit the whole frozen
-TRAIN roster and the state of its first capture attempts. It rehashes original
+TRAIN roster, selected capture directory and every retained predecessor. It rehashes original
 and active input descriptors, checks native admission records and preserves
 every zero, unqualified or pending case in the denominator. Keep stdout private.
+
+For the finished 15-case census, write stdout to the checked private campaign
+file `compact-development-focus1024-final-census-r1.private.json` and hash it.
+The observed-input batch command, original controls and limits are in the
+[FP16 execution contract](../../../arbiter-fp16-execution/CONTRACT.md).
+
+Run `python -IB scripts/arbiter/analysis/development_margins/train_delivered_evidence.py` to measure the original publisher answer span against the literal returned evidence from settled TRAIN pre-dispatch Answers. It retains all 15 requests, including unobserved and unresolved cases, and authenticates each source, original menu, publication and exact question. The grader rejoins the retained Answer command, original named index and scope, pre-request status and every admitted native observation. It checks budget stops against the original zero-admission receipt. This is a development check of delivered evidence before a Context forward. Run the adjacent test_train_delivered_evidence.py for union, partial, unknown and wrong-publication controls.
+
+The Q541 first fixture closed before it issued Answer when an unrelated
+change to the shared public-source reader changed its whole-file hash. Its
+second fixture repeats the original request in a fresh scope. The collector
+checks each predecessor receipt, journal and elapsed time before selecting
+the corrected run. For exact replay, materialize the Git blob for
+`31eb6703:scripts/arbiter/analysis/public_source_admission/native_cohort_source_reads.py`
+into the checked private campaign directory
+`compact-development-original-retry-helper-r1/native_cohort_source_reads.py`.
+Verify SHA-256 `3201675f6dde0f1f81436f71faa17410828802898791985ffc87eb24554bc847`
+before and after materialization. The capture source verifies that same hash
+before starting service and again when closing the original operation.
+
+The four settled three-case batches use the 15-row prefix census above,
+with each selected case independently authenticated. D: is the only
+fresh-run output root. Historical imported model copies removed by the
+approved cleanup remain historical. Prospective native captures must
+reserve the three exact independent asset copies and native graph-overlay
+headroom. Their canonical source model bytes remain independently checked.

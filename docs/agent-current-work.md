@@ -4,7 +4,7 @@ These instructions are mandatory for the active assignment. Standing rules remai
 
 All unlinked filesystem paths below are repository-relative unless absolute or prefixed with `~/`.
 
-The user stopped the Arbiter campaign on 20 November 2026 and limited the assignment to D: cleanup and the standing disk-space rules. The prior release schedule below is historical while the campaign is stopped. Keep work on D: and wait for a new user instruction before restarting builds, calibration or qualification.
+The user resumed the Windows and Linux FP16 campaign after D: cleanup. Keep new Windows work on D:, reuse the existing checkout target with one Cargo owner, and apply the standing disk budget and fixture disposal rules. Retained receipts remain evidence under their original identities. Removed fixture installations must be restored or replaced by a verified compatible installation before reuse.
 
 | Need | Source |
 |---|---|
