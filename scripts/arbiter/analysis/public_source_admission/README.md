@@ -41,6 +41,12 @@ The family-root source-provenance.json maps original and maintained SHA-256 valu
   The audit decodes only the selected answer values and gold document text,
   projects the publisher's Unicode scalar offsets without shifting them, and
   retains aggregate literal-match, mismatch and out-of-range counts.
+- [IBM retained source grouping](audit_mtrag_retained_groups.py) runs offline
+  under checked Windows Python `-I -B -S`. It joins the two frozen private
+  receipts by original task, conversation, question-token digest, positive
+  passage, source document and canonical URL. Its private output keeps
+  connected cases together for later review. Human evidence sufficiency,
+  source notices and native visibility remain open.
 - [IBM Cloud support screening](audit_mtrag_cloud_metadata.py) reads the
   frozen publisher qrels and classification metadata for MTRAG-UN and
   MTRAG. Run it with checked Windows Python `-I -B -S` and no arguments.
