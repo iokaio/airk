@@ -25,7 +25,7 @@ const WEIGHT: &str = "0c4bd89d032e7dd821071c3559776cd3da50d54d84b6e575373fd8cf70
 const ORIGINAL: &str = "735c77839099adf75426cf3ef9884ad69a99b60bb73e5fdf6247b7f321b12ded";
 const INPUT: &str = "14290e4a90a69dee4d60f29b31c3be731f1b0c9c857bd04432f3758a3944fad2";
 const ROOT: &str = "compact-cutlass-protected-staged-r1";
-const OPTIMIZERS: [(&str, &str); 3] = [
+pub(super) const OPTIMIZERS: [(&str, &str); 3] = [
     (
         "optimization.constant_folding_max_output_size_in_bytes",
         "1048576",
@@ -37,7 +37,7 @@ const OPTIMIZERS: [(&str, &str); 3] = [
     ),
 ];
 
-fn held(path: &Path, length: u64, expected: &str, deadline: Instant) -> Result<File> {
+pub(super) fn held(path: &Path, length: u64, expected: &str, deadline: Instant) -> Result<File> {
     let mut file = OpenOptions::new().read(true).share_mode(1).open(path)?;
     let meta = file.metadata()?;
     ensure!(
@@ -83,7 +83,7 @@ fn fixed_input(campaign: &Path) -> Result<CompiledInput> {
     Ok(input)
 }
 
-fn score(session: &mut Session, x: CompiledInput) -> Result<Vec<f32>> {
+pub(super) fn score(session: &mut Session, x: CompiledInput) -> Result<Vec<f32>> {
     let width = x.input_ids.len();
     let cards = x.candidate_positions.len();
     let result = session.run(ort::inputs![

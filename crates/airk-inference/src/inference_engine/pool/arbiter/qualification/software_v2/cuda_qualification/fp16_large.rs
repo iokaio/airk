@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Private Large baseline metadata and disposable final-graph diagnostics.
+mod compensated;
 use super::*;
 use airk_core::arbiter::device::{DevicePrecision, PlacementPolicy};
 
@@ -27,9 +28,16 @@ struct ProtectedStage {
 
 impl ProtectedStage {
     fn checked_graph(self, reference: &Reference, pin: &ResourceFilePin) -> Result<ReferenceFile> {
+        let expected = if pin.sha256 == QKV_STAGE.parse()? {
+            QKV_GRAPH
+        } else if pin.sha256 == BODY_STAGE.parse()? {
+            BODY_GRAPH
+        } else {
+            anyhow::bail!("unreviewed Large protected stage");
+        };
         ensure!(
             self.original_graph == reference.graph && self.weights == reference.weights
-                && self.graph.sha256 == QKV_GRAPH.parse()?
+                && self.graph.sha256 == expected.parse()?
                 && Path::new(&self.graph.path).parent() == Path::new(&pin.path).parent(),
             "Large Q/K/V graph or unmodified weights differ"
         );
@@ -49,12 +57,21 @@ fn large_qkv_stage_rejects_relocated_weights() -> Result<()> {
     let mut descriptor = json!({"original_graph":graph,"graph":candidate,"weights":raw});
     let stage: ProtectedStage = serde_json::from_value(descriptor.clone())?;
     assert_eq!(stage.checked_graph(&reference,&manifest)?.sha256, QKV_GRAPH.parse()?);
+    let body_manifest = ResourceFilePin { path: manifest.path.clone(), sha256: BODY_STAGE.parse()? };
+    let wrong_epoch: ProtectedStage = serde_json::from_value(descriptor.clone())?;
+    assert!(wrong_epoch.checked_graph(&reference, &body_manifest).is_err());
+    let mut body = descriptor.clone();
+    body["graph"]["sha256"] = json!(BODY_GRAPH);
+    let correct: ProtectedStage = serde_json::from_value(body)?;
+    assert_eq!(correct.checked_graph(&reference, &body_manifest)?.sha256, BODY_GRAPH.parse()?);
     descriptor["weights"]["path"] = json!("D:/qkv/weights.bin");
     let relocated: ProtectedStage = serde_json::from_value(descriptor)?;
     assert!(relocated.checked_graph(&reference,&manifest).is_err());
     Ok(())
 }
 
+const BODY_STAGE: &str = "a179d41c0dd4fe89ea489e7325365b63aa4825ffd0ac8dc52e17b46fcc3c973b";
+pub(super) const BODY_GRAPH: &str = "636cea20b5fa4f58251589d01a7ef2e3df87f7f4b57498d2765b0d56f6b87d2d";
 const QKV_STAGE: &str = "0ae64faa17aecc33642c3245b3bf55b6f44a961de50128114ecf5ad8442e295c";
 const QKV_REFERENCE: &str = "bc91621b62faeec0963caec75321c34b76e36f4bd66bbb7df6746d2872ab6191";
 pub(super) const QKV_GRAPH: &str = "1448e83dcd209b120bd22e1dec084092f56adc7e8eec5dcd323e179b800467aa";
@@ -127,9 +144,15 @@ pub(super) fn t32_references(
         "AIRK_CUDA_FP16_INDEPENDENT_PROOF",
         "AIRK_CUDA_FP16_INDEPENDENT_PROOF_SHA256",
     )?;
-    let protected_graph = QKV_GRAPH.parse()?;
-    let protected = profile.device_execution.as_ref().is_some_and(|d| d.graph == protected_graph);
-    let matching_digest = if protected { QKV_REFERENCE } else { REFERENCE };
+    let selected = profile.device_execution.as_ref().context("Large device profile missing")?.graph;
+    let (graph_digest, matching_digest, basis) = if selected == BODY_GRAPH.parse()? {
+        (BODY_GRAPH, "d77a23c7f319a7da7361793b793e50687753f574930f51f9def2ba8c4a586d7c", "independent_large_body252_fp32_sm86_causal_flash")
+    } else if selected == QKV_GRAPH.parse()? {
+        (QKV_GRAPH, QKV_REFERENCE, "independent_large_qkv_fp32_sm86_causal_flash")
+    } else {
+        ensure!(selected == GRAPH.parse()?, "unreviewed Large reference graph");
+        (GRAPH, REFERENCE, "independent_large_baseline_half")
+    };
     ensure!(
         proof.sha256 == matching_digest.parse()?
             && profile.model == ModelChoice::ContextQwenLarge
@@ -143,7 +166,6 @@ pub(super) fn t32_references(
         "Large T32 requires the exact independent reference and unqualified FP16 descriptor"
     );
     let reference: Reference = serde_json::from_slice(&pinned(&proof, 1 << 20)?)?;
-    let graph_digest = if protected { QKV_GRAPH } else { GRAPH };
     ensure!(reference.graph.sha256 == graph_digest.parse()?, "Large matching reference graph differs");
     for (key, artifact) in [
         ("model.onnx", &reference.graph),
@@ -175,7 +197,6 @@ pub(super) fn t32_references(
         "Large independent reference is paired to a different input or original vector"
     );
     row.reference_same_artifact = Some(reference.matching_fp16);
-    let basis = if protected { "independent_large_qkv_fp32_sm86_causal_flash" } else { "independent_large_baseline_half" };
     let provenance = json!({"reference_basis":basis, "independent_proof":proof, "reference_inputs":inputs});
     Ok(super::bounded_hybrid::ProfileReferences {
         rows: vec![row],
@@ -187,16 +208,23 @@ pub(super) fn t32_references(
 #[test]
 #[ignore = "owned Windows metadata for the independently attested Large FP16 baseline"]
 fn emit_cuda_large_fp16_probe_metadata() -> Result<()> {
-    emit_large_metadata(false)
+    emit_large_metadata(None)
 }
 
 #[test]
 #[ignore = "owned metadata for the independent Large FP32 Q/K/V intervention"]
 fn emit_cuda_large_qkv_fp32_probe_metadata() -> Result<()> {
-    emit_large_metadata(true)
+    emit_large_metadata(Some(QKV_STAGE))
 }
 
-fn emit_large_metadata(protected: bool) -> Result<()> {
+#[test]
+#[ignore = "owned metadata for the separate Large seven-projection candidate"]
+fn emit_cuda_large_body_fp32_probe_metadata() -> Result<()> {
+    emit_large_metadata(Some(BODY_STAGE))
+}
+
+fn emit_large_metadata(stage_digest: Option<&str>) -> Result<()> {
+    let protected = stage_digest.is_some();
     let started = Instant::now();
     let user = airk_ipc::endpoint::current_user()?;
     ensure!(
@@ -276,9 +304,9 @@ fn emit_large_metadata(protected: bool) -> Result<()> {
         "Large baseline graph or original weights location differs"
     );
     let mut probe_runtime = runtime_manifest.clone();
-    let stage_pin = if protected {
+    let stage_pin = if let Some(expected) = stage_digest {
         let pin = env_pin("AIRK_LARGE_QKV_STAGE", "AIRK_LARGE_QKV_STAGE_SHA256")?;
-        ensure!(pin.sha256 == QKV_STAGE.parse()?, "Large Q/K/V stage differs");
+        ensure!(pin.sha256 == expected.parse()?, "Large selected protected stage differs");
         let stage: ProtectedStage = serde_json::from_slice(&pinned(&pin, 1 << 20)?)?;
         reference.graph = stage.checked_graph(&reference, &pin)?;
         let (_, installed) = airk_host::gpu_runtime::installed_paths()?;
@@ -398,7 +426,13 @@ fn emit_large_metadata(protected: bool) -> Result<()> {
 #[test]
 #[ignore = "owned Windows Large protected-Q/K/V graph and optimizer placement"]
 fn cuda_large_qkv_fp32_load_only_graph_diagnostic() -> Result<()> {
-    observe_cuda_graph_with_options(ModelChoice::ContextQwenLarge, DevicePrecision::Float16, true)
+    observe_cuda_graph_with_options(ModelChoice::ContextQwenLarge, DevicePrecision::Float16, Some(QKV_GRAPH))
+}
+
+#[test]
+#[ignore = "owned Windows Large seven-projection placement and optimizer observation"]
+fn cuda_large_body_fp32_load_only_graph_diagnostic() -> Result<()> {
+    observe_cuda_graph_with_options(ModelChoice::ContextQwenLarge, DevicePrecision::Float16, Some(BODY_GRAPH))
 }
 
 #[test]

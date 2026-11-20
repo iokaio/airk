@@ -403,6 +403,19 @@ fn cuda_large_fp16_scientific_t32() -> Result<()> {
     })
 }
 
+const BODY_GRAPH_OBSERVATION: &str = "96641f4cf15ddd6cf1209402eae4ed366b9f77f00bfc28f1c894e67143ca4a16";
+
+#[test]
+#[ignore = "owned Windows Large all-body FP32 accumulation against original Flash T32 references"]
+fn cuda_large_body_fp32_scientific_t32() -> Result<()> {
+    profile_context(Experiment {
+        fp16_t32: true,
+        graph: BODY_GRAPH_OBSERVATION,
+        receipt_schema: "airk.private.large-body252-fp32-scientific-t32/1",
+        ..LARGE
+    })
+}
+
 #[test]
 #[ignore = "owned original Windows Large protected Q/K/V FP32 T32 comparison"]
 fn cuda_large_qkv_fp32_scientific_t32() -> Result<()> {
@@ -627,7 +640,7 @@ fn profile_context(experiment: Experiment) -> Result<()> {
         ensure!(manifest.as_path() == Path::new(&runtime_manifest.path), "runtime locator pin differs");
         None
     };
-    let actual_job = if experiment.graph == "0d00e2fabdb5fe54474041fb1f2787502349b78ce40436b955cd4433633a4462" {
+    let actual_job = if matches!(experiment.graph, "0d00e2fabdb5fe54474041fb1f2787502349b78ce40436b955cd4433633a4462" | BODY_GRAPH_OBSERVATION) {
         job_limits(22 << 30, 22 << 30)?
     } else {
         job_limits(bounds.host_limit_bytes, job_limit_bytes)?
@@ -798,7 +811,7 @@ fn profile_context(experiment: Experiment) -> Result<()> {
                 json!([super::hybrid_profile_trace::large_fp16_t32_profiled_run(
                     &bytes,
                     &scorer.graph_metadata().rows,
-                    experiment.graph == "0d00e2fabdb5fe54474041fb1f2787502349b78ce40436b955cd4433633a4462"
+                    experiment.graph
                 )?])
             } else {
                 json!(super::hybrid_profile_trace::profiled_runs(

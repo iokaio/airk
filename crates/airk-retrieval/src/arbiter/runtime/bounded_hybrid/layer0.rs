@@ -286,10 +286,11 @@ impl Scorer {
         source: &dyn AssetSource,
     ) -> Result<()> {
         super::super::cuda::diagnostic::require_graph_diagnostic_profile(&profile)?;
-        let protected = "1448e83dcd209b120bd22e1dec084092f56adc7e8eec5dcd323e179b800467aa".parse()?;
+        let qkv = "1448e83dcd209b120bd22e1dec084092f56adc7e8eec5dcd323e179b800467aa".parse()?;
+        let body = "636cea20b5fa4f58251589d01a7ef2e3df87f7f4b57498d2765b0d56f6b87d2d".parse()?;
         ensure!(
             profile.description.model == ModelChoice::ContextQwenLarge
-                && profile.description.device_execution.as_ref().is_some_and(|d| d.graph == protected),
+                && profile.description.device_execution.as_ref().is_some_and(|d| d.graph == qkv || d.graph == body),
             "Large protected Q/K/V graph differs"
         );
         let session = Self::open_internal(profile, source, qkv_projection_options, OpenMode::GraphMetadataDiagnostic)?;

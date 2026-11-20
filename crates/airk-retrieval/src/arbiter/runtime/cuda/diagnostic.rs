@@ -318,8 +318,10 @@ pub(crate) fn require_graph_diagnostic_profile(
                 "c00371ad9407c25bd52999d87327115025b7c6f55a4e585645ca112d858de5bd".parse()?;
             let protected =
                 "1448e83dcd209b120bd22e1dec084092f56adc7e8eec5dcd323e179b800467aa".parse()?;
+            let body =
+                "636cea20b5fa4f58251589d01a7ef2e3df87f7f4b57498d2765b0d56f6b87d2d".parse()?;
             ensure!(
-                (device.graph == baseline || device.graph == protected)
+                (device.graph == baseline || device.graph == protected || device.graph == body)
                     && profile.description.profile_id
                         == "private-cuda-fp16-large-efficient-probe-v1",
                 "Large FP16 graph diagnostic requires a reviewed baseline or protected Q/K/V graph"

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Test-support-only original-operand Windows CUTLASS attention measurement.
+#[cfg(windows)]
+mod large;
 mod model;
 use super::super::CudaRuntime;
 use anyhow::{Context, Result, ensure};

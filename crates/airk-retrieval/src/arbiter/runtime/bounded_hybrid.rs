@@ -33,6 +33,8 @@ const BATCH_VIEW_PLACEMENT: &str =
 const LARGE_FP16_PLACEMENT: &str =
     "fff6dbe2f0c2fac4b9ba215da7d5029421d2706ee48c01c2485b9f157ee15ca6";
 const LARGE_FP16_GRAPH: &str = "c00371ad9407c25bd52999d87327115025b7c6f55a4e585645ca112d858de5bd";
+const LARGE_BODY_PLACEMENT: &str = "96641f4cf15ddd6cf1209402eae4ed366b9f77f00bfc28f1c894e67143ca4a16";
+const LARGE_BODY_GRAPH: &str = "636cea20b5fa4f58251589d01a7ef2e3df87f7f4b57498d2765b0d56f6b87d2d";
 const LARGE_QKV_PLACEMENT: &str = "0d00e2fabdb5fe54474041fb1f2787502349b78ce40436b955cd4433633a4462";
 const LARGE_QKV_GRAPH: &str = "1448e83dcd209b120bd22e1dec084092f56adc7e8eec5dcd323e179b800467aa";
 const LARGE_T32_INPUT: &str = "ec7b4845c37fb7cbe2a64a866f8b6cdc03479d65593cdb0a1d01102fe56fc335";
@@ -138,7 +140,7 @@ impl GraphGate {
                 && result["placement"]["complete"] == true,
             "complete reviewed Context graph evidence required"
         );
-        let protected = evidence_sha == LARGE_QKV_PLACEMENT.parse()?;
+        let protected = evidence_sha == LARGE_QKV_PLACEMENT.parse()? || evidence_sha == LARGE_BODY_PLACEMENT.parse()?;
         if protected {
             ensure!(model == ModelChoice::ContextQwenLarge && result["optimizer_profile"] == "protected_qkv_fp32",
                     "reviewed Large protected Q/K/V optimizer or model differs");
@@ -291,7 +293,9 @@ impl GraphGate {
             ),
             GraphPolicy::LargeFp16 | GraphPolicy::LargeFp16Projection(_) => (
                 CpuValueBounds::fp16(12_067),
-                if self.evidence_sha == LARGE_QKV_PLACEMENT.parse()? {
+                if self.evidence_sha == LARGE_BODY_PLACEMENT.parse()? {
+                    b"airk.private.large-body252-fp32-bounded-hybrid/1"
+                } else if self.evidence_sha == LARGE_QKV_PLACEMENT.parse()? {
                     self.policy.layer0().map_or(b"airk.private.large-qkv-fp32-bounded-hybrid/1".as_slice(), Layer0Cut::scope)
                 } else {
                     self.policy.layer0().map_or(b"airk.private.large-fp16-cuda-bounded-hybrid/1".as_slice(), Layer0Cut::scope)
@@ -751,6 +755,10 @@ impl Scorer {
                 "Large baseline precision differs"
             );
             LARGE_FP16_PLACEMENT
+        } else if candidate.graph == LARGE_BODY_GRAPH.parse()? {
+            ensure!(candidate.precision == airk_core::arbiter::device::DevicePrecision::Float16 && cut.is_none(),
+                    "Large body candidate requires its original FP16 boundaries and intact scoring graph");
+            LARGE_BODY_PLACEMENT
         } else if candidate.graph == LARGE_QKV_GRAPH.parse()? {
             ensure!(candidate.precision == airk_core::arbiter::device::DevicePrecision::Float16,
                     "Large protected Q/K/V requires its original FP16 graph boundaries");
@@ -980,7 +988,7 @@ impl Scorer {
             profile.description(),
             binding.device.observation(binding.load_deadline)?,
         )?;
-        let protected = gate.evidence_sha == LARGE_QKV_PLACEMENT.parse()?;
+        let protected = gate.evidence_sha == LARGE_QKV_PLACEMENT.parse()? || gate.evidence_sha == LARGE_BODY_PLACEMENT.parse()?;
         Self::open_internal(
             profile,
             source,

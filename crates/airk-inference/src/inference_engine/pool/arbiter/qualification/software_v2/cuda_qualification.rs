@@ -1853,10 +1853,15 @@ fn cuda_large_fp32_load_only_graph_metadata_diagnostic() -> Result<()> {
 }
 
 fn observe_cuda_graph_metadata(model: ModelChoice, precision: DevicePrecision) -> Result<()> {
-    observe_cuda_graph_with_options(model, precision, false)
+    observe_cuda_graph_with_options(model, precision, None)
 }
 
-fn observe_cuda_graph_with_options(model: ModelChoice, precision: DevicePrecision, protected_qkv: bool) -> Result<()> {
+fn observe_cuda_graph_with_options(
+    model: ModelChoice,
+    precision: DevicePrecision,
+    selected_graph: Option<&str>,
+) -> Result<()> {
+    let protected_qkv = selected_graph.is_some();
     let started_ns = airk_process::monotonic::now_ns()?;
     let started = Instant::now();
     let execution_user = airk_ipc::endpoint::current_user()?;
@@ -1913,9 +1918,17 @@ fn observe_cuda_graph_with_options(model: ModelChoice, precision: DevicePrecisio
     );
     #[cfg(all(windows, target_arch = "x86_64"))]
     {
-        let candidate: Sha256Digest = fp16_large::QKV_GRAPH.parse()?;
-        let selected = profile.device_execution.as_ref().is_some_and(|device| device.graph == candidate);
-        ensure!(selected == protected_qkv, "Large Q/K/V graph and optimizer selection differ");
+        let actual = profile
+            .device_execution
+            .as_ref()
+            .map(|device| device.graph.to_string());
+        let selected = actual
+            .as_deref()
+            .filter(|v| *v == fp16_large::QKV_GRAPH || *v == fp16_large::BODY_GRAPH);
+        ensure!(
+            selected == selected_graph,
+            "Large protected graph and optimizer selection differ"
+        );
     }
     let capacity_plan = profile_probe_bounds(
         &bounds,
