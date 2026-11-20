@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Build and seal a host-native runtime; never package/publish a VSIX."""
 import argparse
+import contextlib
 import functools
 import hashlib
 import importlib.util
@@ -10,6 +11,7 @@ from pathlib import Path
 import platform
 import plistlib
 import re
+import secrets
 import shutil
 import subprocess
 import tempfile
@@ -628,6 +630,31 @@ def source_identity():
     return {"sha256": result.hexdigest(), "files": len(files)}
 
 
+@contextlib.contextmanager
+def runtime_staging(destination, private_parent=None):
+    if private_parent is None:
+        with tempfile.TemporaryDirectory(prefix=".airk-runtime-stage-", dir=destination.parent) as path:
+            yield Path(path)
+        return
+
+    parent = Path(private_parent).absolute()
+    destination_parent = destination.parent.resolve(strict=True)
+    if parent != parent.resolve(strict=True) or not parent.is_dir() or parent.parent != destination_parent:
+        raise ValueError("Explicit private staging parent must be a real directory immediately under the destination parent")
+    path = parent / (".airk-runtime-stage-" + secrets.token_hex(16))
+    # Python 3.13 implements 0700 on Windows with an OWNER RIGHTS DACL.
+    # The caller selected this dedicated private parent for its inherited DACL.
+    path.mkdir(mode=0o777 if os.name == "nt" else 0o700)
+    identity = path.stat(follow_symlinks=False)
+    try:
+        yield path
+    finally:
+        if os.path.lexists(path):
+            if path.resolve(strict=True).parent != parent or not os.path.samestat(identity, path.stat(follow_symlinks=False)):
+                raise RuntimeError("The original private staging directory was replaced")
+            shutil.rmtree(path)
+
+
 def publish_staging(staging, destination):
     # A just-executed Windows image can briefly retain a scan/share handle. Retry
     # only this owned staging rename; persistent permission/policy failures stay errors.
@@ -960,6 +987,8 @@ def qualify_staged_runtime(staging, version, operating_system, architecture, pro
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--destination", type=Path, required=True)
+    parser.add_argument("--staging-parent", type=Path,
+                        help="Dedicated, access-checked private directory under the destination parent")
     parser.add_argument("--profile", choices=["debug", "release", "release-local"], default="debug")
     parser.add_argument("--admin-inventory", type=Path, default=ROOT / "artifacts/admin/admin-assets.json",
                         help="Split versions: the inventory scripts/build-admin-assets.py wrote after its checks")
@@ -1024,8 +1053,7 @@ def main():
                                        environment=cuda["environment"])
     else:
         static_inputs = verify_static_inputs()
-    with tempfile.TemporaryDirectory(prefix=".airk-runtime-stage-", dir=destination.parent) as temporary:
-        staging = Path(temporary)
+    with runtime_staging(destination, args.staging_parent) as staging:
         if cuda is not None:
             main_binary, cli_binary = cargo_pair(args.profile, features=CUDA_PAIR_FEATURES,
                                                environment=cuda["environment"])

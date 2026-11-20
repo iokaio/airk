@@ -4,6 +4,8 @@ import hashlib
 import importlib.util
 import os
 import plistlib
+import runpy
+import secrets
 import shutil
 import subprocess
 from pathlib import Path
@@ -23,6 +25,32 @@ def _mac_fixture_signing_options(identity, team, keychain=None):
 
 
 class ServiceRuntimeBuildTests(unittest.TestCase):
+    def test_default_and_explicit_private_staging_lifetimes(self):
+        build = runpy.run_path(str(Path(__file__).resolve().parents[1]/"build-service-runtime.py"))
+        root = Path(tempfile.gettempdir()).resolve()/("airk-staging-test-" + secrets.token_hex(16))
+        root.mkdir(mode=0o777 if os.name == "nt" else 0o700)
+        self.addCleanup(shutil.rmtree, root)
+        destination = root/"runtime"
+        with build["runtime_staging"](destination) as default:
+            self.assertEqual(default.parent, root)
+            self.assertTrue(default.is_dir())
+        self.assertFalse(default.exists())
+        private = root/"private"
+        private.mkdir()
+        with self.assertRaisesRegex(RuntimeError, "fixture refused"):
+            with build["runtime_staging"](destination, private) as failed:
+                self.assertEqual(failed.parent, private)
+                raise RuntimeError("fixture refused")
+        self.assertFalse(failed.exists())
+        with build["runtime_staging"](destination, private) as accepted:
+            self.assertNotEqual(accepted, failed)
+            (accepted/"example").write_text("complete", encoding="ascii")
+            build["publish_staging"](accepted, destination)
+        self.assertEqual((destination/"example").read_text(encoding="ascii"), "complete")
+        with self.assertRaisesRegex(ValueError, "immediately under"):
+            with build["runtime_staging"](destination, root):
+                self.fail("an unrelated parent was accepted")
+
     def test_static_identity_binds_actual_aggregate_descriptor_and_refuses_mixed_or_tampered_inputs(self):
         specification = importlib.util.spec_from_file_location(
             'aggregate_identity_builder',Path(__file__).resolve().parents[1]/'build-service-runtime.py')
