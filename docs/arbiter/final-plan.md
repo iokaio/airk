@@ -887,6 +887,10 @@ dependency threatens the deadline, record the affected gate, the blocker
 and what can still finish on time. Report completed evidence and any open
 gates at the deadline.
 
+The user approved separate Linux ELF runtime manifests for the scientific
+and product paths on 20 November UTC. Both require pinned Linux dependencies
+and a Linux compatibility digest. Windows retains its existing identities.
+
 | Phase | Exit evidence | Work that can start independently |
 | --- | --- | --- |
 | Close Windows FP32 | Corrected Large unprofiled cold-load and warm timing with the existing resource and settlement rules. | Read-only FP16 receipt reconciliation and preparation design. |

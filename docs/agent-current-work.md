@@ -36,6 +36,9 @@ Active campaign: Arbiter final implementation (execution start 2026-11-16T05:29:
   efficient FP16 on Windows CUDA first. After Windows FP16 passes, start FP16-only
   Linux CUDA qualification directly on the existing WSL2 instance and
   report genuine blockers. Linux CPU checks continue independently.
+- The user approved separate Linux ELF runtime manifests for scientific and
+  product runs, with pinned Linux dependencies and a Linux compatibility
+  digest. Preserve the existing Windows manifest and compatibility identities.
 - After both CUDA FP16 gates pass, qualify FP16 only on macOS using native
   Core ML. The Datagram weekend has a separate manual kickoff. The future
   Radeon FP16 campaign uses Azure exclusively after those three gates pass,

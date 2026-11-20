@@ -33,3 +33,6 @@ The receipt identifies the historically partly exposed CAL population for a
 fresh capture. Use `--census-only` for the ordered input to prepare_packets.py.
 Redirect stdout to a fresh checked private path. Historical phases supply
 membership only. The fresh service scope and owned capture are still required.
+
+The [CAL service capture owner](cal_capture/README.md) implements the separate
+Windows fixture, owned phase workers and SDK transport under its own contract.

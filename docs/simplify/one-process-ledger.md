@@ -12667,3 +12667,34 @@ lockfile was withheld. Source-rights observation took 10.321022 s, and
 staging with ownership and hash verification took 92.041043 s. Four focused
 rights controls passed. The collector README gives commands for both batches.
 [Corpus, source roles and private receipts](../arbiter/software-v2-data-audit.md#full-techqa-menu-corpus-and-contextbench-file-provenance)
+
+### Linux ELF runtime contract decision, 20 November 2026 UTC
+
+The user approved separate scientific and product Linux ELF manifests,
+pinned Linux dependencies and a Linux compatibility digest. Linux loader
+and descriptor implementation can now proceed. The WSL2 build produced
+the shared ORT ELF with SHA-256
+`17f7cf47ad0d7b5ac895ae588fd62c7f85a13842588161b6a24c7d480f062be4`.
+The CUDA provider build is in progress. Native Windows qualification precedes
+Linux GPU execution.
+
+### Windows Large metadata and CAL100 setup observations
+
+Large preparation verified 48,945 inputs (22,064,489,157 bytes), checked
+21 G5 sources and 27 required test selectors, and finished in 280.412525 s
+under its 600 s limit. The 36-layer plan projects 8,045,328,384 weight bytes.
+The private large-fp16-conversion-plan-r3/large.json SHA-256 is
+`5c4b041301df205f2346f1e955677de492280764f8abfa8c327236ab5a7281b5`.
+Graph conversion and model measurement follow Compact qualification.
+
+The fresh CAL100 setup published all 753 files on one index, verified MiniLM
+search, and warmed Focus and Compact. The first attempt encountered a typed
+retryable publication_busy during indexing. The second used the native
+retry instruction within its original deadline. It closed and reacquired its
+lease, with zero remaining Job members and a peak of 16,455,491,584 bytes.
+The 603.233 s run issued zero CAL questions. The output audit checked 3,352
+entries and reverified input seals. The outer receipt is
+`2f9a0a5891c6c2b60c50ea886a4eef9b56154b55b087c902b2fb6100cdbbebb5`
+and the fixture closure is
+`6843e6cf64036de389de91aa5d4539665f152918c18e6742f37c9f74b1ef376c`.
+The 13-phase pre-forward capture and exact-artifact rule fitting follow setup.
