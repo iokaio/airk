@@ -73,6 +73,16 @@ def selected(input_ref,first,count):
     if Path(input_ref["path"]) == CONTROL and input_ref["sha256"] == CONTROL_SHA:
         row, _ = original_control()
         rows, mode = [row], "r4_engineering_only"
+    elif (Path(input_ref["path"]) == chronology.ROOT/"outer-owned.json" and
+          input_ref["sha256"] == "23aedfee1e92ef826714f37b852301894f048f4ad3964e11eb75e65fd7b4e276"):
+        verifier = RAW/"r5_failed_first56.py"
+        require(digest(verifier) == "18ef657c7e8dfe0f19ec1e40f13a25c1d219814d8137bf5058df638739814354",
+                "failed R5 prefix verifier changed")
+        from r5_failed_first56 import PREFIX, reopen
+        checked(input_ref)
+        prefix = ref(CAMPAIGN/"r5-chronological-native-first56-r1/projection-receipt.json", PREFIX)
+        rows, _ = reopen(prefix)
+        mode = "r5_failed_first56"
     else:
         rows, mode = future_rows(input_ref)
     batch = rows[first:first+count]
