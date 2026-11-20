@@ -127,3 +127,11 @@ to score only that capture in the separate q543 directory. The margin collector
 accepts its execution digest via `--q543-sha256` after the first four shards.
 The two remaining requests keep their original unmeasured slots until the final
 census authenticates them. These are exposed development reference scores.
+
+The R5 installation reader recognizes the distinct original three-group
+(32/32/36) and two-group (56/44) CAL schedules. It verifies the exact frozen
+16- or 17-source set and phase roster against the schema bound by the outer
+owner. Successful two-group custody ends at lifetime-01; a naturally failed
+partial group requires its own genuine pre-shutdown status. The original R3
+physical installation, exclusive mutex, source custody and reader clearance
+remain required for either handoff.

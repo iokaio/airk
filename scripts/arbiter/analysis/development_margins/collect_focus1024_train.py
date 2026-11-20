@@ -75,7 +75,7 @@ def verified_control(run, owned_sha, capture):
         receipt = proof["grouped_custody"]
         require(receipt["path"] == str(campaign / "cal100-focus1024-capture-r5-custody.json"), "foreign grouped custody")
         source = HERE / "grouped_reuse.py"
-        inputs["pin"](source, "549e06eb507779b2704567298246973eee0bd3828827cba035940f4664e8f92a")
+        inputs["pin"](source, "8588e26901dc869a955949083aa0580abca727e735a22166a9ecd81c4dbea667")
         prior_status, _ = runpy.run_path(str(source))["verify"](campaign, prior["sha256"], receipt["sha256"], plan)
     else:
         require(path.name in ("owned.json", "outer-owned.json") and "grouped_custody" not in proof,

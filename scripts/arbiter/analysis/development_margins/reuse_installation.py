@@ -12,7 +12,7 @@ R3 = E / "cal100-focus1024-capture-r3"
 R4 = E / "cal100-focus1024-capture-r4"
 R5 = E / "cal100-focus1024-capture-r5"
 CONTROL = R3 / "fixture/control"
-GROUPED_SHA = "549e06eb507779b2704567298246973eee0bd3828827cba035940f4664e8f92a"
+GROUPED_SHA = "8588e26901dc869a955949083aa0580abca727e735a22166a9ecd81c4dbea667"
 PLAN = "9259b4be9e340ac8e050060e904f53acffee27e3807eca6145a9a8f3be3e299d"
 
 

@@ -104,12 +104,21 @@ The user resumed the Windows and Linux FP16 campaign after D: cleanup. Keep new 
   or unavailable host does not stop independent product checks.
 ## 20 November Windows and Linux FP16 checkpoint
 
-Windows Compact exceeded 0.007 on the 1,014-token development input under
-all three measured arithmetic recipes. The full-projection maximum was
-0.051598. Windows Large exceeded 0.007 at 32 tokens (0.011738); its first
-layer showed a measurable Q/K/V accumulation difference. The independent
-CPU comparison and the next native Large candidate use the original stored
-half weights and widen these three projections. Keep both release gates open.
+The original three Compact Flash recipes exceeded 0.007 on the 1,014-token
+development input. The later Windows Compact graph with protected dense
+projections and compensated CUTLASS attention passed that input at 0.000145
+and the exposed TRAIN_Q543 close call at 0.000081. They are two scientific
+cases. Continue the fixed-width and complete Answer checks. Product use of
+the distinct attention arithmetic awaits the user's execution-identity decision.
+
+Windows Large's original T32 error was 0.011738. Protecting just its Q/K/V
+projections produced 0.014718 against that recipe's independent reference.
+Both chose the matching winner. The next treatment widens all seven body
+projections per layer and retains the original learned half weights and Flash
+attention. The Ubuntu static CUDA core and provider now link, and the first
+verified GNU service pair has zero product model requirements. Native Linux
+model qualification still follows Windows. The 98% paired comparison remains
+unmeasured. See the ledger for the exact source, image and run receipts.
 The 98% paired judged comparison remains unmeasured.
 
 Use the checked CAL restart procedure to reuse the installed models. The

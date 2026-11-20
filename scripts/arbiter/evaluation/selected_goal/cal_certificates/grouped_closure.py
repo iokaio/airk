@@ -8,13 +8,53 @@ PLAN = "airk.private.cal100-grouped-plan/1"
 OBSERVER = "80e8ca821bf6828314f7c0a0c9e3932c6634d9c1e594a6c0f417a0115b9dc301"
 
 
+TWO_PLAN = "airk.private.cal100-two-lifetime-plan/1"
+TWO_FIXTURE = "airk.private.cal100-two-lifetime-fixture/1"
+TWO_GROUPS = (tuple(range(7)), tuple(range(7,13)))
+PLAN_FOR_FIXTURE = {FIXTURE: PLAN, TWO_FIXTURE: TWO_PLAN}
+
+
+def shape(schema):
+    require(schema in (PLAN,TWO_PLAN), "unregistered grouped lifetime plan")
+    return TWO_GROUPS if schema == TWO_PLAN else GROUPS
+
+
+def check_capacity_basis(basis, prior, focus):
+    import runpy
+    from reference_inputs import digest
+    proof = HERE.parent/"cal_capture/dispatch_proof.py"
+    require(digest(proof.read_bytes()) == "75b370b0446e0be1946896cb8978e8028aed0fb939320d4c72426f40386ea027",
+            "changed native capacity proof")
+    read_dispatch = runpy.run_path(str(proof))["read_journal"]
+    require(set(basis) == {"phase_closures","observed","remaining","per_question_upper","group_upper"}
+            and len(basis["phase_closures"]) == 11, "incorrect capacity-only evidence scope")
+    dispatches = []
+    for i, pin in enumerate(basis["phase_closures"]):
+        lifetime = read(pin,prior/f"lifetime-{i:02}/lifetime-closure.json")
+        fixture = prior/f"lifetime-{i:02}/fixture"
+        require(read(lifetime["closed"],fixture/"closed.json")["service_lease_reacquired"] is True
+                and lifetime["dispatch"] == read_dispatch(fixture,focus,setup_only=False),
+                "original lifetime or capacity journal differs")
+        count = lifetime["dispatch"]["focus_dispatches"]
+        require(lifetime["schema"] == "airk.private.cal100-phase-lifetime/1" and lifetime["phase"] == i
+                and type(count) is int and 0 <= count <= 8*28, "wrong historical capacity counter")
+        dispatches.append(count)
+    observed = [sum(dispatches[:7]),sum(dispatches[7:])]
+    require(observed == basis["observed"] == [960,584] and basis["remaining"] == 12
+            and basis["per_question_upper"] == 28
+            and basis["group_upper"] == [observed[0],observed[1]+12*28] == [960,920],
+            "changed capacity estimates or recorder allowance")
+
+
 def check_plan(plan):
-    require(plan["phase_groups"] == [list(group) for group in GROUPS],
-            "grouped CAL must preserve 4/4/5 ordered original phase jobs")
+    require(plan["phase_groups"] == [list(group) for group in shape(plan["schema"])],
+            "grouped CAL must preserve the registered original phase partition")
     capture = HERE.parent/"cal_capture"
     expected = {capture/name for name in (
         "controller.py","prepare.py","phase.cjs","worker.cjs","window_scope.cjs","dispatch_proof.py","launch.py",
         "phased/capture.py","phased/lifetime.py","grouped/run_grouped.py","grouped/group_service.py","grouped/installation_mutex.py")}
+    if plan["schema"] == TWO_PLAN:
+        expected.add(capture/"grouped/two_lifetimes.py")
     expected.update((HERE.parents[3]/"provision-static-onnx-runtime.py", capture.parents[1]/"run_compact_answer.py",
                      capture.parent/"replay_cal_population.py",
                      HERE.parents[3]/"arbiter/analysis/public_source_admission/native_cohort_source_reads.py"))
@@ -24,6 +64,9 @@ def check_plan(plan):
         checked(ref)
     from reference_inputs import CAMPAIGN
     prior = CAMPAIGN/"cal100-focus1024-capture-r4"
+    if plan["schema"] == TWO_PLAN:
+        audit = read(plan["input_audit"])
+        check_capacity_basis(plan["capacity_basis"],prior,audit["profiles"]["arbiter-focus-qwen3-reranker-06b"])
     previous = read(plan["prior_attempt"],prior/"outer-owned.json")
     require(type(previous["exit_code"]) is int and previous["exit_code"] != 0
             and previous["owned_descendants_settled"] is True and previous["owned_job_final_active_processes"] == 0
@@ -69,7 +112,7 @@ def check_clocks(lifetime, rows, common):
 
 
 def check_group(directory, lifetime, group, plan, previous):
-    phases = list(GROUPS[group])
+    phases = list(shape(plan["schema"])[group])
     require(lifetime["schema"] == "airk.private.cal100-group-lifetime/1" and lifetime["group"] == group
             and lifetime["phases"] == phases and len(lifetime["phase_closures"]) == len(phases)
             and type(lifetime["end_ms"]) is int and previous <= lifetime["start_ms"] < lifetime["end_ms"],

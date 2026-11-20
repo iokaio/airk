@@ -62,4 +62,13 @@ rows and qualifies no profile.
 
 For a future completed grouped capture, the certificate reader verifies all 13 original phase Jobs across three distinct native lifetimes with 32, 32 and 36 questions. It checks the settled incomplete R4 predecessor, exact recorder source and per-lifetime admission limit, original phase and common deadlines, unique window grants, and the final publication and input census. Per-phase diagnostic files retain zero certificates until the whole cohort closes.
 
+The two-lifetime contingency has distinct plan and whole-fixture schema tags and
+groups the same 13 original phase jobs into 56 and 44 questions. Its capacity
+evidence reads 11 settled R4 native dispatch journals, checks 960 and 584
+observed admissions, and allows 28 for each of the 12 unobserved questions.
+The prospective 960 and 920 admissions fit each original 1,024 limit. All
+scientific question records, gains and native closures come from the fresh
+two-lifetime execution. The final verifier authenticates its 17 capture
+sources, original setup debit, per-phase clocks, and whole-installation mutex.
+
 A grouped capture also requires `--mutex-release-sha256` from its final `control-mutex-released.json`. This post-exit receipt binds the original acquire record, parent PID, original outer Job closure and the release time after all groups settle.

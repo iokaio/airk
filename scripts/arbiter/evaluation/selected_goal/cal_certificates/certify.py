@@ -146,7 +146,8 @@ def main():
     if not all((args.capture, args.outer_sha256, args.closure_sha256)):
         parser.error("supply a complete capture plus outer and fixture-closure SHA-256")
     closure = read(reference(args.capture/"fixture-closure.json",args.closure_sha256))
-    phased = closure.get("schema") in ("airk.private.cal100-phased-fixture/1","airk.private.cal100-grouped-fixture/1")
+    from grouped_closure import PLAN_FOR_FIXTURE
+    phased = closure.get("schema") in (*PLAN_FOR_FIXTURE,"airk.private.cal100-phased-fixture/1")
     if phased:
         events = phased_events(args.capture,args.outer_sha256,args.closure_sha256,audit,args.audit_sha256,
                                ids,sources,index_root,tasks,release_sha=args.mutex_release_sha256)
@@ -157,7 +158,7 @@ def main():
                                                           audit, sources, index_root, args.audit_sha256)
         events = question_events(args.capture, closure, census, ids, binding, answer, tasks, audit["pipeline"])
         custody = {"phase_census_sha256":closure["phase_census"]["sha256"]}
-    if closure["schema"] == "airk.private.cal100-grouped-fixture/1":
+    if closure["schema"] in PLAN_FOR_FIXTURE:
         custody["mutex_release_sha256"] = args.mutex_release_sha256
     rows = [certificate(e, tasks[e["id"]], audit, window, policy, ledger, utility) for e, window in events]
     require([r["id"] for r in rows] == ids, "incomplete CAL100")

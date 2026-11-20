@@ -25,6 +25,14 @@ class MemoryLedger:
 
 
 class GroupedClockTests(unittest.TestCase):
+    def test_grouped_schema_registers_exact_counts_and_partitions(self):
+        from grouped_closure import PLAN, TWO_PLAN, FIXTURE, TWO_FIXTURE, PLAN_FOR_FIXTURE, shape
+        self.assertEqual(PLAN_FOR_FIXTURE, {FIXTURE: PLAN, TWO_FIXTURE: TWO_PLAN})
+        self.assertEqual(shape(TWO_PLAN), (tuple(range(7)),tuple(range(7,13))))
+        self.assertEqual(shape(PLAN), (tuple(range(4)),tuple(range(4,8)),tuple(range(8,13))))
+        with self.assertRaises(ValueError):
+            shape("unregistered")
+
     def test_first_phase_pays_for_startup_and_final_phase_pays_for_shutdown(self):
         from grouped_closure import check_clocks
         lifetime = {"start_ms":10,"end_ms":200}

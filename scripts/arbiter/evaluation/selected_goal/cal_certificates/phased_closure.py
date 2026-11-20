@@ -48,13 +48,16 @@ def phased_events(root, outer_sha, fixture_sha, audit, audit_sha, ids, sources, 
     closure = read(reference(root/"fixture-closure.json",fixture_sha))
     plan = read(closure["plan"], root/"lifetime-plan.json")
     import grouped_closure as groups
-    grouped = closure["schema"] == groups.FIXTURE
-    shape = groups.GROUPS if grouped else tuple((phase,) for phase in range(13))
+    grouped = closure["schema"] in groups.PLAN_FOR_FIXTURE
+    shape = groups.shape(plan["schema"]) if grouped else tuple((phase,) for phase in range(13))
     if grouped:
         groups.check_plan(plan)
+        if plan["schema"] == groups.TWO_PLAN:
+            require(str(HERE.parent/"cal_capture/grouped/two_lifetimes.py") in outer["argv"],
+                    "wrong two-lifetime capture owner")
     require(settled(outer) and "--owned-plan-sha256" in outer["argv"] and str(root) in outer["argv"]
-            and closure["plan"]["sha256"] in outer["argv"] and plan["schema"]==(groups.PLAN if grouped else "airk.private.cal100-lifetime-plan/1")
-            and closure["schema"]==(groups.FIXTURE if grouped else "airk.private.cal100-phased-fixture/1") and plan["input_audit"]["sha256"]==audit_sha
+            and closure["plan"]["sha256"] in outer["argv"] and plan["schema"]==(groups.PLAN_FOR_FIXTURE[closure["schema"]] if grouped else "airk.private.cal100-lifetime-plan/1")
+            and (grouped or closure["schema"]=="airk.private.cal100-phased-fixture/1") and plan["input_audit"]["sha256"]==audit_sha
             and read(plan["input_audit"])==audit and plan["census"]==audit["census"] and read(plan["census"])["question_ids"]==ids
             and len(ids)==len(set(ids))==closure["ordered_questions"]==100 and len(closure["lifetimes"])==len(shape)
             and plan["phase_ids"]==[ids[i:i+8] for i in range(0,100,8)],"incomplete or changed predeclaration")

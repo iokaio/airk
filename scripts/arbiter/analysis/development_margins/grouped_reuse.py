@@ -38,6 +38,29 @@ def check_release(release, acquired, outer, custody):
             "grouped owner, source custody or native process settlement differs")
 
 
+def group_layout(plan, freeze):
+    three = "airk.private.cal100-grouped-plan/1"
+    two = "airk.private.cal100-two-lifetime-plan/1"
+    require(plan["schema"] in (two, three), "unknown grouped CAL layout")
+    is_two = plan["schema"] == two
+    phases = [list(range(7)), list(range(7, 13))] if is_two else [list(range(4)), list(range(4, 8)), list(range(8, 13))]
+    require(plan["phase_groups"] == phases, "grouped phase order differs")
+    root = Path(__file__).resolve().parents[4]
+    base = root / "scripts/arbiter/evaluation/selected_goal/cal_capture"
+    names = ("controller.py", "prepare.py", "phase.cjs", "worker.cjs", "window_scope.cjs", "dispatch_proof.py", "launch.py",
+             "phased/capture.py", "phased/lifetime.py", "grouped/run_grouped.py", "grouped/group_service.py", "grouped/installation_mutex.py")
+    expected = [base / n for n in names] + [root / "scripts/provision-static-onnx-runtime.py", base.parents[1] / "run_compact_answer.py",
+        base.parent / "replay_cal_population.py", root / "scripts/arbiter/analysis/public_source_admission/native_cohort_source_reads.py"]
+    if is_two:
+        expected.append(base / "grouped/two_lifetimes.py")
+    frozen = {r["path"]: r for r in freeze["sources"]}
+    require(len(frozen) == len(freeze["sources"]) and len(plan["sources"]) == len(expected)
+            and {r["path"] for r in plan["sources"]} == {str(p) for p in expected}
+            and all(frozen.get(r["path"]) == r for r in plan["sources"]), "grouped source closure differs")
+    schema = "airk.private.cal100-two-lifetime-fixture/1" if is_two else "airk.private.cal100-grouped-fixture/1"
+    return len(phases), schema
+
+
 def verify(campaign, release_sha, custody_sha, installation):
     r5 = campaign / "cal100-focus1024-capture-r5"
     release, _ = read(r5 / "control-mutex-released.json", release_sha)
@@ -46,13 +69,13 @@ def verify(campaign, release_sha, custody_sha, installation):
     outer = pinned_at(release["outer"], r5 / "outer-owned.json")
     custody, custody_pin = read(campaign / "cal100-focus1024-capture-r5-custody.json", custody_sha)
     check_release(release, acquired, outer, custody)
-    read(campaign / "cal100-focus1024-capture-r5-freeze.json", custody["freeze_sha256"])
+    freeze, _ = read(campaign / "cal100-focus1024-capture-r5-freeze.json", custody["freeze_sha256"])
     args = outer["argv"]
     require(args.count("--owned-plan-sha256") == 1 and args.count("--output") == 1
             and args[args.index("--output") + 1] == str(r5), "grouped original outer command differs")
     plan, plan_pin = read(r5 / "lifetime-plan.json", args[args.index("--owned-plan-sha256") + 1])
-    require(plan["installation"] == installation and plan["installation_mutex"] == release["acquired"]
-            and plan["phase_groups"] == [list(range(4)), list(range(4, 8)), list(range(8, 13))],
+    groups, fixture_schema = group_layout(plan, freeze)
+    require(plan["installation"] == installation and plan["installation_mutex"] == release["acquired"],
             "grouped installation, mutex or phase order differs")
     r4 = pinned_at(plan["prior_attempt"], campaign / "cal100-focus1024-capture-r4/outer-owned.json")
     require(r4["exit_code"] != 0 and r4["owned_descendants_settled"]
@@ -61,13 +84,13 @@ def verify(campaign, release_sha, custody_sha, installation):
     original = pinned_at(installation["ready"], campaign / "cal100-focus1024-capture-r3/fixture/ready.json")
     original_status = pinned_at(installation["status"], campaign / "cal100-focus1024-capture-r3/commands/cal-ready.stdout")
     folders = sorted(r5.glob("lifetime-[0-9][0-9]"))
-    require(0 < len(folders) <= 3 and folders == [r5 / f"lifetime-{i:02}" for i in range(len(folders))],
+    require(0 < len(folders) <= groups and folders == [r5 / f"lifetime-{i:02}" for i in range(len(folders))],
             "grouped lifetime roster incomplete or unordered")
     closures = None
     if outer["exit_code"] == 0:
         result, _ = read(r5 / "fixture-closure.json")
-        require(result["schema"] == "airk.private.cal100-grouped-fixture/1" and result["plan"]["sha256"] == plan_pin["sha256"]
-                and result["ordered_questions"] == 100 and len(result["lifetimes"]) == len(folders) == 3,
+        require(result["schema"] == fixture_schema and result["plan"]["sha256"] == plan_pin["sha256"]
+                and result["ordered_questions"] == 100 and len(result["lifetimes"]) == len(folders) == groups,
                 "successful grouped terminal lacks its native lifetimes")
         closures = result["lifetimes"]
     seen = {original["health"]["instance"]}
