@@ -126,3 +126,18 @@ workaround. Current retained-parent verification uses ../verification instead.
 Exact-file .gitattributes rules preserve authenticated source bytes, including
 CRLF, across Git filtering and fresh checkouts. Do not normalize protected files
 without deliberately updating their reviewed source/provenance identities.
+
+## Prospective Windows build on D
+
+Run `fresh_windows_d_job.py prepare` from the reviewed, DCO-signed checkout.
+It verifies the original CU15 archive, native and compiler inputs and writes
+a fresh bound recipe beneath the campaign receipt directory. Use the returned
+review SHA with `launch --sha256 SHA --other-host-gib N --other-disk-gib N
+--exclude-mask MASK` after reconciling outstanding reservations and the
+physical siblings used by calibration. The single owned Job checks measured
+volume growth, original request clocks and actual native compiler placement.
+The only allowed destination is `artifacts/v190/final-plan/cu18`. Source
+archives and installed compilers are read in place. The private receipt
+records a prospective build and the ensuing environment verifier consumes
+the same version-six fields. Product projection and native execution have
+their own subsequent acceptance checks.

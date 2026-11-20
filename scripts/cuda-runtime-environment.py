@@ -63,7 +63,9 @@ def _fresh_bundle(destination, aggregate_pin, repo_root, deadline, runtime, core
             or not runtime._sha256(aggregate_pin["sha256"])):
         raise runtime.GpuProofUnavailable("exact fresh aggregate FilePin and absolute destination required")
     owners_root = repo / "scripts/cuda-static-runtime/build"
-    verifier = runtime.load(owners_root / "fresh_verify.py", "fresh_handoff_verifier")
+    prospective = repo / "artifacts/v190/final-plan/cu18"
+    owner_name = "fresh_windows_d.py" if destination == prospective else "fresh_verify.py"
+    verifier = runtime.load(owners_root / owner_name, "fresh_handoff_verifier")
     _fresh_check(deadline)
     facts = verifier.verify_receipt(aggregate_pin, deadline)
     _fresh_check(deadline)
