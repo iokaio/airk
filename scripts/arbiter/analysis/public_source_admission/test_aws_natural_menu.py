@@ -18,13 +18,15 @@ class NativeMenu(unittest.TestCase):
 
         def call(label, operation, args):
             messages.append((operation, args.copy()))
+            if operation == "airk_file_info":
+                return {"scope_observation": "scope", "path": "c", "content_hash": "pinned-c"}
             return pages.pop(0)
 
-        case = {"selector": {"menu": "documents/"}, "members": dict.fromkeys(["a", "b", "c", "ignored"]),
+        case = {"selector": {"menu": "documents/"}, "members": {p: {"sha256": "pinned-" + p} for p in ["a", "b", "c", "ignored"]},
                 "cases": [{"selector": "one", "source_path": "documents/c"}]}
         rows = capture["observe"](capture["COHORT"], [case], None, call)
-        self.assertEqual(messages[-1][1]["cursor"], "token")
-        self.assertEqual([op for op, _ in messages], ["airk_status", "airk_list_files", "airk_list_files"])
+        self.assertEqual(messages[2][1]["cursor"], "token")
+        self.assertEqual([op for op, _ in messages], ["airk_status", "airk_list_files", "airk_list_files", "airk_file_info"])
         return rows[0]
 
     def test_full_inventory(self):

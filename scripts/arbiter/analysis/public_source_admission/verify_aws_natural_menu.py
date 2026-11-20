@@ -62,7 +62,17 @@ def observe(cohort, cases, tree, call_tool):
                 "invalid native continuation")
         cursors.add(cursor)
         args = {**args, "cursor": cursor}
+    positive_paths = sorted({row["source_path"].removeprefix("documents/") for row in case["cases"]} & seen)
+    positive_files = {}
+    for position, path in enumerate(positive_paths):
+        info = call_tool(f"original-positive-{position:02d}", "airk_file_info",
+                         {"path": path, "response_mode": "full", "include_status": True})
+        expected_hash = case["members"][path]["sha256"]
+        require(info["scope_observation"] == scope and info["path"] == path
+                and info["content_hash"] == expected_hash, "original positive differs in full native publication")
+        positive_files[path] = expected_hash
     return [{"selector": case["selector"], "active_question_count": len(case["cases"]),
+             "visible_positive_file_hashes": positive_files,
              "native_scope": scope, "source_path_prefix": "documents/", "native_visible_paths": paths,
              "source_absent_from_native_inventory": sorted(case["members"].keys() - seen),
              "question_source_visibility": [{"selector": row["selector"],
