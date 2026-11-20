@@ -40,30 +40,49 @@ def require_proof(result, small, tier=None):
                 result["admission"]["candidate_pid"], "complete T8192 fit required at the exact floor")
 
 
-def candidate_samples(proof, admission):
+def candidate_samples(proof, admission, *, limit_field="job_limits", host_limit=32*GIB, require_shared_clock=False):
     owned = proof["owned"]
-    limits = owned["suspended_assignment"]["job_limits"]
-    require(limits["process_memory_limit_bytes"] == limits["job_memory_limit_bytes"] == 32*GIB,
-            "candidate original 32 GiB Job caps differ")
+    limits = owned["suspended_assignment"][limit_field]
+    require(limits["process_memory_limit_bytes"] == limits["job_memory_limit_bytes"] == host_limit,
+            "candidate original Job caps differ")
     observation = owned["before_GO"]["wddm"]
     require(observation["pid"] == admission["candidate_pid"] and
             observation["adapter_luid"] == admission["snapshot"]["dxgi"]["luid"], "candidate GPU/PID differs")
     rows = observation["samples"]
     positions = [i for i,row in enumerate(rows) if type(row["process"]["Dedicated Usage"]) is int
                  and row["process"]["Dedicated Usage"] > 0]
+    # PDH_NO_INSTANCE specifically identifies an absent process counter. INVALID_DATA
+    # has a different meaning and cannot establish zero shared use.
+    def checked_shared(row):
+        shared = row["process"]["Shared Usage"]
+        if type(shared) is int and shared >= 0:
+            return shared
+        fields = ("Dedicated Usage", "Shared Usage", "Total Committed")
+        if all(row["process"].get(key) is None and
+               row.get("process_counter_status", {}).get(key) == 0x800007d1 for key in fields):
+            return 0
+        return None
+    before_resume = observation.get("before_resume")
+    captured = ([before_resume] if isinstance(before_resume,dict) else []) + rows
+    all_shared = [checked_shared(row) for row in captured]
+    unavailable = sum(value is None for value in all_shared)
+    peak_shared = max((value for value in all_shared if value is not None), default=None)
+    shared_evidence = {"peak_shared_bytes":peak_shared,"unknown_shared_samples":unavailable,
+                       "all_process_samples":len(captured)}
     if not positions:
-        return {"verified":False, "reason":"no positive dedicated observation"}
+        return {**shared_evidence,"verified":False, "reason":"no positive dedicated observation"}
     values = rows[positions[0]:positions[-1]+1]
     times = [row["end_monotonic_ns"] for row in values]
-    counters = [row["counter_filetime_100ns"].get("process/Dedicated Usage") for row in values]
-    fresh = len(values) >= 2 and all(type(t) is int for t in counters) and all(
-        0 < b-a <= SAMPLE_NS for a,b in zip(times,times[1:])) and all(b > a for a,b in zip(counters,counters[1:]))
+    fields = ("Dedicated Usage","Shared Usage") if require_shared_clock else ("Dedicated Usage",)
+    series = [[row["counter_filetime_100ns"].get("process/"+field) for row in values] for field in fields]
+    fresh = len(values) >= 2 and all(0 < b-a <= SAMPLE_NS for a,b in zip(times,times[1:])) and all(
+        all(type(t) is int for t in counters) and all(b > a for a,b in zip(counters,counters[1:])) for counters in series)
     shared = [r["process"]["Shared Usage"] for r in values]
     local = [r["process"]["Dedicated Usage"] for r in values]
     known = all(type(v) is int for v in shared+local)
     peak = max(local) if known else None
-    return {"verified":fresh and known and all(v==0 for v in shared) and 0 < peak <= 24*GIB,
-            "peak_dedicated_bytes":peak,"peak_shared_bytes":max(shared) if known else None,
+    return {**shared_evidence,"verified":fresh and known and unavailable == 0 and peak_shared == 0 and 0 < peak <= 24*GIB,
+            "peak_dedicated_bytes":peak,
             "observations":len(values),"continuous_samples":fresh}
 
 

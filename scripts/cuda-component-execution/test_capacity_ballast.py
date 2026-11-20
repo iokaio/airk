@@ -34,6 +34,57 @@ class BallastControls(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,"reserve"):
                 reserve(dict(observed,**{field:observed[field]-1}),4*worker.GIB)
 
+    def test_inherited_sizing_channel_preserves_separate_grants(self):
+        import json
+        import subprocess
+        import tempfile
+        # The first child reads the same inherited regular-file handle twice. A
+        # loopback socket only signals publication; both grants arrive on stdin.
+        import socket
+        with tempfile.TemporaryFile(mode="w+b",buffering=0) as channel, socket.socket() as listener:
+            listener.bind(("127.0.0.1",0))
+            listener.listen(1)
+            listener.settimeout(5)
+            program = """import socket,sys,runpy,time
+worker=runpy.run_path(sys.argv[1])
+with socket.create_connection(('127.0.0.1',int(sys.argv[2])),timeout=5) as s:
+    for ordinal in (1,2):
+        assert s.recv(1)==b'G'
+        grant=worker['read_pressure_grant'](sys.stdin.buffer.raw,'test',ordinal,ordinal*64,time.monotonic_ns())
+        s.sendall(bytes([grant['nvidia']]))
+"""
+            child = subprocess.Popen([sys.executable,"-I","-B","-S","-c",program,worker.__file__,
+                                      str(listener.getsockname()[1])],stdin=channel)
+            try:
+                with listener.accept()[0] as sync:
+                    sync.settimeout(5)
+                    for ordinal in (1,2):
+                        channel.seek(0)
+                        channel.truncate()
+                        channel.write(json.dumps(dict(nonce="test",sequence=ordinal,touched=ordinal*64,
+                                                      sample_start_ns=time.monotonic_ns(),nvidia=ordinal)).encode())
+                        sync.sendall(b"G")
+                        self.assertEqual(sync.recv(1),bytes([ordinal]))
+                self.assertEqual(child.wait(timeout=5),0)
+            finally:
+                if child.poll() is None:
+                    child.kill()
+                    child.wait(timeout=5)
+
+    def test_pressure_sizing_uses_tighter_observed_counter_and_rechecks(self):
+        g, m = worker.GIB, worker.MIB
+        maximum = 32*g
+        # Real 16 GiB refusal: CUDA alone was above the floor while both independent counters were below.
+        with self.assertRaisesRegex(ValueError, "floor"):
+            worker.pressure_step((17245929472,16061*m,16832385024),16,32639025152,maximum)
+        self.assertEqual(worker.pressure_step((40*g,39*g,38*g),16,0,maximum),2*g)
+        for independent in ((16*g+300*m,17*g),(17*g,16*g+300*m)):
+            self.assertEqual(worker.pressure_step((17*g,*independent),16,29*g,maximum),236*m)
+        self.assertEqual(worker.pressure_step((17*g,16*g+64*m,17*g),16,30*g,maximum),0)
+        for observations,total in (((16*g,17*g,17*g),31*g),((17*g,17*g,17*g),maximum)):
+            with self.assertRaisesRegex(ValueError,"no bounded increment"):
+                worker.pressure_step(observations,16,total,maximum)
+
     def test_all_tiers_bounded(self):
         for floor in (6,8,12,16,24):
             size = worker.initial_allocation(47*worker.GIB,floor,(48-floor)*worker.GIB)

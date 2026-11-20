@@ -49,6 +49,30 @@ def initial_allocation(free, tier, maximum):
     return size
 
 
+def read_pressure_grant(raw, nonce, sequence, touched, now):
+    raw.seek(0)
+    grant = json.loads(raw.read(4096))
+    require(grant["nonce"] == nonce and grant["sequence"] == sequence and grant["touched"] == touched
+            and 0 <= now-grant["sample_start_ns"] <= 3_000_000_000,
+            "stale or mismatched pressure sizing")
+    return grant
+
+
+def pressure_step(free, tier, touched, maximum):
+    """Size one bounded increment from contemporaneous independent estimates."""
+    require(tier in TIERS and 0 <= touched <= maximum <= (48-tier)*GIB
+            and len(free) == 3 and all(type(n) is int and n >= tier*GIB for n in free),
+            "observed floor or ballast limit lost")
+    cuda, nvidia, wddm = free
+    if min(nvidia, wddm) <= tier*GIB + WINDOW:
+        require(touched > 0, "initial pressure floor already occupied")
+        return 0
+    excess = min(cuda, nvidia, wddm) - (tier*GIB + WINDOW//2)
+    amount = min(2*GIB, excess//MIB*MIB, maximum-touched)
+    require(amount > 0, "no bounded increment reaches the independent tier window")
+    return amount
+
+
 def bind(lib, name, ret, *args):
     fn = getattr(lib, name)
     fn.restype, fn.argtypes = ret, args
@@ -94,9 +118,13 @@ def run(args):
         verify(path, sha)
     calibration = args.commit_calibration
     require(not calibration or (args.small and args.maximum == 2*GIB), "model-free 2 GiB calibration required")
-    accounting = runpy.run_path(str(Path(__file__).with_name("ballast_host_commit.py"))) if calibration else None
+    pressure_reserve = args.pressure_host_reserve
+    require(pressure_reserve is None or (not args.small and not calibration and pressure_reserve >= 16*GIB),
+            "original pressure trial and candidate host reserve required")
+    host_limit = 4*GIB if calibration else args.maximum + 2*GIB
+    accounting = runpy.run_path(str(Path(__file__).with_name("ballast_host_commit.py"))) if calibration or pressure_reserve is not None else None
     def host_sample():
-        return {"host":accounting["worker"]()} if calibration else {}
+        return {"host":accounting["worker"](host_limit)} if accounting else {}
     remaining(args.deadline_ns)
     require(args.tier in TIERS and 0 < args.maximum <= (48 - args.tier) * GIB and
             (not args.small or args.maximum == (2*GIB if calibration else SMALL)), "unreviewed ballast bounds")
@@ -148,17 +176,36 @@ def run(args):
         require(wait(events[0], remaining(args.deadline_ns)) == 0 and wait(events[1], 0) == 258,
                 "allocation gate unavailable")
         free, total = memory()
-        target = args.maximum if args.small else initial_allocation(free, args.tier, args.maximum)
+        target = args.maximum if args.small or pressure_reserve is not None else initial_allocation(free, args.tier, args.maximum)
+        batch_end = sequence = 0
         touched = 0
-        while touched < target:
+        while touched < target or pressure_reserve is not None:
             remaining(args.deadline_ns)
+            if pressure_reserve is not None and touched == batch_end:
+                sequence += 1
+                require(sequence <= 64, "pressure sizing round limit reached")
+                free, _ = memory()
+                emit("sizing", sequence=sequence, touched=touched, free=free)
+                require(wait(events[0], remaining(args.deadline_ns)) == 0 and wait(events[1], 0) == 258,
+                        "pressure sizing not authorized")
+                grant = read_pressure_grant(sys.stdin.buffer.raw, nonce, sequence, touched, time.monotonic_ns())
+                free, _ = memory()
+                observed = (free, grant["nvidia"], grant["wddm"])
+                increment = pressure_step(observed, args.tier, touched, args.maximum)
+                emit("sized", sequence=sequence, touched=touched, free=free, increment=increment)
+                if increment == 0:
+                    break
+                batch_end = touched + increment
             require(wait(events[1], 0) == 258, "ballast controller stopped allocation")
-            amount = min(CHUNK, target - touched)
+            amount = min(CHUNK, (batch_end if pressure_reserve is not None else target) - touched)
             available, _ = memory()
             require(available - amount >= (6 if args.small else args.tier) * GIB,
                     "insufficient measured headroom for next allocation")
-            if calibration:
-                accounting["reserve"](accounting["host"](), target - touched)
+            if accounting:
+                remaining_host = target - touched
+                if pressure_reserve is not None:
+                    remaining_host += pressure_reserve + 2*GIB
+                accounting["reserve"](accounting["host"](), remaining_host)
             address = ptr()
             try:
                 call(dll, "cuMemAlloc_v2", [p(ptr), size], ct.byref(address), amount)
@@ -200,6 +247,7 @@ if __name__ == "__main__":
     parser.add_argument("--luid", required=True)
     parser.add_argument("--nonce", required=True)
     parser.add_argument("--commit-calibration", action="store_true")
+    parser.add_argument("--pressure-host-reserve", type=int)
     parser.add_argument("--small", action="store_true")
     try:
         run(parser.parse_args())

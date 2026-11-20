@@ -69,6 +69,22 @@ def wait_until(event, deadline, why):
     require(left > 0 and event.wait(left), why)
 
 
+def pressure_headroom(host, reservation, candidate, private_resident):
+    private_commit = candidate["private_commit_bytes"]
+    require(type(private_commit) is int and 0 <= private_commit <= 16*GIB
+            and type(private_resident) is int and 0 <= private_resident <= min(private_commit,candidate["working_set_bytes"])
+            and reservation >= 16*GIB, "unverified suspended host charge")
+    pending_commit = reservation - private_commit
+    pending_physical = reservation - private_resident
+    available_commit = host["commit_limit_bytes"] - host["commit_bytes"]
+    require(available_commit >= pending_commit + 8*GIB and
+            host["physical_available_bytes"] >= pending_physical + 8*GIB,
+            "insufficient pre-resume physical or commit reserve")
+    return {"host":host, "outstanding_other_bytes":reservation-16*GIB, "candidate_private_commit_bytes":private_commit,
+            "candidate_private_working_set_bytes":private_resident,"pending_commit_bytes":pending_commit,
+            "pending_physical_bytes":pending_physical,"minimum_spare_bytes":8*GIB}
+
+
 class Gate:
     def __init__(self, tier, small, deadline, luid):
         self.tier, self.small, self.deadline, self.luid = tier, small, deadline, luid
@@ -76,9 +92,13 @@ class Gate:
         self.end = threading.Event()
         self.lock = threading.Lock()
         self.latest = self.held = self.baseline = self.error = self.admission = None
+        self.host_accounting = self.host_reservation = None
+        self.attempt = None
         self.rows = []
+        self.sizing = []
+        self.log_limit = 65536
 
-    def authorize(self, candidate_pid, child_deadline):
+    def authorize(self, candidate_pid, child_deadline, baseline=None):
         require(type(candidate_pid) is int and candidate_pid > 0 and time.monotonic() < child_deadline <= self.deadline
                 and not self.small and self.admission is None, "one native admission per floor trial")
         captured = snapshot(None)
@@ -87,21 +107,31 @@ class Gate:
                     and self.latest and time.monotonic_ns() - self.latest["end_monotonic_ns"] <= SAMPLE_NS
                     and captured["dxgi"]["luid"] == self.luid and
                     resident(self.latest, self.baseline, self.held["touched"]), "stale/nonresident pre-resume measurement")
-            self.admission = {"candidate_pid":candidate_pid, "child_deadline":child_deadline, "observed_monotonic_ns": time.monotonic_ns(), "snapshot": captured,
+            reserve_evidence = {}
+            if self.host_accounting is not None:
+                require(isinstance(baseline,dict), "suspended candidate host sample missing")
+                # The ballast is already resident. The suspended process's entire working set
+                # includes shareable image pages; credit only proven private resident bytes.
+                reserve_evidence["pre_resume_host"] = pressure_headroom(
+                    self.host_accounting["host"](), self.host_reservation, baseline,
+                    baseline.get("private_working_set_bytes", 0))
+            self.attempt = {"candidate_pid":candidate_pid, "observed_monotonic_ns":time.monotonic_ns(),
+                            "snapshot":captured, "sample":self.latest, "cuda_held":self.held, **reserve_evidence}
+            self.admission = {**reserve_evidence, "candidate_pid":candidate_pid, "child_deadline":child_deadline, "observed_monotonic_ns": time.monotonic_ns(), "snapshot": captured,
                               "bytes": headroom(captured, self.latest, self.held, self.tier),
                               "sample": self.latest}
         return self.admission
 
 
-def json_events(log):
-    require(log.stat().st_size <= 65536, "unexpected worker output size")
+def json_events(log, maximum_bytes=65536):
+    require(log.stat().st_size <= maximum_bytes, "unexpected worker output size")
     data = log.read_bytes()
     return [json.loads(line) for line in data.split(b"\n")[:-1] if line.strip()]
 
 
 def terminal(messages, accepted, stopping, pid):
     progress = [v for v in messages if v["kind"] == "chunk"]
-    stages = [v for v in messages if v["kind"] != "chunk"]
+    stages = [v for v in messages if v["kind"] not in ("chunk", "sizing", "sized")]
     errors = [v for v in stages if v["kind"] == "worker_failure"]
     if errors:
         require(len(errors) == 1 and stages[-1] == errors[0], "ambiguous CUDA worker error")
@@ -115,7 +145,8 @@ def terminal(messages, accepted, stopping, pid):
     return {"worker_pid": pid, "messages": messages}
 
 
-def monitor(api, info, deadline, gate, events, log, set_event):
+def monitor(api, info, deadline, gate, events, log, set_event, channel, nonce):
+    answered = 0
     baseline_since = held_since = None
     opened = accepted = stopping = False
     last_counter = None
@@ -130,7 +161,7 @@ def monitor(api, info, deadline, gate, events, log, set_event):
                 row = sampler.sample()
                 gate.rows.append(row)
                 require(len(gate.rows) <= 5000, "sample bound exceeded")
-                messages = json_events(log)
+                messages = json_events(log, gate.log_limit)
                 context = next((v for v in messages if v["kind"] == "context"), None)
                 held = next((v for v in messages if v["kind"] == "held"), None)
                 values = row["process"]
@@ -143,10 +174,35 @@ def monitor(api, info, deadline, gate, events, log, set_event):
                         require(context["uuid"] == UUID and context["luid"] == gate.luid, "worker GPU differs")
                         require(set_event(events[0]), "could not authorize allocation")
                         opened = True
+                if opened and not stopping and gate.host_accounting is not None:
+                    request = next((v for v in messages if v["kind"] == "sizing" and v["sequence"] > answered), None)
+                    if request and (request["touched"] == 0 or resident(row,gate.baseline,request["touched"])):
+                        require(request["sequence"] == answered+1 <= 64, "pressure sizing order differs")
+                        start = time.monotonic_ns()
+                        current = snapshot(None)
+                        adapter = current["dxgi"]
+                        card = current["nvidia_smi_mib"]
+                        require(adapter["luid"] == gate.luid and card["uuid"] == "GPU-"+UUID and
+                                card["driver_model.current"] == "WDDM" and card["driver_version"] == "597.06",
+                                "pressure sizing adapter differs")
+                        grant = {"nonce":nonce, "sequence":request["sequence"], "touched":request["touched"],
+                                 "sample_start_ns":start, "nvidia":card["memory.free"]*MIB,
+                                 "wddm":adapter["dedicated_video_bytes"]-current["wddm_bytes"]["adapter"]["DedicatedUsage"]}
+                        gate.sizing.append({"request":request, "snapshot":current, "completed_ns":time.monotonic_ns(),
+                                            "grant":grant})
+                        channel.seek(0)
+                        channel.truncate()
+                        channel.write(json.dumps(grant).encode("ascii")+b"\n")
+                        channel.flush()
+                        require(set_event(events[0]), "could not authorize bounded pressure increment")
+                        answered += 1
                 if opened and not stopping and type(values["Shared Usage"]) is int:
                     require(values["Shared Usage"] <= gate.baseline["Shared Usage"],
                             "ballast shared usage increased during allocation or hold")
                 if held and opened and not stopping:
+                    if gate.host_accounting is not None:
+                        row["held_host"] = gate.host_accounting["host"]()
+                        gate.host_accounting["reserve"](row["held_host"], 0)
                     ticks = row["counter_filetime_100ns"].get("process/Dedicated Usage")
                     if accepted:
                         require(type(ticks) is int and ticks > last_counter and gate.latest is not None and
@@ -172,7 +228,7 @@ def monitor(api, info, deadline, gate, events, log, set_event):
                     stopping = True
                 rc = api.WaitForSingleObject(info.process, 100)
                 require(rc in (0, 258), "ballast process wait failed")
-        messages = json_events(log)
+        messages = json_events(log, gate.log_limit)
         return terminal(messages, accepted, stopping, int(info.pid)), []
     except BaseException as error:
         with gate.lock:
@@ -183,15 +239,23 @@ def monitor(api, info, deadline, gate, events, log, set_event):
         raise
 
 
-def run(out, tier, maximum, *, small=False, trial=None, calibration=False):
+def run(out, tier, maximum, *, small=False, trial=None, calibration=False, pressure_host_reserve=None):
     require(os.name == "nt" and sys.flags.isolated and sys.flags.no_site and sys.dont_write_bytecode and
             Path(sys.executable) in PINS, "checked isolated Windows Python required")
     require(not calibration or (small and maximum == 2*GIB), "bounded 2 GiB allocation calibration required")
-    host_limit = (4 if calibration else 2) * GIB
-    accounting = runpy.run_path(str(HERE/"ballast_host_commit.py")) if calibration else None
-    before_host = accounting["host"]() if calibration else None
-    if calibration:
-        accounting["reserve"](before_host, host_limit)
+    pressure = pressure_host_reserve is not None
+    if pressure:
+        require(not small and not calibration and type(pressure_host_reserve) is int
+                and pressure_host_reserve >= 16*GIB, "original model trial and pending host reservation required")
+        calibration_file = CAMPAIGN/"compact-capacity-commit-calibration-r1/execution.json"
+        verify(calibration_file, "4b5716f0ef4f97e74148994554260f7b48b1b2f76d3c74748cc46d15849ff997")
+        host_limit = maximum + 2*GIB
+    else:
+        host_limit = (4 if calibration else 2) * GIB
+    accounting = runpy.run_path(str(HERE/"ballast_host_commit.py")) if calibration or pressure else None
+    before_host = accounting["host"]() if accounting else None
+    if accounting:
+        accounting["reserve"](before_host, host_limit + (pressure_host_reserve or 0))
     require(tier in TIERS and (maximum == (2*GIB if calibration else SMALL) if small else 0 < maximum <= (48 - tier)*GIB) and
             ((small and trial is None) or (not small and callable(trial))), "small proof or reviewed candidate required")
     require(out.is_absolute() and out.parent == CAMPAIGN and not out.exists() and
@@ -214,6 +278,10 @@ def run(out, tier, maximum, *, small=False, trial=None, calibration=False):
     require(initial["nvidia_smi_mib"]["driver_version"] == "597.06", "driver version differs")
     luid = initial["dxgi"]["luid"]
     gate = Gate(tier, small, deadline, luid)
+    if pressure:
+        gate.host_accounting, gate.host_reservation = accounting, pressure_host_reserve
+        # A host sample accompanies each of at most 168 bounded allocation chunks.
+        gate.log_limit += 512 * ((maximum + 256*MIB - 1) // (256*MIB))
     nonce = str(uuid.uuid4())
     kernel = ct.WinDLL(str(SYSTEM / "kernel32.dll"), use_last_error=True)
     create = bind(kernel, "CreateEventW", wt.HANDLE, ct.c_void_p, wt.BOOL, wt.BOOL, wt.LPCWSTR)
@@ -231,6 +299,8 @@ def run(out, tier, maximum, *, small=False, trial=None, calibration=False):
         args.append("--small")
     if calibration:
         args.append("--commit-calibration")
+    if pressure:
+        args.extend(["--pressure-host-reserve", pressure_host_reserve])
     args = list(map(str, args))
     image = pin(Path(sys.executable))
     result = {"complete": False, "tier_gib": tier, "small_model_free": small, "maximum_bytes": maximum,
@@ -238,15 +308,17 @@ def run(out, tier, maximum, *, small=False, trial=None, calibration=False):
               "source_pins": [pin(p) for p in (Path(__file__), HERE/"wddm_process_samples.py",
                               HERE/"wddm_capacity_snapshot.py", HELPER)], "driver_and_runtime_pins": {str(p): v for p,v in PINS.items()},
               "host_equivalence": False, "qualification": False, "samples": gate.rows}
-    if calibration:
+    if accounting:
         result.update(host_before=before_host, ballast_job_limit_bytes=host_limit,
-                      commit_calibration=True, host_accounting_source=pin(HERE/"ballast_host_commit.py"))
+                      commit_calibration=calibration, host_accounting_source=pin(HERE/"ballast_host_commit.py"))
+    if pressure:
+        result.update(pressure_host_reserve=pressure_host_reserve, prior_commit_calibration=pin(calibration_file))
     events = []
     thread = None
     try:
         for op in ("go", "stop"):
             ct.set_last_error(0)
-            handle = create(None, True, False, "Local\\airk-ballast-" + nonce + "-" + op)
+            handle = create(None, not (pressure and op == "go"), False, "Local\\airk-ballast-" + nonce + "-" + op)
             require(handle and ct.get_last_error() != 183, "new event required")
             events.append(handle)
         def before(api, job, info, expires):
@@ -265,7 +337,7 @@ def run(out, tier, maximum, *, small=False, trial=None, calibration=False):
                     result["job"] = owner["run_windows_owned_training"](
                         args, ROOT, capture, deadline-time.monotonic(), env, empty, host_limit,
                         before_resume=before, absolute_deadline=deadline,
-                        after_resume=lambda a,j,i,d: monitor(a,i,d,gate,events,log,signal))
+                        after_resume=lambda a,j,i,d: monitor(a,i,d,gate,events,log,signal,empty,nonce))
                 if not natural(result["job"]):
                     refused = result["job"].get("before_GO", {}).get("worker_error", {})
                     raise ValueError(refused.get("message", "ballast Job did not exit naturally"))
@@ -292,11 +364,14 @@ def run(out, tier, maximum, *, small=False, trial=None, calibration=False):
             for handle in events:
                 require(close(handle), "controller event close failed")
         result.update(admission=gate.admission, baseline=gate.baseline, held=gate.held, sample_error=gate.error)
+        if pressure:
+            result["pressure_sizing"] = gate.sizing
+            result["pre_resume_attempt"] = gate.attempt
         result["complete"] = (result["all_workers_joined"] and gate.error is None and "failure" not in result
                               and natural(result.get("job", {})) and time.monotonic() <= deadline)
         try:
             result["post_release"] = snapshot(None)
-            if calibration:
+            if accounting:
                 result["host_after"] = accounting["host"]()
         except Exception as error:
             result["complete"] = False
