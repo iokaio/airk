@@ -57,3 +57,15 @@ same `--first` and `--count`. Redirect its stdout only to a fresh checked
 private path. It checks both workers and every original card order and input
 against the GPU receipt, then reports matching and publisher raw error, mass
 drift and winner agreement separately.
+
+## R8 reuse of Compact scientific CUDA output
+
+Run `python -I -B -S r8_reuse.py` after the complete R8 compiler check. The
+reader validates all seven original R7 GPU receipts against the original graph
+and signed compiler inputs. It then compares the exact tensors and ordered
+card content to R8. Source evidence references resolve to the original hit
+text, citations and byte ranges before comparison. The private stdout receipt
+links the 56 matching vectors to their original Jobs. It executes zero model
+forwards and preserves the original timing, artifact and scientific identity.
+Capture stdout to a fresh checked private path. The 44 remaining CUDA rows
+and any missing CPU references still require scoring before the fit.

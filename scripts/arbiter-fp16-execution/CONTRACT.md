@@ -617,6 +617,16 @@ its SHA. Receipts include complete scores, separate publisher and matching
 comparisons, backend observations and OS Job limits. Q543 preserves the
 ranked actions and records whether the service applied a certificate.
 
+The completed R8 Compact CAL input mode uses the same native selector,
+candidate image and typed graph. The launcher independently pins the
+original compiler executable and the staged scorer copy, then verifies
+identical bytes and their original build and graph custody. Each new phase
+requires the complete R8 evidence certificate, both-model compiler receipt
+and selected phase's owned transcript and admissions. Reused R7 vectors
+retain their scientific receipt, with exact R8 compiled tensors and ordered
+source-resolved card equivalence proven separately. Each new phase retains
+the 120-second clock, 16 GiB host Job and 24 GiB device arena.
+
 Modes `fixed` and `mixed` consume the same-image graph and the sealed T8192
 receipt SHA via `--maximum-receipt-sha256`. The timing owner authenticates
 the original scores at all four widths. The native selector runs one

@@ -19,6 +19,7 @@ PREP_SHA = "bf26d16b2ed80595789441a941c9549aa5ae6fbbdeca3afb17b42aee3b73c501"
 MANIFEST_SHA = "9433753580c8a370bbea42119aa67ac81306229bcf6876514213f3e2979083b5"
 HOST = 4 << 30
 R7_CAL = ("r7-first56", "r7-full100")
+R8_CAL = "r8-full100"
 
 
 def native_output(raw):
@@ -130,7 +131,7 @@ def numerical(result, matching, original):
 
 
 def host_cap(mode, case, cal_epoch=None):
-    if mode == "cal" and cal_epoch in ("r5-first56", "r5-full100", *R7_CAL):
+    if mode == "cal" and cal_epoch in ("r5-first56", "r5-full100", *R7_CAL, R8_CAL):
         return 16 << 30
     if mode == "pressure-fit":
         return 12 << 30
@@ -223,8 +224,13 @@ def run(args, *, pressure=None):
         inputs.extend([timing_source,base.pin(HERE/"timing_control.py")])
     cal_mode = mode == "cal"
     if cal_mode:
-        r7_cal = args.cal_epoch in R7_CAL
-        source_name = "compact_cutlass_cal_r7.py" if r7_cal else "compact_cutlass_cal.py"
+        if args.cal_epoch == R8_CAL:
+            source_name = "compact_cutlass_cal_r8.py"
+        elif args.cal_epoch in R7_CAL:
+            source_name = "compact_cutlass_cal_r7.py"
+        else:
+            source_name = "compact_cutlass_cal.py"
+        checked_cal = args.cal_epoch in (*R7_CAL, R8_CAL)
         cal_source = base.pin(HERE / source_name)
         cal_owner = runpy.run_path(cal_source["path"])
         inputs.append(cal_source)
@@ -291,7 +297,7 @@ def run(args, *, pressure=None):
                     "independent publisher comparator changed")
         inputs += [matching_pin,*original_pins]
     if cal_mode:
-        options = {"audit": audit} if r7_cal else {}
+        options = {"audit": audit} if checked_cal else {}
         cal_inputs, phase_rows, cal_env = cal_owner["inputs"](args, CAMPAIGN, base, exact, **options)
         inputs.extend(cal_inputs)
         audit([Path(p["path"]) for p in cal_inputs])
@@ -431,7 +437,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode",choices=("operand","graph","score","seal","fixed","mixed","cal"),default="operand")
     parser.add_argument("--case",choices=("fixed","q543","32","128","1024","8192"),default="fixed")
-    parser.add_argument("--cal-epoch", choices=("r4-prefix64", "r5-first56", "r5-full100", *R7_CAL))
+    parser.add_argument("--cal-epoch", choices=("r4-prefix64", "r5-first56", "r5-full100", *R7_CAL, R8_CAL))
     parser.add_argument("--cal-phase", type=int, choices=range(13))
     parser.add_argument("--cal-compiler-sha256")
     parser.add_argument("--cal-projection-receipt-sha256")
