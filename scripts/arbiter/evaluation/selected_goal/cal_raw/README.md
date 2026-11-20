@@ -30,3 +30,42 @@ Use `close_scores.py --descriptor <private score job census> --sha256 <digest> -
 The original FP32 comparator reuses the kernel selector `selected_context_cal_complete_readout_raw_scores`. Run `close_original.py --descriptor <descriptor> --sha256 <digest>` with original_compiled, raw, owned_job and producer_binary pins after natural Job settlement. It verifies the suspended native image, original static-1024 capture, all 100 original ordinals and every eligible full-vector result. Its stdout is the private scientific CPU scoring closure. Use `python -I -B -S test_scientific.py` for zero-model corruption controls.
 `original_reference.py` can extract only the publisher FP32 vector from a previously closed matching/publisher reference Job for the exact target phase and ordinal. It compares the complete source and target request, captured scope, ordered cards and compiled inputs, then preserves five original publisher file pins, producer/runtime and the checked Job. The output can supply the original vector for another candidate's independent reference producer. The different candidate needs its own matching vector and actual native score before it can enter an artifact-specific fit.
 The first historical Compact QKV CPU result used the original `replay_compact_t1024_suffix.py` bytes identified by SHA-256 `2ccd33badbfddb795f34f0e52ffce0091f9290956336fc135b0657c029441ff0`. Reproduce it with the original authenticated source epoch and pinned dependencies. The launcher checks these bytes before running. A later graph or changed replay source requires its own reference producer and result.
+
+For the protected Windows Compact graph, `probe_compact_cutlass.py --mode cal`
+uses the normal authenticated native image, Cargo source snapshot and same-image
+`--graph-receipt` and `--graph-sha256` options. Select `--cal-epoch r4-prefix64
+--cal-phase 0` solely for the historical engineering phase. Select
+`r5-first56` or `r5-full100` with the exact native `--cal-compiler-sha256`
+and `--cal-projection-receipt-sha256` for fresh R5 rows. The shared launcher
+retains the original 120-second bound and 32 GiB campaign host ceiling. The R5 scorer uses a stricter 16 GiB process and Job cap. Both limits are recorded. Every original
+eligible forward binds the global source row to its 1-based phase-local
+journal operation, an authentic owned PID, unchanged remaining allowance and
+28 native efficient-attention kernel records. Rows with no request or a
+compiler refusal remain in their original positions. The receipt contains raw
+scientific activity and scores only. The R4 and R5 rows belong to separate
+epochs, and no score from the engineering phase enters the R5 fit.
+
+### Private Windows Compact CUTLASS Read study
+
+After the final R5 mutex release, prepare a private JSON descriptor with
+`first56`, `full` (original chronological projection receipts), `certificate`
+(the independent R5 reference preflight), ordered `provider` (all 13 phase
+execution receipts) and ordered `protected_matching` and `publisher_fp32`
+CPU batch receipt lists covering every original ordinal. Each reference has
+an absolute path and SHA-256. In the checked human shell run
+`python -I -B -S scripts/arbiter/evaluation/selected_goal/cal_raw/cutlass_study_inputs.py --descriptor <absolute-file> --sha256 <descriptor-sha> --output <empty-checked-campaign-directory>`.
+It authenticates both reference families, native placement and synchronized
+score journals, reproduces original signed-source gains and retains the
+original refusal rows and numeric comparison results.
+
+Use `run_cutlass_study.py` with the same three arguments to execute the study.
+Its descriptor wraps the original evidence descriptor as `evidence` and
+supplies `build`, `cargo_log` and `staged_images` pins (original
+receipt_runner Cargo JSON image build, Cargo log and matched staging list).
+The launcher regenerates the input, validates the originating Kernel source and
+image, runs the study in a bounded 120-second, 2 GiB Job, and emits
+`execution.json` with its source pins, ordinal outcomes and Job closure.
+The result reports the greatest native f32 cutoff at maximum certified coverage
+with zero uncertified admissions. A null cutoff records that the evidence
+supported no such admissions. Numeric qualification, semantic utility and
+product activation each require their own evidence.
