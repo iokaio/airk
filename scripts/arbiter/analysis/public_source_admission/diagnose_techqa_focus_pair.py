@@ -24,7 +24,7 @@ def model_view(text):
     return text.replace("\\", "\\\\").replace("<", "\\u003c").replace(">", "\\u003e")
 
 
-def diagnose():
+def diagnose(*, verify_1024=False):
     answer = RUN / "commands/answer.stdout"
     bound(answer, "9997a58787a9eed1e845b3d1941c499c63ad105549b0e80e377999cea9dbeaa0")
     packet = json.loads(answer.read_bytes())["structuredContent"]
@@ -69,18 +69,36 @@ def diagnose():
         refusal = str(error)
     else:
         refusal = None
-    return {"case": "DEV_Q002", "profile": PROFILE, "tokenizer_sha256": compiler["tokenizer"],
+    report = {"case": "DEV_Q002", "profile": PROFILE, "tokenizer_sha256": compiler["tokenizer"],
             "source_answer_sha256": hashlib.sha256(answer.read_bytes()).hexdigest(), "tokenizers_version": __version__,
             "query_bytes": len(query.encode()), "document_bytes": first["source_bytes"], "component_tokens": counts,
             "static_limit": compiler["max_tokens"], "pair_tokens": sum(counts), "reference_refusal": refusal,
             "model_forwards": 0, "production_observed_input_tokens": receipt["observed_input_tokens"]}
 
 
+    if verify_1024:
+        tokens = tuple(token for part in (recipe["PREFIX"], body, recipe["SUFFIX"]) for token in adapter.encode(part))
+        pair = recipe["compile_pair"](adapter, query_view, document_view, 1024)
+        padding = 1024 - len(tokens)
+        if not (padding >= 0 and pair.input_ids == (adapter.pad_token_id,) * padding + tokens
+                and pair.attention_mask == (0,) * padding + (1,) * len(tokens)
+                and pair.position_ids == tuple(range(1024)) and pair.observed_tokens == len(tokens)
+                and pair.padded_tokens == 1024):
+            raise ValueError("publisher compilation lost the full pair or its static position/padding contract")
+        report["publisher_1024"] = {"observed_tokens": len(tokens), "left_padding_tokens": padding,
+                                    "charged_pair_width": pair.padded_tokens,
+                                    "input_ids_sha256": hashlib.sha256(json.dumps(
+                                        pair.input_ids, separators=(",", ":")).encode()).hexdigest(),
+                                    "model_forwards": 0}
+    return report
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--verify-1024", action="store_true")
     args = parser.parse_args()
-    report = diagnose()
+    report = diagnose(verify_1024=args.verify_1024)
     if args.output:
         with args.output.open("x", encoding="utf-8", newline="\n") as stream:
             json.dump(report, stream, indent=2)

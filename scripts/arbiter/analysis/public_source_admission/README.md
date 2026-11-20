@@ -221,3 +221,8 @@ The run ended after its eight-call budget. No compiled prompt was available.
 retained publisher tokenizer and original source window. It reports component
 lengths, the tokenizer version and the separately observed native disposition.
 Use the reviewed Python environment with tokenizers installed.
+
+For the revised Focus profile, `diagnose_techqa_focus_pair.py --verify-1024`
+also compiles the exact observed pair with the publisher reference and verifies
+the complete untruncated IDs, mask, positions and left padding at 1,024.
+DEV_Q002 informed this width choice and is an engineering regression case.

@@ -660,3 +660,16 @@ outcomes remain unobserved. The positive-capture wrapper reported failure
 after the native service and its Job settled. Reconciliation of the original
 bytes preserved this zero-admission case. The private census SHA-256 is
 `196c0f35e6eb5444b4e18837197f2156583a05fcd42c20865260c365ae28d8b8`.
+
+### Focus width selection and exposure of DEV_Q002
+
+DEV_Q002's first Focus pair informed the decision to export a 1,024-token
+Focus candidate. Keep it in its historical screening denominator and use it
+as an engineering regression case. It cannot serve as untouched confirmation
+for that decision. The independent publisher compiler accepted all 858
+tokens, added 166 left-padding tokens and returned exactly 1,024 positions.
+The full input IDs, mask and positions matched the reconstructed source
+sequence and padding. Receipt SHA-256
+`9e10c9de4cc5ecae15f36e13560f6f96826b6d6c5aabde724200e1c305cf1279`.
+This replay used the pinned tokenizer with Python tokenizers 0.21.4 and
+issued no model forward.

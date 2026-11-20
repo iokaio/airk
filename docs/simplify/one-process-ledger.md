@@ -12882,3 +12882,12 @@ The full Admin suite passed 295 with two private capture cases skipped.
 One earlier Edge attempt passed its test body and reported a busy lockfile
 during cleanup. No installed FP16 model or end-to-end Auto selection was
 observed in these UI checks.
+
+The width decision requires a separate native 1,024 resource identity.
+Implement it in resource-policy/3 using the existing layout, 1,024 input
+tokens per Focus pair and a distinct schema/digest domain. Preserve /2's
+512-token canonical bytes and digest, the shared 8,192/120-second allocation
+and the existing external configuration and state layout. The check of the
+original DEV_Q002 pair retained all 858 publisher tokens and 166 padding
+positions in a 1,024-wide input. The case informed the width decision and
+is tracked as exposed. [Width and exposure audit](../arbiter/software-v2-data-audit.md#focus-width-selection-and-exposure-of-dev_q002)
