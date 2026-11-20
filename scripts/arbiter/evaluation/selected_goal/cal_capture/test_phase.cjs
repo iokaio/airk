@@ -9,7 +9,7 @@ const questions = ids.map(id => ({id, split: 'calibration', question: 'question 
 const publication = {collection:'a', token:'p'};
 const obs = {selection:{owner:'agent'}, qualifier:'selected_subset', fingerprint:'1'.repeat(64),
     members:[{index_id:'i',source_root_ids:['r']}]};
-const binding = {instance:'s', index_id:'i', source_root_ids:['r'], publication,
+const binding = {instance:'s', index_id:'i', source_root_ids:['r'], publication, scope_observation:obs,
     focus_manifest:'f', context_manifest:'c', pipeline:'sem'};
 const status = {read_scope:{source:'named',index_ids:['i']}, scope_observation:obs,
     collection:'a', publication:{token:'p'}};
@@ -23,6 +23,7 @@ test('matches all thirteen frozen phase ranges and refuses membership drift', ()
 test('checks token-only status with its collection, member and bound U110 fingerprint', () => {
     const bound = scopeBinding(status,binding);
     selected(status,bound);
+    assert.throws(()=>scopeBinding({...status,scope_observation:{...obs,fingerprint:'2'.repeat(64)}},binding),/authorize/);
     assert.throws(()=>scopeBinding({...status,collection:'b'},binding),/authorize/);
     assert.throws(()=>selected({...status,scope_observation:{...obs,fingerprint:'wrong'}},bound),/selection/);
 });

@@ -57,6 +57,7 @@ async function run(request, phase, ticket, originalSeconds) {
     need(fs.statSync(admitted).isDirectory() && fs.realpathSync.native(admitted).toLowerCase()===admitted.toLowerCase() &&
         !fs.existsSync(path.join(work,'closed.json')),'original observer fixture unavailable');
     const binding={index_id:row.index_id,instance:ready.health.instance,publication:row.publication,
+        scope_observation:row.status_result.structuredContent.scope_observation,
         source_root_ids:row.source_roots.map(r=>r.id),pipeline:audit.pipeline,
         focus_manifest:audit.profiles['arbiter-focus-qwen3-reranker-06b'],
         context_manifest:audit.profiles['arbiter-context-qwen3-17b']};
@@ -68,7 +69,8 @@ async function run(request, phase, ticket, originalSeconds) {
     const stop=()=>{poisoned=true; if(child && !closed) child.kill();};
     function check(ms) {
         need(!poisoned && performance.now()-start+ms < originalSeconds*1000 &&
-            Date.now()+ms < ticket.deadline_ms && !fs.existsSync(path.join(work,'closed.json')),
+            Date.now()+ms < ticket.deadline_ms && !fs.existsSync(path.join(work,'closed.json')) &&
+            !fs.existsSync(path.join(work,'composed-observer.closed.json')),
             'original phase or fixture no longer available');
     }
     const image={path:audit.inputs.cli.path,sha256:audit.inputs.cli.sha256,version:ready.health.version};

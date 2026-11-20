@@ -203,3 +203,11 @@ For the six ContextBench revision roots, run
 once for each base. Use a fresh `cb-<first-eight-base-hex>-native-source-reads-r1`
 directory per invocation. Each service records its own index, publication,
 cited paths and source hashes, along with withheld spans and shutdown.
+
+The single-request TechQA pre-dispatch pilot uses
+`prepare_techqa_predispatch_pilot.py` to freeze the original DEV_Q002
+request and 50 sources. Run
+`python -I -B -S scripts/arbiter/analysis/public_source_admission/run_techqa_predispatch_pilot.py --check-only`
+to verify the sealed inputs. Under the campaign's checked Windows owner,
+supply `--output <absolute-fresh-campaign-pilot-directory>` to run the native
+observer and retain its offered actions, prompt census and dispatch journal.

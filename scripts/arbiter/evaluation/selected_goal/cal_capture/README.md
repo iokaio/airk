@@ -31,6 +31,11 @@ Terminal judgments, reference certificates, model scores and fitted
 policies each need their own measured steps.
 
 Run the focused controls with `node --test test_phase.cjs` and
-`python -B -S test_owner.py`. The controls use synthetic records.
+`python -B -S test_owner.py` and `python -B -S test_dispatch_proof.py`.
+The controls use synthetic records. A full run pins each question to the
+original native scope observation. The final fixture closure links the
+ordered phase receipts and complete warm and dispatch journals. A missing
+or dropped record, a Context dispatch or a missing native charge release
+invalidates the capture.
 A retained command that lists one test proves fixture discoverability.
 A setup-only execution and a full capture have separate receipts.

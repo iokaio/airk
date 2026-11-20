@@ -12,6 +12,7 @@ import time
 
 from controller import AUDIT_SHA, CAMPAIGN, HERE, ROOT, capture, link, owned_module, require
 from prepare import SELECTOR, pin, read
+from dispatch_proof import read_journal
 
 EVALUATION = HERE.parents[1]
 spec = importlib.util.spec_from_file_location("compact_fixture", EVALUATION / "run_compact_answer.py")
@@ -214,8 +215,16 @@ def execute(output, node, *, setup_only):
     closed=native.read_json(work/"closed.json")
     require(closed["instance"]==ready["health"]["instance"] and closed["shutdown_completed"] is True and
             closed["service_lease_reacquired"] is True,"CAL fixture lease did not settle")
+    dispatch = read_journal(work, selected["focus"], setup_only=setup_only)
+    warm = native.read_json(work/"warm-completions.closed.json")
+    require(warm["observer_id"] == ready["warm_observer_id"] and warm["complete"] is True and
+            warm["dropped"] == 0 and warm["error"] is None and warm["records"] == warm["last_sequence"] == 2 and
+            warm["bytes"] == (work/"warm-completions.jsonl").stat().st_size, "incomplete warm recorder")
     native.write_json(output/"fixture-closure.json", {"instance":closed["instance"],"closed":link(work/"closed.json"),
-                      "live_request":link(request),"setup_only":setup_only,"fitted":False})
+                      "live_request":link(request),"setup_only":setup_only,"fitted":False,
+                      "dispatch":dispatch,"warm_summary":link(work/"warm-completions.closed.json"),
+                      "warm_journal":link(work/"warm-completions.jsonl"),
+                      "phase_census":None if setup_only else link(output/"phases.json")})
 
 
 def main():

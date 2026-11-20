@@ -49,7 +49,8 @@ function associate(record, answer, question, binding) {
 function scopeBinding(status, binding) {
     const observation = status.scope_observation;
     requireFact(status.read_scope?.source === 'named' && equal(status.read_scope.index_ids, [binding.index_id]) &&
-        observation?.selection?.owner === 'agent' && observation.qualifier === 'selected_subset' &&
+        equal(observation, binding.scope_observation) && observation?.selection?.owner === 'agent' &&
+        observation.qualifier === 'selected_subset' &&
         observation.members.length === 1 && observation.members[0].index_id === binding.index_id &&
         equal(observation.members[0].source_root_ids, binding.source_root_ids) &&
         typeof observation.fingerprint === 'string' && /^[a-f0-9]{64}$/.test(observation.fingerprint) &&

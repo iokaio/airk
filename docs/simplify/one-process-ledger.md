@@ -12715,3 +12715,19 @@ staged ranges, each on its own publication. Five cases have complete
 native-visible spans. Three adapter controls passed. The
 [data audit](../arbiter/software-v2-data-audit.md#native-reads-at-six-contextbench-revisions)
 records six input revisions, receipt identities, times and Tailwind exclusions.
+
+### CAL100 native dispatch controls and TechQA pre-dispatch pilot preparation
+
+The full CAL100 run started in cal100-live-capture-r1 with its original
+10,800-second lifetime. The controller checks native scope observations
+against the published binding throughout, and checks the final journal for
+every Focus reservation release and zero Context scoring. Nine Python and
+five Node controls passed in primary review. The earlier setup receipt
+only covers setup. The full run needs its own final closure.
+
+The single-request TechQA observer uses the original 50-document DEV_Q002
+menu and a separate service. Its private pilot descriptor digest is
+`d1bc5ae7f75c9a0574eb8c4bba53dcbfa7001927e58c476fb6f4bdd8ed9aadab`.
+The check-only run verified the request, source and profile identities
+without starting a model. Four control tests passed. An actual native run
+is needed to measure offered actions and prompt lengths.
