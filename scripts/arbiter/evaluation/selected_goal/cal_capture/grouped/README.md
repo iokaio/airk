@@ -138,3 +138,15 @@ latest native retirement of the shared installation. Retain its closure and
 mutex receipts for any later restart. This timing evidence does not qualify
 capture or calibration. Run the model-free controls with
 `python -I -B -S -m unittest discover -s . -p test_r8_phase_timing.py`.
+
+### Full capture after the isolated timing run
+
+From the checked Windows shell with the shared installation idle and volume
+monitoring enabled, run `python -I -B -S r8_full_capture.py --output
+<absolute cal100-focus1024-capture-r8 directory> --node <pinned Node path>`.
+Use a fresh empty campaign child. The launcher reopens the completed timing
+retirement, verifies the retained installation under the shared mutex, and
+captures the original 100 questions across the same two native lifetimes.
+It preserves the three-hour common limit, original setup debit and native
+request limits. Full completion produces both lifetime receipts, a fixture
+closure, a settled outer Job and mutex release.
