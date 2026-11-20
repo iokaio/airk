@@ -175,6 +175,15 @@ class LinuxInstallerContracts(unittest.TestCase):
         with patch.object(package, "MAX_INSTALLER_BYTES", 8), self.assertRaisesRegex(ValueError, "oversized"):
             package.verify_installer(archive, {"install.sh": hashlib.sha256(b"123456789").hexdigest()}, "package")
 
+    def test_cargo_build_metadata_is_accepted_only_in_the_notice_directory(self):
+        member = "notices/wasip2-1.0.4+wasi-0.2.12/LICENSE-Apache-2.0_WITH_LLVM-exception"
+        for name in (member, "payload/" + member, "notices/toml_parser-1.1.5+spec-1.1.0/LICENSE-MIT"):
+            self.assertEqual(package.safe_name(name), name)
+        for name in ("service/tool+other", "notices/wasip2+unversioned/LICENSE",
+                     "notices/wasip2-1.0.4+meta/../bad", "notices/crate-1.0.0+meta/LICENSE+other"):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                package.safe_name(name)
+
     def test_output_and_native_paths_remain_bounded_and_relative(self):
         for name in ("../foreign", "/absolute", "runtime/../airk", "runtime//airk", "runtime\\airk", "runtime/space name"):
             with self.subTest(name=name), self.assertRaises(ValueError):
@@ -228,6 +237,12 @@ FAKE_AIRK = b"""#!/bin/sh
 # Fictional setup role: records each call and answers --plan from the environment.
 operation=$4
 mode=${5:-complete}
+if [ "$mode" = --recovery-field ]; then
+    [ "$6" = wrapper-lease-held ] || exit 3
+    printf '%s\\n' wrapper-lease-held >> "$AIRK_FAKE_LOG"
+    printf '%s\\n' true
+    exit 0
+fi
 printf '%s\\n' "$mode" >> "$AIRK_FAKE_LOG"
 cp "$operation" "$AIRK_FAKE_LOG.${mode#--}.json"
 if [ "$mode" = --plan ]; then
@@ -380,6 +395,40 @@ class LinuxServiceInstaller(unittest.TestCase):
         self.assertIn("unsigned", readme)
         self.assertIn("gh attestation verify " + receipt["artifact"], readme)
 
+    def test_streamed_cuda_layout_matches_copied_tar_and_refuses_changed_members(self):
+        _, receipt = split_fixture(self.base)
+        runtime = self.base / "split-runtime"
+        cuda_files = {}
+        for name, data in (("airk-cuda-runtime.json", b"fixture descriptor"),
+                           ("libonnxruntime_providers_cuda.so", b"fixture provider")):
+            (runtime / name).write_bytes(data)
+            cuda_files[name] = package.native.sha256(runtime / name)
+        files = package.native.inventory(runtime)
+        cuda = {"projection": {"files": cuda_files}}
+        copied, streamed = self.base / "copied", self.base / "streamed"
+        copied.mkdir()
+        streamed.mkdir()
+        inventory, count = package.stage_service(runtime, files, receipt, copied, cuda=cuda)
+        observed, count2, sources = package.verified_runtime_layout(runtime, files, receipt, streamed, cuda_files=cuda_files)
+        self.assertEqual((observed, count2), (inventory, count))
+        self.assertEqual((copied / "payload.sha256").read_bytes(), (streamed / "payload.sha256").read_bytes())
+        self.assertEqual((copied / "payload/payload-inventory.json").read_bytes(),
+                         (streamed / "payload/payload-inventory.json").read_bytes())
+        real = package.native.inventory(copied)
+        self.assertEqual(set(real), set(package.native.inventory(streamed)) | set(sources))
+        self.assertEqual(sources["payload/service/libonnxruntime_providers_cuda.so"], runtime / "libonnxruntime_providers_cuda.so")
+        self.assertFalse((streamed / "payload/service").exists())
+        left, right = self.base / "copied.tar.gz", self.base / "streamed.tar.gz"
+        package.write_installer(copied, left, real, "package")
+        package.write_installer(streamed, right, real, "package", runtime_sources=sources)
+        self.assertEqual(left.read_bytes(), right.read_bytes())
+        (runtime / "libonnxruntime_providers_cuda.so").write_bytes(b"changed provider")
+        with self.assertRaisesRegex(ValueError, "payload digest differs"):
+            package.write_installer(streamed, self.base / "wrong.tar.gz", real, "package", runtime_sources=sources)
+        (runtime / "unlisted").write_bytes(b"extra")
+        with self.assertRaisesRegex(ValueError, "install inventory differs"):
+            package.native.validate_runtime(runtime, receipt["version"], package.TARGET, receipt["source"])
+
     def test_split_layout_refuses_files_outside_the_service_layout(self):
         runtime = self.base / "runtime"
         runtime.mkdir()
@@ -485,7 +534,7 @@ class LinuxServiceInstaller(unittest.TestCase):
         options = [f"--{role}-dir={path}/" for role, path in locations.items()]
         result, calls = self.run_installer(stage, "--yes", "--acknowledge-reset", *options, AIRK_FAKE_REMOVED="true")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(calls, ["--plan", "--prepare", "complete"])
+        self.assertEqual(calls, ["--plan", "wrapper-lease-held", "--prepare", "complete"])
         log = self.base / "airk.log"
         prepared = (Path(str(log) + ".prepare.json")).read_bytes()
         self.assertEqual(prepared, Path(str(log) + ".complete.json").read_bytes(), "placement resumes one operation")

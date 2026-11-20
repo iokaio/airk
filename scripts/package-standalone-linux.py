@@ -60,7 +60,9 @@ def entry_mode(name):
 
 def safe_name(name):
     if (not isinstance(name, str) or not name or len(name) > 4096
-            or not re.fullmatch(r"[A-Za-z0-9._/-]+", name)
+            or not (re.fullmatch(r"[A-Za-z0-9._/-]+", name)
+                    or re.fullmatch(r"(?:payload/)?notices/[A-Za-z0-9_-]+-[0-9]+\.[0-9]+\.[0-9]+"
+                                    r"(?:-[A-Za-z0-9.-]+)?\+[A-Za-z0-9.-]+/[A-Za-z0-9._/-]+", name))
             or name.startswith("/") or "//" in name
             or any(part in (".", "..", "") for part in name.split("/"))
             or str(PurePosixPath(name)) != name):
@@ -180,11 +182,11 @@ def verify_installer(archive, expected, directory_name):
         raise ValueError("Installer archive omits required payload")
 
 
-def write_installer(stage, archive, inventory, directory_name):
+def write_installer(stage, archive, inventory, directory_name, *, runtime_sources=None):
     with archive.open("xb") as output, gzip.GzipFile(filename="", mode="wb", fileobj=output, mtime=0) as compressed:
         with tarfile.open(fileobj=compressed, mode="w|", format=tarfile.GNU_FORMAT) as packaged:
             for name in sorted(inventory):
-                path = stage / name
+                path = (runtime_sources or {}).get(name, stage / name)
                 member = tarfile.TarInfo(directory_name + "/" + name)
                 member.size = path.stat().st_size
                 member.mode = entry_mode(name)
@@ -260,6 +262,10 @@ def payload_inventory(layout, version, admin_assets, target=TARGET, executables=
         if item.is_file():
             files[safe_name(item.relative_to(layout).as_posix())] = {"sha256": native.sha256(item),
                                                                     "bytes": item.stat().st_size}
+    return inventory_document(files, version, admin_assets, target, executables, signing)
+
+
+def inventory_document(files, version, admin_assets, target=TARGET, executables=None, signing=None):
     return {"schema": INVENTORY_SCHEMA, "version": version, "channel": "stable", "target": target,
             "executables": dict(executables or SERVICE_IMAGES), "files": files,
             "admin_assets": {"inventory_sha256": admin_assets["inventory_sha256"],
@@ -267,13 +273,20 @@ def payload_inventory(layout, version, admin_assets, target=TARGET, executables=
             "signing": dict(signing or LINUX_SIGNING)}
 
 
-def write_inventory(layout, inventory, stage):
+def write_inventory(layout, inventory, stage, *, runtime_sources=None):
     """Write payload-inventory.json into the layout and the payload.sha256 roster (every placed
     file and the inventory, as `payload/<path>`); returns the roster's file count."""
     (layout / "payload-inventory.json").write_text(json.dumps(inventory, indent=1) + "\n", encoding="utf-8",
                                                    newline="\n")
     names = [*inventory["files"], "payload-inventory.json"]
-    sums = "".join(f"{native.sha256(layout / name)}  payload/{name}\n" for name in sorted(names))
+    hashes = {}
+    for name, row in inventory["files"].items():
+        path = (runtime_sources or {}).get("payload/" + name, layout / name)
+        hashes[name] = native.sha256(path)
+        if hashes[name] != row["sha256"]:
+            raise ValueError("Payload member differs from its inventory: " + name)
+    hashes["payload-inventory.json"] = native.sha256(layout / "payload-inventory.json")
+    sums = "".join(f"{hashes[name]}  payload/{name}\n" for name in sorted(names))
     (stage / "payload.sha256").write_text(sums, encoding="utf-8", newline="\n")
     return len(names)
 
@@ -286,10 +299,26 @@ def stage_service(runtime, files, receipt, stage, *, cuda=None):
     return inventory, write_inventory(layout, inventory, stage)
 
 
-def package_candidate(native_directory, output, *, cuda=None):
+def verified_runtime_layout(runtime, files, receipt, stage, *, cuda_files=None):
+    mapping = layout_names(files, cuda_files=cuda_files)
+    sources, rows = {}, {}
+    for placed, name in sorted(mapping.items(), key=lambda entry: Path(entry[0]).parts):
+        path = runtime / name
+        rows[placed] = {"sha256": files[name], "bytes": path.stat().st_size}
+        sources["payload/" + placed] = path
+    inventory = inventory_document(rows, receipt["version"], receipt["admin_assets"])
+    layout = stage / "payload"
+    layout.mkdir()
+    count = write_inventory(layout, inventory, stage, runtime_sources=sources)
+    return inventory, count, sources
+
+
+def package_candidate(native_directory, output, *, cuda=None, verified_runtime=None):
     split = split_receipts().split_version(workspace_version())
     if cuda is not None and (not split or cuda["static_ort"]["target"] != TARGET):
         raise ValueError("Linux CUDA requires a current split runtime for this target")
+    if verified_runtime is not None and (not split or cuda is None):
+        raise ValueError("A verified runtime directory requires explicit Linux CUDA package evidence")
     templates = ROOT / "installers/linux" if split else ROOT / "installers/linux/presplit"
     source_paths = (Path(__file__).resolve(), templates / "install.sh.in", templates / "README.txt.in")
     installer_sources = {path.relative_to(ROOT).as_posix(): native.sha256(path) for path in source_paths}
@@ -302,7 +331,7 @@ def package_candidate(native_directory, output, *, cuda=None):
     stage.mkdir(); publish.mkdir()
     if split:
         return package_service(receipt, archive, native_directory, output, stage, publish, installer_sources,
-                               source_paths, **({"cuda": cuda} if cuda is not None else {}))
+                               source_paths, cuda=cuda, verified_runtime=verified_runtime)
     runtime_files = stage_runtime(archive, receipt, stage / "runtime")
     sums = "".join(f"{digest}  runtime/{name}\n" for name, digest in sorted(runtime_files.items()))
     (stage / "payload.sha256").write_text(sums, encoding="utf-8", newline="\n")
@@ -338,12 +367,24 @@ def package_candidate(native_directory, output, *, cuda=None):
     return installer
 
 
-def package_service(receipt, archive, native_directory, output, stage, publish, installer_sources, source_paths, *, cuda=None):
+def package_service(receipt, archive, native_directory, output, stage, publish, installer_sources, source_paths, *, cuda=None, verified_runtime=None):
     """Split mode: the AIRK Service tar.gz (plan section 9.4/9.5)."""
-    runtime = output / "runtime"
     options = {"cuda": cuda} if cuda is not None else {}
-    runtime_files = stage_runtime(archive, receipt, runtime, **options)
-    inventory, count = stage_service(runtime, runtime_files, receipt, stage, **options)
+    runtime_sources = {}
+    if verified_runtime is None:
+        runtime = output / "runtime"
+        runtime_files = stage_runtime(archive, receipt, runtime, **options)
+        inventory, count = stage_service(runtime, runtime_files, receipt, stage, **options)
+    else:
+        runtime = Path(verified_runtime).absolute()
+        if runtime != runtime.resolve(strict=True):
+            raise ValueError("Verified runtime directory is redirected")
+        runtime_files, executable = native.validate_runtime(runtime, receipt["version"], TARGET, receipt["source"], **options)
+        if (runtime_files != receipt["payload"] or executable != ("airk", "airkctl")
+                or runtime_files["airk-install.json"] != receipt["install_manifest_sha256"]):
+            raise ValueError("Verified runtime differs from the original native archive")
+        inventory, count, runtime_sources = verified_runtime_layout(
+            runtime, runtime_files, receipt, stage, cuda_files=cuda["projection"]["files"])
     directory_name = f"airk-{receipt['version']}-{TARGET}-installer"
     archive_name = directory_name + ".tar.gz"
     values = {"VERSION": receipt["version"], "ARCHIVE_NAME": archive_name, "DIRECTORY_NAME": directory_name,
@@ -354,8 +395,16 @@ def package_service(receipt, archive, native_directory, output, stage, publish, 
     (stage / "README.txt").write_text(render_template("README.txt.in", values), encoding="utf-8", newline="\n")
     (stage / "install.sh").chmod(0o755)
     payload = native.inventory(stage)
+    for name in runtime_sources:
+        if name in payload:
+            raise ValueError("Streamed runtime shadows a generated installer file")
+        payload[name] = inventory["files"][name.removeprefix("payload/")]["sha256"]
     artifact = publish / archive_name
-    write_installer(stage, artifact, payload, directory_name)
+    write_installer(stage, artifact, payload, directory_name, runtime_sources=runtime_sources)
+    if verified_runtime is not None:
+        native.runtime_builder().reverify_cuda_inputs(cuda)
+        if native.inventory(runtime) != receipt["payload"] or native.sha256(archive) != receipt["archive_sha256"]:
+            raise ValueError("Original native package changed during standalone assembly")
     installer = {"schema": "airk-standalone-installer/1", "version": receipt["version"], "target": TARGET,
                  "commit": receipt["commit"], "tree": receipt["tree"], "dirty_checkout": receipt["dirty_checkout"],
                  "cargo_lock_sha256": receipt["cargo_lock_sha256"],
@@ -381,11 +430,12 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--native-dir", type=Path, required=True, help="Verified package-native.py publish directory")
     parser.add_argument("--output", type=Path, default=ROOT / "artifacts/standalone" / TARGET)
+    parser.add_argument("--verified-runtime-dir", type=Path, help="Original or independently smoke-extracted Linux CUDA runtime")
     native.add_cuda_arguments(parser)
     args = parser.parse_args(argv)
     args.target = TARGET
     cuda = native.cuda_from_args(args, native.runtime_builder())
-    result = package_candidate(args.native_dir, args.output, **({"cuda": cuda} if cuda is not None else {}))
+    result = package_candidate(args.native_dir, args.output, cuda=cuda, verified_runtime=args.verified_runtime_dir)
     print(json.dumps({key: result[key] for key in ("artifact", "artifact_sha256", "installer_kind", "signing")}))
     return 0
 

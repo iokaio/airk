@@ -132,3 +132,30 @@ the static handoff, native product projection and actual native execution eviden
 The product layout puts the verified manifest, native ELF images and projected
 notice files next to `service/airk`. See [Linux FP16 qualification](FP16_QUALIFICATION.md)
 for the separate runtime, score and resource evidence.
+
+For the campaign's native debug pair, pass the original checkout receipt and
+digest to `shipping_source.py --base PATH --base-sha256 SHA`. It projects current
+source and all Rust embedded file inputs to the checked guest checkout, then
+compares the shipping source identity before and after. Use
+`shipping_notice_cache.py --source PATH --source-sha256 SHA` if Cargo's offline
+legal inventory also needs platform-conditional archives. The copier reads the
+existing human-owned archive cache and verifies each new archive against Cargo.lock.
+
+Run `shipping_build.py --source PATH --source-sha256 SHA --attempt N` with a fresh
+attempt. It runs the standard service builder with the verified Admin inventory
+and the native Linux static, projection and original-execution inputs. The
+output receipt records every staged file and the settled child. Use
+`shipping_archive.py native --build PATH --build-sha256 SHA --attempt N` to
+verify the pair, write a native ZIP, extract it independently and exercise the
+service and model smoke checks. With the resulting `--native PATH
+--native-sha256 SHA`, the `standalone` stage reuses that verified extraction
+to generate and independently re-read the complete installer tar. Large members
+retain their canonical placement, modes and checksum entries in the archive.
+
+The watchdog samples the guest filesystem, the physical C: free space and the
+original WSL VHD length every ten seconds. Both volumes retain the campaign's
+24 GiB total growth limit and 100 GiB projected free floor. Native packaging
+reserves one compressed and one extracted copy. Standalone streaming reserves
+one archive plus 64 MiB for its generated manifests and wrapper. The original
+three CUDA inputs, compiled pair and packaging-tool source remain independently
+identified. A model fit or activation requires its own native evidence.
