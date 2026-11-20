@@ -56,7 +56,20 @@ def body(envelope):
 
 def equivalent(a,b):
     keys=("collection","generation","execution","publication","guidance","hits","truncated","semantic_readiness","discovery_readiness")
-    focus=lambda r:{k:v for k,v in r["focus"]["receipt"].items() if k not in ("scope","input_digest","work")}
+    def focus(r):
+        receipt=r["focus"]["receipt"]
+        ranks=receipt["ranked_order"]
+        require(len(set(ranks))==len(ranks)==len(r["hits"]) and set(ranks)==set(receipt["original_order"]),
+                "Focus-to-delivered hit roster incomplete")
+        # NativeFocusRanking::reorder emits the final hits in ranked_order.
+        by_id={key:(hit["citation"],hit["text"],hit["truncated"]) for key,hit in zip(ranks,r["hits"],strict=True)}
+        stable={k:v for k,v in receipt.items() if k not in ("scope","input_digest","work")}
+        for name in ("original_order","ranked_order"):
+            stable[name]=[by_id[key] for key in receipt[name]]
+        for name in ("presentations","scores"):
+            stable[name]=[entry|{"candidate":by_id[entry["candidate"]]} for entry in receipt[name]]
+        stable["work"]={k:v for k,v in receipt["work"].items() if not k.endswith("_us")}
+        return stable
     return (all(a[k]==b[k] for k in keys) and focus(a)==focus(b)
             and a["scope_observation"]["members"]==b["scope_observation"]["members"]
             and a["source_verification"]["counts"]==b["source_verification"]["counts"])
@@ -75,6 +88,9 @@ def search_rows(plan,comparison,cli,index_id):
             pin=old["modes"][int(key[-1])]["stdout"]
             require(case["reference"]==pin,"wrong historical hybrid Search")
             original_path=OLD/"commands"/("search-"+key[-1]+".stdout")
+            old_work=OLD/"fixture"
+            window=old["modes"][int(key[-1])]
+            lo,hi=window["start_ms"],window["end_ms"]
             original=body(read(pin,original_path))
             old_command=json.loads(original_path.with_suffix(".command.json").read_bytes())
             require(old_command["exit_code"]==0 and json.loads(old_command["argv"][-1])==case["args"],"original hybrid query differs")
@@ -92,14 +108,42 @@ def search_rows(plan,comparison,cli,index_id):
             raw=events[j]
             require(case["reference_index"]==j and raw["kind"]=="native_exchange" and raw["argv"][2]=="search"
                     and json.loads(raw["argv"][4])==case["args"],"wrong original search argument or ordinal")
+            historical=events[j-1]
+            lo,hi=historical["start"]["unix_ms"],historical["end"]["unix_ms"]
+            old_work=AB/"fixture"
             original=body(json.loads(raw["result"]["stdout"]))
-        current=body(read(row["stdout"],RUN/"commands"/(label+".stdout")))
+        payload=read(row["stdout"],RUN/"commands"/(label+".stdout"))
         command=json.loads((RUN/"commands"/(label+".command.json")).read_bytes())
         args=command["argv"]
-        require(command["exit_code"]==0 and len(args)==12 and args[0]==cli and args[9]==index_id and args[1:4]==["--output","json","--service-runtime-dir"] and
-                Path(args[4]).samefile(E/"cal100-focus1024-capture-r3/fixture/control") and args[5:9]==["tools","call","airk_search","--index"] and
-                args[-2]=="--args" and json.loads(args[-1])==case["args"],"native search command changed")
+        require(command["exit_code"]==0,"Search did not complete")
+        if label.startswith("q"):
+            helper=PRODUCER.parent/"window_search.cjs"
+            require(plan["window_helper"]==seal(helper) and args==[plan["node"]["path"],str(helper),str(RUN/"plan.json"),seal(RUN/"plan.json")["sha256"],label],
+                    "different native session launch")
+            grant,status,search,release=payload
+            require(grant["kind"]=="window_grant" and grant["result"]["status"]=="scope" and
+                    release=={"kind":"window_release","result":{"status":"scope_released"}} and status["tool"]=="status" and
+                    status["result"]["exitCode"]==0 and search["tool"]=="search" and search["result"]["exitCode"]==0 and
+                    search["argv"]==raw["argv"] and (search["lo"],search["hi"])==(row["start_ms"],row["end_ms"]),
+                    "different window grant or original CLI invocation")
+            current=body(json.loads(search["result"]["stdout"]))
+            selected=body(json.loads(status["result"]["stdout"]))["scope_observation"]
+            require(selected==current["scope_observation"] and selected["selection"]["scope_identity"]==grant["result"]["scope_identity"],
+                    "Search escaped its issued grant")
+        else:
+            require(len(args)==12 and args[0]==cli and args[9]==index_id and args[1:4]==["--output","json","--service-runtime-dir"] and
+                    Path(args[4]).samefile(E/"cal100-focus1024-capture-r3/fixture/control") and
+                    args[5:9]==["tools","call","airk_search","--index"] and args[-2]=="--args" and json.loads(args[-1])==case["args"],
+                    "native search command changed")
+            current=body(payload)
         require(not row["different_fields"] and equivalent(current,original),"original Search stable outputs differ")
+        def native(work,start,end):
+            events=[json.loads(line) for line in (work/"composed-observer.jsonl").read_bytes().splitlines()]
+            return [(e["question_utf8_sha256"],e["profile_manifest"],e["tokens"],e["raw_score_bits"]) for e in events
+                    if e["kind"]=="score_returned" and start<=e["unix_ms"]<=end]
+        expected=native(old_work,lo,hi)
+        require(expected and len(expected)==row["focus_returns"] and expected==native(RUN/"fixture",row["start_ms"],row["end_ms"]),
+                "original Focus native question, token count or raw IEEE score changed")
 
 
 def verify(record, installation, audit_pin, *, live):

@@ -34,6 +34,33 @@ class Epoch(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"dedicated"):
             epoch.preflight(epoch.R5.parent,{},{},"0"*64)
 
+    def test_actual_candidate_projection_and_drift(self):
+        group=HERE.parent/"cal_capture/grouped"
+        sys.path.insert(0,str(group))
+        import r6_candidate, r6_effective_sources, r6_search_handoff
+        proof="060256cdb4d9a47004bb0b1a2ec1cf1796ccb563e34208c1d4bdd3111c13a257"
+        accepted=r6_candidate.checked_epoch(proof,r6_search_handoff.seal)
+        service="77e70341e1da84688c8b16bc992e25b3afed32d2d3e07639a6a5c69176eb0dfa"
+        epoch.audit_for_epoch(accepted["audit"],service)
+        self.assertEqual(accepted["audit"]["sha256"],"aa2dea22544689e785426e03d4fa4f657cfda6d5dbc86b682a8594be7bb680e1")
+        target=epoch.ROOT/"candidate-sources"
+        bytes_by_name=r6_candidate.projected(accepted,target)
+        legacy=epoch.read(self.original["input_audit"])
+        args=(HERE.parents[4],group.parent,target,accepted["audit"]["sha256"],Path(legacy["inputs"]["service"]["path"]).parent)
+        r6_effective_sources.verify(*args,bytes_by_name)
+        for name in bytes_by_name:
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                r6_effective_sources.verify(*args,bytes_by_name | {name:bytes_by_name[name]+b"\n"})
+
+    def test_genuine_search_stable_fields(self):
+        import sys
+        sys.path.insert(0,str(HERE.parent/"cal_capture/grouped"))
+        import r6_search_handoff as handoff
+        path=handoff.OLD/"commands/search-1.stdout"
+        body=handoff.body(handoff.read(handoff.seal(path),path))
+        self.assertTrue(handoff.equivalent(body,body))
+        self.assertFalse(handoff.equivalent(body,body|{"hits":[]}))
+
     def test_foreign_service_does_not_inherit_original_audit(self):
         with self.assertRaisesRegex(ValueError,"unbound service"):
             epoch.audit_for_epoch(self.original["input_audit"],"0"*64)
