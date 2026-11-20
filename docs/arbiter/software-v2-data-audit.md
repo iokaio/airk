@@ -400,6 +400,8 @@ needs a powered, clustered paired comparison on admitted inputs.
 
 ### Source validation results for the confirmation candidate pools
 
+This section records the original source screen and the earlier Q/K/V numerical candidate. For the current Windows and Linux release the matching-reference raw ceiling is 0.007. Subsequent Compact and Large scientific candidates have their own graph identities. The 24 ambiguous AWS cases are excluded. Of the 76 verified TechQA examples, one informed the Focus width change, leaving 75 with frozen publisher spans and ordered menus. Neither numerical parity nor source visibility measures the 98% paired Answer criterion. [Current campaign handoff](../agent-current-work.md) · [Accepted task-quality rule](final-plan.md#accepted-context-fp16-task-quality-qualification)
+
 The original TechQA DEV join verified 76 of 77 publisher answers at their
 exact Unicode scalar offsets in the original source. All 3,527 ordered-menu
 document IDs resolved across 28,482 archive entries. One in-bounds span
