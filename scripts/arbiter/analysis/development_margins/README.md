@@ -200,3 +200,24 @@ the real enrollment source roots, schema, current installed images and native
 profile calibration before writing its JSON to stdout.
 
 The Windows native resource policy check exercises the original compiled service fixture and its private foreground worker on a fresh D: control. Run windows_native_resource_policy.py with isolated Python and a new windows-native-resource-policy-private-rN output path. The checked six-GiB Windows Job retains service policy results separately from installed and model execution evidence.
+
+The original Q598 setup stopped before Answer submission. Run
+`recover_q598_control.py --preflight` to authenticate the original revision 11
+configuration, closed native lease, immutable receipts and physical R3 control.
+The checked recovery invocation takes the existing installation mutex, observes
+both real warm completions, requests idle stage status, shuts down the native
+service and records post-run custody. Its output contains zero Answer requests.
+
+Q598 attempt two observed the revision-13 Search handoff but stopped before
+Answer while the service still held its ready file open for writing. Pass
+that attempt’s `owned.json` and SHA-256 to `capture-owned.ps1 -CaseId
+TRAIN_Q598 -Attempt 3 -FocusWidth 1024`. The stopped-state verifier compares
+all 68 control files, the original service log, endpoint and every database
+table to the previous custody record. The original Search idle stage status
+is bound separately from attempt two’s actual warming status. The reader
+waits for Windows to release the writer before consuming native readiness. The Q598-only callback waits for each enabled
+stage to complete rehydration on the original service before source setup.
+The receipt retains that warm journal, original Answer disposition, live
+stage status when available, and native shutdown. Run
+`python -I -B -S test_q598_search_handoff.py` for the original recovery
+and stale-predecessor controls. This row belongs to the exposed TRAIN set.

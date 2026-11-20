@@ -28,7 +28,8 @@ def verified_control(run, owned_sha, capture):
     owner = inputs["load"](run / "owned.json", owned_sha)
     proof = owner.get("shared_installation")
     if proof is None:
-        require(run.name not in {"compact-development-TRAIN_Q564-focus1024-run-r3",
+        require(run.name not in {"compact-development-TRAIN_Q564-focus1024-run-r2",
+                                 "compact-development-TRAIN_Q564-focus1024-run-r3",
                                  "compact-development-TRAIN_Q598-focus1024-run-r1"},
                 "expected shared installation receipt missing")
         return run / "fixture/control"
@@ -69,7 +70,25 @@ def verified_control(run, owned_sha, capture):
     r4 = campaign / "cal100-focus1024-capture-r4/outer-owned.json"
     r5 = campaign / "cal100-focus1024-capture-r5/control-mutex-released.json"
     required_prior = {"TRAIN_Q564": (r4, r5),
-                      "TRAIN_Q598": (campaign / "compact-development-TRAIN_Q564-focus1024-run-r3/owned.json",)}
+                      "TRAIN_Q598": (campaign / "compact-development-TRAIN_Q564-focus1024-run-r2/owned.json",)}
+    search_run = run.name in ("compact-development-TRAIN_Q598-focus1024-run-r2","compact-development-TRAIN_Q598-focus1024-run-r3") and capture["case_id"] == "TRAIN_Q598"
+    if search_run:
+        latest = campaign / "cal100-search-mode-timing-r1"
+        if run.name.endswith("-r3"):
+            retired = campaign/"compact-development-TRAIN_Q598-focus1024-run-r2/owned.json"
+            require(path==retired and prior["sha256"]=="f45abb479f15087f860e0a0de0261f7ac7ff4044e88947fb0f2378a5ee4bc771", "Q598 physical predecessor differs")
+            retired_owner=inputs["load"](path,prior["sha256"])
+            before=child("control_before","control-before.json")
+            require(proof["control_before"]["sha256"]==retired_owner["shared_installation"]["control_after"]["sha256"] and
+                    before["control_root"]==str(fixed) and retired_owner["exit_code"]==1 and retired_owner["owned_descendants_settled"],
+                    "Q598 r3 lost previous stopped custody")
+            prior=retired_owner["shared_installation"]["previous"]
+            path=Path(prior["path"])
+        required_prior["TRAIN_Q598"] = (latest / "outer-owned.json",)
+        require(prior["sha256"] == "056fe3e1c3103a60c1b2e88303ef491e89f059fbfbba539ae6a377768e0156fe", "foreign Search predecessor")
+    elif capture["case_id"] == "TRAIN_Q598":
+        require(prior["sha256"] == "cae29573bd4d5669b0bf35eb1d963c6c29135954bd31278fb0e85b82a657a642",
+                "Q598 requires the original independently closed D Q564 receipt")
     require(path.parent.parent == campaign and path in required_prior.get(capture["case_id"], (path,)), "foreign predecessor path")
     if path == r5:
         receipt = proof["grouped_custody"]
@@ -83,7 +102,17 @@ def verified_control(run, owned_sha, capture):
         predecessor = inputs["load"](path, prior["sha256"])
         require(predecessor["owned_descendants_settled"] and predecessor["owned_job_final_active_processes"] == 0
                 and predecessor["owned_job_final_member_pids"] == [], "previous owner did not settle")
-        if path == r4:
+        if search_run:
+            require(predecessor["exit_code"] == 0 and not predecessor["timed_out"], "Search owner did not settle")
+            prior_status = {"path":str(path.parent/"commands/stage-after.stdout"), "sha256":"30dacd28b6d15f240791d29fdbf42734be68dc9bdb85674780bb2d4d3298b84d"}
+            warm = child("startup_warm", "startup-warm-before-setup.json")
+            rows = warm["completions"]
+            require(warm["instance"] == ready["health"]["instance"] and warm["configuration_revision"] == 13 and
+                    len(rows) == 2 and {r["stage"] for r in rows} == {"focus","context"} and
+                    all(r["observer_id"] == ready["warm_observer_id"] and r["accepted_configure_revision"] == 0 and
+                        r["profile_manifest"] == saved["configuration"][r["stage"]]["selected_profile"] and r["outcome"] == "ready" for r in rows),
+                    "original rehydration differs")
+        elif path == r4:
             prior_status = plan["status"]
         else:
             prior_status = predecessor["shared_installation"]["status"]
@@ -123,7 +152,10 @@ def collect(row):
     original_run = inputs["CAMPAIGN"] / ("compact-development-" + case + "-focus1024-run-r1")
     prior = [prior_q541(original_run)] if case == "TRAIN_Q541" else []
     attempt = 2 if prior else 1
-    if case == "TRAIN_Q564" and (original_run.parent / "compact-development-TRAIN_Q564-focus1024-run-r3").exists():
+    q564 = original_run.parent / "compact-development-TRAIN_Q564-focus1024-run-r2"
+    if case == "TRAIN_Q564" and q564.exists():
+        require(not q564.with_name("compact-development-TRAIN_Q564-focus1024-run-r3").exists(), "ambiguous Q564 fresh runs")
+        inputs["pin"](q564 / "owned.json","cae29573bd4d5669b0bf35eb1d963c6c29135954bd31278fb0e85b82a657a642")
         pins = {"owned.json": "7863042a003d877937fc929cc615da2da876d1b9171e2ba9eb6e6e9a416cce55",
                 "outer.log": "d3f9595679e43fd98e35c737629223e9c1cc33ffec302f276b9ba70de0355fb9"}
         for name, seal in pins.items():
@@ -135,7 +167,22 @@ def collect(row):
                   "elapsed_seconds": previous["elapsed_seconds"], "run_directory": str(original_run), "proofs": pins},
                  {"attempt": 2, "state": "historical_other_volume_not_reopened", "elapsed_seconds": None}]
         attempt = 3
-    run = inputs["CAMPAIGN"] / f"compact-development-{case}-focus1024-run-r{attempt}"
+    if case == "TRAIN_Q598" and (original_run.parent/"compact-development-TRAIN_Q598-focus1024-run-r2").is_dir():
+        pin = "6866fe743068d17a73d36022ac1fe82f85bbcea5467b301da2a12dfd89447cd8"
+        failed = inputs["load"](original_run/"owned.json",pin)
+        require(failed["exit_code"] == 1 and failed["owned_descendants_settled"] and not any((original_run/"commands").glob("answer*")), "Q598 first attempt differs")
+        prior = [{"attempt":1,"state":"pre_answer_setup_failed","answer_submitted":False,"elapsed_seconds":failed["elapsed_seconds"],
+                  "run_directory":str(original_run),"proofs":{"owned.json":pin}}]
+        attempt = 2
+        if (original_run.parent/"compact-development-TRAIN_Q598-focus1024-run-r3").is_dir():
+            r2=original_run.parent/"compact-development-TRAIN_Q598-focus1024-run-r2"
+            seal="f45abb479f15087f860e0a0de0261f7ac7ff4044e88947fb0f2378a5ee4bc771"
+            failed=inputs["load"](r2/"owned.json",seal)
+            require(failed["exit_code"]==1 and failed["owned_descendants_settled"] and not any((r2/"commands").glob("answer*")), "Q598 publication failure differs")
+            prior.append({"attempt":2,"state":"pre_answer_readiness_publication_failed","answer_submitted":False,"elapsed_seconds":failed["elapsed_seconds"],
+                          "run_directory":str(r2),"proofs":{"owned.json":seal}})
+            attempt = 3
+    run = q564 if case == "TRAIN_Q564" and attempt == 3 else inputs["CAMPAIGN"] / f"compact-development-{case}-focus1024-run-r{attempt}"
     out = {"case": case, "original_descriptor_sha256": row["descriptor_sha256"], "attempt": attempt,
            "run_directory": str(run), "prior_attempts": prior}
     if not (run / "owned.json").is_file():

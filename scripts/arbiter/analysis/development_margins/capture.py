@@ -123,11 +123,33 @@ def main():
     grouped_path = HERE / "grouped_reuse.py"
     pin(grouped_path, reuse["GROUPED_SHA"])
     source_pins[grouped_path] = reuse["GROUPED_SHA"]
+    r2_retirement = reuse["E"] / "compact-development-TRAIN_Q598-focus1024-run-r2/owned.json"
+    current_search = (args.focus_width == 1024 and case_id == "TRAIN_Q598" and
+                      args.reuse_after in (reuse["E"] / "cal100-search-mode-timing-r1/outer-owned.json", r2_retirement))
+    if current_search:
+        source = HERE / "q598_search_handoff.py"
+        source_pins[source] = "e61c6f3da3c3562d1e26daf804d07d483cc72502f92d72f577d005e8fb9ee072"
+        pin(source, source_pins[source])
+        handoff = runpy.run_path(str(source))
     if args.focus_width == 1024:
         base, ready, immutable = reuse["inventory"](validate())
-        if args.reuse_after is not None:
+        if current_search:
+            require(args.reuse_r5_custody_sha256 is None, "unexpected predecessor")
+            prior, digest = args.reuse_after, args.reuse_sha256
+            if prior == r2_retirement:
+                verifier=HERE/"q598_closed_restart.py"
+                source_pins[verifier]="d7db2362db47d613c22fa4ca61922898d67bd2cce80c76542d692b5a347c4234"
+                pin(verifier,source_pins[verifier])
+                previous=runpy.run_path(str(verifier))["verify"](reuse,prior,digest)
+                prior,digest=Path(previous["path"]),previous["sha256"]
+            else:
+                require(not r2_retirement.exists(), "stale Search handoff after Q598 r2 retirement")
+            restart = handoff["predecessor"](reuse,prior,digest,base)
+        elif args.reuse_after is not None:
             previous_case = {"TRAIN_Q564": reuse["latest_cal_receipt"](),
-                             "TRAIN_Q598": reuse["E"] / "compact-development-TRAIN_Q564-focus1024-run-r3/owned.json"}
+                             "TRAIN_Q598": reuse["E"] / "compact-development-TRAIN_Q564-focus1024-run-r2/owned.json"}
+            if case_id == "TRAIN_Q598":
+                pin(previous_case[case_id],"cae29573bd4d5669b0bf35eb1d963c6c29135954bd31278fb0e85b82a657a642")
             require(args.reuse_after.parent.parent == reuse["E"]
                     and args.reuse_after == previous_case.get(case_id, args.reuse_after),
                     "shared-control predecessor differs from original case order")
@@ -153,6 +175,8 @@ def main():
         require(os.environ.get("AIRK_DEVELOPMENT_CAPTURE_OWNER") == str(output), "original case Job required")
         with native["capped_worker_job"](output):
             shared = (restart, reuse["CONTROL"]) if args.focus_width == 1024 else None
+            if current_search:
+                native = handoff["before_setup"](native,output,restart,reuse["CONTROL"])
             pilot["execute"](native, owner, output, capture, shared)
         return
     require(not output.exists(), "fresh output required")
@@ -190,6 +214,8 @@ def main():
         for key, name in (("ready", "fixture/ready.json"), ("closed", "fixture/closed.json"),
                           ("status", "commands/reuse-final-status.stdout"),
                           ("restart_request", "restart-request.json"), ("saved", "fixture/restart-owner.json"),
+                          ("startup_warm","startup-warm-before-setup.json"),
+                          ("failure_stage","commands/failure-stage-at-shutdown.stdout"),
                           ("answer_command", "commands/answer.command.json")):
             if (output / name).is_file():
                 shared[key] = reuse["link"](output / name)
