@@ -35,6 +35,39 @@ The family-root source-provenance.json maps original and maintained SHA-256 valu
   cases transitively through shared exact document IDs. It measures menu
   dependencies and leaves product families, clones and statistical power open.
   All modes skip publisher question, answer and document text values.
+- [IBM Cloud support screening](audit_mtrag_cloud_metadata.py) reads the
+  frozen publisher qrels and classification metadata for MTRAG-UN and
+  MTRAG. Run it with checked Windows Python `-I -B -S` and no arguments.
+  The script fetches the five exact small release files from the pinned
+  publisher revision and emits one private JSON roster to stdout.
+  It retains publisher passage pointers and conversation groups for
+  answerable human questions whose standalone status is established.
+  It compares exact encoded question digests and passage rosters between
+  releases. It skips answer and passage texts and authenticates only the
+  relevance role of the qrels. Source rights, exposure, complete menus,
+  sufficient evidence and native visibility need separate review.
+
+- [AWS documentation QA screening](audit_aws_documentation_metadata.py)
+  reads the pinned publisher CSV and its exact source documents and notices.
+  Run with checked Python `-I -B -S` and `--count 65 --seconds 90`.
+  The private stdout receipt retains CSV row selectors, source identities
+  and answer-match types. Selection prefers literal matches and rotates
+  through documentation families within each match type. Formatting-based
+  matches require span review. Corpus-wide rights, exposure, complete
+  evidence judgments, menus and native visibility still need verification.
+- [Repository candidate collector](collect_repository_confirmation_candidates.py)
+  checks the eight immutable SWE-bench-Live MultiLang shards and reads only
+  six identifier and date columns. Use the checked pinned Python and the
+  provisioned PyArrow. Supply the private `--shards` directory and exact
+  ContextBench `--release`, `--selection` and `--blind-history` paths.
+  The private stdout roster retains 50 cases from distinct literal
+  repositories after screening known aliases, base commits and source dates.
+- [Repository upstream metadata audit](audit_repository_confirmation_upstreams.py)
+  takes the exact sealed `--roster` under the same Python interpreter.
+  It makes up to 50 GitHub metadata requests, retains redirects and other
+  refusals, and reports current canonical repository, fork and license
+  classifiers. Immutable commit reachability, actual issue date and
+  file-specific rights remain separate.
 
 Run the pinned interpreter locally under the verified human identity. Redirect
 the one-line aggregate only to a new audited private campaign path. These

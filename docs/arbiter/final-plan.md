@@ -1934,6 +1934,34 @@ judgment and visibility audit. Hold the candidate's task-quality claim
 until the original confidence bound can be evaluated.
 [Retained source audit](software-v2-data-audit.md#public-train-source-audit-and-stronger-techqa-fence-16-november-2026)
 
+### Supplemental held-out recruitment
+
+On 19 November, the user approved recruiting 90 new TechQA-style
+technical-support candidates and 50 new ContextBench-style repository
+candidates. These counts include the eligibility buffer for reaching
+154 and 56 respectively. Keep the original TechQA and ContextBench
+cohorts under their original provenance. Record supplemental sources
+under their actual publisher identities and report each stratum.
+
+Screen source families, exposure, rights and duplicate requests before
+requesting judgments. Preserve original publisher menus and revision
+identities where present. A supplemental source without a publisher
+menu needs a complete corpus-derived menu frozen for both precision
+arms. Preserve publisher evidence and annotation provenance, including
+whether a label applies to passage relevance, answer support or a
+complete acceptable evidence set. Freeze native-visible spans and
+coverage in the 8,192-token stratum before measuring it. Size the
+paired confidence analysis from distinct source groups and paired
+decisions. Reviewers for new judgments receive the request and frozen
+source evidence without model outputs or precision identities.
+
+The initial recruitment roster contains 25 IBM Cloud, 65 AWS
+documentation and 50 SWE-bench-Live MultiLang candidates. The 65 AWS
+rows fill the gap left after screening IBM Cloud standalone questions.
+All 140 stay in the private screening pool pending admission. See the
+[supplemental source audit](software-v2-data-audit.md#supplemental-90-and-50-candidate-roster)
+for exact revisions, counts and judgment scope.
+
 ### Developer memory fit and shipping Auto
 
 Use an owned A6000 memory-pressure sweep at **6, 8, 12, 16 and 24 GiB of

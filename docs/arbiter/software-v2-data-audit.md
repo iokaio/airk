@@ -360,3 +360,40 @@ with three abstentions. It gives no paired precision or threshold result.
 The candidate needs exact-artifact calibration and a prospectively frozen,
 native-visible judged corpus to measure consequential decisions through
 the complete Answer path.
+
+### Supplemental 90 and 50 candidate roster
+
+The approved screening targets are filled with 90 technical-support
+candidates and 50 repository candidates. Keep these as separate
+supplemental source strata alongside the original TechQA and
+ContextBench inventories. This stage admitted zero cases.
+
+| Source | Cases | Verified evidence and remaining work |
+| --- | ---: | --- |
+| [IBM MTRAG-UN Cloud](https://github.com/IBM/mt-rag-benchmark/blob/e0970de1b1207c2a9506adf238e6e1a22037e38a/mtragun-human/README.md) and [MTRAG Cloud](https://github.com/IBM/mt-rag-benchmark/blob/e0970de1b1207c2a9506adf238e6e1a22037e38a/mtrag-human/README.md) | 25 | Four newer and 21 original answerable, standalone, human-authored queries from different conversations with publisher positive passage judgments. Exact aliases were screened by task, encoded question and passage roster. The original release predates the pinned Qwen3 release. Check earlier exposure, document rights, full support sets and native-visible spans. |
+| [AWS documentation QA](https://github.com/siagholami/aws-documentation/tree/2d06ee9011f3192b2ff38c09f04e01f1ea9e0191) | 65 | Original published QA mapped to exact documentation across 35 files in 12 product families. Fifty-three answer strings match source bytes literally. Twelve formatting-based matches require exact span review. The older public source needs exposure review. Publication answer and document labels still need complete acceptable evidence sets and native alignment. |
+| [SWE-bench-Live MultiLang](https://huggingface.co/datasets/SWE-bench-Live/MultiLang/tree/eb09c2e5db6e4c5a95e01c903c8fd1d5da33c4f3) | 50 | The eight pinned shards supplied 1,077 metadata rows. Excluding 30 known repository, alias or commit overlaps and 280 older publisher dates left 767 rows over 297 literal repositories. The selection has 50 distinct repository names and base commits across all eight languages, with publisher dates April–July 2026. Current GitHub metadata resolved 49 distinct canonical IDs with no reported forks. One alias redirect remains unresolved. Verify actual issue-publication dates, forks and clones, file rights at the base commits, and blinded pre-fix source-span judgments. |
+
+The private aggregate under context-fp16-supplemental-recruitment-r1.json
+is 12c08960c1a879be0884e6a9fc036d1e43a4985b7b15934ec8a9254333169bcb.
+It links the exact private source rosters, reports statuses and contains
+no case text. The Cloud output
+techqa-style-ibm-mtrag-cloud-screen-r1.json is
+779c51e74f6e73c6ff6c59749c1978b47f1ee2894f0044007e2d184e785c75f0.
+The AWS output aws-techqa-style-fallback-r1/aws-qa-candidates.json is
+272de43ac4c79e941a053ae5e7f246d297e81f1c236f0aa00f9fe3194ba22132.
+Both MultiLang receipts are under repository-confirmation-multilang-r1.
+The roster is 28abd5497d6446adda3915b6f0f97a3374d40db28310762ae2de9c8891ae150e.
+The upstream audit is d0b49948f596daca6d6cbad1d7fe66dff0a170cf8c6be456cf10372e42b3354c.
+
+Review source rights and overlap against the actual model, development,
+calibration and historical evaluation lineage first. Prepare private
+native corpus roots, freeze complete menus and map exact support spans
+before paired scoring. The native Answer fixture can capture the full
+offered choices and verification reads. Its observer is bounded to
+100 captures per fixture. The Rust complete Context prompt census then
+measures the 8,192-token stratum against the original remaining budgets
+and retains all refusals. Human reviewers adjudicate complete evidence
+sets without precision or output identities. The 98% decision still
+needs a powered, clustered paired comparison on admitted inputs.
+[Native visibility and collector requirements](../../scripts/arbiter/analysis/public_source_admission/README.md#context-fp16-confirmation-source-censuses)

@@ -12367,3 +12367,27 @@ with budget stops and abstentions. The 98% result requires exact-artifact
 calibration, paired human evidence judgments on a native-visible frozen
 cohort and enough sample power for clustered and long-context outcomes.
 [Confirmation data audit](../arbiter/software-v2-data-audit.md#techqa-menu-dependence-and-confirmation-readiness)
+
+### 2026-11-19 — Context FP16 supplemental candidate recruitment
+
+The user approved adding 90 technical-support and 50 repository
+candidates beside the retained inventories. Authenticated collectors
+and the private roster index reached both screening targets. IBM
+Cloud supplied 25 standalone human candidate requests with publication
+passage relevance. AWS documentation filled the remaining 65 with 53
+literal answer matches and 12 formatting-dependent leads. The
+MultiLang collector reproduced its 50-row private metadata roster
+byte for byte. Current upstream GitHub metadata identified 49
+canonical repositories and left one redirect open. Eligibility,
+admitted human sufficient evidence, exact native menu and 8,192-token
+coverage are pending. No model scoring or paid labeling ran.
+
+Roster index context-fp16-supplemental-recruitment-r1.json SHA-256
+12c08960c1a879be0884e6a9fc036d1e43a4985b7b15934ec8a9254333169bcb.
+The verified execution account and default owner ended in SID 1002.
+The IBM source projection completed in 2.716939 s, AWS source matches
+and selection in 2.990607 s, independent MultiLang replay in 0.578 s,
+and the 50-request upstream query in 4.555 s. The separate receipts
+retain byte pins, roles, and exclusions. Proceed with exact source
+rights and exposure review before native menu and visibility capture.
+[Supplemental source audit](../arbiter/software-v2-data-audit.md#supplemental-90-and-50-candidate-roster)

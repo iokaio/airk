@@ -199,6 +199,13 @@ Use the existing deadline when resuming in a new context.
   power and obtain additional independent judgments as needed before
   confirmation.
   [Dependency audit and confirmation gaps](arbiter/software-v2-data-audit.md#techqa-menu-dependence-and-confirmation-readiness)
+  The approved supplemental screening roster contains 25 IBM Cloud
+  and 65 AWS technical-support candidates plus 50 MultiLang repository
+  candidates. Preserve their separate identities. Check source rights
+  and family/model exposure, join native-visible support spans, obtain
+  independent sufficiency judgments where needed, and freeze complete
+  paired menus and long-context coverage before admission.
+  [Supplemental recruitment outputs](arbiter/software-v2-data-audit.md#supplemental-90-and-50-candidate-roster)
   [Local confirmation-source inventory](arbiter/software-v2-data-audit.md#initial-context-fp16-confirmation-source-inventory)
   [Stock FP32 projection comparison](simplify/one-process-ledger.md#2026-11-19--stock-cuda-fp32-projection-is-a-compact-candidate)
   [FP32 projection output comparison](simplify/one-process-ledger.md#2026-11-19--fp32-projection-output-improves-half-rounding)
