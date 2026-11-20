@@ -1,0 +1,5 @@
+# Native Search timing by retrieval mode
+
+Run two counterbalanced projections of the same originally delivered CAL Search through the canonical CLI. One genuine warm Search precedes the six measured calls. The explicit lexical, vector and hybrid modes use the same query, immutable publication, CPU4 profile and native process. The result separates measured native Focus inference from the remaining end-to-end time. That remaining time includes retrieval, source checks, scheduling and transport and cannot identify a single internal function.
+
+Use the checked Windows identity procedure to create a fresh private campaign output, authenticate the original terminal A/B receipts and reserve the shared physical installation. Run `python -I -B -S run.py <fresh absolute private output>`. The 480-second original fixture guard, standard 32 GiB Job, physical installation mutex, both settled native stage warm receipts and original before/after asset custody stay active throughout. No model, corpus, profile, product settings or CAL labels are produced by this diagnostic.
