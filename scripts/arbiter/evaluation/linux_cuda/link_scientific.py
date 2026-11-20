@@ -30,8 +30,14 @@ def run(a):
     gate = checked_doc(a.source_gate, a.source_gate_sha256)
     if gate["stage"] != "nextest" or gate["success"] is not True or gate["selected_tests"] < 1:
         raise ValueError("original checked GNU source gate required")
-    root = STAGE / "source"
+    joint = gate.get("source_view")
+    root = REPO / "artifacts/v190/final-plan/gnu-joint-source" if joint else STAGE / "source"
     def check_sources():
+        if joint:
+            import joint_source
+            if gate["scope"] != "airk-retrieval,airk-inference" or joint_source.authenticate(root) != joint:
+                raise ValueError("scientific GNU signed source differs from native Nextest")
+            return
         git = ["/usr/bin/git", "--no-optional-locks", "-C", str(root)]
         head = subprocess.check_output([*git, "rev-parse", "HEAD"], timeout=10).decode().strip()
         if head != gate["base"] or head != "20b893d82fe3c46d591af37285901bc3b2e8ac25":
@@ -52,6 +58,23 @@ def run(a):
     if (observed["fits_empty"] is not True or observed["approved"] is not False
         or observed["manifest"]["sha256"] != assembly["manifest_sha256"] or sha(descriptor) != assembly["manifest_sha256"]):
         raise ValueError("actual empty scientific ELF descriptor required")
+    target_manifest = image_root / "airk-cuda-runtime.json"
+    def check_retained_runtime():
+        first = checked_doc(CAMPAIGN / "linux-cuda-linked-scientific-image-r1.json",
+                            "93f408f615625bc58dee947adc0b584faf72deb637aa650c962f373bf16629e5")
+        if pin(target_manifest) != first["staged_manifest"] or first["staged_manifest"]["sha256"] != assembly["manifest_sha256"]:
+            raise ValueError("retained scientific descriptor differs from the original native assembly")
+        if pin(image_root / "airk-inference-scientific") != first["image"]:
+            raise ValueError("original linked scientific executable changed")
+        for row in json.loads(target_manifest.read_bytes())["closure"]["files"]:
+            name = row["name"]
+            if Path(name).name != name:
+                raise ValueError("expected a scientific payload sibling")
+            expected = {"path": str(image_root / name), "sha256": row["sha256"], "bytes": row["bytes"]}
+            if pin(image_root / name) != expected:
+                raise ValueError("retained scientific payload changed: " + name)
+    if joint:
+        check_retained_runtime()
     if sha(CPU) != CPU_SHA:
         raise ValueError("original observed child owner required")
     env_file = CAMPAIGN / "linux-driver-fix-checks-r1/gate-preflight.json"
@@ -92,13 +115,17 @@ def run(a):
     guarded(native, uid, stat.S_ISREG)
     core["verify_linked_image"](native)
     original = {"path": str(native), "bytes": native.stat().st_size, "sha256": sha(native)}
-    image = image_root / "airk-inference-scientific"
-    target_manifest = image_root / "airk-cuda-runtime.json"
-    if image.exists() or target_manifest.exists():
+    name = "airk-inference-scientific"
+    if joint:
+        check_retained_runtime()
+        name += "-" + original["sha256"]
+    image = image_root / name
+    if os.path.lexists(image) or (not joint and os.path.lexists(target_manifest)):
         raise ValueError("fresh runtime image and manifest siblings required")
     copy_checked(native, image, original["sha256"], uid)
     image.chmod(0o700)
-    copy_checked(descriptor, target_manifest, assembly["manifest_sha256"], uid)
+    if not joint:
+        copy_checked(descriptor, target_manifest, assembly["manifest_sha256"], uid)
     if core["verify_handoff"](core_path, a.core_sha256, REPO) != handoff:
         raise ValueError("static GNU build changed during compilation")
     core["verify_linked_image"](image)
@@ -106,6 +133,8 @@ def run(a):
              "static_core_build": a.core_sha256, "aggregate_static_sha256": handoff["aggregate_sha256"],
              "manifest_sha256": assembly["manifest_sha256"], "source_gate_sha256": a.source_gate_sha256,
              "assembly_sha256": a.assembly_sha256, "command":result, "link_log_sha256":sha(log), "symbols":symbols}
+    if joint:
+        proof["source_view"] = joint
     write(output / "image-proof.json", proof)
     audit(output,uid)
     return {"image_proof": pin(output/"image-proof.json"), "image": pin(image), "staged_manifest":pin(target_manifest)}

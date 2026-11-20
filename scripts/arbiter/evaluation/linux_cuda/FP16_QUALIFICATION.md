@@ -144,3 +144,16 @@ EXECUTION_SHA256` with one `--row` for each original, independently completed
 width. It authenticates the original CPU Job and reference, publisher revision,
 weight and graph identity and all eight scores. The T32/T128 input receipt
 records just those two widths. A GNU runtime score is a later distinct result.
+
+For the signed `fdf13652` scientific source, `joint_source.py` authenticates
+the original R7 archive and the 35-file native delta. Its 10,151-file view
+belongs at `artifacts/v190/final-plan/gnu-joint-source` for the duration of
+the build. Preserve the original R7 tree. Once that view and storage are
+available to the native build, run `maintained_gate.py --signed-joint` with
+`--gate inspect`, then `clippy` and `nextest` against the pinned inspection
+receipt. Both crates are included. Give the genuine Nextest receipt and its
+SHA-256 to `link_scientific.py --source-gate` and `--source-gate-sha256`,
+with the original scientific assembly, static-core producer and a fresh
+`--attempt`. The linker rechecks the original image, descriptor and sibling
+CUDA payloads and retains the new executable under its own SHA-256 name.
+The two native graph selectors require independent GNU graph observations.

@@ -34,14 +34,20 @@ def run(options):
     os.umask(0o077)
     repo = REPO
     dependencies = {}
-    if options.signed_r7:
+    verify_source = None
+    if options.signed_r7 or options.signed_joint:
         import signed_gate
-        repo = signed_gate.ROOT
-        joint = signed_gate.authenticate()
+        if options.signed_joint:
+            import joint_source
+            repo = REPO / "artifacts/v190/final-plan/gnu-joint-source"
+            verify_source = lambda: joint_source.authenticate(repo)
+        else:
+            repo = signed_gate.ROOT
+            verify_source = signed_gate.authenticate
         dependencies = signed_gate.native()
     before = source_inventory(repo)
-    if options.signed_r7:
-        before.update(joint=joint,native=dependencies)
+    if verify_source:
+        before.update(joint=verify_source(),native=dependencies)
     if options.gate == "inspect":
         return before
     if not options.freeze or sha(options.freeze) != options.freeze_sha256 or before != json.loads(options.freeze.read_bytes()):
@@ -73,6 +79,8 @@ def run(options):
             continue
     cargo = BASE / "rustup/toolchains/1.98.0-x86_64-unknown-linux-gnu/bin/cargo"
     args = ["--locked", "--offline", "--timings", "-p", "airk-retrieval"]
+    if options.signed_joint:
+        args.extend(["-p", "airk-inference"])
     if options.gate == "product-clippy":
         command = [cargo, "clippy", *args, "--features", "gpu-cuda", "--lib", "--", "-D", "warnings"]
     elif options.gate == "clippy":
@@ -84,7 +92,10 @@ def run(options):
                           "test(arbiter::runtime::cuda)")]
     process = runpy.run_path(str(CPU))
     bounded = True
-    if options.signed_r7:
+    if options.signed_joint and options.gate == "nextest":
+        command[-1] = ("test(arbiter::runtime::cuda) | test(cpu_source_transition) | "
+                       "test(original_reference_paths_keep_a_bounded_source_root) | test(fp16_compact::) | test(fp16_large::)")
+    if verify_source:
         from shipping_build import monitored
         reserve = (128 if options.gate == "clippy" else 512) << 20
         result,_,_,bounded = monitored(command,repo,scan,env,reserve,uid,timeout=1800,log_name="cargo.log")
@@ -92,8 +103,8 @@ def run(options):
         result = process["run_owned"](["/usr/bin/nice", "-n", "10", "/usr/bin/prlimit", "--as=8589934592",
                                        "--", *command], repo, scan / "cargo.log", 1800, env)
     after = source_inventory(repo)
-    if options.signed_r7:
-        after.update(joint=signed_gate.authenticate(),native=signed_gate.native())
+    if verify_source:
+        after.update(joint=verify_source(),native=signed_gate.native())
     log = (scan / "cargo.log").read_text(errors="replace")
     summary = re.search(r"Summary \[[^\]]+\]\s+(\d+) tests? run: (\d+) passed", log)
     count = int(summary[1]) if summary else 0
@@ -102,7 +113,9 @@ def run(options):
         audit(BASE / folder, uid)
     return {"success": before == after and bounded and process["successful"](result) and
             (options.gate in ("clippy", "product-clippy") or summary is not None and count > 0 and count == int(summary[2])),
-            "scope": "airk-retrieval", "incremental": False, "target": env["CARGO_TARGET_DIR"],
+            **({"stage": options.gate, "source_view": before["joint"]} if options.signed_joint else {}),
+            "scope": "airk-retrieval,airk-inference" if options.signed_joint else "airk-retrieval",
+            "incremental": False, "target": env["CARGO_TARGET_DIR"],
             "sources_before": before["sha256"], "sources_after": after["sha256"], "source_receipt": options.freeze_sha256,
             "selected_tests": count if options.gate == "nextest" else None, "command": result,
             "log": str(scan / "cargo.log"), "log_sha256": sha(scan / "cargo.log"),
@@ -112,7 +125,9 @@ def run(options):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--gate", choices=("inspect", "clippy", "product-clippy", "nextest"), required=True)
-    parser.add_argument("--signed-r7",action="store_true")
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument("--signed-r7",action="store_true")
+    source.add_argument("--signed-joint",action="store_true")
     parser.add_argument("--attempt", type=int, default=1)
     parser.add_argument("--freeze", type=Path)
     parser.add_argument("--freeze-sha256")
