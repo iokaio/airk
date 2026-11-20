@@ -69,3 +69,15 @@ links the 56 matching vectors to their original Jobs. It executes zero model
 forwards and preserves the original timing, artifact and scientific identity.
 Capture stdout to a fresh checked private path. The 44 remaining CUDA rows
 and any missing CPU references still require scoring before the fit.
+
+After phases 7–12 settle, run `python -I -B -S r8_compact_panel.py
+--phase-sha256 <six R8 phase SHA-256 values in order>` in the checked human
+shell. Save stdout to a fresh private path. The panel links each score vector
+to its original authenticated GPU Job, preserving all 100 ordinals and the
+exact graph, compiler and reuse evidence. CPU references and fit are separate.
+
+`r8_reuse_cpu.py` checks the two missing groups of sealed R5 CPU references
+against the exact R8 inputs and the retained R7 GPU scores. It authenticates
+both original CPU Jobs per group and reports complete numerical comparisons
+for ordinals 24–39. Capture stdout to a fresh checked private path. The reuse
+check performs no new forwards.

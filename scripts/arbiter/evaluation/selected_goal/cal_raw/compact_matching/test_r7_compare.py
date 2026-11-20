@@ -48,6 +48,17 @@ class ProtectedGpuJoin(unittest.TestCase):
         with patch.object(comparison.parent, "settled", return_value=True):
             self.assertEqual(self.vectors(self.receipt), [[2.0, 0.5], [3.0, 0.5]])
 
+    def test_terminal_phase_uses_four_original_ordinals(self):
+        rows = [row | {"ordinal": 96 + i} for i, row in enumerate(self.rows[:4])]
+        native = [r | {"status": "raw_scores_only", "input_digest": r["compiled"]["input_digest"],
+                       "scores": [1.0, 2.0]} for r in rows]
+        result = self.receipt["result"]
+        result = result | {"cal_native_forwards": 4, "cal": result["cal"] | {"phase": 12, "rows": native}}
+        with patch.object(comparison.parent, "settled", return_value=True):
+            scores = comparison.native_vectors(self.receipt | {"result": result}, rows, 12, self.proof,
+                                               self.graph, self.model, phase_size=4)
+        self.assertEqual(scores, [[1.0, 2.0]] * 4)
+
     def test_changed_roster_digest_or_vector_extent_refuses(self):
         for change in ({"roster": {"cards": ["second", "first"]}}, {"input_digest": "other"}, {"scores": [2.0]}):
             with self.subTest(change=change), patch.object(comparison.parent, "settled", return_value=True):

@@ -29,19 +29,19 @@ def compatible_sources(observed, current):
     return observed in (original, recovered)
 
 
-def native_vectors(report, rows, phase, provenance, graph, model_input):
+def native_vectors(report, rows, phase, provenance, graph, model_input, *, phase_size=8):
     result = report["result"]
     cal = result["cal"]
     require(report["complete"] is True and report["mode"] == "cal" and parent.settled(report["owned"])
             and report["image"] == graph["image"] and report["build"] == graph["build"]
             and report["runtime_manifest"] == graph["runtime_manifest"]
             and all(result[key] == provenance[key] for key in ("model_sha256", "weight_sha256", "typed_graph_sha256"))
-            and result["cal_native_forwards"] == len(cal["rows"]) == 8 and cal["phase"] == phase
+            and result["cal_native_forwards"] == len(cal["rows"]) == phase_size and cal["phase"] == phase
             and cal["original_projection"] == {"path": model_input["path"], "sha256": model_input["sha256"]}
             and cal["launch_audit"]["sha256"] == provenance["launch_audit_sha256"]
             and cal["calibration_fitted"] is False and cal["qualification"] is False,
             "R7 GPU phase does not bind exact graph, phase or original inputs")
-    require([item["ordinal"] for item in cal["rows"]] == list(range(phase * 8, phase * 8 + 8)),
+    require([item["ordinal"] for item in cal["rows"]] == list(range(phase * 8, phase * 8 + phase_size)),
             "R7 GPU phase differs from the original ordinal interval")
     vectors = []
     for row in rows:

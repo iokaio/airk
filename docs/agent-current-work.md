@@ -433,3 +433,15 @@ The disk observer remained healthy. Use the [terminal receipt checkpoint](simpli
 for the exact 100-row input identities. Continue with the independent R8
 certificate and projection, then fitting and the remaining Windows FP16
 qualification gates.
+
+### Windows Compact full CUDA CAL panel completed, 20 November 2026 at 23:52 UTC
+
+The R8 certificate and both original compiler censuses are complete. The
+scientific Compact raw panel has all 100 score vectors. It reuses the 56
+verified R7 GPU vectors and contains 44 new R8 vectors. Forty rows have
+independent matching and publisher references. Continue with the remaining
+references at ordinal 040, preserving completed batches and the original
+timeouts. See the [Compact panel checkpoint](simplify/one-process-ledger.md#20-november-2026-at-2352-utc--complete-compact-cuda-cal-panel-and-recover-16-cpu-comparisons)
+for the exact pins and successor volume observer. Large needs its own input
+selector on the existing scientific graph before raw scoring. Fitting and
+later gates still require their own evidence.
