@@ -375,7 +375,7 @@ R6 started on the optimized native Windows service with the original three-hour 
 
 AWS R5 verified all 27 positive files and 41 eligible source ranges in the original publication. It observed 15800 files through one service cursor before fresh brokerage was required. R5 206021 checked immutable entries remained intact. The separate AWS R2 witness was stopped on request before native census; original owned 11c6d55c5c79a8c9bf129a6bb1b4946590febbafe1bcc8687bbc099be2862bad, zero surviving children. Resume with a fresh witnessed census and pretested whole-guide queries. The 24 ambiguous selectors remain excluded.
 
-### Live resume checkpoint, 20 November 2026 at 15:00 UTC
+### Live resume checkpoint, 20 November 2026 at 15:58 UTC
 
 R7 calibration resumed under the original common clock with plan SHA
 `c04be2262a32d8318f9aa222e73ea9bf078ad80d7975d907eebefe486895a2eb`.
@@ -386,11 +386,13 @@ opening the full population. The 16:59:12.847 UTC common deadline includes
 the original setup debit. Inspect the R4 volume watcher before starting
 writers and retain the original cutoffs.
 
-First56 projection and compiler receipt identities are in the ledger. Run
-one guarded phase-00 Compact score using the same-image graph receipt and
-the [protected Compact R7 readout](../scripts/arbiter-fp16-execution/README.md).
-Then review observed custody and scoring before scheduling the remaining
-phases. The original CAL R5 rows remain historical and R6 has zero questions.
+The first 56 Context Compact raw GPU vectors settled in seven clean owned
+batches. Their exact receipts, original inputs and zero-forward compiler
+receipts are in the ledger. Independent protected and publisher comparisons
+still need an R7-aware reference reader and affinity admission. Reobserve
+the full capture and original terminal before projecting the remaining
+population. The original CAL R5 rows remain historical and R6 has zero
+questions.
 
 The CU18 R2 build is settled and failed after an MSVC helper prevented the
 original configure tree from closing. It retained the generated graph and
