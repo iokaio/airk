@@ -17,7 +17,8 @@ def tensor_digest(value):
     return hashlib.sha256(encoded).hexdigest()
 
 
-def chronology(phases, model, ordinal=None, reader=phase_rows):
+def chronology(phases, model, ordinal=None, reader=phase_rows, *, batch=False):
+    require(not (batch and ordinal is not None), "choose a batch or a single original ordinal")
     require(0 < len(phases) <= 13, "one through thirteen consecutive closed phases required")
     rows = []
     seen_ids = set()
@@ -38,6 +39,8 @@ def chronology(phases, model, ordinal=None, reader=phase_rows):
               "original_requests": len(rows), "statuses": dict(counts),
               "first_eligible_ordinal": eligible[0]["ordinal"] if eligible else None,
               "NN_invocations": 0}
+    if batch:
+        result["rows"] = rows
     if ordinal is not None:
         require(0 <= ordinal < len(rows), "ordinal outside closed chronological prefix")
         row = rows[ordinal]
@@ -53,8 +56,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--phase", nargs=2, action="append", required=True, metavar=("PATH", "SHA256"))
     parser.add_argument("--model", choices=MODELS, required=True)
-    parser.add_argument("--ordinal", type=int)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--ordinal", type=int)
+    mode.add_argument("--batch", action="store_true")
     args = parser.parse_args()
     require(sys.flags.isolated and sys.flags.no_site and sys.dont_write_bytecode, "use Python -I -B -S")
     refs = [{"path": path, "sha256": digest} for path, digest in args.phase]
-    print(json.dumps(chronology(refs, args.model, args.ordinal), allow_nan=False, separators=(",", ":")))
+    print(json.dumps(chronology(refs, args.model, args.ordinal, batch=args.batch), allow_nan=False, separators=(",", ":")))
