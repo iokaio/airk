@@ -170,17 +170,17 @@ def execute(output, node, *, setup_only):
                 return native.read_json(result)
             status = wait_cal_publication(status_call, commands, index_id, process, deadline)
             require(status["files"] == 753, "CAL source publication count differs")
-            # Status reports ready/counts. The full default Search reports the
-            # actual served pipeline. Use a fixed infrastructure query before
-            # Focus is enabled and keep it outside the CAL question/probe count.
-            search = native.tool_body(cli("pipeline-observation", "tools", "call", "airk_search", "--index", index_id,
-                                      "--args", json.dumps({"query": "source", "limit": 1, "max_bytes": 4096,
-                                      "full_chunks": True, "response_mode": "full", "include_status": True})))
-            require(search["semantic_readiness"]["state"] == "ready" and
-                    search["semantic_readiness"]["pipeline_digest"] == audit["pipeline"] and
-                    search["publication"]["token"] == status["publication"]["token"] and
-                    search["execution"]["served_mode"] in ("hybrid", "vector") and
-                    search["execution"]["incomplete"] is False, "actual default semantic pipeline differs")
+            if setup_only:
+                # The setup probe observes the served pipeline before any stage warms.
+                # Full captures prove it on each delivered native Search instead.
+                search = native.tool_body(cli("pipeline-observation", "tools", "call", "airk_search", "--index", index_id,
+                                          "--args", json.dumps({"query": "source", "limit": 1, "max_bytes": 4096,
+                                          "full_chunks": True, "response_mode": "full", "include_status": True})))
+                require(search["semantic_readiness"]["state"] == "ready" and
+                        search["semantic_readiness"]["pipeline_digest"] == audit["pipeline"] and
+                        search["publication"]["token"] == status["publication"]["token"] and
+                        search["execution"]["served_mode"] in ("hybrid", "vector") and
+                        search["execution"]["incomplete"] is False, "actual default semantic pipeline differs")
             selected = {"focus":audit["profiles"]["arbiter-focus-qwen3-reranker-06b"],
                         "context":audit["profiles"]["arbiter-context-qwen3-17b"]}
             for stage, manifest in selected.items():

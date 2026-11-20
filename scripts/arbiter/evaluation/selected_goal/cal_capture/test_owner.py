@@ -18,10 +18,10 @@ class OwnerTests(unittest.TestCase):
 
     def test_summary_keeps_refusals_in_denominator(self):
         ids = [f"q{i}" for i in range(4)]
-        rows = [{"kind": "cal_question", "evidence": {"id": i, "probes": []}} for i in ids]
+        rows = [{"kind": "cal_question", "evidence": {"id": i, "probes": [], "pipeline_searches": 0}} for i in ids]
         rows.append({"kind": "phase_complete", "phase": 12, "ids": ids,
                      "instance": "original", "publication": {"token":"p"}})
-        self.assertEqual(summary(self.make_log(rows), 12, ids, "original", {"token":"p"}), 0)
+        self.assertEqual(summary(self.make_log(rows), 12, ids, "original", {"token":"p"}), (0, 0))
         with self.assertRaisesRegex(ValueError, "incomplete"):
             summary(self.make_log(rows[:-1]), 12, ids, "original", {"token":"p"})
         with self.assertRaisesRegex(ValueError, "incomplete"):

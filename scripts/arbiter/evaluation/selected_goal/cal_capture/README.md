@@ -2,7 +2,7 @@
 
 This Windows owner connects the retained, partly exposed CAL population to
 the current native service. It installs the bundled MiniLM, publishes one
-CAL index, observes its pipeline and enables the frozen CPU Focus and
+CAL index and enables the frozen CPU Focus and
 Compact bootstrap profiles. The native CAL observer records the two
 compiler censuses before any Context model dispatch. The bootstrap
 profile and the CUDA artifact to be fitted have separate identities.
@@ -38,4 +38,7 @@ ordered phase receipts and complete warm and dispatch journals. A missing
 or dropped record, a Context dispatch or a missing native charge release
 invalidates the capture.
 A retained command that lists one test proves fixture discoverability.
-A setup-only execution and a full capture have separate receipts.
+A setup-only execution observes MiniLM through a fixed Search before either
+stage warms. Full capture records the same publication and served pipeline
+on each delivered Search inside Answers and on delivered Search probes.
+The full census requires at least one such observation.

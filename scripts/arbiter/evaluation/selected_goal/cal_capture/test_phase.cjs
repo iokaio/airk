@@ -3,7 +3,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { phaseRows, selected, associate, scopeBinding, invoke, capturePhase } = require('./phase.cjs');
+const { phaseRows, selected, associate, scopeBinding, invoke, verifySearch, capturePhase } = require('./phase.cjs');
 const ids = Array.from({length: 100}, (_, i) => 'q' + i);
 const questions = ids.map(id => ({id, split: 'calibration', question: 'question ' + id}));
 const publication = {collection:'a', token:'p'};
@@ -27,15 +27,25 @@ test('checks token-only status with its collection, member and bound U110 finger
     assert.throws(()=>scopeBinding({...status,collection:'b'},binding),/authorize/);
     assert.throws(()=>selected({...status,scope_observation:{...obs,fingerprint:'wrong'}},bound),/selection/);
 });
+test('requires the full served MiniLM publication on every delivered Search', () => {
+    const good = {publication, semantic_readiness:{state:'ready',pipeline_digest:'sem'},
+        execution:{served_mode:'hybrid',incomplete:false}};
+    verifySearch(good,binding);
+    assert.throws(()=>verifySearch({...good,semantic_readiness:{state:'ready',pipeline_digest:'foreign'}},binding),/MiniLM/);
+    assert.throws(()=>verifySearch({...good,execution:{served_mode:'lexical',incomplete:false}},binding),/MiniLM/);
+    assert.throws(()=>verifySearch({...good,publication:{...publication,token:'new'}},binding),/MiniLM/);
+});
 test('requires matching admission, strict zero work and original verified probe roster', () => {
     const scope = {publication};
-    const request = {question:'q',read_attempt:{request_id:'x'},scope,ordinal:2,roster:{basis:'b'}};
+    const records = [{id:1,canonical_result:{value:'original'}}];
+    const request = {question:'q',records,read_attempt:{request_id:'1'.repeat(32)},scope,ordinal:2,roster:{basis:'b'}};
     const record = {schema:'airk.private-selected-Context-native-admission-observation/1',request,
         Context_NN_dispatch:false,Focus_configuration:'ON',actual_Context_profile:{manifest:'c'},
         actual_Focus_profile:'f',MiniLM_pipeline:'sem',planned_input_digest:'d',verified_probe_requests:[]};
     const advice = {input_digest:'d',observed_input_tokens:0,work:{input_tokens:0},outcome:{status:'unavailable'}};
-    const delivered = {request_id:'x',assessment:{scope},assessment_history:[{ordinal:2,basis:'b',result:{advice}}]};
+    const delivered = {request_id:'2'.repeat(32),records:[...records,{id:2}],assessment:{scope},assessment_history:[{ordinal:2,basis:'b',result:{advice}}]};
     assert.deepEqual(associate(record,delivered,'q',binding),[]);
+    assert.throws(()=>associate(record,{...delivered,records:[{id:9}]},'q',binding),/source record association/);
     assert.throws(()=>associate({...record,Context_NN_dispatch:true},delivered,'q',binding),/admission/);
     advice.observed_input_tokens = 1;
     assert.throws(()=>associate(record,delivered,'q',binding),/non-dispatch/);

@@ -12831,3 +12831,26 @@ does not close Compact release qualification. The fourth Large metadata
 attempt detected an edit to the Linux manifest source during final input
 authentication at 239.038 s. A source-stable epoch and fresh receipt are
 required before consuming a Large conversion plan.
+
+### CAL Search observation and TechQA Focus refusal investigation
+
+All five delivered native Search records from CAL R1 passed the expected
+MiniLM digest, ready state and original publication checks. The corrected
+full-capture owner verifies each delivered Search and requires evidence of
+the expected pipeline across the census. The separate fixed Search remains
+in the setup-only route. Five scope/association controls and the other ten
+CAL controls passed. R2's nonreplayable refusal is preserved under custody
+digest `024c220416da53a7a9904ce08ad5621a47e5781d44b51a05dbadf72201a85c11`.
+R3 started with a fresh index and the original budgets.
+
+For TechQA DEV_Q002, replay of the first Focus pair with publisher bytes and
+tokenizers 0.21.4 yielded 39 prefix, 810 body and 9 suffix tokens. The native
+compiler uses tokenizers 0.23.2 with a 512-token limit. The service recorded
+a generic failure and unknown observed token use. An independent replay
+does not supply a native measured token count. The original 2,048-token
+reservation remains in the work ledger. Diagnosis receipt
+`1d624ad5c0aba82e4c9246e8b883ffee96878736e8a617a6f6ef121c2bfde013`.
+TRAIN_Q103 also delivered its original Answer and had zero assessments
+after eight calls and fanout slots. Its owned run lasted 158.597 s and
+settled with zero Job members. The capture digest is
+`a255eb87f99cd323e943f2aeffc5907eb2640a33eeb32e23fa295e2abd9ab632`.

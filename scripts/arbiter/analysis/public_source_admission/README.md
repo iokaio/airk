@@ -216,3 +216,8 @@ The first DEV_Q002 Answer produced zero native assessment observations.
 `reconcile_techqa_predispatch_pilot.py` verifies the original r2 files and
 writes the observed zero census to a fresh checked private destination.
 The run ended after its eight-call budget. No compiled prompt was available.
+
+`diagnose_techqa_focus_pair.py` replays the original DEV_Q002 pair with the
+retained publisher tokenizer and original source window. It reports component
+lengths, the tokenizer version and the separately observed native disposition.
+Use the reviewed Python environment with tokenizers installed.

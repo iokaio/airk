@@ -38,7 +38,7 @@ def owned_module():
 
 def summary(log, phase, expected_ids, instance, publication):
     require(log.stat().st_size <= 64 << 20, "phase transcript exceeds owner limit")
-    rows, closes, probes = [], [], 0
+    rows, closes, probes, pipeline_searches = [], [], 0, 0
     with log.open("rb") as stream:
         for line in stream:
             event = json.loads(line)
@@ -47,12 +47,15 @@ def summary(log, phase, expected_ids, instance, publication):
                 rows.append(evidence["id"])
                 require(len(evidence["probes"]) <= 5, "more than five counterfactuals")
                 probes += len(evidence["probes"])
+                require(type(evidence["pipeline_searches"]) is int and evidence["pipeline_searches"] >= 0,
+                        "invalid observed Search count")
+                pipeline_searches += evidence["pipeline_searches"]
             elif event["kind"] == "phase_complete":
                 closes.append(event)
     require(rows == expected_ids and len(closes) == 1 and closes[0] == {
         "kind": "phase_complete", "phase": phase, "ids": expected_ids,
         "instance": instance, "publication": publication}, "incomplete original census")
-    return probes
+    return probes, pipeline_searches
 
 
 def capture(request_path, request_sha, output, node):
@@ -85,7 +88,7 @@ def capture(request_path, request_sha, output, node):
     source = [link(HERE / n) for n in ("worker.cjs", "phase.cjs", "controller.py", "prepare.py")]
     source.append(link(Path(owner.__file__)))
     closures = []
-    total_probes = 0
+    total_probes = total_searches = 0
     for phase in range(13):
         for ref in source:
             pin(Path(ref["path"]), ref["sha256"])
@@ -103,13 +106,16 @@ def capture(request_path, request_sha, output, node):
             json.dump(result, stream, sort_keys=True)
         require(owner.successful(result) and result["owned_job_final_active_processes"] == 0 and
                 result["owned_job_final_member_pids"] == [], "phase failed or did not settle; retained original result")
-        total_probes += summary(log, phase, ids[8*phase:8*phase+8], instance, publication)
+        probes, searches = summary(log, phase, ids[8*phase:8*phase+8], instance, publication)
+        total_probes += probes
+        total_searches += searches
         closures.append(link(closure))
     for ref in source:
         pin(Path(ref["path"]), ref["sha256"])
+    require(total_searches > 0, "no actual CAL Search proved the served MiniLM publication")
     require(total_probes <= 500 and time.monotonic() < deadline, "original census budget exceeded")
     return {"schema":"airk.private.cal100-owned-phase-census/1", "instance": instance, "publication": publication,
-            "phase_closures": closures, "probes": total_probes, "ordered_questions": 100,
+            "phase_closures": closures, "probes": total_probes, "ordered_questions": 100, "pipeline_searches": total_searches,
             "request_sha256": request_sha, "original_start": clock, "fixture_shutdown_verified": False,
             "independent_certificates": False, "fitted": False}
 

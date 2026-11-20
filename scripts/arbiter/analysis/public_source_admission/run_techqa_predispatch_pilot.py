@@ -11,6 +11,7 @@ import runpy
 import subprocess
 import sys
 import time
+from typing import Callable, NamedTuple
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[3]
@@ -127,8 +128,19 @@ def wait_stage(native, work, process, ready, stage, manifest, revision, deadline
                                    stage + " warm completion", file_changes=0x18)
 
 
-def execute(native, owner, output):
-    pilot = validate_inputs()
+class SourceCapture(NamedTuple):
+    input_directory: Path
+    descriptor_sha256: str
+    validate: Callable
+    source_name: str
+    observed_zero: Callable | None = None
+
+
+PILOT = SourceCapture(INPUT, DESCRIPTOR, validate_inputs, "TechQA held-out pilot")
+
+
+def execute(native, owner, output, capture=PILOT):
+    pilot = capture.validate()
     assets = pilot["runtime_inputs"]
     service, cli_image = (Path(assets[k]["path"]) for k in ("service", "cli"))
     work, logs, index = output / "fixture", output / "commands", output / "index"
@@ -163,7 +175,7 @@ def execute(native, owner, output):
                         and not any(admissions.iterdir()) and (work / "control").samefile(ready["control_root"]),
                         "fresh pre-dispatch pilot fixture identity differs")
                 setup = invoke("setup", "--root", pilot["source_root"], "--data-dir", index, "library", "setup",
-                               "--name", "TechQA held-out pilot", "--watch", "off", "--apply")
+                               "--name", capture.source_name, "--watch", "off", "--apply")
                 with setup.open("rb") as stream:
                     draft, applied = map(json.loads, stream)
                 require("draft" in draft, "native setup draft missing")
@@ -211,7 +223,7 @@ def execute(native, owner, output):
                 selected = {"focus": pilot["cpu_focus_manifest"], "context": pilot["cpu_context_bootstrap_manifest"]}
                 for stage, manifest in selected.items():
                     prefix = "enable-" + stage
-                    stage_env = env | {"AIRK_ARBITER_EVALUATION_SCOPES": str(INPUT / "source-scopes.private.json"),
+                    stage_env = env | {"AIRK_ARBITER_EVALUATION_SCOPES": str(capture.input_directory / "source-scopes.private.json"),
                                        "AIRK_ARBITER_EVALUATION_SCOPES_SHA256": pilot["private_files"]["source-scopes.private.json"],
                                        "AIRK_ARBITER_EVALUATION_PROFILE": manifest, "AIRK_ARBITER_EVALUATION_STAGE": stage,
                                        "AIRK_ARBITER_EVALUATION_ENABLED": "true", "AIRK_ARBITER_EVALUATION_CONTROL_PREFIX": prefix}
@@ -223,7 +235,7 @@ def execute(native, owner, output):
                 state = cli("ready-stages", "arbiter", "status-legacy")
                 require(all(state[k]["availability"] == "ready" and state[k]["active_profile"] == value
                             and state[k]["selected_profile"] == value for k, value in selected.items()), "pilot stages not both ready")
-                request = read(INPUT / "request.private.json")
+                request = read(capture.input_directory / "request.private.json")
                 emitted = read(work / "context-request.json")
                 require(emitted | {"question": request["question"]} == request, "held-out request differs from native template")
                 require(not any(admissions.iterdir()), "unexpected admission before original request")
@@ -233,9 +245,10 @@ def execute(native, owner, output):
                         and current["scope_observation"] == status["scope_observation"],
                         "held-out source scope or publication changed")
                 answer = native["tool_body"](cli("answer", "tools", "call", "airk_answer", "--index", index_id,
-                                                 "--args-file", INPUT / "request.private.json"))
+                                                 "--args-file", capture.input_directory / "request.private.json"))
                 files = sorted(admissions.glob("record-*.json"))
-                require(files and len(files) == len(answer["assessment_history"]), "incomplete delivered admission census")
+                require((files or capture.observed_zero is not None) and len(files) == len(answer["assessment_history"]),
+                        "incomplete delivered admission census")
                 binding = dict(selected, pipeline=pilot["required_minilm_pipeline"], publication=publication,
                                scope_observation=current["scope_observation"], index_id=index_id)
                 records = []
@@ -259,11 +272,14 @@ def execute(native, owner, output):
     require(len(dispatches) == summary["records"] and not any(row.get("task") == "airk.context_action.v1"
             and row["kind"] in ("dispatch_admitted", "score_returned") for row in dispatches),
             "unexpected actual Context dispatch")
-    require(validate_inputs() == pilot, "pilot sources changed across the original attempt")
+    disposition = {}
+    if not records:
+        disposition["zero_disposition"] = capture.observed_zero(answer, request, binding, admissions, summary, dispatches)
+    require(capture.validate() == pilot, "pilot sources changed across the original attempt")
     native["write_json"](output / "capture.private.json", {
         "schema": "airk.private.techqa-predispatch-capture/1", "case_id": pilot["question_id"],
-        "input_sha256": DESCRIPTOR, "publication": publication, "fixture_instance": closed["instance"],
-        "ordered_source_documents": len(pilot["publisher_order"]), "native_observations": records, "judged": False,
+        "input_sha256": capture.descriptor_sha256, "publication": publication, "fixture_instance": closed["instance"],
+        "ordered_source_documents": len(pilot["publisher_order"]), "native_observations": records, "judged": False, **disposition,
     })
 
 
