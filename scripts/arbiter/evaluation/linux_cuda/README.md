@@ -65,3 +65,17 @@ Capture each JSON result to a fresh checked private receipt.
 Run `/usr/bin/python3 -B -S -m unittest -v test_ort_build` for the focused
 producer controls. These use the original frozen r3 translation unit and do
 not initialize a GPU or load the compiled provider.
+
+## Source and compiler input authentication
+
+Use `verified_inputs.py --acquisition <reviewed-download-receipt> --inputs <guest-input-root>`
+to verify every installed CUDA file or symlink against the members of the twelve
+original NVIDIA distributions. Use `source_seal.py --configure <configure-receipt> --sha256 <digest>`
+to compare the ORT and cuDNN frontend sources with their original archives and the
+six reviewed Linux source changes. Retain both JSON results as private receipts.
+
+The campaign's `authenticated_build.py` consumes those exact receipts and accepts
+the same configure, digest, target, worker and attempt arguments as `build_ort.py`.
+It reopens both source trees and the CUDA inputs before and after the native build.
+Run `/usr/bin/python3 -B -S -m unittest -v test_authentication` as the Ubuntu
+build owner for the input tampering and roster controls.
