@@ -79,3 +79,26 @@ the same configure, digest, target, worker and attempt arguments as `build_ort.p
 It reopens both source trees and the CUDA inputs before and after the native build.
 Run `/usr/bin/python3 -B -S -m unittest -v test_authentication` as the Ubuntu
 build owner for the input tampering and roster controls.
+
+## Interrupted compiler recovery and volume checks
+
+`checkpoint_ort.py` seals the original two-worker provider build and its settled
+object tree. After the recorded WSL restart, run `recover_ort.py --phase inspect`
+and preserve stdout as a private receipt. It authenticates all original files,
+both original Ninja journal prefixes, and the 323 later objects by their actual
+completed commands. Pass that receipt and digest to
+`recover_ort.py --phase build --custody <receipt> --custody-sha256 <sha256> --jobs 2`.
+The original 10,800-second wall deadline applies across boots. No model executes.
+`drvfs_probe.py` measures actual owner, mode, link and ELF behavior on a candidate
+mount. Use the original guest-native build for inputs requiring private POSIX modes.
+
+During this particular resumed build, run `watch_provider.ps1 -ReceiptRoot <campaign>`
+from the checked Windows checkout. Every 30 seconds it records Windows free memory,
+commit, C: free bytes, backing VHD length, and guest filesystem free bytes. It
+requests an exact owned Ninja checkpoint if the 24 GiB volume-growth bound or
+projected 100 GiB free floor is crossed. `pause_provider.py` can briefly suspend
+only the verified provider build session through retained pidfds during a coordinated
+Windows timing window. The control records the stopped census and resumes at its
+deadline. Preserve both its output and the cross-host observations. For the
+static targets and final archive, start the same host watcher with `-Stage core`
+and `-Stage archive` respectively. Both retain the original volume baseline.

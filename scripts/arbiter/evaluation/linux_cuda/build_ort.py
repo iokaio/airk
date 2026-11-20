@@ -8,6 +8,7 @@ import pwd
 import resource
 import runpy
 import stat
+import time
 
 from configure_ort import BASE, CPU, CPU_SHA, audit, sha
 from graph_proof import snapshot
@@ -49,18 +50,30 @@ def run(options):
             if sha(root/rel)!=digest:
                 raise ValueError("changed projected source: "+rel)
     sources()
-    targets={"shared":["libonnxruntime_providers_shared.so"],"provider":["libonnxruntime_providers_cuda.so"],
-             "core":["all","re2"]}[options.target]
+    cpu=runpy.run_path(str(CPU))
+    if options.target == "core":
+        archive = CPU.with_name("static-onnx-aggregate.py")
+        if sha(archive) != "e13b6ce08b35682e0b4bc68bff83e41165b0d7a94bca5a9ecde530b6577dc233":
+            raise ValueError("unreviewed runtime archive selector")
+        closure = runpy.run_path(str(archive))["runtime_closure"]
+        targets = closure((build / "build.ninja").read_text(), cpu["STATIC_COMPONENTS"], False, cpu["relative_name"])
+    else:
+        targets = [{"shared":"libonnxruntime_providers_shared.so","provider":"libonnxruntime_providers_cuda.so"}[options.target]]
     before=snapshot(build,tools,env,targets)
     guest_before=available_bytes()
     if guest_before < (12*options.jobs+8) << 30:
         raise ValueError("insufficient measured guest headroom for selected workers")
-    cpu=runpy.run_path(str(CPU))
     command=["/usr/bin/nice","-n","10","/usr/bin/prlimit","--as=12884901888","--",tools["ninja"],
              "-C",str(build),"-j"+str(options.jobs),*targets]
     log=root/("build-"+options.target+"-r"+str(options.attempt)+".log")
     r0=resource.getrusage(resource.RUSAGE_CHILDREN)
-    result=cpu["run_owned"](command,root,log,300 if options.target=="shared" else 10800,env)
+    timeout = 300 if options.target == "shared" else 10800
+    expires = getattr(options, "expires_boottime", None)
+    if expires is not None:
+        timeout = min(timeout, expires - time.clock_gettime(time.CLOCK_BOOTTIME))
+        if timeout <= 0:
+            raise ValueError("original native build deadline expired")
+    result=cpu["run_owned"](command,root,log,timeout,env)
     r1=resource.getrusage(resource.RUSAGE_CHILDREN)
     after=snapshot(build,tools,env,targets)
     stable=before==after and snapshot(build,tools,cfg["environment"])==cfg["graph_proof"]
@@ -73,7 +86,7 @@ def run(options):
               not any(k in binary["dynamic_tags"] for k in ("RPATH","RUNPATH")))
     return {"schema":"airk.private.wsl-cuda-ort-build/2","configure":sha(options.configure),
             "rules_unchanged":stable,"before":before,"after":after,"targets":targets,"command":result,
-            "log_sha256":sha(log),"artifact":binary,"jobs":options.jobs,"nvcc_threads":1,
+            "log_sha256":sha(log),"observer_seconds":timeout,"artifact":binary,"jobs":options.jobs,"nvcc_threads":1,
             "guest_available_before":guest_before,"guest_available_after":available_bytes(),
             "child_cpu_user_seconds":r1.ru_utime-r0.ru_utime,"child_cpu_system_seconds":r1.ru_stime-r0.ru_stime,
             "largest_waited_child_maxrss_kib":r1.ru_maxrss,

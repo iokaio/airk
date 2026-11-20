@@ -87,8 +87,11 @@ def snapshot(build, tools, env, targets=DEFAULT_TARGETS, graph=None):
             raise ValueError("unsafe Linux build tool")
         sealed_tools[name]={"path":str(actual),"bytes":st.st_size,"sha256":file_hash(actual)}
     commands={}
-    for target in targets:
-        cmd=[tools["ninja"],"-C",str(build),"-f",str(graph),"-t","commands",target]
+    groups = [(target, [target]) for target in targets]
+    if len(targets) > 8:
+        groups = [("static-closure", list(targets))]
+    for target, names in groups:
+        cmd=[tools["ninja"],"-C",str(build),"-f",str(graph),"-t","commands",*names]
         raw=subprocess.run(cmd,env=env,check=True,capture_output=True,timeout=30).stdout
         if not 0<len(raw)<=64<<20:
             raise ValueError("expanded Ninja command capacity")
