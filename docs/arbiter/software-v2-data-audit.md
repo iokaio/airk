@@ -720,6 +720,18 @@ The retained evidence supports **zero blinded confirmation packets**. No packet 
 
 The exact pre-fix source and native menu for a rights-cleared, unexposed repository case would permit a fresh packet eligibility check. The 98% paired Answer comparison remains unmeasured.
 
+### Full-source follow-up for the three unexposed-by-TRAIN ContextBench cases
+
+The retained TRAIN fence excluded these three issue IDs from its 450 original cases. The recorded upstream lineage showed no known TRAIN family match. Third-source exposure, clone checks and final reservation remain unresolved.
+
+| Original issue | Pinned pre-fix source | Full-source check |
+| --- | --- | --- |
+| `rayon-rs__rayon-986` | `2de810e97d5ce832ff98023a4a9cf215a86244ea` | All 207 source blobs (1,255,802 bytes) and 44 directories matched the pinned Git tree. The original positive file has a verified dual-license basis. The full tree additionally includes `rayon-demo/data/tsp/dj38.tsp` from the University of Waterloo TSP collection, a documented derived `dj15.tsp`, and a RiverTrail-derived n-body demo. Their original grants and notice obligations remain to be established. |
+| `googlecontainertools__jib-2688` | `7b36544eca5e72aba689760118b98419ef4dd179` | The two positive files have Apache headers. The 1,022-blob tree (7,275,989 bytes) contains third-party Gradle wrapper JARs across examples. Full-source bytes and applicable third-party notices remain to be verified. |
+| `angular__angular-37561` | `f7997256fc23e202e08df39997afd360d202f9f1` | Two positive files passed a file-header, package and root MIT review. The 9,064-blob tree (64,935,082 bytes) includes a separately licensed Bazel protobuf source. Full-source bytes and their governing notices remain to be verified. |
+
+The single fixed-revision public Rayon download has SHA-256 `6a6cea18c3cc94ef8479f555e4cb5a35dea2306b6ffa6f22a2461a35d72392d0`. The complete private blob inventory and rights-review signals have SHA-256 `dffbfec80e3a1bf7d34597d90b3439e0be0e4b37f9400925bb47490ec1e808a0`. No new complete native menu, confirmation outcome or review packet was issued. [Rayon source check](../../scripts/arbiter/analysis/public_source_admission/audit_contextbench_rayon_source.py)
+
 ### Replacement repository source screen, 20 November 2026
 
 The retained publisher shards contain commit links for all 50 selected repository cases and nine reserves. Across all 59, the tree URL identifies the same base commit independently resolved in the original screen. For the 35 selected cases whose bases were dated later, the retained ancestry evidence connects each base to its merge. None of the 35 recorded merge IDs appears in its case's publisher commit list. These locators supply neither file-level state at the judgment point nor an independent judgment identifying acceptable supporting spans. The screen added zero cases to the eligible confirmation roster. The 24 ambiguous AWS cases remain excluded, and the 98% paired Answer comparison remains unmeasured. [Publisher commit check and reproduction](../../scripts/arbiter/analysis/public_source_admission/README.md)

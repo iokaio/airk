@@ -256,6 +256,14 @@ are materialized and authenticated. This stage only inventories revisions.
 
 Run `python -IB scripts/arbiter/analysis/public_source_admission/verify_techqa_delivered_evidence.py` to check the original DEV_Q002 pilot Answer against its publisher span. It verifies the private source and Answer receipts, locates each literal snippet within its cited lines, and checks coverage across the returned byte intervals. Ambiguous snippets leave a missing span unresolved.
 
+The [Rayon source audit](audit_contextbench_rayon_source.py) takes
+`--archive <fresh-private-file> --audit <fresh-private-json>` in the same
+checked private directory. With a verified interpreter, run under `-I -B -S`.
+It retrieves one fixed public archive with no redirects or credentials,
+reconstructs the preselected Git tree, checks every member against that
+tree and records the original rights-review signals for each regular blob.
+Its receipt precedes full-tree rights clearance and native staging.
+
 The two smallest fd base revisions have separate whole-source engineering
 fixtures. Run `contextbench_fd_sources.py` to authenticate all tar members
 against the pinned recursive Git trees and inspect the applicable notices.
