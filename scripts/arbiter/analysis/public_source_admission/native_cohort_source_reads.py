@@ -94,7 +94,28 @@ def publication_read(cli, read_json, runs, label, arguments, deadline):
             time.sleep(delay / 1000)
 
 
-def execute(w, owner, output, cohort):
+def span_inputs(manifest):
+    cases = manifest["cases"]
+    documents = {c["document"]["path"]: c["document"] for c in cases}
+    return "corpus", cases, documents
+
+
+def observe_spans(cohort, cases, tree, call_tool):
+    rows = []
+    for case in cases:
+        identifier = case["selector"][cohort.selector_field]
+        span = case["source_span"]
+        path = case["document"]["path"]
+        response = call_tool(f"read-{identifier}", "airk_read_file", {
+            "path": path, "start_line": span["line_start"], "end_line": span["line_end_inclusive"],
+            "max_bytes": 65536, "response_mode": "full", "include_status": True,
+        })
+        observation = verified_lines(case, (tree / path).read_bytes(), response)
+        rows.append({"selector": case["selector"], **observation})
+    return rows
+
+
+def execute(w, owner, output, cohort, prepare_inputs, observe):
     corpus = CAMPAIGN / cohort.corpus_directory
     plan_path = CAMPAIGN / "fp32-paired-answer-r1/cpu-launch-manifest-bound.json"
     checked(plan_path, PLAN)
@@ -102,9 +123,9 @@ def execute(w, owner, output, cohort):
     paths = {k: w["pin"](owner, plan[k]) for k in ("service", "cli", "inputs")}
     manifest_path = corpus / "manifest.private.json"
     checked(manifest_path, cohort.manifest_sha256)
-    cases = w["read_json"](manifest_path)["cases"]
-    tree = corpus / "corpus"
-    source = {c["document"]["path"]: c["document"] for c in cases}
+    subdirectory, cases, source = prepare_inputs(w["read_json"](manifest_path))
+    tree = owner.plain(corpus / subdirectory)
+    require(tree.parent == corpus, "invalid private source root")
     require(len(cases) == cohort.case_count and len(source) == cohort.document_count
             and len({c["selector"][cohort.selector_field] for c in cases}) == cohort.case_count, "cohort counts differ")
     require({p.relative_to(tree).as_posix() for p in tree.rglob("*") if p.is_file()} == set(source),
@@ -128,7 +149,6 @@ def execute(w, owner, output, cohort):
     def cli(label, *args):
         return w["read_json"](command(label, *args))
 
-    rows = []
     with (output / "service.log").open("xb") as log:
         with subprocess.Popen(w["fixture_command"](paths["service"], "cpu"), cwd=ROOT, env=env,
                               stdout=log, stderr=log, stdin=subprocess.DEVNULL,
@@ -156,18 +176,13 @@ def execute(w, owner, output, cohort):
                 # Bind every read to the native fully ready publication.
                 ready_status = w["wait_semantic"](cli, index)
                 publication = ready_status["publication"]["token"]
-                for case in cases:
-                    i = case["selector"][cohort.selector_field]
-                    span = case["source_span"]
-                    path = case["document"]["path"]
-                    args = dict(path=path, start_line=span["line_start"], end_line=span["line_end_inclusive"],
-                                max_bytes=65536, response_mode="full", include_status=True)
-                    request = ["tools", "call", "airk_read_file", "--index", index, "--args", json.dumps(args)]
-                    response = w["tool_body"](publication_read(cli, w["read_json"], runs, f"read-{i}", request, deadline))
-                    token = response["publication"]["token"]
-                    require(token == publication, "native publication changed")
-                    observation = verified_lines(case, (tree / path).read_bytes(), response)
-                    rows.append({"selector": case["selector"], **observation})
+                def call_tool(label, tool, arguments):
+                    request = ["tools", "call", tool, "--index", index, "--args", json.dumps(arguments)]
+                    response = w["tool_body"](publication_read(cli, w["read_json"], runs, label, request, deadline))
+                    require(response["publication"]["token"] == publication, "native publication changed")
+                    return response
+
+                rows = observe(cohort, cases, tree, call_tool)
             finally:
                 if service.poll() is None:
                     command("shutdown", "service", "shutdown")
@@ -175,7 +190,7 @@ def execute(w, owner, output, cohort):
     closed = w["read_json"](work / "closed.json")
     require(closed["instance"] == ready["health"]["instance"] and closed["shutdown_completed"]
             and closed["service_lease_reacquired"], "private fixture settlement differs")
-    require(len(rows) == cohort.case_count, "missing native span reads")
+    require(len(rows) == cohort.case_count, "incomplete native observation")
     w["write_json"](output / "native-reads.private.json", {
         "schema": f"airk.private.{cohort.name}-native-source-reads/1", "corpus_manifest_sha256": cohort.manifest_sha256,
         **cohort.receipt_identity, "fixture_plan_sha256": PLAN,
@@ -185,7 +200,7 @@ def execute(w, owner, output, cohort):
     })
 
 
-def run_cohort(cohort, handler):
+def run_cohort(cohort, handler, *, prepare_inputs=span_inputs, observe=observe_spans):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
@@ -200,7 +215,7 @@ def run_cohort(cohort, handler):
     if args.worker:
         require(os.environ.get("AIRK_NATIVE_COHORT_READS_OWNED") == str(output), "owned worker required")
         with w["capped_worker_job"](output):
-            execute(w, owner, output, cohort)
+            execute(w, owner, output, cohort, prepare_inputs, observe)
         return
     require(not output.exists(), "fresh run output required")
     output.mkdir()

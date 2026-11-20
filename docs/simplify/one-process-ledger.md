@@ -12647,3 +12647,23 @@ records exact commands, identity, inputs, output roots and source roles.
 | linux-cuda-redistributions-r1/acquisition.json | 07f177d5faf4b365d1d1a9351b62b8123e96572cc6a2362fb1cec44375fb6b5c |
 | linux-cuda-build-inputs-r1.json | b24ddaa3c8c69f731cc1a6c79d2026eff01c9f9f62bb9c73652c84219954ab3a |
 | linux-cuda-sm86-compiler-r1.json | 8d4c07a7c6b7a57e4d0f718118f9420faa136c769738f5bda2a5457652812d60 |
+
+### 2026-11-19 — First complete publisher menu on the native service
+
+All 3,526 TechQA source documents needed by the 76 ordered menus were
+materialized (12,925,787 bytes). The pinned archive projection took
+47.5309673 s and the complete checked batch took 283.1020178 s. For the
+first case in immutable ID order, airk_list_files returned the complete
+50-document inventory and all 50 airk_file_info calls matched the original
+source hashes on one publication. The native run took 111.517 s, peak Job
+128,876,544 bytes, and exited naturally with no remaining processes.
+The checked owner audited 879 private descendants. Six new controls and
+seven previous controls passed. The receipt preserves publisher order and
+native enumeration order separately. No Answer was issued.
+
+The six fully aligned ContextBench cases yielded 13 staged source files and
+16 governing notices across six revision-specific roots. One dependency
+lockfile was withheld. Source-rights observation took 10.321022 s, and
+staging with ownership and hash verification took 92.041043 s. Four focused
+rights controls passed. The collector README gives commands for both batches.
+[Corpus, source roles and private receipts](../arbiter/software-v2-data-audit.md#full-techqa-menu-corpus-and-contextbench-file-provenance)

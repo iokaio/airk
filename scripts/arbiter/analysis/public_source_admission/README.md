@@ -179,3 +179,20 @@ sealed r1 manifest and the common native cohort reader with checked Python
 -I -B -S --output <fresh absolute private directory>. It waits for a ready
 native publication, verifies each citation and source digest, and preserves
 typed refusals. The publisher's full 50-document menus are separately pinned.
+
+[Materialize the complete TechQA menus](stage-techqa-full-menus.ps1) runs
+the [archive collector](stage_techqa_full_menus.py) and verifies the checked
+output inventory. Use -VerifyOnly for the existing sealed r1 tree. Shared
+documents have one canonical byte copy. The first exact case by ID has a
+dedicated 50-document root. The [native menu pilot](verify_techqa_native_menu.py)
+takes --output <fresh private campaign directory> with checked Python -I -B -S.
+It lists the complete native inventory and requests file information for every
+publisher menu member, comparing original hashes in publisher order.
+
+[Check ContextBench file provenance](audit_contextbench_confirmation_rights.py)
+on the six cases with exact declared spans using the provisioned PyArrow
+interpreter with -I -B and the absolute --directory and --gh inputs.
+[Stage checked sources](stage-contextbench-confirmation-sources.ps1) takes
+that private evidence via -Receipt and a fresh private -Destination. Source
+files are separated by base revision, and governing notices are staged beside
+the source roots. The manifest records every withheld path.

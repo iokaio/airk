@@ -590,3 +590,30 @@ paired contrast or prove that a gate is impossible. Neither overall nor
 8,192-token judged paired outcomes have been measured. The private
 active-confirmation-source-groups-r1.private.json digest is
 2468b79029dd4fab82d92f5960503824841b1c9fa83f874f426151f10e909c92.
+
+### Full TechQA menu corpus and ContextBench file provenance
+
+The private TechQA corpus materialization verified every one of the 3,526
+distinct document byte identities needed for the 76 active menus. The
+76 ordered lists contain 3,800 positions, with 266 documents used in more
+than one menu. The first exact case by publisher ID has a 50-document
+private native root. The service listed exactly those 50 paths from one
+publication and returned matching source sizes and hashes for every member.
+The 50 files had 63 indexed chunks. This inventory precedes the separate
+native offered-action and Context prompt captures.
+
+The six fully aligned ContextBench cases reference five upstream repositories
+at six bases. All 14 repo/base/path tuples matched their Git blob identities.
+Observed canonical and fork lineages had no overlap among 60 resolved TRAIN
+claims. Two TRAIN aliases remain unresolved. The private stage contains
+13 source files and 16 license or notice files. Five cases have their entire
+annotated source set staged. One case has three staged files and a withheld
+generated dependency lockfile pending provenance review. The source roots
+preserve the original revision-relative paths and exclude the notices.
+
+| Private evidence | SHA-256 |
+| --- | --- |
+| techqa-full-menu-corpus-r1/manifest.private.json | 34109e91b1aa8acd13af56fc706ef3f73006502e3fdffed23843d13b263d1821 |
+| techqa-menu-native-source-reads-r1/native-reads.private.json | 120e9b270f8fb5a0accc7ed31f33ba99f52e3016736409d7720592b84e1633ff |
+| repository-confirmation-multilang-r1/contextbench-six-source-rights-r1.private.json | 34d01f50c1e6f4892c4ffcd54243a32af09abc122406a86a9ff5c2e03795a98a |
+| contextbench-six-private-corpora-r1/manifest.private.json | 46dede63b8ceb84464471a8d66846989184bf3a2b8525a5bef76278ed1a5a9b8 |
