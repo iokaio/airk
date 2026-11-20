@@ -127,12 +127,14 @@ def window_binding(native, grant, status, seen):
                            observation=obs, scope=native.scope)
 
 
-def question_events(root, closure, census, ids, binding, template, tasks, pipeline):
-    observed_names, fingerprints = set(), set()
+def question_events(root, closure, census, ids, binding, template, tasks, pipeline, *,
+                    first_phase=0, lifetime_fingerprints=None):
+    observed_names = set()
+    fingerprints = set() if lifetime_fingerprints is None else lifetime_fingerprints
     total = searches = 0
-    for phase, pin in enumerate(census["phase_closures"]):
+    for phase, pin in enumerate(census["phase_closures"], start=first_phase):
         expected = ids[phase*8:(phase+1)*8]
-        stem = root / "phases" / f"phase-{phase:02}"
+        stem = (root / "phases" if lifetime_fingerprints is None else root) / f"phase-{phase:02}"
         owner = read(pin, stem.with_suffix(".owned.json"))
         require(settled(owner) and owner["phase"] == phase and owner["request_sha256"] == census["request_sha256"]
                 and Path(owner["transcript"]["path"]) == stem.with_suffix(".jsonl"), "incomplete phase ownership")
@@ -197,6 +199,6 @@ def question_events(root, closure, census, ids, binding, template, tasks, pipeli
                         "phase close differs")
                 closed = True
         require(closed and grant is None and completed is None and not exchanges and not captures, "missing close or unassociated native observations")
-    require(searches == census["pipeline_searches"] and searches > 0, "incomplete original Search census")
+    require(searches == census["pipeline_searches"] and (lifetime_fingerprints is not None or searches > 0), "incomplete original Search census")
     require(total == census["probes"] and observed_names == {p.name for p in
             (root / "fixture/context-cal-admissions").glob("record-*.json")}, "capture omitted observations")

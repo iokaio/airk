@@ -24,6 +24,16 @@ class MemoryLedger:
         return self.spans
 
 
+class PhasedClockTests(unittest.TestCase):
+    def test_original_phase_and_whole_wall_limits(self):
+        from phased_closure import phase_interval
+        phase_interval(1000,1801000,1000,1801000)
+        for arguments in ((999,1001,1000,1801000),(1000,1801001,1000,1801001),
+                          (1000,1002,1000,1001),(1000,1000,1000,1001)):
+            with self.assertRaises(ValueError):
+                phase_interval(*arguments)
+
+
 class CertificateTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

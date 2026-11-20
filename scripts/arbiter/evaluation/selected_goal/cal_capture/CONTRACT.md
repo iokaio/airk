@@ -8,7 +8,7 @@ Context profile so the native observer can examine both compiler censuses.
 Each associated record must show zero Context work, the same source
 publication, and a matching request, ordinal, roster basis and input digest.
 
-A fresh owner starts the fixture and retains the original PID, clock and
+For the original single-lifetime capture, a fresh owner starts the fixture and retains the original PID, clock and
 deadline. Only that fixture can supply its 100-question population, in twelve
 phases of eight and a last phase of four. Give each child at most 1,800 seconds
 inside the single 10,800-second fixture deadline. Preserve each native
@@ -27,3 +27,14 @@ delivered Answer and probe. Release the grant after the completed question
 and before the next grant. Retain each grant, observed fingerprint and release.
 An uncertain exchange ends the attempt. Require natural session, Job and
 fixture closures before claiming their respective evidence.
+
+The phased owner in `phased/` may reopen the fully settled R3 installation
+through its native restart protocol. It predeclares the same ordered thirteen
+phases and 100 questions before executing any question. Each phase owns a
+distinct service instance, one complete bounded dispatch and warm journal,
+and its own original 1,800-second deadline. The common 10,800-second limit
+includes the entire measured R3 setup cost and all phased work. One enclosing
+32 GiB Job supervises the campaign. The original R3 evidence stays separate.
+A complete result requires thirteen sequential natural shutdowns, original
+publication and source membership throughout, 100 unique W4 fingerprints,
+and independent validation of the full chain of phase and service closures.

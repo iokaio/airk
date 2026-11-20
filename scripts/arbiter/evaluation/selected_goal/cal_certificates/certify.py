@@ -12,7 +12,8 @@ import sys
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from capture_closure import question_events, verify_fixture
-from reference_inputs import digest, load_inputs, reference, require
+from reference_inputs import digest, load_inputs, read, reference, require
+from phased_closure import phased_events
 
 
 def real_scope(result, binding):
@@ -143,12 +144,22 @@ def main():
     require(active is not None, "live certificates require the active static-1024 Focus launch audit")
     if not all((args.capture, args.outer_sha256, args.closure_sha256)):
         parser.error("supply a complete capture plus outer and fixture-closure SHA-256")
-    closure, census, binding, answer = verify_fixture(args.capture, args.outer_sha256, args.closure_sha256,
-                                                      audit, sources, index_root, args.audit_sha256)
-    events = question_events(args.capture, closure, census, ids, binding, answer, tasks, audit["pipeline"])
+    closure = read(reference(args.capture/"fixture-closure.json",args.closure_sha256))
+    phased = closure.get("schema")=="airk.private.cal100-phased-fixture/1"
+    if phased:
+        events = phased_events(args.capture,args.outer_sha256,args.closure_sha256,audit,args.audit_sha256,
+                               ids,sources,index_root,tasks)
+        custody = {"lifetime_plan_sha256":closure["plan"]["sha256"],
+                   "lifetime_closure_sha256":[ref["sha256"] for ref in closure["lifetimes"]]}
+    else:
+        closure, census, binding, answer = verify_fixture(args.capture, args.outer_sha256, args.closure_sha256,
+                                                          audit, sources, index_root, args.audit_sha256)
+        events = question_events(args.capture, closure, census, ids, binding, answer, tasks, audit["pipeline"])
+        custody = {"phase_census_sha256":closure["phase_census"]["sha256"]}
     rows = [certificate(e, tasks[e["id"]], audit, window, policy, ledger, utility) for e, window in events]
     require([r["id"] for r in rows] == ids, "incomplete CAL100")
-    binding.verify()
+    if not phased:
+        binding.verify()
     refs = audit["inputs"]
     print(json.dumps({"schema": "airk.private-selected-Context-CAL-reference-preflight/1", "complete": True,
                       "qualified_profiles": [], "Focus_configuration": "ON",
@@ -156,9 +167,9 @@ def main():
                       "MiniLM_pipeline": audit["pipeline"], "corpus_sha256": refs["corpus"]["sha256"],
                       "capture_sha256": args.closure_sha256, "source_manifest_sha256": refs["manifest"]["sha256"],
                       "rubric_sha256": refs["rubric"]["sha256"], "task_policy": policy, "human_semantic_gold_count": 0,
-                      "outer_owned_sha256": args.outer_sha256, "phase_census_sha256": closure["phase_census"]["sha256"],
+                      "outer_owned_sha256": args.outer_sha256, **custody,
                       "launch_audit_sha256": args.audit_sha256, "focus_tokens": 1024, "source_sha256": {p.name: digest(p.read_bytes()) for p in
-                          (HERE/"certify.py", HERE/"capture_closure.py", HERE/"reference_inputs.py")},
+                          (HERE/"certify.py", HERE/"capture_closure.py", HERE/"phased_closure.py", HERE/"reference_inputs.py")},
                       "native_capture_status_counts": Counter(r["native_capture_status"] for r in rows),
                       "scope": "Original human support gain from additional verified reads only. Terminal labels unavailable.",
                       "rows": rows}, ensure_ascii=True, separators=(",", ":"), allow_nan=False))

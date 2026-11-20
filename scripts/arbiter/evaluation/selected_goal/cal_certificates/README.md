@@ -45,6 +45,12 @@ publication, repository roots, revision and policy. The verifier checks the
 single project membership and the ready 753-file, 767-vector collection. It
 accepts a question only after its window release and rejects fingerprint reuse.
 
+A phased fixture uses the same command with its own outer and fixture closure digests.
+The verifier authenticates the original installation, the predeclared 13 lifetimes,
+all native restarts, the 100 original windows and the common clock including original
+setup time. Each lifetime must close its own native service, warm and dispatch
+journals before any certificates can be issued.
+
 Each counterfactual starts from the same source-authenticated baseline. The
 maintained goal_sources owner matches returned excerpts to the exact source
 file and byte window. The maintained goal_rubric owner measures gained facts
