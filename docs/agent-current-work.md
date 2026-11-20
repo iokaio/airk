@@ -4,7 +4,7 @@ These instructions are mandatory for the active assignment. Standing rules remai
 
 All unlinked filesystem paths below are repository-relative unless absolute or prefixed with `~/`.
 
-Active campaign: Arbiter final implementation (execution start 2026-11-16T05:29:42Z).
+The user stopped the Arbiter campaign on 20 November 2026 and limited the assignment to D: cleanup and the standing disk-space rules. The prior release schedule below is historical while the campaign is stopped. Keep work on D: and wait for a new user instruction before restarting builds, calibration or qualification.
 
 | Need | Source |
 |---|---|
