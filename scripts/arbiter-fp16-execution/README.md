@@ -7,3 +7,5 @@ For Compact, `probe_compact_cutlass.py` measures attention operands, graph place
 Run a selected program with `--help` for its exact arguments. Use the checked campaign execution path and a fresh receipt destination on D:. See the [execution contract](CONTRACT.md) for graph identities, input requirements and run modes, and the [capacity sweep procedure](../cuda-component-execution/CAPACITY-SWEEP.md) for pressure admission.
 
 Run `compact_width_drift.py` using isolated Python with bytecode disabled to summarize the four frozen eight-card Compact score receipts. Its JSON reports each width, reference top-two margins and matching and publisher raw and probability errors. The pooled statistics give each of the 32 scores one vote and use nearest-rank p95. Task-level evidence uses the complete Answer workload and its own judgments.
+
+Both model probes use score_comparison.py to compare complete score vectors against the matching arithmetic and original publisher references. Run test_score_comparison.py with isolated Python to check ties, nonfinite values and the two raw-error limits.
