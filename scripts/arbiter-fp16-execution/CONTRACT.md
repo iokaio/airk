@@ -404,8 +404,10 @@ log roster to its frozen input. The original host, device and deadline
 bounds apply. A raw-screen miss may retain the later safe forwards.
 Either normalized-mass comparison above 0.05 stops the batch. The receipt
 records score errors, winner margins, one latency observation per width
-and memory snapshots. The 0.010 screen and 0.020 near-tie marker are private
-development checks. The 0.001 qualification cutoff remains in force.
+and memory snapshots. The provisional 1.8.207 development ceiling of 0.070 and 0.020 near-tie marker are private
+development checks. All development passes require matching winners. A separate
+at-risk label identifies matching margins at most 0.140. The 0.001
+qualification cutoff remains in force.
 
 ## Identical-operand Compact Q/K/V attention diagnostic
 
@@ -468,3 +470,11 @@ use up to eight parallel readers with at most 64 entries pending. The
 caller retains the original deadline, observes every result, and repeats
 authentication before returning the completed plan. The execution path
 continues to authenticate its own inputs.
+
+The private `qkv-decision-t1024` capture uses the exact reviewed Compact
+Q/K/V graph and frozen decision position 1023. It exposes the existing
+normalized FP16 K-projection inputs at layers 0, 9, 18 and 27.
+The native run binds four full [1,1024,2048] output buffers
+(16 MiB total) and retains four rows of 2,048 half words. The eight
+ordinary scores must match the sealed native run bit for bit. The same
+whole-graph placement, attention, deadline and settlement checks apply.

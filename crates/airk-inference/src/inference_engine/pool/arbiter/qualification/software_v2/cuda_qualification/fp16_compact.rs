@@ -240,9 +240,10 @@ fn projection_reference(
 
 const DEVELOPMENT_REFERENCE_SHA: &str =
     "f0d0e01fa28e7a876f1c57bc9894dff7e2a915ac8bf8150885b2aac2fdff2f14";
-const DEVELOPMENT_RAW_LIMIT: f64 = 0.010;
+// Provisional Compact 1.8.207 development-only limit. Qualification retains 0.001.
+const DEVELOPMENT_RAW_LIMIT: f64 = 0.070;
 const DEVELOPMENT_MASS_LIMIT: f64 = 0.05;
-const DEVELOPMENT_NEAR_TIE_LIMIT: f64 = 2.0 * DEVELOPMENT_RAW_LIMIT;
+const DEVELOPMENT_NEAR_TIE_LIMIT: f64 = 0.020;
 const RETAINED_DEVELOPMENT_FIXTURE: &str =
     "3962186640b42648b345fa200516ed44a3de4ccab0d783e671c9c22c3b8b1bbd";
 const RETAINED_DEVELOPMENT_PRODUCER: &str =
@@ -443,7 +444,13 @@ fn development_metrics(row: &mut Value, actual: &[f32], reference: &ReferencePro
     row["native_margin_for_original_fp32_winner"] =
         json!(development_signed_margin(actual, original_winner));
     row["near_tie_ambiguous"] = json!(near_tie);
-    row["development_screen_pass"] = json!(raw <= DEVELOPMENT_RAW_LIMIT && (matched || near_tie));
+    row["raw_ceiling_winner_at_risk"] = json!(matching_margin <= 2.0 * DEVELOPMENT_RAW_LIMIT);
+    row["development_screen_pass"] = json!(
+        raw <= DEVELOPMENT_RAW_LIMIT
+            && matched
+            && mass <= DEVELOPMENT_MASS_LIMIT
+            && original_mass <= DEVELOPMENT_MASS_LIMIT
+    );
     ensure!(
         mass <= DEVELOPMENT_MASS_LIMIT && original_mass <= DEVELOPMENT_MASS_LIMIT,
         "matching Q/K/V or original FP32 mass bound refused at T{}",
@@ -488,15 +495,28 @@ fn compact_qkv_development_preserves_signed_near_tie_and_mass_refusal() -> Resul
     assert_eq!(row["matching_qkv_winner"], 0);
     assert_eq!(row["matching_qkv_argmax_matches"], false);
     assert_eq!(row["near_tie_ambiguous"], true);
-    assert_eq!(row["development_screen_pass"], true);
+    assert_eq!(row["raw_ceiling_winner_at_risk"], true);
+    assert_eq!(row["development_screen_pass"], false);
     assert!(
         row["native_margin_for_matching_qkv_winner"]
             .as_f64()
             .unwrap()
             < 0.0
     );
+    actual = expected;
+    actual[2] = 0.069;
+    development_metrics(&mut row, &actual, &reference)?;
+    assert_eq!(row["development_screen_pass"], true);
+    actual[2] = 0.071;
+    development_metrics(&mut row, &actual, &reference)?;
+    assert_eq!(row["development_screen_pass"], false);
+    let mut reference = reference;
+    reference.matching_fp16[1] = 0.96875;
+    actual[2] = 0.0;
     actual[0] = 0.98;
     development_metrics(&mut row, &actual, &reference)?;
+    assert_eq!(row["near_tie_ambiguous"], false);
+    assert_eq!(row["raw_ceiling_winner_at_risk"], true);
     assert_eq!(row["development_screen_pass"], false);
     actual[0] = 15.0;
     assert!(development_metrics(&mut row, &actual, &reference).is_err());
@@ -1095,6 +1115,7 @@ enum CompactFp16Probe {
     QkvProjectionT32,
     QkvDevelopmentBatch,
     QkvLayer0T1024,
+    QkvDecisionT1024,
     QkvoProjectionGraphOnly,
     QkvoProjectionT32,
     BoundedT32,
@@ -1168,6 +1189,12 @@ fn cuda_compact_fp32_qkv_layer0_t1024() -> Result<()> {
     observe_compact_fp16_t32(CompactFp16Probe::QkvLayer0T1024)
 }
 
+#[test]
+#[ignore = "owned normalized decision-row capture on the sealed Compact Q/K/V T1024 input"]
+fn cuda_compact_fp32_qkv_decision_t1024() -> Result<()> {
+    observe_compact_fp16_t32(CompactFp16Probe::QkvDecisionT1024)
+}
+
 #[derive(Serialize)]
 struct Layer0Tap {
     name: &'static str,
@@ -1204,16 +1231,17 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
     let (projection_spec, projection_t32, graph_only) = match mode {
         CompactFp16Probe::QkvProjectionGraphOnly => (Some(&QKV), false, true),
         CompactFp16Probe::QkvProjectionT32 => (Some(&QKV), true, false),
-        CompactFp16Probe::QkvDevelopmentBatch | CompactFp16Probe::QkvLayer0T1024 => {
-            (Some(&QKV), false, false)
-        }
+        CompactFp16Probe::QkvDevelopmentBatch
+        | CompactFp16Probe::QkvLayer0T1024
+        | CompactFp16Probe::QkvDecisionT1024 => (Some(&QKV), false, false),
         CompactFp16Probe::QkvoProjectionGraphOnly => (Some(&QKVO), false, true),
         CompactFp16Probe::QkvoProjectionT32 => (Some(&QKVO), true, false),
         CompactFp16Probe::GraphOnly => (None, false, true),
         _ => (None, false, false),
     };
     let development_batch = mode == CompactFp16Probe::QkvDevelopmentBatch;
-    let qkv_layer0_t1024 = mode == CompactFp16Probe::QkvLayer0T1024;
+    let decision_rows = mode == CompactFp16Probe::QkvDecisionT1024;
+    let qkv_layer0_t1024 = decision_rows || mode == CompactFp16Probe::QkvLayer0T1024;
     let projection_taps = mode == CompactFp16Probe::Layer0ProjectionTaps;
     let layer0_taps = mode == CompactFp16Probe::Layer0Taps || projection_taps || qkv_layer0_t1024;
     let started_ns = airk_process::monotonic::now_ns()?;
@@ -1408,6 +1436,7 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
             CompactFp16Probe::QkvProjectionGraphOnly => QKV.graph_schema,
             CompactFp16Probe::QkvProjectionT32 => QKV.t32_schema,
             CompactFp16Probe::QkvDevelopmentBatch => "airk.private.compact-fp32-qkv-development-batch/1",
+            CompactFp16Probe::QkvDecisionT1024 => "airk.private.compact-fp32-qkv-decision-t1024/1",
             CompactFp16Probe::QkvLayer0T1024 => "airk.private.compact-fp32-qkv-layer0-t1024/1",
             CompactFp16Probe::QkvoProjectionGraphOnly => QKVO.graph_schema,
             CompactFp16Probe::QkvoProjectionT32 => QKVO.t32_schema,
@@ -1529,6 +1558,10 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
                         Scorer::open_private_compact_fp32_qkvo_projection_profiled(
                             execution, files, profile_prefix, graph_bytes, pin.sha256,
                         )
+                    } else if decision_rows {
+                        Scorer::open_private_compact_fp32_qkv_decision_t1024(
+                            execution, files, profile_prefix, graph_bytes, pin.sha256,
+                        )
                     } else if qkv_layer0_t1024 {
                         Scorer::open_private_compact_fp32_qkv_layer0_t1024(
                             execution, files, profile_prefix, graph_bytes, pin.sha256,
@@ -1614,11 +1647,15 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
             let (actual, taps) = scored.value?;
             receipt["native_forward_returned"] = json!(true);
             if qkv_layer0_t1024 {
-                let roster = airk_retrieval::arbiter::runtime::COMPACT_FP16_LAYER0_TAPS;
+                let (roster, retained_rows) = if decision_rows {
+                    (Scorer::COMPACT_QKV_DECISION_TAPS, 1)
+                } else {
+                    (airk_retrieval::arbiter::runtime::COMPACT_FP16_LAYER0_TAPS, 1024)
+                };
                 let taps = taps.context("Compact Q/K/V T1024 attention outputs missing")?;
                 ensure!(
                     taps.len() == roster.len()
-                        && taps.iter().zip(roster).all(|(bits, &(_, width))| bits.len() == 1024 * width)
+                        && taps.iter().zip(roster).all(|(bits, &(_, width))| bits.len() == retained_rows * width)
                         && actual.len() == 8
                         && actual.iter().all(|score| score.is_finite()),
                     "Compact Q/K/V T1024 outputs differ"

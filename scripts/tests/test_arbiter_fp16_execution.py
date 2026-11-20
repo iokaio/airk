@@ -421,6 +421,7 @@ class CompactBoundedT32Controls(unittest.TestCase):
         self.assertEqual(metrics["native_margin_for_reference_winner"], -1 / 128)
         self.assertEqual((metrics["native_winner"], metrics["winner"]), (1, 0))
         self.assertFalse(metrics["argmax_matches"])
+        self.assertFalse(self.probe["provisional_development_pass"](metrics, metrics))
 
 
 class CompactLayer0Controls(unittest.TestCase):

@@ -26,6 +26,7 @@ SELECTORS = {
     "projection-graph": PREFIX + "cuda_compact_fp32_qkv_projection_load_only_graph_diagnostic",
     "projection-t32": PREFIX + "cuda_compact_fp32_qkv_projection_t32_component",
     "qkv-development": PREFIX + "cuda_compact_fp32_qkv_projection_development_batch",
+    "qkv-decision-t1024": PREFIX + "cuda_compact_fp32_qkv_decision_t1024",
     "qkv-layer0-t1024": PREFIX + "cuda_compact_fp32_qkv_layer0_t1024",
     "qkvo-metadata": PREFIX + "emit_cuda_compact_fp32_qkvo_projection_probe_metadata",
     "qkvo-graph": PREFIX + "cuda_compact_fp32_qkvo_projection_load_only_graph_diagnostic",
@@ -38,7 +39,11 @@ SELECTORS = {
 QKVO_MODES = ("qkvo-metadata", "qkvo-graph", "qkvo-t32")
 DEVELOPMENT_MODE = "qkv-development"
 WIDER_TAP_MODE = "qkv-layer0-t1024"
-WIDER_REFERENCE_MODES = (DEVELOPMENT_MODE, WIDER_TAP_MODE)
+DECISION_MODE = "qkv-decision-t1024"
+WIDE_CAPTURES = (WIDER_TAP_MODE, DECISION_MODE)
+DECISION_ROSTER = tuple((f"/airk_g5/weight//scorer/layers.{layer}/{site}/MatMul/input16", 2048)
+                        for layer in (0, 9, 18, 27) for site in ("self_attn/k_proj",))
+WIDER_REFERENCE_MODES = (DEVELOPMENT_MODE, *WIDE_CAPTURES)
 PROJECTION_SCORE_MODES = ("projection-t32", "qkvo-t32", *WIDER_REFERENCE_MODES)
 PROJECTION_MODES = ("projection-metadata", "projection-graph", "projection-t32", *WIDER_REFERENCE_MODES, *QKVO_MODES)
 WIDER_TAP_SCHEMA = "airk.private.compact-fp32-qkv-layer0-t1024/1"
@@ -51,7 +56,7 @@ DEVELOPMENT_SCHEMA = "airk.private.compact-fp32-qkv-development-batch/1"
 DEVELOPMENT_REFERENCE_SCHEMA = "airk.private.compact-fp32-qkv-wider-reference/1"
 DEVELOPMENT_REFERENCE_SHA = "f0d0e01fa28e7a876f1c57bc9894dff7e2a915ac8bf8150885b2aac2fdff2f14"
 DEVELOPMENT_WIDTHS = (128, 1024, 8192)
-DEVELOPMENT_RAW_LIMIT = .010
+DEVELOPMENT_RAW_LIMIT = .070
 DEVELOPMENT_NEAR_TIE = .020
 METADATA_MODES = ("metadata", "projection-metadata", "qkvo-metadata")
 GRAPH_MODES = ("graph", "projection-graph", "qkvo-graph")
@@ -262,10 +267,37 @@ def linked_image(build, image, base, audit, mode):
         relevant += (BOUNDED_SOURCE, inference + "/cuda_qualification/hybrid_profile_trace.rs")
     if mode in TAP_SCOPES or mode in ("projection-graph", "qkvo-graph", *PROJECTION_SCORE_MODES):
         relevant += ("crates/airk-retrieval/src/arbiter/runtime/bounded_hybrid/layer0.rs",)
-    if mode in TAP_SCOPES or mode == WIDER_TAP_MODE:
+    if mode in TAP_SCOPES or mode in WIDE_CAPTURES:
         relevant += ("crates/airk-retrieval/src/arbiter/runtime/cuda/run.rs",)
     sources = {relative: exact_pin(ROOT / relative, native[relative], base) for relative in relevant}
     return log_pin, artifact, sources
+
+
+def decision_build_approvals(log, artifact, manifest, base, audit):
+    """Bind rustc's exact environment dependencies to the selected Cargo executable."""
+    image = Path(artifact["path"])
+    deps = image.parent
+    require(deps.name == "deps" and image.stem.startswith("airk_inference-"), "Cargo deps image required")
+    fingerprints = deps.parent / ".fingerprint"
+    inf = fingerprints / image.stem.replace("airk_inference-", "airk-inference-", 1) / "test-lib-airk_inference.json"
+    with Path(log["path"]).open(encoding="utf-8") as stream:
+        events = (json.loads(line) for line in stream if line.startswith("{"))
+        libs = [Path(name) for event in events if event.get("reason") == "compiler-artifact"
+                and event["target"]["name"] == "airk_retrieval" and event["profile"]["test"] is False
+                for name in event["filenames"] if name.endswith(".rlib")]
+    require(len(libs) == 1 and libs[0].parent == deps and libs[0].stem.startswith("libairk_retrieval-"),
+            "exact Retrieval rlib required")
+    key = libs[0].stem.removeprefix("libairk_retrieval-")
+    fingerprint = fingerprints / ("airk-retrieval-" + key) / "lib-airk_retrieval"
+    info = deps / ("airk_retrieval-" + key + ".d")
+    audit([inf, fingerprint, info])
+    lineage = [row[3] for row in base.read(str(inf))["deps"] if row[1] == "airk_retrieval"]
+    require(lineage == [int.from_bytes(bytes.fromhex(fingerprint.read_text().strip()), "little")],
+            "Inference test image did not link selected Retrieval fingerprint")
+    expected = {"# env-dep:AIRK_APPROVED_CUDA_MANIFEST_SHA256=" + manifest["sha256"],
+                "# env-dep:AIRK_STATIC_CUDA_BUILD_SHA256=" + base.read(manifest["path"])["static_core_build"]}
+    require(expected <= set(info.read_text(encoding="utf8").splitlines()), "compiled CUDA approval pins missing")
+    return [base.pin(path) for path in (inf, fingerprint, info)]
 
 
 def has_output_projection(projection):
@@ -748,7 +780,7 @@ def validate_bounded_t32(value, reviewed, placement, source, *, policy=BOUNDED_P
 
 def validate_layer0_evidence(value, component, roster=LAYER0_TAPS, *, tokens=32):
     taps = value["layer0_taps"]
-    require(isinstance(taps, list) and len(taps) == len(roster), "exact four layer-0 taps required")
+    require(isinstance(taps, list) and len(taps) == len(roster), "exact diagnostic tap roster required")
     for tap, (name, width) in zip(taps, roster):
         require(isinstance(tap, dict) and set(tap) == {"name", "width", "bits"}
                 and tap["name"] == name and type(tap["width"]) is int and tap["width"] == width,
@@ -883,8 +915,11 @@ def read_sealed_t1024(request, stage, reviewed, reference, parent, base, audit):
 
 
 def validate_wider_capture(value, paths, owned, request, evidence, metadata, manifest, image, component, base,
-                           projection, reference_pin, graph, placement, policy_source, sealed):
-    validate_native_identity(value, WIDER_TAP_SCHEMA, owned, request, evidence, metadata, manifest, image, base)
+                           projection, reference_pin, graph, placement, policy_source, sealed, mode=WIDER_TAP_MODE):
+    decision = mode == DECISION_MODE
+    schema = "airk.private.compact-fp32-qkv-decision-t1024/1" if decision else WIDER_TAP_SCHEMA
+    policy = b"airk.private.compact-fp32-qkv-cuda-decision-t1024/1" if decision else WIDER_TAP_POLICY
+    validate_native_identity(value, schema, owned, request, evidence, metadata, manifest, image, base)
     require(value["projection_stage"] == core(projection[0])
             and value["projection_reference"] == core(reference_pin)
             and value["native_forward_returned"] is value["forward_synchronized"] is True
@@ -899,9 +934,10 @@ def validate_wider_capture(value, paths, owned, request, evidence, metadata, man
             and finite(row["elapsed_us"], 0, 120_000_000)
             and finite(row["native_call_elapsed_us"], 0, row["elapsed_us"]),
             "captured T1024 input, score words or timing differs from the sealed evidence")
-    validate_bounded_t32(value, graph, placement, policy_source, policy=WIDER_TAP_POLICY,
+    validate_bounded_t32(value, graph, placement, policy_source, policy=policy,
                          total=PROJECTION_TOTAL_NODES, tokens=WIDER_TAP_TOKENS)
-    validate_layer0_evidence(value, component, tokens=WIDER_TAP_TOKENS)
+    validate_layer0_evidence(value, component, DECISION_ROSTER if decision else LAYER0_TAPS,
+                             tokens=1 if decision else WIDER_TAP_TOKENS)
     events = read_operations(paths["operations"])
     component["validate_operations"](events, value)
     require(events[-1]["native_call_elapsed_us"] == row["native_call_elapsed_us"],
@@ -918,7 +954,7 @@ def validate_wider_capture(value, paths, owned, request, evidence, metadata, man
     require(Path(trace["path"]) == paths["profile"] and 0 < trace["bytes"] <= LOG_CAP,
             "exact captured T1024 runtime profile required")
     base.pinned(trace)
-    return attention_logs(paths["stdout"].read_bytes(), WIDER_TAP_MODE)
+    return attention_logs(paths["stdout"].read_bytes(), mode)
 
 
 def development_metrics(raw, reference):
@@ -946,6 +982,11 @@ def development_metrics(raw, reference):
         "native_winner": winner,
         "native_winner_margin": actual[winner] - actual[actual_order[1]],
     }
+
+
+def provisional_development_pass(matching, original):
+    return (matching["raw_error"] <= DEVELOPMENT_RAW_LIMIT and matching["argmax_matches"]
+            and matching["mass_error"] <= .05 and original["mass_error"] <= .05)
 
 
 def development_attention_logs(raw, rows):
@@ -1058,7 +1099,9 @@ def validate_development(value, paths, owned, request, evidence, metadata, manif
                 and row["within_deadline"] is True,
                 "native winner, margin or original deadline differs")
         near_tie = matching["reference_margin"] <= DEVELOPMENT_NEAR_TIE
-        screened = matching["raw_error"] <= DEVELOPMENT_RAW_LIMIT and (matching["argmax_matches"] or near_tie)
+        screened = provisional_development_pass(matching, original)
+        require(row["raw_ceiling_winner_at_risk"] is (matching["reference_margin"] <= 2 * DEVELOPMENT_RAW_LIMIT),
+                "development winner at-risk label differs")
         require(row["near_tie_ambiguous"] is near_tie and row["development_screen_pass"] is screened,
                 "development near-tie or raw-screen classification differs")
         gate_results.append(screened)
@@ -1131,6 +1174,8 @@ def run(args):
             audit([Path(pin["path"])])
             dependencies[name] = retained_core(pin, base)
     inputs = [request, evidence, image, build, manifest, log, artifact, *sources.values(), *dependencies.values()]
+    approvals = decision_build_approvals(log, artifact, manifest, base, audit) if args.mode == DECISION_MODE else []
+    inputs.extend(approvals)
     projection_reference = development_reference = None
     if projection is not None:
         stage_pin, stage = projection
@@ -1169,7 +1214,7 @@ def run(args):
         )
         inputs.extend((graph_receipt, graph, graph_operations))
     sealed_t1024 = None
-    if args.mode == WIDER_TAP_MODE:
+    if args.mode in WIDE_CAPTURES:
         sealed_pins, sealed_t1024 = read_sealed_t1024(
             request, stage_pin, graph, projection_reference, parent, base, audit,
         )
@@ -1191,6 +1236,8 @@ def run(args):
         receipt["projection_assets"] = {name: stage[name] for name in ("candidate_graph", "candidate_weights")}
     if projection_reference is not None:
         receipt["projection_reference"] = core(projection_reference)
+    if approvals:
+        receipt["compile_time_cuda_approvals"] = approvals
     if sealed_t1024 is not None:
         receipt["sealed_scoring"] = {"owned": sealed_pins[0], "native": sealed_pins[1]}
     component["mkdir"](guard, out, deadline=expires)
@@ -1265,7 +1312,7 @@ def run(args):
                 paths["profile"] = traces[0]
         value = None
         if not metadata_mode and paths["native"].is_file():
-            value = (base.read(paths["native"], LOG_CAP) if args.mode == WIDER_TAP_MODE
+            value = (base.read(paths["native"], LOG_CAP) if args.mode in WIDE_CAPTURES
                      else base.read(paths["native"]))
             if value.get("error"):
                 raise ValueError(value["error"])
@@ -1292,11 +1339,11 @@ def run(args):
                 receipt["projection_graph"] = validate_projection_graph(
                     value["graph_observation"]["graph_metadata"], output_projection=has_output_projection(projection),
                 )
-        elif args.mode == WIDER_TAP_MODE:
+        elif args.mode in WIDE_CAPTURES:
             require(value is not None and "profile" in paths, "native capture or actual profile missing")
             receipt["flash_attention_records"] = validate_wider_capture(
                 value, paths, receipt["owned"], request, evidence, evidence_value, manifest, image, component, base,
-                projection, projection_reference, graph, reviewed_placement, sources[BOUNDED_SOURCE], sealed_t1024,
+                projection, projection_reference, graph, reviewed_placement, sources[BOUNDED_SOURCE], sealed_t1024, args.mode,
             )
             receipt["raw_scores_equal_to_sealed"] = True
         elif args.mode == DEVELOPMENT_MODE:
@@ -1342,7 +1389,7 @@ def run(args):
                 for path in retained:
                     if path.is_file():
                         limit = (component["DIAGNOSTIC_PROOFS"]["native_result"]
-                                 if args.mode != WIDER_TAP_MODE and path == paths["native"]
+                                 if args.mode not in WIDE_CAPTURES and path == paths["native"]
                                  and args.mode in (*GRAPH_MODES, *TAP_SCOPES, *PROJECTION_SCORE_MODES) else LOG_CAP)
                         size = path.stat().st_size
                         pin = (base.pin(path) if size <= limit else

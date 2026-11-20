@@ -505,8 +505,9 @@ the original Windows job, device capacity and 120-second deadline.
 
 The distinct development receipt records the finite score arrays, both raw and
 mass differences, selected indices, signed margins and actual timings. The
-0.010 raw development screen treats the matching reference margin within
-0.020 as ambiguous if the winner changes. Raw or winner nonpass permits later
+provisional 1.8.207 development screen requires a matching winner and raw error
+at most 0.070. The historical near-tie label uses a reference margin at most
+0.020. A separate at-risk flag uses a reference margin at most 0.140. Raw or winner nonpass permits later
 safe widths. Either mass difference above 0.05, incorrect placement, invalid
 output or lost custody stops the batch after retaining available evidence.
 The complete 1,942-node typed profile checks each recorded width and the 374
@@ -531,3 +532,11 @@ to 64 MiB for its 6,291,456 half words. Progress receipts and the other
 selectors retain the 16 MiB cap. The operation journal records the load and
 the single numerical call. The result records the actual CUDA and host
 teardown and carries no product admission or qualification.
+
+The private `qkv-decision-t1024` capture uses the exact reviewed Compact
+Q/K/V graph and frozen decision position 1023. It exposes the existing
+normalized FP16 K-projection inputs at layers 0, 9, 18 and 27.
+The native run binds four full [1,1024,2048] output buffers
+(16 MiB total) and retains four rows of 2,048 half words. The eight
+ordinary scores must match the sealed native run bit for bit. The same
+whole-graph placement, attention, deadline and settlement checks apply.

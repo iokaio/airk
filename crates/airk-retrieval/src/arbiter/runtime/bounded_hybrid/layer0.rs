@@ -9,6 +9,14 @@ pub const COMPACT_FP16_LAYER0_TAPS: &[(&str, usize)] = &[
     (V_PROJECTION, 1024),
     ("/airk_g5/attention/0/raw16", 2048),
 ];
+macro_rules! decision_taps {
+    ($($n:literal),+) => {
+        &[$(
+            (concat!("/airk_g5/weight//scorer/layers.", $n, "/self_attn/k_proj/MatMul/input16"), 2048),
+        )+]
+    };
+}
+
 const GQA: &str = "/airk_g5/attention/0/efficient";
 const V_PROJECTION: &str = "/airk_g5/weight//scorer/layers.0/self_attn/v_proj/MatMul/output16";
 const PROJECTION_INPUT: &str = "/airk_g5/weight//scorer/layers.0/self_attn/k_proj/MatMul/input16";
@@ -35,6 +43,7 @@ pub(super) enum Layer0Cut {
     Attention,
     Projection,
     QkvAttentionT1024,
+    QkvDecisionT1024,
 }
 
 impl Layer0Cut {
@@ -42,20 +51,21 @@ impl Layer0Cut {
         match self {
             Self::Attention | Self::QkvAttentionT1024 => COMPACT_FP16_LAYER0_TAPS,
             Self::Projection => COMPACT_FP16_LAYER0_PROJECTION_TAPS,
+            Self::QkvDecisionT1024 => Scorer::COMPACT_QKV_DECISION_TAPS,
         }
     }
 
     pub(super) fn tokens(self) -> usize {
         match self {
             Self::Attention | Self::Projection => 32,
-            Self::QkvAttentionT1024 => 1024,
+            Self::QkvAttentionT1024 | Self::QkvDecisionT1024 => 1024,
         }
     }
 
     pub(super) fn validate_input(self, input: &CompiledInput) -> Result<()> {
         match self {
             Self::Attention | Self::Projection => validate_input(input),
-            Self::QkvAttentionT1024 => {
+            Self::QkvAttentionT1024 | Self::QkvDecisionT1024 => {
                 ensure!(
                     input.input_digest == T1024_INPUT.parse()?
                         && input.input_ids.len() == 1024
@@ -75,6 +85,7 @@ impl Layer0Cut {
         match self {
             Self::Attention => b"airk.private.compact-fp16-cuda-layer0-taps/1",
             Self::Projection => b"airk.private.compact-fp16-cuda-layer0-projection-taps/1",
+            Self::QkvDecisionT1024 => b"airk.private.compact-fp32-qkv-cuda-decision-t1024/1",
             Self::QkvAttentionT1024 => b"airk.private.compact-fp32-qkv-cuda-layer0-t1024/1",
         }
     }
@@ -205,6 +216,9 @@ fn require_qkv_projection_profile(
 }
 
 impl Scorer {
+    /// Frozen normalized FP16 K-projection inputs sampled across Compact.
+    pub const COMPACT_QKV_DECISION_TAPS: &'static [(&'static str, usize)] =
+        decision_taps!(0, 9, 18, 27);
     /// Captures one disposable observation of a separately reviewed Compact FP16
     /// graph whose Q, K and V projections are under diagnostic review.
     pub fn load_private_compact_fp32_qkv_projection_diagnostic(
@@ -266,6 +280,24 @@ impl Scorer {
             reviewed_graph_sha,
             REVIEWED_QKV,
             Some(Layer0Cut::QkvAttentionT1024),
+        )
+    }
+
+    pub fn open_private_compact_fp32_qkv_decision_t1024(
+        profile: ExecutionProfile,
+        source: &dyn AssetSource,
+        profiling_prefix: &Path,
+        reviewed_graph_result: &[u8],
+        reviewed_graph_sha: Sha256Digest,
+    ) -> Result<Self> {
+        Self::open_private_compact_fp32_projection_profiled(
+            profile,
+            source,
+            profiling_prefix,
+            reviewed_graph_result,
+            reviewed_graph_sha,
+            REVIEWED_QKV,
+            Some(Layer0Cut::QkvDecisionT1024),
         )
     }
 
@@ -674,6 +706,19 @@ pub(super) fn validate_graph(
             ))
         };
         let assigned = match cut {
+            Layer0Cut::QkvDecisionT1024 => {
+                // The original reviewed graph already contains this named half boundary.
+                base.as_array().is_some_and(|all| {
+                    all.iter().any(|row| {
+                        row["kind"] == "value"
+                            && row["name"] == tap
+                            && row["element_type"] == 10
+                            && row["rank"] == 3
+                            && row["graph"] == 0
+                            && row["producer"].is_u64()
+                    })
+                })
+            }
             Layer0Cut::Attention | Layer0Cut::QkvAttentionT1024 if index == 3 => {
                 has_edge(Some(gqa), 2, 0)
             }
@@ -703,6 +748,20 @@ pub(super) fn validate_graph(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decision_taps_cover_four_pinned_normalized_attention_inputs() {
+        let taps = Layer0Cut::QkvDecisionT1024.taps();
+        assert_eq!(taps.len(), 4);
+        for (&(name, width), layer) in taps.iter().zip([0, 9, 18, 27]) {
+            assert_eq!(
+                name,
+                format!("/airk_g5/weight//scorer/layers.{layer}/self_attn/k_proj/MatMul/input16")
+            );
+            assert_eq!(width, 2048);
+        }
+        assert_eq!(Layer0Cut::QkvDecisionT1024.tokens(), 1024);
+    }
 
     #[test]
     fn layer0_projection_outputs_retain_the_symbolic_token_axis() -> Result<()> {

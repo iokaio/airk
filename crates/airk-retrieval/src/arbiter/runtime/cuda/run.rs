@@ -70,15 +70,18 @@ impl Binding {
         taps: &[(&'static str, usize)],
         tokens: usize,
     ) -> Result<(Vec<f32>, Vec<Vec<u16>>)> {
+        let decision_only =
+            taps == super::super::Scorer::COMPACT_QKV_DECISION_TAPS && tokens == 1024;
         ensure!(
             self.evidence.is_none()
                 && matches!(tokens, 32 | 1024)
                 && input.input_ids.len() == tokens
                 && input.candidate_positions.len() == 8
-                && taps
-                    .iter()
-                    .map(|&(_, width)| width)
-                    .eq([2048, 1024, 1024, 2048]),
+                && (decision_only
+                    || taps
+                        .iter()
+                        .map(|&(_, width)| width)
+                        .eq([2048, 1024, 1024, 2048])),
             "Compact FP16 layer-0 tap probe geometry changed"
         );
         score_with_outputs(
@@ -110,7 +113,12 @@ impl Binding {
                                 && values.iter().all(|value| value.is_finite()),
                             "Compact FP16 tap shape or finite-value contract changed: {name}"
                         );
-                        Ok(values.iter().map(|value| value.to_bits()).collect())
+                        let retained = if decision_only {
+                            &values[(tokens - 1) * width..]
+                        } else {
+                            values
+                        };
+                        Ok(retained.iter().map(|value| value.to_bits()).collect())
                     })
                     .collect()
             },

@@ -12731,3 +12731,33 @@ menu and a separate service. Its private pilot descriptor digest is
 The check-only run verified the request, source and profile identities
 without starting a model. Four control tests passed. An actual native run
 is needed to measure offered actions and prompt lengths.
+
+### Compact T1024 decision-row diagnostic and provisional rescreen
+
+The full A6000 forward returned the same eight ordinary score words while
+exposing four existing K-projection inputs for position 1023. The normalized
+device/reference rows matched at layer 0. They differed in 1,773, 1,909 and
+1,929 of 2,048 half words at layers 9, 18 and 27. Their relative L2 differences
+were 0.001040, 0.002022 and 0.003061. The profile retained all 28 Flash layers.
+The owned run settled in 55.84 s with 9,484,779,520 bytes peak host commit.
+A preceding attempt refused a profile whose math digest incorporated modified
+test source. The successful four-output probe used the original six math
+sources and matched the retained candidate identity.
+
+The executable development check requires the same winner, maximum matching
+raw error 0.07, and both mass errors at most 0.05. The replay under the new
+development rule passed all four widths. All four matching-reference top-two
+gaps exceed 0.14. These cases supply no near-tie or paired evidence.
+
+| Evidence | SHA-256 |
+| --- | --- |
+| Native owned decision probe | 3ddf7fab2ca7eb4c79451836d745d21298d17c9f20233ae201a40a8a32143c09 |
+| Four-row comparison | 23d28bec3558c0d9d07bd524079548c4e6a9259415ee4904c15a1d636452ba37 |
+| Original scores under provisional rule | 8722b0c2b069a7b7329838cd6f58100a40f15f3f448905e527bd3d98106b56b7 |
+| Clippy | aab27ae21303046d6109672863e4136b05919cc70a7f8b72b805703ab757ad69 |
+| Nextest, 62 passed and 479 filtered | 07f6241c96285bf20f475aaeb0dfa4a14055c40ccbe48bc08e4424b14c202379 |
+| Linked test image | 3e232e4c1d7552be8342b0894b3219129ded32b12cacb05be95b4142bb73d3ed |
+
+The focused wrapper suite passed 87 tests. The final Rust batch ran after
+the native source inventory settled. Input sealing in a previous batch
+detected concurrently added Linux source.

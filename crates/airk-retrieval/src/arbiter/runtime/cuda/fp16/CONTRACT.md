@@ -49,3 +49,11 @@ receipt and current profile and adapter. The bounded gate compares all
 session rows and counters under the existing 374 CPU controls and original
 payload bounds. The native scorer remains limited to the frozen T32 input
 and deadline. Its diagnostic result grants no product admission.
+
+The private `qkv-decision-t1024` capture uses the exact reviewed Compact
+Q/K/V graph and frozen decision position 1023. It exposes the existing
+normalized FP16 K-projection inputs at layers 0, 9, 18 and 27.
+The native run binds four full [1,1024,2048] output buffers
+(16 MiB total) and retains four rows of 2,048 half words. The eight
+ordinary scores must match the sealed native run bit for bit. The same
+whole-graph placement, attention, deadline and settlement checks apply.
