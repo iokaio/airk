@@ -102,3 +102,19 @@ watchdog termination, kernel memory observation and settlement refusal. The Larg
 parent regression uses the original Windows receipt to test the parser, including
 truncated diagnostic text alongside complete typed graph rows. GNU model evidence
 requires a new observation under its own image.
+
+## Protected Compact CUTLASS
+
+The protected Compact graph has 196 FP32 MatMuls and 28 efficient multi-head
+attention operators. Run `python -I -B -S scripts/arbiter/evaluation/linux_cuda/cutlass_references.py`
+from the checkout to authenticate the original independent CPU references at
+T32, T128, T1024 and T8192. The command reads the pinned original execution,
+producer and fixture for each width and prints the eight matching scores,
+original FP32 scores, argmax and compiled input digest. It reads no CUDA device.
+
+To check retained Large CPU inputs, run `python -E -B -S
+scripts/arbiter/evaluation/linux_cuda/large_direct_references.py --row WIDTH
+EXECUTION_SHA256` with one `--row` for each original, independently completed
+width. It authenticates the original CPU Job and reference, publisher revision,
+weight and graph identity and all eight scores. The T32/T128 input receipt
+records just those two widths. A GNU runtime score is a later distinct result.
