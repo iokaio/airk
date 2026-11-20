@@ -69,3 +69,5 @@ The result reports the greatest native f32 cutoff at maximum certified coverage
 with zero uncertified admissions. A null cutoff records that the evidence
 supported no such admissions. Numeric qualification, semantic utility and
 product activation each require their own evidence.
+
+Run collect_first56_gpu.py with isolated Python to reopen the seven original fresh R5 CUDA phases against their frozen 56-row projection. Its private JSON output preserves the phase pins for the full-cohort study.

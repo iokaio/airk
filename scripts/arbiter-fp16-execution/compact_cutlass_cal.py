@@ -11,6 +11,7 @@ ORIGINAL = "6e7520aa29076f0958353a158e9be3390caef48675188e14e53660d035c1068f"
 AUDIT = "87731282ecd121eaf08d5074d1bc421c5753bc65f7126f9578b31c6f9303d661"
 PLAN4 = "9259b4be9e340ac8e050060e904f53acffee27e3807eca6145a9a8f3be3e299d"
 PLAN5 = "55a89e5219cf6de0c3b59cbaa8a4a8a43dc0d097276368cfb5a28ee2fe6536bf"
+R5_PRODUCER = "6da3b982fb8ef837b5e67b2312de6caf3b54dd72859e53abeced6f2a2d0de40c"
 ACQUIRED5 = "f0e60bafcd2e431f8daaa00b75b05b856506fb3afe08752fba48e9af8e324981"
 CORRECTED_SELECTOR = "e7a87b85e038ab04f5e2e17b8a1d7804d4ee89969ab956aea6ff0a84a591a413"
 R4_COMPILER = "a9920b78d7c9532c66c9cb07ead4d23fccd0084d26f65657b42fb00e9772795e"
@@ -68,6 +69,9 @@ def original_inputs(args, campaign, base, exact):
         require(presentation["original_requests"] == count and presentation["NN_invocations"] == presentation["gain_certificates"] == 0
                 and presentation["plan_sha256"] == plan and len(presentation["lifetimes"]) == (1 if count==56 else 2)
                 and bool(presentation["terminal"]) == (count==100), "R5 population or original closure differs")
+        producer = Path(__file__).resolve().parents[1] / "arbiter/evaluation/selected_goal/cal_raw/r5_chronological_inputs.py"
+        require(presentation["source_sha256"] == R5_PRODUCER, "wrong original R5 projection producer")
+        keep(producer,R5_PRODUCER)
         root5 = campaign / "cal100-focus1024-capture-r5"
         keep(root5/"lifetime-plan.json", PLAN5)
         require(presentation["acquired_sha256"] == ACQUIRED5, "wrong R5 original installation acquisition")
