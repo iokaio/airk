@@ -2386,3 +2386,6 @@ mod tests {
 
 #[cfg(test)]
 mod source_map_tests;
+
+#[cfg(test)]
+mod source_mirror;

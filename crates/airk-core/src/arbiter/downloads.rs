@@ -43,6 +43,7 @@ pub fn download_origin(url: &str) -> Result<DownloadOrigin> {
                 "Qwen",
                 "Qwen3-Reranker-0.6B" | "Qwen3-0.6B-Base" | "Qwen3-1.7B" | "Qwen3-4B"
             ) | ("onnx-community", "Qwen3-Reranker-0.6B-ONNX")
+                | ("iokaio", "airk-arbiter-models")
         ),
         "unreviewed Arbiter model repository"
     );

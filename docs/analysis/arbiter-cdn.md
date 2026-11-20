@@ -6,6 +6,13 @@ Use **Hugging Face as the primary download source and GitHub Releases as the bac
 
 AIRK’s compiled catalog owns filenames, source locations, lengths and SHA-256 values. Use existing approved upstream repositories only for files that match the selected bytes exactly. Publish AIRK-derived graphs, weights and companion files to the AIRK-owned Hub repository with their verified licenses and provenance. For scale, the retained `models-1.8.201` catalog has 44 parts totaling 24,130,010,313 bytes and a 1 GiB maximum part. Use the approved final asset roster for actual storage, transfer and verification budgets. Hugging Face applies resolver rate limits, and public storage is subject to its plan and usage policies. Verify those limits for the intended organization before rollout. [Retained catalog](../../crates/airk-retrieval/src/arbiter/release-catalog.json) · [Hub rate limits](https://huggingface.co/docs/hub/rate-limits) · [Hub storage limits](https://huggingface.co/docs/hub/storage-limits)
 
+The maintained implementation and exact operator commands are in the
+[Arbiter mirror runbook](../../scripts/arbiter/distribution/README.md).
+The public, ungated `iokaio/airk-arbiter-models` repository exists and its
+existing Model card has been read back anonymously at a pinned commit. This
+can serve as the first small-read control. Approved model assets still need
+the release preparation, publication and installed verification below.
+
 ## Account preparation for Tyler
 
 1. **Choose the owning account.** Sign in to Hugging Face and enable two-factor authentication. Use an organization controlled by the project, preferably `iokaio` if available or already under your control. Keep an administrator able to recover access. [Organizations](https://huggingface.co/docs/hub/organizations) · [Two-factor authentication](https://huggingface.co/docs/hub/security-2fa)

@@ -6,6 +6,18 @@
     },
     "valid": false
   },
+  "hf_airk_primary_configured_gh_backup_structural_only": {
+    "part": {
+      "backup_urls": [
+        "https://github.com/iokaio/airk/releases/download/v1.9.0/airk-arbiter-focus.fixture.bin"
+      ],
+      "bytes": 17,
+      "sha256": "0101010101010101010101010101010101010101010101010101010101010101",
+      "url": "https://huggingface.co/iokaio/airk-arbiter-models/resolve/0123456789abcdef0123456789abcdef01234567/airk-arbiter-focus.fixture.bin"
+    },
+    "source_count": 2,
+    "working_gh_backup_asserted": false
+  },
   "hf_primary_actual_same_byte_hf_backup": {
     "part": {
       "backup_urls": [

@@ -4,6 +4,9 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 const HF: &str = "https://huggingface.co/Qwen/Qwen3-0.6B-Base/resolve/da87bfb608c14b7cf20ba1ce41287e8de496c0cd/LICENSE";
 const HF_BACKUP: &str = "https://huggingface.co/Qwen/Qwen3-1.7B/resolve/70d244cc86ccca08cf5af4e1e306ecf908b1ad5e/LICENSE";
+const AIRK_HF: &str = "https://huggingface.co/iokaio/airk-arbiter-models/resolve/0123456789abcdef0123456789abcdef01234567/airk-arbiter-focus.fixture.bin";
+const AIRK_GITHUB: &str =
+    "https://github.com/iokaio/airk/releases/download/v1.9.0/airk-arbiter-focus.fixture.bin";
 fn part() -> AssetPart {
     AssetPart {
         url: HF.into(),
@@ -116,6 +119,37 @@ fn immutable_reviewed_download_origins_are_closed() -> Result<()> {
     Ok(())
 }
 #[test]
+fn airk_hub_origin_requires_exact_repository_and_a_flat_commit_pinned_file() -> Result<()> {
+    assert_eq!(download_origin(AIRK_HF)?, DownloadOrigin::HuggingFace);
+    let (base, _) = AIRK_HF.rsplit_once('/').unwrap();
+    assert_eq!(
+        download_origin(&format!("{base}/{}", "a".repeat(192)))?,
+        DownloadOrigin::HuggingFace
+    );
+    const REVISION: &str = "0123456789abcdef0123456789abcdef01234567";
+    for url in [
+        AIRK_HF.replace("/iokaio/", "/someone-else/"),
+        AIRK_HF.replace("/iokaio/", "/Iokaio/"),
+        AIRK_HF.replace("/iokaio/", "/datasets/iokaio/"),
+        AIRK_HF.replace("/airk-arbiter-models/", "/airk-models/"),
+        AIRK_HF.replace("/airk-arbiter-models/", "/airk-arbiter-models.git/"),
+        AIRK_HF.replace("/resolve/", "/blob/"),
+        AIRK_HF.replace(REVISION, "main"),
+        AIRK_HF.replace(REVISION, &REVISION[..39]),
+        AIRK_HF.replace(REVISION, &format!("{REVISION}0")),
+        AIRK_HF.replace(REVISION, &REVISION.to_ascii_uppercase()),
+        format!("{base}/nested/part-01.bin"),
+        format!("{base}/%2e%2e"),
+        format!("{base}/{}", "a".repeat(193)),
+        format!("{AIRK_HF}?download=true"),
+        format!("{AIRK_HF}#file"),
+    ] {
+        assert!(download_origin(&url).is_err(), "{url}");
+    }
+    Ok(())
+}
+
+#[test]
 fn complete_backup_ordinals_share_exact_part_identity_and_asset_bounds() -> Result<()> {
     let mut value = part();
     value.backup_urls = vec![HF_BACKUP.into()];
@@ -187,6 +221,26 @@ fn native_download_origin_semantic_fixture_emitter() -> Result<()> {
     let mut configured_gh_backup = hf.clone();
     configured_gh_backup.backup_urls = vec![original.downloads[0].parts[0].url.clone()];
     configured_gh_backup.validate()?;
+    let airk_mirrored = AssetDownload {
+        asset_name: "structural-airk-mirror".into(),
+        parts: vec![AssetPart {
+            url: AIRK_HF.into(),
+            backup_urls: vec![AIRK_GITHUB.into()],
+            bytes: 17,
+            sha256: Sha256Digest::from_bytes([1; 32]),
+        }],
+    };
+    let airk_sources = airk_mirrored.source_count()?;
+    assert_eq!(airk_sources, 2);
+    let airk_part = &airk_mirrored.parts[0];
+    assert_eq!(
+        download_origin(airk_part.source_url(0).unwrap())?,
+        DownloadOrigin::HuggingFace
+    );
+    assert_eq!(
+        download_origin(airk_part.source_url(1).unwrap())?,
+        DownloadOrigin::GitHubRelease
+    );
     let incomplete = AssetDownload {
         asset_name: "structural-two-part".into(),
         parts: vec![actual_hf_backup.clone(), hf.clone()],
@@ -199,6 +253,7 @@ fn native_download_origin_semantic_fixture_emitter() -> Result<()> {
         "hf_primary_no_backup":{"part":hf,"origin":"hugging_face","source_count":1,"public_metadata_identity_only":true},
         "hf_primary_actual_same_byte_hf_backup":{"part":actual_hf_backup,"source_count":2,"public_metadata_identity_only":true},
         "hf_primary_configured_gh_backup_structural_only":{"part":configured_gh_backup,"source_count":2,"working_gh_backup_asserted":false},
+        "hf_airk_primary_configured_gh_backup_structural_only":{"part":airk_part,"source_count":airk_sources,"working_gh_backup_asserted":false},
         "retained_profile":{"profile":original,"empty_backups_omit":true,"old_profile_fixture_sha256":"d0064974be46e7cb56099a71c248587d81cd93eccd1405ec9e736664c199d593"},
         "incomplete_backup_roster":{"download":incomplete,"valid":false},"empty_parts":{"download":empty,"valid":false},
         "schema_document":crate::arbiter::schema::document()});

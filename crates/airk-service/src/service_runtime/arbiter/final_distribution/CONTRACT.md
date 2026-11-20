@@ -257,6 +257,40 @@ GitHub backup/tag handling. These are inert metadata/file controls, not model,
 remote-availability or release qualification. Root alone executes Cargo/NN.
 
 
+## Preparing reviewed mirrored transport maps
+
+The ignored private selector
+`service_runtime::arbiter::final_distribution::source_mirror::emit_reviewed_download_source_maps`
+prepares transport maps without promoting profiles. Set
+`AIRK_ARBITER_SOURCE_MIRROR_INPUT` and `AIRK_ARBITER_SOURCE_MIRROR_INPUT_SHA256`
+to a pinned private request, and `AIRK_ARBITER_SOURCE_MIRROR_OUTPUT` to a fresh
+absolute output directory checked by the human execution guard.
+
+The request schema `airk.private-arbiter-source-mirror-input/1` has
+`github_tag`, one to three `baseline_maps` file pins, and an `hf_report` file
+pin. Each baseline uses the existing native `Vec<AssetDownload>` JSON shape.
+The report supplies `repo`, immutable `commit` and `files` rows containing
+`path`, `bytes` and `sha256`. The anonymous verification producer verifies
+the optional Model card separately and excludes it from these transport pins.
+The optional `changed` and `requested_head` fields carry publication
+observations and confer no approval.
+
+The selected GitHub-primary parts must all use the requested official release
+tag, have no existing backups, and match the complete verified Hub filename,
+length and digest union. Shared filenames across maps require matching pins.
+Mixed primary origins within an asset, incomplete maps and conflicting or
+unexpected part identities refuse. Unchanged reviewed upstream-primary assets
+retain their existing sources. The output writes `download-sources-000.json`
+and subsequent numbered native maps in baseline order. Each mirrored part
+retains its original ordered length and SHA-256 and names the same filename
+on both hosts. The original GitHub URL becomes its backup.
+
+The emitter reads pinned reports and produces only native maps. The exact
+output SHA still requires the existing RecordedDecision approval. Final
+promotion independently verifies the complete logical file and ordered
+slices against the candidate files and retains all proof and policy gates.
+This handoff adds no public operation or source-map shape.
+
 ## D05 additive terminal proof scope (15 November 2026)
 
 Historical final proof `/1` and generic calibration-equivalence receipts retain

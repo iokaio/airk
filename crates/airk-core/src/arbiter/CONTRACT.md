@@ -852,15 +852,16 @@ retained old nested Rust Profile serializer/hashed fixture. No airk-state/1
 fixture is rewritten. Nonempty release descriptors require a new authenticated
 manifest/catalog through final promotion, never rewritten consent or enablement.
 
-Core download_origin is the sole initial-source predicate. Existing official
-iokaio/airk GitHub release URLs retain their exact safe tag/file rules. HF URLs
-are HTTPS huggingface.co with exact reviewed repositories Qwen/Qwen3-Reranker-0.6B,
-Qwen/Qwen3-0.6B-Base, Qwen/Qwen3-1.7B, Qwen/Qwen3-4B and
-onnx-community/Qwen3-Reranker-0.6B-ONNX, then resolve/40-lowercase-hex/safe-single-file.
-No credentials, explicit ports, branches, query, fragment, escapes or traversal;
-no derived AIRK repository is invented. Metadata/source shape does not establish
-actual availability, rights or payload qualification. Redirect admission remains
-an independently bounded native transport duty.
+Core download_origin is the sole initial-source predicate. Official
+iokaio/airk GitHub release URLs use safe tag and file components. Hugging Face
+URLs use HTTPS on huggingface.co and one of the exact repositories
+Qwen/Qwen3-Reranker-0.6B, Qwen/Qwen3-0.6B-Base, Qwen/Qwen3-1.7B, Qwen/Qwen3-4B,
+onnx-community/Qwen3-Reranker-0.6B-ONNX, or iokaio/airk-arbiter-models. Each
+resolve path binds a lowercase 40-character hexadecimal commit and one safe
+root-level filename. Core rejects credentials, explicit ports, branches,
+queries, fragments, escapes and traversal. Availability, rights and payload
+qualification require separate evidence. Native transport owns bounded redirect
+admission.
 
 AssetDownload.source_count validates a complete same-count backup ordinal on
 EVERY ordered part, at most initial+two alternatives. AssetPart.source_url(0)

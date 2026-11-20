@@ -427,6 +427,7 @@ mod tests {
             "hf_primary_no_backup",
             "hf_primary_actual_same_byte_hf_backup",
             "hf_primary_configured_gh_backup_structural_only",
+            "hf_airk_primary_configured_gh_backup_structural_only",
         ] {
             let row = &cases[name];
             let part: AssetPart = serde_json::from_value(row["part"].clone())?;
@@ -469,6 +470,17 @@ mod tests {
             "//evil.invalid/tokenizer.json",
         ] {
             assert!(redirect_url(source, bad).is_err(), "{bad}");
+        }
+        let airk = "https://huggingface.co/iokaio/airk-arbiter-models/resolve/0123456789abcdef0123456789abcdef01234567/airk-arbiter-focus.fixture.bin";
+        let airk_cache = "/api/resolve-cache/models/iokaio/airk-arbiter-models/0123456789abcdef0123456789abcdef01234567/airk-arbiter-focus.fixture.bin?etag=opaque";
+        approved(airk, true)?;
+        redirect_url(airk, airk_cache)?;
+        for different in [
+            airk_cache.replace("0123456789", "1123456789"),
+            airk_cache.replace("focus.fixture.bin", "large.fixture.bin"),
+            airk_cache.replace("iokaio", "other"),
+        ] {
+            assert!(redirect_url(airk, &different).is_err());
         }
         assert!(approved(cache, true).is_err());
         assert!(
