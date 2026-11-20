@@ -156,3 +156,4 @@ Metering is sampled and does not measure an ORT allocator high-water mark.
 Retain a separate post-release adapter snapshot under the original owner.
 The live CPU child control runs with
 `python -B -S scripts/cuda-component-execution/test_wddm_process_samples.py`.
+The [A6000 capacity sweep](CAPACITY-SWEEP.md) describes the separate pressure observer, its model-free controls and the native fit and timing probes. The measured 2 GiB control and the failed 8 and 12 GiB fit attempts have separate receipts. The minimum supported GPU memory remains open.
