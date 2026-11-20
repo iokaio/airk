@@ -111,3 +111,6 @@ rounding. The input activation uses the same FP32 RMS norm and FP16 cast as
 the reference. Each consumed external tensor is matched to the independent
 publisher digest. A native intermediate capture is needed to localize any
 CPU-versus-CUDA discrepancy.
+### Large first-layer projection diagnosis
+
+The Windows `probe_large.py projection-t32` mode captures the original shared FP16 input and three first-layer projection outputs from a synchronized 32-token run. `large_layer0_capture.py` verifies the CUDA producers, shared consumer edges, row indices, element words and unchanged eight final scores. `large_projection_control.py` takes the pinned independent Large reference, the original native observation (`--capture` and `--capture-sha256`), and a fresh `--owned-log`. It compares three complete rows with exact integer dot products rounded to FP16. With `--gpu-treatment` in the assigned exclusive GPU slot, it also uses `large_projection_gemm.py` to replay the original and widened products on the same operands. The receipt reports counts and maxima for each route, host and Job observations, and natural settlement. This test measures one layer and keeps complete model scoring as a separate run.

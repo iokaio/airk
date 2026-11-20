@@ -34,9 +34,13 @@ def load(pin):
     return json.loads(path.read_bytes())
 
 
-def execute(path):
+GPU_UUID = "GPU-08e2b3f6-6a39-3456-77cb-a57287a702ec"
+
+
+def execute(path, capture=None, capture_sha=None, gpu_treatment=False):
     require(sys.flags.isolated and sys.flags.no_site and sys.dont_write_bytecode
-            and os.environ.get("CUDA_VISIBLE_DEVICES") == "", "isolated CPU-only interpreter required")
+            and os.environ.get("CUDA_VISIBLE_DEVICES") == (GPU_UUID if gpu_treatment else ""),
+            "isolated interpreter and exactly requested device visibility required")
     ref = load({"path": path, "sha256": REFERENCE})
     inputs = load(ref["source_inputs"])
     plan = load(ref["conversion_plan"])
@@ -111,6 +115,33 @@ def execute(path):
     norm = torch.from_numpy(read_tensor("layers.0.input_layernorm.weight"))
     activation = half["rms"](torch, embed, norm, 1e-6).half().contiguous()
     left = exact["half_array_units"](np, activation.numpy().tobytes()).reshape(32, 2560)[list(TOKENS)]
+    capture_proof = None
+    capture_inputs = None
+    capture_rows = None
+    capture_differences = {}
+    if capture is not None:
+        capture_owner = runpy.run_path(str(ROOT / "scripts/arbiter-fp16-execution/large_layer0_capture.py"))
+        capture_proof, capture_rows = capture_owner["read_capture"](capture, capture_sha)
+        native_activation = np.asarray(capture_rows[capture_owner["SHARED"]], dtype="<u2")
+        cpu_activation = activation.numpy().view("<u2")[0, list(TOKENS)]
+        capture_inputs = {"words": int(cpu_activation.size),
+                          "mismatched_words": int(np.count_nonzero(cpu_activation != native_activation)),
+                          "max_abs_error": float(abs(cpu_activation.view("<f2").astype("<f4")
+                                                     - native_activation.view("<f2")).max())}
+        left_native = exact["half_array_units"](np, native_activation.tobytes()).reshape(len(TOKENS), 2560)
+    treatment = None
+    if gpu_treatment:
+        require(capture_proof is not None, "actual Large operands required for a CUDA treatment")
+        algorithm = ROOT / "scripts/arbiter-fp16-execution/large_projection_gemm.py"
+        gpu_sha = "7315a752db13779295104d06bc24947c4af6b1312fffaa0b7551c4bf0473c581"
+        require(digest(algorithm) == gpu_sha, "GPU treatment program changed")
+        _, full = capture_owner["read_capture"](capture, capture_sha, all_rows=True)
+        gpu_weights = {k: read_tensor("layers.0.self_attn." + k + "_proj.weight") for k in ("k", "v", "q")}
+        gpu_activation = np.asarray(full[capture_owner["SHARED"]], dtype="<u2").reshape(32,2560).view("<f2")
+        outputs, libraries = runpy.run_path(str(algorithm))["gemms"](
+            np, capture.parent.parent / "windows-cu15-scientific-provider-stage-r1", gpu_activation, gpu_weights)
+        require(digest(algorithm) == gpu_sha, "GPU treatment changed during execution")
+        treatment = {"gpu_uuid": GPU_UUID, "libraries": libraries, "program_sha256": gpu_sha, "routes": {}}
     results = {}
     for route, width in (("k", 1024), ("v", 1024), ("q", 4096)):
         name = "layers.0.self_attn." + route + "_proj.weight"
@@ -120,10 +151,17 @@ def execute(path):
         actual = actual[0, list(TOKENS)].view("<u2")
         mismatches = 0
         max_error = 0.0
+        native_misses = 0
+        native_max_error = 0.0
+        protected_misses = 0
+        protected_max = 0.0
         for start in range(0, width, 64):
             col = right[:, start:start + 64].copy()
             units = exact["half_array_units"](np, col.tobytes()).reshape(col.shape)
-            bound = int(abs(left).max()) * int(abs(units).sum(axis=0).max())
+            left_max = int(abs(left).max())
+            if capture_rows is not None:
+                left_max = max(left_max, int(abs(left_native).max()))
+            bound = left_max * int(abs(units).sum(axis=0).max())
             require(bound < 1 << 63, "64-bit exact dot overflow")
             dots = left @ units
             expected = np.fromiter((exact["rounded_half_word"](int(v)) for v in dots.flat),
@@ -131,7 +169,36 @@ def execute(path):
             obs = actual[:, start:start + 64]
             mismatches += int(np.count_nonzero(obs != expected))
             max_error = max(max_error, float(abs(obs.view("<f2").astype("<f4") - expected.view("<f2")).max()))
+            if capture_rows is not None:
+                native_dots = left_native @ units
+                gold = np.fromiter((exact["rounded_half_word"](int(v)) for v in native_dots.flat),
+                                   dtype="<u2", count=native_dots.size).reshape(native_dots.shape)
+                name = "/airk_g5/weight//scorer/layers.0/self_attn/" + route + "_proj/MatMul/output16"
+                observed = np.asarray(capture_rows[name], dtype="<u2")[:, start:start + 64]
+                if gpu_treatment:
+                    candidate = outputs["fp32"][route][list(TOKENS), start:start + 64]
+                    protected_misses += int(np.count_nonzero(candidate != gold))
+                    protected_max = max(protected_max, float(abs(candidate.view("<f2").astype("<f4") - gold.view("<f2")).max()))
+                native_misses += int(np.count_nonzero(observed != gold))
+                native_max_error = max(native_max_error, float(abs(observed.view("<f2").astype("<f4") - gold.view("<f2")).max()))
+        if gpu_treatment:
+            native_full = np.asarray(full["/airk_g5/weight//scorer/layers.0/self_attn/" + route + "_proj/MatMul/output16"],
+                                     dtype="<u2").reshape(32, width)
+            treatment["routes"][route] = {"paired_words": int(native_full.size),
+                "replayed_original_vs_captured_word_mismatches": int(np.count_nonzero(outputs["original"][route] != native_full)),
+                "evaluated_exact_dots": int(actual.size), "fp32_then_half_vs_exact_mismatches": protected_misses,
+                "fp32_then_half_vs_exact_max_error": protected_max}
+        if capture_rows is not None:
+            capture_differences[route] = {"words": int(actual.size), "native_vs_exact_mismatches_on_native_input": native_misses,
+                                           "native_vs_exact_max_abs_error_on_native_input": native_max_error}
         results[route] = {"words": int(actual.size), "mismatched_words": mismatches, "max_abs_error": max_error}
+    if gpu_treatment:
+        treatment["original_reproduced"] = all(x["replayed_original_vs_captured_word_mismatches"] == 0
+                                                for x in treatment["routes"].values())
+        treatment["treatment_supported"] = treatment["original_reproduced"] and all(
+            treatment["routes"][k]["fp32_then_half_vs_exact_mismatches"] < v["native_vs_exact_mismatches_on_native_input"]
+            and treatment["routes"][k]["fp32_then_half_vs_exact_max_error"] <= v["native_vs_exact_max_abs_error_on_native_input"]
+            for k, v in capture_differences.items())
     def pin_runtime(module_path, _check):
         return {"path": str(module_path), "bytes": module_path.stat().st_size, "sha256": digest(module_path)}
     allowed = dict(runtime["files"])
@@ -144,10 +211,12 @@ def execute(path):
             "reference_sha256": REFERENCE, "input_digest": row["input_digest"], "graph": ref["graph"],
             "verified_parameter_count": 5, "token_positions": TOKENS, "activation_sha256":
             hashlib.sha256(activation.numpy().tobytes()).hexdigest(), "routes": results,
-            "native_intermediates_observed": False, "qualification": False}
+            "native_intermediates_observed": capture_proof is not None, "capture": capture_proof,
+            "gpu_treatment": treatment, "normalized_input_comparison": capture_inputs, "native_projection_comparison": capture_differences,
+            "qualification": False}
 
 
-def run_owned(reference, log):
+def run_owned(reference, log, capture=None, capture_sha=None, gpu_treatment=False):
     ref = load({"path": reference, "sha256": REFERENCE})
     plan = load(ref["conversion_plan"])
     owner_path = ROOT / "scripts/arbiter-fp16-execution.py"
@@ -168,7 +237,7 @@ def run_owned(reference, log):
     temp = str(log.parent / "temp")
     env = {key: value for key, value in os.environ.items() if not key.upper().startswith(
         ("AIRK_", "ORT_", "PYTHON", "CUDA_", "CUDNN_", "TORCH_", "TRITON_", "HF_", "HUGGINGFACE_"))}
-    env.update(CUDA_VISIBLE_DEVICES="", HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1", TOKENIZERS_PARALLELISM="false",
+    env.update(CUDA_VISIBLE_DEVICES=GPU_UUID if gpu_treatment else "", HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1", TOKENIZERS_PARALLELISM="false",
                TORCH_HOME=temp, TORCHINDUCTOR_CACHE_DIR=temp, TRITON_CACHE_DIR=temp, TEMP=temp, TMP=temp, TMPDIR=temp)
     require(log.is_absolute() and log.parent.parent == reference.parent.parent
             and log.name == "stdout.log" and not log.exists(), "fresh private sibling experiment required")
@@ -183,6 +252,10 @@ def run_owned(reference, log):
 
     command = [sys.executable, "-I", "-B", "-S", "-X", "pycache_prefix=" + plan["cache_prefix"],
                str(source), str(reference)]
+    if capture is not None:
+        command.extend(["--capture", str(capture), "--capture-sha256", capture_sha])
+    if gpu_treatment:
+        command.append("--gpu-treatment")
     with open(os.devnull, "rb") as stdin, log.open("xb") as stdout:
         owned = owner.run_windows_owned_training(command, ROOT, stdout, deadline - time.monotonic(), env,
                                                 stdin, 4 << 30, before_resume=suspended,
@@ -199,6 +272,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("reference", type=Path)
     parser.add_argument("--owned-log", type=Path)
+    parser.add_argument("--capture", type=Path)
+    parser.add_argument("--capture-sha256")
+    parser.add_argument("--gpu-treatment", action="store_true")
     args = parser.parse_args()
-    result = run_owned(args.reference, args.owned_log) if args.owned_log else execute(args.reference)
+    require((args.capture is None) == (args.capture_sha256 is None), "pair native capture path and SHA-256")
+    result = (run_owned(args.reference, args.owned_log, args.capture, args.capture_sha256, args.gpu_treatment) if args.owned_log
+              else execute(args.reference, args.capture, args.capture_sha256, args.gpu_treatment))
     print(json.dumps(result, allow_nan=False))
