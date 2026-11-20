@@ -83,6 +83,71 @@ fn control(session: &mut Session, root: &Path) -> Result<Value> {
     )
 }
 
+const TRAIN_WIDTH: usize = 1588;
+const TRAIN_REMAINING_NS: u64 = 100_253_589_300;
+
+fn train_input(campaign: &Path) -> Result<CompiledInput> {
+    let base = campaign.join("compact-development-TRAIN_Q543-focus1024-run-r1");
+    let capture: Value = serde_json::from_slice(&pinned(
+        &base.join("capture.private.json"),
+        1624,
+        "0eb6a5b4f433e9022179a1c950095f1466e9d8ca0b111ecd63ea2a0d7eeaaa47",
+    )?)?;
+    ensure!(
+        capture["case_id"] == "TRAIN_Q543" && capture["judged"] == false,
+        "unexpected development capture"
+    );
+    let record: Value = serde_json::from_slice(&pinned(
+        &base.join("fixture/context-cal-admissions/record-0001.json"),
+        204733,
+        "50ed40cec62a39b0067515b9aab2cd97c2849ef547dad149c49d86a32a863912",
+    )?)?;
+    train_compiled(&record)
+}
+
+fn train_compiled(record: &Value) -> Result<CompiledInput> {
+    ensure!(
+        record["ordinal_in_private_run"] == 1
+            && record["Context_NN_dispatch"] == false
+            && record["remaining_ns_at_observation"].as_u64() == Some(TRAIN_REMAINING_NS)
+            && record["request"]["remaining_input_tokens"] == 4096
+            && record["request"]["roster"]["cards"]
+                .as_array()
+                .is_some_and(|c| c.len() == 7),
+        "original TRAIN capture or remaining allowance differs"
+    );
+    let mut rows = record["compiler_census"]
+        .as_array()
+        .context("missing Large compiler census")?
+        .iter()
+        .filter(|r| {
+            r["model"] == "arbiter-context-qwen3-4b"
+                && r["profile"]
+                    == "d0e3c74813347b9bb4d3e17ffa4e337bbd16574ca80a81e4b1504c7e1546b307"
+        });
+    let r = rows.next().context("missing Large TRAIN compiler row")?;
+    ensure!(
+        rows.next().is_none()
+            && r["NN_invocations"] == 0
+            && r["fits_remaining_allowance"] == true
+            && r["input_tokens"] == 1588,
+        "wrong Large compiler row"
+    );
+    let x: CompiledInput = serde_json::from_value(r["compiled"].clone())?;
+    ensure!(
+        x.input_digest.to_string()
+            == "af125f4c7ef1cd3776ea0cf7308743724a958744a921559746d907d0278868a4"
+            && x.input_ids.len() == TRAIN_WIDTH
+            && x.attention_mask == vec![1; TRAIN_WIDTH]
+            && x.position_ids.iter().copied().eq(0..1588)
+            && x.decision_position == 1587
+            && x.candidate_positions.iter().copied().eq(32..39)
+            && x.option_mask == vec![true; 7],
+        "wrong original Large TRAIN input"
+    );
+    Ok(x)
+}
+
 fn input(campaign: &Path, width: usize) -> Result<CompiledInput> {
     ensure!(
         matches!(width, 32 | 128 | 1024 | 8192),
@@ -120,53 +185,9 @@ fn input(campaign: &Path, width: usize) -> Result<CompiledInput> {
     Ok(x)
 }
 
-fn routes(p: &super::super::super::PlacementObservation) -> Result<()> {
-    let nodes: std::collections::BTreeMap<_, _> =
-        p.nodes.iter().map(|n| (n.name.as_str(), n)).collect();
-    ensure!(
-        p.complete
-            && nodes.len() == p.nodes.len()
-            && p.nodes
-                .iter()
-                .filter(|n| n.op == "MultiHeadAttention")
-                .count()
-                == 36
-            && !p.nodes.iter().any(|n| n.op == "GroupQueryAttention"),
-        "incomplete optimized Large attention"
-    );
-    for i in 0..36 {
-        let name = format!("/airk_large_cutlass/{i}/efficient");
-        let n = nodes.get(name.as_str()).context("Large MHA absent")?;
-        ensure!(
-            n.domain == "com.microsoft"
-                && n.op == "MultiHeadAttention"
-                && n.ep == "CUDAExecutionProvider",
-            "Large MHA left CUDA"
-        );
-        for site in [
-            "self_attn/q_proj",
-            "self_attn/k_proj",
-            "self_attn/v_proj",
-            "self_attn/o_proj",
-            "mlp/gate_proj",
-            "mlp/up_proj",
-            "mlp/down_proj",
-        ] {
-            let name = format!("/scorer/layers.{i}/{site}/MatMul");
-            let n = nodes
-                .get(name.as_str())
-                .context("Large projection absent")?;
-            ensure!(
-                n.op == "MatMul" && n.ep == "CUDAExecutionProvider",
-                "Large learned projection left CUDA"
-            );
-        }
-    }
-    Ok(())
-}
-
 impl CudaRuntime {
     /// Measure either the fixed layer-17 control or the distinct authenticated Large scientific graph.
+    #[cfg(windows)]
     pub fn observe_large_compensated(
         &self,
         campaign: &Path,
@@ -178,6 +199,7 @@ impl CudaRuntime {
     }
 
     /// Observe the direct FP32-activation model backed by the original immutable half weights.
+    #[cfg(windows)]
     pub fn observe_large_direct(
         &self,
         campaign: &Path,
@@ -185,6 +207,16 @@ impl CudaRuntime {
         deadline: Instant,
     ) -> Result<Value> {
         self.observe_large_arithmetic(campaign, false, case, true, deadline)
+    }
+
+    /// Retain the complete GNU final graph and placement before any numerical use.
+    #[cfg(target_os = "linux")]
+    pub fn observe_large_direct_gnu_graph(
+        &self,
+        campaign: &Path,
+        deadline: Instant,
+    ) -> Result<Value> {
+        self.observe_large_arithmetic(campaign, false, None, true, deadline)
     }
 
     fn observe_large_arithmetic(
@@ -195,6 +227,12 @@ impl CudaRuntime {
         direct: bool,
         deadline: Instant,
     ) -> Result<Value> {
+        #[cfg(target_os = "linux")]
+        ensure!(
+            direct && !operand && case.is_none(),
+            "GNU Large requires its independently reviewed final graph and CPU bounds before scoring"
+        );
+        let train_start = Instant::now();
         crate::native_inference::require_service_compute()?;
         let (leaf, graph_bytes, graph_digest) = if direct {
             (
@@ -245,6 +283,7 @@ impl CudaRuntime {
         let mut builder = Session::builder()?.with_execution_providers([provider])?;
         let root = campaign.join("large-cutlass-t32-operands-r1");
         let weights = campaign.join("large-fp16-conversion-owned-r5/candidate");
+        #[cfg(windows)]
         let _retained;
         let mut session = if operand {
             let graph = pinned(
@@ -257,24 +296,39 @@ impl CudaRuntime {
                 .commit_from_memory(&graph)?
         } else {
             let graph = campaign.join(leaf);
-            _retained = (
-                super::model::held(&graph, graph_bytes, graph_digest, deadline)?,
-                super::model::held(
-                    &weights.join("weights.bin"),
-                    8_045_328_384,
-                    WEIGHT,
-                    deadline,
-                )?,
-            );
+            #[cfg(windows)]
+            {
+                _retained = (
+                    super::model::held(&graph, graph_bytes, graph_digest, deadline)?,
+                    super::model::held(
+                        &weights.join("weights.bin"),
+                        8_045_328_384,
+                        WEIGHT,
+                        deadline,
+                    )?,
+                );
+            }
             for (name, value) in super::model::OPTIMIZERS {
                 builder = builder.with_config_entry(name, value)?;
             }
-            builder
-                .with_config_entry(
-                    "session.model_external_initializers_file_folder_path",
-                    weights.to_str().context("invalid weight path")?,
+            #[cfg(windows)]
+            {
+                builder
+                    .with_config_entry(
+                        "session.model_external_initializers_file_folder_path",
+                        weights.to_str().context("invalid weight path")?,
+                    )?
+                    .commit_from_file(&graph)?
+            }
+            #[cfg(target_os = "linux")]
+            {
+                super::model::linux::Inputs::open_paths(
+                    (&graph, graph_bytes, graph_digest),
+                    (&weights.join("weights.bin"), 8_045_328_384, WEIGHT),
+                    deadline,
                 )?
-                .commit_from_file(&graph)?
+                .session(builder)?
+            }
         };
         let placement = self.loaded.placement(&session)?;
         let result = if operand {
@@ -292,7 +346,15 @@ impl CudaRuntime {
         } else {
             let meta = self.loaded.graph_metadata(&session, deadline, &placement)?;
             meta.validate_against(&placement)?;
-            let routes = routes(&placement).map_err(|e| e.to_string());
+            let routes = super::large_routes::routes(&placement).map_err(|e| e.to_string());
+            #[cfg(target_os = "linux")]
+            let cpu = crate::arbiter::runtime::cuda::linux::check_model_cpu_bounds(
+                airk_core::arbiter::ModelChoice::ContextQwenLarge,
+                graph_digest.parse()?,
+                &meta,
+            )
+            .map_err(|e| e.to_string());
+            #[cfg(windows)]
             let cpu = meta
                 .validate_bounded_fp16_cpu_values(12_067)
                 .map_err(|e| e.to_string());
@@ -302,9 +364,20 @@ impl CudaRuntime {
                     digest == expected && routes.is_ok() && cpu.is_ok(),
                     "Large typed graph, real projection or bounded shape controls differ"
                 );
-                let x = input(campaign, width)?;
+                let x = if width == TRAIN_WIDTH {
+                    ensure!(direct, "TRAIN Q543 requires the direct FP32 candidate");
+                    train_input(campaign)?
+                } else {
+                    input(campaign, width)?
+                };
                 let input_digest = x.input_digest.to_string();
                 let values = super::model::score(&mut session, x)?;
+                if width == TRAIN_WIDTH {
+                    ensure!(
+                        train_start.elapsed().as_nanos() <= u128::from(TRAIN_REMAINING_NS),
+                        "original TRAIN request allowance expired"
+                    );
+                }
                 Some(
                     json!({"compiled_input_digest":input_digest,"raw_scores":values,"width":width}),
                 )
@@ -332,6 +405,23 @@ impl CudaRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn large_train_q543_requires_original_compiler_and_allowance() {
+        let mut record = json!({
+            "ordinal_in_private_run":1, "Context_NN_dispatch":false, "remaining_ns_at_observation":TRAIN_REMAINING_NS,
+            "request":{"remaining_input_tokens":4096,"roster":{"cards":[1,2,3,4,5,6,7]}},
+            "compiler_census":[{"model":"arbiter-context-qwen3-0.6b","profile":"compact"}]
+        });
+        assert!(
+            train_compiled(&record)
+                .is_err_and(|e| e.to_string().contains("missing Large TRAIN compiler row"))
+        );
+        record["remaining_ns_at_observation"] = json!(TRAIN_REMAINING_NS + 1);
+        assert!(
+            train_compiled(&record).is_err_and(|e| e.to_string().contains("remaining allowance"))
+        );
+    }
+
     #[test]
     fn large_kv_expansion_preserves_four_consecutive_heads() {
         let x: Vec<_> = (0..TOKENS * 8)

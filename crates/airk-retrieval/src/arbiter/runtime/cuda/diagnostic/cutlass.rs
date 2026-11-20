@@ -1,23 +1,37 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Test-support-only original-operand Windows CUTLASS attention measurement.
-#[cfg(windows)]
 mod large;
+mod large_routes;
 mod model;
 use super::super::CudaRuntime;
-use anyhow::{Context, Result, ensure};
+#[cfg(windows)]
+use anyhow::Context;
+use anyhow::{Result, ensure};
+#[cfg(windows)]
 use ort::execution_providers::{CUDAExecutionProvider, cuda::CUDAAttentionBackend};
+#[cfg(windows)]
 use ort::session::Session;
+#[cfg(windows)]
 use ort::value::Tensor;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::{fs, path::Path, time::Instant};
+#[cfg(windows)]
+use std::time::Instant;
+use std::{fs, path::Path};
 
+#[cfg(windows)]
 const TOKENS: usize = 1014;
+#[cfg(windows)]
 const HEADS: usize = 16;
+#[cfg(windows)]
 const DIM: usize = 128;
+#[cfg(windows)]
 const WIDTH: usize = HEADS * DIM;
+#[cfg(windows)]
 const NODE: &str = "airk_cutlass_gqa_decision_control";
+#[cfg(windows)]
 const GRAPH: &str = "9f10f2f9d44840d77680644fd3d96d9a5fc8934726964463f62f0984bc68521a";
+#[cfg(windows)]
 const INPUTS: &str = "f5376e4178eb2e8522225d77d87297f7110ca7c88767c06ebb2a56b09620f3b6";
 
 fn pinned(path: &Path, length: usize, sha: &str) -> Result<Vec<u8>> {
@@ -33,6 +47,7 @@ fn pinned(path: &Path, length: usize, sha: &str) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+#[cfg(windows)]
 fn expanded_kv(input: &[f32]) -> Result<Vec<f32>> {
     ensure!(
         input.len() == TOKENS * WIDTH / 2,
@@ -46,6 +61,7 @@ fn expanded_kv(input: &[f32]) -> Result<Vec<f32>> {
         .collect())
 }
 
+#[cfg(windows)]
 fn inputs(path: &Path) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>)> {
     let bytes = pinned(path, (WIDTH + TOKENS * WIDTH) * 2, INPUTS)?;
     let floats: Vec<_> = bytes
@@ -63,6 +79,7 @@ fn inputs(path: &Path) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>)> {
     Ok((q.to_vec(), expanded_kv(k)?, expanded_kv(v)?))
 }
 
+#[cfg(windows)]
 impl CudaRuntime {
     /// Evaluate one fixed scientific control. The owner retains its genuine service lease and all native capabilities.
     pub fn observe_compact_cutlass_operand(&self, root: &Path, deadline: Instant) -> Result<Value> {
@@ -175,7 +192,7 @@ impl CudaRuntime {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod tests {
     use super::*;
 

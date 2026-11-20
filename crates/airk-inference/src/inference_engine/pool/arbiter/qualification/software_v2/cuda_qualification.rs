@@ -2346,3 +2346,5 @@ mod batch_view;
 mod fp16_compact;
 #[cfg(all(windows, target_arch = "x86_64"))]
 mod fp16_large;
+#[cfg(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64"))]
+mod gnu_cutlass;

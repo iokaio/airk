@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Scientific graph load/score for the fixed protected-attention Compact candidate.
 mod inputs;
+#[cfg(target_os = "linux")]
+pub(super) mod linux;
+#[cfg(windows)]
 mod pressure;
 
 use super::{CudaRuntime, Result, Sha256, Value, ensure, json};
@@ -12,13 +15,13 @@ use ort::{
     value::Tensor,
 };
 use sha2::Digest;
+#[cfg(windows)]
 use std::{
     fs::{File, OpenOptions},
     io::Read,
     os::windows::fs::{MetadataExt, OpenOptionsExt},
-    path::Path,
-    time::Instant,
 };
+use std::{path::Path, time::Instant};
 
 const GRAPH: &str = "147be075a73ff81ca17b6c2fb965ec8f887e10908fbd33cf47a919d1694aa3d9";
 const WEIGHT: &str = "0c4bd89d032e7dd821071c3559776cd3da50d54d84b6e575373fd8cf7003a7c3";
@@ -37,6 +40,7 @@ pub(super) const OPTIMIZERS: [(&str, &str); 3] = [
     ),
 ];
 
+#[cfg(windows)]
 pub(super) fn held(path: &Path, length: u64, expected: &str, deadline: Instant) -> Result<File> {
     let mut file = OpenOptions::new().read(true).share_mode(1).open(path)?;
     let meta = file.metadata()?;
@@ -258,9 +262,14 @@ impl CudaRuntime {
             "fixed scientific provider environment required"
         );
         let stage = campaign.join(ROOT);
+        #[cfg(windows)]
         let graph = stage.join("model.onnx");
+        #[cfg(windows)]
         let _model = held(&graph, 854973, GRAPH, deadline)?;
+        #[cfg(windows)]
         let _weight = held(&stage.join("weights.bin"), 3_441_397_760, WEIGHT, deadline)?;
+        #[cfg(target_os = "linux")]
+        let assets = linux::Inputs::open(&stage, deadline)?;
         let adapters = self.adapters(deadline)?;
         let [adapter] = adapters.as_slice() else {
             anyhow::bail!("single original A6000 required")
@@ -277,6 +286,21 @@ impl CudaRuntime {
             .loaded
             .retain_primary(adapter.ordinal, self._native_lease.clone())?;
         let before = self.loaded.observe(adapter.ordinal, &context, deadline)?;
+        #[cfg(target_os = "linux")]
+        let (arena, grant): (u64, Option<Value>) = {
+            ensure!(
+                pressure_tier.is_none()
+                    && std::env::var_os("AIRK_COMPACT_PRESSURE_TIER_GIB").is_none()
+                    && std::env::var_os("AIRK_COMPACT_PRESSURE_NONCE").is_none(),
+                "GNU requires independent native pressure evidence"
+            );
+            ensure!(
+                before.free_bytes >= 24 << 30,
+                "original GNU CUDA reservation unavailable"
+            );
+            (24 << 30, None)
+        };
+        #[cfg(windows)]
         let (arena, grant) = if let Some(tier) = pressure_tier {
             let gate = reviewed_graph.context("pressure requires sealed graph")?;
             ensure!(
@@ -323,7 +347,10 @@ impl CudaRuntime {
             builder = builder.with_config_entry(name, value)?;
         }
         let started = Instant::now();
+        #[cfg(windows)]
         let mut session = builder.commit_from_file(&graph)?;
+        #[cfg(target_os = "linux")]
+        let mut session = assets.session(builder)?;
         let cold_us = started.elapsed().as_micros();
         let placement = self.loaded.placement(&session)?;
         let meta: GraphMetadataObservation =
@@ -331,6 +358,14 @@ impl CudaRuntime {
         meta.validate_against(&placement)?;
         let routes = check_gpu_nodes(&placement).map_err(|e| e.to_string());
         // Keep graph-only refusals observable; numeric dispatch requires both independent checks.
+        #[cfg(target_os = "linux")]
+        let cpu = crate::arbiter::runtime::cuda::linux::check_model_cpu_bounds(
+            airk_core::arbiter::ModelChoice::ContextQwenCompact,
+            GRAPH.parse()?,
+            &meta,
+        )
+        .map_err(|e| e.to_string());
+        #[cfg(windows)]
         let cpu = meta
             .validate_bounded_fp16_cpu_values(9_443)
             .map_err(|e| e.to_string());

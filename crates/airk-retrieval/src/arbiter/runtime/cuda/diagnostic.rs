@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Bounded observations only; never a session, scorer or execution capability.
 use super::*;
-#[cfg(all(feature = "test-support", windows, target_arch = "x86_64"))]
+#[cfg(all(
+    feature = "test-support",
+    target_arch = "x86_64",
+    any(windows, all(target_os = "linux", target_env = "gnu"))
+))]
 mod cutlass;
 #[derive(Clone, Debug, Serialize)]
 pub struct LogRow {

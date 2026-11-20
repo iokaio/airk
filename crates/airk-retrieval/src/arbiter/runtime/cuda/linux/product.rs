@@ -47,10 +47,15 @@ pub(in super::super) fn check_product_cpu_bounds(
         graphs.next().is_none(),
         "multiple Linux Context model graphs"
     );
-    cpu_values::validate_cpu_values(
-        &observed.rows,
-        limits(REVIEWED, profile.model, graph.sha256)?,
-    )
+    check_model_cpu_bounds(profile.model, graph.sha256, observed)
+}
+
+pub(in super::super) fn check_model_cpu_bounds(
+    model: ModelChoice,
+    graph: Sha256Digest,
+    observed: &Observation,
+) -> Result<()> {
+    cpu_values::validate_cpu_values(&observed.rows, limits(REVIEWED, model, graph)?)
 }
 
 #[cfg(test)]

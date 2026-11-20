@@ -20,6 +20,8 @@ use self::{
     mappings::{Handle, ImageId},
 };
 pub(super) use driver::PrimaryContext;
+#[cfg(feature = "test-support")]
+pub(super) use product::check_model_cpu_bounds;
 pub(super) use product::check_product_cpu_bounds;
 
 static ADMISSION: Mutex<()> = Mutex::new(());
