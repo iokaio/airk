@@ -159,3 +159,14 @@ reserves one compressed and one extracted copy. Standalone streaming reserves
 one archive plus 64 MiB for its generated manifests and wrapper. The original
 three CUDA inputs, compiled pair and packaging-tool source remain independently
 identified. A model fit or activation requires its own native evidence.
+
+`shipping_service.py --build PATH --build-sha256 SHA --attempt N` stages the original
+pair through the managed installer in the verified owner’s executable XDG tmpfs.
+It exercises catalog setup, Context Compact enrollment, the global GPU setting,
+Auto/FP16 and explicit CPU selection through the matched public CLI. The control
+expects the descriptive build to refuse activation and retain its settings. It
+records command responses, managed lifecycle settlement, guest and backing
+capacity, tmpfs use and swap. Reserve 4 GiB for tmpfs and 8 GiB for the native
+processes. A failed request retains the instance for diagnosis for up to 180
+seconds. Lifecycle settlement releases the service. The native standalone
+`install.sh` journey and model execution each require separate evidence.
