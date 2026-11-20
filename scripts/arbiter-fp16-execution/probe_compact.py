@@ -25,6 +25,8 @@ SELECTORS = {
     "projection-metadata": PREFIX + "emit_cuda_compact_fp32_qkv_projection_probe_metadata",
     "projection-graph": PREFIX + "cuda_compact_fp32_qkv_projection_load_only_graph_diagnostic",
     "projection-t32": PREFIX + "cuda_compact_fp32_qkv_projection_t32_component",
+    "qkv-resource20": PREFIX + "cuda_compact_fp16_resource20",
+    "qkv-mixed": PREFIX + "cuda_compact_fp16_mixed_timing",
     "qkv-development": PREFIX + "cuda_compact_fp32_qkv_projection_development_batch",
     "qkv-decision-t1024": PREFIX + "cuda_compact_fp32_qkv_decision_t1024",
     "qkv-layer0-t1024": PREFIX + "cuda_compact_fp32_qkv_layer0_t1024",
@@ -43,7 +45,8 @@ DECISION_MODE = "qkv-decision-t1024"
 WIDE_CAPTURES = (WIDER_TAP_MODE, DECISION_MODE)
 DECISION_ROSTER = tuple((f"/airk_g5/weight//scorer/layers.{layer}/{site}/MatMul/input16", 2048)
                         for layer in (0, 9, 18, 27) for site in ("self_attn/k_proj",))
-WIDER_REFERENCE_MODES = (DEVELOPMENT_MODE, *WIDE_CAPTURES)
+TIMING_MODES = ("qkv-resource20", "qkv-mixed")
+WIDER_REFERENCE_MODES = (DEVELOPMENT_MODE, *WIDE_CAPTURES, *TIMING_MODES)
 PROJECTION_SCORE_MODES = ("projection-t32", "qkvo-t32", *WIDER_REFERENCE_MODES)
 PROJECTION_MODES = ("projection-metadata", "projection-graph", "projection-t32", *WIDER_REFERENCE_MODES, *QKVO_MODES)
 WIDER_TAP_SCHEMA = "airk.private.compact-fp32-qkv-layer0-t1024/1"
@@ -269,6 +272,8 @@ def linked_image(build, image, base, audit, mode):
         relevant += ("crates/airk-retrieval/src/arbiter/runtime/bounded_hybrid/layer0.rs",)
     if mode in TAP_SCOPES or mode in WIDE_CAPTURES:
         relevant += ("crates/airk-retrieval/src/arbiter/runtime/cuda/run.rs",)
+    if mode in TIMING_MODES:
+        relevant += (inference + "/cuda_qualification/fp16_compact/timing.rs",)
     sources = {relative: exact_pin(ROOT / relative, native[relative], base) for relative in relevant}
     return log_pin, artifact, sources
 
@@ -989,9 +994,9 @@ def provisional_development_pass(matching, original):
             and matching["mass_error"] <= .05 and original["mass_error"] <= .05)
 
 
-def development_attention_logs(raw, rows):
+def development_attention_logs(raw, rows, mode=DEVELOPMENT_MODE):
     require(0 < len(raw) <= LOG_CAP, "complete bounded development log required")
-    prefix = f"test {SELECTORS[DEVELOPMENT_MODE]} ... "
+    prefix = f"test {SELECTORS[mode]} ... "
     marker = "AIRK_CUDA_QKV_DEVELOPMENT_FORWARD "
     chunks = []
     for line in raw.decode("utf-8", errors="replace").splitlines():
@@ -1006,10 +1011,10 @@ def development_attention_logs(raw, rows):
             require(chunks, "received an attention log before the first development forward")
             chunks[-1].append(line)
     require(len(chunks) == len(rows), "exact development forward marker roster required")
-    return [attention_logs("\n".join(chunk).encode("utf-8"), DEVELOPMENT_MODE) for chunk in chunks]
+    return [attention_logs("\n".join(chunk).encode("utf-8"), mode) for chunk in chunks]
 
 
-def validate_development_operations(events, value, component):
+def validate_development_operations(events, value, component, timing_mode=None):
     rows = value["rows"]
     require(len(events) == 2 * (1 + len(rows)), "exact development Load and Numeric journals required")
     component["validate_operations"](events[:2], value, load_only=True)
@@ -1017,11 +1022,17 @@ def validate_development_operations(events, value, component):
     previous = events[1]["observed_monotonic_ns"]
     for ordinal, row in enumerate(rows, 1):
         start, end = events[2 * ordinal:2 * ordinal + 2]
+        if timing_mode == "qkv-resource20":
+            kind, native_ordinal = ("warmup" if ordinal == 1 else "sample"), ordinal - 1
+        elif timing_mode == "qkv-mixed":
+            kind, native_ordinal = "sample", ordinal
+        else:
+            kind, native_ordinal = "numeric", ordinal
         for turn, phase in ((start, "started"), (end, "returned")):
             sequence = 2 * ordinal + (1 if phase == "started" else 2)
             require(turn["schema"] == "airk.arbiter.native-operation/1"
                     and turn["sequence"] == sequence and turn["identity"] == identity
-                    and turn["kind"] == "numeric" and turn["ordinal"] == ordinal
+                    and turn["kind"] == kind and turn["ordinal"] == native_ordinal
                     and turn["phase"] == phase and turn["clock"] == "windows_performance_counter"
                     and turn["operation_input_digest"] == row["input_digest"]
                     and turn["expires_monotonic_ns"] == value["original_expires_monotonic_ns"]
@@ -1035,19 +1046,7 @@ def validate_development_operations(events, value, component):
                 "development Numeric operation timing or completion differs")
 
 
-def validate_development(value, paths, owned, request, evidence, metadata, manifest, image, component, base,
-                         projection, reference_pin, reference_proof, graph, placement, source):
-    validate_native_identity(value, DEVELOPMENT_SCHEMA, owned, request, evidence, metadata, manifest, image, base)
-    require(value["development_only"] is True and value["qualification_cutoff_raw"] == .001
-            and value["development_raw_limit"] == DEVELOPMENT_RAW_LIMIT
-            and value["matching_qkv_mass_limit"] == value["original_fp32_mass_limit"] == .05
-            and value["near_tie_margin_limit"] == DEVELOPMENT_NEAR_TIE
-            and value["reference_basis"] == "independent_wider_qkv_cpu_approximation"
-            and value["reference_recipe"] == reference_proof["recipe"]
-            and value["projection_stage"] == core(projection[0]) and value["projection_reference"] == core(reference_pin)
-            and value["native_forward_returned"] is value["forward_synchronized"] is True
-            and value["numeric_forward_attempts"] == len(DEVELOPMENT_WIDTHS),
-            "development scope, cutoffs or comparison identity differs")
+def validate_development_placement(value, placement, graph, source):
     actual_placement = value["final_placement"]
     require(actual_placement["complete"] is True
             and actual_placement["shim_status"] == actual_placement["ort_error_code"] == 0
@@ -1064,6 +1063,22 @@ def validate_development(value, paths, owned, request, evidence, metadata, manif
             and len(plan["nodes"]) == 28 and {node["name"] for node in plan["nodes"]} == NAMES
             and all(node["operator"] == "GroupQueryAttention" and node["domain"] == "com.microsoft"
                     for node in plan["nodes"]), "exact development FP16 FlashAttention plan required")
+
+
+def validate_development(value, paths, owned, request, evidence, metadata, manifest, image, component, base,
+                         projection, reference_pin, reference_proof, graph, placement, source):
+    validate_native_identity(value, DEVELOPMENT_SCHEMA, owned, request, evidence, metadata, manifest, image, base)
+    require(value["development_only"] is True and value["qualification_cutoff_raw"] == .001
+            and value["development_raw_limit"] == DEVELOPMENT_RAW_LIMIT
+            and value["matching_qkv_mass_limit"] == value["original_fp32_mass_limit"] == .05
+            and value["near_tie_margin_limit"] == DEVELOPMENT_NEAR_TIE
+            and value["reference_basis"] == "independent_wider_qkv_cpu_approximation"
+            and value["reference_recipe"] == reference_proof["recipe"]
+            and value["projection_stage"] == core(projection[0]) and value["projection_reference"] == core(reference_pin)
+            and value["native_forward_returned"] is value["forward_synchronized"] is True
+            and value["numeric_forward_attempts"] == len(DEVELOPMENT_WIDTHS),
+            "development scope, cutoffs or comparison identity differs")
+    validate_development_placement(value, placement, graph, source)
     rows, profiles = value["rows"], value["profiled_runs"]
     require(len(rows) == len(profiles) == len(DEVELOPMENT_WIDTHS), "exact development result and profile roster required")
     adapter_identity = ("uuid", "ordinal", "compute_major", "compute_minor", "driver_api_version",
@@ -1174,7 +1189,7 @@ def run(args):
             audit([Path(pin["path"])])
             dependencies[name] = retained_core(pin, base)
     inputs = [request, evidence, image, build, manifest, log, artifact, *sources.values(), *dependencies.values()]
-    approvals = decision_build_approvals(log, artifact, manifest, base, audit) if args.mode == DECISION_MODE else []
+    approvals = decision_build_approvals(log, artifact, manifest, base, audit) if args.mode in (DECISION_MODE, *TIMING_MODES) else []
     inputs.extend(approvals)
     projection_reference = development_reference = None
     if projection is not None:
@@ -1214,11 +1229,31 @@ def run(args):
         )
         inputs.extend((graph_receipt, graph, graph_operations))
     sealed_t1024 = None
-    if args.mode in WIDE_CAPTURES:
+    timing = args.mode in TIMING_MODES
+    if args.mode in WIDE_CAPTURES or timing:
         sealed_pins, sealed_t1024 = read_sealed_t1024(
             request, stage_pin, graph, projection_reference, parent, base, audit,
         )
         inputs.extend(sealed_pins)
+    if timing:
+        short_folder = CAMPAIGN / "compact-fp16-qkv-fp32-native-t32-r2"
+        short_source = short_folder / "native-result.json"
+        short_owner = short_folder / "execution.json"
+        scripts = (ROOT / "scripts/arbiter-fp16-execution/timing_control.py",
+                   ROOT / "scripts/cuda-component-execution/wddm_process_samples.py",
+                   ROOT / "scripts/cuda-component-execution/wddm_capacity_snapshot.py")
+        audit([short_source, short_owner, *scripts])
+        short = exact_pin(short_source, "217431438d1bf79bbffa071c9d69d62f4dcb73c44cdee458c19cc50a544d774f", base)
+        short_receipt = exact_pin(short_owner, "a479f953b5c13076d7c54388a89e257f6a18dc3cc5031a3bae9fa89e2b99e3ee", base)
+        previous = base.read(str(short_owner))
+        require(previous["request"] == request and previous["projection_stage"] == core(stage_pin)
+                and previous["complete"] is False and previous["owned"]["owned_descendants_settled"] is True
+                and short in previous["failure_outputs"], "original T32 refusal or candidate identity differs")
+        controls = [base.pin(path) for path in scripts]
+        inputs.extend([short, short_receipt, *controls])
+        timing_owner, wddm, capacity = [runpy.run_path(str(path)) for path in scripts]
+        sealed_rows = {row["tokens"]: row for row in (base.read(str(short_source))["rows"]
+                       + base.read(sealed_pins[1]["path"])["rows"])}
     command = [image["path"], "--ignored", "--exact", SELECTORS[args.mode], "--nocapture", "--test-threads=1"]
     receipt = {
         "schema": "airk.private.owned-compact-fp16-probe/1", "mode": args.mode, "complete": False,
@@ -1238,6 +1273,8 @@ def run(args):
         receipt["projection_reference"] = core(projection_reference)
     if approvals:
         receipt["compile_time_cuda_approvals"] = approvals
+    if timing:
+        receipt["timing_inputs"] = [short_receipt, short, *sealed_pins, *controls]
     if sealed_t1024 is not None:
         receipt["sealed_scoring"] = {"owned": sealed_pins[0], "native": sealed_pins[1]}
     component["mkdir"](guard, out, deadline=expires)
@@ -1255,7 +1292,7 @@ def run(args):
             planned.append(metadata)
         else:
             planned.extend((paths["native"], paths["operations"]))
-            if args.mode in SCORING_MODES:
+            if args.mode in SCORING_MODES and not timing:
                 planned.append(out / "ort-profile")
         audit(planned, False)
         env = {key: value for key, value in os.environ.items()
@@ -1278,7 +1315,7 @@ def run(args):
                        AIRK_CUDA_FP16_METADATA_RECEIPT_SHA256=evidence["sha256"],
                        AIRK_CUDA_QUALIFICATION_OUTPUT=str(paths["native"]),
                        ORT_CUDA_GEMM_OPTIONS="2", ORT_ENABLE_ATTENTION_KERNEL_DEBUG_INFO="1")
-            if args.mode in SCORING_MODES:
+            if args.mode in SCORING_MODES and not timing:
                 env["AIRK_CUDA_FP16_PROFILE_PREFIX"] = str(out / "ort-profile")
             if graph is not None:
                 env.update(AIRK_CUDA_FP16_REVIEWED_GRAPH=graph["path"],
@@ -1286,13 +1323,29 @@ def run(args):
             receipt["inherited_math_environment"] = {key: env[key] for key in
                 ("ORT_CUDA_GEMM_OPTIONS", "ORT_ENABLE_ATTENTION_KERNEL_DEBUG_INFO")}
 
+        if timing:
+            receipt["before_load_adapter"] = capacity["snapshot"](None)
+            luid = receipt["before_load_adapter"]["dxgi"]["luid"]
+            env.update(AIRK_CUDA_FP16_TIMING_T32=short["path"], AIRK_CUDA_FP16_TIMING_T32_SHA256=short["sha256"],
+                       AIRK_CUDA_FP16_TIMING_WIDER=sealed_pins[1]["path"],
+                       AIRK_CUDA_FP16_TIMING_WIDER_SHA256=sealed_pins[1]["sha256"])
+        baseline = None
+
         def before_resume(api, job, info, child_deadline):
+            nonlocal baseline
             proof = parent.suspended_authentication(api, info, expires, child_deadline, base.SID,
                                                     image, owner.image_proof)
             require(component["token_owner"](info.process) == base.SID
                     and owner.job_snapshot(api, job) == ([int(info.pid)], 1, 1),
                     "suspended Compact default owner or Job census differs")
+            if timing:
+                with wddm["ProcessSampler"](info, luid) as sampler:
+                    baseline = sampler.sample()
             return dict(proof, default_owner_sid=base.SID, job_limits=job_limits(api, job))
+
+        def watch_timing(api, _job, info, child_deadline):
+            observation = wddm["observe_process"](api, info, child_deadline, luid, baseline)
+            return {"wddm": observation}, []
 
         with paths["stdin"].open("xb"):
             pass
@@ -1300,13 +1353,15 @@ def run(args):
             audit(common.values())
             receipt["owned"] = owner.run_windows_owned_training(
                 command, ROOT, stdout, expires - time.monotonic(), env, stdin, HOST,
-                before_resume=before_resume, absolute_deadline=expires,
+                before_resume=before_resume, after_resume=watch_timing if timing else None, absolute_deadline=expires,
             )
         exit_code = observed_native_exit(receipt["owned"])
+        if timing and receipt["owned"]["owned_descendants_settled"]:
+            receipt["after_release_adapter"] = capacity["snapshot"](None)
         observed = list(out.rglob("*"))
         audit(observed)
         require(paths["stdout"].stat().st_size <= LOG_CAP, "actual stdout exceeded its retained bound")
-        if args.mode in SCORING_MODES:
+        if args.mode in SCORING_MODES and not timing:
             traces = list(out.glob("ort-profile*.json"))
             if len(traces) == 1:
                 paths["profile"] = traces[0]
@@ -1339,6 +1394,24 @@ def run(args):
                 receipt["projection_graph"] = validate_projection_graph(
                     value["graph_observation"]["graph_metadata"], output_projection=has_output_projection(projection),
                 )
+        elif timing:
+            schema = ("airk.private.compact-fp16-unprofiled-resource20/1" if args.mode == "qkv-resource20"
+                      else "airk.private.compact-fp16-unprofiled-mixed/1")
+            validate_native_identity(value, schema, receipt["owned"], request, evidence, evidence_value, manifest, image, base)
+            require(value["profiling_enabled"] is False and value["runtime_profile"] is None
+                    and not any(out.glob("ort-profile*")) and value["projection_stage"] == core(stage_pin)
+                    and value["projection_reference"] == core(projection_reference)
+                    and value["timing_score_sources"] == [core(short), core(sealed_pins[1])]
+                    and value["native_forward_returned"] is value["forward_synchronized"] is True
+                    and value["numeric_forward_attempts"] == len(value["rows"]), "unprofiled score custody differs")
+            validate_development_placement(value, reviewed_placement, graph, sources[BOUNDED_SOURCE])
+            events = read_operations(paths["operations"])
+            validate_development_operations(events, value, component, args.mode)
+            receipt["timing"] = timing_owner["timing_rows"](args.mode, value["rows"], sealed_rows)
+            receipt["flash_attention_records"] = development_attention_logs(paths["stdout"].read_bytes(), value["rows"], args.mode)
+            timing_owner["same_adapter"](receipt["before_load_adapter"], receipt["after_release_adapter"], value)
+            receipt["memory_by_cycle"] = timing_owner["memory_coverage"](
+                args.mode, receipt["owned"]["before_GO"]["wddm"], events, value["pid"], luid)
         elif args.mode in WIDE_CAPTURES:
             require(value is not None and "profile" in paths, "native capture or actual profile missing")
             receipt["flash_attention_records"] = validate_wider_capture(

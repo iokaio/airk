@@ -12891,3 +12891,35 @@ and the existing external configuration and state layout. The check of the
 original DEV_Q002 pair retained all 858 publisher tokens and 166 padding
 positions in a 1,024-wide input. The case informed the width decision and
 is tracked as exposed. [Width and exposure audit](../arbiter/software-v2-data-audit.md#focus-width-selection-and-exposure-of-dev_q002)
+
+### Windows Compact unprofiled model timing and Large FP16 conversion
+
+The fixed-width session completed a cold load in 11.826674 s, a warmup in
+1.197813 s, then 20 synchronized T8192 model calls. Median was 0.660805 s,
+p95 0.666346 s and maximum 0.670840 s. All 21 vectors matched the original
+native words. The run observed 588 Flash records. Peak Job commit was
+8,998,772,736 bytes. There were 140 resident process-counter samples,
+with maxima of 6,716,731,392 bytes dedicated and 79,691,776 bytes shared.
+The historical Windows FP32 T8192 p95 was 3.245899 s. CPU work overlapped
+the development run. This is component timing; Answer p95 is still open.
+Fixed receipt `b43d40d0b1edce0cf747a935dc4e28f7f6bcc7cd0b92fc1f981640a68f98c79a`.
+
+A separately loaded session cycled 32, 128, 1,024, 8,192 and 32 tokens
+three times, returning all fifteen exact vectors. Mixed p50 was 96.198 ms
+and maximum/p95 664.392 ms. Dedicated and shared sampled process maxima
+were equal across the three cycles, 6,179,856,384 and 79,691,776 bytes.
+Sample counts by cycle were 14, 10 and 10. Both jobs closed naturally with
+zero members. An earlier run stopped after eleven timed samples when its
+journal used the wrong ordinal class; that attempt has no 20-sample claim.
+Mixed receipt `c9b4471c3d657ef6c13ea741b3168a2fdc99c8b65e30a7e0994146c4a3e0561f`.
+The closed graph's full allocation peak, pressure sweep and installed
+service remain separate gates.
+
+Large conversion completed at 331.9200785 s under the original 600 s/8 GiB
+Job. Peak commit was 914,485,248 bytes. Source seals remained intact. The
+1,142,250-byte graph digest is
+`c00371ad9407c25bd52999d87327115025b7c6f55a4e585645ca112d858de5bd`.
+The 8,045,328,384-byte FP16 weights digest is
+`5b053f02795e72ff88123b28f89d3f2c89da055e9ed2228bc60809dd0a2b4270`.
+Owned execution `85b927e9ea3746995eaf57c6777d777a9c3879c6750c121dcf42c6bb54fc0e87`
+consumed Large plan `d09ee0900ae7b13f251272170ef27d5de3181ea6b7ca16612f33e364a77ece0b`.

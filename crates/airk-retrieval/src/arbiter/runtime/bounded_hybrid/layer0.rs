@@ -256,7 +256,7 @@ impl Scorer {
         Self::open_private_compact_fp32_projection_profiled(
             profile,
             source,
-            profiling_prefix,
+            Some(profiling_prefix),
             reviewed_graph_result,
             reviewed_graph_sha,
             REVIEWED_QKV,
@@ -275,7 +275,7 @@ impl Scorer {
         Self::open_private_compact_fp32_projection_profiled(
             profile,
             source,
-            profiling_prefix,
+            Some(profiling_prefix),
             reviewed_graph_result,
             reviewed_graph_sha,
             REVIEWED_QKV,
@@ -293,7 +293,7 @@ impl Scorer {
         Self::open_private_compact_fp32_projection_profiled(
             profile,
             source,
-            profiling_prefix,
+            Some(profiling_prefix),
             reviewed_graph_result,
             reviewed_graph_sha,
             REVIEWED_QKV,
@@ -311,7 +311,7 @@ impl Scorer {
         Self::open_private_compact_fp32_projection_profiled(
             profile,
             source,
-            profiling_prefix,
+            Some(profiling_prefix),
             reviewed_graph_result,
             reviewed_graph_sha,
             REVIEWED_QKVO.context("reviewed Compact Q/K/V/O load receipt unavailable")?,
@@ -319,10 +319,28 @@ impl Scorer {
         )
     }
 
+    /// Opens the reviewed Q/K/V graph with ordinary outputs and no ORT profiler.
+    pub fn open_private_compact_fp32_qkv_unprofiled(
+        profile: ExecutionProfile,
+        source: &dyn AssetSource,
+        reviewed_graph_result: &[u8],
+        reviewed_graph_sha: Sha256Digest,
+    ) -> Result<Self> {
+        Self::open_private_compact_fp32_projection_profiled(
+            profile,
+            source,
+            None,
+            reviewed_graph_result,
+            reviewed_graph_sha,
+            REVIEWED_QKV,
+            None,
+        )
+    }
+
     fn open_private_compact_fp32_projection_profiled(
         profile: ExecutionProfile,
         source: &dyn AssetSource,
-        profiling_prefix: &Path,
+        profiling_prefix: Option<&Path>,
         reviewed_graph_result: &[u8],
         reviewed_graph_sha: Sha256Digest,
         review: ReviewedProjection,
@@ -350,7 +368,13 @@ impl Scorer {
         let scorer = Self::open_internal(
             profile,
             source,
-            |builder| Ok(qkv_projection_options(builder)?.with_profiling(profiling_prefix)?),
+            |builder| {
+                let builder = qkv_projection_options(builder)?;
+                match profiling_prefix {
+                    Some(prefix) => Ok(builder.with_profiling(prefix)?),
+                    None => Ok(builder),
+                }
+            },
             OpenMode::BoundedHybrid(Box::new(gate)),
         )?
         .context("Compact QKV projection scorer missing")?;

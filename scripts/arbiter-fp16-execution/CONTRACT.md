@@ -478,3 +478,15 @@ The native run binds four full [1,1024,2048] output buffers
 (16 MiB total) and retains four rows of 2,048 half words. The eight
 ordinary scores must match the sealed native run bit for bit. The same
 whole-graph placement, attention, deadline and settlement checks apply.
+
+The separate private `qkv-resource20` and `qkv-mixed` selectors open the
+reviewed Compact Q/K/V session without enabling ORT profiling. The fixed
+population has one T8192 warmup followed by 20 timed T8192 calls. The mixed
+population repeats [32, 128, 1024, 8192, 32] three times within one load.
+Both retain the original 120-second, 32 GiB host and 24 GiB device bounds.
+An operation journal binds every completed call to its input and duration.
+Each complete score vector must exactly reproduce the earlier native vector
+for its input. The parent verifies each call's FlashAttention records and
+retains the sampled process working set, private commitment and dedicated
+and shared WDDM GPU memory for the same process handle and adapter LUID.
+Timing receipts report development measurements without product admission.
