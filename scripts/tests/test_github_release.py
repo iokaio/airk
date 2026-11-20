@@ -649,13 +649,16 @@ promotion = release.module("split_promote_vsix", "promote-vsix.py")
 def split_files(target, signed=False, version=SPLIT, admin=SPLIT_ADMIN, images=True):
     """Fictional bytes in the split pair layout: schema-3 pair metadata and schema-2 build receipt."""
     files, executables = pair_files(target, signed, version)
-    if tuple(int(part) for part in version.split(".")) >= (1, 9, 0):
-        # Current packages require real authenticated public model notices even
-        # when all native/signature bytes are fictional custody fixtures.
+    release_version = tuple(int(part) for part in version.split("."))
+    if release_version >= (1, 8, 207):
+        # Current packages require the actual pinned notices even when the
+        # native binaries and signatures are fictional custody fixtures.
         legal = release.native.runtime_builder().load_script("license-notices")
         with tempfile.TemporaryDirectory() as temporary:
             notices = Path(temporary) / "notices"
-            legal.stage_model_notices(release.ROOT, notices)
+            legal.stage_research_notices(release.ROOT, notices)
+            if release_version >= (1, 9, 0):
+                legal.stage_model_notices(release.ROOT, notices)
             for source in notices.rglob("*"):
                 if source.is_file():
                     files["notices/" + source.relative_to(notices).as_posix()] = source.read_bytes()
