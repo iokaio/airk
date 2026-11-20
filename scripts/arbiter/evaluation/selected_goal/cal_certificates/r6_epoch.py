@@ -77,15 +77,27 @@ def verify_plan(plan,audit_pin,service_sha):
             and not outer["owned_job_final_member_pids"] and not (R5.parent/"fixture-closure.json").exists(),
             "R5 retirement changed")
     handoff=plan["physical_handoff"]
-    retired=read(handoff["retired"],CAMPAIGN/"compact-development-TRAIN_Q598-focus1024-run-r2/owned.json")
-    require(handoff["retired"]["sha256"]=="f45abb479f15087f860e0a0de0261f7ac7ff4044e88947fb0f2378a5ee4bc771" and
-            retired["exit_code"]==1 and retired["owned_descendants_settled"] and retired["owned_job_final_active_processes"]==0,
-            "physical retirement differs")
-    idle_path=CAMPAIGN/"cal100-search-mode-timing-r1/commands/stage-after.stdout"
+    import sys
+    group=HERE.parent/"cal_capture/grouped"
+    sys.path.insert(0,str(group))
+    successor="comparison" in handoff
+    if successor:
+        import r6_search_handoff
+        lookup=read(handoff["plan"],r6_search_handoff.RUN/"plan.json")
+        r6_search_handoff.verify(handoff,plan["installation"],lookup["audit"],live=False)
+        require(read(handoff["mutex"])["at_ms"] <= plan["start_ms"],"Search still owned installation at R6 start")
+        idle_path=r6_search_handoff.RUN/"commands/stage-after.stdout"
+    else:
+        retired=read(handoff["retired"],CAMPAIGN/"compact-development-TRAIN_Q598-focus1024-run-r2/owned.json")
+        require(handoff["retired"]["sha256"]=="f45abb479f15087f860e0a0de0261f7ac7ff4044e88947fb0f2378a5ee4bc771" and
+                retired["exit_code"]==1 and retired["owned_descendants_settled"] and retired["owned_job_final_active_processes"]==0,
+                "physical retirement differs")
+        idle_path=CAMPAIGN/"cal100-search-mode-timing-r1/commands/stage-after.stdout"
+        require(handoff["idle"]["sha256"]=="30dacd28b6d15f240791d29fdbf42734be68dc9bdb85674780bb2d4d3298b84d","original Search idle changed")
     idle=read(handoff["idle"],idle_path)
     prior=read(original["installation"]["status"])
     config=idle["configuration"]
-    require(plan["installation"]["status"]==handoff["idle"] and handoff["idle"]["sha256"]=="30dacd28b6d15f240791d29fdbf42734be68dc9bdb85674780bb2d4d3298b84d" and
+    require(plan["installation"]["status"]==handoff["idle"] and
             config["revision"]==13 and prior["configuration"]|{"revision":13}==config and
             all(idle[k]["running"]==idle[k]["queued"]==0 and idle[k]["availability"]=="ready" and
                 idle[k]["selected_profile"]==idle[k]["active_profile"]==prior[k]["active_profile"] for k in ("focus","context")),
@@ -96,11 +108,33 @@ def verify_plan(plan,audit_pin,service_sha):
     extras={owner,group/"r6_handoff.py",group/"r6_preflight.py"}
     expected_handoff={HERE.parents[2]/"analysis/development_margins"/name for name in
                       ("reuse_installation.py","q598_closed_restart.py","q598_search_handoff.py")}
+    worker=group.parent/"worker.cjs"
+    if successor:
+        expected_handoff={group.parent/"fused_search/compare.py",group.parent/"dispatch_proof.py"}
+        extras.add(group/"r6_search_handoff.py")
+    r5paths={Path(row["path"]) for row in original["sources"]}
+    expected=r5paths | extras | expected_handoff
+    if "candidate_service" in plan:
+        import r6_candidate
+        require(successor,"candidate has no successful real Search retirement")
+        candidate=plan["candidate_service"]
+        epoch=r6_candidate.checked_epoch(candidate["provenance"]["sha256"],r6_search_handoff.seal)
+        target=ROOT/"candidate-sources"
+        projected=r6_candidate.snapshots(epoch,target,r6_search_handoff.seal,create=False)
+        from r6_effective_sources import verify as verify_source_bytes
+        legacy_directory=Path(read(original["input_audit"])["inputs"]["service"]["path"]).parent
+        verify_source_bytes(HERE.parents[4],group.parent,target,epoch["audit"]["sha256"],legacy_directory,
+                            {name:checked(ref) for name,ref in projected.items()})
+        require(candidate==dict(epoch,sources=projected) and epoch["audit"]==audit_pin==lookup["audit"]
+                and epoch["image"]==audit["inputs"]["service"],"different native candidate or projected worker")
+        expected.update({group/"r6_candidate.py",target/"worker.cjs",target/"group_service.py"})
+        worker=target/"worker.cjs"
+    else:
+        require(Path(audit_pin["path"])==ORIGINAL,"original worker requires original service audit")
     require({Path(p["path"]) for p in handoff["sources"]}==expected_handoff and
-            sources[:len(original["sources"])]==original["sources"] and
-            {Path(p["path"]) for p in sources[len(original["sources"]):]}==extras|expected_handoff and
-            len(sources)==len(original["sources"])+6,"incorrect R6 source owner roster")
+            sources[:len(original["sources"])]==original["sources"] and len(sources)==len(expected) and
+            {Path(p["path"]) for p in sources}==expected,"incorrect R6 source owner roster")
     for source in sources:
         checked(source)
     return {"plan_schema":plan["schema"], "fixture_schema":"airk.private.cal100-r6-two-lifetime-fixture/1",
-            "source":owner,"status_path":idle_path, "anchor_service":read(original["input_audit"])["inputs"]["service"]["sha256"]},audit
+            "source":owner,"worker":worker,"status_path":idle_path, "anchor_service":read(original["input_audit"])["inputs"]["service"]["sha256"]},audit

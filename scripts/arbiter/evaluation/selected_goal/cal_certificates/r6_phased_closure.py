@@ -4,7 +4,8 @@ import math
 from pathlib import Path
 import runpy
 
-from capture_closure import question_events, settled
+from capture_closure import settled
+from r6_questions import question_events
 from reference_inputs import CAMPAIGN, HERE, checked, digest, parsed, read, reference, require
 
 
@@ -120,7 +121,7 @@ def phased_events(root, outer_sha, fixture_sha, audit, audit_sha, ids, sources, 
         census = {k:lifetime[k] for k in sums}
         census.update(phase_closures=phase_pins,request_sha256=lifetime["live_request"]["sha256"])
         yield from question_events(directory,lifetime,census,ids,binding,template,tasks,audit["pipeline"],
-                                   first_phase=phase,lifetime_fingerprints=fingerprints)
+                                   first_phase=phase,lifetime_fingerprints=fingerprints,worker=r6["worker"])
         binding.verify()
         for k in sums:
             sums[k] += lifetime[k]

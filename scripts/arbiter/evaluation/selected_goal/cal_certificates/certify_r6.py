@@ -35,7 +35,7 @@ def main():
     require([r["id"] for r in rows]==ids,"unclosed original R6 population")
     closure=read(reference(ROOT/"fixture-closure.json",a.closure_sha256))
     refs=audit["inputs"]
-    files=("certify_r6.py","r6_epoch.py","r6_phased_closure.py","r6_group.py","certify.py","phased_closure.py",
+    files=("certify_r6.py","r6_epoch.py","r6_phased_closure.py","r6_group.py","r6_questions.py","r6_effective_sources.py","certify.py","phased_closure.py",
            "grouped_closure.py","capture_closure.py","reference_inputs.py")
     report={"schema":"airk.private-selected-Context-CAL-reference-preflight/1","complete":True,"qualified_profiles":[],
             "Focus_configuration":"ON","Focus_profile":focus,"MiniLM_pipeline":audit["pipeline"],

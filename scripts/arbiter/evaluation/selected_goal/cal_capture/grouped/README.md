@@ -51,3 +51,31 @@ publication. A stale idle status alone cannot attest the latest retirement.
 An optimized service image also needs a new scientific audit, worker and
 certificate binding its actual executable and matching inputs. Calibration,
 numerical, fit and release gates require their own completed evidence.
+
+The fresh original-service owner is `r6_capture.py`. After actual launch
+authorization and host admission, invoke it under the checked Windows
+human shell with `python -I -B -S r6_capture.py --output <fresh absolute
+campaign directory cal100-focus1024-capture-r6> --node <pinned Node binary>`.
+The parent holds the installation mutex until its Job settles. The owned worker
+rechecks the 68-file stopped Q598-r2 physical state and its native lease,
+the matching Search revision 13 idle status and the unchanged CAL configuration
+before a service can start. Each group uses the original service, phase worker
+and fixed per-service ticket. The R6 plan links the incomplete R5 terminal and
+all 23 source owners. Its distinct plan and fixture schemas identify a fresh
+two-lifetime attempt. Tests in `test_r6_capture.py` exercise plan creation,
+the 125-second boundary, configuration drift and refusal before any model run.
+
+After the fresh canonical Search comparison, add `--search-handoff OUTER_SHA
+RELEASE_SHA COMPARISON_SHA` to bind its actual stopped state in place of the
+Q598-r2 handoff. The independent verifier hashes the current physical tree
+under the already-held installation mutex before startup. An original-service
+capture can consume this newer physical handoff. To run the rebuilt scientific
+service, also supply `--candidate-provenance-sha256 SHA` for the authenticated
+`cal100-fused-candidate-launch-r1/provenance.json`; the comparison must use
+the same audit. The staged image, compiler receipt/log, original inputs and its
+actual native selector are checked. Only the service pin and selector executable
+may change in the launch audit. The plan records the source producer, dependencies
+and effective hashes of two generated source snapshots under `candidate-sources`.
+Those snapshots bind the new audit, service DLL search directory and actual
+worker filename, while preserving the original operation, phase and lifetime
+clocks. Actual speed and authorization to launch remain external inputs.
