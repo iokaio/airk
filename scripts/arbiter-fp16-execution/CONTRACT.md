@@ -528,4 +528,71 @@ authenticates that same final graph in its own session, profiles one
 independently identified T32/N8 input, and retains the 36 actual Flash
 kernel records. The development screen compares matching raw error with
 0.07, checks the matching winner, and checks both normalized mass errors
-against 0.05. The original 0.001 matching raw result is recorded separately.
+against 0.05. The release matching maximum absolute raw error is 0.007.
+The owned receipt records its verdict and the T32 comparison with its matching
+winner and both mass checks. The 0.001 flag is retained as a historical
+comparison. One T32 result has only that input's scope.
+
+`compact_train_batch_reference.py` uses the frozen 15-member TechQA TRAIN
+roster under static 1,024 Focus. The first four groups consume the private
+`compact-development-focus1024-prefix12-census-r1.private.json` containing
+all 15 rows and the settled first 12 requests. The final group uses the
+final census. Reconcile each previously scored input against that final
+population before combining groups. The five consecutive groups of three retain each no-admission,
+compiler refusal and insufficient native token allowance. Each eligible
+Compact input carries the full typed compiler value, option mask, roster,
+offered choices, source and native remaining budget. The worker loads the
+pinned original publisher and independent matching weights once per group
+and runs the T65 ragged constant, exact eight T128 matching words and the
+0.001 original FP32 check before reading candidate scores. TRAIN_Q111 reuses
+its already measured reference only after checking exact typed input and
+ordered semantic action provenance. The 0.014 release-sensitivity, historical 0.020 and 0.140 development reports use the two
+highest legal logits under the native option mask.
+
+From the checked host run isolated Python with `-I -B -S`, the script,
+`--batch <1..5> --census-sha256 <applicable-private-census-SHA> --check-only`.
+Metadata-only verification uses the sealed conversion plan's absent
+`-X pycache_prefix=...`, empty `CUDA_VISIBLE_DEVICES` and a verified existing
+`TORCHINDUCTOR_CACHE_DIR` under the private D: campaign.
+For actual measurements replace `--check-only` with `--output <absolute
+fresh campaign/compact-train-focus1024-reference-batchN-r1>`. The same
+owned Windows reference Job applies its original 600 seconds and 32 GiB,
+CPU-only runtime, suspended child verification and natural-settlement check.
+Each group has its own receipt. These are development reference scores.
+
+Use `summarize_train_reference.py --prefix-sha256 <sha> --receipt-sha256 <sha>`
+with one receipt argument per completed group, in order. It verifies native
+input identity through each shard's case receipt and recomputes all three
+margin screens over legal options. Supply `--final-sha256 <sha>` when a
+final cohort is available to check each prior observation against final
+source evidence. Unmeasured cases stay in the 15-row result.
+
+### Compact full-projection diagnostic
+
+`stage_compact_full_projection.py` widens the 196 dense projection operands
+and products to FP32 while retaining the original FP16 weights on disk and
+the 28 stock FP16 attention nodes. Its inverse must reproduce the exact
+source ONNX bytes. `compact_full_projection_reference.py` checks the prior
+score words and produces independent matching and dense-attention CPU
+controls for the original seven-card engineering admission.
+`stage_compact_runtime_d.ps1` verifies and copies the original approved
+runtime DLLs, native producer and manifest to the D: campaign stage. Its
+Prepare request changes only the manifest's absolute location.
+
+Use `probe_compact.py full-metadata`, `full-graph`, then `full-observed`
+with the original owned inputs, independently verified graph, reference and
+native image receipts. `full-cuts` adds sparse measurements on the same
+input. Each session requires the original output score words and placement,
+and exactly four original graph tensors selected with `--full-cut-group`.
+`head` observes the normalized inputs at layers 0, 13 and 27 plus the final
+normalized decision row. `attention` observes layer 13's Q, K, V and raw
+attention result. `dense` observes its raw attention, output projection,
+activated MLP input and down projection. The two captures of the common
+attention result must agree bit for bit. The earlier 53-output attempt
+refused the original score-plus-four-output admission contract.
+
+Only the layer-13 keys and values retain their complete 1,014-token history.
+FP32 rows carry pairs of unsigned 16-bit words, low word first.
+`compact_full_cut_reference.py` compares the eleven distinct boundaries
+against the independent reference. It reconstructs the two dense products,
+Flash attention and the final embedding readout using native operands.
