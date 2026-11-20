@@ -1,5 +1,38 @@
 # Windows scientific CAL readout
 
+## R7 chronological original inputs
+
+Run `python -I -B -S r7_chronological_inputs.py --plan-sha256 <R7 plan SHA>
+--lifetime-sha256 <lifetime 00 closure SHA> --output <empty checked campaign
+child>` in the verified Windows shell after the first native lifetime has
+closed and while the original R7 parent still owns the installation. The
+adapter authenticates the optimized service audit, R6 retirement, R7 plan,
+closed seven-phase Job and journal chain, and each released native W4 grant.
+It keeps the two original model input censuses, ordered cards, captured
+requests, refusal positions, and remaining allowances.
+
+For all 100 observations, pass a second `--lifetime-sha256` for lifetime 01
+and `--terminal <outer SHA> <whole fixture SHA> <mutex release SHA>`. Whole
+capture verification requires natural closure of both lifetimes and all 13
+phase Jobs, and the original shared clock and mutex release. Use a fresh
+output directory for each projection.
+
+The output consists of linked phase reports, `compact.json`, `large.json`
+and `projection-receipt.json`. The model JSON files use the original native
+chronological compiler input shape with R7's exact audit and plan digests.
+They are ready for the two-model compiler selector on a verified image built
+with the candidate-audit support. Native compiler execution, raw GPU/CPU
+scores, human-reference certificates and fitting have their own receipts.
+
+Use `run_r7_compiler_batch.py` with the exact projection path and SHA, the
+native inference test executable and SHA, and the image build, Cargo log and
+outer build Job SHA values. Preflight a fresh D: compiler output directory
+and a sibling scratch directory with the same name plus `-temp`, then point
+`TEMP`, `TMP` and `TMPDIR` to that scratch directory. The original two-model
+selector runs in a 2 GiB Job with a 120-second limit and emits `native.log` and
+`native.json`. Its report retains the R7 projection, exact executable and
+compiler custody, both model counts and zero inference invocations.
+
 ## R5 chronological original inputs
 
 After R5 lifetime 00 closes naturally, run `r5_chronological_inputs.py --lifetime-sha256 <first closure SHA> --output <empty checked campaign child> --compile` with the checked Windows Python in isolated, no-site, no-bytecode mode. The producer independently verifies all seven phase receipts, the original launch/plan, live supervisor and held installation mutex. It writes both original model batches, including all refusals, and runs the preserved CPU-only native compiler selector against 56 requests. `projection-receipt.json` pins both model files and the completed compiler Job. A directory without this final receipt is incomplete.
