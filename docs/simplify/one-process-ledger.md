@@ -12601,3 +12601,23 @@ The collector README gives the checked Python -I -B -S staging and read
 commands. After the run, the stage CLI was broadened to accept a fresh
 numbered directory for reproduction. The measured manifest retains the
 actual stage source identity.
+
+### 2026-11-19 — Large FP16 preparation retained at the G5 source boundary
+
+The original Large graph is f8ba5d3e…c32fd94 with 36 attention layers and
+8,045,328,384 expected FP16 weight bytes. The exact Large FP32 scoring
+and Resource20 prerequisite hashes matched. Preparing the metadata for
+48,945 inputs totaling 22.06 GB hit its original 600-second deadline
+during final reauthentication (600.143966 s). Preserve all partial files
+under large-fp16-conversion-plan-r1. Their presence does not authorize
+conversion, scoring or placement.
+
+A 947-file sample took 1.9619713 s serially and 0.9402053 s with eight
+readers. The maintained preparer now uses up to eight workers in batches
+of 64, retaining full byte and path checks in both observations. The
+conversion owner suite passed 87 tests with python -IBS
+scripts/tests/test_arbiter_fp16_execution.py. The r2 attempt refused in
+0.7996653 s on a changed native runtime.rs before producing a plan.
+Resume with reviewed current Windows G5 Clippy and Nextest/JUnit identities
+after the running diagnostic source change. Large CUDA execution still
+follows the Compact gate.

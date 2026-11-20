@@ -1090,5 +1090,28 @@ class FP32ProcessProofControls(unittest.TestCase):
 
 
 
+class PreparationFileChecksTests(unittest.TestCase):
+    def test_reopens_every_input_on_each_observation_and_refuses_late_drift(self):
+        expected = list(range(89))
+        first = list(M.preparation_file_checks(lambda index: index, expected))
+        self.assertEqual(first, expected)
+        changed = set()
+
+        def check_again(index):
+            if index == 88:
+                raise ValueError('changed last input')
+            return index
+
+        with self.assertRaisesRegex(ValueError, 'changed last input'):
+            changed.update(M.preparation_file_checks(check_again, expected))
+        self.assertEqual(changed, set(range(88)))
+
+    def test_original_deadline_exception_propagates(self):
+        def expired(_):
+            raise TimeoutError('original deadline')
+        with self.assertRaisesRegex(TimeoutError, 'original deadline'):
+            list(M.preparation_file_checks(expired, range(100)))
+
+
 if __name__ == '__main__':
     unittest.main()

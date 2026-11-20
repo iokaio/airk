@@ -77,10 +77,19 @@ def load(path, name):
     return module
 
 
-def file_roster(root):
+def preparation_file_checks(inspect, items):
+    # Limit pending reads and propagate every failure on the original caller's clock.
+    from concurrent.futures import ThreadPoolExecutor
+    from itertools import batched
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        for batch in batched(items, 64):
+            yield from executor.map(inspect, batch)
+
+
+def runtime_members(root):
     root = Path(root)
     require(root.is_absolute() and root.resolve(strict=True) == root and root.is_dir(), 'canonical runtime root required')
-    result = set()
     stack = [root]
     while stack:
         directory = stack.pop()
@@ -91,8 +100,11 @@ def file_roster(root):
                 if child.name != '__pycache__':
                     stack.append(child)
             else:
-                result.add(str(regular(child)))
-    return result
+                yield child
+
+
+def file_roster(root, map_files=map):
+    return {str(path) for path in map_files(regular, runtime_members(root))}
 
 
 def validate_plan(plan):
@@ -118,13 +130,13 @@ def validate_plan(plan):
     return by_path
 
 
-def authenticate(plan, check=lambda: None):
+def authenticate(plan, check=lambda: None, map_files=map):
     by_path = validate_plan(plan)
-    for row in plan['input_files']:
-        pinned(row, check)
+    for _ in map_files(lambda row: pinned(row, check), plan['input_files']):
+        pass
     runtime = read(plan['runtime_manifest']['path'])
     require(set(runtime) == {'roots', 'files', 'import_paths'}, 'complete explicit runtime closure required')
-    actual = set().union(*(file_roster(root) for root in runtime['roots']))
+    actual = set().union(*(file_roster(root, map_files) for root in runtime['roots']))
     require(actual == set(runtime['files']), 'runtime complete file roster changed')
     for path, row in runtime['files'].items():
         require(path == row['path'] and by_path.get(path) == row, 'runtime member omitted from input census')
@@ -775,11 +787,12 @@ def source_facts(source, model, check=lambda: None):
     return original, selected
 
 
-def runtime_facts(baseline, roots, check=lambda: None):
+def runtime_facts(baseline, roots, check=lambda: None, map_files=map):
     require(baseline['sha256'] == RUNTIME_BASELINE_SHA, 'original runtime baseline identity differs')
     value = read(pinned(baseline, check))
     require(value.get('schema') == 'airk.private.exact-python-runtime-files/1', 'runtime baseline schema differs')
-    files = {path: pin(path, check) for path in sorted(set().union(*(file_roster(root) for root in roots)))}
+    paths = sorted(set().union(*(file_roster(root, map_files) for root in roots)))
+    files = {row['path']: row for row in map_files(lambda path: pin(path, check), paths)}
     outside = {}
     for path, sha in value['files'].items():
         row = files.get(path) or pin(path, check)
@@ -838,7 +851,7 @@ def prepare(args):
     python = original['python']; pinned(python, check)
     require(pin(sys.executable, check) == python, 'original interpreter required for preparation')
     home = Path(python['path']).parent
-    runtime, outside = runtime_facts(pin(args.runtime_baseline, check), [home / 'Lib', home / 'DLLs', Path(original['python_site'])], check)
+    runtime, outside = runtime_facts(pin(args.runtime_baseline, check), [home / 'Lib', home / 'DLLs', Path(original['python_site'])], check, preparation_file_checks)
     plan_path = Path(args.plan)
     require(plan_path.is_absolute() and plan_path.resolve(strict=False) == plan_path
             and plan_path.is_relative_to(root / 'artifacts') and plan_path.parent.is_dir(), 'fresh canonical artifact metadata parent required')
@@ -889,7 +902,7 @@ def prepare(args):
         with target.open('xb') as stream:
             stream.write(raw); stream.flush(); os.fsync(stream.fileno())
         guard(plan, target, True, deadline=deadline)
-    authenticate(plan, check)
+    authenticate(plan, check, preparation_file_checks)
     check()
     return pin(plan_path, check)
 

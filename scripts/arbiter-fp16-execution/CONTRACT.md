@@ -462,3 +462,9 @@ captured raw attention tensor. It substitutes only the layer-zero output in
 one 28-layer reference forward. It measures sensitivity to that one internal
 value. The resulting vector is diagnostic and cannot supply an independent
 qualification reference.
+
+During metadata preparation the input-file and runtime-roster checks can
+use up to eight parallel readers with at most 64 entries pending. The
+caller retains the original deadline, observes every result, and repeats
+authentication before returning the completed plan. The execution path
+continues to authenticate its own inputs.
