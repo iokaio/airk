@@ -728,6 +728,9 @@ fn reconcile_semantic_setup(
     lease: &airk_store::service::ProjectLease,
     engine: airk_core::identity::Sha256Digest,
 ) -> Result<()> {
+    if registry.semantic_setup_canceled(lease)? {
+        return Ok(());
+    }
     let project = lease.identity().0;
     let snapshot = kernel.inspect_service(project)?;
     if snapshot.vectors_enabled == Some(true)

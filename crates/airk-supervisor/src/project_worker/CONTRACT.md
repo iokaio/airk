@@ -85,3 +85,5 @@ Cheap controls preserve the captured wire parent/identity on decode and use
 injected broker time to prove an accepted query can settle after admission
 expiry while a new one is refused. These establish clock ownership and no-replay
 behavior; they do not qualify a model, live service or real R154 outcome.
+
+Before acknowledging activation, the project worker asks the registry whether its own project already has a terminal canceled job. That receipt vetoes semantic setup, so the worker can return from setup reconciliation without inspecting the complete publication. All other projects retain the existing semantic inspection and transactional enrollment checks.

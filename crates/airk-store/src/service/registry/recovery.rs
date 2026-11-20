@@ -200,6 +200,30 @@ mod tests {
         Ok(())
     }
     #[test]
+    fn semantic_setup_cancellation_is_epoch_and_project_scoped() -> Result<()> {
+        let (root, mut registry, lease, key) = fixture()?;
+        let project = lease.identity().0;
+        let signature = format!("{}:{}", digest(1), digest(2));
+        let job = registry.enqueue(project, nonce(3), &key, JobKind::Index)?;
+        assert!(!registry.semantic_setup_canceled(&lease)?);
+        registry.cancel_pending(job.id)?;
+        assert!(registry.semantic_setup_canceled(&lease)?);
+        registry.configure_watch(project, true)?;
+        assert!(!registry.reconcile_semantic_setup(&lease, &signature)?);
+
+        let other =
+            ProjectRegistration::new("/other-source".into(), "/other-data".into(), "other".into())?;
+        registry.register(&other)?;
+        let mut other_lease = ProjectLease::acquire(root.path(), other.binding)?;
+        assert!(registry.semantic_setup_canceled(&other_lease).is_err());
+        registry.admit_worker(&mut other_lease)?;
+        assert!(!registry.semantic_setup_canceled(&other_lease)?);
+        registry.configure_watch(other.binding, true)?;
+        assert!(registry.reconcile_semantic_setup(&other_lease, &signature)?);
+        Ok(())
+    }
+
+    #[test]
     fn cancellation_and_cross_job_stall_budget_win_over_recovery() -> Result<()> {
         let (_root, mut registry, lease, mut key) = fixture()?;
         let project = lease.identity().0;
@@ -779,6 +803,29 @@ impl ServiceRegistry {
     pub fn has_recovery_waits(&self) -> Result<bool> {
         Ok(self.connection.query_row("SELECT EXISTS(SELECT 1 FROM service_job_recovery r JOIN service_jobs j ON j.id=r.job JOIN projects p ON p.binding=j.project WHERE r.waiting=1 AND j.state='pending' AND p.registered=1 AND p.paused=0)",[],|r|r.get(0))?)
     }
+    /// A terminal cancellation vetoes automatic semantic setup for this project.
+    /// Read the retained receipt under the same admitted epoch before opening the
+    /// potentially large publication. The enqueue transaction rechecks this veto.
+    pub fn semantic_setup_canceled(
+        &mut self,
+        lease: &crate::service::ProjectLease,
+    ) -> Result<bool> {
+        let tx = self.connection.transaction()?;
+        super::jobs::worker_epoch(&tx, &self.root, lease)?;
+        Self::has_canceled_job(&tx, lease.identity().0)
+    }
+
+    fn has_canceled_job(
+        connection: &rusqlite::Connection,
+        project: ProjectBinding,
+    ) -> Result<bool> {
+        Ok(connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM service_jobs WHERE project=?1 AND state='canceled')",
+            [project.to_string()],
+            |row| row.get(0),
+        )?)
+    }
+
     /// One reconciliation per engine/settings identity. Canceled work and manual
     /// projects never acquire fresh work merely because a query opens a worker.
     pub fn reconcile_semantic_setup(
@@ -798,7 +845,10 @@ impl ServiceRegistry {
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         super::jobs::worker_epoch(&tx, &self.root, lease)?;
         let project = lease.identity().0;
-        let eligible:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM projects p JOIN service_watch w ON w.project=p.binding WHERE p.binding=?1 AND p.registered=1 AND p.paused=0 AND w.enabled=1 AND w.blocked_revision IS NULL) AND NOT EXISTS(SELECT 1 FROM service_jobs WHERE project=?1 AND state IN('pending','running','canceled')) AND NOT EXISTS(SELECT 1 FROM service_semantic_review WHERE project=?1 AND signature=?2)",params![project.to_string(),signature],|r|r.get(0))?;
+        if Self::has_canceled_job(&tx, project)? {
+            return Ok(false);
+        }
+        let eligible:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM projects p JOIN service_watch w ON w.project=p.binding WHERE p.binding=?1 AND p.registered=1 AND p.paused=0 AND w.enabled=1 AND w.blocked_revision IS NULL) AND NOT EXISTS(SELECT 1 FROM service_jobs WHERE project=?1 AND state IN('pending','running')) AND NOT EXISTS(SELECT 1 FROM service_semantic_review WHERE project=?1 AND signature=?2)",params![project.to_string(),signature],|r|r.get(0))?;
         if !eligible {
             return Ok(false);
         }

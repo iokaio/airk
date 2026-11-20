@@ -33,3 +33,5 @@ owner refuses with original DB/journal bytes unchanged. Actual file IDs and
 bounded bytes are rechecked against retained handles/path objects before the
 original recovery under the still-held ServiceLease. Preview scratch is owned
 by the private native control root and is never persisted as registry authority.
+
+A retained canceled job vetoes automatic semantic setup for its own project. The registry checks the worker lease and project epoch before exposing that veto. Its immediate enqueue transaction checks cancellation again alongside the watch, active job and engine/settings signature gates.
