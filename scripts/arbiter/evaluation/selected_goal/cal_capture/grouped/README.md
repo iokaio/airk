@@ -9,3 +9,45 @@ The original Windows supervisor acquires `Local\AIRK-20261116-Focus1024-Reuse` w
 The enclosing 10,800-second clock includes the original R3 setup debit of 545.806 seconds, three native restarts and closures, and all thirteen phase Jobs. Each 1,800-second phase is clipped to the remaining campaign clock. The first phase of each group includes its restart and warm. The final phase includes service shutdown and native charge settlement. Each request preserves its original 120-second budget and five-second delivery grace. No prior capture row or observer event enters this census.
 
 Under the verified same-human Windows guard, run `python -B -S run_grouped.py --output <fresh-absolute-campaign-child> --node <pinned-node> --prior-outer-sha256 <actual-R4-terminal-sha256>`. The output contains a frozen `lifetime-plan.json`, three lifetime directories with original phase transcripts and separate warm/dispatch/lease closures, the linked whole fixture closure and an outer Job receipt. Independent scientific certification and score/fit operate on a complete capture.
+
+### Prospective R6 clock preflight
+
+Run `python -I -B -S r6_preflight.py` on Windows to reopen the original R5
+plan, 17 checked source files, settled outer Job, R3 setup cost and independent
+post-closure timing estimate. This is a read-only calculation. R5 ended
+incomplete after 98 questions. Its 10,800-second common clock, less 545.806
+seconds of setup, leaves 10,254.194 seconds for the owned capture. A separately
+authorized 11,700-second common clock would leave 11,154.194 seconds. The
+estimated additional time beyond final admission is 766.860328 seconds under
+that alternative; actual R6 timing requires a fresh run.
+
+The preflight accepts a decision only when the exact decision document's
+SHA-256 has been reviewed and pinned in its maintained source. Its fields are
+`attempt=R6`, `common_ms=11700000`, `predecessor_plan=<R5 plan SHA-256>`
+and `scope=whole-attempt-clock-only`. No decision is currently pinned. A new
+launcher and its independent verifier must bind the same selected common
+clock and R6 plan/closure identities. R5's terminal, partial rows and schema
+remain historical evidence. Every one of the 100 rows must originate in R6.
+
+Keep two actual native recorder lifetimes (56 and 44 questions) and thirteen
+phases (twelve of eight, then four). Each native fixture-start ticket keeps
+its 10,800-second span; both service lifetimes remain clipped by the enclosing
+deadline and active phase. The first phase in each group pays restart, warm and
+binding; the last pays its shutdown and native lease reacquisition. Each
+1,800-second phase uses the earlier monotonic/absolute common cut-off. Each
+120-second operation needs more than 125 seconds remaining before admission
+and retains the five-second delivery allowance. Each phase Job and the outer
+Job must settle naturally with zero descendants. The original 32 GiB nested
+worker Job, 8,192-token Answer input, at most five probes per question (500
+overall), and two per-lifetime recorder limits of 1,024 admissions, 8,192
+records and 64 MiB remain in force. Trials require complete warm/dispatch
+journals, unique instance/scope fingerprints, original population order,
+frozen compiler/model inputs and independently verified timestamp chains.
+
+A calculation grants no physical access. Before launch, the Windows owner
+must acquire the existing installation mutex and verify the latest real
+retirement, exact stopped-state handoff, persisted configuration and
+publication. A stale idle status alone cannot attest the latest retirement.
+An optimized service image also needs a new scientific audit, worker and
+certificate binding its actual executable and matching inputs. Calibration,
+numerical, fit and release gates require their own completed evidence.
