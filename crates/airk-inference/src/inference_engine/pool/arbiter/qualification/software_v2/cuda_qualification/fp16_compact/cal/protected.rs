@@ -23,15 +23,14 @@ fn compact_cutlass_original_cal_phase() -> Result<()> {
         "AIRK_CUDA_CAL_LAUNCH_AUDIT",
         "AIRK_CUDA_CAL_LAUNCH_AUDIT_SHA256",
     )?;
-    ensure!(audit_pin.sha256.to_string() == AUDIT, "wrong CAL launch");
-    let audit = json_file(&audit_pin, 2 << 20)?;
+    let audit = chronological_audit(&audit_pin)?;
     let projection_pin = env_pin(
         "AIRK_CUDA_CAL_CHRONOLOGICAL_COMPACT",
         "AIRK_CUDA_CAL_CHRONOLOGICAL_COMPACT_SHA256",
     )?;
     let projection = json_file(&projection_pin, 128 << 20)?;
     ensure!(projection["model"] == MODEL, "wrong original compiler");
-    verify_chronological_projection(&audit, &projection, true)?;
+    verify_chronological_projection(&audit, &audit_pin.sha256.to_string(), &projection, true)?;
     let census = json_file(&pin(&audit["census"])?, 2 << 20)?;
     let ids = array(&census, "question_ids")?;
     let (_, _, compiler) = original_compiler(&audit, ModelChoice::ContextQwenCompact)?;

@@ -10,6 +10,17 @@ Actual graph admission audits exact28 Focus/Compact or36 Large named efficient a
 
 Stock ORT debug output precedes kernel completion. Qualification must reconcile exact planned forward labels and complete node roster with actual fp16 FLASH_ATTENTION/Focus EFFICIENT_ATTENTION lines plus separately authenticated native return+GPU synchronization. Missing/MATH/foreign/duplicate/partial evidence refuses G5 qualification. Native input/output, all1..8192 structural compatibility, original FP32 and matching-half numeric bounds, genuine20 samples/allocator peaks/coexistence/cancel/OOM/task/CAL gates remain independent. No input budget, memory ceiling, tolerance, retry or clock is widened. No unqualified metadata grants public Auto/GPU admission.
 
+On Windows x64 the separate protected efficient MHA recipe uses the approved
+Compact or Large graph with its exact original half-weight sidecar. The recipe
+keeps the protected optimizer overrides and selects CUDA EFFICIENT_ATTENTION
+with TF32 disabled and FP32 Q/K/V and output. The complete final layout must
+contain every expected Microsoft MHA and learned MatMul on CUDA. Existing
+bounded placement authentication still checks all typed rows and admissible CPU
+controls before scoring. The product runtime requirement, calibrated profile and
+live per-host eligibility remain mandatory. Product session options and its
+verified in-memory loader need their own placement, numerical and installed
+evidence.
+
 The data-only native constructor takes typed actual Core Assets, closed original graph lineage (Focus19b20/Compactc79/Largef8), actual source, native runtime manifest and declared phase plan. It authenticates current metadata/new graph+weights, creates new unavailable CAL, clears targets/qualification/downloads, retains current compiler/tokenizer/host tiers and emits distinct G5 manifest. It is not an execution capability. Its original source-lineage field and actual artifact bytes still require independent transformation and matching-half Torch proof; this constructor grants none.
 
 The artifact graph auditor additionally requires explicit Focus per-layer padded-query Where sanitization and live output32 edge, avoiding unwritten padded query outputs. Complete dtype/head/mask/full-model equivalence remains bound to the authenticated reviewed exporter and independent full initializer/cast-boundary proof. Actual stock backend logs and native returned+synchronized completion are mandatory independent evidence; no debug setting or attention plan means backend success.

@@ -247,3 +247,162 @@ fn original_compact_bounded_options_refused_by_strict_input_plan() -> Result<()>
     );
     Ok(())
 }
+
+#[cfg(all(windows, target_arch = "x86_64"))]
+#[test]
+fn protected_efficient_mha_binds_the_model_graph_and_half_weight_identity() -> Result<()> {
+    use airk_core::arbiter::{Asset, AssetRole};
+    for (model, graph, weights, weight_bytes) in [
+        (
+            ModelChoice::ContextQwenCompact,
+            "147be075a73ff81ca17b6c2fb965ec8f887e10908fbd33cf47a919d1694aa3d9",
+            "0c4bd89d032e7dd821071c3559776cd3da50d54d84b6e575373fd8cf7003a7c3",
+            3_441_397_760,
+        ),
+        (
+            ModelChoice::ContextQwenLarge,
+            "c1b5776144c6d9af07d08552cae40e491d8f866e89c53bab567adeeb32ca75e4",
+            "5b053f02795e72ff88123b28f89d3f2c89da055e9ed2228bc60809dd0a2b4270",
+            8_045_328_384,
+        ),
+    ] {
+        let mut profile = super::super::super::catalog_profiles()?
+            .into_iter()
+            .find(|profile| profile.model == model && profile.cpu_fit.is_some())
+            .context("Context CPU fixture profile missing")?;
+        let asset = Asset {
+            name: "weights.bin".into(),
+            role: AssetRole::ExternalWeights,
+            bytes: weight_bytes,
+            sha256: weights.parse()?,
+        };
+        profile
+            .assets
+            .retain(|asset| asset.role != AssetRole::ExternalWeights);
+        profile.assets.push(asset.clone());
+        let recipe = BoundedContextOptimizer::ProtectedEfficientMha;
+        profile.device_execution = Some(DeviceExecution {
+            schema: DEVICE_EXECUTION_SCHEMA.into(),
+            backend: GpuBackend::Cuda,
+            runtime_build: Sha256Digest::from_bytes([1; 32]),
+            compatibility_policy: Sha256Digest::from_bytes([2; 32]),
+            provider_options: recipe.provider_options(model)?,
+            math_policy: recipe.math_policy(model)?,
+            precision: DevicePrecision::Float16,
+            tf32: false,
+            placement: PlacementPolicy::BoundedHybrid {
+                policy: Sha256Digest::from_bytes([3; 32]),
+            },
+            graph: graph.parse()?,
+            host_fit: profile.cpu_fit.take().context("Context CPU fit missing")?,
+            memory: DeviceMemory::Dedicated {
+                required_peak_bytes: 1,
+                headroom_bytes: 1,
+            },
+        });
+        assert!(is_protected_efficient_mha(&profile)?);
+        assert_ne!(
+            recipe.provider_options(model)?,
+            BoundedContextOptimizer::ProtectedProjections.provider_options(model)?
+        );
+        let check = |profile: &Profile| {
+            AttentionPlan::from_graph(profile, b"foreign graph", &BTreeMap::new())
+                .unwrap_err()
+                .to_string()
+        };
+        assert_eq!(
+            check(&profile),
+            "protected efficient MHA graph artifact differs"
+        );
+        profile.assets.last_mut().unwrap().sha256 = Sha256Digest::from_bytes([9; 32]);
+        assert_eq!(
+            check(&profile),
+            "protected efficient MHA weight artifact differs"
+        );
+        profile.assets.pop();
+        profile.assets.extend([asset.clone(), asset]);
+        assert_eq!(
+            check(&profile),
+            "protected efficient MHA weight artifact differs"
+        );
+        let device = profile.device_execution.as_mut().unwrap();
+        device.placement = PlacementPolicy::StrictGpu;
+        assert!(!is_protected_efficient_mha(&profile)?);
+        assert_eq!(check(&profile), "G5 profile math/provider identity differs");
+    }
+    Ok(())
+}
+
+#[cfg(all(windows, target_arch = "x86_64"))]
+#[test]
+fn protected_efficient_mha_requires_every_model_specific_cuda_attention_and_projection()
+-> Result<()> {
+    for (model, prefix, layers) in [
+        (ModelChoice::ContextQwenCompact, "airk_compact_cutlass", 28),
+        (ModelChoice::ContextQwenLarge, "airk_large_cutlass", 36),
+    ] {
+        let candidate = ProtectedContextMha::for_model(model)?;
+        let plan = AttentionPlan {
+            schema: "airk.native.cuda-fp16-attention-plan/1",
+            graph: candidate.graph.parse()?,
+            model,
+            operator: "MultiHeadAttention",
+            domain: "com.microsoft",
+            dtype: "fp32",
+            backend: "EFFICIENT_ATTENTION",
+            math_policy: Sha256Digest::from_bytes([1; 32]),
+            provider_options: Sha256Digest::from_bytes([2; 32]),
+            nodes: candidate.attention_nodes(),
+        };
+        let mut nodes = Vec::new();
+        for layer in 0..layers {
+            nodes.push(PlacedNode {
+                subgraph_index: 0,
+                name: format!("/{prefix}/{layer}/efficient"),
+                domain: "com.microsoft".into(),
+                op: "MultiHeadAttention".into(),
+                ep: "CUDAExecutionProvider".into(),
+            });
+            for site in [
+                "self_attn/q_proj",
+                "self_attn/k_proj",
+                "self_attn/v_proj",
+                "self_attn/o_proj",
+                "mlp/gate_proj",
+                "mlp/up_proj",
+                "mlp/down_proj",
+            ] {
+                nodes.push(PlacedNode {
+                    subgraph_index: 0,
+                    name: format!("/scorer/layers.{layer}/{site}/MatMul"),
+                    domain: String::new(),
+                    op: "MatMul".into(),
+                    ep: "CUDAExecutionProvider".into(),
+                });
+            }
+        }
+        let placement = PlacementObservation {
+            scope: "literal protected Context assignment",
+            complete: true,
+            shim_status: 0,
+            ort_error_code: 0,
+            reported_nodes: nodes.len() as u64,
+            reported_string_bytes: 1024,
+            nodes,
+        };
+        plan.require_attention_placement(&placement)?;
+        let mut bad = placement.clone();
+        bad.nodes[0].op = "GroupQueryAttention".into();
+        assert!(plan.require_attention_placement(&bad).is_err());
+        let mut bad = placement.clone();
+        bad.nodes.last_mut().unwrap().ep = "CPUExecutionProvider".into();
+        assert!(plan.require_attention_placement(&bad).is_err());
+        let mut bad = placement.clone();
+        bad.nodes.pop();
+        assert!(plan.require_attention_placement(&bad).is_err());
+        let mut bad = placement;
+        bad.complete = false;
+        assert!(plan.require_attention_placement(&bad).is_err());
+    }
+    Ok(())
+}

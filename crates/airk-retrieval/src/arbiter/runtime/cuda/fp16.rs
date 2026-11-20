@@ -64,13 +64,127 @@ pub fn fp16_math_policy_digest(model: ModelChoice) -> Result<Sha256Digest> {
     let (model, backend) = family(model)?;
     Ok(airk_core::identity::framed_digest(b"airk.native.cuda.math-policy/2",&[model.as_bytes(),backend.as_bytes(),include_bytes!("fp16.rs"),include_bytes!("../../external_data/g5.rs"),include_bytes!("../cuda.rs"),include_bytes!("../../runtime.rs"),include_bytes!("../../external_data.rs"),include_bytes!("../../../onnx.rs"),b"g5-full-fp16-learned-weights-except-rms-scales-and-focus-readout;ieee754-rne-no-clipping;f32-residual-rmsnorm-qk-norm-rope-silu-gate-sparse-readout;epsilon=1e-6;theta=1000000;head128;original-scale-bits=3db504f3;f32-output-abi;tf32=0;half-gemm-compute32f-no-reduced-precision-reduction;unchanged-numeric-limits;actual-backend-and-completion-proof-separate"]))
 }
-pub(super) fn backend(model: ModelChoice) -> Result<CUDAAttentionBackend> {
-    Ok(if family(model)?.1 == "EFFICIENT_ATTENTION" {
+pub(super) fn backend(profile: &Profile) -> Result<CUDAAttentionBackend> {
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    if is_protected_efficient_mha(profile)? {
+        return Ok(CUDAAttentionBackend::EFFICIENT_ATTENTION);
+    }
+    Ok(if family(profile.model)?.1 == "EFFICIENT_ATTENTION" {
         CUDAAttentionBackend::EFFICIENT_ATTENTION
     } else {
         CUDAAttentionBackend::FLASH_ATTENTION
     })
 }
+#[cfg(all(windows, target_arch = "x86_64"))]
+fn is_protected_efficient_mha(profile: &Profile) -> Result<bool> {
+    let Some(device) = &profile.device_execution else {
+        return Ok(false);
+    };
+    Ok(
+        matches!(device.placement, PlacementPolicy::BoundedHybrid { .. })
+            && BoundedContextOptimizer::from_profile(profile)?
+                == BoundedContextOptimizer::ProtectedEfficientMha,
+    )
+}
+
+#[cfg(all(windows, target_arch = "x86_64"))]
+struct ProtectedContextMha {
+    prefix: &'static str,
+    layers: usize,
+    graph: &'static str,
+    graph_bytes: usize,
+    weights: &'static str,
+    weight_bytes: u64,
+}
+
+#[cfg(all(windows, target_arch = "x86_64"))]
+impl ProtectedContextMha {
+    fn for_model(model: ModelChoice) -> Result<Self> {
+        match model {
+            ModelChoice::ContextQwenCompact => Ok(Self {
+                prefix: "airk_compact_cutlass",
+                layers: 28,
+                graph: "147be075a73ff81ca17b6c2fb965ec8f887e10908fbd33cf47a919d1694aa3d9",
+                graph_bytes: 854_973,
+                weights: "0c4bd89d032e7dd821071c3559776cd3da50d54d84b6e575373fd8cf7003a7c3",
+                weight_bytes: 3_441_397_760,
+            }),
+            ModelChoice::ContextQwenLarge => Ok(Self {
+                prefix: "airk_large_cutlass",
+                layers: 36,
+                graph: "c1b5776144c6d9af07d08552cae40e491d8f866e89c53bab567adeeb32ca75e4",
+                graph_bytes: 1_100_471,
+                weights: "5b053f02795e72ff88123b28f89d3f2c89da055e9ed2228bc60809dd0a2b4270",
+                weight_bytes: 8_045_328_384,
+            }),
+            _ => anyhow::bail!("protected efficient MHA requires a Context model"),
+        }
+    }
+
+    fn require_weights(&self, assets: &[airk_core::arbiter::Asset]) -> Result<()> {
+        let mut weights = assets
+            .iter()
+            .filter(|asset| asset.role == airk_core::arbiter::AssetRole::ExternalWeights);
+        let weight = weights
+            .next()
+            .context("protected efficient MHA weight asset missing")?;
+        ensure!(
+            weights.next().is_none()
+                && weight.name == "weights.bin"
+                && weight.bytes == self.weight_bytes
+                && weight.sha256 == self.weights.parse()?,
+            "protected efficient MHA weight artifact differs"
+        );
+        Ok(())
+    }
+
+    fn attention_nodes(&self) -> Vec<crate::arbiter::external_data::g5::AttentionNode> {
+        (0..self.layers)
+            .map(|layer| crate::arbiter::external_data::g5::AttentionNode {
+                name: format!("/{}/{layer}/efficient", self.prefix),
+                operator: "MultiHeadAttention".into(),
+                domain: "com.microsoft".into(),
+            })
+            .collect()
+    }
+
+    fn require_projections(&self, placement: &PlacementObservation) -> Result<()> {
+        let nodes: BTreeMap<_, _> = placement
+            .nodes
+            .iter()
+            .map(|node| (node.name.as_str(), node))
+            .collect();
+        ensure!(
+            placement.complete && nodes.len() == placement.nodes.len(),
+            "protected efficient MHA native placement is incomplete or ambiguous"
+        );
+        for layer in 0..self.layers {
+            for site in [
+                "self_attn/q_proj",
+                "self_attn/k_proj",
+                "self_attn/v_proj",
+                "self_attn/o_proj",
+                "mlp/gate_proj",
+                "mlp/up_proj",
+                "mlp/down_proj",
+            ] {
+                let name = format!("/scorer/layers.{layer}/{site}/MatMul");
+                let node = nodes
+                    .get(name.as_str())
+                    .context("protected learned projection missing")?;
+                ensure!(
+                    node.subgraph_index == 0
+                        && node.domain.is_empty()
+                        && node.op == "MatMul"
+                        && node.ep == "CUDAExecutionProvider",
+                    "protected learned projection differs: {name}"
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub(in crate::arbiter::runtime) struct AttentionPlan {
     schema: &'static str,
@@ -94,6 +208,36 @@ impl AttentionPlan {
             .device_execution
             .as_ref()
             .context("G5 CPU descriptor")?;
+        #[cfg(all(windows, target_arch = "x86_64"))]
+        if is_protected_efficient_mha(profile)? {
+            let recipe = BoundedContextOptimizer::ProtectedEfficientMha;
+            let candidate = ProtectedContextMha::for_model(profile.model)?;
+            ensure!(
+                p.math_policy == recipe.math_policy(profile.model)?,
+                "protected efficient MHA math identity differs"
+            );
+            candidate.require_weights(&profile.assets)?;
+            let actual = Sha256Digest::from_bytes(Sha256::digest(graph).into());
+            // The independently reviewed graph bytes pin every FP32 Q/K/V edge and causal MHA attribute.
+            ensure!(
+                graph.len() == candidate.graph_bytes
+                    && actual == candidate.graph.parse()?
+                    && actual == p.graph,
+                "protected efficient MHA graph artifact differs"
+            );
+            return Ok(Self {
+                schema: "airk.native.cuda-fp16-attention-plan/1",
+                graph: actual,
+                model: profile.model,
+                operator: "MultiHeadAttention",
+                domain: "com.microsoft",
+                dtype: "fp32",
+                backend: "EFFICIENT_ATTENTION",
+                math_policy: p.math_policy,
+                provider_options: p.provider_options,
+                nodes: candidate.attention_nodes(),
+            });
+        }
         ensure!(
             p.precision == DevicePrecision::Float16
                 && !p.tf32
@@ -166,6 +310,10 @@ impl AttentionPlan {
                     == 1),
             "G5 final SessionState attention roster differs"
         );
+        #[cfg(all(windows, target_arch = "x86_64"))]
+        if self.dtype == "fp32" {
+            ProtectedContextMha::for_model(self.model)?.require_projections(placement)?;
+        }
         Ok(())
     }
     pub(in crate::arbiter::runtime) fn validate_input(

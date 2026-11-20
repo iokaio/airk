@@ -18,6 +18,8 @@ use sha2::{Digest, Sha256};
 pub enum BoundedContextOptimizer {
     Level3,
     ProtectedProjections,
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    ProtectedEfficientMha,
 }
 
 impl BoundedContextOptimizer {
@@ -34,6 +36,10 @@ impl BoundedContextOptimizer {
             device.precision == DevicePrecision::Float16 && !device.tf32,
             "bounded CUDA Context requires FP16 with TF32 disabled"
         );
+        #[cfg(all(windows, target_arch = "x86_64"))]
+        if Self::ProtectedEfficientMha.provider_options(profile.model)? == device.provider_options {
+            return Ok(Self::ProtectedEfficientMha);
+        }
         for candidate in [Self::Level3, Self::ProtectedProjections] {
             if candidate.provider_options(profile.model)? == device.provider_options {
                 return Ok(candidate);
@@ -75,24 +81,26 @@ impl BoundedContextOptimizer {
         match self {
             Self::Level3 => b"ort-level3",
             Self::ProtectedProjections => b"ort-level3-protected-projections",
+            #[cfg(all(windows, target_arch = "x86_64"))]
+            Self::ProtectedEfficientMha => b"ort-level3-protected-efficient-mha",
         }
     }
 
     fn overrides(self) -> &'static [(&'static str, &'static str)] {
-        match self {
-            Self::Level3 => &[],
-            Self::ProtectedProjections => &[
-                (
-                    "optimization.constant_folding_max_output_size_in_bytes",
-                    "1048576",
-                ),
-                ("optimization.enable_cast_chain_elimination", "0"),
-                (
-                    "optimization.disable_specified_optimizers",
-                    "FuseFp16InitializerToFp32NodeTransformer",
-                ),
-            ],
+        if self == Self::Level3 {
+            return &[];
         }
+        &[
+            (
+                "optimization.constant_folding_max_output_size_in_bytes",
+                "1048576",
+            ),
+            ("optimization.enable_cast_chain_elimination", "0"),
+            (
+                "optimization.disable_specified_optimizers",
+                "FuseFp16InitializerToFp32NodeTransformer",
+            ),
+        ]
     }
 
     pub fn configure(
@@ -107,10 +115,21 @@ impl BoundedContextOptimizer {
 
     /// Identifies the configured native options, independently of the eventual graph assignment.
     pub fn provider_options(self, model: ModelChoice) -> Result<Sha256Digest> {
-        Ok(framed_digest(b"airk.native.cuda.bounded-context-provider-options/1", &[
-            host_scope()?, model_scope(model)?, self.name(), &serde_json::to_vec(self.overrides())?,
-            b"cuda-required;cpu-control-values-only;tf32=0;cuda-graph=0;arena=declared-cold-peak;flash-attention;ort-level3;host-fit-threads;sequential;memory-pattern=0;spinning=0;ORT_CUDA_GEMM_OPTIONS=2;original-deadline",
-        ]))
+        let options = match self {
+            #[cfg(all(windows, target_arch = "x86_64"))]
+            Self::ProtectedEfficientMha => b"cuda-required;cpu-control-values-only;tf32=0;cuda-graph=0;arena=declared-cold-peak;efficient-attention;ort-level3;host-fit-threads;sequential;memory-pattern=0;spinning=0;ORT_CUDA_GEMM_OPTIONS=2;original-deadline".as_slice(),
+            _ => b"cuda-required;cpu-control-values-only;tf32=0;cuda-graph=0;arena=declared-cold-peak;flash-attention;ort-level3;host-fit-threads;sequential;memory-pattern=0;spinning=0;ORT_CUDA_GEMM_OPTIONS=2;original-deadline".as_slice(),
+        };
+        Ok(framed_digest(
+            b"airk.native.cuda.bounded-context-provider-options/1",
+            &[
+                host_scope()?,
+                model_scope(model)?,
+                self.name(),
+                &serde_json::to_vec(self.overrides())?,
+                options,
+            ],
+        ))
     }
 
     /// Identifies the code implementing the effective mixed-precision recipe.

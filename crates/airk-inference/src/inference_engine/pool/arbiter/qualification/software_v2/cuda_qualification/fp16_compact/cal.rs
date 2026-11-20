@@ -8,6 +8,39 @@ const AUDIT: &str = "87731282ecd121eaf08d5074d1bc421c5753bc65f7126f9578b31c6f930
 use airk_retrieval::arbiter::scientific_cal::{self, CompactArtifact};
 const ORIGINAL: &str = scientific_cal::ORIGINAL.manifest;
 const MODEL: &str = "arbiter-context-qwen3-17b";
+const R6_AUDIT: &str = "aa2dea22544689e785426e03d4fa4f657cfda6d5dbc86b682a8594be7bb680e1";
+const R6_SERVICE: &str = "77e70341e1da84688c8b16bc992e25b3afed32d2d3e07639a6a5c69176eb0dfa";
+
+fn chronological_audit(pin: &ResourceFilePin) -> Result<Value> {
+    let digest = pin.sha256.to_string();
+    ensure!(
+        digest == AUDIT || digest == R6_AUDIT,
+        "foreign chronological CAL audit"
+    );
+    let audit = json_file(pin, 2 << 20)?;
+    ensure!(
+        digest != R6_AUDIT || audit["inputs"]["service"]["sha256"] == R6_SERVICE,
+        "R6 chronological service differs"
+    );
+    Ok(audit)
+}
+
+#[test]
+fn chronological_cal_rejects_foreign_audit_before_opening_file() -> Result<()> {
+    let unknown = ResourceFilePin {
+        path: "absent-foreign-audit.json".into(),
+        sha256: R6_SERVICE.parse()?,
+    };
+    ensure!(
+        chronological_audit(&unknown)
+            .unwrap_err()
+            .to_string()
+            .contains("foreign chronological CAL audit"),
+        "unreviewed launch audit reached a file reader"
+    );
+    Ok(())
+}
+
 const MAX_CERTIFICATE: u64 = 256 << 20;
 
 fn array<'a>(value: &'a Value, field: &str) -> Result<&'a Vec<Value>> {
@@ -242,7 +275,7 @@ fn chronological_original_context_compiler_row() -> Result<()> {
         "AIRK_CUDA_CAL_CHRONOLOGICAL_INPUT_SHA256",
     )?;
     let projection = json_file(&input, 16 << 20)?;
-    verify_chronological_projection(&audit, &projection, false)?;
+    verify_chronological_projection(&audit, AUDIT, &projection, false)?;
     Ok(())
 }
 
@@ -253,8 +286,7 @@ fn chronological_original_context_compiler_batch() -> Result<()> {
         "AIRK_CUDA_CAL_LAUNCH_AUDIT",
         "AIRK_CUDA_CAL_LAUNCH_AUDIT_SHA256",
     )?;
-    ensure!(audit_pin.sha256.to_string() == AUDIT, "foreign CAL audit");
-    let audit = json_file(&audit_pin, 2 << 20)?;
+    let audit = chronological_audit(&audit_pin)?;
     let mut phases = None;
     for (key, model) in [
         ("COMPACT", ModelChoice::ContextQwenCompact),
@@ -268,19 +300,24 @@ fn chronological_original_context_compiler_batch() -> Result<()> {
             ensure!(*previous == projection["phases"], "model prefixes differ");
         }
         phases = Some(projection["phases"].clone());
-        verify_chronological_projection(&audit, &projection, true)?;
+        verify_chronological_projection(&audit, &audit_pin.sha256.to_string(), &projection, true)?;
     }
     Ok(())
 }
 
-fn verify_chronological_projection(audit: &Value, projection: &Value, batch: bool) -> Result<()> {
+fn verify_chronological_projection(
+    audit: &Value,
+    audit_sha: &str,
+    projection: &Value,
+    batch: bool,
+) -> Result<()> {
     let model: ModelChoice = serde_json::from_value(projection["model"].clone())?;
     let (_, profile, compiler) = original_compiler(audit, model)?;
     let census = json_file(&pin(&audit["census"])?, 2 << 20)?;
     let ids = array(&census, "question_ids")?;
     ensure!(
         ids.len() == 100
-            && projection["launch_audit_sha256"] == AUDIT
+            && projection["launch_audit_sha256"] == audit_sha
             && projection["NN_invocations"] == 0
             && projection["original_manifest"] == profile.manifest.to_string(),
         "foreign chronological projection"

@@ -374,3 +374,29 @@ Windows Compact/Large passed 0.007 matching raw at all four widths. Fixed20 mode
 R6 started on the optimized native Windows service with the original three-hour clock. It stopped before its first question when the native catalog selection revision was 8 and the retained initial scope required 4. Its independent scope identity had also changed. Preserve the guards and authenticate the new post-restart selection, then use the genuinely closed R6 as the next physical predecessor. R6 produced zero questions; original R5 stays 98/100. Native lease recovered, outer exit 1/no forced termination/no remaining members, mutex released. Original outer c29f7db5040ef9d4face6a6fea6365de36aaf51adf8ad940bb6f8cb39fd359db, release d976fbe1a642530b6e57ef470a44827cb89df7d0bf03ddeb12a04b086543c74e, custody c805f6228ad84ec4aff40b9699231be83507a40fe78d88ec16a3922000db543f. Search optimization seven-case timed equivalence and 28 scores are development controls only. Fresh D CUDA producer R1 stopped before configure with an inherited two-process cap; corrected signed supervisor 542a7a89 passed genuine negative/positive process-tree controls. Its R2 has not launched. Preserve the original 13:44 start and 16:44 UTC build cutoff.
 
 AWS R5 verified all 27 positive files and 41 eligible source ranges in the original publication. It observed 15800 files through one service cursor before fresh brokerage was required. R5 206021 checked immutable entries remained intact. The separate AWS R2 witness was stopped on request before native census; original owned 11c6d55c5c79a8c9bf129a6bb1b4946590febbafe1bcc8687bbc099be2862bad, zero surviving children. Resume with a fresh witnessed census and pretested whole-guide queries. The 24 ambiguous selectors remain excluded.
+
+### Live resume checkpoint, 20 November 2026 at 15:00 UTC
+
+R7 calibration resumed under the original common clock with plan SHA
+`c04be2262a32d8318f9aa222e73ea9bf078ad80d7975d907eebefe486895a2eb`.
+Four phases and 32 questions closed. Reobserve the actual R7 owner and
+terminal before opening either population. The 16:59:12.847 UTC common
+deadline includes the original setup debit. Inspect the current R4 volume
+watcher before starting writers. Keep the original cutoffs.
+
+After natural lifetime 00 closure, use the R7 chronological population and
+same-image native compiler entrypoints in the [CAL readout](../scripts/arbiter/evaluation/selected_goal/cal_raw/README.md#r7-chronological-original-inputs).
+The exact image and both build/Job receipts are in the ledger. Reuse the
+authenticated zero-forward same-image Compact graph receipt for subsequent
+scientific phase scoring. The original CAL R5 rows remain historical and
+the R6 attempt still has zero questions.
+
+The CU18 R2 build is settled and failed after an MSVC helper prevented the
+original configure tree from closing. It retained the generated graph and
+original failure custody. A reviewed direct-Job preflight can reopen that
+evidence under the original 16:44 UTC cutoff. It has no active compiler.
+The GNU CPU attempt 3 recorded 173 passing test cases and failed the
+signed source census on its generated JUnit. The original report was
+preserved, and a separate attempt 4 uses a verified private Nextest store.
+Reobserve the actual owner and terminal. Linux CUDA qualification follows
+Windows. Neither release is ready, and no artifact was published.

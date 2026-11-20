@@ -96,7 +96,10 @@ def phase_argv(phase, directory):
     if phase == "nextest":
         require(command[-2] == "-E" and "large_kv_expansion_preserves_four_consecutive_heads" in command[-1],
                 "wrong original Large regression roster")
-        command[-1] += " | test(large_train_q543_requires_original_compiler_and_allowance)"
+        if directory.name.startswith("windows-r6-chronological-checks-"):
+            command[-1] = "test(chronological_cal_rejects_foreign_audit_before_opening_file) | test(compact_cal_population_rejects_reordered_and_duplicate_ordinals) | test(protected_efficient_mha_binds_the_model_graph_and_half_weight_identity) | test(protected_efficient_mha_requires_every_model_specific_cuda_attention_and_projection) | test(original_compact_bounded_options_refused_by_strict_input_plan)"
+        else:
+            command[-1] += " | test(large_train_q543_requires_original_compiler_and_allowance)"
         if directory.name.startswith("windows-large-direct-timing-checks-"):
             command[-1] += " | test(compact_fp16_timing_fixes_warm_population_and_mixed_cycles)"
     return [sys.executable,"-I","-B","-S",str(ROOT/"scripts/dev/receipt_runner.py"),"--groups","native",
@@ -108,7 +111,7 @@ def run(args):
     shared = runpy.run_path(str(ROOT/"scripts/arbiter/evaluation/run_compact_answer.py"))
     owner = shared["owner_module"]()
     directory = owner.plain(args.output)
-    require(directory.parent == CAMPAIGN and directory.name.startswith(("windows-large-train-q543-scientific-checks-", "windows-large-direct-timing-checks-")),
+    require(directory.parent == CAMPAIGN and (directory.name.startswith("windows-r6-chronological-checks-") or directory.name.startswith(("windows-large-train-q543-scientific-checks-", "windows-large-direct-timing-checks-"))),
             "fresh Large scientific receipt directory required")
     require(Path(os.environ["CARGO_HOME"]) == CAMPAIGN/"windows-offline-cargo-r1/home" and
             os.environ.get("CARGO_BUILD_JOBS") == "1" and os.environ.get("CARGO_NET_OFFLINE") == "true" and
@@ -137,7 +140,7 @@ def run(args):
             shared["write_json"](phase_dir/"tool-exits.json",drained)
         return
     require(not any(phase_dir.iterdir()), "fresh outer Cargo phase directory required")
-    original = [sys.executable,"-I","-B","-S",str(HERE),*sys.argv[1:],"--worker"]
+    original = [sys.executable,"-I","-B","-S",str(Path(__file__).resolve()),*sys.argv[1:],"--worker"]
     wall = min(1800,int(1795194600-time.time()))
     require(wall >= 120,"campaign deadline leaves insufficient native time")
     result = owner.run_evaluation_fixture(original,ROOT,phase_dir/"outer.log",wall,

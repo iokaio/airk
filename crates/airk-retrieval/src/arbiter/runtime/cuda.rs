@@ -1017,7 +1017,7 @@ impl Binding {
             .is_some_and(|p| p.precision == DevicePrecision::Float16)
         {
             fp16::require_environment(self.evidence.is_none())?;
-            provider = provider.with_attention_backend(fp16::backend(profile.model)?);
+            provider = provider.with_attention_backend(fp16::backend(profile)?);
         }
         let builder = builder
             .with_execution_providers([provider.build().error_on_failure()])
