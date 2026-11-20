@@ -90,14 +90,23 @@ def run(args):
     files=base.read(build["path"],32<<20)["groups"]["native"]["files"]
     retrieval="crates/airk-retrieval/src/arbiter/runtime/cuda/diagnostic/cutlass"
     inference="crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/cuda_qualification/fp16_large"
-    for key in (retrieval+".rs", retrieval+"/large.rs", retrieval+"/model.rs", inference+".rs", inference+"/compensated.rs"):
+    required_native = [retrieval+".rs", retrieval+"/large.rs", retrieval+"/model.rs", inference+".rs", inference+"/compensated.rs"]
+    if retrieval+"/large_routes.rs" in files:
+        required_native.append(retrieval+"/large_routes.rs")
+    for key in required_native:
         path=args.snapshot/(files[key]+".source")
         audit([path])
         sources[key]=exact(path,files[key])
     backend=runpy.run_path(str(HERE/"compact_cutlass_attention.py"))["backend_sources"](args.image.parent)
     backend={key:backend[key] for key in ("producer","provider_sources","sm80_gemm_type","internal_math")}
     pins=[backend["producer"],backend["sm80_gemm_type"],*backend["provider_sources"].values(),lineage,base.pin(Path(__file__).resolve()),base.pin(HERE/"probe_compact.py"),base.pin(HERE/"large_body_placement.py"),
-          base.pin(HERE/"probe_compact_cutlass.py"), base.pin(HERE/"compact_cutlass_attention.py")]
+          exact(HERE/"score_comparison.py","24f264d1989c105c9b284f8eccb104f4f786398c5605ef23be59b0e4bd5428c1"), base.pin(HERE/"compact_cutlass_attention.py")]
+    sources_to_reopen = [ROOT/"scripts/cuda-component-execution.py", ROOT/"scripts/cuda-native-execution.py",
+                         ROOT/"scripts/cuda-component-execution/wddm_capacity_snapshot.py",
+                         ROOT/"scripts/cuda-component-execution/wddm_process_samples.py"]
+    pins += [base.pin(path) for path in sources_to_reopen]
+    pins += [exact(base.MAINTAINED_HELPER_ROOT/name, sha) for name,sha in base.HELPERS.items()]
+    pins.extend(guard.values())
     prep=exact(CAMPAIGN/"large-cutlass-t32-operands-r1/prepare.json","f9a45a949357610f6a7310b8df2b87ae07225382422fcc56f375fba00df8ccea")
     original=base.read(prep["path"])
     pins += [prep,*original["assets"].values()]
@@ -128,13 +137,34 @@ def run(args):
         closure=base.read(refp["path"])
         require(closure["complete"] and parent.settled(closure["owned"]) and not closure["whole_phase_expired"],"matching independent Job not closed")
         ref=base.read(closure["proof"]["path"])
-        original_inputs=exact(CAMPAIGN/"large-fp16-independent-reference-inputs-r1.json",ORIGINAL)
-        rows=[r for r in base.read(original_inputs["path"])["rows"] if len(r["input"]["input_ids"])==args.width]
-        require(len(rows)==1 and ref["input_digest"]==rows[0]["input"]["input_digest"] and ref["tokens"]==args.width
+        if args.width == 1588:
+            require(args.direct and ref.get("train_phase")=="matching", "original Large TRAIN protected reference required")
+            case_source=exact(HERE.parent/"arbiter-fp16-reference/large_train_case.py","722baf8ad63976edea9c389f16a06be8ebf33d185ff96b4e3fd6a06e6dd6aa3b")
+            case=runpy.run_path(case_source["path"])["original"](CAMPAIGN)
+            retained=ref["case_pins"]
+            require(len(retained)==4 and retained[:2]==case["pins"], "original TRAIN source or publisher closure differs")
+            for pin in retained:
+                base.pinned(pin)
+            pub=base.read(retained[2]["path"])
+            require(pub["complete"] and parent.settled(pub["owned"]) and not pub["whole_phase_expired"]
+                    and pub["proof"]==retained[3], "original publisher Job not settled")
+            p=base.read(retained[3]["path"])
+            require(p["train_phase"]=="publisher" and p["case_pins"]==case["pins"] and p["publisher"]["official_forwards"]==2
+                    and p["publisher"]["t32_max_abs"]<=0.001 and p["input_digest"]==case["input"]["input_digest"]
+                    and len(p["original_fp32"])==len(ref["matching_fp16"])==7, "wrong publisher row or incomplete matching data")
+            row=dict(case,reference_original_fp32=p["original_fp32"])
+            pins.extend([case_source,*retained])
+        else:
+            original_inputs=exact(CAMPAIGN/"large-fp16-independent-reference-inputs-r1.json",ORIGINAL)
+            rows=[r for r in base.read(original_inputs["path"])["rows"] if len(r["input"]["input_ids"])==args.width]
+            require(len(rows)==1, "ambiguous frozen Large width")
+            row=rows[0]
+            pins.append(original_inputs)
+        require(ref["input_digest"]==row["input"]["input_digest"] and ref["tokens"]==args.width
                 and ref["candidate"]["graph"]==arm["graph"] and ref["candidate"]["protected_routes_in_model_order"]==252
-                and ref["recipe"]==("large-weight-only-fp32-sm86-compensated-causal-mha" if args.direct else "large-body252-fp32-sm86-compensated-causal-mha") and ref["original_fp32"]==rows[0]["reference_original_fp32"]
+                and ref["recipe"]==("large-weight-only-fp32-sm86-compensated-causal-mha" if args.direct else "large-body252-fp32-sm86-compensated-causal-mha") and ref["original_fp32"]==row["reference_original_fp32"]
                 and ref["cpu_placement"]["torch_intraop_threads"]==2,"frozen Large reference/input differs")
-        pins += [gp,refp,closure["proof"],original_inputs]
+        pins += [gp,refp,closure["proof"]]
     audit([Path(p["path"]) for p in pins])
     for pin in pins:
         base.pinned(pin)
@@ -186,8 +216,16 @@ def run(args):
             receipt["typed_graph_validation"]=reviewed(native,shared,args.direct)
         else:
             require(result["typed_graph_sha256"]==gate and result["score"]["compiled_input_digest"]==ref["input_digest"],"scored wrong original input")
-            receipt["numerical"]=runpy.run_path(str(HERE/"probe_compact_cutlass.py"))["numerical"](
+            receipt["numerical"]=runpy.run_path(str(HERE/"score_comparison.py"))["numerical"](
                 result["score"]["raw_scores"],ref["matching_fp16"],ref["original_fp32"])
+            if args.width == 1588:
+                def ranking(values):
+                    first,second = sorted(range(len(values)), key=values.__getitem__, reverse=True)[:2]
+                    return {"first":first, "runner_up":second, "raw_margin":values[first]-values[second]}
+                receipt["training_development"] = {
+                    "case":row["name"], "input_digest":ref["input_digest"], "remaining_ns":row["remaining_ns"],
+                    "remaining_input_tokens":row["remaining_input_tokens"], "ordered_roster":row["roster"],
+                    "rankings":{k:ranking(receipt["numerical"][k]) for k in ("candidate_scores","matching_scores","original_scores")}}
         receipt["after_release_adapter"]=capacity["snapshot"](None)
         require(receipt["after_release_adapter"]["dxgi"]["luid"]==luid,"physical adapter changed")
         for item in [image,build,manifest,log,linked,*approvals,*sources.values(),*pins]:
@@ -209,7 +247,7 @@ if __name__=="__main__":
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument("--mode",choices=("operand","graph","score"),required=True)
     p.add_argument("--direct",action="store_true")
-    p.add_argument("--width",type=int,choices=(32,128,1024,8192),default=32)
+    p.add_argument("--width",type=int,choices=(32,128,1024,1588,8192),default=32)
     for field in ("image","build","powershell","lineage","operand-receipt","graph-receipt","reference"):
         required=field in ("image","build","powershell","lineage")
         p.add_argument("--"+field,type=Path,required=required)

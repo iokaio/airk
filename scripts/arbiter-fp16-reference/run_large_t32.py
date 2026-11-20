@@ -73,7 +73,38 @@ def candidate_inputs(c, args, proofs, check):
     return result
 
 
+TRAIN = HERE.with_name("large_train_case.py")
+TRAIN_SHA = "722baf8ad63976edea9c389f16a06be8ebf33d185ff96b4e3fd6a06e6dd6aa3b"
+
 def selected_row(meta, args):
+    if args.train_phase:
+        require(args.recipe == DIRECT_RECIPE and args.tokens == 1588 and not args.capture_hidden, "unreviewed TRAIN case")
+        case = checked_module(TRAIN, TRAIN_SHA)["original"](CAMPAIGN)
+        case["reference_original_fp32"] = None
+        if args.train_phase == "matching":
+            path = args.publisher_execution
+            require(path is not None and path.parent.parent == CAMPAIGN and path.name == "execution.json"
+                    and args.publisher_sha256, "matching TRAIN needs the sealed publisher execution")
+            support = checked_module(SUPPORT, SUPPORT_SHA)
+            closure, pin = support["read_pinned_json"](path,args.publisher_sha256,lambda: None)
+            owned = closure["owned"]
+            evidence = closure["proof"]
+            require(closure["complete"] and not closure["whole_phase_expired"] and owned["exit_code"] == 0
+                    and owned["owned_job_final_active_processes"] == 0 and not owned["timed_out"]
+                    and Path(evidence["path"]) == path.with_name("reference.json"), "original publisher Job did not close")
+            obs, ep = support["read_pinned_json"](evidence["path"],evidence["sha256"],lambda: None)
+            require(ep == evidence and obs["train_phase"] == "publisher" and obs["tokens"] == 1588
+                    and obs["input_digest"] == case["input"]["input_digest"] and obs["case_pins"] == case["pins"]
+                    and obs["publisher"]["official_forwards"] == 2 and obs["publisher"]["t32_max_abs"] <= 0.001
+                    and obs["matching_fp16"] is None and obs["original_fp32"] == obs["publisher"]["original_fp32"]
+                    and len(obs["original_fp32"]) == 7 and all(math.isfinite(v) for v in obs["original_fp32"]),
+                    "publisher Job belongs to another case or lacks original positive control")
+            case["reference_original_fp32"] = obs["original_fp32"]
+            case["pins"] += [pin,ep]
+        else:
+            require(args.publisher_execution is None and args.publisher_sha256 is None, "publisher computes original values")
+        return case
+    require(args.tokens != 1588 and args.publisher_execution is None and args.publisher_sha256 is None, "expected frozen width case")
     rows = [row for row in meta["rows"] if len(row["input"]["input_ids"]) == args.tokens]
     require(len(rows) == 1 and (args.recipe in (MHA_RECIPE,DIRECT_RECIPE) or (args.recipe == WIDE_RECIPE) == (args.tokens != 32)),
             "one declared input of the requested width and its applicable recipe required")
@@ -255,8 +286,25 @@ def reference(args):
     torch.set_num_interop_threads(1)
     half = support["load_module"](ROOT / "scripts/arbiter-fp16-reference.py", "large_independent_half")
     def observe(stage, detail=None):
-        print("AIRK_LARGE_REFERENCE_PHASE " + json.dumps({"stage": stage, "detail": detail}), flush=True)
+        print("AIRK_LARGE_REFERENCE_PHASE " + json.dumps({"monotonic":time.monotonic(),"stage": stage, "detail": detail}), flush=True)
         check()
+    row = selected_row(meta, args)
+    if args.train_phase:
+        inputs[str(TRAIN)] = c["pin"](TRAIN, check)
+        for pin in row["pins"]:
+            c["pinned"](pin, check)
+    if args.train_phase == "publisher":
+        official = checked_module(TRAIN,TRAIN_SHA)["publisher"](torch,prep,meta,row,check)
+        for item in (pp, rp, mp, *meta["publisher_files"].values(), *row["pins"], inputs[str(TRAIN)]):
+            c["pinned"](item, check)
+        return {"model":"large", "recipe":args.recipe, "tokens":args.tokens, "train_phase":"publisher",
+                "case_pins":row["pins"], "multi_tile_source":None, "candidate":variant,
+                "cpu_placement":placement, "conversion_plan":pp, "conversion_receipt":rp, "source_inputs":mp,
+                "graph":variant["graph"], "weights":proofs["weights"], "input_digest":row["input"]["input_digest"],
+                "publisher":official, "original_fp32":official["original_fp32"], "matching_fp16":None,
+                "loaded_runtime":support["loaded_runtime"](inputs,c["pin"],check), "forward_count":2,
+                "job":limits, "device":"cpu", "pid":os.getpid(), "token":token, "deadline":args.deadline,
+                "native_execution":False, "qualification":False}
     streamer = checked_module(STREAM, STREAM_SHA)
     independent, publisher = streamer["build"](half, torch, prep, observe)
     observe("publisher_parameters_ready")
@@ -267,7 +315,6 @@ def reference(args):
         original_files=c["read"](plan["source_closure"]["path"]))
     check()
     observe("graph_and_learned_bytes_verified")
-    row = selected_row(meta, args)
     hidden = None
     if args.capture_hidden:
         require(variant is not None and args.tokens == 32, "hidden control requires original QKV T32")
@@ -282,11 +329,11 @@ def reference(args):
         scores = checked_module(script,digest)["score"](independent,row["input"],check)
     else:
         scores = independent.forward(row["input"], context_flash_single_tile=args.recipe == FLASH_RECIPE)
-    require(scores.dtype == torch.float32 and scores.device.type == "cpu" and tuple(scores.shape) == (1, 8)
+    require(scores.dtype == torch.float32 and scores.device.type == "cpu" and tuple(scores.shape) == (1, len(row["input"]["option_mask"]))
             and not torch.cuda.is_initialized(), "CPU-only Large score ABI differs")
     observe(f"t{args.tokens}_forward_completed")
     vector = scores[0].tolist()
-    require(support["finite_scores"](vector), "nonfinite CPU reference")
+    require(all(math.isfinite(v) for v in vector), "nonfinite CPU reference")
     for key in ("graph", "weights", "manifest"):
         c["pinned"](proofs[key], check)
     # Repeat source and candidate custody after the actual forward on the same deadline.
@@ -301,7 +348,8 @@ def reference(args):
         support["read_pinned_json"](root / "reference-producer.json", producer, check)
     if args.recipe == WIDE_RECIPE:
         c["pinned"](inputs[str(WIDE)], check)
-    return {**({"hidden":hidden,"hidden_source":inputs[str(HIDDEN)]} if hidden is not None else {}),
+    return {**({"train_phase":args.train_phase,"case_pins":row["pins"]} if args.train_phase else {}),
+            **({"hidden":hidden,"hidden_source":inputs[str(HIDDEN)]} if hidden is not None else {}),
             "model": "large", "recipe": args.recipe, "tokens": args.tokens,
             "multi_tile_source": inputs.get(str(WIDE)), "candidate": variant, "cpu_placement": placement, "conversion_plan": pp, "conversion_receipt": rp,
             "source_inputs": mp, "graph": variant["graph"] if variant else proofs["graph"], "weights": proofs["weights"], "verification": verification,
@@ -310,6 +358,19 @@ def reference(args):
             "forward_count": 1, "job": limits, "device": "cpu", "pid": os.getpid(), "token": token, "deadline": args.deadline,
             "native_execution": False, "qualification": False}
 
+
+def valid_scores(obs, row, args):
+    count = len(row["input"]["option_mask"])
+    def finite(values):
+        return isinstance(values,list) and len(values) == count and all(type(v) in (int,float) and math.isfinite(v) for v in values)
+    if args.train_phase:
+        require(obs["train_phase"] == args.train_phase and obs["case_pins"] == row["pins"], "wrong TRAIN phase or source")
+    if args.train_phase == "publisher":
+        p = obs["publisher"]
+        return (obs["forward_count"] == p["official_forwards"] == 2 and 0 <= p["t32_max_abs"] <= 0.001
+                and len(p["t32_control"]) == 8 and p["input_digest"] == obs["input_digest"] and p["model"] == "Qwen/Qwen3-4B"
+                and obs["matching_fp16"] is None and obs["original_fp32"] == p["original_fp32"] and finite(p["original_fp32"]))
+    return obs["forward_count"] == 1 and obs["original_fp32"] == row["reference_original_fp32"] and finite(obs["matching_fp16"])
 
 def run(args):
     start = time.monotonic()
@@ -335,6 +396,10 @@ def run(args):
             "--worker", "--plan", str(args.plan), "--plan-sha256", pp["sha256"], "--conversion", str(args.conversion),
             "--conversion-sha256", rp["sha256"], "--deadline", repr(deadline), "--worker-sha256", source["sha256"],
             "--recipe", args.recipe, "--tokens", str(args.tokens), "--affinity-mask", str(args.affinity_mask)]
+    if args.train_phase:
+        argv += ["--train-phase",args.train_phase]
+        if args.publisher_execution is not None:
+            argv += ["--publisher-execution",str(args.publisher_execution),"--publisher-sha256",args.publisher_sha256]
     if args.capture_hidden:
         require(args.recipe == QKV_RECIPE and args.tokens == 32, "protected Large T32 capture required")
         argv.append("--capture-hidden")
@@ -374,9 +439,12 @@ def run(args):
                 and obs["model"] == "large" and obs["recipe"] == args.recipe and obs["device"] == "cpu"
                 and obs["tokens"] == args.tokens and obs["multi_tile_source"] == wide_source
                 and obs["job"] == {"process_bytes": memory_cap, "job_bytes": memory_cap, "active_limit": 2}
-                and obs["forward_count"] == 1 and obs["original_fp32"] == row["reference_original_fp32"]
-                and obs["input_digest"] == row["input"]["input_digest"] and support["finite_scores"](obs["matching_fp16"])
+                and obs["input_digest"] == row["input"]["input_digest"]
+                and valid_scores(obs, row, args)
                 and obs["native_execution"] is obs["qualification"] is False, "Large CPU proof differs from owned request")
+        if args.train_phase:
+            require(selected_row(meta,args) == row and c["pin"](TRAIN,check)["sha256"] == TRAIN_SHA,
+                    "original TRAIN case or publisher changed during worker execution")
         if args.capture_hidden:
             prior = c["pin"](CAMPAIGN / "large-fp32-qkv-independent-t32-r1" / "reference.json", check)
             require(prior["sha256"] == "bc91621b62faeec0963caec75321c34b76e36f4bd66bbb7df6746d2872ab6191"
@@ -421,7 +489,10 @@ if __name__ == "__main__":
     parser.add_argument("--recipe", choices=("baseline-half", FLASH_RECIPE, WIDE_RECIPE,QKV_RECIPE,BODY_RECIPE,MHA_RECIPE,DIRECT_RECIPE), default="baseline-half")
     parser.add_argument("--capture-hidden", action="store_true")
     parser.add_argument("--affinity-mask", type=lambda value: int(value,0), default=0)
-    parser.add_argument("--tokens", choices=(32, 128, 1024, 8192), type=int, default=32)
+    parser.add_argument("--train-phase", choices=("publisher","matching"))
+    parser.add_argument("--publisher-execution", type=Path)
+    parser.add_argument("--publisher-sha256")
+    parser.add_argument("--tokens", choices=(32, 128, 1024, 1588, 8192), type=int, default=32)
     args = parser.parse_args()
     require(sys.flags.isolated and sys.flags.no_site and sys.dont_write_bytecode, "run with -I -B -S")
     if args.worker:
