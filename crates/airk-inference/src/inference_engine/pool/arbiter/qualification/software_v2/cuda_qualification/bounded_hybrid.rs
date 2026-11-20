@@ -23,6 +23,7 @@ struct Experiment {
     receipt_schema: &'static str,
     equivalent_predecessor: bool,
     fp16_t32: bool,
+    projection_capture: bool,
 }
 
 const COMPACT: Experiment = Experiment {
@@ -30,6 +31,7 @@ const COMPACT: Experiment = Experiment {
     host_gib: 32,
     device_gib: 24,
     graph: GRAPH_SHA,
+    projection_capture: false,
     retained: RETAINED_SHA,
     supplemental: SUPPLEMENTAL_SHA,
     receipt_schema: "airk.private.cuda-compact-bounded-hybrid-profile/1",
@@ -42,6 +44,7 @@ const LARGE: Experiment = Experiment {
     host_gib: 48,
     device_gib: 44,
     graph: "1892e5b040d8c51969f1d3361d0929950fa98f0ef4079060e48d00458635488a",
+    projection_capture: false,
     retained: "c87c4edcdec2ab5e98b41bfc186c3bb7d60791e7b9efd0aea186b731eecc3dd2",
     supplemental: "020669f0c44a959a0d95798eb3cc52925513e7e549496368017e0827a398aaef",
     receipt_schema: "airk.private.cuda-large-bounded-hybrid-profile/1",
@@ -308,9 +311,25 @@ fn score_rows(
             operation::Kind::Numeric,
             index + 1,
             Some(row.input.input_digest),
-            || scorer.score_with_deadline(&row.input, deadline),
+            || {
+                if experiment.projection_capture {
+                    scorer.score_large_projection_taps(&row.input, deadline).map(|(s,t)| (s,Some(t)))
+                } else {
+                    scorer.score_with_deadline(&row.input, deadline).map(|s| (s,None))
+                }
+            },
         )?;
-        let actual = timed.value?;
+        let (actual, taps) = timed.value?;
+        if let Some(taps) = taps {
+            if matches!(experiment.receipt_schema, ATTENTION17_SCHEMA | DENSE17_SCHEMA) {
+                receipt["layer17_taps"] = large_block17_words(experiment.receipt_schema,taps)?;
+            } else if experiment.graph == "0d00e2fabdb5fe54474041fb1f2787502349b78ce40436b955cd4433633a4462" {
+                receipt["hidden_taps"] = large_hidden_words(taps)?;
+            } else {
+                receipt["layer0_taps"] = large_projection_words(taps)?;
+            }
+            receipt["layer0_final_graph"] = json!(scorer.graph_metadata());
+        }
         let (same_raw, same_mass, same_argmax) = comparison(&actual, same)?;
         let (original_raw, original_mass, original_argmax) = comparison(&actual, original)?;
         let mut observed = json!({
@@ -380,6 +399,127 @@ fn cuda_large_fp16_scientific_t32() -> Result<()> {
         fp16_t32: true,
         graph: "fff6dbe2f0c2fac4b9ba215da7d5029421d2706ee48c01c2485b9f157ee15ca6",
         receipt_schema: "airk.private.large-fp16-scientific-t32/1",
+        ..LARGE
+    })
+}
+
+#[test]
+#[ignore = "owned original Windows Large protected Q/K/V FP32 T32 comparison"]
+fn cuda_large_qkv_fp32_scientific_t32() -> Result<()> {
+    profile_context(Experiment {
+        fp16_t32: true,
+        graph: "0d00e2fabdb5fe54474041fb1f2787502349b78ce40436b955cd4433633a4462",
+        receipt_schema: "airk.private.large-qkv-fp32-scientific-t32/1",
+        ..LARGE
+    })
+}
+
+#[test]
+#[ignore = "owned Windows Large protected hidden/readout operand capture"]
+fn cuda_large_qkv_hidden_t32() -> Result<()> {
+    profile_context(Experiment {
+        fp16_t32: true, projection_capture: true, graph: "0d00e2fabdb5fe54474041fb1f2787502349b78ce40436b955cd4433633a4462",
+        receipt_schema: "airk.private.large-qkv-hidden-t32/1",
+        ..LARGE
+    })
+}
+
+const ATTENTION17_SCHEMA: &str = "airk.private.large-qkv-attention17-t32/1";
+const DENSE17_SCHEMA: &str = "airk.private.large-qkv-dense17-t32/1";
+
+fn large_block17_words(schema: &str, words: Vec<Vec<u16>>) -> Result<Value> {
+    let attention = [("q",4096,32),("k",1024,32),("v",1024,32),("attention",4096,32)];
+    let dense = [("o_input",4096,1),("o_output",2560,1),("down_input",9728,1),("down_output",2560,1)];
+    let roster = match schema {
+        ATTENTION17_SCHEMA => attention,
+        DENSE17_SCHEMA => dense,
+        _ => anyhow::bail!("unknown Large layer17 operand set"),
+    };
+    ensure!(words.len() == roster.len(), "four Large layer17 operands required");
+    let mut result = Vec::new();
+    for ((name,width,tokens), bits) in roster.into_iter().zip(words) {
+        ensure!(bits.len() == width*tokens && bits.iter().all(|v| v & 0x7c00 != 0x7c00),
+                "Large layer17 operand size or binary16 finiteness differs");
+        result.push(json!({"name":name,"width":width,"tokens":tokens,"bits":bits}));
+    }
+    Ok(json!(result))
+}
+
+#[test]
+fn large_layer17_roster_refuses_truncated_key_history() {
+    assert!(large_block17_words(ATTENTION17_SCHEMA,
+        vec![vec![0;32*4096],vec![0;1024],vec![0;32*1024],vec![0;32*4096]]).is_err());
+}
+
+#[test]
+#[ignore = "owned Windows Large protected Q/K/V layer17 Flash operands"]
+fn cuda_large_qkv_attention17_t32() -> Result<()> {
+    profile_context(Experiment { fp16_t32: true, projection_capture: true,
+        graph: "0d00e2fabdb5fe54474041fb1f2787502349b78ce40436b955cd4433633a4462",receipt_schema:ATTENTION17_SCHEMA,..LARGE })
+}
+
+#[test]
+#[ignore = "owned Windows Large protected Q/K/V layer17 dense operands"]
+fn cuda_large_qkv_dense17_t32() -> Result<()> {
+    profile_context(Experiment { fp16_t32: true, projection_capture: true,
+        graph: "0d00e2fabdb5fe54474041fb1f2787502349b78ce40436b955cd4433633a4462",receipt_schema:DENSE17_SCHEMA,..LARGE })
+}
+
+fn large_hidden_words(words: Vec<Vec<u16>>) -> Result<Value> {
+    let names = ["/scorer/layers.0/input_layernorm/Mul_1_output_0",
+        "/scorer/layers.17/input_layernorm/Mul_1_output_0", "/scorer/layers.35/Add_1_output_0",
+        "/scorer/norm/Mul_1_output_0"];
+    ensure!(words.len() == names.len(), "four original FP32 decision rows required");
+    let mut result = Vec::new();
+    for (name, bits) in names.into_iter().zip(words) {
+        ensure!(bits.len() == 5120 && bits.as_chunks::<2>().0.iter().all(|w|
+            f32::from_bits(u32::from(w[0]) | (u32::from(w[1]) << 16)).is_finite()),
+            "original Large hidden row requires 2560 finite FP32 words");
+        result.push(json!({"name":name, "token":31, "width":2560, "bits":bits}));
+    }
+    Ok(json!(result))
+}
+
+#[test]
+fn large_hidden_rows_require_finite_fp32_pairs() {
+    let mut words = vec![vec![0; 5120]; 4];
+    assert!(large_hidden_words(words.clone()).is_ok());
+    words[2][1] = 0x7fc0;
+    assert!(large_hidden_words(words).is_err());
+}
+
+fn large_projection_words(words: Vec<Vec<u16>>) -> Result<Value> {
+    const ROSTER: [(&str, usize); 4] = [
+        ("/airk_g5/weight//scorer/layers.0/self_attn/k_proj/MatMul/input16", 2560),
+        ("/airk_g5/weight//scorer/layers.0/self_attn/k_proj/MatMul/output16", 1024),
+        ("/airk_g5/weight//scorer/layers.0/self_attn/v_proj/MatMul/output16", 1024),
+        ("/airk_g5/weight//scorer/layers.0/self_attn/q_proj/MatMul/output16", 4096),
+    ];
+    ensure!(words.len() == ROSTER.len(), "four original Large projection tensors required");
+    let mut taps = Vec::with_capacity(ROSTER.len());
+    for ((name, width), bits) in ROSTER.into_iter().zip(words) {
+        ensure!(bits.len() == 32 * width && bits.iter().all(|word| *word & 0x7c00 != 0x7c00),
+            "original finite Large T32 tap dimensions differ: {name}");
+        taps.push(json!({"name":name,"width":width,"bits":bits}));
+    }
+    Ok(json!(taps))
+}
+
+#[test]
+fn large_projection_taps_reject_malformed_native_words() {
+    assert!(large_projection_words(vec![]).is_err());
+    let mut rows: Vec<_> = [2560,1024,1024,4096].map(|width| vec![0; 32*width]).into();
+    rows[3][31*4096] = 0x7e00;
+    assert!(large_projection_words(rows).is_err());
+}
+
+#[test]
+#[ignore = "owned Windows original Large T32 projection operands and live CUDA edges"]
+fn cuda_large_fp16_projection_taps_t32() -> Result<()> {
+    profile_context(Experiment {
+        projection_capture: true, fp16_t32: true,
+        graph: "fff6dbe2f0c2fac4b9ba215da7d5029421d2706ee48c01c2485b9f157ee15ca6",
+        receipt_schema: "airk.private.large-fp16-layer0-projection-t32/1",
         ..LARGE
     })
 }
@@ -475,11 +615,23 @@ fn profile_context(experiment: Experiment) -> Result<()> {
     );
     pinned(&runtime_manifest, 128 << 10)?;
     let (root, manifest) = airk_host::gpu_runtime::installed_paths()?;
-    ensure!(
-        manifest.as_path() == Path::new(&runtime_manifest.path),
-        "runtime locator pin differs"
-    );
-    let actual_job = job_limits(bounds.host_limit_bytes, job_limit_bytes)?;
+    let installed_runtime = if experiment.projection_capture {
+        let expected = out.parent().and_then(Path::parent).context("private campaign directory missing")?
+            .join("windows-cu15-scientific-provider-stage-r1/airk-cuda-runtime.json");
+        ensure!(manifest == expected, "original Large capture requires its guarded D provider stage");
+        let installed = ResourceFilePin { path: manifest.to_string_lossy().into_owned(), sha256: runtime_manifest.sha256 };
+        ensure!(pinned(&installed, 128 << 10)? == pinned(&runtime_manifest, 128 << 10)?,
+            "installed runtime differs from the original Large CUDA provider");
+        Some(installed)
+    } else {
+        ensure!(manifest.as_path() == Path::new(&runtime_manifest.path), "runtime locator pin differs");
+        None
+    };
+    let actual_job = if experiment.graph == "0d00e2fabdb5fe54474041fb1f2787502349b78ce40436b955cd4433633a4462" {
+        job_limits(22 << 30, 22 << 30)?
+    } else {
+        job_limits(bounds.host_limit_bytes, job_limit_bytes)?
+    };
     let mut resources = airk_kernel::service_resources::Resources::detect(ResourceConfiguration {
         preset: ResourcePreset::Throughput,
         ..ResourceConfiguration::default()
@@ -520,6 +672,9 @@ fn profile_context(experiment: Experiment) -> Result<()> {
         "rows": [], "session_teardown_observed": false, "measured_peak_device_bytes": null,
         "measured_transfer_bytes": null,
     });
+    if let Some(pin) = &installed_runtime {
+        receipt["installed_runtime_manifest"] = json!(pin);
+    }
     receipt.as_object_mut().unwrap().extend(
         references
             .provenance
@@ -575,6 +730,12 @@ fn profile_context(experiment: Experiment) -> Result<()> {
             let loaded = operations.observe(operation::Kind::Load, 0, None, || {
                 let open = if experiment.model == ModelChoice::ContextQwenCompact {
                     Scorer::open_compact_bounded_hybrid_profiled
+                } else if experiment.receipt_schema == ATTENTION17_SCHEMA {
+                    Scorer::open_large_attention17_taps
+                } else if experiment.receipt_schema == DENSE17_SCHEMA {
+                    Scorer::open_large_dense17_taps
+                } else if experiment.projection_capture {
+                    Scorer::open_large_fp16_projection_taps
                 } else {
                     Scorer::open_large_bounded_hybrid_profiled
                 };
@@ -636,7 +797,8 @@ fn profile_context(experiment: Experiment) -> Result<()> {
             receipt["profiled_runs"] = if experiment.fp16_t32 {
                 json!([super::hybrid_profile_trace::large_fp16_t32_profiled_run(
                     &bytes,
-                    &scorer.graph_metadata().rows
+                    &scorer.graph_metadata().rows,
+                    experiment.graph == "0d00e2fabdb5fe54474041fb1f2787502349b78ce40436b955cd4433633a4462"
                 )?])
             } else {
                 json!(super::hybrid_profile_trace::profiled_runs(
@@ -666,6 +828,9 @@ fn profile_context(experiment: Experiment) -> Result<()> {
             }
             if let Some(pin) = &capacity_pin {
                 pinned(pin, 4096)?;
+            }
+            if let Some(pin) = &installed_runtime {
+                pinned(pin, 128 << 10)?;
             }
             for (pin, max) in &references.pins {
                 pinned(pin, *max)?;

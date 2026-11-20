@@ -845,6 +845,61 @@ fn historical_assembly_request_omits_new_checkpoint_authority_and_requires_expli
 }
 
 #[test]
+#[ignore = "Windows product runtime: actual held PE and public-source proof, no model requirements"]
+fn emit_nonactivating_windows_product_runtime() -> Result<()> {
+    let started = Instant::now();
+    let (request, input) = request()?;
+    let Request::Assembly {
+        schema,
+        assembly,
+        deadline_ms,
+    } = request
+    else {
+        anyhow::bail!("original held native assembly request required");
+    };
+    ensure!(
+        schema == SCHEMA && (1..=120000).contains(&deadline_ms),
+        "original assembly deadline differs"
+    );
+    let deadline = started + Duration::from_millis(deadline_ms);
+    let source_pin = env_pin(
+        "AIRK_CUDA_PRODUCT_SOURCES",
+        "AIRK_CUDA_PRODUCT_SOURCES_SHA256",
+    )?;
+    let sources = pinned(&source_pin, 16 << 20)?;
+    let path = output()?;
+    require_installed_descriptor_name(&path)?;
+    let (_parent, control) = private_control()?;
+    let lease = Arc::new(airk_store::service::ServiceLease::acquire(&control)?);
+    let owner = airk_kernel::inference_owner::NativeInferenceOwner::admit(lease.clone())?;
+    let (descriptor, provenance) = owner.run(|| {
+        // SAFETY: the real exclusive lease and compute scope cover this metadata-only observation.
+        unsafe {
+            cuda::observe_product_runtime_assembly(lease.clone(), assembly, &sources, deadline)
+        }
+    })??;
+    let proof = write_new(
+        &path.with_file_name("airk-cuda-build-provenance.json"),
+        &provenance,
+    )?;
+    let output = write_new(&path, &descriptor)?;
+    ensure!(
+        Instant::now() < deadline,
+        "product metadata observation expired"
+    );
+    write_json(
+        &path.with_extension("receipt.json"),
+        &json!({
+            "schema":"airk.private.windows-product-runtime-observation/1","input":input,
+            "source_input":source_pin,"descriptor":output,"provenance":proof,"pid":std::process::id(),
+            "execution_user":airk_ipc::endpoint::current_user()?,"elapsed_us":started.elapsed().as_micros(),
+            "model_requests_dispatched":false,"activation":false,"qualification":false
+        }),
+    )?;
+    Ok(())
+}
+
+#[test]
 #[ignore = "NN0: supplied genuine manifest/2+held public closure; package metadata only, no activation"]
 fn emit_cuda_runtime_package_projection_from_held_native_closure() -> Result<()> {
     let started = Instant::now();
@@ -1798,6 +1853,10 @@ fn cuda_large_fp32_load_only_graph_metadata_diagnostic() -> Result<()> {
 }
 
 fn observe_cuda_graph_metadata(model: ModelChoice, precision: DevicePrecision) -> Result<()> {
+    observe_cuda_graph_with_options(model, precision, false)
+}
+
+fn observe_cuda_graph_with_options(model: ModelChoice, precision: DevicePrecision, protected_qkv: bool) -> Result<()> {
     let started_ns = airk_process::monotonic::now_ns()?;
     let started = Instant::now();
     let execution_user = airk_ipc::endpoint::current_user()?;
@@ -1852,6 +1911,12 @@ fn observe_cuda_graph_metadata(model: ModelChoice, precision: DevicePrecision) -
             && profile.cpu_fit.is_none(),
         "graph metadata diagnostic requires the selected model and precision"
     );
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    {
+        let candidate: Sha256Digest = fp16_large::QKV_GRAPH.parse()?;
+        let selected = profile.device_execution.as_ref().is_some_and(|device| device.graph == candidate);
+        ensure!(selected == protected_qkv, "Large Q/K/V graph and optimizer selection differ");
+    }
     let capacity_plan = profile_probe_bounds(
         &bounds,
         cold_bytes,
@@ -1866,7 +1931,11 @@ fn observe_cuda_graph_metadata(model: ModelChoice, precision: DevicePrecision) -
         manifest.as_path() == Path::new(&runtime_manifest.path),
         "diagnostic manifest differs from installed runtime locator"
     );
-    let actual_job = job_limits(bounds.host_limit_bytes, job_limit_bytes)?;
+    let actual_job = if protected_qkv {
+        job_limits(22 << 30, 22 << 30)?
+    } else {
+        job_limits(bounds.host_limit_bytes, job_limit_bytes)?
+    };
     let mut resources = airk_kernel::service_resources::Resources::detect(ResourceConfiguration {
         preset: ResourcePreset::Throughput,
         ..ResourceConfiguration::default()
@@ -1949,8 +2018,18 @@ fn observe_cuda_graph_metadata(model: ModelChoice, precision: DevicePrecision) -
         );
         dispatched = true;
         receipt["session_load_dispatched"] = json!(true);
-        let result =
-            Scorer::diagnose_cuda_graph_metadata(execution, custody.files.as_ref().unwrap());
+        let source = custody.files.as_ref().unwrap();
+        let result = if protected_qkv {
+            #[cfg(all(windows, target_arch = "x86_64"))]
+            {
+                receipt["optimizer_profile"] = json!("protected_qkv_fp32");
+                Scorer::diagnose_large_fp32_qkv_graph(execution, source)
+            }
+            #[cfg(not(all(windows, target_arch = "x86_64")))]
+            anyhow::bail!("Large protected Q/K/V diagnostic requires Windows x86_64")
+        } else {
+            Scorer::diagnose_cuda_graph_metadata(execution, source)
+        };
         let post_files = verify_files(custody.files.as_ref().unwrap(), &profile);
         result.and(post_files)
     });

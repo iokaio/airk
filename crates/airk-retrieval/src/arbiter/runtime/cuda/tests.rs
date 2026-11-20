@@ -199,7 +199,19 @@ fn native_probe_runtime_metadata_checks_exact_pin_and_original_byte_cap() -> Res
     let value = manifest();
     let raw = serde_json::to_vec(&value)?;
     let pin = Sha256Digest::from_bytes(Sha256::digest(&raw).into());
+    #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu")))]
     assert_eq!(probe_runtime_identity(&raw, pin)?, value.static_core_build);
+    #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+    {
+        assert!(probe_runtime_identity(&raw, pin).is_err());
+        let value = manifest::linux::scientific_test_manifest();
+        let raw = serde_json::to_vec(&value)?;
+        let pin = Sha256Digest::from_bytes(Sha256::digest(&raw).into());
+        assert_eq!(
+            probe_runtime_identity(&raw, pin)?.to_string(),
+            "1".repeat(64)
+        );
+    }
     assert!(probe_runtime_identity(&raw, Sha256Digest::from_bytes([9; 32])).is_err());
     let oversized = vec![b' '; (128 << 10) + 1];
     let pin = Sha256Digest::from_bytes(Sha256::digest(&oversized).into());
@@ -306,7 +318,10 @@ fn native_probe_builder_returns_new_bound_unavailable_cal_without_old_rules() ->
         }
     }
     let source = CalibrationOnly(raw.clone());
+    #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu")))]
     let runtime = serde_json::to_vec(&manifest())?;
+    #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+    let runtime = serde_json::to_vec(&manifest::linux::scientific_test_manifest())?;
     let runtime_pin = Sha256Digest::from_bytes(Sha256::digest(&runtime).into());
     let plan = DeviceCapacityPlan::probe(12 << 30, 1 << 30, 2 << 30)?;
     let result = prepare_fp32_probe_profile(&cpu, &source, &runtime, runtime_pin, plan)?;
@@ -455,7 +470,7 @@ fn product_compute_classes_bind_distinct_literal_policy_and_adapter_metadata() -
         ),
     ];
     assert_eq!(
-        product_compatibility_policy_digest().to_string(),
+        manifest::product_compatibility_policy_digest().to_string(),
         "12918e36599fa7c8787d4e7d9e12d83cf161c5635b7ab6c768976d7b45d0edf9"
     );
     for (class, expected) in classes {
@@ -543,14 +558,14 @@ fn product_compatibility_is_not_reference_uuid_or_driver_image_equality() -> Res
 fn qualified_scientific_route_preserves_scoring_while_product_requires_live_eligibility()
 -> Result<()> {
     let legacy = manifest::RuntimeDescriptor::Scientific(manifest());
-    let scientific = eligibility::initial_admission(&legacy);
+    let scientific = eligibility::initial_admission(legacy.is_product());
     assert!(matches!(
         scientific,
         eligibility::AdmissionState::Scientific
     ));
     scientific.authorize(Sha256Digest::from_bytes([9; 32]))?;
     let product = manifest::RuntimeDescriptor::Product(product_manifest());
-    let product = eligibility::initial_admission(&product);
+    let product = eligibility::initial_admission(product.is_product());
     assert!(matches!(product, eligibility::AdmissionState::Pending));
     assert!(
         product
@@ -588,7 +603,13 @@ fn package_projection_refuses_unpinned_nonabsolute_and_aliased_descriptor_reques
 
 #[cfg(not(all(windows, target_arch = "x86_64")))]
 #[test]
-fn unsupported_platform_refuses_runtime_before_manifest_access() -> Result<()> {
+fn unavailable_platform_or_unapproved_linux_refuses_before_manifest_access() -> Result<()> {
+    #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+    if option_env!("AIRK_APPROVED_LINUX_CUDA_MANIFEST_SHA256").is_some()
+        && option_env!("AIRK_STATIC_LINUX_CUDA_BUILD_SHA256").is_some()
+    {
+        return Ok(()); // This control specifically exercises an unapproved image.
+    }
     let control = tempfile::Builder::new()
         .prefix("airk-cuda-unsupported-")
         .tempdir_in(std::env::temp_dir().canonicalize()?)?;
@@ -611,7 +632,10 @@ fn unsupported_platform_refuses_runtime_before_manifest_access() -> Result<()> {
     };
     let error = result.err().context("unsupported runtime was admitted")?;
     assert!(error.downcast_ref::<RuntimeUnavailable>().is_some());
+    #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu")))]
     assert!(error.to_string().contains("unsupported platform"));
+    #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+    assert!(error.to_string().contains("approval not compiled"));
     assert!(!root.exists());
     drop(scope);
     Ok(())

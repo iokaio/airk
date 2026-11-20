@@ -588,6 +588,7 @@ dependencies = [
  "diskann-vector",
  "futures",
  "half",
+ "libc",
  "ort",
  "serde",
  "serde_json",

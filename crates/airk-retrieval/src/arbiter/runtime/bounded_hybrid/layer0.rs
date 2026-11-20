@@ -34,6 +34,35 @@ pub const COMPACT_FP16_LAYER0_PROJECTION_TAPS: &[(&str, usize)] = &[
         2048,
     ),
 ];
+pub(super) const LARGE_ATTENTION17: &[(&str, usize)] = &[
+    ("/airk_g5/attention/17/q16", 4096), ("/airk_g5/attention/17/k16", 1024),
+    ("/airk_g5/weight//scorer/layers.17/self_attn/v_proj/MatMul/output16", 1024),
+    ("/airk_g5/attention/17/raw16", 4096),
+];
+pub(super) const LARGE_DENSE17: &[(&str, usize)] = &[
+    ("/airk_g5/attention/17/raw16", 4096),
+    ("/airk_g5/weight//scorer/layers.17/self_attn/o_proj/MatMul/output16", 2560),
+    ("/airk_g5/weight//scorer/layers.17/mlp/down_proj/MatMul/input16", 9728),
+    ("/airk_g5/weight//scorer/layers.17/mlp/down_proj/MatMul/output16", 2560),
+];
+
+fn fixed_tap_batch(name: &str) -> bool {
+    (name.starts_with("/airk_g5/weight/") && !LARGE_ATTENTION17.iter().chain(LARGE_DENSE17).any(|tap| tap.0 == name))
+        || full_cut::fixed_batch(name)
+}
+
+pub(super) const LARGE_QKV_HIDDEN_TAPS: &[(&str, usize)] = &[
+    ("/scorer/layers.0/input_layernorm/Mul_1_output_0", 2560),
+    ("/scorer/layers.17/input_layernorm/Mul_1_output_0", 2560),
+    ("/scorer/layers.35/Add_1_output_0", 2560),
+    ("/scorer/norm/Mul_1_output_0", 2560),
+];
+pub(super) const LARGE_PROJECTION_TAPS: &[(&str, usize)] = &[
+    (PROJECTION_INPUT, 2560),
+    ("/airk_g5/weight//scorer/layers.0/self_attn/k_proj/MatMul/output16", 1024),
+    (V_PROJECTION, 1024),
+    ("/airk_g5/weight//scorer/layers.0/self_attn/q_proj/MatMul/output16", 4096),
+];
 const PROJECTION_NODES: [&str; 3] = [
     "/scorer/layers.0/self_attn/k_proj/MatMul",
     "/scorer/layers.0/self_attn/v_proj/MatMul",
@@ -42,8 +71,13 @@ const PROJECTION_NODES: [&str; 3] = [
 
 #[derive(Clone, Copy)]
 pub(super) enum Layer0Cut {
+    FullProjectionT1014(&'static [(&'static str, usize)]),
     Attention,
     Projection,
+    LargeProjection,
+    LargeProtectedHidden,
+    LargeAttention17,
+    LargeDense17,
     QkvAttentionT1024,
     QkvDecisionT1024,
 }
@@ -53,20 +87,41 @@ impl Layer0Cut {
         match self {
             Self::Attention | Self::QkvAttentionT1024 => COMPACT_FP16_LAYER0_TAPS,
             Self::Projection => COMPACT_FP16_LAYER0_PROJECTION_TAPS,
+            Self::LargeProjection => LARGE_PROJECTION_TAPS,
+            Self::LargeProtectedHidden => LARGE_QKV_HIDDEN_TAPS,
+            Self::LargeAttention17 => LARGE_ATTENTION17,
+            Self::LargeDense17 => LARGE_DENSE17,
+            Self::FullProjectionT1014(taps) => taps,
             Self::QkvDecisionT1024 => Scorer::COMPACT_QKV_DECISION_TAPS,
         }
     }
 
     pub(super) fn tokens(self) -> usize {
         match self {
-            Self::Attention | Self::Projection => 32,
+            Self::Attention | Self::Projection | Self::LargeProjection | Self::LargeProtectedHidden | Self::LargeAttention17 | Self::LargeDense17 => 32,
+            Self::FullProjectionT1014(_) => 1014,
             Self::QkvAttentionT1024 | Self::QkvDecisionT1024 => 1024,
         }
     }
 
     pub(super) fn validate_input(self, input: &CompiledInput) -> Result<()> {
         match self {
-            Self::Attention | Self::Projection => validate_input(input),
+            Self::Attention | Self::Projection | Self::LargeProjection | Self::LargeProtectedHidden | Self::LargeAttention17 | Self::LargeDense17 => validate_input(input),
+            Self::FullProjectionT1014(_) => {
+                ensure!(
+                    input.input_digest
+                        == "14290e4a90a69dee4d60f29b31c3be731f1b0c9c857bd04432f3758a3944fad2"
+                            .parse()?
+                        && input.input_ids.len() == 1014
+                        && input.decision_position == 1013
+                        && input.attention_mask == [1; 1014]
+                        && input.position_ids.iter().copied().eq(0..1014)
+                        && input.candidate_positions.iter().copied().eq(32..39)
+                        && input.option_mask == [true; 7],
+                    "original full-projection T1014/N7 input required"
+                );
+                Ok(())
+            }
             Self::QkvAttentionT1024 | Self::QkvDecisionT1024 => {
                 ensure!(
                     input.input_digest == T1024_INPUT.parse()?
@@ -87,11 +142,18 @@ impl Layer0Cut {
         match self {
             Self::Attention => b"airk.private.compact-fp16-cuda-layer0-taps/1",
             Self::Projection => b"airk.private.compact-fp16-cuda-layer0-projection-taps/1",
+            Self::LargeProjection => b"airk.private.large-fp16-cuda-layer0-projection-taps/1",
+            Self::LargeProtectedHidden => b"airk.private.large-qkv-fp32-cuda-hidden-taps/1",
+            Self::LargeAttention17 => b"airk.private.large-qkv-fp32-attention17/1",
+            Self::LargeDense17 => b"airk.private.large-qkv-fp32-dense17/1",
+            Self::FullProjectionT1014(_) => b"airk.private.compact-full-fp32-cuda-t1014-cuts/1",
             Self::QkvDecisionT1024 => b"airk.private.compact-fp32-qkv-cuda-decision-t1024/1",
             Self::QkvAttentionT1024 => b"airk.private.compact-fp32-qkv-cuda-layer0-t1024/1",
         }
     }
 }
+mod full_cut;
+
 const T32_INPUT: &str = "ec7b4845c37fb7cbe2a64a866f8b6cdc03479d65593cdb0a1d01102fe56fc335";
 const T1024_INPUT: &str = "948a46156a129e61b5beadce977e6314b6e96c9570a439724813fe9592fa6357";
 
@@ -135,7 +197,7 @@ const REVIEWED_QKVO: Option<ReviewedProjection> = Some(ReviewedProjection {
     load_schema: "airk.private.compact-fp32-qkvo-graph-diagnostic/1",
 });
 
-fn qkv_projection_options(
+pub(super) fn qkv_projection_options(
     builder: ort::session::builder::SessionBuilder,
 ) -> Result<ort::session::builder::SessionBuilder> {
     Ok(builder
@@ -218,6 +280,23 @@ fn require_qkv_projection_profile(
 }
 
 impl Scorer {
+    /// Opens the exact Windows Large protected-Q/K/V graph for a disposable placement observation.
+    pub fn diagnose_large_fp32_qkv_graph(
+        profile: ExecutionProfile,
+        source: &dyn AssetSource,
+    ) -> Result<()> {
+        super::super::cuda::diagnostic::require_graph_diagnostic_profile(&profile)?;
+        let protected = "1448e83dcd209b120bd22e1dec084092f56adc7e8eec5dcd323e179b800467aa".parse()?;
+        ensure!(
+            profile.description.model == ModelChoice::ContextQwenLarge
+                && profile.description.device_execution.as_ref().is_some_and(|d| d.graph == protected),
+            "Large protected Q/K/V graph differs"
+        );
+        let session = Self::open_internal(profile, source, qkv_projection_options, OpenMode::GraphMetadataDiagnostic)?;
+        ensure!(session.is_none(), "Large Q/K/V graph observation returned a scorer");
+        Ok(())
+    }
+
     /// Frozen normalized FP16 K-projection inputs sampled across Compact.
     pub const COMPACT_QKV_DECISION_TAPS: &'static [(&'static str, usize)] =
         decision_taps!(0, 9, 18, 27);
@@ -318,6 +397,34 @@ impl Scorer {
             reviewed_graph_sha,
             REVIEWED_QKVO.context("reviewed Compact Q/K/V/O load receipt unavailable")?,
             None,
+        )
+    }
+
+    /// Opens the 196 FP32 dense products after their actual finalized CUDA placement was verified.
+    pub fn open_private_compact_full_unprofiled(
+        profile: ExecutionProfile,
+        capture_taps: Option<&'static [(&'static str, usize)]>,
+        source: &dyn AssetSource,
+        reviewed_graph_result: &[u8],
+        reviewed_graph_sha: Sha256Digest,
+    ) -> Result<Self> {
+        ensure!(
+            capture_taps.is_none_or(Self::is_full_projection_tap_group),
+            "unknown four-output Compact projection diagnostic group"
+        );
+        let review = ReviewedProjection {
+            graph_sha: "fe94664a4addf797feaa54235e07f484f4e72051a894a154e5aff7f2c1c11ea6",
+            load_sha: "492da42c6b55364d79daa2b20b1d17373039acc5c43995c4df11031fa82e4c54",
+            load_schema: "airk.private.compact-fp32-full-graph-diagnostic/1",
+        };
+        Self::open_private_compact_fp32_projection_profiled(
+            profile,
+            source,
+            None,
+            reviewed_graph_result,
+            reviewed_graph_sha,
+            review,
+            capture_taps.map(Layer0Cut::FullProjectionT1014),
         )
     }
 
@@ -534,7 +641,7 @@ fn write_output(graph: &mut Vec<u8>, name: &str, width: usize) {
     let mut shape = Vec::new();
     // Keep the admitted graph's partial shape. A fixed token count in the
     // declaration allows ORT to fold unrelated downstream shape operations.
-    if name.starts_with("/airk_g5/weight/") {
+    if fixed_tap_batch(name) {
         write_message(&mut shape, 1, &[8, 1]); // batch dim_value
         let mut tokens = Vec::new();
         write_message(&mut tokens, 2, b"tokens"); // dim_param
@@ -546,7 +653,7 @@ fn write_output(graph: &mut Vec<u8>, name: &str, width: usize) {
     let mut value = vec![8]; // TensorShapeProto.Dimension.dim_value
     write_varint(&mut value, width as u64);
     write_message(&mut shape, 1, &value);
-    let mut tensor_type = vec![8, 10]; // TypeProto.Tensor.elem_type = FLOAT16
+    let mut tensor_type = vec![8, if name.starts_with("/scorer/") { 1 } else { 10 }];
     write_message(&mut tensor_type, 2, &shape);
     let mut value_type = Vec::new();
     write_message(&mut value_type, 1, &tensor_type);
@@ -632,7 +739,7 @@ pub(super) fn validate_output_abi(session: &Session, cut: Layer0Cut) -> Result<(
         "layer-0 diagnostic output count differs"
     );
     for &(name, width) in cut.taps() {
-        let batch = if name.starts_with("/airk_g5/weight/") {
+        let batch = if fixed_tap_batch(name) {
             1
         } else {
             -1
@@ -640,7 +747,7 @@ pub(super) fn validate_output_abi(session: &Session, cut: Layer0Cut) -> Result<(
         ensure!(
             session.outputs.iter().any(|output| output.name == name
                 && matches!(&output.output_type, ValueType::Tensor { ty, shape, .. }
-                    if *ty == ort::tensor::TensorElementType::Float16
+                    if *ty == if name.starts_with("/scorer/") { ort::tensor::TensorElementType::Float32 } else { ort::tensor::TensorElementType::Float16 }
                         && shape.as_ref() == [batch, -1, width as i64])),
             "layer-0 diagnostic output ABI differs: {name}"
         );
@@ -740,11 +847,16 @@ pub(super) fn validate_graph(
                     graph: 0,
                     value,
                     name,
-                    element_type: Some(10),
+                    element_type: Some(dtype),
                     rank: Some(3),
                     producer: Some(producer),
                     ..
-                } if name == tap && cuda_nodes.contains(producer) => Some(*value),
+                } if name == tap
+                    && *dtype == if tap.starts_with("/scorer/") { 1 } else { 10 }
+                    && cuda_nodes.contains(producer) =>
+                {
+                    Some(*value)
+                }
                 _ => None,
             })
             .context("layer-0 half tap producer missing or not CUDA")?;
@@ -755,13 +867,14 @@ pub(super) fn validate_graph(
             ))
         };
         let assigned = match cut {
-            Layer0Cut::QkvDecisionT1024 => {
+            Layer0Cut::QkvDecisionT1024 | Layer0Cut::FullProjectionT1014(_) | Layer0Cut::LargeProtectedHidden | Layer0Cut::LargeAttention17 | Layer0Cut::LargeDense17 => {
                 // The original reviewed graph already contains this named half boundary.
                 base.as_array().is_some_and(|all| {
                     all.iter().any(|row| {
                         row["kind"] == "value"
                             && row["name"] == tap
-                            && row["element_type"] == 10
+                            && row["element_type"]
+                                == if tap.starts_with("/scorer/") { 1 } else { 10 }
                             && row["rank"] == 3
                             && row["graph"] == 0
                             && row["producer"].is_u64()
@@ -774,10 +887,10 @@ pub(super) fn validate_graph(
             Layer0Cut::Attention | Layer0Cut::QkvAttentionT1024 => {
                 has_edge(Some(gqa), 0, index as u64)
             }
-            Layer0Cut::Projection if index == 0 => projections
+            Layer0Cut::Projection | Layer0Cut::LargeProjection if index == 0 => projections
                 .iter()
                 .all(|&node| node.is_some() && has_edge(node, 0, 0)),
-            Layer0Cut::Projection => {
+            Layer0Cut::Projection | Layer0Cut::LargeProjection => {
                 let node = projections[index - 1];
                 node.is_some() && has_edge(node, 2, 0)
             }

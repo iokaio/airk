@@ -21,7 +21,10 @@ pub(super) struct Observed {
 }
 
 impl Observed {
-    pub(super) fn load(candidate: &CandidateProof, down_scores: bool) -> Result<Self> {
+    pub(super) fn load(
+        candidate: &CandidateProof,
+        precision: Option<&ProjectionSpec>,
+    ) -> Result<Self> {
         let reference_pin = env_pin(
             "AIRK_CUDA_OBSERVED_REFERENCE",
             "AIRK_CUDA_OBSERVED_REFERENCE_SHA256",
@@ -49,9 +52,8 @@ impl Observed {
                 && reference["matching_t128_score_words_equal"] == true
                 && reference["ragged_constant_value_control"] == true
                 && reference["reference_basis"]["sha256"] == DEVELOPMENT_REFERENCE_SHA
-                && (if down_scores {
-                    down::SPEC
-                        .artifact
+                && (if let Some(spec) = precision {
+                    spec.artifact
                         .is_some_and(|(_, graph)| graph == candidate.graph.sha256.to_string())
                         && QKV
                             .artifact
@@ -133,32 +135,43 @@ impl Observed {
                 && request.remaining_ms > 0,
             "original compiler or allowance differs"
         );
-        let (matching, precision_reference): (Vec<f32>, _) = if down_scores {
+        let (matching, precision_reference): (Vec<f32>, _) = if let Some(spec) = precision {
             let pin = env_pin(
                 "AIRK_CUDA_FP16_PROJECTION_REFERENCE",
                 "AIRK_CUDA_FP16_PROJECTION_REFERENCE_SHA256",
             )?;
             ensure!(
-                down::SPEC
-                    .reference_sha
+                spec.reference_sha
                     .is_some_and(|sha| sha == pin.sha256.to_string()),
                 "unreviewed down-projection independent score proof"
             );
             let closure: Value = serde_json::from_slice(&pinned(&pin, PROOF_BYTES)?)?;
             let scored = &closure["result"];
+            let (recipe, prior, matching) = if spec.stage_schema == full::SPEC.stage_schema {
+                (
+                    "c073724d2f98ac90a944718a055d8326691e569c29731243cf305eb41fb9bd5f",
+                    &scored["sealed_qkv"],
+                    &scored["matching_fp16"],
+                )
+            } else {
+                (
+                    "762f3da4ab62a3b52a528e7aa238c3749aed4af5db7318d777746947eaec58b0",
+                    &scored["baseline"]["scores"],
+                    &scored["all_down_fp32"]["scores"],
+                )
+            };
             ensure!(
                 closure["complete"] == true
                     && closure["owned"]["exit_code"] == 0
                     && closure["owned"]["owned_descendants_settled"] == true
                     && closure["owned"]["owned_job_final_active_processes"] == 0
-                    && scored["schema"] == down::SPEC.reference_schema
+                    && scored["schema"] == spec.reference_schema
                     && scored["qualification"] == false
                     && scored["native_candidate_scoring"] == false
                     && scored["case"] == case
-                    && scored["recipe_sha256"]
-                        == "762f3da4ab62a3b52a528e7aa238c3749aed4af5db7318d777746947eaec58b0"
+                    && scored["recipe_sha256"] == recipe
                     && scored["original_cpu"]["sha256"] == json!(reference_pin.sha256)
-                    && scored["baseline"]["scores"] == reference["matching_fp16"]
+                    && prior == &reference["matching_fp16"]
                     && scored["original_fp32"] == reference["original_fp32"]
                     && scored["compiled"] == reference["compiled"]
                     && scored["roster"] == reference["roster"]
@@ -166,10 +179,7 @@ impl Observed {
                     && scored["census"] == reference["census"],
                 "protected candidate independent source or compiler input differs"
             );
-            (
-                serde_json::from_value(scored["all_down_fp32"]["scores"].clone())?,
-                Some(pin),
-            )
+            (serde_json::from_value(matching.clone())?, Some(pin))
         } else {
             (
                 serde_json::from_value(reference["matching_fp16"].clone())?,
@@ -233,13 +243,24 @@ impl Observed {
         let compile_us = start.elapsed().as_micros();
         receipt["numeric_forward_attempts"] = json!(1);
         flush_graph_diagnostic(file, receipt)?;
+        let cut = receipt["schema"] == "airk.private.compact-full-t1014-cut/1";
         let timed = journal.observe(
             operation::Kind::Numeric,
             1,
             Some(input.input_digest),
-            || scorer.score_with_deadline(&input, call_deadline),
+            || {
+                if cut {
+                    scorer
+                        .score_layer0_taps(&input, call_deadline)
+                        .map(|(scores, rows)| (scores, Some(rows)))
+                } else {
+                    scorer
+                        .score_with_deadline(&input, call_deadline)
+                        .map(|scores| (scores, None))
+                }
+            },
         )?;
-        let scores = timed.value?;
+        let (scores, taps) = timed.value?;
         scorer.synchronize(call_deadline)?;
         ensure!(
             scorer.device_settled()
@@ -249,6 +270,9 @@ impl Observed {
                 && scores.iter().all(|s| s.is_finite()),
             "observed input score, deadline or settlement differs"
         );
+        if let Some(taps) = taps {
+            full::record_cuts(receipt, &scores, taps)?;
+        }
         let (raw, mass, winner) = comparison(&scores, &self.matching)?;
         let (original_raw, original_mass, original_winner) = comparison(&scores, &self.original)?;
         let margin = development_signed_margin(&self.matching, development_winner(&self.matching));

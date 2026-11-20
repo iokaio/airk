@@ -990,6 +990,14 @@ impl LoadedRuntime {
 
 #[cfg(feature = "test-support")]
 pub(super) fn observe_assembly(input: RuntimeAssemblyInput, deadline: Instant) -> Result<Vec<u8>> {
+    Ok(serde_json::to_vec(&observe_held_files(input, deadline)?)?)
+}
+
+#[cfg(feature = "test-support")]
+fn observe_held_files(
+    input: RuntimeAssemblyInput,
+    deadline: Instant,
+) -> Result<manifest::RuntimeManifest> {
     let directory = OpenedDirectory::open(&input.directory)?;
     security(directory.as_file(), true)?;
     ensure!(
@@ -1183,7 +1191,7 @@ pub(super) fn observe_assembly(input: RuntimeAssemblyInput, deadline: Instant) -
     checkpoint_source.custody.recheck()?;
     checkpoint_source.historical.recheck()?;
     in_time(deadline)?;
-    Ok(serde_json::to_vec(&manifest)?)
+    Ok(manifest)
 }
 
 pub(super) fn runtime_poisoned() -> bool {
@@ -1191,7 +1199,6 @@ pub(super) fn runtime_poisoned() -> bool {
 }
 
 impl LoadedRuntime {
-    #[cfg(feature = "test-support")]
     pub fn graph_metadata(
         &self,
         session: &ort::session::Session,
@@ -1235,7 +1242,6 @@ fn final_collector() -> Result<super::placement::Collector> {
         .context(RuntimeUnavailable::new("final-placement capability absent"))
 }
 
-#[cfg(feature = "test-support")]
 fn final_graph_collector() -> Result<super::graph_metadata::Collector> {
     let mut module = std::ptr::null_mut();
     // FROM_ADDRESS interprets this parameter as a code address, not UTF16 text.
@@ -1440,6 +1446,20 @@ impl super::provenance::projection::Source for ProjectionSource {
 #[cfg(feature = "test-support")]
 pub(super) fn project_public(raw: &[u8], deadline: Instant) -> Result<Vec<u8>> {
     let input = super::provenance::projection::decode_input(raw)?;
+    let prepared = prepare_public(input, deadline)?;
+    let bytes = serde_json::to_vec(&prepared)?;
+    ensure!(
+        bytes.len() <= 16 << 20,
+        "native projection output too large"
+    );
+    Ok(bytes)
+}
+
+#[cfg(feature = "test-support")]
+fn prepare_public(
+    input: super::provenance::projection::Input,
+    deadline: Instant,
+) -> Result<super::provenance::projection::Prepared> {
     super::custody::validate_custody_compatibility(
         &input.custody_copies,
         &input.historical_tool_copies,
@@ -1453,10 +1473,39 @@ pub(super) fn project_public(raw: &[u8], deadline: Instant) -> Result<Vec<u8>> {
     let prepared = super::provenance::projection::project(&source, input)?;
     source.custody.recheck()?;
     source.historical.recheck()?;
-    let bytes = serde_json::to_vec(&prepared)?;
-    ensure!(bytes.len() <= 16 << 20, "native projection output cap");
     in_time(deadline)?;
-    Ok(bytes)
+    Ok(prepared)
+}
+
+#[cfg(feature = "test-support")]
+pub(super) fn observe_product_assembly(
+    input: RuntimeAssemblyInput,
+    provenance_input: &[u8],
+    deadline: Instant,
+) -> Result<(Vec<u8>, Vec<u8>)> {
+    let directory = input.directory.clone();
+    let observed = observe_held_files(input, deadline)?;
+    let request = super::provenance::projection::product_input(
+        provenance_input,
+        &directory,
+        &observed.files,
+    )?;
+    let proof = prepare_public(request, deadline)?;
+    let descriptor = manifest::ProductRuntimeManifest {
+        schema: "airk.native.cuda-runtime-manifest/2".into(),
+        ort_version: observed.ort_version,
+        static_core_build: observed.static_core_build,
+        provenance: proof.provenance,
+        files: observed.files,
+        load_order: observed.load_order,
+        system_imports: observed.system_imports,
+        requirements: Vec::new(),
+    };
+    descriptor.validate()?;
+    super::provenance::validate_product(&proof.bytes, &descriptor)?;
+    let bytes = serde_json::to_vec(&descriptor)?;
+    in_time(deadline)?;
+    Ok((bytes, proof.bytes))
 }
 
 /// No CUDA/ORT initialization, driver load or process-module mutation is performed.

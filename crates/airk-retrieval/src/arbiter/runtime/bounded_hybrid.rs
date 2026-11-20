@@ -3,6 +3,7 @@
 
 use super::*;
 use airk_core::{arbiter::resource_policy::ResourcePolicy, identity::framed_digest};
+use cuda::graph_metadata::cpu_values::{CpuValueBounds, validate_cpu_values};
 use cuda::{GraphMetadataObservation, GraphMetadataRow};
 use serde_json::Value;
 use std::{
@@ -16,10 +17,10 @@ pub use layer0::{
     COMPACT_FP16_LAYER0_PROJECTION_TAPS, COMPACT_FP16_LAYER0_TAPS, CompactFp16Layer0GraphRefusal,
 };
 
+#[cfg(test)]
 const CPU: &str = "CPUExecutionProvider";
 const CUDA: &str = "CUDAExecutionProvider";
 const MAX_NATIVE_RESULT_BYTES: usize = 16 << 20;
-const MAX_CPU_VALUE_BYTES: u64 = 40;
 const COMPACT_CPU_PAYLOAD_BYTES: u64 = 34_131;
 const COMPACT_FP16_GRAPH_SHA: &str =
     "47a7cd6f9e0ddf50911cc7a745bcbec4ca2a963772aad5e2e6acc663e26ec104";
@@ -32,6 +33,8 @@ const BATCH_VIEW_PLACEMENT: &str =
 const LARGE_FP16_PLACEMENT: &str =
     "fff6dbe2f0c2fac4b9ba215da7d5029421d2706ee48c01c2485b9f157ee15ca6";
 const LARGE_FP16_GRAPH: &str = "c00371ad9407c25bd52999d87327115025b7c6f55a4e585645ca112d858de5bd";
+const LARGE_QKV_PLACEMENT: &str = "0d00e2fabdb5fe54474041fb1f2787502349b78ce40436b955cd4433633a4462";
+const LARGE_QKV_GRAPH: &str = "1448e83dcd209b120bd22e1dec084092f56adc7e8eec5dcd323e179b800467aa";
 const LARGE_T32_INPUT: &str = "ec7b4845c37fb7cbe2a64a866f8b6cdc03479d65593cdb0a1d01102fe56fc335";
 const APPROVED_WIDTHS: [usize; 4] = [32, 128, 1024, 8192];
 
@@ -39,6 +42,7 @@ const APPROVED_WIDTHS: [usize; 4] = [32, 128, 1024, 8192];
 enum GraphPolicy {
     ContextFp32(ModelChoice),
     LargeFp16,
+    LargeFp16Projection(Layer0Cut),
     CompactFp16,
     CompactFp16Layer0(Layer0Cut),
 }
@@ -47,33 +51,8 @@ impl GraphPolicy {
     fn layer0(self) -> Option<Layer0Cut> {
         match self {
             Self::CompactFp16Layer0(cut) => Some(cut),
+            Self::LargeFp16Projection(cut) => Some(cut),
             _ => None,
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-struct CpuValueBounds {
-    maximum_payload: u64,
-    maximum_vector_elements: i64,
-    maximum_value_bytes: u64,
-    allow_int32: bool,
-}
-
-impl CpuValueBounds {
-    const COMPACT_FP16: Self = Self {
-        maximum_payload: 9_443,
-        maximum_vector_elements: 4,
-        maximum_value_bytes: 32,
-        allow_int32: true,
-    };
-
-    const fn fp32(maximum_payload: u64) -> Self {
-        Self {
-            maximum_payload,
-            maximum_vector_elements: 5,
-            maximum_value_bytes: MAX_CPU_VALUE_BYTES,
-            allow_int32: false,
         }
     }
 }
@@ -159,8 +138,13 @@ impl GraphGate {
                 && result["placement"]["complete"] == true,
             "complete reviewed Context graph evidence required"
         );
+        let protected = evidence_sha == LARGE_QKV_PLACEMENT.parse()?;
+        if protected {
+            ensure!(model == ModelChoice::ContextQwenLarge && result["optimizer_profile"] == "protected_qkv_fp32",
+                    "reviewed Large protected Q/K/V optimizer or model differs");
+        }
         let policy = if model == ModelChoice::ContextQwenLarge
-            && evidence_sha == LARGE_FP16_PLACEMENT.parse()?
+            && (evidence_sha == LARGE_FP16_PLACEMENT.parse()? || protected)
         {
             GraphPolicy::LargeFp16
         } else {
@@ -225,7 +209,7 @@ impl GraphGate {
         policy: GraphPolicy,
     ) -> Result<Self> {
         let graph = match policy {
-            GraphPolicy::ContextFp32(_) | GraphPolicy::LargeFp16 => &mut result["graph_metadata"],
+            GraphPolicy::ContextFp32(_) | GraphPolicy::LargeFp16 | GraphPolicy::LargeFp16Projection(_) => &mut result["graph_metadata"],
             GraphPolicy::CompactFp16 | GraphPolicy::CompactFp16Layer0(_) => {
                 &mut result["graph_observation"]["graph_metadata"]
             }
@@ -260,7 +244,7 @@ impl GraphGate {
         let current = serde_json::to_value(adapter)?;
         let model = match self.policy {
             GraphPolicy::ContextFp32(model) => model,
-            GraphPolicy::LargeFp16 => ModelChoice::ContextQwenLarge,
+            GraphPolicy::LargeFp16 | GraphPolicy::LargeFp16Projection(_) => ModelChoice::ContextQwenLarge,
             GraphPolicy::CompactFp16 | GraphPolicy::CompactFp16Layer0(_) => {
                 ModelChoice::ContextQwenCompact
             }
@@ -305,14 +289,13 @@ impl GraphGate {
                 CpuValueBounds::fp32(LARGE_CPU_PAYLOAD_BYTES),
                 b"airk.private.large-cuda-bounded-hybrid/1",
             ),
-            GraphPolicy::LargeFp16 => (
-                CpuValueBounds {
-                    maximum_payload: 12_067,
-                    maximum_vector_elements: 4,
-                    maximum_value_bytes: 32,
-                    allow_int32: true,
+            GraphPolicy::LargeFp16 | GraphPolicy::LargeFp16Projection(_) => (
+                CpuValueBounds::fp16(12_067),
+                if self.evidence_sha == LARGE_QKV_PLACEMENT.parse()? {
+                    self.policy.layer0().map_or(b"airk.private.large-qkv-fp32-bounded-hybrid/1".as_slice(), Layer0Cut::scope)
+                } else {
+                    self.policy.layer0().map_or(b"airk.private.large-fp16-cuda-bounded-hybrid/1".as_slice(), Layer0Cut::scope)
                 },
-                b"airk.private.large-fp16-cuda-bounded-hybrid/1",
             ),
             GraphPolicy::CompactFp16 => (
                 CpuValueBounds::COMPACT_FP16,
@@ -348,13 +331,19 @@ impl GraphGate {
             }
             return Err(cause);
         }
-        let source = Sha256::digest(include_bytes!("bounded_hybrid.rs"));
+        let source = framed_digest(
+            b"airk.private.cuda.bounded-hybrid-validator/2",
+            &[
+                include_bytes!("bounded_hybrid.rs"),
+                include_bytes!("cuda/graph_metadata/cpu_values.rs"),
+            ],
+        );
         let policy_identity = framed_digest(
             scope,
             &[
                 self.evidence_sha.as_bytes(),
                 self.profile.as_bytes(),
-                &source,
+                source.as_bytes(),
             ],
         );
         Ok(GraphEvidence {
@@ -363,111 +352,6 @@ impl GraphGate {
             policy: self.policy,
         })
     }
-}
-
-fn validate_cpu_values(rows: &[GraphMetadataRow], bounds: CpuValueBounds) -> Result<()> {
-    use GraphMetadataRow::*;
-    let mut root_count = 0;
-    let mut cpu_nodes = BTreeSet::new();
-    let mut cuda_nodes = 0;
-    let mut tensors = BTreeMap::new();
-    let mut dimensions = BTreeMap::new();
-    let mut incident_values = BTreeSet::new();
-    for row in rows {
-        match row {
-            Graph {
-                graph,
-                parent_graph,
-                parent_node,
-                outer_bindings,
-                ..
-            } => {
-                ensure!(
-                    *graph == 0
-                        && parent_graph.is_none()
-                        && parent_node.is_none()
-                        && outer_bindings == "not_applicable",
-                    "bounded hybrid requires one fully resolved root graph"
-                );
-                root_count += 1;
-            }
-            Node { node, ep, .. } if ep == CPU => {
-                cpu_nodes.insert(*node);
-            }
-            Node { ep, .. } => {
-                ensure!(ep == CUDA, "unexpected bounded hybrid execution provider");
-                cuda_nodes += 1;
-            }
-            Value {
-                value,
-                element_type,
-                rank,
-                type_state,
-                ..
-            } => {
-                tensors.insert(*value, (*element_type, *rank, type_state.as_str()));
-            }
-            Dimension {
-                value,
-                index: 0,
-                number: Some(number),
-                symbol: None,
-                ..
-            } => {
-                dimensions.insert(*value, *number);
-            }
-            Edge {
-                node: Some(node),
-                value,
-                role,
-                ..
-            } if cpu_nodes.contains(node) => {
-                // ORT's kernel input profile omits implicit slots. The frozen
-                // Context graphs have none on CPU, so require that exact scope.
-                ensure!(*role != 1, "CPU implicit input cannot be profiled");
-                incident_values.extend(*value);
-            }
-            _ => {}
-        }
-    }
-    ensure!(
-        root_count == 1 && !cpu_nodes.is_empty() && cuda_nodes > 0 && !incident_values.is_empty(),
-        "bounded hybrid requires an observed CPU and CUDA root graph"
-    );
-    let mut total_bytes = 0_u64;
-    for value in incident_values {
-        let &(element, rank, state) = tensors.get(&value).context("missing CPU tensor value")?;
-        let width = match (element, state) {
-            (Some(6), "tensor") if bounds.allow_int32 => 4_u64,
-            (Some(7), "tensor") => 8_u64,
-            (Some(9), "tensor") => 1,
-            _ => anyhow::bail!("CPU tensor element is outside the reviewed control types"),
-        };
-        let elements = match rank {
-            Some(0) => 1,
-            Some(1) => match dimensions.get(&value) {
-                Some(elements) if (0..=bounds.maximum_vector_elements).contains(elements) => {
-                    *elements as u64
-                }
-                _ => anyhow::bail!(
-                    "CPU vector requires a fixed length at most {}",
-                    bounds.maximum_vector_elements
-                ),
-            },
-            _ => anyhow::bail!("CPU tensor must be scalar or a fixed vector"),
-        };
-        let bytes = elements * width;
-        ensure!(
-            bytes <= bounds.maximum_value_bytes,
-            "CPU tensor exceeds observed byte bound"
-        );
-        total_bytes += bytes;
-    }
-    ensure!(
-        total_bytes <= bounds.maximum_payload,
-        "distinct CPU tensor payload exceeds observed aggregate bound"
-    );
-    Ok(())
 }
 
 fn validate_compact_fp16_attention(rows: &[GraphMetadataRow], plan: &Value) -> Result<()> {
@@ -719,13 +603,17 @@ impl Scorer {
         input: &CompiledInput,
         deadline: Instant,
     ) -> Result<(Vec<f32>, Vec<Vec<u16>>)> {
-        crate::native_inference::require_service_compute()?;
-        self.profile.validate_native_source()?;
         let cut = self
             .bounded_hybrid
             .as_ref()
             .and_then(|evidence| evidence.policy.layer0())
             .context("exact admitted Compact FP16 layer-0 diagnostic session required")?;
+        self.score_layer0_cut(input, deadline, cut)
+    }
+
+    fn score_layer0_cut(&self, input: &CompiledInput, deadline: Instant, cut: Layer0Cut) -> Result<(Vec<f32>, Vec<Vec<u16>>)> {
+        crate::native_inference::require_service_compute()?;
+        self.profile.validate_native_source()?;
         let binding = self
             .profile
             .gpu
@@ -791,7 +679,35 @@ impl Scorer {
             reviewed_graph_result,
             reviewed_graph_sha,
             OpenExperiment::Profiled(profiling_prefix),
+            None,
         )
+    }
+
+    pub(super) const LARGE_ATTENTION17: &'static [(&'static str, usize)] = layer0::LARGE_ATTENTION17;
+    pub(super) const LARGE_DENSE17: &'static [(&'static str, usize)] = layer0::LARGE_DENSE17;
+    pub(super) const LARGE_QKV_HIDDEN_TAPS: &'static [(&'static str, usize)] = layer0::LARGE_QKV_HIDDEN_TAPS;
+    pub(super) const LARGE_FP16_PROJECTION_TAPS: &'static [(&'static str, usize)] = layer0::LARGE_PROJECTION_TAPS;
+
+    pub fn open_large_fp16_projection_taps(
+        profile: ExecutionProfile, source: &dyn AssetSource, profiling_prefix: &Path,
+        reviewed_graph_result: &[u8], reviewed_graph_sha: Sha256Digest,
+    ) -> Result<BoundedHybridScorer> {
+        Self::open_large_bounded_hybrid(profile, source, reviewed_graph_result, reviewed_graph_sha,
+            OpenExperiment::Profiled(profiling_prefix), Some(if reviewed_graph_sha == LARGE_QKV_PLACEMENT.parse()? {
+                Layer0Cut::LargeProtectedHidden
+            } else { Layer0Cut::LargeProjection }))
+    }
+
+    pub fn open_large_attention17_taps(profile: ExecutionProfile, source: &dyn AssetSource,
+        prefix: &Path, graph: &[u8], digest: Sha256Digest) -> Result<BoundedHybridScorer> {
+        Self::open_large_bounded_hybrid(profile, source, graph, digest,
+            OpenExperiment::Profiled(prefix), Some(Layer0Cut::LargeAttention17))
+    }
+
+    pub fn open_large_dense17_taps(profile: ExecutionProfile, source: &dyn AssetSource,
+        prefix: &Path, graph: &[u8], digest: Sha256Digest) -> Result<BoundedHybridScorer> {
+        Self::open_large_bounded_hybrid(profile, source, graph, digest,
+            OpenExperiment::Profiled(prefix), Some(Layer0Cut::LargeDense17))
     }
 
     pub fn open_large_bounded_hybrid_resource(
@@ -807,6 +723,7 @@ impl Scorer {
             reviewed_graph_result,
             reviewed_graph_sha,
             OpenExperiment::Resource(overall_deadline),
+            None,
         )
     }
 
@@ -816,6 +733,7 @@ impl Scorer {
         reviewed_graph_result: &[u8],
         reviewed_graph_sha: Sha256Digest,
         experiment: OpenExperiment<'_>,
+        cut: Option<Layer0Cut>,
     ) -> Result<BoundedHybridScorer> {
         cuda::diagnostic::require_graph_diagnostic_profile(&profile)?;
         let binding = profile
@@ -833,6 +751,10 @@ impl Scorer {
                 "Large baseline precision differs"
             );
             LARGE_FP16_PLACEMENT
+        } else if candidate.graph == LARGE_QKV_GRAPH.parse()? {
+            ensure!(candidate.precision == airk_core::arbiter::device::DevicePrecision::Float16,
+                    "Large protected Q/K/V requires its original FP16 graph boundaries");
+            LARGE_QKV_PLACEMENT
         } else if candidate.graph == BATCH_VIEW_GRAPH.parse()? {
             BATCH_VIEW_PLACEMENT
         } else {
@@ -860,13 +782,15 @@ impl Scorer {
                 (overall_deadline, None, Profiling::Disabled)
             }
         };
-        let (scorer, mut evidence) = Self::open_reviewed_graph(
-            profile,
-            source,
-            reviewed_graph_result,
-            reviewed_graph_sha,
-            prefix,
-        )?;
+        let mut gate = GraphGate::new(reviewed_graph_result, reviewed_graph_sha, profile.description().model)?;
+        if let Some(cut) = cut {
+            ensure!(matches!(gate.policy, GraphPolicy::LargeFp16) && profiling == Profiling::Active,
+                "Large projection capture requires the reviewed FP16 source and active profiler");
+            ensure!((placement == LARGE_QKV_PLACEMENT) != matches!(cut, Layer0Cut::LargeProjection),
+                    "Large protected taps require their separately authenticated graph");
+            gate.policy = GraphPolicy::LargeFp16Projection(cut);
+        }
+        let (scorer, mut evidence) = Self::open_reviewed_gate(profile, source, prefix, gate)?;
         if profiling == Profiling::Disabled {
             evidence.policy_identity = framed_digest(
                 b"airk.private.large-cuda-batch-view-bounded-hybrid-resource/1",
@@ -1021,12 +945,17 @@ impl Scorer {
             reviewed_graph_sha,
             profile.description().model,
         )?;
+        Self::open_reviewed_gate(profile, source, profiling_prefix, gate)
+    }
+
+    fn open_reviewed_gate(profile: ExecutionProfile, source: &dyn AssetSource,
+        profiling_prefix: Option<&Path>, gate: GraphGate) -> Result<(Self, GraphEvidence)> {
         let mut scorer = Self::open_gated_graph(profile, source, profiling_prefix, gate)?;
         let evidence = scorer
             .bounded_hybrid
             .take()
             .context("same-session graph evidence missing")?;
-        if matches!(evidence.policy, GraphPolicy::LargeFp16) {
+        if matches!(evidence.policy, GraphPolicy::LargeFp16 | GraphPolicy::LargeFp16Projection(_)) {
             let attention = scorer
                 .fp16_attention
                 .as_ref()
@@ -1051,12 +980,16 @@ impl Scorer {
             profile.description(),
             binding.device.observation(binding.load_deadline)?,
         )?;
+        let protected = gate.evidence_sha == LARGE_QKV_PLACEMENT.parse()?;
         Self::open_internal(
             profile,
             source,
-            |builder| match profiling_prefix {
-                Some(prefix) => Ok(builder.with_profiling(prefix)?),
-                None => Ok(builder),
+            |builder| {
+                let builder = if protected { layer0::qkv_projection_options(builder)? } else { builder };
+                match profiling_prefix {
+                    Some(prefix) => Ok(builder.with_profiling(prefix)?),
+                    None => Ok(builder),
+                }
             },
             OpenMode::BoundedHybrid(Box::new(gate)),
         )?
@@ -1065,6 +998,13 @@ impl Scorer {
 }
 
 impl BoundedHybridScorer {
+    pub fn score_large_projection_taps(&self, input: &CompiledInput, deadline: Instant) -> Result<(Vec<f32>, Vec<Vec<u16>>)> {
+        let GraphPolicy::LargeFp16Projection(cut) = self.evidence.policy else { anyhow::bail!("Large capture requires its promoted T32 session") };
+        ensure!(self.profiling == Profiling::Active && deadline <= self.deadline,
+            "Large capture requires its promoted T32 session and original deadline");
+        self.scorer.score_layer0_cut(input, deadline, cut)
+    }
+
     pub fn policy_identity(&self) -> Sha256Digest {
         self.evidence.policy_identity
     }

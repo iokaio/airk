@@ -132,6 +132,13 @@ impl AttentionPlan {
         placement: &PlacementObservation,
     ) -> Result<()> {
         placement.clone().require_strict()?;
+        self.require_attention_placement(placement)
+    }
+
+    pub(in crate::arbiter::runtime) fn require_attention_placement(
+        &self,
+        placement: &PlacementObservation,
+    ) -> Result<()> {
         let actual = placement
             .nodes
             .iter()

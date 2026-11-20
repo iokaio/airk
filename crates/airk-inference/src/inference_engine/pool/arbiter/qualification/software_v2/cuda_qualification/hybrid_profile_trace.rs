@@ -104,12 +104,14 @@ pub(super) fn profiled_runs(
 pub(super) fn large_fp16_t32_profiled_run(
     bytes: &[u8],
     graph: &[GraphMetadataRow],
+    protected_qkv: bool,
 ) -> Result<ProfiledRun> {
+    let expected_nodes = if protected_qkv { 2486 } else { 2234 };
     let run = profiled_runs_for_scope(bytes, graph, &[32], CpuControlScope::Fp16)?
         .pop()
         .context("Large T32 serial profile missing")?;
     ensure!(
-        run.node_count == 2234 && run.cpu_nodes == 478 && run.cpu_max_tensor_bytes <= 32,
+        run.node_count == expected_nodes && run.cpu_nodes == 478 && run.cpu_max_tensor_bytes <= 32,
         "Large FP16 T32 profile exceeds its reviewed final graph or CPU control bounds"
     );
     Ok(run)

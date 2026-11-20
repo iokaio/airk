@@ -6,7 +6,14 @@ use airk_core::{
 };
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
-#[cfg(any(test, feature = "test-support", all(windows, target_arch = "x86_64")))]
+#[cfg(any(
+    test,
+    feature = "test-support",
+    all(
+        target_arch = "x86_64",
+        any(windows, all(target_os = "linux", target_env = "gnu"))
+    )
+))]
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -26,12 +33,27 @@ pub use custody::{
     validate_custody_compatibility, validate_historical_tool_custody, validate_metadata_custody,
 };
 pub(super) mod diagnostic;
-#[cfg(feature = "test-support")]
+#[cfg(any(
+    feature = "test-support",
+    all(
+        target_arch = "x86_64",
+        any(windows, all(target_os = "linux", target_env = "gnu"))
+    )
+))]
 pub(super) mod graph_metadata;
 #[cfg(feature = "test-support")]
 pub use diagnostic::{LoadObserver, LoadSnapshot};
-#[cfg(feature = "test-support")]
-pub use graph_metadata::{Observation as GraphMetadataObservation, Row as GraphMetadataRow};
+#[cfg(any(
+    feature = "test-support",
+    all(
+        target_arch = "x86_64",
+        any(windows, all(target_os = "linux", target_env = "gnu"))
+    )
+))]
+pub use graph_metadata::{
+    Observation as GraphMetadataObservation, Row as GraphMetadataRow,
+    bounded_execution::BoundedContextOptimizer,
+};
 mod eligibility;
 mod fp16;
 pub(super) use fp16::AttentionPlan;
@@ -45,10 +67,19 @@ pub use numeric::compare_reference_scores;
 #[cfg(any(test, all(windows, target_arch = "x86_64")))]
 mod provenance;
 pub use eligibility::{DeviceEligibility, EligibilityKey, is_device_eligibility_failure};
-pub use manifest::product_compatibility_policy_digest;
+#[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+pub use manifest::linux::{compatibility_policy_digest, product_compatibility_policy_digest};
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu")))]
+pub use manifest::{compatibility_policy_digest, product_compatibility_policy_digest};
 mod run;
 pub(super) use run::score as score_gpu;
-#[cfg(any(test, all(windows, target_arch = "x86_64")))]
+#[cfg(any(
+    test,
+    all(
+        target_arch = "x86_64",
+        any(windows, all(target_os = "linux", target_env = "gnu"))
+    )
+))]
 mod context;
 #[cfg(any(test, all(windows, target_arch = "x86_64")))]
 mod modules;
@@ -57,21 +88,66 @@ mod pe;
 mod placement;
 #[cfg(any(test, all(windows, target_arch = "x86_64")))]
 mod security;
-pub use manifest::{compatibility_policy_digest, math_policy_digest, provider_options_digest};
+#[cfg(all(
+    feature = "test-support",
+    target_os = "linux",
+    target_arch = "x86_64",
+    target_env = "gnu"
+))]
+pub use manifest::linux::{
+    encode_build_provenance, encode_empty_product, linux_cuda_payload_names,
+};
+
+/// Maximum sealed private ELF backing retained outside the scorer address space.
+#[cfg(all(
+    feature = "test-support",
+    all(target_os = "linux", target_arch = "x86_64", target_env = "gnu")
+))]
+pub fn linux_cuda_private_backing(raw: &[u8]) -> Result<u64> {
+    let (descriptor, _) = manifest::linux::Descriptor::approved(raw)?;
+    let page = u64::try_from(unsafe { libc::sysconf(libc::_SC_PAGESIZE) })?;
+    ensure!(page.is_power_of_two(), "Linux system page size unavailable");
+    descriptor.files().iter().try_fold(0_u64, |sum, file| {
+        let extent = file
+            .bytes
+            .checked_next_multiple_of(page)
+            .context("Linux ELF page extent overflow")?;
+        sum.checked_add(extent)
+            .context("private Linux CUDA backing byte overflow")
+    })
+}
+pub use manifest::{math_policy_digest, provider_options_digest};
 pub use placement::{PlacedNode, PlacementObservation, PlacementRefusal};
 #[cfg(test)]
 mod tests;
 #[cfg(all(windows, target_arch = "x86_64"))]
 mod windows;
+#[cfg(all(windows, target_arch = "x86_64"))]
+use windows as platform;
+#[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+mod linux;
+#[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+use linux as platform;
+#[cfg(any(
+    test,
+    all(target_os = "linux", target_arch = "x86_64", target_env = "gnu")
+))]
+mod elf;
 static NEXT_EPOCH: AtomicU64 = AtomicU64::new(1);
 /// Actual native poison observation, including admission failures before a
 /// CudaDevice could be returned. This never grants execution authority.
 pub fn process_poisoned() -> bool {
-    #[cfg(all(windows, target_arch = "x86_64"))]
+    #[cfg(all(
+        target_arch = "x86_64",
+        any(windows, all(target_os = "linux", target_env = "gnu"))
+    ))]
     {
-        windows::runtime_poisoned()
+        platform::runtime_poisoned()
     }
-    #[cfg(not(all(windows, target_arch = "x86_64")))]
+    #[cfg(not(all(
+        target_arch = "x86_64",
+        any(windows, all(target_os = "linux", target_env = "gnu"))
+    )))]
     {
         false
     }
@@ -203,18 +279,44 @@ impl Claims {
     }
 }
 /// No Deserialize, no public field constructor. Host retains the actual service lease.
-#[cfg(all(windows, target_arch = "x86_64"))]
+#[cfg(all(
+    target_arch = "x86_64",
+    any(windows, all(target_os = "linux", target_env = "gnu"))
+))]
 static RUNTIME_OWNER: Mutex<Weak<CudaRuntime>> = Mutex::new(Weak::new());
 
-#[cfg(any(test, all(windows, target_arch = "x86_64")))]
+#[cfg(any(
+    test,
+    all(
+        target_arch = "x86_64",
+        any(windows, all(target_os = "linux", target_env = "gnu"))
+    )
+))]
 fn same_native_lease(a: &Arc<dyn Send + Sync>, b: &Arc<dyn Send + Sync>) -> bool {
     Arc::ptr_eq(a, b)
 }
 
+fn requirement_policy(row: &manifest::VariantRequirement) -> Result<Sha256Digest> {
+    #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+    {
+        manifest::linux::requirement_policy(row)
+    }
+    #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu")))]
+    {
+        row.compatibility_policy_digest()
+    }
+}
+
 pub struct CudaRuntime {
-    #[cfg(all(windows, target_arch = "x86_64"))]
-    loaded: &'static windows::LoadedRuntime,
+    #[cfg(all(
+        target_arch = "x86_64",
+        any(windows, all(target_os = "linux", target_env = "gnu"))
+    ))]
+    loaded: &'static platform::LoadedRuntime,
+    #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu")))]
     manifest: manifest::RuntimeDescriptor,
+    #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+    manifest: manifest::NativeRuntimeDescriptor,
     identity: Sha256Digest,
     _native_lease: Arc<dyn Send + Sync>,
     devices: Mutex<BTreeMap<[u8; 16], Weak<CudaDevice>>>,
@@ -231,7 +333,10 @@ impl CudaRuntime {
     ) -> Result<Arc<Self>> {
         crate::native_inference::require_service_compute()?;
         in_time(deadline)?;
-        #[cfg(all(windows, target_arch = "x86_64"))]
+        #[cfg(all(
+            target_arch = "x86_64",
+            any(windows, all(target_os = "linux", target_env = "gnu"))
+        ))]
         {
             let mut owner = RUNTIME_OWNER
                 .lock()
@@ -243,7 +348,7 @@ impl CudaRuntime {
                     "CUDA runtime already belongs to another native service lease"
                 );
             }
-            let (loaded, manifest, identity) = windows::admit(root, manifest_path, deadline)?;
+            let (loaded, manifest, identity) = platform::admit(root, manifest_path, deadline)?;
             if let Some(actual) = existing {
                 ensure!(actual.identity == identity, "CUDA owner manifest changed");
                 return Ok(actual);
@@ -260,7 +365,10 @@ impl CudaRuntime {
             *owner = Arc::downgrade(&actual);
             Ok(actual)
         }
-        #[cfg(not(all(windows, target_arch = "x86_64")))]
+        #[cfg(not(all(
+            target_arch = "x86_64",
+            any(windows, all(target_os = "linux", target_env = "gnu"))
+        )))]
         {
             let _ = (lease, root, manifest_path);
             anyhow::bail!(RuntimeUnavailable::new("unsupported platform"))
@@ -282,11 +390,17 @@ impl CudaRuntime {
             self.is_product(),
             "metadata-only discovery is the product /2 path"
         );
-        #[cfg(all(windows, target_arch = "x86_64"))]
+        #[cfg(all(
+            target_arch = "x86_64",
+            any(windows, all(target_os = "linux", target_env = "gnu"))
+        ))]
         {
             self.loaded.discover(deadline)
         }
-        #[cfg(not(all(windows, target_arch = "x86_64")))]
+        #[cfg(not(all(
+            target_arch = "x86_64",
+            any(windows, all(target_os = "linux", target_env = "gnu"))
+        )))]
         {
             anyhow::bail!("CUDA product discovery unavailable")
         }
@@ -302,7 +416,7 @@ impl CudaRuntime {
         let policy = profile.device_execution.as_ref()?;
         (row.matches_adapter_class(adapter)
             && policy.runtime_build == self.runtime_build()
-            && row.compatibility_policy_digest().ok()? == policy.compatibility_policy)
+            && requirement_policy(row).ok()? == policy.compatibility_policy)
             .then(|| row.supports(adapter).is_ok())
     }
     pub fn adapters(&self, deadline: Instant) -> Result<Vec<AdapterObservation>> {
@@ -312,11 +426,17 @@ impl CudaRuntime {
             !self.is_product(),
             "product discovery must not retain contexts on unselected adapters"
         );
-        #[cfg(all(windows, target_arch = "x86_64"))]
+        #[cfg(all(
+            target_arch = "x86_64",
+            any(windows, all(target_os = "linux", target_env = "gnu"))
+        ))]
         {
             self.loaded.adapters(deadline, self._native_lease.clone())
         }
-        #[cfg(not(all(windows, target_arch = "x86_64")))]
+        #[cfg(not(all(
+            target_arch = "x86_64",
+            any(windows, all(target_os = "linux", target_env = "gnu"))
+        )))]
         {
             anyhow::bail!("CUDA unavailable")
         }
@@ -330,7 +450,10 @@ impl CudaRuntime {
             device.observation(deadline)?;
             return Ok(device);
         }
-        #[cfg(all(windows, target_arch = "x86_64"))]
+        #[cfg(all(
+            target_arch = "x86_64",
+            any(windows, all(target_os = "linux", target_env = "gnu"))
+        ))]
         let (observed, context) = if self.is_product() {
             let id = self
                 .discover_adapters(deadline)?
@@ -370,7 +493,10 @@ impl CudaRuntime {
                 .retain_primary(observed.ordinal, self._native_lease.clone())?;
             (observed, context)
         };
-        #[cfg(not(all(windows, target_arch = "x86_64")))]
+        #[cfg(not(all(
+            target_arch = "x86_64",
+            any(windows, all(target_os = "linux", target_env = "gnu"))
+        )))]
         let observed = self
             .adapters(deadline)?
             .into_iter()
@@ -391,7 +517,10 @@ impl CudaRuntime {
             epoch: AtomicU64::new(epoch),
             poisoned: AtomicBool::new(false),
             claims: Mutex::new(Claims::default()),
-            #[cfg(all(windows, target_arch = "x86_64"))]
+            #[cfg(all(
+                target_arch = "x86_64",
+                any(windows, all(target_os = "linux", target_env = "gnu"))
+            ))]
             context,
         });
         devices.insert(uuid, Arc::downgrade(&device));
@@ -404,8 +533,11 @@ pub struct CudaDevice {
     epoch: AtomicU64,
     poisoned: AtomicBool,
     claims: Mutex<Claims>,
-    #[cfg(all(windows, target_arch = "x86_64"))]
-    context: windows::PrimaryContext,
+    #[cfg(all(
+        target_arch = "x86_64",
+        any(windows, all(target_os = "linux", target_env = "gnu"))
+    ))]
+    context: platform::PrimaryContext,
 }
 impl CudaDevice {
     pub fn uuid(&self) -> [u8; 16] {
@@ -419,17 +551,29 @@ impl CudaDevice {
     }
     pub fn poisoned(&self) -> bool {
         self.poisoned.load(Ordering::Acquire) || {
-            #[cfg(all(windows, target_arch = "x86_64"))]
+            #[cfg(all(
+                target_arch = "x86_64",
+                any(windows, all(target_os = "linux", target_env = "gnu"))
+            ))]
             {
-                windows::runtime_poisoned()
+                platform::runtime_poisoned()
             }
-            #[cfg(not(all(windows, target_arch = "x86_64")))]
+            #[cfg(not(all(
+                target_arch = "x86_64",
+                any(windows, all(target_os = "linux", target_env = "gnu"))
+            )))]
             {
                 false
             }
         }
     }
-    #[cfg(any(feature = "test-support", all(windows, target_arch = "x86_64")))]
+    #[cfg(any(
+        feature = "test-support",
+        all(
+            target_arch = "x86_64",
+            any(windows, all(target_os = "linux", target_env = "gnu"))
+        )
+    ))]
     fn poison(&self) {
         self.poisoned.store(true, Ordering::Release);
         self.epoch.fetch_add(1, Ordering::AcqRel);
@@ -438,7 +582,10 @@ impl CudaDevice {
         crate::native_inference::require_service_compute()?;
         in_time(deadline)?;
         ensure!(!self.poisoned(), "CUDA adapter is poisoned");
-        #[cfg(all(windows, target_arch = "x86_64"))]
+        #[cfg(all(
+            target_arch = "x86_64",
+            any(windows, all(target_os = "linux", target_env = "gnu"))
+        ))]
         {
             let result =
                 self.runtime
@@ -466,13 +613,19 @@ impl CudaDevice {
                 }
             }
         }
-        #[cfg(not(all(windows, target_arch = "x86_64")))]
+        #[cfg(not(all(
+            target_arch = "x86_64",
+            any(windows, all(target_os = "linux", target_env = "gnu"))
+        )))]
         {
             anyhow::bail!("CUDA unavailable")
         }
     }
     pub fn synchronize(&self, deadline: Instant) -> Result<()> {
-        #[cfg(all(windows, target_arch = "x86_64"))]
+        #[cfg(all(
+            target_arch = "x86_64",
+            any(windows, all(target_os = "linux", target_env = "gnu"))
+        ))]
         {
             // Cleanup is never skipped merely because the original deadline expired.
             if let Err(error) = self.runtime.loaded.synchronize(&self.context) {
@@ -481,7 +634,10 @@ impl CudaDevice {
             }
             in_time(deadline)
         }
-        #[cfg(not(all(windows, target_arch = "x86_64")))]
+        #[cfg(not(all(
+            target_arch = "x86_64",
+            any(windows, all(target_os = "linux", target_env = "gnu"))
+        )))]
         {
             let _ = deadline;
             anyhow::bail!("CUDA unavailable")
@@ -530,6 +686,38 @@ impl CudaDevice {
             .as_ref()
             .context("CPU profile cannot acquire CUDA execution")?;
         policy.validate(profile)?;
+        let (provider_options, math_policy) = match &policy.placement {
+            PlacementPolicy::StrictGpu if policy.precision == DevicePrecision::Float32 => {
+                (provider_options_digest(), math_policy_digest())
+            }
+            PlacementPolicy::StrictGpu => (
+                fp16_provider_options_digest(profile.model)?,
+                fp16_math_policy_digest(profile.model)?,
+            ),
+            #[cfg(all(
+                target_arch = "x86_64",
+                any(windows, all(target_os = "linux", target_env = "gnu"))
+            ))]
+            PlacementPolicy::BoundedHybrid { .. } => {
+                ensure!(
+                    self.runtime.manifest.is_product(),
+                    "bounded CUDA execution requires the qualified product runtime"
+                );
+                self.runtime.manifest.requirement(profile)?;
+                let recipe = BoundedContextOptimizer::from_profile(profile)?;
+                (
+                    recipe.provider_options(profile.model)?,
+                    recipe.math_policy(profile.model)?,
+                )
+            }
+            #[cfg(not(all(
+                target_arch = "x86_64",
+                any(windows, all(target_os = "linux", target_env = "gnu"))
+            )))]
+            PlacementPolicy::BoundedHybrid { .. } => {
+                anyhow::bail!("qualified bounded CUDA execution unavailable on this target")
+            }
+        };
         ensure!(
             policy.backend == GpuBackend::Cuda
                 && matches!(
@@ -537,33 +725,69 @@ impl CudaDevice {
                     DevicePrecision::Float32 | DevicePrecision::Float16
                 )
                 && !policy.tf32
-                && policy.placement == PlacementPolicy::StrictGpu
                 && policy.runtime_build == self.runtime.runtime_build()
                 && policy.compatibility_policy
                     == if self.runtime.manifest.is_product() {
-                        self.runtime
-                            .manifest
-                            .requirement(profile)?
-                            .compatibility_policy_digest()?
+                        requirement_policy(self.runtime.manifest.requirement(profile)?)?
                     } else {
                         compatibility_policy_digest()
                     }
-                && policy.provider_options
-                    == if policy.precision == DevicePrecision::Float32 {
-                        provider_options_digest()
-                    } else {
-                        fp16_provider_options_digest(profile.model)?
-                    }
-                && policy.math_policy
-                    == if policy.precision == DevicePrecision::Float32 {
-                        math_policy_digest()
-                    } else {
-                        fp16_math_policy_digest(profile.model)?
-                    },
-            "GPU model/runtime/policy/precision is not the native strict variant"
+                && policy.provider_options == provider_options
+                && policy.math_policy == math_policy,
+            "GPU model/runtime/policy/precision differs from native execution"
         );
         Ok(())
     }
+    pub(super) fn verify_session_placement(
+        &self,
+        profile: &Profile,
+        session: &ort::session::Session,
+        deadline: Instant,
+        attention: Option<&AttentionPlan>,
+    ) -> Result<()> {
+        in_time(deadline)?;
+        let placement = self.placement(session)?;
+        let device = profile
+            .device_execution
+            .as_ref()
+            .context("missing CUDA execution policy")?;
+        match &device.placement {
+            PlacementPolicy::StrictGpu => {
+                if let Some(plan) = attention {
+                    plan.require_placement(&placement)?;
+                    plan.require_math_environment()?;
+                } else {
+                    placement.require_strict()?;
+                }
+            }
+            #[cfg(all(
+                target_arch = "x86_64",
+                any(windows, all(target_os = "linux", target_env = "gnu"))
+            ))]
+            PlacementPolicy::BoundedHybrid { policy } => {
+                ensure!(
+                    self.runtime.manifest.is_product(),
+                    "bounded CUDA requires the product runtime"
+                );
+                self.runtime.manifest.requirement(profile)?;
+                let plan = attention.context("bounded CUDA requires FP16 Context attention")?;
+                plan.require_attention_placement(&placement)?;
+                plan.require_math_environment()?;
+                let observed = self.graph_metadata(session, deadline, &placement)?;
+                BoundedContextOptimizer::from_profile(profile)?
+                    .verify_execution(profile, &placement, &observed, *policy)?;
+            }
+            #[cfg(not(all(
+                target_arch = "x86_64",
+                any(windows, all(target_os = "linux", target_env = "gnu"))
+            )))]
+            PlacementPolicy::BoundedHybrid { .. } => {
+                anyhow::bail!("bounded CUDA target unavailable")
+            }
+        }
+        in_time(deadline)
+    }
+
     pub(super) fn qualified_plan(&self, profile: &Profile) -> Result<DeviceCapacityPlan> {
         self.validate_profile(profile)?;
         if self.runtime.manifest.is_product() {
@@ -599,7 +823,13 @@ impl CudaDevice {
             fit.headroom_bytes,
         )
     }
-    #[cfg(feature = "test-support")]
+    #[cfg(any(
+        feature = "test-support",
+        all(
+            target_arch = "x86_64",
+            any(windows, all(target_os = "linux", target_env = "gnu"))
+        )
+    ))]
     pub(super) fn graph_metadata(
         &self,
         session: &ort::session::Session,
@@ -607,13 +837,19 @@ impl CudaDevice {
         placement: &PlacementObservation,
     ) -> Result<GraphMetadataObservation> {
         in_time(deadline)?;
-        #[cfg(all(windows, target_arch = "x86_64"))]
+        #[cfg(all(
+            target_arch = "x86_64",
+            any(windows, all(target_os = "linux", target_env = "gnu"))
+        ))]
         {
             self.runtime
                 .loaded
                 .graph_metadata(session, deadline, placement)
         }
-        #[cfg(not(all(windows, target_arch = "x86_64")))]
+        #[cfg(not(all(
+            target_arch = "x86_64",
+            any(windows, all(target_os = "linux", target_env = "gnu"))
+        )))]
         {
             let _ = (session, placement);
             anyhow::bail!("final graph metadata unavailable")
@@ -623,11 +859,17 @@ impl CudaDevice {
         &self,
         session: &ort::session::Session,
     ) -> Result<PlacementObservation> {
-        #[cfg(all(windows, target_arch = "x86_64"))]
+        #[cfg(all(
+            target_arch = "x86_64",
+            any(windows, all(target_os = "linux", target_env = "gnu"))
+        ))]
         {
             self.runtime.loaded.placement(session)
         }
-        #[cfg(not(all(windows, target_arch = "x86_64")))]
+        #[cfg(not(all(
+            target_arch = "x86_64",
+            any(windows, all(target_os = "linux", target_env = "gnu"))
+        )))]
         {
             let _ = session;
             anyhow::bail!("CUDA placement unavailable")
@@ -721,7 +963,7 @@ impl Binding {
             );
             (fit.evidence.clone(), fit.host_warm_extra_bytes)
         };
-        let admission = eligibility::initial_admission(&device.runtime.manifest);
+        let admission = eligibility::initial_admission(device.runtime.manifest.is_product());
         Ok(Self {
             device,
             plan,
@@ -831,10 +1073,17 @@ pub unsafe fn observe_runtime_assembly(
     {
         windows::observe_assembly(input, deadline)
     }
-    #[cfg(not(all(windows, target_arch = "x86_64")))]
+    #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+    {
+        linux::observe_assembly(input, deadline)
+    }
+    #[cfg(not(all(
+        target_arch = "x86_64",
+        any(windows, all(target_os = "linux", target_env = "gnu"))
+    )))]
     {
         let _ = input;
-        anyhow::bail!("CUDA assembly factory requires Windows x64")
+        anyhow::bail!("CUDA assembly factory requires an approved native x86-64 backend")
     }
 }
 
@@ -908,11 +1157,17 @@ impl CudaDevice {
 impl CudaRuntime {
     pub fn poisoned(&self) -> bool {
         self.devices.is_poisoned() || {
-            #[cfg(all(windows, target_arch = "x86_64"))]
+            #[cfg(all(
+                target_arch = "x86_64",
+                any(windows, all(target_os = "linux", target_env = "gnu"))
+            ))]
             {
-                windows::runtime_poisoned()
+                platform::runtime_poisoned()
             }
-            #[cfg(not(all(windows, target_arch = "x86_64")))]
+            #[cfg(not(all(
+                target_arch = "x86_64",
+                any(windows, all(target_os = "linux", target_env = "gnu"))
+            )))]
             {
                 false
             }
@@ -983,13 +1238,26 @@ fn probe_runtime_identity(
             == runtime_manifest_sha256,
         "native runtime metadata pin mismatch"
     );
-    let runtime: manifest::RuntimeManifest = serde_json::from_slice(runtime_manifest)?;
-    runtime.validate()?;
-    ensure!(
-        runtime.fits.is_empty() && runtime.static_core_build != Sha256Digest::from_bytes([0; 32]),
-        "first probe requires unqualified native runtime metadata"
-    );
-    Ok(runtime.static_core_build)
+    #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+    {
+        let runtime = manifest::linux::Descriptor::parse(runtime_manifest)?;
+        ensure!(
+            !runtime.is_product() && runtime.fits()?.is_empty(),
+            "first probe requires unqualified Linux scientific metadata"
+        );
+        Ok(runtime.build())
+    }
+    #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu")))]
+    {
+        let runtime: manifest::RuntimeManifest = serde_json::from_slice(runtime_manifest)?;
+        runtime.validate()?;
+        ensure!(
+            runtime.fits.is_empty()
+                && runtime.static_core_build != Sha256Digest::from_bytes([0; 32]),
+            "first probe requires unqualified native runtime metadata"
+        );
+        Ok(runtime.static_core_build)
+    }
 }
 
 /// Data-only, unqualified first FP32 probe metadata. Does not mint evaluation,
@@ -1137,6 +1405,30 @@ pub fn prepare_fp32_probe_profile(
     })
 }
 
+/// Observe native package files and the source proof together to emit a descriptive
+/// product descriptor with an empty model requirement roster.
+/// # Safety
+/// The caller must retain the actual service lease and native compute scope.
+#[cfg(feature = "test-support")]
+pub unsafe fn observe_product_runtime_assembly(
+    _lease: Arc<dyn Send + Sync>,
+    input: RuntimeAssemblyInput,
+    provenance_input: &[u8],
+    deadline: Instant,
+) -> Result<(Vec<u8>, Vec<u8>)> {
+    crate::native_inference::require_service_compute()?;
+    in_time(deadline)?;
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    {
+        windows::observe_product_assembly(input, provenance_input, deadline)
+    }
+    #[cfg(not(all(windows, target_arch = "x86_64")))]
+    {
+        let _ = (input, provenance_input);
+        anyhow::bail!("Windows x64 product assembly required")
+    }
+}
+
 /// Metadata-only opaque Rust projection. Its output creates no runtime/device permit.
 /// # Safety
 /// Caller passes the actual retained ServiceLease and existing native compute scope;
@@ -1199,8 +1491,15 @@ pub unsafe fn observe_runtime_package_projection(
     {
         windows::observe_package_projection(root, descriptor, descriptor_sha256, deadline)
     }
-    #[cfg(not(all(windows, target_arch = "x86_64")))]
+    #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
     {
-        anyhow::bail!("native CUDA package projection requires Windows x64")
+        linux::observe_package_projection(root, descriptor, descriptor_sha256, deadline)
+    }
+    #[cfg(not(all(
+        target_arch = "x86_64",
+        any(windows, all(target_os = "linux", target_env = "gnu"))
+    )))]
+    {
+        anyhow::bail!("native CUDA package projection requires a supported x64 host")
     }
 }

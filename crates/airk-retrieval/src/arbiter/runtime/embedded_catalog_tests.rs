@@ -53,8 +53,13 @@ fn selected_local_test_profiles_are_admitted_at_1_8_201_and_refused_from_1_9_0()
         profile.validate()?;
         profile.validate_release_downloads()?;
         if model == ModelChoice::FocusQwenReranker06B {
-            validate_selected_policies(&profile)?;
-            assert!(ExecutionProfile::from_release(profile.manifest).is_ok());
+            assert!(validate_selected_policies(&profile).is_err());
+            let execution = ExecutionProfile::from_release(profile.manifest)?;
+            let transition = execution
+                .source_transition_record()?
+                .expect("legacy Focus source witness");
+            assert_eq!(transition["legacy_manifest"], profile.manifest.to_string());
+            assert_eq!(transition["task_qualification_transferred"], false);
         } else {
             // Immutable public Context descriptors bind the historical task source.
             // The series exception does not bypass the changed semantic policy.

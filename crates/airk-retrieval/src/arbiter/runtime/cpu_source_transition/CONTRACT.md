@@ -326,7 +326,7 @@ FP16 graph c00371ad9407c25bd52999d87327115025b7c6f55a4e585645ca112d858de5bd
 under its native unqualified Large evaluation profile. The strict observer
 continues to require Compact. Reversing the Large graph branch and shared
 model predicate reproduces the preceding diagnostic source 02823087575662de75f8fe531bcbda7304c0dc274b775c8cf4303fc26be73174.
-The current diagnostic source is d4c51397621b145f96421b3a599e0e04f10f12a38e0963fd9fc80aafb02c3989.
+The prior diagnostic source was d4c51397621b145f96421b3a599e0e04f10f12a38e0963fd9fc80aafb02c3989. Adding the Windows x64 test-support-only CUTLASS operand observer declaration advances the diagnostic source to 458978ca4f667f16cebb39bb94167fbebf959ec88ebc42d235f6b8fa17ce78ce. The observer requires native service compute authority, the authenticated runtime and a fixed graph and operand digest. Its output is diagnostic evidence.
 The observer returns only final placement metadata and settles its session.
 Original CPU descriptor and qualification receipts retain their recorded scope.
 
@@ -352,3 +352,21 @@ The current source pin is
 52563c3185ff061dc852fbdd0f12846a6b4f04330ad2f66ddec9c8b5afa77252.
 The closed source owner emits a fresh row with the same descriptor and
 digest framing. Earlier receipts retain their original identities.
+
+### Product CUDA placement and the original static512 CPU release
+
+The bounded Context CUDA optimizer and actual-session placement checks advance
+the LF-normalized runtime source from 52563c3185ff061dc852fbdd0f12846a6b4f04330ad2f66ddec9c8b5afa77252
+to 7b4650767610eafdfea4b6c273e042008e4eae4654dde516d438c6ee2f8449b3.
+The original Focus CPU catalog entry has no device execution descriptor. It
+selects the CPU provider and preserves the original sequential CPU4 settings.
+
+The private candidate used the production release-asset and release-profile
+admission calls, an owned native service inference scope, all nine catalog
+assets, and the original static512 fixture b07dbc3bf8167d54d2cb43a07b1cfa361173e7bf1c5207870dfafdcf5d71b080.
+All ten native model-view pairs reproduced the original compiler arrays and
+both reference logits exactly. The test bound each compiled input to the
+new transition row 09842b67ad09a739412ccdb6c20efe51c43f4b5dd0c0ca74f122c2f0b51e2f58.
+The other two fixture rows are publisher diagnostic pairs. The original
+descriptor, legacy source identity and task qualification retain their
+recorded scope.

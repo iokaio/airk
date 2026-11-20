@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Bounded observations only; never a session, scorer or execution capability.
 use super::*;
+#[cfg(all(feature = "test-support", windows, target_arch = "x86_64"))]
+mod cutlass;
 #[derive(Clone, Debug, Serialize)]
 pub struct LogRow {
     pub location: String,
@@ -314,11 +316,13 @@ pub(crate) fn require_graph_diagnostic_profile(
                 .context("Large device descriptor missing")?;
             let baseline =
                 "c00371ad9407c25bd52999d87327115025b7c6f55a4e585645ca112d858de5bd".parse()?;
+            let protected =
+                "1448e83dcd209b120bd22e1dec084092f56adc7e8eec5dcd323e179b800467aa".parse()?;
             ensure!(
-                device.graph == baseline
+                (device.graph == baseline || device.graph == protected)
                     && profile.description.profile_id
                         == "private-cuda-fp16-large-efficient-probe-v1",
-                "Large FP16 graph diagnostic requires the reviewed baseline"
+                "Large FP16 graph diagnostic requires a reviewed baseline or protected Q/K/V graph"
             );
             return require_fp16_profile(profile, ModelChoice::ContextQwenLarge);
         }

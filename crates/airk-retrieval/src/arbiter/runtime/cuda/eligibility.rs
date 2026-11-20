@@ -93,8 +93,8 @@ pub(super) enum AdmissionState {
     },
     Eligible(Arc<DeviceEligibility>),
 }
-pub(super) fn initial_admission(manifest: &manifest::RuntimeDescriptor) -> AdmissionState {
-    if manifest.is_product() {
+pub(super) fn initial_admission(product: bool) -> AdmissionState {
+    if product {
         AdmissionState::Pending
     } else {
         AdmissionState::Scientific
@@ -467,9 +467,18 @@ impl Scorer {
         }
         in_time(deadline)?;
         ensure!(liveness(), "native eligibility authority changed");
-        self.device_placement()?
-            .context("complete final native placement missing")?
-            .require_strict()?;
+        {
+            let session = self
+                .session
+                .lock()
+                .map_err(|_| anyhow::anyhow!("native session owner poisoned"))?;
+            binding.device.verify_session_placement(
+                self.profile.description(),
+                &session,
+                deadline,
+                self.fp16_attention.as_ref(),
+            )?;
+        }
         let capacity = binding.device.reserve_warm_work(
             binding.plan.warm_extra_bytes(),
             binding.plan.headroom_bytes(),

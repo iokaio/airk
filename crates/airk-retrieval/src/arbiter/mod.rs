@@ -4,6 +4,8 @@
 pub mod compiler;
 #[cfg(feature = "local-inference")]
 pub mod context_action;
+#[cfg(all(feature = "local-inference", feature = "test-support"))]
+pub mod scientific_cal;
 #[cfg(feature = "local-inference")]
 mod external_data;
 #[cfg(feature = "local-inference")]

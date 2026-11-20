@@ -254,6 +254,93 @@ fn focus_native_weight8_static1024_matches_publisher_and_compiled_model_views() 
     parity(STATIC1024)
 }
 
+#[test]
+#[ignore = "requires the exact original release catalog CPU assets and static512 input fixture"]
+fn legacy_focus_release_cpu_replays_original_compiled_pairs() -> Result<()> {
+    let manifest: Sha256Digest =
+        "04821edaed45ac10aa5b0b7b2c0b7b28bf5d04a06c8b623cfe6d762f77d5e23b".parse()?;
+    let profile = airk_retrieval::arbiter::runtime::release_asset_profile(manifest)?;
+    let execution = ExecutionProfile::from_release(manifest)?;
+    let record = execution
+        .source_transition_record()?
+        .context("missing release transition")?;
+    ensure!(
+        record["legacy_manifest"] == manifest.to_string()
+            && record["task_qualification_transferred"] == false,
+        "wrong release source transition"
+    );
+    let directory = PathBuf::from(
+        std::env::var_os("AIRK_LEGACY_FOCUS_ASSETS").context("missing original assets")?,
+    );
+    let metadata = PathBuf::from(
+        std::env::var_os("AIRK_LEGACY_FOCUS_METADATA").context("missing original metadata")?,
+    );
+    let source = FocusFiles(
+        profile
+            .assets
+            .iter()
+            .map(|asset| {
+                let path = if asset.name == "focus-relevance-metadata.json" {
+                    metadata.clone()
+                } else {
+                    directory.join(&asset.name)
+                };
+                (asset.name.clone(), path)
+            })
+            .collect(),
+    );
+    let (_parent, control) = private_control()?;
+    let lease = Arc::new(airk_store::service::ServiceLease::acquire(&control)?);
+    let owner = airk_kernel::inference_owner::NativeInferenceOwner::admit(lease)?;
+    owner.run(|| -> Result<()> {
+        verify_assets(&source, &profile)?;
+        let fixture = std::fs::read(directory.join("native-runtime512-fixture.json"))?;
+        ensure!(
+            format!("{:x}", Sha256::digest(&fixture))
+                == "b07dbc3bf8167d54d2cb43a07b1cfa361173e7bf1c5207870dfafdcf5d71b080",
+            "original fixture changed"
+        );
+        let fixture: Value = serde_json::from_slice(&fixture)?;
+        let scorer = Scorer::open(execution, &source)?;
+        let mut verified = Vec::new();
+        for row in fixture["rows"]
+            .as_array()
+            .context("missing original inputs")?
+        {
+            if row["native_model_view"] != true {
+                continue;
+            }
+            let (question, option) = original_pair(row)?;
+            let compiled = scorer.compile("", &question, &[option])?;
+            same_compiler_view(&compiled, row)?;
+            let binding = scorer
+                .source_transition_input(&compiled)?
+                .context("missing original input binding")?;
+            ensure!(
+                binding["current_compiled_input"] == compiled.input_digest.to_string()
+                    && binding["transition"] == record,
+                "compiled transition differs"
+            );
+            let scores = scorer.score(&compiled)?;
+            let expected =
+                serde_json::from_value::<Vec<f32>>(row["python_weight8_logits"][0].clone())?;
+            let (raw, relevance, winner) = raw_error(&scores, &expected)?;
+            ensure!(
+                raw <= 0.001 && relevance <= 0.00001 && winner,
+                "original weight8 CPU math changed"
+            );
+            verified.push(json!({"id":row["id"],"binding":binding,"raw_scores":scores,
+                "reference_scores":expected,"maximum_raw_error":raw}));
+        }
+        ensure!(verified.len() == 10, "incomplete compiled native fixture");
+        println!(
+            "{}",
+            json!({"profile":manifest,"width":512,"rows":verified})
+        );
+        Ok(())
+    })?
+}
+
 fn parity(width: Width) -> Result<()> {
     let (input, profile, profile_bytes, fixture_bytes, fixture) = inputs(width)?;
     let output = PathBuf::from(

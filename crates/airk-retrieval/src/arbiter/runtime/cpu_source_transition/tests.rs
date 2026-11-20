@@ -244,11 +244,11 @@ fn publisher_census_row_refuses_old_task_and_preserves_legacy_payload() -> Resul
 fn cuda_bridge_and_driver_closure_preserve_closed_cpu_runtime_source() -> Result<()> {
     assert_eq!(
         source_sha(include_bytes!("../../runtime.rs"))?.to_string(),
-        "52563c3185ff061dc852fbdd0f12846a6b4f04330ad2f66ddec9c8b5afa77252"
+        "7b4650767610eafdfea4b6c273e042008e4eae4654dde516d438c6ee2f8449b3"
     );
     assert_eq!(
         source_sha(include_bytes!("../cuda/windows.rs"))?.to_string(),
-        "1f577d70657997313743f1c973a3433a575a485d218497abf9080a9079e4ff51"
+        "4189e3ab8ce70bd837921bc3458bd8424c861fbfa596622800b3b372e69e040f"
     );
     assert_eq!(
         source_sha(include_bytes!("../cuda/modules.rs"))?.to_string(),
@@ -260,7 +260,7 @@ fn cuda_bridge_and_driver_closure_preserve_closed_cpu_runtime_source() -> Result
     let record = serde_json::to_value(witness.record(&profile)?)?;
     assert_eq!(
         record["current_runtime_source"],
-        "52563c3185ff061dc852fbdd0f12846a6b4f04330ad2f66ddec9c8b5afa77252"
+        "7b4650767610eafdfea4b6c273e042008e4eae4654dde516d438c6ee2f8449b3"
     );
     assert_eq!(
         record["current_task_policy"],
@@ -277,15 +277,15 @@ fn placement_diagnostic_supplement_binds_current_runtime_without_qualification_t
 -> Result<()> {
     assert_eq!(
         source_sha(include_bytes!("../../runtime.rs"))?.to_string(),
-        "52563c3185ff061dc852fbdd0f12846a6b4f04330ad2f66ddec9c8b5afa77252"
+        "7b4650767610eafdfea4b6c273e042008e4eae4654dde516d438c6ee2f8449b3"
     );
     assert_eq!(
         source_sha(include_bytes!("../cuda/diagnostic.rs"))?.to_string(),
-        "d4c51397621b145f96421b3a599e0e04f10f12a38e0963fd9fc80aafb02c3989"
+        "74e00598fa44d34d029c8b3c3447947cbfbb98e2af452ded702344a04d7eb8a2"
     );
     assert_eq!(
         source_sha(include_bytes!("../cuda.rs"))?.to_string(),
-        "1744cc2d0a37ee1dfd69ccf532992b636911a6395a3c93f4c95966eb7e6950a7"
+        "fbfc73225ed3cd4317f35d1ceb0a1c18e8138e087ab57d3aa7f830a890466002"
     );
     assert_ne!(
         CURRENT_RUNTIME_SOURCE,
@@ -304,11 +304,11 @@ fn placement_diagnostic_supplement_binds_current_runtime_without_qualification_t
 fn final_graph_metadata_supplement_binds_current_source_without_policy_admission() -> Result<()> {
     assert_eq!(
         source_sha(include_bytes!("../../runtime.rs"))?.to_string(),
-        "52563c3185ff061dc852fbdd0f12846a6b4f04330ad2f66ddec9c8b5afa77252"
+        "7b4650767610eafdfea4b6c273e042008e4eae4654dde516d438c6ee2f8449b3"
     );
     assert_eq!(
         source_sha(include_bytes!("../cuda/graph_metadata.rs"))?.to_string(),
-        "022f8432d0c54cefb130fa8b84ced38579e768f0b8545e3c3f86bee4d003f708"
+        "4faba32f35aaf072dbd2882d64ab19033de285dc7b44206823dabf32be0987df"
     );
     assert_ne!(
         CURRENT_RUNTIME_SOURCE,
@@ -327,7 +327,7 @@ fn final_graph_metadata_supplement_binds_current_source_without_policy_admission
 fn g5_supplement_binds_exact_current_source_without_relabelling_old_row() -> Result<()> {
     assert_eq!(
         source_sha(include_bytes!("../../runtime.rs"))?.to_string(),
-        "52563c3185ff061dc852fbdd0f12846a6b4f04330ad2f66ddec9c8b5afa77252"
+        "7b4650767610eafdfea4b6c273e042008e4eae4654dde516d438c6ee2f8449b3"
     );
     let profile = legacy_focus()?;
     let before = serde_json::to_vec(&profile)?;
@@ -335,7 +335,7 @@ fn g5_supplement_binds_exact_current_source_without_relabelling_old_row() -> Res
     let record = serde_json::to_value(witness.record(&profile)?)?;
     assert_eq!(
         record["current_runtime_source"],
-        "52563c3185ff061dc852fbdd0f12846a6b4f04330ad2f66ddec9c8b5afa77252"
+        "7b4650767610eafdfea4b6c273e042008e4eae4654dde516d438c6ee2f8449b3"
     );
     assert_ne!(
         record["current_runtime_source"],

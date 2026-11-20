@@ -491,6 +491,35 @@ impl Scorer {
         profile.validate_native_source()?;
         #[cfg(feature = "gpu-cuda")]
         let gpu = profile.gpu.clone();
+        #[cfg(all(
+            feature = "gpu-cuda",
+            all(
+                target_arch = "x86_64",
+                any(windows, all(target_os = "linux", target_env = "gnu"))
+            )
+        ))]
+        let bounded_product = match profile
+            .description()
+            .device_execution
+            .as_ref()
+            .map(|device| &device.placement)
+        {
+            Some(airk_core::arbiter::device::PlacementPolicy::BoundedHybrid { .. }) => {
+                let binding = gpu
+                    .as_ref()
+                    .context("qualified bounded CUDA binding missing")?;
+                ensure!(
+                    matches!(&_mode, OpenMode::Execution)
+                        && profile.release_qualified()
+                        && binding.evidence.is_some(),
+                    "bounded Context execution requires a qualified release profile and authenticated product binding"
+                );
+                Some(cuda::BoundedContextOptimizer::from_profile(
+                    profile.description(),
+                )?)
+            }
+            _ => None,
+        };
         #[cfg(feature = "gpu-cuda")]
         if let Some(binding) = &gpu {
             binding.device.validate_profile(profile.description())?;
@@ -659,6 +688,16 @@ impl Scorer {
                 .build()])?;
         }
         builder = configure(builder)?;
+        #[cfg(all(
+            feature = "gpu-cuda",
+            all(
+                target_arch = "x86_64",
+                any(windows, all(target_os = "linux", target_env = "gnu"))
+            )
+        ))]
+        if let Some(recipe) = bounded_product {
+            builder = recipe.configure(builder)?;
+        }
         #[cfg(all(feature = "gpu-cuda", feature = "test-support"))]
         match &_mode {
             OpenMode::PlacementDiagnostic => {
@@ -788,13 +827,12 @@ impl Scorer {
                     bounded_hybrid = Some(gate.verify_session(binding, &session)?);
                 }
                 OpenMode::Execution => {
-                    let placement = binding.device.placement(&session)?;
-                    if let Some(plan) = &fp16_attention {
-                        plan.require_placement(&placement)?;
-                        plan.require_math_environment()?;
-                    } else {
-                        placement.require_strict()?;
-                    }
+                    binding.device.verify_session_placement(
+                        profile.description(),
+                        &session,
+                        binding.load_deadline,
+                        fp16_attention.as_ref(),
+                    )?;
                 }
             }
         }
@@ -1625,6 +1663,31 @@ impl Scorer {
         let placement = self
             .device_placement()?
             .context("G5 CUDA placement missing")?;
+        #[cfg(all(
+            target_arch = "x86_64",
+            any(windows, all(target_os = "linux", target_env = "gnu"))
+        ))]
+        if self.profile.release_qualified()
+            && self
+                .profile
+                .description()
+                .device_execution
+                .as_ref()
+                .is_some_and(|p| {
+                    matches!(
+                        p.placement,
+                        airk_core::arbiter::device::PlacementPolicy::BoundedHybrid { .. }
+                    )
+                })
+        {
+            plan.require_attention_placement(&placement)?;
+        } else {
+            plan.require_placement(&placement)?;
+        }
+        #[cfg(not(all(
+            target_arch = "x86_64",
+            any(windows, all(target_os = "linux", target_env = "gnu"))
+        )))]
         plan.require_placement(&placement)?;
         Ok(Some(plan.observation()?))
     }

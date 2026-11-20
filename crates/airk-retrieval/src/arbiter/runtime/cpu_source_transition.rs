@@ -15,7 +15,7 @@ const LEGACY_RUNTIME_SOURCE: &str =
     "d2879546ba9e949fdd8b135a244923de2adb781e8598539cc33f4d7d6f0794eb";
 // Exact runtime owner hook bytes for the reviewed G5 supplement. A different source requires a new row.
 const CURRENT_RUNTIME_SOURCE: Option<&str> =
-    Some("52563c3185ff061dc852fbdd0f12846a6b4f04330ad2f66ddec9c8b5afa77252");
+    Some("7b4650767610eafdfea4b6c273e042008e4eae4654dde516d438c6ee2f8449b3");
 const LEGACY_CORE: &str = "ddd9dbc76ae2c7e92c3b57b58a9443161fb045bbc175596f57bb41c9b1b5bbe6";
 const CURRENT_CORE: &str = "914692048e6d833e0d18c10485e7d9f57f2e0c8874f428b31002bcf7c09cdeef";
 const CURRENT_TASK: &str = "25c96233573bd34cd71d03317bc757677d31e48ffbe362c462499d5fb1b7eff7";

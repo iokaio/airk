@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Private native metadata and T32 probe for the reviewed Compact FP16 candidate.
 use super::*;
+mod cal;
 mod down;
+mod full;
 mod observed;
 mod timing;
 use airk_core::arbiter::device::{DevicePrecision, PlacementPolicy};
@@ -140,6 +142,8 @@ fn projection_stage(
             && fact["graph_proof"]["projection_count"] == spec.projections
             && (if spec.stage_schema == down::SPEC.stage_schema {
                 down::stage_proof(&fact)
+            } else if spec.stage_schema == full::SPEC.stage_schema {
+                full::stage_proof(&fact)
             } else {
                 fact["graph_proof"]["added_cast_count"] == spec.projections * 3
             })
@@ -1147,11 +1151,15 @@ enum CompactFp16Probe {
     QkvDevelopmentBatch,
     QkvResource20,
     QkvObservedDevelopment,
+    QkvScientificCal,
     QkvFitProbe,
     QkvMixedTiming,
     QkvLayer0T1024,
     QkvDecisionT1024,
     DownGraph,
+    FullGraph,
+    FullScores,
+    FullCuts,
     DownScores,
     QkvoProjectionGraphOnly,
     QkvoProjectionT32,
@@ -1294,12 +1302,17 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
         CompactFp16Probe::QkvProjectionT32 => (Some(&QKV), true, false),
         CompactFp16Probe::QkvDevelopmentBatch
         | CompactFp16Probe::QkvObservedDevelopment
+        | CompactFp16Probe::QkvScientificCal
         | CompactFp16Probe::QkvFitProbe
         | CompactFp16Probe::QkvResource20
         | CompactFp16Probe::QkvMixedTiming
         | CompactFp16Probe::QkvLayer0T1024
         | CompactFp16Probe::QkvDecisionT1024 => (Some(&QKV), false, false),
         CompactFp16Probe::DownGraph => (Some(&down::SPEC), false, true),
+        CompactFp16Probe::FullGraph => (Some(&full::SPEC), false, true),
+        CompactFp16Probe::FullScores | CompactFp16Probe::FullCuts => {
+            (Some(&full::SPEC), false, false)
+        }
         CompactFp16Probe::DownScores => (Some(&down::SPEC), false, false),
         CompactFp16Probe::QkvoProjectionGraphOnly => (Some(&QKVO), false, true),
         CompactFp16Probe::QkvoProjectionT32 => (Some(&QKVO), true, false),
@@ -1312,9 +1325,13 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
         CompactFp16Probe::QkvMixedTiming => Some(timing::Population::Mixed),
         _ => None,
     };
+    let capture_full = mode == CompactFp16Probe::FullCuts;
+    let scientific_cal = mode == CompactFp16Probe::QkvScientificCal;
+    let full_scores = capture_full || mode == CompactFp16Probe::FullScores;
     let down_scores = mode == CompactFp16Probe::DownScores;
-    let representative = mode == CompactFp16Probe::QkvObservedDevelopment || down_scores;
-    let unprofiled = representative || timing.is_some();
+    let precision_scores = full_scores || down_scores;
+    let representative = mode == CompactFp16Probe::QkvObservedDevelopment || precision_scores;
+    let unprofiled = representative || timing.is_some() || scientific_cal;
     let development_batch = mode == CompactFp16Probe::QkvDevelopmentBatch;
     let decision_rows = mode == CompactFp16Probe::QkvDecisionT1024;
     let qkv_layer0_t1024 = decision_rows || mode == CompactFp16Probe::QkvLayer0T1024;
@@ -1408,7 +1425,10 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
     } else {
         None
     };
-    let development = if development_batch || qkv_layer0_t1024 || (unprofiled && !down_scores) {
+    let development = if development_batch
+        || qkv_layer0_t1024
+        || (unprofiled && !precision_scores && !scientific_cal)
+    {
         let (stage, candidate) = projection
             .as_ref()
             .context("missing development Q/K/V stage")?;
@@ -1462,7 +1482,10 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
 
     let output = output()?;
     let observed_proof = representative
-        .then(|| observed::Observed::load(candidate, down_scores))
+        .then(|| observed::Observed::load(candidate, projection_spec.filter(|_| precision_scores)))
+        .transpose()?;
+    let cal_row = scientific_cal
+        .then(|| cal::Selected::load(candidate, &profile, &input.profile))
         .transpose()?;
     let timing_proof = timing.map(|_| timing::Sealed::load()).transpose()?;
     let prefix = if graph_only || unprofiled {
@@ -1518,12 +1541,16 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
             CompactFp16Probe::QkvProjectionT32 => QKV.t32_schema,
             CompactFp16Probe::QkvDevelopmentBatch => "airk.private.compact-fp32-qkv-development-batch/1",
             CompactFp16Probe::QkvObservedDevelopment => "airk.private.compact-qkv-observed-development/1",
+            CompactFp16Probe::QkvScientificCal => "airk.private.compact-qkv-scientific-cal-row/1",
             CompactFp16Probe::QkvResource20 => "airk.private.compact-fp16-unprofiled-resource20/1",
             CompactFp16Probe::QkvFitProbe => "airk.private.compact-fp16-unprofiled-fit/1",
             CompactFp16Probe::QkvMixedTiming => "airk.private.compact-fp16-unprofiled-mixed/1",
             CompactFp16Probe::QkvDecisionT1024 => "airk.private.compact-fp32-qkv-decision-t1024/1",
             CompactFp16Probe::QkvLayer0T1024 => "airk.private.compact-fp32-qkv-layer0-t1024/1",
             CompactFp16Probe::DownGraph => down::SPEC.graph_schema,
+            CompactFp16Probe::FullGraph => full::SPEC.graph_schema,
+            CompactFp16Probe::FullScores => "airk.private.compact-full-observed-development/1",
+            CompactFp16Probe::FullCuts => "airk.private.compact-full-t1014-cut/1",
             CompactFp16Probe::DownScores => "airk.private.compact-qkv-down-observed-development/1",
             CompactFp16Probe::QkvoProjectionGraphOnly => QKVO.graph_schema,
             CompactFp16Probe::QkvoProjectionT32 => QKVO.t32_schema,
@@ -1657,6 +1684,11 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
             let loaded = journal.observe(operation::Kind::Load, 0, None, || {
                 if unprofiled {
                     let (pin, graph_bytes) = reviewed_graph.as_ref().context("missing timing graph custody")?;
+                    if full_scores {
+                        return Scorer::open_private_compact_full_unprofiled(execution,
+                            if capture_full { Some(full::selected_taps(&text("AIRK_CUDA_COMPACT_FULL_CUT_GROUP")?)?) } else { None },
+                            files, graph_bytes, pin.sha256);
+                    }
                     if down_scores {
                         return Scorer::open_private_compact_down_unprofiled(execution, files, graph_bytes, pin.sha256);
                     }
@@ -1720,6 +1752,10 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
                 scorer.attention_backend_plan()?.context("actual Compact FP16 attention plan missing")?
             };
             flush_graph_diagnostic(&mut file, &receipt)?;
+            if let Some(selected) = &cal_row {
+                let compiler = observed::compiler(&profile, files)?;
+                return selected.score(scorer, &compiler, &mut journal, &mut receipt, &mut file, deadline);
+            }
             if let Some(observation) = &observed_proof {
                 let compiler = observed::compiler(&profile, files)?;
                 return observation.score(scorer, &compiler, &mut journal, &mut receipt, &mut file, deadline);
@@ -1932,6 +1968,9 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
             for pin in [&row.reference_pin, &row.capture_pin, &row.census_pin].into_iter().chain(row.precision_reference.iter()) {
                 teardown = teardown.and(pinned(pin, PROOF_BYTES).map(|_| ()));
             }
+        }
+        if let Some(selected) = &cal_row {
+            teardown = teardown.and(selected.recheck());
         }
         work.and(teardown)?;
         verify_files(custody.files.as_ref().context("Compact FP16 post-input custody missing")?, &profile)?;

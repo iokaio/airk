@@ -19,6 +19,47 @@ struct Reference {
 }
 
 #[derive(Deserialize)]
+struct ProtectedStage {
+    original_graph: ReferenceFile,
+    graph: ReferenceFile,
+    weights: ReferenceFile,
+}
+
+impl ProtectedStage {
+    fn checked_graph(self, reference: &Reference, pin: &ResourceFilePin) -> Result<ReferenceFile> {
+        ensure!(
+            self.original_graph == reference.graph && self.weights == reference.weights
+                && self.graph.sha256 == QKV_GRAPH.parse()?
+                && Path::new(&self.graph.path).parent() == Path::new(&pin.path).parent(),
+            "Large Q/K/V graph or unmodified weights differ"
+        );
+        Ok(self.graph)
+    }
+}
+
+#[test]
+fn large_qkv_stage_rejects_relocated_weights() -> Result<()> {
+    let digest = sha(b"same weight bytes");
+    let raw = json!({"path":"D:/original/weights.bin","bytes":7,"sha256":digest});
+    let graph = json!({"path":"D:/original/model.onnx","bytes":5,"sha256":GRAPH});
+    let candidate = json!({"path":"D:/qkv/model.onnx","bytes":9,"sha256":QKV_GRAPH});
+    let reference: Reference = serde_json::from_value(json!({"graph":graph,"weights":raw,
+        "input_digest":digest,"source_inputs":raw,"matching_fp16":[],"original_fp32":[]}))?;
+    let manifest = ResourceFilePin {path:"D:/qkv/stage.json".into(),sha256:QKV_STAGE.parse()?};
+    let mut descriptor = json!({"original_graph":graph,"graph":candidate,"weights":raw});
+    let stage: ProtectedStage = serde_json::from_value(descriptor.clone())?;
+    assert_eq!(stage.checked_graph(&reference,&manifest)?.sha256, QKV_GRAPH.parse()?);
+    descriptor["weights"]["path"] = json!("D:/qkv/weights.bin");
+    let relocated: ProtectedStage = serde_json::from_value(descriptor)?;
+    assert!(relocated.checked_graph(&reference,&manifest).is_err());
+    Ok(())
+}
+
+const QKV_STAGE: &str = "0ae64faa17aecc33642c3245b3bf55b6f44a961de50128114ecf5ad8442e295c";
+const QKV_REFERENCE: &str = "bc91621b62faeec0963caec75321c34b76e36f4bd66bbb7df6746d2872ab6191";
+pub(super) const QKV_GRAPH: &str = "1448e83dcd209b120bd22e1dec084092f56adc7e8eec5dcd323e179b800467aa";
+
+#[derive(Deserialize, PartialEq)]
 struct ReferenceFile {
     path: String,
     bytes: u64,
@@ -86,8 +127,11 @@ pub(super) fn t32_references(
         "AIRK_CUDA_FP16_INDEPENDENT_PROOF",
         "AIRK_CUDA_FP16_INDEPENDENT_PROOF_SHA256",
     )?;
+    let protected_graph = QKV_GRAPH.parse()?;
+    let protected = profile.device_execution.as_ref().is_some_and(|d| d.graph == protected_graph);
+    let matching_digest = if protected { QKV_REFERENCE } else { REFERENCE };
     ensure!(
-        proof.sha256 == REFERENCE.parse()?
+        proof.sha256 == matching_digest.parse()?
             && profile.model == ModelChoice::ContextQwenLarge
             && profile
                 .device_execution
@@ -99,6 +143,8 @@ pub(super) fn t32_references(
         "Large T32 requires the exact independent reference and unqualified FP16 descriptor"
     );
     let reference: Reference = serde_json::from_slice(&pinned(&proof, 1 << 20)?)?;
+    let graph_digest = if protected { QKV_GRAPH } else { GRAPH };
+    ensure!(reference.graph.sha256 == graph_digest.parse()?, "Large matching reference graph differs");
     for (key, artifact) in [
         ("model.onnx", &reference.graph),
         ("weights.bin", &reference.weights),
@@ -129,7 +175,8 @@ pub(super) fn t32_references(
         "Large independent reference is paired to a different input or original vector"
     );
     row.reference_same_artifact = Some(reference.matching_fp16);
-    let provenance = json!({"reference_basis":"independent_large_baseline_half", "independent_proof":proof, "reference_inputs":inputs});
+    let basis = if protected { "independent_large_qkv_fp32_sm86_causal_flash" } else { "independent_large_baseline_half" };
+    let provenance = json!({"reference_basis":basis, "independent_proof":proof, "reference_inputs":inputs});
     Ok(super::bounded_hybrid::ProfileReferences {
         rows: vec![row],
         provenance,
@@ -140,6 +187,16 @@ pub(super) fn t32_references(
 #[test]
 #[ignore = "owned Windows metadata for the independently attested Large FP16 baseline"]
 fn emit_cuda_large_fp16_probe_metadata() -> Result<()> {
+    emit_large_metadata(false)
+}
+
+#[test]
+#[ignore = "owned metadata for the independent Large FP32 Q/K/V intervention"]
+fn emit_cuda_large_qkv_fp32_probe_metadata() -> Result<()> {
+    emit_large_metadata(true)
+}
+
+fn emit_large_metadata(protected: bool) -> Result<()> {
     let started = Instant::now();
     let user = airk_ipc::endpoint::current_user()?;
     ensure!(
@@ -165,7 +222,13 @@ fn emit_cuda_large_fp16_probe_metadata() -> Result<()> {
         anyhow::bail!("Large CPU prepare input required");
     };
     let deadline = started + Duration::from_millis(bounds.deadline_ms);
-    let job = job_limits(bounds.host_limit_bytes, job_limit_bytes)?;
+    let job = if protected {
+        ensure!(bounds.host_limit_bytes == 48 << 30 && job_limit_bytes == 48 << 30,
+                "protected metadata requires the original Large host reservation");
+        job_limits(16 << 30, 16 << 30)?
+    } else {
+        job_limits(bounds.host_limit_bytes, job_limit_bytes)?
+    };
     let (mut input, cpu, cpu_files, _) = inputs_from(&cpu_input)?;
     let capacity = profile_probe_bounds(
         &bounds,
@@ -206,7 +269,25 @@ fn emit_cuda_large_fp16_probe_metadata() -> Result<()> {
         proof.sha256 == REFERENCE.parse()?,
         "Large independent reference differs"
     );
-    let reference: Reference = serde_json::from_slice(&pinned(&proof, 1 << 20)?)?;
+    let mut reference: Reference = serde_json::from_slice(&pinned(&proof, 1 << 20)?)?;
+    ensure!(
+        reference.graph.sha256 == GRAPH.parse()?
+            && Path::new(&reference.graph.path).parent() == Path::new(&reference.weights.path).parent(),
+        "Large baseline graph or original weights location differs"
+    );
+    let mut probe_runtime = runtime_manifest.clone();
+    let stage_pin = if protected {
+        let pin = env_pin("AIRK_LARGE_QKV_STAGE", "AIRK_LARGE_QKV_STAGE_SHA256")?;
+        ensure!(pin.sha256 == QKV_STAGE.parse()?, "Large Q/K/V stage differs");
+        let stage: ProtectedStage = serde_json::from_slice(&pinned(&pin, 1 << 20)?)?;
+        reference.graph = stage.checked_graph(&reference, &pin)?;
+        let (_, installed) = airk_host::gpu_runtime::installed_paths()?;
+        probe_runtime.path = installed.to_str().context("installed runtime path encoding")?.into();
+        ensure!(pinned(&probe_runtime, 128 << 10)? == runtime, "installed runtime differs");
+        Some(pin)
+    } else {
+        None
+    };
     verify_files(&cpu_files, &cpu)?;
     ensure!(
         Instant::now() < deadline,
@@ -216,12 +297,6 @@ fn emit_cuda_large_fp16_probe_metadata() -> Result<()> {
     let weights = reference
         .weights
         .asset("weights.bin", AssetRole::ExternalWeights)?;
-    ensure!(
-        graph.sha256 == GRAPH.parse()?
-            && Path::new(&reference.graph.path).parent()
-                == Path::new(&reference.weights.path).parent(),
-        "Large candidate location or graph differs"
-    );
     for asset in &cpu.assets {
         if matches!(asset.role, AssetRole::Model | AssetRole::ExternalWeights) {
             input.files.remove(&asset.name);
@@ -270,13 +345,14 @@ fn emit_cuda_large_fp16_probe_metadata() -> Result<()> {
         "absolute Large metadata output required"
     );
     std::fs::create_dir(&directory)?;
-    input.source_manifest = write_json(
-        &directory.join("source-manifest.json"),
-        &json!({
-            "schema":"airk.private.large-fp16-source/1","parent_source":input.source_manifest,"parent_input":cpu_input,
-            "parent_profile":cpu.manifest,"original_graph":original,"independent_proof":proof,"attention_plan":prepared.attention_plan,"assets":prepared.profile.assets
-        }),
-    )?;
+    let mut source_manifest = json!({
+        "schema":"airk.private.large-fp16-source/1","parent_source":input.source_manifest,"parent_input":cpu_input,
+        "parent_profile":cpu.manifest,"original_graph":original,"independent_proof":proof,"attention_plan":prepared.attention_plan,"assets":prepared.profile.assets
+    });
+    if let Some(pin) = &stage_pin {
+        source_manifest["protected_graph_stage"] = json!(pin);
+    }
+    input.source_manifest = write_json(&directory.join("source-manifest.json"), &source_manifest)?;
     let calibration = write_new(
         &directory.join(&prepared.calibration_name),
         &prepared.calibration_bytes,
@@ -293,7 +369,7 @@ fn emit_cuda_large_fp16_probe_metadata() -> Result<()> {
         &Request::Probe {
             schema,
             gpu_input: native_input.clone(),
-            runtime_manifest: runtime_manifest.clone(),
+            runtime_manifest: probe_runtime.clone(),
             bounds,
             cold_bytes,
             warm_bytes,
@@ -312,10 +388,17 @@ fn emit_cuda_large_fp16_probe_metadata() -> Result<()> {
             "independent_proof":proof,"reference_input_digest":reference.input_digest,"source_manifest":input.source_manifest,
             "profile":prepared.profile.manifest,"profile_pin":input.profile,"calibration":calibration,"native_input":native_input,"probe_request":probe,
             "graph":reference.graph.sha256,"weights":reference.weights.sha256,"actual_job":job,"execution_user":user,"pid":std::process::id(),
-            "native_binary_sha256":file_hash(&std::env::current_exe()?)?,"model_requests_dispatched":false,"qualified":false
+            "native_binary_sha256":file_hash(&std::env::current_exe()?)?,"model_requests_dispatched":false,"qualified":false,
+            "protected_graph_stage":stage_pin,"probe_runtime_manifest":probe_runtime
         }),
     )?;
     Ok(())
+}
+
+#[test]
+#[ignore = "owned Windows Large protected-Q/K/V graph and optimizer placement"]
+fn cuda_large_qkv_fp32_load_only_graph_diagnostic() -> Result<()> {
+    observe_cuda_graph_with_options(ModelChoice::ContextQwenLarge, DevicePrecision::Float16, true)
 }
 
 #[test]

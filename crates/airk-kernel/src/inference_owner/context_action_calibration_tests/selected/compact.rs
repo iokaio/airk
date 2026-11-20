@@ -2,9 +2,8 @@
 //! Private per-artifact CAL fit; the full selected two-model gate is separate.
 use super::*;
 
-const ORIGINAL_PROFILE: &str = "13085b0cbb6ed15bb4d6fb0318aad59b60e9c0d9c9ddb3e19f5b9f14be52f620";
-const CUDA_PROFILE: &str = "67cc4ddcd715c20daf9ed7462b03777002ef2c06db59f9069575b1c5d14bc6bc";
-const ORIGINAL_MANIFEST: &str = "6e7520aa29076f0958353a158e9be3390caef48675188e14e53660d035c1068f";
+use airk_retrieval::arbiter::scientific_cal::{self, CompactArtifact};
+const ORIGINAL_MANIFEST: &str = scientific_cal::ORIGINAL.manifest;
 const CORPUS: &str = "c51a9aa5985f2c505a2839d7b426d1614390b35639b89d9aae93681878d6ffe4";
 
 #[derive(Deserialize)]
@@ -167,7 +166,7 @@ fn verify_producer(
     evidence: &Value,
     raw: &Value,
     input: &ScientificInput,
-    cuda: bool,
+    artifact: &CompactArtifact,
 ) -> Result<()> {
     ensure!(
         evidence["schema"] == "airk.private.compact-cal-raw-closure/1"
@@ -196,10 +195,13 @@ fn verify_producer(
             "native scoring Job incomplete"
         );
     }
-    if cuda {
+    ensure!(
+        evidence["origin"] == artifact.origin,
+        "scientific scorer origin differs"
+    );
+    if let Some(basis) = artifact.matching_basis {
         ensure!(
-            evidence["origin"] == "native_compact_qkv_cuda"
-                && evidence["returned_synchronized"] == true,
+            evidence["returned_synchronized"] == true,
             "live candidate CUDA completion required"
         );
         let pin: Pin = serde_json::from_value(evidence["independent_references"].clone())?;
@@ -207,7 +209,10 @@ fn verify_producer(
         ensure!(
             independent["schema"] == "airk.private.compact-cal-independent-references/1"
                 && independent["complete"] == true
-                && independent["candidate_profile_sha256"] == CUDA_PROFILE
+                && independent["candidate_profile_sha256"] == artifact.profile_file
+                && independent["candidate_graph_sha256"] == artifact.graph
+                && independent["candidate_weights_sha256"] == artifact.weights
+                && independent["matching_reference_basis_sha256"] == basis
                 && independent["preflight_sha256"] == json!(input.preflight.sha256),
             "foreign independent references"
         );
@@ -231,11 +236,6 @@ fn verify_producer(
                 );
             }
         }
-    } else {
-        ensure!(
-            evidence["origin"] == "native_original_compact_cpu",
-            "original artifact scorer required"
-        );
     }
     Ok(())
 }
@@ -248,11 +248,6 @@ fn fit_compact_artifact_generic_read_scientific() -> Result<()> {
         std::env::var_os("AIRK_CONTEXT_ACTION_FIT_INPUT").context("missing fit input")?,
     );
     let input: ScientificInput = serde_json::from_slice(&read_pinned(&path, expected)?)?;
-    let cuda = match input.model.profile_sha256.to_string().as_str() {
-        ORIGINAL_PROFILE => false,
-        CUDA_PROFILE => true,
-        _ => anyhow::bail!("unreviewed Compact artifact"),
-    };
     let pre = input.preflight.json()?;
     let profile: Profile = serde_json::from_slice(&read_pinned(
         &input.model.profile,
@@ -267,7 +262,8 @@ fn fit_compact_artifact_generic_read_scientific() -> Result<()> {
         serde_json::from_slice(&read_pinned(&input.model.raw, input.model.raw_sha256)?)?;
     read_pinned(&input.producer_binary.path, input.producer_binary.sha256)?;
     let master = focus_epoch(&input, &pre)?;
-    verify_producer(&input.scoring_closure.json()?, &raw, &input, cuda)?;
+    let artifact = CompactArtifact::registered(input.model.profile_sha256, &profile)?;
+    verify_producer(&input.scoring_closure.json()?, &raw, &input, artifact)?;
     ensure!(
         pre["qualified_profiles"] == json!([])
             && pre["corpus_sha256"] == CORPUS

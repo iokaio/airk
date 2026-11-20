@@ -271,6 +271,34 @@ fn private_json_duplicates_floats_and_unlisted_path_options_refuse() -> Result<(
     assert_eq!(projected[0].name, "CMAKE_CUDA_ARCHITECTURES");
     assert_eq!(projected[0].value, "86;89;120");
 
+    let mut fresh = valid_paths.clone();
+    for name in [
+        "CMAKE_C_COMPILER",
+        "CMAKE_CXX_COMPILER",
+        "CMAKE_CUDA_HOST_COMPILER",
+    ] {
+        fresh.push(json!(format!("-D{name}=C:/Tools/cl.exe")));
+    }
+    let compiler = r"C:\Tools\cl.exe";
+    let observed = product_fresh::public_options(&json!(fresh), compiler)?;
+    assert_eq!(observed.len(), 1);
+    assert_eq!(observed[0].name, "CMAKE_CUDA_ARCHITECTURES");
+    assert!(product_fresh::public_options(&json!(fresh), r"C:\Other\cl.exe").is_err());
+    let mut one_foreign = fresh.clone();
+    *one_foreign
+        .last_mut()
+        .context("missing compiler option in test")? =
+        json!("-DCMAKE_CUDA_HOST_COMPILER=C:/Other/cl.exe");
+    assert!(product_fresh::public_options(&json!(one_foreign), compiler).is_err());
+    let mut one_missing = fresh.clone();
+    one_missing.pop();
+    assert!(product_fresh::public_options(&json!(one_missing), compiler).is_err());
+    let mut unlisted = fresh.clone();
+    unlisted.push(json!("-DFOREIGN=C:/Tools/cl.exe"));
+    assert!(product_fresh::public_options(&json!(unlisted), compiler).is_err());
+    fresh.push(json!("-DCMAKE_C_COMPILER=C:/Tools/cl.exe"));
+    assert!(product_fresh::public_options(&json!(fresh), compiler).is_err());
+    assert!(product_fresh::public_options(&json!(valid_paths), compiler).is_err());
     valid_paths.push(json!("-DUNKNOWN=C:/Users/private"));
     let error = options(&Value::Array(valid_paths))
         .err()

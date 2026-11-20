@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Bounded final graph observations from the owning static core; never a policy permit.
+pub(super) mod bounded_execution;
+pub(in crate::arbiter::runtime) mod cpu_values;
 use super::*;
 use serde_json::Value;
 const MAX_JSON: usize = 8 << 20;
@@ -223,7 +225,13 @@ impl Observation {
             .collect()
     }
 }
-#[cfg(any(test, all(windows, target_arch = "x86_64")))]
+#[cfg(any(
+    test,
+    all(
+        target_arch = "x86_64",
+        any(windows, all(target_os = "linux", target_env = "gnu"))
+    )
+))]
 #[repr(C)]
 pub(super) struct Raw {
     kind: u32,
@@ -237,7 +245,10 @@ pub(super) struct Raw {
     text: [*const u8; 4],
     text_bytes: [usize; 4],
 }
-#[cfg(all(windows, target_arch = "x86_64"))]
+#[cfg(all(
+    target_arch = "x86_64",
+    any(windows, all(target_os = "linux", target_env = "gnu"))
+))]
 pub(super) type Collector = unsafe extern "C" fn(
     *const std::ffi::c_void,
     *const std::ffi::c_void,
@@ -697,7 +708,13 @@ impl Sink {
         value
     }
 }
-#[cfg(any(test, all(windows, target_arch = "x86_64")))]
+#[cfg(any(
+    test,
+    all(
+        target_arch = "x86_64",
+        any(windows, all(target_os = "linux", target_env = "gnu"))
+    )
+))]
 unsafe fn decode(raw: &Raw) -> Result<Row> {
     let mut strings = Vec::with_capacity(4);
     for i in 0..4 {
@@ -833,7 +850,10 @@ unsafe fn decode(raw: &Raw) -> Result<Row> {
         _ => anyhow::bail!("unknown metadata record kind"),
     })
 }
-#[cfg(all(windows, target_arch = "x86_64"))]
+#[cfg(all(
+    target_arch = "x86_64",
+    any(windows, all(target_os = "linux", target_env = "gnu"))
+))]
 unsafe extern "C" fn callback(user: *mut std::ffi::c_void, raw: *const Raw) -> i32 {
     if user.is_null() || raw.is_null() {
         return 1;
@@ -873,7 +893,10 @@ unsafe extern "C" fn callback(user: *mut std::ffi::c_void, raw: *const Raw) -> i
         }
     }
 }
-#[cfg(all(windows, target_arch = "x86_64"))]
+#[cfg(all(
+    target_arch = "x86_64",
+    any(windows, all(target_os = "linux", target_env = "gnu"))
+))]
 pub(super) unsafe fn observe(
     collect: Collector,
     session: &ort::session::Session,

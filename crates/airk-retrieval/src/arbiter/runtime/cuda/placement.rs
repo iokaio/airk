@@ -1,11 +1,29 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Final SessionState graph placement from the same-core owning C API extension.
 use super::*;
-#[cfg(any(test, all(windows, target_arch = "x86_64")))]
+#[cfg(any(
+    test,
+    all(
+        target_arch = "x86_64",
+        any(windows, all(target_os = "linux", target_env = "gnu"))
+    )
+))]
 use std::ffi::c_void;
-#[cfg(any(test, all(windows, target_arch = "x86_64")))]
+#[cfg(any(
+    test,
+    all(
+        target_arch = "x86_64",
+        any(windows, all(target_os = "linux", target_env = "gnu"))
+    )
+))]
 const MAX_NODES: u64 = 65536;
-#[cfg(any(test, all(windows, target_arch = "x86_64")))]
+#[cfg(any(
+    test,
+    all(
+        target_arch = "x86_64",
+        any(windows, all(target_os = "linux", target_env = "gnu"))
+    )
+))]
 const MAX_BYTES: u64 = 16 << 20;
 #[derive(Clone, Debug, Serialize)]
 pub struct PlacedNode {
@@ -36,13 +54,25 @@ impl PlacementObservation {
         Ok(())
     }
 }
-#[cfg(any(test, all(windows, target_arch = "x86_64")))]
+#[cfg(any(
+    test,
+    all(
+        target_arch = "x86_64",
+        any(windows, all(target_os = "linux", target_env = "gnu"))
+    )
+))]
 struct Sink {
     nodes: Vec<PlacedNode>,
     bytes: u64,
     failed: bool,
 }
-#[cfg(any(test, all(windows, target_arch = "x86_64")))]
+#[cfg(any(
+    test,
+    all(
+        target_arch = "x86_64",
+        any(windows, all(target_os = "linux", target_env = "gnu"))
+    )
+))]
 unsafe fn text(pointer: *const u8, len: usize) -> Result<String> {
     ensure!(
         len <= 4096 && (len == 0 || !pointer.is_null()),
@@ -54,7 +84,10 @@ unsafe fn text(pointer: *const u8, len: usize) -> Result<String> {
     // SAFETY: admitted native shim owns each borrowed string through callback.
     Ok(std::str::from_utf8(unsafe { std::slice::from_raw_parts(pointer, len) })?.to_owned())
 }
-#[cfg(all(windows, target_arch = "x86_64"))]
+#[cfg(all(
+    target_arch = "x86_64",
+    any(windows, all(target_os = "linux", target_env = "gnu"))
+))]
 type Callback = unsafe extern "C" fn(
     *mut c_void,
     u64,
@@ -67,7 +100,10 @@ type Callback = unsafe extern "C" fn(
     *const u8,
     usize,
 ) -> i32;
-#[cfg(all(windows, target_arch = "x86_64"))]
+#[cfg(all(
+    target_arch = "x86_64",
+    any(windows, all(target_os = "linux", target_env = "gnu"))
+))]
 pub(super) type Collector = unsafe extern "C" fn(
     *const c_void,
     *const c_void,
@@ -79,7 +115,13 @@ pub(super) type Collector = unsafe extern "C" fn(
     *mut u64,
     *mut i32,
 ) -> i32;
-#[cfg(any(test, all(windows, target_arch = "x86_64")))]
+#[cfg(any(
+    test,
+    all(
+        target_arch = "x86_64",
+        any(windows, all(target_os = "linux", target_env = "gnu"))
+    )
+))]
 unsafe extern "C" fn collect_row(
     user: *mut c_void,
     index: u64,
@@ -134,7 +176,10 @@ unsafe extern "C" fn collect_row(
         1
     }
 }
-#[cfg(all(windows, target_arch = "x86_64"))]
+#[cfg(all(
+    target_arch = "x86_64",
+    any(windows, all(target_os = "linux", target_env = "gnu"))
+))]
 pub(super) unsafe fn observe(
     collect: Collector,
     session: &ort::session::Session,

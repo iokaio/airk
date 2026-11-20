@@ -815,3 +815,39 @@ token axes and preserves the complete reviewed operator placement. It accepts
 only the sealed all-live T1024 input and uses the isolated policy domain
 `airk.private.compact-fp32-qkv-cuda-layer0-t1024/1`. The transfer owner
 allocates the exact T1024 shapes and requires the existing settlement checks.
+
+## Measured Context graph execution identity
+
+The Windows x86-64 Compact and Large FP16 release route accepts a bounded-hybrid
+placement only when the authenticated release profile and the product CUDA
+runtime descriptor have a matching qualified variant. Cold and warm device
+reservations, host fit, actual adapter admission, the acceptance fixture,
+service GPU policy and the original dispatch deadline all continue to apply.
+
+The versioned provider policy identifies either the ordinary ORT Level3
+optimizer or the protected projection options. The latter caps constant folding
+at 1 MiB, disables cast-chain elimination and disables
+`FuseFp16InitializerToFp32NodeTransformer`. Both require the native FP16 math
+environment and FlashAttention. Before allowing a forward, the scorer reads
+the static-core final SessionState placement and full graph metadata from its
+own live session. The recognized GQA roster must execute on CUDA. Windows
+Compact and Large each admit only scalar or fixed-length control tensors
+at CPU nodes, at most four elements and 32 bytes per tensor. Their respective
+measured aggregate bounds are 9,443 and 12,067 bytes.
+
+`airk.native.cuda.bounded-context-execution/1` binds the OS/architecture,
+logical model, consumed graph and external weight asset descriptions, static
+runtime build, compatibility policy, host CPU fit, effective optimizer and
+math policy, typed native graph counters and complete graph/placement rows.
+The row-multiset encoding hashes each canonical UTF-8 JSON row with SHA-256,
+sorts the row hashes lexicographically including duplicates, and frames each
+hash through AIRK's versioned digest owner. The release manifest carries the
+result in the existing `PlacementPolicy::BoundedHybrid` field. The native
+policy owner is [bounded_execution.rs](graph_metadata/bounded_execution.rs).
+
+Linux x86-64 GNU uses its own target scope, loader bytes, actual optimizer
+and native ELF observations when deriving this identity. Each target needs
+its own acceptance evidence and product runtime descriptor. The current
+CPU release catalog and retained historical scientific images keep their
+original evidence. New source epochs require fresh numerical, task and
+resource qualification before any release row can be admitted.

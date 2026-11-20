@@ -3,6 +3,7 @@ use super::*;
 #[cfg(any(test, feature = "test-support", all(windows, target_arch = "x86_64")))]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg(any(test, not(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))))]
 pub(super) struct RuntimeFile {
     pub name: String,
     pub bytes: u64,
@@ -27,6 +28,7 @@ pub(super) struct VariantFit {
 #[cfg(any(test, feature = "test-support", all(windows, target_arch = "x86_64")))]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg(any(test, not(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))))]
 pub(super) struct RuntimeManifest {
     pub schema: String,
     pub ort_version: String,
@@ -40,6 +42,7 @@ pub(super) struct RuntimeManifest {
     pub fits: Vec<VariantFit>,
 }
 #[cfg(any(test, feature = "test-support", all(windows, target_arch = "x86_64")))]
+#[cfg(any(test, not(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))))]
 fn name(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
@@ -50,6 +53,7 @@ fn name(value: &str) -> bool {
         && !value.contains("..")
 }
 #[cfg(any(test, feature = "test-support", all(windows, target_arch = "x86_64")))]
+#[cfg(any(test, not(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))))]
 fn validate_payload(
     files: &[RuntimeFile],
     load_order: &[String],
@@ -110,6 +114,7 @@ fn validate_payload(
 }
 
 #[cfg(any(test, feature = "test-support", all(windows, target_arch = "x86_64")))]
+#[cfg(any(test, not(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))))]
 impl RuntimeManifest {
     #[cfg(any(test, feature = "test-support", all(windows, target_arch = "x86_64")))]
     pub fn validate(&self) -> Result<()> {
@@ -178,6 +183,7 @@ impl RuntimeManifest {
         Ok((value, digest))
     }
 }
+#[cfg(any(test, not(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))))]
 pub fn compatibility_policy_digest() -> Sha256Digest {
     airk_core::identity::framed_digest(b"airk.native.cuda.compatibility/1",&[b"windows-x64;ort1.30;single-static-core;api22;cuda-driver-primary-context;sm=86;driver-api>=12080"])
 }
@@ -215,6 +221,7 @@ impl VariantRequirement {
         product_compatibility_policy(*class).map(|_| *class)
     }
 
+    #[cfg(any(test, not(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))))]
     pub fn compatibility_policy_digest(&self) -> Result<Sha256Digest> {
         let [major, minor] = self
             .compute_class()
@@ -342,12 +349,14 @@ impl ProductRuntimeManifest {
 // Unsupported production targets cannot construct a native runtime descriptor.
 // Keep its read type for shared eligibility APIs without inventing runtime values.
 #[derive(Clone, Debug)]
+#[cfg(any(test, not(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))))]
 pub(super) enum RuntimeDescriptor {
     #[cfg(any(test, all(windows, target_arch = "x86_64")))]
     Scientific(RuntimeManifest),
     #[cfg(any(test, all(windows, target_arch = "x86_64")))]
     Product(ProductRuntimeManifest),
 }
+#[cfg(any(test, not(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))))]
 impl RuntimeDescriptor {
     #[cfg(any(test, all(windows, target_arch = "x86_64")))]
     pub fn parse(raw: &[u8]) -> Result<Self> {
@@ -367,6 +376,7 @@ impl RuntimeDescriptor {
             _ => anyhow::bail!("unknown CUDA runtime descriptor schema"),
         }
     }
+    #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu")))]
     pub fn build(&self) -> Sha256Digest {
         #[cfg(not(any(test, all(windows, target_arch = "x86_64"))))]
         {
@@ -435,6 +445,7 @@ impl RuntimeDescriptor {
             }
         }
     }
+    #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu")))]
     pub fn requirement(&self, profile: &Profile) -> Result<&VariantRequirement> {
         #[cfg(not(any(test, all(windows, target_arch = "x86_64"))))]
         {
@@ -500,6 +511,7 @@ fn product_compatibility_policy(class: [u32; 2]) -> Option<&'static [u8]> {
     }
 }
 
+#[cfg(any(test, not(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))))]
 pub(super) fn product_compatibility_policy_digest_for(
     major: i32,
     minor: i32,
@@ -512,6 +524,12 @@ pub(super) fn product_compatibility_policy_digest_for(
     ))
 }
 
+#[cfg(any(test, not(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))))]
 pub fn product_compatibility_policy_digest() -> Sha256Digest {
     airk_core::identity::framed_digest(b"airk.native.cuda.compatibility/2", &[PRODUCT_SM86_POLICY])
 }
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+pub(super) mod linux;
+#[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+pub(super) use linux::Descriptor as NativeRuntimeDescriptor;
