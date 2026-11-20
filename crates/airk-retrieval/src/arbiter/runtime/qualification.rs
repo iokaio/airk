@@ -259,7 +259,10 @@ pub fn prepare_with_limits(
     policy: &ResourcePolicy,
     output: &Path,
 ) -> Result<PreparedProfile> {
-    policy.validate()?;
+    ensure!(
+        policy == &ResourcePolicy::software_v2(),
+        "original regeneration requires the static512 software-v2 policy"
+    );
     prepare_declared(input, output, Some(policy))
 }
 
@@ -278,12 +281,21 @@ fn compiler_with_limits(bytes: &[u8], focus: bool, policy: &ResourcePolicy) -> R
     );
     if focus {
         ensure!(
-            profile.max_tokens == policy.focus_pair_input_tokens,
-            "Focus resource policy cannot widen its static graph"
+            profile.max_tokens == 512,
+            "original Focus compiler must be static512"
         );
-        return Ok(bytes.to_vec());
+        if policy.focus_pair_input_tokens == 512 {
+            return Ok(bytes.to_vec());
+        }
+        ensure!(
+            sha(bytes).to_string()
+                == "2cba18a75ae105352ed9fdc94cb88812364710fcbaa6e2191a3addc524b86133",
+            "static1024 requires the authenticated original Qwen Focus compiler"
+        );
+        profile.max_tokens = policy.focus_pair_input_tokens;
+    } else {
+        profile.max_tokens = policy.context_input_tokens;
     }
-    profile.max_tokens = policy.context_input_tokens;
     profile.validate()?;
     let mut bytes = serde_json::to_vec_pretty(&profile)?;
     bytes.push(b'\n');
@@ -537,6 +549,9 @@ mod tests;
 
 #[cfg(test)]
 mod resource_tests;
+
+#[cfg(test)]
+mod focus_static1024;
 
 #[cfg(test)]
 mod regeneration;

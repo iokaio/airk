@@ -6,6 +6,16 @@ lengths and SHA256 values with bounded streaming reads. It emits the actual
 Rust compiler asset, calibration/relevance metadata, experimental descriptor
 and `asset-files.private.json` overlay; weights are not copied or relabeled.
 
+The static1024 Focus compiler experiment uses the authenticated original 512
+compiler and selected tokenizer under Core resource-policy/3. The ignored
+`emit_exact_native_focus_static1024_compiler` check generates the compiler
+and policy in a fresh checked directory under `artifacts/`. Set
+`AIRK_FOCUS1024_ORIGINAL_ASSETS` and `AIRK_FOCUS1024_COMPILER_OUTPUT` to
+absolute private paths. The receipt records both compiler identities and
+requires the unchanged compiler owner to accept the new bytes. It covers
+compiler construction only; the separate graph, numerical and service runs
+supply their own evidence.
+
 Only the selected Focus, ContextCompact and ContextLarge identities qualify
 for this constructor. The caller explicitly supplies an approved `CpuFit` and
 experiment memory/disk reservations. Focus uses the recorded CPU4 baseline.

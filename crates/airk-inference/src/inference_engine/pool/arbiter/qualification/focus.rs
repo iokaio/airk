@@ -51,7 +51,28 @@ impl AssetSource for FocusFiles {
 
 type LoadedInputs = (FocusInput, Profile, Vec<u8>, Vec<u8>, Value);
 
-fn inputs() -> Result<LoadedInputs> {
+#[derive(Clone, Copy)]
+struct Width {
+    tokens: usize,
+    rows: usize,
+    resource_id: &'static str,
+    minimum_occupied: i64,
+}
+
+const STATIC512: Width = Width {
+    tokens: 512,
+    rows: 12,
+    resource_id: "long-maintenance-synthetic",
+    minimum_occupied: 480,
+};
+const STATIC1024: Width = Width {
+    tokens: 1024,
+    rows: 14,
+    resource_id: "synthetic-1024",
+    minimum_occupied: 1024,
+};
+
+fn inputs(width: Width) -> Result<LoadedInputs> {
     let input_bytes = std::fs::read(
         std::env::var_os("AIRK_FOCUS_QUALIFICATION_INPUT")
             .context("missing Focus profile inputs")?,
@@ -82,7 +103,7 @@ fn inputs() -> Result<LoadedInputs> {
             && profile.tasks == std::collections::BTreeSet::from([Task::FocusRank])
             && profile.task_policies.get(&Task::FocusRank) == Some(&focus::policy_digest()?)
             && profile.abi.readout == Readout::FocusYesNo
-            && profile.max_tokens == 512
+            && profile.max_tokens == width.tokens
             && profile.max_candidates == 4
             && profile.qualification.is_none()
             && profile.qualified_targets.is_empty()
@@ -112,9 +133,21 @@ fn inputs() -> Result<LoadedInputs> {
     ensure!(
         fixture["rows"]
             .as_array()
-            .is_some_and(|rows| rows.len() == 12),
-        "complete twelve publisher512 controls required"
+            .is_some_and(|rows| rows.len() == width.rows),
+        "complete publisher control roster required"
     );
+    if width.tokens == STATIC1024.tokens {
+        ensure!(
+            fixture["schema"] == "airk.private-independent-focus-publisher1024-fixture/1"
+                && fixture["input_pins"]["width"] == 1024
+                && profile
+                    .assets
+                    .iter()
+                    .any(|asset| asset.role == AssetRole::Model
+                        && fixture["input_pins"]["graph"] == asset.sha256.to_string()),
+            "static1024 fixture requires its exact candidate graph"
+        );
+    }
     Ok((input, profile, bytes, fixture_bytes, fixture))
 }
 fn verify_assets(source: &FocusFiles, profile: &Profile) -> Result<()> {
@@ -180,7 +213,7 @@ fn same_compiler_view(input: &CompiledInput, row: &Value) -> Result<()> {
     ] {
         ensure!(
             observed[field] == row["expected"][field],
-            "native Focus differs from independent publisher512 field: {field}"
+            "native Focus differs from independent publisher field: {field}"
         );
     }
     Ok(())
@@ -212,7 +245,17 @@ fn raw_error(actual: &[f32], expected: &[f32]) -> Result<(f64, f64, bool)> {
 #[test]
 #[ignore = "explicit actual selected Focus assets, native CPU4 scope and publisher512 fixture required"]
 fn focus_native_weight8_static512_matches_publisher_and_compiled_model_views() -> Result<()> {
-    let (input, profile, profile_bytes, fixture_bytes, fixture) = inputs()?;
+    parity(STATIC512)
+}
+
+#[test]
+#[ignore = "explicit isolated Focus1024 graph and publisher controls required"]
+fn focus_native_weight8_static1024_matches_publisher_and_compiled_model_views() -> Result<()> {
+    parity(STATIC1024)
+}
+
+fn parity(width: Width) -> Result<()> {
+    let (input, profile, profile_bytes, fixture_bytes, fixture) = inputs(width)?;
     let output = PathBuf::from(
         std::env::var_os("AIRK_FOCUS_NATIVE_PARITY_OUTPUT")
             .context("missing fresh native parity output")?,
@@ -225,7 +268,7 @@ fn focus_native_weight8_static512_matches_publisher_and_compiled_model_views() -
     owner.run(|| -> Result<()> {
         verify_assets(&source, &profile)?;
         let fixture_hash = Sha256Digest::from_bytes(Sha256::digest(&fixture_bytes).into());
-        let mut receipt = json!({"schema":"airk.private-focus-native-parity/1","complete":false,"evaluation":true,"release_qualified":false,"profile":profile.manifest,"profile_source_sha256":format!("{:x}",Sha256::digest(&profile_bytes)),"fixture_sha256":fixture_hash,"runtime":profile.runtime,"policy":focus::policy_digest()?,"rows":[],"scope":"Actual native CPU4 ORT numerical parity; ten native compiled model-view pairs and two explicitly raw publisher diagnostic pairs, no indexed authority/quality/composed-path qualification"});
+        let mut receipt = json!({"schema":"airk.private-focus-native-parity/1","complete":false,"evaluation":true,"release_qualified":false,"profile":profile.manifest,"profile_source_sha256":format!("{:x}",Sha256::digest(&profile_bytes)),"fixture_sha256":fixture_hash,"runtime":profile.runtime,"policy":focus::policy_digest()?,"rows":[],"scope":"Actual native CPU4 ORT numerical parity; native compiled model-view pairs and two explicitly raw publisher diagnostic pairs, no indexed authority/quality/composed-path qualification"});
         let run = (|| -> Result<()> {
             let started = Instant::now();
             let scorer = Scorer::open(ExecutionProfile::for_qualification(profile.clone())?, &source)?;
@@ -242,8 +285,12 @@ fn focus_native_weight8_static512_matches_publisher_and_compiled_model_views() -
                     same_compiler_view(&actual, row)?;
                     actual
                 } else { diagnostic_input(row, fixture_hash)? };
-                let publisher: Vec<f32> = serde_json::from_value(row["official_logits"][0].clone())?;
-                let python: Vec<f32> = serde_json::from_value(row["python_weight8_logits"][0].clone())?;
+                let pair = |field: &str| -> Result<Vec<f32>> {
+                    let value = if width.tokens == STATIC512.tokens { &row[field][0] } else { &row[field] };
+                    Ok(serde_json::from_value(value.clone())?)
+                };
+                let publisher = pair("official_logits")?;
+                let python = pair("python_weight8_logits")?;
                 let started = Instant::now();
                 let actual = scorer.score(&compiled)?;
                 let elapsed = started.elapsed().as_micros();
@@ -252,7 +299,7 @@ fn focus_native_weight8_static512_matches_publisher_and_compiled_model_views() -
                 receipt["rows"].as_array_mut().unwrap().push(json!({"id":row["id"],"native_model_view":native,"input":compiled,"raw_scores":actual,"publisher_scores":publisher,"python_weight8_scores":python,"publisher_raw_error":raw,"publisher_relevance_error":score,"publisher_argmax_matches":argmax,"runtime_raw_error":runtime_raw,"runtime_relevance_error":runtime_score,"runtime_argmax_matches":runtime_argmax,"inference_us":elapsed}));
                 ensure!(raw <= 0.25 && score <= 0.05 && argmax && runtime_raw <= 0.001 && runtime_score <= 0.00001 && runtime_argmax, "frozen actual native Focus numerical tolerance exceeded");
             }
-            ensure!(native_count == 10, "complete ten native model-view cases required");
+            ensure!(native_count == width.rows - 2, "complete native model-view roster required");
             drop(scorer);
             verify_assets(&source, &profile)?;
             Ok(())
@@ -268,7 +315,17 @@ fn focus_native_weight8_static512_matches_publisher_and_compiled_model_views() -
 #[test]
 #[ignore = "explicit isolated CPU4 Focus maximum-input twenty-sample native resource campaign"]
 fn focus_native_cpu4_tier_records_maximum512_pair_resources() -> Result<()> {
-    let (input, profile, profile_bytes, fixture_bytes, fixture) = inputs()?;
+    resource(STATIC512)
+}
+
+#[test]
+#[ignore = "explicit isolated CPU4 Focus1024 maximum-input twenty-sample resource campaign"]
+fn focus_native_cpu4_tier_records_maximum1024_pair_resources() -> Result<()> {
+    resource(STATIC1024)
+}
+
+fn resource(width: Width) -> Result<()> {
+    let (input, profile, profile_bytes, fixture_bytes, fixture) = inputs(width)?;
     let output = PathBuf::from(
         std::env::var_os("AIRK_FOCUS_NATIVE_RESOURCE_OUTPUT")
             .context("missing fresh resource output")?,
@@ -281,14 +338,14 @@ fn focus_native_cpu4_tier_records_maximum512_pair_resources() -> Result<()> {
     ))?;
     owner.run(|| -> Result<()> {
         verify_assets(&source, &profile)?;
-        let row = fixture["rows"].as_array().context("missing resource source")?.iter().find(|row| row["id"] == "long-maintenance-synthetic").context("missing frozen near-cap source")?;
+        let row = fixture["rows"].as_array().context("missing resource source")?.iter().find(|row| row["id"] == width.resource_id).context("missing frozen near-cap source")?;
         let (question, option) = original_pair(row)?;
         let started = Instant::now();
         let scorer = Scorer::open(ExecutionProfile::for_qualification(profile.clone())?, &source)?;
         let load_us = started.elapsed().as_micros();
         let compiled = scorer.compile("", &question, &[option])?;
         same_compiler_view(&compiled, row)?;
-        ensure!(compiled.input_ids.len() == 512 && compiled.attention_mask.iter().sum::<i64>() >= 480 && compiled.candidate_positions == [2152,9693], "full static512 original source workload required");
+        ensure!(compiled.input_ids.len() == width.tokens && compiled.attention_mask.iter().sum::<i64>() >= width.minimum_occupied && compiled.candidate_positions == [2152,9693], "full static original source workload required");
         let warmup = Instant::now();scorer.score(&compiled)?;let warmup_us = warmup.elapsed().as_micros();
         let mut samples = Vec::new();
         for _ in 0..20 { let started = Instant::now();scorer.score(&compiled)?;samples.push(started.elapsed().as_micros()); }
@@ -296,9 +353,105 @@ fn focus_native_cpu4_tier_records_maximum512_pair_resources() -> Result<()> {
         let peak = peak_rss().context("native process lifetime peak unavailable")?;
         let identity = scorer.execution_identity()?;
         drop(scorer);verify_assets(&source, &profile)?;
-        let receipt = json!({"schema":"airk.private-focus-native-resource/1","complete":true,"evaluation":true,"release_qualified":false,"profile":profile.manifest,"profile_source_sha256":format!("{:x}",Sha256::digest(&profile_bytes)),"fixture_sha256":format!("{:x}",Sha256::digest(&fixture_bytes)),"execution_identity":identity,"input":compiled,"load_us":load_us,"warmup_us":warmup_us,"samples_us":samples,"nearest_rank_p95_us":ordered[18],"maximum_us":ordered[19],"peak_process_rss_bytes":peak,"scope":"Actual CPU4 native512 pair and20warm measurements under real native lease; no composed-path admission/latency, cancellation/source authority, end-user RAM floor or publication claim"});
+        let receipt = json!({"schema":"airk.private-focus-native-resource/1","complete":true,"evaluation":true,"release_qualified":false,"profile":profile.manifest,"profile_source_sha256":format!("{:x}",Sha256::digest(&profile_bytes)),"fixture_sha256":format!("{:x}",Sha256::digest(&fixture_bytes)),"execution_identity":identity,"input":compiled,"load_us":load_us,"warmup_us":warmup_us,"samples_us":samples,"nearest_rank_p95_us":ordered[18],"maximum_us":ordered[19],"peak_process_rss_bytes":peak,"scope":"Actual CPU4 native fixed-width pair and20warm measurements under real native lease; no composed-path admission/latency, cancellation/source authority, end-user RAM floor or publication claim"});
         std::fs::write(&output, serde_json::to_vec_pretty(&receipt)?)?;
         Ok(())
     })??;
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires the original pinned DEV_Q002 first Search and unqualified Focus1024 compiler"]
+fn focus_static1024_compiles_original_dev_pair_without_dispatch() -> Result<()> {
+    use airk_retrieval::arbiter::compiler::Compiler;
+    use std::io::Write;
+
+    let (input, profile, _, _, _) = inputs(STATIC1024)?;
+    let answer = std::fs::read(
+        std::env::var_os("AIRK_FOCUS_NATIVE_ORIGINAL_ANSWER").context("missing original Answer")?,
+    )?;
+    let answer_sha = Sha256Digest::from_bytes(Sha256::digest(&answer).into());
+    ensure!(
+        answer_sha.to_string()
+            == "9997a58787a9eed1e845b3d1941c499c63ad105549b0e80e377999cea9dbeaa0",
+        "original Answer identity differs"
+    );
+    let packet: Value = serde_json::from_slice(&answer)?;
+    let body = &packet["structuredContent"];
+    let record = &body["records"][0];
+    let result = &record["canonical_result"];
+    let receipt = &result["focus"]["receipt"];
+    let view = &receipt["presentations"][0];
+    let query = record["arguments"]["query"]
+        .as_str()
+        .context("original query")?;
+    let text = result["hits"][0]["text"].as_str().context("first source")?;
+    let id = view["candidate"].as_str().context("presented candidate")?;
+    ensure!(
+        record["operation"] == "search"
+            && body["question"] == query
+            && query.len() == 1702
+            && view["candidate"] == receipt["original_order"][0]
+            && view["utf8_start"] == 0
+            && view["utf8_end"] == 620
+            && view["source_bytes"] == 620
+            && text.len() == 620,
+        "original untruncated question or source window differs"
+    );
+    let source = FocusFiles(input.files);
+    let bytes = |role| -> Result<Vec<u8>> {
+        let asset = profile
+            .assets
+            .iter()
+            .find(|asset| asset.role == role)
+            .context("missing compiler asset")?;
+        let value = source.read_asset(asset)?;
+        ensure!(
+            Sha256Digest::from_bytes(Sha256::digest(&value).into()) == asset.sha256,
+            "compiler source changed"
+        );
+        Ok(value)
+    };
+    let compiler =
+        Compiler::from_verified(&bytes(AssetRole::Compiler)?, &bytes(AssetRole::Tokenizer)?)?;
+    let pair = compiler.compile(
+        "",
+        query,
+        &[Candidate {
+            id: id.to_owned(),
+            text: text.to_owned(),
+        }],
+    )?;
+    ensure!(
+        pair.input_ids.len() == 1024
+            && pair.attention_mask.len() == 1024
+            && pair.attention_mask[..166].iter().all(|&v| v == 0)
+            && pair.input_ids[..166].iter().all(|&v| v == 151643)
+            && pair.attention_mask[166..].iter().all(|&v| v == 1)
+            && pair.position_ids.iter().copied().eq(0..1024)
+            && pair.decision_position == 1023
+            && pair.candidate_positions == [2152, 9693]
+            && pair.option_mask == [true, true],
+        "native compiler lost original positions, source or padding"
+    );
+    ensure!(
+        format!("{:x}", Sha256::digest(serde_json::to_vec(&pair.input_ids)?))
+            == "c2cfbaa85f91e1eba2f972ef77ebb8f5f0f1b7edbef7ca69c19e85b89e09c8bf",
+        "compiled IDs differ from the independent publisher reference"
+    );
+    let output = PathBuf::from(
+        std::env::var_os("AIRK_FOCUS_NATIVE_COMPILE_OUTPUT").context("missing compile output")?,
+    );
+    let mut file = std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(output)?;
+    serde_json::to_writer_pretty(
+        &mut file,
+        &json!({"schema":"airk.private-focus-original-compile/1","complete":true,
+        "source_answer":answer_sha,"profile":profile.manifest,"compiler":profile.compiler,"compiled":pair,
+        "unpadded_tokens":858,"left_padding":166,"model_invocations":0,"release_qualified":false}),
+    )?;
+    file.flush()?;
     Ok(())
 }

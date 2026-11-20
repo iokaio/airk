@@ -41,12 +41,23 @@ impl ResourcePolicy {
             stop_on_first_overrun: true,
         }
     }
+    /// Selected static1024 Focus candidate under the original shared Answer budget.
+    pub fn focus_static1024() -> Self {
+        Self {
+            schema: "airk.arbiter.resource-policy/3".into(),
+            focus_pair_input_tokens: 1024,
+            ..Self::software_v2()
+        }
+    }
     pub fn validate(&self) -> Result<()> {
+        let selected = matches!(
+            (self.schema.as_str(), self.focus_pair_input_tokens),
+            ("airk.arbiter.resource-policy/2", 512) | ("airk.arbiter.resource-policy/3", 1024)
+        );
         ensure!(
-            self.schema == "airk.arbiter.resource-policy/2"
+            selected
                 && self.shared_input_tokens == 8192
                 && self.context_input_tokens == 8192
-                && self.focus_pair_input_tokens == 512
                 && self.maximum_context_candidates == 8
                 && self.deadline_ms == 120_000
                 && self.p95_limit_us == 120_000_000
@@ -57,14 +68,14 @@ impl ResourcePolicy {
         );
         Ok(())
     }
-    /// Exact Rust field order, compact JSON, no newline; schema and framing are /2.
+    /// Exact Rust field order, compact JSON, no newline; the validated schema selects its framing domain.
     pub fn canonical_bytes(&self) -> Result<Vec<u8>> {
         self.validate()?;
         Ok(serde_json::to_vec(self)?)
     }
     pub fn digest(&self) -> Result<Sha256Digest> {
         Ok(framed_digest(
-            b"airk.arbiter.resource-policy/2",
+            self.schema.as_bytes(),
             &[&self.canonical_bytes()?],
         ))
     }

@@ -12953,3 +12953,36 @@ The complete Git tree inventory passed for all six repository revisions.
 Each recursive tree rebuilt to the pinned root. Two independent controls
 verify order insensitivity and refusal on missing/altered entries.
 [Per-revision counts](../arbiter/software-v2-data-audit.md#repository-wide-source-inventory)
+
+### Native Focus 1,024 profile and scoring
+
+The native issuer emitted the new compiler and profile. Focus manifest
+`94c65d0c598b0b110cd25ddeb1c167ae730430197c0d5e6a59d79ee226c17c64`
+binds compiler `ee22d14302eb862521de1ff3a7dbae003ef5829ae5b5fdf413219022c8c3bf4a`
+to the 1,024-wide graph under resource-policy/3. The original Compact,
+Large, MiniLM and frozen CAL inputs retain their identities. The new launch
+audit is `87731282ecd121eaf08d5074d1bc421c5753bc65f7126f9578b31c6f9303d661`.
+Four-crate all-features/all-targets Clippy passed in 53.86 s. Five focused
+controls passed with 1,344 skipped. All fifteen CAL collector controls passed.
+
+AIRK's native four-thread CPU scorer matched the Python ONNX Runtime scores
+on all fourteen 1,024-position inputs. All twelve canonical publisher
+model-view comparisons checked every compiled tensor. All fourteen winners
+matched the publisher model. Load took 2.971 s and the native selector
+took 61.40 s. The Job settled in 61.751 s with zero remaining processes.
+Native parity receipt `91fff97b069fcabf29b5ee85436d2fcd7f32eb67b9372b0c7dca043c2645a5f6`;
+owned receipt `8b2252b0099bdfa57abff62e6b7fdd8f3643fe3f607caa2a6a333fca567034b7`.
+The new Focus profile still needs its native Resource20 and full CAL results.
+
+The separate full-width Focus Resource20 run subsequently passed on CPU4.
+The original 1,024/1,024-token input cold-loaded in 2.906523 s and warmed
+in 3.799729 s. Warm p95 over 20 calls was 3.939099 s; maximum 3.988996 s.
+Whole Job peak commit was 3,986,190,336 bytes and native peak RSS was
+2,952,749,056 bytes. The Job settled naturally after 86.022 s. Native
+Resource20 SHA-256 `2154b031b42b7ecd543f914a51142d9c4ea57bfb59b7f71c8799e1df7a2bebb0`,
+owned SHA-256 `33d2e066dd883010daf0261befaa20968c76663608bdb6310270a923ec2bf4c2`.
+A separate AIRK compile-only replay of DEV_Q002 exactly reproduced all
+1,024 independently expected input IDs with 166 leading padding positions.
+Native input digest `c60372a13dadcf6be59af19c3f90144b0cb72cec17fb25ac621e8b054276cabe`.
+The first fresh CAL100 fixture using this profile started in
+cal100-focus1024-capture-r1.

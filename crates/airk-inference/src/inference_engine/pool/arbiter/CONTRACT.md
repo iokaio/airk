@@ -94,6 +94,20 @@ and earliest deadline, including the protected Context allocation. No observatio
 renews a request deadline or authorizes an extra dispatch.
 
 
+The separate static1024 selectors bind the 1,024-token CPU4 profile to its
+independent publisher fixture and exact graph digest. Twelve model-view rows
+must match every compiled field. Two raw diagnostic rows retain their source
+classification. All fourteen scores must pass the same publisher and independent
+weight8-runtime limits as the static512 controls. The resource selector uses
+the fully occupied 1,024-token synthetic pair and retains the same load, warmup,
+20 samples, selected CPU execution identity and process peak measurements.
+
+A separate compile-only selector reconstructs the exposed DEV_Q002 first Search
+from its pinned original Answer, binds the full original source window and query,
+and compares the complete padded token vector with an independent publisher
+digest. It emits the native compiler input, including the attention mask and
+position IDs, without opening the graph or dispatching a score.
+
 ## Selected Context exact-FP32 numeric/resource qualification
 
 The selected FP32 fallback consumes the byte-identical packed graph and original independent official hidden/trained-row controls. Native all-live/H scores must agree with the direct original reference within0.001, and the independently retained same-artifact original FP32 known-live scores within0.001. The obsolete approximate0.25 gate does not apply to FP32. Exact corresponding argmax identities remain required.

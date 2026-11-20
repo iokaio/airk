@@ -23,6 +23,27 @@ fn software_v2_policy_has_literal_limits_and_distinct_canonical_identity() -> Re
 }
 
 #[test]
+fn static1024_policy_keeps_original_budget_and_has_distinct_framed_identity() -> Result<()> {
+    let policy = ResourcePolicy::focus_static1024();
+    let expected = br#"{"schema":"airk.arbiter.resource-policy/3","shared_input_tokens":8192,"context_input_tokens":8192,"focus_pair_input_tokens":1024,"maximum_context_candidates":8,"deadline_ms":120000,"p95_limit_us":120000000,"required_warm_samples":20,"quantile":"nearest_rank_95","stop_on_first_overrun":true}"#;
+    assert_eq!(policy.canonical_bytes()?, expected);
+    assert_eq!(
+        policy.digest()?,
+        framed_digest(b"airk.arbiter.resource-policy/3", &[expected])
+    );
+    assert_ne!(policy.digest()?, ResourcePolicy::software_v2().digest()?);
+    for mut crossed in [ResourcePolicy::software_v2(), policy] {
+        crossed.focus_pair_input_tokens = if crossed.focus_pair_input_tokens == 512 {
+            1024
+        } else {
+            512
+        };
+        assert!(crossed.digest().is_err());
+    }
+    Ok(())
+}
+
+#[test]
 fn changed_resource_limits_and_historical_policy_are_not_software_v2() -> Result<()> {
     for (field, replacement) in [
         (

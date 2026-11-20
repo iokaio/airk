@@ -10,7 +10,7 @@ import subprocess
 import sys
 import time
 
-from controller import AUDIT_SHA, CAMPAIGN, HERE, ROOT, capture, link, owned_module, require
+from controller import AUDIT_PATH, AUDIT_SHA, CAMPAIGN, HERE, ROOT, capture, link, owned_module, require
 from prepare import SELECTOR, pin, read
 from dispatch_proof import read_journal
 
@@ -109,7 +109,7 @@ def check_cal_sources():
 
 def execute(output, node, *, setup_only):
     before = check_cal_sources()
-    audit = read(CAMPAIGN / "cal100-launch-input-audit-r1.json", AUDIT_SHA)
+    audit = read(AUDIT_PATH, AUDIT_SHA)
     inputs = audit["inputs"]
     for ref in [*inputs.values(), *audit["compiled_sdk"].values()]:
         pin(Path(ref["path"]), ref["sha256"])

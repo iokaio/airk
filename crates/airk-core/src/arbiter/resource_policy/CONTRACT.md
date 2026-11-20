@@ -12,6 +12,12 @@ nearest-rank p95 at sorted index18. Policy canonical bytes are compact Rust
 field-order JSON without newline; the framed /2 digest binds those exact bytes.
 Policy identity is a declaration, never a claim of graph fit or qualification.
 
+The selected static1024 Focus candidate uses resource-policy/3, its own
+framed digest domain and a 1024-token pair input. It preserves all other
+software-v2 limits and the exact field order above. The /2 policy continues
+to authenticate the earlier 512-token evidence. Graph and compiler identity,
+numeric proof and measured host resources remain separate requirements.
+
 A series records attempted calls separately from known score-return samples.
 Each actual duration is u64 microseconds and RSS is observed process-lifetime
 peak bytes. The first known deadline or RSS overrun remains in the series and

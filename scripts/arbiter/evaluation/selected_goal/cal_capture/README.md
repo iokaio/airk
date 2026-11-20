@@ -42,3 +42,11 @@ A setup-only execution observes MiniLM through a fixed Search before either
 stage warms. Full capture records the same publication and served pipeline
 on each delivered Search inside Answers and on delivered Search probes.
 The full census requires at least one such observation.
+
+The selected 1024-token Focus capture uses the original 8192-token shared
+Answer budget, the existing two Context descriptors and the original CAL100
+inputs. Run `stage_focus1024.py --metadata <native-profile-directory>
+--bootstrap-sha256 <native-receipt-digest> --output <fresh-directory>`
+under checked Python to stage the authenticated Rust asset overlay. The
+current capture controllers pin the resulting native roster and audit.
+Earlier 512-token fixture receipts retain their original identities.

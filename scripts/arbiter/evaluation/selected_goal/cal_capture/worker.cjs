@@ -9,7 +9,7 @@ const {capturePhase} = require('./phase.cjs');
 const exec = promisify(execFile);
 const ROOT = path.resolve(__dirname,'../../../../..');
 const E = path.join(ROOT,'artifacts/v190/final-plan/exec-20261116T052942Z');
-const AUDIT = '39e36a6fcc40f28412ff97ede00917b3bcd5147675c70510691b01e901607287';
+const AUDIT = '87731282ecd121eaf08d5074d1bc421c5753bc65f7126f9578b31c6f9303d661';
 const sha = raw => crypto.createHash('sha256').update(raw).digest('hex');
 function need(value,message) { if (!value) throw Error(message); }
 function inside(parent,filename) {
@@ -34,7 +34,7 @@ async function run(request, phase, ticket, originalSeconds) {
     const start=performance.now();
     need(request.schema==='airk.private.cal100-live-fixture/1' && Number.isFinite(originalSeconds) &&
         originalSeconds>0 && originalSeconds<=1800, 'invalid original phase time');
-    const raw=ordinary(path.join(E,'cal100-launch-input-audit-r1.json'),32<<10);
+    const raw=ordinary(path.join(E,'cal100-focus1024-launch-r1','cal100-launch-audit.json'),32<<10);
     need(sha(raw)===AUDIT,'launch-input audit differs');
     const audit=JSON.parse(raw), scopes=pinned(audit.inputs.scopes), census=pinned(audit.census);
     const work=request.fixture_root;

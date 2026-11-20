@@ -14,7 +14,8 @@ from prepare import CAMPAIGN, ROOT, pin, read
 
 HERE = Path(__file__).resolve().parent
 NODE_SHA = "ba4e6d110e8c1592a1ecd390f6b05f3da124b13871a5be62b341a07a853c6c32"
-AUDIT_SHA = "39e36a6fcc40f28412ff97ede00917b3bcd5147675c70510691b01e901607287"
+AUDIT_SHA = "87731282ecd121eaf08d5074d1bc421c5753bc65f7126f9578b31c6f9303d661"
+AUDIT_PATH = CAMPAIGN / "cal100-focus1024-launch-r1/cal100-launch-audit.json"
 
 
 def require(condition, reason):
@@ -65,7 +66,7 @@ def capture(request_path, request_sha, output, node):
             output.resolve(strict=True) == output and not any(output.iterdir()), "fresh checked output directory required")
     request = read(request_path, request_sha)
     require(request["schema"] == "airk.private.cal100-live-fixture/1", "unknown live fixture request")
-    audit = read(CAMPAIGN / "cal100-launch-input-audit-r1.json", AUDIT_SHA)
+    audit = read(AUDIT_PATH, AUDIT_SHA)
     ids = read(Path(audit["census"]["path"]), audit["census"]["sha256"])["question_ids"]
     root = Path(request["fixture_root"])
     require(root.is_absolute() and root.is_relative_to(CAMPAIGN) and root.resolve(strict=True) == root,
