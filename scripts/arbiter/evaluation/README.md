@@ -57,3 +57,20 @@ The Windows campaign shares one 1.5 GiB offline Cargo home on D: across its nati
 For the CPU fallback, windows_cpu_product.py runs the ordinary offline build-service-runtime.py CPU producer against the original warm debug target, a reviewed static environment and the sealed Admin inventory. Supply the current CAL PID when a CAL service is running, the measured concurrent host-growth reservation, and the path name and SHA-256 of the independent custody receipt. Use the D Cargo environment first and obtain the sole target writer. The shared tooling allowance covers the warm Cargo target. The separate CPU stage allowance covers retained ORT inputs, earlier private attempts and the actual staged product. The optional stock --staging-parent creates a unique child beneath the prechecked D staging directory and keeps the ordinary atomic publication. The producer audits the warm debug target through audit-windows-product-target.ps1 before and after Cargo, enforces two below-normal cores and a 6 GiB Job, and records the candidate product alongside its authenticated input and disk growth. When product staging needs room, reclaim-windows-cpu-ort-intermediates.ps1 authenticates the closed stock build via windows_ort_intermediates.py, records and hashes every removed original Ninja .obj/.pch, and runs the full independent stock audit again. The aggregate, component libraries, build receipts and source remain available to the ordinary verifier.
 
 windows_managed_device_policy.py verifies the original CPU product, stage and activation receipts, reopens that same installation on D:, and runs the normal explicit Start, catalog, health, device-policy and Stop operations. It reuses the installed files and original index. It shares the original CLI/RPC requests with the Linux operational journey in linux_cuda/device_policy_workflow.py. The Windows receipt identifies the genuine matched pair, complete checked responses, shutdown, and the unqualified-stage refusal separately from any Inno installer or model-forward observation.
+
+For the unsigned Windows CPU installer, `windows_cpu_installer_source.py`
+compares the stock build receipt with current files and retained local Git
+blobs. `materialize_windows_installer_source.py` creates a checked private
+source-only Git view and verifies its 2,109 inputs through the stock producer.
+`windows_stock_cpu_installer.py` uses the original installer script, the
+authenticated debug pair, sealed Admin inventory, static ORT environment and
+installed ISCC compiler. Its argument is outstanding host memory in bytes.
+The D environment owns Cargo metadata and all compiler scratch. The output
+contains the unsigned CPU installer, stock packaging receipt and Job evidence.
+
+`close_windows_cpu_product.py` verifies the original stock native Job and
+every packaged file against the install manifest and the separately completed
+target and private product ownership audits. `audit-windows-device-reuse.ps1`
+checks the physical installation, state, source and data directories around
+the Windows device-policy journey. Its R4 native lifetime uses the original
+installed pair and registered index, with fresh request and shutdown receipts.

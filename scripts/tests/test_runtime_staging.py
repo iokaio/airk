@@ -40,7 +40,7 @@ class LocalStagingTests(unittest.TestCase):
                 (images / name).write_bytes(b"signed image fixture " + name.encode())
             observations = {"source": dict(base["source"]), "static": dict(base["static_ort"]), "admin": dict(base["admin_assets"])}
             calls = []
-            package = None
+            package = load("package-native")
             original_files = None
             inventory_file = root / "checked-admin.json"
             inventory_file.write_text("{}", encoding="utf-8")
