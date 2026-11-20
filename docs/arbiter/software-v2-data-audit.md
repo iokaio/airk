@@ -532,3 +532,40 @@ in a repository cannot establish the state of an individual evidence file.
 | techqa-original-dev-ordered-menu-freeze-r1.json | 50f876ebb9cf3a8328314e7be3e01f343b2d1b67cd7979fe2aaceeb2c82064f7 |
 | repository-confirmation-multilang-r1/premerge-topology-r1.private.json | 69dd8e32d8d2a6a034f1db870617eb52942abfbab19daf8095dc951f9144ad65 |
 | repository-confirmation-multilang-r1/premerge-extended-history-r1.private.json | ccf73de8c7afe837baf9a486afe9e5687a16c028bc2a1b9ecd17ed0a05a47b4c |
+
+### Product-family exposure and repository evidence labels
+
+None of the 76 active original TechQA menus shares a canonical URL or
+upstream document ID with the 388 original TRAIN gold documents. No menu
+document hash matched the 1,514 retained file descriptors. All 76 menus
+had the four publisher metadata fields used in the comparison. Seventy-five
+menus share at least one literal product ID with TRAIN, including 56 gold
+documents. Product-name overlap also occurs in 75 menus, including 64 gold
+documents. Account for family exposure before reservation. The private
+techqa-menu-train-exposure-r1.json digest is
+2de707182f15be6e486a0e0fea004a52575e232a1db4caa4f3ad7d9ef992657c.
+
+The eight pinned MultiLang shards contain 1,077 rows with a common 20-field
+schema. It includes solution and test patches and no separate independently
+annotated source file or span. Keep the 50 selected MultiLang cases in the
+review pool until independently judged. ContextBench has publisher expert
+annotations. The 14 eligible cases across eight repository clusters had
+125 spans on 65 distinct repo/base/path tuples. The declared-line join
+verified 64 blobs and matched 101 spans. Five spans differed, 18 exceeded
+file bounds and one blob was unavailable. A separate exact whole-body,
+line-boundary check located two more spans. Six cases matched all their
+published spans. Eight remain partial.
+
+The selection fence was sealed before projecting gold into Python objects.
+The underlying parquet row group spans the full release. A publisher search
+result incidentally displayed part of an Astropy case outside TRAIN. Its
+repository was already excluded from the 14-case selection. It contributed
+no evidence. No case acquired native or task-quality admission through
+these archive and blob checks.
+
+| Private file under repository-confirmation-multilang-r1 | SHA-256 |
+| --- | --- |
+| source-label-schema-r1.private.json | 7ae992b7385245c4871ecd7c7cfd38f3526e0f84754f0669ce80c3f81b41c512 |
+| contextbench-14-selection-r1.private.json | 51adc46cedf7f9d8803a91e790dffae5c2cfbabcc2c9018bae9221ae67dc722b |
+| contextbench-14-declared-lines-r1.private.json | a80f26b9026bf0ee3fdf3dc4f9c10523cb6bfa61b734dcd3d61f9b154636c66e |
+| contextbench-14-derived-lines-r1.private.json | 84da2e363f508e2e1d138099b222f9a34a65c5cf17553b9c0f7786a52b5542b8 |

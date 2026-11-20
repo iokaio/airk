@@ -12516,3 +12516,33 @@ The owner receipt owned.json is
 The process exited 0 in 57.902 s with no remaining Job members, using
 124,477,440 bytes peak Job memory. Ownership audit covered 494 descendant
 outputs in the checked batch, which took 58.7835723 s including validation.
+
+### 2026-11-19 — Fifteen-hour Windows and Linux CUDA FP16 target
+
+The user requested release-ready Windows and Linux CUDA FP16 within 15 hours
+to inform the weekend Mac rental and Azure Radeon preparation. The UTC clock
+was 2026-11-20 02:10:54 immediately after the request, giving an approximate
+target of Friday, 20 November at 10:10 a.m. America/Denver. Keep original
+per-run deadlines and Windows-before-Linux GPU order. No booking or publication
+was authorized. Windows matching-reference parity, exact-artifact calibration,
+paired quality, both variants' resource and fallback qualification remain open.
+The retained Linux controls exercised typed refusal. The live runtime loader
+currently accepts only Windows x64, and the manifest and compatibility digest
+require Windows DLL semantics. A Linux persisted-contract decision is pending.
+The evidence does not support a release-ready estimate at this checkpoint.
+
+### 2026-11-19 — TechQA TRAIN product exposure and ContextBench span verification
+
+The 38.181 s TechQA audit found exact product ID overlap in 75 of 76 menus,
+including 56 answer documents. None shared a canonical URL or upstream
+document ID with TRAIN gold. The ContextBench schema, fenced selection,
+declared-line and strict-derived checks took 0.294, 0.053, 7.096 and
+0.909 s respectively. Four GitHub GraphQL batches resolved 64 of 65 blob
+identities. In total 103 of 125 original annotations have a declared or
+strict-derived match. Six of 14 cases match completely. One excluded
+Astropy case appeared incidentally in a publisher search preview and was
+already fenced out by repository. Two TechQA, three schema, five declared
+and five strict-derived controls passed. The collector README contains
+the invocations. Native visibility, family review and sufficiency remain
+open. Windows human SID and default owner ended in 1002.
+[Source audit and receipts](../arbiter/software-v2-data-audit.md#product-family-exposure-and-repository-evidence-labels)

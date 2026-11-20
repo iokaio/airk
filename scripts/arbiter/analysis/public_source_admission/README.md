@@ -143,3 +143,21 @@ under checked Python -I -B -S with --output set to a fresh absolute campaign
 directory. It pins the separate CPU service image, CLI and corpus manifest,
 indexes the staged source tree in a disposable catalog, and verifies each
 indexed line read and its original answer bytes against one publication.
+
+[TechQA menu exposure](audit_techqa_menu_exposure.py) compares the frozen
+76 exact DEV menus against the 388 original TRAIN gold documents and 1,514
+retained source descriptors. Run checked Python -I -B -S and redirect stdout
+to a fresh private receipt. The result distinguishes each answer document
+from its full menu and reports missing fields independently of equality.
+
+The [repository annotation schema audit](audit_repository_label_schema.py)
+accepts the original absolute roster directory via --directory. Run the
+provisioned PyArrow interpreter with -I -B. It authenticates all eight
+MultiLang shards and the ContextBench archive before examining their schemas.
+The [ContextBench declared-line audit](audit_contextbench_confirmation_spans.py)
+uses the same arguments to produce the private 14-case selection. With that
+receipt sealed, add --verify-spans --gh <absolute pinned executable> to check
+the selected annotations against original public blobs. The
+[strict-derived span check](audit_contextbench_derived_spans.py) takes the
+same directory, reopens only the partial cases, and reports entire annotation
+bodies that occur at exactly one line boundary. Both location records survive.
