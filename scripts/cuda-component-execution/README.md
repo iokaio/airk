@@ -134,3 +134,25 @@ passing four-width receipt and exact journal watchdog pin as described in
 [Resource20 execution](COMPACT-RESOURCE20.md#corrected-large-resource20).
 The parent retains the owned Job, per-operation journal and sampled adapter
 memory alongside the native resource result.
+
+### Windows WDDM capacity measurements
+
+Run `python -I -B -S scripts/cuda-component-execution/wddm_capacity_snapshot.py`
+from the verified Windows shell to read the A6000 UUID, driver mode, DXGI
+adapter LUID and Windows dedicated/shared counters. An optional `--pid`
+requires an existing GPU process instance on that adapter. The remote
+session may enumerate another DXGI description for the same GPU. Exactly
+one matching physical adapter must have a WDDM counter.
+
+The owned launcher's pre-resume hook can take a sample with
+`ProcessSampler(info, adapter_luid)` from `wddm_process_samples.py` as a
+context manager. The post-resume hook calls
+`observe_process(api, info, deadline, adapter_luid, baseline)` on the
+original child handle until exit. This records adapter and process
+dedicated/shared/total committed counters, their provider timestamps,
+process private commit and working set, and the monotonic sampling window.
+Missing process counters before GPU use or after release remain explicit.
+Metering is sampled and does not measure an ORT allocator high-water mark.
+Retain a separate post-release adapter snapshot under the original owner.
+The live CPU child control runs with
+`python -B -S scripts/cuda-component-execution/test_wddm_process_samples.py`.

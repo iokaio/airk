@@ -12773,3 +12773,18 @@ slots and 698 distinct documents, digest
 The sealed native request roster is
 `586f4d2d22c2cc4daef0c6b71bef5035f8165f9f8bde546a093d08d474049d67`.
 [Observed native outcome](../arbiter/software-v2-data-audit.md#first-techqa-offered-action-pilot)
+
+### A6000 dedicated and shared capacity observer preflight
+
+Windows reports WDDM, driver 597.06 and 49,140 MiB total A6000 memory.
+DXGI enumerated two A6000 descriptions in the remote session; one matched
+a physical WDDM adapter counter. The sampler bound that LUID to the
+campaign's exact NVIDIA UUID. The checked user's desktop process supplied
+real dedicated, shared and committed counters. The original-handle test used
+a separate CPU child, proved host commit sampling, observed a natural exit
+and rejected a mismatched PID. No model workload ran for this preflight.
+Resource20, mixed widths and actual pressure measurements need their own
+timed runs and sampler receipts. The PDH process preflight digest is
+`1355bf037b06388de8eab9420bcb323916edffdb92ebdc2cf01c6ec231dd2124`.
+The snapshot digest is
+`beaeefb4cb6dc66d60c8e136affe43c89cabad1bd5d93f4e3db6433447adc7d4`.
