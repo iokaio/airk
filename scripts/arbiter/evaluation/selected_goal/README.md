@@ -36,3 +36,8 @@ membership only. The fresh service scope and owned capture are still required.
 
 The [CAL service capture owner](cal_capture/README.md) implements the separate
 Windows fixture, owned phase workers and SDK transport under its own contract.
+
+The [CAL reference certificate producer](cal_certificates/README.md)
+authenticates all thirteen native phase transcripts and derives independent
+Read evidence gain from original human support. It can run its source-only
+preflight before the capture closes.

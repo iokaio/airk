@@ -12788,3 +12788,24 @@ timed runs and sampler receipts. The PDH process preflight digest is
 `1355bf037b06388de8eab9420bcb323916edffdb92ebdc2cf01c6ec231dd2124`.
 The snapshot digest is
 `beaeefb4cb6dc66d60c8e136affe43c89cabad1bd5d93f4e3db6433447adc7d4`.
+
+### CAL100 capture association and independent certificate source
+
+The first full attempt stopped after the first Answer. Four native Focus
+calls completed and Context had zero calls. The MCP outer request ID is
+issued by telemetry; native read attempts have their own request IDs. The
+corrected collector associates the original question, publication, native
+source record prefix, assessment ordinal, roster basis and input digest.
+Replay of the original Answer recovered its five offered probes. Five
+phase controls passed including rejection of crossed source evidence.
+The first attempt settled after 529.610 seconds. The second attempt indexed
+all 753 source files and then received a nonreplayable scoped observation
+refusal on the infrastructure Search before its first CAL question.
+
+The separate reference certificate owner verified all 753 original files
+for 100 questions spanning 90 source groups in 9.1301 seconds; source
+preflight digest
+`85e5adfc747716c5b928abd88a98b2c31f1960fdfb1774e51b62b92bca993e01`.
+Seven controls passed, including checking the closing phase, independent
+counterfactuals and matching native sources. No complete CAL100 closure
+or fitted rule has been obtained.
