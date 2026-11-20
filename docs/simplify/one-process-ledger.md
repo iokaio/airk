@@ -12986,3 +12986,5 @@ A separate AIRK compile-only replay of DEV_Q002 exactly reproduced all
 Native input digest `c60372a13dadcf6be59af19c3f90144b0cb72cec17fb25ac621e8b054276cabe`.
 The first fresh CAL100 fixture using this profile started in
 cal100-focus1024-capture-r1.
+
+The exposed TechQA DEV_Q002 width-selection pilot now has a literal returned-evidence audit. The receipt techqa-delivered-evidence-q002-r1.private.json (bb5d7f10f28ee84a25766f7e897f25bd96b2904e32736e82fedd4f3a72ddef1a) verifies all original records and hits against immutable source and Answer identities. The one matching document returned only 43 of 154 required span bytes; four focused controls passed covering repeated snippets, clipped returns, UTF-8 byte offsets and fragment unions. Compare the reissued 1024 case only as exposed engineering evidence.

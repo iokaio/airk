@@ -233,3 +233,5 @@ Run with checked Python `-I -B -S` and retain stdout in private storage.
 The collector recomputes every tree object ID from upstream entry names,
 modes and child IDs. Blob lengths are publisher metadata until their bytes
 are materialized and authenticated. This stage only inventories revisions.
+
+Run `python -IB scripts/arbiter/analysis/public_source_admission/verify_techqa_delivered_evidence.py` to check the original DEV_Q002 pilot Answer against its publisher span. It verifies the private source and Answer receipts, locates each literal snippet within its cited lines, and checks coverage across the returned byte intervals. Ambiguous snippets leave a missing span unresolved.

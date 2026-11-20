@@ -685,3 +685,7 @@ metadata. This establishes full revision membership before any scoring.
 Blob materialization, native visibility and offered actions are separate.
 Private inventory digest
 `1e500bf49108bc64e3616459603dbc23b56f0ca478490ce00d6728177156531a`.
+
+### Delivered evidence on the exposed DEV_Q002 pilot
+
+The static-512 pilot returned 24 hits in six records. One hit cited the publisher's gold document (lines 1–27). Its delivered excerpt covered bytes [0,749), overlapping 43 of the 154 required bytes [706,860). The exact-span rubric therefore records incomplete evidence on this Answer. This observation concerns the original width-selection pilot only. It supplies no held-out or paired estimate for the revised Focus profile.
