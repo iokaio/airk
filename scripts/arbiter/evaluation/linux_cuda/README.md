@@ -111,6 +111,18 @@ Pass this receipt via `--freeze <path> --freeze-sha256 <digest>` to the
 reservation is available. These run on GNU against the existing CPU static archive.
 Their source and process receipts describe compilation and CPU controls.
 
+For the joint `f3978a12` baseline, add `--signed-r7` to all three commands.
+`signed_gate.py` verifies the complete Git archive and its staged files on D,
+then reopens the genuine GNU static ORT aggregate and scientific ELF descriptor.
+The signed Clippy and Nextest gates use the same offline target and enforce the
+original volume caps. Nextest includes the CUDA and CPU source transition tests.
+
+Run `cutlass_source.py` to verify the original protected Compact graph and weights,
+the six ORT attention source files, the CUTLASS arithmetic specialization, and the
+actual SM86 object in the Linux provider link. Its JSON describes native build
+and input identities. Runtime operator selection requires a Linux graph and
+kernel observation.
+
 Use `finish_ort.py --phase provider` with the shared/provider command receipts
 and attempt number after the authenticated provider has linked. Use the `core`
 phase after the canonical static component targets finish. `stage_payload.py`

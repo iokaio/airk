@@ -44,7 +44,7 @@ def capacity(baseline, now, reserve=0):
                ((now["guest_free"],guest),(now["backing_free"],backing)))
 
 
-def monitored(command, root, result_dir, env, reserve, uid, *, address_space=8 << 30):
+def monitored(command, root, result_dir, env, reserve, uid, *, address_space=8 << 30, timeout=3600, log_name="build.log"):
     baseline = json.loads((CAMPAIGN/"linux-cuda-r4-provider-r3-space-watch.jsonl").read_text().splitlines()[0])
     samples = [space()]
     if not capacity(baseline,samples[0],reserve):
@@ -78,7 +78,7 @@ def monitored(command, root, result_dir, env, reserve, uid, *, address_space=8 <
     process = runpy.run_path(str(CPU))
     try:
         observed = process["run_owned"](["/usr/bin/nice","-n","10","/usr/bin/prlimit",f"--as={address_space}","--",*command],
-                                        root,result_dir/"build.log",3600,env)
+                                        root,result_dir/log_name,timeout,env)
     finally:
         done.set()
         monitor.join()
