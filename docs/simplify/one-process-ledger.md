@@ -12854,3 +12854,18 @@ TRAIN_Q103 also delivered its original Answer and had zero assessments
 after eight calls and fanout slots. Its owned run lasted 158.597 s and
 settled with zero Job members. The capture digest is
 `a255eb87f99cd323e943f2aeffc5907eb2640a33eeb32e23fa295e2abd9ab632`.
+
+### User decision to change Focus from 512 to 1,024 tokens per pair
+
+The user selected the static 1,024-token width for the current candidate.
+The 858-token independent DEV_Q002 replay exceeds 768 and fits inside 1,024.
+The shared request budget is 8,192 tokens. Four padded 1,024-token pairs
+require 4,096 tokens. With Context ready, Focus may use at most half the
+original local optional allocation. Even when all 8,192 tokens are locally
+available, only two 2,048-token pairs fit this 4,096-token Focus ceiling.
+Use a new Focus export and compiler/profile identity with independent checks
+of scores, padding, overflow, resource use and actual service activation.
+Re-run affected calibration and paired evidence with the selected profile.
+The 512-profile CAL R3 fixture was superseded during indexing. Earlier
+512-token evidence retains its observed configuration. The prior Context
+development ceiling of 0.07 and all release gates retain their scopes.

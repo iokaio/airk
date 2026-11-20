@@ -46,7 +46,7 @@ contract encodings must be recorded before implementation; see section 11.
 | D03 | Human-reviewed labels for unattended work | APPROVED: use suitable existing human-reviewed labels; finish other work and block only unsupported promotion when labels are missing. Agent judgments are not human gold. | Data acceptance, terminals and FINAL |
 | D04 | Shared-folder automatic agent-config editing | APPROVED: allow automatic edits only when the entire file and recovery path meet a reviewed safe policy; otherwise provide the complete manual entry. Token-free AIRK fields alone do not qualify a path. | Step 2 |
 | D05 | Context terminal-class contract extension | APPROVED: include the extension; leave Sufficient, Clarify and NoJustifiedRead unavailable unless each class's evidence passes. | Steps 2, 11, 13 |
-| D06 | Shipping read budget | APPROVED: qualify 8192 tokens / 120 seconds as the new default, including all client timeouts. The 2048/30 configuration remains a historical/control population. Focus stays a static 512-token pair unless separately re-exported. | Steps 2, 4, 7, 12–15 |
+| D06 | Shipping read budget | APPROVED: qualify 8192 tokens / 120 seconds as the new default, including all client timeouts. The 2048/30 configuration remains a historical/control population. User amendment, 19 November Denver time: re-export and qualify Focus at a static 1,024 tokens per pair under its own identity. | Steps 2, 4, 7, 12–15 |
 | D07 | p95 latency limit for the new profile | APPROVED: set the new profile's measured p95 qualification limit to 120 seconds and report actual component and end-to-end latency. Historical 30-second measurements remain historical. | New resource-policy freeze and qualification |
 | D08 | Automatic local GPU execution and CPU fallback | APPROVED during execution: detect whether each user's GPU can safely run the selected model, use a qualified GPU variant when it can, otherwise automatically select a qualified fitting CPU variant for that same model. Report the device/reason; preserve consent, budgets and qualification gates. LATEST APPROVED: close the Windows FP32 campaign after the current Large run passes. Use its evidence to inform efficient FP16 qualification on Windows CUDA, Linux CUDA, macOS Core ML, Azure Windows Radeon DirectML, and Azure Linux Radeon ROCm, in that order. Target an FP16-only GPU release if it passes the measured gates and fits target developer machines. Users can disable GPU use service-wide across all backends. Radeon is a future experimental FP16 opt-in with qualified same-model CPU fallback. | Additional Step 2 contracts; Steps 6–7, 12–18; G1–G5 |
 
@@ -317,8 +317,11 @@ Independent platform defects may remain scheduled with an explicit blocker.
    using current task-policy bytes and complete retained cards. Preserve every
    read, excerpt, hypothesis, gap and reason. Measure missing decisive spans,
    identifier loss, overflow, prompt/padding charges and useful legal options.
-7. Keep Focus pair width 512 and left padding unless an explicitly triggered
-   wider-export experiment succeeds. Context's dynamic axes do not themselves
+7. Export and qualify the user-selected 1,024-token Focus pair width with
+   left padding. Bind the new compiler, graph, profile, and native numerical
+   and resource evidence. Re-run the native offered-action census and affected
+   calibration and paired task evidence with that exact Focus profile.
+   Context's dynamic axes do not themselves
    prove 8192 resource fit. Shared budget charges include every Focus and
    Context input; there is no per-stage reset.
 
@@ -926,7 +929,7 @@ profile's policy only.
 | Generic Context fit | >=1 certified positive; zero accepted UNKNOWN; exact whole-roster winner and margin before class acceptance. |
 | Terminals | Class-specific human-backed evidence, zero observed false sufficiency and frozen risk/coverage criteria; unsupported stays unavailable. Generic Read success is not terminal qualification. |
 | Approximate export | Raw-logit drift <= .25; normalized-mass diagnostic drift <= .05; identical fixture argmax under the frozen rule. New real near-boundary cases supplement these gates. |
-| New default | Shared 8192 input tokens / 120000 ms; compatible actual graph/profile; complete client timeout propagation; no work-budget reset. Focus remains 512 per admitted pair. |
+| New default | Shared 8192 input tokens / 120000 ms; compatible actual graph/profile; complete client timeout propagation; no work-budget reset. Use the new 1,024-token Focus export for the current candidate. |
 | New latency | Measured p95 <= 120 seconds for the new profile; report actual component and end-to-end cold/warm latency and failure costs. Preserve the frozen sample/quantile protocol and original 30-second evidence separately. |
 | Resources | Measured actual CPU/ISA/provider/threads, memory/disk/load peaks and resident coexistence at shipped inputs; no unsupported transfer from old reservations or hosts. D08 additionally requires measured device memory/placement and automatic qualified CPU fallback; section 11. |
 | Catalog/package | Exactly three qualified selected optional profiles, native emitted catalog/capture, complete rights/source maps, final-series local-test refusal and verified payload census. |
@@ -1106,8 +1109,9 @@ attempt bounded graph diagnosis and FP32 execution under the original gates.
 New static core, native manifest, profile and image identities must remain
 separate from the old qualified or unqualified artifacts. Do not silently admit
 CPU nodes, promote a model or mark a plan step complete to bypass missing proof.
-The shared 8192-token/120-second requirement, Focus's 512-token graph limit,
-D01–D08, original T0 and current 72-hour deadline remain unchanged.
+That checkpoint retained the 8,192-token/120-second request, the then-current
+512-token Focus graph and earlier deadline. D06 and section 5 record the
+subsequent Focus-width and deadline decisions.
 
 ### Prior execution snapshot — historical evidence, not current source qualification
 
@@ -1714,7 +1718,7 @@ native execution.
    fails, isolate graph lowering, kernel dispatch or score divergence with
    the smallest reproducing case before spending time on a full run. Repeat
    the sequence for Large after Compact passes and bind Large's own verified
-   prerequisites. Qualify Focus independently on its 512-token pair path.
+   prerequisites. Qualify Focus independently on the user-selected 1,024-token pair path.
    [Exporter contract](../../scripts/arbiter-fp16-export/CONTRACT.md) ·
    [Conversion custody and prerequisites](../../scripts/arbiter-fp16-execution/CONTRACT.md) ·
    [ONNX Runtime fused attention](https://onnxruntime.ai/blogs/accelerating-llama-2)

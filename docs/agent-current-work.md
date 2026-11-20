@@ -81,8 +81,11 @@ Active campaign: Arbiter final implementation (execution start 2026-11-16T05:29:
 - The approved qualification target is a new default of 8192 shared input tokens
   and 120 seconds, including all client timeouts, with a measured p95 limit of
   120 seconds. Report actual component and end-to-end latency. Historical
-  2048-token/30-second evidence remains historical; Focus's graph remains
-  512 tokens per pair unless separately re-exported and qualified.
+  2048-token/30-second evidence remains historical. The user selected a
+  static 1,024-token query/passage pair for Focus on 19 November Denver
+  time. Re-export and qualify the 1,024 graph and compiler under fresh
+  identities. Use the existing 8,192-token shared budget and 120-second
+  deadline. Existing 512-token runs retain their historical artifact identity.
 ## Recovery and execution
 
 - Automatic agent-config edits require a reviewed safe policy for the entire
