@@ -33,6 +33,14 @@ def write(path, value):
         json.dump(value, stream, allow_nan=False, sort_keys=True)
 
 
+def classify_stdout(raw, scope, index, request, focus_profile, arm, elapsed_ns):
+    try:
+        native = obs["measure_answer"](body(json.loads(raw)),scope,index,request,focus_profile,arm)
+        return {"state":obs["native_state"](native,elapsed_ns,request),"native":native}
+    except (KeyError,ValueError,TypeError) as exc:
+        return {"state":"invalid_native","error":str(exc)}
+
+
 def installed(arm):
     record = pin(INSTALL, arm["install_record_sha256"])
     images = {}
@@ -197,12 +205,8 @@ def run(arm, arm_sha, output):
                             timeout=request["budget"]["deadline_ms"]/1000)
             result = {"elapsed_ns":meta["elapsed_ns"],"state":meta["state"],"command":label+".command.json"}
             if meta["state"] == "observed":
-                try:
-                    native = obs["measure_answer"](body(pin(Path(meta["stdout"]),meta["stdout_sha256"])),scopes[case],
-                                                  index,request,row["focus_profile"],arm)
-                    result.update(state=obs["native_state"](native,meta["elapsed_ns"],request),native=native)
-                except (KeyError,ValueError,TypeError) as exc:
-                    result.update(state="invalid_native",error=str(exc))
+                raw, _ = freeze["sealed"](Path(meta["stdout"]),meta["stdout_sha256"])
+                result.update(classify_stdout(raw,scopes[case],index,request,row["focus_profile"],arm,meta["elapsed_ns"]))
             return result
         report["warmup"] = answer("untimed-warmup",order[0])
         require(report["warmup"]["state"] == "observed", "original uncounted warm-up failed")

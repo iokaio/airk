@@ -30,6 +30,12 @@ class Timing(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"unknown"):
             state({"stop":"pending","termination":"pending"},1,req)
 
+    def test_successful_cli_with_unparseable_stdout_preserves_invalid_native(self):
+        classify = compare["owner"]["classify_stdout"]
+        result = classify(b"{",{},None,{},None,{},1)
+        self.assertEqual(set(result),{"state","error"})
+        self.assertEqual(result["state"],"invalid_native")
+
     def test_uncounted_context_cannot_manufacture_selection(self):
         a, b = rows(8_000_000_000), rows(5_500_000_000)
         def arm(r,device):

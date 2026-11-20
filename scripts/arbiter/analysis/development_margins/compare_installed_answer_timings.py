@@ -49,19 +49,21 @@ def reopen(path, seal, spec_path, expected_provider):
                 "tools","call","airk_answer","--index",index,"--args-file",case["request"]]
                 and command["end_ns"] - command["start_ns"] == command["elapsed_ns"] == row["elapsed_ns"]
                 and Path(command["stdout"]) == path.parent / (label+".stdout"), "original native timer, source or scope differs")
-        if row["state"] == "observed" or "native" in row:
-            require(command["exit_code"] == 0 and command["state"] == "observed", "observed request lacks a successful native command")
+        raw, _ = owner["freeze"]["sealed"](Path(command["stdout"]),command["stdout_sha256"])
+        if command["state"] == "observed":
+            require(command["exit_code"] == 0,"observed request lacks a successful native command")
             request = pin(Path(case["request"]),case["request_sha256"])
-            native = obs["measure_answer"](owner["body"](pin(Path(command["stdout"]), command["stdout_sha256"])),
-                    result["scopes"][case["case"]],index,request,case["focus_profile"],arm)
-            require(native == row["native"] and native["request_id"] not in seen, "native evidence or request identity reused")
-            require(row["state"] == obs["native_state"](native,command["elapsed_ns"],request),
-                    "reported state differs from original Answer or elapsed deadline")
-            seen.add(native["request_id"])
+            derived = owner["classify_stdout"](raw,result["scopes"][case["case"]],index,request,
+                                               case["focus_profile"],arm,command["elapsed_ns"])
+            require({k:row[k] for k in ("state","native","error") if k in row} == derived,
+                    "reported disposition differs from original Answer or elapsed deadline")
+            if "native" in derived:
+                request_id = derived["native"]["request_id"]
+                require(request_id not in seen,"native request identity reused")
+                seen.add(request_id)
         else:
-            require(row["state"] in ("timeout","cli_error","invalid_native")
-                    and command["state"] == ("observed" if row["state"] == "invalid_native" else row["state"]),
-                    "unknown or contradictory measured disposition")
+            require(row["state"] == command["state"] and row["state"] in ("timeout","cli_error")
+                    and "native" not in row,"unknown or contradictory measured disposition")
     stats = obs["summary"](result["rows"], order)
     require(stats == result["summary"], "recomputed service p95 differs")
     return result, stats
