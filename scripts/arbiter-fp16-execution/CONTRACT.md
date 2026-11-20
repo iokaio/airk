@@ -454,3 +454,11 @@ validation proves that each FP32 CUDA O projection widens the same layer's
 half GQA output and preserves the result narrowing. The scoring selector
 requires the exact passing typed load and independent reference, as well
 as complete profiling, settlement and the established numerical limits.
+
+The private T1024 suffix diagnostic uses replay_compact_t1024_suffix.py under
+the checked isolated CPU interpreter (-I -B -S, --output <fresh campaign path>).
+It binds the original publisher weights, wider reference, native scores and
+captured raw attention tensor. It substitutes only the layer-zero output in
+one 28-layer reference forward. It measures sensitivity to that one internal
+value. The resulting vector is diagnostic and cannot supply an independent
+qualification reference.

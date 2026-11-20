@@ -12546,3 +12546,28 @@ and five strict-derived controls passed. The collector README contains
 the invocations. Native visibility, family review and sufficiency remain
 open. Windows human SID and default owner ended in 1002.
 [Source audit and receipts](../arbiter/software-v2-data-audit.md#product-family-exposure-and-repository-evidence-labels)
+
+### 2026-11-19 — T1024 suffix replay and prospective quality population
+
+The isolated CPU replay substituted only the sealed CUDA layer-zero raw
+attention output in the independent T1024 forward. Maximum raw difference
+against the same native score vector fell from 0.0681533813 to 0.0616683960.
+The two CPU vectors differed by up to 0.0520057678. Layer-zero substitution
+alone leaves a large residual. Preserve the 0.001 limit and localize the
+remaining drift at sparse residual-stream observations before changing
+precision. The replay was diagnostic. It ran no CUDA work and did not
+generate a new qualification reference. The checked CPU process exited
+0 with 15,795,576,832 bytes peak Job memory and no remaining Job members.
+The command used checked Python -I -B -S replay_compact_t1024_suffix.py
+--output <fresh campaign child>. The private compact-qkv-t1024-suffix-r1/execution.json
+digest is fed80a349e4f0a10e8dbc39ea0964af9d37fd22c623ccf87de0c41afdf195df5.
+Three focused suffix controls passed.
+
+The active confirmation group census used checked Python -I -B -S
+audit_active_confirmation_groups.py --directory <campaign-root> and took
+0.107 s including output audit. Three focused checks passed. Of 206
+screened cases, zero have judged paired deliveries or confirmed paired
+8,192-token outcomes. The AWS exclusion reduced the technical-support
+pool to 142 against the prospective planning target of 154. The nine-family
+AWS grouping gives 124 provisional source groups across the five pools.
+[Population evidence](../arbiter/software-v2-data-audit.md#active-source-dependence-before-paired-measurement)

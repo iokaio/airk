@@ -569,3 +569,24 @@ these archive and blob checks.
 | contextbench-14-selection-r1.private.json | 51adc46cedf7f9d8803a91e790dffae5c2cfbabcc2c9018bae9221ae67dc722b |
 | contextbench-14-declared-lines-r1.private.json | a80f26b9026bf0ee3fdf3dc4f9c10523cb6bfa61b734dcd3d61f9b154636c66e |
 | contextbench-14-derived-lines-r1.private.json | 84da2e363f508e2e1d138099b222f9a34a65c5cf17553b9c0f7786a52b5542b8 |
+
+### Active source dependence before paired measurement
+
+The active pool contains 142 technical-support and 64 repository candidates.
+The 76 TechQA cases form 33 groups under shared menu documents, with 36
+cases in the largest. IBM Cloud's 25 requests form 24 groups under shared
+positive documents. All use the same host. AWS spans nine guide families
+or 27 answer documents. ContextBench spans eight repositories, with five
+represented among the six cases whose evidence spans all match. MultiLang
+adds 50 screened repositories without independent acceptable evidence sets.
+
+Treating those within-pool groups as separate gives 124 groups when AWS uses
+guide families, or 142 when AWS uses documents. Cross-pool and model exposure,
+missing labels, and actual paired development variance still affect sizing.
+For scale only, if all 124 were independent and both arms always succeeded
+against a known perfect baseline, the one-sided exact 95% lower success
+bound would be 97.61%. This illustration does not estimate the required
+paired contrast or prove that a gate is impossible. Neither overall nor
+8,192-token judged paired outcomes have been measured. The private
+active-confirmation-source-groups-r1.private.json digest is
+2468b79029dd4fab82d92f5960503824841b1c9fa83f874f426151f10e909c92.

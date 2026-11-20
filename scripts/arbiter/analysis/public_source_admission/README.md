@@ -161,3 +161,10 @@ the selected annotations against original public blobs. The
 [strict-derived span check](audit_contextbench_derived_spans.py) takes the
 same directory, reopens only the partial cases, and reports entire annotation
 bodies that occur at exactly one line boundary. Both location records survive.
+
+[Active confirmation groups](audit_active_confirmation_groups.py) takes the
+private campaign root via --directory. Run checked Python -I -B -S and
+capture stdout in a fresh private receipt. It links overlapping menus and
+sources within each publisher pool, retaining alternate document and family
+groupings, incomplete annotations and screening-only rows. These groups
+support prospective sizing. They do not establish independent outcomes.
