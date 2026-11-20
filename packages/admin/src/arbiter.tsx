@@ -44,6 +44,13 @@ function activeModelTitle(stage: Stage, status: DeviceStageStatus): string {
 }
 const deviceTitle: Record<DevicePolicy, string> = { auto: 'Auto', cpu: 'CPU' };
 const preferenceTitle: Record<GpuPrecisionPreference, string> = { auto: 'Auto', fp32: 'FP32', fp16: 'FP16' };
+function precisionChoices(status: DeviceStageStatus): GpuPrecisionPreference[] {
+  const variants = status.models.flatMap(model => model.variants).filter(variant => variant.backend !== null);
+  const choices: GpuPrecisionPreference[] = ['auto'];
+  if (variants.some(variant => variant.precision === 'float32')) choices.push('fp32');
+  if (variants.some(variant => variant.precision === 'float16')) choices.push('fp16');
+  return choices;
+}
 function backendTitle(backend: DeviceVariantStatus['backend']): string {
   return backend === null ? 'CPU' : backend === 'cuda' ? 'CUDA' : backend === 'direct_ml' ? 'DirectML' : backend === 'core_ml' ? 'Core ML' : 'Unsupported native backend';
 }
@@ -198,7 +205,8 @@ export function createArbiterWorkspace(deps: ArbiterDependencies) {
       edit(stage, draft => { draft.configuration.device_policy = policy; });
     },
     precision(stage: Stage, precision: GpuPrecisionPreference) {
-      if (!['auto','fp32','fp16'].includes(precision)) return;
+      synchronize();
+      if (!observation || statusStale || !precisionChoices(observation[stage]).includes(precision)) return;
       edit(stage, draft => { draft.configuration.gpu_precision = precision; });
     },
     indexInput(stage: Stage, index: string) { edit(stage, draft => { draft.index = index; }); },
@@ -251,6 +259,8 @@ export function Arbiter(): JSX.Element {
     {!view.observation ? <p>{view.sending ? 'Loading Focus and Context status...' : 'Arbiter status is unavailable. Use Refresh Arbiter status to try again.'}</p> : !view.drafts ? <p>Native configuration requires initialization. The reported disabled configuration is a placeholder and cannot be edited or saved.</p> : stages.map(stage => {
       const status = view.observation![stage], draft = view.drafts![stage], review = view.reviews![stage];
       const title = stageTitles[stage], tasks = [...new Set(status.models.filter(entry => !!stageModelTitle(stage, entry.model)).flatMap(entry => entry.tasks))];
+      const choices = precisionChoices(status);
+      const requested = draft.configuration.gpu_precision;
       const validEnabled = !draft.configuration.enabled || draft.configuration.indexes.length > 0 && status.models.some(entry => entry.model === draft.configuration.selected_model && admittedStageModel(stage, entry));
       return <section aria-label={title} key={stage}>
         <h3>{title}</h3>
@@ -264,7 +274,10 @@ export function Arbiter(): JSX.Element {
         <h4>Choose a model and execution policy</h4>
         <p>Model selection, device policy and GPU precision change this draft only. Auto permits native CPU fallback when eligible; CPU excludes GPU candidates. A saved request never establishes current capacity, runtime availability or qualification.</p>
         <label>Device policy<select aria-label={`${title} device policy`} value={draft.configuration.device_policy} disabled={!view.canSend} onChange={event => workspace.device(stage, event.currentTarget.value as DevicePolicy)}><option value="auto">Auto</option><option value="cpu">CPU</option></select></label>
-        <label>GPU precision<select aria-label={`${title} GPU precision`} value={draft.configuration.gpu_precision} disabled={!view.canSend} onChange={event => workspace.precision(stage, event.currentTarget.value as GpuPrecisionPreference)}><option value="auto">Auto</option><option value="fp32">FP32</option><option value="fp16">FP16</option></select></label>
+        <label>GPU precision<select aria-label={`${title} GPU precision`} value={requested} disabled={!view.canSend || view.statusStale} onChange={event => workspace.precision(stage, event.currentTarget.value as GpuPrecisionPreference)}>
+          {choices.map(choice => <option key={choice} value={choice}>{preferenceTitle[choice]}</option>)}
+          {!choices.includes(requested) && <option value={requested} disabled>{preferenceTitle[requested]} (unavailable)</option>}
+        </select></label>
         <p>Precision applies only to GPU candidates and is saved but unused while CPU is selected. CPU fallback retains its native CPU profile; requested FP32 or FP16 is never shown as the CPU's actual precision.</p>
         <label><input type="radio" name={`arbiter-${stage}-model`} checked={!draft.configuration.selected_model} disabled={!view.canSend} onChange={() => workspace.select(stage, null)} /> No model selected</label>
         {!status.models.length ? <p>No native model choices are available for this stage.</p> : null}

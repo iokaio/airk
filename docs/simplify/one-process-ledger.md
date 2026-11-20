@@ -12869,3 +12869,16 @@ Re-run affected calibration and paired evidence with the selected profile.
 The 512-profile CAL R3 fixture was superseded during indexing. Earlier
 512-token evidence retains its observed configuration. The prior Context
 development ceiling of 0.07 and all release gates retain their scopes.
+
+### GPU precision selection in Admin and Workbench
+
+Both selectors derive available GPU precision choices from native Status3
+variants. CPU-only and FP16-only installations expose their actual choices.
+An unavailable saved precision is displayed disabled, leaving its persisted
+value visible to the user. The browser fixtures cover disconnected, CPU-only,
+FP16-only and engineering states. Type checking, the five web assets and
+their byte-rebuild check passed. The scoped Chrome tests passed 74/74.
+The full Admin suite passed 295 with two private capture cases skipped.
+One earlier Edge attempt passed its test body and reported a busy lockfile
+during cleanup. No installed FP16 model or end-to-end Auto selection was
+observed in these UI checks.

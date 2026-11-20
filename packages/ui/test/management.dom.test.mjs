@@ -71,7 +71,14 @@ test('real shared editor Service uses native port, explicit Arbiter enrollment/C
     assert.equal(await browser.evaluate(`document.querySelectorAll('input[type=radio][name="arbiter-focus-model"]').length`),2);
     assert.equal(await browser.evaluate(`document.querySelectorAll('input[type=radio][name="arbiter-context-model"]').length`),3);
     assert.deepEqual(await browser.evaluate(`[...document.querySelector('[aria-label="Arbiter Focus device policy"]').options].map(option=>option.value)`),['auto','cpu']);
-    assert.deepEqual(await browser.evaluate(`[...document.querySelector('[aria-label="Arbiter Focus GPU precision"]').options].map(option=>option.value)`),['auto','fp32','fp16']);
+    assert.deepEqual(await browser.evaluate(`[...document.querySelector('[aria-label="Arbiter Focus GPU precision"]').options].map(option=>option.value)`),['auto']);
+    const nativeFocus=JSON.parse(await readFile(new URL('../../../fixtures/split/arbiter/device_cases.json',import.meta.url),'utf8')).cases.find(row=>row.id==='focus_cpu_local_candidate').status.focus;
+    const fp16Only=nativeFocus.models[0].variants.filter(variant=>variant.precision==='float16');
+    assert.equal(fp16Only.length,1);
+    await browser.evaluate(`window.arbiterStatus.focus.models[0].variants=${JSON.stringify(fp16Only)};
+      [...document.querySelectorAll('button')].find(button=>button.textContent==='Refresh Arbiter status').click();`);
+    await browser.observed(`document.querySelector('[aria-label="Arbiter Focus GPU precision"]').options.length===2`);
+    assert.deepEqual(await browser.evaluate(`[...document.querySelector('[aria-label="Arbiter Focus GPU precision"]').options].map(option=>option.value)`),['auto','fp16']);
     assert.equal(await browser.evaluate(`document.querySelector('[aria-label="Arbiter Focus"] input[type=checkbox]').checked`), false);
     await browser.evaluate(`{const stage=document.querySelector('[aria-label="Arbiter Focus"]');stage.querySelector('input[type=checkbox]').click();}`);
     assert.equal(await browser.evaluate(`[...document.querySelectorAll('button')].find(button=>button.textContent==='Apply Arbiter Focus choices').disabled`),true,'unqualified model cannot be enabled');
