@@ -397,3 +397,59 @@ and retains all refusals. Human reviewers adjudicate complete evidence
 sets without precision or output identities. The 98% decision still
 needs a powered, clustered paired comparison on admitted inputs.
 [Native visibility and collector requirements](../../scripts/arbiter/analysis/public_source_admission/README.md#context-fp16-confirmation-source-censuses)
+
+### Source validation results for the confirmation candidate pools
+
+The original TechQA DEV join verified 76 of 77 publisher answers at their
+exact Unicode scalar offsets in the original source. All 3,527 ordered-menu
+document IDs resolved across 28,482 archive entries. One in-bounds span
+differs from the published answer and is withheld. Preserve the original
+offsets. The private techqa-original-dev-source-spans-r1.json receipt is
+f8b022efff9fd0ffaa8a7c7f307f4aa4e6ab2a7aa4d0623beb6851d1232701e9.
+
+The IBM audit joined all 60 passage pointers for the 25 Cloud questions
+to 49 literal documents in the exact official passage archive, which has
+72,442 rows. Exact identifiers, canonical URLs and hosts did not overlap
+388 original TechQA TRAIN gold documents, 12,355 original DEV menu
+documents, or 254 retained TRAIN source documents. Every selected query
+was authored before the April 2025 Qwen3 publication. The original
+release was already public. The four newer-release questions have
+earlier authored dates and unresolved private exposure. Review source
+notices, family aliases, clones and exposure before canonical admission.
+The private techqa-style-ibm-mtrag-cloud-source-metadata-r1.json
+receipt is 2bd2a972bf385d0732af3fa24a716b9f580e0ca8ec4887a2fcb47d8846493ee5.
+
+The AWS projection reauthenticated all 35 source files and returned
+41 unique original byte and line ranges. Twenty-nine are literal and
+12 use the verified Markdown range projection. Twenty-four answers
+occur more than once and have no selected span. One unique range crosses
+fenced code and carries a separate rights flag. The root and 12 family
+notice sets were pinned. Exact comparisons found no match in the inspected
+1,514 retained file descriptors, 2,525 TRAIN queries or 394 TechQA TRAIN
+candidate question digests. Full rights, semantic clones, calibration
+and model exposure remain open. The private AWS source projection receipt
+is 9a248fa25c34b0b0b5c4b9caf83a44b2127331971ac547f1885e0c7bc990bf9f.
+
+The MultiLang pinned-revision screen resolved all 50 canonical repository
+identities, including the earlier redirect. It resolved 69 of 72 historical
+ContextBench claims and found zero known canonical or fork overlaps in that
+scope. All 50 exact base commits were tied to their pull requests and
+49 were ancestors of the observed default heads. GitHub issue chronology
+showed 49 post-model, ordered issue-to-merge pairs. The pinned root-license
+API matched 48 base commit blobs. Thirty-nine cases jointly meet the
+post-model chronology, exact pull-base association, permissive root
+classifier and observed overlap screen. Only 16 frozen source commits
+were no later than their original issue. Later snapshots need an explicit
+pre-fix evidence and chronology review. Per-file rights, the three
+unresolved historical aliases and clone/later exposure remain open.
+The pinned-upstream-screen.private.json receipt is
+dcef091a79fc092e5422b39c62c47c197810a5263c19d1d4a66c08362f3987c4.
+
+The exact CUDA Compact Q/K/V calibration still has zero rules and
+all four action classes unsupported. The retained matching-reference
+development raw errors remain 0.006991, 0.068153 and 0.046494 at
+128, 1,024 and 8,192 tokens respectively, above the 0.001 parity
+requirement. Source verification supplies inputs for adjudication.
+Before the judged comparison, freeze native-visible evidence sets,
+complete the native menus for the two precision arms, and verify
+8,192-token coverage and the prospective paired analysis.

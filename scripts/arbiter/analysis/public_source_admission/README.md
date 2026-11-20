@@ -35,6 +35,12 @@ The family-root source-provenance.json maps original and maintained SHA-256 valu
   cases transitively through shared exact document IDs. It measures menu
   dependencies and leaves product families, clones and statistical power open.
   All modes skip publisher question, answer and document text values.
+- [Original TechQA DEV span audit](audit_techqa_dev_source_spans.py) checks
+  the 77 exact publisher cases from the existing metadata census. Pass a fresh
+  checked private `--output` path with pinned Windows Python `-I -B -S`.
+  The audit decodes only the selected answer values and gold document text,
+  projects the publisher's Unicode scalar offsets without shifting them, and
+  retains aggregate literal-match, mismatch and out-of-range counts.
 - [IBM Cloud support screening](audit_mtrag_cloud_metadata.py) reads the
   frozen publisher qrels and classification metadata for MTRAG-UN and
   MTRAG. Run it with checked Windows Python `-I -B -S` and no arguments.
@@ -47,6 +53,13 @@ The family-root source-provenance.json maps original and maintained SHA-256 valu
   relevance role of the qrels. Source rights, exposure, complete menus,
   sufficient evidence and native visibility need separate review.
 
+- [IBM Cloud source admission audit](audit_mtrag_cloud_admission.py)
+  runs under checked Windows Python `-I -B -S` and emits one private metadata
+  receipt to stdout. It joins the frozen screening pointers to the
+  exact official passage archive, authenticates publisher annotation
+  dates and compares the retained TechQA TRAIN/DEV source metadata.
+  It skips corpus text and keeps document rights, complete evidence
+  judgments and native visibility pending.
 - [AWS documentation QA screening](audit_aws_documentation_metadata.py)
   reads the pinned publisher CSV and its exact source documents and notices.
   Run with checked Python `-I -B -S` and `--count 65 --seconds 90`.
@@ -55,6 +68,14 @@ The family-root source-provenance.json maps original and maintained SHA-256 valu
   through documentation families within each match type. Formatting-based
   matches require span review. Corpus-wide rights, exposure, complete
   evidence judgments, menus and native visibility still need verification.
+- [AWS source projection](audit_aws_documentation_source_projection.py)
+  takes the exact private `--screen` receipt under checked Python
+  `-I -B -S`. It reauthenticates selected AWS source bytes and license
+  notices and retains raw byte and line coordinates for unique origins.
+  Repeated literals remain ambiguous. Formatting projections and fenced
+  code are explicitly flagged. The receipt also records the scope of the
+  frozen exposure comparison. This is input preparation for the native
+  visibility and independent evidence-set checks.
 - [Repository candidate collector](collect_repository_confirmation_candidates.py)
   checks the eight immutable SWE-bench-Live MultiLang shards and reads only
   six identifier and date columns. Use the checked pinned Python and the
@@ -68,6 +89,15 @@ The family-root source-provenance.json maps original and maintained SHA-256 valu
   refusals, and reports current canonical repository, fork and license
   classifiers. Immutable commit reachability, actual issue date and
   file-specific rights remain separate.
+- [Pinned repository upstream screen](screen_repository_confirmation_upstreams.py)
+  takes the exact private `--roster`, preliminary `--previous` receipt, and
+  pinned `--gh` executable. Run under verified same-human custody with
+  provisioned PyArrow and the user's existing GitHub CLI authentication.
+  It reads only public selected identity, issue chronology, commit and
+  license metadata. It compares canonical lineage against the blind
+  ContextBench fence and verifies the root license blob at the exact base
+  commit. Per-file rights, unresolved aliases, clone overlap and human
+  evidence judgments remain separate checks.
 
 Run the pinned interpreter locally under the verified human identity. Redirect
 the one-line aggregate only to a new audited private campaign path. These

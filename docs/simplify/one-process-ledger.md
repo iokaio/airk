@@ -12391,3 +12391,34 @@ and the 50-request upstream query in 4.555 s. The separate receipts
 retain byte pins, roles, and exclusions. Proceed with exact source
 rights and exposure review before native menu and visibility capture.
 [Supplemental source audit](../arbiter/software-v2-data-audit.md#supplemental-90-and-50-candidate-roster)
+
+### 2026-11-19 — Confirmation source spans and pinned upstream screening
+
+The source validation wave ran on the original TechQA candidate set and
+the supplemental IBM Cloud, AWS documentation, and MultiLang rosters.
+All private outputs were audited under the verified human SID and default
+owner ending 1002. The original TechQA audit matched 76 published answer
+spans and withheld one in-bounds mismatch. IBM Cloud joined all 60
+published passage pointers for 25 questions. The exact limited exposure
+comparison found no identifier, URL or host overlap and retained the
+pre-Qwen3 authored dates as open exposure evidence. AWS mapped 41
+unique source ranges and withheld 24 with repeated occurrences.
+MultiLang resolved 50 base commits. Thirty-nine cases met the scoped
+chronology, known ContextBench overlap and root-license checks.
+No case gained native or judged qualification.
+
+| Evidence | Private SHA-256 | Actual elapsed |
+| --- | --- | ---: |
+| TechQA publisher DEV spans | f8b022efff9fd0ffaa8a7c7f307f4aa4e6ab2a7aa4d0623beb6851d1232701e9 | 60.477257 s |
+| IBM Cloud passage join and exposure fields | 2bd2a972bf385d0732af3fa24a716b9f580e0ca8ec4887a2fcb47d8846493ee5 | 51.441476 s |
+| AWS original source ranges | 9a248fa25c34b0b0b5c4b9caf83a44b2127331971ac547f1885e0c7bc990bf9f | 1.480114 s |
+| MultiLang exact upstream metadata | dcef091a79fc092e5422b39c62c47c197810a5263c19d1d4a66c08362f3987c4 | 33.771 s |
+
+The maintained commands retain the source, release and prior receipt
+pins for each check. Exact per-file rights, remaining source exposure,
+native corpus coordinates, a complete paired-menu freeze and human
+acceptable evidence-set judgments remain open. The Compact Q/K/V
+calibration receipt b5ef749ce5e3349513f380c5fd03d7e1839a1f9830a4a7172ec1db59e37c1be3
+still has zero rules. The 0.001 same-recipe parity requirement also remains
+unmet. The 98% paired Answer comparison has no measured result.
+[Source validation audit](../arbiter/software-v2-data-audit.md#source-validation-results-for-the-confirmation-candidate-pools)

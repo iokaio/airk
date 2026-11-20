@@ -206,6 +206,13 @@ Use the existing deadline when resuming in a new context.
   independent sufficiency judgments where needed, and freeze complete
   paired menus and long-context coverage before admission.
   [Supplemental recruitment outputs](arbiter/software-v2-data-audit.md#supplemental-90-and-50-candidate-roster)
+  Source validation matched 76 original TechQA answer spans, resolved
+  all 60 publisher pointers for 25 IBM Cloud cases, mapped 41 unique AWS
+  ranges, and found 39 MultiLang candidates with the scoped chronology,
+  root-license and known-overlap checks. Preserve
+  refusals. Complete the remaining source and human reviews and
+  capture exact native-visible evidence before scoring a judged arm.
+  [Confirmation source validation](arbiter/software-v2-data-audit.md#source-validation-results-for-the-confirmation-candidate-pools)
   [Local confirmation-source inventory](arbiter/software-v2-data-audit.md#initial-context-fp16-confirmation-source-inventory)
   [Stock FP32 projection comparison](simplify/one-process-ledger.md#2026-11-19--stock-cuda-fp32-projection-is-a-compact-candidate)
   [FP32 projection output comparison](simplify/one-process-ledger.md#2026-11-19--fp32-projection-output-improves-half-rounding)
