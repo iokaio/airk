@@ -102,6 +102,23 @@ The user resumed the Windows and Linux FP16 campaign after D: cleanup. Keep new 
   contract-first ordering, explicit parallel file ownership, one Cargo
   owner per host/target and primary review before expensive integrated runs. A failing model
   or unavailable host does not stop independent product checks.
+## 20 November Windows and Linux FP16 checkpoint
+
+Windows Compact exceeded 0.007 on the 1,014-token development input under
+all three measured arithmetic recipes. The full-projection maximum was
+0.051598. Windows Large exceeded 0.007 at 32 tokens (0.011738); its first
+layer showed a measurable Q/K/V accumulation difference. The independent
+CPU comparison and the next native Large candidate use the original stored
+half weights and widen these three projections. Keep both release gates open.
+The 98% paired judged comparison remains unmeasured.
+
+Use the checked CAL restart procedure to reuse the installed models. The
+Linux provider continues in its existing Ubuntu virtual disk on C:. Check
+physical C: and D: headroom plus guest ext4 space before admitting growth.
+Keep new Windows outputs on D:. Exact run identities, active deductions
+against the original time limits, and later results belong in the
+[execution ledger](simplify/one-process-ledger.md).
+
 ## 18 November extension restart checkpoint
 
 This checkpoint used the earlier Friday 9:27 p.m. deadline. See the current
@@ -193,8 +210,9 @@ Windows and Linux CUDA target under Authority and deadline.
   The approved 0.010 Windows CUDA development batch completed on the
   Q/K/V candidate. T128 passed with 0.006991 raw error. T1024 and T8192
   missed at 0.068153 and 0.046494. All three kept the full score order
-  and passed both mass limits. The 0.001 same-recipe qualification
-  limit and 98% judged-evidence rule still apply. The T1024 layer-zero
+  and passed both mass limits. This historical batch used a 0.001
+  same-recipe qualification limit. The current Windows/Linux Context release
+  uses 0.007 and retains the 98% judged-evidence rule. The T1024 layer-zero
   capture reproduced all eight sealed CUDA score words. On identical
   Q/K/V inputs, the multi-tile CPU replay matched 98.54% of attention
   output words, with 0.000976563 maximum error. Avoid widening

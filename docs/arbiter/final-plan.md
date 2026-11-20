@@ -1905,9 +1905,10 @@ One correctly placed, resource-safe development session can retain the
 remaining widths after a raw-screen nonpass. Stop for structural,
 resource, identity, finite-output, settlement or required mass failures.
 Record actual device placement, latency and memory observations, with
-their measurement scope. Retain the 0.001 same-recipe qualification
-limit and 98% paired judged-evidence rule. Review results on representative
-close calls and long requests before proposing any qualification change.
+their measurement scope. Retain the original 0.001 qualification assessment in the batch receipt. The
+subsequent Windows/Linux Context release decision sets the matching-recipe
+ceiling at 0.007 and retains the 98% paired judged-evidence rule. Review
+representative close calls and long requests under the frozen release criteria.
 
 The initial Windows CUDA batch completed all three widths. T128 passed
 the raw screen. T1024 and T8192 exceeded it. Both mass comparisons
