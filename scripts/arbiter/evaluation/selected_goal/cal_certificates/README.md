@@ -93,3 +93,18 @@ question window fingerprint remain distinct. The R3 setup debit and all
 operation clocks still apply. The retired R6 supplies custody evidence only.
 All 100 question and probe records must come from the two completed R7
 lifetimes.
+
+The standalone R8 reader opens the retained Windows plan, two native lifetime
+closures, outer Job, final mutex release and latest timing handoff. It checks all
+100 ordered questions and emits the same reference preflight format as UTF-8
+JSON on stdout. Run the focused controls or read the completed capture in the
+checked Windows shell.
+
+```powershell
+python -I -B -S scripts/arbiter/evaluation/selected_goal/cal_certificates/test_r8_capture.py
+python -I -B -S scripts/arbiter/evaluation/selected_goal/cal_certificates/r8_capture.py
+```
+
+The combined reader can emit both the certificate and chronological inputs
+with one verification of the native capture. See the [chronological input
+README](../cal_raw/README.md).

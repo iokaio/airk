@@ -1,5 +1,20 @@
 # Windows scientific CAL readout
 
+## R8 complete calibration inputs
+
+Run `python -I -B -S r8_chronological_inputs.py --plan-sha256 <R8 plan SHA>
+--lifetime-sha256 <lifetime 00 SHA> --lifetime-sha256 <lifetime 01 SHA>
+--terminal <outer SHA> <fixture SHA> <mutex release SHA> --output <empty checked
+campaign child>` after both R8 lifetimes close. Use the Windows execution guard
+before admitting the output directory. The CLI verifies the complete original
+capture once, then writes the independent `reference-preflight.json`, both
+model compiler inputs, and all 13 linked phase reports. The final
+`projection-receipt.json` binds those results to the exact R8 plan and source.
+The projection executes no model forwards. For the compiler-only check,
+use `run_compiler_batch.py` with the existing verified image, the two model
+files, and `--launch-audit <path> <SHA>` from the projection receipt. The
+existing single-child Job and selector verify both original compiler inputs.
+
 ## R7 chronological original inputs
 
 Run `python -I -B -S r7_chronological_inputs.py --plan-sha256 <R7 plan SHA>

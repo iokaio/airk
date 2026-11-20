@@ -34,10 +34,13 @@ def execute(args):
     require(args.log.is_absolute() and args.log.resolve() == args.log and cwd.parent == CAMPAIGN
             and not args.log.exists(), "fresh private log required")
     native_pin = {"path": str(image), "sha256": args.image_sha256}
-    env = {k:v for k,v in os.environ.items() if not k.startswith(("AIRK_", "CUDA_", "ORT_"))}
+    audit_path, audit_sha = args.launch_audit
+    audit_pin = {"path": audit_path, "sha256": audit_sha}
+    checked(audit_pin, maximum=2 << 20)
+    env = {k: v for k, v in os.environ.items() if not k.upper().startswith(("AIRK_", "CUDA_", "ORT_"))}
     env["CUDA_VISIBLE_DEVICES"] = ""
-    env["AIRK_CUDA_CAL_LAUNCH_AUDIT"] = str(CAMPAIGN/"cal100-focus1024-launch-r1"/"cal100-launch-audit.json")
-    env["AIRK_CUDA_CAL_LAUNCH_AUDIT_SHA256"] = AUDIT
+    env["AIRK_CUDA_CAL_LAUNCH_AUDIT"] = audit_path
+    env["AIRK_CUDA_CAL_LAUNCH_AUDIT_SHA256"] = audit_sha
     expected = {}
     inputs = {}
     for model in ("compact", "large"):
@@ -49,7 +52,9 @@ def execute(args):
         inputs[model] = pin
         eligible = value["statuses"].get("eligible", 0)
         count = value["original_requests"]
-        require(len(value["rows"]) == count and len(value["phases"]) in range(1,14), "incomplete input")
+        require(value["launch_audit_sha256"] == audit_sha
+                and len(value["rows"]) == count and len(value["phases"]) in range(1, 14),
+                "incomplete input or mismatched launch audit")
         expected[model] = f"ContextQwen{model.capitalize()} original_requests={count} native_recompiled={eligible} retained_refusals={count-eligible}"
     def authenticate(api, handle, info, child_deadline):
         proof = parent.suspended_authentication(api, info, deadline, child_deadline, token["user_sid"], native_pin, job.image_proof)
@@ -66,7 +71,7 @@ def execute(args):
              and all(any(line.endswith(summary) for line in lines) for summary in expected.values())
              and any("1 passed; 0 failed;" in line for line in lines))
     return {"passed":valid, "command":argv, "image":native_pin, "inputs":inputs, "summary":expected,
-            "launch_audit_sha256":AUDIT, "job":observed, "log_sha256":digest(args.log),
+            "launch_audit_sha256":audit_sha, "job":observed, "log_sha256":digest(args.log),
             "source_sha256":digest(Path(__file__)), "NN_invocations":0}
 
 
@@ -77,6 +82,8 @@ if __name__ == "__main__":
     p.add_argument("--compact", nargs=2, required=True, metavar=("PATH","SHA256"))
     p.add_argument("--large", nargs=2, required=True, metavar=("PATH","SHA256"))
     p.add_argument("--log", type=Path, required=True)
+    p.add_argument("--launch-audit", nargs=2, metavar=("PATH", "SHA256"),
+                   default=(str(CAMPAIGN / "cal100-focus1024-launch-r1/cal100-launch-audit.json"), AUDIT))
     args = p.parse_args()
     require(sys.platform=="win32" and sys.flags.isolated and sys.flags.no_site and sys.dont_write_bytecode,
             "use checked Windows Python -I -B -S")
