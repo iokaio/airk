@@ -2226,3 +2226,5 @@ The user approved `allow_gpu` in the versioned service resource configuration an
 ### Approved Windows Compact FP16 execution identity
 
 The user approved a separate Windows Compact FP16 identity binding the exact graph, optimizer settings and observed final GPU/CPU placement. Authenticate the optimized graph's complete node placement through the native runtime and bind the approved result using the bounded-hybrid policy. A changed graph, optimizer policy or placement requires a new identity and fresh qualification. Catalog admission remains subject to the numerical, task-quality, fit and installed runtime gates.
+
+The user extended this execution-identity design to Windows Large, Linux Compact and Linux Large wherever mixed execution is required. Each operating system and model binds its own exact graph, optimizer and measured placement and undergoes independent qualification. The Linux ELF runtime and compatibility digest remain separate from Windows.

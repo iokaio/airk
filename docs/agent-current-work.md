@@ -291,3 +291,5 @@ Windows and Linux CUDA target under Authority and deadline.
   campaign artifacts. Never stage or package private state, credentials,
   indexed source copies or training examples. Verified distributable outputs
   belong in separate fresh package directories.
+
+On 20 November UTC the user approved binding exact graph, optimizer settings and measured GPU/CPU placement for Windows Compact, Windows Large, Linux Compact and Linux Large wherever mixed execution is needed. Each model and OS requires independent qualification. The versioned service-wide allow_gpu setting defaults to enabled for existing configurations. Both decisions are recorded in the final plan.
