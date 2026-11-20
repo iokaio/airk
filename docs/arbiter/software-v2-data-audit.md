@@ -617,3 +617,33 @@ preserve the original revision-relative paths and exclude the notices.
 | techqa-menu-native-source-reads-r1/native-reads.private.json | 120e9b270f8fb5a0accc7ed31f33ba99f52e3016736409d7720592b84e1633ff |
 | repository-confirmation-multilang-r1/contextbench-six-source-rights-r1.private.json | 34d01f50c1e6f4892c4ffcd54243a32af09abc122406a86a9ff5c2e03795a98a |
 | contextbench-six-private-corpora-r1/manifest.private.json | 46dede63b8ceb84464471a8d66846989184bf3a2b8525a5bef76278ed1a5a9b8 |
+
+### Additional technical-support recruitment screen
+
+The 24 AWS requests with ambiguous gold occurrences stay excluded. The
+active technical-support pool has 142 candidates against the planning
+target of 154, before applying native menu and exposure checks. The
+additional source screen yielded zero verified independent replacements.
+The IBM release documents the available corpus and Telco restrictions.
+The NVIDIA and TechSupportEval releases reuse TechQA questions. Counting
+these copies would duplicate existing coverage.
+[IBM release](https://github.com/IBM/mt-rag-benchmark/blob/e0970de1b1207c2a9506adf238e6e1a22037e38a/mtragun-human/README.md) · [NVIDIA dataset description](https://huggingface.co/datasets/nvidia/TechQA-RAG-Eval/raw/main/README.md) · [TechSupportEval release](https://github.com/NetManAIOps/TechSupportEval/blob/6500194228b667159e4b9a61fcbfe9e1d38df560/README.md)
+
+### Native reads at six ContextBench revisions
+
+Six isolated native services returned exact paths, source hashes and cited
+bytes for all 24 staged spans. Five cases have full publisher span coverage.
+The Tailwind case returned four of its twenty spans. Its other sixteen
+are in the withheld lockfile. Each service reached a ready publication and
+exited with zero remaining owned processes. This establishes source
+visibility. Offered actions and judged paired outcomes still require
+separate measurements.
+
+| Base prefix | Native read receipt SHA-256 | Owned seconds |
+| --- | --- | ---: |
+| 7b36544e | 02fe079fa1d40d3cc990dcd65c0297d7a118fa8cc6d981dba1dea84d2ef8447f | 92.445 |
+| cbd11d8a | f33eb0025848c43f5948643ec682cf94203e03246426476de62fe040e83c9cdd | 88.196 |
+| 2de810e9 | 01d2c7e5f12391654ff5c6dcfd8b77e15baa36faed196e58f1120be5b763ca2d | 53.008 |
+| 93cdb262 | 046c3272278d00c815db741ce80d7c1ee6228f4700046a6580b894fd73025ccc | 54.733 |
+| daea6623 | fcf18d49bd64cf553cd300e9ecfb6c02e6b2284b97ebe64874fcc605478cd340 | 50.833 |
+| f7997256 | d9997ae2dbc03e4feea3d423f9cb38395c42afc1bd795ae90a61fd30829e10ce | 62.236 |

@@ -36,6 +36,9 @@ Active campaign: Arbiter final implementation (execution start 2026-11-16T05:29:
   efficient FP16 on Windows CUDA first. After Windows FP16 passes, start FP16-only
   Linux CUDA qualification directly on the existing WSL2 instance and
   report genuine blockers. Linux CPU checks continue independently.
+- Apply the user-approved provisional 0.07 raw-score ceiling to this FP16
+  version's development runs. Review representative close calls and freeze
+  any revised release rule before held-out confirmation.
 - The user approved separate Linux ELF runtime manifests for scientific and
   product runs, with pinned Linux dependencies and a Linux compatibility
   digest. Preserve the existing Windows manifest and compatibility identities.

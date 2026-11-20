@@ -1847,6 +1847,19 @@ score comparison.
 
 ### Approved Windows Compact CUDA development screen
 
+On 20 November UTC the user authorized **0.07 maximum absolute raw-score
+error for this version's development runs**. Use the matching-recipe
+reference, existing mass limits and identical winner checks. Under a 0.07
+bound, candidates whose reference scores differ by at most 0.14 can switch
+order. Report such leading pairs, consequential changes near active
+thresholds, and 8,192-token outcomes separately. Use representative
+development observations to review and freeze a release rule before
+held-out confirmation. The release limit currently recorded is 0.001.
+Exact-artifact calibration, the 98% paired evidence requirement, Windows
+and Linux runtime acceptance and platform sequencing continue to apply.
+
+The following was the earlier, completed 0.010 development batch.
+
 Use 0.010 maximum absolute raw-score error for the next development
 batch on the retained Compact Q/K/V candidate. Compare against its
 independent CPU reference with the same stored half weights and

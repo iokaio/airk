@@ -196,3 +196,10 @@ interpreter with -I -B and the absolute --directory and --gh inputs.
 that private evidence via -Receipt and a fresh private -Destination. Source
 files are separated by base revision, and governing notices are staged beside
 the source roots. The manifest records every withheld path.
+
+For the six ContextBench revision roots, run
+`stage-contextbench-native-roots.ps1` once, then invoke
+`python -I -B -S scripts/arbiter/analysis/public_source_admission/verify_contextbench_native_source_reads.py --output <absolute-private-revision-output>`
+once for each base. Use a fresh `cb-<first-eight-base-hex>-native-source-reads-r1`
+directory per invocation. Each service records its own index, publication,
+cited paths and source hashes, along with withheld spans and shutdown.

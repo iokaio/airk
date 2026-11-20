@@ -12698,3 +12698,20 @@ entries and reverified input seals. The outer receipt is
 and the fixture closure is
 `6843e6cf64036de389de91aa5d4539665f152918c18e6742f37c9f74b1ef376c`.
 The 13-phase pre-forward capture and exact-artifact rule fitting follow setup.
+
+### Provisional 0.07 raw parity for FP16 development, 20 November 2026 UTC
+
+The user authorized the 0.07 maximum absolute raw-score ceiling for
+development on this version. The four frozen Windows Compact Q/K/V cases
+fall within that ceiling and keep the same winner. Matching-reference
+top-two margins are 4.821965, 1.368767, 14.968845 and 0.733833 at 32, 128,
+1,024 and 8,192 tokens. None exercises the 0.14 possible winner-swap
+interval. The maximum observed mass deviation is 0.010781661. Retain
+historical qualification outcomes against the original 0.001 limit. The
+release decision requires a frozen rule and independent confirmation.
+
+All six ContextBench revision-scoped native fixtures verified their 24
+staged ranges, each on its own publication. Five cases have complete
+native-visible spans. Three adapter controls passed. The
+[data audit](../arbiter/software-v2-data-audit.md#native-reads-at-six-contextbench-revisions)
+records six input revisions, receipt identities, times and Tailwind exclusions.
