@@ -16,8 +16,8 @@ import time
 HERE = Path(__file__).resolve().parent
 d = runpy.run_path(str(HERE / "fresh_windows_d.py"))
 ROOT, OUT, E, GIB = (d[key] for key in ("REPO", "OUTPUT", "CAMPAIGN", "GIB"))
-PLAN = E / "windows-cu18-reviewed-build-r1"
-RUN = E / "windows-cu18-native-build-r1"
+PLAN = E / "windows-cu18-reviewed-build-r2"
+RUN = E / "windows-cu18-native-build-r2"
 CONFIG = PLAN / "configure-recipe.json"
 BINDING = PLAN / "review.json"
 HIST_ARCHIVE = E / "fresh-cuda-aggregate-cu15-r1.json"
@@ -58,11 +58,28 @@ def signed_sources(head, base):
     return rows
 
 
+def control_evidence(base):
+    receipt = E/"windows-cu18-descendant-control-r2/execution.json"
+    pin = base.pin(receipt)
+    data = json.loads(d["read"](receipt,pin["sha256"]))
+    require(data["source"] == base.pin(Path(__file__).resolve()), "native control was not run against this owner")
+    rows = data["process_count_cases"]
+    require(len(rows)==2 and [r["job"]["suspended_assignment"]["active_limit"] for r in rows]==[2,64]
+            and rows[0]["job"]["exit_code"] != 0 and rows[1]["job"]["exit_code"] == 0
+            and rows[1]["job"]["owned_total_processes"] >= 4, "native active process limit control differs")
+    for row in rows:
+        base.pinned(row["log"])
+        require(row["job"]["owned_descendants_settled"] and row["job"]["owned_job_final_active_processes"]==0,
+                "native control Job did not settle")
+    return pin
+
+
 def prepare():
     c, base, _, _, guard = runtime()
     require(not PLAN.exists() and not OUT.exists() and not RUN.exists(), "fresh D build/plan required")
     head = git_bytes(["rev-parse", "--verify", "HEAD"]).decode().strip()
     owners = signed_sources(head, base)
+    control = control_evidence(base)
     reviewed = dt.datetime.now(dt.timezone.utc)
     recipe = d["current_recipe"](head, reviewed.isoformat())
     d["cutoff"](reviewed, reviewed)
@@ -78,14 +95,15 @@ def prepare():
                   "configure":base.pin(CONFIG), "owners":owners, "original_configure":base.pin(d["ORIGINAL"]),
                   "original_archive":base.pin(HIST_ARCHIVE), "output":str(OUT), "wall_seconds":10800,
                   "archive_seconds":300, "terminal":d["END"].isoformat(), "host_cap":HOST_CAP,
-                  "disk_reservation":DISK_CAP})
+                  "disk_reservation":DISK_CAP,"native_control":control})
     return base.pin(BINDING)
 
 
 def checked_plan(sha, base):
     value = json.loads(d["read"](BINDING, sha))
     require(value["owners"] == signed_sources(value["head"], base) and value["configure"] == base.pin(CONFIG)
-            and value["output"] == str(OUT), "prospective source/recipe binding differs")
+            and value["output"] == str(OUT) and value["native_control"] == control_evidence(base),
+            "prospective source/recipe binding differs")
     body = d["check_recipe"](CONFIG, value["configure"]["sha256"])
     require(body["head"] == value["head"], "reviewed head differs")
     return value, body
@@ -140,13 +158,17 @@ def verify_outer(facts, deadline):
                                  "worker","--sha256",before[0]["sha256"]]
             and admission["host_cap"] == HOST_CAP and admission["disk_reservation"] == DISK_CAP,
             "D original launch arguments or reservations differ")
+    original = first_admission()
+    require(admission["deadline"] <= original["deadline"] and
+            dt.datetime.fromisoformat(admission["start"]) >= dt.datetime.fromisoformat(original["start"]),
+            "original supervisor clock lost")
     job = execution["job"]
     grant = job["suspended_assignment"]
     require(job["exit_code"] == 0 and not job["timed_out"] and not job["log_oversized"]
             and job["owned_descendants_settled"] and not job["owned_job_forced_termination"]
             and job["owned_job_final_active_processes"] == 0 and job["owned_job_final_member_pids"] == []
             and job["child_assigned_before_resume"] and job["whole_process_deadline_not_refreshed"]
-            and grant["host_cap"] == HOST_CAP and grant["below_normal"] and
+            and grant["host_cap"] == HOST_CAP and grant["active_limit"] == 64 and grant["below_normal"] and
             len(set(grant["placement"]["logical_cpus"])) == 8, "D original CUDA Job or affinity did not qualify")
     require(time.monotonic() < deadline and before == [base.pin(path) for path in paths],
             "D custody inputs changed or verification expired")
@@ -187,9 +209,97 @@ def live_tools(recipe):
     return {Path(row["path"]):row for row in rows if row["path"].lower().endswith(".exe")}
 
 
+def process_grant(c, base, parent, owner, py, deadline, placement, limit):
+    require(limit in (2, 64), "invalid reviewed Windows process limit")
+    mask = sum(1 << i for i in placement["logical_cpus"])
+    limits_type = runpy.run_path(str(ROOT/"scripts/arbiter/analysis/public_source_admission/aws_normal_service.py"))["Limits"]
+    def before(api,job,info,until):
+        proof = parent.suspended_authentication(api,info,deadline,until,base.SID,py,owner.image_proof)
+        require(c["token_owner"](info.process)==base.SID, "foreign default owner")
+        limits = limits_type()
+        def query():
+            require(api.QueryInformationJobObject(job,9,ctypes.byref(limits),ctypes.sizeof(limits),None),
+                    "Job limits query failed")
+        query()
+        require(limits.basic.active_limit == 2 and limits.basic.flags & 0x8,
+                "pinned worker initial process-count guard differs")
+        limits.basic.flags |= 0x20 | 0x10 | 0x8
+        limits.basic.active_limit = limit
+        limits.basic.affinity = mask
+        limits.basic.priority = 0x4000
+        require(api.SetInformationJobObject(job,9,ctypes.byref(limits),ctypes.sizeof(limits)),
+                "compiler Job resource grant refused")
+        query()
+        require(limits.job == limits.process == HOST_CAP and limits.basic.priority == 0x4000 and
+                limits.basic.affinity == mask and limits.basic.active_limit == limit and limits.basic.flags & 0x8,
+                "observed compiler Job grant differs")
+        return dict(proof,host_cap=HOST_CAP,below_normal=True,placement=placement,active_limit=limit)
+    return before
+
+
+def first_admission():
+    prev = E/"windows-cu18-native-build-r1"
+    original = json.loads(d["read"](prev/"admission.json","73790666f819ebd758b5746787c42c13e68c545aeeaa4fca75fd11bebe3822c5"))
+    ended = json.loads(d["read"](prev/"execution.json","749bf09a05e7f346cd2a49a3edbdb4aad3dd0260f4c50ea92ec14ad79c3b7028"))
+    require(ended["passed"] is False and ended["job"]["exit_code"]==1 and ended["job"]["owned_descendants_settled"]
+            and ended["job"]["owned_job_final_active_processes"]==0, "original failed parent changed")
+    return original
+
+
+def first_deadline():
+    original = first_admission()
+    expiry = d["cutoff"](dt.datetime.now(dt.timezone.utc),dt.datetime.fromisoformat(original["start"]))
+    return min(original["deadline"],time.monotonic()+(expiry-dt.datetime.now(dt.timezone.utc)).total_seconds())
+
+
+def native_control():
+    c,base,parent,owner,guard = runtime()
+    runs = E/"windows-cu18-descendant-control-r2"
+    require(not runs.exists(), "preserve executed process-tree control")
+    c["mkdir"](guard,runs)
+    recipe = json.loads(d["read"](E/"windows-cu18-reviewed-build-r1/configure-recipe.json",
+                                 "472950f08d8b9589726656f9bf04bd153462d528a0c0e71353bbe113ebddd6ff"))
+    scratch = runs/"tmp"
+    c["mkdir"](guard,scratch)
+    env = dict(recipe["environment"])
+    env.update(TEMP=str(scratch),TMP=str(scratch),TMPDIR=str(scratch),PSModuleAnalysisCachePath=str(scratch/"ps-cache"))
+    placement = native_placement(0x550000000000000f)
+    interpreter = Path(sys.executable)
+    git = "C:/Program Files/Git/cmd/git.exe"
+    command = [sys.executable,"-I","-B","-c",
+               "import subprocess,sys;sys.exit(subprocess.call(sys.argv[1:]))",
+               str(recipe["tools"]["cmake"]["path"]),"-E","env",git,"--no-optional-locks","-C",str(ROOT),
+               "cat-file","-t",recipe["head"]]
+    result = []
+    for limit in (2,64):
+        deadline = time.monotonic()+30
+        path = runs/f"{limit}.log"
+        stdin = runs/f"{limit}.stdin"
+        c["guard_many"](guard,[path,stdin])
+        with stdin.open("xb"):
+            pass
+        with path.open("xb") as out,stdin.open("rb") as inp:
+            proof = owner.run_windows_owned_training(command,ROOT,out,deadline-time.monotonic(),env,inp,HOST_CAP,
+                    before_resume=process_grant(c,base,parent,owner,base.pin(interpreter),deadline,placement,limit),
+                    absolute_deadline=deadline)
+        c["guard_many"](guard,[path,stdin],True)
+        require(proof["owned_descendants_settled"] and proof["owned_job_final_active_processes"]==0 and
+                not proof["timed_out"] and not proof["owned_job_forced_termination"] and
+                proof["suspended_assignment"]["active_limit"]==limit, "actual native process control did not settle")
+        if limit == 2:
+            require(proof["exit_code"] != 0, "research two-process guard unexpectedly admitted native chain")
+        else:
+            require(proof["exit_code"] == 0 and path.read_bytes().strip()==b"commit" and
+                    proof["owned_total_processes"]>=4, "actual Python/CMake/Git shim/native chain missing")
+        result.append({"job":proof,"log":base.pin(path)})
+    c["write_new"](guard,runs/"execution.json",{"argv":command,"source":base.pin(Path(__file__).resolve()),
+                   "process_count_cases":result})
+    return base.pin(runs/"execution.json")
+
+
 def launch(args):
     import psutil
-    from ctypes import byref, sizeof
+
     c, base, parent, owner, guard = runtime()
     _, recipe = checked_plan(args.sha256, base)
     require(not RUN.exists() and not OUT.exists(), "preserve existing build or attempted run")
@@ -201,7 +311,7 @@ def launch(args):
     reserved = args.other_disk_gib * GIB
     d["disk_admission"](free, DISK_CAP, reserved)
     start_utc = dt.datetime.now(dt.timezone.utc)
-    deadline = time.monotonic() + (d["cutoff"](start_utc,start_utc) - start_utc).total_seconds()
+    deadline = first_deadline()
     c["mkdir"](guard, RUN)
     scratch = RUN / "tmp"
     c["mkdir"](guard, scratch)
@@ -213,26 +323,10 @@ def launch(args):
                    "resources":host,"other_host_gib":args.other_host_gib,"other_disk_gib":args.other_disk_gib,
                    "volume_free":free,"host_cap":HOST_CAP,"disk_reservation":DISK_CAP,"argv":argsv})
     placement = native_placement(args.exclude_mask)
-    mask = sum(1 << i for i in placement["logical_cpus"])
     expected_tools = live_tools(recipe)
     py = base.pin(Path(sys.executable))
     require(py["sha256"] == recipe["tools"]["python"]["sha256"], "worker interpreter differs")
-    limits_type = runpy.run_path(str(ROOT/"scripts/arbiter/analysis/public_source_admission/aws_normal_service.py"))["Limits"]
-    def before(api,job,info,until):
-        proof = parent.suspended_authentication(api, info, deadline, until, base.SID, py, owner.image_proof)
-        require(c["token_owner"](info.process)==base.SID, "foreign default owner")
-        limits = limits_type()
-        def query():
-            require(api.QueryInformationJobObject(job,9,byref(limits),sizeof(limits),None),"Job limits query failed")
-        query()
-        limits.basic.flags |= 0x20 | 0x10
-        limits.basic.affinity = mask
-        limits.basic.priority = 0x4000
-        require(api.SetInformationJobObject(job,9,byref(limits),sizeof(limits)), "below-normal Job placement refused")
-        query()
-        require(limits.job == limits.process == HOST_CAP and limits.basic.priority==0x4000 and
-                limits.basic.affinity == mask, "Job bounds differ")
-        return dict(proof, host_cap=HOST_CAP, below_normal=True, placement=placement)
+    before = process_grant(c,base,parent,owner,py,deadline,placement,64)
 
     peak = 0
     tools = {}
@@ -297,6 +391,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="mode",required=True)
     sub.add_parser("prepare")
+    sub.add_parser("control")
     for name in ("worker","launch"):
         opts = sub.add_parser(name)
         opts.add_argument("--sha256",required=True)
@@ -305,7 +400,9 @@ if __name__ == "__main__":
             opts.add_argument("--other-disk-gib",type=int,required=True)
             opts.add_argument("--exclude-mask",type=lambda v:int(v,0),required=True)
     args = parser.parse_args()
-    if args.mode == "prepare":
+    if args.mode == "control":
+        print(json.dumps(native_control()))
+    elif args.mode == "prepare":
         print(json.dumps(prepare()))
     elif args.mode == "worker":
         worker(args.sha256)
