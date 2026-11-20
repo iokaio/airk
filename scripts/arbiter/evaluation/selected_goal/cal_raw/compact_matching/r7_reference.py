@@ -19,6 +19,7 @@ from science import owners
 
 ROLES = ("protected_matching", "publisher_fp32")
 SCHEMA = "airk.private.compact-protected-cal-r7-cpu-batch/1"
+CPU_PROBE_SECONDS = 180
 
 
 def source_set():
@@ -154,7 +155,8 @@ def verified_runtime(deadline=None):
 
 
 def owned(args, rows, provenance, sources):
-    conversion, legacy, plan, token, deadline = verified_runtime()
+    probe_deadline = time.monotonic() + CPU_PROBE_SECONDS if args.cpu_probe else None
+    conversion, legacy, plan, token, deadline = verified_runtime(probe_deadline)
     helper = ROOT / "scripts/cuda-native-execution/helpers"
     for leaf, sha in conversion.HELPERS.items():
         require(digest(helper / leaf) == sha, "original suspended owner helper differs")
@@ -180,6 +182,8 @@ def owned(args, rows, provenance, sources):
     argv = [sys.executable, "-I", "-B", "-S", "-X", "pycache_prefix=" + plan["cache_prefix"], str(Path(__file__).resolve()),
             "--worker-deadline", repr(deadline), "--source-set", json.dumps(sources, sort_keys=True, separators=(",", ":")),
             "--first", str(args.first), "--count", str(args.count), "--role", args.role]
+    if args.cpu_probe:
+        argv.append("--cpu-probe")
     for name in ("projection", "compiler", "graph"):
         argv.extend(["--" + name, provenance[name]["path"], "--" + name + "-sha256", provenance[name]["sha256"]])
     if args.cal_pid is not None:
@@ -241,6 +245,8 @@ def main():
     parser.add_argument("--first", type=int, required=True)
     parser.add_argument("--count", type=int, required=True)
     parser.add_argument("--role", choices=ROLES, required=True)
+    parser.add_argument("--cpu-probe", action="store_true",
+                        help="one offline CPU diagnostic row under an owned 180-second timeout")
     affinity = parser.add_mutually_exclusive_group()
     affinity.add_argument("--cal-pid", type=int)
     affinity.add_argument("--terminal", nargs=len(TERMINAL_KEYS), metavar=TERMINAL_KEYS)
@@ -249,6 +255,8 @@ def main():
     args = parser.parse_args()
     require(sys.platform == "win32" and sys.flags.isolated and sys.flags.no_site and sys.dont_write_bytecode,
             "use the original checked Windows Python -I -B -S")
+    require(not args.cpu_probe or (args.count == 1 and not args.check_only),
+            "an offline CPU diagnostic probe requires one owned row")
     if not args.check_only:
         require(any(value is not None for value in (args.cal_pid, args.terminal, args.failed_terminal)),
                 "explicit live CAL PID or original terminal custody required")
@@ -261,7 +269,8 @@ def main():
     elif args.output is not None:
         owned(args, rows, provenance, sources)
     else:
-        require(0 < args.worker_deadline - time.monotonic() <= 600 and sources == json.loads(args.source_set),
+        limit = CPU_PROBE_SECONDS if args.cpu_probe else 600
+        require(0 < args.worker_deadline - time.monotonic() <= limit and sources == json.loads(args.source_set),
                 "foreign parent source proof or worker deadline")
         _, _, plan, _, _ = verified_runtime(args.worker_deadline)
         terminal = None

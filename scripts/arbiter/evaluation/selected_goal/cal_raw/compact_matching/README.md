@@ -36,6 +36,13 @@ physical cores at BelowNormal priority. Keep the 22 GiB Job, 600-second whole
 attempt clock and original row allowances. Reserve shared host and volume
 headroom before each measured Job. Run the two roles as separate Jobs.
 
+For a CPU-only diagnostic use `--cpu-probe --count 1` with the same inputs,
+role and custody arguments. The parent gives the single-row Job an absolute
+180-second deadline, including owned setup and compute. The aggregate
+reference batch uses its separate 600-second envelope. The native Answer
+operation, session transport, CAL capture clock and CUDA qualification have
+separate deadlines.
+
 A successful receipt links the exact graph, compiler, original input rows,
 owner, source pins and measured complete vectors. The protected and publisher
 scorers use the existing independently verified mathematics and reference

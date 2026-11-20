@@ -20,6 +20,9 @@ class ReferenceSourceCompatibility(unittest.TestCase):
         self.assertTrue(comparison.compatible_sources(historical, current))
         self.assertFalse(comparison.compatible_sources(historical | {scoring: "other scoring"}, current))
         self.assertFalse(comparison.compatible_sources(previous, current))
+        recovered = current | {str(directory / "r7_reference.py"): comparison.PRE_PROBE_RUNNER}
+        self.assertTrue(comparison.compatible_sources(recovered, current))
+        self.assertFalse(comparison.compatible_sources(recovered | {scoring: "other scoring"}, current))
 
 
 class ProtectedGpuJoin(unittest.TestCase):

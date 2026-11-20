@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Model-free checks for R7 CPU reference admission and provenance."""
 from pathlib import Path
+from types import SimpleNamespace
 import sys
 import unittest
 from unittest.mock import patch
@@ -20,6 +21,34 @@ class R7ReferenceAdmission(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "two quiet physical cores"):
                     owner.checked_science([], "protected_matching", {}, 600.0, 17, None, {}, {})
                 load.assert_not_called()
+
+    def test_owned_cpu_probe_starts_a_180_second_absolute_deadline(self):
+        for diagnostic, deadline in ((True, 207.0), (False, None)):
+            with (
+                self.subTest(diagnostic=diagnostic),
+                patch.object(owner.time, "monotonic", return_value=27.0),
+                patch.object(owner, "verified_runtime", side_effect=ValueError("clock recorded")) as runtime,
+            ):
+                with self.assertRaisesRegex(ValueError, "clock recorded"):
+                    owner.owned(SimpleNamespace(cpu_probe=diagnostic), [], {}, {})
+                runtime.assert_called_once_with(deadline)
+
+    def test_worker_rejects_a_probe_clock_longer_than_180_seconds(self):
+        argv = ["r7_reference.py", "--cpu-probe", "--first", "0", "--count", "1",
+                "--role", "publisher_fp32", "--cal-pid", "17", "--source-set", "{}"]
+        for name in ("projection", "compiler", "graph"):
+            argv.extend(["--" + name, "unused", "--" + name + "-sha256", "unused"])
+        for deadline, error in ((207.0, "worker clock accepted"), (207.01, "foreign parent source proof")):
+            with (
+                self.subTest(deadline=deadline),
+                patch.object(sys, "argv", [*argv, "--worker-deadline", str(deadline)]),
+                patch.object(owner, "inputs", return_value=([], {})),
+                patch.object(owner, "source_set", return_value={}),
+                patch.object(owner.time, "monotonic", return_value=27.0),
+                patch.object(owner, "verified_runtime", side_effect=ValueError("worker clock accepted")),
+                self.assertRaisesRegex(ValueError, error),
+            ):
+                owner.main()
 
     def test_attempt_worker_does_not_receive_a_fresh_reference_clock(self):
         with patch.object(owner.time, "monotonic", return_value=27.0):
