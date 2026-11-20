@@ -77,9 +77,17 @@ LAYER_JOB = HERE.with_name("large_layer_job.py")
 LAYER_JOB_SHA = "bfffc8fa720d74e10732d75103bdb24d6920931bc4d7081e1615ed80ad394875"
 
 TRAIN = HERE.with_name("large_train_case.py")
-TRAIN_SHA = "722baf8ad63976edea9c389f16a06be8ebf33d185ff96b4e3fd6a06e6dd6aa3b"
+TRAIN_SHA = "53f61c7ee10561afcc269e9b482ef32cad89530b15fe721dfb1f010fe995e79f"
+
+SCREEN = HERE.with_name("large_train_screen.py")
+SCREEN_SHA = "be3b0de1a4b06a145e4370f0e27589ba07b80955139cd26fbef5672b765e4519"
 
 def selected_row(meta, args):
+    if args.train_phase == "screen":
+        require(args.recipe==DIRECT_RECIPE and args.tokens==1193 and not args.capture_hidden
+                and not args.layers and args.publisher_execution is None and args.publisher_sha256 is None,
+                "original finite publisher-only screen required")
+        return checked_module(SCREEN,SCREEN_SHA)["population"](CAMPAIGN)
     if args.train_phase:
         require(args.recipe == DIRECT_RECIPE and args.tokens == 1588 and not args.capture_hidden, "unreviewed TRAIN case")
         case = checked_module(TRAIN, TRAIN_SHA)["original"](CAMPAIGN)
@@ -303,16 +311,22 @@ def reference(args):
         inputs[str(TRAIN)] = c["pin"](TRAIN, check)
         for pin in row["pins"]:
             c["pinned"](pin, check)
-    if args.train_phase == "publisher":
-        official = checked_module(TRAIN,TRAIN_SHA)["publisher"](torch,prep,meta,row,check)
+    if args.train_phase in ("publisher","screen"):
+        train = checked_module(TRAIN,TRAIN_SHA)
+        if args.train_phase == "screen":
+            inputs[str(SCREEN)] = c["pin"](SCREEN,check)
+            official = checked_module(SCREEN,SCREEN_SHA)["publisher"](torch,prep,meta,row,check,train)
+            c["pinned"](inputs[str(SCREEN)],check)
+        else:
+            official = train["publisher"](torch,prep,meta,row,check)
         for item in (pp, rp, mp, *meta["publisher_files"].values(), *row["pins"], inputs[str(TRAIN)]):
             c["pinned"](item, check)
-        return {"model":"large", "recipe":args.recipe, "tokens":args.tokens, "train_phase":"publisher",
+        return {"model":"large", "recipe":args.recipe, "tokens":args.tokens, "train_phase":args.train_phase,
                 "case_pins":row["pins"], "multi_tile_source":None, "candidate":variant,
                 "cpu_placement":placement, "conversion_plan":pp, "conversion_receipt":rp, "source_inputs":mp,
                 "graph":variant["graph"], "weights":proofs["weights"], "input_digest":row["input"]["input_digest"],
-                "publisher":official, "original_fp32":official["original_fp32"], "matching_fp16":None,
-                "loaded_runtime":support["loaded_runtime"](inputs,c["pin"],check), "forward_count":2,
+                "publisher":official, "original_fp32":official.get("original_fp32"), "matching_fp16":None,
+                "loaded_runtime":support["loaded_runtime"](inputs,c["pin"],check), "forward_count":official["official_forwards"],
                 "job":limits, "device":"cpu", "pid":os.getpid(), "token":token, "deadline":args.deadline,
                 "native_execution":False, "qualification":False}
     streamer = checked_module(STREAM, STREAM_SHA)
@@ -387,6 +401,14 @@ def valid_scores(obs, row, args):
                 and (finite(obs["matching_fp16"]) if args.layers[1] == 36 else obs["matching_fp16"] is None))
     if args.train_phase:
         require(obs["train_phase"] == args.train_phase and obs["case_pins"] == row["pins"], "wrong TRAIN phase or source")
+    if args.train_phase == "screen":
+        p=obs["publisher"]
+        screen=checked_module(SCREEN,SCREEN_SHA)
+        expected, first=screen["ranked"](row["screen"],p["original_vectors"])
+        return (p["plan_sha256"]==screen["PLAN"] and p["results"]==expected and p["selected"]==first
+                and p["decoder_trace"]==list(range(36))*5 and obs["forward_count"]==p["official_forwards"]==5
+                and p["candidate_forwards"]==0 and 0<=p["t32_max_abs"]<=0.001 and len(p["t32_control"])==8
+                and obs["original_fp32"] is None and obs["matching_fp16"] is None)
     if args.train_phase == "publisher":
         p = obs["publisher"]
         return (obs["forward_count"] == p["official_forwards"] == 2 and 0 <= p["t32_max_abs"] <= 0.001
@@ -549,10 +571,10 @@ if __name__ == "__main__":
     for flag in ("prior-layers","layer-control"):
         parser.add_argument("--"+flag,type=Path)
         parser.add_argument("--"+flag+"-sha256")
-    parser.add_argument("--train-phase", choices=("publisher","matching"))
+    parser.add_argument("--train-phase", choices=("publisher","matching","screen"))
     parser.add_argument("--publisher-execution", type=Path)
     parser.add_argument("--publisher-sha256")
-    parser.add_argument("--tokens", choices=(32, 128, 1024, 1588, 8192), type=int, default=32)
+    parser.add_argument("--tokens", choices=(32, 128, 1024, 1193, 1588, 8192), type=int, default=32)
     args = parser.parse_args()
     require(sys.flags.isolated and sys.flags.no_site and sys.dont_write_bytecode, "run with -I -B -S")
     if args.worker:
