@@ -2,6 +2,7 @@
 from pathlib import Path
 import runpy
 import unittest
+from unittest.mock import patch
 
 
 grader = runpy.run_path(str(Path(__file__).with_name("train_delivered_evidence.py")))
@@ -48,11 +49,72 @@ class ReturnedTrainSupport(unittest.TestCase):
         answer = {"read_scope": scope, "scope_observation": {"fingerprint": "a"},
                   "assessment": {"scope": {"publication": publication}}}
         verify = grader["verify_delivery_scope"]
-        self.assertEqual(verify(run, request, status, command, publication, answer), "i")
+        control = run / "fixture/control"
+        self.assertEqual(verify(control, request, status, command, publication, answer), "i")
         with self.assertRaises(ValueError):
-            verify(run, request, status, command, publication, answer | {"scope_observation": {"fingerprint": "b"}})
+            verify(control, request, status, command, publication, answer | {"scope_observation": {"fingerprint": "b"}})
         with self.assertRaises(ValueError):
             verify(Path("other-attempt"), request, status, command, publication, answer)
+
+    def test_shared_receipt_control_reaches_answer_consumer(self):
+        verify = grader["collect"]["verified_control"]
+        binding = grader["collect"]["inputs"]
+        root = Path("campaign")
+        run = root / "compact-development-TRAIN_Q564-focus1024-run-r3"
+        fixed = root / "cal100-focus1024-capture-r3/fixture/control"
+        r4 = root / "cal100-focus1024-capture-r4"
+        plan_sha = "9259b4be9e340ac8e050060e904f53acffee27e3807eca6145a9a8f3be3e299d"
+        pool = {}
+        def add(path, obj, seal=None):
+            seal = seal or str(len(pool))
+            pool[(path, seal)] = obj
+            return {"path": str(path), "sha256": seal}
+        cfg = {"revision": 2}
+        shared = {"control_root": str(fixed), "anchor_plan_sha256": plan_sha}
+        health = {"executable_sha256": "service", "instance": "a"}
+        ready = {"profiles": ["focus1024", "context"], "inputs_sha256": "roster", "health": health,
+                 "control_root": str(fixed)}
+        original = {"ready": add(fixed.parent / "ready.json", ready),
+                    "closed": add(fixed.parent / "closed.json", {}),
+                    "status": add(fixed.parents[1] / "commands/cal-ready.stdout", {"configuration": cfg})}
+        add(r4 / "lifetime-plan.json", {"installation": original}, plan_sha)
+        shared["previous"] = add(r4 / "outer-owned.json", {"owned_descendants_settled": True,
+                                 "owned_job_final_active_processes": 0, "owned_job_final_member_pids": []})
+        shared["ready"] = add(run / "fixture/ready.json", ready | {"health": health | {"instance": "b"}})
+        shared["closed"] = add(run / "fixture/closed.json", {"instance": "b", "control_root": str(fixed),
+                               "shutdown_completed": True, "service_lease_reacquired": True})
+        saved = {"configuration": cfg, "control": str(fixed)}
+        shared["saved"] = add(run / "fixture/restart-owner.json", saved)
+        shared["restart_request"] = add(run / "restart-request.json", dict(original))
+        shared["status"] = add(run / "commands/reuse-final-status.stdout",
+                               {k: {"queued": 0, "running": 0} for k in ("focus", "context")})
+        request = Path("request")
+        cmd = {"exit_code": 0, "argv": ["cli", "--output", "json", "--service-runtime-dir", str(fixed),
+               "tools", "call", "airk_answer", "--index", "i", "--args-file", str(request)]}
+        shared["answer_command"] = add(run / "commands/answer.command.json", cmd)
+        own = add(run / "owned.json", {"shared_installation": shared})
+        obs = {"fixture_instance": "b", "case_id": "TRAIN_Q564"}
+        with patch.dict(binding, {"CAMPAIGN": root, "load": lambda path, seal: pool[path, seal]}):
+            control = verify(run, own["sha256"], obs)
+            publication = {"token": "p"}
+            scope = {"read_scope": {"index_ids": ["i"]}, "publication": publication, "scope_observation": {}}
+            answer = {"assessment": {"scope": {"publication": publication}}, "read_scope": scope["read_scope"],
+                      "scope_observation": {}}
+            verify_scope = grader["verify_delivery_scope"]
+            self.assertEqual(verify_scope(control, request, {"isError": False, "structuredContent": scope},
+                                          cmd, publication, answer), "i")
+            with patch.dict(saved, {"control": str(run / "foreign")}):
+                with self.assertRaisesRegex(ValueError, "native shared control"):
+                    verify(run, own["sha256"], obs)
+            with patch.dict(shared, {"control_root": str(run / "alias")}):
+                with self.assertRaisesRegex(ValueError, "installation anchor"):
+                    verify(run, own["sha256"], obs)
+            with patch.dict(shared["answer_command"], {"path": str(root / "other-command.json")}):
+                with self.assertRaisesRegex(ValueError, "foreign shared-control evidence"):
+                    verify(run, own["sha256"], obs)
+            with patch.dict(cmd, {"argv": cmd["argv"][:4] + [str(run / "fixture/control")] + cmd["argv"][5:]}):
+                with self.assertRaisesRegex(ValueError, "native shared control"):
+                    verify(run, own["sha256"], obs)
 
     def test_wrong_publication_refuses(self):
         with self.assertRaisesRegex(ValueError, "publication differs"):

@@ -18,6 +18,73 @@ def observed(path):
     return json.loads(raw), hashlib.sha256(raw).hexdigest()
 
 
+def native_control_name(path):
+    # The Rust fixture records canonical extended-length DOS paths; the CLI
+    # command receives the ordinary drive-qualified spelling under this root.
+    return Path(str(path).removeprefix("\\\\?\\"))
+
+
+def verified_control(run, owned_sha, capture):
+    owner = inputs["load"](run / "owned.json", owned_sha)
+    proof = owner.get("shared_installation")
+    if proof is None:
+        require(run.name not in {"compact-development-TRAIN_Q564-focus1024-run-r3",
+                                 "compact-development-TRAIN_Q598-focus1024-run-r1"},
+                "expected shared installation receipt missing")
+        return run / "fixture/control"
+    campaign = inputs["CAMPAIGN"]
+    fixed = campaign / "cal100-focus1024-capture-r3/fixture/control"
+    plan_file = campaign / "cal100-focus1024-capture-r4/lifetime-plan.json"
+    plan_sha = "9259b4be9e340ac8e050060e904f53acffee27e3807eca6145a9a8f3be3e299d"
+    require(run.parent == campaign and proof["control_root"] == str(fixed) and proof["anchor_plan_sha256"] == plan_sha,
+            "shared control or installation anchor differs")
+    plan = inputs["load"](plan_file, plan_sha)["installation"]
+    def child(name, relative):
+        seal = proof[name]
+        path = run / relative
+        require(seal["path"] == str(path), "foreign shared-control evidence")
+        return inputs["load"](path, seal["sha256"])
+    ready = child("ready", "fixture/ready.json")
+    closed = child("closed", "fixture/closed.json")
+    saved = child("saved", "fixture/restart-owner.json")
+    restart = child("restart_request", "restart-request.json")
+    status = child("status", "commands/reuse-final-status.stdout")
+    command = child("answer_command", "commands/answer.command.json")
+    require(all(native_control_name(p) == fixed for p in (ready["control_root"], closed["control_root"], saved["control"]))
+            and ready["health"]["instance"] == closed["instance"] == capture["fixture_instance"]
+            and closed["shutdown_completed"] and closed["service_lease_reacquired"]
+            and command["exit_code"] == 0 and command["argv"][3:5] == ["--service-runtime-dir", str(fixed)]
+            and all(status[k]["running"] == status[k]["queued"] == 0 for k in ("focus", "context")),
+            "native shared control, case incarnation, command or settlement differs")
+    for key in ("ready", "closed"):
+        require(restart[key] == {f: plan[key][f] for f in ("path", "sha256")}, "restart anchor changed")
+    original = inputs["load"](Path(restart["ready"]["path"]), restart["ready"]["sha256"])
+    require(native_control_name(original["control_root"]) == fixed and original["profiles"] == ready["profiles"]
+            and original["inputs_sha256"] == ready["inputs_sha256"]
+            and original["health"]["executable_sha256"] == ready["health"]["executable_sha256"]
+            and original["health"]["instance"] != ready["health"]["instance"],
+            "native restart changed original control, executable or profile closure")
+    prior = proof["previous"]
+    path = Path(prior["path"])
+    required_prior = {"TRAIN_Q564": campaign / "cal100-focus1024-capture-r4/outer-owned.json",
+                      "TRAIN_Q598": campaign / "compact-development-TRAIN_Q564-focus1024-run-r3/owned.json"}
+    require(path.parent.parent == campaign and path.name in ("owned.json", "outer-owned.json")
+            and path == required_prior.get(capture["case_id"], path), "foreign predecessor path")
+    predecessor = inputs["load"](path, prior["sha256"])
+    require(predecessor["owned_descendants_settled"] and predecessor["owned_job_final_active_processes"] == 0
+            and predecessor["owned_job_final_member_pids"] == [], "previous owner did not settle")
+    if path == campaign / "cal100-focus1024-capture-r4/outer-owned.json":
+        prior_status = plan["status"]
+    else:
+        prior_status = predecessor["shared_installation"]["status"]
+        require(path.name == "owned.json" and prior_status["path"] == str(path.parent / "commands/reuse-final-status.stdout"),
+                "foreign predecessor idle status")
+    require(restart["status"] == {f: prior_status[f] for f in ("path", "sha256")}
+            and inputs["load"](Path(prior_status["path"]), prior_status["sha256"])["configuration"] == saved["configuration"],
+            "saved native configuration differs from the sealed predecessor")
+    return fixed
+
+
 def prior_q541(run):
     pins = {
         "owned.json": "56ed43d6bf290c8fdc26f6f9f0ae4bb0c378fc291f22d2f8531a8f3181306f9c",
@@ -46,6 +113,18 @@ def collect(row):
     original_run = inputs["CAMPAIGN"] / ("compact-development-" + case + "-focus1024-run-r1")
     prior = [prior_q541(original_run)] if case == "TRAIN_Q541" else []
     attempt = 2 if prior else 1
+    if case == "TRAIN_Q564" and (original_run.parent / "compact-development-TRAIN_Q564-focus1024-run-r3").exists():
+        pins = {"owned.json": "7863042a003d877937fc929cc615da2da876d1b9171e2ba9eb6e6e9a416cce55",
+                "outer.log": "d3f9595679e43fd98e35c737629223e9c1cc33ffec302f276b9ba70de0355fb9"}
+        for name, seal in pins.items():
+            inputs["pin"](original_run / name, seal)
+        previous = json.loads((original_run / "owned.json").read_bytes())
+        require(previous["exit_code"] == 1 and previous["owned_descendants_settled"]
+                and not any((original_run / "commands").glob("answer*")), "Q564 original setup evidence differs")
+        prior = [{"attempt": 1, "state": "pre_answer_setup_failed", "answer_submitted": False,
+                  "elapsed_seconds": previous["elapsed_seconds"], "run_directory": str(original_run), "proofs": pins},
+                 {"attempt": 2, "state": "historical_other_volume_not_reopened", "elapsed_seconds": None}]
+        attempt = 3
     run = inputs["CAMPAIGN"] / f"compact-development-{case}-focus1024-run-r{attempt}"
     out = {"case": case, "original_descriptor_sha256": row["descriptor_sha256"], "attempt": attempt,
            "run_directory": str(run), "prior_attempts": prior}
@@ -53,7 +132,10 @@ def collect(row):
         return dict(out, state="started_unsettled" if run.exists() else "unobserved")
     owner, out["owned_sha256"] = observed(run / "owned.json")
     out["elapsed_seconds"] = owner["elapsed_seconds"]
-    out["total_attempt_elapsed_seconds"] = owner["elapsed_seconds"] + sum(item["elapsed_seconds"] for item in prior)
+    times = [owner["elapsed_seconds"], *(item["elapsed_seconds"] for item in prior)]
+    out["total_attempt_elapsed_seconds"] = None if None in times else sum(times)
+    if None in times:
+        out["observed_attempt_elapsed_seconds"] = sum(item for item in times if item is not None)
     require(owner["focus_width"] == 1024, "unexpected focus width")
     if (owner["exit_code"] != 0 or owner["timed_out"] or owner["owned_job_forced_termination"]
             or not owner["owned_descendants_settled"] or not owner["source_seals_unchanged"]
@@ -66,6 +148,9 @@ def collect(row):
     out["capture_path"] = str(run / "capture.private.json")
     require(capture["case_id"] == case and capture["input_sha256"] == owner["capture_descriptor_sha256"] == expected
             and capture["ordered_source_documents"] == 50 and capture["judged"] is False, "case provenance differs")
+    control = verified_control(run, out["owned_sha256"], capture)
+    if control != run / "fixture/control":
+        out["verified_control_root"] = str(control)
     out.update(active_descriptor_sha256=expected, publication=capture["publication"])
     admissions = []
     for item in capture["native_observations"]:

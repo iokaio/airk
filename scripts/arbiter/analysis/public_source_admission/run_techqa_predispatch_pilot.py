@@ -24,6 +24,8 @@ BUDGET = 120
 NATIVE = ROOT / "scripts/arbiter/evaluation/run_compact_answer.py"
 NATIVE_SHA = "9625bb14ca85eaf5057b3b272d92eb99589fa13e47ea1eeef56d35b0fcb09496"
 OWNER_SHA = "a1772271cfc3e585de903a7e80021b54f97da823a485e48621a60dcee564c044"
+RETRY_SHA = "3201675f6dde0f1f81436f71faa17410828802898791985ffc87eb24554bc847"
+FROZEN_RETRY = CAMPAIGN / "compact-development-original-retry-helper-r1/native_cohort_source_reads.py"
 
 
 def require(ok, message):
@@ -147,8 +149,14 @@ class SourceCapture(NamedTuple):
 PILOT = SourceCapture(INPUT, DESCRIPTOR, validate_inputs, "TechQA held-out pilot")
 
 
-def execute(native, owner, output, capture=PILOT):
+def execute(native, owner, output, capture=PILOT, restart=None):
     pilot = capture.validate()
+    if pilot["cpu_focus_manifest"] == "94c65d0c598b0b110cd25ddeb1c167ae730430197c0d5e6a59d79ee226c17c64":
+        require(restart is not None and os.environ.get("AIRK_TRAIN_REUSE_AUDITED_CONTROL") == str(restart[1]),
+                "static-1024 capture requires a checked physical installation")
+    retry_helper = FROZEN_RETRY if FROZEN_RETRY.is_file() else HERE / "native_cohort_source_reads.py"
+    pin(retry_helper, RETRY_SHA)
+    repeat = runpy.run_path(str(retry_helper))["publication_read"]
     assets = pilot["runtime_inputs"]
     service, cli_image = (Path(assets[k]["path"]) for k in ("service", "cli"))
     work, logs, index = output / "fixture", output / "commands", output / "index"
@@ -160,10 +168,17 @@ def execute(native, owner, output, capture=PILOT):
                AIRK_ARBITER_EVALUATION_INPUTS_SHA256=assets["inputs"]["sha256"], AIRK_ARBITER_EVALUATION_WORK=str(work),
                AIRK_ARBITER_EVALUATION_SECONDS=str(LIMIT), AIRK_ARBITER_EVALUATION_RESOURCE_CONSENT="throughput64gib4threads",
                AIRK_MCP_RESPONSE_MODE="full")
+    control = work / "control"
+    if restart is not None:
+        request, control = restart
+        restart_path = output / "restart-request.json"
+        native["write_json"](restart_path, request)
+        env.update(AIRK_ARBITER_EVALUATION_RESTART=str(restart_path),
+                   AIRK_ARBITER_EVALUATION_RESTART_SHA256=pin(restart_path))
     deadline = time.monotonic() + LIMIT
 
     def invoke(label, *args):
-        return native["run_logged"]([cli_image, "--output", "json", "--service-runtime-dir", work / "control", *args],
+        return native["run_logged"]([cli_image, "--output", "json", "--service-runtime-dir", control, *args],
                                     logs, label, env, deadline)[0]
 
     def cli(label, *args):
@@ -180,8 +195,16 @@ def execute(native, owner, output, capture=PILOT):
                 admissions = work / "context-cal-admissions"
                 require(ready["health"]["process_id"] == process.pid and ready["health"]["executable_sha256"] == assets["service"]["sha256"]
                         and ready["inputs_sha256"] == assets["inputs"]["sha256"] and admissions.is_dir()
-                        and not any(admissions.iterdir()) and (work / "control").samefile(ready["control_root"]),
+                        and not any(admissions.iterdir()) and control.samefile(ready["control_root"]),
                         "fresh pre-dispatch pilot fixture identity differs")
+                if restart is not None:
+                    original = read(Path(request["ready"]["path"]))
+                    saved = read(work / "restart-owner.json")
+                    require(ready["profiles"] == original["profiles"]
+                            and ready["health"]["instance"] != original["health"]["instance"]
+                            and saved["configuration"] == read(Path(request["status"]["path"]))["configuration"]
+                            and control.samefile(saved["control"]) and not (work / "control").exists(),
+                            "native same-install restart did not bind the saved control")
                 setup = invoke("setup", "--root", pilot["source_root"], "--data-dir", index, "library", "setup",
                                "--name", capture.source_name, "--watch", "off", "--apply")
                 with setup.open("rb") as stream:
@@ -193,13 +216,11 @@ def execute(native, owner, output, capture=PILOT):
                 native["run_logged"](native["ignored"](service, "emit_private_selected_vector_configuration"), logs,
                                      "emit-minilm", env | {"AIRK_SELECTED_MINILM_DIRECTORY": str(Path(assets["minilm"]["path"]).parent),
                                                           "AIRK_SELECTED_VECTOR_DRAFT_OUTPUT": str(drafts)}, deadline)
-                job = cli("install-minilm", "--service-project", project, "configure", "--file", drafts / "minilm-install.json")["job"]
-                native["wait_job"](cli, job["id"], "configure")
+                if restart is None:
+                    job = cli("install-minilm", "--service-project", project, "configure", "--file", drafts / "minilm-install.json")["job"]
+                    native["wait_job"](cli, job["id"], "configure")
                 job = cli("index", "--service-project", project, "index")["job"]
                 native["wait_job"](cli, job["id"], "index")
-                retry_helper = HERE / "native_cohort_source_reads.py"
-                pin(retry_helper, "3201675f6dde0f1f81436f71faa17410828802898791985ffc87eb24554bc847")
-                repeat = runpy.run_path(str(retry_helper))["publication_read"]
                 observation_deadline = min(deadline, time.monotonic() + BUDGET)
                 status_calls = 0
 
@@ -208,7 +229,7 @@ def execute(native, owner, output, capture=PILOT):
                     require(status_calls < 240, "native status observation count exceeded")
                     status_calls += 1
                     result = native["run_logged"](
-                        [cli_image, "--output", "json", "--service-runtime-dir", work / "control", *args],
+                        [cli_image, "--output", "json", "--service-runtime-dir", control, *args],
                         logs, label, env, observation_deadline,
                     )[0]
                     return read(result)
@@ -235,6 +256,13 @@ def execute(native, owner, output, capture=PILOT):
                                        "AIRK_ARBITER_EVALUATION_SCOPES_SHA256": pilot["private_files"]["source-scopes.private.json"],
                                        "AIRK_ARBITER_EVALUATION_PROFILE": manifest, "AIRK_ARBITER_EVALUATION_STAGE": stage,
                                        "AIRK_ARBITER_EVALUATION_ENABLED": "true", "AIRK_ARBITER_EVALUATION_CONTROL_PREFIX": prefix}
+                    if restart is not None:
+                        disable = "disable-" + stage
+                        disable_env = stage_env | {"AIRK_ARBITER_EVALUATION_ENABLED": "false",
+                                                   "AIRK_ARBITER_EVALUATION_CONTROL_PREFIX": disable}
+                        native["run_logged"](native["ignored"](service, "emit_private_arbiter_configuration"),
+                                             logs, "emit-" + disable, disable_env, deadline)
+                        cli(disable, "arbiter", "configure", "--legacy", "--file", work / (disable + ".configure.json"))
                     native["run_logged"](native["ignored"](service, "emit_private_arbiter_configuration"),
                                          logs, "emit-" + stage, stage_env, deadline)
                     configuration = cli("configure-" + stage, "arbiter", "configure", "--legacy",
@@ -243,6 +271,9 @@ def execute(native, owner, output, capture=PILOT):
                 state = cli("ready-stages", "arbiter", "status-legacy")
                 require(all(state[k]["availability"] == "ready" and state[k]["active_profile"] == value
                             and state[k]["selected_profile"] == value for k, value in selected.items()), "pilot stages not both ready")
+                if restart is not None:
+                    require(all([entry["index_id"] for entry in state["configuration"][stage]["indexes"]] == [index_id]
+                                for stage in selected), "stage enrollment escaped this source menu")
                 request = read(capture.input_directory / "request.private.json")
                 emitted = read(work / "context-request.json")
                 require(emitted | {"question": request["question"]} == request, "held-out request differs from native template")
@@ -264,6 +295,11 @@ def execute(native, owner, output, capture=PILOT):
                     observed = read(file)
                     records.append({"file": file.name, "sha256": pin(file),
                                     **confirmed_census(observed, answer, request, binding)})
+                if restart is not None:
+                    final = cli("reuse-final-status", "arbiter", "status-legacy")
+                    require(final["configuration"] == state["configuration"] and final.get("initialization") is None
+                            and all(final[k]["queued"] == final[k]["running"] == 0 for k in selected),
+                            "shared installation did not retain the settled case configuration")
             finally:
                 if process.poll() is None and (work / "ready.json").is_file():
                     invoke("shutdown", "service", "shutdown")
@@ -283,6 +319,7 @@ def execute(native, owner, output, capture=PILOT):
     disposition = {}
     if not records:
         disposition["zero_disposition"] = capture.observed_zero(answer, request, binding, admissions, summary, dispatches)
+    pin(retry_helper, RETRY_SHA)
     require(capture.validate() == pilot, "pilot sources changed across the original attempt")
     native["write_json"](output / "capture.private.json", {
         "schema": "airk.private.techqa-predispatch-capture/1", "case_id": pilot["question_id"],

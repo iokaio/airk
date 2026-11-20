@@ -40,11 +40,11 @@ def delivered(answer, publication, body, document, gold):
     return ("unresolved" if unresolved else "incomplete"), intervals
 
 
-def verify_delivery_scope(run, request_path, status, command, publication, answer):
+def verify_delivery_scope(control, request_path, status, command, publication, answer):
     scope = status["structuredContent"]
     index, = scope["read_scope"]["index_ids"]
     require(not status["isError"] and command["exit_code"] == 0
-            and command["argv"][1:] == ["--output", "json", "--service-runtime-dir", str(run / "fixture/control"),
+            and command["argv"][1:] == ["--output", "json", "--service-runtime-dir", str(control),
                                        "tools", "call", "airk_answer", "--index", index, "--args-file", str(request_path)]
             and scope["publication"]["token"] == publication["token"]
             and answer["assessment"]["scope"]["publication"] == publication
@@ -59,7 +59,8 @@ def verify_answer(run, case, original, obs, answer):
     command, _ = collect["observed"](run / "commands/answer.command.json")
     request_path = inputs["INPUTS"] / case / "request.private.json"
     request = inputs["load"](request_path, original["private_files"]["request.private.json"])
-    index = verify_delivery_scope(run, request_path, status, command, obs["publication"], answer)
+    control = Path(obs.get("verified_control_root", run / "fixture/control"))
+    index = verify_delivery_scope(control, request_path, status, command, obs["publication"], answer)
     binding = dict(index_id=index, publication=obs["publication"], scope_observation=answer["scope_observation"],
                    context=original["cpu_context_bootstrap_manifest"], focus=collect["focus"]["FOCUS"],
                    pipeline=original["required_minilm_pipeline"])
