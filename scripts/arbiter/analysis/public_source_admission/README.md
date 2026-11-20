@@ -284,11 +284,64 @@ Keep all private data and receipts under the campaign artifact root.
 4. Run `expand-aws-natural-menu.ps1 -ExpectedSid <verified-human-SID>` to
    expand the complete original corpus into `aws-docs-full-r1`. The
    collection root corresponds exactly to the publisher's `documents/`.
-5. In the authorized CPU window, run `verify_aws_natural_menu.py --output`
-   with a fresh `aws-natural-native-source-reads-*` campaign path. The
-   existing bounded fixture binds the original file hashes, serves one
-   publication and follows every native file-list continuation. A complete
-   census identifies both indexed paths and absent publisher members.
-   `test_aws_natural_menu.py` exercises pagination and scope-failure
-   handling. A ranker action menu and paired quality require separate
-   observations.
+   Run `verify_aws_expanded_sources.py <campaign>/aws-expanded-source-verification-r1.private.json`
+   to rehash the expanded source, check the exact byte count, and verify that
+   all 24 ambiguous publisher selectors are absent from the 41 active cases.
+5. In the admitted CPU window, run `run_aws_publication.py --phase setup
+   --output <campaign>/aws-publication-setup-r1 --not-after <UTC-cutoff>`
+   using `python -I -B -S`. Verify the full tree, register a single
+   collection, configure its vectors off, run the original native index job,
+   and require its completed revision to equal its ready discovery publication.
+   The offline setup has a four-hour ceiling. The campaign cutoff also bounds
+   the owned Job. Each individual CLI command retains its 120-second maximum.
+6. After verifying the output tree and setup checkpoint, run the same entry
+   point with `--phase census --output <campaign>/aws-publication-census-r1
+   --not-after <UTC-cutoff> --checkpoint <setup>/checkpoint.private.json
+   --checkpoint-sha256 <verified-digest>`. This phase has a 20-minute ceiling.
+   It authenticates the original source tree again, reopens the settled
+   original control root through the native restart interface, verifies the
+   same publication, and follows every file-list continuation. Each visible
+   positive also receives an original-hash file-info check.
+   After an interrupted census, preserve that attempt and use a fresh output
+   and the same settled setup checkpoint. A failed or unsettled setup supplies
+   no resume certificate. The underlying small-cohort diagnostic retains
+   its original 240-second limit.
+
+Run `test_aws_natural_menu.py` and `test_aws_publication_setup.py` for
+pagination, source scope, independent phase clocks, and settlement controls.
+The source census records actual source-visible paths. Semantic retrieval,
+ranker offers and paired quality require separate observations.
+
+`aws_normal_service.py` uses the signed installed Windows 1.8.206 pair.
+It starts the normal service with a fresh campaign control root, verifies
+its PID in the bounded Windows Job, configures vectors off, and indexes
+the original sources. It stops and restarts the service, checks the same
+published revision and durable scope, then requires every paginated file
+list and each visible positive's file-info hash to use the complete new
+service scope. The one-document pilot and the 282-file scaling guide
+have their own receipts. Full mode uses the original 35,515-file tree,
+a 6 GiB process and aggregate limit, four below-normal logical CPUs, an
+8 GiB native store quota and a 12 GiB campaign disk reservation.
+Invoke with `--mode pilot|scaling|full --output <campaign>/aws-normal-<mode>-<attempt>`
+under the checked Windows procedure after resource admission. The original
+small native-fixture and separate setup/census recipes above retain their
+own image identities and evidence.
+
+`techqa_normal_visibility.py` reads the pinned source-membership manifest
+and published document bodies from `techqa-full-menu-corpus-r1`. It needs
+the checked signed installed Windows 1.8.206 service and CLI. Use isolated
+Python `-I -B -S` with `--mode pilot|full --check-only` for a read-only
+source closure. The pilot uses exposed DEV_Q002. Full mode selects all 75
+other menu IDs. Each named registration gets an independent exact
+50-document directory and store under the one fresh D: service control.
+Vectors are disabled. Each case receipt records the complete native file
+inventory, publisher order, any absent paths and the original byte count
+and SHA-256 for every visible member. No question or model is needed.
+
+After checking resource admission, replace `--check-only` with
+`--output <absolute-campaign>/techqa-normal-source-<mode>-rN`. Use the
+same-human guard on the fresh parent and audit all descendants afterwards.
+The job uses at most 2 GiB and four below-normal logical CPUs. Each index
+boundary measures cluster-rounded case and control storage against the
+2 GiB reservation. A failed or partial run retains its per-case evidence.
+Verify the final owned Job receipt before counting the full population.
