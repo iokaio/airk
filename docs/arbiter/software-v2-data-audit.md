@@ -673,3 +673,15 @@ sequence and padding. Receipt SHA-256
 `9e10c9de4cc5ecae15f36e13560f6f96826b6d6c5aabde724200e1c305cf1279`.
 This replay used the pinned tokenizer with Python tokenizers 0.21.4 and
 issued no model forward.
+
+### Repository-wide source inventory
+
+The six ContextBench revision roots now have complete Git tree inventories.
+The collector recomputed every directory's Git object ID up to its previously
+pinned root. The inventories contain 10,927 entries for Angular, 1,717 for
+Jib, 251 for Rayon, 59 for each of two fd revisions and 173 for Tailwind.
+The two fd bases have 495,592 and 508,482 ordinary blob bytes by publisher
+metadata. This establishes full revision membership before any scoring.
+Blob materialization, native visibility and offered actions are separate.
+Private inventory digest
+`1e500bf49108bc64e3616459603dbc23b56f0ca478490ce00d6728177156531a`.

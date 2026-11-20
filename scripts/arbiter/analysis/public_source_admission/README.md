@@ -226,3 +226,10 @@ For the revised Focus profile, `diagnose_techqa_focus_pair.py --verify-1024`
 also compiles the exact observed pair with the publisher reference and verifies
 the complete untruncated IDs, mask, positions and left padding at 1,024.
 DEV_Q002 informed this width choice and is an engineering regression case.
+
+`contextbench_full_tree_inventory.py --gh <absolute-reviewed-gh>` verifies
+the entire recursive Git tree at each of the six retained revision roots.
+Run with checked Python `-I -B -S` and retain stdout in private storage.
+The collector recomputes every tree object ID from upstream entry names,
+modes and child IDs. Blob lengths are publisher metadata until their bytes
+are materialized and authenticated. This stage only inventories revisions.

@@ -12948,3 +12948,8 @@ commit. This is an export and CPU numerical result. AIRK native activation,
 | Owned execution | 5a4595b76225b46d395e44f6ced5e1d24ebe8007d31e889a0d7e9851e62713c0 |
 | Independent numerical comparison | dd6d22fb2f17bb18b05b396b5e378405da6d53872e5fcff565c46ed08c7feed4 |
 | Fourteen-row native qualification input | 061ab415af64d540fc4100621c6b950e8856465ad0d3cf663646d9a41914663a |
+
+The complete Git tree inventory passed for all six repository revisions.
+Each recursive tree rebuilt to the pinned root. Two independent controls
+verify order insensitivity and refusal on missing/altered entries.
+[Per-revision counts](../arbiter/software-v2-data-audit.md#repository-wide-source-inventory)
