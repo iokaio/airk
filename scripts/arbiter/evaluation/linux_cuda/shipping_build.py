@@ -44,20 +44,26 @@ def capacity(baseline, now, reserve=0):
                ((now["guest_free"],guest),(now["backing_free"],backing)))
 
 
-def monitored(command, root, result_dir, env, reserve, uid, *, address_space=8 << 30, timeout=3600, log_name="build.log"):
+def monitored(command, root, result_dir, env, reserve, uid, *, address_space=8 << 30, timeout=3600, log_name="build.log",
+              volume_guard=None):
     baseline = json.loads((CAMPAIGN/"linux-cuda-r4-provider-r3-space-watch.jsonl").read_text().splitlines()[0])
     samples = [space()]
-    if not capacity(baseline,samples[0],reserve):
-        raise ValueError("insufficient original 24 GiB guest/backing reservation for the original operation")
+    def fits(sample, *, admitting=False):
+        if volume_guard is None:
+            return capacity(baseline, sample, reserve if admitting else 0)
+        return volume_guard(sample, samples[0], admitting)
+
+    if not fits(samples[0], admitting=True):
+        raise ValueError("insufficient guest or backing reservation for the original operation")
     done, exceeded = threading.Event(), threading.Event()
     def observe():
         while not done.wait(10):
             try:
                 samples.append(space())
-                if capacity(baseline,samples[-1]):
+                if fits(samples[-1]):
                     continue
-            except OSError:
-                pass
+            except (OSError, ValueError, KeyError) as error:
+                samples[-1]["volume_observation_error"] = str(error)
             exceeded.set()
             for proc in processes(command):
                 pid = int(proc.name)
@@ -83,10 +89,15 @@ def monitored(command, root, result_dir, env, reserve, uid, *, address_space=8 <
         done.set()
         monitor.join()
         samples.append(space())
+        try:
+            final_fits = fits(samples[-1])
+        except (OSError, ValueError, KeyError) as error:
+            samples[-1]["volume_observation_error"] = str(error)
+            final_fits = False
         with (result_dir/"volumes.json").open("x") as log:
             json.dump(samples,log)
     audit(result_dir,uid)
-    success = process["successful"](observed) and not exceeded.is_set() and capacity(baseline,samples[-1])
+    success = process["successful"](observed) and not exceeded.is_set() and final_fits
     return observed, samples, exceeded.is_set(), success
 
 

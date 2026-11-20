@@ -116,6 +116,12 @@ For the joint `f3978a12` baseline, add `--signed-r7` to all three commands.
 then reopens the genuine GNU static ORT aggregate and scientific ELF descriptor.
 The signed Clippy and Nextest gates use the same offline target and enforce the
 original volume caps. Nextest includes the CUDA and CPU source transition tests.
+For the resumed signed R7 Nextest only, pass `--revised-host-volume-log` with
+its active `host-volume-watch-r4.jsonl` path. This admits 512 MiB of additional
+Cargo writes under the original 24 GiB guest and VHD caps. It checks the approved
+120 GB physical C: allowance separately and reserves the configured 16 GiB swap
+backing. Both free-space floors, the original baselines and the 17:10 UTC cutoff
+still apply. The native volume receipt retains the host watcher observations.
 
 Run `cutlass_source.py` to verify the original protected Compact graph and weights,
 the six ORT attention source files, the CUTLASS arithmetic specialization, and the

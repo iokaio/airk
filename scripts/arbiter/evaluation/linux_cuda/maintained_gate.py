@@ -7,6 +7,7 @@ import os
 import re
 import runpy
 import stat
+import time
 from pathlib import Path
 
 from cargo_gate import ENV_PIN
@@ -32,6 +33,8 @@ def source_inventory(repo=REPO):
 def run(options):
     uid = identity()
     os.umask(0o077)
+    if options.revised_host_volume_log is not None and (not options.signed_r7 or options.gate != "nextest"):
+        raise ValueError("revised host volume monitor is scoped to signed R7 Nextest")
     repo = REPO
     dependencies = {}
     verify_source = None
@@ -60,7 +63,6 @@ def run(options):
     scan = BASE / ("merged-retrieval-" + options.gate + "-r" + str(options.attempt))
     if not 1 <= options.attempt <= 99 or scan.exists():
         raise ValueError("fresh GNU gate required")
-    scan.mkdir(0o700)
     env = json.loads(env_file.read_bytes())["environment"]
     env.update(HOME=str(BASE.parents[1]), LC_ALL="C", CARGO_NET_OFFLINE="true", CARGO_BUILD_JOBS="1",
                CARGO_INCREMENTAL="0", RAYON_NUM_THREADS="1", RUST_TEST_THREADS="1")
@@ -96,10 +98,29 @@ def run(options):
         command[-1] = ("test(arbiter::runtime::cuda) | test(cpu_source_transition) | "
                        "test(original_reference_paths_keep_a_bounded_source_root) | test(fp16_compact::) | test(fp16_large::)")
     if verify_source:
-        from shipping_build import monitored
+        from shipping_build import monitored, space
         reserve = (128 if options.gate == "clippy" else 512) << 20
-        result,_,_,bounded = monitored(command,repo,scan,env,reserve,uid,timeout=1800,log_name="cargo.log")
+        volume_guard = None
+        timeout = 1800
+        if options.revised_host_volume_log is not None:
+            from r7_volume_budget import CUTOFF, original_guest_baseline, read_monitor, revised_capacity
+            baseline = original_guest_baseline()
+            def volume_guard(sample, initial, admitting):
+                observation = read_monitor(options.revised_host_volume_log, uid, time.time())
+                sample["host_monitor"] = observation
+                return revised_capacity(baseline, sample, observation, initial, reserve, admitting=admitting)
+
+            initial = space()
+            timeout = min(timeout, CUTOFF - time.time())
+            if timeout <= 0 or not volume_guard(initial, initial, True):
+                raise ValueError("signed R7 storage reservation or campaign clock is unavailable")
+        scan.mkdir(0o700)
+        guarded(scan, uid, stat.S_ISDIR)
+        result,_,_,bounded = monitored(command,repo,scan,env,reserve,uid,timeout=timeout,log_name="cargo.log",
+                                       volume_guard=volume_guard)
     else:
+        scan.mkdir(0o700)
+        guarded(scan, uid, stat.S_ISDIR)
         result = process["run_owned"](["/usr/bin/nice", "-n", "10", "/usr/bin/prlimit", "--as=8589934592",
                                        "--", *command], repo, scan / "cargo.log", 1800, env)
     after = source_inventory(repo)
@@ -131,4 +152,5 @@ if __name__ == "__main__":
     parser.add_argument("--attempt", type=int, default=1)
     parser.add_argument("--freeze", type=Path)
     parser.add_argument("--freeze-sha256")
+    parser.add_argument("--revised-host-volume-log", type=Path)
     print(json.dumps(run(parser.parse_args()), sort_keys=True))
