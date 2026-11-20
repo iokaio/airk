@@ -1776,7 +1776,7 @@ original criteria.
 
 | Comparison | Context Compact and Large | Focus |
 | --- | --- | --- |
-| Native versus independent matching-recipe FP16 | Raw error ≤ 0.001, mass error ≤ 0.05 and identical argmax | Raw error ≤ 0.001, mass error ≤ 0.00001 and identical argmax |
+| Native versus independent matching-recipe FP16 | For this Windows/Linux CUDA release, maximum absolute raw error ≤ 0.007, mass error ≤ 0.05 and identical argmax | Raw error ≤ 0.001, mass error ≤ 0.00001 and identical argmax |
 | Native FP16 versus independent original FP32 | Mass error ≤ 0.05 and the accepted task-quality rule. Record raw error and argmax changes. | Raw error ≤ 0.25, mass error ≤ 0.05 and identical argmax |
 
 The observed Large 0.000328064 error at 8,192 tokens is an FP32 comparison.
@@ -1813,8 +1813,9 @@ score comparison.
 [Compact FP16 first probe](#windows-compact-fp16-first-probe)
 
 1. **Preserve the matching-recipe implementation check.** Require native
-   Context FP16 to match its independent reference within 0.001 maximum raw
-   error and 0.05 normalized-mass error, with finite scores and identical
+   Windows and Linux Context FP16 to match its independent reference within
+   0.007 maximum absolute raw-score error for this release. Require at most
+   0.05 normalized-mass error, with finite scores and identical
    argmax. Use a fresh matching reference when the precision recipe changes.
    Against original FP32, the judged task-quality gate replaces the
    fixed 0.001 raw-error cutoff and identical-winner requirement. Retain the
@@ -1858,7 +1859,7 @@ bound, candidates whose reference scores differ by at most 0.14 can switch
 order. Report such leading pairs, consequential changes near active
 thresholds, and 8,192-token outcomes separately. Use representative
 development observations to review and freeze a release rule before
-held-out confirmation. The release limit currently recorded is 0.001.
+held-out confirmation. At the time of this development decision, the release limit was 0.001. Before held-out confirmation, the user froze 0.007 for this Windows/Linux Context CUDA release.
 Exact-artifact calibration, the 98% paired evidence requirement, Windows
 and Linux runtime acceptance and platform sequencing continue to apply.
 
