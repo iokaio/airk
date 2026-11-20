@@ -490,3 +490,42 @@ for its input. The parent verifies each call's FlashAttention records and
 retains the sampled process working set, private commitment and dedicated
 and shared WDDM GPU memory for the same process handle and adapter LUID.
 Timing receipts report development measurements without product admission.
+
+The `qkv-fit-probe` selector cold-loads the same sealed unprofiled graph and
+scores one original T8192 input. A capacity trial can supply its original
+suspended-process gate to bind measured headroom to the actual candidate PID.
+
+The `qkv-observed-development` selector takes one sealed CPU reference from
+`representative_compact_reference.py`. The worker authenticates the original
+service admission, rebuilds its complete compiler input and ordered roster,
+and compares the actual synchronized CUDA scores with the original FP32 and
+matching-precision publisher scores. Each run retains its original remaining
+budget and one reviewed TRAIN or fixed engineering input. Both currently
+reviewed captures used the historical static512 Focus upstream.
+
+## Windows Large baseline
+
+Run `probe_large.py metadata` with the pinned original Large CPU Prepare request,
+independent streaming CPU T32 receipt, staged Inference image and Cargo JSON
+build receipt. The native selector authenticates the existing CPU profile and
+converted model files and emits the private Large CUDA profile. Its sibling
+`graph` mode consumes that exact Probe request and metadata receipt and observes
+a disposable session under the same 120-second deadline. The native Large
+harness requires 48 GiB process and Job caps and 44 GiB device reservation
+with 40 GiB cold arena, 8 GiB warm allowance and 4 GiB headroom. Receipt fields
+report actual host peak, final placement, session settlement and ownership.
+The graph mode verifies all 36 named Large attention nodes on CUDA. Actual
+Flash kernel and numerical results require separate scoring evidence.
+Use a fresh guarded campaign child for each invocation. `--help` lists the
+required absolute paths and SHA-256 argument pairs.
+
+For `t32`, supply the native graph receipt with `--graph`, the original
+FP16 Probe request, and the metadata receipt. Its measured final graph
+contains 1,756 CUDA and 478 CPU nodes. The 670 unique CPU control values
+total 12,067 bytes. All are BOOL, INT32 or INT64 scalar/vector tensors,
+with a maximum of four vector elements and 32 bytes per value. The scorer
+authenticates that same final graph in its own session, profiles one
+independently identified T32/N8 input, and retains the 36 actual Flash
+kernel records. The development screen compares matching raw error with
+0.07, checks the matching winner, and checks both normalized mass errors
+against 0.05. The original 0.001 matching raw result is recorded separately.

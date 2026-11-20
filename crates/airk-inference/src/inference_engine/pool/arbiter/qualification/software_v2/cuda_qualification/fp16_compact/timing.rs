@@ -7,6 +7,7 @@ const WIDER_NATIVE: &str = "4da43ecdfaeba452cc65009bcadfb82de942253c89a7d544c628
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum Population {
+    Fit,
     Fixed,
     Mixed,
 }
@@ -16,12 +17,13 @@ impl Population {
         match (self, index) {
             (Self::Fixed, 0) => (operation::Kind::Warmup, 0),
             (Self::Fixed, i) => (operation::Kind::Sample, i),
-            (Self::Mixed, i) => (operation::Kind::Sample, i + 1),
+            (Self::Mixed | Self::Fit, i) => (operation::Kind::Sample, i + 1),
         }
     }
 
     pub(super) fn schedule(self) -> Vec<(usize, usize, &'static str)> {
         match self {
+            Self::Fit => vec![(3, 0, "sample")],
             Self::Fixed => std::iter::once((3, 0, "warmup"))
                 .chain(std::iter::repeat_n((3, 0, "sample"), 20))
                 .collect(),
@@ -135,6 +137,11 @@ impl<'a> Run<'a> {
 
 #[test]
 fn compact_fp16_timing_fixes_warm_population_and_mixed_cycles() {
+    assert_eq!(Population::Fit.schedule(), [(3, 0, "sample")]);
+    assert_eq!(
+        Population::Fit.journal_operation(0),
+        (operation::Kind::Sample, 1)
+    );
     let fixed = Population::Fixed.schedule();
     assert_eq!(fixed[0], (3, 0, "warmup"));
     assert_eq!(fixed[1..], [(3, 0, "sample"); 20]);

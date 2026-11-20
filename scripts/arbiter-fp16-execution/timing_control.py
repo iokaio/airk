@@ -12,6 +12,8 @@ def require(condition, message):
 
 
 def schedule(mode):
+    if mode == "qkv-fit-probe":
+        return [(8192, 0, "sample")]
     if mode == "qkv-resource20":
         return [(8192, 0, "warmup")] + [(8192, 0, "sample")] * 20
     require(mode == "qkv-mixed", "unknown Compact timing population")
@@ -33,6 +35,8 @@ def timing_rows(mode, rows, sealed):
                 "timing width, ordinal, score, deadline or synchronization differs")
         if kind == "sample":
             elapsed.append(row["elapsed_us"])
+    if mode == "qkv-fit-probe":
+        return {"first_calls": 1, "first_call_us": elapsed[0]}
     ordered = sorted(elapsed)
     return {"warm_samples": len(ordered), "nearest_rank_p50_us": ordered[math.ceil(len(ordered)*.5)-1],
             "nearest_rank_p95_us": ordered[math.ceil(len(ordered)*.95)-1], "maximum_us": ordered[-1]}

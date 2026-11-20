@@ -18,6 +18,14 @@ class TimingTests(unittest.TestCase):
                              native_call_elapsed_us=10+i, elapsed_us=100+i))
         return sealed, rows
 
+    def test_fit_probe_has_one_original_t8192_score(self):
+        sealed, rows = self.rows([8192])
+        rows[0]["cycle"] = 0
+        self.assertEqual(OWNER["timing_rows"]("qkv-fit-probe", rows, sealed),
+                         {"first_calls": 1, "first_call_us": 100})
+        with self.assertRaisesRegex(ValueError, "length"):
+            OWNER["timing_rows"]("qkv-fit-probe", rows+rows, sealed)
+
     def test_fixed_nearest_ranks_exclude_warmup(self):
         sealed, rows = self.rows([8192]*21)
         rows[0]["elapsed_us"] = 119999999

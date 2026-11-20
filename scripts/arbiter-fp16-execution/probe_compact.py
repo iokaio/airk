@@ -27,6 +27,8 @@ SELECTORS = {
     "projection-t32": PREFIX + "cuda_compact_fp32_qkv_projection_t32_component",
     "qkv-resource20": PREFIX + "cuda_compact_fp16_resource20",
     "qkv-mixed": PREFIX + "cuda_compact_fp16_mixed_timing",
+    "qkv-observed-development": PREFIX + "cuda_compact_fp16_observed_development",
+    "qkv-fit-probe": PREFIX + "cuda_compact_fp16_fit_probe",
     "qkv-development": PREFIX + "cuda_compact_fp32_qkv_projection_development_batch",
     "qkv-decision-t1024": PREFIX + "cuda_compact_fp32_qkv_decision_t1024",
     "qkv-layer0-t1024": PREFIX + "cuda_compact_fp32_qkv_layer0_t1024",
@@ -45,8 +47,11 @@ DECISION_MODE = "qkv-decision-t1024"
 WIDE_CAPTURES = (WIDER_TAP_MODE, DECISION_MODE)
 DECISION_ROSTER = tuple((f"/airk_g5/weight//scorer/layers.{layer}/{site}/MatMul/input16", 2048)
                         for layer in (0, 9, 18, 27) for site in ("self_attn/k_proj",))
-TIMING_MODES = ("qkv-resource20", "qkv-mixed")
-WIDER_REFERENCE_MODES = (DEVELOPMENT_MODE, *WIDE_CAPTURES, *TIMING_MODES)
+TIMING_MODES = ("qkv-resource20", "qkv-mixed", "qkv-fit-probe")
+OBSERVED_MODE = "qkv-observed-development"
+OBSERVED_REFERENCES = {"f657bbcdc9dac88829376c639bf2f20b6e4ae4c40f796f6305c1ec044bb59b91",
+                       "89b5a289b66ce93ac314c583cadff2112fda185081152d3f6a7886bae8b8d169"}
+WIDER_REFERENCE_MODES = (OBSERVED_MODE, DEVELOPMENT_MODE, *WIDE_CAPTURES, *TIMING_MODES)
 PROJECTION_SCORE_MODES = ("projection-t32", "qkvo-t32", *WIDER_REFERENCE_MODES)
 PROJECTION_MODES = ("projection-metadata", "projection-graph", "projection-t32", *WIDER_REFERENCE_MODES, *QKVO_MODES)
 WIDER_TAP_SCHEMA = "airk.private.compact-fp32-qkv-layer0-t1024/1"
@@ -229,7 +234,7 @@ def retained_core(pin, base):
     return value
 
 
-def linked_image(build, image, base, audit, mode):
+def linked_image(build, image, base, audit, mode, *, source_snapshot=None):
     observed = base.read(build["path"], 32 << 20)
     command = observed["command"]
     require(observed["schema"] == "airk-readiness-command/1" and observed["passed"] is True
@@ -272,9 +277,19 @@ def linked_image(build, image, base, audit, mode):
         relevant += ("crates/airk-retrieval/src/arbiter/runtime/bounded_hybrid/layer0.rs",)
     if mode in TAP_SCOPES or mode in WIDE_CAPTURES:
         relevant += ("crates/airk-retrieval/src/arbiter/runtime/cuda/run.rs",)
+    if mode == OBSERVED_MODE:
+        relevant += (inference + "/cuda_qualification/fp16_compact/observed.rs",)
     if mode in TIMING_MODES:
         relevant += (inference + "/cuda_qualification/fp16_compact/timing.rs",)
-    sources = {relative: exact_pin(ROOT / relative, native[relative], base) for relative in relevant}
+    if source_snapshot is None:
+        paths = {relative: ROOT / relative for relative in relevant}
+    else:
+        expected = Path(build["path"]).resolve(strict=True).parent / "retained-native-sources"
+        require(source_snapshot.resolve(strict=True) == source_snapshot == expected,
+                "source snapshot must be the sealed Cargo receipt's retained-native-sources directory")
+        paths = {relative: source_snapshot / (native[relative] + ".source") for relative in relevant}
+        audit([source_snapshot, *paths.values()])
+    sources = {relative: exact_pin(path, native[relative], base) for relative, path in paths.items()}
     return log_pin, artifact, sources
 
 
@@ -963,8 +978,11 @@ def validate_wider_capture(value, paths, owned, request, evidence, metadata, man
 
 
 def development_metrics(raw, reference):
+    require(len(raw) == len(reference) and 2 <= len(raw) <= 8, "development reference cardinality differs")
+    word_format = f"<{len(raw)}f"
+
     def f32(values):
-        return struct.unpack("<8f", struct.pack("<8f", *values))
+        return struct.unpack(word_format, struct.pack(word_format, *values))
 
     def mass(values):
         peak = max(values)
@@ -973,8 +991,8 @@ def development_metrics(raw, reference):
         return [value / total for value in weights]
 
     actual, expected = f32(raw), f32(reference)
-    order = sorted(range(8), key=expected.__getitem__, reverse=True)
-    actual_order = sorted(range(8), key=actual.__getitem__, reverse=True)
+    order = sorted(range(len(raw)), key=expected.__getitem__, reverse=True)
+    actual_order = sorted(range(len(raw)), key=actual.__getitem__, reverse=True)
     winner, ref_winner = actual_order[0], order[0]
     return {
         "raw_error": max(abs(a - b) for a, b in zip(actual, expected, strict=True)),
@@ -1024,7 +1042,7 @@ def validate_development_operations(events, value, component, timing_mode=None):
         start, end = events[2 * ordinal:2 * ordinal + 2]
         if timing_mode == "qkv-resource20":
             kind, native_ordinal = ("warmup" if ordinal == 1 else "sample"), ordinal - 1
-        elif timing_mode == "qkv-mixed":
+        elif timing_mode in ("qkv-mixed", "qkv-fit-probe"):
             kind, native_ordinal = "sample", ordinal
         else:
             kind, native_ordinal = "numeric", ordinal
@@ -1138,7 +1156,9 @@ def validate_development(value, paths, owned, request, evidence, metadata, manif
     return development_attention_logs(paths["stdout"].read_bytes(), rows)
 
 
-def run(args):
+def run(args, *, capacity_gate=None):
+    require(capacity_gate is None or (callable(capacity_gate) and args.mode in ("qkv-fit-probe", "qkv-resource20")),
+            "external capacity gate requires an owned fit or fixed-population probe")
     started = time.monotonic()
     expires = started + WALL
     started_utc = datetime.now(timezone.utc)
@@ -1172,7 +1192,8 @@ def run(args):
                                    output_projection=args.mode in QKVO_MODES)
                   if args.mode in PROJECTION_MODES else None)
     validate_request(args.mode, request_value, request, evidence_value, manifest, projection=projection)
-    log, artifact, sources = linked_image(build, image, base, audit, args.mode)
+    log, artifact, sources = linked_image(build, image, base, audit, args.mode,
+                                          source_snapshot=getattr(args, "source_snapshot", None))
     dependencies = {}
     if metadata_mode:
         if projection is not None:
@@ -1189,7 +1210,7 @@ def run(args):
             audit([Path(pin["path"])])
             dependencies[name] = retained_core(pin, base)
     inputs = [request, evidence, image, build, manifest, log, artifact, *sources.values(), *dependencies.values()]
-    approvals = decision_build_approvals(log, artifact, manifest, base, audit) if args.mode in (DECISION_MODE, *TIMING_MODES) else []
+    approvals = decision_build_approvals(log, artifact, manifest, base, audit) if args.mode in (DECISION_MODE, OBSERVED_MODE, *TIMING_MODES) else []
     inputs.extend(approvals)
     projection_reference = development_reference = None
     if projection is not None:
@@ -1228,6 +1249,20 @@ def run(args):
             projection=projection,
         )
         inputs.extend((graph_receipt, graph, graph_operations))
+    representative = args.mode == OBSERVED_MODE
+    if representative:
+        require(args.observed_reference_sha256 in OBSERVED_REFERENCES, "unreviewed engineering reference")
+        audit([args.observed_reference])
+        reference_pin = exact_pin(args.observed_reference, args.observed_reference_sha256, base)
+        closure = base.read(reference_pin["path"])
+        reference = closure["result"]
+        require(closure["complete"] is True and parent.settled(closure["owned"])
+                and reference["reference_basis"]["sha256"] == DEVELOPMENT_REFERENCE_SHA,
+                "original CPU source or Job settlement differs")
+        inputs.append(reference_pin)
+        for file in (reference["census"], reference["capture"]):
+            audit([Path(file["path"])])
+            inputs.append(exact_pin(Path(file["path"]), file["sha256"], base))
     sealed_t1024 = None
     timing = args.mode in TIMING_MODES
     if args.mode in WIDE_CAPTURES or timing:
@@ -1292,7 +1327,7 @@ def run(args):
             planned.append(metadata)
         else:
             planned.extend((paths["native"], paths["operations"]))
-            if args.mode in SCORING_MODES and not timing:
+            if args.mode in SCORING_MODES and not timing and not representative:
                 planned.append(out / "ort-profile")
         audit(planned, False)
         env = {key: value for key, value in os.environ.items()
@@ -1300,6 +1335,10 @@ def run(args):
         env.update(PATH=r"C:\Windows\System32;C:\Windows", TEMP=str(temp), TMP=str(temp), TMPDIR=str(temp),
                    AIRK_PRIVATE_CENSUS_BASE=str(temp), CUDA_CACHE_PATH=str(temp),
                    AIRK_CUDA_QUALIFICATION_INPUT=request["path"], AIRK_CUDA_QUALIFICATION_INPUT_SHA256=request["sha256"])
+        if representative:
+            env.update(AIRK_CUDA_OBSERVED_REFERENCE=reference_pin["path"],
+                       AIRK_CUDA_OBSERVED_REFERENCE_SHA256=reference_pin["sha256"])
+            receipt["observed_reference"] = reference_pin
         if projection is not None:
             env.update(AIRK_CUDA_FP16_PROJECTION_STAGE=stage_pin["path"],
                        AIRK_CUDA_FP16_PROJECTION_STAGE_SHA256=stage_pin["sha256"])
@@ -1315,7 +1354,7 @@ def run(args):
                        AIRK_CUDA_FP16_METADATA_RECEIPT_SHA256=evidence["sha256"],
                        AIRK_CUDA_QUALIFICATION_OUTPUT=str(paths["native"]),
                        ORT_CUDA_GEMM_OPTIONS="2", ORT_ENABLE_ATTENTION_KERNEL_DEBUG_INFO="1")
-            if args.mode in SCORING_MODES and not timing:
+            if args.mode in SCORING_MODES and not timing and not representative:
                 env["AIRK_CUDA_FP16_PROFILE_PREFIX"] = str(out / "ort-profile")
             if graph is not None:
                 env.update(AIRK_CUDA_FP16_REVIEWED_GRAPH=graph["path"],
@@ -1341,7 +1380,14 @@ def run(args):
             if timing:
                 with wddm["ProcessSampler"](info, luid) as sampler:
                     baseline = sampler.sample()
-            return dict(proof, default_owner_sid=base.SID, job_limits=job_limits(api, job))
+            limits = job_limits(api, job)
+            if capacity_gate is not None:
+                measured = capacity_gate(int(info.pid), child_deadline)
+                require(isinstance(measured, dict) and measured["candidate_pid"] == info.pid
+                        and measured["child_deadline"] == child_deadline and time.monotonic() < child_deadline,
+                        "before-resume capacity evidence differs from the exact candidate or deadline")
+                receipt["capacity_before_resume"] = measured
+            return dict(proof, default_owner_sid=base.SID, job_limits=limits)
 
         def watch_timing(api, _job, info, child_deadline):
             observation = wddm["observe_process"](api, info, child_deadline, luid, baseline)
@@ -1361,7 +1407,7 @@ def run(args):
         observed = list(out.rglob("*"))
         audit(observed)
         require(paths["stdout"].stat().st_size <= LOG_CAP, "actual stdout exceeded its retained bound")
-        if args.mode in SCORING_MODES and not timing:
+        if args.mode in SCORING_MODES and not timing and not representative:
             traces = list(out.glob("ort-profile*.json"))
             if len(traces) == 1:
                 paths["profile"] = traces[0]
@@ -1394,9 +1440,51 @@ def run(args):
                 receipt["projection_graph"] = validate_projection_graph(
                     value["graph_observation"]["graph_metadata"], output_projection=has_output_projection(projection),
                 )
+        elif representative:
+            validate_native_identity(value, "airk.private.compact-qkv-observed-development/1", receipt["owned"],
+                                     request, evidence, evidence_value, manifest, image, base)
+            require(value["profiling_enabled"] is False and value["runtime_profile"] is None
+                    and not any(out.glob("ort-profile*")) and value["projection_stage"] == core(stage_pin)
+                    and value["projection_reference"] == core(projection_reference)
+                    and value["observed_reference"] == core(reference_pin)
+                    and all(value["observed_" + key] == core(reference[key]) for key in ("capture", "census"))
+                    and value["native_forward_returned"] is value["forward_synchronized"] is True
+                    and value["numeric_forward_attempts"] == len(value["rows"]) == 1,
+                    "representative source, original receipt or unprofiled scoring differs")
+            row, = value["rows"]
+            compiled = reference["compiled"]
+            capture = base.read(reference["capture"]["path"])
+            require(row["name"] == reference["case"] and row["ordinal"] == reference["ordinal"]
+                    and row["compiled"] == compiled and row["input_digest"] == compiled["input_digest"]
+                    and row["tokens"] == len(compiled["input_ids"]) <= reference["remaining_input_tokens"]
+                    and row["options"] == len(reference["roster"]["cards"]) and row["roster"] == reference["roster"]
+                    and row["matching_fp16"] == reference["matching_fp16"] and row["original_fp32"] == reference["original_fp32"]
+                    and row["original_remaining_ms"] == capture["request"]["remaining_ms"]
+                    and row["original_remaining_ns"] == capture["remaining_ns_at_observation"]
+                    and row["within_deadline"] is row["forward_synchronized"] is True,
+                    "changed original input, roster, independent scores or remaining native deadline")
+            stats = {}
+            for label, key in (("matching", "matching_fp16"), ("original", "original_fp32")):
+                result = development_metrics(row["raw_scores"], reference[key])
+                require(row[label + "_raw_error"] == result["raw_error"] and row[label + "_winner_agrees"] is result["argmax_matches"]
+                        and math.isclose(row[label + "_mass_error"], result["mass_error"], rel_tol=0, abs_tol=2e-15),
+                        "representative score comparison differs")
+                stats[label] = result
+            matching = stats["matching"]
+            passed = provisional_development_pass(matching, stats["original"])
+            require(row["matching_margin"] == matching["reference_margin"] and row["development_screen_pass"] is passed
+                    and row["near_tie_ambiguous"] is (matching["reference_margin"] <= DEVELOPMENT_NEAR_TIE)
+                    and row["raw_ceiling_winner_at_risk"] is (matching["reference_margin"] <= 2 * DEVELOPMENT_RAW_LIMIT),
+                    "development decision or margin differs")
+            validate_development_placement(value, reviewed_placement, graph, sources[BOUNDED_SOURCE])
+            validate_development_operations(read_operations(paths["operations"]), value, component)
+            receipt["flash_attention_records"] = attention_logs(paths["stdout"].read_bytes(), args.mode)
+            receipt["observed_comparison"] = stats
+            receipt["development_screen_pass"] = passed
         elif timing:
-            schema = ("airk.private.compact-fp16-unprofiled-resource20/1" if args.mode == "qkv-resource20"
-                      else "airk.private.compact-fp16-unprofiled-mixed/1")
+            schema = {"qkv-resource20": "airk.private.compact-fp16-unprofiled-resource20/1",
+                      "qkv-fit-probe": "airk.private.compact-fp16-unprofiled-fit/1",
+                      "qkv-mixed": "airk.private.compact-fp16-unprofiled-mixed/1"}[args.mode]
             validate_native_identity(value, schema, receipt["owned"], request, evidence, evidence_value, manifest, image, base)
             require(value["profiling_enabled"] is False and value["runtime_profile"] is None
                     and not any(out.glob("ort-profile*")) and value["projection_stage"] == core(stage_pin)
@@ -1487,7 +1575,15 @@ def main():
     parser.add_argument("--projection-stage-sha256")
     parser.add_argument("--projection-reference", type=Path)
     parser.add_argument("--projection-reference-sha256")
+    parser.add_argument("--source-snapshot", type=Path)
+    parser.add_argument("--observed-reference", type=Path)
+    parser.add_argument("--observed-reference-sha256")
     args = parser.parse_args()
+    if args.mode == OBSERVED_MODE:
+        if args.observed_reference is None or args.observed_reference_sha256 not in OBSERVED_REFERENCES:
+            parser.error("observed development requires one exact reviewed original reference")
+    elif args.observed_reference is not None or args.observed_reference_sha256 is not None:
+        parser.error("an observed reference requires the observed development mode")
     if args.mode in PROJECTION_MODES:
         expected = QKVO_STAGE_SHA if args.mode in QKVO_MODES else PROJECTION_STAGE_SHA
         if args.projection_stage is None or args.projection_stage_sha256 != expected:

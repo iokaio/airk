@@ -552,3 +552,15 @@ for its input. The parent verifies each call's FlashAttention records and
 retains the sampled process working set, private commitment and dedicated
 and shared WDDM GPU memory for the same process handle and adapter LUID.
 Timing receipts report development measurements without product admission.
+
+The `qkv-fit-probe` selector cold-loads the same sealed unprofiled graph and
+scores one original T8192 input. A capacity trial can supply its original
+suspended-process gate to bind measured headroom to the actual candidate PID.
+
+The `qkv-observed-development` selector takes one sealed CPU reference from
+`representative_compact_reference.py`. The worker authenticates the original
+service admission, rebuilds its complete compiler input and ordered roster,
+and compares the actual synchronized CUDA scores with the original FP32 and
+matching-precision publisher scores. Each run retains its original remaining
+budget and one reviewed TRAIN or fixed engineering input. Both currently
+reviewed captures used the historical static512 Focus upstream.

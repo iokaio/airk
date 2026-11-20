@@ -140,7 +140,7 @@ def worker(replay, wider, deadline, decision_rows=False):
             "scores": scores, "independent_reference": False, "qualification": False}
 
 
-def run_owned(replay, wider, out, decision_rows=False):
+def run_owned(replay, wider, out, decision_rows=False, *, representative=None, down_projection=False):
     legacy, _ = wider.load_base()
     deadline = time.monotonic() + legacy.MAX_WALL_SECONDS
     def check():
@@ -173,7 +173,11 @@ def run_owned(replay, wider, out, decision_rows=False):
     log, receipt = out / "worker.log", out / "execution.json"
     for path in (log, receipt):
         conversion.guard(plan, path, deadline=deadline)
-    source = replay.file_pin(Path(__file__).resolve())
+    script = Path(__file__).resolve() if representative is None else HERE / "representative_compact_reference.py"
+    if down_projection:
+        require(representative is not None and not decision_rows, "down projection requires a frozen admission")
+        script = HERE / "compact_down_projection_reference.py"
+    source = replay.file_pin(script)
     env = {key: val for key, val in os.environ.items()
            if not key.upper().startswith(("AIRK_", "ORT_", "PYTHON", "CUDA_", "CUDNN_", "TORCH_", "HF_", "TRITON_"))}
     env.update(CUDA_VISIBLE_DEVICES="", HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1", TOKENIZERS_PARALLELISM="false",
@@ -183,6 +187,9 @@ def run_owned(replay, wider, out, decision_rows=False):
             "--worker-deadline", repr(deadline), "--source-sha256", source["sha256"]]
     if decision_rows:
         argv.append("--decision-rows")
+    if representative is not None:
+        case, census_sha, ordinal = representative
+        argv.extend(["--case", case, "--census-sha256", census_sha, "--ordinal", str(ordinal)])
     def suspended(api, job, info, child_deadline):
         observed = parent.suspended_authentication(api, info, deadline, child_deadline, conversion.SID,
                                                   plan["python"], owner.image_proof)
@@ -196,7 +203,7 @@ def run_owned(replay, wider, out, decision_rows=False):
     conversion.guard(plan, log, True, deadline=time.monotonic()+10)
     require(log.stat().st_size <= 16 << 20, "unexpected log extent")
     markers = [line[len(MARKER):] for line in log.read_text(encoding="utf8").splitlines() if line.startswith(MARKER)]
-    complete = parent.settled(owned) and len(markers) == 1 and replay.file_pin(Path(__file__).resolve()) == source
+    complete = parent.settled(owned) and len(markers) == 1 and replay.file_pin(script) == source
     data = {"complete": complete, "owned": owned, "source": source, "command": argv,
             "conversion_source": replay.file_pin(wrapper), "result": json.loads(markers[0]) if complete else None}
     with receipt.open("x", encoding="utf8", newline="\n") as stream:

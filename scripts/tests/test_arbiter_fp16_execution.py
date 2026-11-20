@@ -412,6 +412,15 @@ class CompactBoundedT32Controls(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "duplicate"):
             check("\n".join(moved).encode(), cases)
 
+    def test_observed_seven_card_vectors_keep_slot_order_and_reject_a_missing_card(self):
+        compare = self.probe["development_metrics"]
+        reference = [0, 1, 2, 3, 8, 6, 7]
+        actual = [0, 1, 2, 3, 7, 6, 8]
+        self.assertEqual(compare(actual, reference)["winner"], 4)
+        self.assertEqual(compare(actual, reference)["native_winner"], 6)
+        with self.assertRaisesRegex(ValueError, "cardinality"):
+            compare(actual[:-1], reference)
+
     def test_development_comparison_retains_the_signed_near_tie_margin(self):
         compare = self.probe["development_metrics"]
         lower = 1 - 1 / 128

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Private native metadata and T32 probe for the reviewed Compact FP16 candidate.
 use super::*;
+mod observed;
 mod timing;
 use airk_core::arbiter::device::{DevicePrecision, PlacementPolicy};
 
@@ -1136,6 +1137,8 @@ enum CompactFp16Probe {
     QkvProjectionT32,
     QkvDevelopmentBatch,
     QkvResource20,
+    QkvObservedDevelopment,
+    QkvFitProbe,
     QkvMixedTiming,
     QkvLayer0T1024,
     QkvDecisionT1024,
@@ -1207,6 +1210,18 @@ fn cuda_compact_fp32_qkv_projection_development_batch() -> Result<()> {
 }
 
 #[test]
+#[ignore = "owned unprofiled Compact CUDA engineering admission"]
+fn cuda_compact_fp16_observed_development() -> Result<()> {
+    observe_compact_fp16_t32(CompactFp16Probe::QkvObservedDevelopment)
+}
+
+#[test]
+#[ignore = "owned scientific fit probe: one sealed Compact T8192 call after cold load"]
+fn cuda_compact_fp16_fit_probe() -> Result<()> {
+    observe_compact_fp16_t32(CompactFp16Probe::QkvFitProbe)
+}
+
+#[test]
 #[ignore = "owned Compact FP16 unprofiled cold load, one warmup and twenty T8192 samples"]
 fn cuda_compact_fp16_resource20() -> Result<()> {
     observe_compact_fp16_t32(CompactFp16Probe::QkvResource20)
@@ -1267,6 +1282,8 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
         CompactFp16Probe::QkvProjectionGraphOnly => (Some(&QKV), false, true),
         CompactFp16Probe::QkvProjectionT32 => (Some(&QKV), true, false),
         CompactFp16Probe::QkvDevelopmentBatch
+        | CompactFp16Probe::QkvObservedDevelopment
+        | CompactFp16Probe::QkvFitProbe
         | CompactFp16Probe::QkvResource20
         | CompactFp16Probe::QkvMixedTiming
         | CompactFp16Probe::QkvLayer0T1024
@@ -1277,10 +1294,13 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
         _ => (None, false, false),
     };
     let timing = match mode {
+        CompactFp16Probe::QkvFitProbe => Some(timing::Population::Fit),
         CompactFp16Probe::QkvResource20 => Some(timing::Population::Fixed),
         CompactFp16Probe::QkvMixedTiming => Some(timing::Population::Mixed),
         _ => None,
     };
+    let representative = mode == CompactFp16Probe::QkvObservedDevelopment;
+    let unprofiled = representative || timing.is_some();
     let development_batch = mode == CompactFp16Probe::QkvDevelopmentBatch;
     let decision_rows = mode == CompactFp16Probe::QkvDecisionT1024;
     let qkv_layer0_t1024 = decision_rows || mode == CompactFp16Probe::QkvLayer0T1024;
@@ -1374,7 +1394,7 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
     } else {
         None
     };
-    let development = if development_batch || qkv_layer0_t1024 || timing.is_some() {
+    let development = if development_batch || qkv_layer0_t1024 || unprofiled {
         let (stage, candidate) = projection
             .as_ref()
             .context("missing development Q/K/V stage")?;
@@ -1396,21 +1416,20 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
         || layer0_taps
         || projection_t32
         || development_batch
-        || timing.is_some()
+        || unprofiled
     {
         let pin = env_pin(
             "AIRK_CUDA_FP16_REVIEWED_GRAPH",
             "AIRK_CUDA_FP16_REVIEWED_GRAPH_SHA256",
         )?;
-        let expected =
-            if projection_t32 || development_batch || qkv_layer0_t1024 || timing.is_some() {
-                projection_spec
-                    .context("missing Compact projection scope")?
-                    .native_graph_sha
-                    .context("reviewed Compact projection native graph pin unavailable")?
-            } else {
-                REVIEWED_FP16_GRAPH_SHA256
-            };
+        let expected = if projection_t32 || development_batch || qkv_layer0_t1024 || unprofiled {
+            projection_spec
+                .context("missing Compact projection scope")?
+                .native_graph_sha
+                .context("reviewed Compact projection native graph pin unavailable")?
+        } else {
+            REVIEWED_FP16_GRAPH_SHA256
+        };
         ensure!(
             pin.sha256 == expected.parse::<Sha256Digest>()?,
             "unreviewed Compact FP16 graph evidence"
@@ -1428,8 +1447,11 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
     );
 
     let output = output()?;
+    let observed_proof = representative
+        .then(|| observed::Observed::load(candidate))
+        .transpose()?;
     let timing_proof = timing.map(|_| timing::Sealed::load()).transpose()?;
-    let prefix = if graph_only || timing.is_some() {
+    let prefix = if graph_only || unprofiled {
         ensure!(
             output.is_absolute(),
             "absolute Compact FP16 diagnostic output required"
@@ -1481,7 +1503,9 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
             CompactFp16Probe::QkvProjectionGraphOnly => QKV.graph_schema,
             CompactFp16Probe::QkvProjectionT32 => QKV.t32_schema,
             CompactFp16Probe::QkvDevelopmentBatch => "airk.private.compact-fp32-qkv-development-batch/1",
+            CompactFp16Probe::QkvObservedDevelopment => "airk.private.compact-qkv-observed-development/1",
             CompactFp16Probe::QkvResource20 => "airk.private.compact-fp16-unprofiled-resource20/1",
+            CompactFp16Probe::QkvFitProbe => "airk.private.compact-fp16-unprofiled-fit/1",
             CompactFp16Probe::QkvMixedTiming => "airk.private.compact-fp16-unprofiled-mixed/1",
             CompactFp16Probe::QkvDecisionT1024 => "airk.private.compact-fp32-qkv-decision-t1024/1",
             CompactFp16Probe::QkvLayer0T1024 => "airk.private.compact-fp32-qkv-layer0-t1024/1",
@@ -1510,6 +1534,12 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
         },
         "measured_peak_device_bytes": null, "native_backend_attested": false,
     });
+    if let Some(row) = &observed_proof {
+        receipt["profiling_enabled"] = json!(false);
+        receipt["observed_reference"] = json!(row.reference_pin);
+        receipt["observed_capture"] = json!(row.capture_pin);
+        receipt["observed_census"] = json!(row.census_pin);
+    }
     if let Some(sealed) = &timing_proof {
         receipt["profiling_enabled"] = json!(false);
         receipt["timing_score_sources"] = json!(sealed.pins);
@@ -1604,7 +1634,7 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
             };
             let observer = execution.cuda_compact_fp16_load_observer()?;
             let loaded = journal.observe(operation::Kind::Load, 0, None, || {
-                if timing.is_some() {
+                if unprofiled {
                     let (pin, graph_bytes) = reviewed_graph.as_ref().context("missing timing graph custody")?;
                     return Scorer::open_private_compact_fp32_qkv_unprofiled(execution, files, graph_bytes, pin.sha256);
                 }
@@ -1666,6 +1696,10 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
                 scorer.attention_backend_plan()?.context("actual Compact FP16 attention plan missing")?
             };
             flush_graph_diagnostic(&mut file, &receipt)?;
+            if let Some(observation) = &observed_proof {
+                let compiler = observed::compiler(&profile, files)?;
+                return observation.score(scorer, &compiler, &mut journal, &mut receipt, &mut file, deadline);
+            }
             if development_batch || timing.is_some() {
                 let references = development.as_ref().context("development reference custody missing")?;
                 let device = custody.device.as_ref().context("development CUDA device custody missing")?;
@@ -1767,7 +1801,7 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
 
         let mut teardown = Ok(());
         let session_opened = custody.scorer.is_some();
-        if timing.is_some() && let Some(scorer) = custody.scorer.take() {
+        if unprofiled && let Some(scorer) = custody.scorer.take() {
             teardown = scorer.synchronize(deadline).and_then(|()| {
                 ensure!(scorer.device_settled(), "unprofiled session has pending GPU work");
                 receipt["forward_synchronized"] = json!(receipt["native_forward_returned"] == true);
@@ -1869,6 +1903,11 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
         }
         if let Some(sealed) = &timing_proof {
             for pin in &sealed.pins { teardown = teardown.and(pinned(pin, PROOF_BYTES).map(|_| ())); }
+        }
+        if let Some(row) = &observed_proof {
+            for pin in [&row.reference_pin, &row.capture_pin, &row.census_pin] {
+                teardown = teardown.and(pinned(pin, PROOF_BYTES).map(|_| ()));
+            }
         }
         work.and(teardown)?;
         verify_files(custody.files.as_ref().context("Compact FP16 post-input custody missing")?, &profile)?;
