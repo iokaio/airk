@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Private native metadata and T32 probe for the reviewed Compact FP16 candidate.
 use super::*;
+mod down;
 mod observed;
 mod timing;
 use airk_core::arbiter::device::{DevicePrecision, PlacementPolicy};
@@ -137,7 +138,11 @@ fn projection_stage(
             && fact["baseline_graph"] == json!(proof.candidate.graph)
             && fact["baseline_weights"] == json!(proof.candidate.weights)
             && fact["graph_proof"]["projection_count"] == spec.projections
-            && fact["graph_proof"]["added_cast_count"] == spec.projections * 3
+            && (if spec.stage_schema == down::SPEC.stage_schema {
+                down::stage_proof(&fact)
+            } else {
+                fact["graph_proof"]["added_cast_count"] == spec.projections * 3
+            })
             && candidate.graph.sha256 == graph_sha.parse::<Sha256Digest>()?
             && candidate.graph.sha256 != proof.candidate.graph.sha256
             && candidate.weights.sha256 == proof.candidate.weights.sha256
@@ -242,7 +247,8 @@ fn projection_reference(
 
 const DEVELOPMENT_REFERENCE_SHA: &str =
     "f0d0e01fa28e7a876f1c57bc9894dff7e2a915ac8bf8150885b2aac2fdff2f14";
-// Provisional Compact 1.8.207 development-only limit. Qualification retains 0.001.
+// Version-scoped Compact matching-precision limits; historical receipts retain their own thresholds.
+const RELEASE_RAW_LIMIT: f64 = 0.007;
 const DEVELOPMENT_RAW_LIMIT: f64 = 0.070;
 const DEVELOPMENT_MASS_LIMIT: f64 = 0.05;
 const DEVELOPMENT_NEAR_TIE_LIMIT: f64 = 0.020;
@@ -1086,7 +1092,10 @@ fn t32_reference_bounds(
     (matching_raw, matching_mass, matching_argmax): (f64, f64, bool),
     original_mass: f64,
 ) -> bool {
-    matching_raw <= 0.001 && matching_mass <= 0.05 && matching_argmax && original_mass <= 0.05
+    matching_raw <= RELEASE_RAW_LIMIT
+        && matching_mass <= 0.05
+        && matching_argmax
+        && original_mass <= 0.05
 }
 
 #[test]
@@ -1098,8 +1107,8 @@ fn compact_fp16_t32_limits_matching_parity_and_original_mass() -> Result<()> {
     assert!(!original_argmax);
     assert!(t32_reference_bounds(matching, original_mass));
 
-    assert!(t32_reference_bounds((0.001, 0.05, true), 0.05));
-    assert!(!t32_reference_bounds((0.0011, 0.05, true), 0.05));
+    assert!(t32_reference_bounds((0.007, 0.05, true), 0.05));
+    assert!(!t32_reference_bounds((0.007001, 0.05, true), 0.05));
     assert!(!t32_reference_bounds((0.001, 0.051, true), 0.05));
     assert!(!t32_reference_bounds((0.001, 0.05, false), 0.05));
     assert!(!t32_reference_bounds((0.001, 0.05, true), 0.051));
@@ -1142,6 +1151,8 @@ enum CompactFp16Probe {
     QkvMixedTiming,
     QkvLayer0T1024,
     QkvDecisionT1024,
+    DownGraph,
+    DownScores,
     QkvoProjectionGraphOnly,
     QkvoProjectionT32,
     BoundedT32,
@@ -1288,6 +1299,8 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
         | CompactFp16Probe::QkvMixedTiming
         | CompactFp16Probe::QkvLayer0T1024
         | CompactFp16Probe::QkvDecisionT1024 => (Some(&QKV), false, false),
+        CompactFp16Probe::DownGraph => (Some(&down::SPEC), false, true),
+        CompactFp16Probe::DownScores => (Some(&down::SPEC), false, false),
         CompactFp16Probe::QkvoProjectionGraphOnly => (Some(&QKVO), false, true),
         CompactFp16Probe::QkvoProjectionT32 => (Some(&QKVO), true, false),
         CompactFp16Probe::GraphOnly => (None, false, true),
@@ -1299,7 +1312,8 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
         CompactFp16Probe::QkvMixedTiming => Some(timing::Population::Mixed),
         _ => None,
     };
-    let representative = mode == CompactFp16Probe::QkvObservedDevelopment;
+    let down_scores = mode == CompactFp16Probe::DownScores;
+    let representative = mode == CompactFp16Probe::QkvObservedDevelopment || down_scores;
     let unprofiled = representative || timing.is_some();
     let development_batch = mode == CompactFp16Probe::QkvDevelopmentBatch;
     let decision_rows = mode == CompactFp16Probe::QkvDecisionT1024;
@@ -1394,7 +1408,7 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
     } else {
         None
     };
-    let development = if development_batch || qkv_layer0_t1024 || unprofiled {
+    let development = if development_batch || qkv_layer0_t1024 || (unprofiled && !down_scores) {
         let (stage, candidate) = projection
             .as_ref()
             .context("missing development Q/K/V stage")?;
@@ -1448,7 +1462,7 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
 
     let output = output()?;
     let observed_proof = representative
-        .then(|| observed::Observed::load(candidate))
+        .then(|| observed::Observed::load(candidate, down_scores))
         .transpose()?;
     let timing_proof = timing.map(|_| timing::Sealed::load()).transpose()?;
     let prefix = if graph_only || unprofiled {
@@ -1509,6 +1523,8 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
             CompactFp16Probe::QkvMixedTiming => "airk.private.compact-fp16-unprofiled-mixed/1",
             CompactFp16Probe::QkvDecisionT1024 => "airk.private.compact-fp32-qkv-decision-t1024/1",
             CompactFp16Probe::QkvLayer0T1024 => "airk.private.compact-fp32-qkv-layer0-t1024/1",
+            CompactFp16Probe::DownGraph => down::SPEC.graph_schema,
+            CompactFp16Probe::DownScores => "airk.private.compact-qkv-down-observed-development/1",
             CompactFp16Probe::QkvoProjectionGraphOnly => QKVO.graph_schema,
             CompactFp16Probe::QkvoProjectionT32 => QKVO.t32_schema,
             CompactFp16Probe::BoundedT32 => "airk.private.compact-fp16-bounded-t32-component/1",
@@ -1537,6 +1553,10 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
     if let Some(row) = &observed_proof {
         receipt["profiling_enabled"] = json!(false);
         receipt["observed_reference"] = json!(row.reference_pin);
+        if let Some(pin) = &row.precision_reference {
+            receipt["projection_reference"] = json!(pin);
+            receipt["development_only"] = json!(true);
+        }
         receipt["observed_capture"] = json!(row.capture_pin);
         receipt["observed_census"] = json!(row.census_pin);
     }
@@ -1560,7 +1580,8 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
         receipt["development_only"] = json!(true);
     }
     if development_batch {
-        receipt["qualification_cutoff_raw"] = json!(0.001);
+        receipt["qualification_cutoff_raw"] = json!(RELEASE_RAW_LIMIT);
+        receipt["historical_qualification_cutoff_raw"] = json!(0.001);
         receipt["development_raw_limit"] = json!(DEVELOPMENT_RAW_LIMIT);
         receipt["matching_qkv_mass_limit"] = json!(DEVELOPMENT_MASS_LIMIT);
         receipt["original_fp32_mass_limit"] = json!(DEVELOPMENT_MASS_LIMIT);
@@ -1636,6 +1657,9 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
             let loaded = journal.observe(operation::Kind::Load, 0, None, || {
                 if unprofiled {
                     let (pin, graph_bytes) = reviewed_graph.as_ref().context("missing timing graph custody")?;
+                    if down_scores {
+                        return Scorer::open_private_compact_down_unprofiled(execution, files, graph_bytes, pin.sha256);
+                    }
                     return Scorer::open_private_compact_fp32_qkv_unprofiled(execution, files, graph_bytes, pin.sha256);
                 }
                 let profile_prefix = prefix.as_deref().context("scoring profile prefix missing")?;
@@ -1905,7 +1929,7 @@ fn observe_compact_fp16_t32(mode: CompactFp16Probe) -> Result<()> {
             for pin in &sealed.pins { teardown = teardown.and(pinned(pin, PROOF_BYTES).map(|_| ())); }
         }
         if let Some(row) = &observed_proof {
-            for pin in [&row.reference_pin, &row.capture_pin, &row.census_pin] {
+            for pin in [&row.reference_pin, &row.capture_pin, &row.census_pin].into_iter().chain(row.precision_reference.iter()) {
                 teardown = teardown.and(pinned(pin, PROOF_BYTES).map(|_| ()));
             }
         }

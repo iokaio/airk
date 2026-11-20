@@ -281,7 +281,7 @@ fn placement_diagnostic_supplement_binds_current_runtime_without_qualification_t
     );
     assert_eq!(
         source_sha(include_bytes!("../cuda/diagnostic.rs"))?.to_string(),
-        "02823087575662de75f8fe531bcbda7304c0dc274b775c8cf4303fc26be73174"
+        "d4c51397621b145f96421b3a599e0e04f10f12a38e0963fd9fc80aafb02c3989"
     );
     assert_eq!(
         source_sha(include_bytes!("../cuda.rs"))?.to_string(),

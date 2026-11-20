@@ -8,6 +8,7 @@ const ORIGINAL_COMPACT: &str = "6e7520aa29076f0958353a158e9be3390caef48675188e14
 
 pub(super) struct Observed {
     pub(super) reference_pin: ResourceFilePin,
+    pub(super) precision_reference: Option<ResourceFilePin>,
     pub(super) capture_pin: ResourceFilePin,
     pub(super) census_pin: ResourceFilePin,
     pub(super) case: String,
@@ -20,7 +21,7 @@ pub(super) struct Observed {
 }
 
 impl Observed {
-    pub(super) fn load(candidate: &CandidateProof) -> Result<Self> {
+    pub(super) fn load(candidate: &CandidateProof, down_scores: bool) -> Result<Self> {
         let reference_pin = env_pin(
             "AIRK_CUDA_OBSERVED_REFERENCE",
             "AIRK_CUDA_OBSERVED_REFERENCE_SHA256",
@@ -48,7 +49,16 @@ impl Observed {
                 && reference["matching_t128_score_words_equal"] == true
                 && reference["ragged_constant_value_control"] == true
                 && reference["reference_basis"]["sha256"] == DEVELOPMENT_REFERENCE_SHA
-                && reference["candidate_graph_sha256"] == json!(candidate.graph.sha256),
+                && (if down_scores {
+                    down::SPEC
+                        .artifact
+                        .is_some_and(|(_, graph)| graph == candidate.graph.sha256.to_string())
+                        && QKV
+                            .artifact
+                            .is_some_and(|(_, graph)| reference["candidate_graph_sha256"] == graph)
+                } else {
+                    reference["candidate_graph_sha256"] == json!(candidate.graph.sha256)
+                }),
             "authenticated completed publisher reference for this engineering graph required"
         );
         let capture_pin = serde_json::from_value::<ProofFile>(reference["capture"].clone())?.pin();
@@ -123,7 +133,49 @@ impl Observed {
                 && request.remaining_ms > 0,
             "original compiler or allowance differs"
         );
-        let matching: Vec<f32> = serde_json::from_value(reference["matching_fp16"].clone())?;
+        let (matching, precision_reference): (Vec<f32>, _) = if down_scores {
+            let pin = env_pin(
+                "AIRK_CUDA_FP16_PROJECTION_REFERENCE",
+                "AIRK_CUDA_FP16_PROJECTION_REFERENCE_SHA256",
+            )?;
+            ensure!(
+                down::SPEC
+                    .reference_sha
+                    .is_some_and(|sha| sha == pin.sha256.to_string()),
+                "unreviewed down-projection independent score proof"
+            );
+            let closure: Value = serde_json::from_slice(&pinned(&pin, PROOF_BYTES)?)?;
+            let scored = &closure["result"];
+            ensure!(
+                closure["complete"] == true
+                    && closure["owned"]["exit_code"] == 0
+                    && closure["owned"]["owned_descendants_settled"] == true
+                    && closure["owned"]["owned_job_final_active_processes"] == 0
+                    && scored["schema"] == down::SPEC.reference_schema
+                    && scored["qualification"] == false
+                    && scored["native_candidate_scoring"] == false
+                    && scored["case"] == case
+                    && scored["recipe_sha256"]
+                        == "762f3da4ab62a3b52a528e7aa238c3749aed4af5db7318d777746947eaec58b0"
+                    && scored["original_cpu"]["sha256"] == json!(reference_pin.sha256)
+                    && scored["baseline"]["scores"] == reference["matching_fp16"]
+                    && scored["original_fp32"] == reference["original_fp32"]
+                    && scored["compiled"] == reference["compiled"]
+                    && scored["roster"] == reference["roster"]
+                    && scored["capture"] == reference["capture"]
+                    && scored["census"] == reference["census"],
+                "protected candidate independent source or compiler input differs"
+            );
+            (
+                serde_json::from_value(scored["all_down_fp32"]["scores"].clone())?,
+                Some(pin),
+            )
+        } else {
+            (
+                serde_json::from_value(reference["matching_fp16"].clone())?,
+                None,
+            )
+        };
         let original: Vec<f32> = serde_json::from_value(reference["original_fp32"].clone())?;
         ensure!(
             matching.len() == count
@@ -133,6 +185,7 @@ impl Observed {
         );
         Ok(Self {
             reference_pin,
+            precision_reference,
             capture_pin,
             census_pin,
             case,
@@ -204,6 +257,8 @@ impl Observed {
             && mass <= DEVELOPMENT_MASS_LIMIT
             && original_mass <= DEVELOPMENT_MASS_LIMIT;
         receipt["native_forward_returned"] = json!(true);
+        receipt["release_raw_limit"] = json!(RELEASE_RAW_LIMIT);
+        receipt["release_raw_pass"] = json!(raw <= RELEASE_RAW_LIMIT);
         receipt["rows"] = json!([{"name":self.case,"ordinal":self.ordinal,"input_digest":input.input_digest,
             "tokens":input.input_ids.len(),"options":scores.len(),"compiled":compiled,"roster":self.request.roster,
             "raw_scores":scores,"matching_fp16":self.matching,"original_fp32":self.original,

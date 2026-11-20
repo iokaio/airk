@@ -29,11 +29,16 @@ const LARGE_GRAPH_SHA: &str = "1892e5b040d8c51969f1d3361d0929950fa98f0ef4079060e
 const BATCH_VIEW_GRAPH: &str = "5c9a26693eec8522bbfb4d5c4445fa0b60684449a5ea2e1098ec71cca96405b1";
 const BATCH_VIEW_PLACEMENT: &str =
     "d4ccefff117a11c68b92c3f9c08b145a4fbb5a470114af5a23107c73a26bc431";
+const LARGE_FP16_PLACEMENT: &str =
+    "fff6dbe2f0c2fac4b9ba215da7d5029421d2706ee48c01c2485b9f157ee15ca6";
+const LARGE_FP16_GRAPH: &str = "c00371ad9407c25bd52999d87327115025b7c6f55a4e585645ca112d858de5bd";
+const LARGE_T32_INPUT: &str = "ec7b4845c37fb7cbe2a64a866f8b6cdc03479d65593cdb0a1d01102fe56fc335";
 const APPROVED_WIDTHS: [usize; 4] = [32, 128, 1024, 8192];
 
 #[derive(Clone, Copy)]
 enum GraphPolicy {
     ContextFp32(ModelChoice),
+    LargeFp16,
     CompactFp16,
     CompactFp16Layer0(Layer0Cut),
 }
@@ -154,7 +159,14 @@ impl GraphGate {
                 && result["placement"]["complete"] == true,
             "complete reviewed Context graph evidence required"
         );
-        Self::from_result(result, evidence_sha, GraphPolicy::ContextFp32(model))
+        let policy = if model == ModelChoice::ContextQwenLarge
+            && evidence_sha == LARGE_FP16_PLACEMENT.parse()?
+        {
+            GraphPolicy::LargeFp16
+        } else {
+            GraphPolicy::ContextFp32(model)
+        };
+        Self::from_result(result, evidence_sha, policy)
     }
 
     fn new_compact_fp16(raw: &[u8], evidence_sha: Sha256Digest) -> Result<Self> {
@@ -213,7 +225,7 @@ impl GraphGate {
         policy: GraphPolicy,
     ) -> Result<Self> {
         let graph = match policy {
-            GraphPolicy::ContextFp32(_) => &mut result["graph_metadata"],
+            GraphPolicy::ContextFp32(_) | GraphPolicy::LargeFp16 => &mut result["graph_metadata"],
             GraphPolicy::CompactFp16 | GraphPolicy::CompactFp16Layer0(_) => {
                 &mut result["graph_observation"]["graph_metadata"]
             }
@@ -248,6 +260,7 @@ impl GraphGate {
         let current = serde_json::to_value(adapter)?;
         let model = match self.policy {
             GraphPolicy::ContextFp32(model) => model,
+            GraphPolicy::LargeFp16 => ModelChoice::ContextQwenLarge,
             GraphPolicy::CompactFp16 | GraphPolicy::CompactFp16Layer0(_) => {
                 ModelChoice::ContextQwenCompact
             }
@@ -291,6 +304,15 @@ impl GraphGate {
             GraphPolicy::ContextFp32(ModelChoice::ContextQwenLarge) => (
                 CpuValueBounds::fp32(LARGE_CPU_PAYLOAD_BYTES),
                 b"airk.private.large-cuda-bounded-hybrid/1",
+            ),
+            GraphPolicy::LargeFp16 => (
+                CpuValueBounds {
+                    maximum_payload: 12_067,
+                    maximum_vector_elements: 4,
+                    maximum_value_bytes: 32,
+                    allow_int32: true,
+                },
+                b"airk.private.large-fp16-cuda-bounded-hybrid/1",
             ),
             GraphPolicy::CompactFp16 => (
                 CpuValueBounds::COMPACT_FP16,
@@ -449,6 +471,10 @@ fn validate_cpu_values(rows: &[GraphMetadataRow], bounds: CpuValueBounds) -> Res
 }
 
 fn validate_compact_fp16_attention(rows: &[GraphMetadataRow], plan: &Value) -> Result<()> {
+    validate_fp16_attention(rows, plan, COMPACT_FP16_ATTENTION_NODES)
+}
+
+fn validate_fp16_attention(rows: &[GraphMetadataRow], plan: &Value, count: usize) -> Result<()> {
     const OP: &str = "GroupQueryAttention";
     const DOMAIN: &str = "com.microsoft";
     let expected = plan["nodes"]
@@ -459,7 +485,7 @@ fn validate_compact_fp16_attention(rows: &[GraphMetadataRow], plan: &Value) -> R
             && plan["domain"] == DOMAIN
             && plan["dtype"] == "fp16"
             && plan["backend"] == "FLASH_ATTENTION"
-            && expected.len() == COMPACT_FP16_ATTENTION_NODES,
+            && expected.len() == count,
         "Compact FP16 canonical attention plan differs"
     );
     let mut expected_names = BTreeSet::new();
@@ -801,7 +827,13 @@ impl Scorer {
             .device_execution
             .as_ref()
             .context("Large bounded hybrid device policy missing")?;
-        let placement = if candidate.graph == BATCH_VIEW_GRAPH.parse()? {
+        let placement = if candidate.graph == LARGE_FP16_GRAPH.parse()? {
+            ensure!(
+                candidate.precision == airk_core::arbiter::device::DevicePrecision::Float16,
+                "Large baseline precision differs"
+            );
+            LARGE_FP16_PLACEMENT
+        } else if candidate.graph == BATCH_VIEW_GRAPH.parse()? {
             BATCH_VIEW_PLACEMENT
         } else {
             LARGE_GRAPH_SHA
@@ -994,6 +1026,14 @@ impl Scorer {
             .bounded_hybrid
             .take()
             .context("same-session graph evidence missing")?;
+        if matches!(evidence.policy, GraphPolicy::LargeFp16) {
+            let attention = scorer
+                .fp16_attention
+                .as_ref()
+                .context("Large FP16 G5 plan missing")?;
+            validate_fp16_attention(&evidence.graph.rows, &attention.observation()?, 36)?;
+            attention.require_math_environment()?;
+        }
         Ok((scorer, evidence))
     }
 
@@ -1038,6 +1078,16 @@ impl BoundedHybridScorer {
         input: &CompiledInput,
         deadline: Instant,
     ) -> Result<Vec<f32>> {
+        if matches!(self.evidence.policy, GraphPolicy::LargeFp16) {
+            ensure!(
+                input.input_digest == LARGE_T32_INPUT.parse()?
+                    && input.input_ids.len() == 32
+                    && input.candidate_positions.len() == 8
+                    && input.attention_mask == [1; 32]
+                    && input.option_mask == [true; 8],
+                "Large FP16 scientific forward requires the single reviewed T32 input"
+            );
+        }
         match self.profiling {
             Profiling::Active => {
                 ensure!(

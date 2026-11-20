@@ -32,6 +32,9 @@ SELECTORS = {
     "qkv-development": PREFIX + "cuda_compact_fp32_qkv_projection_development_batch",
     "qkv-decision-t1024": PREFIX + "cuda_compact_fp32_qkv_decision_t1024",
     "qkv-layer0-t1024": PREFIX + "cuda_compact_fp32_qkv_layer0_t1024",
+    "down-metadata": PREFIX + "down::emit_down_metadata",
+    "down-graph": PREFIX + "down::observe_down_graph",
+    "down-observed": PREFIX + "down::observe_down_scores",
     "qkvo-metadata": PREFIX + "emit_cuda_compact_fp32_qkvo_projection_probe_metadata",
     "qkvo-graph": PREFIX + "cuda_compact_fp32_qkvo_projection_load_only_graph_diagnostic",
     "qkvo-t32": PREFIX + "cuda_compact_fp32_qkvo_projection_t32_component",
@@ -40,6 +43,14 @@ SELECTORS = {
     "layer0-t32": PREFIX + "cuda_compact_fp16_layer0_taps",
     "layer0-projection-t32": PREFIX + "cuda_compact_fp16_layer0_projection_taps",
 }
+DOWN_STAGE_SCHEMA = "airk.private.compact-fp32-qkv-down-projection-candidate/1"
+DOWN_STAGE_SHA = "95e81ed4222c4cfdfc57e7e5f4600f135fe9bee9cbc7f7439b6111543476a737"
+DOWN_GRAPH_SHA = "a583cbd0906a9801461ac0678d1607ecfe73398b637c19c97ea072c5750a33a1"
+DOWN_SCORE = "down-observed"
+DOWN_NATIVE_SHA = "295f0c79716cba2ec3da993e4a2659a7a67b6daec8bb473185c5818413d6daa4"
+DOWN_GRAPH_RECEIPT_SHA = "c6d53799992c313daf988334547bd9d36ee5d5a99af6eb9375b01b375c186693"
+DOWN_REFERENCE_SHA = "ffda904c92a2354ed9a4c17cf27ea8ce05452b56172c9d36c3a1c045a13ecf52"
+DOWN_MODES = ("down-metadata", "down-graph", DOWN_SCORE)
 QKVO_MODES = ("qkvo-metadata", "qkvo-graph", "qkvo-t32")
 DEVELOPMENT_MODE = "qkv-development"
 WIDER_TAP_MODE = "qkv-layer0-t1024"
@@ -52,8 +63,8 @@ OBSERVED_MODE = "qkv-observed-development"
 OBSERVED_REFERENCES = {"f657bbcdc9dac88829376c639bf2f20b6e4ae4c40f796f6305c1ec044bb59b91",
                        "89b5a289b66ce93ac314c583cadff2112fda185081152d3f6a7886bae8b8d169"}
 WIDER_REFERENCE_MODES = (OBSERVED_MODE, DEVELOPMENT_MODE, *WIDE_CAPTURES, *TIMING_MODES)
-PROJECTION_SCORE_MODES = ("projection-t32", "qkvo-t32", *WIDER_REFERENCE_MODES)
-PROJECTION_MODES = ("projection-metadata", "projection-graph", "projection-t32", *WIDER_REFERENCE_MODES, *QKVO_MODES)
+PROJECTION_SCORE_MODES = ("projection-t32", "qkvo-t32", DOWN_SCORE, *WIDER_REFERENCE_MODES)
+PROJECTION_MODES = ("projection-metadata", "projection-graph", "projection-t32", *WIDER_REFERENCE_MODES, *QKVO_MODES, *DOWN_MODES)
 WIDER_TAP_SCHEMA = "airk.private.compact-fp32-qkv-layer0-t1024/1"
 WIDER_TAP_POLICY = b"airk.private.compact-fp32-qkv-cuda-layer0-t1024/1"
 SEALED_T1024_BATCH = "compact-fp16-qkv-fp32-native-development-r1"
@@ -64,10 +75,11 @@ DEVELOPMENT_SCHEMA = "airk.private.compact-fp32-qkv-development-batch/1"
 DEVELOPMENT_REFERENCE_SCHEMA = "airk.private.compact-fp32-qkv-wider-reference/1"
 DEVELOPMENT_REFERENCE_SHA = "f0d0e01fa28e7a876f1c57bc9894dff7e2a915ac8bf8150885b2aac2fdff2f14"
 DEVELOPMENT_WIDTHS = (128, 1024, 8192)
+RELEASE_RAW_LIMIT = .007
 DEVELOPMENT_RAW_LIMIT = .070
 DEVELOPMENT_NEAR_TIE = .020
-METADATA_MODES = ("metadata", "projection-metadata", "qkvo-metadata")
-GRAPH_MODES = ("graph", "projection-graph", "qkvo-graph")
+METADATA_MODES = ("metadata", "projection-metadata", "qkvo-metadata", "down-metadata")
+GRAPH_MODES = ("graph", "projection-graph", "qkvo-graph", "down-graph")
 QKVO_STAGE_SCHEMA = "airk.private.compact-fp32-qkvo-projection-candidate/1"
 QKVO_STAGE_SHA = "dbf3a746b8ec66d81ba68798988cdc4068d99841c538cbb2963a37125bd3fb5b"
 QKVO_GRAPH_SHA = "0f2407345000cb244674238eead6178bc711238f2a4ddc5b61eef603d87be0b1"
@@ -234,7 +246,35 @@ def retained_core(pin, base):
     return value
 
 
-def linked_image(build, image, base, audit, mode, *, source_snapshot=None):
+def retained_cargo_file(original, record, build, base, audit):
+    require(record["path"] == str(original) and re.fullmatch("[a-f0-9]{64}", record["sha256"]),
+            "record does not bind the original selected Cargo path")
+    copy = Path(build["path"]).parent / "retained-cargo-lineage" / (record["sha256"] + ".cargo")
+    audit([copy])
+    pin = exact_pin(copy, record["sha256"], base)
+    require(pin["bytes"] == record["bytes"], "retained Cargo bytes differ")
+    return pin
+
+
+def retained_cargo_chain(path, digest, build, image, manifest, base, audit, parent):
+    require(path.is_absolute() and path.name == "execution.json" and path.parent.parent == CAMPAIGN,
+            "prior direct campaign closure required")
+    audit([path])
+    pin = exact_pin(path, digest, base)
+    previous = base.read(pin["path"])
+    custody = previous["owned"]["suspended_assignment"]
+    require(previous["schema"] == "airk.private.owned-compact-fp16-probe/1"
+            and previous["complete"] is True and previous["failure"] is None
+            and previous["whole_phase_expired"] is False and parent.settled(previous["owned"])
+            and previous["build"] == build and previous["image"] == image
+            and previous["runtime_manifest"] == manifest and "retained_cargo_proof" not in previous
+            and custody["image"] == core(image) and custody["execution_user_sid"] == custody["default_owner_sid"] == base.SID
+            and len(previous["compile_time_cuda_approvals"]) == 3,
+            "prior observed original Cargo image, native custody or lineage differs")
+    return pin, previous
+
+
+def linked_image(build, image, base, audit, mode, *, source_snapshot=None, cargo_chain=None):
     observed = base.read(build["path"], 32 << 20)
     command = observed["command"]
     require(observed["schema"] == "airk-readiness-command/1" and observed["passed"] is True
@@ -257,8 +297,12 @@ def linked_image(build, image, base, audit, mode, *, source_snapshot=None):
                         and event["profile"]["test"] is True and event.get("executable")):
                     selected.append(Path(event["executable"]))
     require(len(selected) == 1, "exactly one compiler-emitted Inference test image required")
-    audit(selected)
-    artifact = base.pin(selected[0])
+    if cargo_chain is None:
+        audit(selected)
+        artifact = base.pin(selected[0])
+    else:
+        require(cargo_chain["build_log"] == log_pin, "original build log changed")
+        artifact = retained_cargo_file(selected[0], cargo_chain["linked_image"], build, base, audit)
     require((artifact["sha256"], artifact["bytes"]) == (image["sha256"], image["bytes"]),
             "staged image differs from the linked Cargo image")
     native = observed["groups"]["native"]["files"]
@@ -273,11 +317,13 @@ def linked_image(build, image, base, audit, mode, *, source_snapshot=None):
     )
     if mode in REVIEWED_MODES:
         relevant += (BOUNDED_SOURCE, inference + "/cuda_qualification/hybrid_profile_trace.rs")
-    if mode in TAP_SCOPES or mode in ("projection-graph", "qkvo-graph", *PROJECTION_SCORE_MODES):
+    if mode in TAP_SCOPES or mode in ("projection-graph", "qkvo-graph", "down-graph", *PROJECTION_SCORE_MODES):
         relevant += ("crates/airk-retrieval/src/arbiter/runtime/bounded_hybrid/layer0.rs",)
     if mode in TAP_SCOPES or mode in WIDE_CAPTURES:
         relevant += ("crates/airk-retrieval/src/arbiter/runtime/cuda/run.rs",)
-    if mode == OBSERVED_MODE:
+    if mode in DOWN_MODES:
+        relevant += (inference + "/cuda_qualification/fp16_compact/down.rs",)
+    if mode in (OBSERVED_MODE, DOWN_SCORE):
         relevant += (inference + "/cuda_qualification/fp16_compact/observed.rs",)
     if mode in TIMING_MODES:
         relevant += (inference + "/cuda_qualification/fp16_compact/timing.rs",)
@@ -293,9 +339,9 @@ def linked_image(build, image, base, audit, mode, *, source_snapshot=None):
     return log_pin, artifact, sources
 
 
-def decision_build_approvals(log, artifact, manifest, base, audit):
+def decision_build_approvals(log, artifact, manifest, base, audit, *, cargo_chain=None):
     """Bind rustc's exact environment dependencies to the selected Cargo executable."""
-    image = Path(artifact["path"])
+    image = Path(artifact["path"] if cargo_chain is None else cargo_chain["linked_image"]["path"])
     deps = image.parent
     require(deps.name == "deps" and image.stem.startswith("airk_inference-"), "Cargo deps image required")
     fingerprints = deps.parent / ".fingerprint"
@@ -310,14 +356,20 @@ def decision_build_approvals(log, artifact, manifest, base, audit):
     key = libs[0].stem.removeprefix("libairk_retrieval-")
     fingerprint = fingerprints / ("airk-retrieval-" + key) / "lib-airk_retrieval"
     info = deps / ("airk_retrieval-" + key + ".d")
-    audit([inf, fingerprint, info])
+    if cargo_chain is None:
+        audit([inf, fingerprint, info])
+        pins = [base.pin(path) for path in (inf, fingerprint, info)]
+    else:
+        pins = [retained_cargo_file(original, record, cargo_chain["build"], base, audit)
+                for original, record in zip((inf, fingerprint, info), cargo_chain["compile_time_cuda_approvals"], strict=True)]
+        inf, fingerprint, info = (Path(pin["path"]) for pin in pins)
     lineage = [row[3] for row in base.read(str(inf))["deps"] if row[1] == "airk_retrieval"]
     require(lineage == [int.from_bytes(bytes.fromhex(fingerprint.read_text().strip()), "little")],
             "Inference test image did not link selected Retrieval fingerprint")
     expected = {"# env-dep:AIRK_APPROVED_CUDA_MANIFEST_SHA256=" + manifest["sha256"],
                 "# env-dep:AIRK_STATIC_CUDA_BUILD_SHA256=" + base.read(manifest["path"])["static_core_build"]}
     require(expected <= set(info.read_text(encoding="utf8").splitlines()), "compiled CUDA approval pins missing")
-    return [base.pin(path) for path in (inf, fingerprint, info)]
+    return pins
 
 
 def has_output_projection(projection):
@@ -325,15 +377,19 @@ def has_output_projection(projection):
 
 
 def projection_schema(projection, qkv_schema):
+    if projection is not None and projection[1]["schema"] == DOWN_STAGE_SCHEMA:
+        return qkv_schema.replace("fp32-qkv-", "fp32-qkv-down-")
     return qkv_schema.replace("fp32-qkv-", "fp32-qkvo-") if has_output_projection(projection) else qkv_schema
 
 
-def projection_stage(path, expected, base, audit, *, output_projection=False):
+def projection_stage(path, expected, base, audit, *, output_projection=False, down=False):
     stage_sha = QKVO_STAGE_SHA if output_projection else PROJECTION_STAGE_SHA
     graph_sha = QKVO_GRAPH_SHA if output_projection else PROJECTION_GRAPH_SHA
     stage_schema = (QKVO_STAGE_SCHEMA if output_projection
                     else "airk.private.compact-fp32-qkv-projection-candidate/1")
-    count = 112 if output_projection else 84
+    count = 112 if output_projection or down else 84
+    if down:
+        stage_sha, graph_sha, stage_schema = DOWN_STAGE_SHA, DOWN_GRAPH_SHA, DOWN_STAGE_SCHEMA
     require(path.is_absolute() and path.parent.parent == CAMPAIGN and path.name == "stage.json"
             and expected == stage_sha, "exact retained Compact projection stage required")
     audit([path])
@@ -345,7 +401,9 @@ def projection_stage(path, expected, base, audit, *, output_projection=False):
             and all(type(value[key]) is int and value[key] == 0
                     for key in ("native_load_attempts", "native_forward_attempts"))
             and value["graph_proof"]["projection_count"] == count
-            and value["graph_proof"]["added_cast_count"] == 3 * count,
+            and (value["graph_proof"]["prior_qkv_routes"] == 84 and value["graph_proof"]["new_input_and_weight_casts"] == 56
+                 and value["graph_proof"]["removed_half_output_casts"] == 28 and value["graph_proof"]["source_graph_recovered_byte_for_byte"] is True
+                 if down else value["graph_proof"]["added_cast_count"] == 3 * count),
             "reviewed Compact projection stage scope differs")
     if output_projection:
         require(value["projection_experiment"]["sha256"] == QKVO_EXPERIMENT_SHA,
@@ -529,7 +587,7 @@ def validate_metadata(value, paths, request, evidence, manifest, base, *, projec
 
 
 def validate_t32_comparisons(row):
-    require(finite(row["matching_fp16_raw_error"], 0, .001)
+    require(finite(row["matching_fp16_raw_error"], 0, RELEASE_RAW_LIMIT)
             and finite(row["matching_fp16_mass_error"], 0, .05)
             and row["matching_fp16_argmax_matches"] is True,
             "native T32 matching FP16 comparison refused")
@@ -618,7 +676,7 @@ def validate_graph(value, events, component):
             "native graph Load duration and independent returned marker differ")
 
 
-def validate_projection_graph(graph, *, output_projection=False):
+def validate_projection_graph(graph, *, output_projection=False, down=False):
     """Prove the widened projection arithmetic in the validated final SessionState graph."""
     rows = [row for row in graph["rows"] if row["graph"] == 0]
     nodes = {row["node"]: row for row in rows if row["kind"] == "node"}
@@ -708,14 +766,37 @@ def validate_projection_graph(graph, *, output_projection=False):
                 and c16["name"] == "/airk_g5/weight/" + name + "/output16",
                 f"Q/K/V original half output binding differs: {name}")
         input_casts.add(a_cast)
-    return {"cuda_fp32_matmuls": len(projections), "weight_upcasts": len(projections),
-            "activation_upcasts": len(input_casts), "output_downcasts": len(projections)}
+    result = {"cuda_fp32_matmuls": len(projections), "weight_upcasts": len(projections),
+              "activation_upcasts": len(input_casts), "output_downcasts": len(projections)}
+    if down:
+        names = {node["name"]: idx for idx, node in nodes.items()}
+        for layer in range(28):
+            name = f"/scorer/layers.{layer}/mlp/down_proj/MatMul"
+            index = names[name]
+            cuda_node(index, "MatMul", name)
+            activation, weight = typed_values(index, 0, (1, 1), name)
+            product, = typed_values(index, 2, (1,), name)
+            prefix = f"/airk_compact_mlp_down_fp32/layers.{layer}/"
+            half_activation, activation_cast = one_cast_source(activation, 10, name)
+            half_weight, weight_cast = one_cast_source(weight, 10, name)
+            require(activation_cast == prefix+"input32" and weight_cast == prefix+"weight32"
+                    and half_activation["name"] == "/airk_g5/weight/"+name+"/input16"
+                    and half_weight["provenance"] == "immutable_session_initializer"
+                    and [dimensions[(half_weight["value"], axis)] for axis in (0,1)] == [6144,2048]
+                    and product["name"] == name+"_output_0", f"down projection or storage differs at layer {layer}")
+            next_nodes = consumers[product["value"]]
+            require(len(next_nodes) == 1 and cuda_node(next_nodes[0], "Add", name)["name"] == f"/scorer/layers.{layer}/Add_1",
+                    "FP32 down projection must feed the original residual addition")
+        result["cuda_fp32_down_projections"] = 28
+        result["down_projection_fp32_residual_inputs"] = 28
+    return result
 
 
 def reviewed_graph(receipt, request, evidence, metadata, manifest, parent, component, base, audit, *, projection=None):
     historical = base.read(receipt["path"])
     owned = historical["owned"]
-    mode = "qkvo-graph" if has_output_projection(projection) else "projection-graph" if projection is not None else "graph"
+    down = projection is not None and projection[1]["schema"] == DOWN_STAGE_SCHEMA
+    mode = "down-graph" if down else "qkvo-graph" if has_output_projection(projection) else "projection-graph" if projection is not None else "graph"
     require(historical["schema"] == "airk.private.owned-compact-fp16-probe/1"
             and historical["mode"] == mode and historical["complete"] is True
             and historical["qualification"] is False and historical["failure"] is None
@@ -726,7 +807,7 @@ def reviewed_graph(receipt, request, evidence, metadata, manifest, parent, compo
             "reviewed owned graph does not bind this Probe, metadata, runtime and settled Job")
     source = historical["outputs"]["native"]
     operations = historical["outputs"]["operations"]
-    expected = (QKVO_REVIEWED_GRAPH_SHA if has_output_projection(projection) else
+    expected = (DOWN_NATIVE_SHA if down else QKVO_REVIEWED_GRAPH_SHA if has_output_projection(projection) else
                 PROJECTION_REVIEWED_GRAPH_SHA if projection is not None else REVIEWED_GRAPH_SHA)
     require(source["sha256"] == expected
             and 0 < source["bytes"] <= component["DIAGNOSTIC_PROOFS"]["native_result"]
@@ -746,13 +827,13 @@ def reviewed_graph(receipt, request, evidence, metadata, manifest, parent, compo
     if projection is not None:
         pin, stage = projection
         typed = validate_projection_graph(graph["graph_observation"]["graph_metadata"],
-                                          output_projection=has_output_projection(projection))
+                                          output_projection=has_output_projection(projection), down=down)
         require(graph.get("projection_stage") == historical.get("projection_stage") == core(pin)
                 and historical["projection_assets"] == {name: stage[name] for name in ("candidate_graph", "candidate_weights")}
                 and typed == historical["projection_graph"], "reviewed Q/K/V graph stage or typed summary differs")
     placement = graph["graph_observation"]["placement"]
     roster = placement_roster(placement)
-    total = (placement["reported_nodes"] if has_output_projection(projection) else
+    total = (placement["reported_nodes"] if has_output_projection(projection) or down else
              PROJECTION_TOTAL_NODES if projection is not None else BOUNDED_TOTAL_NODES)
     require(len(roster) == total and sum(row[-1] == CPU for row in roster) == BOUNDED_CPU_NODES
             and all(row[0] == 0 and row[-1] in (CPU, CUDA) for row in roster),
@@ -1086,7 +1167,8 @@ def validate_development_placement(value, placement, graph, source):
 def validate_development(value, paths, owned, request, evidence, metadata, manifest, image, component, base,
                          projection, reference_pin, reference_proof, graph, placement, source):
     validate_native_identity(value, DEVELOPMENT_SCHEMA, owned, request, evidence, metadata, manifest, image, base)
-    require(value["development_only"] is True and value["qualification_cutoff_raw"] == .001
+    require(value["development_only"] is True and value["qualification_cutoff_raw"] == RELEASE_RAW_LIMIT
+            and value["historical_qualification_cutoff_raw"] == .001
             and value["development_raw_limit"] == DEVELOPMENT_RAW_LIMIT
             and value["matching_qkv_mass_limit"] == value["original_fp32_mass_limit"] == .05
             and value["near_tie_margin_limit"] == DEVELOPMENT_NEAR_TIE
@@ -1189,10 +1271,14 @@ def run(args, *, capacity_gate=None):
     metadata_mode = args.mode in METADATA_MODES
     graph_mode = args.mode in GRAPH_MODES
     projection = (projection_stage(args.projection_stage, args.projection_stage_sha256, base, audit,
-                                   output_projection=args.mode in QKVO_MODES)
+                                   output_projection=args.mode in QKVO_MODES, down=args.mode in DOWN_MODES)
                   if args.mode in PROJECTION_MODES else None)
     validate_request(args.mode, request_value, request, evidence_value, manifest, projection=projection)
-    log, artifact, sources = linked_image(build, image, base, audit, args.mode,
+    retained = cargo_chain = None
+    if getattr(args, "retained_cargo_proof", None) is not None:
+        retained, cargo_chain = retained_cargo_chain(args.retained_cargo_proof, args.retained_cargo_proof_sha256,
+                                                    build, image, manifest, base, audit, parent)
+    log, artifact, sources = linked_image(build, image, base, audit, args.mode, cargo_chain=cargo_chain,
                                           source_snapshot=getattr(args, "source_snapshot", None))
     dependencies = {}
     if metadata_mode:
@@ -1210,7 +1296,9 @@ def run(args, *, capacity_gate=None):
             audit([Path(pin["path"])])
             dependencies[name] = retained_core(pin, base)
     inputs = [request, evidence, image, build, manifest, log, artifact, *sources.values(), *dependencies.values()]
-    approvals = decision_build_approvals(log, artifact, manifest, base, audit) if args.mode in (DECISION_MODE, OBSERVED_MODE, *TIMING_MODES) else []
+    if retained is not None:
+        inputs.append(retained)
+    approvals = decision_build_approvals(log, artifact, manifest, base, audit, cargo_chain=cargo_chain) if args.mode in (DECISION_MODE, OBSERVED_MODE, *TIMING_MODES, *DOWN_MODES) else []
     inputs.extend(approvals)
     projection_reference = development_reference = None
     if projection is not None:
@@ -1233,6 +1321,17 @@ def run(args, *, capacity_gate=None):
                             audit([Path(pin["path"])])
                             base.pinned(pin)
                             inputs.append(pin)
+            elif args.mode == DOWN_SCORE:
+                audit([args.projection_reference])
+                projection_reference = exact_pin(args.projection_reference, DOWN_REFERENCE_SHA, base)
+                down_closure = base.read(projection_reference["path"])
+                down_reference = down_closure["result"]
+                require(parent.settled(down_closure["owned"]) and down_closure["complete"] is True
+                        and down_reference["schema"] == "airk.private.compact-mlp-down-projection-reference/1"
+                        and down_reference["qualification"] is False and down_reference["native_candidate_scoring"] is False
+                        and down_reference["recipe_sha256"] == "762f3da4ab62a3b52a528e7aa238c3749aed4af5db7318d777746947eaec58b0",
+                        "protected reference original CPU custody or recipe differs")
+                inputs.append(projection_reference)
             elif args.mode in PROJECTION_SCORE_MODES:
                 projection_reference = read_projection_reference(
                     args.projection_reference, args.projection_reference_sha256, projection, independent, base, audit,
@@ -1241,7 +1340,7 @@ def run(args, *, capacity_gate=None):
     graph_receipt = graph = graph_operations = reviewed_placement = None
     if args.mode in REVIEWED_MODES:
         audit([args.graph_receipt])
-        expected = (QKVO_REVIEWED_RECEIPT_SHA if has_output_projection(projection) else
+        expected = (DOWN_GRAPH_RECEIPT_SHA if args.mode == DOWN_SCORE else QKVO_REVIEWED_RECEIPT_SHA if has_output_projection(projection) else
                     PROJECTION_REVIEWED_RECEIPT_SHA if projection is not None else REVIEWED_RECEIPT_SHA)
         graph_receipt = exact_pin(args.graph_receipt, expected, base)
         graph, graph_operations, reviewed_placement = reviewed_graph(
@@ -1249,7 +1348,7 @@ def run(args, *, capacity_gate=None):
             projection=projection,
         )
         inputs.extend((graph_receipt, graph, graph_operations))
-    representative = args.mode == OBSERVED_MODE
+    representative = args.mode in (OBSERVED_MODE, DOWN_SCORE)
     if representative:
         require(args.observed_reference_sha256 in OBSERVED_REFERENCES, "unreviewed engineering reference")
         audit([args.observed_reference])
@@ -1259,34 +1358,43 @@ def run(args, *, capacity_gate=None):
         require(closure["complete"] is True and parent.settled(closure["owned"])
                 and reference["reference_basis"]["sha256"] == DEVELOPMENT_REFERENCE_SHA,
                 "original CPU source or Job settlement differs")
+        if args.mode == DOWN_SCORE:
+            require(down_reference["original_cpu"] == reference_pin and down_reference["compiled"] == reference["compiled"]
+                    and down_reference["roster"] == reference["roster"] and down_reference["baseline"]["scores"] == reference["matching_fp16"]
+                    and down_reference["original_fp32"] == reference["original_fp32"], "protected reference original input differs")
+            reference = dict(reference, matching_fp16=down_reference["all_down_fp32"]["scores"])
         inputs.append(reference_pin)
         for file in (reference["census"], reference["capture"]):
             audit([Path(file["path"])])
             inputs.append(exact_pin(Path(file["path"]), file["sha256"], base))
     sealed_t1024 = None
     timing = args.mode in TIMING_MODES
+    monitor = timing or representative
     if args.mode in WIDE_CAPTURES or timing:
         sealed_pins, sealed_t1024 = read_sealed_t1024(
             request, stage_pin, graph, projection_reference, parent, base, audit,
         )
         inputs.extend(sealed_pins)
+    if monitor:
+        scripts = (ROOT / "scripts/arbiter-fp16-execution/timing_control.py",
+                   ROOT / "scripts/cuda-component-execution/wddm_process_samples.py",
+                   ROOT / "scripts/cuda-component-execution/wddm_capacity_snapshot.py")
+        audit(scripts)
+        controls = [base.pin(path) for path in scripts]
+        inputs.extend(controls)
+        timing_owner, wddm, capacity = [runpy.run_path(str(path)) for path in scripts]
     if timing:
         short_folder = CAMPAIGN / "compact-fp16-qkv-fp32-native-t32-r2"
         short_source = short_folder / "native-result.json"
         short_owner = short_folder / "execution.json"
-        scripts = (ROOT / "scripts/arbiter-fp16-execution/timing_control.py",
-                   ROOT / "scripts/cuda-component-execution/wddm_process_samples.py",
-                   ROOT / "scripts/cuda-component-execution/wddm_capacity_snapshot.py")
-        audit([short_source, short_owner, *scripts])
+        audit([short_source, short_owner])
         short = exact_pin(short_source, "217431438d1bf79bbffa071c9d69d62f4dcb73c44cdee458c19cc50a544d774f", base)
         short_receipt = exact_pin(short_owner, "a479f953b5c13076d7c54388a89e257f6a18dc3cc5031a3bae9fa89e2b99e3ee", base)
         previous = base.read(str(short_owner))
         require(previous["request"] == request and previous["projection_stage"] == core(stage_pin)
                 and previous["complete"] is False and previous["owned"]["owned_descendants_settled"] is True
                 and short in previous["failure_outputs"], "original T32 refusal or candidate identity differs")
-        controls = [base.pin(path) for path in scripts]
-        inputs.extend([short, short_receipt, *controls])
-        timing_owner, wddm, capacity = [runpy.run_path(str(path)) for path in scripts]
+        inputs.extend([short, short_receipt])
         sealed_rows = {row["tokens"]: row for row in (base.read(str(short_source))["rows"]
                        + base.read(sealed_pins[1]["path"])["rows"])}
     command = [image["path"], "--ignored", "--exact", SELECTORS[args.mode], "--nocapture", "--test-threads=1"]
@@ -1306,6 +1414,9 @@ def run(args, *, capacity_gate=None):
         receipt["projection_assets"] = {name: stage[name] for name in ("candidate_graph", "candidate_weights")}
     if projection_reference is not None:
         receipt["projection_reference"] = core(projection_reference)
+    if retained is not None:
+        receipt["retained_cargo_proof"] = retained
+        receipt["original_compiler_image"] = cargo_chain["linked_image"]
     if approvals:
         receipt["compile_time_cuda_approvals"] = approvals
     if timing:
@@ -1362,9 +1473,10 @@ def run(args, *, capacity_gate=None):
             receipt["inherited_math_environment"] = {key: env[key] for key in
                 ("ORT_CUDA_GEMM_OPTIONS", "ORT_ENABLE_ATTENTION_KERNEL_DEBUG_INFO")}
 
-        if timing:
+        if monitor:
             receipt["before_load_adapter"] = capacity["snapshot"](None)
             luid = receipt["before_load_adapter"]["dxgi"]["luid"]
+        if timing:
             env.update(AIRK_CUDA_FP16_TIMING_T32=short["path"], AIRK_CUDA_FP16_TIMING_T32_SHA256=short["sha256"],
                        AIRK_CUDA_FP16_TIMING_WIDER=sealed_pins[1]["path"],
                        AIRK_CUDA_FP16_TIMING_WIDER_SHA256=sealed_pins[1]["sha256"])
@@ -1377,7 +1489,7 @@ def run(args, *, capacity_gate=None):
             require(component["token_owner"](info.process) == base.SID
                     and owner.job_snapshot(api, job) == ([int(info.pid)], 1, 1),
                     "suspended Compact default owner or Job census differs")
-            if timing:
+            if monitor:
                 with wddm["ProcessSampler"](info, luid) as sampler:
                     baseline = sampler.sample()
             limits = job_limits(api, job)
@@ -1399,10 +1511,10 @@ def run(args, *, capacity_gate=None):
             audit(common.values())
             receipt["owned"] = owner.run_windows_owned_training(
                 command, ROOT, stdout, expires - time.monotonic(), env, stdin, HOST,
-                before_resume=before_resume, after_resume=watch_timing if timing else None, absolute_deadline=expires,
+                before_resume=before_resume, after_resume=watch_timing if monitor else None, absolute_deadline=expires,
             )
         exit_code = observed_native_exit(receipt["owned"])
-        if timing and receipt["owned"]["owned_descendants_settled"]:
+        if monitor and receipt["owned"]["owned_descendants_settled"]:
             receipt["after_release_adapter"] = capacity["snapshot"](None)
         observed = list(out.rglob("*"))
         audit(observed)
@@ -1439,9 +1551,12 @@ def run(args, *, capacity_gate=None):
                         "Compact reviewed CPU node count differs")
                 receipt["projection_graph"] = validate_projection_graph(
                     value["graph_observation"]["graph_metadata"], output_projection=has_output_projection(projection),
+                    down=args.mode in DOWN_MODES,
                 )
         elif representative:
-            validate_native_identity(value, "airk.private.compact-qkv-observed-development/1", receipt["owned"],
+            schema = ("airk.private.compact-qkv-down-observed-development/1" if args.mode == DOWN_SCORE
+                      else "airk.private.compact-qkv-observed-development/1")
+            validate_native_identity(value, schema, receipt["owned"],
                                      request, evidence, evidence_value, manifest, image, base)
             require(value["profiling_enabled"] is False and value["runtime_profile"] is None
                     and not any(out.glob("ort-profile*")) and value["projection_stage"] == core(stage_pin)
@@ -1477,10 +1592,30 @@ def run(args, *, capacity_gate=None):
                     and row["raw_ceiling_winner_at_risk"] is (matching["reference_margin"] <= 2 * DEVELOPMENT_RAW_LIMIT),
                     "development decision or margin differs")
             validate_development_placement(value, reviewed_placement, graph, sources[BOUNDED_SOURCE])
-            validate_development_operations(read_operations(paths["operations"]), value, component)
+            events = read_operations(paths["operations"])
+            validate_development_operations(events, value, component)
+            timing_owner["same_adapter"](receipt["before_load_adapter"], receipt["after_release_adapter"], value)
+            series = receipt["owned"]["before_GO"]["wddm"]
+            require(series["pid"] == value["pid"] and series["adapter_luid"] == luid
+                    and series["observed_exit_monotonic_ns"] >= events[-1]["observed_monotonic_ns"],
+                    "WDDM samples do not bind the native execution")
+            resident = [s for s in series["samples"] if all(type(s["process"].get(k)) is int
+                        for k in ("Dedicated Usage", "Shared Usage")) and s["process"]["Dedicated Usage"] > 0]
+            call = [s for s in resident if events[2]["observed_monotonic_ns"] <= s["start_monotonic_ns"]
+                    <= s["end_monotonic_ns"] <= events[3]["observed_monotonic_ns"]]
+            receipt["residency"] = {
+                "sample_count": len(resident), "within_numeric_sample_count": len(call),
+                "observed_dedicated_max_bytes": max((s["process"]["Dedicated Usage"] for s in resident), default=None),
+                "observed_shared_max_bytes": max((s["process"]["Shared Usage"] for s in resident), default=None),
+                "within_numeric_dedicated_max_bytes": max((s["process"]["Dedicated Usage"] for s in call), default=None),
+            }
             receipt["flash_attention_records"] = attention_logs(paths["stdout"].read_bytes(), args.mode)
             receipt["observed_comparison"] = stats
+            receipt["development_raw_limit"] = DEVELOPMENT_RAW_LIMIT
             receipt["development_screen_pass"] = passed
+            receipt["release_raw_limit"] = RELEASE_RAW_LIMIT
+            receipt["release_raw_pass"] = matching["raw_error"] <= RELEASE_RAW_LIMIT
+            receipt["historical_matching_raw_limit"] = .001
         elif timing:
             schema = {"qkv-resource20": "airk.private.compact-fp16-unprofiled-resource20/1",
                       "qkv-fit-probe": "airk.private.compact-fp16-unprofiled-fit/1",
@@ -1575,30 +1710,34 @@ def main():
     parser.add_argument("--projection-stage-sha256")
     parser.add_argument("--projection-reference", type=Path)
     parser.add_argument("--projection-reference-sha256")
+    parser.add_argument("--retained-cargo-proof", type=Path)
+    parser.add_argument("--retained-cargo-proof-sha256")
     parser.add_argument("--source-snapshot", type=Path)
     parser.add_argument("--observed-reference", type=Path)
     parser.add_argument("--observed-reference-sha256")
     args = parser.parse_args()
-    if args.mode == OBSERVED_MODE:
+    if (args.retained_cargo_proof is None) != (args.retained_cargo_proof_sha256 is None):
+        parser.error("retained Cargo lineage requires the exact prior closure and its SHA256")
+    if args.mode in (OBSERVED_MODE, DOWN_SCORE):
         if args.observed_reference is None or args.observed_reference_sha256 not in OBSERVED_REFERENCES:
             parser.error("observed development requires one exact reviewed original reference")
     elif args.observed_reference is not None or args.observed_reference_sha256 is not None:
         parser.error("an observed reference requires the observed development mode")
     if args.mode in PROJECTION_MODES:
-        expected = QKVO_STAGE_SHA if args.mode in QKVO_MODES else PROJECTION_STAGE_SHA
+        expected = DOWN_STAGE_SHA if args.mode in DOWN_MODES else QKVO_STAGE_SHA if args.mode in QKVO_MODES else PROJECTION_STAGE_SHA
         if args.projection_stage is None or args.projection_stage_sha256 != expected:
             parser.error(f"{args.mode} requires --projection-stage and the exact reviewed --projection-stage-sha256")
     elif args.projection_stage is not None or args.projection_stage_sha256 is not None:
         parser.error("--projection-stage and --projection-stage-sha256 require a Q/K/V projection mode")
     if args.mode in PROJECTION_SCORE_MODES:
-        expected = (DEVELOPMENT_REFERENCE_SHA if args.mode in WIDER_REFERENCE_MODES else
+        expected = (DOWN_REFERENCE_SHA if args.mode == DOWN_SCORE else DEVELOPMENT_REFERENCE_SHA if args.mode in WIDER_REFERENCE_MODES else
                     QKVO_REFERENCE_SHA if args.mode == "qkvo-t32" else PROJECTION_REFERENCE_SHA)
         if args.projection_reference is None or args.projection_reference_sha256 != expected:
             parser.error(f"{args.mode} requires --projection-reference and the exact --projection-reference-sha256")
     elif args.projection_reference is not None or args.projection_reference_sha256 is not None:
         parser.error("--projection-reference and --projection-reference-sha256 require projection-t32")
     if args.mode in REVIEWED_MODES:
-        expected = (QKVO_REVIEWED_RECEIPT_SHA if args.mode == "qkvo-t32" else
+        expected = (DOWN_GRAPH_RECEIPT_SHA if args.mode == DOWN_SCORE else QKVO_REVIEWED_RECEIPT_SHA if args.mode == "qkvo-t32" else
                     PROJECTION_REVIEWED_RECEIPT_SHA if args.mode in PROJECTION_SCORE_MODES else REVIEWED_RECEIPT_SHA)
         if args.graph_receipt is None or args.graph_receipt_sha256 != expected:
             parser.error(f"{args.mode} requires --graph-receipt and the exact reviewed --graph-receipt-sha256")

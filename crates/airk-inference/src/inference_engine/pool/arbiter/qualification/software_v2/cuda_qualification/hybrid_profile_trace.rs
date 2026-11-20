@@ -31,13 +31,13 @@ fn interval(event: &Value) -> Result<(u64, u64)> {
 #[derive(Clone, Copy)]
 enum CpuControlScope {
     Fp32,
-    CompactFp16,
+    Fp16,
 }
 
 fn control_tensors(values: &Value, scope: CpuControlScope) -> Result<(u64, u64)> {
     let maximum_vector_length = match scope {
         CpuControlScope::Fp32 => 5,
-        CpuControlScope::CompactFp16 => 4,
+        CpuControlScope::Fp16 => 4,
     };
     let mut total = 0;
     let mut maximum = 0;
@@ -50,7 +50,7 @@ fn control_tensors(values: &Value, scope: CpuControlScope) -> Result<(u64, u64)>
         let width = match kind.as_str() {
             "int64" => 8,
             "bool" => 1,
-            "int32" if matches!(scope, CpuControlScope::CompactFp16) => 4,
+            "int32" if matches!(scope, CpuControlScope::Fp16) => 4,
             _ => anyhow::bail!("non-control ORT CPU tensor type {kind}"),
         };
         let dims = dims.as_array().context("ORT tensor shape missing")?;
@@ -101,6 +101,20 @@ pub(super) fn profiled_runs(
     profiled_runs_for_scope(bytes, graph, widths, CpuControlScope::Fp32)
 }
 
+pub(super) fn large_fp16_t32_profiled_run(
+    bytes: &[u8],
+    graph: &[GraphMetadataRow],
+) -> Result<ProfiledRun> {
+    let run = profiled_runs_for_scope(bytes, graph, &[32], CpuControlScope::Fp16)?
+        .pop()
+        .context("Large T32 serial profile missing")?;
+    ensure!(
+        run.node_count == 2234 && run.cpu_nodes == 478 && run.cpu_max_tensor_bytes <= 32,
+        "Large FP16 T32 profile exceeds its reviewed final graph or CPU control bounds"
+    );
+    Ok(run)
+}
+
 pub(super) fn compact_fp16_t32_profiled_run(
     bytes: &[u8],
     graph: &[GraphMetadataRow],
@@ -122,7 +136,7 @@ fn compact_fp16_profiled_run(
     tokens: usize,
     expected_nodes: usize,
 ) -> Result<ProfiledRun> {
-    let run = profiled_runs_for_scope(bytes, graph, &[tokens], CpuControlScope::CompactFp16)?
+    let run = profiled_runs_for_scope(bytes, graph, &[tokens], CpuControlScope::Fp16)?
         .into_iter()
         .next()
         .with_context(|| format!("Compact FP16 T{tokens} profile run missing"))?;
@@ -142,7 +156,7 @@ pub(super) fn compact_fp16_development_profiled_runs(
         [128, 1024, 8192].starts_with(widths),
         "Compact Q/K/V development profile width order differs"
     );
-    let runs = profiled_runs_for_scope(bytes, graph, widths, CpuControlScope::CompactFp16)?;
+    let runs = profiled_runs_for_scope(bytes, graph, widths, CpuControlScope::Fp16)?;
     ensure!(
         runs.iter().all(|run| run.node_count == 1942
             && run.cpu_nodes == 374
@@ -235,23 +249,20 @@ fn profiled_runs_for_scope(
 #[test]
 fn compact_fp16_profile_allows_only_its_fixed_integer_scope() -> Result<()> {
     let controls = json!([{"int32":[1]}, {"int64":[4]}, {"bool":[]}]);
-    assert_eq!(
-        control_tensors(&controls, CpuControlScope::CompactFp16)?,
-        (37, 32)
-    );
+    assert_eq!(control_tensors(&controls, CpuControlScope::Fp16)?, (37, 32));
     assert!(control_tensors(&controls, CpuControlScope::Fp32).is_err());
     let fp32_only = json!([{"int64":[5]}]);
     assert_eq!(
         control_tensors(&fp32_only, CpuControlScope::Fp32)?,
         (40, 40)
     );
-    assert!(control_tensors(&fp32_only, CpuControlScope::CompactFp16).is_err());
+    assert!(control_tensors(&fp32_only, CpuControlScope::Fp16).is_err());
     for value in [
         json!([{"float16":[]}]),
         json!([{"int32":[1, 1]}]),
         json!([{"bool":[5]}]),
     ] {
-        assert!(control_tensors(&value, CpuControlScope::CompactFp16).is_err());
+        assert!(control_tensors(&value, CpuControlScope::Fp16).is_err());
     }
     Ok(())
 }

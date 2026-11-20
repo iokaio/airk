@@ -22,6 +22,7 @@ struct Experiment {
     supplemental: &'static str,
     receipt_schema: &'static str,
     equivalent_predecessor: bool,
+    fp16_t32: bool,
 }
 
 const COMPACT: Experiment = Experiment {
@@ -32,6 +33,7 @@ const COMPACT: Experiment = Experiment {
     retained: RETAINED_SHA,
     supplemental: SUPPLEMENTAL_SHA,
     receipt_schema: "airk.private.cuda-compact-bounded-hybrid-profile/1",
+    fp16_t32: false,
     equivalent_predecessor: false,
 };
 
@@ -43,6 +45,7 @@ const LARGE: Experiment = Experiment {
     retained: "c87c4edcdec2ab5e98b41bfc186c3bb7d60791e7b9efd0aea186b731eecc3dd2",
     supplemental: "020669f0c44a959a0d95798eb3cc52925513e7e549496368017e0827a398aaef",
     receipt_schema: "airk.private.cuda-large-bounded-hybrid-profile/1",
+    fp16_t32: false,
     equivalent_predecessor: false,
 };
 
@@ -222,16 +225,84 @@ fn equivalent_predecessor(current: &Profile, input: &ResourceRunInput) -> Result
     })
 }
 
+pub(super) struct ProfileReferences {
+    pub(super) rows: Vec<NumericCase>,
+    pub(super) provenance: Value,
+    pub(super) pins: Vec<(ResourceFilePin, u64)>,
+}
+
+fn fp32_references(
+    experiment: &Experiment,
+    profile: &Profile,
+    input: &ResourceRunInput,
+) -> Result<ProfileReferences> {
+    let retained_pin = exact_pin("AIRK_CUDA_HYBRID_RETAINED", experiment.retained)?;
+    let supplementary_pin = exact_pin("AIRK_CUDA_HYBRID_SUPPLEMENTAL", experiment.supplemental)?;
+    let retained: NumericFixture = serde_json::from_slice(&pinned(&retained_pin, PROOF_BYTES)?)?;
+    let supplementary: NumericFixture =
+        serde_json::from_slice(&pinned(&supplementary_pin, PROOF_BYTES)?)?;
+    numeric_shape(&retained, profile, &input.policy)?;
+    ensure!(
+        supplementary.schema == retained.schema
+            && supplementary.model == retained.model
+            && supplementary.compiler == retained.compiler
+            && supplementary.resource_policy == retained.resource_policy,
+        "supplemental Context references use a different native scoring identity"
+    );
+    numeric_rows(&supplementary.rows, &[(32, 8), (1024, 8)], false)?;
+    let lineage = if experiment.equivalent_predecessor {
+        Some(equivalent_predecessor(profile, input)?)
+    } else {
+        None
+    };
+    let reference_profile = lineage.as_ref().map_or(profile, |proof| &proof.profile);
+    let retained_producer = validate_reference_producer(&retained, reference_profile)?;
+    let supplementary_producer = validate_reference_producer(&supplementary, reference_profile)?;
+    let rows = vec![
+        supplementary.rows[0].clone(),
+        retained.rows[1].clone(),
+        supplementary.rows[1].clone(),
+        retained.rows[2].clone(),
+    ];
+    let mut provenance = json!({"retained_fixture": retained_pin, "supplemental_fixture": supplementary_pin,
+        "retained_producer": retained_producer, "supplemental_producer": supplementary_producer});
+    let mut pins = vec![
+        (retained_pin, PROOF_BYTES),
+        (supplementary_pin, PROOF_BYTES),
+        (retained_producer, PROOF_BYTES),
+        (supplementary_producer, PROOF_BYTES),
+    ];
+    if let Some(lineage) = lineage {
+        provenance["reference_basis"] = json!("equivalent_predecessor");
+        provenance["reference_request"] = json!(lineage.request);
+        provenance["reference_equivalence"] = json!(lineage.equivalence);
+        pins.extend(
+            [
+                lineage.request,
+                lineage.equivalence,
+                lineage.native_input,
+                lineage.profile_pin,
+            ]
+            .map(|pin| (pin, 1 << 20)),
+        );
+    }
+    Ok(ProfileReferences {
+        rows,
+        provenance,
+        pins,
+    })
+}
+
 fn score_rows(
     scorer: &mut airk_retrieval::arbiter::runtime::BoundedHybridScorer,
-    rows: [&NumericCase; 4],
+    rows: &[NumericCase],
     operations: &mut operation::Journal,
     receipt: &mut Value,
     file: &mut File,
     deadline: Instant,
-    equivalent_predecessor: bool,
+    experiment: &Experiment,
 ) -> Result<()> {
-    for (index, row) in rows.into_iter().enumerate() {
+    for (index, row) in rows.iter().enumerate() {
         let [same, original] = reference_arrays(row)?;
         let timed = operations.observe(
             operation::Kind::Numeric,
@@ -248,7 +319,15 @@ fn score_rows(
             "original_fp32_raw_error": original_raw, "original_fp32_mass_error": original_mass,
             "argmax_matches": same_argmax && original_argmax,
         });
-        let (raw, mass) = if equivalent_predecessor {
+        let (raw, mass) = if experiment.fp16_t32 {
+            observed["development_screen_pass"] = json!(
+                same_raw <= 0.07 && same_mass <= 0.05 && original_mass <= 0.05 && same_argmax
+            );
+            observed["matching_fp16_argmax_matches"] = json!(same_argmax);
+            observed["original_fp32_argmax_matches"] = json!(original_argmax);
+            observed["matching_reference_0_001"] = json!(same_raw <= 0.001);
+            ("matching_fp16_raw_error", "matching_fp16_mass_error")
+        } else if experiment.equivalent_predecessor {
             (
                 "equivalent_predecessor_raw_error",
                 "equivalent_predecessor_mass_error",
@@ -262,14 +341,15 @@ fn score_rows(
         flush_graph_diagnostic(file, receipt)?;
         ensure!(
             timed.within_deadline
-                && same_raw <= 0.001
-                && original_raw <= 0.001
-                && same_mass <= 0.05
-                && original_mass <= 0.05
-                && same_argmax
-                && original_argmax,
-            "Context FP32 reference or original deadline refused at T{}",
-            WIDTHS[index]
+                && (experiment.fp16_t32
+                    || (same_raw <= 0.001
+                        && original_raw <= 0.001
+                        && same_mass <= 0.05
+                        && original_mass <= 0.05
+                        && same_argmax
+                        && original_argmax)),
+            "Context scientific forward or original deadline refused at T{}",
+            row.input.input_ids.len()
         );
     }
     Ok(())
@@ -291,6 +371,17 @@ fn cuda_large_fp32_bounded_hybrid_profile() -> Result<()> {
 #[ignore = "owned Windows 48 GiB job, reviewed corrected graph and independent predecessor references"]
 fn cuda_large_fp32_batch_view_bounded_hybrid_profile() -> Result<()> {
     profile_context(BATCH_VIEW)
+}
+
+#[test]
+#[ignore = "owned Windows Large FP16 T32 engineering comparison against independent CPU"]
+fn cuda_large_fp16_scientific_t32() -> Result<()> {
+    profile_context(Experiment {
+        fp16_t32: true,
+        graph: "fff6dbe2f0c2fac4b9ba215da7d5029421d2706ee48c01c2485b9f157ee15ca6",
+        receipt_schema: "airk.private.large-fp16-scientific-t32/1",
+        ..LARGE
+    })
 }
 
 fn profile_context(experiment: Experiment) -> Result<()> {
@@ -363,35 +454,12 @@ fn profile_context(experiment: Experiment) -> Result<()> {
             && graph["runtime_manifest"] == json!(runtime_manifest),
         "reviewed graph did not consume the exact current request, input and runtime"
     );
-    let retained_pin = exact_pin("AIRK_CUDA_HYBRID_RETAINED", experiment.retained)?;
-    let supplementary_pin = exact_pin("AIRK_CUDA_HYBRID_SUPPLEMENTAL", experiment.supplemental)?;
-    let retained: NumericFixture = serde_json::from_slice(&pinned(&retained_pin, PROOF_BYTES)?)?;
-    let supplementary: NumericFixture =
-        serde_json::from_slice(&pinned(&supplementary_pin, PROOF_BYTES)?)?;
-    numeric_shape(&retained, &profile, &input.policy)?;
-    ensure!(
-        supplementary.schema == retained.schema
-            && supplementary.model == retained.model
-            && supplementary.compiler == retained.compiler
-            && supplementary.resource_policy == retained.resource_policy,
-        "supplemental Context references use a different native scoring identity"
-    );
-    numeric_rows(&supplementary.rows, &[(32, 8), (1024, 8)], false)?;
-    let lineage = if experiment.equivalent_predecessor {
-        Some(equivalent_predecessor(&profile, &input)?)
+    let references = if experiment.fp16_t32 {
+        super::fp16_large::t32_references(&profile, &input)?
     } else {
-        None
+        fp32_references(&experiment, &profile, &input)?
     };
-    let reference_profile = lineage.as_ref().map_or(&profile, |proof| &proof.profile);
-    let retained_producer = validate_reference_producer(&retained, reference_profile)?;
-    let supplementary_producer = validate_reference_producer(&supplementary, reference_profile)?;
-    let rows = [
-        &supplementary.rows[0],
-        &retained.rows[1],
-        &supplementary.rows[1],
-        &retained.rows[2],
-    ];
-    for row in rows {
+    for row in &references.rows {
         reference_arrays(row)?;
     }
     let out = output()?;
@@ -438,8 +506,7 @@ fn profile_context(experiment: Experiment) -> Result<()> {
         "schema": experiment.receipt_schema, "complete": false,
         "qualified": false, "product_admission": false, "request": request_pin, "native_input": gpu_input,
         "profile": profile.manifest, "source_manifest": input.source_manifest, "runtime_manifest": runtime_manifest,
-        "reviewed_graph": graph_pin, "retained_fixture": retained_pin, "supplemental_fixture": supplementary_pin,
-        "retained_producer": retained_producer, "supplemental_producer": supplementary_producer,
+        "reviewed_graph": graph_pin,
         "capacity_policy": capacity_pin,
         "applied_capacity": {
             "arena_limit_bytes": capacity_plan.cold_peak_bytes(),
@@ -453,11 +520,13 @@ fn profile_context(experiment: Experiment) -> Result<()> {
         "rows": [], "session_teardown_observed": false, "measured_peak_device_bytes": null,
         "measured_transfer_bytes": null,
     });
-    if let Some(lineage) = &lineage {
-        receipt["reference_basis"] = json!("equivalent_predecessor");
-        receipt["reference_request"] = json!(lineage.request);
-        receipt["reference_equivalence"] = json!(lineage.equivalence);
-    }
+    receipt.as_object_mut().unwrap().extend(
+        references
+            .provenance
+            .as_object()
+            .context("scoring reference provenance missing")?
+            .clone(),
+    );
     flush_graph_diagnostic(&mut file, &receipt)?;
     let mut operations = operation::Journal::create_until(
         &out,
@@ -535,12 +604,12 @@ fn profile_context(experiment: Experiment) -> Result<()> {
             flush_graph_diagnostic(&mut file, &receipt)?;
             score_rows(
                 &mut scorer,
-                rows,
+                &references.rows,
                 &mut operations,
                 &mut receipt,
                 &mut file,
                 deadline,
-                experiment.equivalent_predecessor,
+                &experiment,
             )?;
             scorer.synchronize(deadline)?;
             ensure!(
@@ -564,11 +633,18 @@ fn profile_context(experiment: Experiment) -> Result<()> {
             receipt["runtime_profile"] = json!({
                 "path": path, "sha256": sha(&bytes), "bytes": bytes.len(),
             });
-            receipt["profiled_runs"] = json!(super::hybrid_profile_trace::profiled_runs(
-                &bytes,
-                &scorer.graph_metadata().rows,
-                &WIDTHS,
-            )?);
+            receipt["profiled_runs"] = if experiment.fp16_t32 {
+                json!([super::hybrid_profile_trace::large_fp16_t32_profiled_run(
+                    &bytes,
+                    &scorer.graph_metadata().rows
+                )?])
+            } else {
+                json!(super::hybrid_profile_trace::profiled_runs(
+                    &bytes,
+                    &scorer.graph_metadata().rows,
+                    &WIDTHS
+                )?)
+            };
             receipt["adapter_after"] = json!(device.observation(deadline)?);
             drop(scorer);
             device.synchronize(deadline)?;
@@ -585,25 +661,14 @@ fn profile_context(experiment: Experiment) -> Result<()> {
                 (&runtime_manifest, 128 << 10),
                 (&input.source_manifest, PROOF_BYTES),
                 (&graph_pin, PROOF_BYTES),
-                (&retained_pin, PROOF_BYTES),
-                (&supplementary_pin, PROOF_BYTES),
-                (&retained_producer, PROOF_BYTES),
-                (&supplementary_producer, PROOF_BYTES),
             ] {
                 pinned(pin, max)?;
             }
             if let Some(pin) = &capacity_pin {
                 pinned(pin, 4096)?;
             }
-            if let Some(lineage) = &lineage {
-                for pin in [
-                    &lineage.request,
-                    &lineage.equivalence,
-                    &lineage.native_input,
-                    &lineage.profile_pin,
-                ] {
-                    pinned(pin, 1 << 20)?;
-                }
+            for (pin, max) in &references.pins {
+                pinned(pin, *max)?;
             }
             ensure!(
                 Instant::now() < deadline,

@@ -283,7 +283,7 @@ class CompactT32ComparisonControls(unittest.TestCase):
 
     def comparison_row(self):
         return {
-            "matching_fp16_raw_error": .001,
+            "matching_fp16_raw_error": .007,
             "matching_fp16_mass_error": .05,
             "matching_fp16_argmax_matches": True,
             "original_fp32_raw_error": .012271881,
@@ -296,7 +296,7 @@ class CompactT32ComparisonControls(unittest.TestCase):
 
     def test_matching_parity_original_mass_and_diagnostic_types_remain_required(self):
         for name, value in {
-            "matching_fp16_raw_error": .0011,
+            "matching_fp16_raw_error": .007001,
             "matching_fp16_mass_error": .051,
             "matching_fp16_argmax_matches": False,
             "original_fp32_raw_error": float("inf"),

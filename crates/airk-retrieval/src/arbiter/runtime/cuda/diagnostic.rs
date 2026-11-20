@@ -306,6 +306,22 @@ pub(crate) fn require_graph_diagnostic_profile(
         .as_ref()
         .is_some_and(|device| device.precision == DevicePrecision::Float16)
     {
+        if profile.description.model == ModelChoice::ContextQwenLarge {
+            let device = profile
+                .description
+                .device_execution
+                .as_ref()
+                .context("Large device descriptor missing")?;
+            let baseline =
+                "c00371ad9407c25bd52999d87327115025b7c6f55a4e585645ca112d858de5bd".parse()?;
+            ensure!(
+                device.graph == baseline
+                    && profile.description.profile_id
+                        == "private-cuda-fp16-large-efficient-probe-v1",
+                "Large FP16 graph diagnostic requires the reviewed baseline"
+            );
+            return require_fp16_profile(profile, ModelChoice::ContextQwenLarge);
+        }
         return require_compact_fp16_profile(profile);
     }
     let model = profile.description.model;
@@ -319,7 +335,15 @@ pub(crate) fn require_graph_diagnostic_profile(
 
 #[cfg(all(feature = "test-support", windows, target_arch = "x86_64"))]
 fn require_compact_fp16_profile(profile: &super::super::ExecutionProfile) -> Result<()> {
-    use airk_core::arbiter::{ModelChoice, device::PlacementPolicy};
+    require_fp16_profile(profile, airk_core::arbiter::ModelChoice::ContextQwenCompact)
+}
+
+#[cfg(all(feature = "test-support", windows, target_arch = "x86_64"))]
+fn require_fp16_profile(
+    profile: &super::super::ExecutionProfile,
+    model: airk_core::arbiter::ModelChoice,
+) -> Result<()> {
+    use airk_core::arbiter::device::PlacementPolicy;
 
     crate::native_inference::require_service_compute()?;
     profile.validate_native_source()?;
@@ -328,7 +352,7 @@ fn require_compact_fp16_profile(profile: &super::super::ExecutionProfile) -> Res
         profile.release,
         profile.description.qualification.is_none()
             && profile.description.qualified_targets.is_empty(),
-        profile.description.model == ModelChoice::ContextQwenCompact,
+        profile.description.model == model,
         profile
             .description
             .device_execution

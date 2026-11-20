@@ -321,6 +321,15 @@ Moving the shared authority back into the strict observer and removing the
 Windows FP16 graph predicate reproduces the preceding source bytes. The
 legacy CPU descriptor, historical evidence and row identity stay bound.
 
+The Windows x64 disposable graph observer also admits the reviewed Large
+FP16 graph c00371ad9407c25bd52999d87327115025b7c6f55a4e585645ca112d858de5bd
+under its native unqualified Large evaluation profile. The strict observer
+continues to require Compact. Reversing the Large graph branch and shared
+model predicate reproduces the preceding diagnostic source 02823087575662de75f8fe531bcbda7304c0dc274b775c8cf4303fc26be73174.
+The current diagnostic source is d4c51397621b145f96421b3a599e0e04f10f12a38e0963fd9fc80aafb02c3989.
+The observer returns only final placement metadata and settles its session.
+Original CPU descriptor and qualification receipts retain their recorded scope.
+
 ### Compact FP16 layer-0 diagnostic source supplement
 
 The Windows x64 test-support build adds an isolated Compact FP16 layer-0

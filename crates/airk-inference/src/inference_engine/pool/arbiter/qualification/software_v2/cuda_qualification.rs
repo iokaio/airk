@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Explicit component probes. No product admission or qualified GPU fit follows.
 use super::*;
+use airk_core::arbiter::device::DevicePrecision;
 use airk_core::{
     arbiter::device::GpuProbeReservation,
     identity::Incarnation,
@@ -1786,17 +1787,17 @@ fn graph_diagnostic_evidence(
 #[test]
 #[ignore = "disposable final graph metadata only: original120s, explicit Compact host/Job, actual CUDA lease/device; no scorer or forward"]
 fn cuda_load_only_graph_metadata_diagnostic() -> Result<()> {
-    observe_cuda_graph_metadata(ModelChoice::ContextQwenCompact)
+    observe_cuda_graph_metadata(ModelChoice::ContextQwenCompact, DevicePrecision::Float32)
 }
 
 #[cfg(all(windows, target_arch = "x86_64"))]
 #[test]
 #[ignore = "disposable Large FP32 final graph; exact Windows 48 GiB process/Job, 120s, admitted CUDA; no scorer or forward"]
 fn cuda_large_fp32_load_only_graph_metadata_diagnostic() -> Result<()> {
-    observe_cuda_graph_metadata(ModelChoice::ContextQwenLarge)
+    observe_cuda_graph_metadata(ModelChoice::ContextQwenLarge, DevicePrecision::Float32)
 }
 
-fn observe_cuda_graph_metadata(model: ModelChoice) -> Result<()> {
+fn observe_cuda_graph_metadata(model: ModelChoice, precision: DevicePrecision) -> Result<()> {
     let started_ns = airk_process::monotonic::now_ns()?;
     let started = Instant::now();
     let execution_user = airk_ipc::endpoint::current_user()?;
@@ -1843,8 +1844,13 @@ fn observe_cuda_graph_metadata(model: ModelChoice) -> Result<()> {
     // Actual source assets are authenticated below before disposable session creation.
     let (input, profile, files, _) = inputs_from(&gpu_input)?;
     ensure!(
-        profile.model == model && profile.device_execution.is_some() && profile.cpu_fit.is_none(),
-        "graph metadata diagnostic requires frozen GPU metadata for the selected model"
+        profile.model == model
+            && profile
+                .device_execution
+                .as_ref()
+                .is_some_and(|device| device.precision == precision)
+            && profile.cpu_fit.is_none(),
+        "graph metadata diagnostic requires the selected model and precision"
     );
     let capacity_plan = profile_probe_bounds(
         &bounds,
@@ -2246,3 +2252,5 @@ mod batch_view;
 
 #[cfg(all(windows, target_arch = "x86_64"))]
 mod fp16_compact;
+#[cfg(all(windows, target_arch = "x86_64"))]
+mod fp16_large;
