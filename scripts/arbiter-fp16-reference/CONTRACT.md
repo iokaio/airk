@@ -1,6 +1,6 @@
 # Independent Arbiter FP16 reference and candidate graph proof
 
-This maintained research owner integrates frozen independent half-reference R2 (7e1a41a657159fda574b866845deb319fb12f4ad9966ba80c8f4109b145b0f9e). It has no executable selected-model entry point. Creating or testing this source authorizes no checkpoint read, model forward, native/GPU operation, export, training, qualification or activation.
+This maintained research owner integrates frozen independent half-reference R2 (7e1a41a657159fda574b866845deb319fb12f4ad9966ba80c8f4109b145b0f9e). The reference module exposes a library API. The Large CPU launcher below uses that API. Creating or testing this source authorizes no checkpoint read, model forward, native/GPU operation, export, training, qualification or activation.
 
 The public candidate verifier requires the authenticated original full-FP32 graph (Focus 19b20ad4, Compact c79c6725, Large f8ba5d3e), its complete closed external-file pins, independently authenticated publisher configuration/reference, and the actual native-pinned candidate graph. It never imports the exporter or trusts its report. Original graph and external-file authentication is repeated after validation; caller retains the native source/file/process custody and original deadline. Candidate learned bytes are checked independently against publisher-derived RNE half/protected FP32 bytes after the complete graph proof succeeds. The private byte-only helper is not an acceptance API.
 
@@ -30,3 +30,42 @@ linear operation. The caller retains the capture identity and comparison.
 
 Original and candidate learned initializer byte proof, whole graph proof, independent half/original numerical comparisons, native strict CUDA placement, actual Flash/MEA dispatch and synchronized return, resource populations, original model deadlines, task/CAL and public admission are separate requirements. Source tests establish only the independent graph/rounding/reference mechanics on literal CPU fixtures. Existing numerical limits do not change. No exporter self-comparison, matching names/counts, metadata hash or requested provider option qualifies an execution.
 Default namespace controls use a self-contained literal Scorer.text / ModuleList model with independent IEEE byte expectations and all embedding/norm/projection names. The genuine pinned publisher-wrapper witness remains only in frozen historical private R2 evidence. Maintained controls require declared Torch/ONNX dependencies, never an ignored campaign source path. Model header semantics and all graph roots are checked in addition to the complete DAG.
+
+## Windows Large CPU reference
+
+Run `python -I -B -S scripts/arbiter-fp16-reference/prepare_large.py` under
+the checked human shell. Retain stdout in a fresh private campaign file.
+This metadata read authenticates the complete Qwen3-4B publisher release,
+both independent FP32 fixture/producer pairs, and the four Large native CUDA
+FP32 input identities. The 128-token digest differs from Compact. The weight
+and attention-tile byte counts describe allocations in the recipe. Measure
+process and Job peaks during an admitted run.
+
+After Compact passes and Large has a reviewed, completed baseline FP16
+conversion, invoke the T32 reference under the checked human shell.
+
+```powershell
+python -I -B -S scripts/arbiter-fp16-reference/run_large_t32.py `
+  --plan $largePlan --plan-sha256 $largePlanSha `
+  --conversion $largeConversion --conversion-sha256 $largeConversionSha `
+  --owned-output $freshLargeReferenceDirectory
+```
+
+Supply canonical absolute paths for the private conversion plan, the actual
+conversion execution receipt and a fresh direct child of the campaign root.
+Review the SHA-256 digests before invocation. The launcher authenticates the
+current G5 prerequisites, the source and conversion receipts, process
+settlement, graph, sidecar and original FP32 input. The Windows owner starts
+the pinned interpreter suspended under the original 32 GiB process and Job
+limits and 600-second clock. The helper allows two process slots for the
+interpreter shim and requires one observed process for this base-Python
+launch. The worker disables CUDA, observes the actual Job limits, checks
+the Large graph and learned bytes independently and returns one eight-score
+T32 vector. Runtime, ownership, refusal and settlement evidence stay private.
+The development graph with promoted projections has a separate arithmetic
+recipe. Wider forwards require their own owned execution and review.
+
+Run `python -I -B -S scripts/arbiter-fp16-reference/test_prepare_large.py`
+for metadata controls and `python -I -B -S scripts/arbiter-fp16-reference/test_large_launch.py`
+for the CPU launcher controls. The Windows suspension test uses a tensor-free
+child to check the actual caps and natural settlement.

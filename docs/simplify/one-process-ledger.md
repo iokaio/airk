@@ -12809,3 +12809,25 @@ preflight digest
 Seven controls passed, including checking the closing phase, independent
 counterfactuals and matching native sources. No complete CAL100 closure
 or fitted rule has been obtained.
+
+### Large independent FP16 inputs and launch preparation
+
+The Windows Large source preflight authenticated all four native inputs,
+including its distinct T128 digest, the original reference producers and
+the publisher roster. It took 12.4751 s and did no tensor work. Its private
+receipt SHA-256 is
+`c01cd56af84f90a6b842c5318f0c3e8eb757f14a9ce3387752c928c2f835c8c7`.
+Three metadata controls, two launch controls and 53 graph/reference controls
+passed. The launch controls verified separate 32 GiB process and Job limits
+for a real tensor-free child. Original FP32 and matching state weights alone
+total 24,135,200,768 bytes before sharing. Large forward peak memory and
+duration are unmeasured.
+
+The scientific Compact attention predecessor is accepted for Large
+development. The two retained sessions cover T32 and T128/T1024/T8192,
+all 28 Flash layers, all-masked/hole/position pre-dispatch refusals, and
+no graph-visible square sequence tensor in the 8,192-token graph. This
+does not close Compact release qualification. The fourth Large metadata
+attempt detected an edit to the Linux manifest source during final input
+authentication at 239.038 s. A source-stable epoch and fresh receipt are
+required before consuming a Large conversion plan.
