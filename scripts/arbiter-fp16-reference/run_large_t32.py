@@ -36,22 +36,46 @@ WIDE_SHA = "24d551de98080eb338f602a725161ed35a95456646860575e1bf16a28d3284cb"
 QKV_RECIPE = "large-qkv-fp32-sm86-causal-flash-single-tile"
 QKV = HERE.with_name("large_qkv_reference.py")
 QKV_SHA = "70d2a406c8fc42de7059c2d5ed15d5a5a9af53a00d9915fe780438109fe5d7ce"
+HIDDEN = HERE.with_name("large_hidden_reference.py")
+HIDDEN_SHA = "be9af50c94d7fb63f420a0d04d031ae6c4097abd920baf6c8d9e5aef5b385d10"
+
+
+BODY_RECIPE = "large-body252-fp32-sm86-causal-flash-single-tile"
+BODY = HERE.with_name("large_body_reference.py")
+BODY_SHA = "7506f90814ad7edcb8851efb5b1647153a7da04aa82f273b86732b6aabda6ed9"
+MHA_RECIPE = "large-body252-fp32-sm86-compensated-causal-mha"
+MHA = HERE.with_name("large_cutlass_reference.py")
+MHA_SHA = "78752923dc8a50f7852015855398343cf62252371cc7defd46a836b9a568233f"
+DIRECT_RECIPE = "large-weight-only-fp32-sm86-compensated-causal-mha"
+DIRECT = HERE.with_name("large_weight_only_reference.py")
+DIRECT_SHA = "0658ac65db0fb9aef920265d45dd61dd2494ea58d75aa365dfb191a2ac31230f"
+PROTECTED_RECIPES = {QKV_RECIPE:(QKV,QKV_SHA,108), BODY_RECIPE:(BODY,BODY_SHA,252), MHA_RECIPE:(MHA,MHA_SHA,252), DIRECT_RECIPE:(DIRECT,DIRECT_SHA,252)}
 
 
 def candidate_inputs(c, args, proofs, check):
-    if args.recipe != QKV_RECIPE:
+    if args.recipe not in PROTECTED_RECIPES:
         return None
-    owner = checked_module(QKV, QKV_SHA)
+    script, digest, count = PROTECTED_RECIPES[args.recipe]
+    owner = checked_module(script, digest)
     stage, descriptor = owner["stage"](CAMPAIGN,c["pin"],check)
     require(descriptor["weights"] == proofs["weights"] and descriptor["original_graph"] == proofs["graph"]
             and args.affinity_mask.bit_count() == 2, "exact original Large assets and two CPU threads required")
-    return {"source":c["pin"](QKV,check),"stage":stage,"graph":descriptor["graph"],
-            "verification":descriptor["verification"],"protected_routes_in_model_order":108}
+    result = {"source":c["pin"](script,check),"stage":stage,"graph":descriptor["graph"],
+              "verification":descriptor["verification"],"protected_routes_in_model_order":count}
+    if args.recipe in (MHA_RECIPE,DIRECT_RECIPE):
+        dependencies = ((HERE.parent.parent/"arbiter-fp16-execution/compact_cutlass_reference.py", owner["FAST_SOURCE"]),
+                        (BODY, owner["BODY_SOURCE"]))
+        if args.recipe == DIRECT_RECIPE:
+            dependencies += ((MHA,owner["MHA_SOURCE"]),)
+        result["arithmetic_inputs"] = [c["pin"](p,check) for p,_ in dependencies]
+        require(all(actual["sha256"]==sha for actual,(_,sha) in zip(result["arithmetic_inputs"],dependencies,strict=True)),
+                "Large compensated MHA arithmetic source differs")
+    return result
 
 
 def selected_row(meta, args):
     rows = [row for row in meta["rows"] if len(row["input"]["input_ids"]) == args.tokens]
-    require(len(rows) == 1 and (args.recipe == WIDE_RECIPE) == (args.tokens != 32),
+    require(len(rows) == 1 and (args.recipe in (MHA_RECIPE,DIRECT_RECIPE) or (args.recipe == WIDE_RECIPE) == (args.tokens != 32)),
             "one declared input of the requested width and its applicable recipe required")
     return rows[0]
 
@@ -67,7 +91,7 @@ def checked_module(path, digest):
 
 
 def host_limit(recipe):
-    return (22 << 30) if recipe == QKV_RECIPE else HOST
+    return (22 << 30) if recipe in PROTECTED_RECIPES else HOST
 
 
 def own_job(requested=HOST):
@@ -198,7 +222,7 @@ def authenticate(args, deadline):
 def reference(args):
     limits = own_job(host_limit(args.recipe))
     placement = None
-    if args.recipe == QKV_RECIPE:
+    if args.recipe in PROTECTED_RECIPES:
         placement = checked_module(QKV,QKV_SHA)["cpu_limits"](args.affinity_mask)
     require(0 < args.deadline - time.monotonic() <= SECONDS and os.environ.get("CUDA_VISIBLE_DEVICES") == ""
             and sys.pycache_prefix and not Path(sys.pycache_prefix).exists(), "bounded CPU-only worker required")
@@ -244,11 +268,18 @@ def reference(args):
     check()
     observe("graph_and_learned_bytes_verified")
     row = selected_row(meta, args)
-    if args.recipe == WIDE_RECIPE:
+    hidden = None
+    if args.capture_hidden:
+        require(variant is not None and args.tokens == 32, "hidden control requires original QKV T32")
+        inputs[str(HIDDEN)] = c["pin"](HIDDEN,check)
+        scores, hidden = checked_module(HIDDEN,HIDDEN_SHA)["capture"](
+            independent, row["input"], check, checked_module(QKV,QKV_SHA)["score"])
+    elif args.recipe == WIDE_RECIPE:
         inputs[str(WIDE)] = c["pin"](WIDE, check)
         scores = checked_module(WIDE, WIDE_SHA)["forward"](independent, row["input"], check)
     elif variant is not None:
-        scores = checked_module(QKV,QKV_SHA)["score"](independent,row["input"],check)
+        script, digest, _ = PROTECTED_RECIPES[args.recipe]
+        scores = checked_module(script,digest)["score"](independent,row["input"],check)
     else:
         scores = independent.forward(row["input"], context_flash_single_tile=args.recipe == FLASH_RECIPE)
     require(scores.dtype == torch.float32 and scores.device.type == "cpu" and tuple(scores.shape) == (1, 8)
@@ -270,7 +301,8 @@ def reference(args):
         support["read_pinned_json"](root / "reference-producer.json", producer, check)
     if args.recipe == WIDE_RECIPE:
         c["pinned"](inputs[str(WIDE)], check)
-    return {"model": "large", "recipe": args.recipe, "tokens": args.tokens,
+    return {**({"hidden":hidden,"hidden_source":inputs[str(HIDDEN)]} if hidden is not None else {}),
+            "model": "large", "recipe": args.recipe, "tokens": args.tokens,
             "multi_tile_source": inputs.get(str(WIDE)), "candidate": variant, "cpu_placement": placement, "conversion_plan": pp, "conversion_receipt": rp,
             "source_inputs": mp, "graph": variant["graph"] if variant else proofs["graph"], "weights": proofs["weights"], "verification": verification,
             "publisher": publisher, "streamed_loader": inputs[str(STREAM)], "input_digest": row["input"]["input_digest"], "original_fp32": row["reference_original_fp32"],
@@ -303,6 +335,9 @@ def run(args):
             "--worker", "--plan", str(args.plan), "--plan-sha256", pp["sha256"], "--conversion", str(args.conversion),
             "--conversion-sha256", rp["sha256"], "--deadline", repr(deadline), "--worker-sha256", source["sha256"],
             "--recipe", args.recipe, "--tokens", str(args.tokens), "--affinity-mask", str(args.affinity_mask)]
+    if args.capture_hidden:
+        require(args.recipe == QKV_RECIPE and args.tokens == 32, "protected Large T32 capture required")
+        argv.append("--capture-hidden")
     env = {k: v for k, v in os.environ.items() if not k.upper().startswith(
         ("AIRK_", "ORT_", "PYTHON", "CUDA_", "CUDNN_", "TORCH_", "TRITON_", "HF_", "HUGGINGFACE_"))}
     env.update(CUDA_VISIBLE_DEVICES="", HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1", TOKENIZERS_PARALLELISM="false",
@@ -342,6 +377,12 @@ def run(args):
                 and obs["forward_count"] == 1 and obs["original_fp32"] == row["reference_original_fp32"]
                 and obs["input_digest"] == row["input"]["input_digest"] and support["finite_scores"](obs["matching_fp16"])
                 and obs["native_execution"] is obs["qualification"] is False, "Large CPU proof differs from owned request")
+        if args.capture_hidden:
+            prior = c["pin"](CAMPAIGN / "large-fp32-qkv-independent-t32-r1" / "reference.json", check)
+            require(prior["sha256"] == "bc91621b62faeec0963caec75321c34b76e36f4bd66bbb7df6746d2872ab6191"
+                    and obs["matching_fp16"] == c["read"](Path(prior["path"]))["matching_fp16"]
+                    and obs["hidden_source"] == c["pin"](HIDDEN,check) and obs["hidden_source"]["sha256"] == HIDDEN_SHA,
+                    "instrumented reference changed the original protected scores or hidden observer")
         require(candidate_inputs(c,args,proofs,check) == variant, "protected candidate changed during CPU reference")
         for entry in [pp, rp, mp, source] + ([wide_source] if wide_source else []):
             c["pinned"](entry, check)
@@ -377,7 +418,8 @@ if __name__ == "__main__":
     mode.add_argument("--worker", action="store_true")
     parser.add_argument("--deadline", type=float)
     parser.add_argument("--worker-sha256")
-    parser.add_argument("--recipe", choices=("baseline-half", FLASH_RECIPE, WIDE_RECIPE,QKV_RECIPE), default="baseline-half")
+    parser.add_argument("--recipe", choices=("baseline-half", FLASH_RECIPE, WIDE_RECIPE,QKV_RECIPE,BODY_RECIPE,MHA_RECIPE,DIRECT_RECIPE), default="baseline-half")
+    parser.add_argument("--capture-hidden", action="store_true")
     parser.add_argument("--affinity-mask", type=lambda value: int(value,0), default=0)
     parser.add_argument("--tokens", choices=(32, 128, 1024, 8192), type=int, default=32)
     args = parser.parse_args()

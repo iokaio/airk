@@ -37,7 +37,7 @@ def load(pin):
 GPU_UUID = "GPU-08e2b3f6-6a39-3456-77cb-a57287a702ec"
 
 
-def execute(path, capture=None, capture_sha=None, gpu_treatment=False):
+def execute(path, capture=None, capture_sha=None, gpu_treatment=False, dense=None, dense_sha=None, panel_mask=0):
     require(sys.flags.isolated and sys.flags.no_site and sys.dont_write_bytecode
             and os.environ.get("CUDA_VISIBLE_DEVICES") == (GPU_UUID if gpu_treatment else ""),
             "isolated interpreter and exactly requested device visibility required")
@@ -55,6 +55,11 @@ def execute(path, capture=None, capture_sha=None, gpu_treatment=False):
     cache = Path(os.environ["TMP"]).resolve(strict=True)
     require(cache.is_relative_to(ROOT / "artifacts") and cache.name == "temp", "private cache required")
     sys.addaudithook(lambda event, args: support["read_only"](event, args, cache))
+    placement = None
+    if panel_mask:
+        placement_source = Path(__file__).with_name("large_qkv_reference.py")
+        require(digest(placement_source) == "70d2a406c8fc42de7059c2d5ed15d5a5a9af53a00d9915fe780438109fe5d7ce", "CPU placement owner changed")
+        placement = runpy.run_path(str(placement_source))["cpu_limits"](panel_mask)
     preloaded = set(sys.modules)
     sys.path.extend(runtime["import_paths"])
     import numpy as np
@@ -109,8 +114,36 @@ def execute(path, capture=None, capture_sha=None, gpu_treatment=False):
             file.seek(int(ext["offset"]))
             return np.frombuffer(file.read(count), dtype=dtype).reshape(p["shape"]).copy()
 
+    def runtime_count():
+        def pin_runtime(module_path, _check):
+            return {"path":str(module_path),"bytes":module_path.stat().st_size,"sha256":digest(module_path)}
+        allowed = dict(runtime["files"])
+        source = Path(__file__).resolve()
+        allowed[str(source)] = pin_runtime(source,None)
+        return support["loaded_runtime"](allowed,pin_runtime,lambda:None,
+                                         (sys.modules[k] for k in sys.modules.keys()-preloaded))
+
+    if dense is not None:
+        require(capture is not None and not gpu_treatment, "both original layer17 operand captures required")
+        helper = Path(__file__).with_name("large_layer17_replay.py")
+        require(digest(helper) == "012d9bf1ec47061752c2beaa6d03d73bf5543f901409e3fbe894b70605d6e9a5", "layer17 replay source differs")
+        observed = runpy.run_path(str(helper))["replay"](np,torch,half,exact,read_tensor,load,
+            path.parent.parent,[{"path":str(capture),"sha256":capture_sha},{"path":str(dense),"sha256":dense_sha}],ref)
+        observed["loaded_runtime_count"] = len(runtime_count())
+        observed["arithmetic_source"] = digest(helper)
+        return observed
     row, = [r["input"] for r in inputs["rows"] if r["input"]["input_digest"] == ref["input_digest"]]
     require(len(row["input_ids"]) == 32 and row["attention_mask"] == [1] * 32, "all-live T32 required")
+    if panel_mask:
+        require(capture is not None and not gpu_treatment and dense is None and torch.get_num_threads()==2 and torch.get_num_interop_threads()==1, "original CPU panel requires two verified quiet cores and no GPU")
+        panel = Path(__file__).with_name("large_roundback_panel.py")
+        panel_sha = "4b4ff8f3d831f65e3f858f7fb8fed2d746b0641b30528b95c5b421f6e43ec822"
+        require(digest(panel)==panel_sha, "panel changed")
+        capture_owner = runpy.run_path(str(ROOT / "scripts/arbiter-fp16-execution/large_layer0_capture.py"))
+        capture_proof, full = capture_owner["read_capture"](capture,capture_sha,all_rows=True)
+        observed = runpy.run_path(str(panel))["measure"](np,torch,half,exact,read_tensor,load,path.parent.parent,row,full,capture_owner)
+        require(digest(panel)==panel_sha, "panel changed during arithmetic")
+        return dict(observed,placement=placement,source_sha256=panel_sha,capture=capture_proof,loaded_runtime_count=len(runtime_count()))
     embed = torch.from_numpy(read_tensor("embed_tokens.weight", row["input_ids"])).float().unsqueeze(0)
     norm = torch.from_numpy(read_tensor("layers.0.input_layernorm.weight"))
     activation = half["rms"](torch, embed, norm, 1e-6).half().contiguous()
@@ -199,13 +232,7 @@ def execute(path, capture=None, capture_sha=None, gpu_treatment=False):
             treatment["routes"][k]["fp32_then_half_vs_exact_mismatches"] < v["native_vs_exact_mismatches_on_native_input"]
             and treatment["routes"][k]["fp32_then_half_vs_exact_max_error"] <= v["native_vs_exact_max_abs_error_on_native_input"]
             for k, v in capture_differences.items())
-    def pin_runtime(module_path, _check):
-        return {"path": str(module_path), "bytes": module_path.stat().st_size, "sha256": digest(module_path)}
-    allowed = dict(runtime["files"])
-    source = Path(__file__).resolve()
-    allowed[str(source)] = pin_runtime(source, None)
-    loaded = support["loaded_runtime"](allowed, pin_runtime, lambda: None,
-                                       (sys.modules[key] for key in sys.modules.keys() - preloaded))
+    loaded = runtime_count()
     require(not torch.cuda.is_initialized(), "CPU-only control required")
     return {"loaded_runtime_count": len(loaded), "math_source": MATH, "rounding_control_source": CONTROL,
             "reference_sha256": REFERENCE, "input_digest": row["input_digest"], "graph": ref["graph"],
@@ -216,7 +243,7 @@ def execute(path, capture=None, capture_sha=None, gpu_treatment=False):
             "qualification": False}
 
 
-def run_owned(reference, log, capture=None, capture_sha=None, gpu_treatment=False):
+def run_owned(reference, log, capture=None, capture_sha=None, gpu_treatment=False, dense=None, dense_sha=None, panel_mask=0):
     ref = load({"path": reference, "sha256": REFERENCE})
     plan = load(ref["conversion_plan"])
     owner_path = ROOT / "scripts/arbiter-fp16-execution.py"
@@ -254,8 +281,12 @@ def run_owned(reference, log, capture=None, capture_sha=None, gpu_treatment=Fals
                str(source), str(reference)]
     if capture is not None:
         command.extend(["--capture", str(capture), "--capture-sha256", capture_sha])
+    if dense is not None:
+        command.extend(["--dense",str(dense),"--dense-sha256",dense_sha])
     if gpu_treatment:
         command.append("--gpu-treatment")
+    if panel_mask:
+        command.extend(["--panel-mask",hex(panel_mask)])
     with open(os.devnull, "rb") as stdin, log.open("xb") as stdout:
         owned = owner.run_windows_owned_training(command, ROOT, stdout, deadline - time.monotonic(), env,
                                                 stdin, 4 << 30, before_resume=suspended,
@@ -274,9 +305,12 @@ if __name__ == "__main__":
     parser.add_argument("--owned-log", type=Path)
     parser.add_argument("--capture", type=Path)
     parser.add_argument("--capture-sha256")
+    parser.add_argument("--dense",type=Path)
+    parser.add_argument("--dense-sha256")
     parser.add_argument("--gpu-treatment", action="store_true")
+    parser.add_argument("--panel-mask", type=lambda value:int(value,0), default=0)
     args = parser.parse_args()
     require((args.capture is None) == (args.capture_sha256 is None), "pair native capture path and SHA-256")
-    result = (run_owned(args.reference, args.owned_log, args.capture, args.capture_sha256, args.gpu_treatment) if args.owned_log
-              else execute(args.reference, args.capture, args.capture_sha256, args.gpu_treatment))
+    result = (run_owned(args.reference, args.owned_log, args.capture, args.capture_sha256, args.gpu_treatment,args.dense,args.dense_sha256,args.panel_mask) if args.owned_log
+              else execute(args.reference, args.capture, args.capture_sha256, args.gpu_treatment,args.dense,args.dense_sha256,args.panel_mask))
     print(json.dumps(result, allow_nan=False))

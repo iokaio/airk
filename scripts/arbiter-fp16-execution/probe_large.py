@@ -17,9 +17,15 @@ CAMPAIGN = ROOT / "artifacts/v190/final-plan/exec-20261116T052942Z"
 PREFIX = "inference_engine::pool::arbiter::qualification::software_v2::cuda_qualification::"
 SELECTORS = {"metadata": PREFIX + "fp16_large::emit_cuda_large_fp16_probe_metadata",
              "graph": PREFIX + "fp16_large::cuda_large_fp16_load_only_graph_diagnostic",
+             "body-t32": PREFIX + "bounded_hybrid::cuda_large_body_fp32_scientific_t32",
+             "body-metadata": PREFIX + "fp16_large::emit_cuda_large_body_fp32_probe_metadata",
+             "body-graph": PREFIX + "fp16_large::cuda_large_body_fp32_load_only_graph_diagnostic",
              "qkv-metadata": PREFIX + "fp16_large::emit_cuda_large_qkv_fp32_probe_metadata",
              "qkv-graph": PREFIX + "fp16_large::cuda_large_qkv_fp32_load_only_graph_diagnostic",
              "qkv-t32": PREFIX + "bounded_hybrid::cuda_large_qkv_fp32_scientific_t32",
+             "qkv-hidden": PREFIX + "bounded_hybrid::cuda_large_qkv_hidden_t32",
+             "qkv-attention17": PREFIX + "bounded_hybrid::cuda_large_qkv_attention17_t32",
+             "qkv-dense17": PREFIX + "bounded_hybrid::cuda_large_qkv_dense17_t32",
              "t32": PREFIX + "bounded_hybrid::cuda_large_fp16_scientific_t32",
              "projection-t32": PREFIX + "bounded_hybrid::cuda_large_fp16_projection_taps_t32"}
 PREPARE = "8e69df4aedb85c556330262051d46c610ab48cec3c2a71aba60039458b6db348"
@@ -40,8 +46,14 @@ def core(pin):
     return {key: pin[key] for key in ("path", "sha256")}
 
 
+QKV_SCORES = ("qkv-t32", "qkv-hidden", "qkv-attention17", "qkv-dense17")
+BODY_PLACEMENT = "96641f4cf15ddd6cf1209402eae4ed366b9f77f00bfc28f1c894e67143ca4a16"
+BODY_MATCHING = "d77a23c7f319a7da7361793b793e50687753f574930f51f9def2ba8c4a586d7c"
+BODY_STAGE = "a179d41c0dd4fe89ea489e7325365b63aa4825ffd0ac8dc52e17b46fcc3c973b"
+BODY_GRAPH = "636cea20b5fa4f58251589d01a7ef2e3df87f7f4b57498d2765b0d56f6b87d2d"
 QKV_STAGE = "0ae64faa17aecc33642c3245b3bf55b6f44a961de50128114ecf5ad8442e295c"
 QKV_GRAPH = "1448e83dcd209b120bd22e1dec084092f56adc7e8eec5dcd323e179b800467aa"
+QKV_GRAPH_RECEIPT = "0d00e2fabdb5fe54474041fb1f2787502349b78ce40436b955cd4433633a4462"
 
 
 def metadata_contract(value, reference, stage=None):
@@ -50,7 +62,7 @@ def metadata_contract(value, reference, stage=None):
     require(value["schema"] == "airk.private.large-fp16-probe-metadata/1"
             and value["request"]["sha256"] == PREPARE and value["independent_proof"]["sha256"] == REFERENCE
             and value["reference_input_digest"] == reference["input_digest"]
-            and value["graph"] == (QKV_GRAPH if stage else GRAPH) and value["weights"] == WEIGHTS
+            and value["graph"] == ({QKV_STAGE: QKV_GRAPH, BODY_STAGE: BODY_GRAPH}[stage["sha256"]] if stage else GRAPH) and value["weights"] == WEIGHTS
             and value["model_requests_dispatched"] is value["qualified"] is False,
             "Large metadata lineage, numerical basis or scope differs")
 
@@ -65,7 +77,10 @@ def validate_large_attention(placement):
 
 
 def scoring_result(value, reference, log, shared, *, mode="t32"):
-    schema = {"projection-t32":"airk.private.large-fp16-layer0-projection-t32/1",
+    schema = {"body-t32":"airk.private.large-body252-fp32-scientific-t32/1", "projection-t32":"airk.private.large-fp16-layer0-projection-t32/1",
+              "qkv-hidden":"airk.private.large-qkv-hidden-t32/1",
+              "qkv-attention17":"airk.private.large-qkv-attention17-t32/1",
+              "qkv-dense17":"airk.private.large-qkv-dense17-t32/1",
               "qkv-t32":"airk.private.large-qkv-fp32-scientific-t32/1"}.get(mode, "airk.private.large-fp16-scientific-t32/1")
     require(value["schema"] == schema and value["complete"] is True
             and value["qualified"] is value["product_admission"] is False and value["session_teardown_observed"] is True
@@ -74,7 +89,7 @@ def scoring_result(value, reference, log, shared, *, mode="t32"):
             "Large scientific scoring or natural settlement evidence differs")
     row, trace = value["rows"][0], value["profiled_runs"][0]
     require(row["tokens"] == trace["tokens"] == 32 and row["input_digest"] == reference["input_digest"]
-            and trace["node_count"] == (2486 if mode == "qkv-t32" else 2234) and trace["cpu_nodes"] == 478 and trace["cpu_max_tensor_bytes"] <= 32,
+            and trace["node_count"] == (2882 if mode == "body-t32" else 2486 if mode in QKV_SCORES else 2234) and trace["cpu_nodes"] == 478 and trace["cpu_max_tensor_bytes"] <= 32,
             "Large scientific T32 input or typed ORT profile differs")
     metrics = {}
     for label, reference_key in [("matching_fp16", "matching_fp16"), ("original_fp32", "original_fp32")]:
@@ -106,10 +121,12 @@ def scoring_result(value, reference, log, shared, *, mode="t32"):
 
 
 def run(args):
-    protected = args.mode in ("qkv-metadata", "qkv-graph", "qkv-t32")
+    body = args.mode in ("body-metadata", "body-graph", "body-t32")
+    protected = body or args.mode in ("qkv-metadata", "qkv-graph", *QKV_SCORES)
+    protected_metadata = args.mode in ("body-metadata", "qkv-metadata")
     capture = args.mode == "projection-t32"
-    numerical = capture or args.mode in ("t32", "qkv-t32")
-    hard_cap = {"qkv-metadata": 16 << 30, "qkv-graph": 22 << 30, "qkv-t32": 22 << 30}.get(args.mode, HOST)
+    numerical = capture or args.mode in ("t32", "body-t32", *QKV_SCORES)
+    hard_cap = (16 << 30 if protected_metadata else 22 << 30) if protected else HOST
     started = time.monotonic()
     deadline = started + 120
     require(os.name == "nt" and sys.flags.isolated and sys.flags.no_site and sys.dont_write_bytecode,
@@ -133,6 +150,8 @@ def run(args):
                 ROOT / "scripts/cuda-component-execution/placement_report.py", ROOT / "scripts/cuda-native-execution.py"]
     if capture:
         wrappers.append(HERE / "large_layer0_capture.py")
+    if body:
+        wrappers.append(HERE / "large_body_placement.py")
     audit(wrappers)
     wrapper_pins = [base.pin(file) for file in wrappers]
     inputs = {}
@@ -144,7 +163,7 @@ def run(args):
     manifest = shared["exact_pin"](args.image.with_name("airk-cuda-runtime.json"), MANIFEST, base)
     probe = base.read(request["path"])
     original_runtime = probe["runtime_manifest"]
-    if capture or args.mode == "qkv-metadata":
+    if capture or protected_metadata:
         require(args.image.parent == CAMPAIGN / "windows-cu15-scientific-provider-stage-r1"
                 and original_runtime["sha256"] == MANIFEST
                 and core(shared["exact_pin"](Path(original_runtime["path"]), MANIFEST, base)) == original_runtime,
@@ -158,17 +177,33 @@ def run(args):
             "Large request process/Job, adapter, arena or expiry differs")
     snapshot = args.build_receipt.parent / "retained-native-sources" if numerical or protected else None
     cargo_chain = None
-    if args.mode == "qkv-graph":
-        direct = CAMPAIGN / "windows-large-protected-qkv-metadata-r1/execution.json"
+    prior_tap = args.direct_attention_sha256
+    require(prior_tap is None or args.mode == "qkv-dense17", "direct attention custody belongs to the paired dense capture")
+    if args.mode == "qkv-graph" or prior_tap is not None:
+        if prior_tap is None:
+            direct = CAMPAIGN / "windows-large-protected-qkv-metadata-r1/execution.json"
+            expected = "a91f80a6a569c9db1f7cb07063e9778796de833e34da01b4d0e3ec7550b9aa46"
+        else:
+            direct = CAMPAIGN / "windows-large-protected-qkv-attention17-t32-r1/execution.json"
+            expected = prior_tap
         audit([direct])
-        pin = shared["exact_pin"](direct, "a91f80a6a569c9db1f7cb07063e9778796de833e34da01b4d0e3ec7550b9aa46", base)
+        pin = shared["exact_pin"](direct, expected, base)
         previous = base.read(pin["path"])
         custody = previous["owned"]["suspended_assignment"]
-        require(previous["mode"] == "qkv-metadata" and previous["complete"] is True
+        if prior_tap is None:
+            require(previous["mode"] == "qkv-metadata" and previous["native"] == evidence,
+                    "protected graph requires its original native metadata")
+        else:
+            require(previous["mode"] == "qkv-attention17" and previous["inputs"]["evidence"] == evidence
+                    and previous["inputs"]["request"] == request and "direct_cargo_proof" not in previous["inputs"]
+                    and previous["inputs"]["reviewed_graph"]["sha256"] == QKV_GRAPH_RECEIPT
+                    and len(previous["build_approvals"]) == 3,
+                    "paired dense capture requires the direct same-graph attention observation")
+        require(previous["schema"] == "airk.private.owned-large-fp16-native/1" and previous["complete"] is True
                 and previous["failure"] is None and previous["whole_phase_expired"] is False
                 and parent.settled(previous["owned"]) and previous["inputs"]["build_receipt"] == build
                 and previous["inputs"]["image"] == image and previous["runtime_manifest"] == manifest
-                and previous["native"] == evidence and custody["image"] == core(image)
+                and custody["image"] == core(image)
                 and custody["execution_user_sid"] == custody["default_owner_sid"] == base.SID,
                 "protected graph requires its directly authenticated original Cargo image and metadata")
         inputs["direct_cargo_proof"] = pin
@@ -202,15 +237,15 @@ def run(args):
         inputs["original_native"] = baseline
     stage = None
     if protected:
-        stage_file = CAMPAIGN / "large-fp32-qkv-stage-r1/stage.json"
+        stage_file = CAMPAIGN / ("large-fp32-body-stage-r1/stage.json" if body else "large-fp32-qkv-stage-r1/stage.json")
         audit([stage_file])
-        stage = shared["exact_pin"](stage_file, QKV_STAGE, base)
+        stage = shared["exact_pin"](stage_file, BODY_STAGE if body else QKV_STAGE, base)
         inputs["protected_stage"] = stage
         for relative in (SOURCE.replace("/cuda_qualification/fp16_large.rs", "/cuda_qualification.rs"),
                          "crates/airk-retrieval/src/arbiter/runtime/bounded_hybrid/layer0.rs",
                          "crates/airk-retrieval/src/arbiter/runtime/cuda/diagnostic.rs"):
             sources[relative] = source_pin(relative)
-    metadata = args.mode in ("metadata", "qkv-metadata")
+    metadata = args.mode == "metadata" or protected_metadata
     evidence_value = base.read(evidence["path"])
     if metadata:
         require(request["sha256"] == PREPARE and evidence["sha256"] == REFERENCE and probe["kind"] == "prepare",
@@ -227,14 +262,15 @@ def run(args):
     require(reference["graph"]["sha256"] == GRAPH and reference["weights"]["sha256"] == WEIGHTS
             and reference["verification"]["graph"]["layers"] == 36 and reference["forward_count"] == 1,
             "Large independent reference geometry differs")
-    if args.mode == "qkv-t32":
-        path = CAMPAIGN / "large-fp32-qkv-independent-t32-r1/reference.json"
+    if args.mode in (*QKV_SCORES, "body-t32"):
+        path = CAMPAIGN / ("large-fp32-body-independent-t32-r1/reference.json" if body
+                           else "large-fp32-qkv-independent-t32-r1/reference.json")
         audit([path])
-        matching = shared["exact_pin"](path, "bc91621b62faeec0963caec75321c34b76e36f4bd66bbb7df6746d2872ab6191", base)
+        matching = shared["exact_pin"](path, BODY_MATCHING if body else "bc91621b62faeec0963caec75321c34b76e36f4bd66bbb7df6746d2872ab6191", base)
         specific = base.read(matching["path"])
-        require(specific["graph"]["sha256"] == QKV_GRAPH and specific["weights"] == reference["weights"]
+        require(specific["graph"]["sha256"] == (BODY_GRAPH if body else QKV_GRAPH) and specific["weights"] == reference["weights"]
                 and specific["input_digest"] == reference["input_digest"] and specific["original_fp32"] == reference["original_fp32"]
-                and specific["candidate"]["protected_routes_in_model_order"] == 108
+                and specific["candidate"]["protected_routes_in_model_order"] == (252 if body else 108)
                 and specific["forward_count"] == 1 and specific["device"] == "cpu",
                 "protected Large scientific reference lineage differs")
         inputs["matching_reference"] = matching
@@ -247,7 +283,7 @@ def run(args):
         selected = [row for row in candidates if row["input"]["input_digest"] == reference["input_digest"]]
         require(len(selected) == 1 and len(selected[0]["input"]["input_ids"]) == 32
                 and selected[0]["reference_original_fp32"] == reference["original_fp32"], "Large reference input pairing differs")
-        graph_sha = ("0d00e2fabdb5fe54474041fb1f2787502349b78ce40436b955cd4433633a4462" if protected
+        graph_sha = (BODY_PLACEMENT if body else QKV_GRAPH_RECEIPT if protected
                      else "fff6dbe2f0c2fac4b9ba215da7d5029421d2706ee48c01c2485b9f157ee15ca6")
         graph = shared["exact_pin"](args.graph, graph_sha, base)
         inputs["reviewed_graph"] = graph
@@ -256,6 +292,8 @@ def run(args):
         if protected:
             require(graph_value["optimizer_profile"] == "protected_qkv_fp32", "protected optimizer differs")
             shared["validate_projection_graph"](graph_value["graph_metadata"], large_qkv=True)
+            if body:
+                runpy.run_path(str(HERE / "large_body_placement.py"))["verify"](graph_value["graph_metadata"])
         controls = runpy.run_path(str(HERE / "large_placement.py"))["cpu_controls"](graph_value["graph_metadata"])
         require(controls["maximum_vector_elements"] == 4 and controls["maximum_value_bytes"] == 32
                 and controls["summed_unique_payload_bytes"] == 12067 and controls["unique_cpu_values"] == 670,
@@ -333,6 +371,23 @@ def run(args):
                     "Large ORT profile escaped the owned prefix")
             base.pinned(profile)
             result.update(scoring_result(value, reference, stdout.read_text(encoding="utf-8"), shared, mode=args.mode))
+            if args.mode in ("qkv-hidden", "qkv-attention17", "qkv-dense17"):
+                original_path = CAMPAIGN / "windows-large-protected-qkv-t32-r1/native.json"
+                audit([original_path])
+                original = shared["exact_pin"](original_path, "6eb43a120a45669915d99cdf57f71143228a6feeaaa1d0c444816ccb0f280790", base)
+                inputs["source_score"] = original
+                require(value["rows"][0]["raw_scores"] == base.read(original["path"])["rows"][0]["raw_scores"],
+                        "promoted hidden taps altered the original native score")
+            if args.mode == "qkv-hidden":
+                require(len(value["hidden_taps"]) == 4 and all(t["token"] == 31 and t["width"] == 2560
+                        and len(t["bits"]) == 5120 for t in value["hidden_taps"]), "four finite native FP32 rows required")
+            if args.mode in ("qkv-attention17", "qkv-dense17"):
+                roster = ([("q",4096,32),("k",1024,32),("v",1024,32),("attention",4096,32)]
+                          if args.mode == "qkv-attention17" else
+                          [("o_input",4096,1),("o_output",2560,1),("down_input",9728,1),("down_output",2560,1)])
+                for tap, (key,width,tokens) in zip(value["layer17_taps"],roster,strict=True):
+                    require(tap["name"] == key and tap["width"] == width and tap["tokens"] == tokens
+                            and len(tap["bits"]) == width*tokens, "original layer17 operand ABI differs")
             if capture:
                 result["capture"] = capture_owner["check_capture"](value, original_native)
             result.update(journal=base.pin(journal), runtime_profile=profile)
@@ -348,9 +403,11 @@ def run(args):
             report = runpy.run_path(str(ROOT / "scripts/cuda-component-execution/placement_report.py"))
             result["graph_summary"] = report["summarize"](value["graph_metadata"])
             result["cpu_controls"] = runpy.run_path(str(HERE / "large_placement.py"))["cpu_controls"](value["graph_metadata"])
-        if args.mode == "qkv-graph":
+        if args.mode in ("qkv-graph", "body-graph"):
             require(value["optimizer_profile"] == "protected_qkv_fp32", "protected session optimizer differs")
             result["protected_routes"] = shared["validate_projection_graph"](value["graph_metadata"], large_qkv=True)
+            if body:
+                result["body_routes"] = runpy.run_path(str(HERE / "large_body_placement.py"))["verify"](value["graph_metadata"])
         for row in (*inputs.values(), manifest, *sources.values(), *wrapper_pins):
             base.pinned(row)
         require(time.monotonic() < deadline, "Large owned diagnostic exceeded original deadline")
@@ -375,5 +432,6 @@ if __name__ == "__main__":
         parser.add_argument("--" + argument, type=Path, required=True)
         parser.add_argument("--" + argument + "-sha256", required=True)
     parser.add_argument("--graph", type=Path)
+    parser.add_argument("--direct-attention-sha256")
     parser.add_argument("--output", required=True, type=Path)
     sys.exit(0 if run(parser.parse_args()) else 1)
