@@ -141,3 +141,54 @@ archives and installed compilers are read in place. The private receipt
 records a prospective build and the ensuing environment verifier consumes
 the same version-six fields. Product projection and native execution have
 their own subsequent acceptance checks.
+
+## CU18 R2 recovery preflight
+
+Run this read-only command through the checked Windows account with the original
+pinned Python and the outer and configure-stage hashes observed after R2
+settles. Standard output is a proposed command plan, with
+`execution_authorized=false` and `qualification=false`.
+
+```
+python -I -B scripts/cuda-static-runtime/build/fresh_windows_direct_recovery.py --r2-execution-sha256 SHA --r2-stage-sha256 SHA
+```
+
+It reopens the original reviewer and supervisor inputs, verifies the failed but
+empty Jobs and preserved configure files, reconstructs the exact original CMake
+command, and keeps the earliest original cutoff. The plan keeps the
+rooted CMake/Ninja build because the stock graph verifier assumes its source,
+frontend and build directories at their original relative paths. All direct-Job
+logs and aggregate output go in a fresh `cu18/direct-r3` child. Preserve the
+failed R2 logs and retain the three original graph files before any future warm
+reconfigure. A separate fresh source root would require a full source
+materialization and a new measured storage reservation.
+
+Before a direct continuation can launch, reopen the exact recipe input roster
+with `fresh_compile.verify_frozen_inputs`, replay the naturally settled source
+patches, and authenticate the original materialized source, frontend and mirror
+using `fresh_retained_source.reconstruct`. Use the original D: guard and volume
+watcher, 32 GiB host Job, 64-descendant allowance, eight measured disjoint
+physical cores and earliest original cutoff. The native direct pattern is
+`fresh_architecture_warm.run_direct` combined with the R2 supervisor's exact
+resource and tool checks. First require a cheap representative native compiler
+Job to settle naturally. R2's failed nested waiter forced cleanup of an actual
+MSVC telemetry child, which new process ownership must observe. Apply the
+original remaining clock without repeating failed inputs unchanged.
+
+For each planned direct stage, require a real suspended-assignment native leader
+exit 0 and an empty, naturally settled Job. Retain the actual direct log, exact
+argv, stage times and checked output pins. After CMake, verify the actual
+configured graph and initial clean output with `fresh_configure.configured_inputs`
+and `fresh_compile.require_clean_build`. After both Ninja phases, reopen the
+graph and source, and verify the same-build provider pair and libraries. Before
+lib.exe, use `fresh_aggregate.select_plan` and `inspect_inputs` to bind exactly 96
+static archive inputs, exclude provider import libraries and write the exact
+response bytes. Use the original 300-second archive bound; reopen the aggregate
+with `inspect_output` and verify the two collector exports and complete COFF
+member closure.
+
+This preflight starts no compiler, opens no Job and grants no build or product
+qualification. The existing fresh compiler and aggregate verifiers still require
+the original PowerShell tree receipt. A future independently reviewed direct
+receipt owner and consumer must bind the complete new build before publishing a
+native environment handoff.
