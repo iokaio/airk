@@ -104,7 +104,34 @@ def candidate(directory):
     return receipt, archive
 
 
-def verify_native(directory, target, commit, version, signed, *, tree=None):
+CUDA_WITNESS = "cuda-build-inputs.json"
+TESTED_BUILD = "tested-airk-build.json"
+
+
+def verified_cuda_files(target, static, witness):
+    builder = native.runtime_builder()
+    if (target not in (builder.CUDA_TARGET, "x86_64-unknown-linux-gnu")
+            or static["target"] != target
+            or builder.cuda_witness_digest(witness) != static["verified_inputs_sha256"]):
+        raise ValueError("CUDA witness differs from the tested build commitment")
+    row = json.loads(witness)
+    original = row["gpu_static_inputs"]
+    if (set(original) != set(static) or {**original, "verified_inputs_sha256": static["verified_inputs_sha256"]} != static
+            or row["files"].get("airk-cuda-runtime.json") != row["descriptor_sha256"]):
+        raise ValueError("CUDA projection differs from the tested static inputs or descriptor")
+    return row["files"]
+
+
+def host_cuda_witness(cuda):
+    if cuda is None:
+        return None
+    builder = native.runtime_builder()
+    static = builder.reverify_cuda_inputs(cuda)
+    witness = builder.cuda_build_witness(cuda["handoff"]["static_ort"], cuda["projection"])
+    return static, witness
+
+
+def verify_native(directory, target, commit, version, signed, *, tree=None, cuda_witness=None):
     receipt, archive = candidate(directory)
     # Split versions package the airk + airkctl pair with the admin identity (C7, no vsix_target).
     split = receipts.split_version(version)
@@ -142,6 +169,15 @@ def verify_native(directory, target, commit, version, signed, *, tree=None):
     if signed:
         required.update(bundle_signatures)
     payload = receipt["payload"]
+    if "airk-cuda-runtime.json" in payload and cuda_witness is None:
+        raise ValueError("The CUDA package requires its tested source witness")
+    if cuda_witness is not None:
+        if not split:
+            raise ValueError("CUDA projection requires split native candidate")
+        cuda_files = verified_cuda_files(target, *cuda_witness)
+        layout = module("standalone_cuda_layout", "package-standalone-linux.py")
+        layout.layout_names(payload, os_name, cuda_files=cuda_files)
+        required.update(cuda_files)
     if not required.issubset(payload):
         raise ValueError("Native legal files or executable missing")
     for name in payload:
@@ -180,6 +216,8 @@ def verify_native(directory, target, commit, version, signed, *, tree=None):
                     or build.get("schema") != (2 if split else 1) or build.get("runtime") != pair
                     or build.get("source") != receipt.get("source")):
                 raise ValueError("Native pair build/installer identities differ")
+            if cuda_witness is not None and build.get("static_ort") != cuda_witness[0]:
+                raise ValueError("Archived build differs from the tested CUDA commitment")
             if split:
                 try:
                     receipts.validate_build_receipt(build)
@@ -250,11 +288,11 @@ def verify_native(directory, target, commit, version, signed, *, tree=None):
     return receipt, archive
 
 
-def stage_signing(directory, target, commit, version, output_root=None, *, tree=None):
+def stage_signing(directory, target, commit, version, output_root=None, *, tree=None, cuda=None):
     """Restore only the tested executable, never arbitrary artifact paths."""
     if target not in SIGNED_TARGETS:
         raise ValueError("Unsupported signing target")
-    receipt, archive = verify_native(directory, target, commit, version, False, tree=tree)
+    receipt, archive = verify_native(directory, target, commit, version, False, tree=tree, cuda_witness=host_cuda_witness(cuda))
     paired = receipt["schema"] in ("airk-native-candidate/2", "airk-native-candidate/3")
     executable = "airk.exe" if "windows" in target else "airk"
     executables = native.runtime_builder().runtime_executables("windows" if "windows" in target else "macos", version) if paired else (executable,)
@@ -289,8 +327,10 @@ def producer_fingerprint(producer):
     return hashlib.sha256(json.dumps(producer, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
-def write_source_record(output, directory, producer, target, commit):
+def write_source_record(output, directory, producer, target, commit, *, verified=None):
     raw = (directory / "manifest.json").read_bytes().decode("utf-8")
+    if verified is not None and json.loads(raw) != verified:
+        raise ValueError("Tested native candidate changed after archive verification")
     # The verified candidate's own version selects the producer catalog it must belong to.
     producers.validate_record(producer, commit, **producers.catalog_args(json.loads(raw).get("version")))
     name = producers.native_artifact(producer, target)
@@ -301,13 +341,52 @@ def write_source_record(output, directory, producer, target, commit):
     (output / "source.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
 
 
-def write_split_source_record(directory, output, producer, target, commit, version, *, tree=None):
+def write_split_source_record(directory, output, producer, target, commit, version, *, tree=None, cuda=None):
     """Split versions: the source record binds the tested native pair alone (no VSIX is per target)."""
     require_campaign_producer(producer)
     if not receipts.split_version(version):
         raise ValueError("Pre-split source records also bind the platform VSIX (promote-vsix.py source)")
-    verify_native(directory, target, commit, version, False, tree=tree)
-    write_source_record(output, directory, producer, target, commit)
+    witness = host_cuda_witness(cuda)
+    receipt, archive = verify_native(directory, target, commit, version, False, tree=tree, cuda_witness=witness)
+    if witness is not None:
+        with zipfile.ZipFile(archive) as zipped:
+            if zipped.getinfo("airk-build.json").file_size > 65_536:
+                raise ValueError("Tested CUDA build receipt exceeds bound")
+            build = zipped.read("airk-build.json")
+        if hashlib.sha256(build).hexdigest() != receipt["payload"]["airk-build.json"]:
+            raise ValueError("Tested CUDA build receipt changed")
+    write_source_record(output, directory, producer, target, commit, verified=receipt)
+    if witness is not None:
+        (output / TESTED_BUILD).write_bytes(build)
+        (output / CUDA_WITNESS).write_bytes(witness[1])
+
+
+def read_tested_cuda(directory, original):
+    if "airk-cuda-runtime.json" not in original["payload"]:
+        if any((directory / name).exists() for name in (CUDA_WITNESS, TESTED_BUILD)):
+            raise ValueError("Unexpected CUDA witness for a CPU candidate")
+        return None
+    def read(name, limit):
+        path = directory / name
+        facts = path.lstat()
+        if (not stat.S_ISREG(facts.st_mode) or facts.st_nlink != 1 or facts.st_size > limit
+                or getattr(facts, "st_file_attributes", 0) & 0x400):
+            raise ValueError("Invalid protected CUDA source artifact")
+        with path.open("rb") as stream:
+            data = stream.read(limit + 1)
+        if len(data) != facts.st_size:
+            raise ValueError("Protected CUDA source artifact changed")
+        return data
+    build = read(TESTED_BUILD, 65_536)
+    if hashlib.sha256(build).hexdigest() != original["payload"]["airk-build.json"]:
+        raise ValueError("Protected CUDA build differs from the tested producer")
+    parsed = json.loads(build)
+    receipts.validate_build_receipt(parsed)
+    witness = read(CUDA_WITNESS, 4 << 20)
+    files = verified_cuda_files(original["target"], parsed["static_ort"], witness)
+    if any(original["payload"].get(name) != digest for name, digest in files.items()):
+        raise ValueError("CUDA roster differs from original tested package")
+    return parsed["static_ort"], witness
 
 
 def source_receipt(directory, producer, target, commit, version, tree=None):
@@ -340,7 +419,7 @@ def source_receipt(directory, producer, target, commit, version, tree=None):
     return original
 
 
-def verify_installer(directory, target, commit, version, runtime, *, published=False):
+def verify_installer(directory, target, commit, version, runtime, *, published=False, cuda_witness=None):
     """Recheck sealed bytes and native/signing provenance from the platform job.
 
     Windows/Mac OS signature checks happen on their native signing runners. The
@@ -379,7 +458,7 @@ def verify_installer(directory, target, commit, version, runtime, *, published=F
             raise ValueError("Invalid standalone installer payload digest")
     split = receipts.split_version(version)
     if split:
-        service = split_service_payload(receipt, target, runtime, payload)
+        service = split_service_payload(receipt, target, runtime, payload, cuda_witness=cuda_witness)
         wrappers = set(payload) - set(service)
     else:
         if {path.removeprefix("runtime/"): value for path, value in payload.items()
@@ -477,13 +556,14 @@ def windows_installer_source(version):
 SERVICE_PAYLOAD = "airk-service-payload/1"
 
 
-def split_service_payload(receipt, target, runtime, payload):
+def split_service_payload(receipt, target, runtime, payload, *, cuda_witness=None):
     """The installer's payload/ roster: the plan §9.5 layout of the tested (signed) pair, its
     pinned `airk-service-payload/1` inventory and, on Windows, the Inno Setup license notice."""
     linux = module("standalone_linux_layout", "package-standalone-linux.py")
     os_name = receipts.platform_of(target)[0]
+    cuda_files = verified_cuda_files(target, *cuda_witness) if cuda_witness is not None else None
     expected = {"payload/" + placed: runtime["payload"][name]
-                for placed, name in linux.layout_names(runtime["payload"], os_name).items()}
+                for placed, name in linux.layout_names(runtime["payload"], os_name, cuda_files=cuda_files).items()}
     inventory = receipt.get("payload_inventory_sha256")
     if (receipt.get("payload_schema") != SERVICE_PAYLOAD or not isinstance(inventory, str)
             or not re.fullmatch(r"[0-9a-f]{64}", inventory) or payload.get("payload/payload-inventory.json") != inventory):
@@ -529,6 +609,8 @@ def assemble(directory, output, commit, version, tag, channel, run_id, attempt, 
             raise ValueError("Release-tooling repairs are pinned to their historical catalog")
         return assemble_split(directory, output, commit, version, tag, channel, run_id, attempt, producer,
                               tree=tree, pinned=pinned, source_records=source_records)
+    # Only split candidates have an authenticated CUDA source-record commitment.
+    witness = None
     suffix = f"{commit}-{run_id}-{attempt}" if producer is None else f"{commit}-{run_id}"
     if producer is not None:
         (producers.validate_record if pinned else producers.verify_record)(producer, commit)
@@ -578,7 +660,7 @@ def assemble(directory, output, commit, version, tag, channel, run_id, attempt, 
                          (vsix_dir / "manifest.json", f"airk-{version}-{native.TARGETS[target]}.vsix-manifest.json")))
         if standalone.required(version, channel):
             installer_dir = directory / f"airk-installer-{target}-{commit}-{run_id}"
-            _, installer = verify_installer(installer_dir, target, commit, version, receipt)
+            _, installer = verify_installer(installer_dir, target, commit, version, receipt, cuda_witness=witness)
             selected.extend(((installer, installer.name),
                              (installer_dir / "installer.json", standalone.manifest(version, target))))
     extension.verify(directory, commit, version, channel, receipts=extensions, tree=tree)
@@ -661,15 +743,21 @@ def assemble_split(directory, output, commit, version, tag, channel, run_id, att
         signed = target in SIGNED_TARGETS
         prefix = "airk-signed" if signed else "airk"
         native_dir = directory / f"{prefix}-native-{target}-{commit}-{run_id}"
-        receipt, archive = verify_native(native_dir, target, commit, version, signed, tree=tree)
-        original = source_receipt(directory / f"airk-source-{target}-{commit}-{run_id}",
-                                  producer, target, commit, version, tree)
+        source_dir = directory / f"airk-source-{target}-{commit}-{run_id}"
+        original = source_receipt(source_dir, producer, target, commit, version, tree)
+        witness = read_tested_cuda(source_dir, original)
+        receipt, archive = verify_native(native_dir, target, commit, version, signed, tree=tree, cuda_witness=witness)
         if signed:
             if receipt["signing"]["source_install_sha256"] != original["payload"]["airk-install.json"]:
                 raise ValueError("Signed pair did not originate in the tested candidate")
             for name, component in receipt["signing"]["components"].items():
                 if component["source_sha256"] != original["payload"][name]:
                     raise ValueError("Signed component did not originate in the tested candidate")
+            if "windows" in target:
+                mutable = set(receipt["signing"]["components"]) | {"airk-runtime.json", "airk-build.json", "airk-install.json"}
+                if ({k: v for k, v in receipt["payload"].items() if k not in mutable}
+                        != {k: v for k, v in original["payload"].items() if k not in mutable}):
+                    raise ValueError("Signing changed an immutable tested Windows payload")
             # Signing transforms executables only: the admin shell and interfaces stay the tested ones.
             if any(receipt[key] != original[key] for key in ("tree", "source", "admin_assets", "i1_protocol",
                                                              "i2_contract", "cargo_lock_sha256")):
@@ -686,7 +774,7 @@ def assemble_split(directory, output, commit, version, tag, channel, run_id, att
                              (portable_dir / standalone.portable_manifest(version, target), standalone.portable_manifest(version, target))))
         if standalone.required(version, channel):
             installer_dir = directory / f"airk-installer-{target}-{commit}-{run_id}"
-            _, installer = verify_installer(installer_dir, target, commit, version, receipt)
+            _, installer = verify_installer(installer_dir, target, commit, version, receipt, cuda_witness=witness)
             selected.extend(((installer, installer.name),
                              (installer_dir / "installer.json", standalone.manifest(version, target))))
     manifest, vsix = universal_vsix(directory, producer, commit, version, channel, run_id, tree=tree)
@@ -1059,6 +1147,7 @@ def main():
     parser.add_argument("--output", type=Path)
     parser.add_argument("--target", choices=native.TARGETS)
     parser.add_argument("--producer", type=Path)
+    native.add_cuda_arguments(parser)
     parser.add_argument("--signed-run-id")
     parser.add_argument("--signed-producer", type=Path)
     parser.add_argument("--resume", action="store_true")
@@ -1066,6 +1155,9 @@ def main():
     parser.add_argument("--source-records", action="store_true")
     parser.add_argument("--channel", choices=("preview", "stable"), default="stable")
     args = parser.parse_args()
+    if args.command not in ("stage-signing", "source-record") and any(
+            value is not None for name, value in vars(args).items() if name.startswith("cuda_")):
+        parser.error("Native CUDA inputs belong to the protected source-record or stage-signing step")
     commit, version, tag = context()
     if args.command == "preflight":
         if args.signed_run_id:
@@ -1084,12 +1176,14 @@ def main():
                 output.write("action=publish-qualified\n")
         print(f"Release {tag}, package version {version}, source {commit}, split catalog {split}")
     elif args.command == "stage-signing":
-        stage_signing(args.directory, args.target, commit, version, tree=extension.package.source_tree(commit))
+        stage_signing(args.directory, args.target, commit, version, tree=extension.package.source_tree(commit),
+                      cuda=native.cuda_from_args(args, native.runtime_builder()))
     elif args.command == "source-record":
         if not receipts.split_version(version) or not (args.directory and args.target and args.producer and args.output):
             parser.error("source-record is the split-version path and requires --directory, --target, --producer and --output")
         write_split_source_record(args.directory, args.output, json.loads(args.producer.read_text(encoding="utf-8")),
-                                  args.target, commit, version, tree=extension.package.source_tree(commit))
+                                  args.target, commit, version, tree=extension.package.source_tree(commit),
+                                  cuda=native.cuda_from_args(args, native.runtime_builder()))
     elif args.command == "assemble":
         assemble(args.directory, args.output, commit, version, tag, args.channel,
                  os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"],

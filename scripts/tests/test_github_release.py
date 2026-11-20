@@ -260,7 +260,7 @@ SPLIT_SIGNING_CLAIMS = {"windows": {"platform": "windows", "publisher": "CN=Ioka
                         "macos": {"platform": "macos", "team_id": "5PX7D99PXA"}}
 
 
-def split_installer_payload(files, target, version, artifact, admin=None, layout_change=None):
+def split_installer_payload(files, target, version, artifact, admin=None, layout_change=None, cuda_names=()):
     """Fictional split installer contents: payload/ (the §9.5 layout and its inventory) plus wrappers."""
     os_name = "windows" if "windows" in target else "macos" if "apple" in target else "linux"
     images = SPLIT_LAYOUT_IMAGES.get(target, {})
@@ -268,7 +268,10 @@ def split_installer_payload(files, target, version, artifact, admin=None, layout
     for name, data in files.items():
         if name in ("airk-install.json", "airk-runtime.json", "airk-build.json"):
             continue
-        layout[images.get(name, "notices/" + name if name in ("LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md") else name)] = data
+        if name in cuda_names:
+            layout["service/" + name] = data
+        else:
+            layout[images.get(name, "notices/" + name if name in ("LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md") else name)] = data
     if os_name == "windows":
         layout["notices/inno-setup/LICENSE.txt"] = b"Fictional compiler license"
     sha = lambda data: release.hashlib.sha256(data).hexdigest()
@@ -933,6 +936,94 @@ class SplitReleaseContracts(MainReleaseFixture):
                 output, native, _ = self.standalone_fixture(Path(temporary), target, SPLIT, split_fixture, options)
                 with self.assertRaisesRegex(ValueError, reason):
                     release.verify_installer(output, target, COMMIT, SPLIT, native)
+
+    def test_windows_and_gnu_installers_use_only_the_tested_cuda_witness(self):
+        for target, providers in (("x86_64-pc-windows-msvc", ("onnxruntime_providers_cuda.dll", "onnxruntime_providers_shared.dll")),
+                                  ("x86_64-unknown-linux-gnu", ("libonnxruntime_providers_cuda.so",))):
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as temporary:
+                sha = lambda data: release.hashlib.sha256(data).hexdigest()
+                public = {name: name.encode() for name in ("airk-cuda-runtime.json", *providers)}
+                roster = {name: sha(data) for name, data in public.items()}
+                files, _ = split_files(target)
+                original = json.loads(files["airk-build.json"])["static_ort"]
+                witness = json.dumps({"gpu_static_inputs": original, "descriptor_sha256": roster["airk-cuda-runtime.json"],
+                                      "files": roster, "native_projection_sha256": "c" * 64, "native_execution_receipt_sha256": "d" * 64},
+                                     sort_keys=True, separators=(",", ":")).encode()
+                static = {**original, "verified_inputs_sha256": sha(b"airk.gpu-runtime-build-inputs/1\0" + witness)}
+                def fixture(directory, target, signed, version):
+                    files, runtime, executables = split_fixture(directory, target, signed, version)
+                    build = json.loads(files["airk-build.json"])
+                    files["airk-build.json"] = json.dumps({**build, "static_ort": static}).encode()
+                    files.update(public)
+                    seal_pair_files(files)
+                    save_pair_candidate(directory, files, runtime, executables)
+                    return files, runtime, executables
+                output, runtime, receipt = self.standalone_fixture(
+                    Path(temporary), target, SPLIT, fixture, {"cuda_names": set(public)})
+                self.assertEqual(release.verify_installer(output, target, COMMIT, SPLIT, runtime,
+                                                          cuda_witness=(static, witness))[0], receipt)
+                with self.assertRaisesRegex(ValueError, "layout"):
+                    release.verify_installer(output, target, COMMIT, SPLIT, runtime)
+
+    def test_split_cuda_witness_binds_signed_windows_siblings_to_tested_archive(self):
+        windows = "x86_64-pc-windows-msvc"
+        sha = lambda data: release.hashlib.sha256(data).hexdigest()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            inputs, producer = self.split_inputs(root, "preview")
+            tested = root / "originals" / windows
+            signed = inputs / f"airk-signed-native-{windows}-{COMMIT}-456"
+            source = inputs / f"airk-source-{windows}-{COMMIT}-456"
+            files, receipt, executables = split_fixture(tested, windows)
+            public = {"airk-cuda-runtime.json": b"fixture descriptor", "onnxruntime_providers_cuda.dll": b"cuda",
+                      "onnxruntime_providers_shared.dll": b"shared"}
+            build = json.loads(files["airk-build.json"])
+            roster = {name: sha(data) for name, data in public.items()}
+            # Independent original byte formula, with the prior static-input digest inside it.
+            document = {"gpu_static_inputs": build["static_ort"], "native_projection_sha256": "a" * 64,
+                        "native_execution_receipt_sha256": "b" * 64, "descriptor_sha256": sha(public["airk-cuda-runtime.json"]),
+                        "files": roster}
+            witness = json.dumps(document, sort_keys=True, separators=(",", ":")).encode()
+            static = {**build["static_ort"], "verified_inputs_sha256": sha(b"airk.gpu-runtime-build-inputs/1\0" + witness)}
+            def install_cuda(contents):
+                build = json.loads(contents["airk-build.json"])
+                build["static_ort"] = static
+                contents["airk-build.json"] = json.dumps(build).encode()
+                contents.update(public)
+                seal_pair_files(contents)
+            install_cuda(files)
+            save_pair_candidate(tested, files, receipt, executables)
+            shutil.rmtree(source)
+            with patch.object(release, "host_cuda_witness", return_value=(static, witness)):
+                release.write_split_source_record(tested, source, producer, windows, COMMIT, SPLIT)
+            self.assertEqual((source / release.TESTED_BUILD).read_bytes(), files["airk-build.json"])
+            self.assertEqual((source / release.CUDA_WITNESS).read_bytes(), witness)
+            signed_files, signed_receipt, executables = split_fixture(signed, windows, True)
+            install_cuda(signed_files)
+            signing = signed_receipt["signing"]
+            signing.update(source_install_sha256=sha(files["airk-install.json"]),
+                           install_manifest_sha256=sha(signed_files["airk-install.json"]))
+            save_pair_candidate(signed, signed_files, signed_receipt, executables)
+            result = self.assemble(inputs, root / "good", "preview", producer)
+            self.assertEqual(set(result["assets"]), SPLIT_PREVIEW_ASSETS)
+            for name, expected in (("NOTICE", "immutable tested"), ("onnxruntime_providers_cuda.dll", "CUDA layout")):
+                with self.subTest(name=name):
+                    tampered = {**signed_files, name: b"substituted after signing"}
+                    seal_pair_files(tampered)
+                    signing["install_manifest_sha256"] = sha(tampered["airk-install.json"])
+                    save_pair_candidate(signed, tampered, signed_receipt, executables)
+                    with self.assertRaisesRegex(ValueError, expected):
+                        self.assemble(inputs, root / "bad", "preview", producer)
+                    self.assertFalse((root / "bad").exists())
+            for name in (release.CUDA_WITNESS, release.TESTED_BUILD):
+                path = source / name
+                original_bytes = path.read_bytes()
+                path.write_bytes(original_bytes + b" ")
+                with self.assertRaisesRegex(ValueError, "tested"):
+                    release.read_tested_cuda(source, receipt)
+                path.write_bytes(original_bytes)
+            with self.assertRaisesRegex(ValueError, "tested build"):
+                release.verified_cuda_files("x86_64-unknown-linux-gnu", static, witness)
 
     def test_split_source_record_binds_the_tested_pair_alone(self):
         with tempfile.TemporaryDirectory() as temporary:

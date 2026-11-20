@@ -174,17 +174,25 @@ def prepare_cuda_inputs(environment_path, environment_sha256, projection_path, p
         child["AIRK_APPROVED_LINUX_CUDA_MANIFEST_SHA256"] = native["descriptor"]["sha256"]
         child["AIRK_STATIC_LINUX_CUDA_BUILD_SHA256"] = native["static_core_build"]
     static = dict(verified["static_ort"])
-    canonical = json.dumps({"gpu_static_inputs": verified["static_ort"],
-        "native_projection_sha256": projection_sha256,
-        "native_execution_receipt_sha256": native_execution_sha256,
-        "descriptor_sha256": native["descriptor"]["sha256"], "files": native["files"]},
-        sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
-    if len(canonical) > 4 << 20:
-        raise RuntimeError("Verified CUDA consumer identity exceeds its bound")
-    static["verified_inputs_sha256"] = hashlib.sha256(
-        b"airk.gpu-runtime-build-inputs/1\0" + canonical).hexdigest()
+    witness = cuda_build_witness(verified["static_ort"], native)
+    static["verified_inputs_sha256"] = cuda_witness_digest(witness)
     return {"request": request, "handoff": verified,
             "projection": native, "static_ort": static, "environment": child}
+
+
+def cuda_build_witness(static_inputs, native):
+    """Original public projection commitment bytes, reproducible from verified native inputs."""
+    return json.dumps({"gpu_static_inputs": static_inputs,
+        "native_projection_sha256": native["native_projection"]["sha256"],
+        "native_execution_receipt_sha256": native["native_execution_receipt"]["sha256"],
+        "descriptor_sha256": native["descriptor"]["sha256"], "files": native["files"]},
+        sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
+
+
+def cuda_witness_digest(witness):
+    if len(witness) > 4 << 20:
+        raise ValueError("Verified CUDA consumer identity exceeds its bound")
+    return hashlib.sha256(b"airk.gpu-runtime-build-inputs/1\0" + witness).hexdigest()
 
 
 def reverify_cuda_inputs(cuda):
