@@ -8,7 +8,8 @@ param(
     [Parameter(Mandatory)][long]$InitialWindowsFreeBytes,
     [Parameter(Mandatory)][long]$WindowsReservationBytes,
     [Parameter(Mandatory)][long]$UbuntuBackingReservationBytes,
-    [Parameter(Mandatory)][long]$RequiredFreeBytes
+    [Parameter(Mandatory)][long]$RequiredFreeBytes,
+    [ValidatePattern('^[a-fA-F0-9]{64}$')][string]$HeldBackingLogSha256
 )
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '../../..')).Path
@@ -26,6 +27,22 @@ $ubuntuDrive = [IO.DriveInfo]::new([IO.Path]::GetPathRoot($disk))
 if ($windowsDrive.Name -ne 'D:\' -or $ubuntuDrive.Name -ne 'C:\') { throw 'Reconcile changed campaign volume mapping before continuing' }
 $ubuntuStart = $ubuntuDrive.AvailableFreeSpace
 $vhdStart = (Get-Item -LiteralPath $disk).Length
+$heldVhd = $null
+if ($HeldBackingLogSha256) {
+    $prior = Join-Path $campaign 'host-volume-watch-r1.jsonl'
+    $null = Assert-AirkCreatedOutput $prior $campaign $ExpectedSid
+    if ((Get-FileHash -LiteralPath $prior).Hash -ne $HeldBackingLogSha256) { throw 'Original alert log changed' }
+    $first = Get-Content -LiteralPath $prior -TotalCount 1 | ConvertFrom-Json
+    $last = Get-Content -LiteralPath $prior -Tail 1 | ConvertFrom-Json
+    if ($last.within_budget -ne $false -or $last.has_headroom -ne $true -or
+        $first.windows_start -ne $InitialWindowsFreeBytes -or $first.windows_budget -ne $WindowsReservationBytes -or
+        $first.backing_budget -ne $UbuntuBackingReservationBytes -or $first.free_floor -ne $RequiredFreeBytes -or
+        $first.backing_start - $last.backing_free -le $UbuntuBackingReservationBytes -or
+        $InitialWindowsFreeBytes - $last.windows_free -gt $WindowsReservationBytes) { throw 'Expected original C-only budget alert' }
+    $ubuntuStart = [long]$first.backing_start
+    $vhdStart = [long]$first.vhd_start
+    $heldVhd = [long]$last.vhd_bytes
+}
 $null = Assert-AirkOutputPathObservation $output $campaign $identity
 $log = [IO.File]::Open($output, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::Read)
 try {
@@ -45,9 +62,19 @@ try {
             $entry = [ordered]@{utc=$now.ToString('o'); windows_free=$windowsFree; backing_free=$ubuntuFree; vhd_bytes=$vhdSize;
                 windows_start=$InitialWindowsFreeBytes; backing_start=$ubuntuStart; vhd_start=$vhdStart; windows_budget=$WindowsReservationBytes;
                 backing_budget=$UbuntuBackingReservationBytes; free_floor=$RequiredFreeBytes; within_budget=$withinBudget; has_headroom=$hasHeadroom}
+            if ($null -ne $heldVhd) {
+                $entry['backing_writes_held'] = $true
+                $entry['original_alert_log_sha256'] = $HeldBackingLogSha256
+            }
             $writer.WriteLine(($entry | ConvertTo-Json -Compress))
             $writer.Flush()
-            if (!$withinBudget -or !$hasHeadroom) { throw 'Volume reservation or free-space floor crossed; hold new writers and review sample' }
+            if ($null -ne $heldVhd) {
+                if ($vhdSize -gt $heldVhd -or $windowsGrowth -gt $WindowsReservationBytes -or !$hasHeadroom) {
+                    throw 'New VHD growth, Windows budget alert or physical floor alert during the C: write hold'
+                }
+            } elseif (!$withinBudget -or !$hasHeadroom) {
+                throw 'Volume reservation or free-space floor crossed; hold new writers and review sample'
+            }
             $remaining = ($NotAfter - $now).TotalSeconds
             if ($remaining -le 0) { break }
             Start-Sleep -Seconds ([Math]::Min(30, $remaining))
