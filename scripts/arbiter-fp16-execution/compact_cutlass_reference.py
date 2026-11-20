@@ -118,7 +118,14 @@ def score(half,model,row,check):
     return scores
 
 
-def worker(args,base,replay,wider):
+def bound_entry_pin(path, expected_sha, replay, check):
+    require(path == (HERE / "compact_cutlass_bound_reference.py").resolve(), "unknown bound reference entry")
+    entry = replay.file_pin(path, check)
+    require(entry["sha256"] == expected_sha, "bound reference entry changed")
+    return entry
+
+
+def worker(args,base,replay,wider,*,bound_entry=False):
     def check():
         require(time.monotonic()<args.worker_deadline,"original CPU deadline expired")
     placement=None
@@ -128,6 +135,11 @@ def worker(args,base,replay,wider):
         placement=runpy.run_path(str(affinity))["place_optional_worker"](args.cal_pid,2)
         require(len(placement["logical_cpus"])==2,"two quiet physical cores required")
     legacy=replay.read_only_bootstrap()
+    entry = None
+    if bound_entry:
+        main = sys.modules["__main__"]
+        entry = bound_entry_pin(Path(main.__file__).resolve(), args.source_sha256, replay, check)
+        legacy.loaded_runtime({entry["path"]: entry}, replay.file_pin, check, [main])
     case,census,capture,_,row=base.inputs(legacy,args.case,args.census_sha256,args.ordinal,check)
     stage,stage_pin=legacy.read_pinned_json(base.CAMPAIGN/"compact-cutlass-protected-staged-r1/stage.json",
         "4465463b434f6bb5e9798307c31e622dc3da4d67b6a5f6bf5793daf5c94beabf",check)
@@ -168,6 +180,9 @@ def worker(args,base,replay,wider):
     for p in (Path(__file__).resolve(),HERE/"compact_full_projection_reference.py",HERE/"representative_compact_reference.py"):
         item=replay.file_pin(p,check)
         pins[item["path"]]=item
+    if entry:
+        require(replay.file_pin(Path(entry["path"]), check) == entry, "bound worker changed during scoring")
+        pins[entry["path"]] = entry
     legacy.loaded_runtime(pins,replay.file_pin,check,[sys.modules[n] for n in sys.modules.keys()-before])
     return {"schema":"airk.private.compact-cutlass-publisher-reference/1","case":case,"census":census,"capture":capture,
             "compiled":row,"stage":stage_pin,"source":source,"runtime":runtime_pin,"recipe":RECIPE,"recipe_sha256":RECIPE_SHA,

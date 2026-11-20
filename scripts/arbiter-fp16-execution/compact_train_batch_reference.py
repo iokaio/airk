@@ -21,11 +21,11 @@ ORIGINAL_PREFIX_SHA = "a30258f4d43fa8d4822a0c56c93c9726448f7eec3ed4bdb72148ba436
 Q543_CAPTURE = "0eb6a5b4f433e9022179a1c950095f1466e9d8ca0b111ecd63ea2a0d7eeaaa47"
 AFFINITY = MARGINS / "observe_cal_thread_affinity.py"
 SOURCES = {
-    MARGINS / "grouped_reuse.py": "549e06eb507779b2704567298246973eee0bd3828827cba035940f4664e8f92a",
+    MARGINS / "grouped_reuse.py": "8588e26901dc869a955949083aa0580abca727e735a22166a9ecd81c4dbea667",
     AFFINITY: "7f37dcc3f9be734a964f561d9afc68b54ede19d036094b7fb7dab697f7d3f57f",
     HERE / "representative_compact_reference.py": "e574ed3d2b7dd3f736891bcf5e40c2eb45edc43f1fbb73bec902c330aded83e1",
-    HERE / "replay_compact_t1024_suffix.py": "5d6347319598dd434224da15a10ceaafc8aad5001ae98c56c58bd90a5f2cb91a",
-    MARGINS / "collect_focus1024_train.py": "18c55f2ab67752254bbc28b3f1c8c22788aa0cab1e779df6f3e14b8352b5e6a1",
+    HERE / "replay_compact_t1024_suffix.py": "03f2170fa7112396bfb861ea486763371b2ca8707d4bb2e060d72af902d21e59",
+    MARGINS / "collect_focus1024_train.py": "3db00fd90ce82d4c9b083d0c9e9794164f16fccc358499088acb50ebbca8edf5",
     MARGINS / "capture_inputs.py": "461bc8b81fc13d604ceccc086cd6e9a9339968d7a474fa4bf206c7ea5d176248",
     MARGINS / "focus1024.py": "428db7bb0e22f96bb6e67b3c9f24276cd9cdca4be92563a05881702a3aecf211",
 }

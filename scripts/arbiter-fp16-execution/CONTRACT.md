@@ -598,3 +598,12 @@ against the independent reference. It reconstructs the two dense products,
 Flash attention and the final embedding readout using native operands.
 
 `compact_cutlass_reference.py` produces an independent scientific reference for the staged Compact graph with 196 widened dense projections and 28 causal FP32-input attention operators. Its SM80 CUTLASS treatment represents FP32 operands with three compensated TF32 products, FP32 accumulation, 32-query blocks and 128-key tiles. The original FP16 Flash policy describes a different arithmetic. `compact_full_cut_reference.py` replays frozen boundary observations, and `compact_train_batch_reference.py` reads the chronological exposed TRAIN roster through `replay_compact_t1024_suffix.py`. Both model-bearing CPU runs verify their source and input receipts. `summarize_train_reference.py` retains missing and zero-admission cases when comparing reference margins.
+
+`compact_cutlass_bound_reference.py` uses the independent protected-attention worker
+with the original Focus1024 TRAIN_Q543 admission and the four original width
+controls. Run it with `--case`, the pinned `--census-sha256`, `--ordinal 1`,
+an original output directory and the active CAL PID for quiet-core placement.
+The whole CPU job has a 22 GiB limit and the original 600-second deadline.
+Each output retains the complete selected input, publisher scores and original
+source. For Q543 it also binds the actual action roster, offered choices and
+remaining request budget. Historical model scores retain their own graph identity.

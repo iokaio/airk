@@ -193,7 +193,10 @@ def run_owned(replay, wider, out, decision_rows=False, *, representative=None, d
     if full_cuts:
         script = HERE / "compact_full_cut_reference.py"
     if cutlass_projection:
-        script = HERE / "compact_cutlass_reference.py"
+        if representative[0] in {"TRAIN_Q543", "CONTROL_T32", "CONTROL_T128", "CONTROL_T1024", "CONTROL_T8192"}:
+            script = HERE / "compact_cutlass_bound_reference.py"
+        else:
+            script = HERE / "compact_cutlass_reference.py"
     if train_batch is not None:
         require(representative is None and not decision_rows and not down_projection, "TRAIN batch requires its own reference mode")
         script = HERE / "compact_train_batch_reference.py"
