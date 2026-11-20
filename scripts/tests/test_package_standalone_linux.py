@@ -280,6 +280,24 @@ class ServiceLayoutNames(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "outside the service layout"):
             package.layout_names({"AIRK.app/Contents/MacOS/airk": "8" * 64}, "windows")
 
+    def test_linux_cuda_projection_preserves_siblings_and_rejects_roster_changes(self):
+        image = {"airk": "a" * 64, "airkctl": "b" * 64}
+        native = {"airk-cuda-runtime.json": "c" * 64, "libonnxruntime_providers_cuda.so": "d" * 64}
+        files = {**self.COMMON, **image, **native}
+        self.assertEqual(package.layout_names(files, cuda_files=native),
+                         {**self.NOTICES, "service/airk": "airk", "bin/airkctl": "airkctl",
+                          "service/airk-cuda-runtime.json": "airk-cuda-runtime.json",
+                          "service/libonnxruntime_providers_cuda.so": "libonnxruntime_providers_cuda.so"})
+        for roster in ({"airk-cuda-runtime.json": native["airk-cuda-runtime.json"]},
+                       {"libonnxruntime_providers_cuda.so": native["libonnxruntime_providers_cuda.so"]},
+                       {**native, "airk": image["airk"]}, {**native, "NOTICE": files["NOTICE"]},
+                       {**native, "airk-install.json": files["airk-install.json"]},
+                       {**native, "airk-cuda-runtime.json": "f" * 64}, {**native, "../escape": "a" * 64}):
+            with self.subTest(roster=roster), self.assertRaises(ValueError):
+                package.layout_names(files, cuda_files=roster)
+        with self.assertRaises(ValueError):
+            package.layout_names(files, "windows", cuda_files=native)
+
     def test_templates_refuse_unresolved_values_including_digit_names(self):
         values = {"VERSION": SPLIT_VERSION, "PAYLOAD_FILE_COUNT": 3, "PAYLOAD_SUMS_SHA256": "1" * 64,
                   "AIRK_SHA256": "2" * 64}

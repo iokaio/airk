@@ -137,13 +137,17 @@ def cuda_from_args(args, builder):
         raise ValueError("All six explicit CUDA input pins are required")
     if not any(value is not None for value in values):
         return None
-    if getattr(args, "target", "x86_64-pc-windows-msvc") != "x86_64-pc-windows-msvc":
-        raise ValueError("Optional CUDA package context requires Windows x64")
-    return builder.prepare_cuda_inputs(*values)
+    target = getattr(args, "target", "x86_64-pc-windows-msvc")
+    if target not in ("x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"):
+        raise ValueError("Optional CUDA package context requires a supported native x86_64 target")
+    cuda = builder.prepare_cuda_inputs(*values)
+    if cuda["static_ort"]["target"] != target:
+        raise ValueError("Optional CUDA source and requested package target differ")
+    return cuda
 
 
 def validate_cuda_payload(builder, cuda, runtime, target, build, files):
-    if target != "x86_64-pc-windows-msvc":
+    if target not in ("x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu") or cuda["static_ort"]["target"] != target:
         raise ValueError("Optional CUDA package target differs")
     if builder.reverify_cuda_inputs(cuda) != build["static_ort"]:
         raise ValueError("Packaged native static/source proof differs from the same CUDA inputs")

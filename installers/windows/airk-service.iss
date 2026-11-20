@@ -48,7 +48,8 @@ UninstallDisplayIcon={app}\service\airk.exe
 LicenseFile={#AirkPayload}\notices\LICENSE
 
 [Files]
-Source: "{#AirkPayload}\service\airk.exe"; DestDir: "{app}\service"; Flags: ignoreversion; Check: ShouldPlacePayload
+; The checked layout contains the service and its exact optional native runtime siblings.
+Source: "{#AirkPayload}\service\*"; DestDir: "{app}\service"; Flags: ignoreversion; Check: ShouldPlacePayload
 Source: "{#AirkPayload}\bin\airkctl.exe"; DestDir: "{app}\bin"; Flags: ignoreversion; Check: ShouldPlacePayload
 Source: "{#AirkPayload}\notices\*"; DestDir: "{app}\notices"; Flags: ignoreversion recursesubdirs createallsubdirs; Check: ShouldPlacePayload
 Source: "{#AirkPayload}\payload-inventory.json"; DestDir: "{app}"; Flags: ignoreversion; Check: ShouldPlacePayload

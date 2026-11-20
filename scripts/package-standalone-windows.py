@@ -68,15 +68,18 @@ def save(path, value):
     path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
 
 
-def native_inputs(runtime_dir, signed_dir):
+def native_inputs(runtime_dir, signed_dir, *, cuda=None):
     commit = signer.run(["git", "rev-parse", "HEAD"]).strip()
     lock = signer.digest(ROOT / "Cargo.lock")
-    runtime, signing = signer.read_verified_pair(signed_dir, runtime_dir, TARGET, commit, lock)
+    options = {"cuda": cuda} if cuda is not None else {}
+    runtime, signing = signer.read_verified_pair(signed_dir, runtime_dir, TARGET, commit, lock, **options)
     install = package.bounded_json(runtime / "airk-install.json")
     build = package.bounded_json(runtime / "airk-build.json", 65_536)
     if not package.runtime_builder().single_image_version(install["version"]):
         raise ValueError("Standalone installer requires the modern single-executable runtime")
-    payload, _executables = package.validate_runtime(runtime, install["version"], TARGET, build["source"])
+    if cuda is not None and (not split(install["version"]) or cuda["static_ort"]["target"] != TARGET):
+        raise ValueError("Windows CUDA requires the pinned split Windows runtime")
+    payload, _executables = package.validate_runtime(runtime, install["version"], TARGET, build["source"], **options)
     if any(name.lower().endswith(".vsix") or "vscode" in name.lower() for name in payload):
         raise ValueError("Standalone installer must contain native CLI/MCP payload only")
     native = {"version": install["version"], "target": TARGET, "commit": commit,
@@ -88,11 +91,12 @@ def native_inputs(runtime_dir, signed_dir):
     return runtime, native
 
 
-def stage_service(runtime, native, license_file, layout):
+def stage_service(runtime, native, license_file, layout, *, cuda=None):
     """The section 9.5 layout from the verified signed pair, the Inno Setup license notice and
     payload-inventory.json over every placed file; returns the layout inventory."""
     layout.mkdir(parents=True, exist_ok=False)
-    for placed, name in sorted(layouts.layout_names(native["payload"], "windows").items()):
+    cuda_files = cuda["projection"]["files"] if cuda is not None else None
+    for placed, name in sorted(layouts.layout_names(native["payload"], "windows", cuda_files=cuda_files).items()):
         path = layout / placed
         path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(plain(runtime / name), path)
@@ -143,10 +147,11 @@ def compile_installer(context, work, *, first):
     return result.returncode
 
 
-def prepare(runtime_dir, signed_dir, output, iscc):
+def prepare(runtime_dir, signed_dir, output, iscc, *, cuda=None):
     if sys.platform != "win32":
         raise ValueError("Windows host required for installer compilation and trust verification")
-    runtime, native = native_inputs(runtime_dir, signed_dir)
+    options = {"cuda": cuda} if cuda is not None else {}
+    runtime, native = native_inputs(runtime_dir, signed_dir, **options)
     compiler = compiler_identity(iscc)
     license_file = plain(iscc.parent / "license.txt", 65_536)
     output.mkdir(parents=True, exist_ok=False)
@@ -160,7 +165,7 @@ def prepare(runtime_dir, signed_dir, output, iscc):
                "installer_source_sha256": signer.digest(script(native["version"])), "native": native, "artifact": artifact}
     if split(native["version"]):
         layout = output / "layout"
-        context.update(layout=str(layout.resolve()), layout_files=stage_service(runtime, native, license_file, layout))
+        context.update(layout=str(layout.resolve()), layout_files=stage_service(runtime, native, license_file, layout, **options))
     save(output / "inputs.json", context)
     result = compile_installer(context, work, first=True)
     # ISCC's documented manual-signing first pass stops after writing the exact
@@ -179,7 +184,7 @@ def prepare(runtime_dir, signed_dir, output, iscc):
     print("Prepared unsigned uninstaller; Azure signing and final EXE verification remain required")
 
 
-def load_context(output):
+def load_context(output, *, cuda=None):
     context = package.bounded_json(output / "inputs.json", 512 << 10)
     prepared = package.bounded_json(output / "prepared.json", 4096)
     if (context.get("schema") != 1 or prepared.get("schema") != 1
@@ -193,7 +198,8 @@ def load_context(output):
         raise ValueError("Installer source/compiler changed after preparation")
     if context["inno_license_sha256"] != signer.digest(plain(Path(context["inno_license"]), 65_536)):
         raise ValueError("Inno Setup license changed after preparation")
-    runtime, native = native_inputs(Path(context["original"]), Path(context["signed"]))
+    options = {"cuda": cuda} if cuda is not None else {}
+    runtime, native = native_inputs(Path(context["original"]), Path(context["signed"]), **options)
     if native != context["native"] or str(runtime.resolve()) != context["runtime"]:
         raise ValueError("Signed runtime changed after installer preparation")
     if "layout" in context and package.inventory(Path(context["layout"])) != context["layout_files"]:
@@ -213,8 +219,8 @@ def verified_signature(binary):
     return receipt
 
 
-def build(output):
-    context, prepared = load_context(output)
+def build(output, *, cuda=None):
+    context, prepared = load_context(output, **({"cuda": cuda} if cuda is not None else {}))
     signed = verified_signature(output / "uninstaller.exe")
     if signed["binary_sha256"] == prepared["unsigned_sha256"]:
         raise ValueError("Uninstaller has not acquired a signature")
@@ -235,8 +241,8 @@ def build(output):
     print("Prepared installer with verified signed uninstaller; outer EXE still requires Azure signing")
 
 
-def record(output):
-    context, prepared = load_context(output)
+def record(output, *, cuda=None):
+    context, prepared = load_context(output, **({"cuda": cuda} if cuda is not None else {}))
     built = package.bounded_json(output / "built.json", 65_536)
     if (built.get("schema") != 1 or built.get("phase") != "unsigned_installer"
             or built.get("inputs_sha256") != signer.digest(output / "inputs.json")):
@@ -277,15 +283,18 @@ def main():
     parser.add_argument("--signed-dir", type=Path)
     parser.add_argument("--output", type=Path, default=ROOT / "artifacts/standalone" / TARGET)
     parser.add_argument("--iscc", type=Path, default=Path(os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)")) / "Inno Setup 6/ISCC.exe")
+    package.add_cuda_arguments(parser)
     args = parser.parse_args()
+    cuda = package.cuda_from_args(args, package.runtime_builder())
+    options = {"cuda": cuda} if cuda is not None else {}
     if args.stage == "prepare":
         if args.runtime_dir is None or args.signed_dir is None:
             parser.error("prepare requires --runtime-dir and --signed-dir")
-        prepare(args.runtime_dir, args.signed_dir, args.output, args.iscc)
+        prepare(args.runtime_dir, args.signed_dir, args.output, args.iscc, **options)
     elif args.stage == "build":
-        build(args.output)
+        build(args.output, **options)
     else:
-        record(args.output)
+        record(args.output, **options)
 
 
 if __name__ == "__main__":

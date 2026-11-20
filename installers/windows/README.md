@@ -78,3 +78,4 @@ contract tests. These do not execute the Pascal script or change a registry.
 Actual Inno compilation, registry/type/Unicode round-trips, signed setup/uninstall and hosted signing/publication remain
 separate qualification gates. Standalone installers initially use the stable
 channel; preview native archives remain separate downloads.
+For a CUDA candidate, pass the same six explicit native environment, projection and execution-receipt path/digest arguments to each `package-standalone-windows.py` stage (`prepare`, `build` and `record`). Each stage rechecks the original and signed Windows pair against the native projection. The DLLs, product descriptor and CUDA-specific notices remain siblings of `service/airk.exe`. The installer inventory binds each file to the bytes staged from the signed pair. The existing signing requirements apply to the installer and its uninstaller.

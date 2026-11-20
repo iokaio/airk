@@ -6,6 +6,24 @@
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    if std::env::var("TARGET").as_deref() == Ok("x86_64-unknown-linux-gnu")
+        && std::env::var_os("CARGO_FEATURE_GPU_CUDA").is_some()
+    {
+        println!("cargo:rerun-if-env-changed=AIRK_APPROVED_LINUX_CUDA_MANIFEST_SHA256");
+        println!("cargo:rerun-if-env-changed=AIRK_STATIC_LINUX_CUDA_BUILD_SHA256");
+        if std::env::var_os("AIRK_APPROVED_LINUX_CUDA_MANIFEST_SHA256").is_some()
+            && std::env::var_os("AIRK_STATIC_LINUX_CUDA_BUILD_SHA256").is_some()
+        {
+            for name in [
+                "OrtGetApiBase",
+                "airk_ort_bootstrap_linux_cuda_v1",
+                "airk_ort_collect_final_placement_v1",
+                "airk_ort_collect_final_graph_metadata_v1",
+            ] {
+                println!("cargo:rustc-link-arg-bin=airk=-Wl,--undefined={name},--export-dynamic-symbol={name}");
+            }
+        }
+    }
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return;
     }

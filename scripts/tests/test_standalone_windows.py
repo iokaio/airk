@@ -277,6 +277,31 @@ class SplitWindowsInstaller(unittest.TestCase):
     signature = WindowsInstallerContracts.signature
     context_patches = WindowsInstallerContracts.context_patches
 
+    def test_cuda_service_layout_copies_and_hashes_the_exact_native_siblings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime, original, _, _ = self.fixture(root)
+            names = ("onnxruntime_providers_cuda.dll", "onnxruntime_providers_shared.dll",
+                     "airk-cuda-runtime.json", "airk-cuda-notice-license.txt")
+            for name in names:
+                (runtime / name).write_bytes(("example " + name).encode())
+            pins = {name: windows.signer.digest(runtime / name) for name in names}
+            native = dict(original, payload={**original["payload"], **pins})
+            cuda = {"projection": {"files": pins}}
+            roster = windows.stage_service(runtime, native, root / "license.txt", root / "layout", cuda=cuda)
+            self.assertEqual(set(roster), self.LAYOUT | {"service/" + name for name in names})
+            script = windows.script(native["version"]).read_text()
+            self.assertIn(r'Source: "{#AirkPayload}\service\*"; DestDir: "{app}\service"', script)
+            for name, expected in pins.items():
+                self.assertEqual(roster["service/" + name], expected)
+            for omitted in names:
+                incomplete = {k: v for k, v in pins.items() if k != omitted}
+                with self.assertRaises(ValueError):
+                    windows.layouts.layout_names(native["payload"], "windows", cuda_files=incomplete)
+            (runtime / names[0]).write_bytes(b"changed source")
+            with self.assertRaisesRegex(ValueError, "changed while staging"):
+                windows.stage_service(runtime, native, root / "license.txt", root / "changed", cuda=cuda)
+
     def test_script_follows_the_version(self):
         self.assertEqual(windows.script("1.8.23").name, "airk.iss")
         self.assertEqual(windows.script("1.8.24").name, "airk-service.iss")

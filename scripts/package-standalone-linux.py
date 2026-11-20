@@ -115,7 +115,7 @@ def candidate(directory):
     return receipt, archive
 
 
-def stage_runtime(archive, receipt, destination):
+def stage_runtime(archive, receipt, destination, *, cuda=None):
     import zipfile
     destination.mkdir(parents=True, exist_ok=False)
     with zipfile.ZipFile(archive) as zipped:
@@ -128,7 +128,8 @@ def stage_runtime(archive, receipt, destination):
             with zipped.open(info) as source, path.open("xb") as output:
                 shutil.copyfileobj(source, output, 1 << 20)
             path.chmod(0o755 if name in ("airk", "airkctl") else 0o644)
-    files, executables = native.validate_runtime(destination, receipt["version"], TARGET, receipt["source"])
+    options = {"cuda": cuda} if cuda is not None else {}
+    files, executables = native.validate_runtime(destination, receipt["version"], TARGET, receipt["source"], **options)
     expected = ("airk", "airkctl") if split_receipts().split_version(receipt["version"]) else ("airk",)
     if files != receipt["payload"] or executables != expected or files.get("airk-install.json") != receipt.get("install_manifest_sha256"):
         raise ValueError("Staged Linux runtime differs from native candidate")
@@ -201,18 +202,29 @@ LAYOUT_IMAGES = {"linux": {"airk": "service/airk", "airkctl": "bin/airkctl"},
                  "macos": {}}
 
 
-def layout_names(files, os_name="linux"):
+def layout_names(files, os_name="linux", *, cuda_files=None):
     """The section 9.5 program layout of a validated split runtime roster, without touching files:
     layout path -> runtime name. Pair metadata stays out of the program folder; the root legal
     files move under notices/; any other file is refused. One owner for the three packagers and
     release assembly (github-release.py)."""
     images = LAYOUT_IMAGES[os_name]
+    if cuda_files is not None:
+        reserved = set(images) | set(PAIR_METADATA) | set(LEGAL)
+        providers = {"windows": {"onnxruntime_providers_cuda.dll", "onnxruntime_providers_shared.dll"},
+                     "linux": {"libonnxruntime_providers_cuda.so"}}
+        if (os_name not in providers or not providers[os_name].issubset(cuda_files)
+                or "airk-cuda-runtime.json" not in cuda_files or reserved.intersection(cuda_files)
+                or any(name not in files or files[name] != digest or "/" in safe_name(name)
+                       for name, digest in cuda_files.items())):
+            raise ValueError(f"{os_name} CUDA layout differs from its native product projection")
     mapping = {}
     for name in files:
         if name in PAIR_METADATA:
             continue
         if name in images:
             placed = images[name]
+        elif cuda_files is not None and name in cuda_files:
+            placed = "service/" + name
         elif name in LEGAL:
             placed = "notices/" + name
         elif name.startswith("notices/") or (os_name == "macos" and name.startswith("AIRK.app/")):
@@ -223,10 +235,10 @@ def layout_names(files, os_name="linux"):
     return mapping
 
 
-def service_layout(runtime, files, layout):
+def service_layout(runtime, files, layout, *, cuda_files=None):
     """The section 9.5 program layout from a validated split runtime; returns layout path -> runtime name.
     Pair metadata stays out of the program folder (as on Windows); any other file is refused."""
-    mapping = layout_names(files)
+    mapping = layout_names(files, cuda_files=cuda_files)
     layout.mkdir(parents=True, exist_ok=False)
     for placed, name in sorted(mapping.items()):
         path = layout / placed
@@ -266,16 +278,18 @@ def write_inventory(layout, inventory, stage):
     return len(names)
 
 
-def stage_service(runtime, files, receipt, stage):
+def stage_service(runtime, files, receipt, stage, *, cuda=None):
     """Stage payload/ (the program layout plus its inventory) and the payload.sha256 roster."""
     layout = stage / "payload"
-    service_layout(runtime, files, layout)
+    service_layout(runtime, files, layout, cuda_files=cuda["projection"]["files"] if cuda is not None else None)
     inventory = payload_inventory(layout, receipt["version"], receipt["admin_assets"])
     return inventory, write_inventory(layout, inventory, stage)
 
 
-def package_candidate(native_directory, output):
+def package_candidate(native_directory, output, *, cuda=None):
     split = split_receipts().split_version(workspace_version())
+    if cuda is not None and (not split or cuda["static_ort"]["target"] != TARGET):
+        raise ValueError("Linux CUDA requires a current split runtime for this target")
     templates = ROOT / "installers/linux" if split else ROOT / "installers/linux/presplit"
     source_paths = (Path(__file__).resolve(), templates / "install.sh.in", templates / "README.txt.in")
     installer_sources = {path.relative_to(ROOT).as_posix(): native.sha256(path) for path in source_paths}
@@ -288,7 +302,7 @@ def package_candidate(native_directory, output):
     stage.mkdir(); publish.mkdir()
     if split:
         return package_service(receipt, archive, native_directory, output, stage, publish, installer_sources,
-                               source_paths)
+                               source_paths, **({"cuda": cuda} if cuda is not None else {}))
     runtime_files = stage_runtime(archive, receipt, stage / "runtime")
     sums = "".join(f"{digest}  runtime/{name}\n" for name, digest in sorted(runtime_files.items()))
     (stage / "payload.sha256").write_text(sums, encoding="utf-8", newline="\n")
@@ -324,11 +338,12 @@ def package_candidate(native_directory, output):
     return installer
 
 
-def package_service(receipt, archive, native_directory, output, stage, publish, installer_sources, source_paths):
+def package_service(receipt, archive, native_directory, output, stage, publish, installer_sources, source_paths, *, cuda=None):
     """Split mode: the AIRK Service tar.gz (plan section 9.4/9.5)."""
     runtime = output / "runtime"
-    runtime_files = stage_runtime(archive, receipt, runtime)
-    inventory, count = stage_service(runtime, runtime_files, receipt, stage)
+    options = {"cuda": cuda} if cuda is not None else {}
+    runtime_files = stage_runtime(archive, receipt, runtime, **options)
+    inventory, count = stage_service(runtime, runtime_files, receipt, stage, **options)
     directory_name = f"airk-{receipt['version']}-{TARGET}-installer"
     archive_name = directory_name + ".tar.gz"
     values = {"VERSION": receipt["version"], "ARCHIVE_NAME": archive_name, "DIRECTORY_NAME": directory_name,
@@ -366,8 +381,11 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--native-dir", type=Path, required=True, help="Verified package-native.py publish directory")
     parser.add_argument("--output", type=Path, default=ROOT / "artifacts/standalone" / TARGET)
+    native.add_cuda_arguments(parser)
     args = parser.parse_args(argv)
-    result = package_candidate(args.native_dir, args.output)
+    args.target = TARGET
+    cuda = native.cuda_from_args(args, native.runtime_builder())
+    result = package_candidate(args.native_dir, args.output, **({"cuda": cuda} if cuda is not None else {}))
     print(json.dumps({key: result[key] for key in ("artifact", "artifact_sha256", "installer_kind", "signing")}))
     return 0
 

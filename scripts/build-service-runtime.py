@@ -95,10 +95,27 @@ CUDA_STATIC_KEYS = {"LIBONNXRUNTIME_NO_PKG_CONFIG", "ORT_SKIP_DOWNLOAD", "ORT_PR
                     "ORT_LIB_LOCATION", "ORT_LIB_PROFILE"}
 
 
+def cuda_host_target():
+    if platform.machine().lower() not in ("amd64", "x86_64"):
+        return None
+    if platform.system() == "Windows":
+        return CUDA_TARGET
+    if platform.system() == "Linux" and platform.libc_ver()[0] == "glibc":
+        return "x86_64-unknown-linux-gnu"
+    return None
+
+
+def cuda_projection_owner(handoff):
+    if handoff["static_ort"]["target"] == "x86_64-unknown-linux-gnu":
+        return load_script("cuda-linux-package")
+    return load_script("cuda-package-provenance")
+
+
 def cuda_handoff(path, expected_sha256, verification_seconds=None):
     """Reopen the maintained genuine GPU build+aggregate proof; no activation grant."""
-    if platform.system() != "Windows" or platform.machine().lower() not in ("amd64", "x86_64"):
-        raise RuntimeError("CUDA shipping runtime is supported only on Windows x86_64")
+    target = cuda_host_target()
+    if target is None:
+        raise RuntimeError("CUDA shipping requires a supported native Windows or GNU/Linux x86_64 host")
     if not isinstance(expected_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
         raise RuntimeError("An explicit reviewed CUDA environment SHA-256 is required")
     verification = {}
@@ -106,7 +123,8 @@ def cuda_handoff(path, expected_sha256, verification_seconds=None):
         if type(verification_seconds) is not int or not 1 <= verification_seconds <= 600:
             raise RuntimeError("CUDA handoff verification must be bounded to 1 through 600 seconds")
         verification["deadline"] = time.monotonic() + verification_seconds
-    verified = load_script("cuda-runtime-environment").verify_handoff(path, expected_sha256, ROOT, **verification)
+    verifier = "cuda-runtime-environment" if target == CUDA_TARGET else "cuda-linux-package"
+    verified = load_script(verifier).verify_handoff(path, expected_sha256, ROOT, **verification)
     environment = verified["environment"]
     if (set(environment) != CUDA_STATIC_KEYS
             or environment["LIBONNXRUNTIME_NO_PKG_CONFIG"] != "1"
@@ -114,13 +132,15 @@ def cuda_handoff(path, expected_sha256, verification_seconds=None):
             or environment["ORT_PREFER_DYNAMIC_LINK"] != "0"
             or environment["ORT_LIB_PROFILE"] != "Release"
             or not Path(environment["ORT_LIB_LOCATION"]).is_absolute()
-            or verified["static_ort"]["target"] != CUDA_TARGET):
+            or verified["static_ort"]["target"] != target):
         raise RuntimeError("Verified CUDA child environment or target differs")
     # Do not mutate the human's environment or adopt ambient activation pins.
     child = dict(os.environ)
     child.update(environment)
     child.pop("AIRK_APPROVED_CUDA_MANIFEST_SHA256", None)
     child.pop("AIRK_STATIC_CUDA_BUILD_SHA256", None)
+    child.pop("AIRK_APPROVED_LINUX_CUDA_MANIFEST_SHA256", None)
+    child.pop("AIRK_STATIC_LINUX_CUDA_BUILD_SHA256", None)
     return verified, child
 
 
@@ -134,7 +154,7 @@ def prepare_cuda_inputs(environment_path, environment_sha256, projection_path, p
     if verification_seconds is not None:
         request += (verification_seconds,)
     verified, child = cuda_handoff(*request)
-    owner = load_script("cuda-package-provenance")
+    owner = cuda_projection_owner(verified)
     native = owner.require_native_activation_projection(
         projection_path, projection_sha256, verified,
         native_execution_receipt=(native_execution_receipt, native_execution_sha256), repo_root=ROOT)
@@ -147,8 +167,12 @@ def prepare_cuda_inputs(environment_path, environment_sha256, projection_path, p
         raise RuntimeError("Native CUDA projection differs from exact same-build input pins")
     # These are compile input identities, not a qualification or approval boolean.
     # Only this explicit caller-pinned native-output route supplies them to Cargo.
-    child["AIRK_APPROVED_CUDA_MANIFEST_SHA256"] = native["descriptor"]["sha256"]
-    child["AIRK_STATIC_CUDA_BUILD_SHA256"] = native["static_core_build"]
+    if verified["static_ort"]["target"] == CUDA_TARGET:
+        child["AIRK_APPROVED_CUDA_MANIFEST_SHA256"] = native["descriptor"]["sha256"]
+        child["AIRK_STATIC_CUDA_BUILD_SHA256"] = native["static_core_build"]
+    else:
+        child["AIRK_APPROVED_LINUX_CUDA_MANIFEST_SHA256"] = native["descriptor"]["sha256"]
+        child["AIRK_STATIC_LINUX_CUDA_BUILD_SHA256"] = native["static_core_build"]
     static = dict(verified["static_ort"])
     canonical = json.dumps({"gpu_static_inputs": verified["static_ort"],
         "native_projection_sha256": projection_sha256,
@@ -167,7 +191,7 @@ def reverify_cuda_inputs(cuda):
     verified, _ = cuda_handoff(*cuda["request"])
     if verified != cuda["handoff"]:
         raise RuntimeError("Genuine CUDA build/aggregate inputs changed during runtime build")
-    observed = load_script("cuda-package-provenance").reverify_native_projection(
+    observed = cuda_projection_owner(verified).reverify_native_projection(
         cuda["projection"], verified)
     if observed != cuda["projection"]:
         raise RuntimeError("Native CUDA projection changed during runtime build")
@@ -185,7 +209,7 @@ def verify_cuda_staged(cuda, staging):
 
 
 def stage_cuda_projection(cuda, staging):
-    files = load_script("cuda-package-provenance").stage_native_projection(
+    files = cuda_projection_owner(cuda["handoff"]).stage_native_projection(
         cuda["projection"], staging, cuda["handoff"])
     if files != cuda["projection"]["files"]:
         raise RuntimeError("Native CUDA staging roster differs")
@@ -478,10 +502,14 @@ def digest(path):
 # The sealed bundle crates/airk-cli/admin-assets is already under "crates". No Node toolchain pin file
 # exists (the pin is the workflow node-version); receipts record the Node/npm actually used.
 CUDA_SOURCE_INPUTS = ("scripts/cuda-runtime-environment.py", "scripts/cuda-package-provenance.py",
-                      "scripts/cuda-native-execution.py", "scripts/cuda-static-runtime.py",
+                      "scripts/cuda-native-execution.py", "scripts/cuda-component-execution.py",
+                      "scripts/cuda-native-execution/windows_product_projection.py",
+                      "scripts/cuda-native-execution/windows_product_observation.py", "scripts/cuda-static-runtime.py",
                       "scripts/cuda-static-archive.py", "scripts/cuda-static-aggregate.py",
                       "scripts/cuda-static-continuation.py", "scripts/cuda-static-continuation-r12.py",
-                      "scripts/cuda-static-checkpointed.py")
+                      "scripts/cuda-static-checkpointed.py", "scripts/cuda-linux-package.py",
+                      "scripts/arbiter/evaluation/linux_cuda/product_projection.py",
+                      "scripts/arbiter/evaluation/linux_cuda/fp16_process.py")
 
 
 FRONTEND_INPUTS = ("packages/admin", "packages/ui", "packages/contracts-gen",
@@ -849,8 +877,10 @@ def qualify_staged_runtime(staging, version, operating_system, architecture, pro
     if split and (admin_inventory is None or admin_block is None):
         raise RuntimeError("Split staging requires the checked Admin inventory")
     if cuda is not None:
-        if operating_system != "windows" or architecture != "x86_64" or not split:
-            raise RuntimeError("CUDA requires a modern split Windows x86_64 runtime")
+        expected = {"windows": CUDA_TARGET, "linux": "x86_64-unknown-linux-gnu"}.get(operating_system)
+        if (expected is None or architecture != "x86_64" or not split
+                or cuda["handoff"]["static_ort"]["target"] != expected):
+            raise RuntimeError("CUDA requires the matching split x86_64 native runtime and handoff")
         if verify_static_inputs(cuda) != static_inputs:
             raise RuntimeError("CUDA static inputs differ before staging")
         stage_cuda_projection(cuda, staging)
@@ -944,8 +974,8 @@ def main():
         raise SystemExit("--cuda-verification-seconds requires explicit CUDA inputs")
     if cuda_requested and not all(value is not None for value in cuda_values):
         raise SystemExit("All six explicit CUDA environment/projection/native-execution path+SHA inputs are required")
-    if cuda_requested and (platform.system() != "Windows" or platform.machine().lower() not in ("amd64", "x86_64")):
-        raise SystemExit("CUDA shipping runtime is supported only on Windows x86_64")
+    if cuda_requested and cuda_host_target() is None:
+        raise SystemExit("CUDA shipping requires a supported native Windows or GNU/Linux x86_64 host")
     if platform.system() == "Darwin":
         configured = os.environ.get("MACOSX_DEPLOYMENT_TARGET", "13.3")
         if configured != "13.3":
@@ -991,6 +1021,8 @@ def main():
         if cuda is not None:
             main_binary, cli_binary = cargo_pair(args.profile, features=CUDA_PAIR_FEATURES,
                                                environment=cuda["environment"])
+            if cuda["handoff"]["static_ort"]["target"] == "x86_64-unknown-linux-gnu":
+                load_script("cuda-linux-package").verify_linked_image(main_binary)
             shutil.copy2(main_binary, staging / main_binary.name)
             shutil.copy2(cli_binary, staging / cli_binary.name)
         else:

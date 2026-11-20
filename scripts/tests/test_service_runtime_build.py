@@ -719,16 +719,25 @@ class GpuServiceRuntimeBuildTests(unittest.TestCase):
 
     def test_gpu_handoff_requires_supported_host_before_any_proof_or_cargo(self):
         builder = self.builder()
-        for system, machine in [("Linux", "x86_64"), ("Darwin", "arm64"), ("Windows", "arm64")]:
+        for system, machine in [("Linux", "aarch64"), ("Darwin", "arm64"), ("Windows", "arm64")]:
             with self.subTest(system=system, machine=machine), \
                  mock.patch.object(builder.platform, "system", return_value=system), \
                  mock.patch.object(builder.platform, "machine", return_value=machine), \
                  mock.patch.object(builder, "load_script") as load, \
                  mock.patch.object(builder.subprocess, "run") as child:
-                with self.assertRaisesRegex(RuntimeError, "only on Windows x86_64"):
+                with self.assertRaisesRegex(RuntimeError, "supported native Windows or GNU/Linux x86_64 host"):
                     builder.cuda_handoff(Path("not-opened"), "a" * 64)
                 load.assert_not_called()
                 child.assert_not_called()
+
+    def test_linux_handoff_selects_gnu_and_refuses_musl(self):
+        builder = self.builder()
+        with mock.patch.object(builder.platform, "system", return_value="Linux"), \
+             mock.patch.object(builder.platform, "machine", return_value="x86_64"):
+            with mock.patch.object(builder.platform, "libc_ver", return_value=("glibc", "2.35")):
+                self.assertEqual(builder.cuda_host_target(), "x86_64-unknown-linux-gnu")
+            with mock.patch.object(builder.platform, "libc_ver", return_value=("musl", "1.2")):
+                self.assertIsNone(builder.cuda_host_target())
 
     def test_gpu_handoff_refuses_absent_or_nonliteral_pin_before_owner(self):
         builder = self.builder()
@@ -909,6 +918,40 @@ class GpuShippingRuntimeBuildTests(unittest.TestCase):
             changed, _ = self.prepare(builder, root, handoff, native)
             self.assertNotEqual(changed["static_ort"]["verified_inputs_sha256"], original)
 
+    def test_linux_postbuild_staging_reopens_matching_static_and_product_inputs(self):
+        builder = self.builder()
+        linux = {"handoff": {"static_ort": {"target": "x86_64-unknown-linux-gnu"}}}
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            def stage(target, image):
+                builder.qualify_staged_runtime(root, "1.9.0", target, "x86_64", "debug",
+                                               {}, {"same": True}, {}, {}, cuda=image)
+            with mock.patch.object(builder, "verify_static_inputs", return_value={"same": True}) as verify, \
+                 mock.patch.object(builder, "stage_cuda_projection", side_effect=LookupError("reached staging")) as copy:
+                with self.assertRaisesRegex(LookupError, "reached staging"):
+                    stage("linux", linux)
+                verify.assert_called_once_with(linux)
+                copy.assert_called_once_with(linux, root)
+                with self.assertRaisesRegex(RuntimeError, "matching split"):
+                    stage("windows", linux)
+                with self.assertRaisesRegex(RuntimeError, "matching split"):
+                    stage("linux", {"handoff": {"static_ort": {"target": "x86_64-pc-windows-msvc"}}})
+                copy.assert_called_once()
+
+    def test_linux_product_uses_separate_native_compile_pins(self):
+        builder = self.builder()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            handoff = GpuServiceRuntimeBuildTests().handoff(root)
+            handoff["static_ort"]["target"] = "x86_64-unknown-linux-gnu"
+            native = self.native(root)
+            product, owner = self.prepare(builder, root, handoff, native)
+            owner.require_native_activation_projection.assert_called_once()
+            environment = product["environment"]
+            self.assertEqual(environment["AIRK_APPROVED_LINUX_CUDA_MANIFEST_SHA256"], native["descriptor"]["sha256"])
+            self.assertEqual(environment["AIRK_STATIC_LINUX_CUDA_BUILD_SHA256"], native["static_core_build"])
+            self.assertNotIn("AIRK_APPROVED_CUDA_MANIFEST_SHA256", environment)
+
     def test_native_projection_refuses_mixed_build_unbound_receipt_and_activation_claims(self):
         builder = self.builder()
         with tempfile.TemporaryDirectory() as temporary:
@@ -952,7 +995,7 @@ class GpuShippingRuntimeBuildTests(unittest.TestCase):
             root = Path(temporary).resolve()
             (root / "airk-cuda-runtime.json").write_bytes(b"native owned test descriptor bytes")
             native = {"files": {"airk-cuda-runtime.json": builder.digest(root / "airk-cuda-runtime.json")}}
-            value = {"projection": native, "handoff": {"genuine_owner_boundary": "synthetic control"}}
+            value = {"projection": native, "handoff": {"static_ort": {"target": "x86_64-pc-windows-msvc"}}}
             public = mock.Mock()
             public.stage_native_projection.return_value = dict(native["files"])
             with mock.patch.object(builder, "load_script", return_value=public):
@@ -982,7 +1025,8 @@ class GpuShippingRuntimeBuildTests(unittest.TestCase):
                 (root / name).write_bytes(b"synthetic artifact for argv-only control; never executed")
             child = {"PATH": "original", "AIRK_STATIC_CUDA_BUILD_SHA256": "a" * 64,
                      "AIRK_APPROVED_CUDA_MANIFEST_SHA256": "d" * 64}
-            cuda = {"environment": child, "static_ort": {"opaque": "same owned six-field value"}}
+            cuda = {"environment": child, "static_ort": {"opaque": "same owned six-field value"},
+                    "handoff": {"static_ort": {"target": "x86_64-pc-windows-msvc"}}}
             with mock.patch.object(builder, "ROOT", root), \
                  mock.patch.object(builder.platform, "system", return_value="Windows"), \
                  mock.patch.object(builder.platform, "machine", return_value="AMD64"), \

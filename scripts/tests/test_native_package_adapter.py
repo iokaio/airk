@@ -120,7 +120,7 @@ class NativeProjectionLegalBoundary(unittest.TestCase):
   pins=[n.pin(runtime/name) for name in sorted(payload)]
   rows=[{'name':Path(row['path']).name,'bytes':row['bytes'],'sha256':row['sha256']} for row in pins]
   value={'schema':'airk.native.cuda-package-projection/1','descriptor':next(row for row in rows if row['name']=='airk-cuda-runtime.json'),'static_core_build':'9'*64,'files':rows,'scope':'literal native-shaped descriptive fixture','activation':False,'qualification':False}
-  projection=root/'projection.json';execution=root/'execution.json';execution.write_bytes(b'inert injected custody receipt')
+  projection=root/'projection.json';execution=root/'execution.json';execution.write_bytes(b'{"schema":"airk.private.owned-cuda-package-projection/1"}')
   plan={'runtime_root':str(runtime),'runtime_files':pins,'descriptor':n.pin(runtime/'airk-cuda-runtime.json')}
   owner=SimpleNamespace(pin=n.pin,regular=n.regular,read=n.read,digest=n.digest,verify_execution=lambda *a,**kw:(plan,{}))
   handoff={'activation_pins_available':False,'gpu_build':{'schema':'airk.cuda-static-build-proof/2','build_receipt':{'sha256':'9'*64}}}

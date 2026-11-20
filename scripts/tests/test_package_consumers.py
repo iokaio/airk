@@ -23,11 +23,15 @@ class Controls(unittest.TestCase):
  def test_incomplete_explicit_gpu_pins_refuse(self):
   with self.assertRaises(ValueError):p.cuda_from_args(self.args(['--cuda-environment','only']),Mock())
  def test_exact_six_pins_use_existing_builder_owner(self):
-  b=Mock();args=self.args(['--cuda-environment','env','--cuda-environment-sha256','a','--cuda-projection','projection','--cuda-projection-sha256','b','--cuda-native-execution-receipt','receipt','--cuda-native-execution-receipt-sha256','c']);p.cuda_from_args(args,b);b.prepare_cuda_inputs.assert_called_once_with(Path('env'),'a',Path('projection'),'b',Path('receipt'),'c')
+  b=Mock();b.prepare_cuda_inputs.return_value={'static_ort':{'target':'x86_64-pc-windows-msvc'}};args=self.args(['--cuda-environment','env','--cuda-environment-sha256','a','--cuda-projection','projection','--cuda-projection-sha256','b','--cuda-native-execution-receipt','receipt','--cuda-native-execution-receipt-sha256','c']);p.cuda_from_args(args,b);b.prepare_cuda_inputs.assert_called_once_with(Path('env'),'a',Path('projection'),'b',Path('receipt'),'c')
   args.target='x86_64-unknown-linux-gnu'
   with self.assertRaises(ValueError):p.cuda_from_args(args,b)
+  b.prepare_cuda_inputs.return_value={'static_ort':{'target':args.target}}
+  self.assertEqual(p.cuda_from_args(args,b),b.prepare_cuda_inputs.return_value)
+  args.target='aarch64-unknown-linux-gnu'
+  with self.assertRaises(ValueError):p.cuda_from_args(args,b)
  def test_payload_requires_same_static_source_and_exact_rows(self):
-  b=Mock();b.reverify_cuda_inputs.return_value={'identity':'same'};cuda={'projection':{'files':{'provider.dll':'a'}}};build={'static_ort':{'identity':'same'}};p.validate_cuda_payload(b,cuda,HERE,'x86_64-pc-windows-msvc',build,{'provider.dll':'a'})
+  b=Mock();b.reverify_cuda_inputs.return_value={'identity':'same'};cuda={'static_ort':{'target':'x86_64-pc-windows-msvc'},'projection':{'files':{'provider.dll':'a'}}};build={'static_ort':{'identity':'same'}};p.validate_cuda_payload(b,cuda,HERE,'x86_64-pc-windows-msvc',build,{'provider.dll':'a'})
   with self.assertRaises(ValueError):p.validate_cuda_payload(b,cuda,HERE,'x86_64-pc-windows-msvc',build,{})
   with self.assertRaises(ValueError):p.validate_cuda_payload(b,cuda,HERE,'x86_64-pc-windows-msvc',{'static_ort':{}},{'provider.dll':'a'})
  def test_sign_prepare_cpu_default_and_explicit_context(self):

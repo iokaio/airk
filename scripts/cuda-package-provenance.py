@@ -71,7 +71,13 @@ def require_native_activation_projection(projection_path=None,projection_sha256=
  if not isinstance(native_execution_receipt,tuple) or len(native_execution_receipt)!=2:raise ValueError('explicit parent receipt path/SHA tuple required')
  owner=_execution_owner();projection=owner.pin(projection_path)
  if projection['sha256']!=projection_sha256:raise ValueError('reviewed native projection SHA differs')
- plan,execution=owner.verify_execution(*native_execution_receipt,projection_pin=projection)
+ execution_path,execution_sha=native_execution_receipt
+ if owner.digest(owner.regular(execution_path))!=execution_sha:raise ValueError('reviewed native execution receipt differs')
+ if owner.read(execution_path).get('schema')=='airk.private.current-windows-package-projection/1':
+  current=owner.load(Path(__file__).with_name('cuda-native-execution')/'windows_product_projection.py','airk_current_nn0')
+  plan,execution=current.verify_execution(execution_path,execution_sha,projection)
+ else:
+  plan,execution=owner.verify_execution(*native_execution_receipt,projection_pin=projection)
  root=Path(plan['runtime_root'])
  if source_root is not None and Path(source_root)!=root:raise ValueError('caller source root differs from actual native custody')
  value=owner.read(projection_path,1<<20)
