@@ -9,7 +9,8 @@ param(
     [Parameter(Mandatory)][long]$WindowsReservationBytes,
     [Parameter(Mandatory)][long]$UbuntuBackingReservationBytes,
     [Parameter(Mandatory)][long]$RequiredFreeBytes,
-    [ValidatePattern('^[a-fA-F0-9]{64}$')][string]$HeldBackingLogSha256
+    [ValidatePattern('^[a-fA-F0-9]{64}$')][string]$HeldBackingLogSha256,
+    [ValidatePattern('^[a-fA-F0-9]{64}$')][string]$RevisedBackingLogSha256
 )
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '../../..')).Path
@@ -28,20 +29,24 @@ if ($windowsDrive.Name -ne 'D:\' -or $ubuntuDrive.Name -ne 'C:\') { throw 'Recon
 $ubuntuStart = $ubuntuDrive.AvailableFreeSpace
 $vhdStart = (Get-Item -LiteralPath $disk).Length
 $heldVhd = $null
-if ($HeldBackingLogSha256) {
+if ($HeldBackingLogSha256 -and $RevisedBackingLogSha256) { throw 'Select one original budget disposition' }
+$priorSha = if ($RevisedBackingLogSha256) { $RevisedBackingLogSha256 } else { $HeldBackingLogSha256 }
+if ($priorSha) {
     $prior = Join-Path $campaign 'host-volume-watch-r1.jsonl'
     $null = Assert-AirkCreatedOutput $prior $campaign $ExpectedSid
-    if ((Get-FileHash -LiteralPath $prior).Hash -ne $HeldBackingLogSha256) { throw 'Original alert log changed' }
+    if ((Get-FileHash -LiteralPath $prior).Hash -ne $priorSha) { throw 'Original alert log changed' }
     $first = Get-Content -LiteralPath $prior -TotalCount 1 | ConvertFrom-Json
     $last = Get-Content -LiteralPath $prior -Tail 1 | ConvertFrom-Json
+    $oldBudget = if ($RevisedBackingLogSha256) { [long](24GB) } else { $UbuntuBackingReservationBytes }
+    if ($RevisedBackingLogSha256 -and $UbuntuBackingReservationBytes -ne 120000000000) { throw 'Expected approved C growth allowance of 120 GB' }
     if ($last.within_budget -ne $false -or $last.has_headroom -ne $true -or
         $first.windows_start -ne $InitialWindowsFreeBytes -or $first.windows_budget -ne $WindowsReservationBytes -or
-        $first.backing_budget -ne $UbuntuBackingReservationBytes -or $first.free_floor -ne $RequiredFreeBytes -or
-        $first.backing_start - $last.backing_free -le $UbuntuBackingReservationBytes -or
+        $first.backing_budget -ne $oldBudget -or $first.free_floor -ne $RequiredFreeBytes -or
+        $first.backing_start - $last.backing_free -le $oldBudget -or
         $InitialWindowsFreeBytes - $last.windows_free -gt $WindowsReservationBytes) { throw 'Expected original C-only budget alert' }
     $ubuntuStart = [long]$first.backing_start
     $vhdStart = [long]$first.vhd_start
-    $heldVhd = [long]$last.vhd_bytes
+    if ($HeldBackingLogSha256) { $heldVhd = [long]$last.vhd_bytes }
 }
 $null = Assert-AirkOutputPathObservation $output $campaign $identity
 $log = [IO.File]::Open($output, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::Read)
@@ -65,6 +70,11 @@ try {
             if ($null -ne $heldVhd) {
                 $entry['backing_writes_held'] = $true
                 $entry['original_alert_log_sha256'] = $HeldBackingLogSha256
+            }
+            if ($RevisedBackingLogSha256) {
+                $entry['backing_writes_held'] = $false
+                $entry['original_alert_log_sha256'] = $RevisedBackingLogSha256
+                $entry['previous_backing_budget'] = $oldBudget
             }
             $writer.WriteLine(($entry | ConvertTo-Json -Compress))
             $writer.Flush()
