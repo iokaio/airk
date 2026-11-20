@@ -309,12 +309,15 @@ receipt, Core ResourceRunInput/2 and exact pinned source manifest/Profile/maps.
 It revalidates Core ResourceSeries: twenty complete valid observed samples,
 nearest-rank p95 at index18, maximum at19,120-second frozen limit and the exact
 reservation. Partial/failed/unknown work cannot acquire p95 or qualify. The
-maximum actual compiled shape is8192/eight-live for Context, static512/no-yes
-for Focus. Warm/load observations, actual CPU/provider identity, ISA, target and
+maximum compiled Context shape is 8,192 tokens with eight live options. Focus
+uses the no/yes readout at its selected static width. Resource policy /2 requires
+at least 480 live tokens in the 512-wide fixture. Resource policy /3 exercises
+all 1,024 live tokens in the 1,024-wide fixture. Warm/load observations, actual CPU/provider identity, ISA, target and
 process/binary/user identity are reconciled with the source and custody records.
 
 The numerical gate consumes native-numeric-result/2 and its exact native numeric
-fixture: all12Focus cases or Context17/3,128/8,8192/8. It independently recomputes
+fixture. Focus evaluates all 12 original /2 cases or all 14 original /3 cases.
+Context evaluates 17/3, 128/8 and 8192/8. The gate independently recomputes
 raw-logit drift, normalized-mass drift and full argmax agreement from exact
 original reference arrays; a copied pass flag or old2048 fixture is insufficient.
 The independently produced reference source roster, actual reference execution

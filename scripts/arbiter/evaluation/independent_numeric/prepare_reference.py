@@ -158,15 +158,24 @@ def prepare(args):
             'cuda_allocator_bytes': args.cuda_gib << 30, 'minimum_cuda_free_bytes': args.minimum_cuda_free_gib << 30, 'threads': args.threads},
         'input_seals': seals}
     if args.upstream == 'Qwen/Qwen3-Reranker-0.6B' and args.kind == 'same_artifact':
-        plan['focus_adapter'] = pin(HERE / 'focus_w8_reference.py')
-        for path in [evidence_root / 'focus-w8-reference-contract.md', evidence_root / 'focus-w8-review-r1.json']:
-            item = pin(path)
-            plan['input_seals'][item['path']] = item['sha256']
-        for reviewed in json.loads((evidence_root / 'focus-w8-review-r1.json').read_bytes())['files']:
-            item = pin(reviewed['path'])
-            if item['sha256'] != reviewed['sha256']:
-                raise ValueError('independently reviewed Focus source/spec changed')
-            plan['input_seals'][item['path']] = item['sha256']
+        width = request['policy']['focus_pair_input_tokens']
+        if width not in (512, 1024):
+            raise ValueError('unknown native Focus static width')
+        if width == 1024:
+            from focus_review1024 import bind
+            adapter = HERE / 'focus_w8_reference1024.py'
+            plan['focus_adapter'] = pin(adapter)
+            bind(evidence_root, adapter, plan['focus_adapter'], seals, pin)
+        else:
+            plan['focus_adapter'] = pin(HERE / 'focus_w8_reference.py')
+            for path in [evidence_root / 'focus-w8-reference-contract.md', evidence_root / 'focus-w8-review-r1.json']:
+                item = pin(path)
+                plan['input_seals'][item['path']] = item['sha256']
+            for reviewed in json.loads((evidence_root / 'focus-w8-review-r1.json').read_bytes())['files']:
+                item = pin(reviewed['path'])
+                if item['sha256'] != reviewed['sha256']:
+                    raise ValueError('independently reviewed Focus source/spec changed')
+                plan['input_seals'][item['path']] = item['sha256']
     parent.preflight(plan)
     if not args.output.resolve().is_relative_to(state_root) or args.output.exists():
         raise ValueError('fresh plan under this exact private preparation required')
