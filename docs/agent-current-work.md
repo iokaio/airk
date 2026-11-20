@@ -107,8 +107,10 @@ The user resumed the Windows and Linux FP16 campaign after D: cleanup. Keep new 
 The original three Compact Flash recipes exceeded 0.007 on the 1,014-token
 development input. The later Windows Compact graph with protected dense
 projections and compensated CUTLASS attention passed that input at 0.000145
-and the exposed TRAIN_Q543 close call at 0.000081. They are two scientific
-cases. Continue the fixed-width and complete Answer checks. Product use of
+and the exposed TRAIN_Q543 close call at 0.000081. All four canonical widths
+passed the matching error, mass and winner checks. The 8,192-token maximum
+was 0.000183106 and its synchronized forward took 1.915 seconds. Continue
+unprofiled warm timing, fit, calibrated Answer and held-out checks. Product use of
 the distinct attention arithmetic awaits the user's execution-identity decision.
 
 Windows Large's original T32 error was 0.011738. Protecting just its Q/K/V
@@ -119,7 +121,6 @@ attention. The Ubuntu static CUDA core and provider now link, and the first
 verified GNU service pair has zero product model requirements. Native Linux
 model qualification still follows Windows. The 98% paired comparison remains
 unmeasured. See the ledger for the exact source, image and run receipts.
-The 98% paired judged comparison remains unmeasured.
 
 Use the checked CAL restart procedure to reuse the installed models. The
 Linux provider continues in its existing Ubuntu virtual disk on C:. Check

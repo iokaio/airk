@@ -1,5 +1,11 @@
 # Windows scientific CAL readout
 
+## R5 chronological original inputs
+
+After R5 lifetime 00 closes naturally, run `r5_chronological_inputs.py --lifetime-sha256 <first closure SHA> --output <empty checked campaign child> --compile` with the checked Windows Python in isolated, no-site, no-bytecode mode. The producer independently verifies all seven phase receipts, the original launch/plan, live supervisor and held installation mutex. It writes both original model batches, including all refusals, and runs the preserved CPU-only native compiler selector against 56 requests. `projection-receipt.json` pins both model files and the completed compiler Job. A directory without this final receipt is incomplete.
+
+For 100 requests supply both `--lifetime-sha256` arguments in order and `--terminal <outer SHA> <whole fixture SHA> <mutex release SHA>`. The producer verifies the entire original fresh R5 chronology before the two-model compile. Readouts and gain certification have separate owners. The R4 producer below retains its original input identities.
+
 ## Chronological original inputs
 
 Run `python -I -B -S chronological_inputs.py --model compact --phase <absolute-phase00-receipt> <independently-verified-SHA256> --ordinal 0`. Supply each subsequent closed R4 lifetime with another `--phase <path> <SHA256>`, in original phase order. Select `large` for the independent original Large compiler census. Without `--ordinal` the command reports each status count and the first eligible ordinal. With an ordinal it retains the original request's capture pins, complete native compiled tensors, ordered action cards and remaining token and time budgets. Direct stdout only to a checked private file. Inputs from a future grouped capture require independent authorization of its actual closed group before they can use this path.
