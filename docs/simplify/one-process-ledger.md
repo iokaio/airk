@@ -12495,3 +12495,24 @@ under the checked human shell, adding --census-only for the census.
 The current paired Answer runner requires Focus disabled and Context ready.
 Fresh CAL capture needs Focus enabled and zero Context forwards under renewed
 U110 scope. The exact GPU calibration still has zero active rules.
+
+### 2026-11-19 — Native AWS indexed reads on the active 41 cases
+
+The isolated CPU service indexed the 27 original source documents and returned
+all 41 requested ranges through airk_read_file on one publication. Every
+original document hash, citation location, returned line and extracted answer
+digest matched, including the fenced-code case. This is an indexed source-read
+check. Native offered menus, Answer delivery, rights review and sufficiency
+remain separate. Three native read controls passed alongside the five staging
+controls. No Answer or GPU arm ran.
+
+Run checked Python -I -B -S
+scripts/arbiter/analysis/public_source_admission/verify_aws_native_source_reads.py
+--output <fresh absolute campaign directory>. Under aws-native-source-reads-r1
+the native-reads.private.json digest is
+86b9072c5188f018ac472c7149a03d062121268d346ba2662702d63149322417.
+The owner receipt owned.json is
+8b57330b1ca57628930c78de0482aa34b6fc51c3275a773cf35e2cab12aaeeda.
+The process exited 0 in 57.902 s with no remaining Job members, using
+124,477,440 bytes peak Job memory. Ownership audit covered 494 descendant
+outputs in the checked batch, which took 58.7835723 s including validation.

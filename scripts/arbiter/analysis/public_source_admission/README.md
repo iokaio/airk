@@ -137,3 +137,9 @@ The metadata supports reconstruction from the pinned archive before native captu
   receipt covers all 35 later bases. Run again with `--extend-history` against
   its sealed receipt to check missing paths in the merge history. The evidence
   covers observed Git parent edges and tree identities.
+
+[Verify the staged AWS native reads](verify_aws_native_source_reads.py) runs
+under checked Python -I -B -S with --output set to a fresh absolute campaign
+directory. It pins the separate CPU service image, CLI and corpus manifest,
+indexes the staged source tree in a disposable catalog, and verifies each
+indexed line read and its original answer bytes against one publication.
