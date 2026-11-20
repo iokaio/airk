@@ -200,3 +200,50 @@ fn qualified_product_math_does_not_force_attention_debug_logging() {
     assert!(check_environment(&allowed, &allowed, false).is_ok());
     assert!(check_environment(&allowed, &allowed, true).is_err());
 }
+
+/// Compare the two existing admission decisions using a retained, unqualified native profile.
+#[cfg(all(
+    target_arch = "x86_64",
+    any(windows, all(target_os = "linux", target_env = "gnu"))
+))]
+#[test]
+#[ignore = "campaign original Compact descriptor required; no CUDA call"]
+fn original_compact_bounded_options_refused_by_strict_input_plan() -> Result<()> {
+    let root = std::env::var_os("AIRK_PRIVATE_CAMPAIGN").context("original campaign required")?;
+    let path = std::path::Path::new(&root)
+        .join("compact-fp16-projection-baseline-metadata-r5/metadata/profile.json");
+    let raw = std::fs::read(path)?;
+    assert_eq!(
+        format!("{:x}", Sha256::digest(&raw)),
+        "2d37b06bb7ee6c5813acedd14b0b98ca305153466a6d467609b37373290da211"
+    );
+    let mut profile: Profile = serde_json::from_slice(&raw)?;
+    assert_eq!(profile.model, ModelChoice::ContextQwenCompact);
+    let model = profile.model;
+    let device = profile.device_execution.as_mut().unwrap();
+    device.provider_options = fp16_provider_options_digest(model)?;
+    device.math_policy = fp16_math_policy_digest(model)?;
+    let strict = AttentionPlan::from_graph(&profile, &[], &BTreeMap::new()).unwrap_err();
+    assert_eq!(
+        strict.to_string(),
+        "G5 actual graph differs from immutable descriptor"
+    );
+
+    let bounded = super::super::BoundedContextOptimizer::ProtectedProjections;
+    let device = profile.device_execution.as_mut().unwrap();
+    device.placement = PlacementPolicy::BoundedHybrid {
+        policy: Sha256Digest::from_bytes([1; 32]),
+    };
+    device.provider_options = bounded.provider_options(model)?;
+    device.math_policy = bounded.math_policy(model)?;
+    assert_eq!(
+        super::super::BoundedContextOptimizer::from_profile(&profile)?,
+        bounded
+    );
+    let refused = AttentionPlan::from_graph(&profile, &[], &BTreeMap::new()).unwrap_err();
+    assert_eq!(
+        refused.to_string(),
+        "G5 profile math/provider identity differs"
+    );
+    Ok(())
+}
