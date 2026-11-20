@@ -31,7 +31,7 @@ class Reuse(unittest.TestCase):
                         "shutdown_completed": True, "service_lease_reacquired": True}
             ordinal = entries.index(pin)
             return {"phase": ordinal, "instance": ordinal, "closed": {"id": ordinal}}
-        fields = {"inventory": lambda _: (base, {"health": {"catalog_clock": {"namespace": "catalog"}}}, {}),
+        fields = {"latest_cal_receipt": lambda: R4 / "outer-owned.json", "inventory": lambda _: (base, {"health": {"catalog_clock": {"namespace": "catalog"}}}, {}),
                   "read": lambda path, seal=None: terminal if path.name == "fixture-closure.json" else owner, "linked": linked}
         with patch.dict(restart.__globals__, fields), patch.object(Path, "samefile", lambda a, b: a == b):
             return restart({}, R4 / "outer-owned.json", "frozen")

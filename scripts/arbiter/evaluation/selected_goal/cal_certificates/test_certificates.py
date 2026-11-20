@@ -24,6 +24,53 @@ class MemoryLedger:
         return self.spans
 
 
+class GroupedClockTests(unittest.TestCase):
+    def test_first_phase_pays_for_startup_and_final_phase_pays_for_shutdown(self):
+        from grouped_closure import check_clocks
+        lifetime = {"start_ms":10,"end_ms":200}
+        rows = [{"start_ms":10,"end_ms":90,"deadline_ms":201},
+                {"start_ms":95,"end_ms":195,"deadline_ms":201}]
+        check_clocks(lifetime,rows,201)
+        for i,field,value in ((0,"start_ms",11),(1,"start_ms",89),(1,"deadline_ms",202),(0,"end_ms",210)):
+            changed = [dict(row) for row in rows]
+            changed[i][field] = value
+            with self.subTest(field=field,value=value), self.assertRaises(ValueError):
+                check_clocks(lifetime,changed,201)
+        with self.assertRaises(ValueError):
+            check_clocks(dict(lifetime,end_ms=202),rows,201)
+
+    def test_final_group_mutex_matches_owner_time_and_original_outer_receipt(self):
+        import grouped_closure
+        import reference_inputs
+        root = Path("example")
+        acquired = {"name":r"Local\AIRK-20261116-Focus1024-Reuse","owner_pid":7,"at_ms":2}
+        plan = {"installation_mutex":{"path":"acquired","sha256":"a"*64},"start_ms":3}
+        def reference(path,digest):
+            return {"path":str(path),"sha256":digest}
+        outer = reference(root/"outer-owned.json","c"*64)
+        released = dict(acquired,at_ms=9,acquired=plan["installation_mutex"],outer=outer)
+        with patch.object(reference_inputs,"reference",side_effect=reference):
+            for changed,valid in (({},True),({"owner_pid":8},False),({"at_ms":7},False),
+                                  ({"outer":{}},False),({"name":"foreign"},False)):
+                with self.subTest(changed=changed), patch.object(grouped_closure,"read",
+                        side_effect=[acquired,dict(released,**changed)]):
+                    if valid:
+                        grouped_closure.check_mutex(root,plan,"c"*64,"b"*64,8)
+                    else:
+                        with self.assertRaises(ValueError):
+                            grouped_closure.check_mutex(root,plan,"c"*64,"b"*64,8)
+
+    def test_long_group_keeps_individual_phase_ceiling(self):
+        from grouped_closure import check_clocks
+        rows = [{"start_ms":0,"end_ms":1600000,"deadline_ms":1800000},
+                {"start_ms":1600010,"end_ms":3200000,"deadline_ms":3400010}]
+        lifetime = {"start_ms":0,"end_ms":3200010}
+        check_clocks(lifetime,rows,5000000)
+        rows[0]["deadline_ms"] += 1
+        with self.assertRaises(ValueError):
+            check_clocks(lifetime,rows,5000000)
+
+
 class PhasedClockTests(unittest.TestCase):
     def test_original_phase_and_whole_wall_limits(self):
         from phased_closure import phase_interval

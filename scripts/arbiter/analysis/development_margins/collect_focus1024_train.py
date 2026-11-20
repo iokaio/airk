@@ -66,19 +66,29 @@ def verified_control(run, owned_sha, capture):
             "native restart changed original control, executable or profile closure")
     prior = proof["previous"]
     path = Path(prior["path"])
-    required_prior = {"TRAIN_Q564": campaign / "cal100-focus1024-capture-r4/outer-owned.json",
-                      "TRAIN_Q598": campaign / "compact-development-TRAIN_Q564-focus1024-run-r3/owned.json"}
-    require(path.parent.parent == campaign and path.name in ("owned.json", "outer-owned.json")
-            and path == required_prior.get(capture["case_id"], path), "foreign predecessor path")
-    predecessor = inputs["load"](path, prior["sha256"])
-    require(predecessor["owned_descendants_settled"] and predecessor["owned_job_final_active_processes"] == 0
-            and predecessor["owned_job_final_member_pids"] == [], "previous owner did not settle")
-    if path == campaign / "cal100-focus1024-capture-r4/outer-owned.json":
-        prior_status = plan["status"]
+    r4 = campaign / "cal100-focus1024-capture-r4/outer-owned.json"
+    r5 = campaign / "cal100-focus1024-capture-r5/control-mutex-released.json"
+    required_prior = {"TRAIN_Q564": (r4, r5),
+                      "TRAIN_Q598": (campaign / "compact-development-TRAIN_Q564-focus1024-run-r3/owned.json",)}
+    require(path.parent.parent == campaign and path in required_prior.get(capture["case_id"], (path,)), "foreign predecessor path")
+    if path == r5:
+        receipt = proof["grouped_custody"]
+        require(receipt["path"] == str(campaign / "cal100-focus1024-capture-r5-custody.json"), "foreign grouped custody")
+        source = HERE / "grouped_reuse.py"
+        inputs["pin"](source, "549e06eb507779b2704567298246973eee0bd3828827cba035940f4664e8f92a")
+        prior_status, _ = runpy.run_path(str(source))["verify"](campaign, prior["sha256"], receipt["sha256"], plan)
     else:
-        prior_status = predecessor["shared_installation"]["status"]
-        require(path.name == "owned.json" and prior_status["path"] == str(path.parent / "commands/reuse-final-status.stdout"),
-                "foreign predecessor idle status")
+        require(path.name in ("owned.json", "outer-owned.json") and "grouped_custody" not in proof,
+                "foreign ungrouped predecessor")
+        predecessor = inputs["load"](path, prior["sha256"])
+        require(predecessor["owned_descendants_settled"] and predecessor["owned_job_final_active_processes"] == 0
+                and predecessor["owned_job_final_member_pids"] == [], "previous owner did not settle")
+        if path == r4:
+            prior_status = plan["status"]
+        else:
+            prior_status = predecessor["shared_installation"]["status"]
+            require(path.name == "owned.json" and prior_status["path"] == str(path.parent / "commands/reuse-final-status.stdout"),
+                    "foreign predecessor idle status")
     require(restart["status"] == {f: prior_status[f] for f in ("path", "sha256")}
             and inputs["load"](Path(prior_status["path"]), prior_status["sha256"])["configuration"] == saved["configuration"],
             "saved native configuration differs from the sealed predecessor")

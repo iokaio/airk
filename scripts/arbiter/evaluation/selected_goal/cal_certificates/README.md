@@ -59,3 +59,7 @@ owner against the selected original bytes and compares the two scoring
 functions' complete syntax trees against the selected rubric before using
 them. Only the maintained implementations run. The report carries all 100
 rows and qualifies no profile.
+
+For a future completed grouped capture, the certificate reader verifies all 13 original phase Jobs across three distinct native lifetimes with 32, 32 and 36 questions. It checks the settled incomplete R4 predecessor, exact recorder source and per-lifetime admission limit, original phase and common deadlines, unique window grants, and the final publication and input census. Per-phase diagnostic files retain zero certificates until the whole cohort closes.
+
+A grouped capture also requires `--mutex-release-sha256` from its final `control-mutex-released.json`. This post-exit receipt binds the original acquire record, parent PID, original outer Job closure and the release time after all groups settle.

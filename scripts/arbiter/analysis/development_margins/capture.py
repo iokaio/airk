@@ -20,7 +20,7 @@ OWNERS = {
     HERE / "focus1024.py": "428db7bb0e22f96bb6e67b3c9f24276cd9cdca4be92563a05881702a3aecf211",
     HERE / "zero_capture.py": "5e1bffd57937225a89bcf762705c2fa70f08d975fbd2377d99d075b3a1c102e3",
 }
-REUSE_SHA = "0dde43a83353c4302ddc83a21496ad966c753b028552461b6e87b5bef5864135"
+REUSE_SHA = "75c87b868dd71156791201e27c2a386c063df839d2103e9e06667c1e87875178"
 ROSTER = "586f4d2d22c2cc4daef0c6b71bef5035f8165f9f8bde546a093d08d474049d67"
 
 
@@ -52,6 +52,7 @@ def main():
     parser.add_argument("--check-only", action="store_true")
     parser.add_argument("--reuse-after", type=Path)
     parser.add_argument("--reuse-sha256")
+    parser.add_argument("--reuse-r5-custody-sha256")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     pilot, inputs, engineering, focus1024, zero = (checked(path) for path in OWNERS)
@@ -119,17 +120,20 @@ def main():
     pin(reuse_path, REUSE_SHA)
     source_pins[reuse_path] = REUSE_SHA
     reuse = runpy.run_path(str(reuse_path))
+    grouped_path = HERE / "grouped_reuse.py"
+    pin(grouped_path, reuse["GROUPED_SHA"])
+    source_pins[grouped_path] = reuse["GROUPED_SHA"]
     if args.focus_width == 1024:
         base, ready, immutable = reuse["inventory"](validate())
         if args.reuse_after is not None:
-            previous_case = {"TRAIN_Q564": reuse["R4"] / "outer-owned.json",
+            previous_case = {"TRAIN_Q564": reuse["latest_cal_receipt"](),
                              "TRAIN_Q598": reuse["E"] / "compact-development-TRAIN_Q564-focus1024-run-r3/owned.json"}
             require(args.reuse_after.parent.parent == reuse["E"]
                     and args.reuse_after == previous_case.get(case_id, args.reuse_after),
                     "shared-control predecessor differs from original case order")
             require(isinstance(args.reuse_sha256, str) and re.fullmatch(r"[0-9a-f]{64}", args.reuse_sha256),
                     "verified predecessor receipt SHA required")
-            restart, immutable = reuse["restart_inputs"](validate(), args.reuse_after, args.reuse_sha256)
+            restart, immutable = reuse["restart_inputs"](validate(), args.reuse_after, args.reuse_sha256, args.reuse_r5_custody_sha256)
         else:
             require(args.check_only, "static-1024 captures must reopen the existing physical installation")
     else:
@@ -170,6 +174,8 @@ def main():
                 "shared control requires the checked owner wrapper")
         prior_backup = reuse["custody"](output, immutable, True)
         extra = ["--reuse-after", args.reuse_after, "--reuse-sha256", args.reuse_sha256]
+        if args.reuse_r5_custody_sha256 is not None:
+            extra += ["--reuse-r5-custody-sha256", args.reuse_r5_custody_sha256]
     result = owner.run_evaluation_fixture([sys.executable, "-I", "-B", "-S", handler, "--case", case_id,
                                            "--focus-width", str(args.focus_width), "--output", output, "--worker", *extra], pilot["ROOT"], output / "outer.log",
                                           pilot["LIMIT"], os.environ | {"AIRK_DEVELOPMENT_CAPTURE_OWNER": str(output)})
@@ -178,6 +184,9 @@ def main():
         shared = {"anchor_plan_sha256": reuse["PLAN"], "control_root": str(reuse["CONTROL"]),
                   "previous": {"path": str(args.reuse_after), "sha256": args.reuse_sha256},
                   "control_before": prior_backup, "control_after": after_backup}
+        if args.reuse_r5_custody_sha256 is not None:
+            shared["grouped_custody"] = {"path": str(reuse["E"] / "cal100-focus1024-capture-r5-custody.json"),
+                                        "sha256": args.reuse_r5_custody_sha256}
         for key, name in (("ready", "fixture/ready.json"), ("closed", "fixture/closed.json"),
                           ("status", "commands/reuse-final-status.stdout"),
                           ("restart_request", "restart-request.json"), ("saved", "fixture/restart-owner.json"),

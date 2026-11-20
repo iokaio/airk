@@ -41,17 +41,22 @@ def phase_interval(start, end, prior_end, common_deadline):
             end-start<=1800000, "phase lifetime overlaps, exceeds 1800 seconds or refreshes the campaign clock")
 
 
-def phased_events(root, outer_sha, fixture_sha, audit, audit_sha, ids, sources, index_root, tasks):
+def phased_events(root, outer_sha, fixture_sha, audit, audit_sha, ids, sources, index_root, tasks, *, release_sha=None):
     require(root.parent == CAMPAIGN and re.fullmatch(r"cal100-focus1024-capture-r[1-9][0-9]*",root.name),
             "foreign phased campaign root")
     outer = read(reference(root/"outer-owned.json",outer_sha))
     closure = read(reference(root/"fixture-closure.json",fixture_sha))
     plan = read(closure["plan"], root/"lifetime-plan.json")
+    import grouped_closure as groups
+    grouped = closure["schema"] == groups.FIXTURE
+    shape = groups.GROUPS if grouped else tuple((phase,) for phase in range(13))
+    if grouped:
+        groups.check_plan(plan)
     require(settled(outer) and "--owned-plan-sha256" in outer["argv"] and str(root) in outer["argv"]
-            and closure["plan"]["sha256"] in outer["argv"] and plan["schema"]=="airk.private.cal100-lifetime-plan/1"
-            and closure["schema"]=="airk.private.cal100-phased-fixture/1" and plan["input_audit"]["sha256"]==audit_sha
+            and closure["plan"]["sha256"] in outer["argv"] and plan["schema"]==(groups.PLAN if grouped else "airk.private.cal100-lifetime-plan/1")
+            and closure["schema"]==(groups.FIXTURE if grouped else "airk.private.cal100-phased-fixture/1") and plan["input_audit"]["sha256"]==audit_sha
             and read(plan["input_audit"])==audit and plan["census"]==audit["census"] and read(plan["census"])["question_ids"]==ids
-            and len(ids)==len(set(ids))==closure["ordered_questions"]==100 and len(closure["lifetimes"])==13
+            and len(ids)==len(set(ids))==closure["ordered_questions"]==100 and len(closure["lifetimes"])==len(shape)
             and plan["phase_ids"]==[ids[i:i+8] for i in range(0,100,8)],"incomplete or changed predeclaration")
     anchor = plan["installation"]
     values = {}
@@ -97,13 +102,19 @@ def phased_events(root, outer_sha, fixture_sha, audit, audit_sha, ids, sources, 
     prior = anchor["closed"]
     last = plan["start_ms"]
     sums = {"probes":0,"pipeline_searches":0}
-    for phase,ref in enumerate(closure["lifetimes"]):
-        directory = root/f"lifetime-{phase:02}"
+    for group,ref in enumerate(closure["lifetimes"]):
+        phase = shape[group][0]
+        directory = root/f"lifetime-{group:02}"
         work = directory/"fixture"
         lifetime = read(ref,directory/"lifetime-closure.json")
-        phase_interval(lifetime["start_ms"],lifetime["end_ms"],last,plan["deadline_ms"])
-        require(lifetime["schema"]=="airk.private.cal100-phase-lifetime/1" and lifetime["phase"]==phase and
-                lifetime["plan"]==closure["plan"] and lifetime["prior"]==prior,"phase ordering or prior closure differs")
+        require(lifetime["plan"]==closure["plan"] and lifetime["prior"]==prior,"plan or predecessor changed")
+        if grouped:
+            phase_pins = groups.check_group(directory,lifetime,group,plan,last)
+        else:
+            phase_interval(lifetime["start_ms"],lifetime["end_ms"],last,plan["deadline_ms"])
+            require(lifetime["schema"]=="airk.private.cal100-phase-lifetime/1" and lifetime["phase"]==phase,
+                    "phase ordering differs")
+            phase_pins = [lifetime["phase_closure"]]
         restart = read(lifetime["restart"],directory/"restart-request.json")
         require(restart=={k:{n:anchor[k][n] for n in ("path","sha256")} for k in ("ready","closed","status")},
                 "restart references a different installation")
@@ -141,13 +152,15 @@ def phased_events(root, outer_sha, fixture_sha, audit, audit_sha, ids, sources, 
                 stage[n]["active_profile"] for n in ("focus","context")),"stage configuration changed")
         check_warm(lifetime["warm"],work,ready)
         census = {k:lifetime[k] for k in sums}
-        census.update(phase_closures=[lifetime["phase_closure"]],request_sha256=lifetime["live_request"]["sha256"])
+        census.update(phase_closures=phase_pins,request_sha256=lifetime["live_request"]["sha256"])
         yield from question_events(directory,lifetime,census,ids,binding,template,tasks,audit["pipeline"],
                                    first_phase=phase,lifetime_fingerprints=fingerprints)
         binding.verify()
         for k in sums:
             sums[k] += lifetime[k]
         last, prior = lifetime["end_ms"],ref
-    require(all(closure[k]==n for k,n in sums.items()) and sums["pipeline_searches"]>0 and len(instances)==14 and
-            len(fingerprints)==114 and last-plan["start_ms"]+debit<=closure["elapsed_ms"]<=10800000,
+    if grouped:
+        groups.check_mutex(root,plan,outer_sha,release_sha,plan["start_ms"]+closure["elapsed_ms"]-debit)
+    require(all(closure[k]==n for k,n in sums.items()) and sums["pipeline_searches"]>0 and len(instances)==len(shape)+1 and
+            len(fingerprints)==len(ids)+len(shape)+1 and last-plan["start_ms"]+debit<=closure["elapsed_ms"]<=10800000,
             "incomplete phased census, unique scopes or common wall clock")

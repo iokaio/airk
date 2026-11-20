@@ -124,6 +124,7 @@ def main():
     parser.add_argument("--capture", type=Path)
     parser.add_argument("--outer-sha256")
     parser.add_argument("--closure-sha256")
+    parser.add_argument("--mutex-release-sha256", help="Grouped capture only: checked final shared installation release")
     parser.add_argument("--active-audit", type=Path)
     parser.add_argument("--audit-sha256")
     parser.add_argument("--focus-manifest")
@@ -145,10 +146,10 @@ def main():
     if not all((args.capture, args.outer_sha256, args.closure_sha256)):
         parser.error("supply a complete capture plus outer and fixture-closure SHA-256")
     closure = read(reference(args.capture/"fixture-closure.json",args.closure_sha256))
-    phased = closure.get("schema")=="airk.private.cal100-phased-fixture/1"
+    phased = closure.get("schema") in ("airk.private.cal100-phased-fixture/1","airk.private.cal100-grouped-fixture/1")
     if phased:
         events = phased_events(args.capture,args.outer_sha256,args.closure_sha256,audit,args.audit_sha256,
-                               ids,sources,index_root,tasks)
+                               ids,sources,index_root,tasks,release_sha=args.mutex_release_sha256)
         custody = {"lifetime_plan_sha256":closure["plan"]["sha256"],
                    "lifetime_closure_sha256":[ref["sha256"] for ref in closure["lifetimes"]]}
     else:
@@ -156,6 +157,8 @@ def main():
                                                           audit, sources, index_root, args.audit_sha256)
         events = question_events(args.capture, closure, census, ids, binding, answer, tasks, audit["pipeline"])
         custody = {"phase_census_sha256":closure["phase_census"]["sha256"]}
+    if closure["schema"] == "airk.private.cal100-grouped-fixture/1":
+        custody["mutex_release_sha256"] = args.mutex_release_sha256
     rows = [certificate(e, tasks[e["id"]], audit, window, policy, ledger, utility) for e, window in events]
     require([r["id"] for r in rows] == ids, "incomplete CAL100")
     if not phased:
@@ -169,7 +172,7 @@ def main():
                       "rubric_sha256": refs["rubric"]["sha256"], "task_policy": policy, "human_semantic_gold_count": 0,
                       "outer_owned_sha256": args.outer_sha256, **custody,
                       "launch_audit_sha256": args.audit_sha256, "focus_tokens": 1024, "source_sha256": {p.name: digest(p.read_bytes()) for p in
-                          (HERE/"certify.py", HERE/"capture_closure.py", HERE/"phased_closure.py", HERE/"reference_inputs.py")},
+                          (HERE/"certify.py", HERE/"capture_closure.py", HERE/"phased_closure.py", HERE/"grouped_closure.py", HERE/"reference_inputs.py")},
                       "native_capture_status_counts": Counter(r["native_capture_status"] for r in rows),
                       "scope": "Original human support gain from additional verified reads only. Terminal labels unavailable.",
                       "rows": rows}, ensure_ascii=True, separators=(",", ":"), allow_nan=False))

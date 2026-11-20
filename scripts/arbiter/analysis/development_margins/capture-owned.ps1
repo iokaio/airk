@@ -5,7 +5,8 @@ param(
     [Parameter(Mandatory)][ValidateRange(1, 9999)][int]$Attempt,
     [ValidateSet(512, 1024)][int]$FocusWidth = 512,
     [string]$ReuseAfter,
-    [ValidatePattern('^[0-9a-f]{64}$')][string]$ReuseSha256
+    [ValidatePattern('^[0-9a-f]{64}$')][string]$ReuseSha256,
+    [ValidatePattern('^[0-9a-f]{64}$')][string]$ReuseR5CustodySha256
 )
 $ErrorActionPreference = 'Stop'
 $workspace = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../../..'))
@@ -48,11 +49,17 @@ try {
         $null = Assert-AirkCreatedOutput $receipt $campaign $sid
         if ((Get-FileHash -LiteralPath $receipt).Hash -ne $ReuseSha256) { throw "Prior closure identity differs" }
         $mutex = [Threading.Mutex]::new($false, "Local\AIRK-20261116-Focus1024-Reuse")
-        if (!$mutex.WaitOne(0)) { throw "Another TRAIN owner holds this installation" }
+        try {
+            if (!$mutex.WaitOne(0)) { throw "Another owner holds this installation" }
+        } catch [Threading.AbandonedMutexException] {
+            $mutex.ReleaseMutex()
+            throw "Abandoned shared installation mutex; a new native closure and custody review are required"
+        }
         $held = $true
         Assert-SharedControl
         $env:AIRK_TRAIN_REUSE_AUDITED_CONTROL = [IO.Path]::GetFullPath($shared)
         $extra = @("--reuse-after",$receipt,"--reuse-sha256",$ReuseSha256)
+        if ($ReuseR5CustodySha256) { $extra += @("--reuse-r5-custody-sha256",$ReuseR5CustodySha256) }
     }
     python -I -B -S (Join-Path $PSScriptRoot 'capture.py') --case $CaseId --focus-width $FocusWidth --output $target @extra
     $exitCode = $LASTEXITCODE

@@ -4,12 +4,15 @@ import hashlib
 import json
 from pathlib import Path
 import shutil
+import runpy
 
 
 E = Path(__file__).resolve().parents[4] / "artifacts/v190/final-plan/exec-20261116T052942Z"
 R3 = E / "cal100-focus1024-capture-r3"
 R4 = E / "cal100-focus1024-capture-r4"
+R5 = E / "cal100-focus1024-capture-r5"
 CONTROL = R3 / "fixture/control"
+GROUPED_SHA = "549e06eb507779b2704567298246973eee0bd3828827cba035940f4664e8f92a"
 PLAN = "9259b4be9e340ac8e050060e904f53acffee27e3807eca6145a9a8f3be3e299d"
 
 
@@ -94,8 +97,29 @@ def failed_cal_lifetimes(ready, status):
     return status
 
 
-def restart_inputs(descriptor, prior, prior_sha):
+def latest_cal_receipt():
+    markers = ("control-mutex-acquired.json", "lifetime-plan.json", "lifetime-00", "outer-owned.json", "control-mutex-released.json")
+    if any((R5 / name).exists() for name in markers):
+        return R5 / "control-mutex-released.json"
+    return R4 / "outer-owned.json"
+
+
+def grouped_verifier():
+    source = Path(__file__).with_name("grouped_reuse.py").resolve()
+    require(link(source)["sha256"] == GROUPED_SHA, "grouped predecessor verifier source changed")
+    return runpy.run_path(str(source))["verify"]
+
+
+def restart_inputs(descriptor, prior, prior_sha, custody_sha=None):
     base, ready, immutable = inventory(descriptor)
+    if prior == R5 / "control-mutex-released.json":
+        require(isinstance(custody_sha, str) and len(custody_sha) == 64, "grouped release also requires sealed source custody")
+        status, _ = grouped_verifier()(E, prior_sha, custody_sha, base)
+        return {k: {"path": p["path"], "sha256": p["sha256"]} for k, p in
+                (("ready", base["ready"]), ("closed", base["closed"]), ("status", status))}, immutable
+    require(custody_sha is None, "unexpected grouped custody digest")
+    if prior == R4 / "outer-owned.json":
+        require(latest_cal_receipt() == prior, "grouped owner started; stale R4 control handoff refused")
     owner = read(prior, prior_sha)
     require(settled(owner) and not owner["timed_out"], "prior owner did not naturally settle")
     if prior == R4 / "outer-owned.json" and owner["exit_code"] != 0:
