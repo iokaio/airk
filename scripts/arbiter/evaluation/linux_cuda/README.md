@@ -130,4 +130,5 @@ original static GNU build for `build-service-runtime.py`, `package-native.py`
 and `package-standalone-linux.py`. The three paired path/digest arguments identify
 the static handoff, native product projection and actual native execution evidence.
 The product layout puts the verified manifest, native ELF images and projected
-notice files next to `service/airk`.
+notice files next to `service/airk`. See [Linux FP16 qualification](FP16_QUALIFICATION.md)
+for the separate runtime, score and resource evidence.
