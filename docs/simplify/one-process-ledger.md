@@ -12422,3 +12422,34 @@ calibration receipt b5ef749ce5e3349513f380c5fd03d7e1839a1f9830a4a7172ec1db59e37c
 still has zero rules. The 0.001 same-recipe parity requirement also remains
 unmet. The 98% paired Answer comparison has no measured result.
 [Source validation audit](../arbiter/software-v2-data-audit.md#source-validation-results-for-the-confirmation-candidate-pools)
+
+### 2026-11-19 — Replacement repository screening and repeated AWS locations
+
+Resumed at 253bcb8f on feat/arbiter-final. The active Windows RDP
+Explorer user, shell SID and default owner matched TYAI\tdotn (SID
+ending 1002). The scoped AIRK index was available. The screeners and
+their private outputs ran under the checked human account.
+
+Two batches of 16 repository cases yielded 9 and 11 scoped passes.
+Receipt order supplies 11 replacements and nine reserves. Of the
+50 resulting review cases, 15 had base commits dated no later than
+the issue. Review pre-fix evidence for the 35 later snapshots. The
+three unresolved historical lineages, per-file rights and model
+exposure remain open. The AWS review checked the 24 withheld cases
+against all 485 literal occurrences. One case has a unique line-level
+lexical lead. An independent judgment is still needed for each case.
+
+Commands from scripts/arbiter/analysis/public_source_admission used the
+provisioned PyArrow Python with -IB screen_repository_confirmation_replacements.py
+--directory <absolute repository-confirmation-multilang-r1> --gh <pinned gh.exe>
+and then the same command with --tranche 2. The two checked batches,
+including their focused controls and output audits, took 15.8971165 s
+and 15.2942993 s. The AWS Python -I -B -S audit_aws_repeated_answer_locations.py
+--projection <absolute aws-techqa-style-source-projection-r1/aws-source-projection.json>
+--seconds 75 took 0.606184 s inside the collector. Three repository
+screen controls and four AWS location controls passed. Source and case
+identities, ranges and refusals are retained in the linked private receipt
+digests. No case was admitted and the paired 98% result remains unmeasured.
+The exact CUDA candidate still has zero active calibration rules and
+exceeds 0.001 matching-reference raw error. No model run was repeated.
+[Audit and receipt hashes](../arbiter/software-v2-data-audit.md#replacement-screening-and-repeated-aws-answers)

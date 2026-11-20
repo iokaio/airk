@@ -76,6 +76,13 @@ The family-root source-provenance.json maps original and maintained SHA-256 valu
   code are explicitly flagged. The receipt also records the scope of the
   frozen exposure comparison. This is input preparation for the native
   visibility and independent evidence-set checks.
+- [AWS repeated-answer locations](audit_aws_repeated_answer_locations.py)
+  takes the sealed AWS source projection via `--projection` under checked
+  Python `-I -B -S`. It authenticates the CSV and source documents and
+  emits every overlapping literal occurrence, its raw byte and line range,
+  its paragraph bounds and digest, and lexical hints for independent review.
+  Send stdout to a fresh private receipt. Each row retains a null publisher
+  range because the CSV identifies the document and answer text only.
 - [Repository candidate collector](collect_repository_confirmation_candidates.py)
   checks the eight immutable SWE-bench-Live MultiLang shards and reads only
   six identifier and date columns. Use the checked pinned Python and the
@@ -98,6 +105,15 @@ The family-root source-provenance.json maps original and maintained SHA-256 valu
   ContextBench fence and verifies the root license blob at the exact base
   commit. Per-file rights, unresolved aliases, clone overlap and human
   evidence judgments remain separate checks.
+
+- [Repository replacement screen](screen_repository_confirmation_replacements.py)
+  replays the exact original roster from the retained shards and checks
+  the next two batches of 16 distinct repository candidates. Use the
+  provisioned PyArrow interpreter with `-IB`, `--directory` set to the
+  absolute original roster directory, and `--gh` set to the pinned GitHub
+  CLI executable. The second batch (`--tranche 2`) also requires the
+  sealed first receipt in that directory. Capture stdout in a fresh private
+  file for each batch. Keep every refusal and preserve receipt row order.
 
 Run the pinned interpreter locally under the verified human identity. Redirect
 the one-line aggregate only to a new audited private campaign path. These

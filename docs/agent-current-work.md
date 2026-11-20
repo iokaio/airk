@@ -213,6 +213,13 @@ Use the existing deadline when resuming in a new context.
   refusals. Complete the remaining source and human reviews and
   capture exact native-visible evidence before scoring a judged arm.
   [Confirmation source validation](arbiter/software-v2-data-audit.md#source-validation-results-for-the-confirmation-candidate-pools)
+  Replacement screening yielded 20 passes across 32 repositories. Keep
+  the first 11 passes with the original 39 and the other nine as reserves.
+  Of those 50, 35 have bases later than the issue and need pre-fix review.
+  All 485 repeated AWS occurrences are mapped. Hold the 24 affected cases
+  for independent judgments on their source passages. The publisher CSV
+  provides no occurrence offsets. The 98% comparison remains unmeasured.
+  [Replacement screening and repeated AWS answers](arbiter/software-v2-data-audit.md#replacement-screening-and-repeated-aws-answers)
   [Local confirmation-source inventory](arbiter/software-v2-data-audit.md#initial-context-fp16-confirmation-source-inventory)
   [Stock FP32 projection comparison](simplify/one-process-ledger.md#2026-11-19--stock-cuda-fp32-projection-is-a-compact-candidate)
   [FP32 projection output comparison](simplify/one-process-ledger.md#2026-11-19--fp32-projection-output-improves-half-rounding)

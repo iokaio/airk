@@ -453,3 +453,52 @@ requirement. Source verification supplies inputs for adjudication.
 Before the judged comparison, freeze native-visible evidence sets,
 complete the native menus for the two precision arms, and verify
 8,192-token coverage and the prospective paired analysis.
+
+### Replacement screening and repeated AWS answers
+
+Of the 39 original MultiLang cases that met the scoped screen, 12 had
+a base commit date no later than the issue. All 12 had a GitHub User
+issue author and an explicit issue closure link. The other 27 had later
+base commits. Of those, 25 had a User actor and two lacked that actor
+classification. A User actor alone does not establish human authorship.
+
+The 24 repeated AWS answers account for 485 literal occurrences across
+13 documents in eight documentation families. Five of those documents
+also contain a uniquely located answer for another case. Keep those
+shared documents together when assessing dependence across the roster.
+
+The repeated-answer audit reauthenticated the 13 source blobs and the
+publisher CSV. Every case has at least two word-bounded hits. Seven
+answer locations across three cases contain all the remaining question
+terms on the answer-bearing lines after removing stopwords and answer
+terms. Only one case has a unique lead by that rule. No candidate
+paragraph contains its question verbatim. One occurrence intersects
+fenced code. The CSV supplies no offset that chooses among these
+locations. Independent reviewers can use the private byte and line
+ranges and paragraph digests to judge which passages supply sufficient
+evidence. All 24 cases remain withheld. The private receipt
+aws-repeated-answer-locations-r1.json is
+4cf5c6484e736ca176333515c7a063e312222e832fae9d2b9b6949dd255feeba.
+
+Two successive 16-case MultiLang batches followed the original
+language-interleaved ranking after excluding the original roster's
+repositories, repository leaf names and base commits. The first batch
+yielded nine scoped passes and the second yielded 11. Across both,
+seven of the 20 passing cases had bases dated no later than the issue.
+All 20 had a GitHub User issue author and an explicit issue closure link.
+Twelve cases were withheld. The overlapping reasons were a missing
+permissive root-license match (10), issue/merge chronology (4), and
+pull/base association (1).
+
+Take the first 11 passing rows in receipt order for the 50-case review
+roster alongside the original 39. That yields 15 base commits no later
+than the issue and 35 later snapshots needing pre-fix review. Retain
+the other nine passing rows as reserves. Three historical repository
+aliases remain unresolved. Per-file rights, exposure, native visibility
+and independent evidence judgments remain open for both batches.
+
+The private receipts under repository-confirmation-multilang-r1 are
+replacement-screen-16-r1.private.json
+(96c939368ad6ac79cfc91a1f309f9887aa6ef22e1be82033f4a91a5774d3f8aa)
+and replacement-screen-16-r2.private.json
+(0b6fdcde3a79efddd4b64b8dc2a1989de9564f01635c163ff077b11d6d415e42).
