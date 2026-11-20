@@ -323,7 +323,7 @@ python scripts/build-service-runtime.py --profile release --destination artifact
 python scripts/package-native.py --target x86_64-pc-windows-msvc --runtime-dir artifacts/runtime/x86_64-pc-windows-msvc
 ```
 
-Use Python 3.11+ locally (the native builder imports standard-library `tomllib`). Output is under ignored `artifacts/native/<target>/`. Retain or deliberately remove only that generated candidate directory before packaging again. Local uncommitted work is recorded as a dirty checkout.
+Use Python 3.11+ locally (the native builder imports standard-library `tomllib`). Output is under ignored `artifacts/native/<target>/`. For CUDA, the packager streams the authenticated payload into the ZIP and tests a separate extraction. Budget for the ZIP and that extraction in addition to the original runtime. Retain or deliberately remove only that generated candidate directory before packaging again. Local uncommitted work is recorded as a dirty checkout.
 
 ## Checks selected by the change
 

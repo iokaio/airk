@@ -123,6 +123,25 @@ def write_archive(stage, archive, expected, executable):
     verify_archive(archive, expected, executable)
 
 
+def write_runtime_archive(runtime, output, archive, files, executables, *, cuda):
+    if cuda is not None:
+        # The producer already verified this immutable runtime. ZIP modes come from
+        # the executable roster, and write_archive reopens and verifies every entry.
+        write_archive(runtime, archive, files, executables)
+        return
+    stage = output / "stage"
+    stage.mkdir()
+    for name in files:
+        destination = stage / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(runtime / name, destination)
+    for name in executables:
+        (stage / name).chmod(0o755)
+    if inventory(stage) != files:
+        raise SystemExit("Runtime payload changed during staging")
+    write_archive(stage, archive, files, executables)
+
+
 def add_cuda_arguments(parser):
     for name in ("cuda-environment", "cuda-projection", "cuda-native-execution-receipt"):
         parser.add_argument("--" + name, type=Path)
@@ -341,20 +360,10 @@ def main():
         raise SystemExit("Candidate output must be a fresh subdirectory of artifacts/")
     # Fresh staging prevents stale files from entering a new candidate.
     output.mkdir(parents=True, exist_ok=False)
-    stage = output / "stage"
     publish = output / "publish"
-    stage.mkdir()
     publish.mkdir()
-    for name in files:
-        destination = stage / name
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(runtime / name, destination)
-    for name in executables:
-        (stage / name).chmod(0o755)
-    if inventory(stage) != files:
-        raise SystemExit("Runtime payload changed during staging")
     archive = publish / ("airk-" + version + "-" + args.target + ".zip")
-    write_archive(stage, archive, files, executables)
+    write_runtime_archive(runtime, output, archive, files, executables, cuda=cuda)
     smoke = output / "smoke"
     smoke.mkdir()
     with zipfile.ZipFile(archive) as zipped:

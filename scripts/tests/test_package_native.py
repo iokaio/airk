@@ -257,6 +257,24 @@ class ArchiveContracts(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "entries differ"):
                 package.verify_archive(archive, expected, "airk")
 
+    def test_verified_cuda_archive_consumes_original_payload_without_an_extra_stage(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runtime = root / "runtime"
+            runtime.mkdir()
+            (runtime / "airk").write_bytes(b"test service")
+            provider = runtime / "provider.so"
+            provider.write_bytes(b"test provider")
+            files = package.inventory(runtime)
+            archive = root / "package.zip"
+            package.write_runtime_archive(runtime, root, archive, files, ("airk",), cuda=object())
+            self.assertFalse((root / "stage").exists())
+            self.assertEqual(package.inventory(runtime), files)
+            package.verify_archive(archive, files, ("airk",))
+            provider.write_bytes(b"changed provider")
+            with self.assertRaisesRegex(ValueError, "digest mismatch"):
+                package.write_runtime_archive(runtime, root, root / "changed.zip", files, ("airk",), cuda=object())
+
     def test_missing_executable_bit_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
