@@ -263,3 +263,32 @@ identities through the manifest, the frozen native inventory, the issue
 request and original budgets before and after the actual Answer request.
 
 Pass `--focus-width 1024` to verify the exposed widened pilot against the same source span. This consumes its own native Answer, admission observation, publication and settled Job receipt.
+
+## AWS full publisher menu
+
+The 41 retained requests share the complete `documents/` tree at publisher
+revision `2d06ee9011f3192b2ff38c09f04e01f1ea9e0191`. The 27 previously
+verified positive documents remain associated with their original selectors.
+Keep all private data and receipts under the campaign artifact root.
+
+1. Run `inventory_aws_natural_menu.py` using `python -I -B -S` and retain
+   its JSON as `aws-natural-menu-inventory-r1.private.json`. It checks the
+   complete publisher tree and binds all 41 active requests to the same menu.
+2. Give `stage_aws_natural_menu_pack.py --output` a fresh checked private
+   directory. It streams the revision archive, verifies each member against
+   its original Git blob, and emits an inert source ZIP and per-file proof.
+   The QA CSV stays outside the pack.
+3. Run `map_aws_source_notices.py --output` with a fresh checked private
+   receipt path. Every member retains its directory-level license and notice
+   evidence, including nested terms and separate sample-code notices.
+4. Run `expand-aws-natural-menu.ps1 -ExpectedSid <verified-human-SID>` to
+   expand the complete original corpus into `aws-docs-full-r1`. The
+   collection root corresponds exactly to the publisher's `documents/`.
+5. In the authorized CPU window, run `verify_aws_natural_menu.py --output`
+   with a fresh `aws-natural-native-source-reads-*` campaign path. The
+   existing bounded fixture binds the original file hashes, serves one
+   publication and follows every native file-list continuation. A complete
+   census identifies both indexed paths and absent publisher members.
+   `test_aws_natural_menu.py` exercises pagination and scope-failure
+   handling. A ranker action menu and paired quality require separate
+   observations.

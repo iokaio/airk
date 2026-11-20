@@ -66,6 +66,7 @@ class Cohort:
     document_count: int
     selector_field: str
     receipt_identity: dict
+    manifest_relative_path: str = "manifest.private.json"
 
 
 def publication_read(cli, read_json, runs, label, arguments, deadline):
@@ -121,7 +122,7 @@ def execute(w, owner, output, cohort, prepare_inputs, observe):
     checked(plan_path, PLAN)
     plan = w["read_json"](plan_path)
     paths = {k: w["pin"](owner, plan[k]) for k in ("service", "cli", "inputs")}
-    manifest_path = corpus / "manifest.private.json"
+    manifest_path = corpus / cohort.manifest_relative_path
     checked(manifest_path, cohort.manifest_sha256)
     subdirectory, cases, source = prepare_inputs(w["read_json"](manifest_path))
     tree = owner.plain(corpus / subdirectory)
