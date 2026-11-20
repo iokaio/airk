@@ -98,3 +98,21 @@ original setup debit, 10,800-second common clock and two lifetime populations.
 It has separate plan and terminal schemas. Use the independent R7 certificate
 option documented in the [certificate reader](../../cal_certificates/README.md)
 after the complete capture and natural closure.
+
+### Read-only R7 predecessor preflight
+
+From the checked Windows shell, run
+`python -I -B -S r8_predecessor.py` in this directory. It sends a JSON custody
+proof to stdout with the exact failed phase 12 and outer Job receipts, mutex
+release, both naturally closed native leases, and the final idle, revision-8
+binding, warm and dispatch pins. The native restart triplet retains R3's
+physical Ready and Closed anchor and uses R7's final idle status. This
+observation leaves current control unchecked.
+
+Add `--check-control` to compare the current stopped control tree under the
+existing installation mutex. This reads about 24 GB and requires no fixture
+startup or output directory. Run the larger observation separately from
+active resource trials. Either mode describes the failed R7 attempt and
+leaves its scientific capture incomplete. A new launch and common-clock
+decision are outside this preflight. Run the model-free cases with
+`python -I -B -S -m unittest discover -s . -p test_r8_predecessor.py`.
