@@ -123,6 +123,16 @@ Cargo writes under the original 24 GiB guest and VHD caps. It checks the approve
 backing. Both free-space floors, the original baselines and the 17:10 UTC cutoff
 still apply. The native volume receipt retains the host watcher observations.
 
+The signed R7 Nextest gate preserves the original CI configuration bytes in a
+per-attempt copy and adds only an absolute `store.dir` inside its checked GNU
+attempt directory. The pinned Nextest CLI receives the copy through
+`--config-file`. The receipt links the original and effective configuration
+hashes and the JUnit output at `nextest-store/ci/junit.xml`. Source custody
+still requires the exact signed file roster. Attempt 3 failed that check after
+all 173 selected tests passed because its default store put the JUnit output
+inside the staged source. Its original gate failure and preserved report
+remain separate from the successor.
+
 Run `cutlass_source.py` to verify the original protected Compact graph and weights,
 the six ORT attention source files, the CUTLASS arithmetic specialization, and the
 actual SM86 object in the Linux provider link. Its JSON describes native build

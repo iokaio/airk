@@ -395,8 +395,14 @@ The CU18 R2 build is settled and failed after an MSVC helper prevented the
 original configure tree from closing. It retained the generated graph and
 original failure custody. A reviewed direct-Job preflight can reopen that
 evidence under the original 16:44 UTC cutoff. It has no active compiler.
-The GNU CPU attempt 3 recorded 173 passing test cases and failed the
-signed source census on its generated JUnit. The original report was
-preserved, and a separate attempt 4 uses a verified private Nextest store.
-Reobserve the actual owner and terminal. Linux CUDA qualification follows
-Windows. Neither release is ready, and no artifact was published.
+GNU CPU attempt 4 passed 173 selected tests and skipped 163 with an
+unchanged signed source census, a verified private Nextest store and no
+remaining Cargo processes. The attempt 3 census failure remains a separate
+historical receipt. Linux CUDA qualification follows Windows.
+
+The R7 CPU references need an affinity check that authenticates the new
+service image before inference. Historical serial timings put the final
+44 dual-reference rows beyond the original cutoff at the observed capture
+pace. A concurrent two-role run would need separate memory admission and
+disjoint observed core placement. Neither release is ready, and no artifact
+was published.

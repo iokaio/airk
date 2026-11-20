@@ -94,6 +94,7 @@ def run(options):
                           "test(arbiter::runtime::cuda)")]
     process = runpy.run_path(str(CPU))
     bounded = True
+    r7_nextest = None
     if options.signed_joint and options.gate == "nextest":
         command[-1] = ("test(arbiter::runtime::cuda) | test(cpu_source_transition) | "
                        "test(original_reference_paths_keep_a_bounded_source_root) | test(fp16_compact::) | test(fp16_large::)")
@@ -116,6 +117,10 @@ def run(options):
                 raise ValueError("signed R7 storage reservation or campaign clock is unavailable")
         scan.mkdir(0o700)
         guarded(scan, uid, stat.S_ISDIR)
+        if options.signed_r7 and options.gate == "nextest":
+            from r7_nextest import prepare
+            r7_nextest = prepare(repo, scan, before["files"][".config/nextest.toml"], uid)
+            command[3:3] = ["--config-file", r7_nextest["effective"]["path"]]
         result,_,_,bounded = monitored(command,repo,scan,env,reserve,uid,timeout=timeout,log_name="cargo.log",
                                        volume_guard=volume_guard)
     else:
@@ -127,7 +132,11 @@ def run(options):
     if verify_source:
         after.update(joint=verify_source(),native=signed_gate.native())
     log = (scan / "cargo.log").read_text(errors="replace")
-    summary = re.search(r"Summary \[[^\]]+\]\s+(\d+) tests? run: (\d+) passed", log)
+    summary = re.search(r"Summary \[[^\]]+\]\s+(\d+) tests? run: (\d+) passed(?:, (\d+) skipped)?", log)
+    if r7_nextest is not None:
+        from r7_nextest import result_junit
+        r7_nextest["junit"] = result_junit(r7_nextest, uid)
+        bounded = bounded and r7_nextest["junit"] is not None
     count = int(summary[1]) if summary else 0
     audit(scan, uid)
     for folder in ("target", "cargo", "tmp", "private-census"):
@@ -139,6 +148,8 @@ def run(options):
             "incremental": False, "target": env["CARGO_TARGET_DIR"],
             "sources_before": before["sha256"], "sources_after": after["sha256"], "source_receipt": options.freeze_sha256,
             "selected_tests": count if options.gate == "nextest" else None, "command": result,
+            **({"nextest_store": r7_nextest, "skipped_tests": int(summary[3] or 0) if summary else None}
+               if r7_nextest is not None else {}),
             "log": str(scan / "cargo.log"), "log_sha256": sha(scan / "cargo.log"),
             "compiled_against": env["ORT_LIB_LOCATION"]}
 
