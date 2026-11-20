@@ -11,6 +11,28 @@ from chronological_inputs import chronology
 
 
 class ScientificJoinTests(unittest.TestCase):
+    def test_original_cpu_preserves_all_refusals_and_eligible_card_order(self):
+        from run_original_cpu import ORIGINAL,compiled_rows
+        rows = [{"id":str(i),"ordinal":i,"status":"no_native_assessment_request"} for i in range(100)]
+        cert = [{"id":r["id"],"source_group":"group","request":None} for r in rows]
+        roster = {"cards":["A","B"]}
+        census = {"profile":ORIGINAL,"compiled":{"input_ids":[3,9]},"fits_remaining_allowance":True}
+        for i in (0,99):
+            rows[i].update(roster=roster,remaining_ms=2,status="eligible",compiled=census["compiled"])
+            cert[i].update(request={"roster":roster},remaining_ms_at_observation=2,compiler_census=[dict(census)])
+        rows[99]["status"] = "compiler_refused_remaining_allowance"
+        cert[99]["compiler_census"][0]["fits_remaining_allowance"] = False
+        checked = compiled_rows(rows,cert)
+        self.assertEqual(checked[0]["status"],"compiled_original_input")
+        self.assertEqual(checked[1]["status"],"no_native_assessment_request")
+        self.assertEqual(checked[99]["status"],"compiler_refused_remaining_allowance")
+        self.assertTrue(all("scores" not in r for r in checked))
+        with self.assertRaises(ValueError):
+            compiled_rows(rows[:-1],cert[:-1])
+        rows[0]["compiled"] = {"input_ids":[9,3]}
+        with self.assertRaises(ValueError):
+            compiled_rows(rows,cert)
+
     def setUp(self):
         self.compiled={"id":"A","source_group":"source","compiled":{"input_ids":[4,5],"candidate_positions":[1]},
                        "status":"compiled_original_input","roster":{"cards":["A"]},"remaining_ms":2}
