@@ -12475,3 +12475,23 @@ The AWS command is pwsh -NoProfile -File stage-aws-unique-source-corpus.ps1 -Run
 Two TechQA, five AWS and six topology controls passed. File-level repository
 evidence, native capture, exact-artifact calibration and the paired result remain open.
 [Verified counts and SHA-256 receipts](../arbiter/software-v2-data-audit.md#active-source-cohort-after-the-aws-exclusions)
+
+### 2026-11-19 — CAL100 source replay for fresh capture
+
+The separate calibration population has 100 ordered questions in 12 phases
+of eight and one of four. Replayed all 13 historical memberships against the
+current preparation code and retained corpus, scopes, manifest and rubric
+pins. All 753 files and paragraph byte ranges matched (344,024 bytes).
+The checked replay including output audit took 15.6852039 s. Eight focused
+preparation controls passed and primary discovery passed all 11 selected-goal tests. The partially exposed historical CAL split
+stays separate from confirmation. No task forwards ran.
+
+Under the private campaign root, cal100-retained-population-replay-r1.json
+has SHA-256 3a15febdd68f7ab4f2a3572981a039e21a30f218a2a4e8b482641153d488773f.
+The ordered census cal100-retained-census-r1.json has SHA-256
+84ba7c6834a95e2ea4683d13a7a1ec0d6aec4754982850041851fb180f0a85d8.
+Use python -B -S scripts/arbiter/evaluation/selected_goal/replay_cal_population.py
+under the checked human shell, adding --census-only for the census.
+The current paired Answer runner requires Focus disabled and Context ready.
+Fresh CAL capture needs Focus enabled and zero Context forwards under renewed
+U110 scope. The exact GPU calibration still has zero active rules.

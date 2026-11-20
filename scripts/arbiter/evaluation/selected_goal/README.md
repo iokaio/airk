@@ -25,3 +25,11 @@ distinct. This26-role anchor audit is not a complete runtime import closure:
 dynamic Python/model/SDK imports and additional source dependencies still need
 operational adapter review. Original LF or CRLF SPDX prefixes are removed only
 when explicitly declared; no source-body newline normalization occurs.
+
+Run `python -B -S scripts/arbiter/evaluation/selected_goal/replay_cal_population.py`
+to authenticate the retained CAL corpus, rubric, 100 ordered scope IDs,
+13 phase memberships and 753 source paragraph ranges against their byte pins.
+The receipt identifies the historically partly exposed CAL population for a
+fresh capture. Use `--census-only` for the ordered input to prepare_packets.py.
+Redirect stdout to a fresh checked private path. Historical phases supply
+membership only. The fresh service scope and owned capture are still required.
