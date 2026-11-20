@@ -46,7 +46,13 @@ fn checked(value: &Value, width: usize, cards: usize, digest: &str) -> Result<Co
 fn protected_control_rejects_mask_position_and_card_drift() -> Result<()> {
     let value = serde_json::json!({"prompt":"control","input_ids":[19,23],"attention_mask":[1,1],
         "position_ids":[0,1],"decision_position":1,"candidate_positions":[32],"option_mask":[true],"input_digest":Q543});
-    checked(&value, 2, 1, Q543)?;
+    let mut input = checked(&value, 2, 1, Q543)?;
+    super::validate_cal_input(&input)?;
+    input.input_ids[0] = 151_936;
+    assert!(super::validate_cal_input(&input).is_err());
+    input.input_ids[0] = 0;
+    input.attention_mask[0] = 0;
+    assert!(super::validate_cal_input(&input).is_err());
     for (field, wrong) in [
         ("decision_position", serde_json::json!(0)),
         ("attention_mask", serde_json::json!([1, 0])),

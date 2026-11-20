@@ -36,7 +36,11 @@ fn compact_cutlass_original_t1014_operand() -> Result<()> {
 }
 
 #[cfg(all(windows, target_arch = "x86_64"))]
-fn protected_cutlass_model(score: bool) -> Result<()> {
+fn protected_cutlass_model(
+    score: bool,
+    timing: Option<timing::Population>,
+    pressure: bool,
+) -> Result<()> {
     let deadline = Instant::now() + Duration::from_secs(120);
     let (root, manifest) = airk_host::gpu_runtime::installed_paths()?;
     let campaign = root
@@ -66,7 +70,20 @@ fn protected_cutlass_model(score: bool) -> Result<()> {
                 == "9433753580c8a370bbea42119aa67ac81306229bcf6876514213f3e2979083b5",
             "exact reviewed scientific runtime required"
         );
-        runtime.observe_protected_cutlass_model(campaign, expected.as_deref(), deadline)
+        if let Some(population) = timing {
+            protected_timing(
+                &runtime,
+                campaign,
+                expected
+                    .as_deref()
+                    .context("missing protected graph gate")?,
+                deadline,
+                population,
+                pressure,
+            )
+        } else {
+            runtime.observe_protected_cutlass_model(campaign, expected.as_deref(), deadline)
+        }
     })??;
     drop(owner);
     drop(lease);
@@ -83,14 +100,102 @@ fn protected_cutlass_model(score: bool) -> Result<()> {
 #[test]
 #[ignore = "owned protected Compact CUTLASS graph-only placement"]
 fn compact_cutlass_protected_graph() -> Result<()> {
-    protected_cutlass_model(false)
+    protected_cutlass_model(false, None, false)
 }
 
 #[cfg(all(windows, target_arch = "x86_64"))]
 #[test]
 #[ignore = "owned protected Compact CUTLASS original engineering score"]
 fn compact_cutlass_protected_fixed_score() -> Result<()> {
-    protected_cutlass_model(true)
+    protected_cutlass_model(true, None, false)
+}
+
+#[cfg(all(windows, target_arch = "x86_64"))]
+#[test]
+#[ignore = "owned protected Compact unprofiled twenty-sample timing"]
+fn compact_cutlass_protected_fixed_timing() -> Result<()> {
+    protected_cutlass_model(true, Some(timing::Population::Fixed), false)
+}
+
+#[cfg(all(windows, target_arch = "x86_64"))]
+#[test]
+#[ignore = "owned protected Compact unprofiled mixed-width timing"]
+fn compact_cutlass_protected_mixed_timing() -> Result<()> {
+    protected_cutlass_model(true, Some(timing::Population::Mixed), false)
+}
+
+#[cfg(all(windows, target_arch = "x86_64"))]
+fn protected_timing(
+    runtime: &airk_retrieval::arbiter::runtime::cuda::CudaRuntime,
+    campaign: &Path,
+    gate: &str,
+    deadline: Instant,
+    population: timing::Population,
+    pressure: bool,
+) -> Result<Value> {
+    let expires_ns = std::env::var("AIRK_COMPACT_CUTLASS_EXPIRES_NS")?.parse::<u64>()?;
+    let now_ns = airk_process::monotonic::now_ns()?;
+    ensure!(
+        now_ns < expires_ns && expires_ns - now_ns <= 120_000_000_000,
+        "invalid original timing deadline"
+    );
+    let output = std::path::PathBuf::from(std::env::var("AIRK_PRIVATE_CENSUS_BASE")?);
+    let binary = std::env::var("AIRK_COMPACT_CUTLASS_TEST_IMAGE_SHA")?.parse()?;
+    let bundle = std::env::var("AIRK_COMPACT_CUTLASS_EXPECTED_WORDS")?;
+    let expected_words: [[u32; 8]; 4] = serde_json::from_str(&bundle)?;
+    let identity = operation::Identity {
+        input_sha256: sha(bundle.as_bytes()),
+        profile: gate.parse()?,
+        process_id: std::process::id(),
+        native_binary_sha256: binary,
+    };
+    let mut journal =
+        operation::Journal::create_until(&output.join("protected.json"), identity, expires_ns)?;
+    let tier = if pressure {
+        Some(std::env::var("AIRK_COMPACT_PRESSURE_TIER_GIB")?.parse::<u64>()?)
+    } else {
+        None
+    };
+    runtime.time_protected_cutlass_model(campaign,gate,deadline,tier,|call,device_snapshot|{
+                let mut rows=Vec::new();
+                for (index,(width_index,cycle,label)) in population.schedule().into_iter().enumerate() {
+                    let (kind,ordinal)=population.journal_operation(index);
+                    let width=[32,128,1024,8192][width_index];
+                    let digest=[T32_INPUT,DEVELOPMENT_CASES[0].2,DEVELOPMENT_CASES[1].2,DEVELOPMENT_CASES[2].2][width_index];
+                    let utc=|| -> Result<u128>{Ok(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos())};
+                    let adapter_before=device_snapshot()?;
+                    let host_rss_before=airk_kernel::service_resource_observations::rss(std::process::id());
+                    let start_ns=airk_process::monotonic::now_ns()?;
+                    let start_utc=utc()?;
+                    let observed=journal.observe(kind,ordinal,Some(digest.parse()?),||call(width_index))?;
+                    let finish_utc=utc()?;
+                    let finish_ns=airk_process::monotonic::now_ns()?;
+                    let adapter_after=device_snapshot()?;
+                    let host_rss_after=airk_kernel::service_resource_observations::rss(std::process::id());
+                    let scores=observed.value?;
+                    ensure!(observed.within_deadline && scores.iter().map(|v|v.to_bits()).eq(expected_words[width_index]),
+                            "warm call expired or differed from the sealed candidate score words");
+                    rows.push(json!({"tokens":width,"cycle":cycle,"kind":label,"input_digest":digest,
+                        "adapter_before":adapter_before,"adapter_after":adapter_after,"host_rss_before_bytes":host_rss_before,"host_rss_after_bytes":host_rss_after,
+                        "native_call_us":observed.native_call_elapsed_us,"start_us":start_ns/1000,"finish_us":finish_ns/1000,
+                        "start_utc_ns":start_utc,"finish_utc_ns":finish_utc,"forward_synchronized":true,"raw_scores":scores}));
+                }
+                Ok(json!({"rows":rows,"expires_monotonic_ns":expires_ns,"profiled":false}))
+            })
+}
+
+#[cfg(all(windows, target_arch = "x86_64"))]
+#[test]
+#[ignore = "owned protected Compact single-call measured-availability fit"]
+fn compact_cutlass_pressure_fit() -> Result<()> {
+    protected_cutlass_model(true, Some(timing::Population::Fit), true)
+}
+
+#[cfg(all(windows, target_arch = "x86_64"))]
+#[test]
+#[ignore = "owned protected Compact retained-pressure full-width twenty-sample timing"]
+fn compact_cutlass_pressure_fixed() -> Result<()> {
+    protected_cutlass_model(true, Some(timing::Population::Fixed), true)
 }
 
 pub(super) const SPEC: ProjectionSpec = ProjectionSpec {

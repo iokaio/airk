@@ -609,3 +609,6 @@ fn compact_cal_population_rejects_reordered_and_duplicate_ordinals() -> Result<(
     assert!(closed_population(&truncated, &audit, &ids).is_err());
     Ok(())
 }
+
+#[cfg(all(windows, target_arch = "x86_64"))]
+mod protected;

@@ -971,6 +971,29 @@ impl LoadedRuntime {
         }
         Ok(values)
     }
+    #[cfg(feature = "test-support")]
+    pub(super) fn pressure_adapter_luid(&self, context: &PrimaryContext) -> Result<String> {
+        ensure!(
+            !self.product,
+            "pressure LUID requires the pinned scientific CUDA runtime"
+        );
+        type GetLuid = unsafe extern "system" fn(*mut u8, *mut u32, i32) -> i32;
+        // The first held module is the authenticated System32 CUDA driver used to create this context.
+        let query: GetLuid = unsafe {
+            symbol(
+                *self._modules.first().context("no retained CUDA driver")?,
+                c"cuDeviceGetLuid",
+            )?
+        };
+        let mut value = [0u8; 8];
+        let mut mask = 0u32;
+        cuda(unsafe { query(value.as_mut_ptr(), &mut mask, context.device) })?;
+        ensure!(mask != 0, "CUDA adapter has no WDDM node mask");
+        let low = u32::from_le_bytes(value[..4].try_into()?);
+        let high = u32::from_le_bytes(value[4..].try_into()?);
+        Ok(format!("luid_0x{high:08x}_0x{low:08x}"))
+    }
+
     pub fn observe(
         &self,
         ordinal: i32,

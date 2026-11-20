@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Scientific graph load/score for the fixed protected-attention Compact candidate.
 mod inputs;
+mod pressure;
 
 use super::{CudaRuntime, Result, Sha256, Value, ensure, json};
 use crate::arbiter::{compiler::CompiledInput, runtime::cuda::GraphMetadataObservation};
@@ -154,6 +155,38 @@ fn check_gpu_nodes(placement: &super::super::super::PlacementObservation) -> Res
     Ok(())
 }
 
+type Measure<'a> = dyn FnMut(
+        &mut dyn FnMut(usize) -> Result<Vec<f32>>,
+        &mut dyn FnMut() -> Result<Value>,
+    ) -> Result<Value>
+    + 'a;
+
+type CalSession<'a> =
+    dyn FnMut(&mut dyn FnMut(&CompiledInput, Instant) -> Result<Vec<f32>>) -> Result<Value> + 'a;
+
+fn validate_cal_input(input: &CompiledInput) -> Result<()> {
+    let t = input.input_ids.len();
+    let n = input.candidate_positions.len();
+    ensure!(
+        (1..=8192).contains(&t)
+            && (1..=8).contains(&n)
+            && input.input_ids.iter().all(|id| (0..151936).contains(id))
+            && input.attention_mask.len() == t
+            && input.attention_mask.iter().all(|&bit| bit == 1)
+            && input.decision_position == i64::try_from(t)? - 1
+            && input.position_ids.iter().copied().eq(0..i64::try_from(t)?)
+            && input.option_mask.len() == n
+            && input.option_mask.iter().all(|&bit| bit)
+            && input
+                .candidate_positions
+                .iter()
+                .copied()
+                .eq(32..32 + i64::try_from(n)?),
+        "original all-live Compact compiler tensor contract differs"
+    );
+    Ok(())
+}
+
 impl CudaRuntime {
     /// Open an immutable science-only graph. Scoring requires an independently sealed observed typed graph digest.
     pub fn observe_protected_cutlass_model(
@@ -162,11 +195,66 @@ impl CudaRuntime {
         reviewed_graph: Option<&str>,
         deadline: Instant,
     ) -> Result<Value> {
+        self.protected_cutlass_session(campaign, reviewed_graph, deadline, None, None, None)
+    }
+
+    /// Run the original qualification owner's warm schedule on one authenticated private session.
+    pub fn time_protected_cutlass_model(
+        &self,
+        campaign: &Path,
+        reviewed_graph: &str,
+        deadline: Instant,
+        pressure_tier: Option<u64>,
+        mut measure: impl FnMut(
+            &mut dyn FnMut(usize) -> Result<Vec<f32>>,
+            &mut dyn FnMut() -> Result<Value>,
+        ) -> Result<Value>,
+    ) -> Result<Value> {
+        self.protected_cutlass_session(
+            campaign,
+            Some(reviewed_graph),
+            deadline,
+            Some(&mut measure),
+            None,
+            pressure_tier,
+        )
+    }
+
+    /// Supply the CAL owner a synchronized scorer only for the lifetime of the verified private model session.
+    pub fn with_protected_cutlass_cal_session(
+        &self,
+        campaign: &Path,
+        reviewed_typed_graph: &str,
+        deadline: Instant,
+        mut collect: impl FnMut(
+            &mut dyn FnMut(&CompiledInput, Instant) -> Result<Vec<f32>>,
+        ) -> Result<Value>,
+    ) -> Result<Value> {
+        self.protected_cutlass_session(
+            campaign,
+            Some(reviewed_typed_graph),
+            deadline,
+            None,
+            Some(&mut collect),
+            None,
+        )
+    }
+
+    fn protected_cutlass_session(
+        &self,
+        campaign: &Path,
+        reviewed_graph: Option<&str>,
+        deadline: Instant,
+        mut measure: Option<&mut Measure<'_>>,
+        mut collect: Option<&mut CalSession<'_>>,
+        pressure_tier: Option<u64>,
+    ) -> Result<Value> {
         crate::native_inference::require_service_compute()?;
         ensure!(
             !self.is_product()
                 && std::env::var("ORT_CUDA_GEMM_OPTIONS").as_deref() == Ok("2")
-                && std::env::var("ORT_ENABLE_ATTENTION_KERNEL_DEBUG_INFO").as_deref() == Ok("1"),
+                && std::env::var("ORT_ENABLE_ATTENTION_KERNEL_DEBUG_INFO").as_deref()
+                    == Ok(if measure.is_some() { "0" } else { "1" }),
             "fixed scientific provider environment required"
         );
         let stage = campaign.join(ROOT);
@@ -189,15 +277,44 @@ impl CudaRuntime {
             .loaded
             .retain_primary(adapter.ordinal, self._native_lease.clone())?;
         let before = self.loaded.observe(adapter.ordinal, &context, deadline)?;
-        ensure!(
-            before.free_bytes >= 24 << 30,
-            "original 24 GiB CUDA reservation unavailable"
-        );
+        let (arena, grant) = if let Some(tier) = pressure_tier {
+            let gate = reviewed_graph.context("pressure requires sealed graph")?;
+            ensure!(
+                measure.is_some() && collect.is_none(),
+                "only explicit scientific timing populations may use pressure"
+            );
+            let luid = self.loaded.pressure_adapter_luid(&context)?;
+            let (arena, grant) = pressure::admit(
+                tier,
+                gate,
+                &adapter.uuid,
+                &luid,
+                || {
+                    Ok(self
+                        .loaded
+                        .observe(adapter.ordinal, &context, deadline)?
+                        .free_bytes)
+                },
+                deadline,
+            )?;
+            (arena, Some(grant))
+        } else {
+            ensure!(
+                std::env::var_os("AIRK_COMPACT_PRESSURE_TIER_GIB").is_none()
+                    && std::env::var_os("AIRK_COMPACT_PRESSURE_NONCE").is_none(),
+                "nonpressure run received an unrelated grant"
+            );
+            ensure!(
+                before.free_bytes >= 24 << 30,
+                "original 24 GiB CUDA reservation unavailable"
+            );
+            (24 << 30, None)
+        };
         let provider = CUDAExecutionProvider::default()
             .with_device_id(adapter.ordinal)
             .with_tf32(false)
             .with_cuda_graph(false)
-            .with_memory_limit(24 << 30)
+            .with_memory_limit(usize::try_from(arena)?)
             .with_attention_backend(CUDAAttentionBackend::EFFICIENT_ATTENTION)
             .build()
             .error_on_failure();
@@ -218,6 +335,9 @@ impl CudaRuntime {
             .validate_bounded_fp16_cpu_values(9_443)
             .map_err(|e| e.to_string());
         let fingerprint = format!("{:x}", Sha256::digest(serde_json::to_vec(&meta.rows)?));
+        let mut population = None;
+        let mut cal = None;
+        let mut cal_native_forwards = 0usize;
         let score_result = if let Some(expected) = reviewed_graph {
             ensure!(
                 routes.is_ok() && cpu.is_ok(),
@@ -227,20 +347,78 @@ impl CudaRuntime {
                 fingerprint == expected,
                 "typed optimized placement differs from original reviewed graph load"
             );
-            let name =
-                std::env::var("AIRK_COMPACT_CUTLASS_INPUT").unwrap_or_else(|_| "fixed".into());
-            let input = inputs::load(campaign, &name)?;
-            let digest = input.input_digest.to_string();
-            ensure!(
-                Instant::now() < deadline,
-                "numeric dispatch past original deadline"
-            );
-            let now = Instant::now();
-            let values = score(&mut session, input)?;
-            self.loaded.synchronize(&context)?;
-            Some(
-                json!({"compiled_input_digest":digest,"raw_scores":values,"native_call_us":now.elapsed().as_micros(),"forward_synchronized":true}),
-            )
+            if let Some(collector) = collect.as_mut() {
+                let mut pending = false;
+                cal = Some(collector(&mut |input, expires| {
+                    ensure!(
+                        !pending && expires <= deadline && Instant::now() < expires,
+                        "original CAL deadline or prior native return refused"
+                    );
+                    validate_cal_input(input)?;
+                    pending = true;
+                    let scores = score(&mut session, input.clone())?;
+                    self.loaded.synchronize(&context)?;
+                    cal_native_forwards += 1;
+                    ensure!(
+                        Instant::now() < expires,
+                        "CAL native result exceeded original deadline"
+                    );
+                    pending = false;
+                    Ok(scores)
+                })?);
+                ensure!(
+                    !pending,
+                    "CAL scorer cannot close after unsettled or expired native work"
+                );
+                None
+            } else if let Some(bench) = measure.as_mut() {
+                let rows = ["32", "128", "1024", "8192"]
+                    .map(|name| inputs::load(campaign, name))
+                    .into_iter()
+                    .collect::<Result<Vec<_>>>()?;
+                let mut count = 0;
+                let mut device_snapshot = || {
+                    Ok(serde_json::to_value(self.loaded.observe(
+                        adapter.ordinal,
+                        &context,
+                        deadline,
+                    )?)?)
+                };
+                population = Some(bench(
+                    &mut |index| {
+                        ensure!(
+                            Instant::now() < deadline && count < 21,
+                            "original timing lifetime or sample cap exhausted"
+                        );
+                        let input = rows.get(index).context("unknown timing control")?;
+                        count += 1;
+                        let scores = score(&mut session, input.clone())?;
+                        self.loaded.synchronize(&context)?;
+                        ensure!(
+                            Instant::now() < deadline,
+                            "timing call exceeded original lifetime"
+                        );
+                        Ok(scores)
+                    },
+                    &mut device_snapshot,
+                )?);
+                None
+            } else {
+                let name =
+                    std::env::var("AIRK_COMPACT_CUTLASS_INPUT").unwrap_or_else(|_| "fixed".into());
+                let input = inputs::load(campaign, &name)?;
+                let digest = input.input_digest.to_string();
+                ensure!(
+                    Instant::now() < deadline,
+                    "numeric dispatch past original deadline"
+                );
+                let now = Instant::now();
+                let values = score(&mut session, input)?;
+                self.loaded.synchronize(&context)?;
+                Some(
+                    json!({"compiled_input_digest":digest,"raw_scores":values,"native_call_us":now.elapsed().as_micros(),"forward_synchronized":true}),
+                )
+            }
         } else {
             None
         };
@@ -261,7 +439,7 @@ impl CudaRuntime {
             json!({"schema":"airk.private.compact-protected-cutlass-model/1","model_sha256":GRAPH,"weight_sha256":WEIGHT,
                  "adapter":adapter,"optimizers":OPTIMIZERS,"cold_us":cold_us,"typed_graph_sha256":fingerprint,
                  "graph":graph_evidence,"placement":placement,"route_refusal":routes.err(),"cpu_refusal":cpu.err(),"score":score_result,"before":before,"after":after,
-                 "after_session_release":released,"product_admission":false,"qualification":false}),
+                 "after_session_release":released,"pressure":grant,"cal":cal,"cal_native_forwards":cal_native_forwards,"timing":population,"product_admission":false,"qualification":false}),
         )
     }
 }
