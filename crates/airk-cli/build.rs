@@ -20,7 +20,9 @@ fn main() {
                 "airk_ort_collect_final_placement_v1",
                 "airk_ort_collect_final_graph_metadata_v1",
             ] {
-                println!("cargo:rustc-link-arg-bin=airk=-Wl,--undefined={name},--export-dynamic-symbol={name}");
+                println!(
+                    "cargo:rustc-link-arg-bin=airk=-Wl,--undefined={name},--export-dynamic-symbol={name}"
+                );
             }
         }
     }

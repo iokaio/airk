@@ -501,7 +501,12 @@ impl Owner {
                 })
                 .collect()
         };
-        #[cfg(all(windows, target_arch = "x86_64", feature = "test-support", feature = "gpu-cuda"))]
+        #[cfg(all(
+            windows,
+            target_arch = "x86_64",
+            feature = "test-support",
+            feature = "gpu-cuda"
+        ))]
         self.apply_evaluation_gpu_policy(allowed)?;
         if active.is_empty() {
             return Ok(());
