@@ -68,6 +68,17 @@ specialized code for Radeon.
 | Linux | CUDA | WebGPU on Vulkan | not applicable | CPU ladder |
 | macOS | not applicable | not applicable | WebGPU on Metal | CPU ladder |
 
+### GPU use is opt-in
+
+GPU use is opt-in on every platform. The user chooses it in the Service Admin
+configuration, through the one service-wide setting. Until that choice is
+made, no GPU route loads and Auto uses the CPU ladder, so CPU is the default
+route everywhere. With GPU use on, Auto prefers a qualified GPU route for the
+adapter and falls back to the ladder. This one setting covers every GPU
+route: CUDA, and WebGPU on Radeon and macOS. The current source defaults the
+setting to enabled, so step 5 changes that default under a recorded contract
+decision.
+
 ### CPU ladder
 
 No CPU tier is guaranteed. The user set a target instead: processors with at
@@ -80,9 +91,9 @@ a qualified tier below it exists there.
 Auto selects the first tier that fits the machine's measured memory and CPU
 class. It reports the device, the tier and the reason on every surface. Each
 result must also let a downstream agent tell which route, model, tier and
-token budget produced its evidence. No downgrade is silent. Service-wide GPU
-opt-out, a missing or unsupported GPU, insufficient device memory and a
-settled GPU failure all enter the ladder.
+token budget produced its evidence. No downgrade is silent. GPU use that is
+not opted in or is turned off, a missing or unsupported GPU, insufficient
+device memory and a settled GPU failure all enter the ladder.
 
 A tier is admitted on the parent protocol for the model forward: one cold
 load, one warmup and 20 warm samples with nearest-rank p95, on a named CPU
@@ -178,7 +189,18 @@ confirmed the three points above.
   the goal cannot be met, the stated requirement is a 16 GB card for Compact
   and a 24 GB card for Large.
 
-No choice in this section remains open.
+The user clarified one more point at 7:51 p.m. Denver time.
+
+- GPU use is opt-in on all platforms, chosen in the Service Admin
+  configuration. This amends the earlier approval under which the
+  service-wide setting defaults to enabled.
+
+One choice follows from that clarification and remains open. It does not
+block steps 1 to 4.
+
+- How to treat a configuration that already stores GPU use as enabled. That
+  value was written as a default and not chosen. The recommendation is to
+  reset it to off once and tell the user.
 
 [D08](final-plan.md#11-automatic-gpu-execution-and-cpu-fallback-d08) ·
 [Platform order](final-plan.md#verified-starting-point-and-backend-order) ·
@@ -217,7 +239,7 @@ card, so each claim states the smallest memory actually tested.
 | 2 | Deliver the CPU milestone. Install the product on Windows and on Linux under WSL2 and measure the ladder tiers end to end at 8 cores, the target class. Start with retrieval and Focus, and add the Compact tiers when step 3 delivers them. Record the four memory figures. macOS joins at step 11. | Each tier has an end-to-end figure at 8 cores on both systems, and the tiers that meet 120 seconds are admitted for the target class. | Nothing | Medium. The runtime build on each system is the risk. |
 | 3 | Export the portable graph for Compact. Record the recipe in the exporter contract first. Verify shared weight bytes. Load on the static runtime with zero forwards. Score the four widths and 2,048 tokens against the reference. Time each width and record the four memory figures. | Compact has measured CPU numbers for the full and fast tiers. | Nothing | High. It reuses the retained FP32 graph and the Large weight-cast edit. |
 | 4 | Finish Windows CUDA. Complete Compact matching references, fit calibration, add the Large selector and score its panel. Run capacity under A6. | Both candidates hold a calibrated panel and a memory figure. | Nothing | High for Compact, medium for Large. |
-| 5 | Record the Core contract decision, then implement: Auto order, the ladder tiers and the CPU target class, typed reasons, truthful status, per-result disclosure of route, model, tier and budget, the weight rule and a WebGPU provider value. Test with injected capabilities. | Reviewed Core changes with qualification flags false. | Nothing | High. |
+| 5 | Record the Core contract decision, then implement: the opt-in GPU default, Auto order, the ladder tiers and the CPU target class, typed reasons, truthful status, per-result disclosure of route, model, tier and budget, the weight rule and a WebGPU provider value. Test with injected capabilities. | Reviewed Core changes with qualification flags false. | Nothing | High. |
 | 6 | Run the WebGPU smoke test on the A6000 through Direct3D 12 as soon as step 3 has a graph. It stays early by the user's decision and includes the speed line. It takes the GPU only when no CUDA run holds it. | A go or no-go for the rented runs. | Step 3 | Unknown until it runs. |
 | 7 | Score the portable graph on the 100 frozen Compact rows and the confirmation set on CPU, and apply acceptance rule 2. | The CPU route is admitted or its first failing row is named. | Steps 3 and 4 | High. |
 | 8 | Complete the stage comparison and the 98% comparison: the FP32 arm, the calibrated identity, and the Compact and Large arms. Compare delivered evidence first and judge only the discordant pairs. | The 98% bound and each Context model's added evidence are measured. | Nothing | Medium. Label coverage decides it. |
@@ -258,6 +280,12 @@ field needs its own recorded decision, because the recorded read-parity
 decision keeps the Search and Answer schemas unchanged and places device
 status in diagnostics. The DirectML and Core ML provider values stay in the
 type until a recorded decision removes them. Build nothing new on them.
+`allow_gpu` defaults to enabled in `service_resources.rs` today, and a
+retained test loads a configuration without the field as enabled. Change the
+default to off under the recorded decision, and settle there how a value
+stored under the earlier default is treated. Reading the Admin controls must
+still not initialize a GPU or load a model.
+[Service resource configuration](../../crates/airk-core/src/service_resources.rs)
 [Device policy source](../../crates/airk-core/src/arbiter/device.rs) ·
 [Native device and profile contract](../../crates/airk-core/src/arbiter/CONTRACT.md)
 

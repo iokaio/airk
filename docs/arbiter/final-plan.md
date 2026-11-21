@@ -72,6 +72,12 @@ Where this plan says otherwise, these approvals govern.
 6. **A6.** Device memory fit is judged against a model-free control on each
    platform and provider, with the approved 2 GiB reserve.
 
+The user also clarified that evening that GPU use is opt-in on every
+platform, chosen in the Service Admin configuration. The service-wide
+setting therefore defaults to off, and CPU is the default route. This amends
+the approved service-wide GPU setting, under which existing installations
+default to enabled.
+
 ### User answers for this plan
 
 The user answered D01–D06 during this planning conversation. These are recorded

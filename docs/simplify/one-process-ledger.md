@@ -13765,3 +13765,31 @@ Checks actually run before committing:
 Not run: Clippy, any Cargo build or Rust test, and any model, GPU or service
 work. Compilation of the preserved Rust changes is therefore unverified and
 is the first check owed before that code is relied on.
+
+The third commit is `eaca06d5`.
+
+### 21 November 2026 at 02:51 UTC — GPU use is opt-in on every platform
+
+The user wrote: "We need to clarify that on all platforms, GPU use is opt-in
+by application choice in service admin configuration."
+
+Recorded in a new design subsection and in section 3 of
+`docs/arbiter/final-plan-fp16.md`, in the approvals subsection of
+`docs/arbiter/final-plan.md` and in `docs/agent-current-work.md`. The
+service-wide setting is the opt-in for every GPU route. Until the user turns
+it on in the Service Admin configuration, no GPU route loads and Auto uses
+the CPU ladder, so CPU is the default route.
+
+This amends the approved service-wide GPU setting, under which existing
+installations default to enabled. The source still implements the earlier
+default: `default_allow_gpu` in `crates/airk-core/src/service_resources.rs`
+supplies the value, and a retained test loads a configuration without the
+field as enabled. No code changed in this session. The change belongs to
+step 5 and needs its recorded contract decision first.
+
+Open with the user: how to treat a configuration that already stores GPU use
+as enabled. The primary agent recommends resetting it to off once and telling
+the user, because that value was written as a default.
+
+Validation was documentation-only: relative links and anchors resolve and
+`git diff --check` passes. No build or run was performed.

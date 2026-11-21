@@ -512,11 +512,17 @@ section of this file conflicts with them, the approvals govern. In short:
   confirmation set.
 - The frozen FP32 artifact may be scored once per model for evaluation only.
 - Device memory fit is judged against a model-free control.
+- GPU use is opt-in on every platform, chosen in the Service Admin
+  configuration through the service-wide setting. CPU is the default route.
+  The source still defaults the setting to enabled, and changing that is
+  part of step 5. The earlier statement in this file that the setting
+  defaults to enabled is superseded.
 
 Follow the [work order](arbiter/final-plan-fp16.md#4-work-order). The user
-answered every choice listed in the plan's section 3. One sentence of the
-user's last answer arrived cut off and is not recorded, so ask before
-assuming anything further. See the
+answered the earlier choices listed in the plan's section 3. One remains
+open: how to treat a configuration that already stores GPU use as enabled.
+One sentence of the user's answers arrived cut off and is not recorded, so
+ask before assuming anything further. See the
 [rewrite entry](simplify/one-process-ledger.md#21-november-2026-between-0129-and-0233-utc--fp16-plan-rewritten-around-ten-stated-priorities)
 and the
 [approval entry](simplify/one-process-ledger.md#21-november-2026-at-0233-utc--user-approves-a1-to-a6-of-the-fp16-delivery-plan).
