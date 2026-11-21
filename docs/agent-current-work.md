@@ -504,9 +504,8 @@ section of this file conflicts with them, the approvals govern. In short:
   the rented hardware. A platform where it fails falls back to CPU. The user
   dropped specialized code for Radeon, so do not start DirectML, MIGraphX or
   ROCm work, and do not treat Core ML as a fallback. The A6000 smoke test
-  stays early and must show WebGPU within five times CUDA. The memory goal is
-  an 8 GB card for Compact and a 16 GB card for Large, with 16 GB and 24 GB
-  as the stated requirement if the goal cannot be met.
+  stays early and must show WebGPU within five times CUDA. The memory targets
+  are a 16 GB card for Compact and a 24 GB card for Large.
 - Calibration and judged task evidence are established once per model. Other
   routes are admitted by offline drift checks with a guard band and a
   confirmation set.
@@ -516,11 +515,18 @@ section of this file conflicts with them, the approvals govern. In short:
   configuration through the service-wide setting. CPU is the default route.
   The source still defaults the setting to enabled, and changing that is
   part of step 5. The earlier statement in this file that the setting
-  defaults to enabled is superseded.
+  defaults to enabled is superseded. A configuration that already stores GPU
+  use as enabled is reset to off once, and the user is told.
+- A person reviews the discordant cases of the paired comparison: the user,
+  unless the user names someone else. Agents prepare the blinded packet and
+  never fill it in.
+- The user authorized multiple agents and asked for the whole plan to be
+  carried to completion. One agent owns Cargo on a target and one owns the
+  GPU at any time. Each agent owns named files and does not commit. The
+  primary agent reviews, commits and pushes every result.
 
 Follow the [work order](arbiter/final-plan-fp16.md#4-work-order). The user
-answered the earlier choices listed in the plan's section 3. One remains
-open: how to treat a configuration that already stores GPU use as enabled.
+answered every choice listed in the plan's section 3, and none remains open.
 The user withdrew an unfinished sentence from an earlier answer as
 unimportant. See the
 [rewrite entry](simplify/one-process-ledger.md#21-november-2026-between-0129-and-0233-utc--fp16-plan-rewritten-around-ten-stated-priorities)

@@ -14167,3 +14167,35 @@ Next executable actions, in order: extend the independent verifier in
 portable graphs on the static AIRK runtime; record the Core contract decision
 for the opt-in GPU default and the ladder tiers, which waits on the user's
 answer about stored GPU settings; then step 1 on the 76 TechQA cases.
+
+Those changes were committed as `413ebc79` and `f0eea40f` and pushed.
+
+### 21 November 2026 at 04:17 UTC — Memory targets, stored GPU setting, reviewer, and parallel agents
+
+The user wrote: "Looks like we need to set Compact target at 16GB and Large
+at 24GB. Proceed as you have recommended to unblock the opt-in change. Add
+the reviewer for discordant cases as you've recommended. Proceed to
+completion of the entire plan. Work as efficiently as you can including used
+multiple agents."
+
+Recorded in `docs/arbiter/final-plan-fp16.md`, `docs/arbiter/final-plan.md`
+and `docs/agent-current-work.md`:
+
+- The GPU memory targets are a 16 GB card for Compact and a 24 GB card for
+  Large. Against them, the first three iterations pass on the A6000: Compact
+  at 9,208 MiB and Large at 17,348 MiB with the reserve. Step 6, the A6000
+  smoke test, is recorded as done with a go.
+- A configuration that already stores GPU use as enabled is reset to off
+  once, and the user is told. This was the primary agent's recommendation.
+- A person reviews discordant cases from a blinded packet. The primary agent
+  reads "the reviewer" as the user unless the user names someone else, and
+  recorded it that way.
+- The plan runs to completion with multiple agents. Working rules: one Cargo
+  owner per target, one GPU owner, named file ownership per agent, no agent
+  commits, and primary review before every commit and push.
+
+First parallel wave, launched after this entry is committed: the independent
+verifier for the portable recipe, the Core change for the opt-in GPU default
+with Cargo ownership, drift of the portable graphs across the 100 frozen
+Compact rows with GPU ownership, and a read-only runbook for the Focus
+comparison of step 1.

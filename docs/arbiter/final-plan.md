@@ -85,6 +85,14 @@ work run to completion before a joint review. Pushing `feat/arbiter-final`
 to `origin` is authorized. No PR, merge, publication or deployment is
 authorized.
 
+After the first three measured iterations the user set the GPU memory
+targets at a 16 GB card for Compact and a 24 GB card for Large, replacing
+the earlier 8 GB and 16 GB goals. A configuration that already stores GPU
+use as enabled is reset to off once, and the user is told. A person reviews
+the discordant cases of the paired comparison, and that person is the user
+unless the user names someone else. The whole plan runs to completion, with
+multiple agents where that is faster.
+
 ### User answers for this plan
 
 The user answered D01–D06 during this planning conversation. These are recorded

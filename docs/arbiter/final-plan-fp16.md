@@ -50,7 +50,7 @@ route, so no route needs its own parity investigation.
 | --- | --- | --- | --- |
 | CPU | Windows, Linux and macOS on any hardware | The portable graph: the model's FP32 graph with its learned weights cast from the FP16 file. | The FP32 form of this graph is retained and measured. The FP16-file form is not yet exported. |
 | CUDA | NVIDIA on Windows and Linux | The existing Compact and Large candidates. | Both pass the four development widths on Windows. Linux links and has not scored a model. |
-| WebGPU | Radeon on Windows and Linux, Apple GPUs on macOS, and other adapters | The portable graph, with FP32 arithmetic on the GPU. | Runs on the A6000 through the official prebuilt plugin: correct, inside the speed line, and inside the fallback memory line after the first iteration. Continues through the staged probe (steps 6, 11 and 12). |
+| WebGPU | Radeon on Windows and Linux, Apple GPUs on macOS, and other adapters | The portable graph, with FP32 arithmetic on the GPU. | Runs on the A6000 through the official prebuilt plugin: both exported graphs are correct, inside the speed line and inside their memory targets. Continues through the staged probe (steps 11 and 12). |
 
 Every route shares the weight file and the scoring contract. The CPU and
 WebGPU routes start from the same portable graph. A route may use a small
@@ -203,12 +203,9 @@ The user clarified one more point at 7:51 p.m. Denver time.
   configuration. This amends the earlier approval under which the
   service-wide setting defaults to enabled.
 
-One choice follows from that clarification and remains open. It does not
-block steps 1 to 4.
-
-- How to treat a configuration that already stores GPU use as enabled. That
-  value was written as a default and not chosen. The recommendation is to
-  reset it to off once and tell the user.
+One choice followed from that clarification: how to treat a configuration
+that already stores GPU use as enabled. The user answered it at 9:17 p.m.,
+below.
 
 The user gave four directions at 8:29 p.m. Denver time.
 
@@ -220,6 +217,21 @@ The user gave four directions at 8:29 p.m. Denver time.
   proceed or try again.
 - Pushing `feat/arbiter-final` to `origin` is authorized, so that nothing
   exists only on one machine.
+
+The user decided four more points at 9:17 p.m. Denver time, after the first
+three measured iterations.
+
+- The memory targets are a 16 GB card for Compact and a 24 GB card for
+  Large. They replace the earlier 8 GB and 16 GB goals.
+- A configuration that already stores GPU use as enabled is reset to off
+  once, and the user is told. That value was written as a default and was
+  not chosen.
+- A person reviews the discordant cases of the paired comparison. The
+  reviewer is the user unless the user names someone else.
+- Carry the whole plan to completion, using multiple agents where that is
+  faster.
+
+No choice in this section remains open.
 
 [D08](final-plan.md#11-automatic-gpu-execution-and-cpu-fallback-d08) ·
 [Platform order](final-plan.md#verified-starting-point-and-backend-order) ·
@@ -235,7 +247,10 @@ NVIDIA on both systems and the Context tiers on CPU. The third adds macOS and
 Radeon: the CPU route on macOS, and WebGPU on Metal, Direct3D 12 and Vulkan.
 The user directed that Mac work start with a rehearsal on the Mac Neo after
 the Windows and Linux CUDA work is complete (step 11). Steps 1 to 5 start now
-and run in parallel within the one-Cargo-owner rule.
+and run in parallel within the one-Cargo-owner rule. The user authorized
+multiple agents. At any time one agent owns Cargo on a target and one owns
+the GPU, each agent owns named files, and the primary agent reviews and
+commits every result.
 
 ### Test hardware
 
@@ -290,9 +305,9 @@ their digests.
 | 3 | Export the portable graph for Compact. Record the recipe in the exporter contract first. Verify shared weight bytes. Load on the static runtime with zero forwards. Score the four widths and 2,048 tokens against the reference. Time each width and record the four memory figures. | Compact has measured CPU numbers for the full and fast tiers. | Nothing | High. The exporter's portable recipe exists, and Compact and Large are exported and scored on the published runtime. The static runtime and the verifier remain. |
 | 4 | Finish Windows CUDA. Complete Compact matching references, fit calibration, add the Large selector and score its panel. Run capacity under A6. | Both candidates hold a calibrated panel and a memory figure. | Nothing | High for Compact, medium for Large. The preserved code compiles after the step 0 fix. The Large selector is still unexercised. |
 | 5 | Record the Core contract decision, then implement: the opt-in GPU default, Auto order, the ladder tiers and the CPU target class, typed reasons, truthful status, per-result disclosure of route, model, tier and budget, the weight rule and a WebGPU provider value. Test with injected capabilities. | Reviewed Core changes with qualification flags false. | Nothing | Medium to high. Profiles already carry a token ceiling, so a tier is a profile. |
-| 6 | Run the WebGPU smoke test on the A6000 through Direct3D 12 as soon as step 3 has a graph. It stays early by the user's decision and includes the speed line. It takes the GPU only when no CUDA run holds it. | A go or no-go for the rented runs. | Step 3 | Medium to high. Probe variants pass correctness, the speed line and the fallback memory line on the A6000. The exporter's graph must repeat it. |
+| 6 | Run the WebGPU smoke test on the A6000 through Direct3D 12 as soon as step 3 has a graph. It stays early by the user's decision and includes the speed line. It takes the GPU only when no CUDA run holds it. | A go or no-go for the rented runs. | Step 3 | Done on 21 November: go. The exported Compact and Large graphs pass correctness, the speed line and their memory targets on the A6000. Large's 8,192-token check was against the CPU provider and still needs an independent reference. |
 | 7 | Score the portable graph on the 100 frozen Compact rows and the confirmation set on CPU, and apply acceptance rule 2. | The CPU route is admitted or its first failing row is named. | Steps 3 and 4, and one policy-confirmation capture on the calibrated identity | High for the scoring. The capture is the cost. |
-| 8 | Complete the stage comparison and the 98% comparison: the FP32 arm, the calibrated identity, and the Compact and Large arms. Compare delivered evidence first and judge only the discordant pairs. | The 98% bound and each Context model's added evidence are measured. | Nothing | Medium. Label coverage decides it. |
+| 8 | Complete the stage comparison and the 98% comparison: the FP32 arm, the calibrated identity, and the Compact and Large arms. Compare delivered evidence first. A person reviews the discordant pairs from a blinded packet. | The 98% bound and each Context model's added evidence are measured. | Nothing | Medium. Label coverage decides it. |
 | 9 | Decide Large's expansion from step 8. Extend Large to the CPU ladder, Linux and WebGPU only if it delivers evidence Compact misses. Until then its CPU fallback is the Compact downgrade. | A recorded disposition for Large. | Step 8 | Not applicable. |
 | 10 | Port the CUDA candidates to Linux on the existing WSL2 instance. Score widths and the frozen rows. | Linux CUDA is admitted by rule 2. | Step 4 | Medium. |
 | 11 | After the Windows and Linux CUDA work is complete, rehearse macOS on the Mac Neo. Build the arm64 runtime with the CPU and WebGPU providers from pinned inputs. Confirm that WebGPU starts on Metal. Run synthetic graphs and reduced fixtures, Focus on CPU, and a dry run of the rented-Mac batch. | The build is reproducible, Metal support is confirmed or refuted, and the batch runs end to end on small inputs. | Steps 4 and 10 | Medium. Memory and disk on the Neo are the risk. |
@@ -357,8 +372,8 @@ other.
 At 8,192 tokens the two providers differed by 0.004814 and chose the same
 winner. The WebGPU warm forward is about 2.3 times the Large CUDA candidate's
 4.7935 s. Large's WebGPU peak was 15,300 MiB above baseline in that four-case
-session. With the reserve that is 17,348 MiB, inside a 24 GB card and about
-1 GiB over the 16 GB goal. On CPU the 2,048-token tier fits easily at eight
+session. With the reserve that is 17,348 MiB, inside the 24 GB target. On
+CPU the 2,048-token tier fits easily at eight
 threads, and the full tier is marginal at 107 s for a single forward.
 
 Still owed for step 3: the zero-forward load and scoring on the static
@@ -383,9 +398,10 @@ status in diagnostics. The DirectML and Core ML provider values stay in the
 type until a recorded decision removes them. Build nothing new on them.
 `allow_gpu` defaults to enabled in `service_resources.rs` today, and a
 retained test loads a configuration without the field as enabled. Change the
-default to off under the recorded decision, and settle there how a value
-stored under the earlier default is treated. Reading the Admin controls must
-still not initialize a GPU or load a model.
+default to off under the recorded decision. A configuration that already
+stores GPU use as enabled is reset to off once, and the service tells the
+user that it did so. A value the user sets after that is kept. Reading the
+Admin controls must still not initialize a GPU or load a model.
 [Service resource configuration](../../crates/airk-core/src/service_resources.rs)
 [Device policy source](../../crates/airk-core/src/arbiter/device.rs) ·
 [Native device and profile contract](../../crates/airk-core/src/arbiter/CONTRACT.md)
@@ -401,9 +417,8 @@ scoring contract. These pass lines are fixed before the probe runs:
 - **Attention.** At 8,192 tokens the optimized graph and the dispatch record
   show the fused attention kernel running and no sequence-squared attention
   tensor.
-- **Memory.** The goal at 8,192 tokens is that Compact fits an 8 GB card and
-  Large a 16 GB card. If the goal cannot be met, the line is a 16 GB card for
-  Compact and a 24 GB card for Large, and the product states that
+- **Memory.** At 8,192 tokens Compact fits a 16 GB card and Large a 24 GB
+  card. Those are the user's targets, and the product states them as its
   requirement. Fit means the measured peak plus the 2 GiB reserve is within
   the card's memory. The test devices hold 32 GB, so this line is what speaks
   for smaller cards.
@@ -433,9 +448,8 @@ baseline.
 | Also half weights, expanded again at load | 9,958 MiB | 4.37 to 4.38 s | 0.004494 |
 | Also half weights kept resident | 7,160 MiB | 4.37 to 4.40 s | 0.004494 |
 
-The last row passes the fallback memory line: 7,160 MiB plus the 2 GiB
-reserve is 9,208 MiB, inside a 16 GB card. It misses the 8 GB goal by about
-1 GiB. Its warm forward is about 2.5 times the CUDA candidate's 1.7721 s. The
+The last row meets the memory target: 7,160 MiB plus the 2 GiB reserve is
+9,208 MiB, inside a 16 GB card. Its warm forward is about 2.5 times the CUDA candidate's 1.7721 s. The
 winner matched in every run. Keeping the weights resident needs two runtime
 passes disabled, `ConstantFolding` and
 `FuseFp16InitializerToFp32NodeTransformer`. The default cache mode and
@@ -458,7 +472,11 @@ Radeon route is pursued, and a native macOS route would need a new decision.
 
 Step 8 detail. A pair with identical delivered evidence is concordant under
 any judgment, so only discordant pairs and the FP32 success rate need
-judgments. As a planning approximation that ignores clustering, with baseline
+judgments. A person makes those judgments: the user, unless the user names
+someone else. The packet for each discordant pair holds the request and the
+frozen source evidence from both arms in random order, with no model output,
+arm name or precision. An agent prepares the packet and never fills it in,
+because agent judgments are not gold. As a planning approximation that ignores clustering, with baseline
 success `p`, discordance `d` and `n` pairs, the lower bound is near
 `0.02 × p − 1.645 × sqrt(d / n)`. With about 200 cases and a baseline near
 0.8 it clears zero only when discordance is below about 2%. Estimate
