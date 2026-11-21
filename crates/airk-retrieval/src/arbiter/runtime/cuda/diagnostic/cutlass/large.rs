@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Fixed Windows Large scientific controls for all 252 projections and grouped causal attention.
+mod cal;
+
 use super::{CudaRuntime, Result, Sha256, Value, ensure, json, pinned};
 use crate::arbiter::compiler::CompiledInput;
 use anyhow::Context;
@@ -185,6 +187,14 @@ fn input(campaign: &Path, width: usize) -> Result<CompiledInput> {
     Ok(x)
 }
 
+type TimedPopulation<'a, 'b> = (&'a mut super::model::Measure<'b>, Option<u64>);
+
+#[derive(Default)]
+struct Measurement<'a, 'callback> {
+    timing: Option<TimedPopulation<'a, 'callback>>,
+    cal: Option<cal::Phase<'a, 'callback>>,
+}
+
 impl CudaRuntime {
     /// Measure either the fixed layer-17 control or the distinct authenticated Large scientific graph.
     #[cfg(windows)]
@@ -195,7 +205,14 @@ impl CudaRuntime {
         case: Option<(usize, &str)>,
         deadline: Instant,
     ) -> Result<Value> {
-        self.observe_large_arithmetic(campaign, operand, case, false, deadline, None)
+        self.observe_large_arithmetic(
+            campaign,
+            operand,
+            case,
+            false,
+            deadline,
+            Measurement::default(),
+        )
     }
 
     /// Observe the direct FP32-activation model backed by the original immutable half weights.
@@ -206,7 +223,14 @@ impl CudaRuntime {
         case: Option<(usize, &str)>,
         deadline: Instant,
     ) -> Result<Value> {
-        self.observe_large_arithmetic(campaign, false, case, true, deadline, None)
+        self.observe_large_arithmetic(
+            campaign,
+            false,
+            case,
+            true,
+            deadline,
+            Measurement::default(),
+        )
     }
 
     /// Time the authenticated direct graph on one retained session with synchronized outputs.
@@ -216,6 +240,7 @@ impl CudaRuntime {
         campaign: &Path,
         gate: &str,
         deadline: Instant,
+        pressure_tier: Option<u64>,
         mut measure: impl FnMut(
             &mut dyn FnMut(usize) -> Result<Vec<f32>>,
             &mut dyn FnMut() -> Result<Value>,
@@ -227,7 +252,37 @@ impl CudaRuntime {
             Some((8192, gate)),
             true,
             deadline,
-            Some(&mut measure),
+            Measurement {
+                timing: Some((&mut measure, pressure_tier)),
+                cal: None,
+            },
+        )
+    }
+
+    /// Score an original CAL phase on one independently attested Large scientific session.
+    #[cfg(windows)]
+    pub fn with_large_direct_cal_session(
+        &self,
+        campaign: &Path,
+        reviewed_graph: &str,
+        deadline: Instant,
+        mut collect: impl FnMut(
+            &mut dyn FnMut(&CompiledInput, Instant) -> Result<Vec<f32>>,
+        ) -> Result<Value>,
+    ) -> Result<Value> {
+        self.observe_large_arithmetic(
+            campaign,
+            false,
+            None,
+            true,
+            deadline,
+            Measurement {
+                timing: None,
+                cal: Some(cal::Phase {
+                    graph: reviewed_graph,
+                    collect: &mut collect,
+                }),
+            },
         )
     }
 
@@ -238,7 +293,14 @@ impl CudaRuntime {
         campaign: &Path,
         deadline: Instant,
     ) -> Result<Value> {
-        self.observe_large_arithmetic(campaign, false, None, true, deadline, None)
+        self.observe_large_arithmetic(
+            campaign,
+            false,
+            None,
+            true,
+            deadline,
+            Measurement::default(),
+        )
     }
 
     fn observe_large_arithmetic(
@@ -248,13 +310,16 @@ impl CudaRuntime {
         case: Option<(usize, &str)>,
         direct: bool,
         deadline: Instant,
-        measure: Option<&mut super::model::Measure<'_>>,
+        measurement: Measurement<'_, '_>,
     ) -> Result<Value> {
         #[cfg(target_os = "linux")]
         ensure!(
-            direct && !operand && case.is_none(),
+            direct && !operand && case.is_none() && measurement.cal.is_none(),
             "GNU Large requires its independently reviewed final graph and CPU bounds before scoring"
         );
+        let (measure, pressure_tier) = measurement
+            .timing
+            .map_or((None, None), |(f, tier)| (Some(f), tier));
         let train_start = Instant::now();
         crate::native_inference::require_service_compute()?;
         let (leaf, graph_bytes, graph_digest) = if direct {
@@ -292,15 +357,54 @@ impl CudaRuntime {
             .loaded
             .retain_primary(adapter.ordinal, self._native_lease.clone())?;
         let before = self.loaded.observe(adapter.ordinal, &context, deadline)?;
-        ensure!(
-            before.free_bytes >= if operand { 1 << 30 } else { 44 << 30 },
-            "insufficient dedicated device headroom"
-        );
+        let ordinary_arena = || -> Result<u64> {
+            ensure!(
+                std::env::var_os("AIRK_LARGE_PRESSURE_TIER_GIB").is_none()
+                    && std::env::var_os("AIRK_LARGE_PRESSURE_NONCE").is_none()
+                    && before.free_bytes >= if operand { 1 << 30 } else { 44 << 30 },
+                "insufficient dedicated device headroom or unexpected pressure grant"
+            );
+            Ok(if operand { 256 << 20 } else { 40 << 30 })
+        };
+        #[cfg(windows)]
+        let (arena, pressure) = if let Some(tier) = pressure_tier {
+            let (width, gate) = case.context("Large pressure requires sealed graph")?;
+            ensure!(
+                direct && !operand && width == 8192 && measure.is_some(),
+                "Large pressure requires direct maximum-width population"
+            );
+            let luid = self.loaded.pressure_adapter_luid(&context)?;
+            let (arena, grant) = super::model::pressure::admit(
+                super::model::pressure::Model::Large,
+                tier,
+                gate,
+                &adapter.uuid,
+                &luid,
+                || {
+                    Ok(self
+                        .loaded
+                        .observe(adapter.ordinal, &context, deadline)?
+                        .free_bytes)
+                },
+                deadline,
+            )?;
+            (arena, Some(grant))
+        } else {
+            (ordinary_arena()?, None)
+        };
+        #[cfg(target_os = "linux")]
+        let (arena, pressure) = {
+            ensure!(
+                pressure_tier.is_none(),
+                "GNU Large requires independent pressure evidence"
+            );
+            (ordinary_arena()?, None::<Value>)
+        };
         let provider = CUDAExecutionProvider::default()
             .with_device_id(adapter.ordinal)
             .with_tf32(false)
             .with_cuda_graph(false)
-            .with_memory_limit(if operand { 256 << 20 } else { 40 << 30 })
+            .with_memory_limit(usize::try_from(arena)?)
             .with_attention_backend(CUDAAttentionBackend::EFFICIENT_ATTENTION)
             .build()
             .error_on_failure();
@@ -384,13 +488,29 @@ impl CudaRuntime {
                 .validate_bounded_fp16_cpu_values(12_067)
                 .map_err(|e| e.to_string());
             let digest = format!("{:x}", Sha256::digest(serde_json::to_vec(&meta.rows)?));
+            let requested = case
+                .map(|(_, expected)| expected)
+                .or_else(|| measurement.cal.as_ref().map(|phase| phase.graph));
             let mut timing = None;
-            let score = if let Some((width, expected)) = case {
+            let mut calibration = None;
+            let score = if let Some(expected) = requested {
                 ensure!(
                     digest == expected && routes.is_ok() && cpu.is_ok(),
                     "Large typed graph, real projection or bounded shape controls differ"
                 );
-                if let Some(bench) = measure {
+                if let Some(phase) = measurement.cal {
+                    ensure!(
+                        direct && !operand && case.is_none() && measure.is_none(),
+                        "Large CAL requires its own direct scientific session"
+                    );
+                    calibration = Some(phase.run(deadline, |input| {
+                        let scores = super::model::score(&mut session, input.clone())?;
+                        self.loaded.synchronize(&context)?;
+                        Ok(scores)
+                    })?);
+                    None
+                } else if let Some(bench) = measure {
+                    let (width, _) = case.context("Large timing requires a fixed input gate")?;
                     ensure!(
                         direct && width == 8192,
                         "timing requires authenticated direct Large"
@@ -430,6 +550,7 @@ impl CudaRuntime {
                     );
                     None
                 } else {
+                    let (width, _) = case.context("missing original Large numerical input")?;
                     let x = if width == TRAIN_WIDTH {
                         ensure!(direct, "TRAIN Q543 requires the direct FP32 candidate");
                         train_input(campaign)?
@@ -451,8 +572,12 @@ impl CudaRuntime {
             } else {
                 None
             };
-            json!({"typed_graph_sha256":digest,"graph":case.is_none().then_some(meta),"score":score,"timing":timing,
-                   "route_refusal":routes.err(),"cpu_refusal":cpu.err(),"model_sha256":graph_digest,"weight_sha256":WEIGHT})
+            let mut result = json!({"typed_graph_sha256":digest,"graph":requested.is_none().then_some(meta),"score":score,"timing":timing,
+                   "route_refusal":routes.err(),"cpu_refusal":cpu.err(),"model_sha256":graph_digest,"weight_sha256":WEIGHT});
+            if let Some(calibration) = calibration {
+                result["cal"] = calibration;
+            }
+            result
         };
         self.loaded.synchronize(&context)?;
         let live = self.loaded.observe(adapter.ordinal, &context, deadline)?;
@@ -464,7 +589,7 @@ impl CudaRuntime {
             "Large diagnostic lifetime expired"
         );
         Ok(
-            json!({"result":result,"adapter":adapter,"placement":placement,"before":before,"live":live,"released":released,"qualification":false}),
+            json!({"result":result,"adapter":adapter,"placement":placement,"before":before,"live":live,"released":released,"pressure":pressure,"qualification":false}),
         )
     }
 }

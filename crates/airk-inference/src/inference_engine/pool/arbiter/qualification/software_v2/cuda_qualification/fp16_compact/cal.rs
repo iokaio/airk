@@ -11,7 +11,7 @@ const MODEL: &str = "arbiter-context-qwen3-17b";
 const R6_AUDIT: &str = "aa2dea22544689e785426e03d4fa4f657cfda6d5dbc86b682a8594be7bb680e1";
 const R6_SERVICE: &str = "77e70341e1da84688c8b16bc992e25b3afed32d2d3e07639a6a5c69176eb0dfa";
 
-fn chronological_audit(pin: &ResourceFilePin) -> Result<Value> {
+pub(in super::super) fn chronological_audit(pin: &ResourceFilePin) -> Result<Value> {
     let digest = pin.sha256.to_string();
     ensure!(
         digest == AUDIT || digest == R6_AUDIT,
@@ -49,7 +49,7 @@ fn array<'a>(value: &'a Value, field: &str) -> Result<&'a Vec<Value>> {
         .with_context(|| format!("CAL {field} array missing"))
 }
 
-fn pin(value: &Value) -> Result<ResourceFilePin> {
+pub(in super::super) fn pin(value: &Value) -> Result<ResourceFilePin> {
     Ok(ResourceFilePin {
         path: value["path"]
             .as_str()
@@ -202,7 +202,7 @@ fn compact_cal100_original_compiled_input_census() -> Result<()> {
     Ok(())
 }
 
-fn original_compiler(
+pub(in super::super) fn original_compiler(
     audit: &Value,
     model: ModelChoice,
 ) -> Result<(ResourceFilePin, Profile, Compiler)> {
@@ -368,7 +368,7 @@ fn verify_chronological_projection(
     Ok(())
 }
 
-fn verify_chronological_row(
+pub(in super::super) fn verify_chronological_row(
     projection: &Value,
     selected: &Value,
     compiler: &Compiler,

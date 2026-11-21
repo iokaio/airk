@@ -77,11 +77,13 @@ def hold_read_only(paths, stack):
         stack.callback(close, handle)
 
 
-def run(args, retained):
+def run(args, retained, pressure=None):
+    pressure_trial = args.mode in ("pressure-fit", "pressure-fixed")
+    require(pressure_trial == (pressure is not None), "Large pressure requires the live checked ballast owner")
     started = time.monotonic()
     end=started+120
     split = args.separate_native_window
-    require(not split or (args.mode=="fixed" and args.direct), "separate native clock only for direct Large fixed20")
+    require(not split or (args.mode in ("fixed","pressure-fixed") and args.direct), "separate native clock only for direct Large fixed20")
     shared=runpy.run_path(str(HERE/"probe_compact.py"))
     components=runpy.run_path(str(ROOT/"scripts/cuda-component-execution.py"))
     capacity=runpy.run_path(str(ROOT/"scripts/cuda-component-execution/wddm_capacity_snapshot.py"))
@@ -112,7 +114,9 @@ def run(args, retained):
     retrieval="crates/airk-retrieval/src/arbiter/runtime/cuda/diagnostic/cutlass"
     inference="crates/airk-inference/src/inference_engine/pool/arbiter/qualification/software_v2/cuda_qualification/fp16_large"
     required_native = [retrieval+".rs", retrieval+"/large.rs", retrieval+"/model.rs", inference+".rs", inference+"/compensated.rs"]
-    timing = args.mode in ("fixed", "mixed")
+    timing = args.mode in ("fixed", "mixed") or pressure_trial
+    if pressure_trial:
+        required_native.append(retrieval+"/model/pressure.rs")
     if timing:
         required_native += [inference.replace("fp16_large", "fp16_compact") + suffix
                             for suffix in (".rs", "/full.rs", "/timing.rs")]
@@ -240,10 +244,12 @@ def run(args, retained):
         for pin in pins:
             base.pinned(pin)
     selector=PREFIX.replace("::large_compensated_","::large_direct_") if args.direct else PREFIX
-    command=[str(args.image),"--exact",selector+mode,"--ignored","--nocapture"]
+    command=[str(args.image),"--exact",selector+mode.replace("-", "_"),"--ignored","--nocapture"]
     receipt={"schema":"airk.private.large-compensated-cuda/1","complete":False,"qualification":False,"mode":mode,"direct":args.direct,"width":args.width,
              "command":command,"image":image,"build":build,"linked_image":linked,"compile_time_cuda_approvals":approvals,"build_log":log,
              "runtime_manifest":manifest,"powershell":guard["powershell"],"sources":sources,"backend_sources":backend,"inputs":pins,"host_bytes":host,"seconds":120}
+    if pressure_trial:
+        receipt["original_limits"] = {"host_bytes":host, "campaign_host_ceiling_bytes":48<<30, "seconds":120}
     components["mkdir"](guard,out,deadline=end)
     temp,stdin,stdout,dst=(out/n for n in ("temp","stdin.txt","stdout-stderr.log","execution.json"))
     try:
@@ -260,6 +266,8 @@ def run(args, retained):
                        AIRK_LARGE_CUTLASS_TEST_IMAGE_SHA=image["sha256"],
                        AIRK_LARGE_CUTLASS_EXPECTED_WORDS=json.dumps(expected_words,separators=(",",":")))
             audit([temp/"protected.operations.jsonl"],False)
+        if pressure_trial:
+            env.update(AIRK_LARGE_PRESSURE_TIER_GIB=str(pressure.tier), AIRK_LARGE_PRESSURE_NONCE=pressure.nonce)
         begin=capacity["snapshot"](None)
         luid=begin["dxgi"]["luid"]
         receipt["before_load_adapter"]=begin
@@ -268,11 +276,26 @@ def run(args, retained):
             nonlocal baseline
             proof=parent.suspended_authentication(api,info,end,child_end,base.SID,image,owner.image_proof)
             require(components["token_owner"](info.process)==base.SID and owner.job_snapshot(api,job)==([info.pid],1,1),"wrong suspended owner or Job")
-            with wddm["ProcessSampler"](info,luid) as sampler:
+            with wddm["ProcessSampler"](info,luid,segment_fields=pressure_trial) as sampler:
                 baseline=sampler.sample()
-            return dict(proof,default_owner_sid=base.SID,observed_limits=shared["job_limits"](api,job,host))
+            limits = shared["job_limits"](api,job,host)
+            if pressure_trial:
+                grant = pressure.grant(info.pid, child_end, image["sha256"], gate, int(env["AIRK_LARGE_CUTLASS_EXPIRES_NS"]), baseline)
+                path = temp/"pressure-admission.json"
+                host_path = temp/"pressure-host-admission.json"
+                audit([path,host_path],False)
+                components["write_new"](guard,path,grant)
+                receipt["pressure_grant"] = base.pin(path)
+                components["write_new"](guard,host_path,{"schema":"airk.private.cuda-pressure-host-admission/1",
+                    "device_grant_sha256":receipt["pressure_grant"]["sha256"], "candidate_pid":info.pid,
+                    "executable_sha256":image["sha256"], "mode":mode, "limits":limits, "campaign_host_ceiling_bytes":48<<30})
+                receipt["pressure_host_grant"] = base.pin(host_path)
+                if split:
+                    hold_read_only([str(path), str(host_path)], retained)
+                custody.extend([receipt["pressure_grant"], receipt["pressure_host_grant"]])
+            return dict(proof,default_owner_sid=base.SID,observed_limits=limits)
         def observing(api,job,info,expiry):
-            return {"wddm":wddm["observe_process"](api,info,expiry,luid,baseline)},[]
+            return {"wddm":wddm["observe_process"](api,info,expiry,luid,baseline,segment_fields=pressure_trial)},[]
         with stdin.open("xb"):
             pass
         with stdin.open("rb") as src,stdout.open("xb") as sink:
@@ -307,6 +330,8 @@ def run(args, retained):
         elif mode=="graph":
             receipt["typed_graph_validation"]=reviewed(native,shared,args.direct)
         elif timing:
+            if pressure_trial:
+                pressure.verify_native(native["pressure"], receipt["pressure_grant"]["sha256"])
             measured = result["timing"]
             require(result["typed_graph_sha256"] == gate and result["route_refusal"] is None and result["cpu_refusal"] is None
                     and measured["input_digests"] == input_digests and not measured["population"]["profiled"], "wrong measured timing graph/input")
@@ -321,7 +346,7 @@ def run(args, retained):
                                              image["sha256"], prefix="AIRK_LARGE_CUTLASS")
             receipt["operations"] = base.pin(journal)
             receipt["memory_by_cycle"] = runpy.run_path(str(lifecycle_path))["memory_coverage"](
-                {"fixed":"qkv-resource20","mixed":"qkv-mixed"}[mode], receipt["owned"]["before_GO"]["wddm"],
+                {"fixed":"qkv-resource20","mixed":"qkv-mixed","pressure-fit":"qkv-fit-probe","pressure-fixed":"qkv-resource20"}[mode], receipt["owned"]["before_GO"]["wddm"],
                 events, receipt["owned"]["owned_leader_pid"], luid, load_recorded=False)
         else:
             require(result["typed_graph_sha256"]==gate and result["score"]["compiled_input_digest"]==ref["input_digest"],"scored wrong original input")

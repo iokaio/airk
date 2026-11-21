@@ -72,7 +72,22 @@ fn pre_resume(available: &Availability, tier: u64) -> Result<u64> {
     Ok(floor)
 }
 
-pub(super) fn admit(
+pub(in super::super) enum Model {
+    Compact,
+    Large,
+}
+
+impl Model {
+    fn namespace(&self) -> &'static str {
+        match self {
+            Self::Compact => "AIRK_COMPACT",
+            Self::Large => "AIRK_LARGE",
+        }
+    }
+}
+
+pub(in super::super) fn admit(
+    model: Model,
     tier: u64,
     expected_graph: &str,
     uuid: &[u8; 16],
@@ -80,9 +95,10 @@ pub(super) fn admit(
     current_free: impl FnOnce() -> Result<u64>,
     deadline: Instant,
 ) -> Result<(u64, Value)> {
-    let name = std::env::var("AIRK_COMPACT_PRESSURE_NONCE")?;
-    let original_expiry = std::env::var("AIRK_COMPACT_CUTLASS_EXPIRES_NS")?.parse::<u64>()?;
-    let image = std::env::var("AIRK_COMPACT_CUTLASS_TEST_IMAGE_SHA")?;
+    let prefix = model.namespace();
+    let name = std::env::var(format!("{prefix}_PRESSURE_NONCE"))?;
+    let original_expiry = std::env::var(format!("{prefix}_CUTLASS_EXPIRES_NS"))?.parse::<u64>()?;
+    let image = std::env::var(format!("{prefix}_CUTLASS_TEST_IMAGE_SHA"))?;
     let base = PathBuf::from(std::env::var("AIRK_PRIVATE_CENSUS_BASE")?);
     ensure!(
         base.is_absolute() && std::fs::symlink_metadata(&base)?.file_attributes() & 0x400 == 0,
@@ -137,7 +153,7 @@ pub(super) fn admit(
         "pre_resume_available_bytes":{"nvidia_free":grant.available_bytes.nvidia_free,"wddm_free":grant.available_bytes.wddm_free,
             "cuda_free_after_touch":grant.available_bytes.cuda_free_after_touch},
         "observed_monotonic_ns":grant.observed_monotonic_ns,"expires_monotonic_ns":original_expiry});
-    println!("AIRK_COMPACT_PRESSURE_GO={evidence}");
+    println!("{prefix}_PRESSURE_GO={evidence}");
     ensure!(
         free >= floor,
         "native pre-load CUDA free {free} below grant floor {floor} after primary-context initialization"

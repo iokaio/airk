@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Private native metadata and T32 probe for the reviewed Compact FP16 candidate.
 use super::*;
-mod cal;
+pub(super) mod cal;
 mod down;
 pub(super) mod full;
 mod observed;

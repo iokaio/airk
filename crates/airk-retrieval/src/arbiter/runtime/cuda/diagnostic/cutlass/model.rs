@@ -4,7 +4,7 @@ mod inputs;
 #[cfg(target_os = "linux")]
 pub(super) mod linux;
 #[cfg(windows)]
-mod pressure;
+pub(super) mod pressure;
 
 use super::{CudaRuntime, Result, Sha256, Value, ensure, json};
 use crate::arbiter::{compiler::CompiledInput, runtime::cuda::GraphMetadataObservation};
@@ -165,10 +165,10 @@ pub(super) type Measure<'a> = dyn FnMut(
     ) -> Result<Value>
     + 'a;
 
-type CalSession<'a> =
+pub(super) type CalSession<'a> =
     dyn FnMut(&mut dyn FnMut(&CompiledInput, Instant) -> Result<Vec<f32>>) -> Result<Value> + 'a;
 
-fn validate_cal_input(input: &CompiledInput) -> Result<()> {
+pub(super) fn validate_cal_input(input: &CompiledInput) -> Result<()> {
     let t = input.input_ids.len();
     let n = input.candidate_positions.len();
     ensure!(
@@ -309,6 +309,7 @@ impl CudaRuntime {
             );
             let luid = self.loaded.pressure_adapter_luid(&context)?;
             let (arena, grant) = pressure::admit(
+                pressure::Model::Compact,
                 tier,
                 gate,
                 &adapter.uuid,

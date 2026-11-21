@@ -6,7 +6,7 @@ import time
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from protected_capacity_sweep import GIB, GRAPH, PressureTrial, UUID, WINDOW
+from protected_capacity_sweep import GIB, GRAPH, LARGE_GRAPH, PressureTrial, UUID, WINDOW
 
 
 class ProtectedPressureControls(unittest.TestCase):
@@ -39,6 +39,17 @@ class ProtectedPressureControls(unittest.TestCase):
                           ("grant_sha256","0"*64)):
             with self.subTest(field=key), self.assertRaises(ValueError):
                 trial.verify_native(dict(observed, **{key:value}), "b"*64)
+
+    def test_large_grant_rejects_compact_graph_and_reopens_own_gate(self):
+        compact = self.make()
+        trial = PressureTrial(16, compact.authorize, LARGE_GRAPH)
+        with self.assertRaises(ValueError):
+            self.grant(trial)
+        original = "13da8267e7490e334b5a860ced90af8318a01f5c2d03759173feac45ca598b46"
+        grant = trial.grant(749, self.now/1e9+20, "c"*64, original, self.now+20_000_000_000)
+        self.assertEqual(grant["typed_graph_sha256"], original)
+        with self.assertRaises(ValueError):
+            compact.grant(749, self.now/1e9+20, "c"*64, original, self.now+20_000_000_000)
 
     def test_under_floor_and_unconstrained_adapter_refused(self):
         for changes in ({"cuda_free_after_touch":16*GIB-1},
@@ -74,6 +85,8 @@ class PressureResidencyControls(unittest.TestCase):
         grant = {"schema":"airk.private.cuda-pressure-host-admission/1","candidate_pid":41,"mode":"pressure-fit",
                  "limits":limits,"device_grant_sha256":"a"*64,"executable_sha256":"b"*64,"campaign_host_ceiling_bytes":32*GIB}
         verify_host_grant(grant,native,limit)
+        with self.assertRaisesRegex(ValueError,"host grant"):
+            verify_host_grant(grant,native,limit,48*GIB)
         for changed in (dict(grant,candidate_pid=42),dict(grant,device_grant_sha256="c"*64),
                         dict(grant,limits=dict(limits,job_memory_limit_bytes=16*GIB))):
             with self.assertRaisesRegex(ValueError,"host grant"):
@@ -86,6 +99,23 @@ class PressureResidencyControls(unittest.TestCase):
         self.assertEqual(pressure_headroom(host,limit,pre,0,limit)["minimum_spare_bytes"],8*GIB)
         with self.assertRaisesRegex(ValueError,"reserve"):
             pressure_headroom(dict(host,physical_available_bytes=20*GIB-1),limit,pre,0,limit)
+
+    def test_large_process_and_aggregate_limits_and_observed_peak(self):
+        from protected_capacity_sweep import verify_host_grant
+        limit = 22*GIB
+        limits = {"process_memory_limit_bytes":limit, "job_memory_limit_bytes":limit}
+        native = {"owned":{"owned_leader_pid":93, "suspended_assignment":{"observed_limits":limits},
+                           "peak_host_committed_bytes":17_730_695_168}, "mode":"pressure-fit", "image":{"sha256":"c"*64},
+                  "pressure_grant":{"sha256":"a"*64}, "original_limits":{"host_bytes":limit,"campaign_host_ceiling_bytes":48*GIB}}
+        grant = {"schema":"airk.private.cuda-pressure-host-admission/1","mode":"pressure-fit","candidate_pid":93,
+                 "limits":limits,"device_grant_sha256":"a"*64,"executable_sha256":"c"*64,"campaign_host_ceiling_bytes":48*GIB}
+        verify_host_grant(grant,native,limit,48*GIB)
+        for key, wrong in (("process_memory_limit_bytes",48*GIB), ("job_memory_limit_bytes",32*GIB)):
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError,"host grant"):
+                verify_host_grant(dict(grant,limits=dict(limits,**{key:wrong})),native,limit,48*GIB)
+        native["owned"]["peak_host_committed_bytes"] = limit + 1
+        with self.assertRaisesRegex(ValueError,"host grant"):
+            verify_host_grant(grant,native,limit,48*GIB)
 
     def coverage(self, rows):
         from capacity_sweep import candidate_samples

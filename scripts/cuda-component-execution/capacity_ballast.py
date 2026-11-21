@@ -71,7 +71,7 @@ def wait_until(event, deadline, why):
 
 def pressure_headroom(host, reservation, candidate, private_resident, candidate_limit=16*GIB):
     private_commit = candidate["private_commit_bytes"]
-    require(candidate_limit in (12*GIB,16*GIB) and type(private_commit) is int and 0 <= private_commit <= candidate_limit
+    require(candidate_limit in (12*GIB,16*GIB,22*GIB) and type(private_commit) is int and 0 <= private_commit <= candidate_limit
             and type(private_resident) is int and 0 <= private_resident <= min(private_commit,candidate["working_set_bytes"])
             and reservation >= candidate_limit, "unverified suspended host charge")
     pending_commit = reservation - private_commit
@@ -240,14 +240,14 @@ def monitor(api, info, deadline, gate, events, log, set_event, channel, nonce):
         raise
 
 
-def run(out, tier, maximum, *, small=False, trial=None, calibration=False, pressure_host_reserve=None, candidate_limit=16*GIB):
+def run(out, tier, maximum, *, small=False, trial=None, calibration=False, pressure_host_reserve=None, candidate_limit=16*GIB, trial_sources=()):
     require(os.name == "nt" and sys.flags.isolated and sys.flags.no_site and sys.dont_write_bytecode and
             Path(sys.executable) in PINS, "checked isolated Windows Python required")
     require(not calibration or (small and maximum == 2*GIB), "bounded 2 GiB allocation calibration required")
     pressure = pressure_host_reserve is not None
     if pressure:
         require(not small and not calibration and type(pressure_host_reserve) is int
-                and candidate_limit in (12*GIB,16*GIB) and pressure_host_reserve >= candidate_limit, "original model trial and pending host reservation required")
+                and candidate_limit in (12*GIB,16*GIB,22*GIB) and pressure_host_reserve >= candidate_limit, "original model trial and pending host reservation required")
         calibration_file = CAMPAIGN/"compact-capacity-commit-calibration-r1/execution.json"
         verify(calibration_file, "4b5716f0ef4f97e74148994554260f7b48b1b2f76d3c74748cc46d15849ff997")
         host_limit = maximum + 2*GIB
@@ -260,7 +260,7 @@ def run(out, tier, maximum, *, small=False, trial=None, calibration=False, press
     require(tier in TIERS and (maximum == (2*GIB if calibration else SMALL) if small else 0 < maximum <= (48 - tier)*GIB) and
             ((small and trial is None) or (not small and callable(trial))), "small proof or reviewed candidate required")
     require(out.is_absolute() and out.parent == CAMPAIGN and not out.exists() and
-            out.name.startswith("compact-capacity-"), "fresh private campaign child required")
+            out.name.startswith("large-capacity-" if candidate_limit == 22*GIB else "compact-capacity-"), "fresh private campaign child required")
     deadline = time.monotonic() + BALLAST_SECONDS
     for path, digest in PINS.items():
         verify(path, digest)
@@ -309,6 +309,8 @@ def run(out, tier, maximum, *, small=False, trial=None, calibration=False, press
               "source_pins": [pin(p) for p in (Path(__file__), HERE/"wddm_process_samples.py",
                               HERE/"wddm_capacity_snapshot.py", HELPER)], "driver_and_runtime_pins": {str(p): v for p,v in PINS.items()},
               "host_equivalence": False, "qualification": False, "samples": gate.rows}
+    if trial_sources:
+        result["trial_sources"] = [pin(p) for p in trial_sources]
     if accounting:
         result.update(host_before=before_host, ballast_job_limit_bytes=host_limit,
                       commit_calibration=calibration, host_accounting_source=pin(HERE/"ballast_host_commit.py"))
@@ -380,6 +382,13 @@ def run(out, tier, maximum, *, small=False, trial=None, calibration=False, press
         if time.monotonic() > deadline:
             result["complete"] = False
             result["whole_phase_expired"] = True
+        if trial_sources:
+            try:
+                for source in result["trial_sources"]:
+                    verify(Path(source["path"]),source["sha256"])
+            except (ValueError,OSError) as error:
+                result["complete"] = False
+                result["trial_source_failure"] = str(error)
         outputs = list(out.rglob("*"))
         if outputs:
             component["guard_many"](guard, outputs, True)

@@ -119,7 +119,7 @@ def run(args):
     calibration = args.commit_calibration
     require(not calibration or (args.small and args.maximum == 2*GIB), "model-free 2 GiB calibration required")
     pressure_reserve = args.pressure_host_reserve
-    require(pressure_reserve is None or (not args.small and not calibration and args.candidate_limit in (12*GIB,16*GIB)
+    require(pressure_reserve is None or (not args.small and not calibration and args.candidate_limit in (12*GIB,16*GIB,22*GIB)
                                             and pressure_reserve >= args.candidate_limit),
             "original pressure trial and candidate host reserve required")
     host_limit = 4*GIB if calibration else args.maximum + 2*GIB
@@ -242,7 +242,7 @@ def run(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--candidate-limit", type=int, choices=(12*GIB,16*GIB))
+    parser.add_argument("--candidate-limit", type=int, choices=(12*GIB,16*GIB,22*GIB))
     parser.add_argument("--tier", type=int, required=True)
     parser.add_argument("--maximum", type=int, required=True)
     parser.add_argument("--deadline-ns", type=int, required=True)

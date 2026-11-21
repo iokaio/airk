@@ -126,8 +126,13 @@ fn compact_cutlass_protected_mixed_timing() -> Result<()> {
 
 #[cfg(all(windows, target_arch = "x86_64"))]
 pub(in super::super) enum TimingModel {
-    Compact { pressure: bool },
-    Large([&'static str; 4]),
+    Compact {
+        pressure: bool,
+    },
+    Large {
+        digests: [&'static str; 4],
+        pressure: bool,
+    },
 }
 
 #[cfg(all(windows, target_arch = "x86_64"))]
@@ -140,7 +145,7 @@ pub(in super::super) fn protected_timing(
     model: TimingModel,
 ) -> Result<Value> {
     let prefix = match model {
-        TimingModel::Large(_) => "AIRK_LARGE_CUTLASS",
+        TimingModel::Large { .. } => "AIRK_LARGE_CUTLASS",
         TimingModel::Compact { .. } => "AIRK_COMPACT_CUTLASS",
     };
     let variable = |key: &str| std::env::var(format!("{prefix}_{key}"));
@@ -169,7 +174,7 @@ pub(in super::super) fn protected_timing(
             DEVELOPMENT_CASES[1].2,
             DEVELOPMENT_CASES[2].2,
         ],
-        TimingModel::Large(digests) => digests,
+        TimingModel::Large { digests, .. } => digests,
     };
     let measure = |call: &mut dyn FnMut(usize) -> Result<Vec<f32>>,
                    device_snapshot: &mut dyn FnMut() -> Result<Value>| {
@@ -212,7 +217,14 @@ pub(in super::super) fn protected_timing(
         Ok(json!({"rows":rows,"expires_monotonic_ns":expires_ns,"profiled":false}))
     };
     match model {
-        TimingModel::Large(_) => runtime.time_large_direct(campaign, gate, deadline, measure),
+        TimingModel::Large { pressure, .. } => {
+            let tier = if pressure {
+                Some(std::env::var("AIRK_LARGE_PRESSURE_TIER_GIB")?.parse::<u64>()?)
+            } else {
+                None
+            };
+            runtime.time_large_direct(campaign, gate, deadline, tier, measure)
+        }
         TimingModel::Compact { pressure } => {
             let tier = if pressure {
                 Some(std::env::var("AIRK_COMPACT_PRESSURE_TIER_GIB")?.parse::<u64>()?)

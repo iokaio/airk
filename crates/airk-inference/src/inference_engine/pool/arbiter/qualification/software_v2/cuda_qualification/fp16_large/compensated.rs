@@ -6,7 +6,7 @@ enum Profile {
     Operand,
     Rounded,
     Direct,
-    Timing(super::super::fp16_compact::timing::Population),
+    Timing(super::super::fp16_compact::timing::Population, bool),
 }
 fn observe(profile: Profile, scored: bool) -> Result<()> {
     let operand = matches!(profile, Profile::Operand);
@@ -48,7 +48,7 @@ fn observe(profile: Profile, scored: bool) -> Result<()> {
         let selected = gate
             .as_ref()
             .map(|(width, digest)| (*width, digest.as_str()));
-        if let Profile::Timing(population) = profile {
+        if let Profile::Timing(population, pressure) = profile {
             let (_, gate) = selected.context("Large timing requires a typed graph")?;
             let digests = [
                 "ec7b4845c37fb7cbe2a64a866f8b6cdc03479d65593cdb0a1d01102fe56fc335",
@@ -63,7 +63,7 @@ fn observe(profile: Profile, scored: bool) -> Result<()> {
                 gate,
                 deadline,
                 population,
-                TimingModel::Large(digests),
+                TimingModel::Large { digests, pressure },
             )
         } else if matches!(profile, Profile::Direct) {
             runtime.observe_large_direct(campaign, selected, deadline)
@@ -115,7 +115,7 @@ fn large_direct_score() -> Result<()> {
 #[ignore = "owned Large direct fixed20"]
 fn large_direct_fixed() -> Result<()> {
     observe(
-        Profile::Timing(super::super::fp16_compact::timing::Population::Fixed),
+        Profile::Timing(super::super::fp16_compact::timing::Population::Fixed, false),
         true,
     )
 }
@@ -124,7 +124,25 @@ fn large_direct_fixed() -> Result<()> {
 #[ignore = "owned Large direct mixed widths"]
 fn large_direct_mixed() -> Result<()> {
     observe(
-        Profile::Timing(super::super::fp16_compact::timing::Population::Mixed),
+        Profile::Timing(super::super::fp16_compact::timing::Population::Mixed, false),
+        true,
+    )
+}
+
+#[test]
+#[ignore = "owned Large direct measured-availability fit"]
+fn large_direct_pressure_fit() -> Result<()> {
+    observe(
+        Profile::Timing(super::super::fp16_compact::timing::Population::Fit, true),
+        true,
+    )
+}
+
+#[test]
+#[ignore = "owned Large direct measured-availability fixed"]
+fn large_direct_pressure_fixed() -> Result<()> {
+    observe(
+        Profile::Timing(super::super::fp16_compact::timing::Population::Fixed, true),
         true,
     )
 }

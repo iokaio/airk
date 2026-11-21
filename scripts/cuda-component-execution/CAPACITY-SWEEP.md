@@ -2,6 +2,8 @@
 
 The Windows capacity observer holds touched CUDA device allocations in their own suspended-before-resume Windows Job. It verifies the Python executable and runtime, System32 NVIDIA driver and DriverStore implementation, NVIDIA UUID, CUDA device LUID and physical WDDM adapter. Each allocation is at most 256 MiB. The worker synchronizes every touch, retains its allocations without GPU traffic during measurement, frees them and releases the CUDA context before the Job exits. A fresh output directory retains the exact source hashes, command, bounds, WDDM/host observations and natural release evidence.
 
+For the Windows Large direct FP32-activation graph, `protected_capacity_sweep.py pressure-fit --model large` takes the same-image operand receipt and digest, final graph receipt and digest, Cargo lineage, probe SHA, tier and other outstanding host reservations. Use a fresh `large-capacity-` campaign child. The candidate's 22 GiB process and Job limits fit within its 48 GiB scientific host ceiling. The native process binds the real tier, adapter and graph to its own suspended admission before loading the model. The scoring population requires the original eight T8192 score words. A `pressure-fixed` request additionally requires a prior admitted genuine fit at the same model, tier and image. Positive shared use or missing residency evidence leaves dedicated-only fit unresolved.
+
 In the verified human shell, run the CPU controls first.
 
 ```powershell

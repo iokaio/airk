@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Private Large baseline metadata and disposable final-graph diagnostics.
+mod cal;
 mod compensated;
 use super::*;
 use airk_core::arbiter::device::{DevicePrecision, PlacementPolicy};
