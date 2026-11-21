@@ -50,7 +50,7 @@ route, so no route needs its own parity investigation.
 | --- | --- | --- | --- |
 | CPU | Windows, Linux and macOS on any hardware | The portable graph: the model's FP32 graph with its learned weights cast from the FP16 file. | The FP32 form of this graph is retained and measured. The FP16-file form is not yet exported. |
 | CUDA | NVIDIA on Windows and Linux | The existing Compact and Large candidates. | Both pass the four development widths on Windows. Linux links and has not scored a model. |
-| WebGPU | Radeon on Windows and Linux, Apple GPUs on macOS, and other adapters | The portable graph, with FP32 arithmetic on the GPU. | Present in the pinned runtime source. Not built or run here. Entered through a staged probe (steps 6, 11 and 12). |
+| WebGPU | Radeon on Windows and Linux, Apple GPUs on macOS, and other adapters | The portable graph, with FP32 arithmetic on the GPU. | Runs on the A6000 through the official prebuilt plugin: correct and inside the speed line, over the memory line (step 0). Continues through the staged probe (steps 6, 11 and 12). |
 
 Every route shares the weight file and the scoring contract. The CPU and
 WebGPU routes start from the same portable graph. A route may use a small
@@ -166,7 +166,7 @@ The user approved A1 to A6 on the evening of 20 November 2026
 
 | ID | Change | Replaces or amends | Why |
 | --- | --- | --- | --- |
-| A1 | Adopt the weight rule: nothing larger than FP16 ships, and passing integer artifacts stay. | The FP16-only wording of 20 November. | P3 names the purpose. An integer artifact serves it better than FP16. The records name the selected Focus artifact FocusW8, an 8-bit export. Confirm the 1,024-token export's format from its receipt before step 2. |
+| A1 | Adopt the weight rule: nothing larger than FP16 ships, and passing integer artifacts stay. | The FP16-only wording of 20 November. | P3 names the purpose. An integer artifact serves it better than FP16. The committed catalog names the Focus profile as an 8-bit export, so A1 covers it. Read the 1,024-token export's receipt before step 2. |
 | A2 | Adopt the CPU ladder, including the 2,048-token tier and reported model downgrades. The user later set a CPU target in place of a promised tier (below). | D08's same-model and same-width fallback. | P9 and P10. Large at full width cannot meet the deadline on CPU. |
 | A3 | Make WebGPU the GPU route for Radeon and macOS when the probe passes on the Azure Radeon VM and the rented Mac. | The Core ML, DirectML and ROCm sequence, and the deferral of WebGPU. | P1, P2, P4 and P5. One provider instead of three. |
 | A4 | Adopt calibration transfer with a guard band and a disjoint confirmation (acceptance rule 2). | Separate calibration and task evidence for every promoted identity. | P4 and P5. Without it each of the routes above needs its own capture. |
@@ -233,22 +233,53 @@ Booking stays a manual user action. Each rented host receives one rehearsed
 batch. A 32 GB device proves the route. It does not prove fit on a smaller
 card, so each claim states the smallest memory actually tested.
 
+### Step 0 — Confidence refinement
+
+The user added this step before the numbered work. It qualifies nothing. Each
+check settles one uncertainty behind the confidence figures and is capped at
+one attempt and one corrective attempt. Its results update the confidence
+column below.
+
+| Check | What it settles |
+| --- | --- |
+| 0a. Compile the Rust preserved in `c41b4fe6` and `4853220b` with a scoped Clippy. | Whether steps 4 and 10 start from code that builds. |
+| 0b. Run a WebGPU smoke test on the A6000 with the documented prebuilt provider package: provider start-up, placement, then the retained FP32 Compact CPU graph at 32 and 8,192 tokens against the reference scores and the CUDA speed line. | Whether the Radeon and macOS route is plausible before any build or rental. |
+| 0c. Count the cohort cases that already carry publisher labels and native-visible spans. | Whether steps 1 and 8 can run without new human judgments. |
+| 0d. Identify the graph behind the retained Compact CPU figure and the format of the 1,024-token Focus export. | Whether step 3 starts from the graph the plan assumes, and whether A1 covers Focus. |
+| 0e. Read how a profile carries its token ceiling in Core. | How large the budget-tier part of step 5 is. |
+| 0f. Read whether the pinned Rust binding can load a provider plugin library. | Whether WebGPU can enter the product without a new runtime build path. |
+
+Results on 21 November 2026 UTC. The receipts are in the private
+`confidence-refinement-r1` folder of the campaign root, and the ledger holds
+their digests.
+
+| Check | Result |
+| --- | --- |
+| 0a | Failed, then fixed. The Large calibration selector called a private function in the Compact module. A two-line visibility change lets the retrieval and inference crates pass scoped Clippy with the CUDA and test-support features. The kernel examples and the airkctl test passed unchanged. Separately, `cargo fmt --all -- --check` fails in 11 files at the pinned toolchain, which the parent plan's format gate will meet. |
+| 0b | Correctness and speed pass. Memory fails as configured. The official plugin 0.6.0 ran the FP32 Compact attention graph on the A6000 through Direct3D 12. At 32 tokens the scores were within 0.0000668 of the FP32 reference. At 8,192 tokens they were within 0.004486, with the same winner both times, and warm forwards took 5.12 to 5.23 s against 1.7721 s for CUDA, a factor of about 2.9. All 28 attention kernels ran on WebGPU. Adapter memory peaked near 21 GB above its baseline. |
+| 0c | 142 cases carry publisher coordinates: 76 TechQA, 41 AWS and 25 IBM Cloud. The 76 TechQA cases also have complete ordered menus, so step 1 can start with them and needs no new judgment. Neither native token budgets nor delivered evidence have been measured for any of them. |
+| 0d | The 86-second figure came from the Compact CPU component at the CPU4 class, four cores and four threads, under a 16 GiB reservation. Two graph forms are retained: the original export and an attention-kernel variant, which is the one that ran on WebGPU. Which form produced the figure was not resolved. The committed catalog names the Focus profile as an 8-bit export. |
+| 0e | Smaller than feared. Core validates a `max_tokens` ceiling on every profile, and the committed catalog already holds Context profiles at 2,048 tokens. A fast tier is a profile, not a compiler change. |
+| 0f | Yes. The pinned `ort` crate has a WebGPU provider module, and its system bindings expose the provider-library registration and device-selection calls. |
+
+[WebGPU probe script](../../scripts/arbiter-webgpu-probe/README.md)
+
 ### Steps
 
 | Step | Work | Done when | Needs | Confidence |
 | --- | --- | --- | --- | --- |
-| 1 | Freeze the judged cohort. Run the first two stage arms on Windows CPU at the same evidence budget: retrieval alone and retrieval with Focus. | Focus's contribution to delivered evidence is measured, with missing evidence, duplicates and latency. | Nothing | Medium. Label coverage decides it. Start with the cases that carry publisher labels. |
+| 1 | Freeze the judged cohort. Run the first two stage arms on Windows CPU at the same evidence budget: retrieval alone and retrieval with Focus. | Focus's contribution to delivered evidence is measured, with missing evidence, duplicates and latency. | Nothing | Medium to high. Start with the 76 TechQA cases, which carry publisher coordinates and complete menus. |
 | 2 | Deliver the CPU milestone. Install the product on Windows and on Linux under WSL2 and measure the ladder tiers end to end at 8 cores, the target class. Start with retrieval and Focus, and add the Compact tiers when step 3 delivers them. Record the four memory figures. macOS joins at step 11. | Each tier has an end-to-end figure at 8 cores on both systems, and the tiers that meet 120 seconds are admitted for the target class. | Nothing | Medium. The runtime build on each system is the risk. |
 | 3 | Export the portable graph for Compact. Record the recipe in the exporter contract first. Verify shared weight bytes. Load on the static runtime with zero forwards. Score the four widths and 2,048 tokens against the reference. Time each width and record the four memory figures. | Compact has measured CPU numbers for the full and fast tiers. | Nothing | High. It reuses the retained FP32 graph and the Large weight-cast edit. |
-| 4 | Finish Windows CUDA. Complete Compact matching references, fit calibration, add the Large selector and score its panel. Run capacity under A6. | Both candidates hold a calibrated panel and a memory figure. | Nothing | High for Compact, medium for Large. |
-| 5 | Record the Core contract decision, then implement: the opt-in GPU default, Auto order, the ladder tiers and the CPU target class, typed reasons, truthful status, per-result disclosure of route, model, tier and budget, the weight rule and a WebGPU provider value. Test with injected capabilities. | Reviewed Core changes with qualification flags false. | Nothing | Medium. The budget tiers are the large part. |
-| 6 | Run the WebGPU smoke test on the A6000 through Direct3D 12 as soon as step 3 has a graph. It stays early by the user's decision and includes the speed line. It takes the GPU only when no CUDA run holds it. | A go or no-go for the rented runs. | Step 3 | Unknown until it runs. |
+| 4 | Finish Windows CUDA. Complete Compact matching references, fit calibration, add the Large selector and score its panel. Run capacity under A6. | Both candidates hold a calibrated panel and a memory figure. | Nothing | High for Compact, medium for Large. The preserved code compiles after the step 0 fix. The Large selector is still unexercised. |
+| 5 | Record the Core contract decision, then implement: the opt-in GPU default, Auto order, the ladder tiers and the CPU target class, typed reasons, truthful status, per-result disclosure of route, model, tier and budget, the weight rule and a WebGPU provider value. Test with injected capabilities. | Reviewed Core changes with qualification flags false. | Nothing | Medium to high. Profiles already carry a token ceiling, so a tier is a profile. |
+| 6 | Run the WebGPU smoke test on the A6000 through Direct3D 12 as soon as step 3 has a graph. It stays early by the user's decision and includes the speed line. It takes the GPU only when no CUDA run holds it. | A go or no-go for the rented runs. | Step 3 | Medium. Step 0 passed correctness and the speed line on the FP32 graph. Memory is the open line. |
 | 7 | Score the portable graph on the 100 frozen Compact rows and the confirmation set on CPU, and apply acceptance rule 2. | The CPU route is admitted or its first failing row is named. | Steps 3 and 4, and one policy-confirmation capture on the calibrated identity | High for the scoring. The capture is the cost. |
 | 8 | Complete the stage comparison and the 98% comparison: the FP32 arm, the calibrated identity, and the Compact and Large arms. Compare delivered evidence first and judge only the discordant pairs. | The 98% bound and each Context model's added evidence are measured. | Nothing | Medium. Label coverage decides it. |
 | 9 | Decide Large's expansion from step 8. Extend Large to the CPU ladder, Linux and WebGPU only if it delivers evidence Compact misses. Until then its CPU fallback is the Compact downgrade. | A recorded disposition for Large. | Step 8 | Not applicable. |
 | 10 | Port the CUDA candidates to Linux on the existing WSL2 instance. Score widths and the frozen rows. | Linux CUDA is admitted by rule 2. | Step 4 | Medium. |
 | 11 | After the Windows and Linux CUDA work is complete, rehearse macOS on the Mac Neo. Build the arm64 runtime with the CPU and WebGPU providers from pinned inputs. Confirm that WebGPU starts on Metal. Run synthetic graphs and reduced fixtures, Focus on CPU, and a dry run of the rented-Mac batch. | The build is reproducible, Metal support is confirmed or refuted, and the batch runs end to end on small inputs. | Steps 4 and 10 | Medium. Memory and disk on the Neo are the risk. |
-| 12 | Run one rehearsed batch on each rented host: the Azure VM under Windows, the Azure VM under Linux, and the rented Mac. | WebGPU is adopted under A3, or the failing platform stays on the CPU ladder. Native Linux and macOS hold CPU evidence for the Context tiers. | Steps 6 and 7. Step 11 for the Mac batch. | Unknown for WebGPU, medium for CPU. |
+| 12 | Run one rehearsed batch on each rented host: the Azure VM under Windows, the Azure VM under Linux, and the rented Mac. | WebGPU is adopted under A3, or the failing platform stays on the CPU ladder. Native Linux and macOS hold CPU evidence for the Context tiers. | Steps 6 and 7. Step 11 for the Mac batch. | Medium for WebGPU. Memory and the Radeon and Metal drivers are the risk. Medium for CPU. |
 | 13 | Package and run the installed journeys of the parent plan for each milestone. | Parent steps 16 and 17 for that milestone. | The milestone's steps | Parent plan. |
 
 Step 2 detail. The retained Focus figure is per pair: 4.280648 s warm p95 at
@@ -320,6 +351,14 @@ If the correctness line passes and the attention, memory or latency line
 fails at 8,192 tokens, repeat those lines at 2,048 tokens. On a pass there,
 WebGPU serves the fast tier on that platform. Whether Auto then prefers the
 GPU fast tier or the CPU full tier is decided when that outcome occurs.
+
+Step 0 already ran the FP32 attention graph this way and measured about
+21 GB at peak, over both memory lines. Before the rented runs, bring that
+down with weights kept resident in half, the kernel's own causal handling in
+place of the explicit attention bias input, and the provider's buffer cache
+modes. Disabling the storage buffer cache made the peak worse. The prebuilt
+plugin package is enough for these runs. A build of the runtime with WebGPU
+is needed only for the product.
 
 The A6000 run is a smoke test and decides only whether to rent. Adoption
 under A3 needs passing runs on the Radeon card under Windows and Linux and on
@@ -451,7 +490,8 @@ to the `onnxruntime/` source directory.
    12 enabled on Windows and Vulkan as an option, and the provider options
    select either backend. Metal on macOS is the expected route and was not
    confirmed in this reading. The runtime's documentation names Metal as a
-   backend and describes a prebuilt plugin package for the provider. The provider supports half tensors through the
+   backend and describes a prebuilt plugin package for the provider. Step 0
+   installed that package and ran it on Direct3D 12. The provider supports half tensors through the
    shader half feature and has kernels for `MatMul`, `Gemm`, `Softmax`,
    `Cast`, `Gather`, `Slice`, `Concat`, `Where`, `Range`, normalization and
    rotary embedding. `contrib_ops/webgpu/bert` holds `GroupQueryAttention`

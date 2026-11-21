@@ -13834,3 +13834,94 @@ milestone is likely as engineering and uncertain as qualification because
 judged evidence depends on label coverage and human review, and WebGPU
 passing every probe line on Radeon and macOS is less likely than not, with
 the CPU ladder as the defined outcome if it fails.
+
+That entry was committed as `ac995f64`.
+
+### 21 November 2026 at 03:16 UTC — Confidence refinement step 0 completed
+
+The user asked for a confidence refinement step in the plan and for it to be
+carried out. Step 0 of `docs/arbiter/final-plan-fp16.md` lists six checks.
+All six ran under the verified human account. Receipts are in the private
+`confidence-refinement-r1` folder of the campaign root. This step qualifies
+nothing. Before it, D: held 1120826208256 free bytes and the Cargo target
+measured 95.5 GiB. After it, D: held 1119784476672 free bytes, and the run
+folder holds 265.8 MB. No compiler process remained after any run. The
+desktop `airk` and `airkctl` processes were present throughout and were left
+alone.
+
+**0a, compile check.** Environment: the five static-runtime values in
+`artifacts/advanced-split/ort130-x64-owned-r5/cargo-aggregate-env.json` and
+`AIRK_BUNDLED_MODEL_DIR` set to the verified bundled model. Target
+`target/`, incremental on, toolchain 1.98.0, format step skipped.
+
+| Command | Result | Receipt SHA-256 |
+| --- | --- | --- |
+| `python scripts/dev-check.py -p airk-retrieval -p airk-inference --features gpu-cuda --skip-fmt` | Exit 101 in 95.5 s. Five errors in an existing test module that needs the `test-support` feature. The command was wrong, not the code. | `e9f8f0d7c9fa65cf811276c31315a3c1b88d7024085f33de7d9ba9c58cdbc064` |
+| `python scripts/dev-check.py -p airk-kernel -p airkctl --skip-fmt` | Exit 0 in 51.4 s. | same receipt |
+| The first command with `--features gpu-cuda,test-support` | Exit 101 in 25.6 s. Two errors: `fp16_large/cal.rs` called `json_file`, which was private in `fp16_compact/cal.rs`. | `e9482c3e4821717a4c3aca4d53e1ae9784880f97038098ab72a880c64aff93c8` |
+| The same command after the fix | Exit 0 in 7.2 s with no warnings. | `225e1d79102d64b135fc39508e7793aec495c969577899e692919b7e84b3e4fe` |
+
+The fix is commit `deba0d8d`: the function takes the visibility of its
+neighbours and is imported. The Large selector has still not been run.
+`cargo fmt --all -- --check` reports differences in 11 files, including
+committed ones outside this session's changes. Nothing was reformatted.
+
+**0b, WebGPU smoke test.** Wheels were downloaded from PyPI into the run
+folder and installed into a private virtual environment with no index:
+`onnxruntime-1.30.0-cp313-cp313-win_amd64.whl`, SHA-256
+`4b63041bd623a9a9ac5e353948436c6fa7f43edd12d6b4a4ebc340bca959ba93`, and
+`onnxruntime_ep_webgpu-0.6.0-py3-none-win_amd64.whl`, SHA-256
+`00853e242f74f4b9072e1620bce9222547c2f988265eb674b5749680c8d62fb9`. The
+plugin library's SHA-256 is
+`6bf102c322d6bad5b1b5a04b0b0c3d43191f70f428ad1d6b4c43719674fc57d9`. The
+script is `scripts/arbiter-webgpu-probe/smoke.py`, commit `5df27387`. The
+graph is the retained Compact attention-kernel variant, SHA-256
+`d2b32177c875a989bdbe56071168bbcabb8d589ba740099feea44972459828c3`, with the
+original FP32 weights, 6882271232 bytes, SHA-256
+`7300a9202a4696f023799985131f6c4599ef9caaaa9b0d5b336f1c229574fbb4`. Inputs
+and reference scores came from the retained T32 and T8192 control reference
+receipts. The adapter was the RTX A6000 through Direct3D 12. The plugin
+reported that the Agility SDK was skipped because Developer Mode is off.
+
+| Run | Result | Receipt SHA-256 |
+| --- | --- | --- |
+| 32 tokens, three warm forwards | Load 9.615 s. First forward 2.2886 s, warm 0.1147 to 0.1298 s. Maximum raw difference from the original FP32 scores 0.0000667572, same winner. 1,795 kernels on WebGPU including all 28 attention kernels, 390 on CPU. | `49fdf99769f841202fa8614f883803cd38d283360b6a18a64d473273a90a4582` |
+| 8,192 tokens, five warm forwards | Load 7.251 s. First forward 5.6617 s, warm 5.1245 to 5.2308 s. Maximum raw difference 0.004486083984375, same winner. Adapter memory 1140 MiB at baseline, 7740 MiB after load, 22137 MiB at peak. | `bf0808d16978abb23ef1f41f9bf48d5773f833689aacb2f8b50cb27afa97226b` |
+| 8,192 tokens with `storageBufferCacheMode=disabled`, three warm forwards | Warm 5.3478 to 5.4226 s, the same scores, and a higher peak of 31432 MiB. | `8f0c5035b8ed381a85edde3df3786c6f78466aa8f0cec89d7e115596d1fc9c39` |
+
+Against the plan's lines: correctness passes within 0.007, and the warm
+forward is about 2.9 times the CUDA candidate's 1.7721 s, inside the factor
+of five. Memory fails as configured, since the peak is near 21 GB above
+baseline against a 16 GB card as the fallback line. The graph was the FP32
+form with expanded weights and an explicit attention bias input, so this is
+not the portable graph of step 3. The memory figure is whole-adapter usage
+and includes other desktop processes at about 1.1 GB. The result is for one
+NVIDIA adapter and says nothing yet about Radeon or Metal drivers.
+
+**0c, labels.** `docs/arbiter/software-v2-data-audit.md` records publisher
+coordinates for 76 TechQA cases with complete ordered menus, 41 AWS cases
+with a private source corpus, and 25 IBM Cloud cases. It also records that
+neither native token budgets nor delivered evidence have been measured.
+
+**0d, graph and Focus format.** The CPU component receipt behind the
+86.049136 s figure names CPU4 with four intra threads, and its profile
+reserves 16 GiB. The original Compact export and an attention-kernel variant
+are both retained. Which produced the figure was not resolved. The committed
+catalog's Focus profile identifier ends in `w8-r1`.
+
+**0e, token ceilings.** `crates/airk-core/src/arbiter/mod.rs` validates a
+`max_tokens` ceiling per profile, and the committed catalog holds Context
+profiles at 2,048 tokens.
+
+**0f, Rust binding.** The pinned `ort` 2.0.0-rc.10 source has a `webgpu`
+provider module, and `ort-sys` exposes `RegisterExecutionProviderLibrary`,
+`GetEpDevices` and `SessionOptionsAppendExecutionProvider_V2`.
+
+Script validation: `python -I -B -m unittest discover -s
+scripts/arbiter-webgpu-probe -p test_smoke.py` selected and passed 5 tests.
+The repository check passed for 10406 public files.
+
+Revised confidence, stated to the user as judgment: CPU on Windows and Linux
+about 85%, CUDA as engineering about 80%, the same milestone fully qualified
+about 55%, WebGPU passing every probe line on Radeon and macOS about 50%,
+and a defined outcome for those platforms either way about 90%.
