@@ -83,3 +83,69 @@ disabled. Pass this to `smoke.py` to keep them resident in half:
 
 On WebGPU, `--option storageBufferCacheMode=simple` roughly halved the peak
 in the first measurements. The default mode and `lazyRelease` were worse.
+
+## Panel drift
+
+`panel.py` scores every row of a compiled panel on one provider and measures
+how far the scores are from named reference scores. It serves the measured
+iterations behind acceptance rule 2 of the FP16 delivery plan: the drift of a
+portable graph from the calibrated identity across the frozen rows. It is a
+development measurement. It applies no limit and qualifies nothing.
+
+Inputs:
+
+- `--model`, `--provider`, `--option`, `--session-config` and
+  `--intra-threads`, as for `smoke.py`. Provider options apply to WebGPU
+  only.
+- `--weights`: a weight file the graph reads, repeated as needed, so that the
+  receipt records its digest.
+- `--panel`: the compiled rows. Each row has an `ordinal`, an `id` and
+  `compiled` with the six inputs. A row that masks an option is refused.
+- `--reference NAME=PATH`: a named reference score set, repeated as needed.
+  The file is a retained raw panel or an earlier `panel.json` of this script.
+  The first one is the primary reference. A reference row must carry the
+  panel row's id and, where it records one, the row's input digest.
+- `--comparison`: a retained paired CPU comparison, repeated as needed. Each
+  one adds its rows to the `matching_cpu` and `publisher_cpu` sets. Its
+  candidate scores must equal the primary reference's scores, which is what
+  ties it to a panel row.
+- `--band-edge`: the inclusive upper token bound of a band, repeated in
+  increasing order. The default bands end at 32, 128, 1,024, 2,048 and 8,192
+  tokens.
+- `--margin`: a winner margin to count rows against, repeated as needed. The
+  defaults are 0.002 and 0.014.
+- `--first` and `--count`: a slice of the panel, for a short trial.
+- `--warm`: warm forwards per row after the first one. The default is 0. The
+  scores come from the last forward.
+- `--output`: a fresh, empty directory.
+
+Outputs: `panel.json` in the output directory. One line per row goes to
+standard error while the run proceeds, and a one-line summary is printed at
+the end. The receipt records the digests of the graph, the weights, the panel
+and every reference file. For each row it holds the token count, the forward
+times, the scores, the winner and its margin over the second score. For each
+reference set the row has, it holds the reference scores, the maximum
+absolute difference, winner agreement, the reference's top-two margin and
+whether that margin is below twice the difference. With warm forwards it also
+holds the largest difference between forwards of the same row.
+
+The summary gives, for each reference set, the maximum, median and
+nearest-rank 95th percentile of the per-row differences, every row whose
+winner changed, every row whose reference margin is below twice its
+difference, the same figures by token band, and the count of rows at each
+margin. The margin counts are a proxy for the cost of a guard band. No fitted
+threshold enters them.
+
+Timing covers the session load, every forward and the whole run. On WebGPU
+the receipt adds whole-adapter memory at baseline, after load, after every
+row and at peak, which shows whether memory grows as token counts vary.
+
+```console
+python -I -B scripts/arbiter-webgpu-probe/panel.py --model <graph.onnx> --weights <weights.bin> --panel <compact.json> --reference calibrated=<raw-panel.json> --comparison <paired-comparison.json> --provider cpu --intra-threads 8 --output <fresh-dir>
+```
+
+`test_panel.py` covers the pure helpers:
+
+```console
+python -I -B -m unittest discover -s scripts/arbiter-webgpu-probe -p test_panel.py
+```
