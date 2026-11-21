@@ -453,10 +453,16 @@ delivered. Each pair is `both`, `a_only`, `b_only`, `neither`, `unresolved`
 or `error`, and the net effect is `b_only` minus `a_only`. Refusals, errors
 and cases where Focus was not applied stay in the denominator. A pair is
 unresolved when the arms did not start from the same initial hits in the
-same order before Focus. The summary reports the 75 judged cases, their 32
+same order before Focus, or their public scope identity differs. That
+identity is the selection and its members. The scope fingerprint is left
+out: for an open agent read it digests a random per-grant nonce and changes
+whenever the service stores the grant again. Pass `--earlier-arm-a <path>
+--earlier-arm-a-sha256 <sha>` with an `--arm-a-only` score of the same
+cases to report whether the repeated arm A reproduces it. The summary reports the 75 judged cases, their 32
 groups with equal weight, and DEV_Q002 separately as exposed. It also
-reports the publisher document's rank in the initial search before and
-after Focus, the uncovered byte ranges, duplicate delivered bytes, the
+reports the publisher document's and span's rank in the initial search
+before and after Focus, how often Focus moved a hit in ranks 1 to 4 up or
+down, the uncovered byte ranges, duplicate delivered bytes, the
 Focus state of every search and the median and nearest-rank 95th percentile
 of the Answer round trip. Standard output holds counts only. Case rows stay
 in the private output.

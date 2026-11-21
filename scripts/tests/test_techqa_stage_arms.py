@@ -59,9 +59,13 @@ def receipt(original, ranked, applied=True, scored=None):
         "presentations": [{"candidate": name, "utf8_start": 0, "utf8_end": 5, "source_bytes": 5} for name in original]}}
 
 
-def arm(records=None, state="ok", stop="budget", elapsed=1_000_000):
+def arm(records=None, state="ok", stop="budget", elapsed=1_000_000, observation=None):
     call = {"state": state, "elapsed_ns": elapsed if state == "ok" else None}
     answer = None if records is None else packet(records, stop)
+    if observation is not None:
+        answer["scope_observation"] = observation
+        for entry in answer["records"]:
+            entry["canonical_result"]["scope_observation"] = observation
     row = scorer["arm_row"](call, answer, "question", PUBLICATION["token"], MEMBERS, TARGET, FILES.__getitem__)
     return dict(row, request="sealed-request")
 
@@ -153,14 +157,59 @@ class FocusObservation(unittest.TestCase):
         figures = scorer["aggregate"]([paired("Q1", a, b)])
         self.assertEqual({"rank_1_4": 1, "rank_5_8": 0, "absent": 0},
                          figures["arms"]["B"]["initial_search"]["gold_document_rank"])
-        self.assertEqual({"movable_rank_1_4_before_focus": 1, "improved": 1, "unchanged": 0, "worsened": 0,
-                          "first_before_focus": 0, "first_after_focus": 1}, figures["gold_document_rank_movement"])
+        moved = {"in_ranks_1_4_before_focus": 1, "moved_up": 1, "not_moved": 0, "moved_down": 0,
+                 "in_ranks_5_8_before_focus": 0, "moved_from_ranks_5_8": 0, "absent": 0,
+                 "first_before_focus": 0, "first_after_focus": 1}
+        self.assertEqual((moved, moved), (figures["gold_document_rank_movement"], figures["gold_span_rank_movement"]))
         reordered = paired("Q1", arm([record("search", [second, first, WHOLE])]), b)
         self.assertEqual((True, False, "unresolved"), (reordered["pairing"]["initial_hits"],
                                                        reordered["pairing"]["order_before_focus"],
                                                        reordered["category"]))
         fewer = paired("Q1", arm([record("search", [first, WHOLE])]), b)
         self.assertEqual((False, "unresolved"), (fewer["pairing"]["initial_hits"], fewer["category"]))
+
+    def test_rank_movement_counts_only_the_scored_prefix_for_document_and_span(self):
+        first, second, third = (hit("other.txt", text, line, line) for line, text in
+                                enumerate(("first", "second", "third"), 1))
+        both_lines, alpha = hit("other.txt", "first\nsecond", 1, 2), hit("gold.txt", "alpha line", 1, 1)
+
+        def case(name, before, order):
+            names = [f"c{number}" for number in range(1, len(before) + 1)]
+            a = arm([record("search", before)])
+            b = arm([record("search", [before[position] for position in order],
+                            receipt(names, [names[position] for position in order]))])
+            return paired(name, a, b)
+
+        rows = [case("up", [first, second, WHOLE], [2, 0, 1]),          # document and span 3 -> 1
+                case("down", [WHOLE, first, second], [1, 0, 2]),        # document and span 1 -> 2
+                case("beyond", [first, second, third, both_lines, WHOLE], [1, 0, 2, 3, 4]),   # rank 5 cannot move
+                case("absent", [first, second], [1, 0]),
+                case("split", [alpha, first, WHOLE], [2, 0, 1])]        # document stays 1, span 3 -> 1
+        self.assertEqual(["both", "both", "both", "neither", "both"], [row["category"] for row in rows])
+        figures = scorer["aggregate"](rows)
+        self.assertEqual({"in_ranks_1_4_before_focus": 3, "moved_up": 1, "not_moved": 1, "moved_down": 1,
+                          "in_ranks_5_8_before_focus": 1, "moved_from_ranks_5_8": 0, "absent": 1,
+                          "first_before_focus": 2, "first_after_focus": 2}, figures["gold_document_rank_movement"])
+        self.assertEqual({"in_ranks_1_4_before_focus": 3, "moved_up": 2, "not_moved": 0, "moved_down": 1,
+                          "in_ranks_5_8_before_focus": 1, "moved_from_ranks_5_8": 0, "absent": 1,
+                          "first_before_focus": 1, "first_after_focus": 2}, figures["gold_span_rank_movement"])
+
+    def test_scope_fingerprint_may_differ_but_the_public_scope_identity_must_pair(self):
+        def scope(fingerprint, identity="selection-1", revision=7, members=("idx_synthetic",)):
+            return {"schema": 1, "qualifier": "selected_subset", "fingerprint": fingerprint,
+                    "selection": {"owner": "agent", "scope_identity": identity, "catalog_revision": revision},
+                    "members": [{"index_id": member, "source_root_ids": ["source"]} for member in members]}
+
+        def side(observation):
+            return arm([record("search", [WHOLE])], observation=observation)
+
+        # The fingerprint digests a random per-grant nonce; the stored grant was renewed between the arms.
+        row = paired("Q1", side(scope("grant-nonce-a")), side(scope("grant-nonce-b")))
+        self.assertEqual((True, "both"), (row["pairing"]["scope"], row["category"]))
+        for other in (scope("grant-nonce-b", identity="selection-2"), scope("grant-nonce-b", revision=8),
+                      scope("grant-nonce-b", members=("idx_other",)), scope("grant-nonce-a", members=())):
+            row = paired("Q1", side(scope("grant-nonce-a")), side(other))
+            self.assertEqual((False, "unresolved"), (row["pairing"]["scope"], row["category"]))
 
     def test_focus_inference_is_summed_per_case_and_per_pair(self):
         a = arm([record("search", [WHOLE, OTHER])])
@@ -262,6 +311,17 @@ class PairedSummary(unittest.TestCase):
         self.assertEqual({"covered": 2, "not_delivered": 1}, summary["judged_figures"]["arms"]["B"]["coverage"])
         self.assertEqual(("neither", "Q0"), (summary["exposed"]["rows"][0]["category"],
                                              summary["exposed"]["rows"][0]["case"]))
+
+    def test_repeated_arm_a_is_compared_case_by_case(self):
+        covered = arm([record("search", [OTHER]), record("context", [WHOLE])])
+        missed, reordered = arm([record("search", [OTHER])]), arm([record("search", [WHOLE, OTHER])])
+        earlier = [{"case": "Q1", "A": covered}, {"case": "Q2", "A": missed}, {"case": "Q3", "A": covered}]
+        rows = [{"case": "Q1", "A": covered}, {"case": "Q2", "A": covered}, {"case": "Q3", "A": reordered},
+                {"case": "Q9", "A": missed}]
+        self.assertEqual({"cases_compared": 3, "cases_not_in_earlier_run": 1, "same_coverage": 2,
+                          "coverage_changes": {"not_delivered->covered": 1}, "same_initial_hits_in_order": 2,
+                          "same_delivered_span_bytes": 2, "same_record_count": 1},
+                         scorer["arm_a_reproduction"](rows, earlier))
 
     def test_nearest_rank_percentile(self):
         self.assertEqual(19, scorer["nearest_rank"](list(range(1, 21)), 95))

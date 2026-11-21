@@ -207,12 +207,22 @@ def arm_row(call, packet, question, token, members, target, body):
     return row
 
 
+def scope_identity(observation):
+    """The public authorization identity of a read: selection, members, qualifier and schema.
+
+    The fingerprint is left out. For an open agent read it digests the service's
+    random per-grant nonce, so it changes whenever the service stores the grant
+    again, even when the selection and its members are identical.
+    """
+    return {key: value for key, value in (observation or {}).items() if key != "fingerprint"}
+
+
 def pairing(a, b):
     """Both arms must start from the same request, index, publication and initial hits."""
     checks = {"request": a.get("request") is not None and a.get("request") == b.get("request")}
     if a["call_state"] == b["call_state"] == "ok":
         checks["index"] = a["index_id"] == b["index_id"]
-        checks["scope"] = a["scope_observation"] == b["scope_observation"]
+        checks["scope"] = scope_identity(a["scope_observation"]) == scope_identity(b["scope_observation"])
         first, second = a.get("initial"), b.get("initial")
         if first and second:
             checks["initial_hits"] = sorted(first["order_before_focus"]) == sorted(second["order_before_focus"])
@@ -339,19 +349,45 @@ def aggregate(rows):
                                 [row["B"]["duplicates"]["union_bytes"] for row in both]),
         "delivered_span_bytes": compared([row["A"].get("delivered_span_bytes", 0) for row in both],
                                          [row["B"].get("delivered_span_bytes", 0) for row in both])}
-    # What Focus did to the publisher document's rank in arm B's initial search.
-    # Only a hit inside the scored prefix (rank 1 to 4 before Focus) can move.
-    ranks = [(row["B"]["initial"]["gold_document_rank_before_focus"], row["B"]["initial"]["gold_document_rank"])
-             for row in both if row["B"].get("initial")]
-    present = [(before, after) for before, after in ranks if before is not None]
-    report["gold_document_rank_movement"] = {
-        "movable_rank_1_4_before_focus": sum(before <= 4 for before, _ in present),
-        "improved": sum(after < before for before, after in present),
-        "unchanged": sum(after == before for before, after in present),
-        "worsened": sum(after > before for before, after in present),
-        "first_before_focus": sum(before == 1 for before, _ in present),
-        "first_after_focus": sum(after == 1 for _, after in present)}
+    # What Focus did to the publisher document's and span's best rank in arm B's
+    # initial search. Only a hit in the scored prefix (rank 1 to 4 before Focus) can move.
+    searched = [row["B"]["initial"] for row in both if row["B"].get("initial")]
+
+    def movement(field):
+        ranks = [(initial[field + "_before_focus"], initial[field]) for initial in searched]
+        prefix = [(before, after) for before, after in ranks if before is not None and before <= 4]
+        beyond = [(before, after) for before, after in ranks if before is not None and before > 4]
+        return {"in_ranks_1_4_before_focus": len(prefix),
+                "moved_up": sum(after < before for before, after in prefix),
+                "not_moved": sum(after == before for before, after in prefix),
+                "moved_down": sum(after > before for before, after in prefix),
+                "in_ranks_5_8_before_focus": len(beyond),
+                "moved_from_ranks_5_8": sum(after != before for before, after in beyond),
+                "absent": sum(before is None for before, _ in ranks),
+                "first_before_focus": sum(before == 1 for before, _ in ranks),
+                "first_after_focus": sum(after == 1 for _, after in ranks)}
+
+    report["gold_document_rank_movement"] = movement("gold_document_rank")
+    report["gold_span_rank_movement"] = movement("gold_span_rank")
     return report
+
+
+def arm_a_reproduction(rows, earlier):
+    """Whether a repeated arm A matches an earlier arm A of the same cases, case by case."""
+    known = {row["case"]: row["A"] for row in earlier}
+    shared = [(row["A"], known[row["case"]]) for row in rows if row["case"] in known]
+    changes = [f"{old['coverage']}->{new['coverage']}" for new, old in shared if new["coverage"] != old["coverage"]]
+
+    def hits(side):
+        return (side.get("initial") or {}).get("order_before_focus")
+
+    return {"cases_compared": len(shared), "cases_not_in_earlier_run": len(rows) - len(shared),
+            "same_coverage": len(shared) - len(changes),
+            "coverage_changes": {change: changes.count(change) for change in sorted(set(changes))},
+            "same_initial_hits_in_order": sum(hits(new) is not None and hits(new) == hits(old) for new, old in shared),
+            "same_delivered_span_bytes": sum(new.get("delivered_span_bytes") == old.get("delivered_span_bytes")
+                                             for new, old in shared),
+            "same_record_count": sum(new.get("records") == old.get("records") for new, old in shared)}
 
 
 def load(descriptor, index_id, request):
@@ -562,6 +598,9 @@ def main():
     parser.add_argument("--focus-census", action="store_true", help="model-free pair census of arm A; needs tokenizers")
     parser.add_argument("--arm-a-only", action="store_true",
                         help="score retrieval alone for a settled run that closed before arm B; no paired outcome")
+    parser.add_argument("--earlier-arm-a", type=Path,
+                        help="an --arm-a-only score of the same cases; reports whether this arm A reproduces it")
+    parser.add_argument("--earlier-arm-a-sha256")
     args = parser.parse_args()
     require(sys.flags.isolated and sys.dont_write_bytecode and (args.focus_census or sys.flags.no_site),
             "use checked Python -I -B -S (the census needs site packages: -I -B)")
@@ -625,6 +664,13 @@ def main():
                               "focus_dispatches": capture["focus_dispatches"]})
         require(len({row["case"] for row in rows}) == len(rows), "a case was scored in more than one run")
         summary = report(rows, freeze)
+        if args.earlier_arm_a is not None:
+            pinned = {"path": str(args.earlier_arm_a), "sha256": args.earlier_arm_a_sha256}
+            earlier = pair.read(pinned)
+            require(earlier["schema"] == "airk.private.techqa-stage-arms-arm-a/1"
+                    and earlier["summary"]["service"] == freeze["runtime"]["service"],
+                    "earlier arm A score is not from this service image")
+            summary["arm_a_reproduction"] = dict(arm_a_reproduction(rows, earlier["rows"]), earlier=pinned)
         summary.update(runs=lifetimes, service=freeze["runtime"]["service"], cli=freeze["runtime"]["cli"],
                        image_scope=freeze["runtime"]["image_scope"], freeze_sha256=args.freeze_sha256,
                        harness_sha256=arms.harness(),
