@@ -13395,3 +13395,24 @@ a 0.000225067139 maximum matching-recipe raw error. This makes 48 original
 scientific Compact pairs. The full Compact GPU panel and all baseline
 results stay available under their exact original identities. No new FP32
 Job was started after the decision.
+
+### 21 November 2026 at 00:48 UTC — Windows CPU FP16 placement diagnostic
+
+Ran `python -I -B -S scripts/arbiter-fp16-execution/diagnose_cpu_fp16_placement.py
+--output <campaign>/windows-cpu-fp16-placement-r2` under the verified human
+account. Audited both optimized graphs before reading and verified the
+private receipt owner before reporting. Source
+`aed09a12e0749c6b4cd54e97c686f61c07ffcb59168a660a3b6f7264c3df53a8`, runtime
+manifest `a557be764ebcf8a2b777403ac349f2d3ecadfabb5d65e16b8c47026239644c95`,
+receipt `a9cdead506902abade384f206ff92281b596d4500b805695cfa39245ef26edea`.
+
+The pinned Windows ONNX Runtime 1.30.0 Python build registered FP16
+GroupQueryAttention and standard Attention kernels. The CPU registry
+lacked FP16 MatMul and Softmax. On two literal graphs with FP16 inputs and
+outputs, CPU optimization inserted two casts into FP32 around MatMul inputs
+and one before the decomposed Softmax. A separate initial load gave
+the same optimized graph and result hashes. These placement checks contain
+no model weights and run zero inference forwards. The exact static
+AIRK runtime and real FP16 CPU model remain unverified. CPU artifact and
+fallback admission, installed Answer latency, Large dedicated memory
+and precision qualification, held-out comparison and Linux CUDA remain open.

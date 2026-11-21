@@ -36,3 +36,11 @@ Run `compact_width_drift.py` using isolated Python with bytecode disabled to sum
 Both model probes use score_comparison.py to compare complete score vectors against the matching arithmetic and original publisher references. Run test_score_comparison.py with isolated Python to check ties, nonfinite values and the two raw-error limits.
 
 Run large_width_results.py with the campaign directory and a fresh private JSON output path to reproduce the four Windows Large score comparisons. It reopens each original native log and reports the score vectors, per-width and pooled raw and normalized-mass differences, winners, native test elapsed time and observed memory peaks. The test elapsed time includes model loading and teardown. The 8192-token result remains separately identifiable.
+
+## CPU FP16 operator placement
+
+Run `python -I -B -S scripts/arbiter-fp16-execution/diagnose_cpu_fp16_placement.py
+--output <fresh guarded campaign directory>` to inspect how the pinned Windows
+ORT CPU provider loads literal FP16 MatMul and Softmax graphs. It saves the
+optimized graphs and reports inserted casts. The controls contain no model
+weights and execute zero forwards.

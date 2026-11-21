@@ -455,3 +455,12 @@ the final comparison. The native catalog currently has FP32 local-test
 Context Compact and Large CPU profiles. Qualifying the FP16 CPU path is
 part of the delivery work, including automatic fallback. Retain the 100
 Compact scientific GPU vectors and the original qualification gates.
+
+### Windows CPU FP16 operator placement, 20 November 2026 at 5:48 p.m. Denver time
+
+The pinned 1.30.0 Windows CPU provider test build widens literal FP16 MatMul
+and Softmax to FP32 on load. The check exercised no inference. Verify the
+exact static AIRK CPU runtime before admitting a release artifact. Keep
+the prior CPU and Large GPU arithmetic evidence attached to their original
+graphs. Compact's 100 scientific score vectors remain available. See the
+[CPU placement receipt checkpoint](simplify/one-process-ledger.md#21-november-2026-at-0048-utc--windows-cpu-fp16-placement-diagnostic).
