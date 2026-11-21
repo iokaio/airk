@@ -516,8 +516,9 @@ section of this file conflicts with them, the approvals govern. In short:
   The source defaults the setting to off since commit `0b5fe97c`. The
   earlier statement in this file that the setting defaults to enabled is
   superseded. A configuration that already stores GPU use as enabled is
-  reset to off once, and the user is told. Admin and the VS Code extension
-  do not show that notice yet.
+  reset to off once, and the user is told: Service Admin shows the notice
+  with "Allow GPU use" and "Keep GPU off", and the VS Code extension shows
+  the reset state.
 - A person reviews the discordant cases of the paired comparison: the user,
   unless the user names someone else. Agents prepare the blinded packet and
   never fill it in.

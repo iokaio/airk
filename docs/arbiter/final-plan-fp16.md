@@ -79,8 +79,10 @@ route: CUDA, and WebGPU on Radeon and macOS. The source now defaults the
 setting to off (commit `0b5fe97c`, 21 November). An enabled value stored
 under the earlier default reads as off with a reset notice pending, and a
 value the user sets afterwards is kept. The decision is recorded in the Core
-Arbiter contract. Admin and the VS Code extension do not show the notice yet,
-so until they do it is visible only in the complete resource result.
+Arbiter contract. Service Admin shows the notice with two answers, "Allow GPU
+use" and "Keep GPU off", and the VS Code extension shows the reset state and
+points to Service Admin. Neither has been exercised against an installed
+service that carries an old enabled setting.
 
 ### CPU ladder
 
@@ -299,6 +301,54 @@ their digests.
 
 [WebGPU probe script](../../scripts/arbiter-webgpu-probe/README.md)
 
+### What the measurements say about the Context stage, 21 November
+
+The Context stage, as designed, has no measured way to add evidence on the
+100-row calibration panel. This is about the task design and the
+unspecialized models. It is not about FP16, CUDA or WebGPU: the FP32 CPU
+references agree with every winner.
+
+- **Compact has no safe cutoff.** The native study on the 100 rows returned
+  none. Only two certified Read cards win, and four uncertified ones win by
+  more.
+- **Compact follows position, not content.** The seven option lines are the
+  same on every row: five generic Read cards in queue order, then Sufficient,
+  then Clarify. A Read option says only `read r<n>`. One fixed per-slot score
+  profile explains 91% of the variation. With the reads rotated behind the
+  options, the best Read stayed on the fourth line in 112 of 112 forwards.
+  Which read a card names explains about 0.5% of the variation. No compile or
+  prompt defect was found.
+- **Large reads the cards and says Sufficient.** Its top card follows the
+  text when cards are rotated, and it is Sufficient on 99 of 100 rows. Among
+  the Read cards it is still mostly position-driven: 80% slot, 7% read.
+- **Stating the read in the option line helps the models see it, not choose
+  well.** The read's share rises to 19% on Compact and 46% on Large. What
+  they then prefer is the first context-expansion read, and the certified
+  reads stay at chance rank.
+- **Asking about one read at a time does not help.** Neither model scores a
+  Read above Sufficient in any of 140 pairs each.
+
+The certificates cover 12 reads on 11 rows, so the sample can rule out a
+large effect and cannot detect a small one. The two prompt forms were probes
+the product never compiles.
+
+What follows for this plan:
+
+- Steps that only matter if Context acts are on hold: Compact catalog rows,
+  the confirmation capture and the Context arms of step 8. Large's CUDA panel
+  is deferred, because Large's top card is a Read on 1 of 100 rows and its
+  fit cannot find a certified admission either.
+- Work that does not depend on Context acting continues: the Focus
+  comparison, the CPU and WebGPU routes as engineering, the opt-in GPU
+  setting, typed reasons and truthful status, and the Linux and macOS CPU
+  paths.
+- Making Context add evidence needs either weights specialized for this task
+  (priority 7) or a redesigned task. That is a new decision for the user and
+  is not part of this plan's approved steps.
+
+[Slot diagnosis](../../scripts/arbiter-context-slot-diagnosis/README.md) ·
+[Study report script](../../scripts/arbiter/evaluation/selected_goal/cal_raw/r8_cutlass_study_report.py)
+
 ### Steps
 
 | Step | Work | Done when | Needs | Confidence |
@@ -306,12 +356,12 @@ their digests.
 | 1 | Freeze the judged cohort. Run the first two stage arms on Windows CPU at the same evidence budget: retrieval alone and retrieval with Focus. | Focus's contribution to delivered evidence is measured, with missing evidence, duplicates and latency. | Nothing | Medium to high. Start with the 76 TechQA cases, which carry publisher coordinates and complete menus. In progress on 21 November. The runner and scorer exist, and the run uses the private evaluation fixture because the Focus profile is unqualified. No pass line is set; the paired counts are reported. Retrieval alone is measured: it delivers the publisher's span on 38 of 75 judged cases. The Focus arm is running as two fixture lifetimes of 38 cases, because the fixture refuses to configure Focus over more than 64 indexes. |
 | 2 | Deliver the CPU milestone. Install the product on Windows and on Linux under WSL2 and measure the ladder tiers end to end at 8 cores, the target class. Start with retrieval and Focus, and add the Compact tiers when step 3 delivers them. Record the four memory figures. macOS joins at step 11. | Each tier has an end-to-end figure at 8 cores on both systems, and the tiers that meet 120 seconds are admitted for the target class. | Nothing | Medium. The runtime build on each system is the risk. |
 | 3 | Export the portable graph for Compact. Record the recipe in the exporter contract first. Verify shared weight bytes. Load on the static runtime with zero forwards. Score the four widths and 2,048 tokens against the reference. Time each width and record the four memory figures. | Compact has measured CPU numbers for the full and fast tiers. | Nothing | High. The exporter's portable recipe exists, Compact and Large are exported and scored on the published runtime, and both pass the independent graph proof. The static runtime loads and scores Compact on Windows. A quiet-machine timing, Large on the static runtime and a learned-byte check for the portable recipe remain. |
-| 4 | Finish Windows CUDA. Complete Compact matching references, fit calibration, add the Large selector and score its panel. Run capacity under A6. | Both candidates hold a calibrated panel and a memory figure. | Nothing | Medium. The Compact fit is predicted to find no safe cutoff, and the native study is running to confirm or refute that. The Large selector is still unexercised and needs a new image and launcher. See the step 4 detail. |
+| 4 | Finish Windows CUDA. Complete Compact matching references, fit calibration, add the Large selector and score its panel. Run capacity under A6. | Both candidates hold a calibrated panel and a memory figure. | Nothing | Not reachable as written. The native study found no safe cutoff for Compact, and the cause is the task design (see the Context section above). The Large tooling exists and its panel is deferred. Capacity under A6 is implemented and replayed offline; live trials wait for the desktop's GPU memory state to recover. See the step 4 detail. |
 | 5 | Record the Core contract decision, then implement: the opt-in GPU default, Auto order, the ladder tiers and the CPU target class, typed reasons, truthful status, per-result disclosure of route, model, tier and budget, the weight rule and a WebGPU provider value. Test with injected capabilities. | Reviewed Core changes with qualification flags false. | Nothing | Medium to high. Profiles already carry a token ceiling, so a tier is a profile. The opt-in GPU default is done (commit `0b5fe97c`). The other slices and the Admin notice remain. |
 | 6 | Run the WebGPU smoke test on the A6000 through Direct3D 12 as soon as step 3 has a graph. It stays early by the user's decision and includes the speed line. It takes the GPU only when no CUDA run holds it. | A go or no-go for the rented runs. | Step 3 | Done on 21 November: go, with a memory caveat found afterwards. The exported Compact and Large graphs pass correctness and the speed line on the A6000, and their memory targets for one input length. With varying lengths the targets are not met by either buffer cache mode as measured (fourth iteration below). Large's 8,192-token check was against the CPU provider and still needs an independent reference. |
-| 7 | Score the portable graph on the 100 frozen Compact rows and the confirmation set on CPU, and apply acceptance rule 2. | The CPU route is admitted or its first failing row is named. | Steps 3 and 4, and one policy-confirmation capture on the calibrated identity | High for the scoring. The capture is the cost. The 100 rows are scored on CPU and WebGPU as a development measurement: no winner changed and the largest raw difference was 0.000519 on CPU. No confirmation capture exists, and none is worth making if the fit finds no safe cutoff. |
-| 8 | Complete the stage comparison and the 98% comparison: the FP32 arm, the calibrated identity, and the Compact and Large arms. Compare delivered evidence first. A person reviews the discordant pairs from a blinded packet. | The 98% bound and each Context model's added evidence are measured. | Nothing | Medium. Label coverage decides it. |
-| 9 | Decide Large's expansion from step 8. Extend Large to the CPU ladder, Linux and WebGPU only if it delivers evidence Compact misses. Until then its CPU fallback is the Compact downgrade. | A recorded disposition for Large. | Step 8 | Not applicable. |
+| 7 | Score the portable graph on the 100 frozen Compact rows and the confirmation set on CPU, and apply acceptance rule 2. | The CPU route is admitted or its first failing row is named. | Steps 3 and 4, and one policy-confirmation capture on the calibrated identity | High for the scoring. The capture is the cost. The 100 rows are scored on CPU and WebGPU as a development measurement: no winner changed and the largest raw difference was 0.000519 on CPU. No confirmation capture exists, and none is made: the fit found no safe cutoff, so there is no policy to confirm. |
+| 8 | Complete the stage comparison and the 98% comparison: the FP32 arm, the calibrated identity, and the Compact and Large arms. Compare delivered evidence first. A person reviews the discordant pairs from a blinded packet. | The 98% bound and each Context model's added evidence are measured. | Nothing | The retrieval and Focus arms are being measured in step 1. The Context arms are on hold: with no policy, Context accepts no action in either precision, so the paired comparison would be equal by construction and would say nothing. |
+| 9 | Decide Large's expansion from step 8. Extend Large to the CPU ladder, Linux and WebGPU only if it delivers evidence Compact misses. Until then its CPU fallback is the Compact downgrade. | A recorded disposition for Large. | Step 8 | Decided by the diagnosis instead: no expansion. Large picks Sufficient on 99 of 100 rows, so it delivers no evidence that Compact misses under the current task. |
 | 10 | Port the CUDA candidates to Linux on the existing WSL2 instance. Score widths and the frozen rows. | Linux CUDA is admitted by rule 2. | Step 4 | Medium. |
 | 11 | After the Windows and Linux CUDA work is complete, rehearse macOS on the Mac Neo. Build the arm64 runtime with the CPU and WebGPU providers from pinned inputs. Confirm that WebGPU starts on Metal. Run synthetic graphs and reduced fixtures, Focus on CPU, and a dry run of the rented-Mac batch. | The build is reproducible, Metal support is confirmed or refuted, and the batch runs end to end on small inputs. | Steps 4 and 10 | Medium. Memory and disk on the Neo are the risk. |
 | 12 | Run one rehearsed batch on each rented host: the Azure VM under Windows, the Azure VM under Linux, and the rented Mac. | WebGPU is adopted under A3, or the failing platform stays on the CPU ladder. Native Linux and macOS hold CPU evidence for the Context tiers. | Steps 6 and 7. Step 11 for the Mac batch. | Medium for WebGPU. Memory and the Radeon and Metal drivers are the risk. Medium for CPU. |
@@ -477,10 +527,12 @@ rewritten until the next accepted change. An accepted request that states
 `allow_gpu: true` stores `gpu_opt_in: "user_choice"`, and that value survives
 restarts. Either answer through the service-wide setting clears the notice.
 The installer carries stored bytes unchanged. Tested with literal bytes in
-Core, real files in Host and a restarted service process. Still owed: the
-notice and a "keep GPU off" action in Admin, the VS Code row, the generated
-type, and one Linux workflow script that asserts the old default. Reading the
-Admin controls must still not initialize a GPU or load a model.
+Core, real files in Host and a restarted service process. The notice, a
+"Keep GPU off" action, the VS Code row and the generated `GpuOptIn` type are
+in place, and the Linux workflow has a successor that expects the new
+default. Showing the notice issues no call beyond the page's existing
+read-only resources read. Reading the Admin controls must still not
+initialize a GPU or load a model.
 [Service resource configuration](../../crates/airk-core/src/service_resources.rs)
 [Device policy source](../../crates/airk-core/src/arbiter/device.rs) ·
 [Native device and profile contract](../../crates/airk-core/src/arbiter/CONTRACT.md)

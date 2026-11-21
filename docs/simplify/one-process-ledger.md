@@ -14644,3 +14644,122 @@ installed model copy has been removed by its owner. C: free
 **Running at the time of writing.** Step 1 Focus comparison (closing),
 portable graph on the static runtime (Cargo owner), slot diagnosis follow-up
 on Large and two prompt probes (GPU owner).
+
+### 21 November 2026 at 07:25 UTC — Fourth wave: static runtime, step 1 retrieval arm, Context on Large and under two prompt probes
+
+Identities as before. Agents made no commits. Every commit below is signed
+off and pushed.
+
+**Commits.**
+
+| Commit | Content | Primary review |
+| --- | --- | --- |
+| `b584c4e2` | Two-arm TechQA stage runner and scorer | Reran 26 tests; read the 64-index guard and the frozen rule. |
+| `02966c7f` | Test-only seam for the portable graph on the static CPU runtime | Read the file's structure, its unqualified-candidate guard and the mount line; added the owning contract paragraph. The agent's checks: scoped Clippy for `airk-inference`, 8 selected unit tests passed, nine ignored-selector runs. |
+| `c9314652` | Plan update for the ladder, the static runtime and the Linux gate | Primary's own edit. |
+| `a1e73842` | Slot diagnosis extended to Large and two prompt probes | Reran 57 tests. |
+
+**Portable Compact graph on the static CPU runtime (step 3 remainder).**
+Receipts under `…/portable-cpu-static-r1/`. Process capped to 8 physical
+cores (affinity mask `0x00000000ffff0000`) of a Threadripper PRO 5975WX.
+Cargo record: target `D:\code\Github\airk\target`, incremental on,
+`--offline`, `--timings`; first Clippy 67.6 s, test build 59.8 s.
+
+- Loads and scores with no change to a digest-input file. All 28 attention
+  nodes and every other kernel ran on the CPU provider.
+- Scores against the FP32 references at 32, 128, 1,024, 1,588 and 8,192
+  tokens: largest difference 0.000282288, every winner the same.
+- Cold load 8.99 to 9.42 s with a warm file cache. Peak resident memory
+  12,635,000,832 bytes, set during load. Resident after load 6.35 GB, after
+  drop 43 to 50 MB.
+- Fast tier at 2,048 tokens: median 9.116 s, p95 9.205 s of 20, with only
+  the user's own processes running. Full tier at 8,192 tokens: median 48.4
+  to 51.3 s, p95 52.0 to 53.3 s, with a service fixture running. These need
+  a quiet-machine rerun before they are quoted for the target class.
+- Projection casts fold at load; the embedding table stays in half.
+- A catalog row needs about a 13 GiB host reservation. Under the default
+  Balanced preset that is admitted only from about 52 GiB of RAM.
+- Found, not caused by this change: two of the 12 `cpu_source_transition`
+  tests fail at HEAD on literal source pins for `cuda/windows.rs` and
+  `cuda/diagnostic.rs`, which changed in `53272734`, `0f56cb23` and
+  `fdf13652` after the test file was last updated. A Cargo owner is reviewing
+  what those pins guard before any re-pin.
+
+**Step 1, retrieval alone (arm A).** The first full run indexed 76 menus and
+ran 76 arm A Answers, then stopped at the first Focus enable step with
+`clean-break complete index roster exceeds 64 indexes`: the fixture's
+configuration emitter refuses a catalog of more than 64 indexes
+(`crates/airk-store/src/service/registry/catalog/binding_lookup.rs:26-34`).
+The fixture closed cleanly and its 24,090,087,424 bytes of installed weights
+were removed after rehashing the originals. Score receipt
+`…/techqa-stage-arms-run-r1-arm-a-score-r1.private.json` (`2437b8f0…65e6`).
+
+| Arm A on the 75 judged cases | Result |
+| --- | --- |
+| Publisher span covered / partial / not delivered | 38 / 3 / 34 |
+| Unresolved, errors | 0, 0 |
+| Publisher document in ranks 1 to 4 / 5 to 8 / absent in the initial search | 51 / 2 / 22 |
+| A hit overlapping the span in ranks 1 to 4 / 5 to 8 / absent | 32 / 1 / 42 |
+| Duplicate bytes delivered | 220,578 of 984,463 (22.4%) |
+| Answer latency, median and p95 | 9,500 ms and 14,891 ms, with builds running |
+
+Focus reorders only the first four hits, so these ranks bound what it can
+add. Each case has one judged span, so an uncovered span is not proof that
+the evidence was insufficient. Primary decision: run the frozen two-lifetime
+plan (38 cases each, freeze `d0ab2cfb…03b7`), which keeps the reviewed
+emitter. It is running.
+
+**Context on Large, and two prompt probes.** WebGPU provider, inputs padded
+to 2,048 tokens, portable graphs. Receipts under
+`…/context-slot-diagnosis-r2/`: Compact report
+`e6a5039e31a22647aca657e3af4f9a1b2efe19a954b36836171ee1e8c2def02a`, Large
+report `1712ab5380de4ad673369477192fb97d280254b382b44c64dba8ecfc5da637f6`.
+No retained Large scores exist for these rows; the Large run is checked only
+by the exact identity rebuild of its tokens and a 15-forward CPU spot check
+(largest difference 0.0005).
+
+| Measure | Compact | Large |
+| --- | --- | --- |
+| Top card over 100 rows | slot 3 (Read) on 45, slot 5 (Sufficient) on 55 | Sufficient on 99, a Read on 1 |
+| Card texts rotated: top card went with the text | 34 of 196 | 183 of 196 |
+| Among the five Read cards: variation from slot / from the read | 98.3% / 0.5% | 79.9% / 6.7% |
+| With the read stated in the option line: slot / read | 71.3% / 19.4% | 41.3% / 46.1% |
+| One read at a time: pairs where Read beats Sufficient | 0 of 140 | 0 of 140 |
+| Certified reads ranked first among five Reads, of 12 (chance 2.4) | 2 natively, 1 to 2 with the read stated | 3 natively, 3 to 4 with the read stated |
+
+- Large reads the cards for its top choice but almost always says
+  Sufficient, so a generic Read rule would rarely fire on it.
+- Stating the read makes both models use it. What they then prefer is the
+  first-queued context expansion, on 19 of 28 rows for Compact and 16 of 28
+  for Large. All 12 certified reads are literal searches.
+- Asked about one read at a time, neither model prefers a Read, and the
+  answer still shifts with option order, by 12.1 on Compact and 4.5 on Large.
+- With 12 certified reads the sample can rule out a large effect and cannot
+  detect a small one.
+
+*Conclusion.* On this panel neither model, natively or under either probe,
+ranks the reads that gain reference evidence above chance. The Context stage
+as designed has no measured way to add evidence, and the generic Read rule
+has nothing to admit on either model. This is a finding about the task
+design and the unspecialized models, not about FP16, CUDA or WebGPU: the
+FP32 CPU references agree with every winner. What would change it is
+specialization of the weights for this task or a redesigned task, and that
+is the user's decision.
+
+*Consequences taken.* The Large CUDA CAL panel is deferred: Large's top card
+is a Read on 1 of 100 rows, so its fit cannot find a certified admission
+either, and the build plus 13 GPU phases would add no decision-relevant
+information. Compact catalog rows, any confirmation capture and the paired
+FP16-to-FP32 Context comparison of step 8 stay on hold for the same reason.
+
+**CUDA capacity trials.** Still blocked. Idle adapter use is about 400 MiB
+against the 1,100 MiB or more of the retained trials. No retry.
+
+**Disk.** D: free 1,062,154,985,472 bytes at 07:25 UTC: 171.09 GB of
+growth against the 195.42 GB budget, 24.3 GB left, with one 24 GB fixture
+installation live for step 1 and counted in that figure. C: free
+2,640,735,305,728: 29.23 GB of the 120 GB allowance.
+
+**Running at the time of writing.** Step 1 Focus arm (two fixture
+lifetimes), and the Cargo owner for the stale pins, the GPU reset notice in
+Admin and VS Code, and the three unpinned files' formatting.
