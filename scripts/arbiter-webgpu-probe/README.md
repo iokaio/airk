@@ -23,6 +23,9 @@ includes every other process on the card.
   `result.original_binding.original_fp32` for the reference scores.
 - `--provider`: `webgpu` (default) or `cpu`.
 - `--option key=value`: a provider option, repeated as needed.
+- `--session-config key=value`: a session configuration entry, repeated as
+  needed.
+- `--intra-threads`: the intra-op thread count, for CPU runs.
 - `--warm`: warm forwards per case after the first one. The default is 3.
 - `--no-profile`: skip the runtime profile and the placement count.
 - `--output`: a fresh, empty directory.
@@ -46,3 +49,32 @@ python -I -B scripts/arbiter-webgpu-probe/smoke.py --model <graph.onnx> --extern
 ```
 
 Keep the output under the private campaign root. Do not commit it.
+
+## Probe variants
+
+`variant.py` derives a probe variant of a retained attention graph, to
+measure what a change does to memory before the maintained exporter adopts
+it. It is not the product graph.
+
+- `--drop-attention-bias` removes the explicit bias input from every causal
+  `GroupQueryAttention` node and prunes the nodes that only produced it. The
+  kernel then applies causality itself. This is valid only for inputs with no
+  padding, which is how Context inputs are compiled.
+- `--half-weights` stores each large FP32 matrix weight and the embedding as
+  FP16 behind a cast, copies every other tensor unchanged, and makes the
+  variant folder self-contained. A non-finite source value or an overflow in
+  the conversion is refused.
+
+```console
+python -I -B scripts/arbiter-webgpu-probe/variant.py --source <graph.onnx> --source-data <model.onnx.data> --output <fresh-dir> --drop-attention-bias --half-weights
+```
+
+The runtime expands half weights again at load unless two passes are
+disabled. Pass this to `smoke.py` to keep them resident in half:
+
+```console
+--session-config "optimization.disable_specified_optimizers=ConstantFolding;FuseFp16InitializerToFp32NodeTransformer"
+```
+
+On WebGPU, `--option storageBufferCacheMode=simple` roughly halved the peak
+in the first measurements. The default mode and `lazyRelease` were worse.

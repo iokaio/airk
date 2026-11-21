@@ -116,6 +116,8 @@ def main():
     parser.add_argument("--case", action="append", required=True, type=Path)
     parser.add_argument("--provider", choices=("webgpu", "cpu"), default="webgpu")
     parser.add_argument("--option", action="append", default=[], help="provider option as key=value")
+    parser.add_argument("--session-config", action="append", default=[], help="session config entry as key=value")
+    parser.add_argument("--intra-threads", type=int, help="intra-op thread count, for CPU runs")
     parser.add_argument("--warm", type=int, default=3)
     parser.add_argument("--no-profile", action="store_true")
     parser.add_argument("--output", required=True, type=Path)
@@ -126,10 +128,16 @@ def main():
     import onnxruntime as ort
 
     options = dict(item.split("=", 1) for item in args.option)
+    session_config = dict(item.split("=", 1) for item in args.session_config)
     receipt = {"schema": "airk.private.webgpu-smoke/1", "qualification": False, "provider": args.provider,
-               "provider_options": options, "onnxruntime": ort.__version__,
+               "provider_options": options, "session_config": session_config, "onnxruntime": ort.__version__,
                "model": {"path": str(args.model), "sha256": digest(args.model)}, "cases": []}
     session_options = ort.SessionOptions()
+    for key, value in session_config.items():
+        session_options.add_session_config_entry(key, value)
+    if args.intra_threads:
+        session_options.intra_op_num_threads = args.intra_threads
+        receipt["intra_threads"] = args.intra_threads
     if args.external_data_dir:
         data = args.external_data_dir / "model.onnx.data"
         receipt["external_data"] = {"path": str(data), "bytes": data.stat().st_size, "sha256": digest(data)}
