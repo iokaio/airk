@@ -15131,3 +15131,40 @@ The Windows CUDA runbook's fit and confirmation steps are retired with them.
 
 **Resume action.** Wait for the user's answers to section 9 of the plan.
 Then start step E1.
+
+### 21 November 2026 at 14:08 UTC — Change sets replace single changes in the Arbiter plan
+
+The user read the first draft of the rewritten plan and corrected its
+adjustment loop: "Instead of altering one thing, I want you to devise more
+comprehensive changes and improvements than altering one thing. Use your
+analytical results to create the most likely set of changes that will improve
+things and make those and then iterate. We do not have weeks upon weeks to
+get this work done."
+
+**Changed in `docs/arbiter/final-plan-fp16.md`.**
+
+- Section 5.2 is now "Change sets, not single changes": pass, analyse, build
+  the whole set, replay, check what earned its place with leave-one-out
+  replays for costly changes, pass again, record. At most three change sets
+  before the report. Slow work starts in parallel from the beginning.
+- Section 5.3 is new: the first change set, nine changes drawn from the
+  source analysis, each marked as measured or as read from the code.
+- Section 6: one baseline pass on the code as it stands, then one full pass
+  per change set covering all three Answer configurations, with a training
+  track and a GPU track running beside the early steps.
+- Sections 8 and 9 follow: at most five passes in all, and reading 3 now
+  says that each pass runs the three configurations together.
+
+**The source fact behind the first change set**, read by the primary agent
+in `crates/airk-kernel/src/arbiter.rs:548-551` and `:838-942`. Answer's first
+search returns at most 8 hits that share 4,096 bytes. Its follow-ups are of
+two kinds only: a 32-line context read after a hit, and a search on a run of
+capitalized words found in a hit. The queue holds 8 and is filled hit by
+hit, so the top hit usually fills it. That gathering suits prose questions.
+It never looks up a definition, references, a file's tests or a governing
+contract. The first change set therefore changes how Answer gathers
+evidence, as well as what Focus and Context are asked to do.
+
+The direction is also recorded in the parent plan, the assignment file and
+the session memory. Nothing in the plan has started. The resume action is
+unchanged: wait for the user's answers to section 9, then start step E1.

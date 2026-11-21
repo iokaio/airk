@@ -115,6 +115,9 @@ say otherwise, this direction governs.
    person is more likely to find useful detail that helps them make better
    choices.
 5. **Weights are adjusted after each test**, from what the scenarios show.
+   The user added the same day that adjustments are made as comprehensive
+   sets of the changes most likely to improve results, built together and
+   then iterated, and not one change at a time, because time is short.
 6. **Large never runs on CPU in production.** Without GPU opt-in, Large is
    not offered and Compact is the only Context option. In tests Large on CPU
    is measured on one scenario in five with a 180-second maximum. This amends

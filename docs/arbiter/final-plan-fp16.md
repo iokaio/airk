@@ -198,14 +198,22 @@ checks which essential items the returned evidence has covered.
 These facts bound what the test can show and what adjusting weights can
 achieve.
 
-- **One Answer request** runs a search on the question, then follow-up reads
-  on its first hits: a 32-line context read for each, and searches on
-  capitalized word runs found in them. It stops at 8 calls, 3 rounds,
-  262,144 bytes or 120 seconds by default.
+- **One Answer request** runs one search on the question, then follow-up
+  reads, and stops at 8 calls, 3 rounds, 262,144 bytes or 120 seconds by
+  default.
+- **The first search is small.** It returns at most 8 hits that share 4,096
+  bytes, so about 500 bytes each.
+- **The follow-ups are built for prose questions.** Answer can issue only two
+  kinds of read: a 32-line context read after a hit, and a new search on a
+  run of capitalized words found in a hit. The queue holds 8 and is filled
+  hit by hit, so the top hit's context read and its capitalized-word searches
+  usually fill it before a second hit is considered. That suits hopping
+  between named things in articles. It does not look up a definition, the
+  callers of a function, a file's tests or the contract that governs a
+  folder, which is what a software task needs.
 - **Focus** reorders at most 4 hits of each search that Answer makes. It has
-  no threshold, and its instruction text is a generic web-search one. Answer
-  follows up on the first 8 hits in any case, so reordering 4 of them changes
-  little unless a budget binds.
+  no threshold, and its instruction text is a generic web-search one. It
+  cannot bring in a hit from outside the 8 returned.
 - **Context cannot act today.** An accepted Context action can do two things
   only: move a read that is already queued to the front, or end the
   gathering. It never adds a read. And every Context profile carries a
@@ -304,59 +312,108 @@ difference and cannot support a fine one, and the report says which it is.
 
 ## 5. Developing weights from the tests
 
-Weights are no longer developed from public question sets. They are adjusted
-after each test, from what the scenarios show.
+Weights are no longer developed from public question sets. After each pass
+the results are analysed, and a set of changes is built and tested together.
 
 ### 5.1 What can be adjusted
 
 "Weights" here means every adjustable value that shapes what Answer returns.
-They are listed from cheapest to most expensive, and each test starts at the
-top.
+A change set draws on any of these levels at once.
 
 | Level | What | Where it lives | Cost to change |
 | --- | --- | --- | --- |
-| 1 | Answer's gathering: calls, rounds, fan-out, bytes per read, lines per context read, hits shown per record | Request budget fields and constants in the kernel | Minutes. No model, no reindex |
-| 2 | Retrieval ranking: how lexical and vector results are fused, snippet size, chunk size | Constants. Fusion gives both sides equal votes today | Minutes for fusion and snippets. Chunk size needs a reindex. Changes the Parse and Search results too, so they are rerun |
+| 1 | Answer's gathering: which follow-up reads it queues and in what order, calls, rounds, fan-out, bytes per read, hits shown per record, packing | Request budget fields and code in the kernel | Hours. No model, no reindex |
+| 2 | Retrieval ranking: how lexical and vector results are fused, snippet size, chunk size | Constants. Fusion gives both sides equal votes today | Minutes for fusion and snippets. Chunk size needs a reindex. Changes the Parse and Search results too |
 | 3 | Focus without training: how many hits it scores, its token width, its instruction text | The model profile and the Focus compiler | Hours. The instruction is a digest input, so the product change needs a recorded decision |
 | 4 | Context without training: the rules that decide which actions are accepted, and how the choices are put to the model | The calibration asset and the roster and prompt code | Hours to days. The roster and prompt are digest inputs |
-| 5 | Focus model weights | The existing LoRA tooling. A pilot checkpoint exists and has never been compared | A day or more per candidate, on the A6000 |
-| 6 | Context model weights | No trainer exists yet | Days. Built only if levels 4 and 5 show it is worth it |
+| 5 | Focus model weights | The existing LoRA tooling. A pilot checkpoint exists and has never been compared | About a day per candidate on the A6000, by estimate |
+| 6 | Context model weights | No trainer exists yet | Days. Decided after the first change set is judged |
 
-Level 4 is where Context first becomes able to act at all (section 3.7).
-Changing its rules cannot make it add a read, only choose among queued reads
-or stop early. If the tests show that this is the limit, the adjustment is to
-what Context is asked to do, and that comes to the user as a design decision.
+### 5.2 Change sets, not single changes
 
-### 5.2 The loop
+The user set this on 21 November: do not alter one thing at a time. Use the
+analysis to build the set of changes most likely to improve results, make
+them together, and iterate. Time is short.
 
-For each Answer configuration, in the order of section 6:
+One iteration:
 
-1. **Test.** Run the agent sessions and judge them.
-2. **Diagnose.** For each scenario where Answer did not win, say why from the
-   turn log: the needed item was never retrieved, was retrieved and not
-   followed, was followed and dropped in packing, or was present and buried.
-3. **Adjust one thing.** Choose the cheapest level that addresses the most
-   common cause. One change at a time.
-4. **Replay.** Rerun the recorded Answer calls with the change and measure
-   coverage of the reference notes mechanically. This takes minutes and uses
-   no agent sessions.
-5. **Confirm.** If coverage improved, rerun the agent sessions for that
-   configuration and judge them again.
-6. **Record.** Every adjustment goes into a table: what changed, why, the
-   coverage before and after, the judged result, kept or reverted.
+1. **Pass.** Run the agent sessions and judge them.
+2. **Analyse.** For every scenario where Answer did not win, name the cause
+   from the turn log: the needed item was never retrieved; was retrieved and
+   not followed; was followed and dropped in packing; was present and
+   buried; the model chose badly; or the reply came too late.
+3. **Build the change set.** Every change that the analysis and the source
+   make likely to help, at any level, built together. Each change is written
+   down with the cause it addresses and the effect I expect.
+4. **Replay.** Rerun the recorded Answer calls with the whole set and
+   measure coverage of the reference notes mechanically. This takes minutes
+   and uses no agent sessions. Starting values such as pool sizes are tuned
+   here.
+5. **Check what earned its place.** Replay again with one change left out,
+   for each change that is costly to keep: one that needs a recorded
+   decision, adds latency, or is a trained weight file. Also for any
+   scenario the set made worse. Each such replay takes minutes.
+6. **Pass again** with agent sessions on all five results, because a set
+   usually changes retrieval and so moves Parse and Search too.
+7. **Record.** The set, each change with its cause and expected effect, the
+   coverage before and after, the judged results, and what was kept or
+   dropped.
 
-A configuration's loop ends when it meets the rule of section 4.3, when three
-adjustments in a row bring no gain, or when the user says so.
+How it is sized:
+
+- **At most three change sets** before the report. After each pass I report,
+  and the user decides whether another set is worth its time.
+- **Slow work starts at once, in parallel:** mining the training pairs,
+  training the first Focus candidate, and building the GPU paths of
+  section 7. They do not wait their turn.
+- **The first set is built while the baseline runs**, on a separate build,
+  so the baseline is still measured on the code as it stands today.
+
+What this gives up: a set shows that the set helped, not which change did.
+Step 5 recovers most of that for the changes where it matters. I accept the
+rest as the price of speed.
 
 Experiments run in the private evaluation build. A change that the tests
-favour reaches the product only through the normal path: a recorded decision
-where it touches a contract, a digest input or a stored format.
+favour reaches the product through the normal path: a recorded decision where
+it touches a contract, a digest input or a stored format. One decision
+record covers a whole kept set.
 
-### 5.3 Training data for model weights
+### 5.3 The first change set
 
-Levels 5 and 6 need training pairs, and the 20 judged scenarios are never
-training data. I propose pairs of the same shape as the scenarios, mined from
-real repositories:
+This is the set I would build today, from the source analysis of section
+3.7. The baseline pass may add to it or remove from it. Each row says whether
+it rests on something measured or on my reading of the code.
+
+| # | Change | Why I expect it to help | Level |
+| --- | --- | --- | --- |
+| 1 | Queue the follow-ups a software task needs: the definition of identifiers named in the instruction and in the top hits, their references, the outline of a hit's file, the tests that cover it, and the contract or README that governs its folder. Reuse the read plans the Parse recipes already define (definition, impact, tests, documents, component) | Read from the code: today's follow-ups are context reads and searches on capitalized word runs, a shape that suits prose questions | 1 |
+| 2 | Spread follow-ups across the hits, not hit by hit | Read from the code: the top hit usually fills the queue of 8 | 1 |
+| 3 | A larger first search: a wider pool of candidates and whole chunks instead of about 500 bytes a hit | Read from the code: 8 hits share 4,096 bytes. An agent needs whole functions and sections | 1 |
+| 4 | Focus scores the whole pool and the best hits are kept. The pool is sized to the device: full on the GPU, smaller on CPU | Read from the code: Focus reorders 4 of 8 and cannot bring a hit in. Measured: about 3.9 s per pair on CPU at 4 threads | 3 |
+| 5 | A software-task instruction for Focus in place of the web-search one | Read from the code. The size of the effect is unknown | 3 |
+| 6 | Fuse lexical and vector results by the kind of query: identifiers lean lexical, prose leans vector. Prefer source and documentation over generated files | My inference; fusion is equal votes today. Moves Parse and Search as well | 2 |
+| 7 | Give Context something to decide and let it act: option lines that state each read in words, the wider and more varied choices of change 1, and a provisional rule that accepts its top Read choice | Read from the code: with zero rules Context never acts. A hint from the retired panel: with the read stated, its share of the score variation rose from 0.5% to 19% for Compact and from 7% to 46% for Large | 4 |
+| 8 | Packing and presentation: drop overlapping evidence, group the reply by what each part is for (where to change, rules to respect, tests, documentation), keep exact locations | A hint from the retired TechQA run: 22% of delivered bytes were duplicates. Serves Rubric B directly | 1 |
+| 9 | Shape the budget to the device, so Answer stays inside 120 seconds on CPU | Measured: Compact takes 9.7 s per call at 2,048 tokens and 47.6 s at 8,192 on 8 cores | 1 |
+
+Changes 1 to 3 alter how Answer gathers evidence, not a model. I include them
+because the analysis says the largest gain is there, and because Focus and
+Context can only choose well among reads that are worth choosing.
+
+Prepared in parallel for the second set:
+
+- The training pairs of section 5.4.
+- Focus candidate weights trained on them with the existing LoRA tooling,
+  and the existing pilot checkpoint, both judged by the same scenarios.
+- Whether to build a Context trainer. That is decided from the first pass
+  with change 7 in place, which shows whether Context chooses well once it
+  can act.
+
+### 5.4 Training data for model weights
+
+Levels 5 and 6 need training pairs, and the judged scenarios are never
+training data. Mining starts at once. I propose pairs of the same shape as
+the scenarios, mined from real repositories:
 
 - A commit's message as the instruction, and the files and regions it
   changed as the needed evidence.
@@ -368,15 +425,17 @@ Any mined pair whose evidence overlaps a judged or sealed scenario's notes is
 left out. Training keeps the earlier protection for existing abilities: the
 original weights stay selectable, and training includes general replay.
 
-### 5.4 Guards
+### 5.5 Guards
 
 - **Fitting the test.** The sealed set of section 4.4.
 - **Fitting the repository.** A model trained on one repository's history
   may only have memorized it. A trained candidate is also checked across
   repositories: trained on pairs from one, tested on the scenarios of the
   other.
-- **Regressions.** After each kept adjustment the earlier configurations are
-  replayed, so a gain for Compact does not silently cost Focus-only.
+- **Regressions.** Every pass covers all three Answer configurations, so a
+  gain for one cannot silently cost another.
+- **Time.** Every pass records how long each reply took, so a set that buys
+  fewer turns with an unacceptable wait is visible.
 
 ## 6. Work order
 
@@ -388,16 +447,23 @@ Nothing here has started.
 | E1 | Build the evaluation service from current source. Create the two indexes with vectors. Check scope and credential exclusion | Both indexes serve hybrid search, and their file counts and commits are recorded |
 | E2 | Write the 20 scenarios and their reference notes, and the sealed set if adopted. Freeze them | The user has seen the scenario list; hashes recorded |
 | E3 | Build the harness: the path wrapper and turn log, the coverage script, the judge packet | A pilot of 2 scenarios in each repository runs end to end on all five paths |
-| E4 | Baseline: Parse, Search and the no-model Answer control on all 20 scenarios | Judged, and reported to the user |
-| E5 | Test 1, Focus only, CPU and GPU. Judge, then the adjustment loop | The loop's end condition; results reported |
-| E6 | Test 2, Focus and Compact, CPU and GPU. Judge, then the loop | The same |
-| E7 | Test 3, Focus and Large, GPU, with the CPU measurement on 4 scenarios. Judge, then the loop | The same |
+| E4 | Baseline pass on the code as it stands: Parse, Search, the no-model Answer control and Answer with Focus only, on all 20 scenarios. Context cannot act yet, so results 2 and 3 are first checked by replay; they get agent sessions only if their evidence differs from result 1. Their time is measured on CPU and GPU | Judged, analysed and reported to the user |
+| E5 | Change set 1 (section 5.3), built while E1 to E4 run. Replay, then a full pass on all five results, CPU and GPU, with Large on CPU on 4 scenarios | Reported; the user decides whether to go on |
+| E6 | Change set 2: what the E5 pass shows, plus the first trained candidates. Replay, then a full pass | The same |
+| E7 | Change set 3, only if E6 shows a gain still within reach | The same |
 | E8 | Run the sealed set once on the final configurations | Reported beside the development results |
-| E9 | Report: the answer to section 1 for each configuration, the adjustment table, and what to deliver | The user decides what ships |
+| E9 | Report: the answer to section 1 for each configuration, the change sets and what each kept, and what to deliver | The user decides what ships |
 
-I report to the user after E2, E4 and each of E5 to E7, because each one can
-change what the next should be. Platform work (Linux, macOS, Radeon,
-packaging) waits for E9, since E9 says which stages are worth delivering.
+Running beside E1 to E5, each with its own agent under the rule of one Cargo
+owner and one GPU owner at a time:
+
+- **Training track.** Mine the pairs, compare the pilot Focus checkpoint,
+  train the first Focus candidate.
+- **GPU track.** The Answer paths for Large and for Focus on the GPU, and
+  the 180-second allowance (section 7).
+
+Platform work (Linux, macOS, Radeon, packaging) waits for E9, since E9 says
+which stages are worth delivering.
 
 ## 7. What has to be built first
 
@@ -417,12 +483,20 @@ Found by reading the source. Each is a gap between today's code and section
 
 These are estimates. The pilot in step E3 replaces them with measurements.
 
-- **A full pass** is 100 agent sessions and 200 judge sessions. I estimate
-  two to three hours of wall time and on the order of ten million tokens.
-- **An adjustment replay** is 20 recorded calls and takes minutes with no
-  agent sessions. A confirmation is 20 agent sessions.
-- **The whole campaign**, with about two kept adjustments for each
-  configuration, is on the order of 220 agent sessions.
+- **A full pass** is 100 agent sessions and their judging. I estimate two to
+  three hours of wall time and on the order of ten million tokens.
+- **A replay** is 20 recorded calls for each configuration and takes minutes
+  with no agent sessions. The leave-one-out checks of section 5.2 are
+  replays.
+- **The whole campaign** is at most five passes: the baseline, up to three
+  change sets and the sealed set. The baseline is smaller, about 80
+  sessions, because Context cannot act yet.
+- **Judging.** The baseline, the last change set and the sealed set get two
+  independent judge sessions for each result. A pass in between gets one,
+  plus my adjudication, to save time.
+- **Building a change set** is the part I cannot size yet. The first set is
+  mostly gathering code and two model-prompt changes, with no training. I
+  will know its real cost once it is built, and I report it then.
 - **Disk.** One evaluation installation with the FP16 weight files is about
   13 GB, and the two indexes are unmeasured. D: has about 39 GB of its
   budget left.
@@ -438,11 +512,18 @@ These are estimates. The pilot in step E3 replaces them with measurements.
 2. **Five results.** The five are the three Answer configurations plus Parse
    and Search, for each scenario. CPU and GPU are two runs of the same Answer
    configuration, judged once unless their evidence differs.
-3. **"After each test, adjust weights."** A test is one Answer configuration
-   run over the scenarios. So the order is Focus only, adjust; Focus and
-   Compact, adjust; Focus and Large, adjust.
-4. **"Weights"** covers the six levels of section 5.1, cheapest first, and
-   not only trained model weights.
+3. **"After each test, adjust weights."** Each pass runs all three Answer
+   configurations together, and one change set follows each pass. Your
+   instruction listed the three configurations in order. With change sets
+   that span every level, running them in one pass is faster and loses
+   nothing, because every pass reports each configuration separately. Say if
+   you want them strictly one after another.
+4. **"Weights" and "adjustments"** cover the six levels of section 5.1, and
+   not only trained model weights. In particular the first change set alters
+   how Answer gathers evidence (changes 1 to 3 of section 5.3). The analysis
+   says the largest gain is there. Change sets are built as you directed on
+   21 November: the most likely set of improvements together, then iterate,
+   with at most three sets before the report.
 5. **Agent sessions with a logged turn count** (section 3.5), in place of my
    estimating turns from one reply. Section 8 gives the lighter alternative.
 6. **The follow-up tools of each path** (section 3.3). In particular, the
@@ -454,9 +535,10 @@ These are estimates. The pilot in step E3 replaces them with measurements.
    sealed second set of scenarios, and training pairs mined from repository
    history.
 9. **The thresholds of section 4.3.**
-10. **Experiments in the private evaluation build** may change digest-input
-    code such as the Focus instruction and the Context prompt without a
-    recorded decision each time. Product changes still need one.
+10. **Experiments in the private evaluation build** may change gathering
+    code and digest-input code such as the Focus instruction and the Context
+    prompt without a recorded decision each time. A kept change set still
+    needs one recorded decision before it reaches the product.
 11. **Platform work waits for E9.**
 12. **Scenario review.** Whether you want to approve the 20 final scenarios
     before the first run, or only see them.

@@ -587,9 +587,11 @@ The direction is also recorded in the
 - The agent judges with the plan's two rubrics. First priority: fewer turns
   for an AI agent to get the context for the task. Lower priority: useful
   detail for a person.
-- Weights are adjusted after each test, from what the scenarios show. Do not
-  present results from public question sets or calibration panels as
-  evidence about product value.
+- Weights are adjusted after each test, from what the scenarios show, as
+  comprehensive change sets: the set of changes most likely to improve
+  results, built together and then iterated. Do not alter one thing at a
+  time; the user said time is short. Do not present results from public
+  question sets or calibration panels as evidence about product value.
 - Large never runs on CPU in production. Without GPU opt-in, Large is not
   offered and Compact is the only Context option. In tests Large on CPU is
   measured on one scenario in five with a 180-second maximum.
