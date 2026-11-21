@@ -13,7 +13,7 @@ import uuid
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from capacity_ballast import CAMPAIGN, ROOT, pin, run
-from capacity_ballast_worker import GIB, TIERS, UUID, WINDOW, require, verify
+from capacity_ballast_worker import GIB, MIB, TIERS, UUID, WINDOW, require, verify
 from capacity_sweep import candidate_samples, receipt, require_proof, segment_evidence
 
 PROBE = ROOT / "scripts/arbiter-fp16-execution/probe_compact_cutlass.py"
@@ -22,6 +22,70 @@ LARGE_GRAPH = "13da8267e7490e334b5a860ced90af8318a01f5c2d03759173feac45ca598b46"
 LARGE_PROBE = ROOT / "scripts/arbiter-fp16-execution/probe_large_cutlass.py"
 MAXIMUM_PROOF = "d9e4abed37173d97ce98aef07615be70dc1fa3d735ee666e5bff467883ac8986"
 SMALL_PROOF = "b412ed022096de0528e947c42b38637e8dd54da1b4bfc9a7393a982274ad0a81"
+# Approved change A6 (docs/arbiter/final-plan-fp16.md, section 3): device memory fit is judged against a
+# model-free control from the same run, with a 2 GiB reserve, and absolute peaks stay in the receipt.
+CAPACITY_RULE = "baseline_relative_a6/1"
+CONTROL_SOURCE = "ballast_process_shared_usage_before_resume"
+MARGIN = 16*MIB
+RESERVE = 2*GIB
+
+
+def baseline_relative(memory, control, tier):
+    """Judge recorded candidate residency against the model-free control. Pure; no device or file access."""
+    require(type(control) is int and control >= 0 and tier in TIERS, "model-free control or tier unavailable")
+    shared, nonlocal_, dedicated = (memory.get(key) for key in
+                                    ("peak_shared_bytes", "peak_fresh_nonlocal_bytes", "peak_dedicated_bytes"))
+    shared_excess = shared - control if type(shared) is int else None
+    # Admission claims non-local use is within the margin, so a missing or wholly stale counter refuses below.
+    nonlocal_excess = nonlocal_ - control if type(nonlocal_) is int else None
+    reserved = dedicated + RESERVE if type(dedicated) is int else None
+    if shared_excess is not None and shared_excess > MARGIN:
+        refusal = "shared_usage_exceeds_control_margin"
+    elif nonlocal_excess is not None and nonlocal_excess > MARGIN:
+        refusal = "nonlocal_usage_exceeds_control_margin"
+    elif reserved is not None and reserved > tier*GIB:
+        refusal = "dedicated_usage_exceeds_tier_reserve"
+    elif (memory.get("verified") is not True or memory.get("shared_ceiling_bytes") != control + MARGIN
+          or memory.get("continuous_samples") is not True or memory.get("unknown_live_samples") != 0
+          or shared_excess is None or nonlocal_excess is None or reserved is None):
+        # Includes any unreadable sample between the first and last positive dedicated observation.
+        refusal = "incomplete_residency_evidence"
+    else:
+        refusal = None
+    return {"name": CAPACITY_RULE, "control": CONTROL_SOURCE, "control_shared_bytes": control, "margin_bytes": MARGIN,
+            "reserve_bytes": RESERVE, "tier_bytes": tier*GIB, "peak_shared_bytes": shared,
+            "peak_fresh_nonlocal_bytes": nonlocal_, "peak_dedicated_bytes": dedicated,
+            "shared_excess_bytes": shared_excess, "nonlocal_excess_bytes": nonlocal_excess,
+            "dedicated_plus_reserve_bytes": reserved, "samples_verified": memory.get("verified") is True,
+            "satisfied": refusal is None, "refusal": refusal}
+
+
+def judge(actual, admission, tier, host_limit):
+    """Evaluate one owned candidate. Live trials and the offline replay share this one implementation."""
+    control = admission["sample"]["process"]["Shared Usage"]
+    require(type(control) is int and control >= 0, "model-free control shared usage unavailable")
+    observed = dict(limit_field="observed_limits", host_limit=host_limit, require_shared_clock=True)
+    memory = candidate_samples(actual, admission, shared_ceiling=control + MARGIN, **observed)
+    memory.update(segment_evidence(actual["owned"]["before_GO"]["wddm"]))
+    # The superseded dedicated-only reading stays visible beside the absolute peaks.
+    memory["dedicated_only_verified"] = (candidate_samples(actual, admission, **observed)["verified"]
+                                         and not memory["nonlocal_conflict"])
+    return memory, baseline_relative(memory, control, tier)
+
+
+def require_prior_fit(prior, *, tier, model, image, build, probe_source_sha256):
+    """Fixed20 needs a complete fit admitted under this same rule, tier, model, image, build and probe."""
+    trial, admission = prior["trial"], prior["admission"]
+    rule = trial.get("capacity_rule")
+    require(prior["complete"] is True and prior["tier_gib"] == tier and trial["mode"] == "pressure-fit"
+            and trial.get("model", "compact") == model
+            and trial["capacity_admitted"] is True and trial["observed_outcome"] == "admitted"
+            and admission["pre_resume_host"]["minimum_spare_bytes"] == 8*GIB
+            and isinstance(rule, dict) and rule.get("satisfied") is True
+            # Re-derive the recorded verdict from the recorded evidence instead of trusting its flags.
+            and rule == baseline_relative(trial["candidate_wddm"], admission["sample"]["process"]["Shared Usage"], tier)
+            and trial["image"] == image and trial["build"] == build
+            and trial["probe_source_sha256"] == probe_source_sha256, "different capacity fit")
 
 
 class PressureTrial:
@@ -102,16 +166,8 @@ def launch(args):
             "sealed Cargo lineage differs from graph proof")
     if args.mode == "pressure-fixed":
         require(args.prior_fit and args.prior_fit_sha256, "original admitted pressure fit required")
-        prior = receipt(args.prior_fit, args.prior_fit_sha256)
-        trial = prior["trial"]
-        require(prior["complete"] is True and prior["tier_gib"] == args.tier and trial["mode"] == "pressure-fit"
-                and trial.get("model", "compact") == args.model
-                and trial["capacity_admitted"] is True and trial["observed_outcome"] == "admitted"
-                and prior["admission"]["pre_resume_host"]["minimum_spare_bytes"] == 8*GIB
-                and trial["candidate_wddm"]["unknown_shared_samples"] == 0
-                and trial["candidate_wddm"].get("nonlocal_conflict") is False
-                and trial["image"] == image and trial["build"] == build
-                and trial["probe_source_sha256"] == args.probe_source_sha256, "different capacity fit")
+        require_prior_fit(receipt(args.prior_fit, args.prior_fit_sha256), tier=args.tier, model=args.model,
+                          image=image, build=build, probe_source_sha256=args.probe_source_sha256)
     else:
         require(not args.prior_fit and not args.prior_fit_sha256, "unexpected prior fit")
     powershell = Path("C:/Program Files/PowerShell/7/pwsh.exe")
@@ -158,27 +214,14 @@ def launch(args):
         host_raw = host_path.read_bytes()
         require(hashlib.sha256(host_raw).hexdigest() == host_pin["sha256"], "changed pressure host grant")
         verify_host_grant(json.loads(host_raw),actual,host_limit,(48 if large else 32)*GIB)
-        memory = candidate_samples(actual, pressure.admission, limit_field="observed_limits", host_limit=host_limit, require_shared_clock=True)
-        memory.update(segment_evidence(owned["before_GO"]["wddm"]))
-        memory["verified"] = memory["verified"] and not memory["nonlocal_conflict"]
+        memory, rule = judge(actual, pressure.admission, args.tier, host_limit)
         complete = actual["complete"] is True and owned["exit_code"] == 0
-        admitted = complete and memory["verified"] and memory["peak_dedicated_bytes"] <= args.tier*GIB
-        if admitted:
-            outcome = "admitted"
-        elif complete and memory.get("peak_shared_bytes") is not None and memory["peak_shared_bytes"] > 0:
-            outcome = "observed_shared_usage"
-        elif complete and memory["nonlocal_conflict"]:
-            outcome = "observed_nonlocal_usage"
-        elif complete and memory.get("peak_dedicated_bytes") is not None and memory["peak_dedicated_bytes"] > args.tier*GIB:
-            outcome = "observed_dedicated_usage_exceeded_tier"
-        elif complete:
-            outcome = "incomplete_residency_evidence"
-        else:
-            outcome = "native_run_incomplete"
+        admitted = complete and rule["satisfied"]
+        outcome = "admitted" if admitted else rule["refusal"] if complete else "native_run_incomplete"
         verify(probe, args.probe_source_sha256)
         return {"model":args.model, "typed_graph_sha256":expected_graph, "mode":args.mode, "candidate_pid":owned["owned_leader_pid"], "native_complete":complete,
                 "capacity_admitted":admitted, "observed_outcome":outcome,
-                "candidate_wddm":memory, "native_execution":actual_pin, "image":image, "build":build,
+                "candidate_wddm":memory, "capacity_rule":rule, "native_execution":actual_pin, "image":image, "build":build,
                 "probe_source_sha256":args.probe_source_sha256, "failure":actual.get("error"),
                 "host_limit_bytes":host_limit, "pressure_host_grant":host_pin,
                 "prior_fit":pin(args.prior_fit) if args.prior_fit else None}

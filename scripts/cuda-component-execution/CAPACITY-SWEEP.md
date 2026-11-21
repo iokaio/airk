@@ -2,7 +2,7 @@
 
 The Windows capacity observer holds touched CUDA device allocations in their own suspended-before-resume Windows Job. It verifies the Python executable and runtime, System32 NVIDIA driver and DriverStore implementation, NVIDIA UUID, CUDA device LUID and physical WDDM adapter. Each allocation is at most 256 MiB. The worker synchronizes every touch, retains its allocations without GPU traffic during measurement, frees them and releases the CUDA context before the Job exits. A fresh output directory retains the exact source hashes, command, bounds, WDDM/host observations and natural release evidence.
 
-For the Windows Large direct FP32-activation graph, `protected_capacity_sweep.py pressure-fit --model large` takes the same-image operand receipt and digest, final graph receipt and digest, Cargo lineage, probe SHA, tier and other outstanding host reservations. Use a fresh `large-capacity-` campaign child. The candidate's 22 GiB process and Job limits fit within its 48 GiB scientific host ceiling. The native process binds the real tier, adapter and graph to its own suspended admission before loading the model. The scoring population requires the original eight T8192 score words. A `pressure-fixed` request additionally requires a prior admitted genuine fit at the same model, tier and image. Positive shared use or missing residency evidence leaves dedicated-only fit unresolved.
+For the Windows Large direct FP32-activation graph, `protected_capacity_sweep.py pressure-fit --model large` takes the same-image operand receipt and digest, final graph receipt and digest, Cargo lineage, probe SHA, tier and other outstanding host reservations. Use a fresh `large-capacity-` campaign child. The candidate's 22 GiB process and Job limits fit within its 48 GiB scientific host ceiling. The native process binds the real tier, adapter and graph to its own suspended admission before loading the model. The scoring population requires the original eight T8192 score words. A `pressure-fixed` request additionally requires a prior admitted genuine fit at the same model, tier and image. Admission follows the [baseline-relative fit rule](#baseline-relative-fit-rule). Shared or non-local use above the control margin, a thin reserve or missing residency evidence refuses the tier.
 
 In the verified human shell, run the CPU controls first.
 
@@ -38,9 +38,45 @@ Reserve all other live Jobs' remaining physical and commit capacity in `--concur
 
 The protected worker requests fresh NVIDIA and WDDM observations on its original adapter after CUDA context initialization and after each synchronized increment of at most 2 GiB. The parent retains each source snapshot, monotonic sampling interval and touched-byte count. The worker checks the nonce, observation age and sequence, rereads CUDA free memory, and allocates in chunks of at most 256 MiB. Every chunk retains its original CUDA and host-reserve checks. The controller preserves the pre-resume measurements even on a refused floor.
 
-The parent verifies all three free-memory observations immediately before resuming the candidate, and binds them to the exact suspended PID, image, typed graph, adapter, nonce and absolute expiry. The native scorer rereads that grant and the actual CUDA free memory after context initialization. It can refuse when the context consumes the remaining room. A successful score, physical residency and unresolved shared usage have separate fields. Keep the original raw process counters. For an admitted tier run `pressure-fixed` with `--prior-fit PATH --prior-fit-sha256 SHA` and the same typed graph, executable, probe and tier. The fixed workload excludes one warmup and measures 20 T8192 forwards. These observations describe only the A6000 under measured pressure.
+The parent verifies all three free-memory observations immediately before resuming the candidate, and binds them to the exact suspended PID, image, typed graph, adapter, nonce and absolute expiry. The native scorer rereads that grant and the actual CUDA free memory after context initialization. It can refuse when the context consumes the remaining room. A successful score, the residency counters and the rule verdict have separate fields. Keep the original raw process counters. For an admitted tier run `pressure-fixed` with `--prior-fit PATH --prior-fit-sha256 SHA` and the same typed graph, executable, probe and tier. The prior fit must have been admitted under the same rule. The fixed workload excludes one warmup and measures 20 T8192 forwards. These observations describe only the A6000 under measured pressure.
+
+### Baseline-relative fit rule
+
+Approved change A6 in the [FP16 delivery plan](../../docs/arbiter/final-plan-fp16.md#3-approved-changes-to-recorded-decisions) replaced the dedicated-only reading of the memory rule. `protected_capacity_sweep.py` now judges the candidate's shared and non-local memory against a model-free control from the same run. The older `capacity_sweep.py` QKV modes keep the dedicated-only reading.
+
+- **Control.** The ballast process's own `Shared Usage` in the sample that authorized the candidate's resume. The ballast is a CUDA context on the same adapter that holds touched allocations and no model. It read 77,594,624 bytes in all six retained runs. The ballast observer still refuses any growth of that figure above the ballast's own baseline.
+- **Margin.** 16 MiB (16,777,216 bytes). The candidate's peak shared bytes over its whole owned lifetime may exceed the control by at most the margin. So may its peak fresh non-local segment bytes.
+- **Reserve.** Peak dedicated bytes plus 2 GiB must not exceed the tier.
+- **Evidence.** Samples must be continuous across the live interval, from the first to the last positive dedicated observation, with every shared and dedicated reading known. An unreadable sample inside that interval refuses. Unreadable samples outside it are counted and do not refuse. The non-local segment counter is mandatory: a run with no fresh non-local reading is refused as `incomplete_residency_evidence`, whether the counter was never read or every reading was stale.
+- **Completion.** The native run must still return the exact score words and exit naturally, and the ballast must hold its residency to the end.
+
+The trial receipt records the verdict in `trial.capacity_rule`: the rule name `baseline_relative_a6/1`, the control and its source, the margin, the reserve, the tier in bytes, the three absolute peaks, both excesses, the dedicated peak plus the reserve, and the refusal reason. `trial.candidate_wddm` keeps the absolute counters and adds `dedicated_only_verified`, the verdict of the earlier reading. The refusals are `shared_usage_exceeds_control_margin`, `nonlocal_usage_exceeds_control_margin`, `dedicated_usage_exceeds_tier_reserve`, `incomplete_residency_evidence` and `native_run_incomplete`.
+
+`pressure-fixed` accepts a prior fit only when it is complete and was admitted under this rule at the same tier, model, image, build and probe digest. The launcher recomputes the recorded verdict from the recorded evidence, so a fit made under the earlier reading is refused.
+
+The launcher exits with status 0 when a trial completes and the rule refuses the tier. Read `trial.capacity_admitted` and `trial.observed_outcome` in the receipt before starting the next tier or a fixed20 run. The CPU controls for the rule are `test_protected_capacity_sweep.py` and `test_replay_capacity_rule.py`, run with `python -I -B -S` like the ballast controls.
+
+The rule has these limits.
+
+- The control is a bare CUDA context. Every clean retained trial showed 2,097,152 bytes above it. The rule tolerates that difference and does not explain it.
+- The counters are process totals sampled about every 110 ms. They do not identify a tensor, an allocation or a paging transfer, and a spill shorter than the sampling interval can be missed.
+- Only fresh non-local readings enter the peak. A stale reading is counted and shown in `peak_nonlocal_bytes`, and it does not refuse while at least one fresh reading exists. The retained 24 GiB Compact receipt predates the segment counters, so it cannot be admitted from its retained samples.
+- The measurements describe the 48 GiB A6000 under ballast pressure. They make no claim about a physically smaller card.
+
+Run `python -I -B -S scripts/cuda-component-execution/replay_capacity_rule.py` to reclassify the six retained fit receipts under this rule from their retained samples. Add `--output` with a fresh `capacity-rule-` campaign child to write the private receipt. This is an offline reclassification and not a live trial: it grants no admission and its rows cannot serve as a prior fit. The retained result is `capacity-rule-a6-replay-r2/execution.json`, SHA-256 `9d4f87cdb43883f1e0c1fd5aecfe9031695246321081425d242487585ec6381b`. It supersedes `capacity-rule-a6-replay-r1/execution.json` (`b2310639404e5d67bd1c184d308e69ccc8e17c01fc57ccbda2a1b0913f16b88d`), which was made before the non-local counter became mandatory and reported the 24 GiB Compact fit as admitted.
+
+| Retained fit | Shared / non-local excess over the control | Peak dedicated plus reserve | Offline reclassification |
+| --- | ---: | ---: | --- |
+| Compact 24 GiB | 2,097,152 B / not recorded | 8,853,729,280 B | Refused for incomplete evidence: no non-local reading |
+| Compact 16 GiB | 2,097,152 B / 2,097,152 B | 8,853,729,280 B | Memory within the rule. The native wrapper refused, so the tier needs a live rerun. |
+| Compact 12 GiB | 2,097,152 B / 2,097,152 B | 8,853,729,280 B | Admitted |
+| Compact 8 GiB | 2,097,152 B / 2,097,152 B | 8,862,117,888 B | Refused on the reserve: the tier is 8,589,934,592 B |
+| Compact 6 GiB | 136,314,880 B / 136,314,880 B | 8,719,773,696 B | Refused on shared use. The ballast also lost residency. |
+| Large 24 GiB | 2,097,152 B / 2,097,152 B | 18,517,479,424 B | Admitted |
 
 ### Windows shared-memory observations
+
+The observations in this section were classified under the dedicated-only reading that the rule above replaced. Their receipts and outcomes are unchanged.
 
 The corrected 24 GiB experiment reproduced all eight original T8192 score words in a 1.872-second synchronized call. The ballast freed 88 of 88 allocations and both Windows Jobs exited naturally with zero members. Before candidate resume, NVIDIA reported 25,880,952,832 bytes free, WDDM reported 25,866,633,216 bytes and the ballast CUDA context reported 26,280,460,288 bytes. The candidate's own CUDA context subsequently reported 49,886,003,200 bytes free. The different contexts supply distinct measurements. See the private `compact-capacity-protected-24-gib-pressure-fit-r1/execution.json` receipt, SHA-256 `dd82bcac500fb4734dfeaa170dd31a2bcb4f6f710b3acbe53d0cb6ecc98dc0f1`.
 

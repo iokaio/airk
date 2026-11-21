@@ -40,7 +40,14 @@ def require_proof(result, small, tier=None):
                 result["admission"]["candidate_pid"], "complete T8192 fit required at the exact floor")
 
 
-def candidate_samples(proof, admission, *, limit_field="job_limits", host_limit=32*GIB, require_shared_clock=False):
+def candidate_samples(proof, admission, *, limit_field="job_limits", host_limit=32*GIB, require_shared_clock=False,
+                      shared_ceiling=None):
+    """Summarize the owned candidate's WDDM process samples.
+
+    By default any shared byte or unreadable shared sample leaves residency unverified. A caller that judges
+    shared use against a same-run model-free control passes that control plus its margin as shared_ceiling.
+    """
+    require(shared_ceiling is None or (type(shared_ceiling) is int and shared_ceiling >= 0), "invalid shared ceiling")
     owned = proof["owned"]
     limits = owned["suspended_assignment"][limit_field]
     require(limits["process_memory_limit_bytes"] == limits["job_memory_limit_bytes"] == host_limit,
@@ -81,9 +88,17 @@ def candidate_samples(proof, admission, *, limit_field="job_limits", host_limit=
     local = [r["process"]["Dedicated Usage"] for r in values]
     known = all(type(v) is int for v in shared+local)
     peak = max(local) if known else None
-    return {**shared_evidence,"verified":fresh and known and unavailable == 0 and peak_shared == 0 and 0 < peak <= 24*GIB,
+    if shared_ceiling is None:
+        within, relative = unavailable == 0 and peak_shared == 0, {}
+    else:
+        # Unreadable samples outside the live interval are counted above and do not refuse here.
+        # Any unreadable sample inside it clears `known`, exactly as in the default reading.
+        within = peak_shared is not None and peak_shared <= shared_ceiling
+        relative = {"shared_ceiling_bytes":shared_ceiling,
+                    "unknown_live_samples":sum(type(a) is not int or type(b) is not int for a,b in zip(shared,local))}
+    return {**shared_evidence,"verified":fresh and known and within and 0 < peak <= 24*GIB,
             "peak_dedicated_bytes":peak,
-            "observations":len(values),"continuous_samples":fresh}
+            "observations":len(values),"continuous_samples":fresh,**relative}
 
 
 def segment_evidence(observation):
