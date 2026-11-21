@@ -663,3 +663,17 @@ and scorer run inside the guarded resident. Before dispatch the resident
 checks its typed graph policy against the operation and fixture deadlines.
 The original settlement and retained-custody rules apply. This private
 mode does not produce a product eligibility witness.
+
+## Portable CPU observation (test-only)
+
+The test-only `qualification/portable_cpu` owner measures the exporter's
+portable recipe on the static CPU runtime at the 8-core, 8-thread tier. Four
+ignored selectors take SHA-pinned private inputs and write only under
+`artifacts/`: emit (the existing Retrieval profile builder, no load),
+load-only (one load and zero forwards), score (retained FP32 references under
+a 0.007 development screen with winner agreement, one warmup and twenty
+forwards through Core `ResourceSeries`, and one profiled forward) and
+timing-only. Load and score require exactly eight usable physical cores and
+keep the real ServiceLease and NativeInferenceOwner. The owner sets no
+qualification, qualified target, download, catalog row, wire shape or
+persisted format, and its figures are development observations.

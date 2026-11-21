@@ -2,6 +2,7 @@
 //! Explicit private qualification, never part of release profile admission.
 mod context;
 mod focus;
+mod portable_cpu;
 mod software_v2;
 
 use super::*;
