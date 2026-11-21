@@ -285,7 +285,7 @@ their digests.
 | --- | --- | --- | --- | --- |
 | 1 | Freeze the judged cohort. Run the first two stage arms on Windows CPU at the same evidence budget: retrieval alone and retrieval with Focus. | Focus's contribution to delivered evidence is measured, with missing evidence, duplicates and latency. | Nothing | Medium to high. Start with the 76 TechQA cases, which carry publisher coordinates and complete menus. |
 | 2 | Deliver the CPU milestone. Install the product on Windows and on Linux under WSL2 and measure the ladder tiers end to end at 8 cores, the target class. Start with retrieval and Focus, and add the Compact tiers when step 3 delivers them. Record the four memory figures. macOS joins at step 11. | Each tier has an end-to-end figure at 8 cores on both systems, and the tiers that meet 120 seconds are admitted for the target class. | Nothing | Medium. The runtime build on each system is the risk. |
-| 3 | Export the portable graph for Compact. Record the recipe in the exporter contract first. Verify shared weight bytes. Load on the static runtime with zero forwards. Score the four widths and 2,048 tokens against the reference. Time each width and record the four memory figures. | Compact has measured CPU numbers for the full and fast tiers. | Nothing | High. It reuses the retained FP32 graph and the Large weight-cast edit. |
+| 3 | Export the portable graph for Compact. Record the recipe in the exporter contract first. Verify shared weight bytes. Load on the static runtime with zero forwards. Score the four widths and 2,048 tokens against the reference. Time each width and record the four memory figures. | Compact has measured CPU numbers for the full and fast tiers. | Nothing | High. The exporter's portable recipe exists and Compact is exported and scored on the published runtime. The static runtime, the verifier and Large remain. |
 | 4 | Finish Windows CUDA. Complete Compact matching references, fit calibration, add the Large selector and score its panel. Run capacity under A6. | Both candidates hold a calibrated panel and a memory figure. | Nothing | High for Compact, medium for Large. The preserved code compiles after the step 0 fix. The Large selector is still unexercised. |
 | 5 | Record the Core contract decision, then implement: the opt-in GPU default, Auto order, the ladder tiers and the CPU target class, typed reasons, truthful status, per-result disclosure of route, model, tier and budget, the weight rule and a WebGPU provider value. Test with injected capabilities. | Reviewed Core changes with qualification flags false. | Nothing | Medium to high. Profiles already carry a token ceiling, so a tier is a profile. |
 | 6 | Run the WebGPU smoke test on the A6000 through Direct3D 12 as soon as step 3 has a graph. It stays early by the user's decision and includes the speed line. It takes the GPU only when no CUDA run holds it. | A go or no-go for the rented runs. | Step 3 | Medium to high. Probe variants pass correctness, the speed line and the fallback memory line on the A6000. The exporter's graph must repeat it. |
@@ -318,6 +318,27 @@ kernel applies causality itself, half weights behind casts, and for GPU
 routes the two disabled passes that keep those weights resident in half. The
 CPU forward of the attention-kernel variant reproduced the retained 0.000191
 error figure, which indicates that the retained CPU figure used that variant.
+
+The second measured iteration, on 21 November, did this for Compact. The
+exporter has a portable recipe, and its CLI takes `--recipe portable`. The
+exported graph's `weights.bin` is byte-identical to the retained Compact GPU
+candidate's, so one weight file serves both. The graph was then scored
+against the FP32 reference on the published runtime build, which is not the
+static runtime. Every case kept the reference winner.
+
+| Case | WebGPU on the A6000: warm forward, difference | CPU at eight threads: warm forward, difference |
+| --- | --- | --- |
+| 32 tokens | 0.064 s, 0.0000954 | 0.177 s, 0.0000467 |
+| 128 tokens | 0.079 s, 0.0000360 | 0.500 s, 0.0000064 |
+| 1,024 tokens | 0.400 s, 0.000328 | 3.76 s, 0.000282 |
+| 1,588 tokens, the TRAIN_Q543 close call | 0.622 s, 0.000370 | 5.99 s, 0.0000725 |
+| 8,192 tokens | 4.37 s, 0.004494 | 41.4 to 44.3 s, 0.000229 |
+
+On WebGPU the weights stayed resident in half and the peak was 7,168 MiB
+above baseline for the 8,192-token case alone, and 8,385 MiB when all five
+cases ran in one session. Still owed for step 3: the zero-forward load and
+scoring on the static runtime, the independent verifier's support for the
+portable recipe, the measured p95 at the 8-core class, and the Large export.
 [Exporter contract](../../scripts/arbiter-fp16-export/CONTRACT.md) ·
 [Large weight-cast edit](../../scripts/arbiter-fp16-execution/large_weight_only_candidate.py) ·
 [Shared-weight verifier](../../scripts/arbiter-fp16-execution/verify_shared_onnx_weights.py) ·

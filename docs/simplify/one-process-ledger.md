@@ -14012,3 +14012,85 @@ a disposable probe artifact owned by this step.
 
 Next executable action: step 3, the portable graph in the maintained
 exporter, carrying the three changes measured here.
+
+Those probe additions and the record were committed as `72da9eb5` and
+`1183e0e5` and pushed.
+
+### 21 November 2026 at 03:51 UTC — Measured iteration 2: Compact portable export
+
+Step 3 of the FP16 plan, for Compact. Development measurement on the
+published runtime build 1.30.0 and plugin 0.6.0, under the identities
+recorded for step 0. Nothing here is qualified, and the static AIRK runtime
+did not run.
+
+**Exporter.** `scripts/arbiter-fp16-export.py` gains `recipe='portable'`
+and `scripts/export-arbiter-fp16.py` gains `--recipe portable`, commit
+`9a6c5669`. The exporter's SHA-256 is now
+`7a19719736095ace1f6213bda7dc08da21ae62898a36aab3f606ac0c98b01121`. Earlier
+conversion receipts pin the previous exporter digest and remain historical.
+The default recipe's graph bytes and report were compared with the committed
+exporter on the focus, compact and large fixtures and were identical.
+`python -I -B -m unittest discover -s scripts/arbiter-fp16-export -p
+test_exporter.py`, run in the private environment because it needs `onnx`,
+selected and passed 36 tests.
+
+**Export.** `python -I -B scripts/export-arbiter-fp16.py --model compact
+--source <original graph> --source-pins <pins> --source-pins-sha256
+c9d8bc0940f1f81d3c60e341d21d6d3068c8d45043c0767fa9d0192edcea9bc3
+--python-site <private site-packages> --output
+<run>/portable-compact-export-r1 --deadline-monotonic-ns <now plus 30
+minutes> --recipe portable` exited 0 in 31.8 seconds. The source graph is the
+original Compact export `c79c6725…`. The pin names the original weight file,
+6882271232 bytes, SHA-256
+`7300a9202a4696f023799985131f6c4599ef9caaaa9b0d5b336f1c229574fbb4`, which
+this ledger already records for that file.
+
+| Output | Bytes | SHA-256 |
+| --- | --- | --- |
+| `model.onnx` | 835760 | `1af995de80ac4ea690a236c9cd74bd1b570684741648efa0ec16b39b03d58a29` |
+| `weights.bin` | 3441397760 | `0c4bd89d032e7dd821071c3559776cd3da50d54d84b6e575373fd8cf7003a7c3` |
+| `export-manifest.private.json` | 185856 | `7262f8a5a77a970f4eb685a3a9ce844fcc1cd7b80891191f29bba21b7a2d1561` |
+
+The `weights.bin` digest equals that of the retained Compact GPU candidates
+under `compact-fp16-present-conversion-owned-r2/candidate` and
+`compact-fp16-conversion-owned-r1/candidate`, hashed in this session. One
+weight file therefore serves the CPU, WebGPU and CUDA graphs of Compact.
+
+**Scores and timings.** WebGPU ran on the A6000 through Direct3D 12 with
+`storageBufferCacheMode=simple` and the two passes disabled, so the weights
+stayed resident in half. The CPU provider ran with eight intra-op threads.
+Differences are against the original FP32 scores in the retained control
+receipts. Every case kept the reference winner.
+
+| Case | WebGPU warm seconds | WebGPU difference | CPU warm seconds | CPU difference |
+| --- | --- | --- | --- | --- |
+| CONTROL_T32 | 0.0636, 0.064 | 0.00009537 | 0.1769 | 0.00004673 |
+| CONTROL_T128 | 0.0786, 0.0796 | 0.00003600 | 0.5004 | 0.000006437 |
+| CONTROL_T1024 | 0.4002, 0.4008 | 0.0003281 | 3.7585 | 0.0002823 |
+| TRAIN_Q543, 1,588 tokens | 0.6216, 0.6288 | 0.0003700 | 5.9874 | 0.00007248 |
+| CONTROL_T8192 | 4.3742, 4.375 | 0.004494 | 44.3146, after a 41.3027 first forward | 0.0002289 |
+
+An earlier pair of runs scored only the 32- and 8,192-token cases: WebGPU
+warm 4.3621 to 4.3867 s at 8,192 tokens with adapter memory 1150 MiB at
+baseline, 4469 after load and 8318 at peak, and the CPU provider 41.418 s
+first and 41.3521 s warm. In the five-case WebGPU session the peak was 9536
+MiB over a 1151 MiB baseline. In the profiled WebGPU run 1,986 kernels ran
+on WebGPU, including 28 attention, 197 MatMul and 198 Cast kernels, and 388
+ran on the CPU provider.
+
+| Receipt | SHA-256 |
+| --- | --- |
+| `portable-compact-webgpu-resident-r1/smoke.json` | `74d9d92784f74adeb05bcb29a6f463f600029c8b11e7b557e64bbd8835ec6ae7` |
+| `portable-compact-cpu-8threads-r1/smoke.json` | `baba7f57a277967ea92246b2db2c1af8a816111c59969413639bfde0a1a6111b` |
+| `portable-compact-webgpu-widths-r1/smoke.json` | `765996592910c2229a94f68fd8187205a8f5aaf9929b81cf536ed27a9b25df7b` |
+| `portable-compact-cpu-8threads-widths-r1/smoke.json` | `17ab6f75e9e3fdd87f2e4ac761b510bd35e879de73d1323684b4da747ed30777` |
+
+Limits: one forward or two per case is not a p95. The published runtime
+build is not the static AIRK runtime. The eight-thread run is not a measured
+8-core machine. The independent graph verifier does not cover the portable
+recipe. D: held 1112861798400 free bytes afterwards. The export folder, 3.4
+GB, is this step's output and is kept for the static-runtime check.
+
+Next executable actions: load and score the portable Compact graph on the
+static AIRK runtime, extend the independent verifier to the portable recipe,
+and export and measure Large.
