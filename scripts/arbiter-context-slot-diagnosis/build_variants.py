@@ -10,10 +10,28 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from layout import FAMILIES, SUFFIX, digest, moved_reads, parse_prompt, pin, require, variant_plan, variant_prompt
+from layout import (FAMILIES, PAIRS, SUFFIX, digest, moved_reads, parse_prompt, pin, require, variant_plan,
+                    variant_prompt, within_input_limits)
 
 SCHEMA = "airk.private.context-slot-variants/1"
 ASSISTANT = SUFFIX[SUFFIX.index("<|im_start|>"):]
+# Families whose prompts have a form that no native input has.
+PROBES = ("stated", "stated_reads") + PAIRS
+
+
+def admitted(tokenizer, text, ids, profile):
+    """Check a probe prompt against the rules the compiler applies, and return its candidate token ids.
+
+    The prompt must parse as the template, meet the compiler's input limits, offer at least two options, which
+    the score owner needs for a margin, and be extended by each symbol as one token.
+    """
+    parts = parse_prompt(text)
+    symbols = profile["symbols"][:len(parts["options"])]
+    require(len(symbols) >= 2 and within_input_limits(parts, profile["max_options"]),
+            "a probe prompt breaks a compiler input limit")
+    require(all(tokenizer.encode(text + item["text"], add_special_tokens=False).ids == ids + [item["id"]]
+                for item in symbols), "a symbol does not extend a probe prompt by one token")
+    return [item["id"] for item in symbols]
 
 
 def chosen_ordinals(available, listed, every):
@@ -57,6 +75,7 @@ def main():
     parser.add_argument("--every", type=int, help="also build variants for every N-th ordinal")
     parser.add_argument("--family", action="append", default=[], choices=FAMILIES,
                         help="a variant family to build; all of them by default")
+    parser.add_argument("--identity-only", action="store_true", help="build the unpermuted input alone")
     parser.add_argument("--output", required=True, type=Path, help="a fresh, empty directory")
     args = parser.parse_args()
     require(sys.flags.isolated and sys.dont_write_bytecode, "use Python -I -B")
@@ -73,9 +92,10 @@ def main():
     tokenizer.no_truncation()
     tokenizer.no_padding()
     panel = json.loads(args.panel.read_bytes())["rows"]
-    families = args.family or list(FAMILIES)
+    require(not (args.identity_only and args.family), "--identity-only builds no family")
+    families = [] if args.identity_only else args.family or list(FAMILIES)
     build = set(chosen_ordinals([row["ordinal"] for row in panel], args.ordinal, args.every))
-    passed, failed, rows, pure = Counter(), {}, [], Counter()
+    passed, failed, rows, pure, lengths = Counter(), {}, [], Counter(), {}
     for row in panel:
         compiled = row["compiled"]
         prompt = compiled["prompt"]
@@ -90,8 +110,10 @@ def main():
         reads = len(json.loads(parts["state"])["verified_reads"])
         variants = []
         for name, family, sources in variant_plan(len(parts["options"]), reads, families):
-            ids = tokenizer.encode(variant_prompt(parts, family, sources), add_special_tokens=False).ids
+            text = variant_prompt(parts, family, sources)
+            ids = tokenizer.encode(text, add_special_tokens=False).ids
             require(len(ids) <= profile["max_tokens"], "a variant exceeds the compiler token limit")
+            variant = {"name": name, "family": family, "sources": sources, "tokens": len(ids), "input_ids": ids}
             if family == "identity":
                 # The method is valid only if the unpermuted rebuild gives back the compiled tokens exactly.
                 require(ids == compiled["input_ids"], "the identity rebuild differs from the compiled tokens")
@@ -99,8 +121,14 @@ def main():
                 # Moving whole option texts should move token spans and change nothing else.
                 pure[(family, len(ids) == len(compiled["input_ids"])
                       and sorted(ids) == sorted(compiled["input_ids"]))] += 1
-            variants.append({"name": name, "family": family, "sources": sources, "tokens": len(ids),
-                             "input_ids": ids})
+            if family in PROBES:
+                # No native input has this form. It must still satisfy the rules the compiler applies to one.
+                symbols = admitted(tokenizer, text, ids, profile)
+                if family in PAIRS:
+                    variant["candidate_positions"] = symbols
+            low, high = lengths.get(family, (len(ids), len(ids)))
+            lengths[family] = (min(low, len(ids)), max(high, len(ids)))
+            variants.append(variant)
         rows.append({"ordinal": row["ordinal"], "input_digest": compiled["input_digest"],
                      "candidate_positions": compiled["candidate_positions"], "variants": variants})
     receipt = {"schema": SCHEMA, "qualification": False, "tokenizers": tokenizers.__version__,
@@ -111,6 +139,7 @@ def main():
                                          tokenizer.encode(ASSISTANT, add_special_tokens=False).ids],
                "card_moves_that_only_move_tokens": {family + ("" if same else "_not"): count
                                                     for (family, same), count in sorted(pure.items())},
+               "tokens_by_family": {family: {"min": low, "max": high} for family, (low, high) in lengths.items()},
                "rows": rows}
     with (args.output / "variants.json").open("x", encoding="utf-8") as file:
         json.dump(receipt, file, allow_nan=False)

@@ -5,7 +5,9 @@ Nothing here reads a model, a tokenizer or a file. See README.md in this folder.
 """
 import hashlib
 import json
+import math
 import statistics
+import unicodedata
 
 # The Qwen single-choice template of crates/airk-retrieval/src/arbiter/compiler/qwen.rs.
 SYSTEM_OPEN = "<|im_start|>system\n"
@@ -153,14 +155,18 @@ def moved_options(options, sources, move_names):
 
 
 def moved_reads(state, sources):
-    """The state text with its verified reads permuted: read number j+1 becomes the read that was sources[j]+1.
+    """The state text with the verified reads sources names: read number j+1 becomes the read that was sources[j]+1.
 
-    The path table is rebuilt in first-use order, evidence first and then the reads in their new order, as the
-    native prompt builder would write it for that order. The identity permutation returns the same characters.
+    `sources` is a permutation of the reads, or a selection of some of them. The path table is rebuilt in
+    first-use order, evidence first and then the reads in their new order, and the count of omitted reads is
+    the available ones less the reads kept, as the native prompt builder would write both for that read list.
+    The identity permutation returns the same characters.
     """
     doc = json.loads(state)
     paths, reads = doc["paths"], doc["verified_reads"]
-    checked_sources(sources, len(reads))
+    require(len(sources) >= 1 and len(set(sources)) == len(sources)
+            and all(type(source) is int and 0 <= source < len(reads) for source in sources),
+            "sources do not name distinct verified reads")
     table = []
 
     def index(path):
@@ -173,16 +179,79 @@ def moved_reads(state, sources):
     for source in sources:
         read = reads[source]
         moved.append(read[:2] + [index(paths[read[2]])] + read[3:] if read_form(read).startswith("literal:") else read)
-    require(sorted(table) == sorted(paths), "the path table names a path that no evidence or read uses")
+    require(set(table) <= set(paths) and (len(sources) < len(reads) or sorted(table) == sorted(paths)),
+            "the path table names a path that no evidence or read uses")
     doc["paths"], doc["indexed_evidence"], doc["verified_reads"] = table, evidence, moved
+    doc["read_choices_omitted"] = doc["read_choices_available"] - len(sources)
     return json.dumps(doc, ensure_ascii=False, separators=(",", ":"))
 
 
-FAMILIES = ("cards", "cards_ids", "reads", "letters")
+def read_statement(read):
+    """A verified read row in words, from its own fields: the search string, or the path and the line range."""
+    if read_form(read).startswith("literal:"):
+        return read[1] + " for: " + read[6]
+    path, mark, lines = read[2].rpartition(":")
+    return read[1] + " of " + (path + " lines " + lines if mark and path and lines else read[2])
+
+
+def stated_options(options, state):
+    """Options whose read cards also state their read in words, after the read number.
+
+    The words come from the state the options belong to, so a read card always states the read it names. This
+    is a diagnostic form. The native compiler never writes it.
+    """
+    reads = json.loads(state)["verified_reads"]
+    out = []
+    for symbol, name, text in options:
+        action, mark, rest = text.partition(";")
+        if body_kind(text) == "read":
+            number = int(action[6:])
+            require(1 <= number <= len(reads), "a read card names a read that the state does not hold")
+            action += " (" + read_statement(reads[number - 1]) + ")"
+        out.append([symbol, name, action + mark + rest])
+    return out
+
+
+def pair_parts(parts, read, swapped):
+    """The parts of a two-option prompt: one generic read card for a single read, and the sufficient card.
+
+    The state keeps only that read, as read number 1. The options are the first read card and the sufficient
+    card of the original, under the first two symbols and option ids. With `swapped` the two texts change
+    places. This is a diagnostic form: the native roster builder always adds the clarify card.
+    """
+    options = parts["options"]
+    enough = [text for _, _, text in options if body_kind(text) == "sufficient"]
+    require(len(options) >= 2 and options[0][2].startswith("read r1;") and len(enough) == 1,
+            "the options do not start with the first read card or hold no single sufficient card")
+    texts = [enough[0], options[0][2]] if swapped else [options[0][2], enough[0]]
+    return parts | {"state": moved_reads(parts["state"], [read]),
+                    "options": [[options[slot][0], options[slot][1], texts[slot]] for slot in range(2)]}
+
+
+def within_input_limits(parts, max_options):
+    """Whether prompt parts meet the input limits of `Compiler::compile` in the retrieval crate's compiler.rs.
+
+    The question is not blank and at most 16,384 bytes, the state at most 65,536 bytes, and there are one to
+    `max_options` options with distinct ids. An id is 1 to 128 bytes with no control character, and an option
+    text is at most 8,192 bytes.
+    """
+    def size(text):
+        return len(text.encode("utf-8"))
+
+    options = parts["options"]
+    names = [name for _, name, _ in options]
+    return (bool(parts["question"].strip()) and size(parts["question"]) <= 16384 and size(parts["state"]) <= 65536
+            and 1 <= len(options) <= max_options and len(set(names)) == len(names)
+            and all(1 <= size(name) <= 128 and not any(unicodedata.category(letter) == "Cc" for letter in name)
+                    and size(text) <= 8192 for _, name, text in options))
+
+
+FAMILIES = ("cards", "cards_ids", "reads", "letters", "stated", "pairs")
+PAIRS = ("pair", "pair_swapped")
 
 
 def variant_plan(options, reads, families):
-    """The permuted inputs to build for one row, as (name, family, sources), after the identity.
+    """The inputs to build for one row, as (name, family, sources), after the identity.
 
     - `cards`: every rotation of the option texts and their reversal. Symbols and option ids stay in place.
     - `cards_ids`: rotations by 1 and 3 and the reversal, with the option id travelling with its text.
@@ -190,10 +259,16 @@ def variant_plan(options, reads, families):
       card names another read.
     - `letters`: rotations by 1 and 3 of the option symbols. Every line keeps its place, id and text and takes
       another symbol. The native compiler never writes this; it separates the symbol from the line position.
+    - `stated`: every read card also states its read in words, in the original read order (family `stated`)
+      and under every rotation of the reads (family `stated_reads`). The native compiler never writes this.
+    - `pairs`: for every read, a two-option input with one generic read card for that read alone and the
+      sufficient card, in that order (family `pair`) and with the two texts swapped (family `pair_swapped`).
+      The native roster builder never writes this.
 
     `sources` is indexed by slot, and a slot is a symbol: the score at index j belongs to symbol j. For the
-    first three families the symbol stays on its line, and sources[j] is the original slot whose body that line
-    shows. For `letters`, sources[j] is the line that symbol j is attached to.
+    card and read families the symbol stays on its line, and sources[j] is the original slot whose body that
+    line shows. For `letters`, sources[j] is the line that symbol j is attached to. For the pair families,
+    sources holds the one read that is kept.
     """
     require(set(families) <= set(FAMILIES), "unknown variant family")
     plan = [("identity", "identity", list(range(options)))]
@@ -209,6 +284,14 @@ def variant_plan(options, reads, families):
     if "letters" in families:
         plan += [("letters_rot" + str(shift), "letters", rotation(options, shift))
                  for shift in (1, 3) if shift < options]
+    if "stated" in families:
+        plan.append(("stated", "stated", list(range(options))))
+        plan += [("stated_reads_rot" + str(shift), "stated_reads", rotation(reads, shift))
+                 for shift in range(1, reads)]
+    if "pairs" in families:
+        for read in range(reads):
+            plan += [("pair_r" + str(read + 1), "pair", [read]), ("pair_r" + str(read + 1) + "_swapped",
+                                                                  "pair_swapped", [read])]
     return plan
 
 
@@ -220,15 +303,21 @@ def moved_symbols(options, sources):
 
 def variant_prompt(parts, family, sources):
     """The prompt of one variant, from the parts of the original prompt."""
-    if family == "identity":
-        require(list(sources) == list(range(len(parts["options"]))), "the identity moves nothing")
-        return render_prompt(parts)
+    if family in ("identity", "stated"):
+        require(list(sources) == list(range(len(parts["options"]))), "this family moves nothing")
+        options = parts["options"] if family == "identity" else stated_options(parts["options"], parts["state"])
+        return render_prompt(parts | {"options": options})
     if family in ("cards", "cards_ids"):
         return render_prompt(parts | {"options": moved_options(parts["options"], sources, family == "cards_ids")})
     if family == "letters":
         return render_prompt(parts | {"options": moved_symbols(parts["options"], sources)})
-    require(family == "reads", "unknown variant family")
-    return render_prompt(parts | {"state": moved_reads(parts["state"], sources)})
+    if family in PAIRS:
+        require(len(sources) == 1, "a pair keeps one read")
+        return render_prompt(pair_parts(parts, sources[0], family == "pair_swapped"))
+    require(family in ("reads", "stated_reads"), "unknown variant family")
+    state = moved_reads(parts["state"], sources)
+    options = parts["options"] if family == "reads" else stated_options(parts["options"], state)
+    return render_prompt(parts | {"state": state, "options": options})
 
 
 def full_sources(sources, count):
@@ -284,6 +373,34 @@ def profile_share(vectors):
     profile = [statistics.fmean(row[slot] for row in rows) for slot in range(len(rows[0]))]
     total = sum(value * value for row in rows for value in row)
     return {"profile": profile, "share": len(rows) * sum(value * value for value in profile) / total if total else None}
+
+
+def split_by_row(table):
+    """How much of the variation of a rows-by-columns table lies between its rows and how much within them.
+
+    `row_mean_sd` is the standard deviation of the row means and `within_row_sd` the pooled standard deviation
+    of the values of a row around its mean.
+    """
+    require(len(table) >= 2 and len(table[0]) >= 2 and all(len(row) == len(table[0]) for row in table),
+            "a table needs two rows and two columns, with rows of one length")
+    width = len(table[0])
+    means = [statistics.fmean(row) for row in table]
+    grand = statistics.fmean(means)
+    between = width * sum((mean - grand) ** 2 for mean in means)
+    within = sum((value - mean) ** 2 for row, mean in zip(table, means) for value in row)
+    total = between + within
+    return {"rows": len(table), "columns": width, "mean": grand,
+            "between_row_share": between / total if total else None,
+            "within_row_share": within / total if total else None,
+            "row_mean_sd": statistics.stdev(means), "within_row_sd": math.sqrt(within / (len(table) * (width - 1)))}
+
+
+def pearson(first, second):
+    """The Pearson correlation of two equally long lists. None when either does not vary."""
+    require(len(first) == len(second) >= 2, "a correlation needs two equally long lists")
+    a, b = centred(first), centred(second)
+    scale = math.sqrt(sum(x * x for x in a) * sum(y * y for y in b))
+    return sum(x * y for x, y in zip(a, b)) / scale if scale else None
 
 
 def without_profile(vectors):

@@ -9,6 +9,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import build_variants
+import compare_scores
 import layout
 import report
 import score_variants
@@ -129,7 +130,10 @@ class SlotTable(unittest.TestCase):
                           for item in out["centred_score_by_read_slot_and_form"]],
                          [(0, "target:context", 2, -1.0), (1, "literal:search", 1, 2.0), (1, "target:context", 1, -2.0)])
         self.assertEqual(out["read_slot_orders"], {"1>0": 1, "0>1": 1})
+        self.assertEqual(out["best_read_slot_counts"], {0: 1, 1: 1})
         self.assertEqual(out["fixed_profile"], {"profile": [-1.0, 0.0, 1.0], "share": 0.25})
+        # The two read scores alone, centred: [-2, 2] and [1, -1]. Their mean profile is [-0.5, 0.5].
+        self.assertEqual(out["fixed_profile_of_reads"], {"profile": [-0.5, 0.5], "share": 0.1})
         self.assertEqual((out["winner_slot_counts"], out["winner_margin"]["mean"]), ({1: 1, 2: 1}, 2.0))
         self.assertEqual((out["certified_rows"], out["certified_cards"], out["certified_by_slot"],
                           out["certified_by_read_form"], out["certified_rank_counts"],
@@ -142,6 +146,21 @@ class SlotTable(unittest.TestCase):
                          [{"UNKNOWN": 2}, {"REFERENCE_GAIN": 1, "UNKNOWN": 1}, {}])
         self.assertEqual((out["evidence_units"], out["evidence_units_cut_short"], out["read_choices_available"],
                           out["read_choices_omitted"]), ({1: 2}, 1, {4: 2}, {2: 2}))
+
+    def test_raw_rows_read_a_raw_panel_or_the_identity_of_a_score_receipt(self):
+        panel = {"schema": "airk.private.r8-compact-scientific-raw-panel/1", "rows": [
+            {"ordinal": 4, "id": "x", "input_digest": "aa", "scores": [1.0, 2.0]}]}
+        self.assertEqual(slot_table.raw_rows(panel), {4: {"input_digest": "aa", "scores": [1.0, 2.0]}})
+        receipt = {"schema": "airk.private.context-slot-scores/1", "complete": True, "rows": [
+            {"ordinal": 4, "input_digest": "aa", "variants": [forward("identity", "identity", [0, 1], [3.0, 4.0]),
+                                                              forward("cards_rot1", "cards", [1, 0], [9.0, 8.0])]}]}
+        self.assertEqual(slot_table.raw_rows(receipt), {4: {"input_digest": "aa", "scores": [3.0, 4.0]}})
+        twice = {"schema": receipt["schema"], "complete": True, "rows": receipt["rows"] * 2}
+        no_identity = {"schema": receipt["schema"], "complete": True, "rows": [
+            {"ordinal": 4, "input_digest": "aa", "variants": [forward("cards_rot1", "cards", [1, 0], [9.0, 8.0])]}]}
+        for bad in (receipt | {"complete": False}, receipt | {"schema": "other"}, twice, no_identity):
+            with self.assertRaises(ValueError):
+                slot_table.raw_rows(bad)
 
 
 class Variants(unittest.TestCase):
@@ -182,10 +201,26 @@ class Scoring(unittest.TestCase):
     def test_compiled_inputs_decide_at_the_last_token_with_no_padding(self):
         self.assertEqual(score_variants.compiled_inputs([7, 8, 9], [32, 33]), {
             "input_ids": [7, 8, 9], "attention_mask": [1, 1, 1], "position_ids": [0, 1, 2],
-            "decision_positions": [2], "candidate_positions": [32, 33], "option_mask": [True, True]})
+            "decision_position": 2, "candidate_positions": [32, 33], "option_mask": [True, True]})
         for ids, candidates in (([], [32, 33]), ([7], [32])):
             with self.assertRaises(ValueError):
                 score_variants.compiled_inputs(ids, candidates)
+
+    def test_padding_plan_requires_one_length_that_holds_every_input_on_webgpu(self):
+        self.assertIsNone(score_variants.padding_plan("cpu", None, None, 1500))
+        self.assertEqual(score_variants.padding_plan("cpu", 2048, 151643, 1500), 2048)
+        self.assertEqual(score_variants.padding_plan("webgpu", 1500, 151643, 1500), 1500)
+        for provider, pad_to, pad_token_id in (("webgpu", None, 151643), ("webgpu", 2048, None),
+                                               ("webgpu", 1499, 151643), ("cpu", 1499, 151643)):
+            with self.assertRaises(ValueError):
+                score_variants.padding_plan(provider, pad_to, pad_token_id, 1500)
+
+    def test_padded_inputs_still_decide_at_the_last_real_token(self):
+        padded = score_variants.smoke.padded(score_variants.compiled_inputs([7, 8, 9], [32, 33]), 5, 151643)
+        out = score_variants.feeds(GRAPH, padded, FakeNumpy)
+        self.assertEqual((out["input_ids"].values, out["attention_mask"].values, out["position_ids"].values,
+                          out["decision_positions"].values),
+                         ([7, 8, 9, 151643, 151643], [1, 1, 1, 0, 0], [0, 1, 2, 3, 4], [2]))
 
     def test_feeds_add_the_batch_axis_only_where_the_graph_has_one(self):
         out = score_variants.feeds(GRAPH, score_variants.compiled_inputs([7, 8, 9], [32, 33]), FakeNumpy)
@@ -277,31 +312,146 @@ class Report(unittest.TestCase):
                                             forward("cards_rot1", "cards", [1, 0], [3.0, 1.0]),
                                             forward("cards_reverse", "cards", [1, 0], [9.0, 0.0])]},
                 {"ordinal": 8, "variants": [forward("identity", "identity", [0, 1], [3.0, 1.0])]}]
-        split, preferred = report.design(rows, "cards", kinds)
+        split, preferred, averaged = report.design(rows, "cards", kinds)
         self.assertEqual((split["rows"], split["forwards"], split["slot_mean"], split["body_mean"]),
                          (1, 2, [1.0, -1.0], [0.0, 0.0]))
         self.assertEqual(split["share"]["slot_common"], 1.0)
         self.assertEqual(split["cell_mean_by_slot_then_body"], [[1.0, 1.0], [-1.0, -1.0]])
         self.assertEqual((split["slot_averaged_first_body"], split["slot_averaged_first_read"]), ({0: 1}, {0: 1}))
-        self.assertEqual(preferred, {7: [0, 1]})
+        self.assertEqual((preferred, averaged), ({7: [0, 1]}, {7: [0.0, 0.0]}))
         self.assertIsNone(report.design(rows, "reads", ["read", "read"]))
 
     def test_design_of_reads_covers_the_read_slots_only(self):
         rows = [{"ordinal": 2, "variants": [forward("identity", "identity", [0, 1, 2], [3.0, 1.0, 50.0]),
                                             forward("reads_rot1", "reads", [1, 0], [1.0, 3.0, 70.0])]}]
-        split, preferred = report.design(rows, "reads", KINDS)
+        split, preferred, averaged = report.design(rows, "reads", KINDS)
         self.assertEqual((split["slot_mean"], split["body_mean"], split["share"]["body_by_row"]),
                          ([0.0, 0.0], [1.0, -1.0], 0.0))
-        self.assertEqual((split["share"]["body_common"], preferred), (1.0, {2: [0, 1]}))
+        self.assertEqual((split["share"]["body_common"], preferred, averaged), (1.0, {2: [0, 1]}, {2: [1.0, -1.0]}))
+
+    def test_read_groups_split_the_slot_averaged_scores_by_form_and_certificate(self):
+        table_rows = {0: {"read_forms": ["target:context", "literal:search"], "certified_slots": [1]},
+                      1: {"read_forms": ["literal:search", "literal:search"], "certified_slots": []}}
+        out = report.read_groups({0: [2.0, -2.0], 1: [3.0, -1.0]}, table_rows)
+        self.assertEqual({form: (item["count"], item["mean"]) for form, item in out["by_read_form"].items()},
+                         {"literal:search": (3, 0.0), "target:context": (1, 2.0)})
+        # Only the row with a certificate is split: its certified read against its other read.
+        self.assertEqual((out["certified"]["count"], out["certified"]["mean"], out["other"]["count"],
+                          out["other"]["mean"]), (1, -2.0, 1, 2.0))
+        none = report.read_groups({1: [3.0, -1.0]}, table_rows)
+        self.assertEqual((none["certified"], none["other"]), (None, None))
+
+    def test_design_of_stated_reads_starts_from_the_stated_variant(self):
+        rows = [{"ordinal": 2, "variants": [forward("identity", "identity", [0, 1, 2], [9.0, 9.0, 50.0]),
+                                            forward("stated", "stated", [0, 1, 2], [4.0, 2.0, 60.0]),
+                                            forward("stated_reads_rot1", "stated_reads", [1, 0], [2.0, 4.0, 70.0])]}]
+        split, preferred, averaged = report.design(rows, "stated", KINDS)
+        self.assertEqual((split["forwards"], split["slot_mean"], split["body_mean"], split["share"]["body_common"]),
+                         (2, [0.0, 0.0], [1.0, -1.0], 1.0))
+        self.assertEqual((preferred, averaged), ({2: [0, 1]}, {2: [1.0, -1.0]}))
+        self.assertIsNone(report.design(rows, "reads", KINDS))
 
     def test_certified_ranks_count_among_the_read_cards(self):
         kinds = ["read", "read", "read", "sufficient"]
         table_rows = {4: {"certified_slots": [2]}, 5: {"certified_slots": []}}
-        scored = {4: [5.0, 1.0, 3.0, 9.0], 5: [1.0, 2.0, 3.0, 4.0]}
+        direct = {"original": {4: [5.0, 1.0, 3.0, 9.0], 5: [1.0, 2.0, 3.0, 4.0]}, "stated": {4: [1.0, 2.0, 8.0, 9.0]}}
         preferred = {"cards": {4: [3, 2, 0, 1]}, "reads": {4: [1, 2, 0]}}
-        self.assertEqual(report.certified_ranks(table_rows, scored, preferred, kinds), [
-            {"ordinal": 4, "certified_slots": [2], "original": [2], "cards_slot_averaged": [1],
+        self.assertEqual(report.certified_ranks(table_rows, direct, preferred, kinds), [
+            {"ordinal": 4, "certified_slots": [2], "original": [2], "stated": [1], "cards_slot_averaged": [1],
              "reads_slot_averaged": [2]}])
+
+    def test_rank_summary_counts_first_places_and_the_mean_rank(self):
+        entries = [{"original": [4, 1], "cards_slot_averaged": [2, 2]}, {"original": [1]}]
+        self.assertEqual(report.rank_summary(entries, ("original", "cards_slot_averaged", "stated")), {
+            "original": {"certified_reads": 3, "ranked_first": 2, "mean_rank": 2.0, "rank_counts": {1: 2, 4: 1}},
+            "cards_slot_averaged": {"certified_reads": 2, "ranked_first": 0, "mean_rank": 2.0,
+                                    "rank_counts": {2: 2}}})
+
+    def test_gathered_labels_each_family_against_its_own_base(self):
+        rows = [{"ordinal": 2, "variants": [
+            forward("identity", "identity", [0, 1, 2], [1.0, 5.0, 3.0]),
+            forward("reads_rot1", "reads", [1, 0], [5.0, 1.0, 3.0]),
+            forward("stated", "stated", [0, 1, 2], [6.0, 1.0, 3.0]),
+            # Against the stated scores the top read went with its read. Against the identity it would have stayed.
+            forward("stated_reads_rot1", "stated_reads", [1, 0], [1.0, 6.0, 3.0])] + PAIR_FORWARDS}]
+        out = report.gathered(rows, KINDS)
+        self.assertEqual({family: [item["winner"] for item in items] for family, items in out["by_family"].items()},
+                         {"reads": ["content"], "stated": ["unmoved_lost"], "stated_reads": ["content"]})
+        self.assertEqual(sorted(out["by_variant"]), ["reads_rot1", "stated", "stated_reads_rot1"])
+        self.assertEqual(out["named"], {"identity": {2: [1.0, 5.0, 3.0]}, "stated": {2: [6.0, 1.0, 3.0]}})
+        self.assertEqual(out["pairs"], {2: [[3.0, 1.0], [-1.0, -3.0]]})
+
+    def test_pair_table_takes_read_minus_sufficient_in_both_orders(self):
+        self.assertEqual(report.pair_table({"variants": PAIR_FORWARDS}), [[3.0, 1.0], [-1.0, -3.0]])
+        self.assertIsNone(report.pair_table({"variants": [forward("identity", "identity", [0, 1], [1.0, 2.0])]}))
+        for bad in (PAIR_FORWARDS[:3], PAIR_FORWARDS[2:],
+                    PAIR_FORWARDS[:3] + [forward("pair_r2_swapped", "pair_swapped", [1], [6.0, 3.0, 1.0])]):
+            with self.assertRaises(ValueError):
+                report.pair_table({"variants": bad})
+
+    def test_pair_summary_separates_the_read_from_the_order(self):
+        tables = {0: [[3.0, 1.0], [-1.0, -3.0]], 1: [[5.0, 3.0], [1.0, -1.0]]}
+        table_rows = {0: {"read_forms": ["target:context", "literal:search"], "certified_slots": [1]},
+                      1: {"read_forms": ["target:context", "target:context"], "certified_slots": []}}
+        native = {0: [1.0, 5.0, 3.0], 1: [4.0, 2.0, 9.0]}
+        out = report.pair_summary(tables, table_rows, native, KINDS)
+        self.assertEqual((out["rows"], out["reads"]), (2, 2))
+        # Order-averaged differences: [2, -2] and [4, 0]. Row means 0 and 2 around 1.
+        averaged = out["order_averaged"]
+        self.assertEqual((averaged["mean"], averaged["between_row_share"], averaged["within_row_share"]),
+                         (1.0, 0.2, 0.8))
+        self.assertAlmostEqual(averaged["row_mean_sd"], 1.4142136, places=6)
+        self.assertAlmostEqual(averaged["within_row_sd"], 2.8284271, places=6)
+        self.assertEqual((averaged["values"]["count"], averaged["values"]["min"], averaged["values"]["max"]),
+                         (4, -2.0, 4.0))
+        self.assertEqual((out["read_first"]["mean"], out["read_second"]["mean"]), (2.0, 0.0))
+        self.assertEqual(out["first_option_advantage"], {"count": 4, "mean": 1.0, "sd": 0.0, "min": 1.0, "max": 1.0})
+        self.assertEqual(out["read_chosen"], {"pairs": 4, "read_first": 3, "read_second": 2, "in_both_orders": 2,
+                                              "in_neither_order": 1, "order_decides": 1})
+        self.assertEqual(out["order_averaged_by_read"], [3.0, -1.0])
+        self.assertEqual({form: (item["count"], item["mean"])
+                          for form, item in out["order_averaged_by_read_form"].items()},
+                         {"literal:search": (1, -2.0), "target:context": (3, 2.0)})
+        self.assertEqual(out["largest_read_by_row"], {0: 2})
+        # Row means 0 and 2 against native read-minus-sufficient 2 and -5: two points on a falling line.
+        self.assertEqual(out["row_mean_against_native_read_minus_sufficient"], -1.0)
+        self.assertEqual(out["certified"], [{"ordinal": 0, "certified_slots": [1], "order_averaged": [2],
+                                             "read_first": [2], "read_second": [2]}])
+        only = {"certified_reads": 1, "ranked_first": 0, "mean_rank": 2.0, "rank_counts": {2: 1}}
+        self.assertEqual(out["certified_summary"], {"order_averaged": only, "read_first": only, "read_second": only})
+        with self.assertRaises(ValueError):
+            report.pair_summary(tables, table_rows, native, ["sufficient", "read", "read"])
+
+
+# Read first: 5 against 2, then 1 against 2. Read second: 5 against 4, then 3 against 6.
+PAIR_FORWARDS = [forward("pair_r1", "pair", [0], [5.0, 2.0]),
+                 forward("pair_r1_swapped", "pair_swapped", [0], [4.0, 5.0]),
+                 forward("pair_r2", "pair", [1], [1.0, 2.0]),
+                 forward("pair_r2_swapped", "pair_swapped", [1], [6.0, 3.0])]
+
+
+class Compare(unittest.TestCase):
+    def test_compared_reports_the_largest_gap_and_changed_winners_by_family(self):
+        def row(ordinal, *variants):
+            return {"ordinal": ordinal, "variants": [dict(variant, tokens=9) for variant in variants]}
+
+        first = [row(1, forward("identity", "identity", [0, 1], [3.0, 1.0]),
+                     forward("cards_rot1", "cards", [1, 0], [2.0, 2.5])),
+                 row(2, forward("identity", "identity", [0, 1], [1.0, 4.0]))]
+        second = [row(1, forward("identity", "identity", [0, 1], [3.25, 1.0]),
+                      forward("cards_rot1", "cards", [1, 0], [3.0, 2.5]),
+                      forward("reads_rot1", "reads", [1, 0], [9.0, 9.0])),
+                  row(2, forward("identity", "identity", [0, 1], [1.0, 4.5]))]
+        out = compare_scores.compared(first, second)
+        self.assertEqual((out["forwards"], out["winner_changes"], out["max_abs_difference"]["max"]), (3, 1, 1.0))
+        self.assertEqual({family: (item["max_abs_difference"]["count"], item["max_abs_difference"]["max"],
+                                   item["winner_changes"]) for family, item in out["by_family"].items()},
+                         {"cards": (1, 1.0, 1), "identity": (2, 0.5, 0)})
+        second[0]["variants"][1]["sources"] = [0, 1]
+        with self.assertRaises(ValueError):
+            compare_scores.compared(first, second)
+        with self.assertRaises(ValueError):
+            compare_scores.compared(first, [row(9, forward("identity", "identity", [0, 1], [1.0, 2.0]))])
 
 
 if __name__ == "__main__":

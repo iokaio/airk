@@ -15,6 +15,25 @@ from layout import (body_kind, card_kind, card_lines, centred, order, parse_prom
 
 SCHEMA = "airk.private.context-slot-table/1"
 PROXY = "generic_read_original_reference_complement"
+RAW_PANEL = "airk.private.r8-compact-scientific-raw-panel/1"
+SCORES = "airk.private.context-slot-scores/1"
+
+
+def raw_rows(doc):
+    """Scores and input digest by ordinal, from a retained raw panel or a score receipt of this folder.
+
+    A score receipt gives the scores of its identity variant. It must be complete.
+    """
+    if doc.get("schema") == RAW_PANEL:
+        return {row["ordinal"]: {"input_digest": row["input_digest"], "scores": row["scores"]} for row in doc["rows"]}
+    require(doc.get("schema") == SCORES and doc.get("complete") is True,
+            "scores must come from a raw panel or a completed score receipt")
+    out = {}
+    for row in doc["rows"]:
+        identity = [variant["scores"] for variant in row["variants"] if variant["family"] == "identity"]
+        require(len(identity) == 1 and row["ordinal"] not in out, "a row lacks one identity variant or is repeated")
+        out[row["ordinal"]] = {"input_digest": row["input_digest"], "scores": identity[0]}
+    return out
 
 
 def static_checks(row, symbols, max_tokens):
@@ -106,7 +125,12 @@ def tables(rows):
         "centred_score_by_read_slot_and_form": [
             {"slot": slot, "form": form, **spread(values)} for (slot, form), values in sorted(by_form.items())],
         "read_slot_orders": dict(read_orders.most_common()),
+        "best_read_slot_counts": dict(sorted(Counter(
+            next(slot for slot in row["order"] if slot in read_slots) for row in rows).items())),
         "fixed_profile": profile_share([row["scores"] for row in rows]),
+        # The same over the read cards alone, so that a strong terminal card does not carry the share.
+        "fixed_profile_of_reads": profile_share([[row["scores"][slot] for slot in read_slots] for row in rows])
+        if len(read_slots) >= 2 else None,
         "winner_slot_counts": dict(sorted(Counter(row["order"][0] for row in rows).items())),
         "winner_margin": spread([row["margin"] for row in rows]),
         "certified_rows": sorted({row["ordinal"] for row, _ in certified}),
@@ -137,14 +161,16 @@ def tables(rows):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--panel", required=True, type=Path, help="compiled rows with their rosters and prompts")
-    parser.add_argument("--raw", required=True, type=Path, help="the raw score panel for the same rows")
+    parser.add_argument("--raw", required=True, type=Path,
+                        help="scores for the same rows: a retained raw panel, or a scores.json of score_variants.py")
     parser.add_argument("--preflight", required=True, type=Path, help="the reference preflight with certificates")
     parser.add_argument("--compiler", required=True, type=Path, help="the compiler profile: symbols and token limit")
     parser.add_argument("--output", required=True, type=Path, help="a new file for the table")
     args = parser.parse_args()
     require(sys.flags.isolated and sys.dont_write_bytecode, "use Python -I -B")
     panel = json.loads(args.panel.read_bytes())["rows"]
-    raw = {row["ordinal"]: row for row in json.loads(args.raw.read_bytes())["rows"]}
+    scores = json.loads(args.raw.read_bytes())
+    raw = raw_rows(scores)
     preflight = {row["id"]: row for row in json.loads(args.preflight.read_bytes())["rows"]}
     profile = json.loads(args.compiler.read_bytes())
     symbols = [item["id"] for item in profile["symbols"]]
@@ -152,15 +178,19 @@ def main():
     rows, checks = [], Counter()
     for row in panel:
         scored, original = raw[row["ordinal"]], preflight[row["id"]]
-        require(scored["id"] == row["id"] and scored["input_digest"] == row["compiled"]["input_digest"]
+        # The input digest binds a score vector to the compiled row, and the roster binds the certificates.
+        require(scored["input_digest"] == row["compiled"]["input_digest"]
                 and original["request"]["roster"] == row["roster"],
-                "raw scores or preflight do not belong to panel row " + str(row["ordinal"]))
+                "scores or preflight do not belong to panel row " + str(row["ordinal"]))
         rows.append(described(row, scored["scores"], original))
         outcome = static_checks(row, symbols, profile["max_tokens"])
         checks.update(name for name, ok in outcome.items() if ok)
         rows[-1]["failed_checks"] = sorted(name for name, ok in outcome.items() if not ok)
     option_blocks = {tuple(map(tuple, parse_prompt(row["compiled"]["prompt"])["options"])) for row in panel}
     receipt = {"schema": SCHEMA, "qualification": False, "panel": pin(args.panel), "raw": pin(args.raw),
+               # Two models can share one compiled input, so a score receipt also says which graph scored it.
+               "raw_scored_by": {key: scores.get(key) for key in ("provider", "model", "weights", "padding")}
+               if scores.get("schema") == SCORES else None,
                "preflight": pin(args.preflight), "compiler": pin(args.compiler),
                "compiler_limits": {"max_tokens": profile["max_tokens"], "max_options": profile["max_options"],
                                    "symbols": profile["symbols"]},
