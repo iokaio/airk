@@ -48,9 +48,9 @@ route, so no route needs its own parity investigation.
 
 | Route | Covers | Graph | State |
 | --- | --- | --- | --- |
-| CPU | Windows, Linux and macOS on any hardware | The portable graph: the model's FP32 graph with its learned weights cast from the FP16 file. | Compact and Large are exported, pass the independent graph proof and are scored on the published runtime build. Compact keeps every winner on the 100 frozen rows. The static runtime has not loaded them. |
+| CPU | Windows, Linux and macOS on any hardware | The portable graph: the model's FP32 graph with its learned weights cast from the FP16 file. | Compact and Large are exported, pass the independent graph proof and are scored on the published runtime build. Compact keeps every winner on the 100 frozen rows. AIRK's static CPU runtime loads and scores Compact on Windows at 8 cores with every reference winner. Linux and macOS have not run it. |
 | CUDA | NVIDIA on Windows and Linux | The existing Compact and Large candidates. | Both pass the four development widths on Windows. Compact's fit is predicted to find no safe cutoff (step 4 detail). Linux links and has not scored a model. |
-| WebGPU | Radeon on Windows and Linux, Apple GPUs on macOS, and other adapters | The portable graph, with FP32 arithmetic on the GPU. | Runs on the A6000 through the official prebuilt plugin: both exported graphs are correct and inside the speed line. They meet their memory targets for one input length only. With varying lengths neither buffer cache mode meets the targets as measured, and a fixed-length ladder is under measurement. Continues through the staged probe (steps 11 and 12). |
+| WebGPU | Radeon on Windows and Linux, Apple GPUs on macOS, and other adapters | The portable graph, with FP32 arithmetic on the GPU. | Runs on the A6000 through the official prebuilt plugin: both exported graphs are correct and inside the speed line. With inputs padded on the right to a ladder of five fixed lengths, both meet their memory targets for varying lengths on the A6000, with no winner change. A real 16 GB or 24 GB card and other adapters are unmeasured. Continues through the staged probe (steps 11 and 12). |
 
 Every route shares the weight file and the scoring contract. The CPU and
 WebGPU routes start from the same portable graph. A route may use a small
@@ -303,9 +303,9 @@ their digests.
 
 | Step | Work | Done when | Needs | Confidence |
 | --- | --- | --- | --- | --- |
-| 1 | Freeze the judged cohort. Run the first two stage arms on Windows CPU at the same evidence budget: retrieval alone and retrieval with Focus. | Focus's contribution to delivered evidence is measured, with missing evidence, duplicates and latency. | Nothing | Medium to high. Start with the 76 TechQA cases, which carry publisher coordinates and complete menus. In progress on 21 November: the two-arm runner and scorer are being written, and the run uses the private evaluation fixture because the Focus profile is unqualified. No pass line is set; the paired counts are reported. |
+| 1 | Freeze the judged cohort. Run the first two stage arms on Windows CPU at the same evidence budget: retrieval alone and retrieval with Focus. | Focus's contribution to delivered evidence is measured, with missing evidence, duplicates and latency. | Nothing | Medium to high. Start with the 76 TechQA cases, which carry publisher coordinates and complete menus. In progress on 21 November. The runner and scorer exist, and the run uses the private evaluation fixture because the Focus profile is unqualified. No pass line is set; the paired counts are reported. Retrieval alone is measured: it delivers the publisher's span on 38 of 75 judged cases. The Focus arm is running as two fixture lifetimes of 38 cases, because the fixture refuses to configure Focus over more than 64 indexes. |
 | 2 | Deliver the CPU milestone. Install the product on Windows and on Linux under WSL2 and measure the ladder tiers end to end at 8 cores, the target class. Start with retrieval and Focus, and add the Compact tiers when step 3 delivers them. Record the four memory figures. macOS joins at step 11. | Each tier has an end-to-end figure at 8 cores on both systems, and the tiers that meet 120 seconds are admitted for the target class. | Nothing | Medium. The runtime build on each system is the risk. |
-| 3 | Export the portable graph for Compact. Record the recipe in the exporter contract first. Verify shared weight bytes. Load on the static runtime with zero forwards. Score the four widths and 2,048 tokens against the reference. Time each width and record the four memory figures. | Compact has measured CPU numbers for the full and fast tiers. | Nothing | High. The exporter's portable recipe exists, Compact and Large are exported and scored on the published runtime, and both pass the independent graph proof. The static runtime and a learned-byte check for the portable recipe remain. |
+| 3 | Export the portable graph for Compact. Record the recipe in the exporter contract first. Verify shared weight bytes. Load on the static runtime with zero forwards. Score the four widths and 2,048 tokens against the reference. Time each width and record the four memory figures. | Compact has measured CPU numbers for the full and fast tiers. | Nothing | High. The exporter's portable recipe exists, Compact and Large are exported and scored on the published runtime, and both pass the independent graph proof. The static runtime loads and scores Compact on Windows. A quiet-machine timing, Large on the static runtime and a learned-byte check for the portable recipe remain. |
 | 4 | Finish Windows CUDA. Complete Compact matching references, fit calibration, add the Large selector and score its panel. Run capacity under A6. | Both candidates hold a calibrated panel and a memory figure. | Nothing | Medium. The Compact fit is predicted to find no safe cutoff, and the native study is running to confirm or refute that. The Large selector is still unexercised and needs a new image and launcher. See the step 4 detail. |
 | 5 | Record the Core contract decision, then implement: the opt-in GPU default, Auto order, the ladder tiers and the CPU target class, typed reasons, truthful status, per-result disclosure of route, model, tier and budget, the weight rule and a WebGPU provider value. Test with injected capabilities. | Reviewed Core changes with qualification flags false. | Nothing | Medium to high. Profiles already carry a token ceiling, so a tier is a profile. The opt-in GPU default is done (commit `0b5fe97c`). The other slices and the Admin notice remain. |
 | 6 | Run the WebGPU smoke test on the A6000 through Direct3D 12 as soon as step 3 has a graph. It stays early by the user's decision and includes the speed line. It takes the GPU only when no CUDA run holds it. | A go or no-go for the rented runs. | Step 3 | Done on 21 November: go, with a memory caveat found afterwards. The exported Compact and Large graphs pass correctness and the speed line on the A6000, and their memory targets for one input length. With varying lengths the targets are not met by either buffer cache mode as measured (fourth iteration below). Large's 8,192-token check was against the CPU provider and still needs an independent reference. |
@@ -388,9 +388,33 @@ default-recipe candidates whose learned bytes were verified, and the weight
 files are identical. A maintained learned-byte check for the portable recipe
 is still owed.
 
-Still owed for step 3: the zero-forward load and scoring on the static
-runtime, that learned-byte check, the measured p95 at the 8-core class for
-both models, and an 8,192-token reference for Large.
+AIRK's static ONNX Runtime 1.30 CPU build loads and scores the portable
+Compact graph through a test-only seam (`portable_cpu.rs`, commit
+`02966c7f`), with no change to a digest-input file. The process was capped to
+8 physical cores of a Threadripper PRO 5975WX. These are development
+observations, taken while other jobs ran.
+
+| Measure | Result |
+| --- | --- |
+| Largest difference from the FP32 references at 32, 128, 1,024, 1,588 and 8,192 tokens | 0.000282, every winner the same |
+| Cold load with a warm file cache | 9.0 to 9.4 s |
+| Peak resident memory, set during load | 11.77 GiB |
+| Resident after load, and after drop | 6.35 GB, then under 50 MB |
+| Fast tier, 2,048 tokens: median and p95 of 20 | 9.12 s and 9.21 s |
+| Full tier, 8,192 tokens: median and p95 of 20 | 48.4 to 51.3 s and 52.0 to 53.3 s |
+
+The projection weight casts fold at load. The embedding table stays in half
+and only gathered rows are cast per forward. The static runtime was 10 to
+40% slower than the published build on the same inputs, and the cause is not
+isolated. Cold load plus a first Full forward takes about 61 to 65 s of the
+120 s deadline. A catalog row needs a host reservation of about 13 GiB. Under
+the default Balanced preset that is admitted only from about 52 GiB of RAM,
+so a 32 GB machine on defaults would refuse Compact on both tiers; the Fast
+tier gives no memory relief because the peak is the load transient.
+
+Still owed for step 3: a quiet-machine p95, a 2,048-token reference
+comparison, Large on the static runtime, the learned-byte check for the
+portable recipe, and an 8,192-token reference for Large.
 [Exporter contract](../../scripts/arbiter-fp16-export/CONTRACT.md) ·
 [Large weight-cast edit](../../scripts/arbiter-fp16-execution/large_weight_only_candidate.py) ·
 [Shared-weight verifier](../../scripts/arbiter-fp16-execution/verify_shared_onnx_weights.py) ·
@@ -542,12 +566,46 @@ not yet seen in the session and never fell, and the 100-row session reached
 | Large | `simple`, one length | 15,300 MiB | 17,348 MiB | 24 GB: fits |
 | Large | `bucket` | 28,864 MiB | 30,912 MiB | 24 GB: misses |
 
-So neither mode meets the targets for varying lengths as measured. The next
-iteration pads each input on the right to a short ladder of fixed lengths
-under `simple`, which bounds the number of buffer sizes, and measures
-`lazyRelease` at 8,192 tokens. Padding is expected to leave the scores
-unchanged because the model is causal and scores are read at the decision
-position; the iteration checks that on CPU first.
+So neither mode meets the targets for varying lengths as measured.
+
+The fifth measured iteration, on 21 November, padded each input on the right
+to a short ladder of fixed lengths under `simple`, which bounds the number of
+buffer sizes. In both exported graphs the attention mask feeds one `Shape`
+node only, every attention node is causal with no bias and no past state, and
+scores are gathered at the decision position, so pad positions cannot reach
+the scores.
+
+- On CPU at eight threads, padded and unpadded scores are bit-identical.
+- On WebGPU, the 100 frozen rows padded to 2,048 tokens differ from the
+  unpadded run by at most 0.000278 with no winner change, and memory stays
+  flat at about 4.76 GB. Changing the pad token changes nothing, so the
+  difference is not leakage from pad positions. It follows the unpadded
+  length modulo 64, and its cause is not established.
+
+| Model | Ladder under `simple` | Peak above baseline | With the 2 GiB reserve | Target | Warm at 8,192 tokens | Times CUDA |
+| --- | --- | --- | --- | --- | --- | --- |
+| Compact | 512, 1,024, 2,048, 4,096, 8,192 | 9,708 MiB | 11,756 MiB | 16 GB: fits | 4.04 to 4.06 s | 2.3 |
+| Compact | 2,048, 8,192 | 8,017 MiB | 10,065 MiB | 16 GB: fits | 4.10 to 4.13 s | 2.3 |
+| Large | 512, 1,024, 2,048, 4,096, 8,192 | 18,647 MiB | 20,695 MiB | 24 GB: fits | 10.37 to 10.38 s | 2.2 |
+| Large | 2,048, 8,192 | 15,188 MiB | 17,236 MiB | 24 GB: fits | 10.19 to 10.31 s | 2.1 |
+
+The order in which lengths arrive does not change the peak. `lazyRelease`
+and `disabled` fill the 48 GB card on Large at 8,192 tokens and are not
+candidates. A padded forward costs what an input of the padded length costs,
+so the five-step ladder bounds the extra time near 2.2 times, while a
+two-step ladder makes a 2,049-token input pay for 8,192. The working
+configuration is therefore `simple`, half weights resident, and the
+five-step ladder for both models. The product applies the padding in a feed
+step of the WebGPU scorer and not in the input compiler, whose source is a
+digest input. Still unmeasured: a real 16 GB or 24 GB card, Radeon, Vulkan
+and Metal, Large on real rows, a long mixed-length soak and the product
+path.
+
+One consequence for the machine itself. The unpadded session that reached
+44.7 GB pushed the desktop's own GPU memory out of dedicated memory. Until
+the desktop repaints, CUDA's free-memory estimate and the adapter's differ by
+about 410 MiB in the opposite direction from before, and the CUDA capacity
+trials' ballast cannot establish a tier.
 
 The A6000 run is a smoke test and decides only whether to rent. Adoption
 under A3 needs passing runs on the Radeon card under Windows and Linux and on
@@ -579,17 +637,27 @@ precision loss.
 Steps 2 and 10, Linux, from a read-only review on 21 November. Four things
 stand between the current state and a Linux measurement:
 
-- No GNU gate is admissible today. The default guard caps C: growth at
-  24 GiB, which is exceeded, and the 120 GB allowance is wired only into an
-  expired file. A successor volume policy must be written and reviewed.
+- The storage gate. Resolved on 21 November: a successor volume policy
+  applies the recorded C: allowance, D: budget, free floor and the retained
+  guest and VHD caps to the GNU gates (commit `dee76ef0`). A boot admission
+  wrapper started the campaign instance under it, and the read-only inspect
+  gate passed, with no VHD growth. The guest has 8 physical cores, the pinned
+  driver libraries match, and a read plus hash from the Windows drive runs at
+  about 130 MB/s: 25.5 s for Compact's weights and 62.3 s for Large's. Each
+  gate's reservation is also its ceiling for one run (128 MiB for Clippy and
+  512 MiB for the others), which a first compile of current source will
+  probably exceed.
 - Linux cannot score a CUDA model with current source. The GNU selectors only
   load, the reviewed Linux CPU-bounds table is empty, and Large scoring is
   refused on GNU. The source that holds the GNU selectors has never been
   compiled on GNU.
 - About 7.33 GB of VHD growth and 11.8 GB of guest space remain under the
-  retained 24 GiB guest and VHD caps. That covers a graph-only CUDA check and
-  the Focus and Compact models for step 2. It does not cover Large or an
-  optimized build of unknown size. Raising those caps is the user's decision.
+  retained 24 GiB guest and VHD caps. By retained measurement the step 2 work
+  fits once and in one order: build the service pair, then copy the Focus and
+  Compact models, leaving about 2.2 GB of VHD. A rebuild after a fix, an
+  optimized build, packaging, and Large in the guest would all be refused,
+  and VHD growth cannot be reclaimed. Raising those caps is the user's
+  decision, and no Linux build starts before it.
 - No Linux end-to-end latency harness exists, the committed catalog has no
   8-core or portable-graph profile, and the resource setting caps inference
   threads at 4. Step 2 on Linux therefore depends on step 5's ladder
