@@ -14985,3 +14985,56 @@ figures.
 
 **Nothing is running at the time of writing.** Cargo and the GPU are free.
 The CUDA capacity trials are still blocked: idle adapter use is 417 MiB.
+
+### 21 November 2026 at 08:51 UTC — Handoff for the user's review
+
+The work order has run as far as it can without the user's decisions. The
+branch is pushed at `afc6a7a8` plus this entry, the working tree is clean and
+`scripts/check-repo.ps1` passes. No agent, build, service fixture, watcher or
+WSL instance is running; every agent of this session has completed. The
+user's own `airk.exe` and `airkctl.exe` were never touched.
+
+**What the user reviews.**
+
+1. The Context stage adds no measured evidence as designed, on either model
+   (entries of 06:28 and 07:25 UTC).
+2. Focus's net effect on delivered evidence is zero on the 75 judged TechQA
+   cases, at about 22 s more per request; retrieval decides the outcome
+   there (entry of 08:22 UTC).
+3. The engineering routes work in measurement: the portable FP16 graph on
+   the static CPU runtime at 9.68 s (2,048 tokens) and 47.61 s (8,192
+   tokens) median on 8 cores, and on WebGPU inside both memory targets with a
+   five-length padding ladder on the A6000.
+
+**Decisions that are the user's, each with the resume action it unlocks.**
+
+| Decision | Resume action |
+| --- | --- |
+| What to do about Context: specialize the weights for the task, redesign the task, or ship retrieval and Focus with Context experimental | A new plan step. Until then Compact catalog rows, the confirmation capture, Large's CUDA panel and the Context arms of step 8 stay on hold. |
+| Raise the retained 24 GiB guest and VHD caps within the 120 GB C: allowance | Change the two constants in `scripts/arbiter/evaluation/linux_cuda/gnu_volume_policy.py`, then start the Linux CPU step from the Linux runbook: watcher, `wsl_boot_admission.py`, gates. Without a raise the step fits once, build first and models second. |
+| Authorize the Linux `install.sh` per-user pointer | The regular installed journey on Linux. |
+| A release tag to name in catalog rows before publication is authorized | Slice S7 of the Core design. |
+
+**Deferred with reasons, tracked here.**
+
+- CUDA capacity live trials under A6: blocked by the desktop's GPU memory
+  state. Precondition: idle `nvidia-smi` use near 1,100 MiB or more, which
+  the user's return to the desktop or a new session should restore. Then run
+  the Compact 16 GiB fit and fixed20 and the Large fits from the commands in
+  the entry of 05:36 UTC, on a quiet host.
+- `module_cycles` boundary failure in `airk-retrieval`: fix with the next
+  deliberate math-policy revision.
+- Seven files in the formatting quarantine: format in the commit before the
+  next image build.
+- Admin browser-teardown errors with Edge 158: a retrying removal in the
+  shared harness's `close()`.
+- Learned-byte check for the portable recipe, a 2,048-token reference
+  comparison, Large on the static runtime and Large's 8,192-token reference.
+- The contract rosters of the CPU source transition do not record the pin
+  advances of `fd4d1d00`.
+- The selection path, the stop path and the no-selection path have not run
+  end to end against a native handle or an installed service.
+- Linux CUDA scoring needs new reviewed Rust; macOS waits for Windows and
+  Linux CUDA by the user's direction; the rented runs wait for booking.
+
+No timed notification is scheduled. Work resumes when the user returns.
