@@ -13,7 +13,8 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from smoke import Sampler, checked, digest, feeds, gpu_used_mib, require
+from smoke import (Sampler, checked, digest, feeds, gpu_used_mib, pad_length, padded, padding_setup,
+                   prepare_session, require)
 
 SCHEMA = "airk.private.webgpu-panel/1"
 RAW_PANEL = "airk.private.r8-compact-scientific-raw-panel/1"
@@ -189,30 +190,6 @@ def summary(rows, name, edges, margins):
     return out
 
 
-def open_session(ort, args, options, session_config, receipt):
-    """Create the session the way smoke.py does: the CPU provider, or the WebGPU plugin on its one device."""
-    session_options = ort.SessionOptions()
-    for key, value in session_config.items():
-        session_options.add_session_config_entry(key, value)
-    if args.intra_threads:
-        session_options.intra_op_num_threads = args.intra_threads
-        receipt["intra_threads"] = args.intra_threads
-    if args.provider == "cpu":
-        require(not options, "provider options apply to WebGPU only")
-        return ort.InferenceSession(str(args.model), sess_options=session_options, providers=["CPUExecutionProvider"])
-    import onnxruntime_ep_webgpu as plugin
-    ort.register_execution_provider_library("webgpu", plugin.get_library_path())
-    devices = [d for d in ort.get_ep_devices() if d.ep_name == plugin.get_ep_name()]
-    require(len(devices) == 1, "expected exactly one WebGPU device, found " + str(len(devices)))
-    hardware = devices[0].device
-    receipt["plugin"] = {"version": dict(devices[0].ep_metadata).get("version"),
-                         "library": pin(plugin.get_library_path()),
-                         "adapter": {"vendor": hardware.vendor, "vendor_id": hardware.vendor_id,
-                                     "device_id": hardware.device_id, **dict(hardware.metadata)}}
-    session_options.add_provider_for_devices(devices, options)
-    return ort.InferenceSession(str(args.model), sess_options=session_options)
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--model", required=True, type=Path)
@@ -235,6 +212,9 @@ def main():
     parser.add_argument("--session-config", action="append", default=[], help="session config entry as key=value")
     parser.add_argument("--intra-threads", type=int, help="intra-op thread count, for CPU runs")
     parser.add_argument("--warm", type=int, default=0, help="warm forwards per row after the first one")
+    parser.add_argument("--pad-to", action="append", default=[], type=int,
+                        help="a padded length; each row is right-padded to the smallest one that holds it")
+    parser.add_argument("--pad-token-id", type=int, help="the token id of a pad token; required when padding")
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
     begun = time.perf_counter()
@@ -261,6 +241,13 @@ def main():
             entry["vectors"].update(vectors)
     chosen = rows[args.first:None if args.count is None else args.first + args.count]
     require(bool(chosen), "no panel row selected")
+    padding, lengths = None, {}
+    if args.pad_to:
+        # Every padded length is settled before the session opens, so a row that is too long stops the run early.
+        lengths = {row["ordinal"]: pad_length(row["tokens"], args.pad_to) for row in chosen}
+        padding = padding_setup(args.model, args.pad_to, args.pad_token_id)
+        padding["rows_at_length"] = {str(length): sum(value == length for value in lengths.values())
+                                     for length in sorted(set(lengths.values()))}
 
     import numpy as np
     import onnxruntime as ort
@@ -274,19 +261,25 @@ def main():
                "selected": {"first": args.first, "rows": len(chosen)}, "primary_reference": primary,
                "references": {name: {"sources": item["sources"], "rows": len(item["vectors"])}
                               for name, item in references.items()},
-               "band_edges": edges, "margins": margins, "warm": args.warm, "started_utc": started_utc, "rows": []}
+               "band_edges": edges, "margins": margins, "warm": args.warm, "padding": padding,
+               "started_utc": started_utc, "rows": []}
     gpu = args.provider == "webgpu"
     baseline = gpu_used_mib() if gpu else None
     sampler = Sampler() if gpu else None
     if sampler:
         sampler.start()
     opened = time.perf_counter()
-    session = open_session(ort, args, options, session_config, receipt)
+    require(gpu or not options, "provider options apply to WebGPU only")
+    session = prepare_session(ort, args.model, args.provider, options, session_config, args.intra_threads, receipt,
+                              pin)()
     load_seconds = round(time.perf_counter() - opened, 3)
     receipt["session_providers"] = session.get_providers()
     after_load = gpu_used_mib() if gpu else None
     for row in chosen:
-        inputs = feeds(session, row["compiled"], np)
+        compiled, padded_tokens = row["compiled"], lengths.get(row["ordinal"])
+        if padded_tokens is not None:
+            compiled = padded(compiled, padded_tokens, args.pad_token_id)
+        inputs = feeds(session, compiled, np)
         times, outputs = [], []
         for _ in range(1 + args.warm):
             start = time.perf_counter()
@@ -296,10 +289,10 @@ def main():
         scores = outputs[-1]
         require(len(scores) == row["options"], "the graph returned an unexpected number of scores")
         finite = all(math.isfinite(value) for vector in outputs for value in vector)
-        entry = {"ordinal": row["ordinal"], "id": row["id"], "tokens": row["tokens"], "options": row["options"],
-                 "input_digest": row["input_digest"], "first_seconds": times[0], "warm_seconds": times[1:],
-                 "scores": plain(scores), "finite": finite, "repeat_max_abs_difference": None,
-                 "winner": None, "margin": None, "comparisons": {}}
+        entry = {"ordinal": row["ordinal"], "id": row["id"], "tokens": row["tokens"], "padded_tokens": padded_tokens,
+                 "options": row["options"], "input_digest": row["input_digest"], "first_seconds": times[0],
+                 "warm_seconds": times[1:], "scores": plain(scores), "finite": finite,
+                 "repeat_max_abs_difference": None, "winner": None, "margin": None, "comparisons": {}}
         if finite:
             entry["winner"], entry["margin"] = top_two(scores)
             if args.warm:
@@ -310,7 +303,8 @@ def main():
         if gpu:
             entry["adapter_memory_mib_after"] = gpu_used_mib()
         receipt["rows"].append(entry)
-        print(json.dumps({"ordinal": entry["ordinal"], "tokens": entry["tokens"], "seconds": times, "finite": finite,
+        print(json.dumps({"ordinal": entry["ordinal"], "tokens": entry["tokens"], "padded_tokens": padded_tokens,
+                          "seconds": times, "finite": finite,
                           "difference": {name: item["max_abs_difference"] for name, item in entry["comparisons"].items()},
                           "same_winner": {name: item["same_winner"] for name, item in entry["comparisons"].items()}}),
               file=sys.stderr, flush=True)
@@ -327,6 +321,7 @@ def main():
         "load_seconds": load_seconds, "forwards": len(scored) * (1 + args.warm),
         "forward_seconds": round(sum(row["first_seconds"] + sum(row["warm_seconds"]) for row in scored), 3),
         "first_seconds": spread([row["first_seconds"] for row in scored]),
+        "warm_seconds": spread([value for row in scored for value in row["warm_seconds"]]) if args.warm else None,
         # From just before the session is created to the last row: load, forwards and per-row overhead.
         "session_seconds": session_seconds,
         # The whole run up to this point: also reading and checking the inputs and hashing the files.

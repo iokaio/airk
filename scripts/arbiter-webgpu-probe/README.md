@@ -26,6 +26,10 @@ includes every other process on the card.
 - `--inputs-only`: a retained reference receipt used for its inputs alone,
   for a model the receipt's scores do not belong to. The case records scores
   and timing and makes no comparison.
+- `--pad-to`, `--pad-token-id` and `--unpadded-too`: see
+  [Padding to a length ladder](#padding-to-a-length-ladder). A `--case` or
+  `--inputs-only` path may end in `@N` to pad that one case to exactly `N`
+  tokens.
 - `--provider`: `webgpu` (default) or `cpu`.
 - `--option key=value`: a provider option, repeated as needed.
 - `--session-config key=value`: a session configuration entry, repeated as
@@ -37,6 +41,12 @@ includes every other process on the card.
 
 Run it in an environment that has `onnxruntime`, `numpy` and, for WebGPU, the
 `onnxruntime-ep-webgpu` plugin package. Record the wheel hashes you installed.
+Padding also needs `onnx`.
+
+When the WebGPU provider fails to start, for example on an unknown value of a
+provider option, the runtime opens the session on the CPU provider instead and
+reports only a warning. `smoke.py` and `panel.py` refuse a WebGPU run whose
+session did not bind the plugin, so such a run leaves no receipt.
 
 ## Outputs
 
@@ -45,7 +55,9 @@ disabled. The receipt records the model and weight digests, the plugin
 library digest and adapter, load time, per-case first and warm forward times,
 scores, the maximum raw difference from the reference, winner agreement, the
 kernels executed per provider and operator, and adapter memory before load,
-after load and at peak. A one-line summary is printed.
+after load and at peak. Each case also records adapter memory after it and
+the peak during it, which counts the reading taken after it. A one-line
+summary is printed.
 
 ## Use
 
@@ -83,6 +95,54 @@ disabled. Pass this to `smoke.py` to keep them resident in half:
 
 On WebGPU, `--option storageBufferCacheMode=simple` roughly halved the peak
 in the first measurements. The default mode and `lazyRelease` were worse.
+In that mode the provider keeps a separate set of buffers for every token
+count it has seen and never releases one, so memory grows with the number of
+distinct input lengths. Padding bounds that number.
+
+## Padding to a length ladder
+
+`smoke.py` and `panel.py` can right-pad every input to one of a few fixed
+token counts, so that a session sees only those lengths.
+
+- `--pad-to N`, repeated as needed, lists the lengths. Each case or row is
+  padded to the smallest listed length that is at least its token count. One
+  that is longer than every listed length is refused before the session
+  opens.
+- `--pad-token-id` is the token id written into the pad positions. It is
+  required when anything is padded. The retained `tokenizer.json` files
+  declare no padding entry, so the id is not read from them. The
+  measurements so far used 151643, the `<|endoftext|>` entry of those files.
+- In `smoke.py`, a `--case` or `--inputs-only` path that ends in `@N` pads
+  that case to exactly `N` tokens instead of its ladder length. Giving the
+  same receipt twice this way puts one input on two rungs of a ladder.
+- `--unpadded-too`, in `smoke.py`, runs each padded case unpadded first, with
+  the same number of forwards, and records the unpadded times and scores and
+  the largest difference between the padded and unpadded scores. The extra
+  input length adds its own buffers, so leave it out of a memory measurement.
+
+A pad position takes the pad id and an attention mask of zero, and its
+position id continues the sequence. The decision position and the candidates
+are unchanged, so the graph still scores the original last token.
+
+Padding is applied only to a graph whose structure supports it, which the
+scripts read with `onnx` before the session opens: the attention mask feeds
+nothing but `Shape` nodes, and every attention node is a causal
+`GroupQueryAttention` with no past state and no explicit bias. Then the
+mask's values are never read and no position sees a later one. Any other
+graph is refused. This is a structural reading, not a proof, so compare
+padded scores with unpadded ones on each provider as well.
+
+The receipt gains a `padding` block with the lengths, the pad id, the mask
+value, the position rule and the graph reading. Each case or row keeps its
+original token count in `tokens` and adds `padded_tokens`. `smoke.py` also
+records `padded_by`, which is `ladder` or `exact`. `panel.py` adds the number
+of rows at each padded length. Bands and reference checks use the original
+token count and input digest, so a padded receipt is a valid `--reference`
+for the same rows.
+
+```console
+python -I -B scripts/arbiter-webgpu-probe/smoke.py --model <graph.onnx> --case <t32-receipt.json> --case <t1588-receipt.json> --case <t1588-receipt.json>@4096 --pad-to 2048 --pad-to 8192 --pad-token-id 151643 --output <fresh-dir>
+```
 
 ## Panel drift
 
@@ -117,6 +177,8 @@ Inputs:
 - `--first` and `--count`: a slice of the panel, for a short trial.
 - `--warm`: warm forwards per row after the first one. The default is 0. The
   scores come from the last forward.
+- `--pad-to` and `--pad-token-id`: see
+  [Padding to a length ladder](#padding-to-a-length-ladder).
 - `--output`: a fresh, empty directory.
 
 Outputs: `panel.json` in the output directory. One line per row goes to
@@ -136,16 +198,23 @@ difference, the same figures by token band, and the count of rows at each
 margin. The margin counts are a proxy for the cost of a guard band. No fitted
 threshold enters them.
 
-Timing covers the session load, every forward and the whole run. On WebGPU
-the receipt adds whole-adapter memory at baseline, after load, after every
-row and at peak, which shows whether memory grows as token counts vary.
+Timing covers the session load, every forward and the whole run, with the
+spread of the first forwards and, when there are any, of the warm forwards.
+On WebGPU the receipt adds whole-adapter memory at baseline, after load,
+after every row and at peak, which shows whether memory grows as token counts
+vary.
 
 ```console
 python -I -B scripts/arbiter-webgpu-probe/panel.py --model <graph.onnx> --weights <weights.bin> --panel <compact.json> --reference calibrated=<raw-panel.json> --comparison <paired-comparison.json> --provider cpu --intra-threads 8 --output <fresh-dir>
 ```
 
-`test_panel.py` covers the pure helpers:
+## Tests
+
+`test_smoke.py`, `test_panel.py` and `test_variant.py` cover the pure
+helpers, including padding, the graph reading and the shared session set-up.
+They need no model, provider or device, and their expected values are written
+by hand.
 
 ```console
-python -I -B -m unittest discover -s scripts/arbiter-webgpu-probe -p test_panel.py
+python -I -B -m unittest discover -s scripts/arbiter-webgpu-probe -p "test_*.py"
 ```
