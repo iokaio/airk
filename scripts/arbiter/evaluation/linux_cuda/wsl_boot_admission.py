@@ -224,7 +224,7 @@ def run(options, *, launch=launch, clock=time.time, pwsh=None):
         raise ValueError("pwsh is required for the Windows identity guard")
     guest_argv = guest_command(["/bin/sh", "-c", GUEST_SCRIPT])
     if options.plan:
-        return {"plan": [host_command(pwsh, options), RUNNING, guest_argv, host_command(pwsh, options), RUNNING,
+        return {"plan": [host_command(pwsh, options), RUNNING, guest_argv, RUNNING, host_command(pwsh, options),
                          host_command(pwsh, options, created=True)]}
     required_memory = HOST_RESERVE + options.other_host_bytes
     report = {"schema": "airk.private.wsl-boot-admission/1", "sid": options.expected_sid,
@@ -274,12 +274,16 @@ def run(options, *, launch=launch, clock=time.time, pwsh=None):
     def boot():
         report["guest_started"] = True
         code, out, error = start(guest_argv, 180)
+        # Listed at once: the instance stops on its own within seconds of its last command returning,
+        # and the host observation below takes longer than that.
+        listed = running(registered)
         report.update(exit_code=code, guest=decode(out).splitlines(), guest_stderr=decode(error).splitlines())
         after = host()
         swap = after["swap_files"]
         report.update(after=volumes(after), post_boot_physical=after["memory"]["physical_available_bytes"],
                       post_boot_virtual=after["memory"]["commit_available_bytes"],
                       swap_path=swap[0]["path"] if len(swap) == 1 else None)
+        report["after"]["running_distributions"] = listed
         found = host_refusals(after, options.expected_sid, 0)
         if code != 0:
             return found + ["guest command exited " + str(code)]
@@ -287,8 +291,7 @@ def run(options, *, launch=launch, clock=time.time, pwsh=None):
         report.update(guest_checks=guest, uid=guest["identity"]["uid"],
                       guest_ollama=[row for row in guest["processes"] if row not in cargo_owners(guest)])
         found += guest_refusals(guest, options.min_distinct_cores)
-        report["after"]["running_distributions"] = running(registered)
-        if report["after"]["running_distributions"] != [DISTRIBUTION]:
+        if listed != [DISTRIBUTION]:
             found.append("only Ubuntu may be running after the boot")
         report["monitor"], seen = monitor(after)
         sample = {"guest_free": guest["filesystems"]["/"]["available"], "backing_free": seen[0],

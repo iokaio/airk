@@ -61,7 +61,9 @@ if (Test-Path -LiteralPath $wslconfig.path -PathType Leaf) {
 $temp = Join-Path $env:LOCALAPPDATA 'Temp'
 $candidates.Add((Join-Path $temp 'swap.vhdx'))
 foreach ($folder in Get-ChildItem -LiteralPath $temp -Directory -ErrorAction SilentlyContinue) { $candidates.Add((Join-Path $folder.FullName 'swap.vhdx')) }
-$swapFiles = @($candidates | Select-Object -Unique | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | ForEach-Object {
+# Sort-Object -Unique, not Select-Object -Unique: the latter is quadratic and took about 90 s over the
+# tens of thousands of folders this temporary folder can hold, which outlasted the guest's idle period.
+$swapFiles = @($candidates | Sort-Object -Unique | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | ForEach-Object {
     $file = Get-Item -LiteralPath $_
     [ordered]@{ path = $file.FullName; length = $file.Length }
 })

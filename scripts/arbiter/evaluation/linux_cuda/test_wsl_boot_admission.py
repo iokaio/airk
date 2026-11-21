@@ -317,7 +317,7 @@ class Admission(unittest.TestCase):
 
     def test_admitted_boot_reproduces_the_retained_receipt_fields(self):
         report = self.admit()
-        self.assertEqual(self.kinds(), ["host", "list", "guest", "host", "list", "audit"])
+        self.assertEqual(self.kinds(), ["host", "list", "guest", "list", "host", "audit"])
         self.assertEqual(self.started[2], [*PREFIX, "--exec", "/bin/sh", "-c", SCRIPT])
         self.assertEqual(self.started[0], [
             "C:\\pwsh.exe", "-NoProfile", "-NonInteractive", "-File",
@@ -383,27 +383,27 @@ class Admission(unittest.TestCase):
         root = GUEST.replace("uid=1000(tyler) gid=1000(tyler) groups=1000(tyler),", "uid=0(root) gid=0(root) groups=0(root),")
         self.guest = (0, root.encode(), b"")
         report = self.refused(["guest identity is not tyler with UID and GID 1000"],
-                              ["host", "list", "guest", "host", "list", "audit"])
+                              ["host", "list", "guest", "list", "host", "audit"])
         self.assertEqual((report["uid"], report["guest"][0][:11]), (0, "uid=0(root)"))
 
     def test_failed_or_unreadable_guest_command_is_recorded_and_refused(self):
         self.guest = (1, b"", b"The system cannot find the file specified.\n")
-        report = self.refused(["guest command exited 1"], ["host", "list", "guest", "host", "audit"])
+        report = self.refused(["guest command exited 1"], ["host", "list", "guest", "list", "host", "audit"])
         self.assertEqual(report["guest_stderr"], ["The system cannot find the file specified."])
 
     def test_unexpected_guest_output_is_recorded_and_refused(self):
         self.guest = (0, b"uid=1000(tyler) gid=1000(tyler) groups=1000(tyler)\nsurprise\n", b"")
         report = self.refused(["ValueError: unexpected guest boot output: expected the df header at line 3"],
-                              ["host", "list", "guest", "host", "audit"])
+                              ["host", "list", "guest", "list", "host", "audit"])
         self.assertEqual(report["guest"][1], "surprise")
 
     def test_second_distribution_after_boot_refuses(self):
         self.listing[1] = (b"Ubuntu\nUbuntu-24.04\n", 0)
-        self.refused(["only Ubuntu may be running after the boot"], ["host", "list", "guest", "host", "list", "audit"])
+        self.refused(["only Ubuntu may be running after the boot"], ["host", "list", "guest", "list", "host", "audit"])
 
     def test_guest_free_space_beyond_its_cap_refuses_after_boot(self):
         self.guest = (0, GUEST.replace("953439313920", "941608951807").encode(), b"")
-        self.refused(["guest free-space growth cap"], ["host", "list", "guest", "host", "list", "audit"])
+        self.refused(["guest free-space growth cap"], ["host", "list", "guest", "list", "host", "audit"])
 
     def test_wrong_windows_identity_writes_nothing(self):
         self.host_exit = 1
@@ -428,7 +428,8 @@ class Admission(unittest.TestCase):
         self.assertEqual(self.started, [])
         self.assertFalse(self.receipt.exists())
         self.assertEqual([command[:5] == PREFIX for command in plan], [False, False, True, False, False, False])
-        self.assertEqual((plan[1], plan[4]), (boot.RUNNING, boot.RUNNING))
+        # The second listing follows the guest command at once, before the slower host observation.
+        self.assertEqual((plan[1], plan[3]), (boot.RUNNING, boot.RUNNING))
 
     def test_binding_and_reservations_are_required(self):
         for changes in ({"volume_log": None, "volume_log_first_row_sha256": None, "not_after": None},
