@@ -73,6 +73,6 @@ AIRK is an independent Artifact Indexing and Retrieval Kernel. These standing ru
 
 ## Current assignment
 
-Read [current campaign instructions](docs/agent-current-work.md) before resuming work: scope, permissions, deadline, active plans, ledger, host/target paths, private roots and user exceptions are mandatory. Resume from live source and exact receipts, not historical status. Currently: `feat/arbiter-final`, local commits only; no push, PR, merge, publication or deployment authorization.
+Read [current campaign instructions](docs/agent-current-work.md) before resuming work: scope, permissions, deadline, active plans, ledger, host/target paths, private roots and user exceptions are mandatory. Resume from live source and exact receipts, not historical status. Currently: `feat/arbiter-final`, with pushes of that branch to `origin` authorized; no PR, merge, publication or deployment authorization.
 
 Definitions are in the [architecture glossary](docs/architecture/airk-architecture.md#agent-workflow-glossary). The [17 November 2026 preservation map](docs/agent-rules-migration.md) records this editorial restructuring; it is an audit record, not another source of policy.

@@ -144,8 +144,10 @@ limit at 0.290778875, so admitting it would need a rule the user approves.
    each model. The guard band protects only while drift stays within the limit,
    and that limit is an observation on these rows. A route that breaks it on
    the confirmation set is not admitted.
-3. **Judge task quality once per model.** Run the 98% paired comparison on the
-   calibrated identity. Other routes inherit it through rule 2.
+3. **Measure task quality on every iteration.** Run the paired comparison
+   against FP32 on the calibrated identity and report the result each time.
+   The 98% figure is a reference point for the review. It does not stop the
+   work. Other routes inherit the result through rule 2.
 4. **Measure what each stage contributes.** On the same tasks and the same
    final evidence budget, compare retrieval alone, retrieval with Focus, and
    retrieval with each Context model. Record whether the delivered spans
@@ -203,6 +205,17 @@ block steps 1 to 4.
 - How to treat a configuration that already stores GPU use as enabled. That
   value was written as a default and not chosen. The recommendation is to
   reset it to off once and tell the user.
+
+The user gave four directions at 8:29 p.m. Denver time.
+
+- Do not assume the existing GPU work was done right. Fix or improve it
+  where it is not.
+- Measure the paired comparison against FP32 on each iteration and report
+  it. Do not stop at 98%.
+- Finish the work. A joint review of the results then decides whether to
+  proceed or try again.
+- Pushing `feat/arbiter-final` to `origin` is authorized, so that nothing
+  exists only on one machine.
 
 [D08](final-plan.md#11-automatic-gpu-execution-and-cpu-fallback-d08) ·
 [Platform order](final-plan.md#verified-starting-point-and-backend-order) ·

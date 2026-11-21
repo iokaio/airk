@@ -13925,3 +13925,30 @@ Revised confidence, stated to the user as judgment: CPU on Windows and Linux
 about 85%, CUDA as engineering about 80%, the same milestone fully qualified
 about 55%, WebGPU passing every probe line on Radeon and macOS about 50%,
 and a defined outcome for those platforms either way about 90%.
+
+The plan and ledger for step 0 were committed as `18d33a69`.
+
+### 21 November 2026 at 03:29 UTC — Branch pushed; run to completion and measure each iteration
+
+The user wrote: "Assume that the existing GPU work was not necessarily done
+right. Do not hesitate to fix or improve it. Instead of stopping at 98%, just
+measure what you get in each iteration. Finish. Then we'll review results and
+decide whether to proceed or try again. You are authorized to push the
+branch. We don't want to lose anything we've done."
+
+`git push origin feat/arbiter-final` advanced the remote from `afb02450` to
+`18d33a69` in 10.3 seconds, 187 commits. Before the push, the unpushed range
+held 1,259 blobs totalling 142.5 MB with none above 5 MB, 687 changed files,
+and no path under `temp/`, `.airk/` or `artifacts/`. After a fetch, the local
+and remote heads matched with nothing ahead or behind.
+
+Recorded: acceptance rule 3 of `docs/arbiter/final-plan-fp16.md` now measures
+task quality on every iteration and treats 98% as a reference point. Section
+3 of that plan, section 1 of the parent plan and the current assignment carry
+the four directions. The "Currently" line of `AGENTS.md` and `CLAUDE.md` now
+states that pushing this branch to `origin` is authorized. The two files
+remain identical. No PR, merge, publication or deployment is authorized.
+
+Working rule from here: push after each coherent set of commits. Implementation
+starts with the WebGPU memory line, the largest remaining risk, using the
+prebuilt plugin and the probe script.

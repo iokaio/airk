@@ -78,6 +78,13 @@ setting therefore defaults to off, and CPU is the default route. This amends
 the approved service-wide GPU setting, under which existing installations
 default to enabled.
 
+The user then directed that existing GPU work be fixed or improved wherever
+it is not right, that the paired comparison against FP32 be measured and
+reported on each iteration without stopping the work at 98%, and that the
+work run to completion before a joint review. Pushing `feat/arbiter-final`
+to `origin` is authorized. No PR, merge, publication or deployment is
+authorized.
+
 ### User answers for this plan
 
 The user answered D01–D06 during this planning conversation. These are recorded

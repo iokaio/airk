@@ -17,8 +17,8 @@ The user resumed the Windows and Linux FP16 campaign after D: cleanup. Keep new 
 
 ## Authority and deadline
 
-- Branch: feat/arbiter-final, created from feat/advanced-split. Commit locally; no push to this new branch, PR,
-  merge, publication or deployment is authorized.
+- Branch: feat/arbiter-final, created from feat/advanced-split. Commit locally. The user authorized pushing
+  this branch to origin on 20 November 2026, Denver time. No PR, merge, publication or deployment is authorized.
 - Current task: implement all steps of docs/arbiter/final-plan.md, authorized
   by the user on 15 November 2026. Execution T0 is recorded in the ledger.
   The user authorized continuing past the earlier 72-hour checkpoint.
@@ -532,6 +532,14 @@ a 32 GB GPU and 128 GB of RAM, and an Azure V620 VM with a 32 GB Radeon card
 under Windows and under Linux. Booking stays a manual user action. Rehearse
 each rented batch on local hardware first. See the
 [later revision entry](simplify/one-process-ledger.md#21-november-2026-between-0129-and-0233-utc--fp16-plan-revised-for-review-feedback-and-named-test-hardware).
+
+At 03:29 UTC on 21 November the user directed the work to run to completion
+and added three rules. Do not assume the existing GPU work was done right:
+fix or improve it where it is not. Measure and report the paired comparison
+against FP32 on each iteration, and do not stop the work at 98%. Review the
+results with the user after the work finishes, and decide then whether to
+proceed or try again. Push the branch after each coherent set of commits so
+that nothing exists only on this machine.
 
 The user directed that the macOS rehearsal on the Mac Neo start after the
 Windows and Linux CUDA work is complete. It is step 11 of the work order. Do
