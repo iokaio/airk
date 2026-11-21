@@ -487,12 +487,14 @@ an advanced answer. Specialize weights without limiting existing abilities.
 Examine MiniLM at low priority. CPU inference must be available whenever the
 GPU cannot be used. Explore faster, lower-quality CPU options.
 
-The [FP16 delivery plan](arbiter/final-plan-fp16.md#1-priorities) is rewritten
-around them. Six items amend recorded decisions, and the user approved all
-six at 02:33 UTC on 21 November:
-[approvals A1–A6](arbiter/final-plan-fp16.md#3-approved-changes-to-recorded-decisions).
-They are also recorded in section 1 of the final plan. Where an earlier
-section of this file conflicts with them, the approvals govern. In short:
+The FP16 delivery plan was rewritten around them that evening. Six items
+amended recorded decisions, and the user approved all six at 02:33 UTC on
+21 November:
+[approvals A1–A6](arbiter/final-plan.md#fp16-delivery-plan-approvals-20-november-2026-americadenver).
+Where an earlier section of this file conflicts with them, the approvals
+govern. The user's evaluation direction of 21 November, in the next section,
+retires the two bullets below that are marked so, and amends the ladder for
+Large. In short:
 
 - No weight file larger than FP16 ships. MiniLM INT8 and the retained Focus
   CPU export stay.
@@ -506,10 +508,11 @@ section of this file conflicts with them, the approvals govern. In short:
   ROCm work, and do not treat Core ML as a fallback. The A6000 smoke test
   stays early and must show WebGPU within five times CUDA. The memory targets
   are a 16 GB card for Compact and a 24 GB card for Large.
-- Calibration and judged task evidence are established once per model. Other
-  routes are admitted by offline drift checks with a guard band and a
-  confirmation set.
-- The frozen FP32 artifact may be scored once per model for evaluation only.
+- Retired on 21 November: calibration and judged task evidence established
+  once per model, with other routes admitted by offline drift checks with a
+  guard band and a confirmation set.
+- Retired on 21 November: scoring the frozen FP32 artifact once per model
+  for evaluation.
 - Device memory fit is judged against a model-free control.
 - GPU use is opt-in on every platform, chosen in the Service Admin
   configuration through the service-wide setting. CPU is the default route.
@@ -519,16 +522,16 @@ section of this file conflicts with them, the approvals govern. In short:
   reset to off once, and the user is told: Service Admin shows the notice
   with "Allow GPU use" and "Keep GPU off", and the VS Code extension shows
   the reset state.
-- A person reviews the discordant cases of the paired comparison: the user,
-  unless the user names someone else. Agents prepare the blinded packet and
-  never fill it in.
+- Retired on 21 November with the paired comparison: a person reviewing its
+  discordant cases. The user now reviews the judging packet of the Arbiter
+  plan.
 - The user authorized multiple agents and asked for the whole plan to be
   carried to completion. One agent owns Cargo on a target and one owns the
   GPU at any time. Each agent owns named files and does not commit. The
   primary agent reviews, commits and pushes every result.
 
-Follow the [work order](arbiter/final-plan-fp16.md#4-work-order). The user
-answered every choice listed in the plan's section 3, and none remains open.
+The work order of that plan is superseded by the
+[work order of the Arbiter plan](arbiter/final-plan-fp16.md#6-work-order).
 The user withdrew an unfinished sentence from an earlier answer as
 unimportant. See the
 [rewrite entry](simplify/one-process-ledger.md#21-november-2026-between-0129-and-0233-utc--fp16-plan-rewritten-around-ten-stated-priorities)
@@ -554,41 +557,64 @@ Windows and Linux CUDA work is complete. It is step 11 of the work order. Do
 not start macOS builds before then. See the
 [sequencing entry](simplify/one-process-ledger.md#21-november-2026-between-0129-and-0233-utc--mac-neo-rehearsal-sequenced-after-windows-and-linux-cuda).
 
-State at 08:22 UTC on 21 November, after the measured waves. Resume from the
-ledger entries of 21 November, the last being the
-[step 1 result entry](simplify/one-process-ledger.md#21-november-2026-at-0822-utc--step-1-result-focuss-net-effect-on-delivered-evidence-is-zero-pins-notice-and-formatting-landed),
-and not from this summary.
+### Evaluation direction, 21 November 2026 (America/Denver)
 
-- Measured results the user reviews before the plan goes further:
-  - The Context stage as designed adds no measured evidence on the 100-row
-    panel. Compact has no safe cutoff and follows the position of an option
-    line. Large picks Sufficient on 99 of 100 rows. Neither ranks the
-    certified reads above chance, natively or under two prompt probes.
-  - Focus's net effect on delivered evidence is zero on the 75 judged TechQA
-    cases (four gained, four lost), at about 22 s more per request.
-    Retrieval decides the outcome there.
-  - The portable FP16 graph loads and scores on the static CPU runtime, and
-    on WebGPU a five-length padding ladder meets both memory targets on the
-    A6000.
-- On hold because Context does not act: Large's CUDA panel, Compact catalog
-  rows, any confirmation capture and the Context arms of step 8.
-- Done and pushed: the opt-in GPU default with its Admin and VS Code notice,
-  the portable graph proof, the capacity rule under A6, the Linux storage
-  policy and boot wrapper, the static-runtime seam, the stage-arm tools and
-  the slot diagnosis.
+The user redirected the work after the first measured results. I had reported
+results from public question sets (a 100-row calibration panel and 76 TechQA
+cases) as if they answered the product question. They do not, and the user
+dropped that approach. The purpose, in the user's words, is to learn whether
+"the 'answer' tool improve[d] substantially the results for an AI agent
+tasked with a common set of ten software development instructions that one
+might encounter including architectural, writing, documentation, testing,
+and coding."
+
+The governing plan is the rewritten
+[Arbiter plan](arbiter/final-plan-fp16.md). Read it before any Arbiter work.
+The direction is also recorded in the
+[parent plan](arbiter/final-plan.md#evaluation-direction-21-november-2026-americadenver).
+
+- **Do not start step E1 or later before the user has read the plan and
+  answered its section 9.** The plan was written for that read. No index has
+  been built and no test has run.
+- Two new indexes are built from the branch as it builds today, for
+  `D:\code\github\airk` and `D:\code\github\bookbuilder`. The user's
+  running service is not used, and nothing is written into either
+  repository.
+- Ten scenarios in each repository: three coding, two writing, two test or
+  QA and three architecture. Five results per scenario: Answer with Focus
+  only, with Focus and Compact, with Focus and Large, the `parse` path and
+  the `search` path. Answer configurations run on CPU and GPU.
+- The agent judges with the plan's two rubrics. First priority: fewer turns
+  for an AI agent to get the context for the task. Lower priority: useful
+  detail for a person.
+- Weights are adjusted after each test, from what the scenarios show. Do not
+  present results from public question sets or calibration panels as
+  evidence about product value.
+- Large never runs on CPU in production. Without GPU opt-in, Large is not
+  offered and Compact is the only Context option. In tests Large on CPU is
+  measured on one scenario in five with a 180-second maximum.
+
+State when the plan was rewritten. Resume from the ledger entries of
+21 November and not from this summary.
+
+- Done and pushed before the redirection, and still valid as engineering:
+  the opt-in GPU default with its Admin and VS Code notice, the Core route
+  planner with typed reasons, the portable graph proof and its load on the
+  static CPU runtime, the capacity rule under A6, the Linux storage policy
+  and boot wrapper, and the WebGPU padding measurements.
+- Retired as acceptance evidence: everything measured on the calibration
+  panel and on TechQA. The stage-arm tools and the slot diagnosis remain in
+  the repository as tools.
 - Private runbooks and the Core design are in
-  `artifacts/v190/final-plan/exec-20261116T052942Z/agent-runbooks-r1/`. An
-  agent that executes one of those steps reads its runbook first.
+  `artifacts/v190/final-plan/exec-20261116T052942Z/agent-runbooks-r1/`. The
+  Windows CUDA runbook's calibration and fit steps are retired.
 - Known failing or blocked checks, each with an owner in the ledger: the
   `module_cycles` boundary check in `airk-retrieval`, seven pinned files in
   the formatting quarantine, the Admin browser-teardown errors with Edge 158,
   and the CUDA capacity trials, which wait for the desktop's GPU memory
   state to recover.
 - Linux: the campaign distribution is `Ubuntu` with user `tyler`; never run a
-  bare `wsl` command. No Linux build starts before the cap decision.
-- Open user decisions: what to do about the Context stage (specialize the
-  weights, redesign the task, or ship retrieval and Focus with Context
-  experimental); raising the retained 24 GiB guest and VHD caps within the
-  120 GB C: allowance; authorization for the Linux `install.sh` per-user
-  pointer; and naming a release tag in catalog rows before publication is
-  authorized.
+  bare `wsl` command. Platform work waits for step E9 of the Arbiter plan.
+- Open user decisions: the twelve readings in section 9 of the Arbiter plan.
+  Still open from before and not urgent: the Linux guest and VHD caps, the
+  Linux `install.sh` per-user pointer, and a release tag for catalog rows.

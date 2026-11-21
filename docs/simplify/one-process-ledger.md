@@ -15038,3 +15038,96 @@ user's own `airk.exe` and `airkctl.exe` were never touched.
   Linux CUDA by the user's direction; the rented runs wait for booking.
 
 No timed notification is scheduled. Work resumes when the user returns.
+
+### 21 November 2026 at 13:48 UTC — The user redirects the evaluation; the plan is rewritten for the user's read
+
+Identity: PowerShell, Bash and the edit tool as `TYAI\tdotn` (SID ending
+`-1002`), not elevated. One read-only agent gathered source facts and changed
+nothing. No build, service, model, GPU or WSL work ran.
+
+**Correction to my own reporting.** The handoff entry above, and my summary
+to the user, said that the Context stage adds no measured evidence and that
+Focus's net effect is zero. Both statements rested on public question sets: a
+100-row calibration panel scored directly on compiled prompts, and 76 TechQA
+cases on a private fixture. Neither indexed a real local codebase or asked
+what an agent asks while doing a developer's task. The user pointed this out.
+The measurements stand as recorded. The conclusion that the stages "do not
+currently improve what the agent receives" generalized past them and is
+withdrawn.
+
+**The user's direction** (given as six written instructions). The purpose of
+the work is to answer one question: "did the 'answer' tool improve
+substantially the results for an AI agent tasked with a common set of ten
+software development instructions that one might encounter including
+architectural, writing, documentation, testing, and coding."
+
+1. Large on CPU never happens except in tests. In tests it is measured on
+   one question in five with a 180-second maximum. In production, without GPU
+   opt-in, Large is off the table and Compact is the only Context option.
+2. Build new indexes for `D:\code\github\airk` and
+   `D:\code\github\bookbuilder` for end-to-end tests. The running service is
+   not used. The agent judges, because no established criteria exist.
+3. Change how weights are developed and tested. Build the two indexes from
+   current code. Run the scenarios with Answer against the other tools,
+   including parse: with Focus only, with Focus and Compact, and with Focus
+   and Large, each on CPU and GPU. Adjust weights after each test.
+4. Ten scenarios: three coding, two writing, two test or QA, three
+   architecture. An Answer path, a parse path and a search path, giving five
+   results to judge.
+5. A rubric for two criteria. Highest priority: whether Answer greatly
+   improves the information returned so that an AI agent needs fewer turns to
+   get the context for the task. Lower priority: whether a human is more
+   likely to find useful detail that helps them make better choices.
+6. Modify the plan document to take this approach and drop the testing that
+   used publicly sourced questions. The user will read the plan carefully
+   before execution.
+
+**Recorded.** `docs/arbiter/final-plan-fp16.md` is rewritten as "AIRK Arbiter
+plan: does Answer help an agent do software work?". The direction is also in
+section 1 of `docs/arbiter/final-plan.md` and in `docs/agent-current-work.md`.
+Three links to removed sections of the plan were repointed.
+
+**Facts from the source that the plan depends on** (read-only agent, cited
+in its report by file and line):
+
+- `airk_parse` executes a bounded read-only evidence plan from text, a named
+  recipe or an explicit plan: at most 6 steps, 12 reads, 30 seconds and
+  512 KiB. It uses no Arbiter model.
+- One Answer request runs a search on the question, then follow-up reads on
+  its first hits, and stops at 8 calls, 3 rounds, 262,144 bytes or 120
+  seconds by default.
+- A request deadline above 120,000 ms is rejected in Core validation and
+  clamped again in the MCP handler, the kernel and the resource policy.
+- Focus reorders at most 4 hits of each search Answer makes, with no
+  threshold and a web-search instruction text.
+- An accepted Context action can only move an already queued read to the
+  front or end the gathering. Every Context profile carries a calibration
+  with zero rules, so today Context changes no evidence in Answer.
+- A private CUDA Answer selector exists for Compact only. None exists for
+  Large. Code that prepares a CUDA Focus profile exists and has never run.
+- LoRA tooling exists for Focus, with a pilot checkpoint that was never
+  compared. No Context trainer exists.
+- The indexer honours `.gitignore`, `.ignore` and `.airkignore`, and skips
+  credential files by default.
+
+**Interpretations I made, listed for the user in section 9 of the plan:** 20
+scenarios (ten in each repository); the five results are the three Answer
+configurations plus parse and search; a test is one Answer configuration, so
+weights are adjusted after each; "weights" covers every adjustable value from
+gathering budgets to trained model weights; agent sessions with a logged turn
+count; the follow-up tools of each path; Large on CPU on 4 scenarios; three
+additions I recommend (a no-model Answer control, a sealed second set of
+scenarios, training pairs mined from repository history); the thresholds for
+"substantially"; experiments in the private evaluation build; platform work
+waits for the result; and whether the user approves the final scenarios.
+
+**Not started, by the user's instruction to read the plan first:** the
+evaluation service build, the two indexes, the scenarios and every test.
+
+**Retired as acceptance evidence, kept as history:** the calibration panel
+and fit study, the drift admission and confirmation capture, the paired
+comparison with its FP32 arm and review, and the TechQA stage comparison.
+The Windows CUDA runbook's fit and confirmation steps are retired with them.
+
+**Resume action.** Wait for the user's answers to section 9 of the plan.
+Then start step E1.

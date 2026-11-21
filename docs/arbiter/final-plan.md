@@ -44,9 +44,10 @@ engineering and the former CPU fallback policy retain their original scope.
 
 ### FP16 delivery plan approvals, 20 November 2026 (America/Denver)
 
-The user approved six changes proposed in the
-[FP16 delivery plan](final-plan-fp16.md#3-approved-changes-to-recorded-decisions).
-Where this plan says otherwise, these approvals govern.
+The user approved six changes proposed in the FP16 delivery plan, which
+stood in [that file](final-plan-fp16.md#11-decisions-in-force) until it was
+rewritten on 21 November. Where this plan says otherwise, these approvals
+govern, as amended by the evaluation direction below.
 
 1. **A1.** No weight file larger than FP16 ships. The bundled MiniLM INT8
    encoder and the retained Focus CPU export stay.
@@ -84,6 +85,41 @@ reported on each iteration without stopping the work at 98%, and that the
 work run to completion before a joint review. Pushing `feat/arbiter-final`
 to `origin` is authorized. No PR, merge, publication or deployment is
 authorized.
+
+### Evaluation direction, 21 November 2026 (America/Denver)
+
+After the first measured results the user redirected the work. The purpose is
+to answer one question: did the `answer` tool improve substantially the
+results for an AI agent tasked with a common set of ten software development
+instructions, including architectural, writing, documentation, testing and
+coding tasks. The governing plan is the rewritten
+[Arbiter plan](final-plan-fp16.md). Where this plan or the approvals above
+say otherwise, this direction governs.
+
+1. **The public question sets are dropped** as the basis for testing and for
+   developing weights. That retires the 100-row calibration panel and its
+   fitted cutoff, the drift admission and confirmation capture of A4, the
+   FP32 evaluation arm of A5, the paired comparison with its 98% reference
+   point and review of discordant pairs, and the TechQA and judged-cohort
+   work. Their receipts remain as history.
+2. **The test is end to end on two real indexes**, built from the branch as
+   it builds today, for `D:\code\github\airk` and
+   `D:\code\github\bookbuilder`. The running service is not used.
+3. **Ten scenarios**: three coding, two writing, two test or QA and three
+   architecture. Each has five results to judge: Answer with Focus only,
+   Answer with Focus and Compact, Answer with Focus and Large, the `parse`
+   path and the `search` path. The Answer configurations run on CPU and GPU.
+4. **The agent judges with a rubric it writes.** First priority: whether
+   Answer greatly improves the information returned so that an AI agent needs
+   fewer turns to get the context for the task. Lower priority: whether a
+   person is more likely to find useful detail that helps them make better
+   choices.
+5. **Weights are adjusted after each test**, from what the scenarios show.
+6. **Large never runs on CPU in production.** Without GPU opt-in, Large is
+   not offered and Compact is the only Context option. In tests Large on CPU
+   is measured on one scenario in five with a 180-second maximum. This amends
+   the CPU ladder of A2.
+7. **The user reads the rewritten plan before execution starts.**
 
 After the first three measured iterations the user set the GPU memory
 targets at a 16 GB card for Compact and a 24 GB card for Large, replacing

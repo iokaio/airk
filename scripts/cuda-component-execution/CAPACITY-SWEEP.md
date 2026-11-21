@@ -42,7 +42,7 @@ The parent verifies all three free-memory observations immediately before resumi
 
 ### Baseline-relative fit rule
 
-Approved change A6 in the [FP16 delivery plan](../../docs/arbiter/final-plan-fp16.md#3-approved-changes-to-recorded-decisions) replaced the dedicated-only reading of the memory rule. `protected_capacity_sweep.py` now judges the candidate's shared and non-local memory against a model-free control from the same run. The older `capacity_sweep.py` QKV modes keep the dedicated-only reading.
+Approved change A6, recorded in the [parent plan](../../docs/arbiter/final-plan.md#fp16-delivery-plan-approvals-20-november-2026-americadenver) and still in force under the [Arbiter plan](../../docs/arbiter/final-plan-fp16.md#11-decisions-in-force), replaced the dedicated-only reading of the memory rule. `protected_capacity_sweep.py` now judges the candidate's shared and non-local memory against a model-free control from the same run. The older `capacity_sweep.py` QKV modes keep the dedicated-only reading.
 
 - **Control.** The ballast process's own `Shared Usage` in the sample that authorized the candidate's resume. The ballast is a CUDA context on the same adapter that holds touched allocations and no model. It read 77,594,624 bytes in all six retained runs. The ballast observer still refuses any growth of that figure above the ballast's own baseline.
 - **Margin.** 16 MiB (16,777,216 bytes). The candidate's peak shared bytes over its whole owned lifetime may exceed the control by at most the margin. So may its peak fresh non-local segment bytes.

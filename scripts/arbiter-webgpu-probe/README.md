@@ -3,7 +3,7 @@
 `smoke.py` runs a retained Context graph through an ONNX Runtime provider and
 compares the scores with the original FP32 scores kept in a retained reference
 receipt. It answers three early questions about the WebGPU route in the
-[FP16 delivery plan](../../docs/arbiter/final-plan-fp16.md): whether the
+[Arbiter plan](../../docs/arbiter/final-plan-fp16.md#10-engineering-state-carried-forward): whether the
 provider starts and places the graph on the GPU, whether its scores agree
 with the reference, and how its latency compares with CUDA on the same card.
 
@@ -147,10 +147,12 @@ python -I -B scripts/arbiter-webgpu-probe/smoke.py --model <graph.onnx> --case <
 ## Panel drift
 
 `panel.py` scores every row of a compiled panel on one provider and measures
-how far the scores are from named reference scores. It serves the measured
-iterations behind acceptance rule 2 of the FP16 delivery plan: the drift of a
-portable graph from the calibrated identity across the frozen rows. It is a
-development measurement. It applies no limit and qualifies nothing.
+how far the scores are from named reference scores. It was written for the
+drift check of the earlier FP16 delivery plan, which compared a portable
+graph with reference scores across a frozen panel. That acceptance approach
+was retired on 21 November 2026. The script remains a numerical comparison
+tool for any panel of compiled inputs. It is a development measurement. It
+applies no limit and qualifies nothing.
 
 Inputs:
 

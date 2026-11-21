@@ -2,9 +2,9 @@
 
 `run-selector.ps1` runs the ignored `portable_cpu` selectors of `airk-inference`
 on Windows. The selectors load and score the portable Context graph on AIRK's
-own static ONNX Runtime CPU build, at the 8-core class of the
-[FP16 delivery plan](../../docs/arbiter/final-plan-fp16.md). The portable graph
-stores its learned weights as FP16 and computes in FP32.
+own static ONNX Runtime CPU build, at the 8-core class named in the
+[Arbiter plan](../../docs/arbiter/final-plan-fp16.md#10-engineering-state-carried-forward).
+The portable graph stores its learned weights as FP16 and computes in FP32.
 
 The Rust owner is
 `crates/airk-inference/src/inference_engine/pool/arbiter/qualification/portable_cpu.rs`.
