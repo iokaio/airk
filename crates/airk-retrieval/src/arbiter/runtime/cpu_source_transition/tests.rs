@@ -248,7 +248,7 @@ fn cuda_bridge_and_driver_closure_preserve_closed_cpu_runtime_source() -> Result
     );
     assert_eq!(
         source_sha(include_bytes!("../cuda/windows.rs"))?.to_string(),
-        "4189e3ab8ce70bd837921bc3458bd8424c861fbfa596622800b3b372e69e040f"
+        "25fc2a0453c4aa244d6e5b2390759a07e03eb265403c12eb0bb8ed8b88036cb4"
     );
     assert_eq!(
         source_sha(include_bytes!("../cuda/modules.rs"))?.to_string(),
@@ -281,11 +281,11 @@ fn placement_diagnostic_supplement_binds_current_runtime_without_qualification_t
     );
     assert_eq!(
         source_sha(include_bytes!("../cuda/diagnostic.rs"))?.to_string(),
-        "74e00598fa44d34d029c8b3c3447947cbfbb98e2af452ded702344a04d7eb8a2"
+        "6b6c934752a21eabd9a660d6ea03a237d28e52e7bddca4478065abc7e8342e3a"
     );
     assert_eq!(
         source_sha(include_bytes!("../cuda.rs"))?.to_string(),
-        "fbfc73225ed3cd4317f35d1ceb0a1c18e8138e087ab57d3aa7f830a890466002"
+        "127cb9123f20bbe6ad84958ef71e43de23a4da7dc130e00ff06d3cad518caa36"
     );
     assert_ne!(
         CURRENT_RUNTIME_SOURCE,
