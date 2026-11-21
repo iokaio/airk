@@ -507,6 +507,96 @@ fn canceled_or_expired_before_actual_score_cannot_mint_completion_receipt() -> R
 }
 
 #[test]
+fn input_above_the_token_ceiling_is_a_typed_refusal_before_any_native_score() -> Result<()> {
+    let started = Instant::now();
+    let deadline = started + Duration::from_secs(1);
+    let native_calls = std::cell::Cell::new(0);
+    // The lane's own steps with an injected compiler and scorer: compile,
+    // apply the request ceiling, then dispatch.
+    let run = |compiled: Result<usize>, ceiling: usize| -> Result<Scored> {
+        compiled
+            .map_err(|cause| compile_refused(5, 9, cause))
+            .and_then(|tokens| {
+                let receipt = CompiledReceipt {
+                    input_digest: Sha256Digest::from_bytes([0x21; 32]),
+                    input_tokens: tokens,
+                    queue_us: 5,
+                    compile_us: 9,
+                };
+                within_token_ceiling(&receipt, ceiling)?;
+                dispatch_before_original_deadline(
+                    deadline,
+                    || started,
+                    || false,
+                    || {
+                        observed_score_call(
+                            &receipt,
+                            started,
+                            || started + Duration::from_micros(41),
+                            || {
+                                native_calls.set(native_calls.get() + 1);
+                                Ok(vec![0.25, 0.5])
+                            },
+                        )
+                    },
+                )
+            })
+    };
+    // The compiler refuses an input above the profile's token ceiling.
+    let Err(error) = run(
+        Err(anyhow::anyhow!("synthetic compiler ceiling refusal")),
+        2048,
+    ) else {
+        anyhow::bail!("a compiler refusal returned scores");
+    };
+    let refusal = error
+        .downcast_ref::<KnownInputRefusal>()
+        .context("compiler refusal lost its type")?;
+    assert_eq!(
+        (refusal.input_tokens, refusal.queue_us, refusal.compile_us),
+        (None, 5, 9)
+    );
+    assert_eq!(
+        std::error::Error::source(refusal).unwrap().to_string(),
+        "synthetic compiler ceiling refusal"
+    );
+    assert!(error.downcast_ref::<KnownScoreFailure>().is_none());
+    // A compiled input one token above the request ceiling.
+    let Err(error) = run(Ok(2049), 2048) else {
+        anyhow::bail!("an input above the ceiling returned scores");
+    };
+    let refusal = error
+        .downcast_ref::<KnownInputRefusal>()
+        .context("ceiling refusal lost its type")?;
+    assert_eq!(
+        (refusal.input_tokens, refusal.queue_us, refusal.compile_us),
+        (Some(2049), 5, 9)
+    );
+    assert!(error.downcast_ref::<KnownScoreFailure>().is_none());
+    assert_eq!(native_calls.get(), 0, "a refused input reached the scorer");
+    // A later delivery refusal keeps the typed refusal and mints no work receipt.
+    let Err(error) = finish_score_delivery(
+        run(Ok(4096), 2048),
+        Err(anyhow::anyhow!("synthetic source delivery revoked")),
+    ) else {
+        anyhow::bail!("a refused delivery returned scores");
+    };
+    assert_eq!(
+        error
+            .downcast_ref::<KnownInputRefusal>()
+            .and_then(|refusal| refusal.input_tokens),
+        Some(4096)
+    );
+    assert!(error.downcast_ref::<KnownScoreFailure>().is_none());
+    assert_eq!(native_calls.get(), 0);
+    // At the ceiling the input is dispatched exactly once.
+    let scored = run(Ok(2048), 2048)?;
+    assert_eq!(scored.input_tokens, 2048);
+    assert_eq!(native_calls.get(), 1);
+    Ok(())
+}
+
+#[test]
 fn disabling_one_stage_does_not_select_or_release_the_other_resident() -> Result<()> {
     use airk_core::{
         arbiter::{Enrollment, StageConfiguration},

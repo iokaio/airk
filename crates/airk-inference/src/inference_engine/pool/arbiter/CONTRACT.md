@@ -19,6 +19,18 @@ existing score timing start is preserved, including its surrounding admission
 cost; these measurements do not newly assert that an FFI dispatch happened when
 a scorer rejected input before entering its native implementation.
 
+`KnownInputRefusal` is the typed result of a refusal that precedes native
+execution (decided 21 November 2026 under the Core decision "CPU ladder, Auto
+route order and typed fallback reasons"). The lane creates it in two places
+only: when the compiler refuses the input, as it does above the profile's token
+ceiling, and when a compiled input is above the request's `max_input_tokens`.
+It carries the compiled token count when there is one, the known queue and
+compile microseconds and the original private cause. No score call is made
+after either refusal, so a caller may release the token reservation it held for
+that request. The compiled receipt of an input above the request ceiling is
+still emitted first. A later delivery refusal keeps the type reachable and
+never turns it into a `KnownScoreFailure`.
+
 A post-score source/configuration/queue delivery refusal retains the same known
 receipt on both successful and failed score returns; scores are withheld. Such
 a receipt supplies accounting, never renewed source permission or authority to

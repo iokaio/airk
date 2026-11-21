@@ -125,6 +125,133 @@ fn actual_service_receipt_projection_preserves_known_overrun_and_core_counter_co
 }
 
 #[test]
+fn context_reservation_is_the_smaller_of_remaining_tokens_and_the_tier_ceiling() {
+    for (remaining, ceiling, reserved) in [
+        (8192, 2048, 2048),
+        (8192, 8192, 8192),
+        (1000, 2048, 1000),
+        (2048, 2048, 2048),
+        (1, 8192, 1),
+        (4096, 128, 128),
+    ] {
+        assert_eq!(
+            reserved_input_tokens(remaining, ceiling),
+            reserved,
+            "{remaining} remaining, {ceiling} ceiling"
+        );
+    }
+}
+
+#[cfg(feature = "local-inference")]
+fn read_attempt() -> airk_core::read_attempt::ReadAttemptBudget {
+    airk_core::read_attempt::ReadAttemptBudget {
+        schema: 1,
+        request_id: Incarnation::from_bytes([1; 16]),
+        clock: airk_core::read_attempt::ReadClock::WindowsPerformanceCounter,
+        expires_monotonic_ns: 120_000_000_100,
+        remaining_ns: 120_000_000_000,
+        native_retry_expires_monotonic_ns: None,
+    }
+}
+
+#[test]
+#[cfg(feature = "local-inference")]
+fn input_above_the_tier_ceiling_is_a_known_refusal_with_no_native_work_and_no_held_reservation()
+-> Result<()> {
+    // The native lane's side, with an injected compiler and scorer, is
+    // `input_above_the_token_ceiling_is_a_typed_refusal_before_any_native_score`
+    // in the inference pool. This is the service's settlement of that refusal.
+    let parent = airk_core::arbiter::Budget::default();
+    assert_eq!(parent.input_tokens, 8192);
+    for (compiled, reason) in [
+        (
+            None,
+            "The native compiler refused this input before any model work, as it does for an input above the profile's token ceiling. No native work ran and the token reservation was released.",
+        ),
+        (
+            Some(2300),
+            "The compiled input is above the token ceiling reserved for this assessment. No native work ran and the token reservation was released.",
+        ),
+    ] {
+        // A Fast tier (2,048 tokens) with 8,192 request tokens remaining.
+        let reserved = reserved_input_tokens(8192, 2048);
+        assert_eq!(reserved, 2048);
+        let ledger = Mutex::new(super::super::joint_ledger::Ledger::default());
+        let ticket =
+            ledger
+                .lock()
+                .unwrap()
+                .reserve(read_attempt(), &parent, 1, reserved, None, 100)?;
+        // The hold is real: only the rest of the parent budget is free.
+        assert!(
+            ledger
+                .lock()
+                .unwrap()
+                .reserve(read_attempt(), &parent, 2, 8192 - reserved + 1, None, 101)
+                .is_err()
+        );
+        let mut value = advice();
+        value.reserved_input_tokens = reserved;
+        settle_known_refusal(&mut value, &ledger, ticket, compiled, 17, 19);
+        // Compile work is known and no inference ran.
+        assert_eq!(value.observed_input_tokens, Some(compiled.unwrap_or(0)));
+        assert_eq!(value.work.input_tokens, compiled.unwrap_or(0));
+        assert_eq!(
+            (
+                value.work.queue_us,
+                value.work.compile_us,
+                value.work.inference_us,
+                value.work.policy_us
+            ),
+            (Some(17), Some(19), None, None)
+        );
+        assert!(
+            matches!(&value.outcome, Outcome::Unavailable { reason: actual } if actual == reason),
+            "{:?}",
+            value.outcome
+        );
+        value.validate()?;
+        // No reservation is held: the next ordinal may take the whole budget.
+        ledger
+            .lock()
+            .unwrap()
+            .reserve(read_attempt(), &parent, 2, 8192, None, 102)?;
+        // The refused ordinal itself is never reusable.
+        assert!(
+            ledger
+                .lock()
+                .unwrap()
+                .reserve(read_attempt(), &parent, 1, 1, None, 103)
+                .is_err()
+        );
+    }
+    // A refusal that contradicts a recorded compile receipt keeps its hold.
+    let ledger = Mutex::new(super::super::joint_ledger::Ledger::default());
+    let ticket = ledger
+        .lock()
+        .unwrap()
+        .reserve(read_attempt(), &parent, 1, 2048, None, 100)?;
+    ledger.lock().unwrap().compiled(ticket, 512)?;
+    let mut value = advice();
+    value.reserved_input_tokens = 2048;
+    settle_known_refusal(&mut value, &ledger, ticket, None, 17, 19);
+    assert!(
+        matches!(&value.outcome, Outcome::Unavailable { reason } if reason.ends_with("the original reservation remains held.")),
+        "{:?}",
+        value.outcome
+    );
+    assert!(
+        ledger
+            .lock()
+            .unwrap()
+            .reserve(read_attempt(), &parent, 2, 8192 - 2048 + 1, None, 101)
+            .is_err()
+    );
+    assert_eq!(value.work.inference_us, None);
+    Ok(())
+}
+
+#[test]
 #[cfg(all(feature = "local-inference", feature = "test-support"))]
 fn private_observation_is_known_zero_dispatch_not_lost_work_or_a_decision() -> Result<()> {
     let cases: serde_json::Value = serde_json::from_slice(include_bytes!(
@@ -170,7 +297,13 @@ fn private_observation_is_known_zero_dispatch_not_lost_work_or_a_decision() -> R
     let value = captured_without_dispatch(&request, &profile, policy)?;
     assert_eq!(value.observed_input_tokens, Some(0));
     assert_eq!(value.work, Work::default());
-    assert_eq!(value.reserved_input_tokens, request.remaining_input_tokens);
+    // The reservation is the smaller of the remaining request tokens (2,048)
+    // and this profile's token ceiling (128), not the remaining tokens alone.
+    assert_eq!(
+        (request.remaining_input_tokens, profile.max_tokens),
+        (2048, 128)
+    );
+    assert_eq!(value.reserved_input_tokens, 128);
     assert!(matches!(value.outcome, Outcome::Unavailable { .. }));
     assert_eq!(value.scope, request.scope);
     assert_eq!(value.task_policy, request.roster.policy);

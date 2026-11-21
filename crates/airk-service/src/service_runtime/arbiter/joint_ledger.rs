@@ -279,6 +279,27 @@ impl Ledger {
         charge.compiled = Some(tokens);
         Ok(())
     }
+    /// The native lane refused the input before any model work, so nothing was
+    /// consumed and the token reservation is released. The ordinal stays used:
+    /// a slot is never reusable. A recorded compile receipt within the
+    /// reservation contradicts such a refusal, and the hold then remains.
+    pub(super) fn refused(&mut self, ticket: Ticket) -> Result<()> {
+        ensure!(
+            matches!(ticket.slot, Slot::Context(_)),
+            "Only a Context assessment has an input-ceiling refusal"
+        );
+        let charge = self
+            .attempts
+            .get_mut(&ticket.attempt)
+            .and_then(|state| state.charges.get_mut(&ticket.slot))
+            .context("joint NN reservation unavailable")?;
+        ensure!(
+            charge.compiled.is_none(),
+            "joint NN refusal contradicts its compile receipt"
+        );
+        charge.tokens = 0;
+        Ok(())
+    }
     /// A Focus prefix reports monotonic aggregate receipts for distinct native
     /// pairs. Unknown later work keeps the entire original reservation.
     pub(super) fn compiled_prefix(&mut self, ticket: Ticket, tokens: usize) -> Result<()> {

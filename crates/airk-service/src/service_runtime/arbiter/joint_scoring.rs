@@ -22,6 +22,47 @@ fn observe_work(
     advice.work.inference_us = inference_us;
 }
 
+/// A Context advice reserves the smaller of the remaining request tokens and
+/// the selected tier's token ceiling: a tier never consumes more than that.
+#[cfg(any(feature = "local-inference", test))]
+fn reserved_input_tokens(remaining: usize, tier_ceiling: usize) -> usize {
+    remaining.min(tier_ceiling)
+}
+
+/// Settles a refusal the native lane observed before any model work. The
+/// token reservation is released and the advice records that no inference
+/// ran. `compiled_tokens` is the compiled count when the compiler produced an
+/// input above the reserved ceiling, and absent when the compiler refused.
+#[cfg(feature = "local-inference")]
+fn settle_known_refusal(
+    advice: &mut ContextActionAdvice,
+    ledger: &Mutex<super::joint_ledger::Ledger>,
+    ticket: super::joint_ledger::Ticket,
+    compiled_tokens: Option<usize>,
+    queue_us: u64,
+    compile_us: u64,
+) {
+    let released = ledger
+        .lock()
+        .map_err(|_| anyhow::anyhow!("joint NN ledger unavailable"))
+        .and_then(|mut ledger| ledger.refused(ticket))
+        .is_ok();
+    let tokens = compiled_tokens.unwrap_or(0);
+    advice.observed_input_tokens = Some(tokens);
+    advice.work.input_tokens = tokens;
+    advice.work.queue_us = Some(queue_us);
+    advice.work.compile_us = Some(compile_us);
+    advice.work.inference_us = None;
+    advice.outcome = Outcome::Unavailable {
+        reason: match (released, compiled_tokens) {
+            (false, _) => "The native lane refused this input before any model work, but that refusal contradicts the recorded reservation. No native work ran and the original reservation remains held.",
+            (true, Some(_)) => "The compiled input is above the token ceiling reserved for this assessment. No native work ran and the token reservation was released.",
+            (true, None) => "The native compiler refused this input before any model work, as it does for an input above the profile's token ceiling. No native work ran and the token reservation was released.",
+        }
+        .into(),
+    };
+}
+
 #[cfg(any(feature = "local-inference", test))]
 fn retain_late_scope_refusal(advice: &mut ContextActionAdvice, checked: Result<()>) -> bool {
     if checked.is_ok() {
@@ -97,7 +138,7 @@ impl StageOwner {
         {
             use airk_core::{arbiter::context_action::ADVICE_SCHEMA_V2, identity::framed_digest};
             use airk_inference::inference_engine::pool::arbiter::{
-                CompiledReceipt, KnownScoreFailure, ScoreRequest,
+                CompiledReceipt, KnownInputRefusal, KnownScoreFailure, ScoreRequest,
             };
             use airk_retrieval::arbiter::context_action;
             let execution = self.profile_description(
@@ -155,6 +196,8 @@ impl StageOwner {
             .context("joint native owner deadline")??;
             let calibration = handle.joint_calibration(profile.manifest)?;
             calibration.validate(&profile, task_policy)?;
+            let reserved =
+                reserved_input_tokens(request.remaining_input_tokens, profile.max_tokens);
             let prompt = context_action::prompt(&request)?;
             let planned_digest = framed_digest(
                 b"airk.arbiter.planned-task-input/1",
@@ -164,7 +207,7 @@ impl StageOwner {
                 profile:profile.manifest,runtime:profile.advice_runtime()?,compiler:profile.compiler,
                 calibration:profile.calibration,policy:profile.policy,task_policy,scope:request.scope.clone(),
                 input_digest:planned_digest,evidence:request.roster.basis.source_units_presented.iter().map(|unit|unit.record).collect::<std::collections::BTreeSet<_>>().into_iter().collect(),
-                work:Work::default(),reserved_input_tokens:request.remaining_input_tokens,observed_input_tokens:None,
+                work:Work::default(),reserved_input_tokens:reserved,observed_input_tokens:None,
                 outcome:Outcome::Unavailable {reason:"The joint native outcome is unknown; its original token/ordinal reservation remains held. Canonical gathering remains available.".into()} };
             let mut ledger_attempt = request.read_attempt;
             ledger_attempt.remaining_ns = ledger_attempt.remaining_ns.min(
@@ -180,7 +223,7 @@ impl StageOwner {
                     ledger_attempt,
                     &request.parent_budget,
                     request.ordinal,
-                    request.remaining_input_tokens,
+                    reserved,
                     request.partition.as_ref(),
                     airk_process::monotonic::now_ns()?,
                 )?;
@@ -235,7 +278,7 @@ impl StageOwner {
                         candidates: prompt.candidates,
                         resident,
                         admission,
-                        max_input_tokens: request.remaining_input_tokens,
+                        max_input_tokens: reserved,
                     },
                 )
             };
@@ -267,7 +310,11 @@ impl StageOwner {
                     receipt.compile_us,
                     None,
                 );
-                if self
+                if receipt.input_tokens > reserved {
+                    // The native lane refuses this input before dispatch. Its
+                    // typed refusal, awaited below, releases the reservation.
+                    advice.outcome=Outcome::Unavailable {reason:"Known compiled input exceeded its reservation and native execution is refused. The reservation remains held until the native lane's refusal is observed.".into()};
+                } else if self
                     .joint_ledger
                     .lock()
                     .map_err(|_| anyhow::anyhow!("joint NN ledger unavailable"))
@@ -335,6 +382,17 @@ impl StageOwner {
                 } else if failure.source_delivery_refused {
                     "Native work completed, but original delivery admission changed; measured work is retained without a decision."
                 } else {"Native scoring returned a known failure; actual completed work is retained without a decision."}.into()};
+            } else if let Ok(Ok(Err(error))) = &completion
+                && let Some(refusal) = error.downcast_ref::<KnownInputRefusal>()
+            {
+                settle_known_refusal(
+                    &mut advice,
+                    &self.joint_ledger,
+                    ticket,
+                    refusal.input_tokens,
+                    refusal.queue_us,
+                    refusal.compile_us,
+                );
             }
             if retain_late_scope_refusal(
                 &mut advice,
@@ -375,7 +433,7 @@ fn captured_without_dispatch(
         scope: request.scope.clone(), input_digest,
         evidence: request.roster.basis.source_units_presented.iter().map(|unit|unit.record)
             .collect::<std::collections::BTreeSet<_>>().into_iter().collect(),
-        reserved_input_tokens: request.remaining_input_tokens,
+        reserved_input_tokens: reserved_input_tokens(request.remaining_input_tokens, profile.max_tokens),
         observed_input_tokens: Some(0), work: Work::default(),
         outcome: Outcome::Unavailable { reason: "Private native CAL observation captured before Context compile/dispatch. No Context forward or scoring dispatch occurred; existing Focus work remains charged. Separate data-preparation compiler census remains in its own receipt. This is not a fitted action, abstention score or task qualification.".into() },
     };

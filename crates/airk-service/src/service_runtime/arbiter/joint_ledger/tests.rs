@@ -404,3 +404,59 @@ fn current_120_second_window_never_renews_inside_125_second_transport_parent() {
         assert!(ledger.reserve(original, &parent, 3, 1, None, now).is_err());
     }
 }
+#[test]
+fn input_ceiling_refusal_releases_the_tokens_and_keeps_the_ordinal_used() {
+    let mut ledger = Ledger::default();
+    let ticket = ledger
+        .reserve_historical(attempt(), 1, 2048, None, 100)
+        .unwrap();
+    // While the outcome is unknown the whole parent budget is held.
+    assert!(
+        ledger
+            .reserve_historical(attempt(), 2, 1, None, 101)
+            .is_err()
+    );
+    ledger.refused(ticket).unwrap();
+    // No reservation is held: the next ordinal may take the whole budget.
+    let next = ledger
+        .reserve_historical(attempt(), 2, 2048, None, 102)
+        .unwrap();
+    // The refused ordinal is never reusable and can never report work.
+    assert!(
+        ledger
+            .reserve_historical(attempt(), 1, 1, None, 103)
+            .is_err()
+    );
+    assert!(ledger.compiled(ticket, 1).is_err());
+    assert!(ledger.completed(ticket, 1).is_err());
+    // A compile receipt within the reservation contradicts a refusal, and
+    // that hold remains.
+    ledger.compiled(next, 512).unwrap();
+    assert!(ledger.refused(next).is_err());
+    assert!(
+        ledger
+            .reserve_historical(attempt(), 3, 1, None, 104)
+            .is_err()
+    );
+    // A Focus reservation has no input-ceiling refusal.
+    let mut ledger = Ledger::default();
+    let focus = ledger
+        .reserve_focus(
+            attempt(),
+            &historical_budget(),
+            FocusInvocation {
+                index_id: partition(3, 1, 2048).index_id,
+                ordinal: 1,
+            },
+            2048,
+            None,
+            100,
+        )
+        .unwrap();
+    assert!(ledger.refused(focus).is_err());
+    assert!(
+        ledger
+            .reserve_historical(attempt(), 1, 1, None, 101)
+            .is_err()
+    );
+}

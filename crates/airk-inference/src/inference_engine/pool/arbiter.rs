@@ -94,6 +94,56 @@ impl std::error::Error for KnownScoreFailure {
     }
 }
 
+/// A refusal observed before any native execution. Either the compiler
+/// refused the input, as it does above the profile's token ceiling, or the
+/// compiled input is above the token ceiling of this request. No model work
+/// ran, so the caller may release the token reservation it held. Only this
+/// lane constructs the value.
+#[derive(Debug)]
+pub struct KnownInputRefusal {
+    /// The compiled token count, when the compiler produced an input. None
+    /// when the compiler itself refused.
+    pub input_tokens: Option<usize>,
+    pub queue_us: u64,
+    pub compile_us: u64,
+    cause: anyhow::Error,
+}
+impl std::fmt::Display for KnownInputRefusal {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Optional native input was refused before any model work")
+    }
+}
+impl std::error::Error for KnownInputRefusal {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.cause.as_ref())
+    }
+}
+/// The compiler refused the input. Nothing was dispatched.
+fn compile_refused(queue_us: u64, compile_us: u64, cause: anyhow::Error) -> anyhow::Error {
+    KnownInputRefusal {
+        input_tokens: None,
+        queue_us,
+        compile_us,
+        cause,
+    }
+    .into()
+}
+/// The request's token ceiling, applied to a compiled input before dispatch.
+fn within_token_ceiling(compiled: &CompiledReceipt, ceiling: usize) -> Result<()> {
+    if compiled.input_tokens <= ceiling {
+        return Ok(());
+    }
+    Err(KnownInputRefusal {
+        input_tokens: Some(compiled.input_tokens),
+        queue_us: compiled.queue_us,
+        compile_us: compiled.compile_us,
+        cause: anyhow::anyhow!(
+            "Arbiter original input-token budget exhausted before native execution"
+        ),
+    }
+    .into())
+}
+
 fn observed_score_call(
     compiled: &CompiledReceipt,
     started: Instant,
@@ -1257,14 +1307,16 @@ impl Lane {
                             let scorer = resident.scorer();
                             let queue_us = job.queued_at.elapsed().as_micros().min(u64::MAX as u128) as u64;
                             let compile_started=Instant::now();
-                            let result = scorer.compile(&job.state, &job.question, &job.candidates).and_then(|input| {
+                            // A compiler refusal and the token ceiling below are both
+                            // known to precede native execution.
+                            let result = scorer.compile(&job.state, &job.question, &job.candidates).map_err(|cause|compile_refused(queue_us,compile_started.elapsed().as_micros().min(u64::MAX as u128) as u64,cause)).and_then(|input| {
                                 let compile_us=compile_started.elapsed().as_micros().min(u64::MAX as u128) as u64;
                                 // Known compilation is observable even when a
                                 // subsequent token/deadline/authority gate refuses
                                 // FFI. No native execution precedes those checks.
                                 let receipt=CompiledReceipt {input_digest:input.input_digest,input_tokens:input.input_ids.len(),queue_us,compile_us};
                                 let compiled_delivered=job.compiled.take().context("compiled receipt already consumed")?.send(receipt.clone()).is_ok();
-                                ensure!(input.input_ids.len() <= job.max_input_tokens,"Arbiter original input-token budget exhausted before native execution");
+                                within_token_ceiling(&receipt,job.max_input_tokens)?;
                                 ensure!(Instant::now() < job.deadline,"Arbiter original deadline exhausted during compilation");
                                 let current={let queue=shared.queue.lock().map_err(|_|anyhow::anyhow!("Arbiter queue unavailable"))?;
                                     !queue.closed && !queue.release_profiles.contains(&scorer.profile().manifest) && queue.eligibility.current(stage,queue.configuration.as_ref()) && permitted(queue.configuration.as_ref(),&job,scorer.profile().manifest)};
