@@ -1,12 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Private arithmetic for verified R5 study inputs. No profile or calibration artifact.
+//! Private arithmetic for verified R5 or R8 study inputs. No profile or calibration artifact.
 use super::*;
 use airk_core::arbiter::context_action::calibration::terminal::raw_winner;
 
 const GRAPH: &str = "147be075a73ff81ca17b6c2fb965ec8f887e10908fbd33cf47a919d1694aa3d9";
 const WEIGHTS: &str = "0c4bd89d032e7dd821071c3559776cd3da50d54d84b6e575373fd8cf7003a7c3";
 const RECIPE: &str = "7efd4fc72f11de95131c532467803a6a2c82c71cf84ac0bd23cabbcf3662e394";
-const PLAN: &str = "55a89e5219cf6de0c3b59cbaa8a4a8a43dc0d097276368cfb5a28ee2fe6536bf";
+// Completed CAL100 lifetime plans whose verified inputs the study accepts: R5, then R8.
+const PLANS: [&str; 2] = [
+    "55a89e5219cf6de0c3b59cbaa8a4a8a43dc0d097276368cfb5a28ee2fe6536bf",
+    "52e2fb170c4074da74c4f08a04b02364c5dfde7dd612d0f2c964e0fbd157242c",
+];
+
+// One accepted plan must name both the input and its independent preflight.
+fn study_plan(input: &Value) -> Option<&'static str> {
+    PLANS
+        .into_iter()
+        .find(|plan| input["plan"] == *plan && input["preflight"]["lifetime_plan_sha256"] == *plan)
+}
 
 fn supported_winner(case: &Case) -> Result<Option<(Sha256Digest, f32, bool)>> {
     let Some(scores) = &case.scores else {
@@ -54,20 +65,19 @@ fn cutoff(winners: &[(f32, bool)]) -> Option<f32> {
 }
 
 #[test]
-#[ignore = "explicit verified full-R5 private graph study; no scorer, asset calibration or product activation"]
+#[ignore = "explicit verified full-R5 or full-R8 private graph study; no scorer, asset calibration or product activation"]
 fn study_cutlass_generic_read() -> Result<()> {
     let bytes = read_pinned(
         Path::new(&std::env::var("AIRK_CUTLASS_STUDY_INPUT")?),
         std::env::var("AIRK_CUTLASS_STUDY_INPUT_SHA256")?.parse()?,
     )?;
     let input: Value = serde_json::from_slice(&bytes)?;
+    let plan = study_plan(&input).context("different study epoch")?;
     ensure!(
         input["schema"] == "airk.private.cutlass-study-verified-input/1"
             && input["graph"] == GRAPH
             && input["weights"] == WEIGHTS
             && input["recipe"] == RECIPE
-            && input["plan"] == PLAN
-            && input["preflight"]["lifetime_plan_sha256"] == PLAN
             && input["preflight"]["focus_tokens"] == 1024,
         "different study epoch"
     );
@@ -103,7 +113,7 @@ fn study_cutlass_generic_read() -> Result<()> {
     println!(
         "AIRK_CUTLASS_READ_STUDY={}",
         json!({"input_sha256":sha(&bytes),"graph":GRAPH,"weights":WEIGHTS,
-        "recipe":RECIPE,"plan":PLAN,"minimum_raw_margin":threshold,"margin_bits":threshold.map(f32::to_bits),
+        "recipe":RECIPE,"plan":plan,"minimum_raw_margin":threshold,"margin_bits":threshold.map(f32::to_bits),
         "outcomes":outcomes,"release_qualified":false,"registered_profile":false})
     );
     Ok(())
@@ -124,4 +134,21 @@ fn study_requires_unique_finite_supported_winner_and_zero_unknowns() -> Result<(
     assert_eq!(cutoff(&[(1., true), (1., false)]), None);
     assert_eq!(cutoff(&[(2., true), (1., false), (0.5, true)]), Some(2.));
     Ok(())
+}
+
+#[test]
+fn study_accepts_only_a_completed_plan_that_also_names_its_preflight() {
+    let r5 = "55a89e5219cf6de0c3b59cbaa8a4a8a43dc0d097276368cfb5a28ee2fe6536bf";
+    let r8 = "52e2fb170c4074da74c4f08a04b02364c5dfde7dd612d0f2c964e0fbd157242c";
+    let bound = |plan: &str, preflight: &str| {
+        study_plan(&json!({"plan":plan,"preflight":{"lifetime_plan_sha256":preflight}}))
+    };
+    assert_eq!(bound(r5, r5), Some(r5));
+    assert_eq!(bound(r8, r8), Some(r8));
+    assert_eq!(bound(r8, r5), None, "R8 input with the R5 certificate");
+    assert_eq!(bound(r5, r8), None, "R5 input with the R8 certificate");
+    assert_eq!(study_plan(&json!({"plan":r8,"preflight":{}})), None);
+    // R7 never closed its full population, so its plan is not accepted.
+    let r7 = "c04be2262a32d8318f9aa222e73ea9bf078ad80d7975d907eebefe486895a2eb";
+    assert_eq!(bound(r7, r7), None);
 }

@@ -120,6 +120,54 @@ with zero uncertified admissions. A null cutoff records that the evidence
 supported no such admissions. Numeric qualification, semantic utility and
 product activation each require their own evidence.
 
+### R8 Compact Read study
+
+The Kernel study accepts the completed R5 and R8 plans. One accepted plan
+must name both the input and its preflight. The rule is the same for both.
+
+`r8_cutlass_study_inputs.py` builds the study input for R8 from the retained
+Compact panel. Its descriptor has three fields:
+
+- `panel`: absolute path and SHA-256 of the R8 Compact raw panel.
+- `certificate`: absolute path and SHA-256 of the R8 reference preflight.
+- `provider_sha256`: the six R8 phase receipt digests, phases 07–12 in order.
+
+The builder reproduces the panel from all 13 native phase receipts through
+`compact_matching/r8_compact_panel.py`. It requires the certificate pinned by
+the R8 projection receipt, and checks every row's compiled input and roster
+through `compact_matching/r8_reference_inputs.py`. It reads no CPU reference
+Job, so the input carries no numeric comparison.
+
+Build and stage the Kernel test image before the study. Run scoped Clippy,
+the module's unit tests with Nextest, and `cargo test -p airk-kernel --lib
+--all-features --locked --offline --target x86_64-pc-windows-msvc --no-run
+--timings --message-format=json`, each through `scripts/dev/receipt_runner.py
+--groups native --out <checked-campaign-directory>`. Create an empty checked
+`images` directory beside the receipts. Then run `python -I -B -S
+stage_cutlass_study_image.py --build <image receipt> --build-sha256 <sha>
+--unit <unit receipt> --unit-sha256 <sha>`. It copies the one linked Kernel
+test image and writes `images/images.json`. Set the `unit_sha256` pin in
+`run_cutlass_study.py` to the new unit receipt digest; the launchers accept
+only that image.
+
+`run_r8_cutlass_study.py --descriptor <absolute-file> --sha256 <descriptor-sha>
+--output <empty-checked-campaign-directory>` runs the study. Its descriptor
+wraps the three fields above as `evidence` and adds the `build`, `cargo_log`
+and `staged_images` pins. It reuses the R5 launcher for the image check, the
+120-second, 2 GiB Job and `execution.json`, and requires the R8 plan in the
+native report.
+
+`r8_cutlass_study_report.py --execution <execution.json> --sha256 <sha>`
+describes a completed study by ordinal, count and margin: top-card counts,
+the rank of each certified card, Read winner margins, and the best certified
+coverage at 0, 1, 2, 3 and 5 tolerated uncertified admissions. It refuses to
+print when its zero-tolerance result differs from the native cutoff or
+admissions. The tolerated rows are descriptive and propose no rule. Redirect
+stdout only to a checked private path.
+
+Run `python -I -B -S test_r8_cutlass_study_inputs.py` for the zero-model
+controls of the builder, launcher, stager and description.
+
 Run collect_first56_gpu.py with isolated Python to reopen the seven original fresh R5 CUDA phases against their frozen 56-row projection. Its private JSON output preserves the phase pins for the full-cohort study.
 
 After both original R5 lifetimes and all 13 GPU Jobs close, collect_full100_gpu.py --projection-sha256 <verified full100 projection hash> reopens the prior seven original phase receipts and the six terminal receipts. It checks complete first56 compiled row equality against the terminal projection, per-phase admission and operation evidence, and ordered source/card IDs. Its provider list is the input to the independent scientific study; the native raw-score collection does not fit a rule.

@@ -39,7 +39,7 @@ def image_from(descriptor):
     if isinstance(staging,dict):
         require(staging["build_sha256"] == descriptor["build"]["sha256"] and staging["study_selector"] == SELECTOR
                 and staging["study_invocations"] == 0 and staging["unit_sha256"] ==
-                "3bc65c36b05d70e32ca81c693972d6cd6831413f7fa0b0e68b4bb3c5b37c4480",
+                "cce6e760c8c49c6e1301a91d945819e1d2297360bba7a279bac3454dbe849990",
                 "incorrect dedicated native study staging")
         staging = [staging]
     matches = [image for image in staging if image["name"] == "airk_kernel"]
