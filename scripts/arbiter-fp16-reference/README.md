@@ -9,3 +9,22 @@ Use the pinned CPU Torch environment and the checked same-user runner. See the [
 For the exposed TRAIN_Q543 question, large_train_case.py reopens the original seven ordered options and the native 1,588-token input. Run the publisher phase of run_large_t32.py first, then supply its sealed execution receipt to the matching phase. The publisher checks the known 32-token result before scoring this development question.
 
 For 8192 tokens, run_large_t32.py can compute a contiguous layer range per bounded CPU Job. large_layer_job.py verifies the previous residual and the original graph and weights. large_direct_layers.py applies the same dense projections and attention math in model order. The 1024-token control uses layers 0 through 17 and 18 through 35, then compares all eight final score words to the uninterrupted result. Keep the per-layer hashes, timings and original execution receipts. A finished 8192-token CPU panel still needs an independent native CUDA comparison.
+
+## Portable graph proof
+
+`portable_graph.py` is the independent graph proof for exports made with the FP16 exporter's `portable` recipe, which keeps binary16 learned storage and computes projections and attention in FP32. `graph.py` remains the proof for the default recipe. The [reference contract](CONTRACT.md#portable-recipe-graph-proof) states the policy and its limits.
+
+For Compact or Large, run the proof under the checked same-user shell with an interpreter that provides `onnx`:
+
+```powershell
+python -I -B scripts/arbiter-fp16-reference/verify_portable.py `
+  --model compact `
+  --original $originalGraph `
+  --original-pins $originalPins --original-pins-sha256 $originalPinsSha `
+  --graph $portableGraph --graph-sha256 $portableGraphSha `
+  --publisher $publisherAssetRoot
+```
+
+`--original` is the authenticated original FP32 `model.onnx` with its external data beside it. `--original-pins` is a JSON map from each external file name to its `sha256` and `bytes`, and the run requires that file's reviewed digest. `--graph` is the portable `model.onnx` with its reviewed digest. `--publisher` is the publisher asset root that holds `research-asset-pins.json`. The run hashes the original external file twice and the publisher release once. It opens no candidate weights and writes no files. On success it prints one JSON line with the input identities, the three verifier source digests and the proof. A refusal exits nonzero and names the failed check. Retain stdout in the private campaign directory.
+
+Run `python -I -B scripts/arbiter-fp16-reference/test_portable_graph.py` for the literal Context and Focus controls. They need `onnx` and use no exporter, model, Torch or GPU.
