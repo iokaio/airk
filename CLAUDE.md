@@ -75,4 +75,10 @@ AIRK is an independent Artifact Indexing and Retrieval Kernel. These standing ru
 
 Read [current campaign instructions](docs/agent-current-work.md) before resuming work: scope, permissions, deadline, active plans, ledger, host/target paths, private roots and user exceptions are mandatory. Resume from live source and exact receipts, not historical status. Currently: `feat/arbiter-final`, with pushes of that branch to `origin` authorized; no PR, merge, publication or deployment authorization.
 
+The active plan is the [Answer evaluation plan](docs/arbiter/final-plan-fp16.md); its execution waits for the user's explicit word to start. The user set these rules for it on 21 November 2026:
+
+- Agent sessions run in headless Claude Code on Sonnet (`claude-sonnet-5-5`); judge sessions run in headless Claude Code on Opus (`claude-opus-5-5`). This harness is the approved agent orchestration for the evaluation. It is evaluation tooling, never product, and runs as the verified human.
+- One commit per series: a series' change-set code (or, for the baseline, the harness), its report, its evaluation results file and its ledger entry land together in one signed-off commit, so commits and results compare one to one. Nothing of a series is committed before it is judged.
+- Run the number of improvement iterations the user last set (currently three) back to back with no decision between them, then stop for the user's manual inspection. The user may change the number at each inspection. The sealed set runs only on the user's word after an inspection.
+
 Definitions are in the [architecture glossary](docs/architecture/airk-architecture.md#agent-workflow-glossary). The [17 November 2026 preservation map](docs/agent-rules-migration.md) records this editorial restructuring; it is an audit record, not another source of policy.

@@ -19,7 +19,7 @@ the five results per scenario, the two rubrics and how weights are adjusted.
 
 | # | Report | What it covers | Outcome |
 | --- | --- | --- | --- |
-| — | None yet | The plan's readings were approved on 21 November 2026. Execution has not started; it waits for the user's word. The first report, `00-setup.md`, follows the pilot. | — |
+| — | None yet | The plan's readings were approved on 21 November 2026, and the same day the user set the agent (Sonnet) and judge (Opus) models, one commit per series and three iterations before a stop. Execution has not started; it waits for the user's word. The first commit holds `00-setup.md` and `01-baseline.md`. | — |
 
 The newest report is the current standing. The final report, when it exists,
 answers the question above for each Answer configuration.
@@ -34,14 +34,30 @@ answers the question above for each Answer configuration.
 | `05-sealed-set.md` | The sealed scenarios, run once on the configuration named beforehand |
 | `06-final-report.md` | The answer to the question, and what is recommended for delivery |
 
-A report is committed when its series is judged, before the next series
-starts. A report is not rewritten later. If something in it proves wrong, a
-dated correction is added at its top and the later report explains it.
+**One commit per series.** When a series is judged, everything it produced
+lands in one commit: the change set's code (for the baseline, the harness,
+scenarios and rubrics), the report, its results file and this README's new
+row. Nothing of a series is committed earlier, so any two series commits can
+be compared directly, and checking one out gives the code its results came
+from. The setup report goes into the baseline's commit.
+
+Three change sets run back to back, and then work stops for the user's
+manual inspection. The user may set more or fewer further iterations at each
+inspection; they take the next report numbers, and the sealed set and final
+report move after them.
+
+A report is not rewritten after its commit. If something in it proves wrong,
+a dated correction is added at its top, in the next series' commit, and the
+later report explains it.
 
 Beside the reports:
 
 - `scenarios.md` holds the scenario instructions and their kinds, once
   frozen.
+- `results/` holds one results file per series, with the same columns every
+  time: each scenario's grades from each judge, the adjudicated grade, turns
+  to a correct finish, first-call yield, bytes and time. It holds grades,
+  counts and timings, not evidence text.
 - `rubrics.md` holds the two rubrics, the definition of a correct finish,
   the table of cases that are not clear-cut and the rule for "substantially
   improves", as frozen before the first judged run.

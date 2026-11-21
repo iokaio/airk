@@ -7,6 +7,9 @@ keeps its name so that existing links still resolve.
 Status: the user read this plan on 21 November, corrected it (change sets in
 place of single changes, and a report for every series), approved its main
 readings and had me adopt four points from an outside review (section 2).
+Later that day the user chose the agent and judge models, set one commit per
+series and set three iterations before a stop for manual inspection (section
+2, "Set by the user after review").
 **Execution has not started.** It waits for the user's explicit word. Section
 9 lists every place where I interpreted an instruction and which of those
 the user has confirmed.
@@ -91,6 +94,29 @@ to adopt what I judged worth adopting. I adopted all four of its points.
   the baseline shows that essential material falls outside the candidate
   pool.
 
+### Set by the user after review
+
+The user set these on 21 November, after reading the plan with its open
+questions.
+
+- **The agent is headless Claude Code on Sonnet** (`claude-sonnet-5-5`). Every
+  scenario session of section 3.5 runs that way.
+- **The judge is headless Claude Code on Opus** (`claude-opus-5-5`). Every
+  judge session of section 4.5 runs that way. My adjudication is separate
+  from those sessions and is labelled as mine.
+- **One commit per series.** Each full set of test reports and evaluations
+  is one commit, so that commits and their results can be compared one to
+  one (section 5.6).
+- **Three iterations, then a stop.** Three change sets are built and tested
+  back to back, with no decision between them. After the third is committed,
+  work stops for the user's manual inspection. At each inspection the user
+  may set the number of further iterations, more or fewer (section 5.2).
+- **My defaults for everything else.** The defaults I proposed for the
+  remaining open points are adopted. They are recorded where they apply: the
+  private folder (section 3.1), training on bookbuilder (section 5.4), the
+  product rule for Large (section 7), and readings 12 and 13 of section 9.
+- **No deadline is set.** Work is reported at each stop.
+
 ## 3. The test
 
 ### 3.1 Service and indexes
@@ -107,7 +133,10 @@ this branch has changed a great deal beyond Arbiter.
   files) and one for `D:\code\github\bookbuilder` (WritingForge Pro: C# and
   .NET with a Vue and TypeScript front end; 8,250 tracked files).
 - **Read-only sources.** Nothing is written into either repository. Index
-  data lives under the private campaign folder. The indexer honours
+  data, service state, session logs and raw results live under the private
+  campaign folder
+  `artifacts/v190/final-plan/exec-20261116T052942Z/answer-eval-r1/`, which is
+  git-ignored. The indexer honours
   `.gitignore`, which should keep build output and `node_modules` out; step
   E1 checks what is actually in scope. Before indexing I also check that no
   credential file is in scope (bookbuilder has an `aikeys.json` at its root)
@@ -200,11 +229,17 @@ lists what has to be built before every cell of this table can run.
 
 An agent produces each result, and its turns are logged, not estimated.
 
-- **The agent.** A fresh agent session for each scenario and path. It
-  receives the scenario's instruction and nothing else about the repository.
-  It may reach the index only through the tools of its path, through a small
-  wrapper that enforces the path's tool list and logs every call: tool,
-  arguments, bytes returned and time.
+- **The agent.** A fresh headless Claude Code session on Sonnet
+  (`claude-sonnet-5-5`) for each scenario and path, run by the harness as the
+  same human. It receives the scenario's instruction and nothing else about
+  the repository. It starts in an empty working folder under the private
+  campaign folder, so it loads no project instructions, and with an MCP
+  configuration that names only the wrapper. Built-in file, shell and web
+  tools are denied. It may reach the index only through the tools of its
+  path, through a small wrapper that enforces the path's tool list and logs
+  every call: tool, arguments, bytes returned and time. The exact command
+  line, Claude Code version and model identifier are recorded with every
+  session.
 - **Its job.** Gather the context needed to do the task, then stop and write
   a short work brief: where it would work, what it must respect and what it
   still does not know. It does not do the task itself.
@@ -363,9 +398,11 @@ The user approved these thresholds on 21 November.
 **Headroom.** A substantial win is possible only on a scenario where the
 better of Parse and Search needs three or more calls, or never finishes
 correctly. The baseline report counts those scenarios. If there are fewer
-than 12, no adjustment can meet the rule, and I bring that to the user as a
-decision before a change set is tested. It would be a finding in itself: on
-those tasks the simpler tools are already enough.
+than 12, no adjustment can meet the rule. It would be a finding in itself: on
+those tasks the simpler tools are already enough. Because the user set three
+iterations with no decision between them (section 2), a low count does not
+stop the work. It is stated at the top of the baseline report, every later
+report repeats it, and the user weighs it at the inspection.
 
 Results are reported for each configuration, each repository and each kind
 of task, with every scenario listed. Twenty scenarios support a clear
@@ -402,8 +439,10 @@ applied to that configuration once, on the sealed set.
 
 - **Frozen inputs.** Instructions, reference notes and the tables of section
   4.1 are fixed before any run.
-- **Blind first pass.** Two independent judge sessions score each result
-  from the rubric, the notes and the evidence, with the path names hidden
+- **Blind first pass.** Two independent judge sessions, each a fresh
+  headless Claude Code session on Opus (`claude-opus-5-5`) with no tools
+  beyond reading its judging packet, score each result from the rubric, the
+  notes and the evidence, with the path names hidden
   where that is possible. Answer's reply has a recognizable shape, so the
   blinding is partial and I say so.
 - **Adjudication.** I settle any scores that differ by more than one grade
@@ -464,15 +503,20 @@ One iteration:
    no-model control included. Parse and Search are run again only when the
    set changes something they depend on. Otherwise their sessions are reused
    (section 3.3).
-7. **Report.** Write the series up in the report folder (section 5.6): the
-   set, each change with its cause and expected effect, the results, what
-   was good, what was bad, and what was kept or dropped. The report is
-   committed before the next set starts.
+7. **Report and commit.** Write the series up in the report folder (section
+   5.6): the set, each change with its cause and expected effect, the
+   results, what was good, what was bad, and what was kept or dropped. The
+   series is committed as one commit before the next set starts.
 
 How it is sized:
 
-- **At most three change sets** before the report. After each pass I report,
-  and the user decides whether another set is worth its time.
+- **Three change sets, then a stop.** The user set this on 21 November. The
+  three iterations run back to back: each set is built, replayed, passed,
+  reported and committed, and the next set starts from that commit with no
+  decision in between. After the third commit, work stops for the user's
+  manual inspection. At each inspection the user sets how many further
+  iterations to run, which may be more or fewer, and the same rule applies
+  to them. A genuine blocker still stops work early and is reported.
 - **Slow work starts at once, in parallel:** mining the training pairs,
   training the first Focus candidate, and building the GPU paths of
   section 7. They do not wait their turn.
@@ -554,6 +598,12 @@ Mining leaves out three things: the paths excluded from the index (section
 evidence overlaps a judged or sealed scenario's notes. Training keeps the earlier protection for existing abilities: the
 original weights stay selectable, and training includes general replay.
 
+Pairs may be mined from both repositories. A weight file trained on any
+bookbuilder pair is an evaluation candidate only. It is not shipped, and is
+not proposed for delivery, until the user decides that bookbuilder material
+may be carried in delivered weights. Pairs and weight files stay in the
+private campaign folder.
+
 ### 5.5 Guards
 
 - **Fitting the test.** The sealed set of section 4.5.
@@ -583,11 +633,27 @@ of it.
   dropped, regressions, failures and timeouts.
 - **Readable on its own.** A report is written for someone who was not
   there. It does not assume the plan, the ledger or the code is open.
-- **Committed when the series is judged**, before the next series starts,
-  and not rewritten afterwards. A later correction is added at the top with
-  its date.
+- **One commit per series.** The user set this on 21 November, so that each
+  commit and its results can be compared with the others. When a series is
+  judged, everything it produced lands in a single signed-off commit, and
+  nothing of it is committed earlier:
+  - the change set's code, or for the baseline the harness, scenarios and
+    rubrics;
+  - the series report;
+  - its evaluation results: every scenario's grades from each judge, the
+    adjudicated grade, turns to a correct finish, first-call yield, bytes
+    and time, in a results file with the same columns in every series, so
+    two commits can be compared with a plain diff;
+  - the README's new row and the ledger entry.
+
+  The setup pilot (`00-setup.md`) is not a full set, so it goes into the
+  baseline's commit. Each series commit is pushed to `origin` under the
+  branch's existing authorization. A report is not rewritten after its
+  commit. A later correction is added at its top with its date, in the next
+  series' commit.
 - **What stays private.** Raw tool output and the agents' session logs stay
-  in the campaign folder. The reports quote none of the bookbuilder
+  in the campaign folder. The committed results file holds grades, counts
+  and timings, not evidence text. The reports quote none of the bookbuilder
   repository's source; they name its scenarios and may cite its file paths.
 
 The ledger keeps recording commands, identities and receipts. The reports
@@ -601,16 +667,20 @@ folder below say how far it has got.
 
 | Step | Work | Done when |
 | --- | --- | --- |
-| E0 | The user reads this plan and corrects it, and says to start | The main readings of section 9 were approved on 21 November. The word to start has not been given |
+| E0 | The user reads this plan and corrects it, and says to start | The main readings of section 9 were approved on 21 November, and the agent, judge, commit and iteration choices were set the same day. The word to start has not been given |
 | E1 | Build the evaluation service from current source. Create the two indexes with vectors. Check scope and credential exclusion, and apply the benchmark exclusions of section 3.1 | Both indexes serve hybrid search, their file counts and commits are recorded, and the leak probe passes |
-| E2 | Write the 20 scenarios and their reference notes, and the sealed set if adopted. Freeze them | The user has seen the scenario list; hashes recorded |
-| E3 | Build the harness: the path wrapper and turn log, the coverage script, the judge packet | A pilot of 2 scenarios in each repository runs end to end on all five paths. Report `00-setup.md` is committed, with `scenarios.md` and `rubrics.md` |
-| E4 | Baseline pass on the code as it stands: Parse, Search, the no-model Answer control and Answer with Focus only, on all 20 scenarios. Context cannot act yet, so results 2 and 3 reuse result 1's sessions where their evidence is identical; their time is measured on CPU and GPU. With no agent session, record the rank at which each essential item first appears in a search of 100 hits | Judged and analysed. Report `01-baseline.md` is committed with the headroom count of section 4.3, and the user has it |
-| E5 | Change set 1 (section 5.3), built while E1 to E4 run. Replay, then a pass on every Answer configuration and the control, CPU and GPU, with Large on CPU on 4 scenarios. Parse and Search sessions are reused, since the set leaves shared search alone | Report `02-change-set-1.md` is committed; the user decides whether to go on |
-| E6 | Change set 2: what the E5 pass shows, plus the first trained candidates. Replay, then a full pass | Report `03-change-set-2.md`; the same decision |
-| E7 | Change set 3, only if E6 shows a gain still within reach | Report `04-change-set-3.md`; the same decision |
-| E8 | Write down the configuration the development results support. Run the sealed set once on it, with the control, Parse and Search | Report `05-sealed-set.md`, beside the development results |
-| E9 | Final report `06-final-report.md`: the answer to section 1 for each configuration, the change sets and what each kept, and what to deliver | The user decides what ships |
+| E2 | Write the 20 scenarios and their reference notes, and the sealed set. Freeze them | The user has seen the scenario list; hashes recorded |
+| E3 | Build the harness: the path wrapper and turn log, the headless Claude Code launcher for Sonnet agents and Opus judges, the coverage script, the judge packet | A pilot of 2 scenarios in each repository runs end to end on all five paths. Report `00-setup.md` is written, with `scenarios.md` and `rubrics.md`. It is committed with the baseline |
+| E4 | Baseline pass on the code as it stands: Parse, Search, the no-model Answer control and Answer with Focus only, on all 20 scenarios. Context cannot act yet, so results 2 and 3 reuse result 1's sessions where their evidence is identical; their time is measured on CPU and GPU. With no agent session, record the rank at which each essential item first appears in a search of 100 hits | Judged and analysed. Commit 1: the harness, `00-setup.md`, `01-baseline.md` with the headroom count of section 4.3, and the baseline results file |
+| E5 | Change set 1 (section 5.3), built while E1 to E4 run. Replay, then a pass on every Answer configuration and the control, CPU and GPU, with Large on CPU on 4 scenarios. Parse and Search sessions are reused, since the set leaves shared search alone | Commit 2: the set's code, `02-change-set-1.md` and its results file. Change set 2 starts at once |
+| E6 | Change set 2: what the E5 pass shows, plus the first trained candidates. Replay, then a full pass | Commit 3: the set's code, `03-change-set-2.md` and its results file. Change set 3 starts at once |
+| E7 | Change set 3: what the E6 pass shows | Commit 4: the set's code, `04-change-set-3.md` and its results file. **Work stops for the user's manual inspection.** The user sets how many further iterations to run, if any |
+| E8 | Only on the user's word after an inspection. Write down the configuration the development results support. Run the sealed set once on it, with the control, Parse and Search | Report `05-sealed-set.md`, beside the development results, in its own commit |
+| E9 | Final report `06-final-report.md`: the answer to section 1 for each configuration, the change sets and what each kept, and what to deliver | Its own commit. The user decides what ships |
+
+Further iterations that the user sets at an inspection take the next report
+numbers (`05-change-set-4.md` and on), and the sealed set and final report
+move after them.
 
 Running beside E1 to E5, each with its own agent under the rule of one Cargo
 owner and one GPU owner at a time:
@@ -621,7 +691,12 @@ owner and one GPU owner at a time:
   the 180-second allowance (section 7).
 
 Every report goes in [docs/arbiter/answer-evaluation/](answer-evaluation/README.md)
-(section 5.6). A step is not done until its report is committed.
+(section 5.6). A step is not done until its series commit exists. The
+training and GPU tracks commit nothing on their own: what they produce enters
+the series commit that first uses it.
+
+The A6000 has one owner at a time. The baseline's GPU runs come first. The
+GPU track and Focus training use the device between them.
 
 Platform work (Linux, macOS, Radeon, packaging) waits for E9, since E9 says
 which stages are worth delivering.
@@ -638,7 +713,7 @@ Found by reading the source. Each is a gap between today's code and section
 | 180 seconds for Large on CPU | Every layer caps a request at 120,000 ms: Core validation, the MCP handler, the kernel and the resource policy | An evaluation-only allowance of 180,000 ms. The product cap stays at 120 seconds |
 | Context rules on the GPU | The CUDA Answer selector requires a calibration with zero rules | A deliberate change so an adjusted calibration can be tested there |
 | The turn log | None | The wrapper of section 3.5, kept in the repository with its tests |
-| Large gated by GPU opt-in | Route planning with typed reasons (commit `e587bf6d`). Large still has CPU profiles in the catalog | The product rule of section 2: no CPU candidate for Large, and Admin offers Large only with GPU use on. A recorded decision first |
+| Large gated by GPU opt-in | Route planning with typed reasons (commit `e587bf6d`). Large still has CPU profiles in the catalog | The product rule of section 2: no CPU candidate for Large, and Admin offers Large only with GPU use on. The test does not need it. The decision is recorded during the campaign and the product change is made after E9, unless the user asks for it sooner |
 
 ## 8. Cost
 
@@ -653,14 +728,19 @@ These are estimates. The pilot in step E3 replaces them with measurements.
 - **A replay** is 20 recorded calls for each configuration and takes minutes
   with no agent sessions. The leave-one-out checks of section 5.2 are
   replays.
-- **The whole campaign** is at most five passes: the baseline, up to three
-  change sets and the sealed set. The baseline is about 80 sessions (Parse,
+- **The whole campaign** is five passes as set today: the baseline, three
+  change sets and the sealed set. More iterations set at an inspection add a
+  pass each. The baseline is about 80 sessions (Parse,
   Search, the control and Focus only), because Context cannot act yet. The
   sealed set is about 80 (one configuration, the control, Parse and
   Search).
-- **Judging.** The baseline, the last change set and the sealed set get two
-  independent judge sessions for each result. A pass in between gets one,
-  plus my adjudication, to save time.
+- **Judging.** The baseline, the last change set before each inspection and
+  the sealed set get two independent Opus judge sessions for each result. A
+  pass in between gets one, plus my adjudication, to save time.
+- **Models.** Agent sessions run on Sonnet and judge sessions on Opus, both
+  through headless Claude Code on the user's account. The token estimate
+  above is for that split. Each report records the sessions and tokens it
+  actually used.
 - **Building a change set** is the part I cannot size yet. The first set is
   mostly gathering code and two model-prompt changes, with no training. I
   will know its real cost once it is built, and I report it then.
@@ -675,9 +755,11 @@ These are estimates. The pilot in step E3 replaces them with measurements.
 ## 9. My reading of your instructions: please confirm or correct
 
 On 21 November the user confirmed reading 4 and then approved readings 1, 3,
-5, 8 and 9. The others (2, 6, 7, 10, 11, 12 and 13) stand as written and are
-followed unless the user corrects them. Approving the readings was not the
-word to start, and execution waits for that.
+5, 8 and 9. Later that day the user set readings 14 to 16 and told me to use
+my defaults for the remaining choices, which settles 12 and 13 as written.
+The others (2, 6, 7, 10 and 11) stand as written and are followed unless the
+user corrects them. None of this was the word to start, and execution waits
+for that.
 
 1. **Twenty scenarios.** Ten for each repository, the same ten kinds of
    instruction in both. The alternative is ten in all, five in each.
@@ -713,12 +795,17 @@ word to start, and execution waits for that.
     prompt without a recorded decision each time. A kept change set still
     needs one recorded decision before it reaches the product.
 11. **Platform work waits for E9.**
-12. **Scenario review.** Whether you want to approve the 20 final scenarios
-    before the first run, or only see them.
-13. **What the reports may say about bookbuilder.** The reports are committed
-    to this repository (section 5.6). I plan to name bookbuilder's scenarios
-    and cite its file paths, and to quote none of its source. Say if its
-    paths or scenario wording should stay out as well.
+12. **Scenario review. Settled by default.** The user sees the 20 final
+    scenarios before the first run. Approval is not required.
+13. **What the reports may say about bookbuilder. Settled by default.** The
+    reports name bookbuilder's scenarios and cite its file paths, and quote
+    none of its source.
+14. **Set by the user.** Agent sessions run in headless Claude Code on
+    Sonnet; judge sessions in headless Claude Code on Opus.
+15. **Set by the user.** One commit per full set of test reports and
+    evaluations (section 5.6).
+16. **Set by the user.** Three iterations back to back, then a stop for
+    manual inspection. The number may change at each inspection.
 
 ## 10. Engineering state carried forward
 
@@ -750,3 +837,8 @@ entries of 21 November hold the receipts.
 | Memory targets: 16 GB for Compact, 24 GB for Large | In force |
 | The user reviews discordant pairs of the paired comparison | Retired. The user now reviews the judging packet of section 4.5 |
 | Pushes of `feat/arbiter-final` to `origin` | Authorized. No PR, merge, publication or deployment |
+| Agent on Sonnet, judge on Opus, both headless Claude Code | Set on 21 November. The harness is evaluation tooling, not product |
+| One commit per series of reports and evaluations | Set on 21 November |
+| Three iterations, then a stop for manual inspection | Set on 21 November. The user may change the number at each inspection |
+| Weights trained on bookbuilder pairs | Evaluation candidates only until the user decides otherwise |
+| Other gates of the parent plan's assignment (the 0.007 raw-score ceiling, the 98% paired comparison, held-out confirmation) | Suspended for this campaign. This plan replaces them as acceptance evidence |

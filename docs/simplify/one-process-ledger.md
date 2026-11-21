@@ -15289,3 +15289,39 @@ session is run for that scenario and path.
 
 **Resume action.** None until the user says to start. Then step E1 of the
 Arbiter plan.
+
+### 21 November 2026 at 15:02 UTC — The user sets the agent, judge, commit and iteration rules; execution still waits
+
+The user answered the open questions of the Arbiter plan and told me not to
+start executing it. Recorded in the plan (sections 2, 3.1, 3.5, 4.3, 4.5,
+5.2, 5.4, 5.6, 6, 7, 8, 9 and 11), AGENTS.md and CLAUDE.md (same edit to
+both, still byte-identical), the assignment file and the report folder's
+README.
+
+- Agent sessions: headless Claude Code on Sonnet (`claude-sonnet-5-5`).
+  Judge sessions: headless Claude Code on Opus (`claude-opus-5-5`).
+- One commit per full set of test reports and evaluations, so commits and
+  results compare one to one. A series' code, report, results file, README
+  row and ledger entry land together; the setup report joins the baseline's
+  commit.
+- Three iterations back to back, then a stop for manual inspection. The user
+  may change the number at each inspection. The sealed set waits for the
+  user's word after an inspection.
+- My defaults for the rest: no deadline; the existing private folder
+  `artifacts/v190/final-plan/exec-20261116T052942Z/answer-eval-r1/`; the
+  user sees the scenarios before the first run, without needing to approve
+  them; reports cite bookbuilder paths and scenario wording but quote none
+  of its source; the product change for Large's GPU gating comes after E9;
+  the baseline has first claim on the A6000; weights trained on bookbuilder
+  pairs are evaluation candidates only; the assignment file's qualification
+  gates are suspended for this campaign.
+- One consequence: a headroom count below 12 in the baseline no longer stops
+  work before a change set. It is reported at the top of every report and
+  weighed at the inspection.
+
+Identity: `TYAI\tdotn`, SID `S-1-5-21-3678370870-3858642417-826968105-1002`,
+for the shell and its parent process; every edited file is owned by it.
+Nothing was built, indexed, launched or run.
+
+**Resume action.** None until the user says to start. Then step E1 of the
+Arbiter plan.
