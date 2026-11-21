@@ -19,7 +19,7 @@ the five results per scenario, the two rubrics and how weights are adjusted.
 
 | # | Report | What it covers | Outcome |
 | --- | --- | --- | --- |
-| — | None yet | The work has not started. The plan awaits the user's read. | — |
+| — | None yet | The user approved the plan on 21 November 2026 and setup began that day. The first report, `00-setup.md`, follows the pilot. | — |
 
 The newest report is the current standing. The final report, when it exists,
 answers the question above for each Answer configuration.

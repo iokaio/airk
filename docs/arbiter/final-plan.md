@@ -130,6 +130,12 @@ say otherwise, this direction governs.
    what was good and what was bad, and is written to be read easily by
    anyone with access to the repository. The reports live in
    [docs/arbiter/answer-evaluation/](answer-evaluation/README.md).
+10. **Approved to start.** The user approved the plan's main readings the
+    same day: ten scenarios in each repository, all three Answer
+    configurations in each pass with one change set after it, agent sessions
+    with a logged turn count, the no-model control, a sealed second set of
+    scenarios, training pairs mined from repository history, and the
+    proposed thresholds for "substantially improves".
 
 After the first three measured iterations the user set the GPU memory
 targets at a 16 GB card for Compact and a 24 GB card for Large, replacing

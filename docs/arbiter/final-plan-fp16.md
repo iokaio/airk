@@ -4,10 +4,11 @@ Rewritten on 21 November 2026 (America/Denver) at the user's direction. It
 replaces the FP16 delivery plan that stood in this file until then. The file
 keeps its name so that existing links still resolve.
 
-Status: written for the user to read. Nothing in sections 3 to 7 has started,
-and nothing starts until the user has read this plan and corrected it. Section
-9 lists every place where I interpreted an instruction, so that a wrong
-reading is easy to find.
+Status: the user read this plan on 21 November, corrected it twice (change
+sets in place of single changes, and a report for every series) and approved
+its main readings. Work started that day with steps E1 to E3 and the parallel
+tracks of section 6. Section 9 lists every place where I interpreted an
+instruction and which of those the user has confirmed.
 [Parent plan](final-plan.md) · [Ledger](../simplify/one-process-ledger.md)
 
 ## 1. The question
@@ -467,11 +468,12 @@ are the readable account; the ledger is the audit trail behind them.
 
 ## 6. Work order
 
-Nothing here has started.
+Step E0 is done. The reports in the folder below say how far the rest has
+got.
 
 | Step | Work | Done when |
 | --- | --- | --- |
-| E0 | The user reads this plan and corrects it | Section 9 is answered |
+| E0 | The user reads this plan and corrects it | Done on 21 November: the main readings of section 9 are approved |
 | E1 | Build the evaluation service from current source. Create the two indexes with vectors. Check scope and credential exclusion | Both indexes serve hybrid search, and their file counts and commits are recorded |
 | E2 | Write the 20 scenarios and their reference notes, and the sealed set if adopted. Freeze them | The user has seen the scenario list; hashes recorded |
 | E3 | Build the harness: the path wrapper and turn log, the coverage script, the judge packet | A pilot of 2 scenarios in each repository runs end to end on all five paths. Report `00-setup.md` is committed, with `scenarios.md` and `rubrics.md` |
@@ -537,6 +539,10 @@ These are estimates. The pilot in step E3 replaces them with measurements.
   where this plan measures them.
 
 ## 9. My reading of your instructions: please confirm or correct
+
+On 21 November the user confirmed reading 4 and then approved readings 1, 3,
+5, 8 and 9. The others (2, 6, 7, 10, 11, 12 and 13) stand as written and are
+followed unless the user corrects them.
 
 1. **Twenty scenarios.** Ten for each repository, the same ten kinds of
    instruction in both. The alternative is ten in all, five in each.

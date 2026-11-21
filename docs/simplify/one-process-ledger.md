@@ -15200,3 +15200,34 @@ tool output and session logs stay in the private campaign folder.
 
 The resume action is unchanged: wait for the user's answers to the open
 readings of section 9, then start step E1.
+
+### 21 November 2026 at 14:26 UTC — The user approves the plan's main readings; the evaluation starts
+
+I had listed five readings as the ones that shape the work most: twenty
+scenarios (ten in each repository); each pass running all three Answer
+configurations with one change set after it; agent sessions with a logged
+turn count; the three additions (a no-model Answer control, a sealed second
+set of scenarios, training pairs mined from repository history); and the
+thresholds for "substantially improves". The user answered: "I approve of
+all of those." Reading 4 was confirmed earlier. Readings 2, 6, 7, 10, 11, 12
+and 13 are followed as written and remain the user's to correct.
+
+Step E0 of the Arbiter plan is done. Recorded in the plan, the parent plan,
+the assignment file and the report folder's README.
+
+**Started.** A private folder for this evaluation,
+`artifacts/v190/final-plan/exec-20261116T052942Z/answer-eval-r1/`, with a
+common brief that every agent reads first (identity, custody, the read-only
+rule for the bookbuilder repository, one Cargo owner and one GPU owner, no
+commits). First wave: the evaluation service build and the two indexes
+(Cargo owner), the scenarios and reference notes for each repository, the
+harness, the mining of training pairs, and the detailed design of the first
+change set.
+
+**State at the start.** Source `adfa58aa` on `feat/arbiter-final`;
+bookbuilder at `238b22a72` with a clean tree. D: free 1,075,700,412,416
+bytes, 37.9 GB of the budget left. C: free 2,639,605,989,376. No Cargo,
+Python or model job running; idle adapter use 573 MiB. The retired
+calibration installation under `cal100-focus1024-capture-r3` holds 24.16 GB
+of installed weight copies that can be reclaimed once their originals are
+rehashed.

@@ -573,9 +573,10 @@ The governing plan is the rewritten
 The direction is also recorded in the
 [parent plan](arbiter/final-plan.md#evaluation-direction-21-november-2026-americadenver).
 
-- **Do not start step E1 or later before the user has read the plan and
-  answered its section 9.** The plan was written for that read. No index has
-  been built and no test has run.
+- The user read the plan, corrected it twice and approved its main readings
+  on 21 November (reading 4, then readings 1, 3, 5, 8 and 9). Steps E1 to E3
+  and the parallel tracks started that day. The other readings of section 9
+  stand as written unless the user corrects them.
 - Two new indexes are built from the branch as it builds today, for
   `D:\code\github\airk` and `D:\code\github\bookbuilder`. The user's
   running service is not used, and nothing is written into either
@@ -624,8 +625,7 @@ State when the plan was rewritten. Resume from the ledger entries of
   state to recover.
 - Linux: the campaign distribution is `Ubuntu` with user `tyler`; never run a
   bare `wsl` command. Platform work waits for step E9 of the Arbiter plan.
-- Open user decisions: the readings in section 9 of the Arbiter plan. The
-  user confirmed reading 4 and has not yet answered the others or said to
-  start.
+- Open user decisions: readings 2, 6, 7, 10, 11, 12 and 13 of the Arbiter
+  plan's section 9 are followed as written and are the user's to correct.
   Still open from before and not urgent: the Linux guest and VHD caps, the
   Linux `install.sh` per-user pointer, and a release tag for catalog rows.
