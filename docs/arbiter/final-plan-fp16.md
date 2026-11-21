@@ -102,7 +102,8 @@ figure states which of the two it is.
 
 1. **Full.** The selected model at the 8,192-token budget, where its measured
    p95 meets 120 seconds. The FP32 Compact graph measured a model-forward p95
-   of 86.049136 s over 20 samples.
+   of 86.049136 s over 20 samples at the CPU4 class, which is below the
+   8-core target.
 2. **Fast.** The selected model at a 2,048-token budget. At the earlier
    2,048-token limits Compact measured a p95 of about 19.5 s and Large about
    23.1 s. Those are historical figures on earlier artifacts. Measure again.
@@ -139,7 +140,8 @@ limit at 0.290778875, so admitting it would need a rule the user approves.
    accept and abstain decisions as the calibrated identity, including the
    near ties and the 8,192-token cases. The confirmation set is the
    calibrated identity's policy-confirmation capture, reused as frozen
-   inputs. The guard band protects only while drift stays within the limit,
+   inputs. No such capture is recorded yet, so one live capture is owed for
+   each model. The guard band protects only while drift stays within the limit,
    and that limit is an observation on these rows. A route that breaks it on
    the confirmation set is not admitted.
 3. **Judge task quality once per model.** Run the 98% paired comparison on the
@@ -235,13 +237,13 @@ card, so each claim states the smallest memory actually tested.
 
 | Step | Work | Done when | Needs | Confidence |
 | --- | --- | --- | --- | --- |
-| 1 | Freeze the judged cohort. Run the first two stage arms on Windows CPU at the same evidence budget: retrieval alone and retrieval with Focus. | Focus's contribution to delivered evidence is measured, with missing evidence, duplicates and latency. | Nothing | High. |
+| 1 | Freeze the judged cohort. Run the first two stage arms on Windows CPU at the same evidence budget: retrieval alone and retrieval with Focus. | Focus's contribution to delivered evidence is measured, with missing evidence, duplicates and latency. | Nothing | Medium. Label coverage decides it. Start with the cases that carry publisher labels. |
 | 2 | Deliver the CPU milestone. Install the product on Windows and on Linux under WSL2 and measure the ladder tiers end to end at 8 cores, the target class. Start with retrieval and Focus, and add the Compact tiers when step 3 delivers them. Record the four memory figures. macOS joins at step 11. | Each tier has an end-to-end figure at 8 cores on both systems, and the tiers that meet 120 seconds are admitted for the target class. | Nothing | Medium. The runtime build on each system is the risk. |
 | 3 | Export the portable graph for Compact. Record the recipe in the exporter contract first. Verify shared weight bytes. Load on the static runtime with zero forwards. Score the four widths and 2,048 tokens against the reference. Time each width and record the four memory figures. | Compact has measured CPU numbers for the full and fast tiers. | Nothing | High. It reuses the retained FP32 graph and the Large weight-cast edit. |
 | 4 | Finish Windows CUDA. Complete Compact matching references, fit calibration, add the Large selector and score its panel. Run capacity under A6. | Both candidates hold a calibrated panel and a memory figure. | Nothing | High for Compact, medium for Large. |
-| 5 | Record the Core contract decision, then implement: the opt-in GPU default, Auto order, the ladder tiers and the CPU target class, typed reasons, truthful status, per-result disclosure of route, model, tier and budget, the weight rule and a WebGPU provider value. Test with injected capabilities. | Reviewed Core changes with qualification flags false. | Nothing | High. |
+| 5 | Record the Core contract decision, then implement: the opt-in GPU default, Auto order, the ladder tiers and the CPU target class, typed reasons, truthful status, per-result disclosure of route, model, tier and budget, the weight rule and a WebGPU provider value. Test with injected capabilities. | Reviewed Core changes with qualification flags false. | Nothing | Medium. The budget tiers are the large part. |
 | 6 | Run the WebGPU smoke test on the A6000 through Direct3D 12 as soon as step 3 has a graph. It stays early by the user's decision and includes the speed line. It takes the GPU only when no CUDA run holds it. | A go or no-go for the rented runs. | Step 3 | Unknown until it runs. |
-| 7 | Score the portable graph on the 100 frozen Compact rows and the confirmation set on CPU, and apply acceptance rule 2. | The CPU route is admitted or its first failing row is named. | Steps 3 and 4 | High. |
+| 7 | Score the portable graph on the 100 frozen Compact rows and the confirmation set on CPU, and apply acceptance rule 2. | The CPU route is admitted or its first failing row is named. | Steps 3 and 4, and one policy-confirmation capture on the calibrated identity | High for the scoring. The capture is the cost. |
 | 8 | Complete the stage comparison and the 98% comparison: the FP32 arm, the calibrated identity, and the Compact and Large arms. Compare delivered evidence first and judge only the discordant pairs. | The 98% bound and each Context model's added evidence are measured. | Nothing | Medium. Label coverage decides it. |
 | 9 | Decide Large's expansion from step 8. Extend Large to the CPU ladder, Linux and WebGPU only if it delivers evidence Compact misses. Until then its CPU fallback is the Compact downgrade. | A recorded disposition for Large. | Step 8 | Not applicable. |
 | 10 | Port the CUDA candidates to Linux on the existing WSL2 instance. Score widths and the frozen rows. | Linux CUDA is admitted by rule 2. | Step 4 | Medium. |
@@ -408,7 +410,7 @@ embedding identity and a reindex, and so a separate decision.
 | Windows Compact calibration | 100 complete score vectors, 48 with both CPU references. Fixed20 warm p95 1.7721 s. |
 | Windows Large | Four widths pass. Fixed20 warm p95 4.793535 s. Raw calibration needs an input selector, and no capacity trial has run. |
 | Windows Compact memory pressure | Exact scores at 24, 16, 12 and 8 GiB with a 79,691,776-byte shared peak. A model-free CUDA context holding 2 GiB peaked at 77,594,624 shared bytes. The 6 GiB tier lost ballast residency. |
-| CPU at 8,192 tokens | The FP32 Compact graph measured a 20-sample p95 of 86.049136 s under 16 GiB. The FP32 Large score did not return within 120 seconds. |
+| CPU at 8,192 tokens | The FP32 Compact graph measured a 20-sample p95 of 86.049136 s under 16 GiB at the CPU4 class. The FP32 Large score did not return within 120 seconds. |
 | CPU at 2,048 tokens | Earlier limits measured Compact at about 19.5 s and Large at about 23.1 s. Historical, on earlier artifacts. |
 | Focus on CPU at 1,024 tokens | 14 of 14 winners matched. Matching error 0.000019073486328125. Publisher difference 0.2344675064086914, inside the 0.25 approximate-export limit. Per-pair 20-sample p95 4.280648 s and 2,936,418,304 bytes peak commit. An engineering run scored 14 pairs in 59.14 s. |
 | Focus benefit | Unmeasured on delivered evidence. The one retained signal is exploratory: instruction selection moved macro-component AUROC from 0.480313 to 0.554258 on three development clusters, which does not establish significance. |
@@ -448,7 +450,8 @@ to the `onnxruntime/` source directory.
    `onnxruntime_USE_WEBGPU` option. `cmake/deps.txt` pins Dawn with Direct3D
    12 enabled on Windows and Vulkan as an option, and the provider options
    select either backend. Metal on macOS is the expected route and was not
-   confirmed in this reading. The provider supports half tensors through the
+   confirmed in this reading. The runtime's documentation names Metal as a
+   backend and describes a prebuilt plugin package for the provider. The provider supports half tensors through the
    shader half feature and has kernels for `MatMul`, `Gemm`, `Softmax`,
    `Cast`, `Gather`, `Slice`, `Concat`, `Where`, `Range`, normalization and
    rotary embedding. `contrib_ops/webgpu/bert` holds `GroupQueryAttention`

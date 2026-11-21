@@ -521,8 +521,8 @@ section of this file conflicts with them, the approvals govern. In short:
 Follow the [work order](arbiter/final-plan-fp16.md#4-work-order). The user
 answered the earlier choices listed in the plan's section 3. One remains
 open: how to treat a configuration that already stores GPU use as enabled.
-One sentence of the user's answers arrived cut off and is not recorded, so
-ask before assuming anything further. See the
+The user withdrew an unfinished sentence from an earlier answer as
+unimportant. See the
 [rewrite entry](simplify/one-process-ledger.md#21-november-2026-between-0129-and-0233-utc--fp16-plan-rewritten-around-ten-stated-priorities)
 and the
 [approval entry](simplify/one-process-ledger.md#21-november-2026-at-0233-utc--user-approves-a1-to-a6-of-the-fp16-delivery-plan).

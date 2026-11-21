@@ -13793,3 +13793,44 @@ the user, because that value was written as a default.
 
 Validation was documentation-only: relative links and anchors resolve and
 `git diff --check` passes. No build or run was performed.
+
+That entry was committed as `8c82b1f7`.
+
+### 21 November 2026 at 02:57 UTC — Plan review before implementation
+
+The user withdrew the unfinished sentence from the 02:43 UTC answers as
+unimportant and asked for a review of the plan and a confidence statement.
+The review was a read of the plan, this ledger and public documentation.
+Nothing was built or run.
+
+Corrections made to `docs/arbiter/final-plan-fp16.md`:
+
+- The 86.049136 s Compact CPU figure was measured at the CPU4 class, as the
+  Resource20 comparison in this ledger states. The plan now says so. It is
+  below the 8-core target and does not predict it.
+- A search of this ledger found no policy-confirmation capture. Acceptance
+  rule 2 and step 7 depend on one, so the plan now states that one live
+  capture per model is owed.
+- The confidence of steps 1 and 5 is lowered to medium. Step 1 depends on
+  label coverage. Step 5 includes budget tiers, which reach the compiler and
+  profile paths.
+
+Findings recorded and not yet acted on:
+
+- The runtime's documentation describes the WebGPU provider as a prebuilt
+  plugin package for Python and .NET, with a shared provider library, and
+  names Direct3D 12, Vulkan and Metal as its backends. A smoke test through
+  that package would need no Dawn build. This was read from public
+  documentation and a search summary and was not installed or run.
+- Compilation of the 40 files preserved in `c41b4fe6` and `4853220b` is
+  still unverified. A scoped Clippy on the two affected crates is the first
+  check owed.
+- The graph that produced the retained Compact CPU figure has not been
+  identified in this session. Step 3 must confirm it before export.
+
+The primary agent's confidence, stated to the user as judgment and not as a
+measured result: the CPU milestone on Windows and Linux is likely, the CUDA
+milestone is likely as engineering and uncertain as qualification because
+judged evidence depends on label coverage and human review, and WebGPU
+passing every probe line on Radeon and macOS is less likely than not, with
+the CPU ladder as the defined outcome if it fails.
