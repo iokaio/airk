@@ -123,6 +123,13 @@ say otherwise, this direction governs.
    is measured on one scenario in five with a 180-second maximum. This amends
    the CPU ladder of A2.
 7. **The user reads the rewritten plan before execution starts.**
+8. **Adjustments include how Answer gathers evidence.** The user confirmed
+   that "weights" and "adjustments" cover every adjustable value, from the
+   reads Answer queues to trained model weights.
+9. **Every series of changes and tests is reported.** Each report explains
+   what was good and what was bad, and is written to be read easily by
+   anyone with access to the repository. The reports live in
+   [docs/arbiter/answer-evaluation/](answer-evaluation/README.md).
 
 After the first three measured iterations the user set the GPU memory
 targets at a 16 GB card for Compact and a 24 GB card for Large, replacing

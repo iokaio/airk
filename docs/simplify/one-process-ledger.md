@@ -15168,3 +15168,35 @@ evidence, as well as what Focus and Context are asked to do.
 The direction is also recorded in the parent plan, the assignment file and
 the session memory. Nothing in the plan has started. The resume action is
 unchanged: wait for the user's answers to section 9, then start step E1.
+
+### 21 November 2026 at 14:21 UTC — Reading 4 confirmed; a report folder for every series of changes and tests
+
+The user wrote: "Use your Reading 4. The plan must log in documentation each
+successive series of changes and tests, explaining what was good and what was
+bad. This should be a series of reports easily read by anyone with access to
+the repo in a specific directory under docs for that purpose."
+
+**Recorded.**
+
+- Reading 4 of the plan's section 9 is confirmed: "weights" and
+  "adjustments" cover every adjustable value, including how Answer gathers
+  evidence. The other readings are still open, and the user has not yet said
+  to start.
+- New folder `docs/arbiter/answer-evaluation/` with a README that states the
+  purpose, lists the reports in order, fixes their names and fixes the nine
+  sections every report contains: summary, what changed, what was tested,
+  results, what was good, what was bad, why, what happens next, and limits
+  and receipts. No report exists yet, because no work has started.
+- Plan section 5.6 is new and requires one report per series, committed
+  before the next series starts and not rewritten afterwards. Each step of
+  the work order now names its report, and a step is not done until its
+  report is committed.
+- The documentation catalog links the plan and the report folder.
+
+**A custody choice I made and listed for the user as reading 13.** The
+reports are committed to this repository. They name the bookbuilder
+scenarios and may cite its file paths, and quote none of its source. Raw
+tool output and session logs stay in the private campaign folder.
+
+The resume action is unchanged: wait for the user's answers to the open
+readings of section 9, then start step E1.

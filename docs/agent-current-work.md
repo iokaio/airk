@@ -592,6 +592,13 @@ The direction is also recorded in the
   results, built together and then iterated. Do not alter one thing at a
   time; the user said time is short. Do not present results from public
   question sets or calibration panels as evidence about product value.
+- "Weights" and "adjustments" cover every adjustable value, including how
+  Answer gathers evidence. The user confirmed this reading.
+- Every series of changes and tests gets a report in
+  `docs/arbiter/answer-evaluation/`, with the fixed sections its README
+  lists, including what was good and what was bad. A step is not done until
+  its report is committed. Reports are written for a reader who was not
+  there, and quote none of the bookbuilder repository's source.
 - Large never runs on CPU in production. Without GPU opt-in, Large is not
   offered and Compact is the only Context option. In tests Large on CPU is
   measured on one scenario in five with a 180-second maximum.
@@ -617,6 +624,8 @@ State when the plan was rewritten. Resume from the ledger entries of
   state to recover.
 - Linux: the campaign distribution is `Ubuntu` with user `tyler`; never run a
   bare `wsl` command. Platform work waits for step E9 of the Arbiter plan.
-- Open user decisions: the twelve readings in section 9 of the Arbiter plan.
+- Open user decisions: the readings in section 9 of the Arbiter plan. The
+  user confirmed reading 4 and has not yet answered the others or said to
+  start.
   Still open from before and not urgent: the Linux guest and VHD caps, the
   Linux `install.sh` per-user pointer, and a release tag for catalog rows.

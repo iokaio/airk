@@ -366,6 +366,8 @@ The [Windows build/editor guide](windows-local-build.md) describes pair builds, 
 
 - [Arbiter research credits, data rights and shipped notices](arbiter/README.md)
 - [Current Arbiter final implementation plan](arbiter/final-plan.md)
+- [Arbiter plan: does Answer help an agent do software work?](arbiter/final-plan-fp16.md)
+- [Answer evaluation reports: each series of changes and tests](arbiter/answer-evaluation/README.md)
 - [Current execution ledger and identified candidate artifacts](simplify/one-process-ledger.md)
 - [Historical 1.9.0 source candidate and planned promotion record](releases/release-1.9.0.md)
 - [Earlier advanced split execution plan](split/codex-plan.md)

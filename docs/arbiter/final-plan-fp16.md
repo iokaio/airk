@@ -355,9 +355,10 @@ One iteration:
    scenario the set made worse. Each such replay takes minutes.
 6. **Pass again** with agent sessions on all five results, because a set
    usually changes retrieval and so moves Parse and Search too.
-7. **Record.** The set, each change with its cause and expected effect, the
-   coverage before and after, the judged results, and what was kept or
-   dropped.
+7. **Report.** Write the series up in the report folder (section 5.6): the
+   set, each change with its cause and expected effect, the results, what
+   was good, what was bad, and what was kept or dropped. The report is
+   committed before the next set starts.
 
 How it is sized:
 
@@ -437,6 +438,33 @@ original weights stay selectable, and training includes general replay.
 - **Time.** Every pass records how long each reply took, so a set that buys
   fewer turns with an unacceptable wait is visible.
 
+### 5.6 A report for every series of changes and tests
+
+The user required this on 21 November. Every series of changes and its test
+is written up as a report in one folder,
+[docs/arbiter/answer-evaluation/](answer-evaluation/README.md), so that
+anyone with access to the repository can follow what was tried and what came
+of it.
+
+- **One report per series**, numbered in order: the setup, the baseline,
+  each change set with the pass that tested it, the sealed set and the final
+  report. The folder's README lists them with a one-line outcome each.
+- **The same sections in every report:** a summary, what changed, what was
+  tested, the results, what was good, what was bad, why, what happens next,
+  and the limits. "What was bad" includes changes that were made and then
+  dropped, regressions, failures and timeouts.
+- **Readable on its own.** A report is written for someone who was not
+  there. It does not assume the plan, the ledger or the code is open.
+- **Committed when the series is judged**, before the next series starts,
+  and not rewritten afterwards. A later correction is added at the top with
+  its date.
+- **What stays private.** Raw tool output and the agents' session logs stay
+  in the campaign folder. The reports quote none of the bookbuilder
+  repository's source; they name its scenarios and may cite its file paths.
+
+The ledger keeps recording commands, identities and receipts. The reports
+are the readable account; the ledger is the audit trail behind them.
+
 ## 6. Work order
 
 Nothing here has started.
@@ -446,13 +474,13 @@ Nothing here has started.
 | E0 | The user reads this plan and corrects it | Section 9 is answered |
 | E1 | Build the evaluation service from current source. Create the two indexes with vectors. Check scope and credential exclusion | Both indexes serve hybrid search, and their file counts and commits are recorded |
 | E2 | Write the 20 scenarios and their reference notes, and the sealed set if adopted. Freeze them | The user has seen the scenario list; hashes recorded |
-| E3 | Build the harness: the path wrapper and turn log, the coverage script, the judge packet | A pilot of 2 scenarios in each repository runs end to end on all five paths |
-| E4 | Baseline pass on the code as it stands: Parse, Search, the no-model Answer control and Answer with Focus only, on all 20 scenarios. Context cannot act yet, so results 2 and 3 are first checked by replay; they get agent sessions only if their evidence differs from result 1. Their time is measured on CPU and GPU | Judged, analysed and reported to the user |
-| E5 | Change set 1 (section 5.3), built while E1 to E4 run. Replay, then a full pass on all five results, CPU and GPU, with Large on CPU on 4 scenarios | Reported; the user decides whether to go on |
-| E6 | Change set 2: what the E5 pass shows, plus the first trained candidates. Replay, then a full pass | The same |
-| E7 | Change set 3, only if E6 shows a gain still within reach | The same |
-| E8 | Run the sealed set once on the final configurations | Reported beside the development results |
-| E9 | Report: the answer to section 1 for each configuration, the change sets and what each kept, and what to deliver | The user decides what ships |
+| E3 | Build the harness: the path wrapper and turn log, the coverage script, the judge packet | A pilot of 2 scenarios in each repository runs end to end on all five paths. Report `00-setup.md` is committed, with `scenarios.md` and `rubrics.md` |
+| E4 | Baseline pass on the code as it stands: Parse, Search, the no-model Answer control and Answer with Focus only, on all 20 scenarios. Context cannot act yet, so results 2 and 3 are first checked by replay; they get agent sessions only if their evidence differs from result 1. Their time is measured on CPU and GPU | Judged and analysed. Report `01-baseline.md` is committed and the user has it |
+| E5 | Change set 1 (section 5.3), built while E1 to E4 run. Replay, then a full pass on all five results, CPU and GPU, with Large on CPU on 4 scenarios | Report `02-change-set-1.md` is committed; the user decides whether to go on |
+| E6 | Change set 2: what the E5 pass shows, plus the first trained candidates. Replay, then a full pass | Report `03-change-set-2.md`; the same decision |
+| E7 | Change set 3, only if E6 shows a gain still within reach | Report `04-change-set-3.md`; the same decision |
+| E8 | Run the sealed set once on the final configurations | Report `05-sealed-set.md`, beside the development results |
+| E9 | Final report `06-final-report.md`: the answer to section 1 for each configuration, the change sets and what each kept, and what to deliver | The user decides what ships |
 
 Running beside E1 to E5, each with its own agent under the rule of one Cargo
 owner and one GPU owner at a time:
@@ -461,6 +489,9 @@ owner and one GPU owner at a time:
   train the first Focus candidate.
 - **GPU track.** The Answer paths for Large and for Focus on the GPU, and
   the 180-second allowance (section 7).
+
+Every report goes in [docs/arbiter/answer-evaluation/](answer-evaluation/README.md)
+(section 5.6). A step is not done until its report is committed.
 
 Platform work (Linux, macOS, Radeon, packaging) waits for E9, since E9 says
 which stages are worth delivering.
@@ -518,12 +549,13 @@ These are estimates. The pilot in step E3 replaces them with measurements.
    that span every level, running them in one pass is faster and loses
    nothing, because every pass reports each configuration separately. Say if
    you want them strictly one after another.
-4. **"Weights" and "adjustments"** cover the six levels of section 5.1, and
-   not only trained model weights. In particular the first change set alters
-   how Answer gathers evidence (changes 1 to 3 of section 5.3). The analysis
-   says the largest gain is there. Change sets are built as you directed on
-   21 November: the most likely set of improvements together, then iterate,
-   with at most three sets before the report.
+4. **Confirmed by the user on 21 November.** "Weights" and "adjustments"
+   cover the six levels of section 5.1, and not only trained model weights.
+   In particular the first change set alters how Answer gathers evidence
+   (changes 1 to 3 of section 5.3). The analysis says the largest gain is
+   there. Change sets are built as the user directed: the most likely set of
+   improvements together, then iterate, with at most three sets before the
+   report.
 5. **Agent sessions with a logged turn count** (section 3.5), in place of my
    estimating turns from one reply. Section 8 gives the lighter alternative.
 6. **The follow-up tools of each path** (section 3.3). In particular, the
@@ -542,6 +574,10 @@ These are estimates. The pilot in step E3 replaces them with measurements.
 11. **Platform work waits for E9.**
 12. **Scenario review.** Whether you want to approve the 20 final scenarios
     before the first run, or only see them.
+13. **What the reports may say about bookbuilder.** The reports are committed
+    to this repository (section 5.6). I plan to name bookbuilder's scenarios
+    and cite its file paths, and to quote none of its source. Say if its
+    paths or scenario wording should stay out as well.
 
 ## 10. Engineering state carried forward
 
