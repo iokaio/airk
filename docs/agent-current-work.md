@@ -573,10 +573,19 @@ The governing plan is the rewritten
 The direction is also recorded in the
 [parent plan](arbiter/final-plan.md#evaluation-direction-21-november-2026-americadenver).
 
-- The user read the plan, corrected it twice and approved its main readings
-  on 21 November (reading 4, then readings 1, 3, 5, 8 and 9). Steps E1 to E3
-  and the parallel tracks started that day. The other readings of section 9
-  stand as written unless the user corrects them.
+- **Do not start step E1 or later until the user explicitly says to start.**
+  The user read the plan, corrected it and approved its main readings on
+  21 November (reading 4, then readings 1, 3, 5, 8 and 9). That approval was
+  not the word to start: the primary agent took it as one, the user stopped
+  it before any agent ran, and said "do not execute on the plan yet". No
+  service, index, scenario, harness or test exists. The other readings of
+  section 9 stand as written unless the user corrects them.
+- The user then passed on an outside review and the plan adopted its four
+  points: the benchmark's own files are excluded from the airk index, with a
+  leak probe; a turn count ends at a correct finish (evidence and brief both
+  right), with the headroom reported at the baseline; every report shows
+  what each model adds over the stage below it; and shared search fusion is
+  held back from the first change set.
 - Two new indexes are built from the branch as it builds today, for
   `D:\code\github\airk` and `D:\code\github\bookbuilder`. The user's
   running service is not used, and nothing is written into either

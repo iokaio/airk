@@ -130,12 +130,20 @@ say otherwise, this direction governs.
    what was good and what was bad, and is written to be read easily by
    anyone with access to the repository. The reports live in
    [docs/arbiter/answer-evaluation/](answer-evaluation/README.md).
-10. **Approved to start.** The user approved the plan's main readings the
-    same day: ten scenarios in each repository, all three Answer
-    configurations in each pass with one change set after it, agent sessions
-    with a logged turn count, the no-model control, a sealed second set of
-    scenarios, training pairs mined from repository history, and the
-    proposed thresholds for "substantially improves".
+10. **Readings approved; execution not started.** The user approved the
+    plan's main readings the same day: ten scenarios in each repository, all
+    three Answer configurations in each pass with one change set after it,
+    agent sessions with a logged turn count, the no-model control, a sealed
+    second set of scenarios, training pairs mined from repository history,
+    and the proposed thresholds for "substantially improves". The user then
+    said not to execute the plan yet. Execution waits for the user's
+    explicit word.
+11. **Four points adopted from an outside review** the user passed on: keep
+    the benchmark's own files out of the index it is tested on; count turns
+    to a correct finish, where the evidence and the agent's brief are both
+    right, and report the headroom for a win at the baseline; show in every
+    report what each model adds over the stage below it; and hold shared
+    search fusion back from the first change set.
 
 After the first three measured iterations the user set the GPU memory
 targets at a 16 GB card for Compact and a 24 GB card for Large, replacing

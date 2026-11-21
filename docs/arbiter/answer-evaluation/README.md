@@ -19,7 +19,7 @@ the five results per scenario, the two rubrics and how weights are adjusted.
 
 | # | Report | What it covers | Outcome |
 | --- | --- | --- | --- |
-| — | None yet | The user approved the plan on 21 November 2026 and setup began that day. The first report, `00-setup.md`, follows the pilot. | — |
+| — | None yet | The plan's readings were approved on 21 November 2026. Execution has not started; it waits for the user's word. The first report, `00-setup.md`, follows the pilot. | — |
 
 The newest report is the current standing. The final report, when it exists,
 answers the question above for each Answer configuration.
@@ -28,10 +28,10 @@ answers the question above for each Answer configuration.
 
 | File | Written after |
 | --- | --- |
-| `00-setup.md` | The service is built, the two indexes exist, the scenarios and rubrics are frozen and the pilot has run |
-| `01-baseline.md` | The baseline pass on the code as it stood before any change |
+| `00-setup.md` | The service is built, the two indexes exist with the benchmark's own files excluded and the leak probe passing, the scenarios and rubrics are frozen and the pilot has run |
+| `01-baseline.md` | The baseline pass on the code as it stood before any change. It also reports the headroom: on how many scenarios a substantial win is possible at all |
 | `02-change-set-1.md`, `03-change-set-2.md`, `04-change-set-3.md` | Each change set and the pass that tested it |
-| `05-sealed-set.md` | The sealed scenarios, run once on the final configurations |
+| `05-sealed-set.md` | The sealed scenarios, run once on the configuration named beforehand |
 | `06-final-report.md` | The answer to the question, and what is recommended for delivery |
 
 A report is committed when its series is judged, before the next series
@@ -42,7 +42,8 @@ Beside the reports:
 
 - `scenarios.md` holds the scenario instructions and their kinds, once
   frozen.
-- `rubrics.md` holds the two rubrics and the rule for "substantially
+- `rubrics.md` holds the two rubrics, the definition of a correct finish,
+  the table of cases that are not clear-cut and the rule for "substantially
   improves", as frozen before the first judged run.
 
 ## What every report contains
@@ -56,9 +57,18 @@ The same sections in the same order, so two reports can be compared quickly.
    test. The baseline report says "nothing" here.
 3. **What was tested.** The Answer configurations, the devices, the source
    commit, the index revisions and the scenario set.
-4. **Results.** Turns to sufficient context and the two rubric scores, for
-   each configuration against Parse and Search: overall, for each
-   repository, for each kind of task and for each scenario.
+4. **Results.** Three parts, each with every scenario listed.
+   - *Against Parse and Search.* For each Answer configuration: correct
+     finishes, turns to a correct finish, substantial wins, ties and losses,
+     and the two rubric scores, overall, for each repository and for each
+     kind of task. A correct finish means the evidence established every
+     essential fact and the agent's brief got those facts right.
+   - *What each model adds.* On the same scenario rows: what Answer with no
+     model does against Parse and Search, what Focus adds to that, what
+     Compact adds to Focus, and what Large adds to Compact. For each step,
+     the correct finishes added, the turns saved and the time added.
+   - *Reuse.* Which results reused an earlier session because the agent
+     would have received identical evidence, and which were run again.
 5. **What was good.** What worked, with the scenarios that show it.
 6. **What was bad.** What did not work, what got worse, what failed or timed
    out, and any change that was made and then dropped. Nothing is left out

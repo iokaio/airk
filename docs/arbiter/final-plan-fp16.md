@@ -4,11 +4,12 @@ Rewritten on 21 November 2026 (America/Denver) at the user's direction. It
 replaces the FP16 delivery plan that stood in this file until then. The file
 keeps its name so that existing links still resolve.
 
-Status: the user read this plan on 21 November, corrected it twice (change
-sets in place of single changes, and a report for every series) and approved
-its main readings. Work started that day with steps E1 to E3 and the parallel
-tracks of section 6. Section 9 lists every place where I interpreted an
-instruction and which of those the user has confirmed.
+Status: the user read this plan on 21 November, corrected it (change sets in
+place of single changes, and a report for every series), approved its main
+readings and had me adopt four points from an outside review (section 2).
+**Execution has not started.** It waits for the user's explicit word. Section
+9 lists every place where I interpreted an instruction and which of those
+the user has confirmed.
 [Parent plan](final-plan.md) · [Ledger](../simplify/one-process-ledger.md)
 
 ## 1. The question
@@ -71,6 +72,25 @@ The user decided this on 21 November. It amends the CPU ladder of approval A2.
 - **In tests, Large on CPU is a measurement only.** It runs on one scenario
   in five, with a maximum of 180 seconds.
 
+### Adopted from review
+
+The user passed on an outside review of this plan on 21 November and asked me
+to adopt what I judged worth adopting. I adopted all four of its points.
+
+- **The benchmark stays out of its own index** (section 3.1). Otherwise a
+  search could retrieve this plan, the scenario file or a report and appear
+  to solve a task in one turn.
+- **A turn count ends at a correct finish** (section 4.1): the evidence
+  establishes every essential fact, and the agent's brief gets those facts
+  right. The room there is for a win is reported with the baseline
+  (section 4.3).
+- **Each model must earn its place** (section 4.4). Every report shows what
+  Focus adds over Answer with no model, what Compact adds over Focus, and
+  what Large adds over Compact.
+- **Shared search fusion leaves the first change set** (section 5.3), unless
+  the baseline shows that essential material falls outside the candidate
+  pool.
+
 ## 3. The test
 
 ### 3.1 Service and indexes
@@ -95,6 +115,20 @@ this branch has changed a great deal beyond Arbiter.
 - **Fixed for a test.** Watching is off. Each index is built once at a
   recorded commit and is not rebuilt during a test unless an adjustment
   requires it, in which case every path is run again.
+- **The benchmark is excluded from the airk index.** These paths describe the
+  test itself and are denied through the index's own source policy: this
+  plan, the report folder `docs/arbiter/answer-evaluation/`, the ledger
+  `docs/simplify/one-process-ledger.md`, the assignment file
+  `docs/agent-current-work.md` and the harness folder
+  `scripts/arbiter-answer-eval/`. The reference notes are never in scope,
+  because they live in the git-ignored campaign folder. No ignore file is
+  added to the repository: that would change the product and the user's own
+  index. Ordinary product documentation stays searchable, because finding it
+  is part of the task.
+- **A leak probe after every build.** A distinctive phrase from each
+  scenario instruction is searched for, and the build is refused if any hit
+  comes from an excluded path. The same exclusions and the same probe apply
+  to every rebuild.
 
 ### 3.2 Ten scenarios per repository
 
@@ -132,14 +166,19 @@ Each scenario produces five results to judge.
 | 4 | Parse | `airk_parse` only: text, a named recipe or an explicit plan of up to 6 steps and 12 reads in one call. It uses no Arbiter model |
 | 5 | Search | `airk_search` first, then single reads: `airk_references`, `airk_symbols`, `airk_outline`, `airk_context`, `airk_read_file` |
 
-With 20 scenarios that is 100 results in a full pass. Results 4 and 5 do not
-depend on the models, so they are run once and reused until something they
-depend on changes.
+With 20 scenarios that is 100 results in a full pass.
 
-I recommend one addition: a control run of Answer with no model enabled.
-Without it the test cannot tell whether a gain comes from the way Answer
-gathers evidence or from Focus. It needs no model and is compared with result
-1 mechanically, so it adds almost no cost.
+**The control.** The user approved one more run beside the five: Answer with
+no model enabled. It is carried through every pass and every change set. It
+is the only way to tell what the way Answer gathers evidence contributes from
+what a model contributes (section 4.4).
+
+**Reusing a session.** A session is reused, and not run again, when its agent
+would receive identical evidence in the same order. A digest of the first
+reply decides that. It applies between configurations, as when Context
+cannot act and results 2 and 3 return what result 1 returns. It applies
+between passes, as when a change set leaves Parse and Search untouched. Each
+report says which results were reused.
 
 ### 3.4 CPU and GPU
 
@@ -175,6 +214,9 @@ An agent produces each result, and its turns are logged, not estimated.
   Parse. After that the agent chooses its own follow-ups.
 - **Audit.** Every location the brief cites must appear in a logged result. A
   session that used anything outside the wrapper is discarded and rerun.
+- **A second session on a close call.** One session is one sample. Where a
+  scenario's verdict turns on a single turn, a second session is run for that
+  scenario and path, and both are reported.
 
 Device comparison and weight adjustment do not need an agent. They replay the
 recorded Answer calls and compare the returned evidence (section 5.2).
@@ -185,14 +227,19 @@ Before any run, each scenario gets reference notes written by reading the
 repository directly, never through the tools under test.
 
 - Between four and ten items of needed context, each with a file, a symbol or
-  line range, a one-line reason, and a mark of essential or helpful.
+  line range, and a mark of essential or helpful.
+- Each essential item states the fact the agent must take from that place, in
+  one sentence: the rule, the behaviour or the constraint. A location alone
+  is not enough, because an agent can be handed the right file and still
+  misread it.
 - Alternatives are listed where more than one place would serve.
 - The notes and the instructions are frozen and hashed before the first run.
   A correction after that is allowed only for a factual error, and is
   recorded with its reason.
 
 The notes make the first criterion measurable: after each turn, a script
-checks which essential items the returned evidence has covered.
+checks which essential items the returned evidence has covered. A judge then
+checks the agent's brief against the stated facts.
 
 ### 3.7 What Answer does today, from the source
 
@@ -232,36 +279,58 @@ results and can overrule any score.
 
 ### 4.1 Rubric A: fewer turns for an agent (first priority)
 
-Measured from the turn log and the reference notes:
+A turn count means something only if the agent ends up right. So turns are
+counted to a **correct finish**, which needs both of these:
 
-- **Turns to sufficient context.** The number of the turn after which every
-  essential item was covered. If the session ends without that, the result
-  is "not reached" and the missing items are listed.
+1. **The evidence establishes every essential fact.** After some turn, the
+   returned evidence covers every essential item of the reference notes. A
+   script checks this from the turn log.
+2. **The brief gets those facts right.** The agent's work brief states each
+   essential fact correctly. A judge checks this against the notes.
+
+The turn count of a correct finish is the turn at which the first condition
+was met. A session that meets the first and fails the second has no correct
+finish: the evidence was there and the agent did not take it in.
+
+Also measured from the turn log:
+
 - **First-call yield.** The share of essential items covered by the first
   call alone.
 - **Context cost.** Bytes returned to the agent over the session, and
   elapsed time. Fewer turns bought with a very large or very slow reply is
   recorded as such.
 
-Judged from the session:
+Also judged from the session:
 
 - **Misleading or noisy evidence.** Whether irrelevant or wrong material sent
   the agent down a wrong path.
-- **The work brief.** Whether the agent's own account of the task is correct
-  and complete against the notes.
 
 Each result gets one grade:
 
 | Grade | Meaning |
 | --- | --- |
-| 4 | Sufficient after one call, and the brief is correct |
-| 3 | Sufficient after two calls |
-| 2 | Sufficient after three or four calls |
-| 1 | Sufficient after five or more calls, or the right area was found and an essential item is still missing |
-| 0 | Not sufficient, misleading, failed or timed out |
+| 4 | A correct finish after one call |
+| 3 | A correct finish after two calls |
+| 2 | A correct finish after three or four calls |
+| 1 | A correct finish after five or more calls. Or one essential fact short: every fact was covered and the brief got one wrong, or one fact was never covered |
+| 0 | More than one essential fact missing or wrong, misleading evidence that the agent followed, a failure or a timeout |
 
-A grade is lowered by one when the evidence misled the agent or the brief is
-wrong on an essential point.
+Cases that are not clear-cut are counted this way. The table is fixed before
+the first run, so none of them is decided after the results are seen.
+
+| Case | How it counts |
+| --- | --- |
+| Answer finishes correctly one turn sooner than the better of Parse and Search | Better, and reported as better. Not a substantial win |
+| Answer and the better of them finish correctly on the same turn | A tie |
+| Answer finishes correctly later than the better of them | Worse |
+| Answer's evidence covers every essential fact and its brief gets one wrong | No correct finish for Answer. Not a win, whatever its turn count |
+| Answer finishes correctly, and neither Parse nor Search does | A substantial win |
+| Answer fails or times out, and Parse or Search finishes correctly | Worse |
+| No path finishes correctly | No win. The scenario stays in the 20 and is listed as unsolved by every path |
+| The verdict turns on a single turn | A second session is run (section 3.5). The verdict stands if both agree. If they differ, the scenario is reported as undecided and is not a win |
+
+"Worse", wherever section 4.3 uses it, means one of the two rows above that
+say so.
 
 ### 4.2 Rubric B: useful detail for a person (second priority)
 
@@ -277,11 +346,12 @@ original prompt. Four questions, each scored 0 to 4, averaged.
 
 ### 4.3 What "substantially improves" means
 
-I propose this rule and ask the user to set the numbers.
+The user approved these thresholds on 21 November.
 
-- **A substantial win on a scenario:** the Answer result reaches sufficient
-  context at least two turns sooner than the better of Parse and Search, or
-  in one call where the better of them needed three or more.
+- **A substantial win on a scenario:** Answer reaches a correct finish at
+  least two turns sooner than the better of Parse and Search, or in one call
+  where the better of them needed three or more, or at all where neither of
+  them reached one.
 - **A configuration substantially improves results** when it wins that way
   on at least 12 of the 20 scenarios, is worse on at most 2, wins at least 5
   in each repository, and is not worse on average in any of the four kinds
@@ -290,14 +360,48 @@ I propose this rule and ask the user to set the numbers.
   B averages. It does not decide the outcome. It breaks ties and guides how
   Answer presents evidence.
 
+**Headroom.** A substantial win is possible only on a scenario where the
+better of Parse and Search needs three or more calls, or never finishes
+correctly. The baseline report counts those scenarios. If there are fewer
+than 12, no adjustment can meet the rule, and I bring that to the user as a
+decision before a change set is tested. It would be a finding in itself: on
+those tasks the simpler tools are already enough.
+
 Results are reported for each configuration, each repository and each kind
 of task, with every scenario listed. Twenty scenarios support a clear
 difference and cannot support a fine one, and the report says which it is.
 
-### 4.4 Keeping the judging honest
+### 4.4 What each model adds
 
-- **Frozen inputs.** Instructions and reference notes are fixed before any
-  run.
+Beating Parse and Search does not decide what ships. All three Answer
+configurations could win on the same scenarios while better gathering
+accounts for the whole gain. So every report also sets the configurations
+beside each other, on the same scenario rows:
+
+| Step | Compared with | Devices |
+| --- | --- | --- |
+| Answer with no model | The better of Parse and Search | No model runs |
+| Answer with Focus | Answer with no model | CPU and GPU |
+| Answer with Focus and Compact | Answer with Focus | CPU and GPU |
+| Answer with Focus and Large | Answer with Focus and Compact | GPU |
+
+For each step the report gives three things: the correct finishes it adds,
+the turns it saves, and the time it adds. A stage that adds time and no
+correct finish has not earned its place, whatever the comparison with Parse
+and Search says.
+
+This is also how attribution survives change sets. Changes are bundled
+within a layer: gathering, Focus or Context. The steps above separate the
+layers.
+
+Before the sealed set is opened, I write down which configuration the
+development results support, and why. The rule of section 4.3 is then
+applied to that configuration once, on the sealed set.
+
+### 4.5 Keeping the judging honest
+
+- **Frozen inputs.** Instructions, reference notes and the tables of section
+  4.1 are fixed before any run.
 - **Blind first pass.** Two independent judge sessions score each result
   from the rubric, the notes and the evidence, with the path names hidden
   where that is possible. Answer's reply has a recognizable shape, so the
@@ -305,11 +409,13 @@ difference and cannot support a fine one, and the report says which it is.
 - **Adjudication.** I settle any scores that differ by more than one grade
   and record why.
 - **The user's packet.** For each scenario: the instruction, the notes, the
-  five results side by side with their turn logs, the scores and my reasons.
-- **A sealed second set.** I recommend writing a second set of ten scenarios
-  for each repository at the same time, with the same mix, and not running
-  them until the adjustments are finished. Adjusting against 20 scenarios
-  will fit those 20. The sealed set shows whether the gain holds.
+  results side by side with their turn logs, the scores and my reasons.
+- **A sealed second set.** Approved by the user. A second set of ten
+  scenarios for each repository is written at the same time, with the same
+  mix, and is not run until the adjustments are finished. Adjusting against
+  20 scenarios will fit those 20. The sealed set shows whether the gain
+  holds. It is run once: on the configuration named beforehand (section
+  4.4), the no-model control, Parse and Search.
 
 ## 5. Developing weights from the tests
 
@@ -354,8 +460,10 @@ One iteration:
    for each change that is costly to keep: one that needs a recorded
    decision, adds latency, or is a trained weight file. Also for any
    scenario the set made worse. Each such replay takes minutes.
-6. **Pass again** with agent sessions on all five results, because a set
-   usually changes retrieval and so moves Parse and Search too.
+6. **Pass again** with agent sessions on every Answer configuration, the
+   no-model control included. Parse and Search are run again only when the
+   set changes something they depend on. Otherwise their sessions are reused
+   (section 3.3).
 7. **Report.** Write the series up in the report folder (section 5.6): the
    set, each change with its cause and expected effect, the results, what
    was good, what was bad, and what was kept or dropped. The report is
@@ -393,14 +501,32 @@ it rests on something measured or on my reading of the code.
 | 3 | A larger first search: a wider pool of candidates and whole chunks instead of about 500 bytes a hit | Read from the code: 8 hits share 4,096 bytes. An agent needs whole functions and sections | 1 |
 | 4 | Focus scores the whole pool and the best hits are kept. The pool is sized to the device: full on the GPU, smaller on CPU | Read from the code: Focus reorders 4 of 8 and cannot bring a hit in. Measured: about 3.9 s per pair on CPU at 4 threads | 3 |
 | 5 | A software-task instruction for Focus in place of the web-search one | Read from the code. The size of the effect is unknown | 3 |
-| 6 | Fuse lexical and vector results by the kind of query: identifiers lean lexical, prose leans vector. Prefer source and documentation over generated files | My inference; fusion is equal votes today. Moves Parse and Search as well | 2 |
-| 7 | Give Context something to decide and let it act: option lines that state each read in words, the wider and more varied choices of change 1, and a provisional rule that accepts its top Read choice | Read from the code: with zero rules Context never acts. A hint from the retired panel: with the read stated, its share of the score variation rose from 0.5% to 19% for Compact and from 7% to 46% for Large | 4 |
-| 8 | Packing and presentation: drop overlapping evidence, group the reply by what each part is for (where to change, rules to respect, tests, documentation), keep exact locations | A hint from the retired TechQA run: 22% of delivered bytes were duplicates. Serves Rubric B directly | 1 |
-| 9 | Shape the budget to the device, so Answer stays inside 120 seconds on CPU | Measured: Compact takes 9.7 s per call at 2,048 tokens and 47.6 s at 8,192 on 8 cores | 1 |
+| 6 | Give Context something to decide and let it act: option lines that state each read in words, the wider and more varied choices of change 1, and a provisional rule that accepts its top Read choice | Read from the code: with zero rules Context never acts. A hint from the retired panel: with the read stated, its share of the score variation rose from 0.5% to 19% for Compact and from 7% to 46% for Large | 4 |
+| 7 | Packing and presentation: drop overlapping evidence, group the reply by what each part is for (where to change, rules to respect, tests, documentation), keep exact locations | A hint from the retired TechQA run: 22% of delivered bytes were duplicates. Serves Rubric B directly | 1 |
+| 8 | Shape the budget to the device, so Answer stays inside 120 seconds on CPU | Measured: Compact takes 9.7 s per call at 2,048 tokens and 47.6 s at 8,192 on 8 cores | 1 |
 
 Changes 1 to 3 alter how Answer gathers evidence, not a model. I include them
 because the analysis says the largest gain is there, and because Focus and
 Context can only choose well among reads that are worth choosing.
+
+The set is bundled by layer, which is what lets section 4.4 say what each
+layer added. Changes 1, 2, 3, 7 and 8 are the gathering layer and work with
+no model. Changes 4 and 5 are the Focus layer. Change 6 is the Context
+layer. None of them alters the shared search tool, so Parse and Search
+return what they returned at the baseline and their sessions are reused.
+
+Held back from the first set:
+
+- **How shared search fuses and ranks results:** weighting lexical and
+  vector results by the kind of query, and preferring source and
+  documentation over generated files. The case for it is my inference only.
+  It also changes Parse and Search, which would cost 40 comparator sessions
+  in a pass and blur whether Answer improved or the floor moved.
+- **What brings it in.** The baseline measures, with no agent session, the
+  rank at which each essential item first appears in a search of 100 hits.
+  If the items are mostly inside the pool that changes 3 and 4 give Focus,
+  fusion stays out. If they are missing even at that depth, fusion or
+  chunking is the bottleneck and enters the next set.
 
 Prepared in parallel for the second set:
 
@@ -408,7 +534,7 @@ Prepared in parallel for the second set:
 - Focus candidate weights trained on them with the existing LoRA tooling,
   and the existing pilot checkpoint, both judged by the same scenarios.
 - Whether to build a Context trainer. That is decided from the first pass
-  with change 7 in place, which shows whether Context chooses well once it
+  with change 6 in place, which shows whether Context chooses well once it
   can act.
 
 ### 5.4 Training data for model weights
@@ -423,13 +549,14 @@ the scenarios, mined from real repositories:
   the needed evidence.
 - A test as the instruction, and the code under test as the needed evidence.
 
-Any mined pair whose evidence overlaps a judged or sealed scenario's notes is
-left out. Training keeps the earlier protection for existing abilities: the
+Mining leaves out three things: the paths excluded from the index (section
+3.1), every commit made after the scenarios are frozen, and any pair whose
+evidence overlaps a judged or sealed scenario's notes. Training keeps the earlier protection for existing abilities: the
 original weights stay selectable, and training includes general replay.
 
 ### 5.5 Guards
 
-- **Fitting the test.** The sealed set of section 4.4.
+- **Fitting the test.** The sealed set of section 4.5.
 - **Fitting the repository.** A model trained on one repository's history
   may only have memorized it. A trained candidate is also checked across
   repositories: trained on pairs from one, tested on the scenarios of the
@@ -468,20 +595,21 @@ are the readable account; the ledger is the audit trail behind them.
 
 ## 6. Work order
 
-Step E0 is done. The reports in the folder below say how far the rest has
-got.
+Nothing here has started. The readings of section 9 are approved, and
+execution waits for the user's word. Once it starts, the reports in the
+folder below say how far it has got.
 
 | Step | Work | Done when |
 | --- | --- | --- |
-| E0 | The user reads this plan and corrects it | Done on 21 November: the main readings of section 9 are approved |
-| E1 | Build the evaluation service from current source. Create the two indexes with vectors. Check scope and credential exclusion | Both indexes serve hybrid search, and their file counts and commits are recorded |
+| E0 | The user reads this plan and corrects it, and says to start | The main readings of section 9 were approved on 21 November. The word to start has not been given |
+| E1 | Build the evaluation service from current source. Create the two indexes with vectors. Check scope and credential exclusion, and apply the benchmark exclusions of section 3.1 | Both indexes serve hybrid search, their file counts and commits are recorded, and the leak probe passes |
 | E2 | Write the 20 scenarios and their reference notes, and the sealed set if adopted. Freeze them | The user has seen the scenario list; hashes recorded |
 | E3 | Build the harness: the path wrapper and turn log, the coverage script, the judge packet | A pilot of 2 scenarios in each repository runs end to end on all five paths. Report `00-setup.md` is committed, with `scenarios.md` and `rubrics.md` |
-| E4 | Baseline pass on the code as it stands: Parse, Search, the no-model Answer control and Answer with Focus only, on all 20 scenarios. Context cannot act yet, so results 2 and 3 are first checked by replay; they get agent sessions only if their evidence differs from result 1. Their time is measured on CPU and GPU | Judged and analysed. Report `01-baseline.md` is committed and the user has it |
-| E5 | Change set 1 (section 5.3), built while E1 to E4 run. Replay, then a full pass on all five results, CPU and GPU, with Large on CPU on 4 scenarios | Report `02-change-set-1.md` is committed; the user decides whether to go on |
+| E4 | Baseline pass on the code as it stands: Parse, Search, the no-model Answer control and Answer with Focus only, on all 20 scenarios. Context cannot act yet, so results 2 and 3 reuse result 1's sessions where their evidence is identical; their time is measured on CPU and GPU. With no agent session, record the rank at which each essential item first appears in a search of 100 hits | Judged and analysed. Report `01-baseline.md` is committed with the headroom count of section 4.3, and the user has it |
+| E5 | Change set 1 (section 5.3), built while E1 to E4 run. Replay, then a pass on every Answer configuration and the control, CPU and GPU, with Large on CPU on 4 scenarios. Parse and Search sessions are reused, since the set leaves shared search alone | Report `02-change-set-1.md` is committed; the user decides whether to go on |
 | E6 | Change set 2: what the E5 pass shows, plus the first trained candidates. Replay, then a full pass | Report `03-change-set-2.md`; the same decision |
 | E7 | Change set 3, only if E6 shows a gain still within reach | Report `04-change-set-3.md`; the same decision |
-| E8 | Run the sealed set once on the final configurations | Report `05-sealed-set.md`, beside the development results |
+| E8 | Write down the configuration the development results support. Run the sealed set once on it, with the control, Parse and Search | Report `05-sealed-set.md`, beside the development results |
 | E9 | Final report `06-final-report.md`: the answer to section 1 for each configuration, the change sets and what each kept, and what to deliver | The user decides what ships |
 
 Running beside E1 to E5, each with its own agent under the rule of one Cargo
@@ -516,14 +644,20 @@ Found by reading the source. Each is a gap between today's code and section
 
 These are estimates. The pilot in step E3 replaces them with measurements.
 
-- **A full pass** is 100 agent sessions and their judging. I estimate two to
-  three hours of wall time and on the order of ten million tokens.
+- **A pass after a change set** is up to 80 agent sessions: four Answer
+  configurations, the control among them, on 20 scenarios. It is fewer where
+  evidence is identical and sessions are reused. Parse and Search add 40
+  only when a set changed shared search. I estimate two to three hours of
+  wall time and on the order of ten million tokens for 100 sessions with
+  their judging.
 - **A replay** is 20 recorded calls for each configuration and takes minutes
   with no agent sessions. The leave-one-out checks of section 5.2 are
   replays.
 - **The whole campaign** is at most five passes: the baseline, up to three
-  change sets and the sealed set. The baseline is smaller, about 80
-  sessions, because Context cannot act yet.
+  change sets and the sealed set. The baseline is about 80 sessions (Parse,
+  Search, the control and Focus only), because Context cannot act yet. The
+  sealed set is about 80 (one configuration, the control, Parse and
+  Search).
 - **Judging.** The baseline, the last change set and the sealed set get two
   independent judge sessions for each result. A pass in between gets one,
   plus my adjudication, to save time.
@@ -542,7 +676,8 @@ These are estimates. The pilot in step E3 replaces them with measurements.
 
 On 21 November the user confirmed reading 4 and then approved readings 1, 3,
 5, 8 and 9. The others (2, 6, 7, 10, 11, 12 and 13) stand as written and are
-followed unless the user corrects them.
+followed unless the user corrects them. Approving the readings was not the
+word to start, and execution waits for that.
 
 1. **Twenty scenarios.** Ten for each repository, the same ten kinds of
    instruction in both. The alternative is ten in all, five in each.
@@ -569,9 +704,9 @@ followed unless the user corrects them.
 7. **Large on CPU in tests** is 2 of each 10 scenarios, 4 in all. With GPU
    use on, a Large that cannot run on the GPU falls back to Compact and never
    to Large on CPU.
-8. **The three additions I recommend:** the no-model Answer control, the
-   sealed second set of scenarios, and training pairs mined from repository
-   history.
+8. **The three additions I recommended, approved:** the no-model Answer
+   control, now carried through every pass (section 3.3), the sealed second
+   set of scenarios, and training pairs mined from repository history.
 9. **The thresholds of section 4.3.**
 10. **Experiments in the private evaluation build** may change gathering
     code and digest-input code such as the Focus instruction and the Context
@@ -613,5 +748,5 @@ entries of 21 November hold the receipts.
 | A6, memory fit against a model-free control | In force |
 | GPU use is opt-in on every platform | In force and implemented |
 | Memory targets: 16 GB for Compact, 24 GB for Large | In force |
-| The user reviews discordant pairs of the paired comparison | Retired. The user now reviews the judging packet of section 4.4 |
+| The user reviews discordant pairs of the paired comparison | Retired. The user now reviews the judging packet of section 4.5 |
 | Pushes of `feat/arbiter-final` to `origin` | Authorized. No PR, merge, publication or deployment |

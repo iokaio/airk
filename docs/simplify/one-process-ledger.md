@@ -15231,3 +15231,61 @@ Python or model job running; idle adapter use 573 MiB. The retired
 calibration installation under `cal100-focus1024-capture-r3` holds 24.16 GB
 of installed weight copies that can be reclaimed once their originals are
 rehashed.
+
+### 21 November 2026 at 14:47 UTC — Correction: the evaluation has not started; four review points adopted
+
+**Correction to the entry above.** Its heading and its "Started" paragraph
+are wrong. The user's "I approve of all of those" approved the readings I
+had listed. It was not the word to start, and I took it as one. I recorded
+"started" in the plan, the parent plan, the assignment file and the report
+folder's README, pushed that as `403db568`, created the private folder and
+its common brief, and tried to launch three agents. The user rejected the
+launches and wrote "stop" and "do not execute on the plan yet".
+
+What actually exists: the private folder
+`artifacts/v190/final-plan/exec-20261116T052942Z/answer-eval-r1/` with empty
+subfolders and one file, `AGENT-BRIEF.md`. No agent ran. No build, service,
+index, scenario, harness, model, GPU or WSL work was done. The retired
+calibration installation was not touched. The four tracked records are
+corrected in this commit to say that the readings are approved and execution
+waits for the user's explicit word. A session memory now records that
+approving a plan's readings is not permission to execute it.
+
+**Review feedback.** The user passed on an outside review of the plan, asked
+what was worth adopting, and then told me to change the plan as I saw fit
+without starting it. I adopted all four points, with small extensions of my
+own:
+
+1. **The benchmark stays out of its own index.** The airk index denies,
+   through its own source policy, this plan, the report folder, this ledger,
+   the assignment file and the harness folder. No ignore file is added to
+   the repository. A leak probe after every build searches for a phrase from
+   each scenario instruction and refuses the build if a hit comes from an
+   excluded path. Training-pair mining leaves out the same paths and every
+   commit made after the scenarios are frozen.
+2. **A turn count ends at a correct finish.** The evidence must establish
+   every essential fact and the agent's brief must get those facts right, so
+   each essential reference item now states its fact. A table fixes, before
+   the first run, how one-turn differences, wrong briefs, timeouts and
+   scenarios that no path solves are counted. The baseline reports the
+   headroom: the number of scenarios where the better of Parse and Search
+   needs three or more calls. If that is below 12, the approved rule cannot
+   be met and the user decides before a change set is tested.
+3. **Each model must earn its place.** The no-model Answer control is
+   carried through every pass. Every report shows, on the same scenarios,
+   what Focus adds over the control, what Compact adds over Focus and what
+   Large adds over Compact: correct finishes added, turns saved and time
+   added. A session is reused when its agent would receive identical
+   evidence. Before the sealed set is opened, the configuration that the
+   development results support is written down, and the approved rule is
+   applied to it once.
+4. **Shared search fusion is held back from the first change set.** It
+   enters a set only if the baseline shows essential items missing from a
+   search of 100 hits. The first set then leaves Parse and Search unchanged,
+   so their sessions are reused.
+
+My own small addition: where a verdict turns on a single turn, a second
+session is run for that scenario and path.
+
+**Resume action.** None until the user says to start. Then step E1 of the
+Arbiter plan.
