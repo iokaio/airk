@@ -617,6 +617,119 @@ its SHA. Receipts include complete scores, separate publisher and matching
 comparisons, backend observations and OS Job limits. Q543 preserves the
 ranked actions and records whether the service applied a certificate.
 
+## Windows Large direct R8 CAL phase and panel
+
+`probe_large_cal.py` runs the native selector
+`…::cuda_qualification::fp16_large::cal::large_direct_original_cal_phase`
+once for one original R8 phase. Phases 0–11 hold eight chronological requests
+and phase 12 holds four. It produces raw score vectors only. It fits nothing
+and qualifies nothing.
+
+Fixed identities, each refused when it differs:
+
+| Item | SHA-256 |
+|---|---|
+| Typed final graph | `13da8267e7490e334b5a860ced90af8318a01f5c2d03759173feac45ca598b46` |
+| Direct model graph, `large-direct-fp32-stage-r2/model.onnx` | `c1b5776144c6d9af07d08552cae40e491d8f866e89c53bab567adeeb32ca75e4` |
+| Original half weights | `5b053f02795e72ff88123b28f89d3f2c89da055e9ed2228bc60809dd0a2b4270` |
+| Scientific runtime manifest | `9433753580c8a370bbea42119aa67ac81306229bcf6876514213f3e2979083b5` |
+| Launch audit | `aa2dea22544689e785426e03d4fa4f657cfda6d5dbc86b682a8594be7bb680e1` |
+| R8 projection receipt | `e1fd8a2b0f2f064a0c32ef361f8bd085c58120f7eaf5ab1758a80f9bea2ea845` |
+| Large compiler batch, `large.json` | `fac3dd246c91ede7fef576baea1e65ff2971e26f229159878e1993ac068fe6bf` |
+| R8 compiler receipt | `e990a1b8346b5cd0fcd68ffd97b0c1eee776094641bd41ef864af547971690cb` |
+| Static seal of the image that ran the compiler | `e64c46617bc4a5ee83271a9adc4e85b4f391568fb79d2a43e118c01325ccb7ec` |
+
+Limits. The native process and its Job are capped at exactly 22 GiB. One
+120-second clock starts when the launcher starts and covers input custody, the
+native Job and the checks made before the receipt is marked complete. The
+A6000 must have at least 44 GiB free: the launcher refuses on the `nvidia-smi`
+reading before the Job exists, and the selector checks the CUDA reading before
+it opens the session. Run nothing else on the device.
+
+Native environment. The launcher removes every inherited `AIRK_`, `ORT_`,
+`PYTHON`, `CUDA_` and `CUDNN_` variable and sets exactly these:
+`ORT_CUDA_GEMM_OPTIONS=2`, `ORT_ENABLE_ATTENTION_KERNEL_DEBUG_INFO=1`,
+`AIRK_PRIVATE_CENSUS_BASE` and `CUDA_CACHE_PATH` (the receipt's `temp`
+directory), `AIRK_LARGE_CUTLASS_EXPIRES_NS`,
+`AIRK_LARGE_CUTLASS_TEST_IMAGE_SHA`, `AIRK_CUDA_CAL_PHASE`,
+`AIRK_CUDA_CAL_LAUNCH_AUDIT` and `AIRK_CUDA_CAL_CHRONOLOGICAL_LARGE` with
+their `_SHA256` values. A pressure grant or a typed-graph or width gate in the
+environment is refused.
+
+Custody before launch:
+
+- The staged image, its Cargo build receipt, the static seal of that image,
+  the retained sources named by the build receipt, and same-image operand and
+  direct graph receipts. The graph receipt must report the typed graph above.
+- The build must list `fp16_large/cal.rs`, `cutlass/large/cal.rs` and
+  `fp16_compact/cal.rs`. An image built before the selector existed is refused.
+- The R8 projection receipt, both closed lifetimes named by it, the launch
+  audit and question census, the certificate preflight, the phase's
+  independent-input report, its settled owner record and transcript, and each
+  request's original capture record. The capture's Large compiler census must
+  equal the request's compiled input, roster and remaining allowance.
+- The R8 compiler receipt, which recompiled all 100 Large requests with zero
+  model calls. Its executable was the R7 Compact image. A later build reuses
+  that Cargo file name, so the launcher authenticates the image through its
+  static seal and retained staged copy.
+
+The scorer image differs from the compiler image. The selector recompiles each
+request it scores from that request's capture record, on the scorer image,
+immediately before the forward. It does not recompile the other phases' rows.
+
+Native output. The selector prints one `AIRK_LARGE_COMPENSATED=` line holding
+`{"job", "native"}`. Rows are at `native.result.cal.observation.rows` and the
+forward count at `native.result.cal.native_forwards`. The launcher requires 36
+`EFFICIENT_ATTENTION` FP32 kernel records with zero attention workspace for
+every forward, in complete groups of the 36 named layers. The operation
+journal `temp/protected.operations.jsonl` must hold one started and one
+returned event per forward, with the Large batch digest as input identity, the
+typed graph as profile, the owned process ID and the staged image digest.
+
+Outputs. A fresh `large-direct-cal-r8-full100-phaseNN-rN` directory holds
+`execution.json` (schema `airk.private.large-direct-cal-cuda/1`),
+`stdout-stderr.log`, an empty `stdin.txt` and `temp/`. Once the output
+directory exists, a refused or failed run still writes the receipt with
+`complete: false` and the error. A custody refusal before that point creates
+nothing. `--check-only` performs the same custody and stops before the device
+reading, the Job and any output.
+
+`large_cal_panel.py` joins thirteen complete phase receipts from one image and
+one graph receipt. It checks every row's ordinal, question ID, compiled input,
+capture, roster and budget against `large.json` and writes
+`r8-large-raw-panel-rN.json` (schema
+`airk.private.r8-large-scientific-raw-panel/1`). Each row has `ordinal`, `id`,
+`source_phase`, `input_digest` and `scores`, as in the Compact raw panel.
+`top_two_margins` gives, for the two highest legal raw scores of each request,
+the number of requests at or below 0.014 and at or below 0.020, those requests
+and the smallest margin.
+
+`large_cal_build.py` runs the reviewed Clippy, Nextest and image-build
+commands of `large_scientific_build.py`, whose file is unchanged. It keeps the
+template pins, the pinned offline toolchain, `--locked`, `--timings`, the
+four-GiB Job, the single Cargo worker and the unchanged-inputs requirement.
+It differs in four ways:
+
+- The receipt directory is `windows-large-direct-cal-checks-rN`.
+- No campaign cutoff is built in. `--not-after` supplies one for a run and
+  can only shorten the 1,800-second phase limit.
+- D: free space must stay at or above 1,037,825,253,376 bytes plus 512 MiB.
+  That is the original baseline of 1,233,246,265,344 bytes less the approved
+  195,421,011,968-byte budget, and it is above the 107,374,182,400-byte floor.
+- Nextest also runs the two Large CAL unit tests and the two `fp16_compact`
+  CAL tests the selector depends on. The retained JUnit report must show each
+  of the four passing exactly once.
+
+`stage_large_cal_image.py` reads the passed image-build receipt. It copies 24
+built sources to `retained-native-sources/<sha256>.source` beside the receipt:
+the 21 retained for the Large pressure image and the three CAL sources. It
+refuses when a live source no longer equals the built digest. It copies the
+compiler-emitted Inference test image to a fresh
+`fresh-cu15-large-direct-cal-rN-inference.exe` in the scientific provider
+stage, has the probes' own image reader accept the result, and writes
+`windows-large-direct-cal-stage-rN/execution.json` (schema
+`airk.private.large-cal-image-stage/1`).
+
 The completed R8 Compact CAL input mode uses the same native selector,
 candidate image and typed graph. The launcher independently pins the
 original compiler executable and the staged scorer copy, then verifies

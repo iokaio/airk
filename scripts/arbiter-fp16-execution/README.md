@@ -37,6 +37,46 @@ Both model probes use score_comparison.py to compare complete score vectors agai
 
 Run large_width_results.py with the campaign directory and a fresh private JSON output path to reproduce the four Windows Large score comparisons. It reopens each original native log and reports the score vectors, per-width and pooled raw and normalized-mass differences, winners, native test elapsed time and observed memory peaks. The test elapsed time includes model loading and teardown. The 8192-token result remains separately identifiable.
 
+## Windows Large R8 calibration panel
+
+Four tools take the Large direct scientific graph from a source build to the
+complete 100-request raw panel. Each refuses rather than repairs, writes only
+fresh outputs under the private campaign directory and fits nothing. The
+[execution contract](CONTRACT.md#windows-large-direct-r8-cal-phase-and-panel)
+gives the identities, limits and checks.
+
+| Tool | Purpose | Inputs | Outputs |
+|---|---|---|---|
+| `large_cal_build.py` | Check and build the Inference test image that carries the Large CAL selector. | `--phase clippy`, `nextest` or `image`; an existing `windows-large-direct-cal-checks-rN` directory with `temp` and `owned-<phase>` children; the offline Cargo environment; optional `--not-after`. | Cargo receipts, logs and timings in that directory, and `owned-<phase>/limits.json`. |
+| `stage_large_cal_image.py` | Retain the built sources and stage the linked image. | The image-build receipt and its SHA-256, a fresh staged image name, the pinned `pwsh`. | `retained-native-sources/<sha256>.source`, the staged executable and a stage receipt. |
+| `probe_large_cal.py` | Score one original phase, 0–12, in one owned Job. | The staged image, build receipt, static seal, same-image operand and graph receipts, source snapshot and the R8 projection and compiler digests. | `large-direct-cal-r8-full100-phaseNN-rN/execution.json`, the native log and the operation journal. |
+| `large_cal_panel.py` | Join the thirteen phase receipts and count near ties. | Thirteen `--phase-receipt PATH SHA256` pairs and the graph receipt. | `r8-large-raw-panel-rN.json`. |
+
+Use them in this order, from the checked campaign shell, with isolated Python
+(`-I -B -S`):
+
+1. Build with `large_cal_build.py` for `clippy`, `nextest`, then `image`.
+   Build from a committed revision with no crate edit in progress. The receipt
+   requires that no native input changes during the build.
+2. Stage with `stage_large_cal_image.py` straight after the image build.
+3. Seal the staged image with `probe_compact_cutlass.py --mode seal`.
+4. Run `probe_large_cutlass.py --mode operand`, then `--mode graph --direct`,
+   on the staged image. The graph receipt must report the typed graph that the
+   selector names.
+5. Run `probe_large_cal.py --cal-phase 12 --check-only` to verify every input
+   without the device, the Job or any output. Then run phase 12 for real: it
+   has four requests and is the first live check of the selector. Then run
+   phases 0–11.
+6. Assemble with `large_cal_panel.py`.
+
+The device needs at least 44 GiB free for each phase, so run one phase at a
+time with nothing else on the GPU. `--help` lists each tool's arguments.
+
+Run `test_large_cal.py` with isolated Python to check the four tools without a
+GPU or an image. Its cases cover the disk guard, the run cutoff, the Nextest
+roster, the source roster, the native environment, the device precondition,
+receipt and journal parsing, input custody, panel assembly and the refusals.
+
 ## CPU FP16 operator placement
 
 Run `python -I -B -S scripts/arbiter-fp16-execution/diagnose_cpu_fp16_placement.py
