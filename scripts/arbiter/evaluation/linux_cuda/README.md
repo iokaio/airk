@@ -122,6 +122,8 @@ Cargo writes under the original 24 GiB guest and VHD caps. It checks the approve
 120 GB physical C: allowance separately and reserves the configured 16 GiB swap
 backing. Both free-space floors, the original baselines and the 17:10 UTC cutoff
 still apply. The native volume receipt retains the host watcher observations.
+That cutoff has passed, so this option now refuses. New runs use the
+[successor volume policy](#successor-volume-policy-and-guest-start).
 
 The signed R7 Nextest gate preserves the original CI configuration bytes in a
 per-attempt copy and adds only an absolute `store.dir` inside its checked GNU
@@ -198,6 +200,10 @@ capacity, tmpfs use and swap. Reserve 4 GiB for tmpfs and 8 GiB for the native
 processes. A failed request retains the instance for diagnosis for up to 180
 seconds. Lifecycle settlement releases the service. The native standalone
 `install.sh` journey and model execution each require separate evidence.
+The journey now runs `gpu_opt_in_workflow.py`: service-wide GPU use starts
+off and turns on only through the service-wide setting. A pair built before
+commit `0b5fe97c`, including the retained `linux-cuda-descriptive-service-r3`
+pair this control still names, starts with GPU use on and fails that check.
 
 ### Experimental GNU R7 overlays
 
@@ -243,3 +249,63 @@ needs separate enforcement for those writes and genuine native validation.
 See the [WSL kernel configuration](https://github.com/microsoft/WSL2-Linux-Kernel/blob/linux-msft-wsl-5.15.167.4/arch/x86/configs/config-wsl#L3412-L3416),
 the [tagged ABI implementation](https://github.com/microsoft/WSL2-Linux-Kernel/blob/linux-msft-wsl-5.15.167.4/security/landlock/syscalls.c#L133)
 and the [kernel's filesystem access documentation](https://docs.kernel.org/userspace-api/landlock.html#filesystem-flags).
+
+## Successor volume policy and guest start
+
+The rules these tools enforce are in the [admission contract](CONTRACT.md).
+This section says what each tool needs, what it produces and how to run it.
+Run Windows commands from the verified human `pwsh` at the repository root.
+`CAMPAIGN` is `artifacts\v190\final-plan\exec-20261116T052942Z`. In the guest
+the same folder is `/mnt/d/code/Github/airk/artifacts/v190/final-plan/exec-20261116T052942Z`.
+
+**1. Start the host watcher** with the next unused log name, as described in
+`../watch-campaign-volumes.ps1`, and leave it running for the whole batch.
+
+**2. Read the log's binding.**
+`python -B -S scripts\arbiter\evaluation\linux_cuda\gnu_volume_policy.py --volume-log <CAMPAIGN>\host-volume-watch-r<N>.jsonl`
+prints `first_row_sha256` after checking that the first row carries the
+recorded baselines and allowances. It writes nothing.
+
+**3. Admit the guest start.**
+`python -B -S scripts\arbiter\evaluation\linux_cuda\wsl_boot_admission.py --expected-sid <human SID> --receipt <CAMPAIGN>\linux-<name>-boot-r<N>.json --volume-log <log> --volume-log-first-row-sha256 <digest> --not-after <ISO-8601 end with offset>`
+
+- Inputs: the three binding values, a fresh receipt path directly in the
+  campaign root, `--reserve-bytes` for the storage the first job will reserve
+  (default 0), `--other-host-bytes` (default 0) and `--min-distinct-cores`
+  (default 8). The wrapper requires 12 GiB of free physical and commit memory
+  for the guest's CPU gates. State in `--other-host-bytes` what other running
+  jobs have reserved, plus whatever the planned guest job needs beyond 12 GiB.
+- It admits a stopped instance, and also one where only `Ubuntu` is already
+  running, so it can be repeated before each gate. It does not check the GPU.
+- Output: the receipt, the same JSON on stdout, and exit code 0 only when
+  `admitted` is true. A refusal is listed under `refusals`.
+- `--plan` prints the six commands it would start and starts none.
+- It is the only place that starts `wsl.exe` for the boot. Import
+  `guest_command` from it to build any later guest command, so that the
+  distribution and user are always stated.
+
+**4. Run a GNU gate under the policy** by adding the binding to the retained
+command, with the log's guest path:
+`C:\Windows\System32\wsl.exe --distribution Ubuntu --user tyler --cd /mnt/d/code/Github/airk --exec /usr/bin/python3 -B -S scripts/arbiter/evaluation/linux_cuda/maintained_gate.py --gate inspect --volume-log <guest log path> --volume-log-first-row-sha256 <digest> --not-after <end>`
+
+The same three options apply to `--gate clippy`, `--gate product-clippy` and
+`--gate nextest`, with or without `--signed-r7` or `--signed-joint`. Clippy
+reserves 128 MiB and the others 512 MiB. Under the policy a run that grows the
+guest or the VHD beyond its reservation is stopped, so measure one
+representative compile of new source before scheduling a batch.
+
+**5. Run a shipping or packaging entry under the policy** through the
+launcher, which leaves the entry's own arguments unchanged:
+`/usr/bin/python3 -B -S volume_policy_entry.py --volume-log <guest log path> --volume-log-first-row-sha256 <digest> --not-after <end> -- shipping_archive.py native --build <receipt> --build-sha256 <sha256> --attempt <N>`
+
+It accepts `shipping_build.py`, `shipping_archive.py` and `shipping_service.py`.
+Each sample in the entry's `volumes.json` then carries the watcher row, the
+D: reading and any refused limits.
+
+Checks that run on Windows or in the guest without Cargo, a model or WSL
+commands, from this folder:
+`python -B -S -m unittest test_gnu_volume_policy test_volume_policy_entry test_maintained_gate_policy test_shipping_guard_policy test_wsl_boot_admission test_gpu_opt_in_workflow`
+
+The gate and guard checks replace the owned process, the guest filesystem and
+the watcher with recorded values. They show how the policy is selected and
+applied. A native GNU run is still required for each gate.

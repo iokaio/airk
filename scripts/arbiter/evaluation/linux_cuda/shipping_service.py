@@ -14,7 +14,8 @@ import threading
 import time
 
 from configure_ort import BASE, CAMPAIGN, sha
-from device_policy_workflow import exercise
+import gnu_volume_policy
+from gpu_opt_in_workflow import exercise
 from product_projection import checked_path
 from shipping_build import capacity, document, space
 from unpack import guarded
@@ -81,12 +82,17 @@ def run(args):
     samples = []
     finished = threading.Event()
     errors = []
+    fits = lambda value: capacity(baseline,value)
+    if gnu_volume_policy.active() is not None:
+        # Started through volume_policy_entry.py: every total applies, and this journey reserves no storage.
+        observer = gnu_volume_policy.active().guard(None,uid)
+        fits = lambda value: observer(value,samples[0],False)
     def sample():
         value = space()
         value["tmpfs_used_since_start"] = max(0,available-shutil.disk_usage(root).free)
         value["swap_used_kib"] = sum(int(row.split()[3]) for row in Path("/proc/swaps").read_text().splitlines()[1:])
         samples.append(value)
-        check(capacity(baseline,value) and value["tmpfs_used_since_start"] <= 4*GIB and value["swap_used_kib"] == 0,
+        check(fits(value) and value["tmpfs_used_since_start"] <= 4*GIB and value["swap_used_kib"] == 0,
               "physical space, private tmpfs or zero-swap requirement exceeded")
     def monitor():
         while not finished.wait(1):

@@ -15,6 +15,7 @@ import time
 from cargo_gate import ENV_PIN
 from checkpoint_ort import processes
 from configure_ort import BASE, CAMPAIGN, CPU, CPU_SHA, audit, sha
+import gnu_volume_policy
 from product_projection import checked_path
 from shipping_source import owner
 from verified_inputs import identity
@@ -46,6 +47,10 @@ def capacity(baseline, now, reserve=0):
 
 def monitored(command, root, result_dir, env, reserve, uid, *, address_space=8 << 30, timeout=3600, log_name="build.log",
               volume_guard=None):
+    if volume_guard is None and gnu_volume_policy.active() is not None:
+        # A run started through volume_policy_entry.py replaces the original 24 GiB guard below.
+        policy = gnu_volume_policy.active()
+        volume_guard, timeout = policy.guard(reserve, uid), policy.bounded(timeout)
     baseline = json.loads((CAMPAIGN/"linux-cuda-r4-provider-r3-space-watch.jsonl").read_text().splitlines()[0])
     samples = [space()]
     def fits(sample, *, admitting=False):

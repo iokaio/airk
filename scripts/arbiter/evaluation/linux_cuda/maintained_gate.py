@@ -12,6 +12,7 @@ from pathlib import Path
 
 from cargo_gate import ENV_PIN
 from configure_ort import BASE, CAMPAIGN, CPU, CPU_SHA, REPO, audit, sha
+import gnu_volume_policy
 from unpack import guarded
 from verified_inputs import identity
 
@@ -35,6 +36,13 @@ def run(options):
     os.umask(0o077)
     if options.revised_host_volume_log is not None and (not options.signed_r7 or options.gate != "nextest"):
         raise ValueError("revised host volume monitor is scoped to signed R7 Nextest")
+    policy = gnu_volume_policy.selected(options)
+    if policy is not None:
+        if options.revised_host_volume_log is not None:
+            raise ValueError("select one volume policy")
+        # Refuse before the long source census. No gate reserves storage at this point.
+        from shipping_build import space
+        policy.admit(space(), 0, uid)
     repo = REPO
     dependencies = {}
     verify_source = None
@@ -98,7 +106,7 @@ def run(options):
     if options.signed_joint and options.gate == "nextest":
         command[-1] = ("test(arbiter::runtime::cuda) | test(cpu_source_transition) | "
                        "test(original_reference_paths_keep_a_bounded_source_root) | test(fp16_compact::) | test(fp16_large::)")
-    if verify_source:
+    if verify_source or policy is not None:
         from shipping_build import monitored, space
         reserve = (128 if options.gate == "clippy" else 512) << 20
         volume_guard = None
@@ -115,6 +123,8 @@ def run(options):
             timeout = min(timeout, CUTOFF - time.time())
             if timeout <= 0 or not volume_guard(initial, initial, True):
                 raise ValueError("signed R7 storage reservation or campaign clock is unavailable")
+        elif policy is not None:
+            volume_guard, timeout = policy.guard(reserve, uid), policy.bounded(timeout)
         scan.mkdir(0o700)
         guarded(scan, uid, stat.S_ISDIR)
         if options.signed_r7 and options.gate == "nextest":
@@ -150,6 +160,7 @@ def run(options):
             "selected_tests": count if options.gate == "nextest" else None, "command": result,
             **({"nextest_store": r7_nextest, "skipped_tests": int(summary[3] or 0) if summary else None}
                if r7_nextest is not None else {}),
+            **({"volume_policy": policy.receipt()} if policy is not None else {}),
             "log": str(scan / "cargo.log"), "log_sha256": sha(scan / "cargo.log"),
             "compiled_against": env["ORT_LIB_LOCATION"]}
 
@@ -164,4 +175,5 @@ if __name__ == "__main__":
     parser.add_argument("--freeze", type=Path)
     parser.add_argument("--freeze-sha256")
     parser.add_argument("--revised-host-volume-log", type=Path)
+    gnu_volume_policy.arguments(parser)
     print(json.dumps(run(parser.parse_args()), sort_keys=True))
