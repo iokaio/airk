@@ -14528,3 +14528,119 @@ C: free 2,642,838,753,280: 27.12 GB of the 120 GB allowance.
 Compact capacity trial (GPU), portable graph on the static runtime (Cargo
 owner), slot diagnosis (CPU), Large panel preparation (Python only), Linux
 storage policy (Python only, no WSL).
+
+### 21 November 2026 at 06:28 UTC — Third wave: Context scores follow position, Linux boot admitted, Large tooling
+
+Identities as in the previous entries: Windows `TYAI\tdotn` (SID ending
+`-1002`), not elevated; Linux guest `tyler`, UID and GID 1000, verified by
+the boot receipt against the registry default UID of the `Ubuntu`
+distribution. Agents made no commits. Every commit below is signed off and
+pushed.
+
+**Commits.**
+
+| Commit | Content | Primary review |
+| --- | --- | --- |
+| `c3de7440` | Build, staging, phase and panel tools for the Large CAL panel | Reran the folder's 49 tests; read the build guard constants. Nothing built or run with them. |
+| `dee76ef0` | Successor volume policy, boot admission wrapper and opt-in GPU workflow for Linux | Read the gate edits, the limits and every WSL command shape; reran 68 + 16 tests. |
+| `9a2fdc39` | Fix for the boot wrapper's slow host observation | Primary's own fix, self-reviewed; reran 68 tests; measured the observer at 16.5 s. |
+| `b7de01ac` | Slot diagnosis for the Context action scores | Reran 39 tests. |
+
+**Context Compact follows the position of an option line, not its content.**
+Development diagnosis on the CPU provider with the portable Compact graph.
+Receipts under `…/context-slot-diagnosis-r1/`: report
+`6dd242162e4504d9f57df54dd603f4822d8cb8fa2d998f7197602d92e4643770`, slot table
+`d7fc8c835708e9e415aa9f3e4999cda37f1d4b2328ef4ad9be26a52004e3135f`.
+
+- *Roster, from live source.* Card order is fixed and never shuffled: five
+  generic Read cards in gather-queue order, then Sufficient, then Clarify
+  (`crates/airk-retrieval/src/arbiter/context_action.rs:95-180`). A Read
+  option says only `read r<n>`; the read itself is a positional row in the
+  state JSON. Letters A to G are zipped with the options in order and scores
+  are the next-token logits of those letters at the last token
+  (`compiler/qwen.rs:22-172`).
+- *Per slot, all 100 rows.* The option block is identical on every row. Mean
+  centred scores: A −3.00, B −5.42, C −4.64, D +5.88, E −0.65, F +5.77,
+  G +2.07. One fixed per-slot profile explains 91.4% of the centred score
+  variation. The top card is D on 45 rows and F on 55.
+- *Permutation, 28 rows, 504 forwards.* The identity rebuild reproduced the
+  compiled tokens exactly and matched the calibrated scores within 0.00031.
+  With the reads rotated behind unchanged options, the best Read stayed on
+  the fourth line in 112 of 112 forwards and moved with the read in none.
+  Slot explains 93.9% of the variation over the five read slots and the read
+  itself about 0.5%. With letters rotated over unchanged lines, the best Read
+  was the fourth line in 55 of 56, whatever its letter: the preference is for
+  the line position, not the letter token. With card texts rotated, the last
+  line won 150 of 196 forwards.
+- *Certificates.* The 12 certified reads rank among the five Read cards at
+  chance: 2 first natively, 3 first with the slot profile removed, against
+  2.4 expected.
+- *Defect checks.* None found: all 100 rows pass the option, tokenizer,
+  truncation, candidate-token and decision-position checks.
+- *Meaning.* Under this roster the generic Read rule can admit a certified
+  card only when the certified read happens to be queued fourth, and the
+  margin it cuts on does not track certification. That is why the native
+  study found no cutoff. Removing the constant profile leaves the certified
+  reads at chance, so a debiasing step alone does not make the rule admit.
+  Unknown: whether Large behaves the same, and whether a prompt that states
+  the read, or a one-read-at-a-time question, makes the scores follow
+  content. Those three measurements are running on the GPU.
+- *Consequences taken now.* The Large CUDA CAL panel build waits for the
+  Large measurement, since it costs a build and 13 GPU phases and answers
+  less. Catalog rows for Compact tiers (slice S7) and any confirmation
+  capture stay on hold. Work that does not depend on Context acting
+  continues: the Focus comparison, the static-runtime check, the Core slices
+  and the Linux CPU path.
+
+**Linux zero-growth batch.** First run of the new policy and wrapper against
+the real guest.
+
+- First pass: the wrapper started the guest and refused admission with "only
+  Ubuntu may be running after the boot". Cause: the host observer took 102 to
+  115 s, because `Select-Object -Unique` is quadratic over the 48,355 folders
+  in the user's temporary folder, and the guest had stopped before the
+  wrapper listed it. Receipt `…/linux-fp16-boot-r1.json`,
+  `9bbffd9368c8484b33e4b65509cb24c5c4eb9891eaa40b7379642b4c9b05c363`. Fixed in
+  `9a2fdc39`.
+- Second pass: admitted, no refusals, 47.5 s. Receipt
+  `…/linux-fp16-boot-r2.json`,
+  `3dea8791d9fb78fc8171260439cdc9a752e761fd375ebe052df8b7671b2397bf`; watcher
+  `host-volume-watch-r9.jsonl`,
+  `e2b28d8a8c2574db862759f3521e224598a1c94c7cd772dc225392640448f515`, 14 rows
+  within budget.
+- Guest facts: kernel `5.15.167.4-microsoft-standard-WSL2`, 16 logical CPUs
+  on 8 distinct cores, 101,252,886,528 bytes of memory, 16 GiB swap with none
+  used, guest root 953,443,848,192 bytes available, no `ollama`, `cargo`,
+  `rustc` or `nextest` process. Pinned `libcuda.so.1` and NVML libraries
+  match. `nvidia-smi` works unprivileged and shows the A6000.
+- Inspect gate under the policy: exit 0 in 11.249 s, 625 files, source digest
+  `928f57330d43b48106c114d20044e2408984d6f5d143b50e5b97ab9933b3b783`, receipt
+  `…/linux-fp16-inspect-r1.json`,
+  `c6cb3039dbbfc79563c9700851239a8685a0fe2731a8efdcb10eda880ce1ea22`.
+- Read plus hash from `/mnt/d`: Compact weights 25.482 s, Large weights
+  62.272 s, both digests correct, about 130 MB/s. Large spends over half of a
+  120 s deadline before any load.
+- Storage: VHD unchanged at 79,086,747,648 bytes; boot cost 40,955,904 bytes
+  on C:. WSL stopped on its own about 77 s after the last command.
+- Headroom under the retained caps: guest 11,834,896,384 bytes, VHD
+  7,332,691,968. By retained measurement the Linux CPU step fits once, in one
+  order (build, then copy Focus and Compact), leaving about 2.2 GB of VHD. A
+  rebuild, an optimized build, packaging or Large in the guest would be
+  refused. Raising the two caps remains the user's decision.
+
+**Large CAL tooling (`c3de7440`).** Custody review of the Large selector's
+missing `verify_chronological_projection` call: it does not weaken custody
+of any row the selector scores, because the batch bytes are pinned in Rust,
+the retained compiler receipt ran the whole-population check on those bytes,
+and each row is recompiled on the scorer image before it is scored.
+Disposition: no Rust change; if the panel is built, run the zero-forward
+compiler census once on the new image.
+
+**Disk.** D: free 1,092,551,995,392 bytes at 06:27 UTC: 140.69 GB of
+growth against the 195.42 GB budget, 54.7 GB left. The step 1 fixture's
+installed model copy has been removed by its owner. C: free
+2,641,352,712,192: 28.61 GB of the 120 GB allowance.
+
+**Running at the time of writing.** Step 1 Focus comparison (closing),
+portable graph on the static runtime (Cargo owner), slot diagnosis follow-up
+on Large and two prompt probes (GPU owner).
