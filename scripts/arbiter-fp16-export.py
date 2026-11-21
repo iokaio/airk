@@ -14,6 +14,7 @@ ORIGINAL = {
 GEOMETRY = {'focus': (28, 16, 8, 1024), 'compact': (28, 16, 8, 2048), 'large': (36, 32, 8, 2560)}
 NS = '/airk_g5/'
 PROJECTIONS = {'q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj'}
+RECIPES = ('g5', 'portable')
 
 def require(ok, message):
     if not ok: raise ValueError(message)
@@ -120,8 +121,13 @@ def reachable(nodes, outputs, known):
     require(len(ordered)==len(wanted), 'cycle')
     return ordered
 
-def rewrite(model, key, onnx):
-    """Metadata-only transformation; external arrays are converted separately."""
+def rewrite(model, key, onnx, recipe='g5'):
+    """Metadata-only transformation; external arrays are converted separately.
+    Recipe 'g5' is the CUDA proposal with half products and half attention.
+    Recipe 'portable' keeps the same half storage and computes every product,
+    activation and attention in FP32, for the CPU and portable GPU routes.
+    """
+    require(recipe in RECIPES, 'unknown recipe'); portable=recipe=='portable'
     require(key in GEOMETRY and not model.functions and not model.graph.sparse_initializer, 'unsupported graph')
     original=copy.deepcopy(model); g=model.graph; h=onnx.helper; T=onnx.TensorProto
     expected=['input_ids','attention_mask','position_ids']
@@ -137,7 +143,7 @@ def rewrite(model, key, onnx):
         name=NS+name; constants.append(h.make_tensor(name,dtype,dims,values)); return name
     def node(op,inputs,name,**attrs):
         name=NS+name; added.append(h.make_node(op,inputs,[name],name=name,**attrs)); return name
-    zero16=const('half_zero',T.FLOAT16,[],[0.0])
+    zero=const('float_zero',T.FLOAT,[],[0.0]) if portable else const('half_zero',T.FLOAT16,[],[0.0])
     axis1=const('axis1',T.INT64,[1],[1]); one=const('one',T.INT64,[1],[1]); axis2=const('axis2',T.INT64,[1],[2])
     shape=node('Shape',['attention_mask'],'input_shape'); total=node('Gather',[shape,axis1],'T',axis=0)
     total32=node('Cast',[total],'T32',to=T.INT32)
@@ -159,6 +165,12 @@ def rewrite(model, key, onnx):
         for n in consumers:
             original_output=n.output[0]; require(len(n.output)==1,'multi-output weight consumer')
             if n.op_type=='MatMul':
+                if portable:
+                    # Weight-only boundary: upcast the stored half weight. The activation and the product stay FP32.
+                    require(n.input[1]==t.name,'unreviewed weight operand')
+                    n.input[1]=node('Cast',[t.name],'weight/'+n.name+'/weight32',to=T.FLOAT)
+                    modified.add(n.name)
+                    continue
                 value=node('Cast',[n.input[0]],'weight/'+n.name+'/input16',to=T.FLOAT16)
                 n.input[0]=value
             else: require(n.op_type=='Gather' and n.input[0]==t.name, 'unreviewed half consumer')
@@ -196,18 +208,23 @@ def rewrite(model, key, onnx):
         q=node('Reshape',[q,qshape],tag+'q_flat')
         k=node('Reshape',[k,kshape],tag+'k_flat')
         if key=='focus': v=node('Reshape',[v,qshape],tag+'v_flat')
-        q=node('Cast',[q],tag+'q16',to=T.FLOAT16)
-        k=node('Cast',[k],tag+'k16',to=T.FLOAT16)
-        v=node('Cast',[v],tag+'v16',to=T.FLOAT16)
-        out=NS+tag+'raw16'
+        if not portable:
+            q=node('Cast',[q],tag+'q16',to=T.FLOAT16)
+            k=node('Cast',[k],tag+'k16',to=T.FLOAT16)
+            v=node('Cast',[v],tag+'v16',to=T.FLOAT16)
+        # The portable recipe writes FP32 attention straight to the original sink value.
+        result=list(sink.output); require(len(result)==1,'attention sink differs')
+        out=NS+tag+('raw32' if portable else 'raw16')
         if key=='focus':
             added.append(h.make_node('MultiHeadAttention',[q,k,v,'',packed],[out],name=NS+tag+'efficient',domain='com.microsoft',num_heads=heads,unidirectional=1,scale=scale))
-            out=node('Where',[livequeries,out,zero16],tag+'zero_padded_queries')
+            if portable: added.append(h.make_node('Where',[livequeries,out,zero],result,name=NS+tag+'zero_padded_queries'))
+            else: out=node('Where',[livequeries,out,zero],tag+'zero_padded_queries')
         else:
             # CUDA GQA materializes both present tensors even with empty past inputs.
-            outputs=[out,NS+tag+'present_key',NS+tag+'present_value']
+            outputs=[result[0] if portable else out,NS+tag+'present_key',NS+tag+'present_value']
             added.append(h.make_node('GroupQueryAttention',[q,k,v,'','',seqlens,total32],outputs,name=NS+tag+'efficient',domain='com.microsoft',num_heads=heads,kv_num_heads=kv,causal=1,local_window_size=-1,do_rotary=0,scale=scale))
-        added.append(h.make_node('Cast',[out],list(sink.output),name=NS+tag+'output32',to=T.FLOAT)); removed.add(sink.name)
+        if not portable: added.append(h.make_node('Cast',[out],result,name=NS+tag+'output32',to=T.FLOAT))
+        removed.add(sink.name)
     known={x.name for x in g.input}|{x.name for x in g.initializer}|{x.name for x in constants}
     ordered=reachable([n for n in g.node if n.name not in removed]+added,[x.name for x in g.output],known)
     require(not any(n.op_type=='Softmax' for n in ordered),'dense attention survived')
@@ -224,6 +241,7 @@ def rewrite(model, key, onnx):
     imports={x.domain:x.version for x in model.opset_import};require(imports.get('com.microsoft',1)==1,'custom opset differs')
     if 'com.microsoft' not in imports:model.opset_import.append(h.make_opsetid('com.microsoft',1))
     require([x.SerializeToString() for x in original.graph.input]==[x.SerializeToString() for x in g.input] and [x.SerializeToString() for x in original.graph.output]==[x.SerializeToString() for x in g.output], 'ABI mutation')
+    if portable: return {'roles':roles,'scale_bits':scales,'recipe':'portable','arithmetic':'float32','qualification':False}
     return {'roles':roles,'scale_bits':scales,'required_native_sdpa_kernel':2 if key=='focus' else 1,'required_gemm_options':2,'qualification':False}
 
 def source_bytes(tensor, directory):
@@ -309,8 +327,10 @@ def convert_arrays(original, candidate, roles, directory, sidecar, np, deadline,
     return records
 
 
-def export_after_owner_admission(source_path, key, source_file_pins, output, onnx, np, deadline, clock=time.monotonic):
+def export_after_owner_admission(source_path, key, source_file_pins, output, onnx, np, deadline, clock=time.monotonic, recipe='g5'):
     """Actual exporter API, held until Root's FP32 and native G5 admission.
+    Both recipes write byte-identical weights.bin, because the array conversion
+    depends only on the source and its role census.
     It does not create or consume a handwritten native qualification DTO. The
     existing owner must establish authority BEFORE invoking this function.
     source_file_pins is the original exporter closure's external-file SHA/size
@@ -344,7 +364,7 @@ def export_after_owner_admission(source_path, key, source_file_pins, output, onn
                     require(clock()<deadline,'original export deadline expired');hasher.update(chunk)
             require(hasher.hexdigest()==pin['sha256'],'source closure digest differs')
     authenticate()
-    candidate=copy.deepcopy(original);report=rewrite(candidate,key,onnx)
+    candidate=copy.deepcopy(original);report=rewrite(candidate,key,onnx,recipe)
     require(clock()<deadline,'original export deadline expired')
     require(not output.exists() and output.parent.is_dir() and not output.parent.is_symlink() and not output.parent.is_junction(),'fresh approved output directory required')
     output.mkdir(exist_ok=False)

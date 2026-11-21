@@ -255,4 +255,76 @@ class ArrayControls(unittest.TestCase):
             with self.assertRaises(ValueError):e.export_after_owner_admission(p,'focus',{},root/'out',onnx,np,10,clock=lambda:0)
             self.assertFalse((root/'out').exists())
 
+class PortableControls(unittest.TestCase):
+    def test_unknown_recipe_refuses(self):
+        with self.assertRaisesRegex(ValueError,'unknown recipe'):e.rewrite(fixture('compact'),'compact',onnx,'half')
+    def test_named_default_recipe_is_the_default(self):
+        for key in ['focus','compact','large']:
+            a=fixture(key);b=fixture(key);ra=e.rewrite(a,key,onnx);rb=e.rewrite(b,key,onnx,'g5')
+            self.assertEqual(a.SerializeToString(deterministic=True),b.SerializeToString(deterministic=True));self.assertEqual(ra,rb)
+    def test_context_computes_in_fp32_on_half_storage(self):
+        for key,count,qheads in [('compact',28,16),('large',36,32)]:
+            m=fixture(key);original=copy.deepcopy(m);report=e.rewrite(m,key,onnx,'portable')
+            self.assertEqual({k:v for k,v in report.items() if k not in ('roles','scale_bits')},{'recipe':'portable','arithmetic':'float32','qualification':False})
+            nodes={n.name:n for n in m.graph.node};initial={t.name:t for t in m.graph.initializer}
+            casts=[n for n in m.graph.node if n.op_type=='Cast']
+            self.assertFalse(any(e.attributes(n,onnx)['to']==T.FLOAT16 for n in casts))
+            weight_casts=[n for n in casts if n.name.endswith('/weight32')]
+            self.assertEqual(len(weight_casts),count*7)
+            for n in weight_casts:
+                self.assertEqual(initial[n.input[0]].data_type,T.FLOAT16)
+                consumer=nodes[n.name.removeprefix(e.NS+'weight/').removesuffix('/weight32')]
+                self.assertEqual((consumer.op_type,consumer.input[1]),('MatMul',n.output[0]))
+                self.assertFalse(consumer.input[0].startswith(e.NS+'weight/'))
+                self.assertFalse(consumer.output[0].startswith(e.NS))
+            for i in range(count):
+                prefix=f'{e.NS}attention/{i}/';n=nodes[prefix+'efficient']
+                self.assertEqual(list(n.output),[f'/scorer/layers.{i}/self_attn/Reshape_7_output_0',prefix+'present_key',prefix+'present_value'])
+                self.assertEqual(list(n.input[3:]),['','',e.NS+'seqlens32',e.NS+'T32'])
+                self.assertEqual(list(n.input[:2]),[prefix+'q_flat',prefix+'k_flat'])
+                self.assertEqual(n.input[2],f'/scorer/layers.{i}/self_attn/v_proj/MatMul_output_0')
+                self.assertEqual(e.attributes(n,onnx),{'num_heads':qheads,'kv_num_heads':8,'causal':1,'local_window_size':-1,'do_rotary':0,'scale':.125})
+                self.assertNotIn(prefix+'output32',nodes)
+            self.assertFalse(any(n.op_type=='Softmax' or n.name=='/source_mask' for n in m.graph.node))
+            self.assertNotIn(e.NS+'half_zero',initial)
+            self.assertEqual([x.SerializeToString() for x in m.graph.input],[x.SerializeToString() for x in original.graph.input])
+            self.assertEqual([x.SerializeToString() for x in m.graph.output],[x.SerializeToString() for x in original.graph.output])
+    def test_candidate_rows_are_gathered_in_half_then_cast(self):
+        m=fixture('compact');e.rewrite(m,'compact',onnx,'portable')
+        n=next(n for n in m.graph.node if n.name=='/candidate_rows')
+        self.assertEqual(n.input[0],'scorer.embed_tokens.weight')
+        cast=next(n for n in m.graph.node if '/candidate_rows/output32' in n.name)
+        self.assertEqual((list(cast.input),e.attributes(cast,onnx)),([n.output[0]],{'to':T.FLOAT}))
+        self.assertEqual(len([t for t in m.graph.initializer if t.name.endswith('embed_tokens.weight')]),1)
+    def test_focus_attention_and_padding_zero_are_fp32(self):
+        m=fixture('focus');report=e.rewrite(m,'focus',onnx,'portable')
+        nodes={n.name:n for n in m.graph.node};initial={t.name:t for t in m.graph.initializer}
+        self.assertEqual(report['recipe'],'portable')
+        self.assertEqual(len([n for n in m.graph.node if n.op_type=='MultiHeadAttention']),28)
+        for i in range(28):
+            prefix=f'{e.NS}attention/{i}/';n=nodes[prefix+'efficient'];where=nodes[prefix+'zero_padded_queries']
+            self.assertEqual(list(n.output),[prefix+'raw32'])
+            self.assertEqual(list(n.input),[prefix+'q_flat',prefix+'k_flat',prefix+'v_flat','',e.NS+'packed_mask'])
+            self.assertEqual(list(where.input),[e.NS+'live_queries',prefix+'raw32',e.NS+'float_zero'])
+            self.assertEqual(list(where.output),[f'/base/layers.{i}/self_attn/Reshape_5_output_0'])
+        self.assertEqual(initial[e.NS+'float_zero'].data_type,T.FLOAT)
+        self.assertNotIn(e.NS+'half_zero',initial)
+        self.assertEqual(initial['head_weight'].data_type,T.FLOAT)
+        self.assertEqual(initial['base.embed_tokens.weight'].data_type,T.FLOAT16)
+        self.assertFalse(any(n.op_type=='Cast' and e.attributes(n,onnx)['to']==T.FLOAT16 for n in m.graph.node))
+    def test_both_recipes_share_the_role_census_and_storage_types(self):
+        # The array conversion reads only the source and this census, so equal
+        # roles mean both recipes write the same weights.bin bytes.
+        for key in ['focus','compact','large']:
+            a=fixture(key);b=fixture(key);ra=e.rewrite(a,key,onnx);rb=e.rewrite(b,key,onnx,'portable')
+            self.assertEqual((ra['roles'],ra['scale_bits']),(rb['roles'],rb['scale_bits']))
+            learned=lambda m:{t.name:t.data_type for t in m.graph.initializer if not t.name.startswith(e.NS)}
+            self.assertEqual(learned(a),learned(b))
+    def test_protected_math_nodes_keep_their_bytes(self):
+        for key in ['focus','compact','large']:
+            m=fixture(key);before={n.name:n.SerializeToString(deterministic=True) for n in m.graph.node};e.rewrite(m,key,onnx,'portable')
+            kept=[n for n in m.graph.node if n.name in before and n.op_type in ('Mul','Add','Identity')]
+            self.assertTrue(kept)
+            for n in kept:self.assertEqual(n.SerializeToString(deterministic=True),before[n.name])
+
 if __name__=='__main__':unittest.main()

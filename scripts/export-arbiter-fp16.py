@@ -15,6 +15,7 @@ def main():
  p.add_argument('--python-site',type=pathlib.Path,required=True)
  p.add_argument('--output',type=pathlib.Path,required=True)
  p.add_argument('--deadline-monotonic-ns',type=int,required=True)
+ p.add_argument('--recipe',choices=['g5','portable'],default='g5',help='g5: half products and attention for CUDA. portable: the same half storage with FP32 arithmetic.')
  args=p.parse_args();deadline=args.deadline_monotonic_ns/1_000_000_000
  if time.monotonic()>=deadline:raise ValueError('original export deadline expired')
  raw=args.source_pins.read_bytes()
@@ -23,7 +24,7 @@ def main():
  sys.path.insert(0,str(args.python_site.resolve()));import onnx,numpy
  spec=importlib.util.spec_from_file_location('airk_fp16_export',pathlib.Path(__file__).with_name('arbiter-fp16-export.py'))
  module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
- result=module.export_after_owner_admission(args.source,args.model,json.loads(raw),args.output,onnx,numpy,deadline)
+ result=module.export_after_owner_admission(args.source,args.model,json.loads(raw),args.output,onnx,numpy,deadline,recipe=args.recipe)
  graph=args.output/'model.onnx';candidate=onnx.load_model(str(graph),load_external_data=False)
  nodes=[{'name':n.name,'operator':n.op_type,'domain':n.domain} for n in candidate.graph.node if n.op_type in ('GroupQueryAttention','MultiHeadAttention')]
  expected=28 if args.model!='large' else 36
