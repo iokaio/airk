@@ -513,10 +513,11 @@ section of this file conflicts with them, the approvals govern. In short:
 - Device memory fit is judged against a model-free control.
 - GPU use is opt-in on every platform, chosen in the Service Admin
   configuration through the service-wide setting. CPU is the default route.
-  The source still defaults the setting to enabled, and changing that is
-  part of step 5. The earlier statement in this file that the setting
-  defaults to enabled is superseded. A configuration that already stores GPU
-  use as enabled is reset to off once, and the user is told.
+  The source defaults the setting to off since commit `0b5fe97c`. The
+  earlier statement in this file that the setting defaults to enabled is
+  superseded. A configuration that already stores GPU use as enabled is
+  reset to off once, and the user is told. Admin and the VS Code extension
+  do not show that notice yet.
 - A person reviews the discordant cases of the paired comparison: the user,
   unless the user names someone else. Agents prepare the blinded packet and
   never fill it in.
@@ -551,3 +552,26 @@ The user directed that the macOS rehearsal on the Mac Neo start after the
 Windows and Linux CUDA work is complete. It is step 11 of the work order. Do
 not start macOS builds before then. See the
 [sequencing entry](simplify/one-process-ledger.md#21-november-2026-between-0129-and-0233-utc--mac-neo-rehearsal-sequenced-after-windows-and-linux-cuda).
+
+State at 04:57 UTC on 21 November, after the first parallel wave. Resume from
+the
+[first-wave entry](simplify/one-process-ledger.md#21-november-2026-at-0457-utc--first-wave-results-verifier-panel-drift-three-runbooks-cache-mode-finding)
+and later entries, not from this summary.
+
+- Done and pushed: the independent graph proof for the portable recipe, the
+  panel drift script and its measurement, and the opt-in GPU default.
+- Three private runbooks from read-only agents are in
+  `artifacts/v190/final-plan/exec-20261116T052942Z/agent-runbooks-r1/`:
+  the Focus stage comparison, the Windows CUDA finish and Linux. An agent
+  that executes one of those steps reads its runbook first.
+- The Compact fit is predicted to find no safe cutoff. The native study
+  decides it and runs before the remaining references and before any
+  confirmation capture.
+- WebGPU meets its memory targets for one input length only. A fixed-length
+  ladder is the next measured iteration.
+- Linux is blocked on a successor volume policy and on Rust that lets GNU
+  score a CUDA model. The campaign distribution is `Ubuntu` with user
+  `tyler`; never run a bare `wsl` command.
+- Open user decisions: raising the retained 24 GiB guest and VHD caps within
+  the 120 GB C: allowance, authorization for the Linux `install.sh` per-user
+  pointer, and what follows if Compact has no safe cutoff.
