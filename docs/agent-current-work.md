@@ -28,9 +28,9 @@ The user resumed the Windows and Linux FP16 campaign after D: cleanup. Keep new 
   on Sonnet and judge sessions on Opus; each series is one commit; three
   iterations run back to back, then work stops for the user's manual
   inspection, where the user may change the number. Private campaign folder:
-  `artifacts/v190/final-plan/exec-20261116T052942Z/answer-eval-r1/`. Weights
-  trained on bookbuilder pairs are evaluation-only until the user decides
-  otherwise.
+  `artifacts/v190/final-plan/exec-20261116T052942Z/answer-eval-r1/`. Every
+  trained weight candidate is trained on pairs from both the airk and
+  bookbuilder repositories.
 - Previous task: implement all steps of docs/arbiter/final-plan.md, authorized
   by the user on 15 November 2026. Execution T0 is recorded in the ledger.
   The user authorized continuing past the earlier 72-hour checkpoint.

@@ -113,8 +113,10 @@ questions.
   may set the number of further iterations, more or fewer (section 5.2).
 - **My defaults for everything else.** The defaults I proposed for the
   remaining open points are adopted. They are recorded where they apply: the
-  private folder (section 3.1), training on bookbuilder (section 5.4), the
-  product rule for Large (section 7), and readings 12 and 13 of section 9.
+  private folder (section 3.1), the product rule for Large (section 7), and
+  readings 12 and 13 of section 9.
+- **Weights train on both repositories** (section 5.4), for a broader fit to
+  general programming work.
 - **No deadline is set.** Work is reported at each stop.
 
 ## 3. The test
@@ -598,19 +600,25 @@ Mining leaves out three things: the paths excluded from the index (section
 evidence overlaps a judged or sealed scenario's notes. Training keeps the earlier protection for existing abilities: the
 original weights stay selectable, and training includes general replay.
 
-Pairs may be mined from both repositories. A weight file trained on any
-bookbuilder pair is an evaluation candidate only. It is not shipped, and is
-not proposed for delivery, until the user decides that bookbuilder material
-may be carried in delivered weights. Pairs and weight files stay in the
-private campaign folder.
+**Every trained candidate is trained on pairs from both repositories.** The
+user set this on 21 November: the weights are for general-purpose
+programming work, and two repositories in different languages and stacks
+(Rust, TypeScript and documentation; C#, .NET and Vue) give a broader fit
+than either alone. No candidate is trained on one repository only. A
+candidate trained this way may be proposed for delivery like any other.
+Pairs and weight files stay in the private campaign folder until a
+candidate is chosen.
 
 ### 5.5 Guards
 
 - **Fitting the test.** The sealed set of section 4.5.
-- **Fitting the repository.** A model trained on one repository's history
-  may only have memorized it. A trained candidate is also checked across
-  repositories: trained on pairs from one, tested on the scenarios of the
-  other.
+- **Fitting the repositories.** A model trained on two repositories'
+  history may only have memorized them. Because every candidate trains on
+  both (section 5.4), this is checked in two ways. A share of each
+  repository's mined pairs is held out of training, and the candidate's
+  coverage on them is compared with its coverage on the pairs it trained
+  on; a wide gap is reported as memorization. And the general replay of
+  section 5.4 checks that existing abilities survive.
 - **Regressions.** Every pass covers all three Answer configurations, so a
   gain for one cannot silently cost another.
 - **Time.** Every pass records how long each reply took, so a set that buys
@@ -840,5 +848,5 @@ entries of 21 November hold the receipts.
 | Agent on Sonnet, judge on Opus, both headless Claude Code | Set on 21 November. The harness is evaluation tooling, not product |
 | One commit per series of reports and evaluations | Set on 21 November |
 | Three iterations, then a stop for manual inspection | Set on 21 November. The user may change the number at each inspection |
-| Weights trained on bookbuilder pairs | Evaluation candidates only until the user decides otherwise |
+| Training data for weights | Set on 21 November: every candidate trains on pairs from both repositories, for a broader fit to general programming work |
 | Other gates of the parent plan's assignment (the 0.007 raw-score ceiling, the 98% paired comparison, held-out confirmation) | Suspended for this campaign. This plan replaces them as acceptance evidence |

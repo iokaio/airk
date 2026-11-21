@@ -15325,3 +15325,18 @@ Nothing was built, indexed, launched or run.
 
 **Resume action.** None until the user says to start. Then step E1 of the
 Arbiter plan.
+### 21 November 2026 at 15:10 UTC — Correction: weights train on both repositories
+
+The user corrected my default in the entry above. Weights must be trained on
+pairs from both the airk and bookbuilder repositories, for a broader fit to
+general-purpose programming work. Recorded in the plan (sections 2, 5.4, 5.5
+and 11) and the assignment file. Every candidate trains on both; none trains
+on one alone, and a candidate trained this way may be proposed for delivery.
+
+That replaces the guard that trained on one repository and tested on the
+other. The memorization check is now a held-out share of each repository's
+mined pairs, compared with the pairs trained on, beside the general replay
+and the sealed set.
+
+Nothing was built, indexed, launched or run. **Resume action.** None until
+the user says to start. Then step E1 of the Arbiter plan.
