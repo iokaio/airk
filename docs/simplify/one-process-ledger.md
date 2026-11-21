@@ -13952,3 +13952,63 @@ remain identical. No PR, merge, publication or deployment is authorized.
 Working rule from here: push after each coherent set of commits. Implementation
 starts with the WebGPU memory line, the largest remaining risk, using the
 prebuilt plugin and the probe script.
+
+That entry was committed as `b03b9086` and pushed.
+
+### 21 November 2026 at 03:38 UTC — Measured iteration 1: WebGPU memory on the A6000
+
+Purpose: bring the WebGPU peak at 8,192 tokens under the plan's memory lines.
+All runs used the private environment and identities recorded for step 0, the
+RTX A6000 through Direct3D 12, the retained T32 and T8192 control receipts,
+and no other GPU or compiler job. Receipts are under
+`confidence-refinement-r1` in the private campaign root. This is development
+measurement and qualifies nothing.
+
+Probe variants were built by `scripts/arbiter-webgpu-probe/variant.py` from
+the retained Compact attention-kernel graph and its FP32 weights:
+
+- `variant-nobias-r2`: the explicit attention bias removed from all 28
+  attention nodes and 27 producer nodes pruned. Model SHA-256
+  `6f6922ffeaf5915fbb13d00f01b2f58e4d922e1501545045cfd4b9e4f3a53a1b`, receipt
+  `7b5560f70d37cd29251ea56ab5ac7b9aae148e84a6dbf575e2ad264a48078228`. The
+  first attempt, `variant-nobias-r1`, stopped at the ONNX checker because the
+  source weight file is not in the variant folder. The script now runs the
+  checker only for a self-contained variant.
+- `variant-half-nobias-r1`: also 196 matrix weights and the embedding stored
+  as FP16 behind casts, 3440902144 bytes, with 57 small tensors copied
+  unchanged. Model SHA-256
+  `0119cca4e80c5a64077d9eb456444e9089299a14bbe5bb51d8eca53d2e47d80f`, receipt
+  `0e0502bf007bce313a1955f49ba983e74c6f363dd1fcdbbb1acdaa9c77cd93c7`.
+
+| Run at 8,192 tokens | Adapter MiB: baseline, after load, peak | Warm seconds | Raw difference | Receipt SHA-256 |
+| --- | --- | --- | --- | --- |
+| FP32 graph, `storageBufferCacheMode=lazyRelease` | 1158, 7757, 31477 | 5.2932, 5.2683 | 0.004486083984375 | `934b9b7fbfb7c9ed68b11adc621bbc99d28af6c28fa36f47c3c1597a93b5711f` |
+| FP32 graph, `storageBufferCacheMode=simple` | 1156, 7757, 11953 | 5.1104, 5.0771 | 0.004486083984375 | `b98c9fc221077d01c6c34b7006142448b68ddbde6387051bc9058b5160537acb` |
+| No bias, `simple` | 1149, 7749, 11686 | 4.3741, 4.3773 | 0.004486 | `53f2bfc1b4ce4de2ff3f7e39dd666ee2576a9fcc2f2f4ef57bff98aa2bd7426a` |
+| Half and no bias, `simple`, default passes | 1155, 7162, 11113 | 4.3705, 4.3833 | 0.004494 | `ef5790cf4055bbfbad928b3acb01d5614a319039810f970b4b4fc0a81508e116` |
+| Half and no bias, `simple`, `ConstantFolding` and `FuseFp16InitializerToFp32NodeTransformer` disabled | 1157, 4475, 8317 | 4.3708, 4.4045 | 0.004494 | `506657089eb05d9489b13db8ae11b7c2fbedd7088c334f30829c3b0e0273ff97` |
+
+The winner matched in every run. The two half-weight runs also scored the
+32-token case, at 0.00009537 from the reference. The last row's peak is
+7,160 MiB above baseline. With the 2 GiB reserve that is 9,208 MiB, inside a
+16 GB card and about 1 GiB over an 8 GB card. Its warm forward is about 2.5
+times the CUDA candidate's fixed20 p95 of 1.7721 s. Whole-adapter memory
+includes about 1.1 GB of other desktop processes in both baseline and peak.
+
+CPU comparison, same FP32 attention graph, CPU provider, eight intra-op
+threads, published runtime build 1.30.0: load 6.097 s, 32 tokens 0.1845 s
+warm at 0.0000391 from the reference, 8,192 tokens 43.3947 s first and
+43.0795 s warm at 0.0001907 from the reference, same winner. Receipt
+`90b6106e77cf54c24d3d01187ede8ba0fcf423284cb503949196be19e0dafffb`. The
+0.0001907 equals the retained Compact CPU error figure to the printed digits,
+which indicates that figure came from this graph form. The larger WebGPU
+difference is therefore specific to WebGPU arithmetic at long sequences. This
+build is not the static AIRK runtime, and one forward is not a p95.
+
+Script validation: `test_smoke.py` selected and passed 5 tests and
+`test_variant.py` 4 tests. D: held 1116339163136 free bytes afterwards, and
+the run folder holds 3.47 GB, mostly the half-weight probe file. That file is
+a disposable probe artifact owned by this step.
+
+Next executable action: step 3, the portable graph in the maintained
+exporter, carrying the three changes measured here.

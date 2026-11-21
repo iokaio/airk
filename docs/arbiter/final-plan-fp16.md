@@ -50,7 +50,7 @@ route, so no route needs its own parity investigation.
 | --- | --- | --- | --- |
 | CPU | Windows, Linux and macOS on any hardware | The portable graph: the model's FP32 graph with its learned weights cast from the FP16 file. | The FP32 form of this graph is retained and measured. The FP16-file form is not yet exported. |
 | CUDA | NVIDIA on Windows and Linux | The existing Compact and Large candidates. | Both pass the four development widths on Windows. Linux links and has not scored a model. |
-| WebGPU | Radeon on Windows and Linux, Apple GPUs on macOS, and other adapters | The portable graph, with FP32 arithmetic on the GPU. | Runs on the A6000 through the official prebuilt plugin: correct and inside the speed line, over the memory line (step 0). Continues through the staged probe (steps 6, 11 and 12). |
+| WebGPU | Radeon on Windows and Linux, Apple GPUs on macOS, and other adapters | The portable graph, with FP32 arithmetic on the GPU. | Runs on the A6000 through the official prebuilt plugin: correct, inside the speed line, and inside the fallback memory line after the first iteration. Continues through the staged probe (steps 6, 11 and 12). |
 
 Every route shares the weight file and the scoring contract. The CPU and
 WebGPU routes start from the same portable graph. A route may use a small
@@ -103,7 +103,9 @@ figure states which of the two it is.
 1. **Full.** The selected model at the 8,192-token budget, where its measured
    p95 meets 120 seconds. The FP32 Compact graph measured a model-forward p95
    of 86.049136 s over 20 samples at the CPU4 class, which is below the
-   8-core target.
+   8-core target. At eight threads the same graph took 43.1 to 43.4 s per
+   forward in a probe run on the published runtime build, which is not the
+   static runtime.
 2. **Fast.** The selected model at a 2,048-token budget. At the earlier
    2,048-token limits Compact measured a p95 of about 19.5 s and Large about
    23.1 s. Those are historical figures on earlier artifacts. Measure again.
@@ -286,7 +288,7 @@ their digests.
 | 3 | Export the portable graph for Compact. Record the recipe in the exporter contract first. Verify shared weight bytes. Load on the static runtime with zero forwards. Score the four widths and 2,048 tokens against the reference. Time each width and record the four memory figures. | Compact has measured CPU numbers for the full and fast tiers. | Nothing | High. It reuses the retained FP32 graph and the Large weight-cast edit. |
 | 4 | Finish Windows CUDA. Complete Compact matching references, fit calibration, add the Large selector and score its panel. Run capacity under A6. | Both candidates hold a calibrated panel and a memory figure. | Nothing | High for Compact, medium for Large. The preserved code compiles after the step 0 fix. The Large selector is still unexercised. |
 | 5 | Record the Core contract decision, then implement: the opt-in GPU default, Auto order, the ladder tiers and the CPU target class, typed reasons, truthful status, per-result disclosure of route, model, tier and budget, the weight rule and a WebGPU provider value. Test with injected capabilities. | Reviewed Core changes with qualification flags false. | Nothing | Medium to high. Profiles already carry a token ceiling, so a tier is a profile. |
-| 6 | Run the WebGPU smoke test on the A6000 through Direct3D 12 as soon as step 3 has a graph. It stays early by the user's decision and includes the speed line. It takes the GPU only when no CUDA run holds it. | A go or no-go for the rented runs. | Step 3 | Medium. Step 0 passed correctness and the speed line on the FP32 graph. Memory is the open line. |
+| 6 | Run the WebGPU smoke test on the A6000 through Direct3D 12 as soon as step 3 has a graph. It stays early by the user's decision and includes the speed line. It takes the GPU only when no CUDA run holds it. | A go or no-go for the rented runs. | Step 3 | Medium to high. Probe variants pass correctness, the speed line and the fallback memory line on the A6000. The exporter's graph must repeat it. |
 | 7 | Score the portable graph on the 100 frozen Compact rows and the confirmation set on CPU, and apply acceptance rule 2. | The CPU route is admitted or its first failing row is named. | Steps 3 and 4, and one policy-confirmation capture on the calibrated identity | High for the scoring. The capture is the cost. |
 | 8 | Complete the stage comparison and the 98% comparison: the FP32 arm, the calibrated identity, and the Compact and Large arms. Compare delivered evidence first and judge only the discordant pairs. | The 98% bound and each Context model's added evidence are measured. | Nothing | Medium. Label coverage decides it. |
 | 9 | Decide Large's expansion from step 8. Extend Large to the CPU ladder, Linux and WebGPU only if it delivers evidence Compact misses. Until then its CPU fallback is the Compact downgrade. | A recorded disposition for Large. | Step 8 | Not applicable. |
@@ -309,7 +311,13 @@ FP32 CPU graph. Its embedding and seven learned projections per layer read
 the FP16 file through one explicit cast each, and candidate rows are gathered
 in half before the cast. Observe where the runtime evaluates the weight casts
 and bind the optimizer settings and the optimized graph into the identity. The
-pinned constant folding refuses a folded output above 1 GiB.
+pinned constant folding refuses a folded output above 1 GiB. Carry the three
+changes of the first measured iteration into the exporter: no explicit
+attention bias, since Context inputs are compiled without padding and the
+kernel applies causality itself, half weights behind casts, and for GPU
+routes the two disabled passes that keep those weights resident in half. The
+CPU forward of the attention-kernel variant reproduced the retained 0.000191
+error figure, which indicates that the retained CPU figure used that variant.
 [Exporter contract](../../scripts/arbiter-fp16-export/CONTRACT.md) ·
 [Large weight-cast edit](../../scripts/arbiter-fp16-execution/large_weight_only_candidate.py) ·
 [Shared-weight verifier](../../scripts/arbiter-fp16-execution/verify_shared_onnx_weights.py) ·
@@ -365,13 +373,32 @@ fails at 8,192 tokens, repeat those lines at 2,048 tokens. On a pass there,
 WebGPU serves the fast tier on that platform. Whether Auto then prefers the
 GPU fast tier or the CPU full tier is decided when that outcome occurs.
 
-Step 0 already ran the FP32 attention graph this way and measured about
-21 GB at peak, over both memory lines. Before the rented runs, bring that
-down with weights kept resident in half, the kernel's own causal handling in
-place of the explicit attention bias input, and the provider's buffer cache
-modes. Disabling the storage buffer cache made the peak worse. The prebuilt
-plugin package is enough for these runs. A build of the runtime with WebGPU
-is needed only for the product.
+The first measured iteration ran on the A6000 through Direct3D 12 on
+21 November, with the prebuilt plugin and probe variants of the Compact
+attention graph at 8,192 tokens. Memory is the peak above the adapter's
+baseline.
+
+| Configuration | Peak memory | Warm forward | Difference from FP32 |
+| --- | --- | --- | --- |
+| FP32 graph, default buffer cache | 20,997 MiB | 5.12 to 5.23 s | 0.004486 |
+| FP32 graph, `storageBufferCacheMode=simple` | 10,797 MiB | 5.08 to 5.11 s | 0.004486 |
+| Explicit attention bias removed | 10,537 MiB | 4.37 to 4.38 s | 0.004486 |
+| Also half weights, expanded again at load | 9,958 MiB | 4.37 to 4.38 s | 0.004494 |
+| Also half weights kept resident | 7,160 MiB | 4.37 to 4.40 s | 0.004494 |
+
+The last row passes the fallback memory line: 7,160 MiB plus the 2 GiB
+reserve is 9,208 MiB, inside a 16 GB card. It misses the 8 GB goal by about
+1 GiB. Its warm forward is about 2.5 times the CUDA candidate's 1.7721 s. The
+winner matched in every run. Keeping the weights resident needs two runtime
+passes disabled, `ConstantFolding` and
+`FuseFp16InitializerToFp32NodeTransformer`. The default cache mode and
+`lazyRelease` were worse than `simple`, and `disabled` was worst. The same
+attention graph on the CPU provider at eight threads differed from FP32 by
+0.000191, so the 0.0045 is specific to the WebGPU arithmetic and that route
+keeps the 0.007 limit. These are probe variants. Step 3 carries the three
+changes into the exporter's portable graph. The prebuilt plugin package is
+enough for the probe, and a build of the runtime with WebGPU is needed only
+for the product.
 
 The A6000 run is a smoke test and decides only whether to rent. Adoption
 under A3 needs passing runs on the Radeon card under Windows and Linux and on
