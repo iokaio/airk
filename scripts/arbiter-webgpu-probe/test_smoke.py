@@ -70,6 +70,23 @@ class SmokeHelpers(unittest.TestCase):
             with self.assertRaises(ValueError):
                 smoke.load_case(self.write(folder, "case.json", receipt(reference=[1.0])))
 
+    def test_inputs_only_drops_the_reference_of_another_model(self):
+        with tempfile.TemporaryDirectory() as folder:
+            case = smoke.load_case(self.write(folder, "case.json", receipt(reference=[1.0])), reference=False)
+        self.assertEqual((case["case"], case["original_fp32"], case["tokens"]), ("CONTROL (inputs only)", None, 4))
+
+    def test_fixture_rows_become_cases(self):
+        row = receipt()["result"]["compiled"]
+        row = {key: row[key] for key in ("input_ids", "attention_mask", "position_ids", "decision_position",
+                                         "candidate_positions", "option_mask")}
+        doc = {"schema": "airk.private-context-native-fp32-probes/1",
+               "rows": [{"id": "synthetic", "input": row, "original_fp32_all_live": [0.5, 0.25]}]}
+        with tempfile.TemporaryDirectory() as folder:
+            cases = smoke.load_fixture(self.write(folder, "fixture.json", doc))
+            with self.assertRaises(ValueError):
+                smoke.load_fixture(self.write(folder, "other.json", {"schema": "other", "rows": []}))
+        self.assertEqual([(c["case"], c["tokens"], c["original_fp32"]) for c in cases], [("synthetic", 4, [0.5, 0.25])])
+
     def test_feeds_add_the_batch_axis_only_where_the_graph_has_one(self):
         compiled = receipt()["result"]["compiled"]
         out = smoke.feeds(Session(ITEMS), compiled, FakeNumpy)

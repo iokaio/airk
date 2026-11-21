@@ -60,20 +60,46 @@ class Sampler(threading.Thread):
         return self.peak
 
 
-def load_case(path):
-    """Read one retained reference receipt: compiled inputs and the original FP32 scores."""
+def checked(compiled, reference, source):
+    tokens = len(compiled["input_ids"])
+    require(len(compiled["attention_mask"]) == tokens and len(compiled["position_ids"]) == tokens
+            and len(compiled["candidate_positions"]) == len(compiled["option_mask"])
+            and (reference is None or len(reference) == len(compiled["option_mask"])),
+            "retained case has inconsistent shapes: " + str(source))
+    return tokens
+
+
+def load_case(path, reference=True):
+    """Read one retained reference receipt: compiled inputs and the original FP32 scores.
+
+    With reference=False only the inputs are used. That serves a model other than the one
+    the receipt belongs to, where the receipt's scores do not apply.
+    """
     path = Path(path)
     doc = json.loads(path.read_bytes())
     result = doc["result"]
     compiled = result["compiled"]
-    reference = result["original_binding"]["original_fp32"]
-    tokens = len(compiled["input_ids"])
-    require(len(compiled["attention_mask"]) == tokens and len(compiled["position_ids"]) == tokens
-            and len(compiled["candidate_positions"]) == len(compiled["option_mask"]) == len(reference),
-            "retained case has inconsistent shapes: " + str(path))
-    return {"case": result["case"], "receipt": {"path": str(path), "sha256": digest(path)},
+    scores = result["original_binding"]["original_fp32"] if reference else None
+    tokens = checked(compiled, scores, path)
+    return {"case": result["case"] + ("" if reference else " (inputs only)"),
+            "receipt": {"path": str(path), "sha256": digest(path)},
             "input_digest": compiled["input_digest"], "tokens": tokens, "compiled": compiled,
-            "original_fp32": reference, "matching_fp16": result.get("matching_fp16")}
+            "original_fp32": scores, "matching_fp16": result.get("matching_fp16") if reference else None}
+
+
+def load_fixture(path):
+    """Read every row of a retained native numeric fixture: inputs and original FP32 scores."""
+    path = Path(path)
+    doc = json.loads(path.read_bytes())
+    require(doc.get("schema") == "airk.private-context-native-fp32-probes/1", "unexpected fixture schema: " + str(path))
+    pin = {"path": str(path), "sha256": digest(path)}
+    cases = []
+    for row in doc["rows"]:
+        compiled, scores = row["input"], row["original_fp32_all_live"]
+        tokens = checked(compiled, scores, path)
+        cases.append({"case": row["id"], "receipt": pin, "input_digest": None, "tokens": tokens,
+                      "compiled": compiled, "original_fp32": scores, "matching_fp16": None})
+    return cases
 
 
 def feeds(session, compiled, np):
@@ -113,7 +139,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--model", required=True, type=Path)
     parser.add_argument("--external-data-dir", type=Path)
-    parser.add_argument("--case", action="append", required=True, type=Path)
+    parser.add_argument("--case", action="append", default=[], type=Path,
+                        help="a retained reference receipt: inputs and original FP32 scores")
+    parser.add_argument("--fixture", action="append", default=[], type=Path,
+                        help="a retained native numeric fixture: every row is a case")
+    parser.add_argument("--inputs-only", action="append", default=[], type=Path,
+                        help="a retained reference receipt used for its inputs alone")
     parser.add_argument("--provider", choices=("webgpu", "cpu"), default="webgpu")
     parser.add_argument("--option", action="append", default=[], help="provider option as key=value")
     parser.add_argument("--session-config", action="append", default=[], help="session config entry as key=value")
@@ -123,6 +154,9 @@ def main():
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
     require(args.output.is_dir() and not any(args.output.iterdir()), "a fresh empty output directory is required")
+    cases = [case for path in args.fixture for case in load_fixture(path)]
+    cases += [load_case(path) for path in args.case] + [load_case(path, reference=False) for path in args.inputs_only]
+    require(bool(cases), "give at least one --case, --fixture or --inputs-only")
 
     import numpy as np
     import onnxruntime as ort
@@ -171,8 +205,7 @@ def main():
     receipt["session_providers"] = session.get_providers()
     receipt["adapter_memory_mib"] = {"baseline": baseline, "after_load": gpu_used_mib()}
     passed = True
-    for path in args.case:
-        case = load_case(path)
+    for case in cases:
         inputs = feeds(session, case["compiled"], np)
         times = []
         scores = None
@@ -181,16 +214,22 @@ def main():
             scores = session.run(["scores"], inputs)[0]
             times.append(round(time.perf_counter() - start, 4))
         scores = np.asarray(scores, dtype=np.float64).reshape(-1)
-        reference = np.asarray(case["original_fp32"], dtype=np.float64)
         finite = bool(np.isfinite(scores).all())
-        raw = float(np.max(np.abs(scores - reference))) if finite else None
-        winner = finite and int(np.argmax(scores)) == int(np.argmax(reference))
-        passed = passed and finite and winner
+        if case["original_fp32"] is None:
+            # No reference applies to this model for this input: record scores and timing only.
+            raw, winner = None, None
+            passed = passed and finite
+        else:
+            reference = np.asarray(case["original_fp32"], dtype=np.float64)
+            raw = float(np.max(np.abs(scores - reference))) if finite else None
+            winner = finite and int(np.argmax(scores)) == int(np.argmax(reference))
+            passed = passed and finite and winner
         receipt["cases"].append({
             "case": case["case"], "tokens": case["tokens"], "input_digest": case["input_digest"],
             "receipt": case["receipt"], "first_seconds": times[0], "warm_seconds": times[1:],
             "scores": [float(x) for x in scores], "original_fp32": case["original_fp32"],
-            "finite": finite, "max_abs_raw_difference": raw, "same_winner": bool(winner),
+            "finite": finite, "max_abs_raw_difference": raw,
+            "same_winner": None if winner is None else bool(winner),
             "adapter_memory_mib_after": gpu_used_mib()})
     receipt["adapter_memory_mib"]["peak"] = sampler.stop()
     receipt["adapter_memory_mib"]["samples"] = sampler.samples

@@ -21,6 +21,11 @@ includes every other process on the card.
 - `--case`: one retained reference receipt per case, repeated as needed. The
   script reads `result.compiled` for the inputs and
   `result.original_binding.original_fp32` for the reference scores.
+- `--fixture`: a retained native numeric fixture. Every row becomes a case,
+  with `original_fp32_all_live` as its reference scores.
+- `--inputs-only`: a retained reference receipt used for its inputs alone,
+  for a model the receipt's scores do not belong to. The case records scores
+  and timing and makes no comparison.
 - `--provider`: `webgpu` (default) or `cpu`.
 - `--option key=value`: a provider option, repeated as needed.
 - `--session-config key=value`: a session configuration entry, repeated as
