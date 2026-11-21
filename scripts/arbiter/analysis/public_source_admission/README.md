@@ -46,7 +46,10 @@ The family-root source-provenance.json maps original and maintained SHA-256 valu
   receipts by original task, conversation, question-token digest, positive
   passage, source document and canonical URL. Its private output keeps
   connected cases together for later review. Human evidence sufficiency,
-  source notices and native visibility remain open.
+  source notices and native visibility remain open. The optional
+  [original source reader](mtrag_cloud_original_sources.py) resolves the
+  existing exact release pins. Acquiring files requires applicable source
+  access and a checked private destination.
 - [IBM Cloud support screening](audit_mtrag_cloud_metadata.py) reads the
   frozen publisher qrels and classification metadata for MTRAG-UN and
   MTRAG. Run it with checked Windows Python `-I -B -S` and no arguments.
@@ -377,3 +380,86 @@ Verify the final owned Job receipt before counting the full population.
 Run prepare_techqa_publisher_judgments.py with isolated Python and bytecode disabled after the 75-menu normal-source census closes. It joins each original human extractive answer range to the independent native line-range read and the identical full-menu source bytes without reopening question/answer text. The private roster retains the original ordered menu, published scalar and byte coordinates, native publication/scope, matched span digests, license notice, singleton exclusion, shared-document components and literal product overlap. Positive coverage of this one documented set can be measured prospectively. Other answers are unannotated. Cross-role family reservation, measured token widths, locked paired inputs and paired outcome measurement remain separate. No additional blind reviewer packet is generated for these documented positive sets.
 
 Run `python -I -B -S scripts/arbiter/analysis/public_source_admission/score_techqa_answer_pair.py --exposed-control` for the DEV_Q002 one-arm comparator. The paired mode takes independently pinned `--freeze` and `--pairs` JSON files and their `--freeze-sha256` and `--pairs-sha256`. The freeze must bind the 75 original case IDs in order, publisher judgment and rubric SHA-256, exact request budget, service and CLI pins, search pipeline, and each arm's native profile-file, manifest, runtime, graph and weights. The fixture issuer is `private_service_fixture_through_cli`. Pair rows contain `case`, `fp16` and `fp32`; each arm supplies original plan, command, Answer, owned Job, ready/closed fixture, warm closure/log, dispatch observer closure/log and default search file pins. Pin the measurement file whenever the original producer emitted one. Each pin has an absolute path and SHA-256. The scorer authenticates native ordered file censuses, original framed questions, score returns, publication and delivered source bytes. It compares the two arms on the same initial request, budget, ordered sources, publication and scope. Each arm retains its actual dispatches, subsequent actions and delivered evidence. A checked terminal refusal or deadline without delivery counts as a miss, including when the sealed native observer recorded zero dispatches. If a complete supporting span was delivered before that terminal, it counts as a success. An incomplete supporting span counts as a miss. Missing process settlement, output or unresolvable source bytes keeps the pair unresolved. The installed Windows replay adapter accepts a separate `installed_windows_public_cli` freeze. Its `managed_install` uses the Windows timing collector’s original D installation specification. Retain the original `runtime_inspect` pin emitted with the command list. It requires the actual installation record digest, CLI and service pins, control directory, Focus manifest, the original case-to-index map and request SHA-256 map, plus a qualified Compact profile and nonempty calibration with independent file pins for each role. The owned child invocation is `<absolute-python> -I -B -S <absolute-collect_installed_techqa_answer.py> --freeze <path> --freeze-sha256 <sha> --case <id> --role <fp16|fp32> --directory <absolute-fresh-owned-commands>`. Freeze the interpreter and collector SHA-256, installation record and original request paths in advance. The collector reuses the existing installed timing collector’s `CurrentCLI` and source census. Supply its original freeze pin on each replay arm. The owned parent must retain its completed child argv, job settlement and the collector’s printed command list. Retain the original owned Job and all command and stdout files under its `commands` directory. Supply each arm’s ordered `commands` pin list, `request` pin and `owned` pin. The sequence is service-before, stage-before, the case’s status/list/50 file-info/pipeline calls, answer, stage-after and service-after. Use the same installed account, images, request, original native index, publication and scope throughout. The public Answer exposes delivered assessments, work and errors. Private dispatch counts are unavailable on that route. Installed scoring requires an actual qualified installed FP16 arm, an original qualified FP32 CPU arm and all 75 original pairs. The preregistered confidence procedure remains separate.
+
+## Retained AWS source publication
+
+The retained Windows store has one registered natural root covering 35,515
+pinned publisher files. Its 41 eligible requests refer to 27 distinct
+positive documents. Keep all 24 ambiguous requests excluded. Use the
+same-human Windows guard and fresh private campaign outputs for these
+commands. Run Python in isolated mode with bytecode disabled (`-I -B -S`).
+
+`reinspect_aws_normal_store.py` retains the original installed service
+reinspection, durable storage grant and configuration failure. Inspect its
+original receipts before starting a candidate. The 8 GiB quota refusal
+remains part of the evaluation.
+
+`observe_aws_kernel_store.py --image-proof <receipt> --proof-sha <sha256>
+--output <dir>` uses the native kernel example to enumerate the retained
+revision. `classify_aws_kernel_omissions.py --output <json>` compares those
+pages with source digests and the original ingest rules. It preserves each
+absent source in the denominator. The first kernel census has an unresolved
+aggregate custody discrepancy. Its classification records that limitation.
+
+`observe_aws_activation_reads.py --mode control|activation --output <dir>`
+captures file identities and hashes through `aws_kernel_entry_evidence.py`.
+Activation requires the original settled no-op control digest via
+`--control-sha`. It records separate native operation timings and changed
+entries. Kernel results cover only the specified native calls.
+
+`build_aws_worker_probe.py --output <dir>` requires the checked D-only
+Cargo environment, the shared Windows target and a fresh prepared output
+with `tmp` and `fixture` subdirectories. It checks the canceled-job
+regression and stages the actual Cargo-built service, CLI and private test
+starter with their build receipts. `--resume-required-pair` checks the sealed
+R1 Clippy and Nextest receipts against the current native input group and
+builds only the missing images under the separate 3 GiB reservation.
+`aws_windows_allocation.py` reports NTFS file data allocations for the
+shared target, D-only Cargo home and evidence directory, deduplicated by
+volume and file ID. The builder also monitors full-volume free space.
+Run `probe_aws_canceled_worker.py
+--mode pilot --output <dir> --pair-proof <receipt> --pair-sha <sha256>` for
+the one-file candidate service control. `test_aws_retained_source_inputs.py`
+exercises the retained path against the real source-closure helper and
+checks rejection after changing one file. Retained mode additionally needs
+`--pilot-proof <owned.json> --pilot-sha <sha256>`. It checks the stopped
+store identity and uses the original publication. Its outputs distinguish
+startup, public pagination, source-range verification, storage changes
+and job settlement. `--after-selection-busy` uses the sealed R2 stop,
+original scope and subsequent store identity. `--two-lifetimes` on a pilot
+uses three original documents and records native paginated lists and file
+hashes before and after a normal stop/restart. `--after-renewed-grant`
+uses this pilot proof and the sealed R3 stop. The public catalog selection
+must match across lifetimes. A live same-request replay must retain its
+full grant fingerprint. Each public read follows
+only the native typed same-request directive, up to 41 attempts within
+its original 120 seconds. Every attempted command retains separate
+input and output evidence.
+
+`--after-native-status` reopens the sealed R4 stop. The maintained
+`observe_aws_public_gates.py` records the actual full-status result,
+27 positive-file observations, 41 source-range outcomes and pagination
+independently. Pagination requires a single grant, revision, bounded
+unique cursors and a terminal native page. It reports any difference
+from the earlier 35,400-file native inventory and preserves the complete
+35,515-file source denominator. `test_aws_public_gates.py` replays
+original native controls for revision drift and independent gate
+failures. These source-only observations contain no Answer comparison.
+
+The kernel census accepts `--from-retained-r5` with the original native
+image proof to authenticate the stopped R5 store, deny SQLite writes and
+require a byte-identical file identity/content witness before and after.
+
+`observe_aws_guide_prefixes.py --mode pilot --output <dir>` reads six
+original documents at their nested paths under three original guide
+directories. It exercises one-result pages and two naturally settled
+service lifetimes. Full mode takes `--kernel-proof`, `--kernel-sha`,
+`--pilot-proof`, `--pilot-sha` and the R5 `--activation-sha`. It requires
+the unchanged stopped publication and the complete authenticated kernel
+listing. `aws_guide_partitions.py` groups whole first-level guides into
+bounded service lifetimes and uses literal directory prefixes. Every
+guide keeps a separate query, cursor chain and terminal result.
+`test_aws_guide_partitions.py` checks disjoint names, complete assignment
+and refusal of a guide larger than a bundle. The private union receipt
+compares the live results with every kernel-visible path on the same
+revision. Previous single-cursor and status results remain separate.
