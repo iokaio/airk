@@ -554,25 +554,41 @@ Windows and Linux CUDA work is complete. It is step 11 of the work order. Do
 not start macOS builds before then. See the
 [sequencing entry](simplify/one-process-ledger.md#21-november-2026-between-0129-and-0233-utc--mac-neo-rehearsal-sequenced-after-windows-and-linux-cuda).
 
-State at 04:57 UTC on 21 November, after the first parallel wave. Resume from
-the
-[first-wave entry](simplify/one-process-ledger.md#21-november-2026-at-0457-utc--first-wave-results-verifier-panel-drift-three-runbooks-cache-mode-finding)
-and later entries, not from this summary.
+State at 08:22 UTC on 21 November, after the measured waves. Resume from the
+ledger entries of 21 November, the last being the
+[step 1 result entry](simplify/one-process-ledger.md#21-november-2026-at-0822-utc--step-1-result-focuss-net-effect-on-delivered-evidence-is-zero-pins-notice-and-formatting-landed),
+and not from this summary.
 
-- Done and pushed: the independent graph proof for the portable recipe, the
-  panel drift script and its measurement, and the opt-in GPU default.
-- Three private runbooks from read-only agents are in
-  `artifacts/v190/final-plan/exec-20261116T052942Z/agent-runbooks-r1/`:
-  the Focus stage comparison, the Windows CUDA finish and Linux. An agent
-  that executes one of those steps reads its runbook first.
-- The Compact fit is predicted to find no safe cutoff. The native study
-  decides it and runs before the remaining references and before any
-  confirmation capture.
-- WebGPU meets its memory targets for one input length only. A fixed-length
-  ladder is the next measured iteration.
-- Linux is blocked on a successor volume policy and on Rust that lets GNU
-  score a CUDA model. The campaign distribution is `Ubuntu` with user
-  `tyler`; never run a bare `wsl` command.
-- Open user decisions: raising the retained 24 GiB guest and VHD caps within
-  the 120 GB C: allowance, authorization for the Linux `install.sh` per-user
-  pointer, and what follows if Compact has no safe cutoff.
+- Measured results the user reviews before the plan goes further:
+  - The Context stage as designed adds no measured evidence on the 100-row
+    panel. Compact has no safe cutoff and follows the position of an option
+    line. Large picks Sufficient on 99 of 100 rows. Neither ranks the
+    certified reads above chance, natively or under two prompt probes.
+  - Focus's net effect on delivered evidence is zero on the 75 judged TechQA
+    cases (four gained, four lost), at about 22 s more per request.
+    Retrieval decides the outcome there.
+  - The portable FP16 graph loads and scores on the static CPU runtime, and
+    on WebGPU a five-length padding ladder meets both memory targets on the
+    A6000.
+- On hold because Context does not act: Large's CUDA panel, Compact catalog
+  rows, any confirmation capture and the Context arms of step 8.
+- Done and pushed: the opt-in GPU default with its Admin and VS Code notice,
+  the portable graph proof, the capacity rule under A6, the Linux storage
+  policy and boot wrapper, the static-runtime seam, the stage-arm tools and
+  the slot diagnosis.
+- Private runbooks and the Core design are in
+  `artifacts/v190/final-plan/exec-20261116T052942Z/agent-runbooks-r1/`. An
+  agent that executes one of those steps reads its runbook first.
+- Known failing or blocked checks, each with an owner in the ledger: the
+  `module_cycles` boundary check in `airk-retrieval`, seven pinned files in
+  the formatting quarantine, the Admin browser-teardown errors with Edge 158,
+  and the CUDA capacity trials, which wait for the desktop's GPU memory
+  state to recover.
+- Linux: the campaign distribution is `Ubuntu` with user `tyler`; never run a
+  bare `wsl` command. No Linux build starts before the cap decision.
+- Open user decisions: what to do about the Context stage (specialize the
+  weights, redesign the task, or ship retrieval and Focus with Context
+  experimental); raising the retained 24 GiB guest and VHD caps within the
+  120 GB C: allowance; authorization for the Linux `install.sh` per-user
+  pointer; and naming a release tag in catalog rows before publication is
+  authorized.
