@@ -6,6 +6,9 @@ selector retains its native 8192-token/120-second request and requires explicit
 `AIRK_ARBITER_EVALUATION_RESOURCE_CONSENT=throughput64gib4threads` before creating
 state or starting a service. That consent selects only the native Core fixture
 configuration Throughput, 64 GiB memory ceiling and 4 inference threads.
+Service-wide GPU use is opt-in, so a fresh fixture service starts with it
+off. The CUDA Answer selector states `allow_gpu: true` in that same reviewed
+request. Every other selector leaves GPU use off.
 
 After authentic Health binds this test process/image/catalog and before Ready,
 the current selector sends Core ConfigureResources over actual same-user IPC,

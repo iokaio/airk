@@ -285,6 +285,10 @@ fn emit_paired_compact_cpu_comparator() -> Result<()> {
 async fn actual_private_arbiter_fixture_cuda_answer() -> Result<()> {
     let consent = std::env::var("AIRK_ARBITER_EVALUATION_RESOURCE_CONSENT")
         .context("current CUDA fixture requires explicit resource configuration consent")?;
-    let resources = software_v2_resource_configuration(&consent)?;
-    run_actual_private_arbiter_fixture(software_v2_answer_template()?, Some(resources), true).await
+    run_actual_private_arbiter_fixture(
+        software_v2_answer_template()?,
+        Some(cuda_answer_resource_configuration(&consent)?),
+        true,
+    )
+    .await
 }

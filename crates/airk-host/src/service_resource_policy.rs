@@ -57,7 +57,16 @@ pub fn query_concurrency(root: &Path) -> usize {
         |c| c.query_concurrency,
     )
 }
+/// The configuration in effect: the stored bytes read under the opt-in GPU
+/// rule. An enabled value stored under the earlier default is off here, with
+/// the reset notice pending. This reads only; the reset is the reading, and the
+/// next accepted change stores the current encoding.
 pub fn load(root: &Path) -> Result<ResourceConfiguration> {
+    load_stored(root).map(ResourceConfiguration::stored_under_gpu_opt_in)
+}
+/// The stored configuration exactly as written, for a carrier that copies it
+/// unchanged to a successor. Its `allow_gpu` is not the value in effect.
+pub fn load_stored(root: &Path) -> Result<ResourceConfiguration> {
     let path = root.join("resources-1.4.json");
     check(&path)?;
     let file = match std::fs::File::open(path) {
@@ -88,6 +97,9 @@ pub fn save(root: &Path, configuration: &ResourceConfiguration) -> Result<()> {
     std::fs::File::open(root)?.sync_all()?;
     Ok(())
 }
+
+#[cfg(test)]
+mod gpu_opt_in_tests;
 
 #[cfg(test)]
 mod tests {

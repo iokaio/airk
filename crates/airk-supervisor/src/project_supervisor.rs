@@ -2486,8 +2486,9 @@ WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref(), hooks }
                         },
                         Ok(Envelope::ConfigureResources { update, gpu_change, reply }) => {
                             let previous = resources.snapshot().configuration;
+                            // GPU use is opt-in: the service derives the stored record itself.
                             let configuration = match update {
-                                ResourceUpdate::Replace(configuration) => configuration,
+                                ResourceUpdate::Replace(configuration) => configuration.replacing(&previous),
                                 ResourceUpdate::Gpu(setting) => {
                                     if configuration_error {
                                         let _ = reply.send(ControlResponse::Failure {
@@ -2495,7 +2496,9 @@ WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref(), hooks }
                                         });
                                         continue;
                                     }
-                                    if setting.allow_gpu == previous.allow_gpu {
+                                    let chosen = previous.clone().with_gpu_choice(setting.allow_gpu);
+                                    // Off during a pending reset notice is the user's answer, not a repeat.
+                                    if chosen == previous {
                                         let _ = reply.send(ControlResponse::Resources {
                                             observation: Box::new(resources.snapshot()),
                                             age_ms: 0,
@@ -2503,10 +2506,7 @@ WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref(), hooks }
                                         });
                                         continue;
                                     }
-                                    airk_core::service_resources::ResourceConfiguration {
-                                        allow_gpu: setting.allow_gpu,
-                                        ..previous.clone()
-                                    }
+                                    chosen
                                 }
                             };
                             let mut gpu_transition = false;

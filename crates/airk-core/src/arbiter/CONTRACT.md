@@ -1077,3 +1077,99 @@ member.result; it never fuses authorities or global enrollment state. Complete
 copy/export retains precision, native fallback reasons and all variant metadata.
 The additional observation is bounded256KiB inside unchanged original reply/frame
 ceilings. No retries or replacement clock are introduced.
+
+
+## Service-wide GPU use is opt-in (decided 20 November 2026, America/Denver)
+
+Owner: Core `service_resources::ResourceConfiguration`. Host
+`service_resource_policy` owns the stored file. The service resource policy
+owns live GPU eligibility. The user decided both points: GPU use is opt-in on
+every platform through the one service-wide setting, and a configuration that
+already stores GPU use as enabled is reset to off once and the user is told.
+This amends the earlier approval under which a configuration without a stored
+value allowed GPU use. Device policy and GPU precision keep their stored
+values. The Auto order, CPU tiers, typed reasons, per-result disclosure and
+provider values are decided separately.
+
+**Default.** `allow_gpu` is off in a new configuration, in a stored
+configuration that lacks the field, and in a replacement request that omits
+it. No platform or build turns it on. While it is off no GPU route is
+eligible and Auto selects CPU.
+
+**Encoding.** The stored file stays `resources-1.4.json` and grows the way it
+has before: one added field that is optional on read. The field is
+`gpu_opt_in`, written directly after `allow_gpu`. It is omitted when absent,
+so a configuration with GPU use off and no notice keeps its earlier bytes.
+
+| `allow_gpu` | `gpu_opt_in` | Meaning |
+| --- | --- | --- |
+| false or absent | absent | Off. No notice is pending. |
+| true | `user_choice` | The user turned GPU use on. Kept across restarts. |
+| false | `default_reset` | Off after the one-time reset. The notice is pending. |
+| true | absent | Stored under the earlier enabled default. Never in effect. |
+
+`allow_gpu: true` with `default_reset`, and `allow_gpu: false` with
+`user_choice`, are invalid.
+
+**Distinguishing rule.** `allow_gpu: true` is honored only when the same
+configuration carries `gpu_opt_in: user_choice`. The service writes that
+record only for an accepted request that states `allow_gpu: true`. A value
+stored under the earlier default cannot carry it, because no earlier build
+wrote the field.
+
+**One-time reset.** `service_resource_policy::load` reads an enabled value
+without the record as `allow_gpu: false` with `gpu_opt_in: default_reset`.
+This is an interpretation of the stored bytes. It writes nothing, and it
+gives the same result on every start until an accepted request stores the
+current encoding. After that the stored value either carries the record or
+is off, so the reset cannot apply again. A stored off value and a missing
+field are off with no notice, because neither stored GPU use as enabled.
+`load_stored` returns the bytes as written. Only a carrier that copies the
+configuration unchanged uses it, and its `allow_gpu` is not the value in
+effect.
+
+**Report.** The service reports the reset as `gpu_opt_in: "default_reset"`
+inside `configuration` of every `Resources` response: the `service.resources`
+read and the replies to `service.allow_gpu` and `service.configure_resources`,
+on the pipe, airkctl and Admin surfaces. That read returns the supervisor's
+cached snapshot. It initializes no GPU and loads no model. The report clears
+when an accepted request states the GPU choice: `SetGpuAllowed` with either
+value, or a replacement with `allow_gpu: true`. A replacement that leaves GPU
+use off keeps it. A refused, failed or unknown request keeps it, and so does
+a restart.
+
+**Requests.** `SetGpuAllowed` with `true` stores `allow_gpu: true` and
+`user_choice`. With `false` it stores `allow_gpu: false` and no record. A
+request equal to the state in effect changes nothing, as before. `false`
+during a pending notice is therefore a change: it is the user's answer, it
+clears the notice, and it causes no GPU transition. `ConfigureResources`
+replaces every setting and takes `allow_gpu` as stated. The service derives
+the record itself: `user_choice` when GPU use is on, the pending
+`default_reset` when it stays off, otherwise none. `gpu_opt_in` in a request
+is not an instruction. The reply shows the stored result, so a client may
+send back a configuration it read.
+
+**Refusals.**
+
+- A stored file with an invalid pair or an unknown `gpu_opt_in` value is a
+  configuration error. The existing handling applies: the default
+  configuration is in effect with GPU use off, GPU admission is closed, and
+  new work is blocked until a valid replacement is accepted.
+- An unknown `gpu_opt_in` value in a request is refused at decoding.
+- `SetGpuAllowed` with any other field or a non-boolean value is refused at
+  decoding. During a configuration error it is refused with
+  `resource_configuration_requires_repair`. Both are unchanged.
+
+**Compatibility.** `ConfigureResources.configuration` and
+`ResourceSnapshot.configuration` gain the optional field. `SetGpuAllowed`,
+the I3 schema and the generated client types are unchanged. The installer
+rebuild journal embeds this type and re-encodes it byte for byte. A journal
+without the record is unchanged, and the installer copies the stored
+configuration through `load_stored` so that the successor service applies
+this rule. A build that predates the field refuses a file that carries it as
+a configuration error, as it does for the earlier added fields.
+
+Core tests use literal stored bytes for each row of the table, the reset, the
+user's answer in both directions, the replacement rule and the invalid pairs.
+Host tests read and write real files. A service test restarts an owned
+service over a file stored under the earlier default.

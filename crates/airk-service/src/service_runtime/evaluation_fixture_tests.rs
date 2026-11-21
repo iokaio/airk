@@ -420,6 +420,48 @@ fn software_v2_resource_configuration(
     Ok(configuration)
 }
 
+/// GPU use is opt-in and a fresh fixture service starts with it off. The CUDA
+/// Answer selector exists to time CUDA, so its reviewed request states the
+/// choice. Every other selector leaves GPU use off.
+fn cuda_answer_resource_configuration(
+    consent: &str,
+) -> Result<airk_core::service_resources::ResourceConfiguration> {
+    Ok(software_v2_resource_configuration(consent)?.with_gpu_choice(true))
+}
+
+#[test]
+fn cuda_answer_fixture_resources_state_the_gpu_choice_in_the_reviewed_request() -> Result<()> {
+    assert!(cuda_answer_resource_configuration("throughput").is_err());
+    let configuration = cuda_answer_resource_configuration("throughput64gib4threads")?;
+    configuration.validate()?;
+    assert_eq!(
+        serde_json::to_string(&configuration)?,
+        r#"{"allow_gpu":true,"gpu_opt_in":"user_choice","query_concurrency":16,"preset":"throughput","extraction_threads":null,"inference_threads":4,"memory_bytes":68719476736,"background_io_bytes_per_second":null}"#
+    );
+    // The CPU selector's request keeps its earlier bytes and leaves GPU use off.
+    let cpu = software_v2_resource_configuration("throughput64gib4threads")?;
+    assert_eq!(
+        serde_json::to_string(&cpu)?,
+        r#"{"allow_gpu":false,"query_concurrency":16,"preset":"throughput","extraction_threads":null,"inference_threads":4,"memory_bytes":68719476736,"background_io_bytes_per_second":null}"#
+    );
+    // A fresh service stores exactly what the CUDA request states, so the
+    // fixture's comparison of each reply with its request still holds.
+    let fresh = airk_core::service_resources::ResourceConfiguration::default();
+    let stored = configuration.clone().replacing(&fresh);
+    require_software_v2_resource_observation(
+        &ControlResponse::Resources {
+            observation: Box::new(
+                airk_kernel::service_resources::Resources::new(stored, 32, Some(128 << 30))?
+                    .snapshot(),
+            ),
+            age_ms: 0,
+            configuration_error: false,
+        },
+        &configuration,
+    )?;
+    Ok(())
+}
+
 fn require_software_v2_resource_observation(
     response: &ControlResponse,
     expected: &airk_core::service_resources::ResourceConfiguration,

@@ -3235,6 +3235,195 @@ fn resource_configuration_failure_is_distinct_from_memory_and_cached_status_stay
     Ok(())
 }
 
+/// Stored when a new configuration still allowed GPU use.
+const GPU_ENABLED_UNDER_EARLIER_DEFAULT: &[u8] = br#"{"allow_gpu":true,"query_concurrency":16,"preset":"balanced","extraction_threads":null,"inference_threads":null,"memory_bytes":null,"background_io_bytes_per_second":null}"#;
+
+/// GPU permission, its opt-in record and the concurrency setting from one
+/// accepted resource reply of the owned service at `root`.
+fn gpu_setting(
+    executor: &tokio::runtime::Runtime,
+    root: &Path,
+    method: airk_core::service::ControlMethod,
+) -> Result<(bool, Option<airk_core::service_resources::GpuOptIn>, usize)> {
+    let airk_core::service::ControlResponse::Resources {
+        observation,
+        configuration_error: false,
+        ..
+    } = executor.block_on(airk_cli::service_runtime::request(root, method))?
+    else {
+        anyhow::bail!("resource configuration was refused or is in error")
+    };
+    let configuration = &observation.configuration;
+    Ok((
+        configuration.allow_gpu,
+        configuration.gpu_opt_in,
+        configuration.query_concurrency,
+    ))
+}
+
+#[test]
+fn stored_enabled_gpu_default_resets_once_and_the_users_choice_survives_restart() -> Result<()> {
+    use airk_core::{
+        service::ControlMethod,
+        service_resources::{GpuOptIn, ResourceConfiguration, SetGpuAllowed},
+    };
+    let owner = tempfile::tempdir()?;
+    let root = owner.path().join("runtime");
+    airk_cli::local_ipc::prepare_root(&root)?;
+    let stored = root.join("resources-1.4.json");
+    fs::write(&stored, GPU_ENABLED_UNDER_EARLIER_DEFAULT)?;
+    let executor = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let mut children = Children(vec![start(&root)?]);
+    wait_ready(&root)?;
+    // The stored value is not in effect, the reset is reported on every read,
+    // and reading rewrites nothing.
+    for _ in 0..2 {
+        let seen = gpu_setting(&executor, &root, ControlMethod::Resources)?;
+        ensure!(
+            seen == (false, Some(GpuOptIn::DefaultReset), 16),
+            "stored enabled default was not reset and reported: {seen:?}"
+        );
+    }
+    ensure!(
+        fs::read(&stored)? == GPU_ENABLED_UNDER_EARLIER_DEFAULT,
+        "reading the reset rewrote the stored configuration"
+    );
+    // A replacement that leaves GPU use off does not answer the notice.
+    let seen = gpu_setting(
+        &executor,
+        &root,
+        ControlMethod::ConfigureResources {
+            configuration: ResourceConfiguration {
+                query_concurrency: 8,
+                ..Default::default()
+            },
+        },
+    )?;
+    ensure!(
+        seen == (false, Some(GpuOptIn::DefaultReset), 8),
+        "an unrelated replacement lost the reset notice: {seen:?}"
+    );
+    control(&root, "shutdown")?;
+    ensure!(wait_exit(&mut children.0[0])?, "service did not stop");
+
+    // The notice survives a restart until the user answers.
+    children.0.push(start(&root)?);
+    wait_ready(&root)?;
+    let seen = gpu_setting(&executor, &root, ControlMethod::Resources)?;
+    ensure!(
+        seen == (false, Some(GpuOptIn::DefaultReset), 8),
+        "restart lost the reset notice: {seen:?}"
+    );
+    let seen = gpu_setting(
+        &executor,
+        &root,
+        ControlMethod::SetGpuAllowed(SetGpuAllowed { allow_gpu: true }),
+    )?;
+    ensure!(
+        seen == (true, Some(GpuOptIn::UserChoice), 8),
+        "the user's choice was not accepted: {seen:?}"
+    );
+    let chosen: &[u8] = br#"{"allow_gpu":true,"gpu_opt_in":"user_choice","query_concurrency":8,"preset":"balanced","extraction_threads":null,"inference_threads":null,"memory_bytes":null,"background_io_bytes_per_second":null}"#;
+    ensure!(
+        fs::read(&stored)? == chosen,
+        "the user's choice was not stored with its record"
+    );
+    control(&root, "shutdown")?;
+    ensure!(wait_exit(&mut children.0[1])?, "service did not stop");
+
+    // A value the user set after the reset is kept: there is no second reset.
+    children.0.push(start(&root)?);
+    wait_ready(&root)?;
+    let seen = gpu_setting(&executor, &root, ControlMethod::Resources)?;
+    ensure!(
+        seen == (true, Some(GpuOptIn::UserChoice), 8),
+        "the user's choice was reset again after restart: {seen:?}"
+    );
+    ensure!(
+        fs::read(&stored)? == chosen,
+        "restart rewrote the user's stored choice"
+    );
+    let seen = gpu_setting(
+        &executor,
+        &root,
+        ControlMethod::SetGpuAllowed(SetGpuAllowed { allow_gpu: false }),
+    )?;
+    ensure!(
+        seen == (false, None, 8),
+        "turning GPU use off left a record: {seen:?}"
+    );
+    control(&root, "shutdown")?;
+    ensure!(wait_exit(&mut children.0[2])?, "service did not stop");
+    Ok(())
+}
+
+#[test]
+fn answering_the_gpu_reset_notice_with_off_clears_it_and_new_state_starts_off() -> Result<()> {
+    use airk_core::{
+        service::ControlMethod,
+        service_resources::{GpuOptIn, SetGpuAllowed},
+    };
+    let owner = tempfile::tempdir()?;
+    let executor = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    // A service with no stored configuration starts with GPU use off and
+    // nothing to report.
+    let fresh = owner.path().join("fresh");
+    airk_cli::local_ipc::prepare_root(&fresh)?;
+    let mut children = Children(vec![start(&fresh)?]);
+    wait_ready(&fresh)?;
+    let seen = gpu_setting(&executor, &fresh, ControlMethod::Resources)?;
+    ensure!(
+        seen == (false, None, 16),
+        "a new configuration did not start with GPU use off: {seen:?}"
+    );
+    control(&fresh, "shutdown")?;
+    ensure!(wait_exit(&mut children.0[0])?, "service did not stop");
+
+    let root = owner.path().join("runtime");
+    airk_cli::local_ipc::prepare_root(&root)?;
+    let stored = root.join("resources-1.4.json");
+    fs::write(&stored, GPU_ENABLED_UNDER_EARLIER_DEFAULT)?;
+    children.0.push(start(&root)?);
+    wait_ready(&root)?;
+    let seen = gpu_setting(&executor, &root, ControlMethod::Resources)?;
+    ensure!(
+        seen == (false, Some(GpuOptIn::DefaultReset), 16),
+        "stored enabled default was not reset and reported: {seen:?}"
+    );
+    // Off is the user's answer here, not a repeat of the state in effect.
+    let seen = gpu_setting(
+        &executor,
+        &root,
+        ControlMethod::SetGpuAllowed(SetGpuAllowed { allow_gpu: false }),
+    )?;
+    ensure!(
+        seen == (false, None, 16),
+        "answering with off kept the notice: {seen:?}"
+    );
+    let off: &[u8] = br#"{"allow_gpu":false,"query_concurrency":16,"preset":"balanced","extraction_threads":null,"inference_threads":null,"memory_bytes":null,"background_io_bytes_per_second":null}"#;
+    ensure!(
+        fs::read(&stored)? == off,
+        "the answer was not stored as plain off"
+    );
+    control(&root, "shutdown")?;
+    ensure!(wait_exit(&mut children.0[1])?, "service did not stop");
+
+    children.0.push(start(&root)?);
+    wait_ready(&root)?;
+    let seen = gpu_setting(&executor, &root, ControlMethod::Resources)?;
+    ensure!(
+        seen == (false, None, 16),
+        "restart brought the answered notice back: {seen:?}"
+    );
+    control(&root, "shutdown")?;
+    ensure!(wait_exit(&mut children.0[2])?, "service did not stop");
+    Ok(())
+}
+
 #[cfg(windows)]
 #[test]
 fn denied_registered_source_keeps_direct_queries_and_fails_new_work_without_data_loss() -> Result<()>

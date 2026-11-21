@@ -596,7 +596,8 @@ pub(in crate::runtime_install) async fn activate(
             })
             .collect(),
         roster,
-        resources: airk_host::service_resource_policy::load(&old_control)?,
+        // Carried as stored: the successor service applies the opt-in GPU rule.
+        resources: airk_host::service_resource_policy::load_stored(&old_control)?,
         clean_break,
         capture_complete: clean_break.then_some(false),
         expected_indexes,
@@ -792,7 +793,8 @@ async fn advance(root: &Path, journal: &mut Journal) -> Result<Selection> {
                     journal.roster.indexes.len() <= 64,
                     "clean_break_complete_roster_limit: more than 64 indexes; no subset was selected"
                 );
-                journal.resources = airk_host::service_resource_policy::load(&journal.old_control)?;
+                journal.resources =
+                    airk_host::service_resource_policy::load_stored(&journal.old_control)?;
                 journal.indexes = journal
                     .roster
                     .indexes
@@ -829,7 +831,7 @@ async fn advance(root: &Path, journal: &mut Journal) -> Result<Selection> {
                 "rebuild predecessor still has unresolved accepted operations"
             );
             ensure!(
-                serde_json::to_value(airk_host::service_resource_policy::load(
+                serde_json::to_value(airk_host::service_resource_policy::load_stored(
                     &journal.old_control
                 )?)? == serde_json::to_value(&journal.resources)?,
                 "saved service resource policy changed"

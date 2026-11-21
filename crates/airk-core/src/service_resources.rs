@@ -60,11 +60,28 @@ pub enum ResourcePreset {
     Throughput,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// The record kept beside `allow_gpu` now that GPU use is opt-in. Absent when
+/// GPU use is off and no notice is pending. The owning decision is "Service-wide
+/// GPU use is opt-in" in `arbiter/CONTRACT.md`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GpuOptIn {
+    /// The user turned GPU use on through the service-wide setting.
+    UserChoice,
+    /// An enabled value stored under the earlier default was reset to off, and
+    /// the user has not answered yet.
+    DefaultReset,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResourceConfiguration {
-    #[serde(default = "default_allow_gpu")]
+    /// Off unless the user opted in. `true` is in effect only with
+    /// `gpu_opt_in: user_choice`.
+    #[serde(default)]
     pub allow_gpu: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpu_opt_in: Option<GpuOptIn>,
     #[serde(default = "default_query_concurrency")]
     pub query_concurrency: usize,
     pub preset: ResourcePreset,
@@ -80,13 +97,11 @@ pub struct SetGpuAllowed {
     pub allow_gpu: bool,
 }
 
-const fn default_allow_gpu() -> bool {
-    true
-}
 impl Default for ResourceConfiguration {
     fn default() -> Self {
         Self {
-            allow_gpu: default_allow_gpu(),
+            allow_gpu: false,
+            gpu_opt_in: None,
             query_concurrency: DEFAULT_QUERY_CONCURRENCY,
             preset: Default::default(),
             extraction_threads: None,
@@ -97,6 +112,41 @@ impl Default for ResourceConfiguration {
     }
 }
 impl ResourceConfiguration {
+    /// Reads a stored configuration under the opt-in rule. An enabled value
+    /// without the record was written under the earlier default: it becomes off
+    /// with the reset notice pending. Every other configuration is unchanged,
+    /// so applying this twice gives the same result.
+    #[must_use]
+    pub fn stored_under_gpu_opt_in(mut self) -> Self {
+        if self.allow_gpu && self.gpu_opt_in.is_none() {
+            self.allow_gpu = false;
+            self.gpu_opt_in = Some(GpuOptIn::DefaultReset);
+        }
+        self
+    }
+    /// The user's answer through the service-wide setting. Either answer
+    /// clears a pending reset notice.
+    #[must_use]
+    pub fn with_gpu_choice(mut self, allow_gpu: bool) -> Self {
+        self.allow_gpu = allow_gpu;
+        self.gpu_opt_in = allow_gpu.then_some(GpuOptIn::UserChoice);
+        self
+    }
+    /// A whole replacement accepted while `previous` is in effect. It takes
+    /// `allow_gpu` as requested. The record is the service's own: a request
+    /// cannot create a reset notice, and one that leaves GPU use off cannot
+    /// clear it.
+    #[must_use]
+    pub fn replacing(mut self, previous: &Self) -> Self {
+        self.gpu_opt_in = if self.allow_gpu {
+            Some(GpuOptIn::UserChoice)
+        } else {
+            previous
+                .gpu_opt_in
+                .filter(|record| *record == GpuOptIn::DefaultReset)
+        };
+        self
+    }
     pub fn validate(&self) -> Result<()> {
         validate_query_concurrency(self.query_concurrency)?;
         ensure!(
@@ -116,6 +166,15 @@ impl ResourceConfiguration {
             self.background_io_bytes_per_second
                 .is_none_or(|bytes| (1 << 20..=1 << 30).contains(&bytes)),
             "invalid background I/O override"
+        );
+        ensure!(
+            match self.gpu_opt_in {
+                // Off, or enabled under the earlier default and reset when read.
+                None => true,
+                Some(GpuOptIn::UserChoice) => self.allow_gpu,
+                Some(GpuOptIn::DefaultReset) => !self.allow_gpu,
+            },
+            "GPU opt-in record contradicts allow_gpu"
         );
         Ok(())
     }
@@ -173,20 +232,11 @@ pub struct ResourceSnapshot {
 }
 
 #[cfg(test)]
+mod gpu_opt_in_tests;
+
+#[cfg(test)]
 mod concurrency_tests {
     use super::*;
-    #[test]
-    fn legacy_policy_allows_gpu_and_explicit_opt_out_round_trips() {
-        let mut legacy = serde_json::to_value(ResourceConfiguration::default()).unwrap();
-        legacy.as_object_mut().unwrap().remove("allow_gpu");
-        let loaded: ResourceConfiguration = serde_json::from_value(legacy).unwrap();
-        assert!(loaded.allow_gpu);
-        let disabled = ResourceConfiguration { allow_gpu: false, ..loaded };
-        let bytes = serde_json::to_vec(&disabled).unwrap();
-        assert!(!serde_json::from_slice::<ResourceConfiguration>(&bytes).unwrap().allow_gpu);
-        assert!(serde_json::from_str::<SetGpuAllowed>(r#"{"allow_gpu":false,"preset":"balanced"}"#).is_err());
-    }
-
     #[test]
     fn saved_legacy_policy_defaults_to_sixteen_and_only_listed_values_are_valid() {
         let mut legacy = serde_json::to_value(ResourceConfiguration::default()).unwrap();
