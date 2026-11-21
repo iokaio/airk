@@ -381,6 +381,103 @@ Run prepare_techqa_publisher_judgments.py with isolated Python and bytecode disa
 
 Run `python -I -B -S scripts/arbiter/analysis/public_source_admission/score_techqa_answer_pair.py --exposed-control` for the DEV_Q002 one-arm comparator. The paired mode takes independently pinned `--freeze` and `--pairs` JSON files and their `--freeze-sha256` and `--pairs-sha256`. The freeze must bind the 75 original case IDs in order, publisher judgment and rubric SHA-256, exact request budget, service and CLI pins, search pipeline, and each arm's native profile-file, manifest, runtime, graph and weights. The fixture issuer is `private_service_fixture_through_cli`. Pair rows contain `case`, `fp16` and `fp32`; each arm supplies original plan, command, Answer, owned Job, ready/closed fixture, warm closure/log, dispatch observer closure/log and default search file pins. Pin the measurement file whenever the original producer emitted one. Each pin has an absolute path and SHA-256. The scorer authenticates native ordered file censuses, original framed questions, score returns, publication and delivered source bytes. It compares the two arms on the same initial request, budget, ordered sources, publication and scope. Each arm retains its actual dispatches, subsequent actions and delivered evidence. A checked terminal refusal or deadline without delivery counts as a miss, including when the sealed native observer recorded zero dispatches. If a complete supporting span was delivered before that terminal, it counts as a success. An incomplete supporting span counts as a miss. Missing process settlement, output or unresolvable source bytes keeps the pair unresolved. The installed Windows replay adapter accepts a separate `installed_windows_public_cli` freeze. Its `managed_install` uses the Windows timing collector’s original D installation specification. Retain the original `runtime_inspect` pin emitted with the command list. It requires the actual installation record digest, CLI and service pins, control directory, Focus manifest, the original case-to-index map and request SHA-256 map, plus a qualified Compact profile and nonempty calibration with independent file pins for each role. The owned child invocation is `<absolute-python> -I -B -S <absolute-collect_installed_techqa_answer.py> --freeze <path> --freeze-sha256 <sha> --case <id> --role <fp16|fp32> --directory <absolute-fresh-owned-commands>`. Freeze the interpreter and collector SHA-256, installation record and original request paths in advance. The collector reuses the existing installed timing collector’s `CurrentCLI` and source census. Supply its original freeze pin on each replay arm. The owned parent must retain its completed child argv, job settlement and the collector’s printed command list. Retain the original owned Job and all command and stdout files under its `commands` directory. Supply each arm’s ordered `commands` pin list, `request` pin and `owned` pin. The sequence is service-before, stage-before, the case’s status/list/50 file-info/pipeline calls, answer, stage-after and service-after. Use the same installed account, images, request, original native index, publication and scope throughout. The public Answer exposes delivered assessments, work and errors. Private dispatch counts are unavailable on that route. Installed scoring requires an actual qualified installed FP16 arm, an original qualified FP32 CPU arm and all 75 original pairs. The preregistered confidence procedure remains separate.
 
+## TechQA stage arms: retrieval alone and retrieval with Focus
+
+[run_techqa_stage_arms.py](run_techqa_stage_arms.py) and
+[score_techqa_stage_arms.py](score_techqa_stage_arms.py) measure what the
+Focus stage adds to delivered evidence on the 76 frozen TechQA cases. Arm A
+sends each sealed request with both optional stages disabled. Arm B sends
+the identical request to the same index, publication and service instance
+with the static 1,024-token Focus profile enabled on CPU. Context stays
+disabled in both arms and no device configuration is sent. The instrument
+is `airk_answer`: Focus reorders at most four search hits, and that order
+decides which hits get follow-up reads inside the call budget.
+
+Inputs are the pinned full-menu and exact-gold manifests, the 75-row
+publisher judgment roster, the sealed DEV_Q002 pilot descriptor, the
+publisher archive, the retained 50-document source roots, an existing
+service fixture image and CLI, the three-profile roster and the bundled
+MiniLM. No Cargo build is needed, and results are scoped to the pinned
+image. Use the same-human Windows guard on each fresh output parent and
+audit the created trees before consuming them. Run Python as `-I -B -S`.
+
+Freeze the inputs first. Create a fresh empty
+`<campaign>/techqa-stage-arms-inputs-rN` and run
+`python -I -B -S scripts/arbiter/analysis/public_source_admission/run_techqa_stage_arms.py --prepare --output <that directory>`.
+It reads the archive once and starts no service. It writes one request per
+case under `requests/`, the enrollment scope files and
+`freeze.private.json`. The freeze pins every input, the digests of the
+helper scripts, the 33 document-linked groups, the measurement rule and one
+plan per fixture lifetime. The native configuration emitter reads the whole
+fixture catalog and refuses more than 64 registered indexes, so the 76
+cases are split into two lifetimes of 38, `run-1` and `run-2`. Both arms
+of a case run in the same lifetime. The rule has no pass line and is fixed
+before arm B is scored. Pass `--check-only --freeze <path> --freeze-sha256
+<sha>` to re-pin the frozen inputs without a launch.
+
+Run each lifetime with `--freeze <path> --freeze-sha256 <sha> --output
+<campaign>/techqa-stage-arms-run-1-rN`, then the same with `run-2`. One
+owned Job with a 32 GiB cap starts a fresh fixture, which copies about
+24.2 GB of model weights for its three-profile roster. Admission requires
+the 30 GiB reservation above a 100 GiB free-space floor and 32 GiB of
+memory headroom, so dispose of the first installation before starting the
+second. Child temporary files go to `<output>-temp`. A lifetime indexes its
+menus with MiniLM, issues arm A, writes the Focus pair census, then enables
+Focus for its indexes and issues arm B. It ends through `service shutdown`
+and requires the fixture, warm and dispatch closure receipts. An Answer
+call that fails or
+misses its client deadline is recorded as its own state and is never
+retried. The run stops if the fixture service appears in the GPU process
+list. It records the compiler processes seen before each call, because a
+concurrent build affects latency. An output named
+`techqa-stage-arms-dry-rN` runs the exposed DEV_Q002 case only, including
+one enable, disable and enable cycle.
+
+Outputs are `commands/<case>/answer-a.*` and `answer-b.*`,
+`focus-pair-census.private.json`, `capture.private.json`, `owned.json` and
+the fixture receipts. The census is the scorer's `--focus-census` mode. It
+tokenises the first four hits of each arm A initial search with the pinned
+tokenizer and the publisher recipe, and lists the pairs that exceed 1,024
+tokens. It runs no model and needs the reviewed Python environment with
+tokenizers installed (`-I -B`).
+
+Score the closed lifetimes together with
+`python -I -B -S scripts/arbiter/analysis/public_source_admission/score_techqa_stage_arms.py --run <run-1> --capture-sha256 <sha> --run <run-2> --capture-sha256 <sha> --freeze <path> --freeze-sha256 <sha> --output <fresh private json>`.
+Scoring one lifetime alone reports its cases and only the groups whose
+cases are all present. `--arm-a-only --run <run>` scores retrieval alone
+for a settled run that closed before arm B was issued; it makes no paired
+claim. Each arm is `covered`, `partial`, `not_delivered` or `unresolved` against
+the one documented publisher span, or keeps its `cli_error`, `tool_error`
+or `timeout` state. A terminal refusal or deadline is scored on what it
+delivered. Each pair is `both`, `a_only`, `b_only`, `neither`, `unresolved`
+or `error`, and the net effect is `b_only` minus `a_only`. Refusals, errors
+and cases where Focus was not applied stay in the denominator. A pair is
+unresolved when the arms did not start from the same initial hits in the
+same order before Focus. The summary reports the 75 judged cases, their 32
+groups with equal weight, and DEV_Q002 separately as exposed. It also
+reports the publisher document's rank in the initial search before and
+after Focus, the uncovered byte ranges, duplicate delivered bytes, the
+Focus state of every search and the median and nearest-rank 95th percentile
+of the Answer round trip. Standard output holds counts only. Case rows stay
+in the private output.
+
+After scoring, run the runner with `--dispose-weights --freeze <path>
+--freeze-sha256 <sha> --output <run>`. It needs the settled Job receipt. It
+rehashes the retained source weights against the roster profiles, checks
+that each installed file at
+`fixture/control/arbiter-v3/assets/<manifest>/model.onnx.data` is an
+independent byte-identical copy, removes only those copies and writes
+`weights-disposed.json` with the reclaimed bytes. Dispose of one
+installation before admitting the next one.
+
+These figures describe the private fixture on one image at four inference
+threads with an unqualified Focus profile. Each case has one judged span,
+so an uncovered span is not proof that the evidence was insufficient. They
+are not installed-product, 8-core or cross-platform evidence. The synthetic
+controls are in
+[test_techqa_stage_arms.py](../../../tests/test_techqa_stage_arms.py); run
+`python -I -B -m unittest discover -s scripts/tests -p test_techqa_stage_arms.py`.
+
 ## Retained AWS source publication
 
 The retained Windows store has one registered natural root covering 35,515
