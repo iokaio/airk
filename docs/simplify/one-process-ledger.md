@@ -14199,3 +14199,145 @@ verifier for the portable recipe, the Core change for the opt-in GPU default
 with Cargo ownership, drift of the portable graphs across the 100 frozen
 Compact rows with GPU ownership, and a read-only runbook for the Focus
 comparison of step 1.
+
+### 21 November 2026 at 04:57 UTC — First wave results: verifier, panel drift, three runbooks, cache-mode finding
+
+Identities: PowerShell, Bash and the edit tool verified as `TYAI\tdotn`
+(SID ending `-1002`), not elevated. Agents verified the same identity in
+their own shells. Agents made no commits.
+
+**Committed (signed off, not yet pushed at the time of writing):**
+
+- `4f56352d` — independent graph proof for the portable recipe
+  (`scripts/arbiter-fp16-reference/portable_graph.py`, `verify_portable.py`,
+  `test_portable_graph.py`). `graph.py` is unchanged because execution owners
+  pin its digest. Primary review: read both modules, reran
+  `test_portable_graph.py` (20 passed) and `test_graph.py` (18 passed) in the
+  private venv.
+- `3a090913` — panel drift measurement for the WebGPU probe
+  (`scripts/arbiter-webgpu-probe/panel.py`, `test_panel.py`). Primary review:
+  read the module, reran the folder's tests (28 passed).
+
+**Portable graph proof (graph structure only).** Both real exports pass:
+Compact `1af995de…8a29` (28 layers, 4,230 nodes) and Large `2435f479…d3e6`
+(36 layers, 5,414 nodes). The default-recipe Compact graph is refused, as it
+should be. Receipts under
+`artifacts/v190/final-plan/exec-20261116T052942Z/verifier-portable-r1/final/`:
+Compact proof `dde87a14f5948617fda0a613440e5932dfa4ce965b69ba6c748c1b8ce80d1ff8`,
+Large proof `2ab7734cf5b6cdaae2eeb70386359e8fe5455c49e423102aefe50c99ea1adf6e`.
+Not covered: learned bytes of a portable candidate. A primary diagnostic
+(inline, not a maintained check) found that the 197 Compact and 253 Large
+half tensors of the portable graphs carry the same names, shapes, offsets and
+lengths as the default-recipe candidates whose bytes were verified, and the
+`weights.bin` digests are identical. A maintained learned-byte check for the
+portable recipe is still owed before any qualification claim.
+
+**Panel drift, portable Compact, 100 frozen rows (development measurement).**
+Receipts under `…/panel-drift-r1/`: WebGPU
+`017429f6f8a5c3378f947809b01f57bb2fb617a4823c60cb5e160e31fec5897c`, CPU
+`1f457e558906ef85e5f6ef7fcf0ad3b53f54d9b54c85fa8464f38e39f7a7432f`.
+
+| Provider | Max raw difference from the calibrated identity | Median | p95 | Winner changes | Rows with margin below twice the difference |
+| --- | --- | --- | --- | --- | --- |
+| CPU, 8 threads | 0.000519 | 0.000130 | 0.000252 | 0 | 0 |
+| WebGPU (A6000, D3D12) | 0.001633 | 0.000492 | 0.001038 | 0 | 0 |
+
+Against the 48 rows that have CPU references, the largest difference is
+0.000206 on CPU and 0.001816 on WebGPU, with no winner change. Limits: the
+panel's rows are 1,263 to 1,480 tokens, so it says nothing about 8,192
+tokens, where the control measured 0.004494 on WebGPU. Normalized-mass error
+was not computed. The smallest reference margin on the panel is 0.054.
+
+**WebGPU buffer cache finding.** With `storageBufferCacheMode=simple`,
+adapter memory rose by 558 to 786 MiB for each token count not yet seen in
+the session and never fell: the 100-row session peaked at 44,739 MiB.
+Primary follow-up with `bucket`
+(`…/webgpu-cache-mode-r1/`, receipts `ba2ab604…`, `3debb1a8…`, `989599b3…`):
+
+| Model | Cache mode | Peak above baseline at 8,192 tokens | With 2 GiB reserve | Target |
+| --- | --- | --- | --- | --- |
+| Compact | simple, one length | 7,168 MiB | 9,216 MiB | 16 GB: fits |
+| Compact | bucket | 16,035 MiB | 18,083 MiB | 16 GB: misses |
+| Large | simple, one length | 15,300 MiB | 17,348 MiB | 24 GB: fits |
+| Large | bucket | 28,864 MiB | 30,912 MiB | 24 GB: misses |
+
+So the step 6 "go" holds for a single input length only. Neither cache mode
+meets the memory targets for varying lengths as measured. The next measured
+iteration pads inputs to a short ladder of fixed lengths under `simple`, and
+measures `lazyRelease` at 8,192 tokens. An agent owns it and the GPU.
+
+**Runbooks saved** (private, `…/agent-runbooks-r1/`): Linux
+`620773fba3077fc1060306dd67b8d394621da1c53e74f96bc195a06591ad0953`, Focus
+stage comparison
+`a6dcd655c696d8d1247431450e4c60c7a1213fc98e6c704fb1c8a841331805f0`, Windows
+CUDA finish (hash taken before a one-line timestamp correction; the file is
+private and not evidence). All three came from read-only agents. Their main
+findings:
+
+- *Step 1 (Focus).* Every input exists except a two-arm runner and a scorer.
+  The installed product cannot run it, because the Focus profile is
+  unqualified, so it runs on the private evaluation fixture image
+  `77e70341…`. Focus reorders at most four hits and never changes the set, so
+  the instrument is `airk_answer`. No pass line is set: the run reports
+  paired counts and the user reviews them. An agent is writing the two
+  scripts and will run the 76 cases. D: reservation 30 GiB.
+- *Step 4 (Windows CUDA).* The Compact fit is predicted to return
+  `unsupported_no_positive_safe_margin`. This is the agent's arithmetic on
+  the retained panel, not the native owner. Only two certified Read winners
+  exist (margins 0.52 and 5.62) and four uncertified Read winners have larger
+  margins (6.37 to 10.68), so no cutoff admits a certified row without an
+  uncertified one. The CPU references agree with every CUDA winner on the 48
+  checked rows, so this is model behaviour and not a CUDA defect. If the
+  native study confirms it, Compact has no calibrated policy under the
+  generic Read rule and nothing for a confirmation capture to confirm. Other
+  blockers: the Large build launcher refuses (an expired deadline constant
+  and a D: floor that encodes 120 GiB of growth instead of the approved
+  195,421,011,968 bytes), no image contains the Large selector, and no fit
+  entry point accepts the R8 panel without a Rust change.
+- *Steps 2 and 10 (Linux).* No GNU gate is admissible until a successor
+  volume policy exists: the default guard caps C: growth at 24 GiB and the
+  120 GB allowance is wired only into an expired file. Linux cannot score a
+  CUDA model with current source: the GNU selectors are load-only, the
+  reviewed Linux CPU-bounds table is empty and Large scoring is refused on
+  GNU. The source with the GNU selectors has never compiled on GNU. A bare
+  `wsl` starts the wrong distribution as root; the campaign distribution is
+  `Ubuntu` with user `tyler`. About 7.33 GB of VHD growth and 11.8 GB of
+  guest space remain under the retained 24 GiB caps.
+
+**Step 4, step 0 done.** The calibrated Compact image `9e09f30b…` had no
+seal and its build lineage lived in the shared Cargo target. Sealed before
+another test build could overwrite it:
+`…/compact-cutlass-cal-r7-seal-r1/execution.json`,
+`e64c46617bc4a5ee83271a9adc4e85b4f391568fb79d2a43e118c01325ccb7ec`, exit 0.
+
+**Capacity rule frozen before any trial (A6).** Control: the ballast
+process's own shared usage in the same run. Margin: 16 MiB above the control
+for peak shared and peak fresh non-local bytes. Reserve: peak dedicated plus
+2 GiB within the tier. Every clean retained trial exceeded the control by
+exactly 2 MiB and the failed 6 GiB trial by 130 MiB. An agent is making the
+Python change with tests and an offline reclassification. No trial has run
+under the new rule.
+
+**Open user decisions (work continues around them).**
+
+1. Whether the retained 24 GiB guest and VHD caps for the Ubuntu instance
+   may rise within the 120 GB C: allowance. The assignment says the original
+   separate guest and VHD checks remain, so the primary agent has not raised
+   them.
+2. Authorization for the `install.sh` per-user pointer on Linux, which the
+   regular installed journey needs.
+3. What to do if the native study confirms that Compact has no safe cutoff
+   under the generic Read rule.
+
+**Disk.** D: free 1,093,645,856,768 bytes at 04:56 UTC, which is
+139.60 GB of growth against the 195.42 GB budget. Reclaimed 3,440,902,144
+bytes by removing the disposable probe-variant weight file
+`confidence-refinement-r1/variant-half-nobias-r1/weights-fp16.bin`
+(SHA-256 `52a9e72c…`, reproducible with `variant.py` from the retained
+original; its small graph and receipts stay). D: free afterwards
+1,097,086,758,912. Outstanding reservation: 30 GiB for the step 1 fixture.
+C: free 2,643,020,935,168, growth 26.94 GB of the 120 GB allowance.
+
+**Running at the time of writing.** Core opt-in change (Cargo owner), step 1
+Focus comparison (CPU fixture), WebGPU length ladder (GPU owner), capacity
+rule change (Python only).
