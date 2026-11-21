@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! One original R8 phase on the protected scientific Large CUDA graph.
 use super::super::fp16_compact::cal::{
-    chronological_audit, original_compiler, pin, verify_chronological_row,
+    chronological_audit, json_file, original_compiler, pin, verify_chronological_row,
 };
 use super::*;
 use airk_retrieval::arbiter::compiler::CompiledInput;

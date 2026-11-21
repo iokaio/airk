@@ -59,7 +59,7 @@ pub(in super::super) fn pin(value: &Value) -> Result<ResourceFilePin> {
     })
 }
 
-fn json_file(pin: &ResourceFilePin, limit: u64) -> Result<Value> {
+pub(in super::super) fn json_file(pin: &ResourceFilePin, limit: u64) -> Result<Value> {
     Ok(serde_json::from_slice(&pinned(pin, limit)?)?)
 }
 
