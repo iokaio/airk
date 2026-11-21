@@ -110,6 +110,13 @@ export type FailureEnvelope = {
     schema: "airk-admin/1";
 };
 
+/**
+ * The record kept beside `allow_gpu` now that GPU use is opt-in. Absent when
+ * GPU use is off and no notice is pending. The owning decision is "Service-wide
+ * GPU use is opt-in" in `arbiter/CONTRACT.md`.
+ */
+export type GpuOptIn = "user_choice" | "default_reset";
+
 export type Idempotency = "read" | "request_key" | "operation_digest" | "natural";
 
 export type KeyMode = "generate" | "review";

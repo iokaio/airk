@@ -350,6 +350,33 @@ test('copied resource diagnostics retain each observed GPU permission and omit u
     assert.ok(!Object.hasOwn(JSON.parse(diagnosticPreview(state(),false)).resourceConfiguration,'allow_gpu'));
 });
 
+test('the service-wide GPU row names a pending reset apart from plain off, on and unavailable',()=>{
+    const row=(value:ServiceConsoleState)=>managementView(value).resources.find(([label])=>label==='Service-wide GPU use')?.[1];
+    const value=state();
+    value.resources.value={configuration_error:false,observation:{configuration:{preset:'balanced',allow_gpu:false,gpu_opt_in:'default_reset'}}};
+    assert.equal(row(value),'Disabled (reset from an earlier default; choose in Service Admin)');
+    value.resources.value={configuration_error:false,observation:{configuration:{preset:'balanced',allow_gpu:false}}};
+    assert.equal(row(value),'Disabled');
+    value.resources.value={configuration_error:false,observation:{configuration:{preset:'balanced',allow_gpu:true,gpu_opt_in:'user_choice'}}};
+    assert.equal(row(value),'Allowed');
+    value.resources.value={configuration_error:true,observation:{configuration:{preset:'balanced',allow_gpu:false,gpu_opt_in:'default_reset'}}};
+    assert.equal(row(value),'Unavailable');
+    value.resources.value={observation:{configuration:{preset:'balanced',allow_gpu:false,gpu_opt_in:'default_reset'}}};
+    assert.equal(row(value),'Unavailable','a result without the configuration check is not a current setting');
+});
+
+test('copied resource diagnostics retain the GPU opt-in record only when the service reports one',()=>{
+    const value=state();
+    value.resources.value={observation:{configuration:{preset:'balanced',allow_gpu:false,gpu_opt_in:'default_reset',private_path:'/unexported'}}};
+    const report=diagnosticPreview(value,false);
+    assert.deepEqual(JSON.parse(report).resourceConfiguration,{preset:'balanced',allow_gpu:false,gpu_opt_in:'default_reset'});
+    assert.ok(!report.includes('/unexported'));
+    value.resources.value={observation:{configuration:{preset:'balanced',allow_gpu:true,gpu_opt_in:'user_choice'}}};
+    assert.deepEqual(JSON.parse(diagnosticPreview(value,false)).resourceConfiguration,{preset:'balanced',allow_gpu:true,gpu_opt_in:'user_choice'});
+    value.resources.value={observation:{configuration:{preset:'balanced',allow_gpu:false}}};
+    assert.deepEqual(JSON.parse(diagnosticPreview(value,false)).resourceConfiguration,{preset:'balanced',allow_gpu:false});
+});
+
 test('unavailable historical semantics are disclosed in health and complete copied details',()=>{
     const current=state(),semantic={state:'unavailable',failure:'legacy_saved_semantic_conversion_unavailable',future:{preserved:true}};
     const row=current.page!.projects[0] as any;row.inspection.snapshot.semantic=semantic;row.pending_job=null;row.progress=undefined;

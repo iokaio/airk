@@ -63,7 +63,7 @@ pub enum ResourcePreset {
 /// The record kept beside `allow_gpu` now that GPU use is opt-in. Absent when
 /// GPU use is off and no notice is pending. The owning decision is "Service-wide
 /// GPU use is opt-in" in `arbiter/CONTRACT.md`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum GpuOptIn {
     /// The user turned GPU use on through the service-wide setting.

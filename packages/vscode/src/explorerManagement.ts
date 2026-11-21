@@ -4,6 +4,10 @@ import { projectSummaries } from './explorerControl';
 import type { RecordValue } from './serviceClient';
 import { ConsoleObservation, ServiceConsoleState, waitLabel } from './serviceConsoleView';
 import { indexContents, semanticExplanation } from './explorerStatus';
+import type { GpuOptIn } from './generated/i3';
+
+/** The reset record's wire value, checked against the type generated from the Rust owner. */
+const GPU_DEFAULT_RESET: GpuOptIn = 'default_reset';
 
 /** Copy cached diagnostic metadata only. No reads, source bodies, jobs or index inspection are triggered. */
 export function panelDetails(view: ManagementView, section: string, version: string, projectId?: string, status?: StatusSummary, now = Date.now()): string {
@@ -360,7 +364,9 @@ export function managementView(state: ServiceConsoleState): ManagementView {
         ]),
         resources: [observed('Resources', state.resources), observed('Source work', state.sources), ...rows([['Preset', configuration.preset],
             ['Service-wide GPU use', state.resources.value?.configuration_error === false && typeof configuration.allow_gpu === 'boolean'
-                ? (configuration.allow_gpu ? 'Allowed' : 'Disabled') : 'Unavailable'],
+                ? (configuration.allow_gpu ? 'Allowed'
+                    : configuration.gpu_opt_in === GPU_DEFAULT_RESET ? 'Disabled (reset from an earlier default; choose in Service Admin)' : 'Disabled')
+                : 'Unavailable'],
             ['Concurrent evidence requests', configuration.query_concurrency],
             ['Resident workers / limit', resources.resident_workers === undefined ? undefined : `${scalar(resources.resident_workers)} / ${scalar(resources.resident_limit)}`],
             ['Running jobs', resources.running_jobs], ['Waiting projects', resources.waiting_projects], ['Logical CPUs', resources.logical_cpus],

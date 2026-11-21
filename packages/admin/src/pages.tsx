@@ -25,6 +25,7 @@ import { currentSession } from './session';
 import { useContext } from 'preact/hooks';
 import { PageVisible } from './pageVisibility';
 import type { CallResult } from './api';
+import type { GpuOptIn } from '../../contracts-gen/i3';
 
 /** U103: live progress of one registered index, chosen from the catalog names. */
 function OverviewProgress(): JSX.Element {
@@ -272,6 +273,19 @@ export function gpuAllowedOf(value: unknown): boolean | null {
   return typeof configured === 'boolean' ? configured : null;
 }
 
+/** The reset record's wire value, checked against the type generated from the Rust owner. */
+const GPU_DEFAULT_RESET: GpuOptIn = 'default_reset';
+
+/**
+ * True while the service reports that GPU use stored as enabled under the earlier default was
+ * reset to off and the user has not answered. It reads the same current configuration as
+ * `gpuAllowedOf`; any other result shows no notice.
+ */
+export function gpuResetPendingOf(value: unknown): boolean {
+  return gpuAllowedOf(value) === false
+    && field(field(field(value, 'observation'), 'configuration'), 'gpu_opt_in') === GPU_DEFAULT_RESET;
+}
+
 /** Presentation-only native field projection; the complete ResourceSnapshot stays in Details. */
 export function resourceSummaryOf(value: unknown): readonly [string, string][] {
   if (field(value, 'status') !== 'resources') return [];
@@ -332,14 +346,19 @@ export function Service(props: { onLifecycle: (action: 'stop' | 'restart') => vo
   const session = currentSession();
   useEffect(() => { if (visible && session !== null) void refreshResources(); }, [visible, session]);
   const allowed = session && session === observedSession ? gpuAllowedOf(resultOf(resources)) : null;
-  const reviewed = gpuReview?.observation === resources && allowed !== null && gpuReview.desired === !allowed;
+  const resetPending = session !== null && session === observedSession && gpuResetPendingOf(resultOf(resources));
+  // A review belongs to the observation it was opened on. The toggle can only invert the value in
+  // effect. Keeping GPU use off is a request only while the reset notice is pending: the service
+  // takes it as the user's answer and clears the notice without a GPU transition.
+  const reviewedChoice = gpuReview?.observation === resources && allowed !== null
+    && (gpuReview.desired === !allowed || (resetPending && !gpuReview.desired)) ? gpuReview.desired : null;
   const applyGpu = async () => {
-    if (!reviewed || !visible || currentSession() !== observedSession || gpuBusy.current) return;
+    if (reviewedChoice === null || !visible || currentSession() !== observedSession || gpuBusy.current) return;
     gpuBusy.current = true;
     setOutcomeSession(observedSession);
     setGpuReview(null);
     try {
-      await runGpu(OPS.allowGpu, body.allowGpu({ allow_gpu: !allowed }));
+      await runGpu(OPS.allowGpu, body.allowGpu({ allow_gpu: reviewedChoice }));
     } finally {
       gpuBusy.current = false;
       if (session === currentSession()) await refreshResources();
@@ -378,14 +397,25 @@ export function Service(props: { onLifecycle: (action: 'stop' | 'restart') => vo
         {resources.phase === 'done' ? <p class="muted">Last observed {new Date(resources.at).toLocaleTimeString()}. Refresh after changing models or service settings.</p> : null}
         <ResourceSummary state={resources} />
         <p>Service-wide GPU use: <strong>{allowed === null ? 'Unavailable' : allowed ? 'Allowed' : 'Disabled'}</strong></p>
-        {allowed !== null && (reviewed ? <div>
-          <p>{allowed ? 'Disable GPU use for this service?' : 'Allow this service to use an eligible GPU?'}</p>
+        {resetPending ? <p role="status">GPU use was reset to off. An earlier AIRK version allowed GPU use by default, and
+          this service stored that setting. GPU use is now opt-in, so it was turned off once. Choose Allow GPU use to
+          turn it on, or Keep GPU off to leave it off. Either answer clears this notice.</p> : null}
+        {allowed !== null && (reviewedChoice !== null ? <div>
+          <p>{reviewedChoice ? 'Allow this service to use an eligible GPU?'
+            : allowed ? 'Disable GPU use for this service?'
+            : 'Keep GPU use off for this service? This records your answer and clears the notice.'}</p>
           <button type="button" disabled={gpuBusy.current || !visible} onClick={() => void applyGpu()}>Confirm change</button>
           <button type="button" onClick={() => setGpuReview(null)}>Cancel</button>
-        </div> : <button type="button" disabled={gpuBusy.current || !visible}
-          onClick={() => setGpuReview({ observation: resources, desired: !allowed })}>
-          {allowed ? 'Disable GPU use' : 'Allow GPU use'}
-        </button>)}
+        </div> : <>
+          <button type="button" disabled={gpuBusy.current || !visible}
+            onClick={() => setGpuReview({ observation: resources, desired: !allowed })}>
+            {allowed ? 'Disable GPU use' : 'Allow GPU use'}
+          </button>
+          {resetPending ? <button type="button" disabled={gpuBusy.current || !visible}
+            onClick={() => setGpuReview({ observation: resources, desired: false })}>
+            Keep GPU off
+          </button> : null}
+        </>)}
         {outcomeSession === session && gpuOutcome.phase !== 'idle' && <details open><summary>GPU setting result</summary><Outcome state={gpuOutcome} /></details>}
         <details><summary>Details: complete resource result</summary><Outcome state={resources} /></details>
       </Panel>

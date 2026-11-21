@@ -1173,3 +1173,8 @@ Core tests use literal stored bytes for each row of the table, the reset, the
 user's answer in both directions, the replacement rule and the invalid pairs.
 Host tests read and write real files. A service test restarts an owned
 service over a file stored under the earlier default.
+
+`GpuOptIn` derives its JSON Schema and joins the I3 schema roots, so Admin
+and the extension read `gpu_opt_in` through generated types. The wire value
+is unchanged. This replaces the earlier statement that the I3 schema and the
+generated client types are unchanged.
