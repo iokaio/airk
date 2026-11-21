@@ -353,7 +353,7 @@ What follows for this plan:
 
 | Step | Work | Done when | Needs | Confidence |
 | --- | --- | --- | --- | --- |
-| 1 | Freeze the judged cohort. Run the first two stage arms on Windows CPU at the same evidence budget: retrieval alone and retrieval with Focus. | Focus's contribution to delivered evidence is measured, with missing evidence, duplicates and latency. | Nothing | Medium to high. Start with the 76 TechQA cases, which carry publisher coordinates and complete menus. In progress on 21 November. The runner and scorer exist, and the run uses the private evaluation fixture because the Focus profile is unqualified. No pass line is set; the paired counts are reported. Retrieval alone is measured: it delivers the publisher's span on 38 of 75 judged cases. The Focus arm is running as two fixture lifetimes of 38 cases, because the fixture refuses to configure Focus over more than 64 indexes. |
+| 1 | Freeze the judged cohort. Run the first two stage arms on Windows CPU at the same evidence budget: retrieval alone and retrieval with Focus. | Focus's contribution to delivered evidence is measured, with missing evidence, duplicates and latency. | Nothing | Medium to high. Start with the 76 TechQA cases, which carry publisher coordinates and complete menus. Done on 21 November for the 76 TechQA cases, on the private evaluation fixture because the Focus profile is unqualified. No pass line was set. Retrieval alone delivers the publisher's span on 38 of 75 judged cases and retrieval with Focus on 38: four gained, four lost, net zero, at about 22 s more per request. See the step 1 detail. |
 | 2 | Deliver the CPU milestone. Install the product on Windows and on Linux under WSL2 and measure the ladder tiers end to end at 8 cores, the target class. Start with retrieval and Focus, and add the Compact tiers when step 3 delivers them. Record the four memory figures. macOS joins at step 11. | Each tier has an end-to-end figure at 8 cores on both systems, and the tiers that meet 120 seconds are admitted for the target class. | Nothing | Medium. The runtime build on each system is the risk. |
 | 3 | Export the portable graph for Compact. Record the recipe in the exporter contract first. Verify shared weight bytes. Load on the static runtime with zero forwards. Score the four widths and 2,048 tokens against the reference. Time each width and record the four memory figures. | Compact has measured CPU numbers for the full and fast tiers. | Nothing | High. The exporter's portable recipe exists, Compact and Large are exported and scored on the published runtime, and both pass the independent graph proof. The static runtime loads and scores Compact on Windows. A quiet-machine timing, Large on the static runtime and a learned-byte check for the portable recipe remain. |
 | 4 | Finish Windows CUDA. Complete Compact matching references, fit calibration, add the Large selector and score its panel. Run capacity under A6. | Both candidates hold a calibrated panel and a memory figure. | Nothing | Not reachable as written. The native study found no safe cutoff for Compact, and the cause is the task design (see the Context section above). The Large tooling exists and its panel is deferred. Capacity under A6 is implemented and replayed offline; live trials wait for the desktop's GPU memory state to recover. See the step 4 detail. |
@@ -366,6 +366,43 @@ What follows for this plan:
 | 11 | After the Windows and Linux CUDA work is complete, rehearse macOS on the Mac Neo. Build the arm64 runtime with the CPU and WebGPU providers from pinned inputs. Confirm that WebGPU starts on Metal. Run synthetic graphs and reduced fixtures, Focus on CPU, and a dry run of the rented-Mac batch. | The build is reproducible, Metal support is confirmed or refuted, and the batch runs end to end on small inputs. | Steps 4 and 10 | Medium. Memory and disk on the Neo are the risk. |
 | 12 | Run one rehearsed batch on each rented host: the Azure VM under Windows, the Azure VM under Linux, and the rented Mac. | WebGPU is adopted under A3, or the failing platform stays on the CPU ladder. Native Linux and macOS hold CPU evidence for the Context tiers. | Steps 6 and 7. Step 11 for the Mac batch. | Medium for WebGPU. Memory and the Radeon and Metal drivers are the risk. Medium for CPU. |
 | 13 | Package and run the installed journeys of the parent plan for each milestone. | Parent steps 16 and 17 for that milestone. | The milestone's steps | Parent plan. |
+
+Step 1 detail, measured on 21 November. Both arms sent the same frozen
+request to the same index, publication and service instance: 75 judged cases
+plus the exposed DEV_Q002, in two fixture lifetimes of 38, at 4 inference
+threads with the unqualified Focus 1,024 profile. Each case has one judged
+span, so an uncovered span is not proof that the evidence was insufficient.
+
+| Paired outcome over 75 cases | Cases |
+| --- | --- |
+| Span covered in both arms | 34 |
+| Covered by retrieval alone only | 4 |
+| Covered with Focus only | 4 |
+| Covered in neither | 33 |
+| Unresolved or error | 0 |
+
+| Measure | Retrieval alone | With Focus |
+| --- | --- | --- |
+| Span covered / partial / not delivered | 38 / 3 / 34 | 38 / 6 / 31 |
+| Publisher document ranked first in the initial search | 24 | 33 |
+| A hit overlapping the span ranked first | 18 | 22 |
+| Duplicate bytes delivered | 22.4% | 23.8% |
+| Answer latency, median and p95 | 8.8 s and 13.7 s | 31.7 s and 39.1 s |
+
+The net is zero in every one of the 32 judged document-linked groups. Focus
+was applied on every initial search and changed the order of the first hits
+in 68 of 75. It improves the order and does not change how many cases end
+with the span delivered. Retrieval decides the outcome on this cohort: a hit
+overlapping the span is absent from the initial search in 42 of 75 cases,
+and 31 of those end uncovered in both arms. Seven of the eight discordant
+cases are in that set and turned on follow-up reads, not on the reordering.
+Focus reorders only the first four hits, and on later searches it was not
+applied 184 times of 334, mostly because the remaining budget could not
+admit it. Its inference took a median 22.5 s per request, 3.85 s per pair.
+The latency was measured beside builds and is indicative. The scorer's
+pairing check was corrected after the run and the correction is disclosed in
+the ledger.
+[Stage-arm tools](../../scripts/arbiter/analysis/public_source_admission/README.md)
 
 Step 2 detail. The retained Focus figure is per pair: 4.280648 s warm p95 at
 1,024 tokens. A request reranks many pairs, and an engineering run scored 14
