@@ -13377,3 +13377,21 @@ All six fresh R8 Compact CUDA phases naturally exited 0 on the Windows A6000. Sc
 `python -I -B -S scripts/arbiter/evaluation/selected_goal/cal_raw/compact_matching/r8_reuse_cpu.py` recovered R5 matching and publisher CPU scores for ordinals 024–039. It reauthenticated both original CPU Jobs per phase, byte-pinned logs, original input-reader Git blob, compiler tensors, source-resolved card order and exact scoring arithmetic. The 16 same-artifact R7 GPU comparisons passed both winners and numeric checks. Maximum raw and mass differences were 0.000316619873 and 0.000061351894 against matching, 0.000278472900 and 0.000052934562 against publisher. The 1.995-second check executed zero forwards. Private SHA `bd7d72ea7f15db18da7897badb9ae2fe9252e1ac01c26804093f2ee093c21977`. Together with the 24 checked original R7 pairs, 40 of 100 Compact scientific rows have both CPU references and numerical comparison. The remaining reference rows begin at 040. Fitting, Large raw CAL, paired held-out and installed qualification remain open.
 
 The same-user R7 volume observer started at 23:51:04.800 UTC with the original physical baselines, 195,421,011,968-byte Windows reservation, 120,000,000,000-byte Ubuntu backing reservation and 107,374,182,400-byte floor. Its log is `host-volume-watch-r7.jsonl`, scheduled through 03:51:04.800 UTC on 21 November. The first actual sample was healthy on both volumes. Windows uses the existing target and published source is unchanged.
+
+### 21 November 2026 at 00:02 UTC — FP16 only on CPU and GPU
+
+The user confirmed that the release uses FP16 for CPU and GPU, including
+automatic CPU fallback, and directed that FP32 work stop. Use the completed
+FP32 baseline only to compare the final FP16 artifacts. This corrects the
+GPU-only wording and sequence in the earlier checkpoint. The last reference
+batch, for ordinals 040–047, settled before this decision. Both Jobs exited 0
+and the eight scored cases passed their paired numerical checks.
+Matching receipt `40f7c1f2d7153295b10ad13a216fbdaf76a0394b2cff4df9d6360c60c9e5ce42`
+took 270.392 seconds. Publisher receipt
+`7027d2b6434ff8e301e379f47bf266465bb0561a35ab159497a37fb0b708287b` took
+207.090 seconds. Exact same-input comparison
+`188dd94ec9e924ca8c3d56195eaf43620611881c40549bdb6935d91b28466b6b` had
+a 0.000225067139 maximum matching-recipe raw error. This makes 48 original
+scientific Compact pairs. The full Compact GPU panel and all baseline
+results stay available under their exact original identities. No new FP32
+Job was started after the decision.

@@ -6,9 +6,10 @@ The Windows Large FP32 CUDA run passed on 18 November. Retain the Windows
 FP32 results as engineering evidence. Next qualify FP16 with efficient
 attention and automatic CPU fallback. Begin with Windows CUDA, then Linux CUDA
 on WSL2, macOS Core ML, Azure Windows Radeon DirectML, and Azure Linux
-Radeon ROCm. Linux GPU qualification is FP16-only. The release goal is FP16
-as the sole GPU precision if it meets the quality, performance and memory
-gates on target developer machines. See section 11. The user set a 15-hour target for release-ready Windows and Linux CUDA
+Radeon ROCm. For this release, target FP16 on both CPU and GPU, including
+explicit CPU selection and automatic CPU fallback. Reuse the completed FP32
+baseline for comparison with the final FP16 artifacts. See the precision
+decision in section 1 and the platform gates in section 11. The user set a 15-hour target for release-ready Windows and Linux CUDA
 FP16, approximately **Friday, 20 November 2026 at 10:10 a.m. America/Denver**.
 See section 5 for the time basis.
 The original planning request authorized this runbook only. The user authorized
@@ -30,6 +31,16 @@ All-three qualified Focus/Compact/Large profiles remain mandatory for the final
 native publication catalog. A useful local candidate is a separate milestone.
 
 ## 1. Recorded authority and decisions
+
+### FP16 release precision decision, 20 November 2026 (America/Denver)
+
+The user confirmed FP16 as the only delivery precision on CPU and GPU,
+including explicit CPU inference and automatic CPU fallback. Reuse completed
+FP32 baseline results only for comparison against the final FP16 artifacts.
+Stop new FP32 implementation and runs. Keep the released-artifact fit,
+latency, correctness, and held-out gates. Where retained baseline evidence
+does not cover an exact comparison, report that gap. Historical FP32
+engineering and the former CPU fallback policy retain their original scope.
 
 ### User answers for this plan
 
@@ -1532,12 +1543,12 @@ Qualify FP16 in the platform order above. Retain the Windows FP32 model and
 evidence as a separate engineering baseline. Keep explicit CPU as a separate
 device choice. Auto uses a qualified, fitting GPU variant exposed by the
 installed build, then the separately admitted CPU path for the same model.
-The Windows engineering build can exercise explicit FP32 and FP16 where each
-has been admitted. Its Auto order is FP32, then FP16, then CPU. FP16-only
-builds expose Auto and FP16 for GPU precision.
-An explicit GPU precision preference constrains GPU candidates. CPU fallback
-uses its existing admitted precision and reports it separately. Preserve the
-selected model, stage consent, input width and shared budget.
+The prior Windows engineering build exercised admitted FP32 and FP16.
+Its Auto order was FP32, then FP16, then CPU. Apply the 20 November precision
+decision to this release. Auto and explicit FP16 use qualified FP16 GPU
+profiles. Explicit CPU and automatic CPU fallback use a separately qualified
+FP16 CPU profile for the same model. Preserve the selected model, stage
+consent, input width and shared budget.
 
 1. Register the exact half-precision conversion, protected FP32 operations,
    output FP32 ABI, native initializer loading and attention algorithm before
@@ -2028,12 +2039,11 @@ case. A CPU fallback claim requires its own applicable evidence.
 
 ### Future GPU release precision
 
-Target FP16 as the sole GPU precision in a future release to reduce memory,
-storage and packaging demands on developer machines. Base the release decision
-on independent score parity and precision-loss evidence, measured latency and
-memory fit on target developer GPUs, efficient attention, and working same-model
-CPU fallback. Preserve the Windows CUDA FP32 implementation and reproducible
-evidence for comparison and debugging. If an FP16 target misses a gate, record
+Target FP16 as the sole delivery precision on CPU and GPU. Base the release
+decision on independent score parity and precision-loss evidence, measured
+latency and memory fit on target developer machines, efficient GPU attention,
+and working same-model FP16 CPU fallback. Use the already completed FP32
+baseline to compare the final FP16 artifacts. If an FP16 target misses a gate, record
 the blocker and revisit its GPU release scope. Show the GPU precision available
 in the installed release and keep CPU selection and the service-wide GPU opt-out
 available.

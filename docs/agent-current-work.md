@@ -53,11 +53,13 @@ The user resumed the Windows and Linux FP16 campaign after D: cleanup. Keep new 
   local. No cloud teachers are authorized.
 ## Models and qualification
 
-- Retain the Windows FP32 implementation and measured evidence to inform FP16.
-  Keep each variant's identity, evidence and qualification separate, and
-  qualify efficient attention and automatic admitted CPU fallback. The release
-  goal is FP16 as the sole GPU precision if it passes the measured quality,
-  performance and memory gates on target developer machines.
+- The user confirmed FP16-only delivery on 20 November Denver time, on CPU
+  and GPU, including explicit CPU inference and automatic CPU fallback. Stop
+  new FP32 work. Use the already completed FP32 baseline only for comparison
+  with the final FP16 artifacts.
+- Qualify the exact FP16 CPU and GPU artifacts, efficient GPU attention, and
+  a separately qualified FP16 automatic CPU fallback. Preserve the measured
+  quality, performance, memory, and platform gates.
 - On 18 November the user approved an exact 32 GiB Windows Compact host
   process cap. Use a 32 GiB aggregate Job cap so the process can use that
   allowance. Preserve the 24 GiB device budget, original 120-second deadline
@@ -439,9 +441,17 @@ qualification gates.
 The R8 certificate and both original compiler censuses are complete. The
 scientific Compact raw panel has all 100 score vectors. It reuses the 56
 verified R7 GPU vectors and contains 44 new R8 vectors. Forty rows have
-independent matching and publisher references. Continue with the remaining
-references at ordinal 040, preserving completed batches and the original
-timeouts. See the [Compact panel checkpoint](simplify/one-process-ledger.md#20-november-2026-at-2352-utc--complete-compact-cuda-cal-panel-and-recover-16-cpu-comparisons)
+independent matching and publisher references at this checkpoint. Preserve
+the completed reference batches and original timeouts. The new FP16-only
+decision governs all subsequent work. See the [Compact panel checkpoint](simplify/one-process-ledger.md#20-november-2026-at-2352-utc--complete-compact-cuda-cal-panel-and-recover-16-cpu-comparisons)
 for the exact pins and successor volume observer. Large needs its own input
 selector on the existing scientific graph before raw scoring. Fitting and
 later gates still require their own evidence.
+
+### FP16-only CPU and GPU delivery, 20 November 2026 Denver time
+
+The last CPU reference batch settled. Keep the completed FP32 baseline for
+the final comparison. The native catalog currently has FP32 local-test
+Context Compact and Large CPU profiles. Qualifying the FP16 CPU path is
+part of the delivery work, including automatic fallback. Retain the 100
+Compact scientific GPU vectors and the original qualification gates.
