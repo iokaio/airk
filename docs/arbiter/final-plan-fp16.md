@@ -357,7 +357,7 @@ What follows for this plan:
 | 2 | Deliver the CPU milestone. Install the product on Windows and on Linux under WSL2 and measure the ladder tiers end to end at 8 cores, the target class. Start with retrieval and Focus, and add the Compact tiers when step 3 delivers them. Record the four memory figures. macOS joins at step 11. | Each tier has an end-to-end figure at 8 cores on both systems, and the tiers that meet 120 seconds are admitted for the target class. | Nothing | Medium. The runtime build on each system is the risk. |
 | 3 | Export the portable graph for Compact. Record the recipe in the exporter contract first. Verify shared weight bytes. Load on the static runtime with zero forwards. Score the four widths and 2,048 tokens against the reference. Time each width and record the four memory figures. | Compact has measured CPU numbers for the full and fast tiers. | Nothing | High. The exporter's portable recipe exists, Compact and Large are exported and scored on the published runtime, and both pass the independent graph proof. The static runtime loads and scores Compact on Windows. A quiet-machine timing, Large on the static runtime and a learned-byte check for the portable recipe remain. |
 | 4 | Finish Windows CUDA. Complete Compact matching references, fit calibration, add the Large selector and score its panel. Run capacity under A6. | Both candidates hold a calibrated panel and a memory figure. | Nothing | Not reachable as written. The native study found no safe cutoff for Compact, and the cause is the task design (see the Context section above). The Large tooling exists and its panel is deferred. Capacity under A6 is implemented and replayed offline; live trials wait for the desktop's GPU memory state to recover. See the step 4 detail. |
-| 5 | Record the Core contract decision, then implement: the opt-in GPU default, Auto order, the ladder tiers and the CPU target class, typed reasons, truthful status, per-result disclosure of route, model, tier and budget, the weight rule and a WebGPU provider value. Test with injected capabilities. | Reviewed Core changes with qualification flags false. | Nothing | Medium to high. Profiles already carry a token ceiling, so a tier is a profile. The opt-in GPU default is done (commit `0b5fe97c`). The other slices and the Admin notice remain. |
+| 5 | Record the Core contract decision, then implement: the opt-in GPU default, Auto order, the ladder tiers and the CPU target class, typed reasons, truthful status, per-result disclosure of route, model, tier and budget, the weight rule and a WebGPU provider value. Test with injected capabilities. | Reviewed Core changes with qualification flags false. | Nothing | Medium to high. Profiles already carry a token ceiling, so a tier is a profile. Done on 21 November: the opt-in GPU default with its Admin and VS Code notice, the Core route planner with typed fallback reasons, the no-selection status, the fail-closed default and the token-ceiling fix. Remaining: the weight-rule field and the ladder catalog rows, which wait on the Context decision and a release-tag answer, the smaller-model fallback, and the WebGPU provider value, which waits for adoption under A3. |
 | 6 | Run the WebGPU smoke test on the A6000 through Direct3D 12 as soon as step 3 has a graph. It stays early by the user's decision and includes the speed line. It takes the GPU only when no CUDA run holds it. | A go or no-go for the rented runs. | Step 3 | Done on 21 November: go, with a memory caveat found afterwards. The exported Compact and Large graphs pass correctness and the speed line on the A6000, and their memory targets for one input length. With varying lengths the targets are not met by either buffer cache mode as measured (fourth iteration below). Large's 8,192-token check was against the CPU provider and still needs an independent reference. |
 | 7 | Score the portable graph on the 100 frozen Compact rows and the confirmation set on CPU, and apply acceptance rule 2. | The CPU route is admitted or its first failing row is named. | Steps 3 and 4, and one policy-confirmation capture on the calibrated identity | High for the scoring. The capture is the cost. The 100 rows are scored on CPU and WebGPU as a development measurement: no winner changed and the largest raw difference was 0.000519 on CPU. No confirmation capture exists, and none is made: the fit found no safe cutoff, so there is no policy to confirm. |
 | 8 | Complete the stage comparison and the 98% comparison: the FP32 arm, the calibrated identity, and the Compact and Large arms. Compare delivered evidence first. A person reviews the discordant pairs from a blinded packet. | The 98% bound and each Context model's added evidence are measured. | Nothing | The retrieval and Focus arms are being measured in step 1. The Context arms are on hold: with no policy, Context accepts no action in either precision, so the paired comparison would be equal by construction and would say nothing. |
@@ -479,7 +479,8 @@ AIRK's static ONNX Runtime 1.30 CPU build loads and scores the portable
 Compact graph through a test-only seam (`portable_cpu.rs`, commit
 `02966c7f`), with no change to a digest-input file. The process was capped to
 8 physical cores of a Threadripper PRO 5975WX. These are development
-observations, taken while other jobs ran.
+observations. The two timing rows were re-measured with no agent, build or
+other model job running; the other rows were taken while other jobs ran.
 
 | Measure | Result |
 | --- | --- |
@@ -487,8 +488,8 @@ observations, taken while other jobs ran.
 | Cold load with a warm file cache | 9.0 to 9.4 s |
 | Peak resident memory, set during load | 11.77 GiB |
 | Resident after load, and after drop | 6.35 GB, then under 50 MB |
-| Fast tier, 2,048 tokens: median and p95 of 20 | 9.12 s and 9.21 s |
-| Full tier, 8,192 tokens: median and p95 of 20 | 48.4 to 51.3 s and 52.0 to 53.3 s |
+| Fast tier, 2,048 tokens: median and p95 of 20, quiet machine | 9.68 s and 9.75 s |
+| Full tier, 8,192 tokens: median and p95 of 20, quiet machine | 47.61 s and 47.78 s |
 
 The projection weight casts fold at load. The embedding table stays in half
 and only gathered rows are cast per forward. The static runtime was 10 to
@@ -499,9 +500,9 @@ the default Balanced preset that is admitted only from about 52 GiB of RAM,
 so a 32 GB machine on defaults would refuse Compact on both tiers; the Fast
 tier gives no memory relief because the peak is the load transient.
 
-Still owed for step 3: a quiet-machine p95, a 2,048-token reference
-comparison, Large on the static runtime, the learned-byte check for the
-portable recipe, and an 8,192-token reference for Large.
+Still owed for step 3: a 2,048-token reference comparison, Large on the
+static runtime, the learned-byte check for the portable recipe, and an
+8,192-token reference for Large.
 [Exporter contract](../../scripts/arbiter-fp16-export/CONTRACT.md) ·
 [Large weight-cast edit](../../scripts/arbiter-fp16-execution/large_weight_only_candidate.py) ·
 [Shared-weight verifier](../../scripts/arbiter-fp16-execution/verify_shared_onnx_weights.py) ·
@@ -570,6 +571,23 @@ in place, and the Linux workflow has a successor that expects the new
 default. Showing the notice issues no call beyond the page's existing
 read-only resources read. Reading the Admin controls must still not
 initialize a GPU or load a model.
+The route order and its reasons are implemented (commits `e587bf6d` and
+`90253ec6`) under the recorded decision "CPU ladder, Auto route order and
+typed fallback reasons". Core plans the order: a qualified GPU route for the
+adapter, then CPU tiers by larger token budget and larger CPU class. GPU use
+that is off is reported as `gpu_not_opted_in`, an adapter with no qualified
+route as `no_qualified_gpu_route`, and a precision-excluded variant leaves a
+row. When nothing fits, the stage reports `unsupported_system` with its
+rows, or a missing download when a candidate was passed over only because
+its assets are not installed. The device layer starts with GPU use off.
+Status texts are built from typed facts and no longer say "FP32". A Context
+advice reserves at most its profile's token ceiling. Two findings from the
+design shape what remains. The 4-thread resource cap bounds MiniLM embedding
+workers only, so the 8-core tier needs no change to it. Many Rust files are
+digest inputs through `include_bytes!`, so the WebGPU padding belongs in a
+feed step of that scorer and the pinned files are not reformatted until the
+next image build. Not verified: the selection path end to end against a
+native handle, an installed service, and Linux or macOS compiles.
 [Service resource configuration](../../crates/airk-core/src/service_resources.rs)
 [Device policy source](../../crates/airk-core/src/arbiter/device.rs) ·
 [Native device and profile contract](../../crates/airk-core/src/arbiter/CONTRACT.md)
