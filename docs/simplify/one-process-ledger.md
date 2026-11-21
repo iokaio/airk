@@ -14341,3 +14341,190 @@ C: free 2,643,020,935,168, growth 26.94 GB of the 120 GB allowance.
 **Running at the time of writing.** Core opt-in change (Cargo owner), step 1
 Focus comparison (CPU fixture), WebGPU length ladder (GPU owner), capacity
 rule change (Python only).
+
+### 21 November 2026 at 05:36 UTC — Second wave: opt-in default, native fit study, capacity rule, WebGPU ladder, Core design
+
+Identities as in the previous entry. Agents made no commits. Every commit
+below is signed off and pushed to `origin/feat/arbiter-final`.
+
+**Commits.**
+
+| Commit | Content | Primary review |
+| --- | --- | --- |
+| `0b5fe97c` | GPU use is opt-in, with a one-time reset notice | Read the Core, Host, Supervisor and Installer diffs and the literal-byte tests. The agent's checks: scoped Clippy for six crates, 18 + 37 + 2 + 4 selected tests passed. |
+| `866d9889`, `cb327109` | A6 capacity rule and its offline replay | Read the rule, reran 10 + 18 + 5 tests. Tightened on review: a missing non-local counter refuses. |
+| `806e20c5` | The generic Read study accepts the R8 plan | Read the Rust diff: a pin update and one unit test, rule unchanged. Reran 12 + 4 script tests. The agent's checks: Clippy for `airk-kernel` with all features, 7 selected unit tests passed. |
+| `c0f2a1d0` | Fixed-length padding in the WebGPU probe | Reran the folder's 45 tests. |
+
+**Opt-in GPU default (`0b5fe97c`).** `allow_gpu` defaults to off. The stored
+configuration gained one optional field, `gpu_opt_in`. An enabled value
+without it reads as off with `default_reset` pending, and nothing is
+rewritten until the next accepted change. The decision is in the Core
+Arbiter contract, section "Service-wide GPU use is opt-in". Not verified: the
+ignored CUDA Answer fixture on a GPU, a `local-inference` service started
+over a legacy enabled file, and the Admin and airkctl surfaces. Owed: the
+Admin notice with a "keep GPU off" action, the VS Code row, the generated
+type. Receipts: `…/core-gpu-optin-r1/`.
+
+**Native fit study: Compact has no safe cutoff.** The study ran on the R8
+100-row panel on a new kernel test image
+(`…/windows-cutlass-read-study-checks-r2/images/airk_kernel.exe`,
+`1007ff4e4333c837bbeb15090bc139a4e2e42d272a7749dfaafd66f1dc75ead5`) and
+printed `margin_bits: null`. Receipt
+`…/r8-compact-cutlass-read-study-r1/execution.json`,
+`c8847ced64fb847d84e72edc3a945426f91cc4769dcb78a4a3fa85e6d85b1b99`, exit 0,
+CPU only, no calibration asset written. Cargo record: target
+`D:\code\Github\airk\target`, incremental on, `--timings`; Clippy 136.9 s,
+unit tests 364.5 s, image 3.3 s.
+
+- The top card is Sufficient on 55 rows and Read on 45. It is slot 3 on 45
+  rows and slot 5 on 55, and never another slot.
+- The best-scoring Read card is slot 3 on all 100 rows.
+- The 12 certified cards sit in slot 1 (2), slot 2 (7), slot 3 (2) and
+  slot 4 (1). A certified card wins only on the two rows where it is in
+  slot 3: ordinals 55 (margin 0.5196) and 98 (margin 5.6160).
+- 43 uncertified Read cards win, four of them with margins above 5.6160.
+  Tolerating up to three uncertified admissions still admits no certified
+  row. Admitting both certified winners would admit 36 uncertified ones.
+
+The slot pattern is the open question: either the roster fixes roles by
+position, or the model follows position. A diagnosis with a permutation
+experiment on the CPU provider is running. The per-artifact fit and the
+two-model gate did not run. `run_original_cpu.py:22` still pins the earlier
+kernel image and will refuse until re-pinned; FP32 work is stopped.
+
+**Boundary check.** `scripts/dev/boundary_check.py` fails `module_cycles` in
+`airk-retrieval`. The edge is `onnx.rs:454-455`, where
+`initialize_runtime()` calls
+`arbiter::runtime::cuda::capture_at_runtime_init()`. It came with commit
+`cc3e8dff` on 18 November. `onnx.rs` and `fp16.rs` are `include_bytes!`
+inputs of the CUDA math-policy digest, so no code fix is digest-neutral.
+Disposition: a known failing check, owner the primary agent, to be fixed
+with the next deliberate math-policy revision. The reviewed baseline file is
+unchanged.
+
+**A6 capacity rule (`866d9889`).** Frozen control, margin and reserve as in
+the previous entry, plus the review tightening. Offline reclassification of
+retained fits, which is not a live trial:
+`…/capacity-rule-a6-replay-r2/execution.json`,
+`9d4f87cdb43883f1e0c1fd5aecfe9031695246321081425d242487585ec6381b`.
+
+| Retained fit | Result under the rule |
+| --- | --- |
+| Compact 24 GiB | `incomplete_residency_evidence`: the receipt predates the non-local counter |
+| Compact 16 GiB | Memory satisfies the rule; the native run was incomplete, so it needs a live rerun |
+| Compact 12 GiB | Admitted |
+| Compact 8 GiB | `dedicated_usage_exceeds_tier_reserve` by 272,183,296 bytes |
+| Compact 6 GiB | `shared_usage_exceeds_control_margin` |
+| Large 24 GiB | Admitted |
+
+The launcher exits 0 when a trial completes and the rule refuses, so trial
+commands gate on `complete` and `capacity_admitted`.
+
+**First live trial under the rule: stopped in set-up, no model ran.** The
+Compact 16 GiB fit started at 05:36:16 UTC with 32 GiB declared for the
+concurrent step 1 fixture Job. The ballast worker failed after 19 s with
+"no bounded increment reaches the independent tier window", before the
+candidate was launched. Receipt
+`…/compact-capacity-a6-16-gib-fit-r1/execution.json`,
+`e547155cefe230b9aed6eb90dda71efab36b300b3018aa7546a00c03a6dee6bb`,
+`complete: false`. This is not a verdict on the rule or on Compact.
+
+- *Observed.* At the last step CUDA reported 16,447 MiB free while
+  `nvidia-smi` and WDDM reported 16,863 and 16,856 MiB. In the retained
+  trials of 20 November the sign was the other way: CUDA read 381 to 397 MiB
+  more than the other two. At the same ballast size CUDA's own figure is
+  identical in both (16,855 MiB at 30,720 MiB touched). The adapter's idle
+  dedicated use is 365 MiB now and was 1,156 to 1,158 MiB then, while total
+  committed is about the same (1,871 and 1,817 MiB).
+- *Diagnosis (inferred from those figures).* The desktop's own GPU memory was
+  pushed out of dedicated memory by the unpadded WebGPU session that reached
+  44.7 GB, and has not been paged back because nothing on the desktop is
+  repainting. The adapter-level estimates therefore read about 790 MiB more
+  free than before, CUDA's budget-based estimate did not move, and the
+  ballast's three independent estimates no longer meet inside its 128 MiB
+  window. The ballast's refusal is correct: in this state it cannot
+  establish the tier.
+- *Disposition.* No retry on the unchanged state, and no change to the
+  ballast or its window. Retry precondition: idle `nvidia-smi` use back near
+  1,100 MiB or more, checked at each GPU hand-off. Owner: the primary agent.
+  If it has not recovered when the other work is done, the user's return to
+  the desktop or a restart of the session restores it. The fixed20 did not
+  run. Large's fits and fixed20 wait for the same precondition and for a
+  quiet host: Large's fixed20 used 115.85 s of its 120 s native clock
+  without pressure.
+
+**WebGPU fixed-length ladder (fifth measured iteration).** Receipts under
+`…/webgpu-length-ladder-r1/`. Development measurements on the published
+runtime build, A6000 through Direct3D 12.
+
+- Graph reading, both exports: `attention_mask` feeds one `Shape` node only,
+  every attention node is causal with no bias and no past state, and scores
+  are gathered at the decision position.
+- CPU, 8 threads: padded and unpadded scores are bit-identical (8 panel rows
+  to 2,048, and the 1,024-token control to 2,048 and 4,096).
+- WebGPU, 100 rows padded to 2,048: largest difference from the unpadded
+  receipt 0.000278, no winner change, memory flat at 4,752 to 4,767 MiB
+  (`bc66c4ed6a24569dd1cdd2c5d959d3505270f3650f9a7d7da34bcdfcffc68bde`).
+  Changing the pad token id changed nothing, so the difference is not leakage
+  from pad positions. It follows the unpadded length modulo 64; the cause is
+  not established.
+
+| Model | `simple` with ladder | Peak above baseline | With 2 GiB reserve | Target | Warm at 8,192 tokens | Times CUDA |
+| --- | --- | --- | --- | --- | --- | --- |
+| Compact | 512 / 1,024 / 2,048 / 4,096 / 8,192 | 9,708 MiB | 11,756 MiB | 16 GB: fits | 4.04 to 4.06 s | 2.3 |
+| Compact | 2,048 / 8,192 | 8,017 MiB | 10,065 MiB | 16 GB: fits | 4.10 to 4.13 s | 2.3 |
+| Large | 512 / 1,024 / 2,048 / 4,096 / 8,192 | 18,647 MiB | 20,695 MiB | 24 GB: fits | 10.37 to 10.38 s | 2.2 |
+| Large | 2,048 / 8,192 | 15,188 MiB | 17,236 MiB | 24 GB: fits | 10.19 to 10.31 s | 2.1 |
+
+Order of lengths does not change the peak. `lazyRelease` and `disabled` fill
+the 48 GB card on Large at 8,192 tokens and are not candidates. A padded
+forward costs what an input of the padded length costs: 1.52 times for the
+panel rows padded to 2,048. Receipts: Compact five-step
+`7b8cd56611efcae7f52b41b2a819381e9bfad1ed39c03bcbcc9ab1dde21ea15a`, Large
+five-step `22b718282986f8cd3544e8e1adbbf7855cf049f9dc10f78c3b4dea41b535e7c4`.
+A defect found and fixed in the probe: an unknown provider option value made
+the runtime fall back to the CPU provider with only a warning, and the
+script wrote a receipt labelled `webgpu`. Such a run is now refused. Every
+retained WebGPU receipt lists the WebGPU provider. Unmeasured: a real 16 GB
+or 24 GB card, any adapter other than the A6000, Large on real rows, and the
+product path.
+
+**Core design for step 5 and the step 3 remainder** (private,
+`…/agent-runbooks-r1/core-step5-design.md`). Findings that change the work:
+
+1. The 4-thread resource cap bounds MiniLM embedding workers only. A model
+   forward takes its threads from the profile's `cpu_fit`, and the 8-core,
+   8-thread tier is already valid.
+2. Many Rust files are digest inputs through `include_bytes!`, among them
+   `runtime.rs`, `external_data.rs`, `onnx.rs`, the input compiler and
+   `receipt_runtime.rs`. Editing or reformatting one changes identities.
+   Padding therefore belongs in a feed step of the WebGPU scorer, not in the
+   compiler.
+3. The embedded Context profiles are not admissible today: their task-policy
+   digests are stale. Installed Compact tiers need new catalog rows and the
+   first compiled catalog transition.
+4. Typed reasons are lost when nothing is selected, and Core `select()` is
+   called only by tests.
+
+Primary dispositions: slice order S2 (portable graph on the static CPU
+runtime, no contract change), then S0, S1, S3, S4, S5. The receipt-vocabulary
+edit for WebGPU waits for adoption under A3. The optional `Profile` field for
+the weight rule is taken as recommended. Catalog rows (S7) wait for the
+user's answer on naming a release tag before publication is authorized.
+
+**Formatting quarantine.** `cargo fmt --all -- --check` lists ten files.
+Seven are pinned by path through image rosters or are digest inputs. Owner:
+the primary agent. Reason: reformatting changes pinned bytes. Expiry: the
+commit immediately before the next image build. Until then scoped checks use
+`--skip-fmt`. The three unpinned files are formatted in slice S0.
+
+**Disk.** D: free 1,070,985,158,656 bytes at 05:36 UTC: 162.26 GB of
+growth against the 195.42 GB budget, 33.2 GB left. About 24 GB of that is
+the step 1 fixture's installed model copy, which is removed after its run.
+C: free 2,642,838,753,280: 27.12 GB of the 120 GB allowance.
+
+**Running at the time of writing.** Step 1 Focus comparison (CPU fixture),
+Compact capacity trial (GPU), portable graph on the static runtime (Cargo
+owner), slot diagnosis (CPU), Large panel preparation (Python only), Linux
+storage policy (Python only, no WSL).
