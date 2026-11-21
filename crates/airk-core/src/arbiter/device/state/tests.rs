@@ -758,6 +758,71 @@ fn current_device_semantic_case_emitter() -> Result<()> {
     cases.push(serde_json::json!({"id":"initialization_ambiguous","failure":crate::service::ControlResponse::Failure {code:"arbiter_legacy_configuration_ambiguous".into()}}));
     cases.push(serde_json::json!({"id":"initialization_corrupt","failure":crate::service::ControlResponse::Failure {code:"arbiter_current_configuration_invalid".into()}}));
     cases.push(serde_json::json!({"id":"initialization_unresolved_current3","failure":crate::service::ControlResponse::Failure {code:"arbiter_configuration_migration_refused".into()}}));
+    // Route-order cases are appended after every earlier case, so the
+    // positions that other suites read stay fixed.
+    for (id, reason) in [
+        (
+            "context_compact_gpu_not_opted_in_cpu",
+            SelectionReason::GpuNotOptedIn,
+        ),
+        (
+            "context_compact_no_qualified_gpu_route_cpu",
+            SelectionReason::NoQualifiedGpuRoute,
+        ),
+    ] {
+        cases.push(serde_json::json!({"id":id,"status":semantic_status(SelectedModel::ContextCompact,DevicePolicy::Auto,GpuPrecisionPreference::Auto,Some((None,None)),ModelAdmissionStatus::LocalCandidate,Availability::Ready,Some(reason))?}));
+    }
+    let mut no_fit = semantic_status(
+        SelectedModel::ContextCompact,
+        DevicePolicy::Auto,
+        GpuPrecisionPreference::Auto,
+        None,
+        ModelAdmissionStatus::LocalCandidate,
+        Availability::UnsupportedSystem,
+        Some(SelectionReason::GpuNotOptedIn),
+    )?;
+    let cpu_tier = no_fit
+        .context
+        .models
+        .iter()
+        .flat_map(|model| &model.variants)
+        .find(|variant| variant.backend.is_none())
+        .map(|variant| variant.manifest)
+        .context("synthetic CPU tier missing")?;
+    let selection = no_fit
+        .context
+        .selection
+        .as_mut()
+        .context("synthetic selection missing")?;
+    selection.reasons.push(CandidateRejection {
+        manifest: Some(cpu_tier),
+        adapter_key: Some("cpu".into()),
+        reason: SelectionReason::CpuFitInsufficient,
+    });
+    assert!(selection.selected.is_none() && selection.operation_failure.is_none());
+    no_fit.validate()?;
+    cases.push(
+        serde_json::json!({"id":"context_compact_no_fit_unsupported_system","status":no_fit}),
+    );
+    let mut stopped = semantic_status(
+        SelectedModel::ContextCompact,
+        DevicePolicy::Auto,
+        GpuPrecisionPreference::Auto,
+        None,
+        ModelAdmissionStatus::LocalCandidate,
+        Availability::Failed,
+        Some(SelectionReason::DeadlineExpired),
+    )?;
+    stopped
+        .context
+        .selection
+        .as_mut()
+        .context("synthetic selection missing")?
+        .operation_failure = Some(SelectionReason::DeadlineExpired);
+    stopped.validate()?;
+    cases.push(
+        serde_json::json!({"id":"context_compact_deadline_operation_failure","status":stopped}),
+    );
     let document = serde_json::json!({"schema":"airk.arbiter.device-semantic-cases/1","qualification":false,"scope":"Synthetic Rust-native transport/UI conformance only; NO actual GPU/model qualification", "cases":cases,"legacy_migration":{"configuration":legacy,"canonical_sha256":old_sha}});
     if let Some(path) = std::env::var_os("AIRK_WRITE_ARBITER_DEVICE_CASES") {
         use std::io::Write;
@@ -769,7 +834,135 @@ fn current_device_semantic_case_emitter() -> Result<()> {
         bytes.push(b'\n');
         file.write_all(&bytes)?;
         file.sync_all()?;
+    } else {
+        // Without the explicit write, the reviewed capture must be this emission.
+        let reviewed: serde_json::Value = serde_json::from_slice(include_bytes!(
+            "../../../../../../fixtures/split/arbiter/device_cases.json"
+        ))?;
+        assert!(
+            reviewed == document,
+            "regenerate fixtures/split/arbiter/device_cases.json with AIRK_WRITE_ARBITER_DEVICE_CASES"
+        );
     }
+    Ok(())
+}
+
+#[test]
+fn selection_holds_twenty_rows_and_a_no_fit_selection_is_a_valid_unsupported_system() -> Result<()>
+{
+    let mut value = semantic_status(
+        SelectedModel::ContextCompact,
+        DevicePolicy::Auto,
+        GpuPrecisionPreference::Auto,
+        None,
+        ModelAdmissionStatus::LocalCandidate,
+        Availability::UnsupportedSystem,
+        None,
+    )?;
+    let rows = |count: usize| {
+        vec![
+            CandidateRejection {
+                manifest: None,
+                adapter_key: None,
+                reason: SelectionReason::HostMemoryInsufficient,
+            };
+            count
+        ]
+    };
+    for (count, valid) in [(0, true), (18, true), (19, true), (20, true), (21, false)] {
+        value.context.selection.as_mut().unwrap().reasons = rows(count);
+        assert_eq!(value.validate().is_ok(), valid, "{count} rows");
+    }
+    value.context.selection.as_mut().unwrap().reasons = rows(1);
+    let selection = value.context.selection.as_ref().unwrap();
+    assert!(selection.selected.is_none());
+    assert_eq!(value.context.availability, Availability::UnsupportedSystem);
+    assert_eq!(value.context.active_profile, None);
+    // A stopped operation records its typed failure and can never select.
+    let mut stopped = value.clone();
+    stopped.context.availability = Availability::Failed;
+    stopped
+        .context
+        .selection
+        .as_mut()
+        .unwrap()
+        .operation_failure = Some(SelectionReason::DeadlineExpired);
+    stopped.validate()?;
+    let ready = semantic_status(
+        SelectedModel::ContextCompact,
+        DevicePolicy::Auto,
+        GpuPrecisionPreference::Auto,
+        Some((None, None)),
+        ModelAdmissionStatus::LocalCandidate,
+        Availability::Ready,
+        Some(SelectionReason::GpuNotOptedIn),
+    )?;
+    let mut wrong = ready;
+    wrong.context.selection.as_mut().unwrap().operation_failure =
+        Some(SelectionReason::DeadlineExpired);
+    assert!(wrong.validate().is_err());
+    Ok(())
+}
+
+#[test]
+fn reviewed_device_cases_carry_the_route_reasons_and_never_the_reserved_one() -> Result<()> {
+    let raw = include_str!("../../../../../../fixtures/split/arbiter/device_cases.json");
+    let cases: serde_json::Value = serde_json::from_str(raw)?;
+    assert_eq!(cases["qualification"], false);
+    let rows = cases["cases"].as_array().context("device cases")?;
+    let status = |id: &str| -> Result<DeviceStatus> {
+        let row = rows
+            .iter()
+            .find(|row| row["id"] == id)
+            .with_context(|| format!("reviewed case {id} missing"))?;
+        let status: DeviceStatus = serde_json::from_value(row["status"].clone())?;
+        status.validate()?;
+        Ok(status)
+    };
+    let reasons = |status: &DeviceStatus| -> Vec<SelectionReason> {
+        status
+            .context
+            .selection
+            .iter()
+            .flat_map(|selection| &selection.reasons)
+            .map(|row| row.reason)
+            .collect()
+    };
+    let opted_out = status("context_compact_gpu_not_opted_in_cpu")?;
+    assert_eq!(reasons(&opted_out), [SelectionReason::GpuNotOptedIn]);
+    assert_eq!(opted_out.context.availability, Availability::Ready);
+    let no_route = status("context_compact_no_qualified_gpu_route_cpu")?;
+    assert_eq!(reasons(&no_route), [SelectionReason::NoQualifiedGpuRoute]);
+    let no_fit = status("context_compact_no_fit_unsupported_system")?;
+    assert_eq!(
+        reasons(&no_fit),
+        [
+            SelectionReason::GpuNotOptedIn,
+            SelectionReason::CpuFitInsufficient
+        ]
+    );
+    assert_eq!(no_fit.context.availability, Availability::UnsupportedSystem);
+    let selection = no_fit.context.selection.as_ref().context("selection")?;
+    assert!(selection.selected.is_none() && selection.operation_failure.is_none());
+    let stopped = status("context_compact_deadline_operation_failure")?;
+    assert_eq!(stopped.context.availability, Availability::Failed);
+    assert_eq!(
+        stopped
+            .context
+            .selection
+            .as_ref()
+            .and_then(|selection| selection.operation_failure),
+        Some(SelectionReason::DeadlineExpired)
+    );
+    // The earlier positions that other suites read are unchanged.
+    assert_eq!(rows[0]["id"], "both_disabled_auto");
+    assert_eq!(
+        rows[4]["id"],
+        "context_compact_requested_fp16_actual_cpu_fallback"
+    );
+    assert_eq!(rows[6]["id"], "context_large_fp16_qualified_gpu");
+    // The reserved value is in the schema vocabulary and in no emitted case.
+    assert!(!raw.contains("smaller_model_selected"));
     Ok(())
 }
 

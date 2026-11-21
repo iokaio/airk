@@ -51,7 +51,9 @@ partitions. Global ordinals 1..3 are one-use; aggregate NN tokens are at most204
 and each partition's captured allowance is enforced separately. Requested token
 maxima are reserved before queueing. A compiled receipt records observed tokens
 but unknown native completion retains the full reservation. Only actual native
-completion may reconcile unused tokens; no ordinal is ever refunded. The shared
+completion may reconcile unused tokens, and only a refusal that the native lane
+observed before any model work releases a Context reservation whole; no ordinal
+is ever refunded. The shared
 30s assessment cap cannot renew under a longer original read parent: its expired
 tombstone remains until that original parent expires. Live ledger capacity is
 bounded and pressure refuses new optional work.
@@ -506,8 +508,12 @@ catalog/source binding throughout migration, CAS, lifecycle, import, read
 admission and final delivery. Historical operations retain their typed legacy
 contract and refuse current device state. Migration preserves model, consent,
 index enrollment and unrelated state; only the Store owner publishes retained
-original bytes and CAS. Auto selects the same model's admitted FP32 GPU first,
-then admitted FP16 GPU, then admitted FP32 CPU. A preference restricts GPU only.
+original bytes and CAS. Auto tries the candidates in the order that Core
+`attempt_order` returns: a qualified GPU route for the observed adapter, then
+CPU tiers by larger token budget, then by larger CPU class. The Core decision
+"CPU ladder, Auto route order and typed fallback reasons" owns that order and
+the reason of every candidate that is not selected; the service keeps no
+ordering of its own. A preference restricts GPU only.
 Runtime metadata, status and advisory candidates cannot mint ExecutionProfiles,
 capacity claims or GPU evidence. Runtime and adapter observation happen on the
 existing native compute lane, with the actual service lease and original
@@ -517,6 +523,39 @@ score replay. Pre-work unsupported/runtime/initialization/capacity failure may
 try the next admitted variant under the same original budget and current
 consent. Post-work fallback is future-only after actual synchronization and settlement.
 The failed read remains failed and is never replayed or given a fresh budget.
+
+The device layer starts with service-wide GPU use off. Only the resource
+configuration that the service applies turns it on, so a missing or failed
+application leaves every GPU route closed. With GPU use off, Auto records
+`gpu_not_opted_in`; an explicit CPU policy records `forced_cpu` whatever the
+setting is. With GPU use on and no admitted GPU variant of the model, Auto
+records `no_qualified_gpu_route`. The only adapter enumeration in this build is
+the CUDA probe, which observes NVIDIA adapters; `no_gpu` is recorded only when
+that probe ran and reported nothing. An admitted GPU variant that the precision
+preference excludes is recorded `gpu_precision_excluded` and is not probed.
+
+When the order ends with nothing selected, the stage drains any resident it
+still holds, installs a selection with `selected: null` and its rows, keeps no
+native selection and reports `unsupported_system`. When a candidate was
+passed over only because its verified assets are not installed, the phase is
+`missing_assets` instead and the stage reason leads with that fact; an idle
+stage in that phase reports `requested`, as it does after assets are removed.
+The other stage and retrieval continue. An expired deadline, changed authority or unknown
+settlement stops the operation: it reports `failed`, tries nothing further and
+records `operation_failure` with the rows gathered so far. That record is made
+only while this document is still the installed one and the stage is not
+resident; a resident stage keeps the selection it is serving. An idle enabled
+stage reports `unsupported_system` or `constrained` when that is its settled
+phase, and `requested` otherwise.
+
+The stage reason of a resident selection and of a no-fit or stopped selection
+is the Core disclosure sentence, and each variant's reason is the Core variant
+sentence with the typed cause recorded for it. A Context assessment reserves
+the smaller of the remaining request tokens and the selected profile's
+`max_tokens`. When the native lane refuses an input before any model work,
+because the compiler refused it or because the compiled input is above that
+reservation, the assessment is a known refusal: no inference ran, the token
+reservation is released and the ordinal stays used.
 
 
 ### Native device lifecycle review boundaries

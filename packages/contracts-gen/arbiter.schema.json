@@ -3608,7 +3608,10 @@
         "deadline_expired",
         "settlement_unknown",
         "no_qualified_cpu",
-        "gpu_precision_excluded"
+        "gpu_precision_excluded",
+        "gpu_not_opted_in",
+        "no_qualified_gpu_route",
+        "smaller_model_selected"
       ],
       "type": "string"
     },
@@ -4225,7 +4228,7 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "arbiter_contract": 2,
-  "arbiter_device_contract": 1,
+  "arbiter_device_contract": 2,
   "roots": [
     "DeviceConfiguration",
     "DeviceStageConfiguration",

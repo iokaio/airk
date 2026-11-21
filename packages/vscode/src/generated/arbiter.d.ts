@@ -811,7 +811,7 @@ export type SelectedVariant = {
     precision?: DevicePrecision | null;
 };
 
-export type SelectionReason = "forced_cpu" | "no_gpu" | "unqualified" | "target_unsupported" | "runtime_unavailable" | "driver_unsupported" | "device_unsupported" | "graph_unsupported" | "provider_initialization_failed" | "allocation_failed" | "device_memory_unknown" | "device_memory_insufficient" | "host_memory_unknown" | "host_memory_insufficient" | "cpu_fit_insufficient" | "circuit_open" | "authority_changed" | "observation_stale" | "deadline_expired" | "settlement_unknown" | "no_qualified_cpu" | "gpu_precision_excluded";
+export type SelectionReason = "forced_cpu" | "no_gpu" | "unqualified" | "target_unsupported" | "runtime_unavailable" | "driver_unsupported" | "device_unsupported" | "graph_unsupported" | "provider_initialization_failed" | "allocation_failed" | "device_memory_unknown" | "device_memory_insufficient" | "host_memory_unknown" | "host_memory_insufficient" | "cpu_fit_insufficient" | "circuit_open" | "authority_changed" | "observation_stale" | "deadline_expired" | "settlement_unknown" | "no_qualified_cpu" | "gpu_precision_excluded" | "gpu_not_opted_in" | "no_qualified_gpu_route" | "smaller_model_selected";
 
 export type Sha256Digest = string;
 

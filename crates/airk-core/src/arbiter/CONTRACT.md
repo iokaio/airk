@@ -1178,3 +1178,102 @@ service over a file stored under the earlier default.
 and the extension read `gpu_opt_in` through generated types. The wire value
 is unchanged. This replaces the earlier statement that the I3 schema and the
 generated client types are unchanged.
+
+
+## CPU ladder, Auto route order and typed fallback reasons (decided 21 November 2026, America/Denver)
+
+Owner: Core `arbiter::device`. The service device lifecycle applies it. This
+records approvals A1 and A2 of the FP16 delivery plan and amends the
+same-model, same-width fallback in "D08 current configuration4/status3 and
+device variants". Configuration4, DeviceCatalog/1, existing profile bytes,
+every receipt shape and the Search and Answer schemas are unchanged.
+
+**Tier.** A CPU tier is a catalog profile. Its token budget is `max_tokens`
+and its CPU class is `cpu_fit`. The target class of this release is the
+existing 8-core, 8-thread tier. Full is the profile at 8,192 tokens and Fast
+the profile at 2,048 tokens for the same model, graph and weight file. No
+tier is guaranteed. The service-wide `inference_threads` setting bounds
+MiniLM embedding work. It does not bound a model forward, whose threads are
+the profile's `cpu_fit`.
+
+**Order.** For one stage Auto takes the first candidate that is admitted and
+fits. The requested model comes before the next smaller model, which is
+Compact for Large. Within a model, a qualified GPU route for the observed
+adapter comes first, then CPU tiers by larger token budget, then by larger
+CPU class. Device policy `cpu`, or service-wide GPU use that is not turned
+on, removes every GPU candidate. NVIDIA on Windows and Linux uses CUDA. Any
+other adapter on Windows or Linux, and an Apple GPU on macOS, uses WebGPU
+once that route is qualified there. Until then such an adapter is reported
+`no_qualified_gpu_route` and the CPU ladder applies.
+
+**Planner.** Core `attempt_order` owns this order. It is a pure function of
+the requested model, the device policy, the GPU precision preference, the
+service-wide GPU use, the remaining time and the candidates. GPU use is one
+of three states: not turned on, turned on, or turned on with an adapter
+enumeration that found no adapter. A candidate carries its token budget, its
+CPU class and, for a GPU variant, the adapter it was observed on and that
+adapter's vendor. A GPU variant that no adapter was bound to carries its
+rejection, or is excluded by precision, and is never offered. The planner
+returns the candidates to try in order, with one row for each candidate it
+refused. The service tries them in that order and adds one row for each that
+fails at dispatch. Among GPU routes the existing preference stays: FP32
+before FP16, then backend priority. The planner grants no execution, source
+or qualification authority.
+
+**Reasons.** `SelectionReason` gains `gpu_not_opted_in`,
+`no_qualified_gpu_route` and `smaller_model_selected`. Every candidate that
+was considered and not selected has one row.
+
+| Cause | Reason |
+| --- | --- |
+| Device policy `cpu` | `forced_cpu` |
+| GPU use not turned on: never chosen, turned off or reset | `gpu_not_opted_in` |
+| No adapter observed | `no_gpu` |
+| An adapter with no qualified route or variant for this model | `no_qualified_gpu_route` |
+| Provider library absent or not built | `runtime_unavailable` |
+| Provider failed to start | `provider_initialization_failed` |
+| Device or host memory does not fit | `device_memory_insufficient`, `device_memory_unknown`, `host_memory_insufficient`, `host_memory_unknown` |
+| Too few usable physical cores | `cpu_fit_insufficient` |
+| GPU precision preference excludes the variant | `gpu_precision_excluded` |
+| A smaller model was taken | `smaller_model_selected`, with the rows of the larger model |
+| No CPU tier fits | `no_qualified_cpu` |
+
+`forced_cpu` is no longer recorded for the service-wide setting. A selection
+holds at most 20 reason rows. `no_gpu` is recorded only when an adapter
+enumeration ran and found none. When GPU use is on and the model has no GPU
+candidate, the row is `no_qualified_gpu_route`. A CPU candidate that was
+refused has its own row. `no_qualified_cpu` also closes an order that ended
+with nothing selected when the model had no CPU candidate at all.
+
+**No fit.** When the order ends without a selection, the stage records a
+selection with `selected: null` and its rows and reports `unsupported_system`.
+One case differs: when a candidate was passed over only because its verified
+assets are not installed, the phase is `missing_assets`, because a missing
+download is not an unfit system. The other stage and retrieval continue. An expired deadline, changed
+authority or unknown settlement records `operation_failure`, reports `failed`
+and tries nothing further. No work is replayed.
+
+**Smaller model.** A selected variant may belong to the next smaller model of
+the same stage only under Auto and only with `smaller_model_selected`. This
+part takes effect with its own validator change. Until then nothing emits
+`smaller_model_selected`, a selected variant belongs to the requested model,
+and a candidate of another model is refused. The value joins the enum now so
+that the vocabulary changes once.
+
+**Disclosure.** Core writes the stage reason from typed facts. It names the
+route, the model, the threads or adapter route, the token budget and the
+cause of any fallback. It makes no statement about weight precision. It is
+the stage `reason` and so the `reason` of each result's `IndexApplication`.
+A Context advice reserves the smaller of the remaining request tokens and
+the profile's `max_tokens`. A compiled input above that ceiling is a known
+refusal with no native work and no held reservation.
+
+**Compatibility.** The three values are additions to a closed enum in
+status/3, device-status/1 and scoped-device-status/1. Schema names are
+unchanged and `arbiter_device_contract` becomes 2. No stored file holds a
+`SelectionReason`. The Rust owner regenerates `arbiter.schema.json`, the
+generated TypeScript and the device semantic cases, all with
+qualification false.
+
+Core tests give the planner literal candidates, opt-in state, adapter
+vendor, core count and remaining time, and compare literal reason lists.

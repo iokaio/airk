@@ -111,6 +111,9 @@ impl DeviceConfiguration {
         Ok(value)
     }
 }
+/// Most reason rows one selection may hold: one per candidate of the
+/// 16-variant catalog, the global rows and the closing row.
+pub const MAX_SELECTION_REASONS: usize = 20;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelAdmissionStatus {
@@ -348,7 +351,7 @@ impl DeviceStageStatus {
                     && Some(selection.model) == self.selected_model
                     && selection.policy == self.device_policy
                     && selection.gpu_precision == self.gpu_precision
-                    && selection.reasons.len() <= 18,
+                    && selection.reasons.len() <= MAX_SELECTION_REASONS,
                 "device selection request identity differs"
             );
             ensure!(

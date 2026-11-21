@@ -4151,6 +4151,653 @@
         "status": "failure"
       },
       "id": "initialization_unresolved_current3"
+    },
+    {
+      "id": "context_compact_gpu_not_opted_in_cpu",
+      "status": {
+        "configuration": {
+          "catalog": "02020202020202020202020202020202",
+          "context": {
+            "device_policy": "auto",
+            "enabled": true,
+            "gpu_precision": "auto",
+            "indexes": [
+              {
+                "index_id": "idx_05050505050505050505050505050505",
+                "tasks": [
+                  "airk.context_action.v1"
+                ]
+              }
+            ],
+            "selected_model": "context_compact"
+          },
+          "device_catalog": {
+            "catalog": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+            "source": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
+          },
+          "focus": {
+            "device_policy": "auto",
+            "enabled": false,
+            "gpu_precision": "auto",
+            "indexes": [],
+            "selected_model": null
+          },
+          "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+          "revision": 1,
+          "schema": "airk.arbiter.configuration/4"
+        },
+        "context": {
+          "active_profile": "1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
+          "availability": "ready",
+          "device_policy": "auto",
+          "gpu_precision": "auto",
+          "models": [
+            {
+              "availability": "ready",
+              "model": "context_compact",
+              "reason": "Synthetic native model-admission observation; no inferred client permission",
+              "tasks": [
+                "airk.context_action.v1"
+              ],
+              "variants": [
+                {
+                  "availability": "ready",
+                  "backend": null,
+                  "cpu_fit": {
+                    "inter_threads": 1,
+                    "intra_threads": 1,
+                    "minimum_physical_cores": 1,
+                    "sequential": true,
+                    "spinning": false
+                  },
+                  "device_evidence": null,
+                  "download_bytes": 1073741831,
+                  "execution_identity": "onnxruntime-cpu/1.30.0/physical1/intra1/inter1/sequential/spinning0",
+                  "manifest": "1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
+                  "memory_reservation_bytes": 1048576,
+                  "model_admission": "local_candidate",
+                  "precision": null,
+                  "reason": "Synthetic native view fixture; NOT hardware/model qualification",
+                  "tasks": [
+                    "airk.context_action.v1"
+                  ]
+                },
+                {
+                  "availability": "unqualified",
+                  "backend": "cuda",
+                  "device_evidence": null,
+                  "download_bytes": 1073741831,
+                  "execution_identity": "onnxruntime-cuda/1.30.0/device-execution/b52f0ce83d1207e968c7a34424a41244198639564cd532878d8216c71eeea944",
+                  "manifest": "2020202020202020202020202020202020202020202020202020202020202020",
+                  "memory_reservation_bytes": 1048576,
+                  "model_admission": "unavailable",
+                  "precision": "float32",
+                  "reason": "Synthetic native view fixture; NOT hardware/model qualification",
+                  "tasks": [
+                    "airk.context_action.v1"
+                  ]
+                },
+                {
+                  "availability": "unqualified",
+                  "backend": "cuda",
+                  "device_evidence": null,
+                  "download_bytes": 1073741831,
+                  "execution_identity": "onnxruntime-cuda/1.30.0/device-execution/7beb89a105c967a497268ad384d2c14ab4257531948f923b5a4e5aded5d3980b",
+                  "manifest": "2121212121212121212121212121212121212121212121212121212121212121",
+                  "memory_reservation_bytes": 1048576,
+                  "model_admission": "unavailable",
+                  "precision": "float16",
+                  "reason": "Synthetic native view fixture; NOT hardware/model qualification",
+                  "tasks": [
+                    "airk.context_action.v1"
+                  ]
+                }
+              ]
+            },
+            {
+              "availability": "unqualified",
+              "model": "context_large",
+              "reason": "Synthetic no compiled variant; no qualification",
+              "tasks": [
+                "airk.context_action.v1"
+              ],
+              "variants": []
+            }
+          ],
+          "queued": 0,
+          "reason": "Synthetic native typed state; NOT an execution/qualification claim",
+          "running": 0,
+          "selected_model": "context_compact",
+          "selection": {
+            "gpu_precision": "auto",
+            "model": "context_compact",
+            "operation_failure": null,
+            "policy": "auto",
+            "reasons": [
+              {
+                "adapter_key": null,
+                "manifest": null,
+                "reason": "gpu_not_opted_in"
+              }
+            ],
+            "schema": "airk.arbiter.device-status/1",
+            "selected": {
+              "adapter_key": "native-cpu-profile",
+              "backend": null,
+              "capability_epoch": 1,
+              "execution_identity": "onnxruntime-cpu/1.30.0/physical1/intra1/inter1/sequential/spinning0",
+              "manifest": "1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
+              "precision": null
+            }
+          }
+        },
+        "focus": {
+          "active_profile": null,
+          "availability": "disabled",
+          "device_policy": "auto",
+          "gpu_precision": "auto",
+          "models": [
+            {
+              "availability": "unqualified",
+              "model": "focus",
+              "reason": "Synthetic no compiled variant; no qualification",
+              "tasks": [
+                "airk.focus_rank.v1"
+              ],
+              "variants": []
+            }
+          ],
+          "queued": 0,
+          "reason": "Literal native-contract structural fixture; no execution authority",
+          "running": 0,
+          "selected_model": null,
+          "selection": null
+        },
+        "schema": "airk.arbiter.status/3"
+      }
+    },
+    {
+      "id": "context_compact_no_qualified_gpu_route_cpu",
+      "status": {
+        "configuration": {
+          "catalog": "02020202020202020202020202020202",
+          "context": {
+            "device_policy": "auto",
+            "enabled": true,
+            "gpu_precision": "auto",
+            "indexes": [
+              {
+                "index_id": "idx_05050505050505050505050505050505",
+                "tasks": [
+                  "airk.context_action.v1"
+                ]
+              }
+            ],
+            "selected_model": "context_compact"
+          },
+          "device_catalog": {
+            "catalog": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+            "source": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
+          },
+          "focus": {
+            "device_policy": "auto",
+            "enabled": false,
+            "gpu_precision": "auto",
+            "indexes": [],
+            "selected_model": null
+          },
+          "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+          "revision": 1,
+          "schema": "airk.arbiter.configuration/4"
+        },
+        "context": {
+          "active_profile": "1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
+          "availability": "ready",
+          "device_policy": "auto",
+          "gpu_precision": "auto",
+          "models": [
+            {
+              "availability": "ready",
+              "model": "context_compact",
+              "reason": "Synthetic native model-admission observation; no inferred client permission",
+              "tasks": [
+                "airk.context_action.v1"
+              ],
+              "variants": [
+                {
+                  "availability": "ready",
+                  "backend": null,
+                  "cpu_fit": {
+                    "inter_threads": 1,
+                    "intra_threads": 1,
+                    "minimum_physical_cores": 1,
+                    "sequential": true,
+                    "spinning": false
+                  },
+                  "device_evidence": null,
+                  "download_bytes": 1073741831,
+                  "execution_identity": "onnxruntime-cpu/1.30.0/physical1/intra1/inter1/sequential/spinning0",
+                  "manifest": "1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
+                  "memory_reservation_bytes": 1048576,
+                  "model_admission": "local_candidate",
+                  "precision": null,
+                  "reason": "Synthetic native view fixture; NOT hardware/model qualification",
+                  "tasks": [
+                    "airk.context_action.v1"
+                  ]
+                },
+                {
+                  "availability": "unqualified",
+                  "backend": "cuda",
+                  "device_evidence": null,
+                  "download_bytes": 1073741831,
+                  "execution_identity": "onnxruntime-cuda/1.30.0/device-execution/b52f0ce83d1207e968c7a34424a41244198639564cd532878d8216c71eeea944",
+                  "manifest": "2020202020202020202020202020202020202020202020202020202020202020",
+                  "memory_reservation_bytes": 1048576,
+                  "model_admission": "unavailable",
+                  "precision": "float32",
+                  "reason": "Synthetic native view fixture; NOT hardware/model qualification",
+                  "tasks": [
+                    "airk.context_action.v1"
+                  ]
+                },
+                {
+                  "availability": "unqualified",
+                  "backend": "cuda",
+                  "device_evidence": null,
+                  "download_bytes": 1073741831,
+                  "execution_identity": "onnxruntime-cuda/1.30.0/device-execution/7beb89a105c967a497268ad384d2c14ab4257531948f923b5a4e5aded5d3980b",
+                  "manifest": "2121212121212121212121212121212121212121212121212121212121212121",
+                  "memory_reservation_bytes": 1048576,
+                  "model_admission": "unavailable",
+                  "precision": "float16",
+                  "reason": "Synthetic native view fixture; NOT hardware/model qualification",
+                  "tasks": [
+                    "airk.context_action.v1"
+                  ]
+                }
+              ]
+            },
+            {
+              "availability": "unqualified",
+              "model": "context_large",
+              "reason": "Synthetic no compiled variant; no qualification",
+              "tasks": [
+                "airk.context_action.v1"
+              ],
+              "variants": []
+            }
+          ],
+          "queued": 0,
+          "reason": "Synthetic native typed state; NOT an execution/qualification claim",
+          "running": 0,
+          "selected_model": "context_compact",
+          "selection": {
+            "gpu_precision": "auto",
+            "model": "context_compact",
+            "operation_failure": null,
+            "policy": "auto",
+            "reasons": [
+              {
+                "adapter_key": null,
+                "manifest": null,
+                "reason": "no_qualified_gpu_route"
+              }
+            ],
+            "schema": "airk.arbiter.device-status/1",
+            "selected": {
+              "adapter_key": "native-cpu-profile",
+              "backend": null,
+              "capability_epoch": 1,
+              "execution_identity": "onnxruntime-cpu/1.30.0/physical1/intra1/inter1/sequential/spinning0",
+              "manifest": "1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
+              "precision": null
+            }
+          }
+        },
+        "focus": {
+          "active_profile": null,
+          "availability": "disabled",
+          "device_policy": "auto",
+          "gpu_precision": "auto",
+          "models": [
+            {
+              "availability": "unqualified",
+              "model": "focus",
+              "reason": "Synthetic no compiled variant; no qualification",
+              "tasks": [
+                "airk.focus_rank.v1"
+              ],
+              "variants": []
+            }
+          ],
+          "queued": 0,
+          "reason": "Literal native-contract structural fixture; no execution authority",
+          "running": 0,
+          "selected_model": null,
+          "selection": null
+        },
+        "schema": "airk.arbiter.status/3"
+      }
+    },
+    {
+      "id": "context_compact_no_fit_unsupported_system",
+      "status": {
+        "configuration": {
+          "catalog": "02020202020202020202020202020202",
+          "context": {
+            "device_policy": "auto",
+            "enabled": true,
+            "gpu_precision": "auto",
+            "indexes": [
+              {
+                "index_id": "idx_05050505050505050505050505050505",
+                "tasks": [
+                  "airk.context_action.v1"
+                ]
+              }
+            ],
+            "selected_model": "context_compact"
+          },
+          "device_catalog": {
+            "catalog": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+            "source": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
+          },
+          "focus": {
+            "device_policy": "auto",
+            "enabled": false,
+            "gpu_precision": "auto",
+            "indexes": [],
+            "selected_model": null
+          },
+          "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+          "revision": 1,
+          "schema": "airk.arbiter.configuration/4"
+        },
+        "context": {
+          "active_profile": null,
+          "availability": "unsupported_system",
+          "device_policy": "auto",
+          "gpu_precision": "auto",
+          "models": [
+            {
+              "availability": "requested",
+              "model": "context_compact",
+              "reason": "Synthetic native model-admission observation; no inferred client permission",
+              "tasks": [
+                "airk.context_action.v1"
+              ],
+              "variants": [
+                {
+                  "availability": "requested",
+                  "backend": null,
+                  "cpu_fit": {
+                    "inter_threads": 1,
+                    "intra_threads": 1,
+                    "minimum_physical_cores": 1,
+                    "sequential": true,
+                    "spinning": false
+                  },
+                  "device_evidence": null,
+                  "download_bytes": 1073741831,
+                  "execution_identity": "onnxruntime-cpu/1.30.0/physical1/intra1/inter1/sequential/spinning0",
+                  "manifest": "1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
+                  "memory_reservation_bytes": 1048576,
+                  "model_admission": "local_candidate",
+                  "precision": null,
+                  "reason": "Synthetic native view fixture; NOT hardware/model qualification",
+                  "tasks": [
+                    "airk.context_action.v1"
+                  ]
+                },
+                {
+                  "availability": "unqualified",
+                  "backend": "cuda",
+                  "device_evidence": null,
+                  "download_bytes": 1073741831,
+                  "execution_identity": "onnxruntime-cuda/1.30.0/device-execution/b52f0ce83d1207e968c7a34424a41244198639564cd532878d8216c71eeea944",
+                  "manifest": "2020202020202020202020202020202020202020202020202020202020202020",
+                  "memory_reservation_bytes": 1048576,
+                  "model_admission": "unavailable",
+                  "precision": "float32",
+                  "reason": "Synthetic native view fixture; NOT hardware/model qualification",
+                  "tasks": [
+                    "airk.context_action.v1"
+                  ]
+                },
+                {
+                  "availability": "unqualified",
+                  "backend": "cuda",
+                  "device_evidence": null,
+                  "download_bytes": 1073741831,
+                  "execution_identity": "onnxruntime-cuda/1.30.0/device-execution/7beb89a105c967a497268ad384d2c14ab4257531948f923b5a4e5aded5d3980b",
+                  "manifest": "2121212121212121212121212121212121212121212121212121212121212121",
+                  "memory_reservation_bytes": 1048576,
+                  "model_admission": "unavailable",
+                  "precision": "float16",
+                  "reason": "Synthetic native view fixture; NOT hardware/model qualification",
+                  "tasks": [
+                    "airk.context_action.v1"
+                  ]
+                }
+              ]
+            },
+            {
+              "availability": "unqualified",
+              "model": "context_large",
+              "reason": "Synthetic no compiled variant; no qualification",
+              "tasks": [
+                "airk.context_action.v1"
+              ],
+              "variants": []
+            }
+          ],
+          "queued": 0,
+          "reason": "Synthetic native typed state; NOT an execution/qualification claim",
+          "running": 0,
+          "selected_model": "context_compact",
+          "selection": {
+            "gpu_precision": "auto",
+            "model": "context_compact",
+            "operation_failure": null,
+            "policy": "auto",
+            "reasons": [
+              {
+                "adapter_key": null,
+                "manifest": null,
+                "reason": "gpu_not_opted_in"
+              },
+              {
+                "adapter_key": "cpu",
+                "manifest": "1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
+                "reason": "cpu_fit_insufficient"
+              }
+            ],
+            "schema": "airk.arbiter.device-status/1",
+            "selected": null
+          }
+        },
+        "focus": {
+          "active_profile": null,
+          "availability": "disabled",
+          "device_policy": "auto",
+          "gpu_precision": "auto",
+          "models": [
+            {
+              "availability": "unqualified",
+              "model": "focus",
+              "reason": "Synthetic no compiled variant; no qualification",
+              "tasks": [
+                "airk.focus_rank.v1"
+              ],
+              "variants": []
+            }
+          ],
+          "queued": 0,
+          "reason": "Literal native-contract structural fixture; no execution authority",
+          "running": 0,
+          "selected_model": null,
+          "selection": null
+        },
+        "schema": "airk.arbiter.status/3"
+      }
+    },
+    {
+      "id": "context_compact_deadline_operation_failure",
+      "status": {
+        "configuration": {
+          "catalog": "02020202020202020202020202020202",
+          "context": {
+            "device_policy": "auto",
+            "enabled": true,
+            "gpu_precision": "auto",
+            "indexes": [
+              {
+                "index_id": "idx_05050505050505050505050505050505",
+                "tasks": [
+                  "airk.context_action.v1"
+                ]
+              }
+            ],
+            "selected_model": "context_compact"
+          },
+          "device_catalog": {
+            "catalog": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+            "source": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
+          },
+          "focus": {
+            "device_policy": "auto",
+            "enabled": false,
+            "gpu_precision": "auto",
+            "indexes": [],
+            "selected_model": null
+          },
+          "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+          "revision": 1,
+          "schema": "airk.arbiter.configuration/4"
+        },
+        "context": {
+          "active_profile": null,
+          "availability": "failed",
+          "device_policy": "auto",
+          "gpu_precision": "auto",
+          "models": [
+            {
+              "availability": "requested",
+              "model": "context_compact",
+              "reason": "Synthetic native model-admission observation; no inferred client permission",
+              "tasks": [
+                "airk.context_action.v1"
+              ],
+              "variants": [
+                {
+                  "availability": "requested",
+                  "backend": null,
+                  "cpu_fit": {
+                    "inter_threads": 1,
+                    "intra_threads": 1,
+                    "minimum_physical_cores": 1,
+                    "sequential": true,
+                    "spinning": false
+                  },
+                  "device_evidence": null,
+                  "download_bytes": 1073741831,
+                  "execution_identity": "onnxruntime-cpu/1.30.0/physical1/intra1/inter1/sequential/spinning0",
+                  "manifest": "1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
+                  "memory_reservation_bytes": 1048576,
+                  "model_admission": "local_candidate",
+                  "precision": null,
+                  "reason": "Synthetic native view fixture; NOT hardware/model qualification",
+                  "tasks": [
+                    "airk.context_action.v1"
+                  ]
+                },
+                {
+                  "availability": "unqualified",
+                  "backend": "cuda",
+                  "device_evidence": null,
+                  "download_bytes": 1073741831,
+                  "execution_identity": "onnxruntime-cuda/1.30.0/device-execution/b52f0ce83d1207e968c7a34424a41244198639564cd532878d8216c71eeea944",
+                  "manifest": "2020202020202020202020202020202020202020202020202020202020202020",
+                  "memory_reservation_bytes": 1048576,
+                  "model_admission": "unavailable",
+                  "precision": "float32",
+                  "reason": "Synthetic native view fixture; NOT hardware/model qualification",
+                  "tasks": [
+                    "airk.context_action.v1"
+                  ]
+                },
+                {
+                  "availability": "unqualified",
+                  "backend": "cuda",
+                  "device_evidence": null,
+                  "download_bytes": 1073741831,
+                  "execution_identity": "onnxruntime-cuda/1.30.0/device-execution/7beb89a105c967a497268ad384d2c14ab4257531948f923b5a4e5aded5d3980b",
+                  "manifest": "2121212121212121212121212121212121212121212121212121212121212121",
+                  "memory_reservation_bytes": 1048576,
+                  "model_admission": "unavailable",
+                  "precision": "float16",
+                  "reason": "Synthetic native view fixture; NOT hardware/model qualification",
+                  "tasks": [
+                    "airk.context_action.v1"
+                  ]
+                }
+              ]
+            },
+            {
+              "availability": "unqualified",
+              "model": "context_large",
+              "reason": "Synthetic no compiled variant; no qualification",
+              "tasks": [
+                "airk.context_action.v1"
+              ],
+              "variants": []
+            }
+          ],
+          "queued": 0,
+          "reason": "Synthetic native typed state; NOT an execution/qualification claim",
+          "running": 0,
+          "selected_model": "context_compact",
+          "selection": {
+            "gpu_precision": "auto",
+            "model": "context_compact",
+            "operation_failure": "deadline_expired",
+            "policy": "auto",
+            "reasons": [
+              {
+                "adapter_key": null,
+                "manifest": null,
+                "reason": "deadline_expired"
+              }
+            ],
+            "schema": "airk.arbiter.device-status/1",
+            "selected": null
+          }
+        },
+        "focus": {
+          "active_profile": null,
+          "availability": "disabled",
+          "device_policy": "auto",
+          "gpu_precision": "auto",
+          "models": [
+            {
+              "availability": "unqualified",
+              "model": "focus",
+              "reason": "Synthetic no compiled variant; no qualification",
+              "tasks": [
+                "airk.focus_rank.v1"
+              ],
+              "variants": []
+            }
+          ],
+          "queued": 0,
+          "reason": "Literal native-contract structural fixture; no execution authority",
+          "running": 0,
+          "selected_model": null,
+          "selection": null
+        },
+        "schema": "airk.arbiter.status/3"
+      }
     }
   ],
   "legacy_migration": {

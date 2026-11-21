@@ -71,7 +71,7 @@ pub fn document() -> serde_json::Value {
         .collect();
     serde_json::json!({
         "$schema":"https://json-schema.org/draft/2020-12/schema",
-        "title":"AIRK Arbiter Core contract","arbiter_contract":2,"arbiter_device_contract":1,
+        "title":"AIRK Arbiter Core contract","arbiter_contract":2,"arbiter_device_contract":2,
         "roots":roots,"$defs":definitions,
     })
 }

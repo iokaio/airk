@@ -40,11 +40,23 @@ pub(super) struct Readiness {
     pub reason: String,
 }
 #[cfg(feature = "local-inference")]
-#[derive(Default)]
 pub(super) struct Shared {
     pub state: Mutex<DeviceState>,
     gpu_disabled: std::sync::atomic::AtomicBool,
     pub generation: std::sync::atomic::AtomicU64,
+}
+#[cfg(feature = "local-inference")]
+impl Default for Shared {
+    /// GPU use starts off. Only the service's applied resource configuration
+    /// turns it on, so a missing or failed application leaves every GPU route
+    /// closed.
+    fn default() -> Self {
+        Self {
+            state: Mutex::default(),
+            gpu_disabled: std::sync::atomic::AtomicBool::new(true),
+            generation: std::sync::atomic::AtomicU64::default(),
+        }
+    }
 }
 #[cfg(feature = "local-inference")]
 #[derive(Default)]
@@ -80,6 +92,43 @@ pub(super) struct ReadDiagnosticStamp {
 impl Shared {
     pub(super) fn gpu_allowed(&self) -> bool {
         !self.gpu_disabled.load(std::sync::atomic::Ordering::Acquire)
+    }
+    /// The planner's view of the service-wide setting. Adapter enumeration,
+    /// when it runs, may narrow an opted-in sample to "no adapter".
+    fn gpu_use(&self) -> GpuUse {
+        if self.gpu_allowed() {
+            GpuUse::OptedIn
+        } else {
+            GpuUse::NotOptedIn
+        }
+    }
+    /// Applies the service-wide setting. False when it was already in effect.
+    pub(super) fn apply_gpu_allowed(&self, allowed: bool) -> bool {
+        self.gpu_disabled
+            .swap(!allowed, std::sync::atomic::Ordering::AcqRel)
+            == allowed
+    }
+    /// Diagnostic record of a stopped operation. It changes no selected
+    /// variant, readiness, device or native policy, and a resident stage keeps
+    /// the selection it is serving. False when nothing was recorded.
+    fn record_operation_failure(
+        &self,
+        document: &DeviceConfiguration,
+        stage: Stage,
+        selection: DeviceSelection,
+    ) -> bool {
+        let Ok(mut state) = self.state.lock() else {
+            return false;
+        };
+        if state.document.as_ref() != Some(document)
+            || state.ready.contains(&stage)
+            || selection.selected.is_some()
+            || selection.operation_failure.is_none()
+        {
+            return false;
+        }
+        state.selection.insert(stage, selection);
+        true
     }
 
     /// Data-only before/after fence; no Store mutation, native call or permit.
@@ -488,7 +537,7 @@ impl Owner {
                 .state
                 .lock()
                 .map_err(|_| anyhow::anyhow!("GPU policy unavailable"))?;
-            if shared.gpu_disabled.swap(!allowed, Ordering::AcqRel) == !allowed {
+            if !shared.apply_gpu_allowed(allowed) {
                 return Ok(());
             }
             shared.generation.fetch_add(1, Ordering::AcqRel);
@@ -940,6 +989,32 @@ impl StageOwner {
                         && active == Some(profile.manifest)
                         && admitted
                         && (backend.is_none() || evidence.is_some());
+                    let observed = if ready {
+                        VariantState::Active
+                    } else if actual_resident
+                        && active == Some(profile.manifest)
+                        && backend.is_some()
+                        && !device_eligible
+                    {
+                        VariantState::ResidentNotEligible
+                    } else if admitted {
+                        VariantState::Admitted
+                    } else {
+                        VariantState::NotAdmitted
+                    };
+                    // The typed cause recorded for this variant by the
+                    // current document's selection, if it has one.
+                    let cause = state
+                        .selection
+                        .get(&self.stage)
+                        .filter(|_| selected)
+                        .and_then(|selection| {
+                            selection
+                                .reasons
+                                .iter()
+                                .find(|row| row.manifest == Some(profile.manifest))
+                        })
+                        .map(|row| row.reason);
                     DeviceVariantStatus::from_description(
                         profile,
                         if ready {
@@ -949,16 +1024,7 @@ impl StageOwner {
                         } else {
                             Availability::Unqualified
                         },
-                        if ready {
-                            "Actual authenticated native variant is resident."
-                        } else if actual_resident&&active==Some(profile.manifest)&&backend.is_some()&&!device_eligible {
-                            "The GPU session remains resident, but local eligibility is not current; Recover can reaccept it under a bounded management operation."
-                        } else if admitted {
-                            "Native model is admitted; this variant is not active."
-                        } else {
-                            "Variant has no current native model/device admission."
-                        }
-                        .into(),
+                        bounded_reason(variant_disclosure(profile, observed, cause)),
                         if !admitted {
                             ModelAdmissionStatus::Unavailable
                         } else if runtime::is_local_test_profile(profile) {
@@ -1042,7 +1108,7 @@ impl StageOwner {
                     life.phase
                 }
             } else {
-                Availability::Requested
+                settled_phase(life.phase)
             },
             reason: bounded_reason(if !epoch_live {
                 "Native device epoch changed or settlement is unknown; no execution is admitted."
@@ -1749,6 +1815,121 @@ impl Launch {
         let model = requested
             .selected_model
             .context("enabled device model missing")?;
+        let mut rows = Vec::new();
+        match self
+            .select_variant(&handle, model, serial, cancel, &mut rows)
+            .await
+        {
+            Ok(()) => Ok(()),
+            Err(error) => Err(self.stopped(&handle, model, cancel, rows, error)),
+        }
+    }
+    /// Records a deadline, authority or settlement failure as the typed
+    /// `operation_failure` of this stage and names it in the returned error.
+    /// Any other failure is returned unchanged. Nothing further is tried.
+    fn stopped(
+        &self,
+        handle: &Handle,
+        model: SelectedModel,
+        cancel: &CancellationToken,
+        mut rows: Vec<CandidateRejection>,
+        error: anyhow::Error,
+    ) -> anyhow::Error {
+        let settled = !handle.unknown_device_work()
+            && self.devices.state.lock().is_ok_and(|state| {
+                state
+                    .devices
+                    .values()
+                    .all(|(device, epoch)| !device.poisoned() && device.epoch() == *epoch)
+            });
+        let Err(reason) = fallback_permitted(
+            true,
+            settled,
+            self.policy_current(Some(cancel)).is_ok(),
+            remaining_us(self.deadline, Instant::now()),
+        ) else {
+            return error;
+        };
+        let selection = self.selection(model, None, rows_with(&mut rows, reason), Some(reason));
+        let text = disclosure(&selection);
+        self.devices
+            .record_operation_failure(&self.document, self.stage, selection);
+        error.context(text)
+    }
+    fn selection(
+        &self,
+        model: SelectedModel,
+        selected: Option<SelectedVariant>,
+        mut reasons: Vec<CandidateRejection>,
+        operation_failure: Option<SelectionReason>,
+    ) -> DeviceSelection {
+        let requested = self.document.stage(self.stage);
+        reasons.truncate(MAX_SELECTION_REASONS);
+        DeviceSelection {
+            schema: DEVICE_STATUS_SCHEMA.into(),
+            model,
+            policy: requested.device_policy,
+            gpu_precision: requested.gpu_precision,
+            selected,
+            reasons,
+            operation_failure,
+        }
+    }
+    /// The order ended with nothing selected. The stage keeps no native
+    /// selection and records its rows; the other stage and retrieval continue.
+    /// Its phase is `unsupported_system`, unless a candidate was passed over
+    /// only because its verified assets are not installed. That phase is
+    /// `missing_assets`, which an idle stage reports as an unfulfilled request
+    /// whose reason names the missing download.
+    async fn finish_without_selection(
+        &self,
+        handle: &Handle,
+        model: SelectedModel,
+        serial: u64,
+        cancel: &CancellationToken,
+        rows: &[CandidateRejection],
+        assets_missing: bool,
+    ) -> Result<()> {
+        self.current(Some(cancel))?;
+        let observation = handle.observation_for(self.stage)?;
+        for profile in [observation.active_profile, observation.warming_profile]
+            .into_iter()
+            .flatten()
+        {
+            self.drain(handle, profile).await?;
+        }
+        self.current(Some(cancel))?;
+        let selection = self.selection(model, None, rows.to_vec(), None);
+        let reason = no_selection_reason(assets_missing, disclosure(&selection));
+        let policy = self.devices.install(
+            self.document.clone(),
+            self.stage,
+            None,
+            Some(selection),
+            None,
+            None,
+            None,
+        )?;
+        handle.configure_native(policy)?;
+        super::lifecycle::phase(
+            &self.lifecycle,
+            serial,
+            no_selection_phase(assets_missing),
+            &reason,
+        )
+    }
+    /// Builds the candidates of the requested model, asks Core for the order
+    /// and tries them in that order. Every candidate that is considered and not
+    /// selected leaves one row in `rows`.
+    async fn select_variant(
+        &self,
+        handle: &Handle,
+        model: SelectedModel,
+        serial: u64,
+        cancel: &CancellationToken,
+        rows: &mut Vec<CandidateRejection>,
+    ) -> Result<()> {
+        let requested = self.document.stage(self.stage);
         let probe_live = {
             let configuration = self.configuration.clone();
             let binding = self.binding.clone();
@@ -1761,40 +1942,49 @@ impl Launch {
                 &&configuration.device(binding.clone()).load().is_ok_and(|value|matches!(value,airk_store::service::arbiter::device::StoredConfiguration::Device(current) if current==expected))
             }) as Arc<dyn Fn() -> bool + Send + Sync>
         };
-        let mut candidates = Vec::new();
-        let mut rejections = Vec::new();
-        let gpu_allowed = self.devices.gpu_allowed();
-        if requested.device_policy == DevicePolicy::Cpu || !gpu_allowed {
-            rejections.push(CandidateRejection {
-                manifest: None,
-                adapter_key: None,
-                reason: SelectionReason::ForcedCpu,
-            });
-        }
+        let catalog = runtime::catalog_profiles()?;
+        // One advisory row per candidate. `bound` holds, at the same index, the
+        // native witness of a candidate that can actually be tried.
+        let mut advisory = Vec::new();
+        let mut bound: Vec<Option<Candidate>> = Vec::new();
+        let mut probe_rows = Vec::new();
+        // One sample of the service-wide setting decides both the probe and
+        // the row the planner records.
+        let mut gpu_use = self.devices.gpu_use();
+        let gpu_allowed = gpu_use == GpuUse::OptedIn;
         let mut cold_probe_charge: Option<
             Arc<airk_kernel::service_resources::OptionalReservation>,
         > = None;
-        let mut probed = None;
         if requested.device_policy == DevicePolicy::Auto && gpu_allowed {
-            let mut eligible = runtime::catalog_profiles()?
-                .into_iter()
+            // Admitted GPU variants of this model. One that the precision
+            // preference excludes is recorded by the planner and never probed.
+            let (mut eligible, excluded): (Vec<_>, Vec<_>) = catalog
+                .iter()
                 .filter(|profile| {
                     profile.model == model.model() && profile.device_execution.is_some()
                 })
-                .filter(|profile| {
-                    gpu_precision_allows(
-                        requested.gpu_precision,
-                        profile.device_execution.as_ref().map(|v| v.precision),
-                    )
-                })
                 .filter(|profile| runtime::release_asset_profile(profile.manifest).is_ok())
-                .collect::<Vec<_>>();
+                .partition(|profile| {
+                    requested
+                        .gpu_precision
+                        .admits(profile.device_execution.as_ref().map(|v| v.precision))
+                });
+            for profile in excluded {
+                advisory.push(advisory_candidate(model, profile, None, None)?);
+                bound.push(None);
+            }
             eligible.sort_by_key(|profile| {
                 (
-                    precision_rank(profile.device_execution.as_ref().map(|v| v.precision)),
+                    profile
+                        .device_execution
+                        .as_ref()
+                        .map(|v| gpu_route_rank(v.backend, v.precision)),
                     profile.manifest,
                 )
             });
+            let mut probed = None;
+            // The reason no probe ran, recorded for every eligible variant.
+            let mut unprobed = None;
             if let Some(first) = eligible.first() {
                 if cfg!(feature = "gpu-cuda") {
                     let existing = {
@@ -1856,11 +2046,7 @@ impl Launch {
                             }
                             Err(_) => {
                                 self.current(Some(cancel))?;
-                                rejections.push(CandidateRejection {
-                                    manifest: Some(first.manifest),
-                                    adapter_key: None,
-                                    reason: SelectionReason::HostMemoryInsufficient,
-                                });
+                                unprobed = Some(SelectionReason::HostMemoryInsufficient);
                                 (None, false)
                             }
                         },
@@ -1892,100 +2078,110 @@ impl Launch {
                         }
                     }
                 } else {
-                    for profile in eligible {
-                        rejections.push(CandidateRejection {
-                            manifest: Some(profile.manifest),
-                            adapter_key: None,
-                            reason: SelectionReason::RuntimeUnavailable,
-                        });
+                    unprobed = Some(SelectionReason::RuntimeUnavailable);
+                }
+            }
+            if let Some(reason) = unprobed {
+                for profile in &eligible {
+                    advisory.push(advisory_candidate(model, profile, None, Some(reason))?);
+                    bound.push(None);
+                }
+            }
+            if let Some(probe) = probed {
+                if probe.candidates.is_empty() && probe.rejections.is_empty() {
+                    // The enumeration ran and found no adapter for any variant.
+                    gpu_use = GpuUse::NoAdapter;
+                }
+                for row in probe.rejections {
+                    let described = row
+                        .manifest
+                        .and_then(|pin| eligible.iter().find(|profile| profile.manifest == pin));
+                    match described {
+                        Some(profile) => {
+                            advisory.push(advisory_candidate(
+                                model,
+                                profile,
+                                row.adapter_key.map(|key| (key, 1)),
+                                Some(row.reason),
+                            )?);
+                            bound.push(None);
+                        }
+                        // A row that names no probed variant is kept as reported.
+                        None => probe_rows.push(row),
                     }
                 }
-            } else {
-                rejections.push(CandidateRejection {
-                    manifest: None,
-                    adapter_key: None,
-                    reason: SelectionReason::NoGpu,
-                });
-            }
-        }
-        if let Some(probe) = probed {
-            if probe.candidates.is_empty() && probe.rejections.is_empty() {
-                rejections.push(CandidateRejection {
-                    manifest: None,
-                    adapter_key: None,
-                    reason: SelectionReason::NoGpu,
-                });
-            }
-            rejections.extend(probe.rejections);
-            for candidate in probe.candidates {
-                ensure!(
-                    !candidate.probe_only,
-                    "unqualified native evaluation cannot enter product selection"
-                );
-                let precision = candidate
-                    .profile
-                    .description()
-                    .device_execution
-                    .as_ref()
-                    .context("bound GPU descriptor missing")?
-                    .precision;
-                let permitted = gpu_precision_allows(requested.gpu_precision, Some(precision));
-                if permitted {
-                    candidates.push(Candidate {
+                for candidate in probe.candidates {
+                    ensure!(
+                        !candidate.probe_only,
+                        "unqualified native evaluation cannot enter product selection"
+                    );
+                    advisory.push(advisory_candidate(
+                        model,
+                        candidate.profile.description(),
+                        Some((adapter(candidate.uuid), candidate.epoch)),
+                        None,
+                    )?);
+                    bound.push(Some(Candidate {
                         execution: candidate.profile,
                         device: Some(candidate.device),
                         epoch: candidate.epoch,
                         adapter: adapter(candidate.uuid),
                         extra: Some(candidate.host_warm_extra_bytes),
-                    });
-                } else {
-                    rejections.push(CandidateRejection {
-                        manifest: Some(candidate.profile.description().manifest),
-                        adapter_key: Some(adapter(candidate.uuid)),
-                        reason: SelectionReason::GpuPrecisionExcluded,
-                    });
+                    }));
                 }
             }
         }
-        for profile in runtime::catalog_profiles()?
-            .into_iter()
+        for profile in catalog
+            .iter()
             .filter(|profile| profile.model == model.model() && profile.device_execution.is_none())
         {
-            if let Ok(execution) = cpu_candidate(&profile) {
-                candidates.push(Candidate {
-                    execution,
-                    device: None,
-                    epoch: 1,
-                    adapter: "cpu".into(),
-                    extra: None,
-                });
-            } else {
-                rejections.push(CandidateRejection {
-                    manifest: Some(profile.manifest),
-                    adapter_key: Some("cpu".into()),
-                    reason: if cpu_model_admission(&profile).is_ok() {
+            let (execution, rejection) = match cpu_candidate(profile) {
+                Ok(execution) => (Some(execution), None),
+                Err(_) => (
+                    None,
+                    Some(if cpu_model_admission(profile).is_ok() {
                         SelectionReason::CpuFitInsufficient
                     } else {
                         SelectionReason::NoQualifiedCpu
-                    },
-                });
-            }
-        }
-        candidates.sort_by_key(|candidate| {
-            (
-                precision_rank(
-                    candidate
-                        .execution
-                        .description()
-                        .device_execution
-                        .as_ref()
-                        .map(|value| value.precision),
+                    }),
                 ),
-                candidate.adapter.clone(),
-                candidate.execution.description().manifest,
-            )
-        });
-        for candidate in candidates {
+            };
+            advisory.push(advisory_candidate(
+                model,
+                profile,
+                Some(("cpu".into(), 1)),
+                rejection,
+            )?);
+            bound.push(execution.map(|execution| Candidate {
+                execution,
+                device: None,
+                epoch: 1,
+                adapter: "cpu".into(),
+                extra: None,
+            }));
+        }
+        let plan = attempt_order(
+            model,
+            requested.device_policy,
+            requested.gpu_precision,
+            gpu_use,
+            remaining_us(self.deadline, Instant::now()),
+            &advisory,
+        )?;
+        ensure!(
+            plan.operation_failure.is_none(),
+            "device selection stopped before any candidate was tried"
+        );
+        rows.extend(plan.reasons);
+        rows.extend(probe_rows);
+        // Set when a candidate was passed over only because its verified assets
+        // are not installed. That is a missing download, not an unfit system.
+        let mut assets_missing = false;
+        for index in plan.order {
+            let candidate = bound
+                .get_mut(index)
+                .and_then(Option::take)
+                .context("ordered candidate has no native witness")?;
             self.current(Some(cancel))?;
             if candidate
                 .device
@@ -2017,7 +2213,7 @@ impl Launch {
                     .circuits
                     .contains(&key)
                 {
-                    rejections.push(CandidateRejection {
+                    rows.push(CandidateRejection {
                         manifest: Some(profile.manifest),
                         adapter_key: Some(candidate.adapter),
                         reason: SelectionReason::CircuitOpen,
@@ -2028,7 +2224,8 @@ impl Launch {
 
             let store = self.asset_store(&profile)?;
             if store.phase(&profile)? != Some(Phase::Ready) {
-                rejections.push(CandidateRejection {
+                assets_missing = true;
+                rows.push(CandidateRejection {
                     manifest: Some(profile.manifest),
                     adapter_key: Some(candidate.adapter),
                     reason: SelectionReason::Unqualified,
@@ -2036,12 +2233,9 @@ impl Launch {
                 continue;
             }
             let evidence = candidate.execution.device_evidence();
-            let selection = DeviceSelection {
-                schema: DEVICE_STATUS_SCHEMA.into(),
+            let selection = self.selection(
                 model,
-                policy: requested.device_policy,
-                gpu_precision: requested.gpu_precision,
-                selected: Some(SelectedVariant {
+                Some(SelectedVariant {
                     manifest: profile.manifest,
                     execution_identity: profile.device_execution_identity()?,
                     backend: profile.device_execution.as_ref().map(|v| v.backend),
@@ -2049,9 +2243,11 @@ impl Launch {
                     adapter_key: candidate.adapter.clone(),
                     capability_epoch: candidate.epoch,
                 }),
-                reasons: rejections.clone(),
-                operation_failure: None,
-            };
+                rows.clone(),
+                None,
+            );
+            // Core writes the stage reason from this typed selection.
+            let active = disclosure(&selection);
             let retained_device = {
                 let state = self
                     .devices
@@ -2094,7 +2290,7 @@ impl Launch {
                         .get(&self.stage)
                         .is_some_and(ResidentEligibility::current)
                 {
-                    self.require_open_retained_population(&handle, cancel)?;
+                    self.require_open_retained_population(handle, cancel)?;
                     let resident = handle.resident(profile.manifest)?;
                     let receive = handle.reaccept_device(
                         self.lease.clone(),
@@ -2112,7 +2308,7 @@ impl Launch {
                     .context("retained eligibility owner closed without an observed outcome")?;
                     if let Err(error) = returned {
                         if let Err(guard) =
-                            self.record_prework_fault(&handle, profile.manifest, &error, cancel)
+                            self.record_prework_fault(handle, profile.manifest, &error, cancel)
                         {
                             return Err(secondary_fault_error(error, guard));
                         }
@@ -2120,12 +2316,14 @@ impl Launch {
                     }
                     self.current(Some(cancel))?;
                 }
-                self.finish_resident_activation(&handle, &profile, cancel)?;
+                self.finish_resident_activation(handle, &profile, cancel)?;
+                // The exact resident and its original peak charge were retained:
+                // no second model load or reservation was created.
                 return super::lifecycle::phase(
                     &self.lifecycle,
                     serial,
                     Availability::Ready,
-                    "The exact authenticated native resident and original peak charge were retained; no second model load or reservation was created.",
+                    &active,
                 );
             }
             let observation = handle.observation_for(self.stage)?;
@@ -2133,10 +2331,10 @@ impl Launch {
                 .into_iter()
                 .flatten()
             {
-                self.drain(&handle, old).await?;
+                self.drain(handle, old).await?;
             }
             self.current(Some(cancel))?;
-            self.require_open_retained_population(&handle, cancel)?;
+            self.require_open_retained_population(handle, cancel)?;
             let reservation = if cold_probe_charge
                 .as_ref()
                 .is_some_and(|charge| charge.bytes() >= profile.memory_reservation_bytes)
@@ -2163,7 +2361,7 @@ impl Launch {
                     Ok(reservation) => Arc::new(reservation),
                     Err(_) => {
                         self.current(Some(cancel))?;
-                        rejections.push(CandidateRejection {
+                        rows.push(CandidateRejection {
                             manifest: Some(profile.manifest),
                             adapter_key: Some(candidate.adapter),
                             reason: SelectionReason::HostMemoryInsufficient,
@@ -2221,20 +2419,12 @@ impl Launch {
                         ),
                         "device epoch changed after native load"
                     );
-                    self.finish_resident_activation(&handle, &profile, cancel)?;
+                    self.finish_resident_activation(handle, &profile, cancel)?;
                     return super::lifecycle::phase(
                         &self.lifecycle,
                         serial,
                         Availability::Ready,
-                        if profile.device_execution.is_some() {
-                            "Authenticated GPU execution is active for the selected model on the single metadata-selected compatible dedicated CUDA adapter; other adapters were not initialized."
-                        } else if !self.devices.gpu_allowed() {
-                            "FP32 CPU execution is active because GPU use is disabled in service resources."
-                        } else if requested.device_policy == DevicePolicy::Cpu {
-                            "FP32 CPU execution is active by request."
-                        } else {
-                            "FP32 CPU fallback is active for the selected model. GPU policy considers one compatible dedicated CUDA adapter by physical capacity; other adapters are not initialized or claimed unable to fit."
-                        },
+                        &active,
                     );
                 }
                 failure => {
@@ -2254,7 +2444,7 @@ impl Launch {
                         "Variant did not activate; actual native settlement and charge release are required before any fallback.",
                     )?;
                     super::lifecycle::release_actual(
-                        &handle,
+                        handle,
                         profile.manifest,
                         release,
                         self.deadline,
@@ -2270,21 +2460,17 @@ impl Launch {
                     self.current(Some(cancel))?;
                     // Source/input/cancellation/deadline/owner errors are not device
                     // faults and cannot be relabeled as a fallback authorization.
-                    let recorded = match self.record_prework_fault(
-                        &handle,
-                        profile.manifest,
-                        &error,
-                        cancel,
-                    ) {
-                        Ok(recorded) => recorded,
-                        Err(guard) => return Err(secondary_fault_error(error, guard)),
-                    };
+                    let recorded =
+                        match self.record_prework_fault(handle, profile.manifest, &error, cancel) {
+                            Ok(recorded) => recorded,
+                            Err(guard) => return Err(secondary_fault_error(error, guard)),
+                        };
                     match recorded {
                         Some(failed) if failed==profile.manifest=>{},
                         Some(_)=>return Err(error.context("a retained GPU resident failed eligibility; current candidate is not declared unfit and the original attempt stops")),
                         None=>return Err(error.context("unsettled or non-device warm failure; automatic fallback and fault circuit refused")),
                     }
-                    rejections.push(CandidateRejection {
+                    rows.push(CandidateRejection {
                         manifest: Some(profile.manifest),
                         adapter_key: Some(candidate.adapter),
                         reason: prework_device_reason(&error),
@@ -2292,10 +2478,79 @@ impl Launch {
                 }
             }
         }
-        anyhow::bail!(
-            "No admitted same-model variant fits current runtime/device/host policy; ordinary evidence remains available"
-        )
+        rows.extend(plan.no_fit);
+        self.finish_without_selection(handle, model, serial, cancel, rows, assets_missing)
+            .await
     }
+}
+/// The rows of a stopped operation, closed by its typed cause.
+#[cfg(feature = "local-inference")]
+fn rows_with(
+    rows: &mut Vec<CandidateRejection>,
+    reason: SelectionReason,
+) -> Vec<CandidateRejection> {
+    rows.truncate(MAX_SELECTION_REASONS - 1);
+    rows.push(CandidateRejection {
+        manifest: None,
+        adapter_key: None,
+        reason,
+    });
+    std::mem::take(rows)
+}
+/// Core writes the stage reason; the catalog supplies each tier's typed facts.
+#[cfg(feature = "local-inference")]
+fn disclosure(selection: &DeviceSelection) -> String {
+    let catalog = runtime::catalog_profiles().unwrap_or_default();
+    stage_disclosure(selection, |pin| {
+        catalog.iter().find(|profile| profile.manifest == pin)
+    })
+}
+/// The planner's view of one catalog variant. `adapter` is the observed adapter
+/// key and its capability epoch; a GPU variant that no adapter was bound to has
+/// none. Advisory data only: the native witness stays with the caller.
+#[cfg(feature = "local-inference")]
+fn advisory_candidate(
+    model: SelectedModel,
+    profile: &Profile,
+    adapter: Option<(String, u64)>,
+    rejection: Option<SelectionReason>,
+) -> Result<AdvisoryCandidate> {
+    let execution = profile.device_execution.as_ref();
+    let (adapter_key, capability_epoch) = match adapter {
+        Some((key, epoch)) => (Some(key), epoch),
+        None => (None, 1),
+    };
+    Ok(AdvisoryCandidate {
+        manifest: profile.manifest,
+        model,
+        execution_identity: profile.device_execution_identity()?,
+        backend: execution.map(|device| device.backend),
+        precision: execution.map(|device| device.precision),
+        // The one adapter enumeration this build has is the CUDA probe, which
+        // observes NVIDIA adapters only.
+        vendor: execution
+            .filter(|_| adapter_key.is_some())
+            .map(|_| AdapterVendor::Nvidia),
+        adapter_key,
+        capability_epoch,
+        max_tokens: profile.max_tokens,
+        cpu_cores: match execution {
+            Some(device) => device.host_fit.minimum_physical_cores,
+            None => profile
+                .cpu_fit
+                .as_ref()
+                .map_or(1, |fit| fit.minimum_physical_cores),
+        },
+        rejection,
+    })
+}
+/// Microseconds left before the original deadline; zero once it has passed.
+#[cfg(any(feature = "local-inference", test))]
+fn remaining_us(deadline: Instant, now: Instant) -> u64 {
+    deadline
+        .saturating_duration_since(now)
+        .as_micros()
+        .min(u128::from(u64::MAX)) as u64
 }
 #[cfg(feature = "local-inference")]
 struct Candidate {
@@ -2475,25 +2730,50 @@ impl StageOwner {
     }
 }
 
+/// The phase of a stage whose order ended with nothing selected. Assets that
+/// are not installed are a missing download, never an unsupported system.
 #[cfg(any(feature = "local-inference", test))]
-fn gpu_precision_allows(
-    preference: GpuPrecisionPreference,
-    precision: Option<DevicePrecision>,
-) -> bool {
-    matches!(
-        (preference, precision),
-        (_, None)
-            | (GpuPrecisionPreference::Auto, _)
-            | (GpuPrecisionPreference::Fp32, Some(DevicePrecision::Float32))
-            | (GpuPrecisionPreference::Fp16, Some(DevicePrecision::Float16))
-    )
+fn no_selection_phase(assets_missing: bool) -> Availability {
+    if assets_missing {
+        Availability::MissingAssets
+    } else {
+        Availability::UnsupportedSystem
+    }
 }
+
+/// The stage reason for that phase: the typed disclosure, led by the missing
+/// download when that is why a candidate was passed over.
 #[cfg(any(feature = "local-inference", test))]
-fn precision_rank(precision: Option<DevicePrecision>) -> u8 {
-    match precision {
-        Some(DevicePrecision::Float32) => 0,
-        Some(DevicePrecision::Float16) => 1,
-        None => 2,
+fn no_selection_reason(assets_missing: bool, disclosure: String) -> String {
+    if assets_missing {
+        format!(
+            "Verified assets for a candidate of this model are not installed, so it was not tried. {disclosure}"
+        )
+    } else {
+        disclosure
+    }
+}
+
+/// The availability an enabled, idle stage with no resident reports. A stage
+/// whose order ended with no fitting route stays `unsupported_system`, and one
+/// whose only variant was released stays `constrained`. Any other settled
+/// phase is a request that has not produced a resident.
+#[cfg(any(feature = "local-inference", test))]
+fn settled_phase(phase: Availability) -> Availability {
+    match phase {
+        Availability::UnsupportedSystem | Availability::Constrained => phase,
+        Availability::Disabled
+        | Availability::IndexDisabled
+        | Availability::Unqualified
+        | Availability::UnsupportedTask
+        | Availability::MissingAssets
+        | Availability::Requested
+        | Availability::Downloading
+        | Availability::Verifying
+        | Availability::Warming
+        | Availability::Ready
+        | Availability::Draining
+        | Availability::Failed => Availability::Requested,
     }
 }
 #[cfg(any(feature = "local-inference", test))]

@@ -536,6 +536,10 @@ mod execution_observer_tests {
     -> Result<()> {
         let owner = Arc::new(super::super::device_management::Shared::default());
         let weak = Arc::downgrade(&owner);
+        // The device layer starts closed: no grant exists until the service
+        // applies a configuration with GPU use on.
+        assert!(private_gpu_grant(&weak).is_err());
+        assert!(owner.apply_gpu_allowed(true));
         let original = private_gpu_grant(&weak)?;
         assert!(original());
         assert_eq!(Arc::strong_count(&owner), 1);

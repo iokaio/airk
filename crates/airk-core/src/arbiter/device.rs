@@ -77,6 +77,33 @@ impl GpuBackend {
             Self::CoreMl => 2,
         }
     }
+    /// Whether this backend is a qualified route for an adapter of that vendor.
+    /// CUDA serves NVIDIA. No route is qualified for any other adapter yet.
+    pub fn serves(self, vendor: AdapterVendor) -> bool {
+        match self {
+            Self::Cuda => vendor == AdapterVendor::Nvidia,
+            Self::DirectMl | Self::CoreMl => false,
+        }
+    }
+}
+/// The vendor of the adapter a GPU candidate was observed on. Advisory planner
+/// input: never serialized, never an execution or qualification claim.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AdapterVendor {
+    Nvidia,
+    Other,
+}
+/// Service-wide GPU use joined with what adapter enumeration found. Advisory
+/// planner input: never serialized.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GpuUse {
+    /// Not turned on: never chosen, turned off or reset.
+    NotOptedIn,
+    /// Turned on, and an adapter enumeration ran and found no adapter.
+    NoAdapter,
+    /// Turned on. Each bound GPU candidate carries the vendor of its adapter.
+    /// With no GPU candidate the model has no qualified route or variant.
+    OptedIn,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -91,6 +118,17 @@ pub enum GpuPrecisionPreference {
     Auto,
     Fp32,
     Fp16,
+}
+impl GpuPrecisionPreference {
+    /// A preference restricts GPU variants only. A CPU tier has no precision
+    /// and is always admitted.
+    pub fn admits(self, precision: Option<DevicePrecision>) -> bool {
+        match (self, precision) {
+            (_, None) | (Self::Auto, Some(_)) => true,
+            (Self::Fp32, Some(precision)) => precision == DevicePrecision::Float32,
+            (Self::Fp16, Some(precision)) => precision == DevicePrecision::Float16,
+        }
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
@@ -470,6 +508,13 @@ pub enum SelectionReason {
     SettlementUnknown,
     NoQualifiedCpu,
     GpuPrecisionExcluded,
+    // Plain comments keep the derived schema one closed string list.
+    // Service-wide GPU use is not turned on: never chosen, turned off or reset.
+    GpuNotOptedIn,
+    // GPU use is on and no qualified route or variant serves this model here.
+    NoQualifiedGpuRoute,
+    // Reserved for the smaller-model fallback. Nothing emits it yet.
+    SmallerModelSelected,
 }
 /// available_bytes is an actual native observation after existing real device
 /// usage; subtract ONLY broker reservations not yet represented in that usage.
@@ -505,11 +550,20 @@ pub struct AdvisoryCandidate {
     pub execution_identity: String,
     pub backend: Option<GpuBackend>,
     pub precision: Option<DevicePrecision>,
-    pub adapter_key: String,
+    /// The adapter this candidate was observed on, or `cpu` for a CPU tier.
+    /// None for a GPU variant that no adapter was bound to. Such a variant
+    /// carries a rejection or is excluded by precision; it is never offered.
+    pub adapter_key: Option<String>,
+    /// Vendor of that adapter. None for a CPU tier and for an unbound variant.
+    pub vendor: Option<AdapterVendor>,
     pub capability_epoch: u64,
+    /// The profile's token budget.
+    pub max_tokens: usize,
+    /// The profile's CPU class: the physical cores its fit requires.
+    pub cpu_cores: usize,
     pub rejection: Option<SelectionReason>,
 }
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CandidateRejection {
     pub manifest: Option<Sha256Digest>,
@@ -537,156 +591,252 @@ pub struct DeviceSelection {
     pub reasons: Vec<CandidateRejection>,
     pub operation_failure: Option<SelectionReason>,
 }
-/// Advisory deterministic ordering ONLY. Caller must recheck source/consent,
+/// Advisory result of `attempt_order`. It grants nothing: the caller rechecks
+/// source, consent, qualification, capacity, epoch and the original deadline
+/// before each native dispatch.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AttemptPlan {
+    /// Indices into the candidates, in the order to try them.
+    pub order: Vec<usize>,
+    /// Global rows first, then one row per candidate refused before dispatch.
+    pub reasons: Vec<CandidateRejection>,
+    /// Deadline, authority or settlement failure. Nothing may be tried.
+    pub operation_failure: Option<SelectionReason>,
+    /// The row that closes the order when nothing in it is selected: present
+    /// only for a model with no CPU candidate at all.
+    pub no_fit: Option<CandidateRejection>,
+}
+/// Auto preference among GPU routes: FP32 before FP16, then backend priority.
+/// The planner orders by it, and a caller that sizes one probe for several
+/// variants takes the first by it, so the two never disagree.
+pub fn gpu_route_rank(backend: GpuBackend, precision: DevicePrecision) -> (u8, u8) {
+    (
+        match precision {
+            DevicePrecision::Float32 => 0,
+            DevicePrecision::Float16 => 1,
+        },
+        backend.priority(),
+    )
+}
+fn stops_operation(reason: SelectionReason) -> bool {
+    matches!(
+        reason,
+        SelectionReason::AuthorityChanged
+            | SelectionReason::SettlementUnknown
+            | SelectionReason::DeadlineExpired
+    )
+}
+/// The one owner of the Auto route order. Pure and advisory: a qualified GPU
+/// route for the observed adapter first, then CPU tiers by larger token budget,
+/// then by larger CPU class. Device policy `cpu`, or GPU use that is not turned
+/// on, removes every GPU candidate. Candidates of another model are refused.
+pub fn attempt_order(
+    requested: SelectedModel,
+    policy: DevicePolicy,
+    gpu_precision: GpuPrecisionPreference,
+    gpu_use: GpuUse,
+    remaining_us: u64,
+    candidates: &[AdvisoryCandidate],
+) -> Result<AttemptPlan> {
+    ensure!(candidates.len() <= 16, "device observation capacity");
+    let mut seen = BTreeSet::new();
+    for candidate in candidates {
+        let gpu = candidate.backend.is_some();
+        ensure!(
+            candidate.model == requested
+                && gpu == candidate.precision.is_some()
+                && !candidate.execution_identity.is_empty()
+                && candidate.execution_identity.len() <= 4096
+                && candidate
+                    .adapter_key
+                    .as_ref()
+                    .is_none_or(|key| !key.is_empty() && key.len() <= 256)
+                && (gpu || candidate.adapter_key.is_some())
+                && (candidate.vendor.is_none() || (gpu && candidate.adapter_key.is_some()))
+                && candidate.capability_epoch > 0
+                && candidate.max_tokens > 0
+                && candidate.cpu_cores > 0
+                && seen.insert((candidate.manifest, candidate.adapter_key.clone())),
+            "foreign/duplicate/unbounded device observation"
+        );
+    }
+    let global = |reason| CandidateRejection {
+        manifest: None,
+        adapter_key: None,
+        reason,
+    };
+    let mut plan = AttemptPlan {
+        order: Vec::new(),
+        reasons: Vec::new(),
+        operation_failure: None,
+        no_fit: None,
+    };
+    // These are operation-wide failures, including when seen on an unselected
+    // adapter or under forced Cpu. Never continue to any other candidate.
+    let stopped = if remaining_us == 0 {
+        Some(SelectionReason::DeadlineExpired)
+    } else {
+        candidates
+            .iter()
+            .filter_map(|candidate| candidate.rejection)
+            .find(|reason| stops_operation(*reason))
+    };
+    if let Some(reason) = stopped {
+        plan.operation_failure = Some(reason);
+        plan.reasons.push(global(reason));
+        return Ok(plan);
+    }
+    let gpu_count = candidates
+        .iter()
+        .filter(|candidate| candidate.backend.is_some())
+        .count();
+    let gpu_offered = policy == DevicePolicy::Auto && gpu_use != GpuUse::NotOptedIn;
+    match (policy, gpu_use) {
+        (DevicePolicy::Cpu, _) => plan.reasons.push(global(SelectionReason::ForcedCpu)),
+        (DevicePolicy::Auto, GpuUse::NotOptedIn) => {
+            plan.reasons.push(global(SelectionReason::GpuNotOptedIn));
+        }
+        (DevicePolicy::Auto, GpuUse::NoAdapter) => {
+            // A variant that was never bound keeps its own row below.
+            ensure!(
+                candidates
+                    .iter()
+                    .all(|candidate| candidate.vendor.is_none()),
+                "GPU candidate bound to an adapter that was not observed"
+            );
+            plan.reasons.push(global(SelectionReason::NoGpu));
+        }
+        (DevicePolicy::Auto, GpuUse::OptedIn) => {
+            if gpu_count == 0 {
+                plan.reasons
+                    .push(global(SelectionReason::NoQualifiedGpuRoute));
+            }
+        }
+    }
+    let mut ordered: Vec<usize> = (0..candidates.len()).collect();
+    ordered.sort_by_key(|index| {
+        let row = &candidates[*index];
+        // Every GPU candidate has a precision: the roster check above requires it.
+        match row.backend.zip(row.precision) {
+            Some((backend, precision)) => {
+                let (precision_rank, backend_rank) = gpu_route_rank(backend, precision);
+                (
+                    0u8,
+                    precision_rank,
+                    backend_rank,
+                    row.adapter_key.as_deref(),
+                    std::cmp::Reverse(0),
+                    std::cmp::Reverse(0),
+                    row.manifest,
+                )
+            }
+            None => (
+                1,
+                0,
+                0,
+                None,
+                std::cmp::Reverse(row.max_tokens),
+                std::cmp::Reverse(row.cpu_cores),
+                row.manifest,
+            ),
+        }
+    });
+    for index in ordered {
+        let candidate = &candidates[index];
+        let refusal = match (candidate.backend, candidate.vendor) {
+            (Some(_), _) if !gpu_offered => continue,
+            (Some(backend), Some(vendor)) if !backend.serves(vendor) => {
+                Some(SelectionReason::NoQualifiedGpuRoute)
+            }
+            (Some(_), _) if !gpu_precision.admits(candidate.precision) => {
+                Some(SelectionReason::GpuPrecisionExcluded)
+            }
+            _ => candidate.rejection,
+        };
+        if let Some(reason) = refusal {
+            plan.reasons.push(CandidateRejection {
+                manifest: Some(candidate.manifest),
+                adapter_key: candidate.adapter_key.clone(),
+                reason,
+            });
+            continue;
+        }
+        ensure!(
+            candidate.backend.is_none() || candidate.vendor.is_some(),
+            "unbound GPU variant cannot be offered"
+        );
+        plan.order.push(index);
+    }
+    // A CPU candidate that was refused has its own row. Only a model with no
+    // CPU candidate at all closes with this one.
+    if gpu_count == candidates.len() {
+        plan.no_fit = Some(global(SelectionReason::NoQualifiedCpu));
+    }
+    Ok(plan)
+}
+/// Advisory walk of `attempt_order` at one observation epoch: the first
+/// candidate in the order is selected. Caller must recheck source/consent,
 /// qualification, actual capacity, epoch and original deadline before native dispatch.
 pub fn select(
     model: SelectedModel,
     policy: DevicePolicy,
     gpu_precision: GpuPrecisionPreference,
+    gpu_use: GpuUse,
     epoch: u64,
     remaining_us: u64,
     candidates: &[AdvisoryCandidate],
 ) -> Result<DeviceSelection> {
-    ensure!(
-        epoch > 0 && candidates.len() <= 16,
-        "device observation epoch/capacity"
-    );
-    let mut result = DeviceSelection {
+    ensure!(epoch > 0, "device observation epoch");
+    let observed: Vec<AdvisoryCandidate> = candidates
+        .iter()
+        .map(|candidate| {
+            let mut candidate = candidate.clone();
+            if candidate.capability_epoch != epoch
+                && !candidate.rejection.is_some_and(stops_operation)
+            {
+                candidate.rejection = Some(SelectionReason::ObservationStale);
+            }
+            candidate
+        })
+        .collect();
+    let plan = attempt_order(
+        model,
+        policy,
+        gpu_precision,
+        gpu_use,
+        remaining_us,
+        &observed,
+    )?;
+    let selected = match plan.order.first() {
+        Some(index) => {
+            let candidate = &candidates[*index];
+            Some(SelectedVariant {
+                manifest: candidate.manifest,
+                execution_identity: candidate.execution_identity.clone(),
+                backend: candidate.backend,
+                precision: candidate.precision,
+                adapter_key: candidate
+                    .adapter_key
+                    .clone()
+                    .context("offered candidate has no adapter key")?,
+                capability_epoch: epoch,
+            })
+        }
+        None => None,
+    };
+    let mut reasons = plan.reasons;
+    if selected.is_none() && plan.operation_failure.is_none() {
+        reasons.extend(plan.no_fit);
+    }
+    Ok(DeviceSelection {
         schema: DEVICE_STATUS_SCHEMA.into(),
         model,
         policy,
         gpu_precision,
-        selected: None,
-        reasons: Vec::new(),
-        operation_failure: None,
-    };
-    if remaining_us == 0 {
-        result.operation_failure = Some(SelectionReason::DeadlineExpired);
-        result.reasons.push(CandidateRejection {
-            manifest: None,
-            adapter_key: None,
-            reason: SelectionReason::DeadlineExpired,
-        });
-        return Ok(result);
-    }
-    // These are operation-wide failures, including when seen on an unselected
-    // adapter or under forced Cpu. Never continue to any other candidate.
-    if let Some(reason) = candidates
-        .iter()
-        .filter_map(|candidate| candidate.rejection)
-        .find(|reason| {
-            matches!(
-                reason,
-                SelectionReason::AuthorityChanged
-                    | SelectionReason::SettlementUnknown
-                    | SelectionReason::DeadlineExpired
-            )
-        })
-    {
-        result.operation_failure = Some(reason);
-        result.reasons.push(CandidateRejection {
-            manifest: None,
-            adapter_key: None,
-            reason,
-        });
-        return Ok(result);
-    }
-    let mut seen = BTreeSet::new();
-    for candidate in candidates {
-        ensure!(
-            candidate.model == model
-                && candidate.backend.is_some() == candidate.precision.is_some()
-                && !candidate.execution_identity.is_empty()
-                && candidate.execution_identity.len() <= 4096
-                && !candidate.adapter_key.is_empty()
-                && candidate.adapter_key.len() <= 256
-                && candidate.capability_epoch > 0
-                && seen.insert((candidate.manifest, candidate.adapter_key.clone())),
-            "foreign/duplicate/unbounded device observation"
-        );
-    }
-    let mut ordered: Vec<_> = candidates.iter().collect();
-    ordered.sort_by_key(|row| {
-        (
-            match row.precision {
-                Some(DevicePrecision::Float32) => 0,
-                Some(DevicePrecision::Float16) => 1,
-                None => 2,
-            },
-            row.backend.map(|backend| backend.priority()).unwrap_or(3),
-            row.adapter_key.as_str(),
-            row.manifest,
-        )
-    });
-    let gpu_count = candidates
-        .iter()
-        .filter(|row| row.backend.is_some())
-        .count();
-    if policy == DevicePolicy::Cpu {
-        result.reasons.push(CandidateRejection {
-            manifest: None,
-            adapter_key: None,
-            reason: SelectionReason::ForcedCpu,
-        });
-    } else if gpu_count == 0 {
-        result.reasons.push(CandidateRejection {
-            manifest: None,
-            adapter_key: None,
-            reason: SelectionReason::NoGpu,
-        });
-    }
-    for candidate in ordered {
-        if policy == DevicePolicy::Cpu && candidate.backend.is_some() {
-            continue;
-        }
-        let precision_matches = match gpu_precision {
-            GpuPrecisionPreference::Auto => true,
-            GpuPrecisionPreference::Fp32 => candidate.precision == Some(DevicePrecision::Float32),
-            GpuPrecisionPreference::Fp16 => candidate.precision == Some(DevicePrecision::Float16),
-        };
-        if candidate.backend.is_some() && !precision_matches {
-            result.reasons.push(CandidateRejection {
-                manifest: Some(candidate.manifest),
-                adapter_key: Some(candidate.adapter_key.clone()),
-                reason: SelectionReason::GpuPrecisionExcluded,
-            });
-            continue;
-        }
-        let rejection = if candidate.capability_epoch != epoch {
-            Some(SelectionReason::ObservationStale)
-        } else {
-            candidate.rejection
-        };
-        if let Some(reason) = rejection {
-            result.reasons.push(CandidateRejection {
-                manifest: Some(candidate.manifest),
-                adapter_key: Some(candidate.adapter_key.clone()),
-                reason,
-            });
-            continue;
-        }
-        result.selected = Some(SelectedVariant {
-            manifest: candidate.manifest,
-            execution_identity: candidate.execution_identity.clone(),
-            backend: candidate.backend,
-            precision: candidate.precision,
-            adapter_key: candidate.adapter_key.clone(),
-            capability_epoch: epoch,
-        });
-        break;
-    }
-    if result.selected.is_none()
-        && candidates
-            .iter()
-            .all(|candidate| candidate.backend.is_some())
-    {
-        result.reasons.push(CandidateRejection {
-            manifest: None,
-            adapter_key: None,
-            reason: SelectionReason::NoQualifiedCpu,
-        });
-    }
-    Ok(result)
+        selected,
+        reasons,
+        operation_failure: plan.operation_failure,
+    })
 }
 /// No automatic replay after uncertain work. The one original deadline is input,
 /// never created/refreshed here. Real native settlement proof remains owner-held.
@@ -709,12 +859,16 @@ pub fn fallback_permitted(
 }
 
 #[cfg(test)]
+mod planner_tests;
+#[cfg(test)]
 mod tests;
 
 mod read_status;
 pub use read_status::*;
 mod state;
 pub use state::*;
+mod disclosure;
+pub use disclosure::*;
 
 mod receipt_runtime;
 pub use receipt_runtime::valid_advice_runtime;
