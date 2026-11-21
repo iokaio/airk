@@ -13416,3 +13416,352 @@ no model weights and run zero inference forwards. The exact static
 AIRK runtime and real FP16 CPU model remain unverified. CPU artifact and
 fallback admission, installed Answer latency, Large dedicated memory
 and precision qualification, held-out comparison and Linux CUDA remain open.
+
+### 21 November 2026 at 01:20 UTC — FP16 plan revised and pinned ORT half kernels read
+
+Revised `docs/arbiter/final-plan-fp16.md` at the user's request, working
+alone with self-review. The plan now opens with four user-owned questions:
+the definition of FP16 execution, the model and device scope, evaluation-only
+FP32 reference scoring, and the dedicated-memory rule. It keeps one five-row
+Windows matrix and adds an evaluation order for the 98% paired gate and an
+implementation lane. No question is answered and no gate changed. Validation
+was documentation-only: 22 relative links and anchors resolve and
+`git diff --check` passes. No build, test, model forward or FP32 Job ran.
+
+Read the pinned ONNX Runtime 1.30.0 source under the private
+`artifacts/advanced-split/ort130-x64-owned-r5/source` tree. Its `owner.json`
+and `scripts/provision-static-onnx-runtime.py` both record upstream commit
+`f2c39fe2f838cf35ce7da92824f5a5e3ee6e88a7` for `x86_64-pc-windows-msvc`.
+
+- `mlas.h` lines 107–127 define the half-vector macro only for ARM64 and
+  ARM64EC outside Apple. Half GEMM is possible only there, with KleidiAI on
+  ARM64, or on RISC-V.
+- `cpu_execution_provider.cc` lines 30–32, 3759–3795 and 4090–4099 compile the
+  half `MatMul` and `Gemm` kernels only under that condition.
+- `halfgemm.cpp` lines 51–79 return false from both runtime checks elsewhere.
+- `insert_cast_transformer.cc` wraps the remaining half nodes in FP32 casts
+  and removes adjacent inserted casts. `fuse_initializers_transformer.h`
+  converts their half initializers to FP32 at load.
+- `attention.cc` lines 120–191 upcast to FP32 for the half kernels that
+  x86-64 does register.
+
+The first three files match the `v1.30.0` tag byte for byte through
+cdn.jsdelivr.net, with SHA-256 prefixes `fd81c31393986846`,
+`dade21a068f02c59` and `805b64b91daa44f0`. The other three were read from the
+pinned tree only. This is a source reading. The static runtime's kernel
+registry and a forward on a real FP16-artifact CPU graph remain unverified.
+The 5975WX reported AVX2 true and AVX512F and AVX512BW false through .NET
+intrinsics.
+
+Identity: `TYAI\tdotn`, SID `S-1-5-21-3678370870-3858642417-826968105-1002`,
+equal default owner, session 1. An edit-tool probe file in the session
+scratchpad had the same owner and was removed. Unavailable: AIRK MCP status
+returned `scoped_status_timeout` once and was not retried. `github.com`,
+`api.github.com` and `raw.githubusercontent.com` returned 404 for
+`microsoft/onnxruntime` from this workstation, and the mirror later failed to
+resolve the tag.
+
+### 21 November 2026 at 01:29 UTC — Weights-only FP16 CPU recipe selected
+
+The user directed the FP16 plan to adopt the recommended weights-only FP16
+CPU recipe (R1) for CPU inference and automatic CPU fallback. R1 is the
+model's FP32 CPU graph with its embedding and seven learned projections per
+layer read from the GPU candidate's FP16 weight file through explicit casts.
+Its arithmetic is FP32 throughout. On that basis the plan records Q1 as
+option A: FP16 is the stored and delivered weight precision, and named
+operations bound into an execution identity may compute wider. The Q1 record
+is the primary agent's reading of the R1 selection together with the earlier
+approved mixed CUDA execution identities. The user did not state it
+separately. Q2 (model and device scope), Q3 (evaluation-only FP32 reference
+scoring) and Q4 (dedicated-memory rule) remain open.
+
+`docs/arbiter/final-plan-fp16.md` now carries the recipe definition, eight
+work items, the variants not selected and a table of where the recipe
+applies. The provider notes for DirectML, MIGraphX and Core ML come from the
+pinned ONNX Runtime source (`OperatorRegistration.cpp`,
+`migraphx_execution_provider.cc` and `coreml/builders`) and are unverified on
+hardware. The pinned tree has no ROCm provider directory.
+`constant_folding.cc` lines 147–149 cap a folded output at 1 GiB by default.
+
+Validation was documentation-only: 30 relative links and anchors resolve and
+`git diff --check` passes. No exporter, contract, catalog or Core change was
+made. No build, test, model forward or FP32 Job ran. Next executable action:
+record R1 in the exporter contract, then export the Compact CPU graph and run
+the zero-forward load diagnostic on the static runtime.
+
+### 21 November 2026 between 01:29 and 02:33 UTC — FP16 plan rewritten around ten stated priorities
+
+The user stated ten priorities and asked for the FP16 plan to be rewritten so
+it can be implemented in the least time. The priorities are recorded in
+section 1 of `docs/arbiter/final-plan-fp16.md`. Two arrived during the work:
+CPU inference must be available whenever the GPU cannot be used, and faster,
+lower-quality CPU options are to be explored. They supersede the earlier
+proposal of typed unavailability for Large on CPU.
+
+The rewritten plan is a proposal by the primary agent, self-reviewed. Its
+design is one FP16 weight file per model, FP32 arithmetic on half-rounded
+weights as the single reference, and three routes: CPU on every system, the
+existing CUDA candidates for NVIDIA, and WebGPU for Radeon and macOS after a
+bounded probe. It adds a CPU ladder (full budget, a 2,048-token tier, a
+smaller model, retrieval only) and an acceptance scheme that calibrates once
+per model and admits other routes by drift on the 100 frozen rows. Six items
+amend recorded decisions and are listed as A1–A6 awaiting the user's
+approval. None is in effect. The recorded decisions in the final plan govern
+until then.
+
+Research for the rewrite read the pinned ONNX Runtime 1.30.0 source and the
+retained records. No build or run supports any of it.
+
+- The tree has a WebGPU provider behind `onnxruntime_USE_WEBGPU`.
+  `cmake/deps.txt` pins Dawn `v20260818.211311` with Direct3D 12 on by default
+  on Windows and Vulkan as an option. The provider declares half tensor
+  support and has `GroupQueryAttention` with a flash attention prefill path.
+  Metal on macOS was not confirmed in this reading.
+- `python/tools/quantization/matmul_nbits_quantizer.py` and the CPU
+  `MatMulNBits` kernels are present.
+- `docs/arbiter/knownissues.md` section 4 records the earlier 2,048-token CPU
+  figures: Compact p95 about 19.5 s and Large about 23.1 s. They are
+  historical and do not transfer.
+- The 20 November Focus CPU record at 1,024 tokens shows a publisher
+  difference of 0.2344675064086914 against the 0.25 approximate-export limit,
+  with p95 4.280648 s.
+- A targeted search of this ledger found no FP32 result for the held-out
+  cohort. This is a search result and remains to be confirmed from receipts.
+
+Validation was documentation-only: relative links and anchors resolve and
+`git diff --check` passes. No exporter, contract, catalog or Core change was
+made. Next executable action: record the portable graph recipe in the
+exporter contract, then export the Compact graph and run the zero-forward
+load check, which does not depend on A1–A6.
+
+### 21 November 2026 between 01:29 and 02:33 UTC — FP16 plan revised for review feedback and named test hardware
+
+The user named the test hardware: a rented Mac with a 32 GB GPU and 128 GB of
+RAM, and an Azure V620 VM with a 32 GB Radeon card under Windows and under
+Linux. The user also supplied an outside review and asked for the worthwhile
+parts to be incorporated. `docs/arbiter/final-plan-fp16.md` remains a
+proposal by the primary agent, self-reviewed, with A1–A6 still awaiting
+approval.
+
+Incorporated from the review:
+
+- The first milestone is CPU inference installed on all three systems at a
+  promised tier, measured end to end. The promise is the first decision and
+  is folded into A2.
+- The retrieval and retrieval-with-Focus arms run first. Focus's effect on
+  delivered evidence is unmeasured, and the one retained signal is the
+  exploratory AUROC change from 0.480313 to 0.554258 on three clusters.
+- The WebGPU probe is staged: an A6000 smoke test first, then adoption only
+  after passing runs on the Radeon card under both systems and on the rented
+  Mac. It must show the fused attention kernel dispatching at 8,192 tokens,
+  and a provider-specific graph on the same weights is allowed.
+- Calibration transfer no longer claims a guarantee. It adds a disjoint
+  confirmation set scored offline, with near-tie, mass, abstention and
+  8,192-token checks.
+- Large extends beyond Windows CUDA only if the stage comparison shows it
+  delivers evidence Compact misses. Until then its CPU fallback is Compact.
+- Each route records download size, peak load memory, warm residency and
+  memory after unload.
+- The comparison arms share one evidence budget, and the fallback order
+  returns to the parent plan's Core ML, DirectML, then Linux Radeon.
+
+Not incorporated, with reasons recorded in the plan's section 5: a native
+Linux host as a release gate, a live installed confirmation capture per
+route, and new labelled multilingual or code-ranking sets.
+
+Validation was documentation-only: relative links and anchors resolve and
+`git diff --check` passes. No build, test, model forward or FP32 Job ran, and
+no rented host was booked or used.
+
+### 21 November 2026 between 01:29 and 02:33 UTC — Mac Neo rehearsal sequenced after Windows and Linux CUDA
+
+The user directed that practice building for macOS on the Mac Neo enter the
+plan after the Windows and Linux CUDA work is complete.
+`docs/arbiter/final-plan-fp16.md` now carries it as step 11: the arm64 build
+with the CPU and WebGPU providers, WebGPU start-up on Metal, small-graph and
+reduced-fixture runs, Focus on CPU, and a dry run of the rented-Mac batch.
+The rented runs became step 12 and packaging step 13.
+
+One consequence follows from that order. The macOS part of the CPU milestone
+moved out of step 2, so the first milestone now covers Windows and Linux, and
+macOS joins in the third milestone. The A6000 WebGPU smoke test stays at
+step 6. A1–A6 remain unapproved, and the two changes the primary agent
+recommended for the WebGPU route (the CPU ladder as its only fallback and a
+speed gate against CUDA) are not applied.
+
+Validation was documentation-only: relative links and anchors resolve and
+`git diff --check` passes. No build or run was performed, and the Neo was not
+contacted.
+
+### 21 November 2026 between 01:29 and 02:33 UTC — FP16 plan revised for a second outside review
+
+The user supplied a second outside review and asked for the worthwhile items
+to be incorporated. `docs/arbiter/final-plan-fp16.md` remains a proposal by
+the primary agent, self-reviewed. A1–A6 remain unapproved.
+
+- The WebGPU probe has four pass lines fixed in advance: correctness,
+  attention dispatch, memory and latency. The memory line uses the parent
+  plan's planning targets of 8 GB for Compact and 16 GB for Large, which are
+  planning figures and not measured minima.
+- A partial outcome is defined. If the 8,192-token lines fail and the same
+  lines pass at 2,048 tokens, WebGPU serves the fast tier on that platform.
+  The preference between a GPU fast tier and a CPU full tier is left for that
+  occasion.
+- Acceptance rule 2 sets each route's drift limit before its panel is scored,
+  no looser than 0.007 and tightened from the fixtures. It reports accepted
+  coverage with and without the guard band, and adds the retained hard inputs
+  to every route's fixture set.
+- Development discordance above about 2% is diagnosed before any judgment is
+  requested.
+- Each result must disclose the route, model, tier and token budget. A new
+  result field needs its own recorded decision, because the recorded
+  read-parity decision keeps the Search and Answer schemas unchanged.
+- Tier figures state their measurement protocol, and the model-free memory
+  control runs on every platform and provider.
+
+Not incorporated: a structured event with peak memory on every inference, a
+rule to stop 4-bit work when the 8-bit export fails, and named owners for the
+deferred specialization work. The review's check that a guard band never
+flips a rejected decision is true by construction on a single identity and
+adds nothing to rule 2.
+
+Validation was documentation-only: relative links and anchors resolve and
+`git diff --check` passes. No build or run was performed.
+
+### 21 November 2026 at 02:33 UTC — User approves A1 to A6 of the FP16 delivery plan
+
+The user wrote: "I approve A1 through A6". The six changes are in effect and
+are recorded in section 1 of `docs/arbiter/final-plan.md` and section 3 of
+`docs/arbiter/final-plan-fp16.md`.
+
+- A1: no weight file larger than FP16 ships, and passing integer artifacts
+  stay. This settles FP16 as a rule about stored weights.
+- A2: the CPU ladder, with the 2,048-token tier and reported downgrades. The
+  tier promised on every system is still to be chosen after step 1.
+- A3: WebGPU for Radeon and macOS when its probe passes on the rented
+  hardware.
+- A4: calibration transfer with a guard band and a disjoint confirmation.
+- A5: evaluation-only scoring of the frozen FP32 artifact, once per model.
+- A6: device memory fit judged against a model-free control.
+
+Still open with the user: the promised tier, whether a platform where WebGPU
+fails stays on the CPU ladder, a speed requirement against CUDA for the smoke
+test, whether the smoke test waits for the CUDA work, and the probe's memory
+pass lines. These approvals authorize no publication, push or rented booking.
+
+Correction. The four entries above this one carried clock times that the
+primary agent estimated and did not read from the clock, and two of them were
+later than the time observed for this entry. Their headings now give the
+observed bounds, 01:29 to 02:33 UTC. Their order and content are unchanged.
+
+A read of this ledger found the selected Focus artifact named FocusW8, an
+8-bit export. The format of the 1,024-token Focus export remains to be
+confirmed from its receipt before step 2.
+
+Validation was documentation-only: relative links and anchors resolve and
+`git diff --check` passes. No build or run was performed. Next executable
+actions, none of which waits on an open choice: step 1 (freeze the judged
+cohort and run the retrieval and Focus arms), step 3 (record the portable
+graph recipe in the exporter contract, then export Compact), and the Compact
+matching references of step 4.
+
+### 21 November 2026 at 02:38 UTC — User decides WebGPU fallback, speed line and smoke-test timing
+
+The user supplied three decisions:
+
+- "If WebGPU fails on a platform, just fall back to CPU. Drop pursuit of
+  specialized code for Radeon."
+- "Speed gate to the smoke test: WebGPU within 5x of CUDA."
+- "A6000 smoke test: keep it early."
+
+Recorded in section 3 of `docs/arbiter/final-plan-fp16.md`, in the A3 item of
+the approvals subsection of `docs/arbiter/final-plan.md` and in
+`docs/agent-current-work.md`. Consequences applied to the plan:
+
+- A platform where the WebGPU probe fails stays on the CPU ladder. The
+  DirectML and Linux Radeon routes of the parent plan are not pursued. Core
+  ML is no longer a fallback. The primary agent reads the first decision as
+  covering macOS as well, and a native macOS route would need a new decision.
+- The smoke test has a speed line on the A6000: the warm 8,192-token Compact
+  forward within five times the CUDA candidate's on the same card and input.
+  The last CUDA fixed20 p95 was 1.7721 s, so the line is near 8.9 s, with the
+  CUDA figure to be measured again in the same session. A miss stops the
+  probe before any host is rented.
+- The smoke test stays at step 6 and takes the GPU only when no CUDA run
+  holds it.
+- The DirectML and Core ML values stay in the Core provider type until a
+  recorded decision removes them.
+
+Still open with the user: the CPU tier promised on every system, and the
+probe's memory pass lines of 8 GB and 16 GB.
+
+Validation was documentation-only: relative links and anchors resolve and
+`git diff --check` passes. No build or run was performed.
+
+### 21 November 2026 at 02:43 UTC — User answers the remaining FP16 plan choices
+
+The user answered the open choices:
+
+- "Which CPU tier is promised: no guarantees but target should be min 8 cores
+  and no more than 6 years old."
+- "A platform where WebGPU fails stays on CPU."
+- "The smoke test for WebGPU within a set factor of 5x of CUDA."
+- "The smoke test does not wait for all CUDA work."
+- "The memory pass lines of 8 GB and 16 GB are goals but if we have to
+  specify 16GB and 24GB."
+
+The message then ended mid-sentence with "We don't have a C". That last point
+is not recorded and was put back to the user.
+
+Applied to `docs/arbiter/final-plan-fp16.md`, the approvals subsection of
+`docs/arbiter/final-plan.md` and `docs/agent-current-work.md`:
+
+- No CPU tier is promised. The ladder tiers are measured and admitted for a
+  target class of at least 8 cores and no more than six years old, at an
+  8-core cap. Step 2 no longer waits on a promised tier.
+- The WebGPU fallback, speed line and early smoke test were already recorded
+  at 02:38 UTC and are confirmed. The second answer is general, which
+  supports the earlier reading that it covers macOS.
+- The probe's memory line has a goal (an 8 GB card for Compact, a 16 GB card
+  for Large) and a stated requirement if the goal cannot be met (16 GB and
+  24 GB). The primary agent defines fit as measured peak plus the 2 GiB
+  reserve within the card's memory. The user did not state that definition.
+
+Validation was documentation-only: relative links and anchors resolve and
+`git diff --check` passes. No build or run was performed.
+
+### 21 November 2026 at 02:48 UTC — All outstanding files committed locally
+
+The user wrote: "commit all outstanding files so we can get started." The
+working tree held 44 outstanding files: 4 plan documents from this session
+and 40 files left uncommitted by earlier sessions. They went into three
+local commits on `feat/arbiter-final`, each signed off. Nothing was pushed.
+
+- `c41b4fe6` preserves 20 files of Windows calibration, Large selector and
+  capacity work: Rust qualification and CUTLASS diagnostic sources, capacity
+  and FP16 execution scripts, raw calibration joiners and an airkctl test.
+- `4853220b` preserves 20 files of public-source admission observers: the
+  analysis scripts and README, and two airk-kernel examples with their README.
+- The plan documents and this ledger follow in a third commit.
+
+The 40 earlier files were not reviewed, built or qualified in this session.
+Checks actually run before committing:
+
+- A pattern screen of the 40 files for credentials found none. No
+  outstanding path lay under `temp/`, `.airk/` or `artifacts/`. Every new
+  source file carries an SPDX header.
+- `pwsh -NoProfile -File scripts/check-repo.ps1` passed for 10403 public
+  files in 19.1 seconds, and `git diff --check` passed.
+- `python -I -B -m unittest discover -s <dir> -p <file>` ran the four
+  affected script test files. All 17 selected tests passed:
+  `test_protected_capacity_sweep.py` 8, `test_aws_guide_partitions.py` 2,
+  `test_aws_public_gates.py` 2 and `test_aws_retained_source_inputs.py` 5.
+- `cargo fmt --all -- --check` with the default user toolchain reported no
+  parse error across the 13 outstanding Rust files. It reported formatting
+  differences in 11 files repository-wide, one of them outstanding
+  (`fp16_large.rs`). The toolchain was not confirmed as the pinned one, so
+  nothing was reformatted.
+
+Not run: Clippy, any Cargo build or Rust test, and any model, GPU or service
+work. Compilation of the preserved Rust changes is therefore unverified and
+is the first check owed before that code is relied on.

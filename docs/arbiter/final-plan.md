@@ -42,6 +42,36 @@ latency, correctness, and held-out gates. Where retained baseline evidence
 does not cover an exact comparison, report that gap. Historical FP32
 engineering and the former CPU fallback policy retain their original scope.
 
+### FP16 delivery plan approvals, 20 November 2026 (America/Denver)
+
+The user approved six changes proposed in the
+[FP16 delivery plan](final-plan-fp16.md#3-approved-changes-to-recorded-decisions).
+Where this plan says otherwise, these approvals govern.
+
+1. **A1.** No weight file larger than FP16 ships. The bundled MiniLM INT8
+   encoder and the retained Focus CPU export stay.
+2. **A2.** CPU fallback follows a ladder: the selected model at the full
+   budget, the selected model at a 2,048-token budget, the next smaller
+   model, then retrieval only. Every downgrade is reported. This amends
+   D08's same-model and same-width fallback. No CPU tier is guaranteed. The
+   user set a CPU target of at least 8 cores and no more than six years old.
+3. **A3.** WebGPU becomes the GPU route for Radeon and macOS when its probe
+   passes on the Azure Radeon VM and the rented Mac. The user decided the
+   same evening that a platform where WebGPU fails falls back to CPU, and
+   dropped the pursuit of specialized code for Radeon. The DirectML and
+   Linux Radeon routes of section 11 and the Radeon addendum are therefore
+   not pursued, and Core ML is no longer a fallback. The A6000 smoke test
+   stays early and must show WebGPU within five times CUDA. The memory goal
+   is an 8 GB card for Compact and a 16 GB card for Large, with a 16 GB and
+   a 24 GB card as the stated requirement if the goal cannot be met.
+4. **A4.** Calibration and judged task evidence are established once per
+   model. Other routes are admitted by offline drift checks with a guard
+   band and a disjoint confirmation set.
+5. **A5.** The frozen FP32 artifact may be scored once per model for
+   evaluation only. No other FP32 work resumes.
+6. **A6.** Device memory fit is judged against a model-free control on each
+   platform and provider, with the approved 2 GiB reserve.
+
 ### User answers for this plan
 
 The user answered D01–D06 during this planning conversation. These are recorded

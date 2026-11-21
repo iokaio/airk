@@ -464,3 +464,70 @@ exact static AIRK CPU runtime before admitting a release artifact. Keep
 the prior CPU and Large GPU arithmetic evidence attached to their original
 graphs. Compact's 100 scientific score vectors remain available. See the
 [CPU placement receipt checkpoint](simplify/one-process-ledger.md#21-november-2026-at-0048-utc--windows-cpu-fp16-placement-diagnostic).
+
+### Weights-only FP16 CPU recipe selected, 20 November 2026 at 6:29 p.m. Denver time
+
+The user selected the weights-only FP16 CPU recipe for CPU inference and
+automatic CPU fallback. The CPU graph is the model's FP32 graph with its
+learned embedding and projection weights read from the GPU candidate's FP16
+weight file, and its arithmetic is FP32. The plan records FP16 as the stored
+and delivered weight precision on that basis. Record the recipe in the
+exporter contract before conversion, and keep qualification flags false until
+the existing gates pass. See the
+[selection ledger entry](simplify/one-process-ledger.md#21-november-2026-at-0129-utc--weights-only-fp16-cpu-recipe-selected).
+
+### Ten delivery priorities and the approved FP16 delivery plan, evening of 20 November 2026, Denver time
+
+The user stated ten priorities for this delivery. Support Windows, Linux and
+macOS. Support NVIDIA and Radeon GPUs. Use FP16 for smaller downloads and
+reasonable resource requirements. Prefer simpler and good over maximal
+optimization. Choose a solution that reaches all platforms. Enhance retrieval
+so a more capable agent receives the information it needs, without requiring
+an advanced answer. Specialize weights without limiting existing abilities.
+Examine MiniLM at low priority. CPU inference must be available whenever the
+GPU cannot be used. Explore faster, lower-quality CPU options.
+
+The [FP16 delivery plan](arbiter/final-plan-fp16.md#1-priorities) is rewritten
+around them. Six items amend recorded decisions, and the user approved all
+six at 02:33 UTC on 21 November:
+[approvals A1–A6](arbiter/final-plan-fp16.md#3-approved-changes-to-recorded-decisions).
+They are also recorded in section 1 of the final plan. Where an earlier
+section of this file conflicts with them, the approvals govern. In short:
+
+- No weight file larger than FP16 ships. MiniLM INT8 and the retained Focus
+  CPU export stay.
+- CPU fallback follows a ladder: full budget, a 2,048-token budget, the next
+  smaller model, then retrieval only. Every downgrade is reported. No CPU
+  tier is guaranteed. The target is a processor with at least 8 cores that is
+  no more than six years old, so measure the tiers at 8 cores.
+- WebGPU becomes the GPU route for Radeon and macOS when its probe passes on
+  the rented hardware. A platform where it fails falls back to CPU. The user
+  dropped specialized code for Radeon, so do not start DirectML, MIGraphX or
+  ROCm work, and do not treat Core ML as a fallback. The A6000 smoke test
+  stays early and must show WebGPU within five times CUDA. The memory goal is
+  an 8 GB card for Compact and a 16 GB card for Large, with 16 GB and 24 GB
+  as the stated requirement if the goal cannot be met.
+- Calibration and judged task evidence are established once per model. Other
+  routes are admitted by offline drift checks with a guard band and a
+  confirmation set.
+- The frozen FP32 artifact may be scored once per model for evaluation only.
+- Device memory fit is judged against a model-free control.
+
+Follow the [work order](arbiter/final-plan-fp16.md#4-work-order). The user
+answered every choice listed in the plan's section 3. One sentence of the
+user's last answer arrived cut off and is not recorded, so ask before
+assuming anything further. See the
+[rewrite entry](simplify/one-process-ledger.md#21-november-2026-between-0129-and-0233-utc--fp16-plan-rewritten-around-ten-stated-priorities)
+and the
+[approval entry](simplify/one-process-ledger.md#21-november-2026-at-0233-utc--user-approves-a1-to-a6-of-the-fp16-delivery-plan).
+
+The user named the test hardware for proving the plan out: a rented Mac with
+a 32 GB GPU and 128 GB of RAM, and an Azure V620 VM with a 32 GB Radeon card
+under Windows and under Linux. Booking stays a manual user action. Rehearse
+each rented batch on local hardware first. See the
+[later revision entry](simplify/one-process-ledger.md#21-november-2026-between-0129-and-0233-utc--fp16-plan-revised-for-review-feedback-and-named-test-hardware).
+
+The user directed that the macOS rehearsal on the Mac Neo start after the
+Windows and Linux CUDA work is complete. It is step 11 of the work order. Do
+not start macOS builds before then. See the
+[sequencing entry](simplify/one-process-ledger.md#21-november-2026-between-0129-and-0233-utc--mac-neo-rehearsal-sequenced-after-windows-and-linux-cuda).
