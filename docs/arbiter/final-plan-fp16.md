@@ -108,7 +108,9 @@ figure states which of the two it is.
    static runtime.
 2. **Fast.** The selected model at a 2,048-token budget. At the earlier
    2,048-token limits Compact measured a p95 of about 19.5 s and Large about
-   23.1 s. Those are historical figures on earlier artifacts. Measure again.
+   23.1 s. Those are historical figures on earlier artifacts. In the probe
+   runs at eight threads, the portable Large graph took 20.3 s at 2,048
+   tokens and the portable Compact graph 6.0 s at 1,588 tokens.
 3. **Smaller.** The next smaller model when memory or time still does not fit:
    Large to Compact, then Compact to Focus only.
 4. **Retrieval only.** A typed unavailable result for the optional stages.
@@ -285,7 +287,7 @@ their digests.
 | --- | --- | --- | --- | --- |
 | 1 | Freeze the judged cohort. Run the first two stage arms on Windows CPU at the same evidence budget: retrieval alone and retrieval with Focus. | Focus's contribution to delivered evidence is measured, with missing evidence, duplicates and latency. | Nothing | Medium to high. Start with the 76 TechQA cases, which carry publisher coordinates and complete menus. |
 | 2 | Deliver the CPU milestone. Install the product on Windows and on Linux under WSL2 and measure the ladder tiers end to end at 8 cores, the target class. Start with retrieval and Focus, and add the Compact tiers when step 3 delivers them. Record the four memory figures. macOS joins at step 11. | Each tier has an end-to-end figure at 8 cores on both systems, and the tiers that meet 120 seconds are admitted for the target class. | Nothing | Medium. The runtime build on each system is the risk. |
-| 3 | Export the portable graph for Compact. Record the recipe in the exporter contract first. Verify shared weight bytes. Load on the static runtime with zero forwards. Score the four widths and 2,048 tokens against the reference. Time each width and record the four memory figures. | Compact has measured CPU numbers for the full and fast tiers. | Nothing | High. The exporter's portable recipe exists and Compact is exported and scored on the published runtime. The static runtime, the verifier and Large remain. |
+| 3 | Export the portable graph for Compact. Record the recipe in the exporter contract first. Verify shared weight bytes. Load on the static runtime with zero forwards. Score the four widths and 2,048 tokens against the reference. Time each width and record the four memory figures. | Compact has measured CPU numbers for the full and fast tiers. | Nothing | High. The exporter's portable recipe exists, and Compact and Large are exported and scored on the published runtime. The static runtime and the verifier remain. |
 | 4 | Finish Windows CUDA. Complete Compact matching references, fit calibration, add the Large selector and score its panel. Run capacity under A6. | Both candidates hold a calibrated panel and a memory figure. | Nothing | High for Compact, medium for Large. The preserved code compiles after the step 0 fix. The Large selector is still unexercised. |
 | 5 | Record the Core contract decision, then implement: the opt-in GPU default, Auto order, the ladder tiers and the CPU target class, typed reasons, truthful status, per-result disclosure of route, model, tier and budget, the weight rule and a WebGPU provider value. Test with injected capabilities. | Reviewed Core changes with qualification flags false. | Nothing | Medium to high. Profiles already carry a token ceiling, so a tier is a profile. |
 | 6 | Run the WebGPU smoke test on the A6000 through Direct3D 12 as soon as step 3 has a graph. It stays early by the user's decision and includes the speed line. It takes the GPU only when no CUDA run holds it. | A go or no-go for the rented runs. | Step 3 | Medium to high. Probe variants pass correctness, the speed line and the fallback memory line on the A6000. The exporter's graph must repeat it. |
@@ -336,9 +338,33 @@ static runtime. Every case kept the reference winner.
 
 On WebGPU the weights stayed resident in half and the peak was 7,168 MiB
 above baseline for the 8,192-token case alone, and 8,385 MiB when all five
-cases ran in one session. Still owed for step 3: the zero-forward load and
-scoring on the static runtime, the independent verifier's support for the
-portable recipe, the measured p95 at the 8-core class, and the Large export.
+cases ran in one session.
+
+The third measured iteration exported Large the same way. Its `weights.bin`
+is also byte-identical to the retained Large GPU candidate's. Large's
+retained numeric fixture has reference scores at 17, 128 and 2,048 tokens. No
+retained 8,192-token reference was in a form the probe reads, so that width
+used Compact's 8,192-token input and compared the two providers with each
+other.
+
+| Case | WebGPU on the A6000 | CPU at eight threads |
+| --- | --- | --- |
+| 17 tokens | 0.115 s warm, 0.0000324 from FP32 | 0.334 s, 0.0000095 from FP32 |
+| 128 tokens | 0.172 s warm, 0.0000445 from FP32 | 1.16 s, 0.0000167 from FP32 |
+| 2,048 tokens | 2.00 s warm, 0.0000091 from FP32 | 20.3 s, 0.0000057 from FP32 |
+| 8,192 tokens | 10.98 to 11.26 s warm | 107.2 s, one forward |
+
+At 8,192 tokens the two providers differed by 0.004814 and chose the same
+winner. The WebGPU warm forward is about 2.3 times the Large CUDA candidate's
+4.7935 s. Large's WebGPU peak was 15,300 MiB above baseline in that four-case
+session. With the reserve that is 17,348 MiB, inside a 24 GB card and about
+1 GiB over the 16 GB goal. On CPU the 2,048-token tier fits easily at eight
+threads, and the full tier is marginal at 107 s for a single forward.
+
+Still owed for step 3: the zero-forward load and scoring on the static
+runtime, the independent verifier's support for the portable recipe, the
+measured p95 at the 8-core class for both models, and an 8,192-token
+reference for Large.
 [Exporter contract](../../scripts/arbiter-fp16-export/CONTRACT.md) ·
 [Large weight-cast edit](../../scripts/arbiter-fp16-execution/large_weight_only_candidate.py) ·
 [Shared-weight verifier](../../scripts/arbiter-fp16-execution/verify_shared_onnx_weights.py) ·

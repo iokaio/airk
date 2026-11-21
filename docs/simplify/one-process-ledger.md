@@ -14094,3 +14094,76 @@ GB, is this step's output and is kept for the static-runtime check.
 Next executable actions: load and score the portable Compact graph on the
 static AIRK runtime, extend the independent verifier to the portable recipe,
 and export and measure Large.
+
+Those changes were committed as `9a6c5669` and `01536540` and pushed.
+
+### 21 November 2026 at 03:59 UTC — Measured iteration 3: Large portable export
+
+Step 3 of the FP16 plan, for Large, under the same identities and limits as
+iteration 2. Nothing here is qualified, and the static AIRK runtime did not
+run.
+
+**Export.** The same CLI with `--model large --recipe portable` and a
+45-minute deadline exited 0 in 78.2 seconds. The source graph is the original
+Large export `f8ba5d3e…`, hashed in this session. The pin names the original
+weight file, 16089835520 bytes, SHA-256
+`9da676d87747052f709c48d71f072508685c853e012330aa47de5a73e792f81c`, which the
+maintained history runner `runner_large_profile_only.py` already records. The
+pins file's SHA-256 is
+`401549fb7b392e07a60b43988751d5edfa92d4a2e93bdc3bf2225aec6399d5ad`.
+
+| Output | Bytes | SHA-256 |
+| --- | --- | --- |
+| `model.onnx` | 1073356 | `2435f479b8d2a198192d0ffb72d63830b453ad7b62e92ad5f362e167b8a2d3e6` |
+| `weights.bin` | 8045328384 | `5b053f02795e72ff88123b28f89d3f2c89da055e9ed2228bc60809dd0a2b4270` |
+| `export-manifest.private.json` | | `c980ce85b8e0af97aa4e81137c98770527e440a47f610012fc9eac2f4d9d519b` |
+
+The `weights.bin` digest equals that of the retained Large GPU candidate
+under `large-fp16-conversion-owned-r5/candidate`, hashed in this session.
+
+**Scores and timings.** Reference cases are the three rows of the retained
+Large numeric fixture. The 8,192-token case reuses Compact's retained control
+input for timing and memory, with no reference, since no retained Large
+8,192-token reference was in a form the probe reads.
+
+| Case | WebGPU: first, warm seconds | WebGPU difference from FP32 | CPU at eight threads: seconds | CPU difference from FP32 |
+| --- | --- | --- | --- | --- |
+| synthetic-17-by-3 | 0.4674, then 0.1154, 0.1155 | 0.00003242 | 0.3342 | 0.000009537 |
+| synthetic-128-by-8 | 1.1467, then 0.1723, 0.1717 | 0.00004447 | 1.1636 | 0.00001669 |
+| synthetic-2048-by-8 | 2.0405, then 1.9987, 2.0018 | 0.000009060 | 20.3056 | 0.000005722 |
+| 8,192 tokens, inputs only | 10.8303, then 10.9831, 11.2636 | none | 107.1998 | none |
+
+WebGPU against the CPU provider on the same graph: 0.000042, 0.000045,
+0.000008 and 0.004814 across the four cases, with the same winner each time.
+WebGPU adapter memory was 1151 MiB at baseline, 8859 after load and 16451 at
+peak, so 15,300 MiB above baseline in the four-case session. With the 2 GiB
+reserve that is 17,348 MiB: inside a 24 GB card, about 1 GiB over a 16 GB
+card. The WebGPU warm forward is about 2.3 times the Large CUDA candidate's
+fixed20 p95 of 4.793535 s. The CPU load took 18.921 s and the WebGPU load
+11.413 s.
+
+| Receipt | SHA-256 |
+| --- | --- |
+| `portable-large-webgpu-resident-r1/smoke.json` | `04844969954f2a29197dc3a58dd2aae851f59267904f8c5e0c878669205f410f` |
+| `portable-large-cpu-8threads-r1/smoke.json` | `3ef2fd8ee74072b1561d2f47bb14ac2346a5cb580641abe8234f1513fc77dda2` |
+
+The probe gained `--fixture` and `--inputs-only`. `python -I -B -m unittest
+discover -s scripts/arbiter-webgpu-probe -p "test_*.py"` selected and passed
+11 tests.
+
+Limits as before, and two more: the Large 8,192-token comparison is between
+two providers on one graph and not against an independent reference, and its
+input was compiled for Compact. D: held 1104814469120 free bytes after the
+export. The run folder now holds two exports, 3.4 GB and 8.0 GB, kept for the
+static-runtime check, and a 3.4 GB probe variant that is disposable.
+
+**State at this checkpoint.** Done: step 0, the exporter's portable recipe,
+portable exports of Compact and Large with shared weight files, and probe
+measurements on WebGPU and CPU. Not started: steps 1, 2, 4, 5, 7 to 13, and
+the static-runtime part of step 3. No process from this session is running.
+
+Next executable actions, in order: extend the independent verifier in
+`scripts/arbiter-fp16-reference` to the portable recipe; load and score both
+portable graphs on the static AIRK runtime; record the Core contract decision
+for the opt-in GPU default and the ladder tiers, which waits on the user's
+answer about stored GPU settings; then step 1 on the 76 TechQA cases.
