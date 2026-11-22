@@ -1112,6 +1112,41 @@ on 22 November.
 - **Budget:** each part gets a share of the budget, and a part that
   finishes early hands its unused share to the others.
 
+**Why the parts take turns, and what changes so the lane stays busy.**
+Today the service has one model compute thread (`airk-arbiter-compute`) with
+one resident session per stage. Its queue admits at most 8 jobs in all, and
+at most one per index, queued or running
+(`crates/airk-inference/src/inference_engine/pool/arbiter.rs`, score
+admission). All parts of one Answer target the same index, so a second part
+could not even queue its model call while the first part's runs.
+
+Running two sessions of the same model at once is not the remedy. Each costs
+the full model memory: about 9 GB of GPU memory for Compact, 17 GB for Large,
+and up to 12 GiB of RAM for Compact on CPU. And one call already occupies most
+of the GPU or most of the CPU cores. Three changes are made instead:
+
+1. **The parts of one Answer may each queue a model job.** The admission
+   rule counts jobs per Answer attempt within an index, not per index alone.
+   The one-job limit stays across different Answers and different indexes,
+   so a compound request cannot monopolize the lane. The lane then moves
+   straight from one part's call to the next instead of idling while a part
+   runs its reads.
+2. **Candidates from several parts are batched into one model call** where
+   the task allows it.
+   - **Compact:** natural for the coverage and follow-up rosters. One call
+     already scores up to 8 cards.
+   - **Focus:** needs a change first, because its pairs share one question
+     per call today. A per-candidate question, or one call per sub-need
+     group, is decided in L4.
+   - **Accounting:** each batched call charges each part's token and
+     deadline accounting for its own candidates.
+3. **The parts' reads run truly in parallel.** Search, symbols, references
+   and file reads do not touch the model lane. They run concurrently under
+   the existing read limits and the shared read cache.
+
+Running several model sessions at once stays out of scope unless L7 shows
+the single lane is the bottleneck.
+
 **Follow-on, not in the first pass:** Split and Union fit Answer across
 several indexes, which is refused today when the indexes are mixed. Each
 index (or each part and index) would run its own loop, and Union would merge
@@ -1228,6 +1263,103 @@ proposal, for the user's review:
     with two to four sub-needs can then take several minutes, which is why
     the ceiling is 600 s.
 
+### 12.4.1 Many agents at once: queueing without abandoned calls
+
+**Speculative design, for the user's review.**
+
+**The concern.** An AI harness may launch several agents that all call
+Answer at once. Answer calls will last minutes, and the model lane runs one
+job at a time. An agent at the back of the queue could then wait long
+enough for its client to time out and abandon the call. Its queued work
+would be wasted, and the agent would have spent a turn for nothing.
+
+The design rests on six ideas.
+
+**1. Admission never blocks silently.** When an Answer arrives, the service
+estimates two things:
+- the wait, from the queue ahead of it;
+- the work, from measured per-device stage costs and the request's parts.
+
+What it does then depends on the result:
+- **The estimate fits the caller's deadline:** the call is admitted and runs
+  as today.
+- **It does not fit:** the call is not left to hang. Answer applies the
+  first of these that works:
+  - **a. Degrade to fit.** Plan fewer rounds or sub-needs, or move down the
+    device ladder (Large to Compact, or Compact to the no-model loop). The
+    reply discloses the degradation.
+  - **b. Return a ticket at once.** The reply holds a handle, the queue
+    position, an estimated start and finish, and the exact retry time. The
+    agent spends one cheap call to learn when to come back, instead of
+    timing out.
+
+**2. The work outlives the call.**
+- An admitted Answer is a job owned by the service, not by the client's
+  connection.
+- If the client disconnects or times out, the job keeps running to its own
+  deadline.
+- Its result is kept for a bounded time, keyed by the request's digest and
+  the publication it ran on.
+
+**3. Retrying attaches; it does not replay.**
+- If the same agent, or any agent in the same scope, sends the same request
+  on the same publication, the call attaches to the running or finished
+  job.
+- This follows the rule that uncertain work is never replayed. A retry
+  after a timeout costs one call and gets the finished result, or the
+  progress so far.
+- An explicit handle (a continuation) does the same for an agent that kept
+  the ticket.
+
+**4. Fair scheduling across agents.** Several independent Answers share the
+lane:
+- **Turns:** they take turns per round, as the parts of one Answer do.
+  Interleaving across Answers works the same way as within one.
+- **Order:** the earliest deadline goes first, with an ageing guard so no
+  Answer starves.
+- **Fairness:** one client cannot fill the lane, because each attempt is
+  limited to one queued job per part.
+- **Sharing:** the read cache is shared across Answers on the same
+  publication, so agents asking about the same repository reuse each
+  other's reads.
+- **Limit:** a global limit caps how many Answers gather at once.
+  Requests beyond it wait in an admission queue that holds no model or
+  memory reservation. That queue reports its position and estimate.
+
+**5. Keeping the client's clock alive.**
+- **Progress notifications.** Answer sends MCP progress notifications per
+  part and round. The MCP specification lets a client reset its timeout on
+  progress, but not every client does, so this cannot be relied on alone.
+- **Asynchronous calls.** Where the client supports MCP's asynchronous task
+  support, Answer runs as a task the client polls. Which clients support
+  either, including Claude Code, is checked in L2 and recorded in the setup
+  documentation.
+- **A default inside common client timeouts.** The deadline Answer proposes
+  by default stays inside common client tool timeouts. An agent that can
+  wait longer asks for more. Answer then returns a partial result with a
+  continuation before the client's clock runs out, rather than at AIRK's
+  own ceiling.
+
+**6. Visibility.**
+- Status shows the Answer queue: depth, the Answer running, estimated waits
+  and recent per-device stage costs.
+- Every ticket, degradation and attachment is recorded in the reply's
+  receipts, so an agent or a person can see why an answer was late or
+  smaller.
+
+**What this would add to the contracts of section 12.3:**
+- a ticket and continuation shape in the response;
+- an attach-by-digest rule in the kernel;
+- a service-owned job table with bounded retention of results;
+- the admission estimator;
+- earliest-deadline scheduling in the lane.
+
+**Open points for the user:**
+- whether tickets are acceptable to agents, or whether degradation alone
+  should be used;
+- how long finished results are retained;
+- the global limit on Answers gathering at once.
+
 ### 12.5 Devices
 
 The GPU matters more than before, because every stage runs a model several
@@ -1287,9 +1419,10 @@ sections 4.1 to 4.3, measured on both repositories.
 | --- | --- | --- |
 | L0 | Land the evaluation series in order, one signed commit each: the baseline, change set 1, change set 2, and change set 3 as stopped | Commits exist, repository checks pass, `feat/arbiter-final` is pushed |
 | L1 | Contract decisions and Core types: the new request, response and budget version, the ledger slots and token allowance, and the deadline ceiling, in the owning `CONTRACT.md` files, with generated TypeScript and Rust-emitted semantic cases | Contracts recorded; Core builds and its tests pass |
-| L2 | Time: the new ceiling through MCP, Core, kernel, supervisor, ledger and read attempt; per-stage budgets; partial results; progress notifications | Tests show a disclosed partial result at the deadline on every layer |
+| L2 | Time: the new ceiling through MCP, Core, kernel, supervisor, ledger and read attempt; per-stage budgets; partial results; progress notifications; which clients reset timeouts on progress or support asynchronous tasks, recorded | Tests show a disclosed partial result at the deadline on every layer |
+| L2b | Many agents (section 12.4.1), once the user has settled its open points: the service-owned Answer job table, attach-by-digest, tickets and continuations, the admission estimator, degrade-to-fit, earliest-deadline scheduling across Answers, the global gathering limit, and queue status | Tests with several concurrent Answers show no starved request, attach after a client timeout, and a ticket or disclosed degradation when the deadline cannot be met |
 | L3 | Kernel loop: Split, then per part Plan, Retrieve per sub-need, Read and check coverage, Follow up and Compose inside `Gathering`, interleaved across parts with a shared read cache, then Union; with the deterministic no-model path, and the software follow-ups promoted from the evaluation layers | Kernel tests cover each stage, single-part and compound requests, budget hand-back between parts, Union dedup and frame sharing, early stop, budget and deadline stop, and the no-model path |
-| L4 | Service and retrieval: the split, plan, coverage and follow-up task policies, ledger slots, and calibration rules fitted from the evaluation receipts | Service tests pass; policy identities are recorded |
+| L4 | Service and retrieval: the split, plan, coverage and follow-up task policies, ledger slots, per-attempt lane admission for parts, cross-part candidate batching (and the Focus per-candidate question decision), and calibration rules fitted from the evaluation receipts | Service tests pass; policy identities are recorded |
 | L5 | Devices: the Focus CUDA route, Compact on CUDA as a product route, and the Context ladder with typed reasons | Each route and fallback runs on the A6000 and on CPU, with receipts |
 | L6 | Workspace gate | Clippy and tests across the workspace on the matrix of CONTRIBUTING; known failures listed with their owners |
 | L7 | Measure with the evaluation harness: replays, then judged passes on both repositories, CPU and GPU cells | Report `05-answer-loop.md` and its results; then stop for the user's inspection |
