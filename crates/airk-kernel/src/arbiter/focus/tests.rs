@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Canonical Focus owner tests with an injected scorer; no model-quality claim.
 use super::*;
+use std::collections::BTreeMap;
 use airk_core::{
     Citation, DocumentLocation,
     arbiter::{
@@ -876,10 +877,10 @@ fn native_context_partition_keeps_snapshot_digest_separate_from_installed_select
     Ok(())
 }
 
-fn batch(original: &SearchResponse, ordinal: u8) -> SpanBatch {
+fn batch(original: &SearchResponse) -> SpanBatch {
     SpanBatch {
         budget: airk_core::arbiter::answer_loop::BudgetV3::default(),
-        ordinal,
+        round_left: BTreeMap::new(),
         questions: vec!["where is the rule".into(), "which tests cover it".into()],
         spans: original
             .hits
@@ -914,7 +915,7 @@ fn one_focus_call_spans_all_ready_parts_with_per_candidate_questions() -> Result
     let (_temp, kernel, owner, original) = fixture(Mode::Ranked)?;
     kernel.bind_answer_loop(Instant::now() + Duration::from_secs(30))?;
     let ranking = kernel
-        .rank_spans(batch(&original, 1))?
+        .rank_spans(batch(&original))?
         .context("Focus ran")?;
     let batches = owner.batches.lock().unwrap();
     assert_eq!(batches.len(), 1);
@@ -929,12 +930,45 @@ fn one_focus_call_spans_all_ready_parts_with_per_candidate_questions() -> Result
     assert!(ranking.receipt.applied && !ranking.unknown);
     assert!(ranking.relevance[1].unwrap() > ranking.relevance[0].unwrap());
     assert!(owner.requests.lock().unwrap().is_empty());
+    assert_eq!((ranking.ordinal, batches[0].ordinal), (1, 1));
     drop(batches);
-    assert!(
-        kernel.rank_spans(batch(&original, 1))?.is_none(),
-        "an ordinal is allocated once"
-    );
-    assert!(kernel.rank_spans(batch(&original, 2))?.is_some());
+    let second = kernel.rank_spans(batch(&original))?.context("second batch")?;
+    assert_eq!(second.ordinal, 2, "each batch gets the next ordinal");
+    Ok(())
+}
+
+#[test]
+fn a_released_ordinal_is_returned_only_when_nothing_followed_it() {
+    let mut held = Attempt {
+        loop_ordinal: 2,
+        loop_pairs: 6,
+        loop_tokens: 96,
+        ..Attempt::default()
+    };
+    rollback(&mut held, 1, 3, 48);
+    assert_eq!((held.loop_ordinal, held.loop_pairs, held.loop_tokens), (2, 3, 48), "a used hole");
+    rollback(&mut held, 2, 3, 48);
+    assert_eq!((held.loop_ordinal, held.loop_pairs, held.loop_tokens), (1, 0, 0));
+}
+
+#[test]
+fn batched_focus_keeps_the_whole_answer_and_per_part_budgets() -> Result<()> {
+    let (_temp, kernel, owner, original) = fixture(Mode::Ranked)?;
+    kernel.bind_answer_loop(Instant::now() + Duration::from_secs(5))?;
+    let mut small = batch(&original);
+    small.budget.focus_pairs = 4;
+    small.budget.focus_calls = 2;
+    assert!(kernel.rank_spans(small)?.is_some());
+    let mut over = batch(&original);
+    over.budget.focus_pairs = 4;
+    over.budget.focus_calls = 2;
+    assert!(kernel.rank_spans(over)?.is_none(), "cumulative pairs exceed the budget");
+    let mut tight = batch(&original);
+    tight.round_left.insert((1, 1), 40);
+    let error = kernel.rank_spans(tight).err().context("over a part's allowance")?;
+    assert!(error.to_string().contains("part 1 round 1"), "{error}");
+    let requests = owner.batches.lock().unwrap();
+    assert!(requests[0].remaining_ms <= 5_000, "clipped to the original deadline");
     Ok(())
 }
 
@@ -942,11 +976,11 @@ fn one_focus_call_spans_all_ready_parts_with_per_candidate_questions() -> Result
 fn unknown_batched_focus_outcome_keeps_its_reservation_and_blocks_more() -> Result<()> {
     let (_temp, kernel, _owner, original) = fixture(Mode::Unknown)?;
     kernel.bind_answer_loop(Instant::now() + Duration::from_secs(30))?;
-    let ranking = kernel.rank_spans(batch(&original, 1))?.context("submitted")?;
+    let ranking = kernel.rank_spans(batch(&original))?.context("submitted")?;
     assert!(ranking.unknown && !ranking.receipt.applied);
     assert_eq!(ranking.receipt.observed_input_tokens, None);
     assert_eq!(ranking.receipt.reserved_input_tokens, 96);
     assert!(ranking.relevance.iter().all(Option::is_none));
-    assert!(kernel.rank_spans(batch(&original, 2))?.is_none(), "no replay after unknown work");
+    assert!(kernel.rank_spans(batch(&original))?.is_none(), "no replay after unknown work");
     Ok(())
 }

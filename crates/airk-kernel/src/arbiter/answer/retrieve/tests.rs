@@ -259,6 +259,6 @@ fn a_part_search_uses_the_promoted_pool() -> Result<()> {
         (search.part, search.need, search.cause),
         (2, None, Cause::PartSearch)
     );
-    assert_eq!(search.arguments["limit"], Shape::PRODUCT.pool);
+    assert_eq!(search.arguments["limit"], 16);
     Ok(())
 }

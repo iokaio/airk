@@ -35,6 +35,7 @@ pub(super) struct Attempt {
     /// Answer /3 batched Focus calls admitted, and their reserved tokens.
     loop_ordinal: usize,
     loop_tokens: usize,
+    loop_pairs: usize,
 }
 
 fn state(context: &NativeContext) -> Result<std::sync::MutexGuard<'_, Attempt>> {
@@ -783,8 +784,9 @@ pub(super) struct BatchSpan {
 /// One batched Focus call over spans of every ready part (Answer /3).
 pub(super) struct SpanBatch {
     pub(super) budget: airk_core::arbiter::answer_loop::BudgetV3,
-    /// The call's ordinal over the whole Answer, 1 first.
-    pub(super) ordinal: u8,
+    /// Tokens each part may still be charged in its round; a batch over
+    /// several parts is charged to each part separately.
+    pub(super) round_left: BTreeMap<(u8, u8), usize>,
     pub(super) questions: Vec<String>,
     pub(super) spans: Vec<BatchSpan>,
     pub(super) deadline: Instant,
@@ -797,6 +799,19 @@ pub(super) struct SpanRanking {
     pub(super) relevance: Vec<Option<f32>>,
     /// Submitted, but its outcome and work are unknown; nothing is replayed.
     pub(super) unknown: bool,
+    /// The call's ordinal over the whole Answer, allocated under the lock.
+    pub(super) ordinal: u8,
+}
+
+/// Release an allocation that was never dispatched. Its ordinal is given
+/// back only when nothing was allocated after it; otherwise it stays a used
+/// hole, so no two batches ever share an ordinal.
+fn rollback(held: &mut Attempt, ordinal: usize, pairs: usize, tokens: usize) {
+    held.loop_pairs = held.loop_pairs.saturating_sub(pairs);
+    held.loop_tokens = held.loop_tokens.saturating_sub(tokens);
+    if held.loop_ordinal == ordinal {
+        held.loop_ordinal -= 1;
+    }
 }
 
 /// Batched Focus work became stale after native scoring: not delivered.
@@ -825,6 +840,23 @@ impl crate::Kernel {
             held.deadline = Some(held.deadline.map_or(deadline, |prior| prior.min(deadline)));
         }
         Ok(())
+    }
+
+    /// The tokens one Focus pair reserves, when Focus is ready.
+    pub(super) fn focus_pair_tokens(&self) -> Result<Option<usize>> {
+        let Some(context) = &self.arbiter_context else {
+            return Ok(None);
+        };
+        let publication = self.arbiter_publication()?;
+        Ok(match observe_focus_application(context, &publication) {
+            Ok(Some(observed)) if observed.application.availability == Availability::Ready => {
+                observed.limits.map(|limits| limits.pair_input_tokens)
+            }
+            Err(error) if error.is::<airk_core::scoped_reads::ScopeReadRefused>() => {
+                return Err(error);
+            }
+            _ => None,
+        })
     }
 
     /// Score spans against their own sub-need questions in one native call.
@@ -881,6 +913,22 @@ impl crate::Kernel {
             .map(|((part, round), tokens)| TokenAttribution { part, round, tokens })
             .collect();
         let reservation: usize = attribution.iter().map(|charge| charge.tokens).sum();
+        for charge in &attribution {
+            let left = batch
+                .round_left
+                .get(&(charge.part, charge.round))
+                .copied()
+                .unwrap_or(batch.budget.round_input_tokens);
+            ensure!(
+                charge.tokens <= left,
+                "Focus batch exceeds part {} round {} token allowance",
+                charge.part,
+                charge.round
+            );
+        }
+        let deadline = state(context)?
+            .deadline
+            .map_or(batch.deadline, |original| original.min(batch.deadline));
         let mut candidates = Vec::with_capacity(batch.spans.len());
         for (position, span) in batch.spans.iter().enumerate() {
             let question = batch
@@ -903,14 +951,29 @@ impl crate::Kernel {
             }
         }
         let order_digest = NativeFocusRequestV3::candidate_order_digest(&candidates)?;
-        let remaining_ms = batch
-            .deadline
+        let remaining_ms = deadline
             .saturating_duration_since(Instant::now())
             .as_millis()
             .min(u128::from(batch.budget.deadline_ms)) as u64;
         if remaining_ms == 0 {
             return Ok(None);
         }
+        let count = candidates.len();
+        let ordinal = {
+            let mut held = state(context)?;
+            let budget = &batch.budget;
+            if held.blocked
+                || held.loop_ordinal >= budget.focus_calls
+                || held.loop_pairs + count > budget.focus_pairs
+                || held.loop_tokens + reservation > budget.input_tokens
+            {
+                return Ok(None);
+            }
+            held.loop_ordinal += 1;
+            held.loop_pairs += count;
+            held.loop_tokens += reservation;
+            held.loop_ordinal
+        };
         let request = NativeFocusRequestV3 {
             read_attempt: attempt,
             parent_budget: batch.budget.clone(),
@@ -921,7 +984,7 @@ impl crate::Kernel {
             score_count: candidates.len(),
             candidates,
             order_digest,
-            ordinal: batch.ordinal,
+            ordinal: u8::try_from(ordinal)?,
             attribution: attribution.clone(),
             partition: None,
             remaining_ms,
@@ -931,17 +994,10 @@ impl crate::Kernel {
             .validate(context.worker, context.authority, clock, now_ns)
             .is_err()
         {
+            rollback(&mut *state(context)?, ordinal, count, reservation);
             return Ok(None);
         }
-        {
-            let mut held = state(context)?;
-            if held.blocked || usize::from(batch.ordinal) != held.loop_ordinal + 1 {
-                return Ok(None);
-            }
-            held.loop_ordinal += 1;
-            held.loop_tokens += reservation;
-        }
-        let returned = context.owner.focus_batch(request.clone(), batch.deadline);
+        let returned = context.owner.focus_batch(request.clone(), deadline);
         let (mut receipt, unknown) = match returned {
             Ok(Some(response)) if response.validate(&request).is_ok() => {
                 let mut held = state(context)?;
@@ -956,9 +1012,7 @@ impl crate::Kernel {
                 (response.ranking, unknown)
             }
             Ok(None) => {
-                let mut held = state(context)?;
-                held.loop_ordinal -= 1;
-                held.loop_tokens = held.loop_tokens.saturating_sub(reservation);
+                rollback(&mut *state(context)?, ordinal, count, reservation);
                 return Ok(None);
             }
             Err(error) if error.is::<airk_core::scoped_reads::ScopeReadRefused>() => {
@@ -1013,7 +1067,7 @@ impl crate::Kernel {
             }
             .into());
         }
-        if Instant::now() >= batch.deadline && receipt.applied {
+        if Instant::now() >= deadline && receipt.applied {
             receipt.applied = false;
             receipt.availability = Availability::Failed;
             receipt.reason = "Focus completed after its original deadline; canonical order is unchanged.".into();
@@ -1033,6 +1087,7 @@ impl crate::Kernel {
             receipt,
             relevance,
             unknown,
+            ordinal: u8::try_from(ordinal)?,
         }))
     }
 }

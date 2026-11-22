@@ -395,6 +395,7 @@ impl Loop<'_> {
             self.searched.insert(query.to_lowercase());
         }
         let (key, step, round, need) = (dispatch.key, dispatch.step, dispatch.round, dispatch.need);
+        let mandatory = dispatch.cause == Cause::PartSearch;
         match self.gather.offer(dispatch) {
             Offer::Waiting => {
                 if let Some(need) = need
@@ -409,6 +410,11 @@ impl Loop<'_> {
                     && round == 1
                 {
                     self.react(part, need, step, record)?;
+                }
+            }
+            Offer::Failed(_) => {
+                if mandatory && self.parts[part].active() {
+                    self.stop_part(part, v3::PartStop::Refused, round);
                 }
             }
             Offer::Queued | Offer::Unavailable => {}
@@ -630,13 +636,17 @@ impl Loop<'_> {
                             }
                         }
                     }
-                    Observed::Refused(_) => {
-                        if self.parts[part].active() {
-                            self.stop_part(part, v3::PartStop::Refused, round);
+                    Observed::Failed { refused, .. } => {
+                        for id in refused {
+                            if let Some(index) = self.parts.iter().position(|part| part.id == id)
+                                && self.parts[index].active()
+                            {
+                                self.stop_part(index, v3::PartStop::Refused, round);
+                            }
                         }
                     }
                     Observed::Omitted => self.parts[part].shortened = true,
-                    Observed::Failed(_) | Observed::Stale => {}
+                    Observed::Stale => {}
                 }
             }
             self.resolve_probes()?;

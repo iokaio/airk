@@ -95,3 +95,8 @@ fn inherited_identifiers_come_last_and_are_marked() {
             .all(|proposal| proposal.inherited || proposal.kind == NeedKind::Overview)
     );
 }
+
+#[test]
+fn an_apostrophe_does_not_hide_a_quoted_term() {
+    assert_eq!(quoted("don't touch 'retry_refused'"), ["retry_refused"]);
+}

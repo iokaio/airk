@@ -131,3 +131,11 @@ fn a_snippet_top_span_reads_its_whole_chunk_and_cards_name_each_read() -> Result
     assert_eq!(found[1].unrun(v3::UnrunReason::NotChosen).target, "tiny");
     Ok(())
 }
+
+#[test]
+fn a_rejected_quote_does_not_hide_the_next_error_string() {
+    assert_eq!(
+        error_strings("don't touch 'retry_refused' here"),
+        ["retry_refused"]
+    );
+}

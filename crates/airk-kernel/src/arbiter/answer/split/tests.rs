@@ -128,3 +128,14 @@ fn part_ranges_are_exact_utf8_slices() {
         v3::CardClass::KeepWhole
     );
 }
+
+#[test]
+fn one_offset_keeps_every_break_kind() {
+    let question = "Explain the retry budget rules now. Where is the queue policy defined?";
+    let kinds: Vec<_> = breaks(question)
+        .into_iter()
+        .filter(|item| item.at == 36)
+        .map(|item| item.kind)
+        .collect();
+    assert_eq!(kinds, [BreakKind::Question, BreakKind::Sentence]);
+}

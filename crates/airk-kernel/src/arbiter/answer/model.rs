@@ -448,6 +448,32 @@ impl Loop<'_> {
         if self.focus_blocked || self.configuration_changed {
             return Ok(());
         }
+        let Some(pair_tokens) = self
+            .kernel
+            .focus_pair_tokens()?
+            .filter(|tokens| *tokens > 0)
+        else {
+            self.focus_blocked = true;
+            return Ok(());
+        };
+        let allowance = self.request.budget.round_input_tokens;
+        // Focus takes at most half of a part-round's token allowance, so the
+        // card calls of the same barrier keep the other half. Spans past a
+        // part's half stay unscored, disclosed as its model share.
+        let mut planned: BTreeMap<u8, usize> = BTreeMap::new();
+        for (part, _, spans) in entries.iter_mut() {
+            let id = self.parts[*part].id;
+            let used = self.used_tokens.get(&(id, round)).copied().unwrap_or(0);
+            let fits = (allowance / 2).saturating_sub(used) / pair_tokens;
+            let taken = planned.entry(id).or_default();
+            let keep = fits.saturating_sub(*taken).min(spans.len());
+            if keep < spans.len() && !self.model_share.contains(&(id, v3::LoopStage::Read)) {
+                self.model_share.push((id, v3::LoopStage::Read));
+            }
+            *taken += keep;
+            spans.truncate(keep);
+        }
+        let per_call = (allowance / pair_tokens).min(v3::MAX_FOCUS_BATCH_PAIRS);
         let mut start = 0;
         let mut calls_here = 0usize;
         while start < entries.len() {
@@ -461,7 +487,7 @@ impl Loop<'_> {
                 let more = spans.len();
                 let new_question = !questions.contains(query);
                 if end > start
-                    && (pairs + more > v3::MAX_FOCUS_BATCH_PAIRS
+                    && (pairs + more > per_call
                         || (new_question && questions.len() >= v3::MAX_FOCUS_QUESTIONS))
                 {
                     break;
@@ -500,7 +526,18 @@ impl Loop<'_> {
             let count = spans.len();
             let ranking = self.kernel.rank_spans(focus::SpanBatch {
                 budget: budget.clone(),
-                ordinal: u8::try_from(self.ledger.focus.len() + 1)?,
+                round_left: self
+                    .parts
+                    .iter()
+                    .map(|part| {
+                        let used = self
+                            .used_tokens
+                            .get(&(part.id, round))
+                            .copied()
+                            .unwrap_or(0);
+                        ((part.id, round), allowance.saturating_sub(used))
+                    })
+                    .collect(),
                 questions,
                 spans,
                 deadline: self.deadline,
@@ -524,6 +561,10 @@ impl Loop<'_> {
             for ((slot, index), relevance) in owners.into_iter().zip(&ranking.relevance) {
                 entries[start + slot].2[index].focus = *relevance;
             }
+            ensure!(
+                usize::from(ranking.ordinal) > self.ledger.focus.len(),
+                "Focus batch ordinals are allocated in order"
+            );
             self.ledger.focus.push(ranking.receipt);
             if self.focus_blocked {
                 return Ok(());

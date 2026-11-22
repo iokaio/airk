@@ -123,8 +123,12 @@ fn quoted(text: &str) -> Vec<String> {
             let term = after[..end].trim();
             // An apostrophe inside a word is not a quotation.
             let opening = start == 0 || !rest[..start].ends_with(|c: char| c.is_alphanumeric());
-            if opening && (3..=200).contains(&term.len()) && !found.iter().any(|seen| seen == term)
-            {
+            if !opening {
+                // An apostrophe is not an opening quote: move past it only.
+                rest = &rest[start + 1..];
+                continue;
+            }
+            if (3..=200).contains(&term.len()) && !found.iter().any(|seen| seen == term) {
                 found.push(term.to_owned());
             }
             rest = &after[end + 1..];

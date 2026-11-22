@@ -190,7 +190,8 @@ pub(crate) fn breaks(question: &str) -> Vec<Break> {
         }
     }
     found.sort();
-    found.dedup_by_key(|item| item.at);
+    // One offset may carry several kinds, so each class-only card can cut there.
+    found.dedup();
     found.retain(|item| {
         item.at > 0 && item.at < question.len() && question.is_char_boundary(item.at)
     });

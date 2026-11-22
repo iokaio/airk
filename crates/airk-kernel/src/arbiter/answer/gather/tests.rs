@@ -108,7 +108,13 @@ fn failed_follow_up_keeps_receipt_and_queue() -> Result<()> {
             receipt.clone(),
         ))),
     )?;
-    assert_eq!(failed, Observed::Failed(Some(1)));
+    assert_eq!(
+        failed,
+        Observed::Failed {
+            record: Some(1),
+            refused: vec![]
+        }
+    );
     assert!(gather.records[1].failure);
     assert_eq!(gather.records[1].body, receipt);
     assert_eq!(gather.queued_for(1), 1, "the remaining queue survives");
@@ -124,7 +130,13 @@ fn a_failed_part_search_refuses_and_a_foreign_publication_stops_every_part() -> 
     gather.offer(part);
     let taken = gather.take(1, 1);
     let refused = gather.observe(taken[0].seq, Err(anyhow::anyhow!("index unavailable")))?;
-    assert_eq!(refused, Observed::Refused(None));
+    assert_eq!(
+        refused,
+        Observed::Failed {
+            record: None,
+            refused: vec![1]
+        }
+    );
     let other = search(&mut gather, 2, None, "other")?;
     gather.offer(other);
     let taken = gather.take(2, 1);
@@ -183,6 +195,89 @@ fn new_evidence_counts_only_excerpts_new_to_the_part() -> Result<()> {
         gather.new_evidence(1, 2),
         0,
         "a repeated excerpt is no progress"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_stopped_part_hands_a_shared_queued_read_to_its_other_waiter() -> Result<()> {
+    let scope = scope();
+    let mut gather = Gathering::new(v3::BudgetV3::default(), scope.clone())?;
+    let first = search(&mut gather, 1, Some(1), "shared")?;
+    let second = search(&mut gather, 2, Some(2), "shared")?;
+    gather.offer(first);
+    gather.offer(second);
+    let drained = gather.drain_part(1);
+    assert_eq!(drained.len(), 1, "part 1 lists it as unrun");
+    assert_eq!(gather.queued_for(1), 0);
+    assert_eq!(gather.queued_for(2), 1, "part 2 still runs the read");
+    let taken = gather.take(2, 1);
+    assert_eq!((taken[0].part, taken[0].need), (2, Some(2)));
+    gather.observe(
+        taken[0].seq,
+        Ok(reply(&scope, vec![hit("a.md", 1, 2, "x")])),
+    )?;
+    let uses = &gather.records[0].uses;
+    assert_eq!(uses.len(), 1);
+    assert_eq!((uses[0].part, uses[0].cause), (2, v3::UseCause::NeedSearch));
+    Ok(())
+}
+
+#[test]
+fn reads_are_observed_in_dispatch_order_and_keys_ignore_argument_order() -> Result<()> {
+    let scope = scope();
+    let mut gather = Gathering::new(v3::BudgetV3::default(), scope.clone())?;
+    let one = search(&mut gather, 1, Some(1), "one")?;
+    let two = search(&mut gather, 1, Some(2), "two")?;
+    gather.offer(one);
+    gather.offer(two);
+    let taken = gather.take(1, 2);
+    assert!(
+        gather
+            .observe(taken[1].seq, Ok(reply(&scope, vec![])))
+            .is_err()
+    );
+    gather.observe(taken[0].seq, Ok(reply(&scope, vec![])))?;
+    gather.observe(taken[1].seq, Ok(reply(&scope, vec![])))?;
+    let mut forward = Map::new();
+    forward.insert("query".into(), json!("x"));
+    forward.insert("limit".into(), json!({"b":1,"a":2}));
+    let mut backward = Map::new();
+    backward.insert("limit".into(), json!({"a":2,"b":1}));
+    backward.insert("query".into(), json!("x"));
+    assert_eq!(
+        read_key("search", &forward, "r")?,
+        read_key("search", &backward, "r")?
+    );
+    Ok(())
+}
+
+#[test]
+fn a_failed_part_search_refuses_every_part_waiting_on_it() -> Result<()> {
+    let scope = scope();
+    let mut gather = Gathering::new(v3::BudgetV3::default(), scope.clone())?;
+    let first = search(&mut gather, 1, None, "same")?;
+    let second = search(&mut gather, 2, None, "same")?;
+    gather.offer(first);
+    gather.offer(second);
+    let taken = gather.take(1, 1);
+    let failure = json!({"isError":true});
+    let failed = gather.observe(
+        taken[0].seq,
+        Err(anyhow::Error::new(crate::workbench::ReadFailure(failure))),
+    )?;
+    assert_eq!(
+        failed,
+        Observed::Failed {
+            record: Some(0),
+            refused: vec![1, 2]
+        }
+    );
+    let third = search(&mut gather, 3, None, "same")?;
+    assert_eq!(
+        gather.offer(third),
+        Offer::Failed(Some(0)),
+        "never served as evidence"
     );
     Ok(())
 }

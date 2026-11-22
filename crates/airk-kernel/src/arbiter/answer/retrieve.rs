@@ -442,6 +442,10 @@ pub(crate) fn governing_read(
     probe: &Probe,
     lines: usize,
 ) -> Result<Dispatch> {
+    ensure!(
+        lines > 0,
+        "a governing document with no indexed lines is not read"
+    );
     let end = lines.min(120);
     excerpt(
         gather,

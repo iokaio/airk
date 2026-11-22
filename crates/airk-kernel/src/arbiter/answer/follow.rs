@@ -82,8 +82,11 @@ fn error_strings(text: &str) -> Vec<String> {
                 && !found.contains(&literal)
             {
                 found.push(literal);
+                rest = &after[end + 1..];
+            } else {
+                // A rejected opening quote may still close nothing: move past it only.
+                rest = &rest[start + 1..];
             }
-            rest = &after[end + 1..];
         }
     }
     found
@@ -192,7 +195,13 @@ pub(crate) fn candidates(
     let top = spans.first();
     // A truncated or snippet-only top span: read its whole chunk.
     if let Some(span) = top.filter(|span| {
-        span.hit.truncated || span.hit.citation.end_line - span.hit.citation.start_line < 8
+        span.hit.truncated
+            || span
+                .hit
+                .citation
+                .end_line
+                .saturating_sub(span.hit.citation.start_line)
+                < 8
     }) {
         let citation = &span.hit.citation;
         push(

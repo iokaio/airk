@@ -14,14 +14,35 @@ pub(crate) fn read_key(
     arguments: &Map<String, Value>,
     revision: &str,
 ) -> Result<ReadKey> {
+    let arguments = canonical(&Value::Object(arguments.clone()));
     Ok(framed_digest(
         b"airk.arbiter.read-key/1",
         &[
             tool.as_bytes(),
-            &serde_json::to_vec(arguments)?,
+            &serde_json::to_vec(&arguments)?,
             revision.as_bytes(),
         ],
     ))
+}
+
+/// Object keys sorted at every depth: argument order never splits a read.
+fn canonical(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let sorted: BTreeMap<&String, Value> = map
+                .iter()
+                .map(|(key, value)| (key, canonical(value)))
+                .collect();
+            Value::Object(
+                sorted
+                    .into_iter()
+                    .map(|(key, value)| (key.clone(), value))
+                    .collect(),
+            )
+        }
+        Value::Array(items) => Value::Array(items.iter().map(canonical).collect()),
+        other => other.clone(),
+    }
 }
 
 /// Why a read was dispatched; the reply's `UseCause` adds `SharedRead`.
@@ -50,6 +71,10 @@ pub(crate) struct Use {
     pub(crate) need: Option<u8>,
     pub(crate) round: u8,
     pub(crate) cause: v3::UseCause,
+    /// The user's own part search: its failure refuses that part.
+    pub(crate) mandatory: bool,
+    /// The cause this use would have dispatched the read with.
+    pub(crate) intended: Cause,
 }
 
 /// What a read is for inside its sub-need's recipe (`retrieve`).
@@ -98,12 +123,9 @@ impl Dispatch {
             need: self.need,
             round: self.round,
             cause: self.cause.wire(),
+            mandatory: self.cause == Cause::PartSearch,
+            intended: self.cause,
         }
-    }
-    /// Only a part's own search is required; any other read may fail
-    /// legitimately and keeps its canonical failure receipt.
-    pub(crate) fn optional(&self) -> bool {
-        self.cause != Cause::PartSearch
     }
     pub(crate) fn target(&self) -> String {
         let text = ["query", "name", "path"]
@@ -189,10 +211,12 @@ pub(crate) enum GlobalStop {
 pub(crate) enum Observed {
     /// Retained as `records[index]`.
     Retained(usize),
-    /// An optional read failed; its receipt is kept when one was returned.
-    Failed(Option<usize>),
-    /// A part's own search failed: that part is refused.
-    Refused(Option<usize>),
+    /// The read failed; its receipt is kept when one was returned. Every
+    /// part whose own search it was is refused.
+    Failed {
+        record: Option<usize>,
+        refused: Vec<u8>,
+    },
     Stale,
     /// The retention budget could not keep it.
     Omitted,
@@ -204,8 +228,10 @@ pub(crate) enum Offer {
     Queued,
     /// Another dispatch of the same read is queued or pending.
     Waiting,
-    /// Served from a retained record (or its failure receipt).
+    /// Served from a retained record.
     Cached(usize),
+    /// The read already failed; its receipt, if any, records this use.
+    Failed(Option<usize>),
     /// The read was omitted or failed without a receipt; nothing to serve.
     Unavailable,
 }
@@ -307,13 +333,21 @@ impl Gathering {
                 }
                 Offer::Waiting
             }
-            Some(Entry::Retained(index) | Entry::Failed(Some(index))) => {
+            Some(Entry::Retained(index)) => {
                 let index = *index;
                 item.cause = v3::UseCause::SharedRead;
                 self.records[index].attach(item);
                 Offer::Cached(index)
             }
-            Some(Entry::Failed(None) | Entry::Omitted) => Offer::Unavailable,
+            Some(Entry::Failed(record)) => {
+                let record = *record;
+                if let Some(index) = record {
+                    item.cause = v3::UseCause::SharedRead;
+                    self.records[index].attach(item);
+                }
+                Offer::Failed(record)
+            }
+            Some(Entry::Omitted) => Offer::Unavailable,
         }
     }
 
@@ -325,13 +359,33 @@ impl Gathering {
         self.pending.len()
     }
 
-    /// Remove every queued read of `part`, for its unrun list.
+    /// Remove every queued read of `part`, for its unrun list. A read
+    /// another part also waits on stays queued, re-tagged to the first
+    /// remaining waiter, which then owns its dispatch.
     pub(crate) fn drain_part(&mut self, part: u8) -> Vec<Dispatch> {
-        let (drained, kept): (Vec<_>, Vec<_>) =
-            self.queue.drain(..).partition(|item| item.part == part);
-        self.queue = kept.into();
-        for item in &drained {
-            self.reads.remove(&item.key);
+        let mut drained = Vec::new();
+        for mut item in std::mem::take(&mut self.queue) {
+            if item.part != part {
+                self.queue.push_back(item);
+                continue;
+            }
+            let others: Vec<Use> = match self.reads.remove(&item.key) {
+                Some(Entry::Queued(uses)) => {
+                    uses.into_iter().filter(|use_| use_.part != part).collect()
+                }
+                _ => vec![],
+            };
+            drained.push(item.clone());
+            if let Some(first) = others.first() {
+                item.part = first.part;
+                item.need = first.need;
+                item.round = first.round;
+                item.cause = first.intended;
+                let mut owned = others;
+                owned[0].cause = item.cause.wire();
+                self.reads.insert(item.key, Entry::Queued(owned));
+                self.queue.push_back(item);
+            }
         }
         drained
     }
@@ -375,6 +429,10 @@ impl Gathering {
 
     /// Observe one admitted read. The driver calls this in `seq` order.
     pub(crate) fn observe(&mut self, seq: u32, result: Result<Value>) -> Result<Observed> {
+        ensure!(
+            self.pending.keys().next() == Some(&seq),
+            "Answer reads are observed in dispatch order"
+        );
         let dispatch = self
             .pending
             .remove(&seq)
@@ -393,15 +451,20 @@ impl Gathering {
                 let receipt = error
                     .downcast_ref::<crate::workbench::ReadFailure>()
                     .map(|failure| failure.0.clone());
+                let mut refused: Vec<u8> = uses
+                    .iter()
+                    .filter(|use_| use_.mandatory)
+                    .map(|use_| use_.part)
+                    .collect();
+                refused.dedup();
                 let index = match receipt {
                     Some(receipt) => self.retain(&dispatch, receipt, uses, true)?,
                     None => None,
                 };
                 self.reads.insert(dispatch.key, Entry::Failed(index));
-                return Ok(if dispatch.optional() {
-                    Observed::Failed(index)
-                } else {
-                    Observed::Refused(index)
+                return Ok(Observed::Failed {
+                    record: index,
+                    refused,
                 });
             }
         };

@@ -49,6 +49,8 @@ pub(crate) fn record_hits(record: &Record) -> Vec<(String, Hit)> {
                 if let Ok(hit) = serde_json::from_value::<Hit>(value.clone())
                     && !hit.text.trim().is_empty()
                     && crate::workbench::safe_path(&hit.citation.path)
+                    && hit.citation.start_line > 0
+                    && hit.citation.end_line >= hit.citation.start_line
                 {
                     out.push((format!("{base}/{index}"), hit));
                 }
@@ -152,13 +154,31 @@ fn structural(gather: &Gathering, part: u8, need: &Need) -> (bool, bool, bool, b
                 })
     });
     let caller_excerpt = mine.iter().any(|record| record.kind == FollowUp::Callers);
+    // A governing document counts only for the folder of the sub-need's
+    // own evidence (its anchor), as its probe was planned.
+    let anchors: Vec<String> = mine
+        .iter()
+        .filter(|record| record.kind != FollowUp::Governing)
+        .flat_map(|record| {
+            record_hits(record)
+                .into_iter()
+                .map(|(_, hit)| hit.citation.path)
+        })
+        .collect();
     let governing = mine.iter().any(|record| {
         record.kind == FollowUp::Governing
             && record
                 .arguments
                 .get("path")
                 .and_then(Value::as_str)
-                .is_some_and(software::is_governing_path)
+                .is_some_and(|path| {
+                    software::is_governing_path(path)
+                        && anchors.iter().any(|anchor| {
+                            software::governing_candidates(anchor)
+                                .iter()
+                                .any(|candidate| candidate == path)
+                        })
+                })
     });
     (
         definition,
