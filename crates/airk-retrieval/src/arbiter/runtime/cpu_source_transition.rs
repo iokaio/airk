@@ -13,9 +13,10 @@ const LEGACY_CATALOG: &str = "3b257248a435e8e2fb0112165fbe6870ae1db29cbbaece4d05
 const LEGACY_TASK: &str = "cfbcbe4cce111b9f802918488dae82feefb075666a0a7e7a9f93dd082b71c331";
 const LEGACY_RUNTIME_SOURCE: &str =
     "d2879546ba9e949fdd8b135a244923de2adb781e8598539cc33f4d7d6f0794eb";
-// Exact runtime owner hook bytes for the reviewed G5 supplement. A different source requires a new row.
+// Exact runtime owner hook bytes for the reviewed Answer loop admission
+// supplement (L4, CONTRACT.md). A different source requires a new row.
 const CURRENT_RUNTIME_SOURCE: Option<&str> =
-    Some("7b4650767610eafdfea4b6c273e042008e4eae4654dde516d438c6ee2f8449b3");
+    Some("c9008eef62a5af16791e3325b44ef0ada7e789c7b6bf5d50c4dc83ee32c05603");
 const LEGACY_CORE: &str = "ddd9dbc76ae2c7e92c3b57b58a9443161fb045bbc175596f57bb41c9b1b5bbe6";
 const CURRENT_CORE: &str = "914692048e6d833e0d18c10485e7d9f57f2e0c8874f428b31002bcf7c09cdeef";
 const CURRENT_TASK: &str = "25c96233573bd34cd71d03317bc757677d31e48ffbe362c462499d5fb1b7eff7";

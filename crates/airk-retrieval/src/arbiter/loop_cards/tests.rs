@@ -380,3 +380,41 @@ fn plan_takes_the_proposals_above_the_reference_at_least_one_at_most_four() -> R
     assert!(choices[0].chosen.is_empty());
     Ok(())
 }
+
+/// The recorded identities (compiler/CONTRACT.md, "Answer loop card task
+/// policies"). A change to any policy source, the shared owner, a question
+/// or the Core loop semantics moves them and needs a recorded decision.
+#[test]
+fn recorded_loop_policy_identities() -> Result<()> {
+    let recorded = [
+        (
+            Task::ContextSplit,
+            "791878e0d81e7d83e4caf6cf9eab8e0841e71c8e20fbf459efeb76d88c398651",
+        ),
+        (
+            Task::ContextPlan,
+            "422d82cc5959ab16c4687b6129deab6a7129c6a69c35e28cf88f84e45fe0b695",
+        ),
+        (
+            Task::ContextCoverage,
+            "c1175ea5f91e1be3dd0f95fcb8adb626ac92b167fb950c77cc0427ca7e3d5047",
+        ),
+        (
+            Task::ContextFollowUp,
+            "d556d7e8b435d74b6fa99d5336842eb1eed01973c048cdf3d249487f418c6829",
+        ),
+    ];
+    let core = airk_core::arbiter::answer_loop::loop_semantic_policy_digest()?.to_string();
+    let live: Vec<String> = recorded
+        .iter()
+        .map(|(task, _)| task_policy(*task).map(|policy| policy.to_string()))
+        .collect::<Result<_>>()?;
+    assert_eq!(
+        core, "e55c997509a5dd3156d223326145b788807c1c55f15dc216b4239c917b57c000",
+        "live {live:?}"
+    );
+    for ((task, expected), live) in recorded.iter().zip(&live) {
+        assert_eq!(live, expected, "{task:?}");
+    }
+    Ok(())
+}

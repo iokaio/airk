@@ -167,3 +167,74 @@ updated, and its 8 `cpu_source_transition` tests are a known failing check
 (owner: primary agent). The FP16 math-policy digest changes with it. The
 evaluation's CUDA cells are FP32. Any product or FP16 CUDA use needs this
 routing reverted or a recorded decision with a reviewed source row.
+
+**Routing removed from runtime admission (L4, 22 November 2026).** The
+one-turn evaluation is history, so `runtime.rs` no longer routes option-B or
+SoftwareEvidenceV1 profiles: Context and Focus admission take the product
+policies only, and `Scorer::compile` always uses `Compiler::compile`. The
+recorded decision and its inverse-replay proof are in
+`../runtime/cpu_source_transition/CONTRACT.md`, "Answer loop admission
+supplement". `context_wide.rs` and `focus/experiment.rs` stay compiled for
+their remaining kernel and service callers until Answer v2 is deleted.
+
+## Answer loop card task policies (L4, 22 November 2026)
+
+Owner: `airk_retrieval::arbiter::loop_cards` and its four stage modules
+`loop_split`, `loop_plan`, `loop_coverage` and `loop_follow_up`. They are
+compiled without `local-inference` so the no-model loop records the same
+policies; only the model view (`loop_cards::prompt`) needs the compiler.
+
+**Identity.** Each stage's policy is
+`framed_digest(b"airk.arbiter.loop-<stage>-task-policy/1", [LF source of the
+stage module, LF source of loop_cards.rs, the stage QUESTION, Core
+loop_semantic_policy_digest])`. The Core digest
+(`airk.arbiter.loop-core-semantics/1`) binds Core `answer_loop/cards.rs`,
+`calibration.rs`, `focus_batch.rs`, `log.rs`, `semantics.rs`,
+`native_loop.rs` and the Focus Core semantics, so the card and batched-Focus
+semantics are part of every loop identity. Recorded values (control
+`recorded_loop_policy_identities`):
+
+| Task | Policy |
+| --- | --- |
+| Core loop semantics | `e55c997509a5dd3156d223326145b788807c1c55f15dc216b4239c917b57c000` |
+| `airk.context_split.v1` | `791878e0d81e7d83e4caf6cf9eab8e0841e71c8e20fbf459efeb76d88c398651` |
+| `airk.context_plan.v1` | `422d82cc5959ab16c4687b6129deab6a7129c6a69c35e28cf88f84e45fe0b695` |
+| `airk.context_coverage.v1` | `c1175ea5f91e1be3dd0f95fcb8adb626ac92b167fb950c77cc0427ca7e3d5047` |
+| `airk.context_follow_up.v1` | `d556d7e8b435d74b6fa99d5336842eb1eed01973c048cdf3d249487f418c6829` |
+
+**Rosters.** Kernel code proposes every card; this owner never adds, drops
+or rewrites one. Before compile it checks each segment's shape beyond Core's
+validation: symbols are the prefix A, B, C, ...; a call is one stage with at
+most eight cards; Split is one unbatched segment, keep-whole first and then
+only whole partitions; Plan is at least one `need ...` card followed by the
+reference card `no further sub-need`; Coverage is covered first and then
+only read-more or search cards; Follow-up has at least two reads. A roster
+that breaks these refuses. This replaces the design's rebuild-from-proposals
+proof, because the proposers live in the kernel (L3) and the decision log
+already binds each roster by `roster_digest`.
+
+**Model view.** One prompt per card call: state
+`{task, segments: [{s, part, need, round, subject, cards}], rules}` of at most
+65,536 bytes, the stage question, and candidates `c1..c8` in call order with
+text `[s<k>] <card text>`. Machine identities never enter it.
+
+**Selection** (`loop_cards::select`), per segment from that segment's slice
+of the call's scores:
+- the margin is exactly the segment's top raw score minus its runner-up
+  (kernel contract), and a one-card segment abstains;
+- calibrated mode: a unique top card (a tie abstains) is accepted only when
+  the stage's `LoopCalibration` has a rule for its class at that margin
+  (Plan uses class `plan_need`); zero rules abstain, so the kernel's
+  deterministic order decides;
+- Plan: the proposals scored above the reference card, highest first, at
+  least one and at most four; the reference card is never chosen;
+- top-score mode (test-support only, `DecisionMode::TopScore`): the top card,
+  ties to the lowest symbol, never abstaining, with no rule.
+
+**Admission.** `runtime/loop_tasks.rs` admits a Context profile that declares
+exactly the four card tasks under these policies, or exactly the one-turn
+task, never both. `admit_loop_tasks` declares the tasks on a Context profile
+and binds its single Calibration asset to a zero-rule `LoopCalibrationSet`
+(one entry per card task, in card-task order); the emitter recomputes the
+manifest. `Scorer::loop_calibration()` returns the set authenticated at open;
+the inference lane looks up one card task's entry in it.

@@ -46,6 +46,8 @@ pub mod cuda;
 #[cfg(test)]
 mod embedded_catalog_tests;
 mod input;
+mod loop_tasks;
+pub use loop_tasks::admit_loop_tasks;
 #[cfg(all(test, feature = "test-support"))]
 mod local_test_catalog_emitter;
 #[cfg(test)]
@@ -60,41 +62,24 @@ pub(super) fn validate_selected_policies(profile: &Profile) -> Result<()> {
     let Some(stage) = profile.model.stage() else {
         return Ok(());
     };
-    let (task, task_policy, compiler_policy) = match stage {
+    let (task_policies, compiler_policy) = match stage {
         Stage::Focus => {
-            let policy = focus_policy_for(profile)?;
-            (Task::FocusRank, policy, policy)
+            let policy = super::compiler::focus::policy_digest()?;
+            (BTreeMap::from([(Task::FocusRank, policy)]), policy)
         }
         Stage::Context => (
-            Task::ContextAction,
-            super::context_wide::policy_for(profile)?,
+            loop_tasks::context_task_policies(profile)?,
             super::compiler::qwen::policy_digest()?,
         ),
     };
     ensure!(
         profile.stage == Some(stage)
-            && profile.tasks == BTreeSet::from([task])
-            && profile.task_policies == BTreeMap::from([(task, task_policy)])
+            && profile.tasks == task_policies.keys().copied().collect::<BTreeSet<_>>()
+            && profile.task_policies == task_policies
             && profile.policy == compiler_policy,
         "selected model compiler/task source policy is stale or inconsistent"
     );
     Ok(())
-}
-
-/// The Focus pair policy a profile is compiled under: the product publisher
-/// policy, or (private evaluation builds only) the SoftwareEvidenceV1 policy
-/// of change set 1 when the profile declares exactly that policy.
-fn focus_policy_for(profile: &Profile) -> Result<Sha256Digest> {
-    let current = super::compiler::focus::policy_digest()?;
-    #[cfg(any(test, feature = "test-support"))]
-    {
-        let software = super::compiler::focus::experiment::software_policy_digest()?;
-        if profile.task_policies.get(&Task::FocusRank) == Some(&software) {
-            return Ok(software);
-        }
-    }
-    let _ = profile;
-    Ok(current)
 }
 
 pub trait AssetSource {
@@ -372,7 +357,7 @@ impl EvaluationCatalog {
         if description.tasks.contains(&Task::ContextAction) {
             ensure!(
                 description.task_policies.get(&Task::ContextAction)
-                    == Some(&super::context_wide::policy_for(&description)?),
+                    == Some(&super::context_action::policy_digest()?),
                 "evaluation joint action policy differs from native constructor"
             );
         }
@@ -380,7 +365,7 @@ impl EvaluationCatalog {
             ensure!(
                 source_transition.is_some()
                     || description.task_policies.get(&Task::FocusRank)
-                        == Some(&focus_policy_for(&description)?),
+                        == Some(&super::compiler::focus::policy_digest()?),
                 "evaluation Focus source policy differs from native constructor"
             );
         }
@@ -412,6 +397,7 @@ pub struct Scorer {
     bounded_hybrid: Option<bounded_hybrid::GraphEvidence>,
     joint_calibration:
         Option<Arc<airk_core::arbiter::context_action::calibration::JointCalibration>>,
+    loop_calibration: Option<Arc<airk_core::arbiter::answer_loop::LoopCalibrationSet>>,
 }
 
 fn bytes(source: &dyn AssetSource, asset: &Asset, maximum: u64) -> Result<Vec<u8>> {
@@ -613,10 +599,13 @@ impl Scorer {
         let joint_calibration = if profile.description.tasks.contains(&Task::ContextAction) {
             Some(Arc::new(airk_core::arbiter::context_action::calibration::JointCalibration::parse_and_validate(
                 &bytes(source, asset(AssetRole::Calibration)?, 64 << 10)?,
-                profile.description(), super::context_wide::policy_for(profile.description())?)?))
+                profile.description(), super::context_action::policy_digest()?)?))
         } else {
             None
         };
+        let loop_calibration = loop_tasks::calibration_set(profile.description(), |maximum| {
+            bytes(source, asset(AssetRole::Calibration)?, maximum)
+        })?;
         let expected_recipe = match profile.description.model {
             ModelChoice::SmallIntern | ModelChoice::LargeIntern => {
                 CompilerRecipe::InternSingleChoiceV1
@@ -1052,6 +1041,7 @@ impl Scorer {
             ))]
             bounded_hybrid,
             joint_calibration,
+            loop_calibration,
         }))
     }
     #[cfg(any(test, feature = "test-support"))]
@@ -1092,6 +1082,12 @@ impl Scorer {
     ) -> Option<Arc<airk_core::arbiter::context_action::calibration::JointCalibration>> {
         self.joint_calibration.clone()
     }
+    /// The loop calibration set authenticated once at open.
+    pub fn loop_calibration(
+        &self,
+    ) -> Option<Arc<airk_core::arbiter::answer_loop::LoopCalibrationSet>> {
+        self.loop_calibration.clone()
+    }
     pub fn release_qualified(&self) -> bool {
         self.profile.release_qualified()
     }
@@ -1102,17 +1098,6 @@ impl Scorer {
         candidates: &[super::compiler::Candidate],
     ) -> Result<CompiledInput> {
         self.profile.validate_native_source()?;
-        #[cfg(any(test, feature = "test-support"))]
-        if self.profile.description.task_policies.get(&Task::FocusRank)
-            == Some(&super::compiler::focus::experiment::software_policy_digest()?)
-        {
-            return super::compiler::focus::experiment::compile_software(
-                &self.compiler,
-                state,
-                question,
-                candidates,
-            );
-        }
         self.compiler.compile(state, question, candidates)
     }
     pub fn source_transition_record(&self) -> Result<Option<serde_json::Value>> {

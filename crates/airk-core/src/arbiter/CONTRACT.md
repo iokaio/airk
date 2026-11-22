@@ -1710,6 +1710,15 @@ policies' identities when it activates them, and moves the pins then through
 their own recorded decision. `mod.rs` and `schema.rs` changed and are not
 digest inputs.
 
+L4 (22 November 2026) adds `answer_loop/semantics.rs`:
+`loop_semantic_policy_digest` (`airk.arbiter.loop-core-semantics/1`) frames
+the LF sources of `answer_loop/cards.rs`, `calibration.rs`, `focus_batch.rs`,
+`log.rs`, `semantics.rs` and `native_loop.rs` with the Focus Core semantics.
+The retrieval loop task policies hash it, so editing any of these files now
+moves every loop task identity and needs a recorded decision (values in
+`crates/airk-retrieval/src/arbiter/compiler/CONTRACT.md`). It is a new
+closure; the Context and Focus closures and their digests are unchanged.
+
 ### Generated views
 
 `arbiter_contract` becomes 3. The Rust owner regenerates

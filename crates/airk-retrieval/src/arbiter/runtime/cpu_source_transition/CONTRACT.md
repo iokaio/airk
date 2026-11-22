@@ -381,3 +381,74 @@ transition row or pin was added or changed, so the transition's runtime
 source check does not match in that private build, and its 8
 `cpu_source_transition` tests fail there as a known failing check. Product use requires reverting the routing or a reviewed
 source row.
+
+### Answer loop admission supplement (L4, 22 November 2026)
+
+Recorded decision of plan section 12.9 ("Digest inputs and identities"): the
+evaluation routing in `runtime.rs` is replaced by the product loop's Context
+task admission, and the closed CPU row moves to the resulting source. This
+resolves the 8 failing transition controls (and the embedded-catalog control
+that failed through the same check) by a new reviewed row, not by restoring a
+pass against unchanged pins.
+
+LF-normalized SHA-256 of `runtime.rs`:
+
+| Source | SHA-256 | Meaning |
+| --- | --- | --- |
+| `f3978a12` | `7b4650767610eafdfea4b6c273e042008e4eae4654dde516d438c6ee2f8449b3` | Last reviewed row (product CUDA placement) |
+| `179bb1da` | `258d43714a14169d8ca0dd5993890bdcaa26204c13a8e583f83bb6e63bb698e0` | + private evaluation policy routing |
+| `881787f0` | `4d420821574d4d032175433a938f4d54bd74c7d9bb3834e599b16d68d486969f` | + L5 evaluation-only protected admission |
+| intermediate | `9ede486c03ef639d365b6d46e2a43d075408591abd327f589e34b91ff41b993d` | `881787f0` with the routing hunks removed |
+| current | `c9008eef62a5af16791e3325b44ef0ada7e789c7b6bf5d50c4dc83ee32c05603` | + L4 loop admission hooks |
+
+Proof by byte-exact inverse replay, run on copies of the file:
+1. Reverse-applying the `runtime.rs` hunks of `git diff f3978a12 179bb1da`
+   (the routing: `focus_policy_for`, `context_wide::policy_for` at three call
+   sites, and the `compile_software` branch) to `4d420821` gives `9ede486c`.
+   The routing is gone from the live source: `runtime.rs` names neither
+   `context_wide` nor `focus::experiment`.
+2. Reverse-applying the `runtime.rs` hunks of `git diff 179bb1da 881787f0`
+   (L5) to `9ede486c` gives exactly `7b465076`. So the only difference between
+   the last reviewed row and the intermediate source is L5's reviewed
+   admission, recorded in `../cuda/CONTRACT.md`, "L5 digest-input movements".
+3. The L4 hunks over `9ede486c` are the hooks only: Context policy validation
+   takes the task map of `loop_tasks::context_task_policies` (exactly the
+   one-turn `airk.context_action.v1` policy, or exactly the four loop card
+   tasks under their retrieval policies, never both), `Scorer` authenticates
+   the profile's one `LoopCalibrationSet` at open, and `Scorer::loop_calibration`
+   returns that set. The admission logic itself lives in `loop_tasks.rs`,
+   outside this row, so later loop admission changes do not move it. Reverse-applying these hunks reproduces `9ede486c`.
+
+So `7b465076`, `258d4371` and `4d420821` no longer describe the live source,
+and the row the current source produces is new; the static512 binding row
+`09842b67…` is not relabelled. The new control
+`loop_admission_supplement_moves_the_runtime_row_without_relabelling_legacy_evidence`
+asserts all of it against the retained legacy descriptor fixture (profile
+`73d884fb…`, unchanged bytes, legacy manifest, task and runtime pins).
+
+The same controls pin two CUDA files that only L5 moved since `179bb1da`
+(`git log 179bb1da..881787f0`): `cuda.rs` `127cb912…` to `3526ef91…` and
+`cuda/diagnostic.rs` `6b6c9347…` to `b784131c…`, both listed with their
+before and final hashes in L5's table. Reverse-applying the L5 hunks of each
+reproduces the pinned value exactly. Their literals advance with this row.
+
+Unchanged: the legacy descriptor, catalog member, manifest, profile, task,
+Core, compiler and Focus compiler pins, row framing, schema `/1`, the
+pre-1.9 series scope and the no-transfer flags. CPU Focus ranking, compiler,
+ABI and session paths are untouched.
+
+Consequences recorded elsewhere:
+- `runtime.rs` is an input of `fp16_math_policy_digest`, so the G5 math policy
+  of every model and the bounded-context execution policy of every protected
+  profile move again. FP16 CUDA profiles emitted before this change (L5's gate
+  profiles included) no longer open and must be re-emitted, as L5 did after
+  its own movement. All are private and unqualified.
+- A Context profile scores loop cards only after it is re-emitted with the
+  four card tasks and a zero-rule calibration set (`admit_loop_tasks`). The
+  release catalog's Context descriptors keep their historical bytes and stay
+  unadmitted, as before.
+- The private one-turn routing modules (`context_wide.rs`,
+  `compiler/focus/experiment.rs`) remain compiled for their remaining kernel
+  and service callers until Answer v2 is deleted, but no runtime admission
+  path selects them, so an option-B or SoftwareEvidenceV1 profile now
+  refuses at admission.

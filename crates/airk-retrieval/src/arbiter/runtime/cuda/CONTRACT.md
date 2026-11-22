@@ -1045,3 +1045,18 @@ Consequences:
     `runtime.rs` assertion, which runs first, so they are not reported.
   - They will surface when the `runtime.rs` pin is resolved (L4); those tests
     then need a recorded decision for all three files.
+### L4 runtime.rs movement (22 November 2026)
+
+L4 replaces the evaluation routing in `runtime.rs` with the loop's Context
+task admission. `runtime.rs` moves from `4d420821…` (the L5 final above) to
+`c9008eef62a5af16791e3325b44ef0ada7e789c7b6bf5d50c4dc83ee32c05603`; the
+decision and its inverse-replay proof are in
+`../cpu_source_transition/CONTRACT.md`, "Answer loop admission supplement".
+`runtime.rs` is an input of `fp16_math_policy_digest`, so the G5 identity of
+every model, `ProtectedEfficientMha`'s math policy and the bounded-context
+execution policy of every protected profile move with it. The FP16 profiles
+emitted in L5 no longer open and are re-emitted from their retained
+measurements; to score loop cards they are re-emitted with the four card
+tasks through `runtime::admit_loop_tasks`, which replaces the CPU
+JointCalibration with a zero-rule loop calibration set. `cuda.rs`,
+`fp16.rs` and `diagnostic.rs` are unchanged by L4.
