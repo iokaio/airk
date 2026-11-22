@@ -12,6 +12,8 @@ use airk_core::arbiter::answer_loop as v3;
 mod gather;
 #[allow(dead_code)]
 mod retrieve;
+#[allow(dead_code)]
+mod split;
 
 #[cfg(test)]
 mod tests;
