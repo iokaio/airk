@@ -118,6 +118,28 @@ class PairTests(unittest.TestCase):
         self.assertEqual(pair["profiles"]["context-large-fp16-cuda"]["manifest"], digest(6))
         self.assertEqual(pair["profiles"]["focus-w8-1024-cuda"]["stage"], "focus")
 
+    def test_a_strict_gpu_focus_entry_joins_without_a_review(self):
+        focus = Synthetic(self.root, "focus", "arbiter-focus-qwen3-reranker-06b", 7)
+        focus.profile_value["device_execution"]["placement"] = {"mode": "strict_gpu"}
+        focus.profile_sha = write(focus.profile, focus.profile_value)
+        compact, _ = self.assets(self.compact, "compact-assets")
+        focus_assets, _ = self.assets(focus, "focus-assets")
+        entry = {"profile": str(focus.profile), "profile_sha256": focus.profile_sha, "assets": str(focus_assets)}
+        pair, _ = cp.build_pair({"context-compact-fp16-cuda": self.compact.entry(compact),
+                                 "focus-1024-cuda": entry}, {}, self.root / "pair")
+        roster = json.loads((self.root / "pair" / "roster.json").read_text())
+        self.assertEqual(len(roster), 2)
+        # Only the Context entry has a review pin; the Focus row is a Focus stage row.
+        self.assertEqual(len(pair["reviews"]), 1)
+        self.assertEqual(pair["profiles"]["focus-1024-cuda"]["stage"], "focus")
+        # A Focus entry that names a review, or a bounded Focus profile, is refused.
+        with self.assertRaises(ValueError):
+            cp.build_pair({"f": entry | {"review": "x"}}, {}, self.root / "p4")
+        focus.profile_value["device_execution"]["placement"] = {"mode": "bounded_hybrid", "policy": digest(9)}
+        focus.profile_sha = write(focus.profile, focus.profile_value)
+        with self.assertRaises(ValueError):
+            cp.build_pair({"f": entry | {"profile_sha256": focus.profile_sha}}, {}, self.root / "p5")
+
     def test_failed_foreign_or_doubled_entries_are_refused(self):
         compact, _ = self.assets(self.compact, "compact-assets")
         failed = dict(self.compact.review_value, cpu_payload_check="over cap")
@@ -160,6 +182,12 @@ class PairEnvironmentTests(unittest.TestCase):
         self.assertEqual(json.loads(env["AIRK_ARBITER_EVALUATION_CUDA_REVIEWS"]), self.pair["reviews"])
         self.assertEqual(env["AIRK_ARBITER_EVALUATION_CUDA_SEED_CPU"], "focus")
         self.assertNotIn("AIRK_ARBITER_EVALUATION_CUDA_GRAPH", env)
+
+    def test_review_pins_must_match_the_context_entries(self):
+        extra = dict(self.pair, reviews=self.pair["reviews"][:1])
+        sha = write(self.root / "short.json", extra)
+        with self.assertRaises(ValueError):
+            gf.pair_environment(self.root / "short.json", sha)
 
     def test_changed_inputs_refuse(self):
         with self.assertRaises(ValueError):

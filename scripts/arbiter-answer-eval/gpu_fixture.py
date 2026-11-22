@@ -119,8 +119,10 @@ def read_pair(path, digest):
     pair = read_json(FX.pin({"path": str(path), "sha256": digest}))
     require(pair.get("schema") == PAIR_SCHEMA, "not a CUDA pair spec")
     FX.pin(pair["roster"])
-    require(1 <= len(pair["reviews"]) <= 2 and all(set(r) == {"path", "sha256", "profile_sha256"}
-                                                   for r in pair["reviews"]), "one review pin per CUDA entry")
+    contexts = sum(1 for row in pair["profiles"].values() if row["stage"] == "context" and "model" in row)
+    require(1 <= len(pair["reviews"]) <= 2 and len(pair["reviews"]) == contexts
+            and all(set(r) == {"path", "sha256", "profile_sha256"} for r in pair["reviews"]),
+            "one review pin per CUDA Context entry")
     for review in pair["reviews"]:
         FX.pin(review)
     uuid = pair["adapter_uuid"]

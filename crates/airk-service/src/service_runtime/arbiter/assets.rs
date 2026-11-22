@@ -85,7 +85,7 @@ impl StageOwner {
             .cloned()
         {
             ensure!(
-                Instant::now() < answer.graph.expires(),
+                Instant::now() < answer.route.expires(),
                 "private CUDA Answer fixture expired"
             );
             return Ok(Box::new(answer.assets.clone()));

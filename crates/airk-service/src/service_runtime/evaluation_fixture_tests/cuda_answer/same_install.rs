@@ -70,13 +70,15 @@ impl<'a> Facts<'a> {
 }
 
 /// The CUDA profile joins the CPU roster's catalog: an unqualified private
-/// Context Compact or Large profile with a CUDA device binding, a manifest
-/// that no CPU roster entry uses, and a CPU twin of the same model.
+/// Context Compact, Context Large or Focus profile with a CUDA device binding,
+/// a manifest that no CPU roster entry uses, and a CPU twin of the same model.
 fn require_cuda_profile(cpu: &[Facts<'_>], cuda: Facts<'_>) -> Result<()> {
     ensure!(
         matches!(
             cuda.model,
-            ModelChoice::ContextQwenCompact | ModelChoice::ContextQwenLarge
+            ModelChoice::ContextQwenCompact
+                | ModelChoice::ContextQwenLarge
+                | ModelChoice::FocusQwenReranker06B
         ) && !cuda.qualified
             && cuda.profile_id.starts_with("private-")
             && cuda.cuda
@@ -84,7 +86,7 @@ fn require_cuda_profile(cpu: &[Facts<'_>], cuda: Facts<'_>) -> Result<()> {
                 .iter()
                 .all(|profile| profile.manifest != cuda.manifest && !profile.device)
             && cpu.iter().any(|profile| profile.model == cuda.model),
-        "same-install CUDA Answer requires one unqualified CUDA Compact or Large profile beside its CPU roster"
+        "same-install CUDA requires unqualified CUDA Compact, Large or Focus profiles beside their CPU roster"
     );
     Ok(())
 }
@@ -102,8 +104,8 @@ fn prepare_cuda(path: &Path, expected: Sha256Digest) -> Result<(Vec<u8>, Vec<Pre
     );
     let inputs: Vec<super::super::Input> = serde_json::from_slice(&raw_inputs)?;
     ensure!(
-        (1..=2).contains(&inputs.len()),
-        "private CUDA roster names one or two profiles"
+        (1..=3).contains(&inputs.len()),
+        "private CUDA roster names one to three profiles"
     );
     let mut prepared = Vec::new();
     for input in &inputs {
@@ -170,61 +172,104 @@ struct ReviewPin {
     profile_sha256: Sha256Digest,
 }
 
-/// The graph inputs of every CUDA entry: the protected review receipts when
-/// they are named, else the original single reviewed graph result.
-fn cuda_graphs(
-    artifacts: &Path,
-    cuda: &[Prepared],
-    expires: Instant,
-) -> Result<Vec<Input>> {
-    let Some(reviews) = std::env::var_os("AIRK_ARBITER_EVALUATION_CUDA_REVIEWS") else {
-        ensure!(
-            cuda.len() == 1,
-            "two CUDA entries require AIRK_ARBITER_EVALUATION_CUDA_REVIEWS"
-        );
-        let manifest = cuda[0].profile.manifest;
-        return Ok(vec![Input::read_matching(artifacts, expires, |named| {
-            ensure!(
-                named == manifest,
-                "reviewed CUDA graph result names another profile"
-            );
-            Ok(())
-        })?]);
-    };
-    let reviews: Vec<ReviewPin> = serde_json::from_str(
-        reviews
-            .to_str()
-            .context("CUDA review list is not Unicode")?,
-    )?;
-    ensure!(
-        reviews.len() == cuda.len(),
-        "one CUDA review receipt per CUDA roster entry"
-    );
-    let adapter: [u8; 16] =
-        serde_json::from_str(&std::env::var("AIRK_ARBITER_EVALUATION_CUDA_ADAPTER_UUID")?)?;
-    reviews
-        .iter()
-        .zip(cuda)
-        .map(|(review, entry)| {
-            Input::read_review(
-                artifacts,
-                &review.path,
-                review.sha256,
-                review.profile_sha256,
-                &entry.profile,
-                adapter,
-                expires,
-            )
-        })
-        .collect()
+/// One CUDA entry as the seam attaches it.
+struct PlannedEntry {
+    manifest: Sha256Digest,
+    adapter: [u8; 16],
+    route: crate::service_runtime::arbiter::evaluation::PrivateGpuRoute,
+    /// The review pin: a Context entry's graph or bounded policy, or
+    /// `strict_gpu` for a Focus entry, whose placement is verified at open.
+    pin: String,
 }
 
-/// Two CUDA entries are one Compact and one Large, never two of one model.
+/// The inputs of every CUDA entry. Context entries take the protected review
+/// receipts when they are named, in Context roster order, else the original
+/// single reviewed graph result. A Focus entry takes no review: its strict
+/// placement is checked against the live session when it opens.
+fn cuda_graphs(artifacts: &Path, cuda: &[Prepared], expires: Instant) -> Result<Vec<PlannedEntry>> {
+    use crate::service_runtime::arbiter::evaluation::PrivateGpuRoute;
+    let (focus, context): (Vec<&Prepared>, Vec<&Prepared>) = cuda
+        .iter()
+        .partition(|entry| entry.profile.model == ModelChoice::FocusQwenReranker06B);
+    ensure!(
+        focus.len() <= 1,
+        "the CUDA roster holds at most one Focus entry"
+    );
+    let mut planned = Vec::new();
+    match std::env::var_os("AIRK_ARBITER_EVALUATION_CUDA_REVIEWS") {
+        None => {
+            ensure!(
+                context.len() <= 1 && focus.is_empty(),
+                "two CUDA Context entries or a CUDA Focus entry require AIRK_ARBITER_EVALUATION_CUDA_REVIEWS"
+            );
+            if let Some(entry) = context.first() {
+                let manifest = entry.profile.manifest;
+                let input = Input::read_matching(artifacts, expires, |named| {
+                    ensure!(
+                        named == manifest,
+                        "reviewed CUDA graph result names another profile"
+                    );
+                    Ok(())
+                })?;
+                planned.push(PlannedEntry {
+                    manifest: input.manifest,
+                    adapter: input.adapter,
+                    pin: input.pin.to_string(),
+                    route: PrivateGpuRoute::Answer(input.graph),
+                });
+            }
+        }
+        Some(reviews) => {
+            let reviews: Vec<ReviewPin> = serde_json::from_str(
+                reviews
+                    .to_str()
+                    .context("CUDA review list is not Unicode")?,
+            )?;
+            ensure!(
+                reviews.len() == context.len(),
+                "one CUDA review receipt per CUDA Context roster entry"
+            );
+            let adapter: [u8; 16] =
+                serde_json::from_str(&std::env::var("AIRK_ARBITER_EVALUATION_CUDA_ADAPTER_UUID")?)?;
+            for (review, entry) in reviews.iter().zip(&context) {
+                let input = Input::read_review(
+                    artifacts,
+                    &review.path,
+                    review.sha256,
+                    review.profile_sha256,
+                    &entry.profile,
+                    adapter,
+                    expires,
+                )?;
+                planned.push(PlannedEntry {
+                    manifest: input.manifest,
+                    adapter: input.adapter,
+                    pin: input.pin.to_string(),
+                    route: PrivateGpuRoute::Answer(input.graph),
+                });
+            }
+            for entry in focus {
+                ensure!(adapter != [0; 16], "private CUDA adapter identity missing");
+                planned.push(PlannedEntry {
+                    manifest: entry.profile.manifest,
+                    adapter,
+                    pin: "strict_gpu".into(),
+                    route: PrivateGpuRoute::Focus { expires },
+                });
+            }
+        }
+    }
+    ensure!(!planned.is_empty(), "the CUDA roster has no entry");
+    Ok(planned)
+}
+
+/// The CUDA entries are distinct models: at most one Compact, one Large and
+/// one Focus.
 fn require_distinct_models(cuda: &[Facts<'_>]) -> Result<()> {
     let models: BTreeSet<_> = cuda.iter().map(|facts| facts.model).collect();
     ensure!(
         models.len() == cuda.len(),
-        "the CUDA roster holds at most one profile per Context model"
+        "the CUDA roster holds at most one profile per model"
     );
     Ok(())
 }
@@ -372,7 +417,7 @@ async fn run(
             "cuda_models": cuda_models,
             "graph_pins": graphs
                 .iter()
-                .map(|graph| graph.pin)
+                .map(|graph| graph.pin.clone())
                 .collect::<Vec<_>>(),
         }),
     )?;
@@ -458,11 +503,13 @@ async fn run(
             graphs
                 .into_iter()
                 .zip(readers.iter_mut())
-                .map(|(graph, reader)| crate::service_runtime::arbiter::evaluation::PrivateGpuEntry {
-                    manifest: graph.manifest,
-                    adapter: graph.adapter,
-                    graph: graph.graph,
-                    source: reader,
+                .map(|(graph, reader)| {
+                    crate::service_runtime::arbiter::evaluation::PrivateGpuEntry {
+                        manifest: graph.manifest,
+                        adapter: graph.adapter,
+                        route: graph.route,
+                        source: reader,
+                    }
                 })
                 .collect(),
         )?;
@@ -752,11 +799,16 @@ fn same_install_cuda_profile_must_be_a_distinct_unqualified_cuda_context_profile
         ..large
     };
     require_cuda_profile(&cpu, compact)?;
-    for refused in [
+    // A CUDA Focus profile with a CPU Focus twin joins too.
+    require_cuda_profile(
+        &cpu,
         Facts {
             model: ModelChoice::FocusQwenReranker06B,
+            manifest: digest(8),
             ..large
         },
+    )?;
+    for refused in [
         Facts {
             cuda: false,
             device: false,

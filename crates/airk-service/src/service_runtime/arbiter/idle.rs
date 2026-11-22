@@ -42,7 +42,9 @@ pub(super) fn decide(
     let Some(timeout) = timeout.filter(|value| !value.is_zero()) else {
         return IdleDecision::Never;
     };
-    let wait = |value: Duration| IdleDecision::CheckAfter(value.clamp(Duration::from_millis(10), MAX_CHECK_INTERVAL));
+    let wait = |value: Duration| {
+        IdleDecision::CheckAfter(value.clamp(Duration::from_millis(10), MAX_CHECK_INTERVAL))
+    };
     // Only a settled Ready resident with no call in flight unloads. Any
     // lifecycle operation owns the stage until it settles.
     if phase != Availability::Ready || busy || in_flight > 0 {
@@ -198,8 +200,13 @@ async fn unload(shared: &Arc<Mutex<lifecycle::State>>) -> Result<()> {
         let state = shared
             .lock()
             .map_err(|_| anyhow::anyhow!("Arbiter lifecycle unavailable"))?;
-        let manifest = state.profile.context("idle unload has no selected profile")?;
-        let handle = state.handle.clone().context("idle unload has no native owner")?;
+        let manifest = state
+            .profile
+            .context("idle unload has no selected profile")?;
+        let handle = state
+            .handle
+            .clone()
+            .context("idle unload has no native owner")?;
         (handle, manifest, (state.phase, state.reason.clone()))
     };
     // Claim the lifecycle like any operation; a Configure that arrived first
@@ -265,7 +272,9 @@ pub(super) async fn unload_claimed<S: super::release::ReleaseSteps>(
         let admitted = state.serial == serial && state.idle.in_flight == 0;
         if admitted {
             state.phase = Availability::Draining;
-            state.reason = "Idle: unloading the model through the ordinary release; the next call reloads it.".into();
+            state.reason =
+                "Idle: unloading the model through the ordinary release; the next call reloads it."
+                    .into();
         }
         admitted
     };
@@ -425,7 +434,10 @@ mod tests {
         }
         shared
     }
-    fn claim(shared: &Arc<Mutex<lifecycle::State>>, manifest: Sha256Digest) -> Result<(u64, (Availability, String))> {
+    fn claim(
+        shared: &Arc<Mutex<lifecycle::State>>,
+        manifest: Sha256Digest,
+    ) -> Result<(u64, (Availability, String))> {
         let before = {
             let state = shared.lock().unwrap();
             (state.phase, state.reason.clone())
@@ -457,7 +469,11 @@ mod tests {
         let call = begin_use(&shared)?;
         let (serial, before) = claim(&shared, manifest)?;
         let steps = super::super::release::tests::Recorder::default();
-        assert!(unload_claimed(&shared, serial, manifest, before, &steps).await.is_err());
+        assert!(
+            unload_claimed(&shared, serial, manifest, before, &steps)
+                .await
+                .is_err()
+        );
         assert!(steps.seen().is_empty());
         {
             let state = shared.lock().unwrap();
@@ -479,7 +495,11 @@ mod tests {
             fail_charge_wait: true,
             ..Default::default()
         };
-        assert!(unload_claimed(&shared, serial, manifest, before, &steps).await.is_err());
+        assert!(
+            unload_claimed(&shared, serial, manifest, before, &steps)
+                .await
+                .is_err()
+        );
         {
             let state = shared.lock().unwrap();
             // The unknown drain stays visible, and the lifecycle is free.

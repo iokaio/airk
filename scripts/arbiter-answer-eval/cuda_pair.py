@@ -11,7 +11,8 @@ fresh directory holding exactly the profile's asset names, plus a receipt beside
 it (``<dir>.receipt.json``).
 
 ``pair`` writes the pinned inputs of one lifetime with up to two CUDA Context
-entries (one Compact, one Large) and optional extra CUDA rows:
+entries (one Compact, one Large), an optional CUDA Focus entry and optional
+extra CUDA rows:
 
 - ``roster.json``: the same_install CUDA roster (one ``{profile, profile_sha256,
   assets, fixtures}`` per entry);
@@ -24,7 +25,8 @@ entries (one Compact, one Large) and optional extra CUDA rows:
 
 An entry file names ``profile``/``profile_sha256``, ``assets`` (a directory built by
 ``assets``), ``review``/``review_sha256`` (the pass-1 graph diagnostic receipt) and
-``pass1_profile_sha256``.
+``pass1_profile_sha256``. A CUDA Focus entry (a strict-GPU profile) names no
+review: the service verifies its placement against the live session.
 """
 
 import argparse
@@ -38,7 +40,8 @@ ROOT = HERE.parents[1]
 ARTIFACTS = ROOT / "artifacts"
 PAIR_SCHEMA = "airk.private.answer-eval-cuda-pair/1"
 ASSETS_SCHEMA = "airk.private.answer-eval-cuda-assets/1"
-MODELS = {"arbiter-context-qwen3-17b": "compact", "arbiter-context-qwen3-4b": "large"}
+MODELS = {"arbiter-context-qwen3-17b": "compact", "arbiter-context-qwen3-4b": "large",
+          "arbiter-focus-qwen3-reranker-06b": "focus"}
 
 
 def require(condition, message):
@@ -126,6 +129,14 @@ def entry_input(entry):
         if asset["role"] == "fixture":
             fixture = path
     require(fixture is not None, "the profile declares no compiler fixture asset")
+    row = {"profile": str(entry["profile"]), "profile_sha256": entry["profile_sha256"], "assets": str(assets),
+           "fixtures": str(fixture)}
+    device = profile.get("device_execution") or {}
+    if MODELS.get(profile["model"]) == "focus":
+        require(set(entry) == {"profile", "profile_sha256", "assets"}, "a Focus entry names no review")
+        require(device.get("backend") == "cuda" and (device.get("placement") or {}).get("mode") == "strict_gpu",
+                "a CUDA Focus entry is a strict-GPU profile")
+        return profile, row, None, None
     review = read_pinned(entry["review"], entry["review_sha256"])
     reviewed = review.get("profile") or {}
     require(review.get("schema") == "airk.private.l5a-gpu/1" and review.get("step") == "graph"
@@ -143,8 +154,6 @@ def entry_input(entry):
             "the profile's placement does not name its reviewed policy")
     uuid = (review.get("adapter_before") or {}).get("uuid")
     require(isinstance(uuid, list) and len(uuid) == 16 and any(uuid), "the review names no adapter")
-    row = {"profile": str(entry["profile"]), "profile_sha256": entry["profile_sha256"], "assets": str(assets),
-           "fixtures": str(fixture)}
     pin = {"path": str(entry["review"]), "sha256": entry["review_sha256"],
            "profile_sha256": entry["pass1_profile_sha256"]}
     return profile, row, pin, uuid
@@ -154,7 +163,7 @@ def build_pair(entries, rows, out):
     """entries: {name: entry spec}; rows: {name: {"stage", "manifest"}} extra CUDA rows (such as Focus)."""
     out = Path(out)
     require(under(out.parent, ARTIFACTS) and not out.exists(), "the pair directory must be fresh and under artifacts")
-    require(1 <= len(entries) <= 2, "a pair has one or two CUDA Context entries")
+    require(1 <= len(entries) <= 3, "a pair has one to three CUDA entries")
     roster, reviews, adapters, profile_rows, models = [], [], set(), {}, set()
     for name, entry in sorted(entries.items()):
         profile, row, pin, uuid = entry_input(entry)
@@ -162,10 +171,13 @@ def build_pair(entries, rows, out):
         require(model is not None and model not in models, "one Compact and one Large entry at most")
         models.add(model)
         roster.append(row)
-        reviews.append(pin)
-        adapters.add(json.dumps(uuid))
-        profile_rows[name] = {"stage": "context", "device": "cuda", "manifest": profile["manifest"], "model": model}
-    require(len(adapters) == 1, "every entry must name the same adapter")
+        stage = "focus" if model == "focus" else "context"
+        if pin is not None:
+            # Review pins follow the Context entries in roster order, as the service zips them.
+            reviews.append(pin)
+            adapters.add(json.dumps(uuid))
+        profile_rows[name] = {"stage": stage, "device": "cuda", "manifest": profile["manifest"], "model": model}
+    require(len(adapters) == 1, "the Context entries must name one adapter")
     for name, row in rows.items():
         require(name not in profile_rows and row["stage"] in ("focus", "context") and len(row["manifest"]) == 64,
                 f"row {name} is a new name with a stage and a manifest")

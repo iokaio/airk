@@ -130,10 +130,16 @@ pub(super) mod tests {
     #[tokio::test]
     async fn the_new_reservation_runs_only_after_release_and_drain() -> Result<()> {
         let steps = Recorder::default();
-        let value = release_then(&steps, manifest(), deadline(), &CancellationToken::new(), async {
-            steps.push("reserve");
-            Ok(7)
-        })
+        let value = release_then(
+            &steps,
+            manifest(),
+            deadline(),
+            &CancellationToken::new(),
+            async {
+                steps.push("reserve");
+                Ok(7)
+            },
+        )
         .await?;
         assert_eq!(value, 7);
         assert_eq!(
@@ -154,10 +160,16 @@ pub(super) mod tests {
                 fail_charge_wait: charge,
                 ..Recorder::default()
             };
-            let result = release_then(&steps, manifest(), deadline(), &CancellationToken::new(), async {
-                steps.push("reserve");
-                Ok(())
-            })
+            let result = release_then(
+                &steps,
+                manifest(),
+                deadline(),
+                &CancellationToken::new(),
+                async {
+                    steps.push("reserve");
+                    Ok(())
+                },
+            )
             .await;
             assert!(result.is_err());
             assert_eq!(steps.seen(), seen);

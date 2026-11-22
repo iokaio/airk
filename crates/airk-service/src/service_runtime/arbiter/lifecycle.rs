@@ -579,9 +579,11 @@ async fn warm(
     // reservation and the 44 GiB device envelope its reviewed graph ran under.
     #[cfg(all(windows, target_arch = "x86_64", feature = "test-support", feature = "gpu-cuda"))]
     let (host_bytes, device_limit_bytes) = if let Some((answer, _)) = &cuda_answer {
-        ensure!(Instant::now() < answer.graph.expires(), "private CUDA Answer fixture expired");
+        ensure!(Instant::now() < answer.route.expires(), "private CUDA fixture expired");
         match profile.description().model {
             airk_core::arbiter::ModelChoice::ContextQwenLarge => (host_bytes.max(40 << 30), 44 << 30),
+            // A strict-GPU Focus entry keeps its profile's host reservation.
+            airk_core::arbiter::ModelChoice::FocusQwenReranker06B => (host_bytes, 24 << 30),
             _ => (32 << 30, 24 << 30),
         }
     } else {
@@ -753,7 +755,7 @@ async fn warm(
     let local_test = local_test || cuda_answer.is_some();
     #[cfg(all(windows, target_arch = "x86_64", feature = "test-support", feature = "gpu-cuda"))]
     let receiver = if let Some((answer, gpu_current)) = cuda_answer.as_ref() {
-        let deadline = (Instant::now() + Duration::from_secs(120)).min(answer.graph.expires());
+        let deadline = (Instant::now() + Duration::from_secs(120)).min(answer.route.expires());
         let authority = {
             let expected = expected.clone();
             let configuration = configuration.clone();
@@ -768,7 +770,12 @@ async fn warm(
             })
         };
         let host = Arc::new(reservation);
-        let plan = answer.graph.capacity_plan(&profile)?;
+        let plan = match &answer.route {
+            super::evaluation::PrivateGpuRoute::Answer(graph) => graph.capacity_plan(&profile)?,
+            super::evaluation::PrivateGpuRoute::Focus { .. } => {
+                super::evaluation::focus_capacity_plan(profile.description())?
+            }
+        };
         let probe = handle.probe_evaluation_device(
             answer.lease.clone(),
             profile,
@@ -796,14 +803,22 @@ async fn warm(
                 && bound.candidates[0].profile.description().manifest == manifest,
             "exact private CUDA Answer probe binding unavailable"
         );
-        handle.warm_evaluation_answer(
-            bound.candidates.remove(0).profile,
-            source,
-            host,
-            deadline,
-            authority,
-            answer.graph.admit(gpu_current.clone())?,
-        )?
+        let bound = bound.candidates.remove(0).profile;
+        match &answer.route {
+            super::evaluation::PrivateGpuRoute::Answer(graph) => handle.warm_evaluation_answer(
+                bound,
+                source,
+                host,
+                deadline,
+                authority,
+                graph.admit(gpu_current.clone())?,
+            )?,
+            // Focus opens its strict-GPU profile under the probe binding; the
+            // scorer verifies every node's placement against the live session.
+            super::evaluation::PrivateGpuRoute::Focus { .. } => {
+                handle.warm_with_charge(bound, source, host, deadline, authority)?
+            }
+        }
     } else {
         handle.warm(profile, source, reservation)?
     };

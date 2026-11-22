@@ -90,7 +90,10 @@ pub fn context_ladder(
     };
     Ok(LadderOutcome {
         rung,
-        model: compact.selected.as_ref().map(|_| SelectedModel::ContextCompact),
+        model: compact
+            .selected
+            .as_ref()
+            .map(|_| SelectedModel::ContextCompact),
         selected: compact.selected.clone(),
         reasons: bounded(large_reasons, step, compact.reasons.clone()),
     })
@@ -155,7 +158,11 @@ mod tests {
     #[test]
     fn large_on_the_gpu_is_the_top_rung() -> Result<()> {
         let large = selection(SelectedModel::ContextLarge, Some(variant(1, true)), vec![]);
-        let compact = selection(SelectedModel::ContextCompact, Some(variant(2, true)), vec![]);
+        let compact = selection(
+            SelectedModel::ContextCompact,
+            Some(variant(2, true)),
+            vec![],
+        );
         let outcome = context_ladder(Some(&large), &compact)?;
         assert_eq!(outcome.rung, ContextRung::LargeGpu);
         assert_eq!(outcome.model, Some(SelectedModel::ContextLarge));
@@ -171,7 +178,11 @@ mod tests {
             None,
             vec![row(1, SelectionReason::DeviceMemoryInsufficient)],
         );
-        let compact = selection(SelectedModel::ContextCompact, Some(variant(2, true)), vec![]);
+        let compact = selection(
+            SelectedModel::ContextCompact,
+            Some(variant(2, true)),
+            vec![],
+        );
         let outcome = context_ladder(Some(&large), &compact)?;
         assert_eq!(outcome.rung, ContextRung::CompactGpu);
         assert_eq!(outcome.model, Some(SelectedModel::ContextCompact));
@@ -213,7 +224,11 @@ mod tests {
 
     #[test]
     fn compact_requested_starts_at_compact_without_a_step_down_row() -> Result<()> {
-        let compact = selection(SelectedModel::ContextCompact, Some(variant(2, true)), vec![]);
+        let compact = selection(
+            SelectedModel::ContextCompact,
+            Some(variant(2, true)),
+            vec![],
+        );
         let outcome = context_ladder(None, &compact)?;
         assert_eq!(outcome.rung, ContextRung::CompactGpu);
         assert!(outcome.reasons.is_empty());
@@ -225,7 +240,10 @@ mod tests {
         let outcome = context_ladder(None, &none)?;
         assert_eq!(outcome.rung, ContextRung::None);
         assert_eq!(outcome.model, None);
-        assert_eq!(outcome.reasons, vec![global(SelectionReason::NoQualifiedCpu)]);
+        assert_eq!(
+            outcome.reasons,
+            vec![global(SelectionReason::NoQualifiedCpu)]
+        );
         Ok(())
     }
 
@@ -235,7 +253,11 @@ mod tests {
             .map(|byte| row(byte, SelectionReason::AllocationFailed))
             .collect();
         let large = selection(SelectedModel::ContextLarge, None, many);
-        let compact = selection(SelectedModel::ContextCompact, Some(variant(40, true)), vec![]);
+        let compact = selection(
+            SelectedModel::ContextCompact,
+            Some(variant(40, true)),
+            vec![],
+        );
         let outcome = context_ladder(Some(&large), &compact)?;
         assert_eq!(outcome.reasons.len(), MAX_SELECTION_REASONS);
         assert_eq!(

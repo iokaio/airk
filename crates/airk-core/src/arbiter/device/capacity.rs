@@ -239,7 +239,10 @@ mod tests {
         // Another stage's admitted memory on the same device counts too.
         let mut shared = observed(now, 12 * GIB);
         shared.pending_other_bytes = 6 * GIB;
-        assert_eq!(capacity.step(&shared, None).reason, CapacityReason::MemoryFloor);
+        assert_eq!(
+            capacity.step(&shared, None).reason,
+            CapacityReason::MemoryFloor
+        );
         assert_eq!(
             capacity.step(&observed(now, 30 * GIB), None),
             CapacityDecision {
