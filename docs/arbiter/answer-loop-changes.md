@@ -939,7 +939,10 @@ enrollment, the routing removal, the separate ledger and the Focus decision.
 - **Open, not done in L4:**
   - `force_single_segment` (design 5.3) belongs to the kernel's batching (L3);
   - the deletion of `scoring.rs`, `joint_scoring.rs`, `context_wide.rs`,
-    next-read in `tasks.rs` and the supervisor v2 methods waits for L3-10;
+    next-read in `tasks.rs` and the supervisor v2 methods waited for L3-10;
+    on 22 November the primary agent deferred it to after the independent
+    review of the integrated loop, under the user's 12-hour deadline, so it
+    is not part of L4's integration (owner L4);
   - the Focus per-call overhead measurement needs the A6000 (L5/LG);
   - Coverage rosters carry no evidence excerpts (`CardSegment` has only the
     subject and card texts), which limits what a model can judge; this needs
