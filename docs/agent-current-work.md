@@ -21,16 +21,26 @@ The user resumed the Windows and Linux FP16 campaign after D: cleanup. Keep new 
   this branch to origin on 20 November 2026, Denver time. No PR, merge, publication or deployment is authorized.
 - **Current task from 21 November 2026:** the Answer evaluation plan,
   [docs/arbiter/final-plan-fp16.md](arbiter/final-plan-fp16.md). Its
-  execution waits for the user's explicit word to start. For this campaign it
+  execution started on the user's word on 21 November 2026. For this campaign it
   replaces the qualification gates below (the raw-score ceilings, the 98%
   paired evidence gate and held-out confirmation) as acceptance evidence;
   their receipts stay as history. Agent sessions run in headless Claude Code
-  on Sonnet and judge sessions on Opus; each series is one commit; three
+  on Haiku and judge sessions on Sonnet, both at medium effort (changed by
+  the user on 21 November from Sonnet and Opus; the first round runs on
+  airk alone); each series is one commit; three
   iterations run back to back, then work stops for the user's manual
   inspection, where the user may change the number. Private campaign folder:
   `artifacts/v190/final-plan/exec-20261116T052942Z/answer-eval-r1/`. Every
   trained weight candidate is trained on pairs from both the airk and
   bookbuilder repositories.
+- **Redirected on 22 November 2026:** the user stopped the evaluation runs
+  during change set 3 and directed that Answer become a local multi-round
+  inference loop (plan section 12: Plan, Retrieve per sub-need, Read and check
+  coverage, Follow up, Compose). The goal is unchanged. Large runs on the GPU
+  only, falling back to Compact on the GPU and then Compact on the CPU; Focus
+  and Compact GPU routes become product priorities. Answer's time allowance
+  rises above 120 s. Implementation (plan section 12.8, L1 onward) starts only
+  after the user has reviewed the plan revision and its commit.
 - Previous task: implement all steps of docs/arbiter/final-plan.md, authorized
   by the user on 15 November 2026. Execution T0 is recorded in the ledger.
   The user authorized continuing past the earlier 72-hour checkpoint.

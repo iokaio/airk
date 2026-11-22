@@ -10,9 +10,19 @@ readings and had me adopt four points from an outside review (section 2).
 Later that day the user chose the agent and judge models, set one commit per
 series and set three iterations before a stop for manual inspection (section
 2, "Set by the user after review").
-**Execution has not started.** It waits for the user's explicit word. Section
-9 lists every place where I interpreted an instruction and which of those
-the user has confirmed.
+**Execution started on 21 November 2026** at the user's word ("Begin
+execution of this plan … do the first three iterations and report"). The
+same day the user changed the models to Haiku agents and Sonnet judges at
+medium effort, and had the first round run on airk alone while the
+bookbuilder index builds (section 2, "Changed by the user during
+execution"). Section 9 lists every place where I interpreted an instruction
+and which of those the user has confirmed.
+**Redirected on 22 November 2026.** After the baseline and change sets 1 and
+2, the user stopped the evaluation runs during change set 3, at about 10:20 UTC, and
+directed that Answer itself become a local, multi-round inference loop
+(section 12). The goal of section 1 is unchanged; only the Answer
+implementation that serves it changes. Implementation starts after the user
+has reviewed this revision.
 [Parent plan](final-plan.md) · [Ledger](../simplify/one-process-ledger.md)
 
 ## 1. The question
@@ -74,6 +84,9 @@ The user decided this on 21 November. It amends the CPU ladder of approval A2.
   GPU use on, Compact is the only Context option.
 - **In tests, Large on CPU is a measurement only.** It runs on one scenario
   in five, with a maximum of 180 seconds.
+- **Amended on 22 November** (section 12.5): a Large that cannot run on the
+  GPU falls back to Compact on the GPU, then to Compact on the CPU. The
+  Answer loop's evaluation runs no Large-on-CPU measurement.
 
 ### Adopted from review
 
@@ -99,11 +112,13 @@ to adopt what I judged worth adopting. I adopted all four of its points.
 The user set these on 21 November, after reading the plan with its open
 questions.
 
-- **The agent is headless Claude Code on Sonnet** (`claude-sonnet-5-5`). Every
-  scenario session of section 3.5 runs that way.
-- **The judge is headless Claude Code on Opus** (`claude-opus-5-5`). Every
-  judge session of section 4.5 runs that way. My adjudication is separate
-  from those sessions and is labelled as mine.
+- **The agent is headless Claude Code** (`claude-sonnet-5-5` as set here;
+  changed to Haiku below). Every scenario session of section 3.5 runs that
+  way.
+- **The judge is headless Claude Code** (`claude-opus-5-5` as set here;
+  changed to Sonnet below). Every judge session of section 4.5 runs that
+  way. My adjudication is separate from those sessions and is labelled as
+  mine.
 - **One commit per series.** Each full set of test reports and evaluations
   is one commit, so that commits and their results can be compared one to
   one (section 5.6).
@@ -117,7 +132,66 @@ questions.
   readings 12 and 13 of section 9.
 - **Weights train on both repositories** (section 5.4), for a broader fit to
   general programming work.
+
+### Changed by the user during execution
+
+The user set these on 21 November 2026, after execution started.
+
+- **The first round runs on airk alone.** While the bookbuilder index
+  builds, the baseline and change set 1 use airk's ten development
+  scenarios only. From change set 2 on, both repositories are used. The
+  configuration rule of section 4.3 needs 20 scenarios and at least 5 wins
+  in each repository, so it cannot be applied to an airk-only round; those
+  reports give the airk results with the same per-scenario rules and say
+  that the full rule waits for the rounds with both repositories.
+- **The agent is headless Claude Code on Haiku** (`claude-haiku-5-5`), at
+  medium effort (`--effort medium`), to save cost. The question the
+  evaluation answers becomes whether Answer helps a smaller agent. On the
+  airk baseline only, the Answer and the better comparator sessions are
+  also run with a Sonnet agent as a reference point, so a reader can see
+  whether a conclusion drawn from Haiku holds for Sonnet.
+- **More than three rounds.** On 22 November at about 04:00 UTC the user
+  wrote: "If you can do more than three rounds in the next 10 hours, do it."
+  So change sets continue back to back past the third while they fit in that
+  window, each a full series with its own report and commit, and work then
+  stops for the user's inspection.
+- **Commits may wait.** The user then wrote that commits and pushes can wait
+  until several rounds are completed and brought into alignment. Each series
+  still gets its own commit, so commits and results still compare one to
+  one, but the commits are made in order after several rounds, not straight
+  after each pass.
+- **The judge is headless Claude Code on Sonnet** (`claude-sonnet-5-5`), at
+  medium effort. Before the baseline, Sonnet re-judges the pilot's packets
+  and its grades are compared with the pilot's Opus verdicts. If they
+  disagree, the disagreement is reported and the user decides.
 - **No deadline is set.** Work is reported at each stop.
+
+### Changed by the user on 22 November: Answer becomes a local loop
+
+On 22 November 2026, after reading the results of the baseline and change
+sets 1 and 2, the user wrote: "We need to modify Answer to do exactly what you
+have described … a local inference multi-turn loop that saves on expensive
+agent turns with costly tokens." The user set these points.
+
+- **The goal is unchanged.** Section 1 still decides the work: fewer turns
+  for an agent, then useful detail for a person. Only the Answer
+  implementation that serves it changes.
+- **The evaluation runs stop; no prototype is built.** Change set 3 stopped
+  during its first step of replays (receipts kept; see section 6). The loop of section 12
+  is built in Rust directly, not first as a script.
+- **Answer becomes a bounded loop of five stages:** Plan, Retrieve per
+  sub-need, Read and check coverage, Follow up, and Compose (section 12).
+- **Answer may take much longer.** Several local inference turns inside one
+  call need a far larger time allowance than today's 120-second cap. The cap
+  and everything that enforces it change (section 12.4).
+- **The GPU matters more.** Every stage runs a model several times per
+  call, so GPU use for Focus becomes much more important, and for Compact
+  most of all, because that is where the user expects most users to be.
+- **Large runs on the GPU only.** A Large that cannot run on the GPU falls
+  back to Compact on the GPU, and then to Compact on the CPU. Large never
+  runs on the CPU (section 12.5).
+- **The user reviews this revision and its commit before implementation
+  starts.**
 
 ## 3. The test
 
@@ -222,7 +296,7 @@ difference is a finding.
 | --- | --- | --- |
 | Focus only | All scenarios | All scenarios |
 | Focus and Compact | All scenarios | All scenarios |
-| Focus and Large | 2 of each 10 scenarios, 180-second maximum, measurement only | All scenarios |
+| Focus and Large | 2 of each 10 scenarios, measurement only, under the 120-second product cap (the 180-second allowance was not built, section 7) | All scenarios |
 
 GPU runs turn GPU use on explicitly, through the opt-in setting. Section 7
 lists what has to be built before every cell of this table can run.
@@ -231,8 +305,8 @@ lists what has to be built before every cell of this table can run.
 
 An agent produces each result, and its turns are logged, not estimated.
 
-- **The agent.** A fresh headless Claude Code session on Sonnet
-  (`claude-sonnet-5-5`) for each scenario and path, run by the harness as the
+- **The agent.** A fresh headless Claude Code session on Haiku
+  (`claude-haiku-5-5`, medium effort; Sonnet until the change of section 2) for each scenario and path, run by the harness as the
   same human. It receives the scenario's instruction and nothing else about
   the repository. It starts in an empty working folder under the private
   campaign folder, so it loads no project instructions, and with an MCP
@@ -308,6 +382,26 @@ achieve.
 
 So the first pass of results 2 and 3 will show Context's cost and no benefit.
 That is the honest starting point, and section 5 is how it changes.
+
+Learned from the source and the three passes by 22 November, and the basis of
+section 12:
+
+- **One Answer call is already a small loop,** a kernel state machine
+  (`Gathering`) that runs rounds of queued reads. The models only score
+  fixed candidate lists: Focus gives a relevance logit per hit, and Context
+  gives one score per action card. Nothing generates text, and Context can
+  reorder queued reads or stop, never write a new query.
+- **The software follow-ups of change sets 1 to 3 exist only in the private
+  evaluation build.** These are symbol lookups, references, callers, tests,
+  outlines and governing CONTRACT/README probes. In a product build every
+  evaluation layer is off.
+- **Single-shot gathering has a ceiling.** The wider pool and `search_v2`
+  raised pool coverage on airk from 5 to 8 of 53 essential notes, but the
+  first reply still covered about 4, because the added notes sat at ranks
+  22 to 40. Search sessions reached 22 of 53 by iterating: query, read,
+  notice a gap, and query again with words taken from what they had read.
+- **Query wording dominates.** The same queries gave nearly the same coverage
+  under either search, 13 against 15 of 53. Weaker queries gave 6 to 7.
 
 ## 4. Judging
 
@@ -442,7 +536,7 @@ applied to that configuration once, on the sealed set.
 - **Frozen inputs.** Instructions, reference notes and the tables of section
   4.1 are fixed before any run.
 - **Blind first pass.** Two independent judge sessions, each a fresh
-  headless Claude Code session on Opus (`claude-opus-5-5`) with no tools
+  headless Claude Code session on Sonnet (`claude-sonnet-5-5`, medium effort; Opus until the change of section 2) with no tools
   beyond reading its judging packet, score each result from the rubric, the
   notes and the evidence, with the path names hidden
   where that is possible. Answer's reply has a recognizable shape, so the
@@ -669,16 +763,28 @@ are the readable account; the ledger is the audit trail behind them.
 
 ## 6. Work order
 
-Nothing here has started. The readings of section 9 are approved, and
-execution waits for the user's word. Once it starts, the reports in the
-folder below say how far it has got.
+E0 to E6 ran on 21 and 22 November. On 22 November the user stopped E7
+during its first step of replays and redirected the work to section 12, whose
+own work order (section 12.8) now governs. The table is kept as the record of
+the evaluation steps; E8 and E9 now follow the loop's evaluation (L7). State
+at the stop:
+
+- **Judged:** the baseline on both repositories, change set 1 on airk,
+  and change set 2 on both repositories.
+- **E7 stopped.** Change set 3 completed two of its four replay variants.
+  The best was the 40-candidate pool with 3 keyword searches and a strict
+  deadline: 5–6 of 53 essential notes on airk and 10 of 61 on bookbuilder in
+  the first reply, against 2 and 4–5 at baseline. No judged pass ran.
+- **Not run:** the Context leverage measurement and the GPU scenario replays.
+- **Commits.** None of the series is committed yet (the user allowed the
+  commits to wait); landing them is step L0.
 
 | Step | Work | Done when |
 | --- | --- | --- |
-| E0 | The user reads this plan and corrects it, and says to start | The main readings of section 9 were approved on 21 November, and the agent, judge, commit and iteration choices were set the same day. The word to start has not been given |
+| E0 | The user reads this plan and corrects it, and says to start | The main readings of section 9 were approved on 21 November, and the agent, judge, commit and iteration choices were set the same day. The user gave the word to start on 21 November |
 | E1 | Build the evaluation service from current source. Create the two indexes with vectors. Check scope and credential exclusion, and apply the benchmark exclusions of section 3.1 | Both indexes serve hybrid search, their file counts and commits are recorded, and the leak probe passes |
 | E2 | Write the 20 scenarios and their reference notes, and the sealed set. Freeze them | The user has seen the scenario list; hashes recorded |
-| E3 | Build the harness: the path wrapper and turn log, the headless Claude Code launcher for Sonnet agents and Opus judges, the coverage script, the judge packet | A pilot of 2 scenarios in each repository runs end to end on all five paths. Report `00-setup.md` is written, with `scenarios.md` and `rubrics.md`. It is committed with the baseline |
+| E3 | Build the harness: the path wrapper and turn log, the headless Claude Code launcher for the agents and judges, the coverage script, the judge packet | A pilot of 2 scenarios in each repository runs end to end on all five paths. Report `00-setup.md` is written, with `scenarios.md` and `rubrics.md`. It is committed with the baseline |
 | E4 | Baseline pass on the code as it stands: Parse, Search, the no-model Answer control and Answer with Focus only, on all 20 scenarios. Context cannot act yet, so results 2 and 3 reuse result 1's sessions where their evidence is identical; their time is measured on CPU and GPU. With no agent session, record the rank at which each essential item first appears in a search of 100 hits | Judged and analysed. Commit 1: the harness, `00-setup.md`, `01-baseline.md` with the headroom count of section 4.3, and the baseline results file |
 | E5 | Change set 1 (section 5.3), built while E1 to E4 run. Replay, then a pass on every Answer configuration and the control, CPU and GPU, with Large on CPU on 4 scenarios. Parse and Search sessions are reused, since the set leaves shared search alone | Commit 2: the set's code, `02-change-set-1.md` and its results file. Change set 2 starts at once |
 | E6 | Change set 2: what the E5 pass shows, plus the first trained candidates. Replay, then a full pass | Commit 3: the set's code, `03-change-set-2.md` and its results file. Change set 3 starts at once |
@@ -716,12 +822,12 @@ Found by reading the source. Each is a gap between today's code and section
 
 | Gap | What exists | What is needed |
 | --- | --- | --- |
-| Large with Answer on the GPU | A private CUDA Answer selector for Compact only | The same selector extended to Large. Test-support code |
-| Focus on the GPU | Code that prepares a CUDA Focus profile, and a Focus scorer that accepts one. No selector or launcher, and it has never run | A selector and one proving run. This is the least certain item |
-| 180 seconds for Large on CPU | Every layer caps a request at 120,000 ms: Core validation, the MCP handler, the kernel and the resource policy | An evaluation-only allowance of 180,000 ms. The product cap stays at 120 seconds |
-| Context rules on the GPU | The CUDA Answer selector requires a calibration with zero rules | A deliberate change so an adjusted calibration can be tested there |
+| Large with Answer on the GPU | A private CUDA Answer selector for Compact only | The same selector extended to Large. Test-support code. **Built on 21 November:** a same-install selector runs Compact or Large on CUDA against the CPU installation and its indexes |
+| Focus on the GPU | Code that prepares a CUDA Focus profile, and a Focus scorer that accepts one. No selector or launcher, and it has never run | A selector and one proving run. This is the least certain item. **Blocked on 21 November:** no CUDA profile exists for the 1,024-token Focus graph, and there is no reviewed Focus placement or Focus-stage CUDA warm route; all three sit in digest-input files. Focus runs on CPU in every configuration, and the GPU cells are Context on CUDA with Focus on CPU. **Required since 22 November:** the loop runs Focus several times per call, so a reviewed Focus CUDA route is product work in section 12.5, no longer an evaluation convenience |
+| 180 seconds for Large on CPU | Every layer caps a request at 120,000 ms: Core validation, the MCP handler, the kernel and the resource policy | An evaluation-only allowance of 180,000 ms. The product cap stays at 120 seconds. **Not built:** it needs edits to Core budget validation, the MCP clip and the kernel caps, which test-support cannot reach, so Large on CPU is measured under the 120-second product cap and a call past it counts as a timeout (decided 22 November). **Superseded on 22 November:** the loop raises Answer's product time allowance itself (section 12.4), and Large never runs on CPU (section 12.5) |
+| Context rules on the GPU | The CUDA Answer selector requires a calibration with zero rules | A deliberate change so an adjusted calibration can be tested there. **Decided on 22 November:** the bounded-hybrid gate (a digest input, allowed in this private build by reading 10) admits a calibration-only variant of a reviewed CUDA profile and verifies graph and placement against the reviewed base |
 | The turn log | None | The wrapper of section 3.5, kept in the repository with its tests |
-| Large gated by GPU opt-in | Route planning with typed reasons (commit `e587bf6d`). Large still has CPU profiles in the catalog | The product rule of section 2: no CPU candidate for Large, and Admin offers Large only with GPU use on. The test does not need it. The decision is recorded during the campaign and the product change is made after E9, unless the user asks for it sooner |
+| Large gated by GPU opt-in | Route planning with typed reasons (commit `e587bf6d`). Large still has CPU profiles in the catalog | The product rule of section 2: no CPU candidate for Large, and Admin offers Large only with GPU use on. The test does not need it. The decision is recorded during the campaign and the product change is made after E9, unless the user asks for it sooner. **Moved into the loop work on 22 November:** the device ladder of section 12.5 makes it part of L5 |
 
 ## 8. Cost
 
@@ -743,9 +849,11 @@ These are estimates. The pilot in step E3 replaces them with measurements.
   sealed set is about 80 (one configuration, the control, Parse and
   Search).
 - **Judging.** The baseline, the last change set before each inspection and
-  the sealed set get two independent Opus judge sessions for each result. A
-  pass in between gets one, plus my adjudication, to save time.
-- **Models.** Agent sessions run on Sonnet and judge sessions on Opus, both
+  the sealed set get two independent judge sessions for each result. A
+  pass in between was to get one, plus my adjudication, to save time. On 22
+  November the user said there is ample credit for the headless sessions,
+  so every pass gets two judges and a second session on every close call.
+- **Models.** Agent sessions run on Haiku and judge sessions on Sonnet, both at medium effort and
   through headless Claude Code on the user's account. The token estimate
   above is for that split. Each report records the sessions and tokens it
   actually used.
@@ -809,7 +917,9 @@ for that.
     reports name bookbuilder's scenarios and cite its file paths, and quote
     none of its source.
 14. **Set by the user.** Agent sessions run in headless Claude Code on
-    Sonnet; judge sessions in headless Claude Code on Opus.
+    Sonnet; judge sessions in headless Claude Code on Opus. Changed by the
+    user during execution to Haiku agents and Sonnet judges at medium effort
+    (section 2).
 15. **Set by the user.** One commit per full set of test reports and
     evaluations (section 5.6).
 16. **Set by the user.** Three iterations back to back, then a stop for
@@ -830,6 +940,75 @@ entries of 21 November hold the receipts.
 | Route selection | Planned in Core with typed reasons for every fallback. Not yet run end to end against a loaded model |
 | Linux | Storage policy and boot wrapper work against the real guest. No build has run. The guest and disk-image caps are the user's open decision |
 | Known failing checks | One module-cycle boundary check, seven files in the formatting quarantine, Admin browser tests in teardown with Edge 158 |
+| CUDA Context, measured 21–22 November | On the RTX A6000 with `onnxruntime-cuda/1.30.0`: a warm Compact Context call takes 0.22–0.23 s at about 1,190 input tokens, and the first after warm-up 0.60–0.66 s. Large takes 0.53–0.57 s warm and 0.76–0.98 s first. GPU memory in use was 9.0 GB with Compact and 17.2 GB with Large (section 10.1) |
+| Focus on CPU, measured | 3.7–3.8 s per Focus score at 1,024 tokens on every lifetime, CPU-only or with Context on CUDA, because Focus has no GPU route. In a GPU lifetime Focus is about 15 s of a 17 s Answer call |
+
+### 10.1 GPU and CUDA: what the 21–22 November work found
+
+Receipts are in the private GPU-track folder and in the CUDA image records;
+`00-setup.md` section 2.7 and `02-change-set-1.md` section 4.5 give the details.
+
+- **Built:**
+  - a CUDA evaluation image from the baseline commit (402 s build, Clippy
+    clean), then the CUDA images of change set 1 (`cs1b-cuda`, `cs1e-cuda`,
+    474.5 s);
+  - CUDA-capable images for change sets 2 and 3;
+  - a same-install selector that runs Compact or Large on CUDA against the CPU
+    evaluation installation and its indexes, reading the weights from pinned
+    files without copying them.
+- **Measured on a 7-file synthetic repository** (not the evaluation indexes):
+
+  | Answer configuration | Call time |
+  | --- | --- |
+  | No model | 0.38 s |
+  | Focus on CPU | 15.2–15.4 s |
+  | Focus on CPU, Compact on CUDA | 17.0 s |
+  | Focus on CPU, Large on CUDA | 18.0 s (17.4 s warm) |
+
+  The per-call model times are in the table above. Every CUDA Context
+  assessment abstained, as on CPU, because the shipped calibration has no
+  rules.
+- **Measured against the CPU route:**
+  - **Compact:** a warm Context call on CUDA takes about 0.23 s at 1,190
+    tokens, against 9.7 s on CPU at 2,048 tokens. The input lengths differ,
+    so the ratio is approximate, but the gap is more than an order of
+    magnitude. In the evaluation passes, two Compact Answer calls on CPU
+    exceeded the 120-second cap.
+  - **Large:** on CPU, about 100 s per Answer call in the first-call
+    replays and about 300 s of tool time per airk session. On CUDA, a Large
+    Context call takes under 1 s.
+  - **Focus:** on CPU it costs more than every Context call together. Even
+    a GPU lifetime spends about 90% of an Answer call in Focus on the CPU.
+- **Evidence is the same on both devices.** On the synthetic repository a
+  Context reply kept 7 records against 8 without Context. The cause is that
+  an enabled Context stage halves Focus's token allowance, not the device. A
+  CPU and a GPU cell with the same stages gather the same evidence.
+- **Blocked or not done:**
+  - **No GPU route for Focus.** There is no CUDA profile for the 1,024-token
+    Focus graph, no reviewed Focus placement and no Focus warm route on
+    CUDA. All three sit in digest-input files.
+  - **Calibration-only variants.** The CUDA gate binds a reviewed graph
+    result to an exact profile manifest, so it refuses a Context profile
+    that differs only in calibration. The private build admits such a
+    variant under option A, checking graph and placement against the
+    reviewed base. That changes the gate's validator identity and needs a
+    recorded decision before any product use.
+  - **Digest change from the Answer routing.** The evaluation routing in
+    `runtime.rs` changes the CUDA FP16 math-policy digest. The evaluation's
+    CUDA cells are FP32.
+  - **Restart across profiles.** Restarting a Large lifetime on a Compact
+    lifetime's installation is refused, so Large needed its own
+    installation.
+  - **No GPU scenario replays.** No change set ran its GPU cells on the
+    evaluation indexes. Every evaluation lifetime ran on CPU, which is why
+    the GPU showed almost no activity during the passes.
+- **What it means for section 12:**
+  - A loop that runs Compact several times per call is practical on a GPU,
+    at a fraction of a second per step. On a CPU it costs about 10 s or more
+    per step.
+  - Focus is the bottleneck on every device until it has a GPU route.
+  - Large is fast enough on the GPU and too slow on the CPU, which supports
+    the GPU-only rule.
 
 ## 11. Decisions in force
 
@@ -845,8 +1024,223 @@ entries of 21 November hold the receipts.
 | Memory targets: 16 GB for Compact, 24 GB for Large | In force |
 | The user reviews discordant pairs of the paired comparison | Retired. The user now reviews the judging packet of section 4.5 |
 | Pushes of `feat/arbiter-final` to `origin` | Authorized. No PR, merge, publication or deployment |
-| Agent on Sonnet, judge on Opus, both headless Claude Code | Set on 21 November. The harness is evaluation tooling, not product |
+| Agent on Haiku, judge on Sonnet, both headless Claude Code at medium effort | Set on 21 November (first Sonnet and Opus, changed during execution). The harness is evaluation tooling, not product |
 | One commit per series of reports and evaluations | Set on 21 November |
 | Three iterations, then a stop for manual inspection | Set on 21 November. The user may change the number at each inspection |
 | Training data for weights | Set on 21 November: every candidate trains on pairs from both repositories, for a broader fit to general programming work |
 | Other gates of the parent plan's assignment (the 0.007 raw-score ceiling, the 98% paired comparison, held-out confirmation) | Suspended for this campaign. This plan replaces them as acceptance evidence |
+| Answer becomes a local multi-round loop (section 12) | Set by the user on 22 November. This is the recorded decision to change Answer's wire shape, budgets and digest inputs; the exact shapes are settled in L1 and recorded in the owning contracts |
+| Evaluation runs stopped; no script prototype | Set by the user on 22 November. The harness, scenarios and rubrics are kept for measuring the loop (L7) |
+| Device ladder: Large on GPU only, then Compact on GPU, then Compact on CPU; Focus on GPU where available, else CPU | Set by the user on 22 November. Replaces the "Large not offered without GPU opt-in" wording of section 2 by a fallback, and makes the Focus and Compact GPU routes product priorities |
+| Answer's time allowance raised above 120 s | Set by the user on 22 November; the numbers in section 12.4 are my proposal for the user's review |
+| Implementation starts after the user reviews this revision | Set by the user on 22 November |
+
+## 12. Answer as a local multi-round loop
+
+Set by the user on 22 November 2026 (section 2, "Answer becomes a local
+loop"). This section is the design that implementation follows once the user
+has reviewed it. Section 1 remains the goal: one Answer call should do
+locally, with local models, the query, read, notice-a-gap and query-again
+work that an agent otherwise pays for in turns and tokens.
+
+### 12.1 The five stages
+
+One Answer call runs a bounded loop. Every read is still a queued dispatch
+in the existing `Gathering` state machine
+(`crates/airk-kernel/src/arbiter.rs`, `arbiter/joint.rs`), so call, round,
+candidate, byte and deadline accounting, revision fences and receipts apply
+unchanged to every step.
+
+1. **Plan.** The question is split into two to four sub-needs, for example
+   "where is X defined", "who calls it", "what tests cover it" and "which
+   contract governs it". Each sub-need gets its own query wording, which also
+   avoids the lexical AND behaviour that makes long queries vector-only.
+2. **Retrieve per sub-need.** For each sub-need, run a search, then the
+   structural reads that software work needs: symbols, then references,
+   imports and outline, the governing CONTRACT.md and README, and tests.
+   These are the follow-ups of change sets 1 to 3, promoted from the private
+   evaluation layers into the product path.
+3. **Read and check coverage.** Focus scores the candidate spans against
+   each sub-need. Compact (or Large on a GPU) then judges each sub-need as
+   covered, partly covered or missing.
+4. **Follow up.** Each gap gets one targeted query or structural hop, built
+   from terms found in what was just read: identifiers, paths, error strings
+   and names. Steps 3 and 4 repeat for a bounded number of rounds. They stop
+   early when every sub-need is covered or a round adds nothing new.
+5. **Compose.** The reply groups evidence by sub-need, with locations and
+   per-round provenance. It marks any sub-need still missing, and lists the
+   follow-up reads it did not run, so the agent can run them itself.
+
+### 12.2 How the models take part
+
+The models in AIRK today are scorers. Focus returns a relevance logit for
+each (question, passage) pair. Compact and Large return one score for each
+action card in a roster. None of them generates text. The loop therefore
+works by **selection**:
+
+- **Deterministic code proposes, a model chooses.**
+  - **Plan:** the candidate sub-needs come from the question. They are its
+    identifiers, quoted terms and path hints, plus the task-kind templates
+    of the ten scenario kinds: definition, callers, tests, contract,
+    documentation, configuration and so on. Compact scores which sub-needs
+    apply.
+  - **Follow-up:** the candidate queries come from the text read so far.
+    Compact scores which ones best close a gap.
+- **Coverage is an action roster too.** For each sub-need the cards are
+  "covered", "read more here" and "search for this term", scored by Compact
+  under the existing joint-ledger rules.
+- **When a model abstains or is absent, the loop still runs.** The shipped
+  Context calibration has no rules, so every Context action abstains today.
+  An abstained or unavailable model falls back to a deterministic order:
+  every proposed sub-need, the top Focus span per sub-need, and the first
+  extracted term per gap. The no-model loop is therefore a real product
+  path and the evaluation's control.
+- **Generating text, in plan steps, gap descriptions or the final summary,
+  is not part of this design.** It would need a new decode runtime on CPU,
+  CUDA and later WebGPU. It is listed as a later option, decided only after
+  the selection loop has been measured. **For the user's review.**
+- **Calibration.** Compact's decisions need accepted rules, not the
+  zero-rule calibration. Rules are fitted from the evaluation's receipts on
+  both repositories (section 5.4), and the loop records each decision with
+  its score and rule, as joint scoring does today.
+
+### 12.3 Contracts and shapes that change
+
+These need the contract decisions of section 11, settled in L1 and recorded
+in the owning `CONTRACT.md` files.
+
+- **Request and response.**
+  - `airk-core` `ContextRequestV2`, `ContextResponseV2` and `Budget`
+    (`crates/airk-core/src/arbiter/`) gain a new version.
+  - The response adds sub-needs, per-sub-need coverage, per-round
+    provenance, unrun follow-ups and a partial-result marker.
+  - The budget gains per-round limits and the new time ceiling.
+  - The TypeScript mirror comes from the approved schema-to-TypeScript
+    generation, and the semantic cases are emitted by Rust.
+  - **For the user's review:** whether v2 stays accepted beside the new
+    version for one release. I recommend it.
+- **Ledger and token pool.** Today the joint ledger allows at most
+  `min(rounds, 3)` Context slots and `min(calls, 12)` Focus slots, all in one
+  8,192-token pool.
+  - The loop needs more slots and a per-round token allowance.
+  - This changes `airk-core` `context_action.rs` and the service
+    `joint_ledger.rs`, both digest inputs.
+- **Task policies.** The plan, coverage and follow-up rosters are new task
+  policies beside `context_action.rs` and `context_wide.rs` in
+  `airk-retrieval`, each with its own hashed policy identity.
+- **Promoted follow-ups.**
+  - The software follow-ups leave the test-support gate.
+  - They become product code with their own policy identity.
+  - The evaluation layer tokens are removed once the loop replaces them.
+- **Pinned identities.** The `cpu_source_transition` pins, the CUDA FP16
+  math-policy digest and the bounded-hybrid validator identity move
+  because their source files change.
+  - Each is updated through a recorded decision with its retained-fixture
+    proof.
+  - None is re-pinned merely to make a check pass.
+
+### 12.4 Time
+
+Several local model turns per call make Answer much slower than one search.
+The user accepts that: the loop is worth it if it saves agent turns. My
+proposal, for the user's review:
+
+- **Deadline.** Answer's product ceiling rises from 120 s to 600 s, with a
+  default of 300 s. Search and the other reads keep their present limits.
+  - **Where 120 s is enforced today:** the MCP handler's clamp
+    (`crates/airk-mcp/src/lib.rs`), Core `Budget` validation, the kernel's
+    native-budget cap in `joint.rs`, the supervisor's IPC clamps
+    (`crates/airk-supervisor/src/runtime_metadata/arbiter.rs`), the joint
+    ledger's deadline window, and the read attempt's 125 s
+    `MAX_READ_BUDGET` (`crates/airk-core/src/read_attempt.rs`).
+  - Every one of these changes for Answer only.
+- **Per-stage budgets.** Each round gets a share of the deadline, with a
+  reserve kept for Compose, so a slow model cannot consume the whole call.
+  The existing gate estimates (12 s first Context, 30 s single call, 10 s
+  read reserve) are re-measured per device.
+- **Partial results.** At the deadline, Answer returns what it has, grouped
+  by sub-need. It marks the reply partial, says which stage stopped, and
+  lists the unrun follow-ups. A call past its deadline is never an empty
+  failure.
+- **Progress.** Answer reports progress (round, stage, sub-needs covered)
+  through MCP progress notifications, so a client that supports them can
+  see that a long call is advancing.
+- **Client timeouts.** A client's own tool-call timeout can cut a call off
+  before AIRK's deadline. The setup documentation says how to raise it for
+  supported clients. The deadline a client sends is honoured, so a client
+  can ask for less time.
+- **Expected times** (to be measured in L7):
+  - **With Compact and Focus both on a GPU:** a few seconds per round.
+  - **With Compact on a GPU and Focus on CPU:** about 4 s of Focus per
+    search, as today.
+  - **With Compact on CPU:** 10 s or more per Compact step. Three rounds
+    with two to four sub-needs can then take several minutes, which is why
+    the ceiling is 600 s.
+
+### 12.5 Devices
+
+The GPU matters more than before, because every stage runs a model several
+times per call.
+
+- **Context ladder:**
+  - Large runs on the GPU only.
+  - If Large cannot run on the GPU, Context falls back to Compact on the
+    GPU, and then to Compact on the CPU.
+  - Large never runs on the CPU, in production or as a fallback.
+  - Each fallback carries its typed reason, as route selection does today.
+  - Without GPU opt-in, Compact on the CPU is the Context stage.
+- **Compact on the GPU is the main product path.** The user expects most
+  users to be there. Its CUDA route exists and has been measured
+  (section 10.1); it must become a reviewed product route with accepted
+  calibration rules, not only the private calibration-only variant.
+- **Focus on the GPU becomes required work.**
+  - **What to build:** a CUDA profile for the 1,024-token Focus graph, a
+    reviewed Focus placement and a Focus warm route.
+  - **Why:** Focus on the CPU is about 90% of an Answer call even with
+    Context on the GPU, and the loop calls it per sub-need.
+  - **Fallback:** Focus on the CPU remains whenever no GPU is available or
+    opted in.
+- **CPU fallback is always available.** It is Focus and Compact on the CPU,
+  or the no-model loop. Answer never refuses for lack of a GPU.
+- **Platform order.** WebGPU for Radeon and macOS stays decision A3 and
+  follows CUDA, with the same ladder.
+
+### 12.6 What is kept from the evaluation
+
+- The harness, the 20 scenarios, both rubrics, the judges and the reports
+  folder measure the loop (L7). The question asked of them is unchanged.
+- **Kept findings and fixes:**
+  - the search roster fix and the settled-index guard;
+  - `search_v2`, which finds slightly more on the same queries;
+  - the 40-candidate pool;
+  - the indexer pipelining fixes.
+- The private evaluation layers and the restart exceptions stay
+  evaluation-only.
+
+### 12.7 Acceptance
+
+The loop is accepted when the gates below are met. The gates are those of
+sections 4.1 to 4.3, measured on both repositories.
+
+- **First priority, agent turns:** Answer with the loop reaches correct
+  finishes in fewer turns than the better of Parse and Search.
+- **Coverage over a session:** Answer covers at least the essential notes
+  that Search covers. Today that is 22 of 53 on airk and 26 of 61 on
+  bookbuilder.
+- **Every device and fallback route** answers within its deadline or
+  returns a disclosed partial result.
+
+### 12.8 Work order
+
+| Step | Work | Done when |
+| --- | --- | --- |
+| L0 | Land the evaluation series in order, one signed commit each: the baseline, change set 1, change set 2, and change set 3 as stopped | Commits exist, repository checks pass, `feat/arbiter-final` is pushed |
+| L1 | Contract decisions and Core types: the new request, response and budget version, the ledger slots and token allowance, and the deadline ceiling, in the owning `CONTRACT.md` files, with generated TypeScript and Rust-emitted semantic cases | Contracts recorded; Core builds and its tests pass |
+| L2 | Time: the new ceiling through MCP, Core, kernel, supervisor, ledger and read attempt; per-stage budgets; partial results; progress notifications | Tests show a disclosed partial result at the deadline on every layer |
+| L3 | Kernel loop: Plan, Retrieve per sub-need, Read and check coverage, Follow up, Compose inside `Gathering`, with the deterministic no-model path, and the software follow-ups promoted from the evaluation layers | Kernel tests cover each stage, early stop, budget and deadline stop, and the no-model path |
+| L4 | Service and retrieval: the plan, coverage and follow-up task policies, ledger slots, and calibration rules fitted from the evaluation receipts | Service tests pass; policy identities are recorded |
+| L5 | Devices: the Focus CUDA route, Compact on CUDA as a product route, and the Context ladder with typed reasons | Each route and fallback runs on the A6000 and on CPU, with receipts |
+| L6 | Workspace gate | Clippy and tests across the workspace on the matrix of CONTRIBUTING; known failures listed with their owners |
+| L7 | Measure with the evaluation harness: replays, then judged passes on both repositories, CPU and GPU cells | Report `05-answer-loop.md` and its results; then stop for the user's inspection |
+
+E8 (the sealed set) and E9 (the final report) follow L7 on the user's word.
