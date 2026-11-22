@@ -104,6 +104,32 @@ fn next_read_budget(
     Ok((attempt, remaining_ms))
 }
 
+/// Narrow an Answer loop call to its caller's deadline and Answer's ceiling.
+/// The ORIGINAL request ID, clock and absolute expiry are kept: a callback
+/// never mints another attempt or replenishes a slot. Returns the narrowed
+/// attempt and `remaining_ms`.
+fn narrow_answer_call(
+    mut attempt: airk_core::read_attempt::ReadAttemptBudget,
+    remaining_ms: u64,
+    remaining: std::time::Duration,
+    clock: airk_core::read_attempt::ReadClock,
+    now_ns: u64,
+) -> Result<(airk_core::read_attempt::ReadAttemptBudget, u64)> {
+    let remaining_ms = remaining_ms.min(remaining.as_millis().min(u128::from(
+        airk_core::read_attempt::MAX_ANSWER_ARBITER_REMAINING_MS,
+    )) as u64);
+    ensure!(remaining_ms > 0, "Answer loop original deadline exhausted");
+    let original = attempt.remaining_at(clock, now_ns)?;
+    attempt.remaining_ns = attempt
+        .remaining_ns
+        .min(original.as_nanos().min(remaining.as_nanos()) as u64);
+    ensure!(
+        attempt.remaining_ns > 0,
+        "Answer loop original attempt expired"
+    );
+    Ok((attempt, remaining_ms))
+}
+
 struct Controller(PathBuf);
 impl NativeController for Controller {
     fn device_read_status(
@@ -365,34 +391,18 @@ impl NativeController for Controller {
         mut request: airk_core::native_loop::NativeCardRequest,
         deadline: Instant,
     ) -> Result<Option<airk_core::arbiter::answer_loop::CardAdvice>> {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        // Loop card calls are Answer-only: Answer's ceiling.
-        request.remaining_ms = request
-            .remaining_ms
-            .min(remaining.as_millis().min(u128::from(
-                airk_core::read_attempt::MAX_ANSWER_ARBITER_REMAINING_MS,
-            )) as u64);
-        ensure!(
-            request.remaining_ms > 0,
-            "loop card original deadline exhausted"
-        );
-        // Preserve the ORIGINAL request ID, clock and absolute expiry.
         let clock = if cfg!(windows) {
             airk_core::read_attempt::ReadClock::WindowsPerformanceCounter
         } else {
             airk_core::read_attempt::ReadClock::UnixMonotonic
         };
-        let original = request
-            .read_attempt
-            .remaining_at(clock, airk_process::monotonic::now_ns()?)?;
-        request.read_attempt.remaining_ns = request
-            .read_attempt
-            .remaining_ns
-            .min(original.as_nanos().min(remaining.as_nanos()) as u64);
-        ensure!(
-            request.read_attempt.remaining_ns > 0,
-            "loop card original attempt expired"
-        );
+        (request.read_attempt, request.remaining_ms) = narrow_answer_call(
+            request.read_attempt,
+            request.remaining_ms,
+            deadline.saturating_duration_since(Instant::now()),
+            clock,
+            airk_process::monotonic::now_ns()?,
+        )?;
         let worker = request.worker;
         let response = drive_control(|| async {
             tokio::time::timeout_at(
@@ -422,32 +432,18 @@ impl NativeController for Controller {
         mut request: airk_core::native_loop::NativeFocusRequestV3,
         deadline: Instant,
     ) -> Result<Option<airk_core::native_loop::NativeFocusResponseV3>> {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        request.remaining_ms = request
-            .remaining_ms
-            .min(remaining.as_millis().min(u128::from(
-                airk_core::read_attempt::MAX_ANSWER_ARBITER_REMAINING_MS,
-            )) as u64);
-        ensure!(
-            request.remaining_ms > 0,
-            "batched Focus original deadline exhausted"
-        );
         let clock = if cfg!(windows) {
             airk_core::read_attempt::ReadClock::WindowsPerformanceCounter
         } else {
             airk_core::read_attempt::ReadClock::UnixMonotonic
         };
-        let original = request
-            .read_attempt
-            .remaining_at(clock, airk_process::monotonic::now_ns()?)?;
-        request.read_attempt.remaining_ns = request
-            .read_attempt
-            .remaining_ns
-            .min(original.as_nanos().min(remaining.as_nanos()) as u64);
-        ensure!(
-            request.read_attempt.remaining_ns > 0,
-            "batched Focus original attempt expired"
-        );
+        (request.read_attempt, request.remaining_ms) = narrow_answer_call(
+            request.read_attempt,
+            request.remaining_ms,
+            deadline.saturating_duration_since(Instant::now()),
+            clock,
+            airk_process::monotonic::now_ns()?,
+        )?;
         let worker = request.worker;
         let response = drive_control(|| async {
             tokio::time::timeout_at(

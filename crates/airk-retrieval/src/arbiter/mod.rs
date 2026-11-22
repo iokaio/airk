@@ -15,6 +15,7 @@ mod external_data;
 /// without native inference, so the no-model loop records the same policy.
 pub mod loop_cards;
 pub mod loop_coverage;
+pub mod loop_focus;
 pub mod loop_follow_up;
 pub mod loop_plan;
 pub mod loop_split;

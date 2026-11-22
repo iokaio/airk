@@ -195,13 +195,21 @@ fn per_index_capacity_includes_the_actual_running_request() -> Result<()> {
     handle.configure(configuration)?;
     shared.queue.lock().unwrap().running_index = Some((first.scope.index_id, LaneKey::default()));
     let _accepted = handle.score(first)?;
+    let Err(refused) = handle.score(request_fixture(&shared, &resources, 11)?) else {
+        anyhow::bail!(
+            "one running plus one queued exhausts the original two-request per-index limit"
+        );
+    };
     assert!(
-        handle
-            .score(request_fixture(&shared, &resources, 11)?)
-            .is_err(),
-        "one running plus one queued exhausts the original two-request per-index limit"
+        refused.downcast_ref::<AdmissionRefused>().is_some(),
+        "a refusal before queueing is typed, so the caller can release its reservation"
     );
     assert_eq!(handle.observation()?.queued, 1);
+    // An Answer /3 part of a new attempt fits under the index ceiling of four.
+    let mut part = request_fixture(&shared, &resources, 12)?;
+    part.lane = LaneKey::answer(Incarnation::from_bytes([9; 16]), [1]);
+    let _part = handle.score(part)?;
+    assert_eq!(handle.observation()?.queued, 2);
     Ok(())
 }
 #[test]

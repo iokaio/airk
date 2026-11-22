@@ -123,6 +123,32 @@ impl std::error::Error for KnownInputRefusal {
         Some(self.cause.as_ref())
     }
 }
+/// The lane refused a job before queueing it: the source authority had
+/// expired, its input bounds failed, admission was closed or constrained, the
+/// profile was draining, the resident changed or compute admission failed.
+/// The job never entered the queue, so no native work ran and the caller may
+/// release what it reserved. Only this lane constructs the value.
+#[derive(Debug)]
+pub struct AdmissionRefused {
+    cause: anyhow::Error,
+}
+impl AdmissionRefused {
+    /// A refusal for callers' tests, as the lane would report it.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn synthetic(cause: anyhow::Error) -> Self {
+        Self { cause }
+    }
+}
+impl std::fmt::Display for AdmissionRefused {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Optional native job was refused before it was queued")
+    }
+}
+impl std::error::Error for AdmissionRefused {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.cause.as_ref())
+    }
+}
 /// The compiler refused the input. Nothing was dispatched.
 fn compile_refused(queue_us: u64, compile_us: u64, cause: anyhow::Error) -> anyhow::Error {
     KnownInputRefusal {
@@ -1104,7 +1130,21 @@ impl Handle {
     ) -> Result<PendingScore> {
         self.score_inner(request, Some(observer))
     }
+    /// Every error here precedes `jobs.push_back`, so it is a typed
+    /// `AdmissionRefused`: nothing was queued and no native work ran.
     fn score_inner(
+        &self,
+        request: ScoreRequest,
+        #[cfg(feature = "test-support")] observer: Option<execution_observer::Observer>,
+    ) -> Result<PendingScore> {
+        self.admit(
+            request,
+            #[cfg(feature = "test-support")]
+            observer,
+        )
+        .map_err(|cause| AdmissionRefused { cause }.into())
+    }
+    fn admit(
         &self,
         request: ScoreRequest,
         #[cfg(feature = "test-support")] observer: Option<execution_observer::Observer>,

@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Lane fairness for the one model compute thread. Ordinary jobs (Search
-//! Focus, Answer /2) keep the per-index rule: fewer than two jobs on an index,
-//! queued or running, before another is admitted. Answer /3 jobs are keyed by
-//! (index, attempt, part): one job per key, at most four parts of one attempt
-//! on an index, so the parts of one compound Answer can each queue their next
-//! call while one Answer still cannot fill the lane. The queue holds at most
-//! eight jobs in all.
+//! Lane fairness for the one model compute thread, with at most eight jobs
+//! queued in all.
+//! - Ordinary jobs (Search Focus, Answer /2) keep the per-index rule: fewer
+//!   than two jobs on an index, queued or running, counting every job on it.
+//! - Answer /3 jobs are admitted while fewer than four jobs of any kind
+//!   hold the index, across every Answer on it, so one index never takes more than half the queue
+//!   and another index always keeps room. Within it, one job per (attempt,
+//!   part): a job names every part it serves (a batched call spans parts), and
+//!   two jobs of one attempt may not share a part.
 use airk_core::{
     arbiter::{Task, answer_loop::is_card_task},
     identity::Incarnation,
@@ -14,16 +16,30 @@ use airk_core::{
 
 /// At most this many jobs are queued in all.
 pub(super) const MAX_QUEUED: usize = 8;
-/// At most this many parts of one Answer attempt hold a job on one index.
-pub(super) const MAX_ATTEMPT_PARTS: usize = airk_core::arbiter::answer_loop::MAX_PARTS;
+/// An Answer /3 job is admitted only while fewer than this many jobs of any
+/// kind hold its index, across every attempt.
+pub(super) const MAX_INDEX_JOBS: usize = airk_core::arbiter::answer_loop::MAX_PARTS;
 
 /// The fairness key of one lane job.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct LaneKey {
     /// The Answer /3 read attempt, or `None` for ordinary jobs.
     pub attempt: Option<Incarnation>,
-    /// The part within the attempt (0 for Split and for ordinary jobs).
-    pub part: u8,
+    /// Bit `p` is set for each part `p` the job serves (part 0 is Split).
+    /// Ordinary jobs keep 0.
+    pub parts: u8,
+}
+impl LaneKey {
+    /// The key of an Answer /3 job serving `parts` of `attempt`.
+    pub fn answer(attempt: Incarnation, parts: impl IntoIterator<Item = u8>) -> Self {
+        Self {
+            attempt: Some(attempt),
+            parts: parts
+                .into_iter()
+                .filter(|part| *part < 8)
+                .fold(0, |mask, part| mask | (1 << part)),
+        }
+    }
 }
 
 /// The enrollment task that governs `task`: loop card tasks run under the
@@ -55,12 +71,11 @@ pub(super) fn admits(
     match lane.attempt {
         None => on_index.len() < 2,
         Some(attempt) => {
-            !on_index.contains(&lane)
-                && on_index
+            lane.parts != 0
+                && on_index.len() < MAX_INDEX_JOBS
+                && !on_index
                     .iter()
-                    .filter(|key| key.attempt == Some(attempt))
-                    .count()
-                    < MAX_ATTEMPT_PARTS
+                    .any(|key| key.attempt == Some(attempt) && key.parts & lane.parts != 0)
         }
     }
 }

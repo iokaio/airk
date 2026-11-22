@@ -18,6 +18,8 @@ const NOT_ADMITTED: &str = "The selected Context profile does not admit this loo
 const ROSTER_REFUSED: &str = "The loop card roster breaks its task policy's roster rules; no compile or scoring was dispatched.";
 const INPUT_REFUSED: &str =
     "The native lane refused this card input before any model work; the reservation was released.";
+const QUEUE_REFUSED: &str = "The native lane refused to queue this card call; no model work ran and the reservation was released.";
+const RESIDENT_UNAVAILABLE: &str = "The resident Context session was unavailable before dispatch; no model work ran and the reservation was released.";
 const SCORE_FAILED: &str =
     "Native card scoring returned a known failure; measured work is retained without a decision.";
 const SCORES_INVALID: &str = "Native card scoring completed, but its score shape or finiteness was invalid; measured work is retained without a decision.";
@@ -85,64 +87,200 @@ fn not_dispatched(advice: &mut CardAdvice, reason: &str, unsupported: bool) {
     }
 }
 
-/// The lane key of a card call: the original attempt and its lowest part.
+/// The lane key of a card call: the original attempt and every part its
+/// segments serve, so no other job of the attempt may hold one of them.
 #[cfg(feature = "local-inference")]
 fn card_lane(
     request: &NativeCardRequest,
 ) -> airk_inference::inference_engine::pool::arbiter::LaneKey {
-    airk_inference::inference_engine::pool::arbiter::LaneKey {
-        attempt: Some(request.read_attempt.request_id),
-        part: request
-            .segments
-            .iter()
-            .map(|segment| segment.part)
-            .min()
-            .unwrap_or(0),
-    }
+    airk_inference::inference_engine::pool::arbiter::LaneKey::answer(
+        request.read_attempt.request_id,
+        request.segments.iter().map(|segment| segment.part),
+    )
 }
 
-/// Map per-segment selections to advice outcomes.
+/// Map per-segment selections to advice outcomes through the task policy's
+/// own mapping (`loop_cards::outcomes`), so it is part of the policy identity.
 #[cfg(any(feature = "local-inference", test))]
 fn apply_choices(
     advice: &mut CardAdvice,
     segments: &[airk_core::native_loop::CardSegment],
     choices: Vec<airk_retrieval::arbiter::loop_cards::SegmentChoice>,
 ) -> Result<()> {
-    use airk_core::native_loop::LoopCard;
     ensure!(
-        choices.len() == segments.len() && advice.segments.len() == segments.len(),
+        advice.segments.len() == segments.len(),
         "loop selection lost a segment"
     );
-    for ((outcome, segment), choice) in advice.segments.iter_mut().zip(segments).zip(choices) {
-        outcome.raw_scores = choice.raw_scores;
-        if let Some(reason) = choice.abstained {
-            outcome.rule = None;
-            outcome.margin = None;
-            outcome.outcome = Outcome::Abstained {
-                reason: reason.into(),
+    advice.segments = airk_retrieval::arbiter::loop_cards::outcomes(segments, choices)?;
+    Ok(())
+}
+
+/// One card call after its reservation: the ledger, its ticket, and what
+/// selection needs. Kept apart from the stage owner so the settlement can be
+/// driven by a fake lane in tests.
+#[cfg(feature = "local-inference")]
+pub(super) struct CardCall<'a> {
+    pub(super) ledger: &'a Mutex<loop_ledger::Ledger>,
+    pub(super) ticket: loop_ledger::Ticket,
+    pub(super) stage: airk_core::arbiter::answer_loop::LoopStage,
+    pub(super) segments: &'a [airk_core::native_loop::CardSegment],
+    pub(super) calibration: &'a airk_core::arbiter::answer_loop::LoopCalibration,
+    pub(super) mode: airk_retrieval::arbiter::loop_cards::DecisionMode,
+    pub(super) max_sub_needs: usize,
+    pub(super) reserved: usize,
+    pub(super) deadline: Instant,
+}
+
+/// Settle one card call: `pending` is the lane admission (`None` when the
+/// deadline expired before it). A refusal before queueing releases the
+/// reservation; unknown work keeps it; observed completion re-attributes it
+/// and selects per segment.
+#[cfg(feature = "local-inference")]
+pub(super) async fn settle_card_call(
+    call: CardCall<'_>,
+    advice: &mut CardAdvice,
+    pending: Option<Result<airk_inference::inference_engine::pool::arbiter::PendingScore>>,
+) -> Result<()> {
+    use airk_inference::inference_engine::pool::arbiter::{
+        AdmissionRefused, CompiledReceipt, KnownInputRefusal, KnownScoreFailure,
+    };
+    use airk_retrieval::arbiter::loop_cards;
+    let CardCall {
+        ledger,
+        ticket,
+        stage,
+        segments,
+        calibration,
+        mode,
+        max_sub_needs,
+        reserved,
+        deadline,
+    } = call;
+    let mut pending = match pending {
+        Some(Ok(pending)) => pending,
+        // Everything in `pending` precedes the job entering the
+        // queue: the resident lookup, the reuse admission, and
+        // `score`, whose every error is a typed
+        // `AdmissionRefused`. A deadline can only expire while
+        // awaiting the reuse admission, before `score` runs. So a
+        // failure here is a known non-dispatch, released.
+        failed => {
+            let reason = match &failed {
+                Some(Err(error)) if error.downcast_ref::<AdmissionRefused>().is_some() => {
+                    QUEUE_REFUSED
+                }
+                _ => RESIDENT_UNAVAILABLE,
             };
-            continue;
+            if ledger
+                .lock()
+                .map_err(|_| anyhow::anyhow!("loop NN ledger unavailable"))
+                .and_then(|mut ledger| ledger.refused(ticket))
+                .is_ok()
+            {
+                not_dispatched(advice, reason, false);
+            }
+            return Ok(());
         }
-        let digests = choice
-            .chosen
-            .iter()
-            .map(|index| {
-                segment
-                    .cards
-                    .get(*index)
-                    .context("loop selection chose outside its roster")
-                    .and_then(LoopCard::text_digest)
-            })
-            .collect::<Result<Vec<_>>>()?;
-        outcome.rule = choice.rule;
-        outcome.margin = choice.margin;
-        outcome.outcome = Outcome::Accepted {
-            decision: if segment.multiple {
-                Decision::LoopCards(digests)
-            } else {
-                Decision::LoopCard(*digests.first().context("loop selection chose no card")?)
-            },
-        };
+    };
+    let compiled: Option<CompiledReceipt> = match tokio::time::timeout_at(
+        tokio::time::Instant::from_std(deadline),
+        &mut pending.compiled,
+    )
+    .await
+    {
+        Ok(Ok(receipt)) => Some(receipt),
+        _ => {
+            pending.compiled.close();
+            pending.compiled.try_recv().ok()
+        }
+    };
+    if let Some(receipt) = &compiled {
+        advice.work.queue_us = Some(receipt.queue_us);
+        advice.work.compile_us = Some(receipt.compile_us);
+        if receipt.input_tokens <= reserved
+            && ledger
+                .lock()
+                .map_err(|_| anyhow::anyhow!("loop NN ledger unavailable"))
+                .and_then(|mut ledger| ledger.compiled(ticket, receipt.input_tokens))
+                .is_err()
+        {
+            return Ok(());
+        }
+    }
+    let completion = tokio::time::timeout_at(
+        tokio::time::Instant::from_std(deadline),
+        &mut pending.completed,
+    )
+    .await;
+    let settle = |tokens: usize| {
+        ledger
+            .lock()
+            .map_err(|_| anyhow::anyhow!("loop NN ledger unavailable"))
+            .and_then(|mut ledger| ledger.completed(ticket, tokens))
+    };
+    match &completion {
+        Ok(Ok(Ok(scored))) => {
+            let Ok(attribution) = settle(scored.input_tokens) else {
+                return Ok(());
+            };
+            advice.observed_input_tokens = Some(scored.input_tokens);
+            advice.attribution = attribution;
+            advice.work.input_tokens = scored.input_tokens;
+            advice.work.queue_us = Some(scored.queue_us);
+            advice.work.compile_us = Some(scored.compile_us);
+            advice.work.inference_us = Some(scored.inference_us);
+            let policy_started = Instant::now();
+            match loop_cards::select(
+                stage,
+                segments,
+                &scored.scores,
+                calibration,
+                mode,
+                max_sub_needs,
+            )
+            .and_then(|choices| apply_choices(advice, segments, choices))
+            {
+                Ok(()) => {}
+                Err(_) => {
+                    for segment in &mut advice.segments {
+                        segment.raw_scores.clear();
+                        segment.rule = None;
+                        segment.margin = None;
+                        segment.outcome = Outcome::InvalidInput {
+                            reason: SCORES_INVALID.into(),
+                        };
+                    }
+                }
+            }
+            advice.work.policy_us =
+                Some(policy_started.elapsed().as_micros().min(u64::MAX as u128) as u64);
+        }
+        Ok(Ok(Err(error))) if error.downcast_ref::<KnownScoreFailure>().is_some() => {
+            let receipt = &error
+                .downcast_ref::<KnownScoreFailure>()
+                .context("known score failure")?
+                .receipt;
+            if let Ok(attribution) = settle(receipt.input_tokens) {
+                advice.observed_input_tokens = Some(receipt.input_tokens);
+                advice.attribution = attribution;
+                advice.work.input_tokens = receipt.input_tokens;
+                advice.work.queue_us = Some(receipt.queue_us);
+                advice.work.compile_us = Some(receipt.compile_us);
+                advice.work.inference_us = Some(receipt.inference_us);
+            }
+            unavailable(advice, SCORE_FAILED);
+        }
+        Ok(Ok(Err(error))) if error.downcast_ref::<KnownInputRefusal>().is_some() => {
+            let released = ledger
+                .lock()
+                .map_err(|_| anyhow::anyhow!("loop NN ledger unavailable"))
+                .and_then(|mut ledger| ledger.refused(ticket))
+                .is_ok();
+            if released {
+                not_dispatched(advice, INPUT_REFUSED, false);
+            }
+        }
+        _ => {}
     }
     Ok(())
 }
@@ -231,9 +369,7 @@ impl StageOwner {
         }
         #[cfg(feature = "local-inference")]
         {
-            use airk_inference::inference_engine::pool::arbiter::{
-                CompiledReceipt, KnownInputRefusal, KnownScoreFailure, ScoreRequest,
-            };
+            use airk_inference::inference_engine::pool::arbiter::ScoreRequest;
             use airk_retrieval::arbiter::loop_cards;
             let stage = self.stage;
             let profile = self.profile_description(
@@ -346,119 +482,26 @@ impl StageOwner {
                     },
                 )
             };
-            let mut pending =
-                match tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), pending)
+            let pending =
+                tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), pending)
                     .await
-                {
-                    Ok(Ok(pending)) => pending,
-                    _ => {
-                        advice.validate()?;
-                        return Ok(Some(advice));
-                    }
-                };
-            let compiled: Option<CompiledReceipt> = match tokio::time::timeout_at(
-                tokio::time::Instant::from_std(deadline),
-                &mut pending.compiled,
+                    .ok();
+            settle_card_call(
+                CardCall {
+                    ledger: &self.loop_ledger,
+                    ticket,
+                    stage: card_stage,
+                    segments: &request.segments,
+                    calibration: &calibration,
+                    mode: self.decision_mode(),
+                    max_sub_needs: request.parent_budget.max_sub_needs,
+                    reserved,
+                    deadline,
+                },
+                &mut advice,
+                pending,
             )
-            .await
-            {
-                Ok(Ok(receipt)) => Some(receipt),
-                _ => {
-                    pending.compiled.close();
-                    pending.compiled.try_recv().ok()
-                }
-            };
-            if let Some(receipt) = &compiled {
-                advice.work.queue_us = Some(receipt.queue_us);
-                advice.work.compile_us = Some(receipt.compile_us);
-                if receipt.input_tokens <= reserved
-                    && self
-                        .loop_ledger
-                        .lock()
-                        .map_err(|_| anyhow::anyhow!("loop NN ledger unavailable"))
-                        .and_then(|mut ledger| ledger.compiled(ticket, receipt.input_tokens))
-                        .is_err()
-                {
-                    advice.validate()?;
-                    return Ok(Some(advice));
-                }
-            }
-            let completion = tokio::time::timeout_at(
-                tokio::time::Instant::from_std(deadline),
-                &mut pending.completed,
-            )
-            .await;
-            let settle = |tokens: usize| {
-                self.loop_ledger
-                    .lock()
-                    .map_err(|_| anyhow::anyhow!("loop NN ledger unavailable"))
-                    .and_then(|mut ledger| ledger.completed(ticket, tokens))
-            };
-            match &completion {
-                Ok(Ok(Ok(scored))) => {
-                    let Ok(attribution) = settle(scored.input_tokens) else {
-                        advice.validate()?;
-                        return Ok(Some(advice));
-                    };
-                    advice.observed_input_tokens = Some(scored.input_tokens);
-                    advice.attribution = attribution;
-                    advice.work.input_tokens = scored.input_tokens;
-                    advice.work.queue_us = Some(scored.queue_us);
-                    advice.work.compile_us = Some(scored.compile_us);
-                    advice.work.inference_us = Some(scored.inference_us);
-                    let policy_started = Instant::now();
-                    match loop_cards::select(
-                        card_stage,
-                        &request.segments,
-                        &scored.scores,
-                        &calibration,
-                        self.decision_mode(),
-                    )
-                    .and_then(|choices| apply_choices(&mut advice, &request.segments, choices))
-                    {
-                        Ok(()) => {}
-                        Err(_) => {
-                            for segment in &mut advice.segments {
-                                segment.raw_scores.clear();
-                                segment.rule = None;
-                                segment.margin = None;
-                                segment.outcome = Outcome::InvalidInput {
-                                    reason: SCORES_INVALID.into(),
-                                };
-                            }
-                        }
-                    }
-                    advice.work.policy_us =
-                        Some(policy_started.elapsed().as_micros().min(u64::MAX as u128) as u64);
-                }
-                Ok(Ok(Err(error))) if error.downcast_ref::<KnownScoreFailure>().is_some() => {
-                    let receipt = &error
-                        .downcast_ref::<KnownScoreFailure>()
-                        .context("known score failure")?
-                        .receipt;
-                    if let Ok(attribution) = settle(receipt.input_tokens) {
-                        advice.observed_input_tokens = Some(receipt.input_tokens);
-                        advice.attribution = attribution;
-                        advice.work.input_tokens = receipt.input_tokens;
-                        advice.work.queue_us = Some(receipt.queue_us);
-                        advice.work.compile_us = Some(receipt.compile_us);
-                        advice.work.inference_us = Some(receipt.inference_us);
-                    }
-                    unavailable(&mut advice, SCORE_FAILED);
-                }
-                Ok(Ok(Err(error))) if error.downcast_ref::<KnownInputRefusal>().is_some() => {
-                    let released = self
-                        .loop_ledger
-                        .lock()
-                        .map_err(|_| anyhow::anyhow!("loop NN ledger unavailable"))
-                        .and_then(|mut ledger| ledger.refused(ticket))
-                        .is_ok();
-                    if released {
-                        not_dispatched(&mut advice, INPUT_REFUSED, false);
-                    }
-                }
-                _ => {}
-            }
+            .await?;
             let current = self.read_configuration();
             if advice.observed_input_tokens.is_some()
                 && (self
@@ -527,5 +570,7 @@ impl StageOwner {
     }
 }
 
+#[cfg(all(test, feature = "local-inference"))]
+mod settlement_tests;
 #[cfg(test)]
 mod tests;

@@ -234,6 +234,7 @@ fn zero_rule_calibration_abstains_every_segment() -> Result<()> {
         &[3.0, 1.0, 0.5, 2.5],
         &unruled(LoopStage::Coverage),
         DecisionMode::Calibrated,
+        4,
     )?;
     assert_eq!(choices.len(), 2);
     assert!(choices.iter().all(|choice| choice.chosen.is_empty()
@@ -266,6 +267,7 @@ fn calibrated_rule_admits_per_segment_with_exact_top_minus_runner_up() -> Result
         &scores,
         &calibration,
         DecisionMode::Calibrated,
+        4,
     )?;
     // Segment 1: Covered wins at 0.8, below its 1.0 rule: abstains.
     assert!(choices[0].chosen.is_empty());
@@ -282,6 +284,7 @@ fn calibrated_rule_admits_per_segment_with_exact_top_minus_runner_up() -> Result
         &[1.0, 1.0],
         &calibration,
         DecisionMode::Calibrated,
+        4,
     )?;
     assert_eq!(tied[0].abstained, Some("The top card was tied."));
     assert!(
@@ -291,6 +294,7 @@ fn calibrated_rule_admits_per_segment_with_exact_top_minus_runner_up() -> Result
             &[1.0, f32::NAN],
             &calibration,
             DecisionMode::Calibrated,
+            4,
         )
         .is_err()
     );
@@ -301,6 +305,7 @@ fn calibrated_rule_admits_per_segment_with_exact_top_minus_runner_up() -> Result
             &[1.0],
             &calibration,
             DecisionMode::Calibrated,
+            4,
         )
         .is_err(),
         "score shape must match the presented cards"
@@ -312,6 +317,7 @@ fn calibrated_rule_admits_per_segment_with_exact_top_minus_runner_up() -> Result
             &[1.0, 0.0],
             &unruled(LoopStage::FollowUp),
             DecisionMode::Calibrated,
+            4,
         )
         .is_err(),
         "another task's calibration is refused"
@@ -327,6 +333,7 @@ fn top_score_never_abstains_and_ties_go_to_the_lowest_symbol() -> Result<()> {
         &[0.5, 2.0, 2.0],
         &unruled(LoopStage::Coverage),
         DecisionMode::TopScore,
+        4,
     )?;
     assert_eq!(choices[0].chosen, vec![1]);
     assert_eq!(choices[0].rule, None);
@@ -353,6 +360,7 @@ fn plan_takes_the_proposals_above_the_reference_at_least_one_at_most_four() -> R
         &scores,
         &calibration,
         DecisionMode::Calibrated,
+        4,
     )?;
     assert_eq!(choices[0].chosen, vec![0, 4, 2, 1]);
     assert_eq!(
@@ -367,6 +375,7 @@ fn plan_takes_the_proposals_above_the_reference_at_least_one_at_most_four() -> R
         &low,
         &calibration,
         DecisionMode::Calibrated,
+        4,
     )?;
     assert_eq!(choices[0].chosen, vec![1]);
     // Unruled Plan abstains, so the kernel takes every proposed need.
@@ -376,6 +385,7 @@ fn plan_takes_the_proposals_above_the_reference_at_least_one_at_most_four() -> R
         &scores,
         &unruled(LoopStage::Plan),
         DecisionMode::Calibrated,
+        4,
     )?;
     assert!(choices[0].chosen.is_empty());
     Ok(())
@@ -389,19 +399,19 @@ fn recorded_loop_policy_identities() -> Result<()> {
     let recorded = [
         (
             Task::ContextSplit,
-            "42669ee164c7a620926274a1efe6f0597ca971c7c52fecf20e8d7f0b0c873ccc",
+            "c63c95f9771fd72a3015c32b927a1498c2da82d7252dcd6c8976b9e7be622676",
         ),
         (
             Task::ContextPlan,
-            "28c43b34d4859710908dde7fe5e2c3fd390027d01af82e6f67021626b286a0d6",
+            "472634155dbf5b16fe3d65fe25959f5bca7dada2fbedb144cacca71279ce2002",
         ),
         (
             Task::ContextCoverage,
-            "5eb717cf1d4c6b3484e77c1c275bf93e4e85ebbda0ea34c1a50357e9354fe1a7",
+            "32c7f08cf11cf35aaf4d5f284ad8f03e10e970651c04f7261995a66226c4dd20",
         ),
         (
             Task::ContextFollowUp,
-            "a3bbaf848d2c2e983f24e8af0a4627dc7e8f1e53730dc2bbdec81c7d51d86781",
+            "ce541ca1056959b09b7725c14ef5b0a4bcf6c53dfc54fa01bb5904f523a91c15",
         ),
     ];
     let core = airk_core::arbiter::answer_loop::loop_semantic_policy_digest()?.to_string();
@@ -410,11 +420,111 @@ fn recorded_loop_policy_identities() -> Result<()> {
         .map(|(task, _)| task_policy(*task).map(|policy| policy.to_string()))
         .collect::<Result<_>>()?;
     assert_eq!(
-        core, "3b919cb0193f7bcdea4f58a23d7543ff6e980d7da38aec474035e5798b031357",
+        core, "0da27971742ec98aa9f4651587a43149a54f3fec5c5a027933774ec785d2f274",
         "live {live:?}"
     );
     for ((task, expected), live) in recorded.iter().zip(&live) {
         assert_eq!(live, expected, "{task:?}");
     }
+    // The batched Focus identity over the release Focus pair policy.
+    assert_eq!(
+        super::super::loop_focus::policy_digest(super::super::compiler::focus::policy_digest()?)?
+            .to_string(),
+        "f67a532ba7b48e2980afcdd8db6bdde555536e58a2146627302128acc68cad7d"
+    );
+    Ok(())
+}
+
+#[test]
+fn plan_never_chooses_more_than_the_request_s_max_sub_needs() -> Result<()> {
+    let calibration = calibration(
+        Task::ContextPlan,
+        vec![LoopRule {
+            class: CardClass::PlanNeed,
+            minimum_raw_margin: 0.0,
+        }],
+    );
+    let roster = plan(6);
+    // Five proposals score above the reference (last, 1.0).
+    let scores = [3.0f32, 1.5, 2.0, 0.5, 2.5, 1.2, 1.0];
+    for (limit, expected) in [
+        (1, vec![0]),
+        (2, vec![0, 4]),
+        (3, vec![0, 4, 2]),
+        (4, vec![0, 4, 2, 1]),
+        (9, vec![0, 4, 2, 1]),
+        (0, vec![0]),
+    ] {
+        let choices = select(
+            LoopStage::Plan,
+            std::slice::from_ref(&roster),
+            &scores,
+            &calibration,
+            DecisionMode::Calibrated,
+            limit,
+        )?;
+        assert_eq!(choices[0].chosen, expected, "max_sub_needs {limit}");
+    }
+    Ok(())
+}
+
+#[test]
+fn outcomes_map_choices_to_card_digests_rules_and_abstentions() -> Result<()> {
+    let coverage_segments = [coverage(1, 1), coverage(2, 1)];
+    let mapped = outcomes(
+        &coverage_segments,
+        vec![
+            SegmentChoice {
+                raw_scores: vec![2.0, 1.0],
+                chosen: vec![1],
+                rule: Some(0),
+                margin: Some(1.0),
+                abstained: None,
+            },
+            SegmentChoice {
+                raw_scores: vec![0.5, 0.5],
+                chosen: vec![],
+                rule: None,
+                margin: None,
+                abstained: Some("The top card was tied."),
+            },
+        ],
+    )?;
+    assert!(matches!(
+        &mapped[0].outcome,
+        Outcome::Accepted { decision: Decision::LoopCard(card) }
+            if *card == coverage_segments[0].cards[1].text_digest()?
+    ));
+    assert_eq!((mapped[0].rule, mapped[0].margin), (Some(0), Some(1.0)));
+    assert!(matches!(mapped[1].outcome, Outcome::Abstained { .. }));
+    assert_eq!(mapped[1].margin, None);
+    let roster = plan(2);
+    let mapped = outcomes(
+        std::slice::from_ref(&roster),
+        vec![SegmentChoice {
+            raw_scores: vec![1.0, 2.0, 0.0],
+            chosen: vec![1, 0],
+            rule: None,
+            margin: Some(1.0),
+            abstained: None,
+        }],
+    )?;
+    let expected = vec![
+        roster.cards[1].text_digest()?,
+        roster.cards[0].text_digest()?,
+    ];
+    assert!(matches!(
+        &mapped[0].outcome,
+        Outcome::Accepted { decision: Decision::LoopCards(cards) } if *cards == expected
+    ));
+    let outside = SegmentChoice {
+        raw_scores: vec![1.0, 2.0],
+        chosen: vec![7],
+        rule: None,
+        margin: Some(1.0),
+        abstained: None,
+    };
+    assert!(outcomes(&[coverage(1, 1)], vec![outside]).is_err());
+    assert!(outcomes(&[coverage(1, 1)], vec![]).is_err());
     Ok(())
 }

@@ -324,3 +324,72 @@ fn next_read_narrows_each_original_budget_without_minting_an_attempt() -> Result
     assert_eq!(original.remaining_ns, 18_000_000_000);
     Ok(())
 }
+
+#[test]
+fn answer_loop_calls_keep_the_original_attempt_and_clamp_to_the_answer_ceiling() -> Result<()> {
+    use super::narrow_answer_call;
+    let clock = if cfg!(windows) {
+        airk_core::read_attempt::ReadClock::WindowsPerformanceCounter
+    } else {
+        airk_core::read_attempt::ReadClock::UnixMonotonic
+    };
+    let now = 1_000_000_000u64;
+    let original = airk_core::read_attempt::ReadAttemptBudget {
+        schema: 1,
+        request_id: airk_core::identity::Incarnation::from_bytes([3; 16]),
+        clock,
+        expires_monotonic_ns: now + 400_000_000_000,
+        remaining_ns: 400_000_000_000,
+        native_retry_expires_monotonic_ns: None,
+    };
+    // A caller deadline of 700 s cannot raise anything: the attempt has 400 s
+    // and Answer's ceiling is 600 s.
+    let (narrowed, remaining_ms) = narrow_answer_call(
+        original,
+        600_000,
+        std::time::Duration::from_secs(700),
+        clock,
+        now,
+    )?;
+    assert_eq!(narrowed.request_id, original.request_id);
+    assert_eq!(narrowed.clock, original.clock);
+    assert_eq!(narrowed.expires_monotonic_ns, original.expires_monotonic_ns);
+    assert_eq!(narrowed.remaining_ns, 400_000_000_000);
+    assert_eq!(remaining_ms, 600_000);
+    // A nearer caller deadline narrows both the attempt and remaining_ms.
+    let (narrowed, remaining_ms) = narrow_answer_call(
+        original,
+        600_000,
+        std::time::Duration::from_secs(30),
+        clock,
+        now,
+    )?;
+    assert_eq!(narrowed.request_id, original.request_id);
+    assert_eq!(narrowed.remaining_ns, 30_000_000_000);
+    assert_eq!(remaining_ms, 30_000);
+    // Time already spent on the original attempt is never given back.
+    let (narrowed, _) = narrow_answer_call(
+        original,
+        600_000,
+        std::time::Duration::from_secs(700),
+        clock,
+        now + 100_000_000_000,
+    )?;
+    assert_eq!(narrowed.remaining_ns, 300_000_000_000);
+    assert!(
+        narrow_answer_call(original, 600_000, std::time::Duration::ZERO, clock, now).is_err(),
+        "an exhausted caller deadline refuses before any transport"
+    );
+    assert!(
+        narrow_answer_call(
+            original,
+            600_000,
+            std::time::Duration::from_secs(1),
+            clock,
+            now + 400_000_000_000
+        )
+        .is_err(),
+        "an expired original attempt refuses"
+    );
+    Ok(())
+}

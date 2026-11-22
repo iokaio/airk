@@ -11,11 +11,13 @@
 //! deterministic order decides.
 use airk_core::{
     arbiter::{
-        Task,
-        answer_loop::{CardClass, LoopCalibration, LoopStage, MAX_SUB_NEEDS, card_task},
+        Decision, Outcome, Task,
+        answer_loop::{
+            CardClass, LoopCalibration, LoopStage, MAX_SUB_NEEDS, SegmentOutcome, card_task,
+        },
     },
     identity::{Sha256Digest, framed_digest},
-    native_loop::CardSegment,
+    native_loop::{CardSegment, LoopCard},
 };
 use anyhow::{Result, ensure};
 
@@ -196,9 +198,10 @@ fn lowest_top(scores: &[f32]) -> Option<usize> {
 }
 
 /// Plan's multi-select: the cards scored above the reference card (the
-/// last), highest first, at least one and at most four. Only proposals are
-/// chosen; the reference card is never chosen itself.
-fn plan_choice(scores: &[f32]) -> Vec<usize> {
+/// last), highest first, at least one and at most `limit` (the request's
+/// `max_sub_needs`, within 1..=4). Only proposals are chosen; the reference
+/// card is never chosen itself.
+fn plan_choice(scores: &[f32], limit: usize) -> Vec<usize> {
     let reference = scores.len() - 1;
     let mut above: Vec<usize> = (0..reference)
         .filter(|index| scores[*index] > scores[reference])
@@ -208,7 +211,7 @@ fn plan_choice(scores: &[f32]) -> Vec<usize> {
             .total_cmp(&scores[*left])
             .then(left.cmp(right))
     });
-    above.truncate(MAX_SUB_NEEDS);
+    above.truncate(limit.clamp(1, MAX_SUB_NEEDS));
     if above.is_empty()
         && let Some(best) = lowest_top(&scores[..reference])
     {
@@ -226,6 +229,7 @@ pub fn select(
     scores: &[f32],
     calibration: &LoopCalibration,
     mode: DecisionMode,
+    max_sub_needs: usize,
 ) -> Result<Vec<SegmentChoice>> {
     validate_segments(stage, segments)?;
     let cards: usize = segments.iter().map(|segment| segment.cards.len()).sum();
@@ -266,7 +270,7 @@ pub fn select(
             continue;
         };
         let chosen = if stage == LoopStage::Plan {
-            plan_choice(&raw)
+            plan_choice(&raw, max_sub_needs)
         } else {
             vec![top]
         };
@@ -299,6 +303,61 @@ pub fn select(
         });
     }
     Ok(out)
+}
+
+/// The advice outcome of each segment: an accepted single card (or Plan's
+/// several cards, in chosen order) by text digest, with its rule and margin;
+/// or the abstention and its reason. Owned here so the decision mapping is
+/// part of the task policy identity.
+pub fn outcomes(
+    segments: &[CardSegment],
+    choices: Vec<SegmentChoice>,
+) -> Result<Vec<SegmentOutcome>> {
+    ensure!(
+        choices.len() == segments.len(),
+        "loop selection lost a segment"
+    );
+    segments
+        .iter()
+        .zip(choices)
+        .map(|(segment, choice)| {
+            if let Some(reason) = choice.abstained {
+                return Ok(SegmentOutcome {
+                    ordinal: segment.ordinal,
+                    raw_scores: choice.raw_scores,
+                    outcome: Outcome::Abstained {
+                        reason: reason.into(),
+                    },
+                    rule: None,
+                    margin: None,
+                });
+            }
+            let digests = choice
+                .chosen
+                .iter()
+                .map(|index| {
+                    segment
+                        .cards
+                        .get(*index)
+                        .ok_or_else(|| anyhow::anyhow!("loop selection chose outside its roster"))
+                        .and_then(LoopCard::text_digest)
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let decision = if segment.multiple {
+                Decision::LoopCards(digests)
+            } else {
+                ensure!(digests.len() == 1, "a single-choice segment chose one card");
+                Decision::LoopCard(digests[0])
+            };
+            Ok(SegmentOutcome {
+                ordinal: segment.ordinal,
+                raw_scores: choice.raw_scores,
+                outcome: Outcome::Accepted { decision },
+                rule: choice.rule,
+                margin: choice.margin,
+            })
+        })
+        .collect()
 }
 
 #[cfg(feature = "local-inference")]

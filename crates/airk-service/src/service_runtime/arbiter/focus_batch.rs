@@ -14,6 +14,7 @@ use airk_core::{
 const UNKNOWN: &str = "Native batched Focus outcome is unknown; the reservation remains held and canonical order is kept.";
 const APPLIED: &str = "Complete native Focus batch ranked by relevance; each pair was scored against its own sub-need question.";
 const CHANGED: &str = "Focus deadline, source authority or configuration changed; measured work is retained without ranking.";
+const NOT_QUEUED: &str = "The native lane queued no pair of this batch; no model work ran and the reservation was released.";
 const FAILED: &str =
     "A native Focus pair failed or returned invalid logits; no partial ranking was applied.";
 
@@ -140,7 +141,9 @@ impl StageOwner {
                     runtime: profile.advice_runtime()?,
                     compiler: profile.compiler,
                     calibration: profile.calibration,
-                    task_policy,
+                    // The batch's own identity: the pair policy plus the
+                    // batched ranking and Core loop semantics.
+                    task_policy: airk_retrieval::arbiter::loop_focus::policy_digest(task_policy)?,
                 }),
                 availability: Availability::Failed,
                 reason: UNKNOWN.into(),
@@ -168,21 +171,18 @@ impl StageOwner {
                 return batch_response(receipt, &request);
             };
             let live = self.focus_authority(&request, profile.manifest)?;
-            let lane = LaneKey {
-                attempt: Some(request.read_attempt.request_id),
-                part: request
-                    .attribution
-                    .iter()
-                    .map(|charge| charge.part)
-                    .min()
-                    .unwrap_or(0),
-            };
+            // Every part the batch charges is held by its pair jobs.
+            let lane = LaneKey::answer(
+                request.read_attempt.request_id,
+                request.attribution.iter().map(|charge| charge.part),
+            );
             let mut tokens = 0usize;
             let mut queue_us = 0u64;
             let mut compile_us = 0u64;
             let mut inference_us = 0u64;
             let mut settled = true;
             let mut failed = false;
+            let mut refused = false;
             for (index, candidate) in request
                 .candidates
                 .iter()
@@ -227,8 +227,12 @@ impl StageOwner {
                 .await
                 {
                     Ok(Ok(pending)) => pending,
+                    // Not queued (a typed lane refusal, the resident
+                    // unavailable, or the deadline while awaiting reuse
+                    // admission): this pair ran nothing, so the pairs before
+                    // it stay settled and the batch stops here.
                     _ => {
-                        settled = false;
+                        refused = true;
                         break;
                     }
                 };
@@ -321,51 +325,22 @@ impl StageOwner {
             receipt.work.queue_us = Some(queue_us);
             receipt.work.compile_us = Some(compile_us);
             receipt.work.inference_us = settled.then_some(inference_us);
-            if settled && tokens > 0 {
-                // Observed completion re-attributes the tokens to each part
-                // and round in proportion to the pairs it reserved.
-                if let Ok(attribution) = self
-                    .loop_ledger
-                    .lock()
-                    .map_err(|_| anyhow::anyhow!("loop NN ledger unavailable"))?
-                    .completed_prefix(ticket, tokens, &request.attribution)
-                {
-                    receipt.observed_input_tokens = Some(tokens);
-                    receipt.work.input_tokens = tokens;
-                    receipt.attribution = attribution;
-                    receipt.reason = FAILED.into();
-                    if !failed
-                        && receipt.pairs.len() == request.score_count
-                        && Instant::now() < deadline
-                        && live(&request.scope)
-                    {
-                        let policy = Instant::now();
-                        let ids = request.candidate_order();
-                        let mut scored = receipt
-                            .pairs
-                            .iter()
-                            .map(|pair| {
-                                receipt
-                                    .relevance(pair, &ids)
-                                    .map(|score| (pair.candidate, score.relevance))
-                            })
-                            .collect::<Result<Vec<_>>>()?;
-                        scored.sort_by(|(left_i, left), (right_i, right)| {
-                            right.total_cmp(left).then(left_i.cmp(right_i))
-                        });
-                        receipt.ranked = scored
-                            .into_iter()
-                            .map(|(candidate, _)| candidate)
-                            .chain((request.score_count..count).map(|index| index as u16))
-                            .collect();
-                        receipt.applied = true;
-                        receipt.availability = Availability::Ready;
-                        receipt.reason = APPLIED.into();
-                        receipt.work.policy_us =
-                            Some(policy.elapsed().as_micros().min(u64::MAX as u128) as u64);
-                    }
-                }
-            }
+            let still_live = Instant::now() < deadline && live(&request.scope);
+            settle_focus_batch(
+                FocusSettle {
+                    ledger: &self.loop_ledger,
+                    ticket,
+                    reserved: &request.attribution,
+                    ids: request.candidate_order(),
+                    score_count: request.score_count,
+                    tokens,
+                    settled,
+                    failed,
+                    refused,
+                    still_live,
+                },
+                &mut receipt,
+            )?;
             if receipt.applied && (!live(&request.scope) || Instant::now() >= deadline) {
                 receipt.applied = false;
                 receipt.availability = Availability::Failed;
@@ -404,6 +379,94 @@ impl StageOwner {
     }
 }
 
+/// A batch after its pair loop: what ran, and whether authority held.
+#[cfg(feature = "local-inference")]
+pub(super) struct FocusSettle<'a> {
+    pub(super) ledger: &'a Mutex<loop_ledger::Ledger>,
+    pub(super) ticket: loop_ledger::Ticket,
+    /// The reservation per part and round, the weights of re-attribution.
+    pub(super) reserved: &'a [airk_core::arbiter::answer_loop::TokenAttribution],
+    pub(super) ids: Vec<airk_core::identity::Sha256Digest>,
+    pub(super) score_count: usize,
+    pub(super) tokens: usize,
+    /// Every dispatched pair's work is known.
+    pub(super) settled: bool,
+    /// A pair completed with a failure or invalid logits.
+    pub(super) failed: bool,
+    /// The lane queued no further pair.
+    pub(super) refused: bool,
+    pub(super) still_live: bool,
+}
+
+/// Settle a batch in the loop ledger and rank it when it is complete. No
+/// dispatched pair: released. Known work: re-attributed in proportion to
+/// the reservation. Unknown work: the reservation stays held.
+#[cfg(feature = "local-inference")]
+pub(super) fn settle_focus_batch(
+    settle: FocusSettle<'_>,
+    receipt: &mut FocusBatchReceipt,
+) -> Result<()> {
+    let FocusSettle {
+        ledger,
+        ticket,
+        reserved,
+        ids,
+        score_count,
+        tokens,
+        settled,
+        failed,
+        refused,
+        still_live,
+    } = settle;
+    let count = receipt.candidate_count;
+    if settled && tokens == 0 && receipt.pairs.is_empty() {
+        // No pair was dispatched: a known zero-work batch, released.
+        if ledger
+            .lock()
+            .map_err(|_| anyhow::anyhow!("loop NN ledger unavailable"))?
+            .refused(ticket)
+            .is_ok()
+        {
+            receipt.observed_input_tokens = Some(0);
+            receipt.work.input_tokens = 0;
+            for charge in &mut receipt.attribution {
+                charge.tokens = 0;
+            }
+            receipt.reason = if refused { NOT_QUEUED } else { CHANGED }.into();
+        }
+    } else if settled
+        && tokens > 0
+        && let Ok(attribution) = ledger
+            .lock()
+            .map_err(|_| anyhow::anyhow!("loop NN ledger unavailable"))?
+            .completed_prefix(ticket, tokens, reserved)
+    {
+        receipt.observed_input_tokens = Some(tokens);
+        receipt.work.input_tokens = tokens;
+        receipt.attribution = attribution;
+        receipt.reason = FAILED.into();
+        if !failed && receipt.pairs.len() == score_count && still_live {
+            let policy = Instant::now();
+            let scored = receipt
+                .pairs
+                .iter()
+                .map(|pair| {
+                    receipt
+                        .relevance(pair, &ids)
+                        .map(|score| (pair.candidate, score.relevance))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            receipt.ranked = airk_retrieval::arbiter::loop_focus::rank(&scored, count)?;
+            receipt.applied = true;
+            receipt.availability = Availability::Ready;
+            receipt.reason = APPLIED.into();
+            receipt.work.policy_us =
+                Some(policy.elapsed().as_micros().min(u64::MAX as u128) as u64);
+        }
+    }
+    Ok(())
+}
+
 #[cfg(feature = "local-inference")]
 fn batch_response(
     ranking: FocusBatchReceipt,
@@ -413,3 +476,6 @@ fn batch_response(
     response.validate(request)?;
     Ok(Some(response))
 }
+
+#[cfg(all(test, feature = "local-inference"))]
+mod tests;

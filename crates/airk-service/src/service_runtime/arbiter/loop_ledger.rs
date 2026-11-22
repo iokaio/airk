@@ -327,13 +327,11 @@ impl Ledger {
         Ok(())
     }
 
-    /// The lane refused a card input before any model work: nothing was
-    /// consumed, so every part-round charge is released. The slot stays used.
+    /// A known refusal before any model work: the lane refused to queue the
+    /// job, or refused a card input at its ceiling, or a Focus batch queued
+    /// none of its pairs. Nothing was consumed, so every part-round charge is
+    /// released. The slot or ordinal stays used.
     pub(super) fn refused(&mut self, ticket: Ticket) -> Result<()> {
-        ensure!(
-            matches!(ticket.slot, Slot::Card(_)),
-            "Only a card call has an input-ceiling refusal"
-        );
         let charge = self.charge(ticket)?;
         ensure!(
             charge.compiled.is_none(),
@@ -375,8 +373,12 @@ impl Ledger {
         Ok(())
     }
 
-    /// Settle a Focus batch at its observed total, attributed by `weights`
-    /// (each part-round's scored pairs). Returns the observed attribution.
+    /// Settle a Focus batch at its observed total, attributed by `weights`.
+    /// The native request does not say which part a candidate serves, so the
+    /// caller passes the reservation (pairs reserved per part and round) and
+    /// a batch cut short charges every reserved part-round in proportion,
+    /// not only those whose pairs ran (review L1, recorded in the service
+    /// CONTRACT.md). Returns the observed attribution.
     pub(super) fn completed_prefix(
         &mut self,
         ticket: Ticket,
