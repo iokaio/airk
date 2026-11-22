@@ -64,8 +64,25 @@ fn diagnostic_clock_refuses_expiry_wrong_clock_and_oversized_parent() -> Result<
     };
     assert!(live(attempt).is_err());
     attempt.expires_monotonic_ns = u64::MAX;
-    attempt.remaining_ns = 126_000_000_000;
+    // Scoped device status serves Answer, whose read attempt may run to its
+    // own 605 s ceiling (L2); one nanosecond more is refused. Every other
+    // tool's attempt is still refused above 125 s.
+    attempt.remaining_ns = airk_core::read_attempt::MAX_ANSWER_READ_BUDGET.as_nanos() as u64;
+    assert!(live(attempt).is_ok());
+    attempt.remaining_ns += 1;
     assert!(live(attempt).is_err());
+    attempt.remaining_ns = 126_000_000_000;
+    assert!(live(attempt).is_ok());
+    assert!(
+        attempt
+            .remaining_for_tool("search", clock, airk_process::monotonic::now_ns()?)
+            .is_err()
+    );
+    assert!(
+        attempt
+            .remaining_for_tool("airk_answer", clock, airk_process::monotonic::now_ns()?)
+            .is_ok()
+    );
     attempt.remaining_ns = 1;
     attempt.clock = if cfg!(windows) {
         ReadClock::UnixMonotonic

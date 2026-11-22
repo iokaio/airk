@@ -361,11 +361,29 @@ struct RetainedAssetDownload {
     asset_name: String,
     parts: Vec<RetainedAssetPart>,
 }
+/// SHA-256 of the retained fixture in its authenticated CRLF form. The
+/// pinned digest was taken from a CRLF working copy; the committed blob is
+/// LF (`.gitattributes` `eol=lf`), so the bytes are canonicalized to CRLF
+/// before hashing and the check no longer depends on how the file was
+/// checked out. The pin itself is unchanged.
+fn retained_crlf_sha256(raw: &[u8]) -> String {
+    let mut crlf = Vec::with_capacity(raw.len() + raw.len() / 16);
+    for (index, byte) in raw.iter().enumerate() {
+        if *byte == b'\r' && raw.get(index + 1) == Some(&b'\n') {
+            continue;
+        }
+        if *byte == b'\n' {
+            crlf.push(b'\r');
+        }
+        crlf.push(*byte);
+    }
+    format!("{:x}", Sha256::digest(crlf))
+}
 #[test]
 fn retained_profile_bytes_have_no_stage_insertion_or_digest_reidentification() -> Result<()> {
     let raw = include_bytes!("../../../../fixtures/arbiter/profile-downloads.json");
     assert_eq!(
-        format!("{:x}", Sha256::digest(raw)),
+        retained_crlf_sha256(raw),
         "d0064974be46e7cb56099a71c248587d81cd93eccd1405ec9e736664c199d593"
     );
     let prior: RetainedProfile = serde_json::from_slice(raw)?;
