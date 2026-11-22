@@ -10,6 +10,7 @@
 //! [`AnswerJobTable::call`] is the one narrow entry point for the service's
 //! Answer path; the runner closure it is built with performs one Answer.
 mod estimate;
+mod reply;
 mod schedule;
 #[cfg(test)]
 mod tests;
@@ -69,6 +70,11 @@ pub(crate) type RunFuture<R> = Pin<Box<dyn Future<Output = Result<Finished<R>>> 
 /// Performs one dispatched Answer to its own deadline (`StartedJob::run_ms`)
 /// with its applied shape and disclosed degradations.
 pub(crate) type Runner<R> = Arc<dyn Fn(StartedJob) -> RunFuture<R> + Send + Sync>;
+/// One caller's own work for the job it makes: the service's Answer path
+/// supplies the kernel call with a job-owned read context, so the work does
+/// not depend on the calling connection. A call that attaches, or is told
+/// `Busy`, drops its work unused.
+pub(crate) type JobWork<R> = Box<dyn FnOnce(StartedJob) -> RunFuture<R> + Send>;
 
 /// One call's result. Degradations are the ones fitted at dispatch, the same
 /// for the caller that made the job and for every caller that attached.
@@ -97,6 +103,9 @@ struct Shared<R> {
     done: Mutex<HashMap<Sha256Digest, Signal<R>>>,
     clock: Arc<dyn Clock>,
     runner: Runner<R>,
+    /// Work supplied by the call that made a job, taken when it starts.
+    /// Locked only after the schedule lock, never the other way round.
+    work: Mutex<HashMap<Sha256Digest, JobWork<R>>>,
     /// Jobs are spawned here, whatever thread dispatches them.
     runtime: tokio::runtime::Handle,
     /// Test hook: the number of calls that have started waiting.
@@ -141,6 +150,7 @@ impl<R: Send + Sync + 'static> AnswerJobTable<R> {
                 done: Mutex::new(HashMap::new()),
                 clock,
                 runner,
+                work: Mutex::new(HashMap::new()),
                 runtime,
                 #[cfg(test)]
                 waiting: watch::channel(0).0,
@@ -166,6 +176,21 @@ impl<R: Send + Sync + 'static> AnswerJobTable<R> {
         publication: Option<Sha256Digest>,
         call_deadline: tokio::time::Instant,
     ) -> Result<CallReply<R>> {
+        self.call_with_work(scope, request, model, publication, call_deadline, None)
+            .await
+    }
+
+    /// [`Self::call`] with this caller's own `work` for a job it makes; a job
+    /// made without work runs the table's runner.
+    pub(crate) async fn call_with_work(
+        &self,
+        scope: AnswerScope,
+        request: ContextRequestV3,
+        model: Option<ContextRung>,
+        publication: Option<Sha256Digest>,
+        call_deadline: tokio::time::Instant,
+        work: Option<JobWork<R>>,
+    ) -> Result<CallReply<R>> {
         let (submitted, receiver) = {
             let mut schedule = self.schedule()?;
             let now = self.shared.clock.now_ms();
@@ -179,6 +204,15 @@ impl<R: Send + Sync + 'static> AnswerJobTable<R> {
                 Submitted::Attached(id) | Submitted::Admitted(id) => *id,
                 Submitted::Ticketed(ticket) => ticket.id,
             };
+            if let (Submitted::Admitted(_) | Submitted::Ticketed(_), Some(work)) =
+                (&submitted, work)
+            {
+                self.shared
+                    .work
+                    .lock()
+                    .map_err(|_| anyhow!("Answer job work unavailable"))?
+                    .insert(id, work);
+            }
             // Under the schedule lock: a job not finished now signals the
             // receiver made here, because finishing takes this lock first.
             if let Some(JobView::Finished {
@@ -303,7 +337,18 @@ impl<R: Send + Sync + 'static> AnswerJobTable<R> {
         for job in started {
             let id = job.id;
             let runner = self.shared.runner.clone();
-            let run = self.shared.runtime.spawn(async move { runner(job).await });
+            let work = self
+                .shared
+                .work
+                .lock()
+                .ok()
+                .and_then(|mut work| work.remove(&id));
+            let run = self.shared.runtime.spawn(async move {
+                match work {
+                    Some(work) => work(job).await,
+                    None => runner(job).await,
+                }
+            });
             let table = self.clone();
             self.shared.runtime.spawn(async move {
                 let outcome = match run.await {

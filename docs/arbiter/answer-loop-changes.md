@@ -446,29 +446,37 @@ limits on publication still apply in full.
   all confirmed against the source and fixed in the follow-up commit, with
   regression tests. The resolutions are in
   `answer-loop/L2b/review-ab31451e.md`, under the private run root.
-- **Wiring, a follow-up:** the table is not yet on the live call path. The
-  L3 agent is switching the MCP Answer handler to v3 and deleting v1 and v2
-  at the same sites. The remaining steps are:
-  1. **Kernel (L3 owner).** Accept an admission plan in `AnswerEnv`
-     (`crates/airk-kernel/src/arbiter/answer.rs`, `Kernel::answer_with`):
-     the applied shape bounds `Gathering`, and the degradations join the
-     reply.
-  2. **Core or kernel.** Add a builder for the ticket reply (a ticket,
-     partial `admission`/`queued`, and no work), and one for the running
-     partial with its continuation.
-  3. **Service.** Call `AnswerJobTable::call` for Answer /3 where the
-     service admits Answer: at `tools_call::admit_context` and its callers,
-     which are `tools_call::response`, `tools_call::window_response`,
-     `tools_call::selection_read` and `open_reads::response`. The runner
-     reopens its own backend and runs to `run_ms`, so the job does not
-     depend on the caller's connection. The scope is built from the
-     selection's verified authority, never from client input.
-  4. **MCP stdio.** In the local path (`crates/airk-mcp/src/lib.rs`, the
-     `answer` tool), the kernel runs in the MCP process. The table needs a
-     trait in `airk-mcp` that the service implements, because `airk-mcp`
-     cannot depend on `airk-service`.
-  5. **Status.** Expose `QueueStatus` on the service status surface.
-- **Evidence:** the `answer_jobs::` tests in `airk-service` (25 tests),
+- **Wiring (design revised 22 November 2026, branch `loop/l2b-wire`):** the
+  table is not yet on the live call path. The full design is in the
+  contract's "Wiring" section, against L3-10 (b)'s handler shape.
+  - **Built now, in airk-service:**
+    - per-call work (`call_with_work`);
+    - the ticket-shaped reply for queued and running jobs
+      (`reply::pending_reply`), validated against the request budget;
+    - `reply::finished` and `reply::deliver`.
+  - **Choice: the running-job reply is a ticket.** The Core contract allows
+    a reply without parts only in the ticket shape. So a running job's reply
+    is a ticket with position 1, start 0 and the degradations fitted at its
+    dispatch, rather than a partial with a continuation.
+  - **Choice: the call site is the MCP Answer handler, through an
+    `airk-mcp` trait the service implements.** It is no longer the service's
+    `tools_call` paths, which this entry first proposed. Every transport,
+    including the service's HTTPS and IPC paths, ends in that handler inside
+    the in-process owner. Only the handler holds the kernel's verified scope
+    binding (`Kernel::answer_scope`, to add) and the kernel call that the
+    job's work runs.
+  - **Choice: the configured rung only.** Until the kernel can choose a
+    Context rung per Answer (L5's lifetime switch), the service gives the
+    estimator only the configured rung and the no-model loop. Degrading
+    therefore moves only to the no-model loop.
+  - **Remaining:**
+    - the kernel `AdmissionPlan` in `AnswerEnv`, and `answer_scope`;
+    - the job-owned read context and `JobWork`;
+    - the MCP trait, its injection and the handler branch;
+    - status, which needs a contract decision because it adds fields to a
+      wire shape.
+  - **Timing:** all of it lands after L3-10 (b), whose files it touches.
+- **Evidence:** the `answer_jobs::` tests in `airk-service` (29 tests),
   listed in the contract's focused checks.
 
 Further entries are added as implementation proceeds.

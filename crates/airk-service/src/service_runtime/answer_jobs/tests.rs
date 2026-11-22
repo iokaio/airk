@@ -1284,3 +1284,266 @@ async fn a_full_scope_is_told_when_to_retry_and_makes_no_job() {
     ));
     assert_eq!(harness.runs.load(Ordering::SeqCst), 1);
 }
+
+// --- Replies the table produces, and delivery (wiring preparation). ---
+
+fn ticket_for(id: Sha256Digest, running: bool) -> AnswerTicket {
+    AnswerTicket {
+        id,
+        queue_position: if running { 1 } else { 3 },
+        estimated_start_ms: if running { 0 } else { 40_000 },
+        estimated_finish_ms: 90_000,
+        retry_after_ms: 90_000,
+    }
+}
+
+#[test]
+fn a_queued_or_running_job_has_a_valid_ticket_shaped_reply() {
+    let request = request("where is admission", 300_000);
+    let degradations = vec![Degradation::Rounds {
+        requested: 3,
+        applied: 2,
+        reason: DegradationReason::QueueWait,
+    }];
+    for (running, degradations) in [(false, vec![]), (true, degradations)] {
+        let reply = reply::pending_reply(
+            &request,
+            binding(4, 1),
+            ticket_for(Sha256Digest::from_bytes([7; 32]), running),
+            degradations.clone(),
+            12,
+        )
+        .unwrap();
+        // Validated on build; serialized, it still parses and validates.
+        let bytes = serde_json::to_vec(&reply).unwrap();
+        let parsed: airk_core::arbiter::answer_loop::ContextResponseV3 =
+            serde_json::from_slice(&bytes).unwrap();
+        parsed.validate(&request.budget).unwrap();
+        assert!(parsed.parts.is_empty() && parsed.records.is_empty());
+        assert_eq!(parsed.degradations.len(), degradations.len());
+        assert_eq!(parsed.ticket.unwrap().id, Sha256Digest::from_bytes([7; 32]));
+    }
+    // A ticket outside the Core bounds is refused, never delivered.
+    let mut bad = ticket_for(Sha256Digest::from_bytes([7; 32]), true);
+    bad.retry_after_ms = 0;
+    assert!(reply::pending_reply(&request, binding(4, 1), bad, vec![], 1).is_err());
+}
+
+#[test]
+fn a_finished_reply_is_retained_on_its_own_publication_and_size() {
+    let request = request("q", 300_000);
+    let response = reply::pending_reply(
+        &request,
+        binding(4, 1),
+        ticket_for(Sha256Digest::from_bytes([7; 32]), true),
+        vec![],
+        1,
+    )
+    .unwrap();
+    let size = serde_json::to_vec(&response).unwrap().len();
+    let finished = reply::finished(response).unwrap();
+    assert_eq!(finished.publication, publication(1));
+    assert_eq!(finished.retained_bytes, size);
+}
+
+/// Through the real table: a call that times out is delivered a ticket
+/// reply naming its job, the retry by continuation is delivered the
+/// finished reply, a reply naming another authority is refused, and Busy
+/// and failures map through unchanged.
+#[tokio::test(start_paused = true)]
+async fn delivery_maps_every_table_reply_and_checks_the_scope() {
+    let request = request("delivered", 300_000);
+    let answer = reply::pending_reply(
+        &request,
+        binding(4, 1),
+        ticket_for(Sha256Digest::from_bytes([9; 32]), true),
+        vec![],
+        1,
+    )
+    .unwrap();
+    let (release, released) = oneshot::channel::<()>();
+    let released = Arc::new(std::sync::Mutex::new(Some(released)));
+    let runner: Runner<airk_core::arbiter::answer_loop::ContextResponseV3> = {
+        let answer = answer.clone();
+        Arc::new(
+            move |_job| -> RunFuture<airk_core::arbiter::answer_loop::ContextResponseV3> {
+                let answer = answer.clone();
+                let released = released.lock().unwrap().take();
+                Box::pin(async move {
+                    if let Some(released) = released {
+                        released.await.ok();
+                    }
+                    reply::finished(answer)
+                })
+            },
+        )
+    };
+    let table = AnswerJobTable::with_salt(
+        JobTableConfig::default(),
+        Arc::new(TokioClock::new()),
+        runner,
+        [5; 32],
+    )
+    .unwrap();
+    let pending = table
+        .call(scope(4), request.clone(), None, None, deadline_in(STEP))
+        .await
+        .unwrap();
+    let reply::Delivered::Reply { response, attached } =
+        reply::deliver(pending, &request, &binding(4, 1), 5_000).unwrap()
+    else {
+        panic!("a timed-out call is delivered a reply");
+    };
+    assert!(!attached);
+    let ticket = response.ticket.clone().expect("a ticket-shaped reply");
+    response.validate(&request.budget).unwrap();
+    release.send(()).unwrap();
+    let finished = table
+        .call(
+            scope(4),
+            continued(request.clone(), ticket.id),
+            None,
+            None,
+            deadline_in(STEP),
+        )
+        .await
+        .unwrap();
+    // The finished reply ran under authority 4; a caller bound to another
+    // authority is refused even if a table reply reached it.
+    let other = reply::deliver(
+        table
+            .call(
+                scope(4),
+                continued(request.clone(), ticket.id),
+                None,
+                None,
+                deadline_in(STEP),
+            )
+            .await
+            .unwrap(),
+        &request,
+        &binding(5, 1),
+        1,
+    );
+    assert!(other.is_err());
+    let reply::Delivered::Reply { response, attached } =
+        reply::deliver(finished, &request, &binding(4, 1), 1).unwrap()
+    else {
+        panic!("the finished reply is delivered");
+    };
+    assert!(attached);
+    assert_eq!(
+        serde_json::to_value(&*response).unwrap(),
+        serde_json::to_value(&answer).unwrap()
+    );
+    assert!(matches!(
+        reply::deliver(
+            CallReply::Busy { retry_after_ms: 7 },
+            &request,
+            &binding(4, 1),
+            1
+        )
+        .unwrap(),
+        reply::Delivered::Busy { retry_after_ms: 7 }
+    ));
+    assert!(matches!(
+        reply::deliver(
+            CallReply::Finished {
+                id: ticket.id,
+                attached: true,
+                degradations: vec![],
+                outcome: Arc::new(JobOutcome::Failed("worker gone".into())),
+            },
+            &request,
+            &binding(4, 1),
+            1
+        )
+        .unwrap(),
+        reply::Delivered::Failed(message) if message == "worker gone"
+    ));
+}
+
+/// Each caller's own work runs its job; an attaching call's work is dropped
+/// unused, so the work runs once whatever the number of callers.
+#[tokio::test(start_paused = true)]
+async fn the_work_of_the_call_that_made_the_job_runs_it_once() {
+    fn fail() -> Finished<&'static str> {
+        panic!("the table runner must not run a job that has its own work")
+    }
+    let runner: Runner<&'static str> =
+        Arc::new(|_job| -> RunFuture<&'static str> { Box::pin(async { Ok(fail()) }) });
+    let table = AnswerJobTable::with_salt(
+        JobTableConfig::default(),
+        Arc::new(TokioClock::new()),
+        runner,
+        [6; 32],
+    )
+    .unwrap();
+    let ran = Arc::new(AtomicUsize::new(0));
+    let (release, released) = oneshot::channel::<()>();
+    let work =
+        |label: &'static str, gate: Option<oneshot::Receiver<()>>| -> JobWork<&'static str> {
+            let ran = ran.clone();
+            Box::new(move |job: StartedJob| -> RunFuture<&'static str> {
+                Box::pin(async move {
+                    ran.fetch_add(1, Ordering::SeqCst);
+                    if let Some(gate) = gate {
+                        gate.await.ok();
+                    }
+                    assert!(job.run_ms > 0);
+                    Ok(Finished {
+                        value: label,
+                        publication: publication(1),
+                        retained_bytes: 1,
+                    })
+                })
+            })
+        };
+    let first = tokio::spawn({
+        let table = table.clone();
+        let work = work("first", Some(released));
+        async move {
+            table
+                .call_with_work(
+                    scope(4),
+                    small("q", 60_000),
+                    None,
+                    None,
+                    deadline_in(STEP * 10),
+                    Some(work),
+                )
+                .await
+        }
+    });
+    tokio::time::timeout(Duration::from_secs(60), table.waiting_at_least(1))
+        .await
+        .unwrap();
+    let second = tokio::spawn({
+        let table = table.clone();
+        let work = work("second", None);
+        async move {
+            table
+                .call_with_work(
+                    scope(4),
+                    small("q", 60_000),
+                    None,
+                    None,
+                    deadline_in(STEP * 10),
+                    Some(work),
+                )
+                .await
+        }
+    });
+    tokio::time::timeout(Duration::from_secs(60), table.waiting_at_least(2))
+        .await
+        .unwrap();
+    release.send(()).unwrap();
+    for call in [first, second] {
+        assert!(matches!(
+            call.await.unwrap().unwrap(),
+            CallReply::Finished { outcome, .. }
+                if matches!(outcome.as_ref(), JobOutcome::Done { value: "first", .. })
+        ));
+    }
+    assert_eq!(ran.load(Ordering::SeqCst), 1);
+}

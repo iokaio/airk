@@ -34,7 +34,12 @@ the one entry point for the service's Answer path. The other entry points are
 
   The degradations are the ones fitted at dispatch, and they are the same
   for the caller that made the job and for every caller that attached.
-- **The runner** is called inside the job's own task, with a `StartedJob`:
+- **Per-call work.** `call_with_work` lets a caller supply its own work
+  (`JobWork`) for a job it makes. The work is taken when the job starts. A
+  call that attaches, or is told `Busy`, drops its work unused, so a job's
+  work runs once. A job made without work runs the table's runner.
+- **The runner** (or the work) is called inside the job's own task, with a
+  `StartedJob`:
   - the request;
   - the applied `Shape` (parts, sub-needs, rounds and Context rung);
   - the degradations the reply must disclose;
@@ -191,9 +196,86 @@ Past any of them, the call gets `Busy` and no job is made.
 
 ## Wiring
 
-The table is not yet on the live call path. The MCP Answer handler is being
-switched to v3 by L3, and the v1 and v2 paths are being deleted. The wiring
-is a follow-up, listed in `docs/arbiter/answer-loop-changes.md` entry 19.
+The table is not yet on the live call path. Built and tested now, in this
+crate:
+- the table;
+- per-call work;
+- the reply builder `reply::pending_reply`;
+- the outcome adapter `reply::finished`;
+- delivery, `reply::deliver`.
+
+The remaining steps are designed below. They touch files that L3-10 (b) is
+still editing, so they land after it, against its handler shape: the
+`answer` tool takes `RequestContext`, reports progress through
+`ProgressReporter`, and calls `kernel.answer_with(request, AnswerEnv {..})`
+inside `execute_verified_response`.
+
+**Replies for a job without a result.** The Core reply contract allows a
+reply without parts only in the ticket shape: partial at `admission` with
+reason `queued`, no continuation in the marker, and the ticket's id as the
+handle.
+- A queued job's reply is its ticket.
+- A running job's reply is also a ticket, with position 1, start 0 and
+  the degradations fitted at its dispatch.
+- `PartialMarker::continuation` stays for a reply that carries gathered
+  work.
+
+`pending_reply` builds both and validates them against the request budget
+before returning.
+
+1. **Kernel: admission plan and scope.**
+   - `AnswerEnv` gains `admission: Option<&AdmissionPlan>`. The plan is a
+     kernel type: parts, sub-needs, rounds, whether the Context model is
+     used, and the degradations.
+   - `answer_with` bounds `Gathering` by the plan's shape, and when the
+     plan says so it runs the no-model loop. It appends the plan's
+     disclosures to the reply before validating it.
+   - A new `Kernel::answer_scope()` returns the binding that `answer_with`
+     checks before it runs. The handler builds its `AnswerScope` from that,
+     never from client input.
+   - **The rung.** Until the kernel can choose a Context rung per Answer,
+     which needs L5's lifetime switch, the service passes the configured
+     rung as `model`. Its cost table holds only that rung and the no-model
+     loop, so the ladder degrades only to no model.
+2. **Reply builders:** done (`reply.rs`, above).
+3. **Service: ownership and work.**
+   - The service state owns one `AnswerJobTable<ContextResponseV3>`, built
+     at start with `TokioClock` and `set_runtime_capacity` fed from L5b's
+     lane capacity.
+   - For each new job, the handler's `JobWork` captures an `AirkServer`
+     clone whose read context belongs to the job. That context is built
+     with `ReadAttemptContext::new(now + run_ms, fresh token)` and keeps the
+     original lifetime guard and delivery-guard factory. It is not a child
+     of the calling request's cancellation, so a client that disconnects
+     cancels only its own wait.
+   - The work runs `answer_with` on a blocking thread (`spawn_blocking`,
+     because its reads use `block_on`), clamped by the plan, and returns
+     `reply::finished(outcome.response)`.
+4. **MCP: the seam.**
+   - A new `airk-mcp` module defines an object-safe `AnswerJobs` trait, because
+     airk-mcp cannot depend on this crate. Its one method takes the binding,
+     the request, the call deadline and the work, and returns a delivery:
+     a reply (finished or ticket, and whether it attached), a failure, or
+     busy with a retry time.
+   - `AirkServer` gains an optional `Arc<dyn AnswerJobs>`. With one, the
+     handler goes through the table; without one (the standalone stdio and
+     local paths), it calls the kernel directly as today.
+   - The service implements the trait for its table and injects it where
+     it builds in-process owners.
+   - Busy becomes a typed tool error, `answer_queue_busy`, carrying its
+     retry time. A failure keeps today's failure mapping.
+   - The call deadline is the handler's own deadline: the request's,
+     bounded by the read attempt. At that deadline a running job's kernel
+     returns its own partial, so a ticket reply results only when the job
+     waited or was requeued.
+5. **Status.** `QueueStatus` needs a place on the service status surface.
+   Adding fields to a status response changes a wire shape, so this needs a
+   recorded contract decision before it is built.
+
+**After wiring:** tests through the real handler must show several
+concurrent Answers, attach after a client timeout, and a ticket or a
+disclosed degradation. Then remove `expect(dead_code)` on `mod answer_jobs`,
+and the separate security review follows.
 
 ## Focused checks
 
