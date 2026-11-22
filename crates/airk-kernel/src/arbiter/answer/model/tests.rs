@@ -15,7 +15,9 @@ use std::sync::{
 
 #[derive(Clone, Copy, PartialEq)]
 enum Mode {
-    /// The last card of every roster scores highest and is accepted.
+    /// The last card of every roster scores highest and is accepted; a Plan
+    /// roster's last card is the reference, so Plan accepts the best
+    /// proposals below it, up to the sub-need limit.
     Accept,
     Abstain,
     /// The reply is lost after dispatch.
@@ -26,7 +28,7 @@ enum Mode {
     Decline,
     /// Accept the lowest-scoring card while claiming top score.
     NotTop,
-    /// Plan takes every card, whatever the request's sub-need limit.
+    /// Plan takes every proposal, whatever the request's sub-need limit.
     AllPlan,
 }
 
@@ -137,7 +139,9 @@ impl NativeController for Scorer {
                         margin: None,
                     };
                 }
-                let chosen = if self.mode == Mode::NotTop { 0 } else { top };
+                // Plan's reference card (the last) is never choosable.
+                let best = if segment.multiple { top - 1 } else { top };
+                let chosen = if self.mode == Mode::NotTop { 0 } else { best };
                 let digest = segment.cards[chosen].text_digest().unwrap();
                 v3::SegmentOutcome {
                     ordinal: segment.ordinal,
@@ -146,10 +150,19 @@ impl NativeController for Scorer {
                         decision: if segment.multiple && self.mode == Mode::AllPlan {
                             // Every card, so the choice is still the top scores.
                             Decision::LoopCards(
-                                segment
-                                    .cards
+                                segment.cards[..top]
                                     .iter()
                                     .map(|card| card.text_digest().unwrap())
+                                    .collect(),
+                            )
+                        } else if segment.multiple && self.mode != Mode::NotTop {
+                            // The highest-scoring proposals below the
+                            // reference, up to the request's sub-need limit.
+                            let take = request.parent_budget.max_sub_needs.min(top);
+                            Decision::LoopCards(
+                                (top - take..top)
+                                    .rev()
+                                    .map(|index| segment.cards[index].text_digest().unwrap())
                                     .collect(),
                             )
                         } else if segment.multiple {
@@ -279,10 +292,19 @@ fn batched_segments_argmax_per_segment() -> Result<()> {
             continue;
         }
         model_decisions += 1;
-        let argmax = (0..entry.scores.len())
+        // Plan's reference card (the last) is a threshold, not a choice.
+        let choosable = if entry.decision.stage == v3::LoopStage::Plan {
+            entry.scores.len() - 1
+        } else {
+            entry.scores.len()
+        };
+        let argmax = (0..choosable)
             .max_by(|left, right| entry.scores[*left].total_cmp(&entry.scores[*right]))
             .unwrap();
-        assert_eq!(entry.chosen, vec![argmax as u8], "{:?}", entry.decision);
+        assert_eq!(entry.chosen[0], argmax as u8, "{:?}", entry.decision);
+        if entry.decision.stage != v3::LoopStage::Plan {
+            assert_eq!(entry.chosen.len(), 1);
+        }
     }
     assert!(model_decisions > 2);
     // The split roster's highest card is a two-part partition.
@@ -652,5 +674,56 @@ fn a_combined_member_answer_stays_within_its_partition() -> Result<()> {
             .all(|request| request.partition.as_ref() == Some(&allowance)
                 && request.parent_budget == clamped)
     );
+    Ok(())
+}
+
+#[test]
+fn top_score_plan_is_accepted_when_the_reference_card_scores_highest() -> Result<()> {
+    // In Accept mode every roster's last card scores highest; for Plan that
+    // is the reference "no further sub-need", which no decision may choose.
+    let (fixture, scorer) = scored(Mode::Accept)?;
+    let outcome = answer(&fixture)?;
+    let requests = scorer.requests.lock().unwrap();
+    assert!(
+        requests
+            .iter()
+            .any(|request| request.segments.iter().any(|segment| segment.multiple))
+    );
+    let plans: Vec<_> = outcome
+        .custody
+        .log
+        .entries
+        .iter()
+        .filter(|entry| entry.decision.stage == v3::LoopStage::Plan)
+        .collect();
+    assert!(!plans.is_empty());
+    for entry in plans {
+        let reference = entry.scores.len() - 1;
+        assert!(
+            entry.scores[reference] > entry.scores[reference - 1],
+            "the reference scores highest"
+        );
+        assert!(
+            matches!(
+                entry.decision.source,
+                v3::DecisionSource::Model {
+                    mode: v3::ModelMode::TopScore,
+                    ..
+                }
+            ),
+            "the top-score Plan advice is accepted: {:?}",
+            entry.decision
+        );
+        assert_eq!(
+            entry.chosen[0],
+            (reference - 1) as u8,
+            "the best proposal first"
+        );
+        assert!(
+            !entry.chosen.contains(&(reference as u8)),
+            "never the reference"
+        );
+        assert!(!entry.decision.work_unknown);
+    }
     Ok(())
 }

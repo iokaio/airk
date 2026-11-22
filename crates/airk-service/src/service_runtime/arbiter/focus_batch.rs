@@ -120,6 +120,7 @@ impl StageOwner {
                     loop_ledger::FocusCall {
                         index_id: request.scope.index_id,
                         ordinal: request.ordinal,
+                        pairs: request.score_count,
                     },
                     &request.attribution,
                     request.partition.as_ref(),

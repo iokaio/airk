@@ -508,8 +508,13 @@ impl Loop<'_> {
             } else {
                 1
             };
-            // A top-score decision takes the highest-scoring cards: none it
-            // left out scores above one it chose.
+            // Plan's reference card ("no further sub-need", the last) is a
+            // threshold, never choosable.
+            let choosable = |index: usize| {
+                !(seg.at.stage == v3::LoopStage::Plan && index + 1 == seg.cards.len())
+            };
+            // A top-score decision takes the highest-scoring choosable cards:
+            // no choosable card it left out scores above one it chose.
             let top_score = outcome.rule.is_some()
                 || (outcome.raw_scores.len() == seg.cards.len() && {
                     let lowest_chosen = chosen
@@ -517,10 +522,11 @@ impl Loop<'_> {
                         .map(|index| outcome.raw_scores[*index])
                         .fold(f32::INFINITY, f32::min);
                     (0..seg.cards.len())
-                        .filter(|index| !chosen.contains(index))
+                        .filter(|index| choosable(*index) && !chosen.contains(index))
                         .all(|index| outcome.raw_scores[index] <= lowest_chosen)
                 });
             !picked.is_empty()
+                && chosen.iter().all(|index| choosable(*index))
                 && chosen.len() == picked.len()
                 && picked.len() <= limit
                 && top_score

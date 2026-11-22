@@ -197,6 +197,7 @@ fn focus_calls_charge_each_part_round_for_its_own_pairs() -> Result<()> {
         FocusCall {
             index_id: index(3),
             ordinal: 1,
+            pairs: 2,
         },
         &[charge(1, 1, 1_024), charge(2, 1, 2_048)],
         None,
@@ -217,6 +218,7 @@ fn focus_calls_charge_each_part_round_for_its_own_pairs() -> Result<()> {
                 FocusCall {
                     index_id: index(3),
                     ordinal: 3,
+                    pairs: 2,
                 },
                 &[charge(1, 1, 1)],
                 None,
@@ -233,6 +235,7 @@ fn focus_calls_charge_each_part_round_for_its_own_pairs() -> Result<()> {
                 FocusCall {
                     index_id: index(3),
                     ordinal: 2,
+                    pairs: 2,
                 },
                 &[charge(0, 0, 1)],
                 None,
@@ -247,6 +250,7 @@ fn focus_calls_charge_each_part_round_for_its_own_pairs() -> Result<()> {
         FocusCall {
             index_id: index(3),
             ordinal: 2,
+            pairs: 2,
         },
         &[charge(1, 1, 100)],
         None,
@@ -288,6 +292,7 @@ fn partitions_limit_their_card_and_focus_ordinals_and_tokens() -> Result<()> {
                 FocusCall {
                     index_id: index(3),
                     ordinal: 1,
+                    pairs: 2,
                 },
                 &[charge(1, 1, 1_001)],
                 Some(&part),
@@ -304,6 +309,7 @@ fn partitions_limit_their_card_and_focus_ordinals_and_tokens() -> Result<()> {
                 FocusCall {
                     index_id: index(4),
                     ordinal: 1,
+                    pairs: 2,
                 },
                 &[charge(1, 1, 10)],
                 Some(&part),
@@ -354,6 +360,88 @@ fn attempt_identity_and_parent_budget_are_fixed_once_charged() -> Result<()> {
                 600_000_000_100
             )
             .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn focus_pairs_are_bounded_by_the_partition_and_the_parent() -> Result<()> {
+    // The partition allows 16 pairs and two Focus calls.
+    let mut ledger = Ledger::default();
+    let parent = budget();
+    let part = partition(3, vec![], vec![1, 2], 5_000);
+    let call = |ordinal, pairs| FocusCall {
+        index_id: index(3),
+        ordinal,
+        pairs,
+    };
+    assert!(
+        ledger
+            .reserve_focus(
+                attempt(),
+                &parent,
+                call(1, 17),
+                &[charge(1, 1, 10)],
+                Some(&part),
+                10
+            )
+            .is_err(),
+        "17 pairs exceed the partition's 16"
+    );
+    ledger.reserve_focus(
+        attempt(),
+        &parent,
+        call(1, 12),
+        &[charge(1, 1, 10)],
+        Some(&part),
+        11,
+    )?;
+    assert!(
+        ledger
+            .reserve_focus(
+                attempt(),
+                &parent,
+                call(2, 5),
+                &[charge(1, 1, 10)],
+                Some(&part),
+                12
+            )
+            .is_err(),
+        "12 + 5 pairs exceed the partition's 16"
+    );
+    ledger.reserve_focus(
+        attempt(),
+        &parent,
+        call(2, 4),
+        &[charge(1, 1, 10)],
+        Some(&part),
+        13,
+    )?;
+    // Without a partition the parent's focus_pairs bounds the attempt.
+    let small = BudgetV3 {
+        focus_pairs: 6,
+        ..budget()
+    };
+    let mut ledger = Ledger::default();
+    ledger.reserve_focus(attempt(), &small, call(1, 4), &[charge(1, 1, 10)], None, 10)?;
+    assert!(
+        ledger
+            .reserve_focus(attempt(), &small, call(2, 3), &[charge(1, 1, 10)], None, 11)
+            .is_err(),
+        "4 + 3 pairs exceed the parent's 6"
+    );
+    assert!(
+        Ledger::default()
+            .reserve_focus(
+                attempt(),
+                &budget(),
+                call(1, 0),
+                &[charge(1, 1, 10)],
+                None,
+                10
+            )
+            .is_err(),
+        "a Focus call scores at least one pair"
     );
     Ok(())
 }

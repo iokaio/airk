@@ -46,6 +46,7 @@ fn reserved() -> Result<(Mutex<loop_ledger::Ledger>, loop_ledger::Ticket)> {
         loop_ledger::FocusCall {
             index_id: index(),
             ordinal: 1,
+            pairs: 2,
         },
         &reservation(),
         None,
@@ -64,6 +65,7 @@ fn room(ledger: &Mutex<loop_ledger::Ledger>, part: u8, tokens: usize) -> bool {
             loop_ledger::FocusCall {
                 index_id: index(),
                 ordinal: 2,
+                pairs: 2,
             },
             &[charge(part, tokens)],
             None,

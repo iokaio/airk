@@ -26,11 +26,21 @@ enum Slot {
     Focus(IndexId, u8),
 }
 
-/// One batched Focus call: its index and its ordinal over the Answer.
+/// One batched Focus call: its index, its ordinal over the Answer and the
+/// pairs it may score.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct FocusCall {
     pub(super) index_id: IndexId,
     pub(super) ordinal: u8,
+    pub(super) pairs: usize,
+}
+
+/// What one reservation claims.
+struct Claim<'a> {
+    slot: Slot,
+    attribution: &'a [TokenAttribution],
+    /// Focus pairs; 0 for a card call.
+    pairs: usize,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -51,6 +61,8 @@ struct Charge {
     attribution: Vec<TokenAttribution>,
     compiled: Option<usize>,
     partition: Option<IndexId>,
+    /// Focus pairs reserved; never refunded, like the ordinal.
+    pairs: usize,
 }
 impl Charge {
     fn tokens(&self) -> usize {
@@ -122,8 +134,11 @@ impl Ledger {
         self.reserve(
             attempt,
             parent,
-            Slot::Card(card_slot),
-            attribution,
+            Claim {
+                slot: Slot::Card(card_slot),
+                attribution,
+                pairs: 0,
+            },
             partition,
             now_ns,
         )
@@ -139,7 +154,12 @@ impl Ledger {
         partition: Option<&PartitionAllowanceV3>,
         now_ns: u64,
     ) -> Result<Ticket> {
-        let FocusCall { index_id, ordinal } = call;
+        let FocusCall {
+            index_id,
+            ordinal,
+            pairs,
+        } = call;
+        ensure!(pairs > 0, "a Focus call scores at least one pair");
         if let Some(part) = partition {
             ensure!(
                 part.index_id == index_id,
@@ -149,8 +169,11 @@ impl Ledger {
         self.reserve(
             attempt,
             parent,
-            Slot::Focus(index_id, ordinal),
-            attribution,
+            Claim {
+                slot: Slot::Focus(index_id, ordinal),
+                attribution,
+                pairs,
+            },
             partition,
             now_ns,
         )
@@ -160,11 +183,15 @@ impl Ledger {
         &mut self,
         attempt: ReadAttemptBudget,
         parent: &BudgetV3,
-        slot: Slot,
-        attribution: &[TokenAttribution],
+        claim: Claim<'_>,
         partition: Option<&PartitionAllowanceV3>,
         now_ns: u64,
     ) -> Result<Ticket> {
+        let Claim {
+            slot,
+            attribution,
+            pairs,
+        } = claim;
         parent.validate()?;
         let parent_bytes = serde_json::to_vec(parent)?;
         let window_ns = parent
@@ -264,6 +291,11 @@ impl Ledger {
                 .is_some_and(|sum| sum <= parent.input_tokens),
             "loop model token pool exhausted"
         );
+        let used_pairs: usize = state.charges.values().map(|charge| charge.pairs).sum();
+        ensure!(
+            used_pairs + pairs <= parent.focus_pairs,
+            "loop Focus pair budget exhausted"
+        );
         for charge in attribution {
             ensure!(
                 charge.round == 0
@@ -288,6 +320,16 @@ impl Ledger {
                     .is_some_and(|sum| sum <= part.resources.input_tokens),
                 "loop partition tokens exhausted"
             );
+            let used_pairs: usize = state
+                .charges
+                .values()
+                .filter(|charge| charge.partition == Some(part.index_id))
+                .map(|charge| charge.pairs)
+                .sum();
+            ensure!(
+                used_pairs + pairs <= part.resources.focus_pairs,
+                "loop partition Focus pairs exhausted"
+            );
             state.partitions.entry(part.index_id).or_insert(bytes);
         }
         state.charges.insert(
@@ -296,6 +338,7 @@ impl Ledger {
                 attribution: attribution.to_vec(),
                 compiled: None,
                 partition: partition.map(|part| part.index_id),
+                pairs,
             },
         );
         Ok(Ticket {
