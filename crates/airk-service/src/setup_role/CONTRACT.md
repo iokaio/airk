@@ -261,7 +261,8 @@ at the same path is never adopted as the original root.
 - `drain`: for the operation's and the existing record's control roots, a
   `Health` from this user's service whose reported image SHA-256 is the
   existing record's or the payload's `airk`, then `Shutdown` fenced to its
-  instance and the exit of its process (60 s). First, when installed images
+  instance and the exit of its process (90 s, the service's worst stop of about
+  60.25 s with margin; service_runtime CONTRACT.md "Stop and upgrade wait"). First, when installed images
   exist and the step places or removes files, setup writes the I4
   replacement notice (`replacing.json` beside the pointer, ten minutes) so
   editor windows end their `airkctl` sessions; the notice stays through

@@ -2089,3 +2089,133 @@ async fn an_answer_marked_after_its_stream_began_outlives_the_120_second_bound()
     }
     Ok(())
 }
+
+/// L2 gap 1 (L2 deviation 10): a live HTTPS connection carrying an Answer
+/// stays open past 120 s to its result. The real per-connection serve runs
+/// TLS and HTTP/1.1 over an in-memory socket with the connection fence, so
+/// both bounds apply: `OutputBody` widens its stream bound and
+/// `ConnectionFence::widen_output_deadline` widens the IO deadline checked at
+/// each socket write. Both now read Tokio's clock, so paused time drives
+/// them. rmcp's real-clock SSE keep-alive is off (its ping loop after a
+/// paused jump is the hazard in remote/CONTRACT.md), and every body read is
+/// bounded. The response head arrives within the first second, so the
+/// stream and IO bounds set at 120 s are both live when the result is
+/// written at 130 s. (A search is no control here: without progress rmcp
+/// sends its head only with the result, so its bound starts then.)
+#[tokio::test(start_paused = true)]
+async fn a_live_tls_connection_keeps_an_answer_open_past_120_seconds_to_its_result()
+-> anyhow::Result<()> {
+    const BODY_BOUND: usize = 256 * 1024;
+    {
+        let tool = "airk_answer";
+        let mut f = fixture(57443)?;
+        Arc::get_mut(&mut f.gateway.0)
+            .context("the fixture gateway is not shared yet")?
+            .sse_keep_alive_off = true;
+        let (server_socket, client_socket) = tokio::io::duplex(65536);
+        let acceptor = f.gateway.0.tls.borrow().clone();
+        let handshake = Arc::new(Semaphore::new(1)).acquire_owned().await?;
+        let server = tokio::spawn(f.gateway.clone().serve_accepted(
+            server_socket,
+            acceptor,
+            None,
+            handshake,
+        ));
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(rustls::pki_types::CertificateDer::from(f.ca.clone()))?;
+        let config = rustls::ClientConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()?
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+        let tls = tokio::time::timeout(
+            Duration::from_secs(10),
+            tokio_rustls::TlsConnector::from(Arc::new(config)).connect(
+                rustls::pki_types::ServerName::try_from("127.0.0.1")?,
+                client_socket,
+            ),
+        )
+        .await??;
+        let (mut sender, connection) =
+            hyper::client::conn::http1::handshake(TokioIo::new(tls)).await?;
+        let client = tokio::spawn(connection);
+        let authority = f.gateway.0.authority.clone();
+        let post = |body: serde_json::Value, session: Option<&http::HeaderValue>| {
+            let mut builder = Request::builder()
+                .method(http::Method::POST)
+                .uri("/mcp")
+                .header("host", &authority)
+                .header("content-type", "application/json")
+                .header("accept", "application/json, text/event-stream");
+            if let Some(session) = session {
+                builder = builder.header("mcp-session-id", session);
+            }
+            builder.body(Full::new(Bytes::from(body.to_string())))
+        };
+        let bounded = |response: Response<Incoming>| async move {
+            tokio::time::timeout(
+                Duration::from_secs(300),
+                http_body_util::Limited::new(response.into_body(), BODY_BOUND).collect(),
+            )
+            .await
+            .map(|collected| collected.map(|collected| collected.to_bytes()))
+        };
+        let initialized = sender
+            .send_request(post(
+                serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"claude-code","version":"2.1.330"}}}),
+                None,
+            )?)
+            .await?;
+        assert_eq!(initialized.status(), StatusCode::OK);
+        let session = initialized.headers()["mcp-session-id"].clone();
+        bounded(initialized)
+            .await?
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+        let ready = sender
+            .send_request(post(
+                serde_json::json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+                Some(&session),
+            )?)
+            .await?;
+        assert!(ready.status().is_success());
+        bounded(ready)
+            .await?
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+        let started = tokio::time::Instant::now();
+        let response = tokio::time::timeout(
+            Duration::from_secs(300),
+            sender.send_request(post(
+                serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":tool,"arguments":{"hold_seconds":130},"_meta":{"progressToken":"live-tls"}}}),
+                Some(&session),
+            )?),
+        )
+        .await??;
+        let head = started.elapsed();
+        assert!(
+            head < Duration::from_secs(1),
+            "the stream began at {head:?}"
+        );
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            response.headers()[http::header::CONTENT_TYPE]
+                .to_str()?
+                .starts_with("text/event-stream")
+        );
+        let bytes = bounded(response)
+            .await?
+            .map_err(|error| anyhow::anyhow!("the Answer stream ended: {error}"))?;
+        let elapsed = started.elapsed();
+        let text = std::str::from_utf8(&bytes)?;
+        assert!(elapsed >= Duration::from_secs(130), "{elapsed:?}");
+        assert!(text.contains(r#""answer_call":true"#), "{text}");
+        assert!(text.contains(r#""result""#), "{text}");
+        assert!(text.contains("notifications/progress"), "{text}");
+        drop(sender);
+        f.gateway.close().await;
+        tokio::time::timeout(Duration::from_secs(30), server).await??;
+        let _ = tokio::time::timeout(Duration::from_secs(30), client).await?;
+    }
+    Ok(())
+}

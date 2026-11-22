@@ -19,8 +19,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// How long a stopping service has to exit after it accepted `Shutdown`.
-const EXIT: Duration = Duration::from_secs(60);
+/// How long a stopping service has to exit after it accepted `Shutdown`:
+/// its worst stop (about 60.25 s, `service_runtime::stop_budget`) with
+/// margin. Equal to `airkctl::lifecycle::EXIT`.
+pub(crate) const EXIT: Duration = Duration::from_secs(90);
 /// How long open sessions of the installed images have to exit by themselves.
 const SESSIONS: Duration = Duration::from_secs(15);
 
@@ -255,8 +257,9 @@ pub(crate) async fn drain_service(
         .context("service_drain_unproven: the stopping process could not be observed")?;
     ensure!(
         exited,
-        "service_drain_timeout: the AIRK service (process {}) did not exit within 60 seconds",
-        observation.process_id
+        "service_drain_timeout: the AIRK service (process {}) did not exit within {} seconds",
+        observation.process_id,
+        EXIT.as_secs()
     );
     Ok((
         "stopped",

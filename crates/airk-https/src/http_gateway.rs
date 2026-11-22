@@ -75,6 +75,13 @@ const STREAM_SECONDS: u64 = 120;
 /// a previous response still draining) keep the ordinary 125 s even though the
 /// transport context is minted at Answer's ceiling: they are admission, not
 /// the Answer's work.
+/// The connection IO deadline's clock. It is Tokio's, the clock of the
+/// `OutputBody` stream bound it is widened and tightened from, so the two
+/// cannot disagree; outside paused tests it is the system monotonic clock.
+fn io_now() -> Instant {
+    tokio::time::Instant::now().into_std()
+}
+
 fn admission_deadline(context: &ReadAttemptContext) -> Instant {
     context
         .deadline()
@@ -116,6 +123,10 @@ struct State {
     namespace: Incarnation,
     /// The `/admin` plane (split Phase 5); set once by the service owner.
     admin: std::sync::OnceLock<Arc<crate::admin_plane::AdminPlane>>,
+    /// Tests that jump paused Tokio time past rmcp's real-clock SSE
+    /// keep-alive build their read services without it (remote CONTRACT.md).
+    #[cfg(test)]
+    sse_keep_alive_off: bool,
 }
 #[derive(Clone)]
 pub struct Gateway(Arc<State>);
@@ -148,6 +159,8 @@ impl Gateway {
             port: endpoint.url.port(),
             namespace: endpoint.namespace,
             admin: std::sync::OnceLock::new(),
+            #[cfg(test)]
+            sse_keep_alive_off: false,
         })))
     }
     /// Serve `/admin` through `plane`. Without it every admin-plane target
@@ -248,25 +261,7 @@ impl Gateway {
                     let admin_peer=socket.local_addr().ok().map(|server|crate::admin_plane::ConnectionPeer::new(peer,server));
                     tasks.spawn(async move {
                         let _connection=connection;
-                        let delivery=ConnectionFence::new(gateway.0.native_gate.clone());
-                        // Fence the actual socket: TLS reads may also flush queued
-                        // ciphertext (for example while sending a protocol alert).
-                        let socket=FencedIo{inner:socket,delivery:delivery.clone()};
-                        let tls=tokio::select! {_=gateway.0.closed.cancelled()=>return,
-                            result=tokio::time::timeout(Duration::from_secs(15),acceptor.accept(socket))=>match result {Ok(Ok(tls))=>tls,_=>return}};
-                        drop(handshake);
-                        let disconnected=gateway.0.closed.child_token();let cleanup=CancelOnDrop{token:disconnected.clone(),armed:true};
-                        let socket_delivery=delivery.clone();
-                        let requests=service_fn(move|mut request:Request<Incoming>|{
-                            let gateway=gateway.clone();let canceled=disconnected.child_token();let delivery=delivery.clone();
-                            if let Some(admin_peer)=admin_peer.clone(){request.extensions_mut().insert(admin_peer);}
-                            async move {Ok::<_,Infallible>(gateway.handle_on_connection(request,canceled,delivery).await)}
-                        });
-                        let mut builder=http1::Builder::new();builder.timer(TokioTimer::new()).header_read_timeout(Duration::from_secs(15)).max_buf_size(16*1024).max_headers(64);
-                        let tls=FlushTrackedIo{inner:tls,delivery:socket_delivery};
-                        let connection=builder.serve_connection(TokioIo::new(tls),requests);tokio::pin!(connection);
-                        tokio::select! {_=cleanup.token.cancelled()=>{},_=connection.as_mut()=>{}}
-                        drop(cleanup);
+                        gateway.serve_accepted(socket,acceptor,admin_peer,handshake).await;
                     });
                 }
             }
@@ -278,6 +273,73 @@ impl Gateway {
             Some(error) => Err(error.into()),
             None => Ok(()),
         }
+    }
+    /// One accepted connection: TLS, then HTTP/1.1 over the fenced socket,
+    /// until it ends or the gateway closes. The listener and the tests that
+    /// drive a real connection over an in-memory socket share it.
+    async fn serve_accepted<S>(
+        self,
+        socket: S,
+        acceptor: tokio_rustls::TlsAcceptor,
+        admin_peer: Option<crate::admin_plane::ConnectionPeer>,
+        handshake: tokio::sync::OwnedSemaphorePermit,
+    ) where
+        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
+        let gateway = self;
+        let delivery = ConnectionFence::new(gateway.0.native_gate.clone());
+        // Fence the actual socket: TLS reads may also flush queued
+        // ciphertext (for example while sending a protocol alert).
+        let socket = FencedIo {
+            inner: socket,
+            delivery: delivery.clone(),
+        };
+        let tls = tokio::select! {
+            _ = gateway.0.closed.cancelled() => return,
+            result = tokio::time::timeout(Duration::from_secs(15), acceptor.accept(socket)) => match result {
+                Ok(Ok(tls)) => tls,
+                _ => return,
+            },
+        };
+        drop(handshake);
+        let disconnected = gateway.0.closed.child_token();
+        let cleanup = CancelOnDrop {
+            token: disconnected.clone(),
+            armed: true,
+        };
+        let socket_delivery = delivery.clone();
+        let requests = service_fn(move |mut request: Request<Incoming>| {
+            let gateway = gateway.clone();
+            let canceled = disconnected.child_token();
+            let delivery = delivery.clone();
+            if let Some(admin_peer) = admin_peer.clone() {
+                request.extensions_mut().insert(admin_peer);
+            }
+            async move {
+                Ok::<_, Infallible>(
+                    gateway
+                        .handle_on_connection(request, canceled, delivery)
+                        .await,
+                )
+            }
+        });
+        let mut builder = http1::Builder::new();
+        builder
+            .timer(TokioTimer::new())
+            .header_read_timeout(Duration::from_secs(15))
+            .max_buf_size(16 * 1024)
+            .max_headers(64);
+        let tls = FlushTrackedIo {
+            inner: tls,
+            delivery: socket_delivery,
+        };
+        let connection = builder.serve_connection(TokioIo::new(tls), requests);
+        tokio::pin!(connection);
+        tokio::select! {
+            _ = cleanup.token.cancelled() => {},
+            _ = connection.as_mut() => {},
+        }
+        drop(cleanup);
     }
     pub async fn close(&self) {
         self.0.closed.cancel();
@@ -611,7 +673,15 @@ impl Gateway {
                     "credential_context_limit",
                 ));
             }
-            let service = HttpReadService::new(
+            #[cfg(test)]
+            let build = if self.0.sse_keep_alive_off {
+                HttpReadService::without_sse_keep_alive
+            } else {
+                HttpReadService::new
+            };
+            #[cfg(not(test))]
+            let build = HttpReadService::new;
+            let service = build(
                 self.0.factory.clone(),
                 self.0.sessions.clone(),
                 backend,
@@ -1109,7 +1179,7 @@ impl ConnectionFence {
         };
         if requests.closed
             || requests.active.as_ref().is_some_and(|active| {
-                active.context.cancellation().is_cancelled() || Instant::now() >= active.deadline
+                active.context.cancellation().is_cancelled() || io_now() >= active.deadline
             })
         {
             return Poll::Ready(Err(std::io::Error::new(
@@ -1166,8 +1236,7 @@ impl ConnectionFence {
         };
         let effect = || {
             if let Some(active) = requests.active.as_ref() {
-                if active.context.cancellation().is_cancelled() || Instant::now() >= active.deadline
-                {
+                if active.context.cancellation().is_cancelled() || io_now() >= active.deadline {
                     return Poll::Ready(Err(std::io::Error::new(
                         std::io::ErrorKind::TimedOut,
                         "HTTP delivery expired at actual IO cut",

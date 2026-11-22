@@ -10,8 +10,10 @@ use airk_core::{
 };
 use std::{path::Path, time::Duration};
 
-/// How long a stopping service has to exit after it accepted the request.
-pub const EXIT: Duration = Duration::from_secs(60);
+/// How long a stopping service has to exit after it accepted the request:
+/// the service's worst stop (about 60.25 s; airk-service
+/// `service_runtime::stop_budget`, which tests this bound) with margin.
+pub const EXIT: Duration = Duration::from_secs(90);
 
 /// An accepted request whose process has exited.
 pub struct Stopped {
@@ -89,7 +91,10 @@ pub fn stop(control: &Path, version: &str, action: LifecycleAction) -> Result<St
         }),
         Ok(false) => Err(unknown(
             "lifecycle_exit_unobserved",
-            "The AIRK service accepted the request but did not exit within 60 seconds.",
+            format!(
+                "The AIRK service accepted the request but did not exit within {} seconds.",
+                EXIT.as_secs()
+            ),
         )),
         Err(error) => Err(unknown(
             "lifecycle_exit_unobserved",

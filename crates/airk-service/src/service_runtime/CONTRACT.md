@@ -39,6 +39,48 @@ roots retain their independent lifecycle. This adds no lifecycle record fields.
 - Lifecycle ledger bytes, request keys, phase identities and locks are
   unchanged. No lock is held across response delivery.
 
+## Stop and upgrade wait
+
+The stop runs its stages in this order, each at its own bound
+(`stop_budget.rs`):
+1. With `local-inference`, the arbiter's shared shutdown cutoff of 30 s from
+   the start of the stop (`ARBITER_SHUTDOWN`). The next two stages run
+   inside it.
+2. Ingress stops, and the connection drain waits up to 10 s
+   (`CONNECTION_DRAIN`).
+3. The selection revoke waits up to 5 s (`SELECTION_REVOKE`).
+4. Dropping the state drops the supervisor. Its actor notices within one
+   250 ms turn and asks every in-process owner to stop at once. An owner that
+   has not exited by the supervisor's 10 s grace plus 20 s drain is
+   quarantined; the owners are polled every 100 ms.
+
+The worst case is therefore about 60.25 s with the arbiter, and 45.25 s
+without it. `airkctl service stop|restart` (`airkctl::lifecycle::EXIT`) and
+the setup drain (`setup_role::effects::EXIT`) wait 90 s for the process to
+exit, the worst case with a 29 s margin. Both waits are the same constant
+value.
+
+**Closed gap (L2 M3, 22 November 2026, branch `loop/l2b-2`).**
+- **Fault:** both waiters gave up after 60 s. A stop that stayed within every
+  one of its own bounds could still be reported as `lifecycle_exit_unobserved`
+  or `service_drain_timeout`.
+- **Change:** the waits are raised to 90 s, and their messages name the
+  bound. The service's stage bounds became named constants, which the stop
+  path itself uses.
+- **Why the stages were not overlapped:** the owners stop only when the
+  supervisor is dropped, and that happens after the arbiter's settlement.
+  Overlapping the stages needs a supervisor API, and the supervisor's own
+  10 s and 20 s figures are private. Both changes belong to airk-supervisor,
+  which is being edited for L3-10 (b). The owner figure is therefore recorded
+  in `stop_budget.rs` as `OWNER_STOP`. The follow-up is for the supervisor to
+  export it, so that the test reads the supervisor's constant instead.
+- **Evidence:**
+  `stop_budget::tests::the_worst_stop_exceeded_sixty_seconds_and_fits_the_stop_wait`
+  steps an injected clock through the stages in source order. It asserts a
+  worst case of 60,250 ms, which exceeds 60 s, and that both waits are equal
+  and at least 20 s above that worst case. This models the bounds; it does
+  not time a running service stop.
+
 ## Focused checks
 
 ```console

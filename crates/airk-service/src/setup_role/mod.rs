@@ -9,7 +9,7 @@
 //! adapters are in `files`; side effects call their existing owners
 //! (`effects`). `service-login` is the login registration's entry: it serves
 //! like `service-detached` in automatic mode after its authority check.
-mod effects;
+pub(crate) mod effects;
 mod files;
 mod inno;
 mod mac_login;

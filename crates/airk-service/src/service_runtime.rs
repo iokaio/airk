@@ -44,6 +44,7 @@ mod resolve;
 mod rotation;
 mod scope_grant;
 mod source_delivery;
+mod stop_budget;
 mod storage;
 mod tools_call;
 mod usage;
@@ -1944,7 +1945,7 @@ async fn serve_owned(
     let arbiter_shutdown = state
         .arbiter
         .as_ref()
-        .map(|owner| owner.begin_shutdown(Instant::now() + Duration::from_secs(30)));
+        .map(|owner| owner.begin_shutdown(Instant::now() + stop_budget::ARBITER_SHUTDOWN));
     state
         .draining
         .store(true, std::sync::atomic::Ordering::Release);
@@ -1955,7 +1956,7 @@ async fn serve_owned(
         task.await??;
     }
     // All handlers have finite read/write deadlines and hold no project publication state.
-    let _ = tokio::time::timeout(Duration::from_secs(10), async {
+    let _ = tokio::time::timeout(stop_budget::CONNECTION_DRAIN, async {
         while connections.join_next().await.is_some() {}
     })
     .await;
@@ -1981,7 +1982,7 @@ async fn serve_owned(
         let pairs = revoke_nonces_in_gate(state.catalog_gate.as_ref(), nonces);
         if let (false, Some(control)) = (pairs.is_empty(), state.selection_control.clone()) {
             let _ = tokio::time::timeout(
-                Duration::from_secs(5),
+                stop_budget::SELECTION_REVOKE,
                 tokio::task::spawn_blocking(move || control.revoke_selection_scopes(pairs)),
             )
             .await;

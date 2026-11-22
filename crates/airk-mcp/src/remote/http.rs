@@ -434,6 +434,30 @@ impl HttpReadService {
             SSE_KEEP_ALIVE,
         )
     }
+    /// Tests of crates built on this one that jump paused Tokio time past
+    /// the keep-alive (the HTTPS gateway's long-Answer connection test): the
+    /// same service without rmcp's real-clock SSE keep-alive.
+    #[cfg(feature = "test-support")]
+    pub fn without_sse_keep_alive(
+        factory: ReadSessionFactory,
+        budget: HttpSessionBudget,
+        backend: AuthenticatedBackendFactory,
+        preferences: ReadSessionPreferences,
+        authority: String,
+        origins: Vec<String>,
+        limits: HttpReadLimits,
+    ) -> anyhow::Result<Self> {
+        Self::with_sse_keep_alive(
+            factory,
+            budget,
+            backend,
+            preferences,
+            authority,
+            origins,
+            limits,
+            None,
+        )
+    }
     #[allow(clippy::too_many_arguments)]
     fn with_sse_keep_alive(
         factory: ReadSessionFactory,

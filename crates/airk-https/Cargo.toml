@@ -64,6 +64,7 @@ airk-catalog-control = { workspace = true, features = ["test-support"] }
 airk-installer = { workspace = true, features = ["test-support"] }
 airk-supervisor = { workspace = true, features = ["test-support"] }
 airk-frontend = { workspace = true, features = ["test-support"] }
+airk-mcp = { workspace = true, features = ["test-support"] }
 hyper = { workspace = true, features = ["client"] }
 airk-ingest.workspace = true
 rusqlite.workspace = true

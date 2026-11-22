@@ -328,6 +328,46 @@ limits on publication still apply in full.
   the real clock, a ping is sent at most every 15 s, and the stream is
   pulled only as the client reads, under the gateway's `OutputBody` budget.
   Record and evidence: `crates/airk-mcp/src/remote/CONTRACT.md`.
+- **Closed gap (22 November 2026, branch `loop/l2b-2`): a live HTTPS Answer
+  past 120 s.**
+  - **Fault:** no test held a live TLS connection past 120 s. The
+    connection fence also read the system clock while the stream bound read
+    Tokio's, so the IO deadline could not be driven under paused time.
+  - **Change:** the fence's IO deadline now reads Tokio's clock (`io_now`),
+    which is the system clock in production. The per-connection serve is one
+    function (`Gateway::serve_accepted`). Test builds can turn rmcp's
+    real-clock keep-alive off (`HttpReadService::without_sse_keep_alive`,
+    `test-support` only).
+  - **Evidence:**
+    `a_live_tls_connection_keeps_an_answer_open_past_120_seconds_to_its_result`
+    passes. Its head arrives under 1 s and its result after at least 130 s,
+    with every body read bounded. With the fence widening disabled, it fails.
+  - **Record:** `crates/airk-mcp/src/remote/CONTRACT.md`.
+- **Closed gap (22 November 2026, branch `loop/l2b-2`): the stop and upgrade
+  wait (L2 M3).**
+  - **Fault:** the worst service stop, modelled on an injected clock in
+    source order, is about 60.25 s:
+    - the 30 s arbiter cutoff, with the 10 s connection drain and the 5 s
+      revoke inside it;
+    - a 0.25 s supervisor turn;
+    - the in-process owners' 10 s grace and 20 s drain, in parallel.
+
+    That is above the 60 s that `airkctl service stop|restart` and the setup
+    drain waited. So a stop that stayed within all of its own bounds could
+    be reported as failed.
+  - **Change:** both waits are now 90 s, and their messages name the bound.
+    The service's stage bounds are named constants that the stop path uses
+    (`service_runtime/stop_budget.rs`).
+  - **Why the stages were not overlapped:** the owner stop begins only when
+    the supervisor is dropped, after the arbiter's settlement, and the
+    supervisor's figures are private. Both are airk-supervisor changes, and
+    that crate is being edited for L3-10 (b), so they are left as a
+    follow-up.
+  - **Evidence:** the test
+    `stop_budget::tests::the_worst_stop_exceeded_sixty_seconds_and_fits_the_stop_wait`.
+    It models the stage bounds; it does not time a real stop.
+  - **Record:** `crates/airk-service/src/service_runtime/CONTRACT.md`, "Stop
+    and upgrade wait".
 
 ### 19. The Answer job table: choices made where section 12.4.1 left room
 
