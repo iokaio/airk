@@ -281,3 +281,56 @@ fn a_failed_part_search_refuses_every_part_waiting_on_it() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn an_unretainable_failure_receipt_is_not_an_omission() -> Result<()> {
+    let scope = scope();
+    let mut gather = Gathering::new(v3::BudgetV3::default(), scope.clone())?;
+    let read = search(&mut gather, 1, Some(1), "guard")?;
+    gather.offer(read);
+    let taken = gather.take(1, 1);
+    // Retention is all but full when the read fails with a receipt.
+    gather.bytes = gather.budget.max_bytes - 8;
+    let receipt = json!({"isError":true,"content":[{"type":"text","text":"index read failed"}]});
+    let failed = gather.observe(
+        taken[0].seq,
+        Err(anyhow::Error::new(crate::workbench::ReadFailure(receipt))),
+    )?;
+    assert_eq!(
+        failed,
+        Observed::Failed {
+            record: None,
+            refused: vec![]
+        }
+    );
+    assert_eq!(gather.omitted, 0, "no record was omitted");
+    assert_eq!(gather.stop, None, "a failed read does not stop the Answer");
+    assert!(gather.records.is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_stopped_waiter_is_never_handed_a_shared_read() -> Result<()> {
+    let scope = scope();
+    let mut gather = Gathering::new(v3::BudgetV3::default(), scope.clone())?;
+    let owner = search(&mut gather, 1, Some(1), "restart guard")?;
+    let stopped = search(&mut gather, 2, Some(1), "restart guard")?;
+    let live = search(&mut gather, 3, Some(1), "restart guard")?;
+    assert_eq!(gather.offer(owner), Offer::Queued);
+    assert_eq!(gather.offer(stopped), Offer::Waiting);
+    assert_eq!(gather.offer(live), Offer::Waiting);
+    // Part 2 stops first, then the owner: the read goes to part 3.
+    assert!(gather.drain_part(2).is_empty());
+    assert_eq!(gather.drain_part(1).len(), 1);
+    assert_eq!(gather.queued_for(2), 0);
+    assert_eq!(gather.queued_for(3), 1);
+    let taken = gather.take(3, 1);
+    gather.observe(taken[0].seq, Ok(reply(&scope, vec![])))?;
+    let parts: Vec<u8> = gather.records[0]
+        .uses
+        .iter()
+        .map(|item| item.part)
+        .collect();
+    assert_eq!(parts, [3]);
+    Ok(())
+}

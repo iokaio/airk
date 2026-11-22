@@ -76,12 +76,15 @@ fn error_strings(text: &str) -> Vec<String> {
             let Some(end) = after.find(mark) else { break };
             let literal = &after[..end];
             let lower = literal.to_ascii_lowercase();
-            if !literal.contains('\n')
-                && ERROR_WORDS.iter().any(|word| lower.contains(word))
-                && let Some(literal) = bounded(literal)
-                && !found.contains(&literal)
-            {
-                found.push(literal);
+            let error =
+                !literal.contains('\n') && ERROR_WORDS.iter().any(|word| lower.contains(word));
+            if error && let Some(literal) = bounded(literal) {
+                // A repeated error literal is still a literal: skip past its
+                // closing quote, so the text between two literals is never
+                // read as one.
+                if !found.contains(&literal) {
+                    found.push(literal);
+                }
                 rest = &after[end + 1..];
             } else {
                 // A rejected opening quote may still close nothing: move past it only.

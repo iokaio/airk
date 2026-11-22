@@ -139,3 +139,10 @@ fn a_rejected_quote_does_not_hide_the_next_error_string() {
         ["retry_refused"]
     );
 }
+
+#[test]
+fn a_repeated_error_literal_is_skipped_whole() {
+    let text =
+        r#"log("open failed"); retry(); log("open failed"); then the call failed done("ok")"#;
+    assert_eq!(error_strings(text), ["open failed"]);
+}

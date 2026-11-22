@@ -169,6 +169,8 @@ impl crate::Kernel {
             searched: BTreeSet::new(),
             waiting: BTreeMap::new(),
             used_calls: vec![],
+            used_slots: vec![],
+            used_pairs: vec![],
             rr: 0,
             model: context
                 .owner
@@ -215,6 +217,9 @@ struct Loop<'a> {
     /// Recipe steps waiting on a read another dispatch already queued.
     waiting: BTreeMap<ReadKey, Vec<(u8, u8, Step)>>,
     used_calls: Vec<usize>,
+    /// Card slots charged to each part (by index) and Focus pairs it used.
+    used_slots: Vec<usize>,
+    used_pairs: Vec<usize>,
     rr: usize,
     model: Option<LoopModel>,
     model_blocked: bool,
@@ -249,6 +254,24 @@ impl Loop<'_> {
     fn stop_due(&self) -> bool {
         let reserve = Duration::from_millis(self.shares.reserve.total_ms());
         self.now() + reserve >= self.deadline
+    }
+    /// Model calls end before the Compose and Union reserve.
+    fn model_deadline(&self) -> Instant {
+        self.deadline
+            .checked_sub(Duration::from_millis(self.shares.reserve.compose_union_ms))
+            .unwrap_or(self.started)
+            .max(self.started)
+    }
+    fn part_index(&self, id: u8) -> Option<usize> {
+        self.parts.iter().position(|part| part.id == id)
+    }
+    /// Model tokens charged to a part over every round.
+    fn part_tokens(&self, id: u8) -> usize {
+        self.used_tokens
+            .iter()
+            .filter(|((part, _), _)| *part == id)
+            .map(|(_, tokens)| *tokens)
+            .sum()
     }
     fn progress(&self, part: usize, stage: v3::LoopStage) {
         let part = &self.parts[part];
@@ -327,13 +350,23 @@ impl Loop<'_> {
                 &question[span.0..span.1],
             ));
         }
+        // The Split call is charged before the shares are cut.
+        let split_tokens: usize = self.used_tokens.values().sum();
         self.shares = shares::Shares::allocate(
             &self.request.budget,
             self.parts.len(),
-            self.request.budget.context_calls,
-            self.request.budget.input_tokens,
+            self.request
+                .budget
+                .context_calls
+                .saturating_sub(self.card_slots),
+            self.request
+                .budget
+                .input_tokens
+                .saturating_sub(split_tokens),
         );
         self.used_calls = vec![0; self.parts.len()];
+        self.used_slots = vec![0; self.parts.len()];
+        self.used_pairs = vec![0; self.parts.len()];
         for (part, share) in self.parts.iter_mut().zip(&self.shares.parts) {
             part.share_ms = share.deadline_ms;
         }
@@ -383,11 +416,8 @@ impl Loop<'_> {
             let state = self.parts[part]
                 .need(need)
                 .context("Answer read for an unknown sub-need")?;
-            if dispatch.round == 1 {
-                if state.reads >= FIRST_ROUND_READS {
-                    return Ok(());
-                }
-                state.reads += 1;
+            if dispatch.round == 1 && state.reads >= FIRST_ROUND_READS {
+                return Ok(());
             }
             state.tried.insert(dispatch.key);
         }
@@ -399,6 +429,15 @@ impl Loop<'_> {
         let (key, step, round, need) = (dispatch.key, dispatch.step, dispatch.round, dispatch.need);
         let mandatory = dispatch.cause == Cause::PartSearch;
         match self.gather.offer(dispatch) {
+            // Only a new dispatch counts against the round-one cap.
+            Offer::Queued => {
+                if let Some(need) = need
+                    && round == 1
+                    && let Some(state) = self.parts[part].need(need)
+                {
+                    state.reads += 1;
+                }
+            }
             Offer::Waiting => {
                 if let Some(need) = need
                     && round == 1
@@ -419,14 +458,15 @@ impl Loop<'_> {
                     self.stop_part(part, v3::PartStop::Refused, round);
                 }
             }
-            Offer::Queued | Offer::Unavailable => {}
+            Offer::Unavailable => {}
         }
         Ok(())
     }
 
     /// The structural reads a round-one recipe step plans from its record.
     fn react(&mut self, part: usize, need: u8, step: Step, record: usize) -> Result<()> {
-        if step == Step::Leaf || self.gather.records[record].failure {
+        // A stopped part plans nothing more: its reads would never run.
+        if !self.parts[part].active() || step == Step::Leaf || self.gather.records[record].failure {
             return Ok(());
         }
         let Some(state) = self.parts[part]
@@ -617,14 +657,19 @@ impl Loop<'_> {
                 };
                 match self.gather.observe(read.seq, result)? {
                     Observed::Retained(record) => {
+                        let waiters = self.waiting.remove(&read.key).unwrap_or_default();
+                        // A read re-tagged to a waiter reacts once, with the
+                        // waiter's own step.
+                        let owner_waits = waiters.iter().any(|(waiter, need, _)| {
+                            *waiter == read.part && Some(*need) == read.need
+                        });
                         if let Some(need) = read.need
                             && read.round == 1
+                            && !owner_waits
                         {
                             self.react(part, need, read.step, record)?;
                         }
-                        for (waiter, need, step) in
-                            self.waiting.remove(&read.key).unwrap_or_default()
-                        {
+                        for (waiter, need, step) in waiters {
                             if let Some(index) =
                                 self.parts.iter().position(|part| part.id == waiter)
                             {
@@ -827,6 +872,9 @@ impl Loop<'_> {
             part,
             shares::Share {
                 calls: self.used_calls[part],
+                card_slots: self.used_slots[part],
+                focus_pairs: self.used_pairs[part],
+                tokens: self.part_tokens(self.parts[part].id),
                 ..shares::Share::default()
             },
             elapsed,
@@ -894,7 +942,22 @@ impl Loop<'_> {
                 }
             }
         }
-        self.focus(&mut entries, round)?;
+        if let Err(error) = self.focus(&mut entries, round) {
+            // Focus went stale after native work: the Answer's own
+            // nonreplayable refusal, with the work so far kept in custody.
+            return Err(if error.is::<super::focus::FocusBatchStale>() {
+                AnswerPostExecutionStale {
+                    _reply: None,
+                    _custody: Box::new(
+                        self.custody(self.ledger.log(&self.request.question, &self.scope)),
+                    ),
+                    _cause: Some(error),
+                }
+                .into()
+            } else {
+                error
+            });
+        }
         // Coverage: one roster per uncovered sub-need, two per card call.
         let mut segs = Vec::new();
         let mut pending = Vec::new();
@@ -1077,10 +1140,11 @@ impl Loop<'_> {
     fn degradations(&self) -> Vec<v3::Degradation> {
         let mut out = Vec::new();
         let entries = &self.ledger.entries;
+        // Every logged decision took the deterministic order, for whatever
+        // reason (no model, blocked, declined or out of slots).
         if entries
             .iter()
-            .all(|entry| !entry.decision.scored_by_model())
-            && (self.model.is_none() || self.application.availability != Availability::Ready)
+            .all(|entry| entry.decision.source.kind() == v3::SourceKind::Deterministic)
         {
             out.push(v3::Degradation::ContextAbsent);
         }
@@ -1126,6 +1190,22 @@ impl Loop<'_> {
         out
     }
 
+    /// The decision log and every intact canonical result.
+    fn custody(&self, log: v3::DecisionLog) -> AnswerCustody {
+        let records = self
+            .gather
+            .records
+            .iter()
+            .map(|record| CustodyRecord {
+                id: record.id,
+                tool: record.tool.to_owned(),
+                arguments: record.arguments.clone(),
+                canonical_result: record.body.clone(),
+            })
+            .collect();
+        AnswerCustody { log, records }
+    }
+
     fn finish(mut self) -> Result<AnswerOutcome> {
         for part in 0..self.parts.len() {
             if self.parts[part].active() {
@@ -1160,23 +1240,14 @@ impl Loop<'_> {
             unknown_tokens: self.unknown_tokens.clone(),
         };
         let (response, log) = union::assemble(&assembly)?;
-        let records = self
-            .gather
-            .records
-            .iter()
-            .map(|record| CustodyRecord {
-                id: record.id,
-                tool: record.tool.to_owned(),
-                arguments: record.arguments.clone(),
-                canonical_result: record.body.clone(),
-            })
-            .collect();
-        let custody = AnswerCustody { log, records };
+        let custody = self.custody(log);
         // Native work under a configuration that is no longer current is
         // never delivered: a content-free, nonreplayable refusal instead.
         if self.configuration_changed && self.ledger.has_native_work() {
             return Err(AnswerPostExecutionStale {
-                _custody: Box::new((response, custody)),
+                _reply: Some(Box::new(response)),
+                _custody: Box::new(custody),
+                _cause: None,
             }
             .into());
         }
@@ -1191,10 +1262,13 @@ impl Loop<'_> {
 #[cfg(test)]
 mod tests;
 
-/// Native work became stale after a configuration change: the reply and its
-/// custody stay private, and the caller receives a nonreplayable refusal.
+/// Native work became stale after a configuration change, or a Focus batch
+/// went stale mid-loop: the reply (if one was assembled), its custody and
+/// the cause stay private, and the caller receives a nonreplayable refusal.
 pub struct AnswerPostExecutionStale {
-    _custody: Box<(v3::ContextResponseV3, AnswerCustody)>,
+    _reply: Option<Box<v3::ContextResponseV3>>,
+    _custody: Box<AnswerCustody>,
+    _cause: Option<anyhow::Error>,
 }
 impl std::fmt::Debug for AnswerPostExecutionStale {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

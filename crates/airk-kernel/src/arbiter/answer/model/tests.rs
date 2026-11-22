@@ -2,7 +2,9 @@
 //! The model path with a synthetic scorer: batched card calls, abstention,
 //! lost outcomes, foreign advice and configuration change. No model quality
 //! or service transport is claimed.
-use super::super::tests::{Fixture, Owner, canned, fixture_with, request};
+use super::super::tests::{
+    Fixture, Owner, PAIR_TOKENS, canned, fixture_with, focus_ready, focus_scores, request,
+};
 use super::*;
 use airk_core::read_attempt::ReadClock;
 use airk_core::service::{ScopedReadRef, WorkerIdentity};
@@ -22,6 +24,10 @@ enum Mode {
     Foreign,
     /// Decline every call (no admitted card task).
     Decline,
+    /// Accept the lowest-scoring card while claiming top score.
+    NotTop,
+    /// Plan takes every card, whatever the request's sub-need limit.
+    AllPlan,
 }
 
 struct Scorer {
@@ -30,6 +36,9 @@ struct Scorer {
     requests: Mutex<Vec<NativeCardRequest>>,
     profile: Sha256Digest,
     calls: AtomicU64,
+    /// Synthetic Focus is ready beside the card scorer.
+    focus: bool,
+    deadlines: Mutex<Vec<Instant>>,
 }
 
 impl NativeController for Scorer {
@@ -48,6 +57,36 @@ impl NativeController for Scorer {
     fn focus_clock(&self) -> Result<Option<(ReadClock, u64)>> {
         Ok(Some((ReadClock::UnixMonotonic, 1000)))
     }
+    fn focus_application(
+        &self,
+        worker: WorkerIdentity,
+        authority: ScopedReadRef,
+        publication: &airk_core::evidence::RevisionEnvelope,
+    ) -> Result<Option<airk_core::arbiter::FocusApplication>> {
+        if !self.focus {
+            return Ok(None);
+        }
+        Ok(Some(focus_ready(self.owner.application(
+            worker,
+            authority,
+            publication,
+        )?)))
+    }
+    fn focus_batch(
+        &self,
+        request: airk_core::native_loop::NativeFocusRequestV3,
+        _: Instant,
+    ) -> Result<Option<airk_core::native_loop::NativeFocusResponseV3>> {
+        let identity = self
+            .focus_application(
+                request.worker,
+                request.authority,
+                &request.scope.publication,
+            )?
+            .and_then(|ready| ready.identity)
+            .context("Focus is not ready")?;
+        focus_scores(request, identity)
+    }
     fn card_model(
         &self,
         _: WorkerIdentity,
@@ -63,8 +102,9 @@ impl NativeController for Scorer {
     fn score_cards(
         &self,
         request: NativeCardRequest,
-        _: Instant,
+        deadline: Instant,
     ) -> Result<Option<v3::CardAdvice>> {
+        self.deadlines.lock().unwrap().push(deadline);
         request.validate(
             request.worker,
             request.authority,
@@ -97,13 +137,23 @@ impl NativeController for Scorer {
                         margin: None,
                     };
                 }
-                let digest = segment.cards[top].text_digest().unwrap();
+                let chosen = if self.mode == Mode::NotTop { 0 } else { top };
+                let digest = segment.cards[chosen].text_digest().unwrap();
                 v3::SegmentOutcome {
                     ordinal: segment.ordinal,
                     raw_scores: scores,
                     outcome: Outcome::Accepted {
-                        decision: if segment.multiple {
-                            Decision::LoopCards(vec![segment.cards[0].text_digest().unwrap()])
+                        decision: if segment.multiple && self.mode == Mode::AllPlan {
+                            // Every card, so the choice is still the top scores.
+                            Decision::LoopCards(
+                                segment
+                                    .cards
+                                    .iter()
+                                    .map(|card| card.text_digest().unwrap())
+                                    .collect(),
+                            )
+                        } else if segment.multiple {
+                            Decision::LoopCards(vec![digest])
                         } else {
                             Decision::LoopCard(digest)
                         },
@@ -154,6 +204,10 @@ impl NativeController for Scorer {
 }
 
 fn scored(mode: Mode) -> Result<(Fixture, Arc<Scorer>)> {
+    scored_with(mode, false)
+}
+
+fn scored_with(mode: Mode, focus: bool) -> Result<(Fixture, Arc<Scorer>)> {
     let owner = Arc::new(Owner::new());
     let scorer = Arc::new(Scorer {
         owner: owner.clone(),
@@ -161,14 +215,23 @@ fn scored(mode: Mode) -> Result<(Fixture, Arc<Scorer>)> {
         requests: Mutex::new(vec![]),
         profile: Sha256Digest::from_bytes([40; 32]),
         calls: AtomicU64::new(0),
+        focus,
+        deadlines: Mutex::new(vec![]),
     });
     Ok((fixture_with(scorer.clone(), owner)?, scorer))
 }
 
+const QUESTION: &str =
+    "1. explain the restart guard replay policy\n2. which tests cover the retry budget refusal?";
+
 fn answer(fixture: &Fixture) -> Result<AnswerOutcome> {
+    answer_to(fixture, request(QUESTION))
+}
+
+fn answer_to(fixture: &Fixture, request: v3::ContextRequestV3) -> Result<AnswerOutcome> {
     let publication = fixture.publication.clone();
     fixture.kernel.answer(
-        request("1. explain the restart guard replay policy\n2. which tests cover the retry budget refusal?"),
+        request,
         Instant::now() + Duration::from_secs(600),
         &|| Ok(()),
         &|tool, arguments, _| {
@@ -208,6 +271,20 @@ fn batched_segments_argmax_per_segment() -> Result<()> {
         assert_eq!(peer.decision.card_slot, entry.decision.card_slot);
         assert_eq!(peer.decision.receipt, entry.decision.receipt);
     }
+    // Every model decision is its own segment's argmax, from the scores the
+    // scorer returned for that segment.
+    let mut model_decisions = 0;
+    for entry in &log.entries {
+        if entry.decision.source.kind() != v3::SourceKind::Model {
+            continue;
+        }
+        model_decisions += 1;
+        let argmax = (0..entry.scores.len())
+            .max_by(|left, right| entry.scores[*left].total_cmp(&entry.scores[*right]))
+            .unwrap();
+        assert_eq!(entry.chosen, vec![argmax as u8], "{:?}", entry.decision);
+    }
+    assert!(model_decisions > 2);
     // The split roster's highest card is a two-part partition.
     let split = &log.entries[0];
     assert_eq!(split.decision.source.kind(), v3::SourceKind::Model);
@@ -263,6 +340,19 @@ fn abstained_or_none_falls_back_with_recorded_rule() -> Result<()> {
             .all(|entry| !entry.decision.scored_by_model())
     );
     assert_eq!(outcome.response.decision_log.card_calls, 0);
+    // Every decision fell back, so Context is reported absent, and each
+    // part's rosters the model would have scored say they lost their share.
+    let degradations = &outcome.response.degradations;
+    assert!(
+        degradations
+            .iter()
+            .any(|item| matches!(item, v3::Degradation::ContextAbsent))
+    );
+    assert!(
+        degradations
+            .iter()
+            .any(|item| matches!(item, v3::Degradation::ModelShare { .. }))
+    );
     Ok(())
 }
 
@@ -326,5 +416,111 @@ fn configuration_change_after_native_work_is_refused_without_replay() -> Result<
         .context("a stale refusal")?;
     assert_eq!(stale.receipt()["error"]["retryable"], false);
     assert!(scorer.calls.load(Ordering::Acquire) >= 1);
+    Ok(())
+}
+
+#[test]
+fn focus_and_card_tokens_share_one_pool() -> Result<()> {
+    let (fixture, _) = scored_with(Mode::Accept, true)?;
+    let mut small = request(QUESTION);
+    small.budget.input_tokens = 8 * PAIR_TOKENS;
+    small.budget.round_input_tokens = 8 * PAIR_TOKENS;
+    let outcome = answer_to(&fixture, small)?;
+    let log = &outcome.custody.log;
+    assert!(!log.focus_receipts.is_empty(), "Focus ran");
+    assert!(!log.receipts.is_empty(), "cards ran");
+    assert!(outcome.response.work.input_tokens <= 8 * PAIR_TOKENS);
+    Ok(())
+}
+
+#[test]
+fn top_score_advice_must_choose_the_highest_card() -> Result<()> {
+    let (fixture, scorer) = scored(Mode::NotTop)?;
+    let outcome = answer(&fixture)?;
+    assert_eq!(scorer.calls.load(Ordering::Acquire), 1, "no further calls");
+    let log = &outcome.custody.log;
+    assert!(log.receipts.is_empty(), "the advice is not kept");
+    assert!(matches!(
+        log.entries[0].decision.source,
+        v3::DecisionSource::Unavailable { .. }
+    ));
+    assert!(log.entries[0].decision.work_unknown);
+    Ok(())
+}
+
+#[test]
+fn plan_advice_beyond_the_sub_need_limit_is_refused() -> Result<()> {
+    let (fixture, scorer) = scored(Mode::AllPlan)?;
+    let mut limited = request(QUESTION);
+    limited.budget.max_sub_needs = 1;
+    let outcome = answer_to(&fixture, limited)?;
+    let requests = scorer.requests.lock().unwrap();
+    assert!(
+        requests.iter().any(|request| request
+            .segments
+            .iter()
+            .any(|segment| segment.multiple && segment.cards.len() >= 2)),
+        "a Plan roster offered more than one card"
+    );
+    for entry in &outcome.custody.log.entries {
+        if entry.decision.stage == v3::LoopStage::Plan {
+            assert!(entry.chosen.len() <= 1, "{:?}", entry.decision);
+        }
+    }
+    assert!(
+        outcome
+            .response
+            .parts
+            .iter()
+            .all(|part| part.sub_needs.len() <= 1)
+    );
+    Ok(())
+}
+
+#[test]
+fn model_calls_end_before_the_compose_reserve() -> Result<()> {
+    let (fixture, scorer) = scored(Mode::Accept)?;
+    let before = Instant::now();
+    answer(&fixture)?;
+    let deadlines = scorer.deadlines.lock().unwrap();
+    assert!(!deadlines.is_empty());
+    // The default 300 s deadline less the two-part Compose and Union
+    // reserve (9 s + 1 s + 2 x 250 ms).
+    for deadline in deadlines.iter() {
+        assert!(*deadline < before + Duration::from_secs(295));
+    }
+    Ok(())
+}
+
+#[test]
+fn card_slots_follow_each_parts_share() -> Result<()> {
+    let (fixture, _) = scored(Mode::Accept)?;
+    let mut tight = request(
+        "1. where is `restart_guard` defined, who calls it, which tests cover it and where is it documented?\n2. explain the retry budget refusal",
+    );
+    tight.budget.context_calls = 5;
+    tight.budget.rounds = 1;
+    let outcome = answer_to(&fixture, tight)?;
+    let log = &outcome.custody.log;
+    assert_eq!(outcome.response.parts.len(), 2);
+    // A slot is charged to the part of its first segment.
+    let mut first: BTreeMap<u8, Option<u8>> = BTreeMap::new();
+    for entry in &log.entries {
+        if let Some(slot) = entry.decision.card_slot {
+            first.entry(slot).or_insert(entry.decision.part);
+        }
+    }
+    let charged = |part: u8| first.values().filter(|owner| **owner == Some(part)).count();
+    // Split takes one slot; the other four are two a part.
+    assert!(charged(1) <= 2 && charged(2) <= 2, "{first:?}");
+    assert!(charged(2) >= 1, "part 2 is not starved");
+    let coverage_one = log
+        .entries
+        .iter()
+        .filter(|entry| {
+            entry.decision.stage == v3::LoopStage::Coverage && entry.decision.part == Some(1)
+        })
+        .count();
+    assert!(coverage_one >= 3, "part 1 had more rosters than its share");
     Ok(())
 }

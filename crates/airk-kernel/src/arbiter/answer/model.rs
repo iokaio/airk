@@ -83,6 +83,11 @@ impl Loop<'_> {
             let scored = segs[index].cards.len() >= 2;
             let model = if scored { self.model_ready() } else { None };
             let Some(model) = model else {
+                // A roster the model would have scored but could not (it
+                // was blocked, declined or the configuration changed).
+                if scored && self.model.is_some() {
+                    self.disclose_share(&segs[index..=index]);
+                }
                 let seg = &segs[index];
                 self.ledger.deterministic(
                     seg.at,
@@ -125,6 +130,7 @@ impl Loop<'_> {
                     }
                 }
                 None => {
+                    self.disclose_share(group);
                     for seg in group {
                         self.ledger.deterministic(
                             seg.at,
@@ -157,6 +163,16 @@ impl Loop<'_> {
             return Ok(None);
         };
         if self.stop_due() || self.card_slots >= budget.context_calls {
+            self.disclose_share(group);
+            return Ok(None);
+        }
+        // The slot is the first segment's part's (Split is charged before
+        // the shares exist).
+        let charged = group[0].at.part.and_then(|id| self.part_index(id));
+        if let Some(index) = charged
+            && self.used_slots[index] >= self.shares.parts[index].card_slots
+        {
+            self.disclose_share(group);
             return Ok(None);
         }
         // Model time: the part's share of what is left, per round left.
@@ -164,6 +180,7 @@ impl Loop<'_> {
             .deadline
             .saturating_duration_since(self.now())
             .as_millis() as u64;
+        // Barriers left, this one included: at barrier r of n, n - r + 1.
         let rounds_left = budget
             .rounds
             .saturating_sub(usize::from(group[0].at.round.unwrap_or(1)).saturating_sub(1));
@@ -173,37 +190,61 @@ impl Loop<'_> {
         }
         // Tokens: one call's reservation, attributed by card count with the
         // remainder to the lowest part and round.
-        let used: usize = self.used_tokens.values().sum();
-        let reserve = v3::CONTEXT_CALL_TOKENS.min(budget.input_tokens.saturating_sub(used));
         let weights: BTreeMap<(u8, u8), usize> =
             group.iter().fold(BTreeMap::new(), |mut map, seg| {
                 *map.entry(charge_key(&seg.at)).or_default() += seg.cards.len();
                 map
             });
+        // The reservation stays within the pool and the charged parts'
+        // token shares (Split is charged before the shares exist).
+        let used: usize = self.used_tokens.values().sum();
+        let parts: BTreeSet<u8> = weights.keys().map(|(part, _)| *part).collect();
+        let shares_left = parts
+            .iter()
+            .map(|part| match self.part_index(*part) {
+                Some(index) if *part > 0 => self.shares.parts[index]
+                    .tokens
+                    .saturating_sub(self.part_tokens(*part)),
+                _ => usize::MAX,
+            })
+            .fold(0usize, usize::saturating_add);
+        let reserve = v3::CONTEXT_CALL_TOKENS
+            .min(budget.input_tokens.saturating_sub(used))
+            .min(shares_left);
         let total: usize = weights.values().sum();
         if reserve < weights.len() || total == 0 {
             self.disclose_share(group);
             return Ok(None);
         }
+        // Every charged part and round gets at least one token, the rest
+        // by card count, the remainder to the lowest.
+        let spread = reserve - weights.len();
         let mut attribution: Vec<v3::TokenAttribution> = weights
             .iter()
             .map(|(&(part, round), weight)| v3::TokenAttribution {
                 part,
                 round,
-                tokens: reserve * weight / total,
+                tokens: 1 + spread * weight / total,
             })
             .collect();
         let given: usize = attribution.iter().map(|charge| charge.tokens).sum();
         attribution[0].tokens += reserve - given;
+        let over_share = |charge: &v3::TokenAttribution| {
+            charge.part > 0
+                && self.part_index(charge.part).is_some_and(|index| {
+                    self.part_tokens(charge.part) + charge.tokens > self.shares.parts[index].tokens
+                })
+        };
         if attribution.iter().any(|charge| {
-            charge.round > 0
-                && self
-                    .used_tokens
-                    .get(&(charge.part, charge.round))
-                    .copied()
-                    .unwrap_or(0)
-                    + charge.tokens
-                    > budget.round_input_tokens
+            over_share(charge)
+                || charge.round > 0
+                    && self
+                        .used_tokens
+                        .get(&(charge.part, charge.round))
+                        .copied()
+                        .unwrap_or(0)
+                        + charge.tokens
+                        > budget.round_input_tokens
         }) {
             self.disclose_share(group);
             return Ok(None);
@@ -225,7 +266,16 @@ impl Loop<'_> {
                 multiple: stage == v3::LoopStage::Plan,
             })
             .collect();
-        let remaining_ms = (left.min(budget.deadline_ms)).max(1);
+        // A model call never runs into the Compose and Union reserve.
+        let model_deadline = self.model_deadline();
+        let model_left = model_deadline
+            .saturating_duration_since(self.now())
+            .as_millis() as u64;
+        if model_left == 0 {
+            self.disclose_share(group);
+            return Ok(None);
+        }
+        let remaining_ms = model_left.min(budget.deadline_ms);
         let request = NativeCardRequest {
             schema: v3::CARD_REQUEST_SCHEMA.into(),
             read_attempt: attempt,
@@ -249,6 +299,9 @@ impl Loop<'_> {
             return Ok(None);
         }
         self.card_slots += 1;
+        if let Some(index) = charged {
+            self.used_slots[index] += 1;
+        }
         let ordinals: Vec<u8> = (0..group.len())
             .map(|offset| first + offset as u8)
             .collect();
@@ -256,7 +309,7 @@ impl Loop<'_> {
         let returned = self
             .context
             .owner
-            .score_cards(request.clone(), self.deadline);
+            .score_cards(request.clone(), model_deadline);
         let elapsed = self.now().saturating_duration_since(started).as_millis() as u64;
         self.cost.observe(stage, elapsed);
         let gpu = model.device != v3::ExecutionDevice::Cpu;
@@ -282,6 +335,9 @@ impl Loop<'_> {
         match returned {
             Ok(None) => {
                 self.card_slots -= 1;
+                if let Some(index) = charged {
+                    self.used_slots[index] -= 1;
+                }
                 self.model_blocked = true;
                 Ok(None)
             }
@@ -387,7 +443,9 @@ impl Loop<'_> {
 
     /// Advice is used only when it is the exact complete answer to this
     /// request, from the active profile, and every accepted segment is
-    /// consistent with its own scores.
+    /// consistent with its own scores: within its stage's card limit, the
+    /// margin exactly top minus runner-up, and a top-score choice the
+    /// highest-scoring cards.
     fn acceptable(
         &self,
         request: &NativeCardRequest,
@@ -416,23 +474,53 @@ impl Loop<'_> {
             let Outcome::Accepted { decision } = &outcome.outcome else {
                 return true;
             };
-            let count = match decision {
-                Decision::LoopCard(_) => 1,
-                Decision::LoopCards(cards) => cards.len(),
+            let picked: Vec<Sha256Digest> = match decision {
+                Decision::LoopCard(card) => vec![*card],
+                Decision::LoopCards(cards) => cards.clone(),
                 _ => return false,
             };
+            let Ok(digests) = seg
+                .cards
+                .iter()
+                .map(LoopCard::text_digest)
+                .collect::<Result<Vec<_>>>()
+            else {
+                return false;
+            };
+            // Every chosen card is on the roster, once.
+            let chosen: BTreeSet<usize> = picked
+                .iter()
+                .filter_map(|card| digests.iter().position(|digest| digest == card))
+                .collect();
             let mut sorted = outcome.raw_scores.clone();
             sorted.sort_by(|left, right| right.total_cmp(left));
             let margin = match (sorted.first(), sorted.get(1)) {
                 (Some(top), Some(second)) => Some(top - second),
                 _ => None,
             };
+            // Plan may take up to the request's sub-need limit, every other
+            // stage one card.
             let limit = if seg.at.stage == v3::LoopStage::Plan {
-                v3::MAX_SUB_NEEDS
+                self.request.budget.max_sub_needs.min(v3::MAX_SUB_NEEDS)
             } else {
                 1
             };
-            count <= limit
+            // A top-score decision takes the highest-scoring cards: none it
+            // left out scores above one it chose.
+            let top_score = outcome.rule.is_some()
+                || (outcome.raw_scores.len() == seg.cards.len() && {
+                    let lowest_chosen = chosen
+                        .iter()
+                        .map(|index| outcome.raw_scores[*index])
+                        .fold(f32::INFINITY, f32::min);
+                    (0..seg.cards.len())
+                        .filter(|index| !chosen.contains(index))
+                        .all(|index| outcome.raw_scores[index] <= lowest_chosen)
+                });
+            !picked.is_empty()
+                && chosen.len() == picked.len()
+                && picked.len() <= limit
+                && top_score
                 && margin.is_some()
                 && margin.map(f32::to_bits) == outcome.margin.map(f32::to_bits)
         })
@@ -458,20 +546,26 @@ impl Loop<'_> {
         };
         let allowance = self.request.budget.round_input_tokens;
         // Focus takes at most half of a part-round's token allowance, so the
-        // card calls of the same barrier keep the other half. Spans past a
-        // part's half stay unscored, disclosed as its model share.
+        // card calls of the same barrier keep the other half, and never more
+        // than the part's own token and pair shares. Only the first `scored`
+        // spans of an entry are sent; the rest stay in coverage unscored, in
+        // canonical order, disclosed as the part's model share.
         let mut planned: BTreeMap<u8, usize> = BTreeMap::new();
-        for (part, _, spans) in entries.iter_mut() {
+        let mut scored = Vec::with_capacity(entries.len());
+        for (part, _, spans) in entries.iter() {
             let id = self.parts[*part].id;
             let used = self.used_tokens.get(&(id, round)).copied().unwrap_or(0);
-            let fits = (allowance / 2).saturating_sub(used) / pair_tokens;
+            let share = self.shares.parts[*part];
+            let fits = ((allowance / 2).saturating_sub(used) / pair_tokens)
+                .min(share.tokens.saturating_sub(self.part_tokens(id)) / pair_tokens)
+                .min(share.focus_pairs.saturating_sub(self.used_pairs[*part]));
             let taken = planned.entry(id).or_default();
             let keep = fits.saturating_sub(*taken).min(spans.len());
-            if keep < spans.len() && !self.model_share.contains(&(id, v3::LoopStage::Read)) {
-                self.model_share.push((id, v3::LoopStage::Read));
+            if keep < spans.len() {
+                self.disclose_read(id);
             }
             *taken += keep;
-            spans.truncate(keep);
+            scored.push(keep);
         }
         let per_call = (allowance / pair_tokens).min(v3::MAX_FOCUS_BATCH_PAIRS);
         let mut start = 0;
@@ -482,9 +576,9 @@ impl Loop<'_> {
             let mut pairs = 0;
             let mut questions = BTreeSet::new();
             while end < entries.len() {
-                let (part, need, spans) = &entries[end];
+                let (part, need, _) = &entries[end];
                 let query = &self.parts[*part].needs[*need].need.query;
-                let more = spans.len();
+                let more = scored[end];
                 let new_question = !questions.contains(query);
                 if end > start
                     && (pairs + more > per_call
@@ -505,6 +599,7 @@ impl Loop<'_> {
                 || self.focus_pairs + pairs.min(v3::MAX_FOCUS_BATCH_PAIRS) > budget.focus_pairs
                 || self.stop_due()
             {
+                self.disclose_rest(entries, &scored, start);
                 break;
             }
             let needs: Vec<retrieve::Need> = entries[start..end]
@@ -513,9 +608,10 @@ impl Loop<'_> {
                 .collect();
             let ready: Vec<(u8, &retrieve::Need, u8, &[coverage::Span])> = entries[start..end]
                 .iter()
+                .zip(&scored[start..end])
                 .zip(&needs)
-                .map(|((part, _, spans), need)| {
-                    (self.parts[*part].id, need, round, spans.as_slice())
+                .map(|(((part, _, spans), keep), need)| {
+                    (self.parts[*part].id, need, round, &spans[..*keep])
                 })
                 .collect();
             let (questions, owners, spans) = coverage::batch(&ready, v3::MAX_FOCUS_BATCH_PAIRS);
@@ -524,6 +620,17 @@ impl Loop<'_> {
                 continue;
             }
             let count = spans.len();
+            // The whole-attempt pool holds card tokens too: a batch that
+            // would pass it is not sent.
+            let used: usize = self.used_tokens.values().sum();
+            if used + count * pair_tokens > budget.input_tokens {
+                self.disclose_rest(entries, &scored, start);
+                break;
+            }
+            let mut batch_pairs: BTreeMap<u8, usize> = BTreeMap::new();
+            for span in &spans {
+                *batch_pairs.entry(span.part).or_default() += 1;
+            }
             let ranking = self.kernel.rank_spans(focus::SpanBatch {
                 budget: budget.clone(),
                 round_left: self
@@ -540,15 +647,21 @@ impl Loop<'_> {
                     .collect(),
                 questions,
                 spans,
-                deadline: self.deadline,
+                deadline: self.model_deadline(),
             })?;
             let Some(ranking) = ranking else {
                 self.focus_blocked = true;
+                self.disclose_rest(entries, &scored, start);
                 return Ok(());
             };
             calls_here += 1;
             self.batch_split |= calls_here > 1;
             self.focus_pairs += count;
+            for (id, pairs) in batch_pairs {
+                if let Some(index) = self.part_index(id) {
+                    self.used_pairs[index] += pairs;
+                }
+            }
             for charge in &ranking.receipt.attribution {
                 *self
                     .used_tokens
@@ -567,11 +680,32 @@ impl Loop<'_> {
             );
             self.ledger.focus.push(ranking.receipt);
             if self.focus_blocked {
+                self.disclose_rest(entries, &scored, end);
                 return Ok(());
             }
             start = end;
         }
         Ok(())
+    }
+
+    fn disclose_read(&mut self, part: u8) {
+        if !self.model_share.contains(&(part, v3::LoopStage::Read)) {
+            self.model_share.push((part, v3::LoopStage::Read));
+        }
+    }
+
+    /// Spans from `start` on that Focus would have scored stay unscored.
+    fn disclose_rest(
+        &mut self,
+        entries: &[(usize, usize, Vec<coverage::Span>)],
+        scored: &[usize],
+        start: usize,
+    ) {
+        for ((part, _, _), keep) in entries.iter().zip(scored).skip(start) {
+            if *keep > 0 {
+                self.disclose_read(self.parts[*part].id);
+            }
+        }
     }
 }
 

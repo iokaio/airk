@@ -135,6 +135,43 @@ fn omission_order(gather: &Gathering, cited: &BTreeSet<usize>) -> Vec<usize> {
 /// Parts and records that found one definition location.
 type Found = (BTreeSet<u8>, BTreeSet<Sha256Digest>);
 
+/// The conflict notes that survive Union's omissions: each names only the
+/// parts that still have its evidence, and is kept only while it still
+/// shows a divergence between at least two parts.
+fn surviving(
+    gather: &Gathering,
+    notes: Vec<v3::ConflictNote>,
+    retained: &BTreeSet<Sha256Digest>,
+) -> Vec<v3::ConflictNote> {
+    notes
+        .into_iter()
+        .filter_map(|mut note| {
+            note.evidence.retain(|id| retained.contains(id));
+            // A note names only the parts that still have its evidence, and
+            // survives only while it still shows a divergence.
+            let kept: Vec<&Record> = gather
+                .records
+                .iter()
+                .filter(|record| note.evidence.contains(&record.id))
+                .collect();
+            let found: BTreeSet<u8> = kept
+                .iter()
+                .flat_map(|record| record.uses.iter().map(|item| item.part))
+                .collect();
+            note.parts.retain(|part| found.contains(part));
+            let paths: BTreeSet<&str> = kept
+                .iter()
+                .filter_map(|record| record.arguments.get("path").and_then(Value::as_str))
+                .collect();
+            let divergent = match note.kind {
+                v3::ConflictKind::DivergentDefinition => paths.len() >= 2,
+                v3::ConflictKind::DivergentVerdict => !note.evidence.is_empty(),
+            };
+            (divergent && note.parts.len() >= 2).then_some(note)
+        })
+        .collect()
+}
+
 fn conflicts(gather: &Gathering, parts: &[PartState]) -> Vec<v3::ConflictNote> {
     let mut notes = Vec::new();
     // Same definition subject, different definition locations across parts.
@@ -462,17 +499,7 @@ fn build(
         }
     }
     let retained: BTreeSet<Sha256Digest> = records.iter().map(|record| record.id).collect();
-    let conflicts = conflicts(gather, assembly.parts)
-        .into_iter()
-        .filter_map(|mut note| {
-            note.evidence.retain(|id| retained.contains(id));
-            let minimum = match note.kind {
-                v3::ConflictKind::DivergentDefinition => 2,
-                v3::ConflictKind::DivergentVerdict => 1,
-            };
-            (note.evidence.len() >= minimum).then_some(note)
-        })
-        .collect();
+    let conflicts = surviving(gather, conflicts(gather, assembly.parts), &retained);
     let omitted_count = gather.omitted + removed.len();
     let omitted_evidence: Vec<Sha256Digest> = removed
         .iter()

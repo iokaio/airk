@@ -525,3 +525,55 @@ fn divergent_verdicts_are_noted_not_resolved() -> Result<()> {
     assert_eq!(notes[0].evidence, [gather.records[0].id]);
     Ok(())
 }
+
+#[test]
+fn a_conflict_keeps_only_parts_whose_evidence_survives() -> Result<()> {
+    let scope = scope();
+    let mut gather = Gathering::new(v3::BudgetV3::default(), scope.clone())?;
+    // Part 1 reads `foo` in a.rs and c.rs, part 2 in b.rs.
+    for (part, path) in [(1u8, "a.rs"), (2, "b.rs"), (1, "c.rs")] {
+        let dispatch = gather.dispatch(
+            ("read_file", v3::LoopRead::ReadFile),
+            json!({"path":path,"start_line":1,"end_line":9}),
+            (part, Some(1), 1),
+            Cause::Structural,
+            software::FollowUp::Excerpt,
+            Step::Leaf,
+            "foo",
+        )?;
+        gather.offer(dispatch);
+        let taken = gather.take(part, 1);
+        gather.observe(
+            taken[0].seq,
+            Ok(crate::arbiter::answer::tests::reply(
+                &scope,
+                vec![crate::arbiter::answer::tests::hit(
+                    path,
+                    1,
+                    9,
+                    "fn foo() {}",
+                )],
+            )),
+        )?;
+    }
+    let parts: Vec<PartState> = [1u8, 2]
+        .into_iter()
+        .map(|id| PartState::new(id, (0, 1), "x"))
+        .collect();
+    let notes = conflicts(&gather, &parts);
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].kind, v3::ConflictKind::DivergentDefinition);
+    assert_eq!(notes[0].parts, [1, 2]);
+    let id = |index: usize| gather.records[index].id;
+    // b.rs is omitted: only part 1's two locations remain, so no part
+    // diverges from another and the note goes.
+    let without_b = BTreeSet::from([id(0), id(2)]);
+    assert!(surviving(&gather, notes.clone(), &without_b).is_empty());
+    // c.rs is omitted: both parts still have a location.
+    let without_c = BTreeSet::from([id(0), id(1)]);
+    let kept = surviving(&gather, notes, &without_c);
+    assert_eq!(kept.len(), 1);
+    assert_eq!(kept[0].parts, [1, 2]);
+    assert_eq!(kept[0].evidence, [id(0), id(1)]);
+    Ok(())
+}

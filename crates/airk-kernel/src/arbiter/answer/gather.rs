@@ -364,6 +364,15 @@ impl Gathering {
     /// remaining waiter, which then owns its dispatch.
     pub(crate) fn drain_part(&mut self, part: u8) -> Vec<Dispatch> {
         let mut drained = Vec::new();
+        // A stopped part no longer waits on reads other parts queued, so it
+        // can never be handed one of them later.
+        for entry in self.reads.values_mut() {
+            if let Entry::Queued(uses) = entry
+                && uses.first().is_some_and(|first| first.part != part)
+            {
+                uses.retain(|use_| use_.part != part);
+            }
+        }
         for mut item in std::mem::take(&mut self.queue) {
             if item.part != part {
                 self.queue.push_back(item);
@@ -457,9 +466,14 @@ impl Gathering {
                     .map(|use_| use_.part)
                     .collect();
                 refused.dedup();
+                // A receipt that does not fit the retention bytes is not an
+                // omitted record: the read failed either way, so the
+                // failure is kept without its receipt and nothing stops.
                 let index = match receipt {
-                    Some(receipt) => self.retain(&dispatch, receipt, uses, true)?,
-                    None => None,
+                    Some(receipt) if self.fits(&receipt)? => {
+                        self.retain(&dispatch, receipt, uses, true)?
+                    }
+                    _ => None,
                 };
                 self.reads.insert(dispatch.key, Entry::Failed(index));
                 return Ok(Observed::Failed {
@@ -487,6 +501,15 @@ impl Gathering {
                 Ok(Observed::Omitted)
             }
         }
+    }
+
+    fn fits(&self, body: &Value) -> Result<bool> {
+        let bytes = serde_json::to_vec(body)?.len();
+        Ok(self
+            .bytes
+            .checked_add(bytes)
+            .is_some_and(|total| total <= self.budget.max_bytes)
+            && self.records.len() < self.budget.candidates)
     }
 
     fn retain(

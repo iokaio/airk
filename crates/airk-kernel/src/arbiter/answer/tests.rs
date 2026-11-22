@@ -98,10 +98,143 @@ impl NativeController for Owner {
     }
 }
 
+/// The token cost of one synthetic Focus pair.
+pub(crate) const PAIR_TOKENS: usize = 512;
+
+/// A ready synthetic Focus profile beside an application.
+pub(crate) fn focus_ready(
+    mut application: IndexApplication,
+) -> airk_core::arbiter::FocusApplication {
+    let identity = airk_core::arbiter::FocusIdentity {
+        profile: digest(30),
+        runtime: RUNTIME.into(),
+        compiler: digest(31),
+        calibration: digest(32),
+        task_policy: digest(33),
+    };
+    application.profile = Some(identity.profile);
+    application.availability = Availability::Ready;
+    application.reason = "Synthetic Focus owner, not a qualified model".into();
+    airk_core::arbiter::FocusApplication {
+        application,
+        identity: Some(identity),
+        limits: Some(airk_core::arbiter::FocusProfileLimits {
+            max_candidates: v3::MAX_FOCUS_BATCH_PAIRS,
+            pair_input_tokens: PAIR_TOKENS,
+            max_input_tokens: 8192,
+        }),
+    }
+}
+
+/// Synthetic batched Focus: every pair is relevant, the first most, and the
+/// whole reservation is observed.
+pub(crate) fn focus_scores(
+    request: airk_core::native_loop::NativeFocusRequestV3,
+    identity: airk_core::arbiter::FocusIdentity,
+) -> Result<Option<airk_core::native_loop::NativeFocusResponseV3>> {
+    use v3::{FOCUS_BATCH_SCHEMA, FocusBatchReceipt, FocusPairScore};
+    request.validate(
+        request.worker,
+        request.authority,
+        ReadClock::UnixMonotonic,
+        1000,
+    )?;
+    let pairs: Vec<FocusPairScore> = request
+        .candidates
+        .iter()
+        .enumerate()
+        .map(|(index, candidate)| FocusPairScore {
+            candidate: index as u16,
+            question: candidate.question,
+            no_logit: 0.,
+            yes_logit: 4.0 - index as f32 * 0.01,
+        })
+        .collect();
+    let tokens = request.remaining_input_tokens;
+    Ok(Some(airk_core::native_loop::NativeFocusResponseV3 {
+        ranking: FocusBatchReceipt {
+            schema: FOCUS_BATCH_SCHEMA.into(),
+            scope_digest: v3::scope_digest(&request.scope)?,
+            identity: Some(identity),
+            availability: Availability::Ready,
+            reason: "Synthetic batched scoring".into(),
+            applied: true,
+            input_digest: request.input_digest()?,
+            order_digest: request.order_digest,
+            questions_digest: v3::questions_digest(&request.questions)?,
+            question_count: request.questions.len() as u8,
+            candidate_count: request.candidates.len(),
+            ranked: (0..request.candidates.len() as u16).collect(),
+            work: Work {
+                input_tokens: tokens,
+                candidates: pairs.len(),
+                ..Work::default()
+            },
+            pairs,
+            reserved_input_tokens: tokens,
+            observed_input_tokens: Some(tokens),
+            attribution: request.attribution.clone(),
+        },
+    }))
+}
+
+/// The fixture owner with synthetic Focus ready; Context stays disabled.
+pub(crate) struct Focused {
+    pub(crate) owner: Arc<Owner>,
+    pub(crate) batches: AtomicU64,
+    /// The configuration moves while the first batch runs.
+    pub(crate) stale: bool,
+}
+impl NativeController for Focused {
+    fn application(
+        &self,
+        worker: WorkerIdentity,
+        authority: ScopedReadRef,
+        publication: &RevisionEnvelope,
+    ) -> Result<IndexApplication> {
+        self.owner.application(worker, authority, publication)
+    }
+    fn focus_application(
+        &self,
+        worker: WorkerIdentity,
+        authority: ScopedReadRef,
+        publication: &RevisionEnvelope,
+    ) -> Result<Option<airk_core::arbiter::FocusApplication>> {
+        Ok(Some(focus_ready(self.owner.application(
+            worker,
+            authority,
+            publication,
+        )?)))
+    }
+    fn focus_clock(&self) -> Result<Option<(ReadClock, u64)>> {
+        Ok(Some((ReadClock::UnixMonotonic, 1000)))
+    }
+    fn focus_batch(
+        &self,
+        request: airk_core::native_loop::NativeFocusRequestV3,
+        _: Instant,
+    ) -> Result<Option<airk_core::native_loop::NativeFocusResponseV3>> {
+        self.batches.fetch_add(1, Ordering::AcqRel);
+        let identity = focus_ready(self.owner.application(
+            request.worker,
+            request.authority,
+            &request.scope.publication,
+        )?)
+        .identity
+        .context("identity")?;
+        if self.stale {
+            self.owner.revision.store(2, Ordering::Release);
+        }
+        focus_scores(request, identity)
+    }
+}
+
 pub(crate) struct Fixture {
     pub(crate) _temp: tempfile::TempDir,
     pub(crate) kernel: crate::Kernel,
     pub(crate) owner: Arc<Owner>,
+    /// The native controller the kernel was bound with.
+    pub(crate) controller: Arc<dyn NativeController>,
     pub(crate) publication: RevisionEnvelope,
 }
 
@@ -181,7 +314,7 @@ pub(crate) fn fixture_with<T: NativeController + 'static>(
         fencing_generation: 1,
     };
     let native = scoped
-        .with_native_arbiter(worker, reference, controller)?
+        .with_native_arbiter(worker, reference, controller.clone())?
         .with_context_attempt(ReadAttemptBudget {
             schema: 1,
             request_id: Incarnation::from_bytes([10; 16]),
@@ -195,6 +328,7 @@ pub(crate) fn fixture_with<T: NativeController + 'static>(
         _temp: temporary,
         kernel: native,
         owner,
+        controller,
         publication,
     })
 }
@@ -730,13 +864,17 @@ impl Reversing {
 /// every identity and differ only in read completion order.
 fn answer_by(
     fixture: &Fixture,
-    question: &str,
+    request: v3::ContextRequestV3,
     reversing: Option<&Reversing>,
 ) -> Result<AnswerOutcome> {
     let context = fixture.kernel.arbiter_context.as_ref().unwrap();
     let kernel = fixture
         .kernel
-        .with_native_arbiter(context.worker, context.authority, fixture.owner.clone())?
+        .with_native_arbiter(
+            context.worker,
+            context.authority,
+            fixture.controller.clone(),
+        )?
         .with_context_attempt(ReadAttemptBudget {
             schema: 1,
             request_id: Incarnation::from_bytes([10; 16]),
@@ -748,7 +886,7 @@ fn answer_by(
     let clock = Clock::new();
     let publication = fixture.publication.clone();
     kernel.answer_with(
-        request(question),
+        request,
         AnswerEnv {
             deadline: clock.now() + Duration::from_secs(600),
             require_live: &|| Ok(()),
@@ -768,13 +906,13 @@ fn answer_by(
 fn decisions_are_independent_of_read_completion_order() -> Result<()> {
     let question = "Please answer both:\n1. where is `restart_guard` defined and who calls it?\n2. which tests and documentation cover the restart guard replay policy?";
     let fixture = fixture()?;
-    let in_order = answer_by(&fixture, question, None)?;
+    let in_order = answer_by(&fixture, request(question), None)?;
     let reversing = Reversing {
         driver: std::thread::current().id(),
         board: Mutex::new((0, vec![], 0)),
         changed: std::sync::Condvar::new(),
     };
-    let reversed = answer_by(&fixture, question, Some(&reversing))?;
+    let reversed = answer_by(&fixture, request(question), Some(&reversing))?;
     let (arrivals, _, inverted) = *reversing.board.lock().unwrap();
     assert!(arrivals > 4, "the reads ran on wave threads");
     assert!(
@@ -845,5 +983,95 @@ fn only_an_answer_attempt_may_hold_the_answer_read_budget() -> Result<()> {
             .is_err()
     );
     assert!(base.with_context_attempt(attempt(120)).is_ok());
+    Ok(())
+}
+
+fn focused(stale: bool) -> Result<(Fixture, Arc<Focused>)> {
+    let owner = Arc::new(Owner::new());
+    let focused = Arc::new(Focused {
+        owner: owner.clone(),
+        batches: AtomicU64::new(0),
+        stale,
+    });
+    Ok((fixture_with(focused.clone(), owner)?, focused))
+}
+
+/// Each sub-need's reply evidence and whether it came out Missing.
+fn evidence(outcome: &AnswerOutcome) -> Vec<(u8, u8, Vec<Sha256Digest>, bool)> {
+    outcome
+        .response
+        .parts
+        .iter()
+        .flat_map(|part| {
+            part.sub_needs.iter().map(|need| {
+                (
+                    part.id,
+                    need.id,
+                    need.evidence.clone(),
+                    need.coverage == v3::Coverage::Missing,
+                )
+            })
+        })
+        .collect()
+}
+
+#[test]
+fn focus_short_of_tokens_leaves_spans_unscored_not_dropped() -> Result<()> {
+    let (fixture, focused) = focused(false)?;
+    let mut wide = request(
+        "Explain the restart guard replay policy, its configuration flags and the documentation for them",
+    );
+    wide.budget.rounds = 1;
+    let mut narrow = wide.clone();
+    // Half of two pairs: one span a part-round is scored, the rest are not.
+    narrow.budget.round_input_tokens = 2 * PAIR_TOKENS;
+    let wide = answer_by(&fixture, wide, None)?;
+    let narrow = answer_by(&fixture, narrow, None)?;
+    assert!(focused.batches.load(Ordering::Acquire) >= 2);
+    assert!(!wide.custody.log.focus_receipts.is_empty());
+    assert!(!narrow.custody.log.focus_receipts.is_empty());
+    assert!(narrow.response.degradations.iter().any(|item| matches!(
+        item,
+        v3::Degradation::ModelShare {
+            stage: v3::LoopStage::Read,
+            ..
+        }
+    )));
+    let narrow_evidence = evidence(&narrow);
+    assert!(
+        narrow_evidence
+            .iter()
+            .filter(|(_, _, evidence, _)| !evidence.is_empty())
+            .count()
+            >= 2,
+        "{narrow_evidence:?}"
+    );
+    // Focus only orders spans; the unscored ones keep their evidence.
+    assert_eq!(evidence(&wide), narrow_evidence);
+    Ok(())
+}
+
+#[test]
+fn a_focus_batch_gone_stale_is_the_answer_stale_refusal() -> Result<()> {
+    let (fixture, focused) = focused(true)?;
+    let error = answer_by(
+        &fixture,
+        request("Explain the restart guard replay policy and its configuration flags"),
+        None,
+    )
+    .unwrap_err();
+    assert_eq!(focused.batches.load(Ordering::Acquire), 1, "never replayed");
+    let stale = error
+        .downcast_ref::<AnswerPostExecutionStale>()
+        .context("the Answer's own stale refusal")?;
+    assert_eq!(stale.receipt()["error"]["query_replay_safe"], false);
+    // The stale batch's receipt stays in custody with its cause.
+    assert!(
+        stale
+            ._cause
+            .as_ref()
+            .is_some_and(|cause| cause.is::<super::super::focus::FocusBatchStale>())
+    );
+    assert!(!stale._custody.log.entries.is_empty());
     Ok(())
 }
