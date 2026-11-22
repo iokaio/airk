@@ -56,6 +56,12 @@ The user resumed the Windows and Linux FP16 campaign after D: cleanup. Keep new 
     what the 12.7.1 and 12.7.2 bars indicate, with the evidence limits, as
     input to those choices. L7 waits for them. (The earlier "no stop" and
     "one change set" answers are withdrawn.)
+  - **Window widened by the user to 24 hours** (by about 19:00 UTC on 23
+    November): "Do your best but lets compromise on time and make it 24
+    hours." L6 and L7 come after the LG choices. The extra time goes to gate
+    reliability: the job-table wiring and the gate's concurrency test, the
+    combined-Answer review findings 1-3, and the CPU-versus-CUDA Focus parity
+    receipt return to the pre-LG scope.
   - Work not needed for a reliable gate moves after the review: L3-10 (c)
     deletions, L5b concurrent runs, the job-table wiring and the gate's
     concurrency test, and the combined multi-index Answer if it is not on the
