@@ -94,7 +94,6 @@ impl Shares {
         }
     }
 
-    #[cfg_attr(not(test), allow(dead_code))] // the model path (L3-8)
     pub(crate) fn active(&self) -> usize {
         self.parts.iter().filter(|share| !share.done).count()
     }
@@ -148,7 +147,6 @@ impl Shares {
 
     /// A part's model allowance for this turn: the time left before the
     /// reserve, divided among the active parts, then by its rounds left.
-    #[cfg_attr(not(test), allow(dead_code))] // the model path (L3-8)
     pub(crate) fn round_model_ms(&self, left_ms: u64, rounds_left: usize) -> u64 {
         left_ms.saturating_sub(self.reserve.compose_union_ms)
             / self.active().max(1) as u64
@@ -158,12 +156,10 @@ impl Shares {
 
 /// Measured model cost per card task, an exponentially weighted mean that
 /// starts at the first-Context estimate.
-#[cfg_attr(not(test), allow(dead_code))] // the model path (L3-8)
 #[derive(Clone, Debug, Default)]
 pub(crate) struct CostModel {
     measured: BTreeMap<u8, u64>,
 }
-#[cfg_attr(not(test), allow(dead_code))] // the model path (L3-8)
 impl CostModel {
     pub(crate) fn estimate(&self, stage: v3::LoopStage) -> u64 {
         self.measured

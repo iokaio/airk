@@ -35,6 +35,9 @@ pub(crate) struct Assembly<'a> {
     pub(crate) elapsed_ms: u64,
     /// The bytes the reply may take, after the transport's reserve.
     pub(crate) limit: usize,
+    /// Reservations of card calls whose outcome is unknown, per part and
+    /// round: still charged, so retained by the rounds and the work.
+    pub(crate) unknown_tokens: BTreeMap<(u8, u8), usize>,
 }
 
 fn truncate(text: &str, limit: usize) -> (&str, bool) {
@@ -419,7 +422,12 @@ fn build(
                         charge.part == part.id && usize::from(charge.round) == index + 1
                     })
                     .map(|charge| charge.tokens)
-                    .sum(),
+                    .sum::<usize>()
+                    + assembly
+                        .unknown_tokens
+                        .get(&(part.id, index as u8 + 1))
+                        .copied()
+                        .unwrap_or(0),
                 new_evidence: round.new_evidence,
                 follow_ups_run: round.follow_ups_run.clone(),
                 sub_needs_covered: round.covered,
@@ -506,7 +514,12 @@ fn build(
             .unwrap_or(0),
         candidates: gather.candidates,
         bytes: gather.bytes,
-        input_tokens: summary.attribution.iter().map(|charge| charge.tokens).sum(),
+        input_tokens: summary
+            .attribution
+            .iter()
+            .map(|charge| charge.tokens)
+            .sum::<usize>()
+            + assembly.unknown_tokens.values().sum::<usize>(),
         ..Work::default()
     };
     work.queue_us = summary.timings.queue_us;

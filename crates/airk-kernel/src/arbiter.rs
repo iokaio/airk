@@ -47,6 +47,26 @@ pub trait NativeController: Send + Sync {
     ) -> Result<Option<airk_core::native_focus::NativeFocusResponse>> {
         Ok(None)
     }
+    /// Answer /3: the Context model that would score loop card calls now,
+    /// with its device and precision. `None` means no card calls are made and
+    /// the deterministic order decides.
+    fn card_model(
+        &self,
+        _worker: airk_core::service::WorkerIdentity,
+        _authority: airk_core::service::ScopedReadRef,
+        _publication: &airk_core::evidence::RevisionEnvelope,
+    ) -> Result<Option<LoopModel>> {
+        Ok(None)
+    }
+    /// Answer /3: one batched card call. `None` means not dispatched and
+    /// nothing charged; an error after dispatch is an unknown outcome.
+    fn score_cards(
+        &self,
+        _request: airk_core::native_loop::NativeCardRequest,
+        _deadline: Instant,
+    ) -> Result<Option<airk_core::arbiter::answer_loop::CardAdvice>> {
+        Ok(None)
+    }
     /// Answer /3: one batched Focus call whose candidates each name their own
     /// sub-need question. `None` means not dispatched and nothing charged.
     fn focus_batch(
@@ -97,6 +117,14 @@ pub trait NativeController: Send + Sync {
     ) -> Result<Option<airk_core::arbiter::context_action::ContextActionAdvice>> {
         Ok(None)
     }
+}
+/// The Context model a loop card call runs on, as its decisions record it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LoopModel {
+    pub model: device::SelectedModel,
+    pub device: airk_core::arbiter::answer_loop::ExecutionDevice,
+    /// Stated for GPU devices only.
+    pub precision: Option<device::DevicePrecision>,
 }
 pub type CanonicalReader<'a> =
     dyn Fn(&str, &Map<String, Value>, Option<&str>) -> Result<Value> + 'a;
@@ -245,11 +273,20 @@ impl crate::Kernel {
         &self,
         attempt: airk_core::read_attempt::ReadAttemptBudget,
     ) -> Result<Self> {
+        self.with_context_attempt_for("", attempt)
+    }
+    /// As `with_context_attempt`, for the actual tool: an Answer attempt may
+    /// hold up to the Answer read budget, every other tool the 125 s one.
+    pub fn with_context_attempt_for(
+        &self,
+        tool: &str,
+        attempt: airk_core::read_attempt::ReadAttemptBudget,
+    ) -> Result<Self> {
         ensure!(
             attempt.schema == 1
                 && attempt.remaining_ns > 0
                 && attempt.remaining_ns
-                    <= airk_core::read_attempt::MAX_READ_BUDGET.as_nanos() as u64
+                    <= airk_core::read_attempt::read_budget_for_tool(tool).as_nanos() as u64
                 && attempt
                     .native_retry_expires_monotonic_ns
                     .is_none_or(|expiry| expiry <= attempt.expires_monotonic_ns),
@@ -280,12 +317,21 @@ impl crate::Kernel {
         allowance: airk_core::combined_context::PartitionAllowance,
         attempt: airk_core::read_attempt::ReadAttemptBudget,
     ) -> Result<Self> {
+        self.with_context_partition_for("", allowance, attempt)
+    }
+    /// As `with_context_partition`, for the actual tool.
+    pub fn with_context_partition_for(
+        &self,
+        tool: &str,
+        allowance: airk_core::combined_context::PartitionAllowance,
+        attempt: airk_core::read_attempt::ReadAttemptBudget,
+    ) -> Result<Self> {
         allowance.validate()?;
         ensure!(
             allowance.attempt == attempt.request_id,
             "context partition attempt mismatch"
         );
-        let mut kernel = self.with_context_attempt(attempt)?;
+        let mut kernel = self.with_context_attempt_for(tool, attempt)?;
         let context = Arc::get_mut(kernel.arbiter_context.as_mut().unwrap())
             .context("new native context unexpectedly shared")?;
         ensure!(
@@ -1149,6 +1195,10 @@ mod answer;
 mod focus;
 mod joint;
 pub mod software;
+pub use answer::{
+    AnswerCustody, AnswerEnv, AnswerOutcome, AnswerPostExecutionStale, AnswerProgress,
+    CanonicalReadFn, CustodyRecord,
+};
 pub use joint::JointPostExecutionStale;
 #[cfg(test)]
 mod tests;

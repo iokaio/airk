@@ -215,11 +215,11 @@ impl LocalTools {
             server.kernel = match context.context_partition() {
                 Some(partition) => server
                     .kernel
-                    .with_context_partition(partition.clone(), attempt)?
+                    .with_context_partition_for(&name, partition.clone(), attempt)?
                     .with_optional_deadline(context.deadline())?,
                 None => server
                     .kernel
-                    .with_optional_read_attempt(attempt, context.deadline())?,
+                    .with_optional_read_attempt_for(&name, attempt, context.deadline())?,
             };
         } else if context.wire_attempt().is_none() {
             anyhow::ensure!(

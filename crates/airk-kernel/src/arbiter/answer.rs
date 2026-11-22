@@ -22,6 +22,7 @@ mod coverage;
 mod decide;
 mod follow;
 mod gather;
+mod model;
 mod plan;
 mod retrieve;
 mod shares;
@@ -37,6 +38,7 @@ pub type CanonicalReadFn<'a> =
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AnswerProgress {
     pub part: u8,
+    pub parts: u8,
     pub round: u8,
     pub stage: v3::LoopStage,
     pub sub_needs: usize,
@@ -143,6 +145,7 @@ impl crate::Kernel {
         );
         self.bind_answer_loop(deadline)?;
         let gather = Gathering::new(request.budget.clone(), scope.clone())?;
+        let publication_for_model = publication.clone();
         let mut run = Loop {
             kernel: self,
             context,
@@ -165,6 +168,20 @@ impl crate::Kernel {
             waiting: BTreeMap::new(),
             used_calls: vec![],
             rr: 0,
+            model: context
+                .owner
+                .card_model(context.worker, context.authority, &publication_for_model)
+                .ok()
+                .flatten(),
+            model_blocked: false,
+            focus_blocked: false,
+            cost: shares::CostModel::default(),
+            card_slots: 0,
+            focus_pairs: 0,
+            used_tokens: BTreeMap::new(),
+            unknown_tokens: BTreeMap::new(),
+            model_share: vec![],
+            batch_split: false,
         };
         run.split()?;
         run.plan()?;
@@ -197,6 +214,18 @@ struct Loop<'a> {
     waiting: BTreeMap<ReadKey, Vec<(u8, u8, Step)>>,
     used_calls: Vec<usize>,
     rr: usize,
+    model: Option<LoopModel>,
+    model_blocked: bool,
+    focus_blocked: bool,
+    cost: shares::CostModel,
+    card_slots: usize,
+    focus_pairs: usize,
+    /// Model tokens charged per part and round, reservations included.
+    used_tokens: BTreeMap<(u8, u8), usize>,
+    /// Reservations of calls whose outcome is unknown, still charged.
+    unknown_tokens: BTreeMap<(u8, u8), usize>,
+    model_share: Vec<(u8, v3::LoopStage)>,
+    batch_split: bool,
 }
 
 struct Assessed {
@@ -223,6 +252,7 @@ impl Loop<'_> {
         let part = &self.parts[part];
         (self.env.progress)(AnswerProgress {
             part: part.id,
+            parts: self.parts.len() as u8,
             round: part.round(),
             stage,
             sub_needs: part.needs.len(),
@@ -253,6 +283,8 @@ impl Loop<'_> {
         {
             self.configuration_changed = true;
             self.ledger.configuration_changed();
+            self.model_blocked = true;
+            self.focus_blocked = true;
         }
         self.application = current;
         Ok(())
@@ -268,14 +300,23 @@ impl Loop<'_> {
             .enumerate()
             .map(|(index, partition)| split::card(question, partition, SYMBOLS[index]))
             .collect();
-        let chosen = plan.deterministic;
-        self.ledger.deterministic(
-            decide::At::split(),
-            &cards,
-            &[chosen],
-            v3::DeterministicRule::ExplicitBreaks,
-            vec![],
+        let choice = self.decide(
+            vec![model::Seg {
+                at: decide::At::split(),
+                cards,
+                subject: question.to_owned(),
+                basis: vec![],
+                fallback: vec![plan.deterministic],
+                rule: v3::DeterministicRule::ExplicitBreaks,
+            }],
+            1,
         )?;
+        let chosen = choice[0]
+            .chosen
+            .first()
+            .copied()
+            .filter(|index| *index < plan.cards.len())
+            .unwrap_or(plan.deterministic);
         for (index, range) in plan.cards[chosen].0.iter().enumerate() {
             let span = split::part_span(question, *range);
             self.parts.push(PartState::new(
@@ -302,14 +343,28 @@ impl Loop<'_> {
         for index in 0..self.parts.len() {
             let proposals = plan::propose(&self.parts[index].text, &question);
             let cards = plan::cards(&proposals);
-            let chosen = plan::deterministic(&proposals, self.request.budget.max_sub_needs);
-            self.ledger.deterministic(
-                decide::At::plan(self.parts[index].id),
-                &cards,
-                &chosen,
-                v3::DeterministicRule::EveryProposedNeed,
-                vec![],
+            let fallback = plan::deterministic(&proposals, self.request.budget.max_sub_needs);
+            let choice = self.decide(
+                vec![model::Seg {
+                    at: decide::At::plan(self.parts[index].id),
+                    cards,
+                    subject: self.parts[index].text.clone(),
+                    basis: vec![],
+                    fallback: fallback.clone(),
+                    rule: v3::DeterministicRule::EveryProposedNeed,
+                }],
+                1,
             )?;
+            let mut chosen: Vec<usize> = choice[0]
+                .chosen
+                .iter()
+                .copied()
+                .filter(|index| *index < proposals.len())
+                .take(self.request.budget.max_sub_needs)
+                .collect();
+            if chosen.is_empty() {
+                chosen = fallback;
+            }
             self.parts[index].needs = plan::needs(&proposals, &chosen)
                 .into_iter()
                 .map(NeedState::new)
@@ -678,7 +733,10 @@ impl Loop<'_> {
             if self.parts[part].needs[index].covered() {
                 continue;
             }
-            let assessed = self.assess(id, &self.parts[part].needs[index], round);
+            let need = self.parts[part].needs[index].need.id;
+            let mut spans = coverage::spans(&self.gather, id, need, round);
+            coverage::rank(&mut spans);
+            let assessed = self.assess(id, &self.parts[part].needs[index], spans);
             let state = &mut self.parts[part].needs[index];
             state.history.extend(assessed.spans.iter().cloned());
             state.coverage = assessed.coverage;
@@ -696,9 +754,7 @@ impl Loop<'_> {
         last.new_evidence = new_evidence;
     }
 
-    fn assess(&self, part: u8, state: &NeedState, round: u8) -> Assessed {
-        let mut spans = coverage::spans(&self.gather, part, state.need.id, round);
-        coverage::rank(&mut spans);
+    fn assess(&self, part: u8, state: &NeedState, spans: Vec<coverage::Span>) -> Assessed {
         let structural: Vec<usize> = self
             .gather
             .records
@@ -787,10 +843,13 @@ impl Loop<'_> {
             .collect()
     }
 
-    /// The round barrier: coverage, then stop or follow-ups, per part.
+    /// The round barrier, common to every active part: batched Focus over
+    /// all their spans, coverage decisions, then each part's stop or its
+    /// follow-up decisions. Rosters of different gaps never share a read.
     fn barrier(&mut self, round: u8) -> Result<()> {
         self.fence()?;
         let limit = self.request.budget.rounds;
+        let mut entries: Vec<(usize, usize, Vec<coverage::Span>)> = Vec::new();
         for part in 0..self.parts.len() {
             if !self.parts[part].active() {
                 continue;
@@ -798,44 +857,80 @@ impl Loop<'_> {
             let id = self.parts[part].id;
             let new_evidence = self.gather.new_evidence(id, round);
             self.parts[part].current().new_evidence = new_evidence;
+            self.progress(part, v3::LoopStage::Read);
             for index in 0..self.parts[part].needs.len() {
-                if self.parts[part].needs[index].covered() {
-                    continue;
+                if !self.parts[part].needs[index].covered() {
+                    let need = self.parts[part].needs[index].need.id;
+                    entries.push((part, index, coverage::spans(&self.gather, id, need, round)));
                 }
-                let assessed = self.assess(id, &self.parts[part].needs[index], round);
-                let state = &self.parts[part].needs[index];
-                let candidates = follow::candidates(
-                    &self.gather,
-                    id,
-                    &state.need,
-                    &assessed.spans,
-                    &self.searched,
-                    &state.tried,
-                )?;
-                let need = state.need.id;
-                let roster = coverage::cards(
-                    need,
-                    &assessed.spans,
-                    &Self::alternatives(need, &candidates),
-                );
-                let covered = assessed.coverage == v3::Coverage::Covered;
-                if roster.len() >= 2 || covered {
-                    let basis = self.spans_basis(&assessed.spans);
-                    self.ledger.deterministic(
-                        decide::At::need(v3::LoopStage::Coverage, id, need, round),
-                        &roster,
-                        &[usize::from(!covered)],
-                        v3::DeterministicRule::TopFocusSpan,
-                        basis,
-                    )?;
-                }
-                let state = &mut self.parts[part].needs[index];
-                state.history.extend(assessed.spans.iter().cloned());
-                state.coverage = assessed.coverage;
-                state.evidence = assessed.evidence;
-                state.spans = assessed.spans;
-                state.candidates = candidates;
             }
+        }
+        self.focus(&mut entries, round)?;
+        // Coverage: one roster per uncovered sub-need, two per card call.
+        let mut segs = Vec::new();
+        let mut pending = Vec::new();
+        for (part, index, mut spans) in entries {
+            coverage::rank(&mut spans);
+            let id = self.parts[part].id;
+            let assessed = self.assess(id, &self.parts[part].needs[index], spans);
+            let state = &self.parts[part].needs[index];
+            let candidates = follow::candidates(
+                &self.gather,
+                id,
+                &state.need,
+                &assessed.spans,
+                &self.searched,
+                &state.tried,
+            )?;
+            let need = state.need.id;
+            let roster = coverage::cards(
+                need,
+                &assessed.spans,
+                &Self::alternatives(need, &candidates),
+            );
+            let covered = assessed.coverage == v3::Coverage::Covered;
+            let logged = roster.len() >= 2 || covered;
+            if logged {
+                segs.push(model::Seg {
+                    at: decide::At::need(v3::LoopStage::Coverage, id, need, round),
+                    cards: roster,
+                    subject: state.need.query.clone(),
+                    basis: self.spans_basis(&assessed.spans),
+                    fallback: vec![usize::from(!covered)],
+                    rule: v3::DeterministicRule::TopFocusSpan,
+                });
+            }
+            pending.push((part, index, assessed, candidates, logged));
+        }
+        let mut choices = self.decide(segs, 2)?.into_iter();
+        for (part, index, assessed, candidates, logged) in pending {
+            let mut coverage = assessed.coverage;
+            if logged
+                && let Some(choice) = choices.next()
+                && choice.model
+            {
+                coverage = coverage::from_card(
+                    choice.chosen.first() == Some(&0),
+                    &assessed.spans,
+                    assessed.evidence.len(),
+                );
+            }
+            let state = &mut self.parts[part].needs[index];
+            state.history.extend(assessed.spans.iter().cloned());
+            state.coverage = coverage;
+            state.evidence = assessed.evidence;
+            state.spans = assessed.spans;
+            state.candidates = candidates;
+        }
+        // Stops, then follow-up rosters of the parts that continue.
+        let mut segs = Vec::new();
+        let mut planned: Vec<(usize, u8, Vec<follow::Candidate>)> = Vec::new();
+        let mut shown: BTreeSet<ReadKey> = BTreeSet::new();
+        for part in 0..self.parts.len() {
+            if !self.parts[part].active() {
+                continue;
+            }
+            let id = self.parts[part].id;
             let covered = self.parts[part]
                 .needs
                 .iter()
@@ -843,6 +938,7 @@ impl Loop<'_> {
                 .count();
             self.parts[part].current().covered = covered;
             self.progress(part, v3::LoopStage::Coverage);
+            let new_evidence = self.parts[part].current().new_evidence;
             if covered == self.parts[part].needs.len() {
                 self.parts[part].stop = Some(v3::PartStop::Covered);
             } else if usize::from(round) >= limit {
@@ -851,11 +947,79 @@ impl Loop<'_> {
             } else if round > 1 && new_evidence == 0 {
                 self.unrun(part, v3::UnrunReason::NotChosen);
                 self.parts[part].stop = Some(v3::PartStop::NoProgress);
-            } else if !self.follow_up(part, round)? {
-                self.parts[part].stop = Some(v3::PartStop::NoJustifiedRead);
+            } else {
+                let gaps = self.parts[part]
+                    .needs
+                    .iter()
+                    .filter(|need| !need.covered())
+                    .count();
+                let size = if gaps == 1 { follow::MAX_CANDIDATES } else { 4 };
+                let mut any = false;
+                for state in &self.parts[part].needs {
+                    if state.covered() {
+                        continue;
+                    }
+                    let candidates: Vec<follow::Candidate> = state
+                        .candidates
+                        .iter()
+                        .filter(|candidate| {
+                            !self.gather.known(&candidate.key) && !shown.contains(&candidate.key)
+                        })
+                        .take(size)
+                        .cloned()
+                        .collect();
+                    if candidates.is_empty() {
+                        continue;
+                    }
+                    shown.extend(candidates.iter().map(|candidate| candidate.key));
+                    any = true;
+                    let need = state.need.id;
+                    segs.push(model::Seg {
+                        at: decide::At::need(v3::LoopStage::FollowUp, id, need, round),
+                        cards: follow::cards(need, &candidates, size),
+                        subject: state.need.query.clone(),
+                        basis: self.spans_basis(&state.spans),
+                        fallback: vec![0],
+                        rule: v3::DeterministicRule::FirstExtractedTerm,
+                    });
+                    planned.push((part, need, candidates));
+                }
+                if any {
+                    self.parts[part].chosen.clear();
+                    self.parts[part].rounds.push(RoundState::default());
+                } else {
+                    self.parts[part].stop = Some(v3::PartStop::NoJustifiedRead);
+                }
             }
             if !self.parts[part].active() {
                 self.finish_part(part);
+            }
+        }
+        let choices = self.decide(segs, 2)?;
+        for ((part, need, candidates), choice) in planned.into_iter().zip(choices) {
+            let pick = choice
+                .chosen
+                .first()
+                .copied()
+                .unwrap_or(0)
+                .min(candidates.len() - 1);
+            let chosen = candidates[pick].clone();
+            let id = self.parts[part].id;
+            let read = self.gather.dispatch(
+                (chosen.tool, chosen.operation),
+                Value::Object(chosen.arguments.clone()),
+                (id, Some(need), round + 1),
+                Cause::FollowUp,
+                chosen.kind,
+                chosen.step,
+                &chosen.term,
+            )?;
+            self.parts[part].chosen.push((need, chosen));
+            self.offer(part, read)?;
+        }
+        for part in 0..self.parts.len() {
+            if self.parts[part].active() {
+                self.progress(part, v3::LoopStage::FollowUp);
             }
         }
         Ok(())
@@ -881,69 +1045,46 @@ impl Loop<'_> {
         }
     }
 
-    /// Choose one follow-up read per gap; false when no gap has one.
-    fn follow_up(&mut self, part: usize, round: u8) -> Result<bool> {
-        let id = self.parts[part].id;
-        let mut chosen = Vec::new();
-        for index in 0..self.parts[part].needs.len() {
-            let state = &self.parts[part].needs[index];
-            if state.covered() {
-                continue;
-            }
-            let candidates: Vec<follow::Candidate> = state
-                .candidates
-                .iter()
-                .filter(|candidate| !self.gather.known(&candidate.key))
-                .cloned()
-                .collect();
-            let Some(first) = candidates.first().cloned() else {
-                continue;
-            };
-            let need = state.need.id;
-            let roster = follow::cards(need, &candidates, 4);
-            let basis = self.spans_basis(&state.spans);
-            self.ledger.deterministic(
-                decide::At::need(v3::LoopStage::FollowUp, id, need, round),
-                &roster,
-                &[0],
-                v3::DeterministicRule::FirstExtractedTerm,
-                basis,
-            )?;
-            let read = self.gather.dispatch(
-                (first.tool, first.operation),
-                Value::Object(first.arguments.clone()),
-                (id, Some(need), round + 1),
-                Cause::FollowUp,
-                first.kind,
-                first.step,
-                &first.term,
-            )?;
-            chosen.push((need, first));
-            self.offer(part, read)?;
-        }
-        if chosen.is_empty() {
-            return Ok(false);
-        }
-        self.parts[part].chosen = chosen;
-        self.parts[part].rounds.push(RoundState::default());
-        Ok(true)
-    }
-
     fn degradations(&self) -> Vec<v3::Degradation> {
         let mut out = Vec::new();
-        if self
-            .ledger
-            .entries
+        let entries = &self.ledger.entries;
+        if entries
             .iter()
             .all(|entry| !entry.decision.scored_by_model())
+            && (self.model.is_none() || self.application.availability != Availability::Ready)
         {
             out.push(v3::Degradation::ContextAbsent);
+        }
+        let abstained = entries
+            .iter()
+            .filter(|entry| entry.decision.source.kind() == v3::SourceKind::Abstained)
+            .count();
+        if abstained > 0 {
+            out.push(v3::Degradation::ContextAbstained { count: abstained });
         }
         if self.ledger.focus.is_empty() {
             out.push(v3::Degradation::FocusAbsent);
         }
+        for (part, stage) in &self.model_share {
+            out.push(v3::Degradation::ModelShare {
+                part: *part,
+                stage: *stage,
+            });
+        }
+        if entries.iter().any(|entry| entry.decision.work_unknown)
+            || self
+                .ledger
+                .focus
+                .iter()
+                .any(|receipt| receipt.observed_input_tokens.is_none())
+        {
+            out.push(v3::Degradation::ModelOutcomeUnknown);
+        }
         if self.configuration_changed {
             out.push(v3::Degradation::ConfigurationChanged);
+        }
+        if self.batch_split {
+            out.push(v3::Degradation::BatchSplit);
         }
         if self
             .gather
@@ -965,6 +1106,9 @@ impl Loop<'_> {
                 self.finish_part(part);
             }
         }
+        for part in 0..self.parts.len() {
+            self.progress(part, v3::LoopStage::Compose);
+        }
         (self.env.require_live)()?;
         ensure!(
             self.kernel.scoped_read_fingerprint()? == Some(self.context.authority.fingerprint)
@@ -984,9 +1128,9 @@ impl Loop<'_> {
             application: self.application.clone(),
             elapsed_ms: self.elapsed_ms(),
             limit,
+            unknown_tokens: self.unknown_tokens.clone(),
         };
         let (response, log) = union::assemble(&assembly)?;
-        response.validate_with_log(&log, &self.request.budget)?;
         let records = self
             .gather
             .records
@@ -998,12 +1142,48 @@ impl Loop<'_> {
                 canonical_result: record.body.clone(),
             })
             .collect();
-        Ok(AnswerOutcome {
-            response,
-            custody: AnswerCustody { log, records },
-        })
+        let custody = AnswerCustody { log, records };
+        // Native work under a configuration that is no longer current is
+        // never delivered: a content-free, nonreplayable refusal instead.
+        if self.configuration_changed && self.ledger.has_native_work() {
+            return Err(AnswerPostExecutionStale {
+                _custody: Box::new((response, custody)),
+            }
+            .into());
+        }
+        response.validate_with_log(&custody.log, &self.request.budget)?;
+        if !self.parts.is_empty() {
+            self.progress(0, v3::LoopStage::Union);
+        }
+        Ok(AnswerOutcome { response, custody })
     }
 }
 
 #[cfg(test)]
 mod tests;
+
+/// Native work became stale after a configuration change: the reply and its
+/// custody stay private, and the caller receives a nonreplayable refusal.
+pub struct AnswerPostExecutionStale {
+    _custody: Box<(v3::ContextResponseV3, AnswerCustody)>,
+}
+impl std::fmt::Debug for AnswerPostExecutionStale {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AnswerPostExecutionStale")
+            .finish_non_exhaustive()
+    }
+}
+impl std::fmt::Display for AnswerPostExecutionStale {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(
+            "Optional read policy changed after native work; the stale answer cannot be replayed.",
+        )
+    }
+}
+impl std::error::Error for AnswerPostExecutionStale {}
+impl AnswerPostExecutionStale {
+    pub fn receipt(&self) -> Value {
+        json!({"error":{"code":"arbiter_context_action_stale","retryable":false,"query_replay_safe":false,
+            "message":self.to_string()}})
+    }
+}

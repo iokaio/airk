@@ -33,9 +33,7 @@ pub(super) struct Attempt {
     /// batches (`rank_spans`), so Focus is never charged twice.
     defer_in_search: bool,
     /// Answer /3 batched Focus calls admitted, and their reserved tokens.
-    #[cfg_attr(not(test), allow(dead_code))]
     loop_ordinal: usize,
-    #[cfg_attr(not(test), allow(dead_code))]
     loop_tokens: usize,
 }
 
@@ -78,10 +76,21 @@ impl crate::Kernel {
         attempt: airk_core::read_attempt::ReadAttemptBudget,
         deadline: Instant,
     ) -> Result<Self> {
+        self.with_optional_read_attempt_for("", attempt, deadline)
+    }
+
+    /// As `with_optional_read_attempt`, for the actual tool (Answer may hold
+    /// the longer Answer read budget).
+    pub fn with_optional_read_attempt_for(
+        &self,
+        tool: &str,
+        attempt: airk_core::read_attempt::ReadAttemptBudget,
+        deadline: Instant,
+    ) -> Result<Self> {
         if self.arbiter_context.is_none() {
             return Ok(self.clone());
         }
-        let kernel = self.with_context_attempt(attempt)?;
+        let kernel = self.with_context_attempt_for(tool, attempt)?;
         let context = kernel
             .arbiter_context
             .as_ref()
@@ -105,7 +114,7 @@ impl crate::Kernel {
     /// It is metadata space, never a new work budget or caller authority.
     pub fn with_context_reply_reserve(&self, reserve: usize) -> Result<Self> {
         ensure!(
-            reserve <= airk_core::MAX_RESPONSE_BYTES,
+            reserve <= airk_core::arbiter::answer_loop::MAX_ANSWER_RESPONSE_BYTES,
             "Answer metadata reserve exceeds native frame"
         );
         let Some(context) = &self.arbiter_context else {
@@ -762,11 +771,8 @@ impl crate::Kernel {
     }
 }
 
-// Answer /3 items; their driver caller lands in L3-7, which removes the
-// dead-code allowances below.
 /// One span of a batched Focus call: the sub-need question it is scored
 /// against, its hit, and the part and round its tokens are charged to.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(super) struct BatchSpan {
     pub(super) question: u8,
     pub(super) hit: Hit,
@@ -775,7 +781,6 @@ pub(super) struct BatchSpan {
 }
 
 /// One batched Focus call over spans of every ready part (Answer /3).
-#[cfg_attr(not(test), allow(dead_code))]
 pub(super) struct SpanBatch {
     pub(super) budget: airk_core::arbiter::answer_loop::BudgetV3,
     /// The call's ordinal over the whole Answer, 1 first.
@@ -786,7 +791,6 @@ pub(super) struct SpanBatch {
 }
 
 /// A batched Focus call's compact receipt, and each span's relevance.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(super) struct SpanRanking {
     pub(super) receipt: airk_core::arbiter::answer_loop::FocusBatchReceipt,
     /// Relevance per span, `None` when unscored or not applied.
@@ -797,7 +801,6 @@ pub(super) struct SpanRanking {
 
 /// Batched Focus work became stale after native scoring: not delivered.
 #[derive(Debug)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub struct FocusBatchStale {
     _custody: Box<airk_core::arbiter::answer_loop::FocusBatchReceipt>,
 }
@@ -808,7 +811,6 @@ impl std::fmt::Display for FocusBatchStale {
 }
 impl std::error::Error for FocusBatchStale {}
 
-#[cfg_attr(not(test), allow(dead_code))]
 impl crate::Kernel {
     /// Answer /3 binds this once before its first read: loop searches defer
     /// in-search Focus, and the original deadline can only shorten.

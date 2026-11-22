@@ -106,7 +106,6 @@ impl Ledger {
     }
 
     /// Whether any decision carries native model work.
-    #[cfg_attr(not(test), allow(dead_code))] // the model path (L3-8)
     pub(crate) fn has_native_work(&self) -> bool {
         self.entries
             .iter()

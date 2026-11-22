@@ -681,3 +681,43 @@ fn configuration_change_marks_decisions_historical() -> Result<()> {
     assert_eq!(response.applications[0].scope.configuration_revision, 2);
     Ok(())
 }
+
+#[test]
+fn only_an_answer_attempt_may_hold_the_answer_read_budget() -> Result<()> {
+    let fixture = fixture()?;
+    let base = fixture.kernel.with_native_arbiter(
+        fixture.kernel.arbiter_context.as_ref().unwrap().worker,
+        fixture.kernel.arbiter_context.as_ref().unwrap().authority,
+        fixture.owner.clone(),
+    )?;
+    let attempt = |seconds: u64| ReadAttemptBudget {
+        schema: 1,
+        request_id: Incarnation::from_bytes([11; 16]),
+        clock: ReadClock::UnixMonotonic,
+        expires_monotonic_ns: seconds * 1_000_000_000 + 1_000,
+        remaining_ns: seconds * 1_000_000_000,
+        native_retry_expires_monotonic_ns: None,
+    };
+    assert!(
+        base.with_context_attempt(attempt(300)).is_err(),
+        "other tools keep 125 s"
+    );
+    assert!(
+        base.with_context_attempt_for("airk_search", attempt(300))
+            .is_err()
+    );
+    assert!(
+        base.with_context_attempt_for("airk_answer", attempt(300))
+            .is_ok()
+    );
+    assert!(
+        base.with_context_attempt_for("answer", attempt(605))
+            .is_ok()
+    );
+    assert!(
+        base.with_context_attempt_for("airk_answer", attempt(606))
+            .is_err()
+    );
+    assert!(base.with_context_attempt(attempt(120)).is_ok());
+    Ok(())
+}
