@@ -100,6 +100,14 @@ than its own admission would:
   this call would be admitted with. A call that could only get a ticket
   attaches, because the existing job is sooner and discloses its own
   reductions.
+- **Finished, but cut by its deadline:** the result is what the job had by
+  then, so it also needs a call with no more time than the job had (its
+  window at dispatch, with the 1 s tolerance). A call with a longer deadline
+  runs on its own. The runner reports the cut: for an Answer, the reply's
+  partial marker or a part's stop names the deadline. The clock alone does
+  not show it, because the loop keeps a reserve and returns before its
+  window ends. A running job is still joined whatever its window: the work
+  is under way and is not replayed.
 - **Queued:** the job's window must end no earlier than this call's. For a
   ticketed job, its deadline must be at least as long.
 - **Otherwise** the call runs as a separate job, and the digest then names
@@ -112,7 +120,9 @@ per_sub_need_round)` for the job's rung. That figure is scaled by a learned
 correction: an EWMA of elapsed over estimated time, kept between 0.25 and 4.
 - A run that reached its deadline teaches the correction nothing, and
   neither does a smallest-disclosed run whose estimate exceeded its window.
-  Both are recorded in the recent samples as `cut`.
+  Both are recorded in the recent samples as `cut`. A run counts as having
+  reached its deadline when its runner reports the cut, or when it ended
+  within the tolerance of its window.
 - The default costs are placeholders until L5b and L7 measure them per
   device (answer-loop-changes entry 19).
 
@@ -454,7 +464,20 @@ At the seam, without a handler or a kernel:
 - a job is fitted on its own rung and only drops to the no-model loop;
 - an owner finds only the table of its own service.
 
+Every reply of those tests, the ticket-shaped one included, also passes the
+check the delivery planes make on a singleton Answer
+(`context_delivery_bindings`: Core validation under the widest budget).
+
+In a real service (`airk-cli`, `tests/combined_reads.rs`,
+`a_repeated_answer_in_one_service_is_the_reply_its_job_table_kept`): the
+service gives its table to the project owner through the supervisor hook,
+and the same Answer sent three times over the control pipe is run once and
+then answered by the kept reply. This is the one test of the injection
+itself.
+
 On the pure schedule:
+- a result its deadline cut never answers a call with more time, and teaches
+  the cost correction nothing;
 - unmeasured costs never reduce a request that did not wait, still reduce
   one that waited, and still learn;
 - a job dropped without running keeps its place in line for the retry, by

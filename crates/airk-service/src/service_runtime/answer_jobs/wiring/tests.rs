@@ -876,7 +876,78 @@ fn finished_ok(text: &'static str) -> JobOutcome<&'static str> {
         value: text,
         publication: Sha256Digest::from_bytes([1; 32]),
         retained_bytes: 1,
+        cut: false,
     }
+}
+
+#[test]
+fn a_result_its_deadline_cut_never_answers_a_call_with_more_time() -> Result<()> {
+    const SECOND: u64 = 1_000;
+    // Unmeasured costs: a request that did not wait runs at its full shape
+    // whatever its deadline, so the shape alone cannot tell a 60 s run from a
+    // 300 s one.
+    let config = JobTableConfig {
+        costs_measured: false,
+        configured_rung_only: true,
+        ..JobTableConfig::default()
+    };
+    let mut table: Schedule<&'static str> = Schedule::new(config, [9; 32]);
+    let scope = seam_scope();
+    let short = admitted_id(table.submit(scope, asked("q", 60 * SECOND), None, None, 0)?);
+    assert_eq!(table.dispatch(0)[0].run_ms, 60 * SECOND);
+    // While it runs, a retry attaches to it whatever its own deadline: the
+    // work is under way and is not replayed.
+    assert!(matches!(
+        table.submit(scope, asked("q", 300 * SECOND), None, None, SECOND)?,
+        Submitted::Attached(id) if id == short
+    ));
+    // Its loop stops at the reserve and returns what it has, 50 s into a
+    // 60 s window: the runner reports the cut.
+    table.finish(
+        &short,
+        JobOutcome::Done {
+            value: "what it had after 50 s",
+            publication: Sha256Digest::from_bytes([1; 32]),
+            retained_bytes: 1,
+            cut: true,
+        },
+        50 * SECOND,
+    );
+    // A cut run teaches the cost correction nothing.
+    let status = table.status(50 * SECOND);
+    assert!(status.recent[0].cut, "{:?}", status.recent);
+    assert_eq!(status.correction_permille, 1_000);
+    // A call with no more time than that job had gets its result.
+    assert!(matches!(
+        table.submit(scope, asked("q", 60 * SECOND), None, None, 51 * SECOND)?,
+        Submitted::Attached(id) if id == short
+    ));
+    assert!(matches!(
+        table.submit(scope, asked("q", 30 * SECOND), None, None, 51 * SECOND)?,
+        Submitted::Attached(id) if id == short
+    ));
+    // A call with more time runs on its own, and its result is then the one
+    // the request's digest names.
+    let long =
+        admitted_id(table.submit(scope, asked("q", 300 * SECOND), None, None, 52 * SECOND)?);
+    assert_ne!(long, short);
+    assert_eq!(table.dispatch(52 * SECOND)[0].run_ms, 300 * SECOND);
+    table.finish(&long, finished_ok("the whole answer"), 100 * SECOND);
+    // An uncut result answers a call with any deadline.
+    for deadline in [30, 300, 600] {
+        assert!(matches!(
+            table.submit(scope, asked("q", deadline * SECOND), None, None, 101 * SECOND)?,
+            Submitted::Attached(id) if id == long
+        ));
+    }
+    // The cut result's own ticket still reaches it.
+    let mut kept = asked("q", 300 * SECOND);
+    kept.continuation = Some(short);
+    assert!(matches!(
+        table.submit(scope, kept, None, None, 102 * SECOND)?,
+        Submitted::Attached(id) if id == short
+    ));
+    Ok(())
 }
 
 #[test]

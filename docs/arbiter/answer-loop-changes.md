@@ -524,6 +524,17 @@ limits on publication still apply in full.
     has its whole window runs as asked, as it did before the table. A
     request that waited is still fitted to what is left of its window.
     `set_costs` makes the costs measured.
+  - **Gap found and closed: a result cut by a short deadline answered calls
+    with more time.** The no-loss rule of choice 1 compares shapes, and a
+    shape is fitted to its window. With unmeasured costs a request that did
+    not wait keeps its full shape whatever its deadline, so a 60 s run that
+    its deadline cut would have answered a 300 s retry of the same request
+    for ten minutes. A finished result now records the window of a run its
+    deadline cut, and it answers only a call with no more time than that. The
+    reply itself reports the cut (its partial marker or a part's stop names
+    the deadline), because the loop returns before its window ends; the same
+    report now also keeps such a run out of the cost correction, which the
+    clock alone did not.
   - **Choice: the reply reserve is part of the scope.** A reply is packed to
     its maker's reserve for verification metadata. Calls with different
     reserves therefore never share a job.

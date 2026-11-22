@@ -5800,6 +5800,79 @@ async fn current_answer_single_index_preserves_complete_pipe_cli_and_https_mcp_r
     f.assert_sources_unchanged()
 }
 
+/// In a running service an Answer is a job of the service's Answer job table
+/// (plan section 12.4.1, L2b): the service gives its table to the project
+/// owner, and the owner's Answer handler goes through it. So the same request
+/// in the same scope, sent again within one service lifetime, is answered by
+/// the reply the table kept and not by a second run. Each call is still its
+/// own request. A second run would measure its own elapsed time and stage
+/// timings, which is how the two are told apart.
+#[tokio::test]
+async fn a_repeated_answer_in_one_service_is_the_reply_its_job_table_kept() -> Result<()> {
+    let f = Fixture::new(true)?;
+    let _service = f.start().await?;
+    let selected = ScopedConnectRequest {
+        schema: 1,
+        context_key: f.session.context_key,
+        namespace: f.session.namespace,
+        expected_catalog_revision: f.session.expected_catalog_revision,
+        grant_id: f.session.grant_id,
+        expected_grant_revision: f.session.expected_grant_revision,
+        index_id: f.indexes[0],
+        project_ids: vec![f.projects[0]],
+    };
+    let (budget, arguments) = current_answer_request()?;
+    let body = |result: &Value| -> Result<Value> {
+        match result
+            .get("structuredContent")
+            .filter(|body| body.is_object())
+        {
+            Some(body) => Ok(body.clone()),
+            None => Ok(serde_json::from_str(
+                result
+                    .pointer("/content/0/text")
+                    .and_then(Value::as_str)
+                    .context("Answer reply text")?,
+            )?),
+        }
+    };
+    let mut replies = Vec::new();
+    for _ in 0..3 {
+        let result = context_pipe_once(
+            &f,
+            airk_core::service::ToolSelection::Catalog {
+                request: selected.clone(),
+            },
+            &arguments,
+        )
+        .await?;
+        replies.push(body(&result)?);
+    }
+    // The typed reply, without what each call's own rendering adds.
+    let typed = |reply: &Value| -> Result<Value> {
+        Ok(serde_json::to_value(
+            airk_core::arbiter::answer_loop::ContextResponseV3::from_canonical(reply, &budget)?,
+        )?)
+    };
+    let first = typed(&replies[0])?;
+    ensure!(
+        first["ticket"].is_null() && first["parts"].as_array().is_some_and(|parts| !parts.is_empty()),
+        "the first call is a complete answer: {first}"
+    );
+    for later in &replies[1..] {
+        ensure!(
+            typed(later)? == first,
+            "a repeated Answer ran again instead of attaching to its kept job: {} then {later}",
+            replies[0]
+        );
+        ensure!(
+            later["request_id"].is_null() || later["request_id"] != replies[0]["request_id"],
+            "each call is its own request: {later}"
+        );
+    }
+    f.assert_sources_unchanged()
+}
+
 #[tokio::test]
 async fn current_answer_many_and_open_keep_complete_cli_pipe_and_https_mcp_packets() -> Result<()> {
     let f = Fixture::new(true)?;

@@ -13,8 +13,8 @@ use airk_core::arbiter::{
     ScopeBinding, Work,
     answer_loop::{
         AnswerTicket, CONTEXT_SCHEMA_V3, ContextRequestV3, ContextResponseV3, DecisionLogSummary,
-        Degradation, LoopModelWork, LoopStage, LoopTimings, PACKET_SCHEMA_V2, PartialMarker,
-        PartialReason, UnionSummary, empty_log_digest,
+        Degradation, LoopModelWork, LoopStage, LoopTimings, PACKET_SCHEMA_V2, PartStop,
+        PartialMarker, PartialReason, UnionSummary, empty_log_digest,
     },
 };
 use anyhow::{Result, ensure};
@@ -75,14 +75,25 @@ pub(crate) fn pending_reply(
 
 /// A finished kernel reply as the table retains it: the publication it ran
 /// on comes from the reply's own scope, and its retained bytes are its
-/// serialized size.
+/// serialized size. The reply itself says whether its deadline cut it: the
+/// partial marker or any part's stop names the deadline. The loop keeps a
+/// reserve, so such a reply arrives well before its window ends.
 pub(crate) fn finished(response: ContextResponseV3) -> Result<Finished<ContextResponseV3>> {
     let publication = publication_digest(&response.scope.publication)?;
     let retained_bytes = serde_json::to_vec(&response)?.len();
+    let cut = response
+        .partial
+        .as_ref()
+        .is_some_and(|marker| marker.reason == PartialReason::Deadline)
+        || response
+            .parts
+            .iter()
+            .any(|part| part.stop == PartStop::Deadline);
     Ok(Finished {
         value: response,
         publication,
         retained_bytes,
+        cut,
     })
 }
 

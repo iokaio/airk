@@ -68,6 +68,8 @@ pub(crate) struct Finished<R> {
     pub(crate) value: R,
     pub(crate) publication: Sha256Digest,
     pub(crate) retained_bytes: usize,
+    /// The run was cut by its own deadline: the value is what it had by then.
+    pub(crate) cut: bool,
 }
 
 pub(crate) type RunFuture<R> = Pin<Box<dyn Future<Output = Result<Finished<R>>> + Send>>;
@@ -391,6 +393,7 @@ impl<R: Send + Sync + 'static> AnswerJobTable<R> {
                         value: finished.value,
                         publication: finished.publication,
                         retained_bytes: finished.retained_bytes,
+                        cut: finished.cut,
                     },
                     Ok(Err(error)) => match error.downcast::<Unretained>() {
                         Ok(Unretained { message, not_run }) => {

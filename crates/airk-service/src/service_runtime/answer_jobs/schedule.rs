@@ -173,6 +173,8 @@ pub(crate) enum JobOutcome<R> {
         publication: Sha256Digest,
         /// Bytes counted against the retention budget.
         retained_bytes: usize,
+        /// The run was cut by its own deadline, as its runner reports it.
+        cut: bool,
     },
     Failed(String),
     /// The job did nothing a retry could repeat: it never started
@@ -292,6 +294,10 @@ enum State<R> {
     Finished {
         finished_ms: u64,
         outcome: Arc<JobOutcome<R>>,
+        /// The window a run had when its deadline cut it. Such a result is
+        /// what the job had by then, so it never answers a call with more
+        /// time than that.
+        cut_window_ms: Option<u64>,
     },
 }
 
@@ -618,6 +624,12 @@ impl<R> Schedule<R> {
             }
             State::Queued if existing.ticketed => existing.deadline_ms >= deadline_ms,
             State::Queued => existing.due_ms >= due_ms,
+            // A result its deadline cut is what the job had by then. A call
+            // with more time than that job had would get more on its own.
+            State::Finished {
+                cut_window_ms: Some(window_ms),
+                ..
+            } if deadline_ms > window_ms.saturating_add(DEADLINE_TOLERANCE_MS) => false,
             _ => match (existing.applied.as_ref(), own) {
                 (Some(applied), Some(own)) => applied.shape.covers(&own),
                 // This call could only have a ticket: the running or
@@ -729,6 +741,11 @@ impl<R> Schedule<R> {
             }
             self.claims.insert(key, claim);
         }
+        // The runner says when its own deadline cut the run short. A reply
+        // can be cut well before the window ends (the loop keeps a reserve),
+        // so the clock alone does not show it.
+        let reported_cut = matches!(outcome.as_ref(), JobOutcome::Done { cut: true, .. });
+        let mut cut_window_ms = None;
         if let Some(job) = self.jobs.get_mut(id) {
             if let State::Running {
                 started_ms,
@@ -739,9 +756,14 @@ impl<R> Schedule<R> {
                 && !dropped
             {
                 let elapsed_ms = now.saturating_sub(started_ms);
+                let reached =
+                    reported_cut || elapsed_ms.saturating_add(DEADLINE_TOLERANCE_MS) >= run_ms;
+                if reached && matches!(outcome.as_ref(), JobOutcome::Done { .. }) {
+                    cut_window_ms = Some(run_ms);
+                }
                 // A run that reached its deadline, or one admitted smallest
                 // beyond it, says only that the work was at least that long.
-                let cut = forced || elapsed_ms.saturating_add(DEADLINE_TOLERANCE_MS) >= run_ms;
+                let cut = forced || reached;
                 if matches!(outcome.as_ref(), JobOutcome::Done { .. }) && estimated_ms > 0 && !cut {
                     let ratio = (elapsed_ms.saturating_mul(1000) / estimated_ms)
                         .clamp(CORRECTION_MIN, CORRECTION_MAX);
@@ -767,6 +789,7 @@ impl<R> Schedule<R> {
             job.state = State::Finished {
                 finished_ms: now,
                 outcome: outcome.clone(),
+                cut_window_ms,
             };
         }
         if stale {

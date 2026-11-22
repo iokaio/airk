@@ -118,6 +118,7 @@ fn done_on(value: &'static str, bytes: usize, generation: u8) -> JobOutcome<&'st
         value,
         publication: publication(generation),
         retained_bytes: bytes,
+        cut: false,
     }
 }
 fn done(value: &'static str, bytes: usize) -> JobOutcome<&'static str> {
@@ -814,6 +815,7 @@ fn harness(config: JobTableConfig) -> Harness {
                     value,
                     publication: publication(1),
                     retained_bytes: 64,
+                    cut: false,
                 })
             })
         })
@@ -1495,6 +1497,7 @@ async fn the_work_of_the_call_that_made_the_job_runs_it_once() {
                         value: label,
                         publication: publication(1),
                         retained_bytes: 1,
+                        cut: false,
                     })
                 })
             })
