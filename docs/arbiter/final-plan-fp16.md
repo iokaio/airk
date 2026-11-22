@@ -1037,6 +1037,8 @@ Receipts are in the private GPU-track folder and in the CUDA image records;
 | Device ladder: Large on GPU only, then Compact on GPU, then Compact on CPU; Focus on GPU where available, else CPU | Set by the user on 22 November. Replaces the "Large not offered without GPU opt-in" wording of section 2 by a fallback, and makes the Focus and Compact GPU routes product priorities |
 | Answer's time allowance raised above 120 s | Set by the user on 22 November; the numbers in section 12.4 are my proposal for the user's review |
 | Implementation starts after the user reviews this revision | Set by the user on 22 November |
+| Many-agent queueing (section 12.4.1) | Reviewed and accepted by the user on 22 November; its open points take the stated defaults unless the user changes them |
+| No second loaded copy of a model on any device | Set by the user on 22 November. Capacity comes from batching, concurrent runs on one session and overflow to another device, decided at runtime (section 12.5.1) |
 
 ## 12. Answer as a local multi-round loop
 
@@ -1120,10 +1122,12 @@ at most one per index, queued or running
 admission). All parts of one Answer target the same index, so a second part
 could not even queue its model call while the first part's runs.
 
-Running two sessions of the same model at once is not the remedy. Each costs
-the full model memory: about 9 GB of GPU memory for Compact, 17 GB for Large,
-and up to 12 GiB of RAM for Compact on CPU. And one call already occupies most
-of the GPU or most of the CPU cores. Three changes are made instead:
+A second loaded copy of a model is never the remedy, and is excluded
+outright (section 12.5.1). It would cost the full model memory again: about 9
+GB of GPU memory for Compact, 17 GB for Large, and up to 12 GiB of RAM for
+Compact on CPU. One call already occupies most of the GPU or most of the CPU
+cores. Three changes are made instead, with the runtime capacity rules of
+section 12.5.1 deciding how far each goes:
 
 1. **The parts of one Answer may each queue a model job.** The admission
    rule counts jobs per Answer attempt within an index, not per index alone.
@@ -1144,8 +1148,8 @@ of the GPU or most of the CPU cores. Three changes are made instead:
    and file reads do not touch the model lane. They run concurrently under
    the existing read limits and the shared read cache.
 
-Running several model sessions at once stays out of scope unless L7 shows
-the single lane is the bottleneck.
+Concurrent runs on the one loaded session are covered by section 12.5.1.
+A second loaded session of the same model on any device is excluded.
 
 **Follow-on, not in the first pass:** Split and Union fit Answer across
 several indexes, which is refused today when the indexes are mixed. Each
@@ -1265,7 +1269,9 @@ proposal, for the user's review:
 
 ### 12.4.1 Many agents at once: queueing without abandoned calls
 
-**Speculative design, for the user's review.**
+**Reviewed and accepted by the user on 22 November 2026.** It was first
+written as speculation for review. Its open points take the defaults at the
+end of this section unless the user changes them.
 
 **The concern.** An AI harness may launch several agents that all call
 Answer at once. Answer calls will last minutes, and the model lane runs one
@@ -1354,11 +1360,17 @@ lane:
 - the admission estimator;
 - earliest-deadline scheduling in the lane.
 
-**Open points for the user:**
-- whether tickets are acceptable to agents, or whether degradation alone
-  should be used;
-- how long finished results are retained;
-- the global limit on Answers gathering at once.
+**Defaults for the open points** (my proposal, adopted with the design;
+the user may change any of them):
+- **Degradation and tickets: both.** Answer first degrades to fit the
+  deadline. It returns a ticket only when even the smallest disclosed
+  answer cannot fit.
+- **Retention:** a finished result is kept for 10 minutes after it
+  finishes, or until its publication changes, whichever comes first. Its
+  memory counts in the service's budget.
+- **Global gathering limit:** set by the runtime capacity rules of section
+  12.5.1 from the model lanes actually available, with a floor of 2 and a
+  user setting to cap it. It is not a fixed number.
 
 ### 12.5 Devices
 
@@ -1418,6 +1430,108 @@ in bursts. So:
 The reload and re-warm time is unmeasured. L5 measures it for each model on
 each device, and those figures feed the admission estimator.
 
+### 12.5.1 Using local resources at runtime, with one copy of each model
+
+Set by the user on 22 November 2026.
+
+- **One loaded copy only.** AIRK never loads a second copy of a model's
+  weights on any device, whatever the headroom.
+- **Getting more work done.** Throughput comes from three places, decided
+  at runtime from measured resources and load:
+  - batching;
+  - concurrent runs on the one loaded session;
+  - overflow to the same model loaded on another device.
+- **GPU size floors.** These floors for one loaded model on a GPU are
+  unchanged: Focus 8 GB, Compact 16 GB, Large 24 GB. Extra concurrency only
+  uses memory above them.
+
+**The levers, cheapest first.**
+1. **Batching.** More candidates in one model call: up to 8 per call
+   today, and across parts and across Answers where the task allows
+   (section 12.1). Almost no extra memory.
+2. **Concurrent runs on one session.** ONNX Runtime allows several runs
+   at once on one loaded session.
+   - **Memory:** the weights are shared, and each extra run needs only its
+     own working memory for that call's intermediate results.
+   - **On CUDA:** each concurrent run needs its own GPU stream to overlap.
+   - **On the CPU:** concurrent runs split the cores. They help only when
+     one run leaves cores idle, which is common for Focus with short
+     inputs.
+3. **Overflow to another device.** A model loaded on one device may be
+   loaded once on another, for example Compact on the GPU and Compact on
+   the CPU. That is a second route, not a second copy on the same memory.
+   - **Which device takes a job:** each job goes to whichever route
+     finishes it soonest, counting the queue wait and the run time.
+   - **When the CPU takes Compact work:** Compact on the CPU takes about
+     10 s against 0.23 s on the GPU. So it takes Compact work only when the
+     GPU queue wait exceeds that, which is the many-agent case.
+   - **Large has no CPU route** (section 12.5).
+   - **Gate:** each device's own memory rule applies, and the user's GPU
+     opt-in still governs every GPU route.
+
+**What the runtime measures.**
+- **Per model, when it warms.** A short calibration run records:
+  - the weights' footprint;
+  - peak working memory for one run at the stage's largest input;
+  - the time of one run;
+  - how busy one run keeps the device.
+- **Per device, continuously:**
+  - free GPU memory and GPU busy time, through NVIDIA's management library
+    for CUDA, with Radeon and macOS queries added with WebGPU;
+  - free system RAM, physical cores and CPU load.
+
+  Other applications count. A game or another model on the same GPU
+  shrinks AIRK's room.
+- **Per stage, from the queue:** queue depth, waits against deadlines, and
+  throughput achieved.
+
+**The rule for adding a concurrent run to a stage.** All of these must hold:
+1. **Memory:** free memory on the device, after the run's measured working
+   memory, stays above a reserve floor. The floor is the larger of 1.5 GB
+   and 10% of the device, for the system, the display and other work.
+   Stages sharing a device are counted together. On a 24 GB card with Large
+   there is little room for Focus beside it. On the A6000 (48 GB), Large,
+   Focus and extra runs fit.
+2. **Need:** more than one job has waited for a sustained period, or
+   deadlines are at risk.
+3. **Gain:** one run leaves the device underused.
+4. **Proof:** after the run is added, throughput rises by a clear margin
+   (at least 1.3 times), and the existing runs stay within their budgets.
+   Otherwise the run is removed.
+
+**Under pressure, shed quickly and recover slowly.**
+- When free memory falls below the floor, or another application's load
+  rises, concurrent runs are removed down to one per stage.
+- They are added back one at a time after a quiet period, so the count does
+  not oscillate.
+- Shedding never interrupts a running call. It stops new admissions to the
+  extra run and lets running calls finish.
+
+**What changes around it.**
+- **Queue and ledger:**
+  - The lane's admission counts capacity per stage, set by these rules, in
+    place of the fixed one job per index.
+  - Token and deadline accounting allows concurrent reservations.
+  - Fairness across Answers and parts (sections 12.1 and 12.4.1) still
+    holds.
+- **Device faults:** a CUDA fault marks the whole process as poisoned
+  today, so every concurrent run on that GPU fails together. Recovery
+  drains them all and falls back down the ladder of section 12.5.
+- **Mixed devices:** a CPU run and a GPU run can score slightly differently,
+  because their arithmetic is ordered differently, and that could change a
+  close selection.
+  - Every decision records the device it ran on.
+  - L7 checks whether overflow changes evidence. If it does, overflow is
+    restricted to the same device class.
+- **Settings and status:**
+  - Capacity defaults to "auto", capped at 2 concurrent runs per stage until
+    L7 measures more.
+  - User settings cap the concurrent runs per stage and the total GPU memory
+    AIRK may use.
+  - Status shows, per stage and device, the current runs and why each was
+    added or removed.
+  - These figures also set the global gathering limit of section 12.4.1.
+
 ### 12.6 What is kept from the evaluation
 
 - The harness, the 20 scenarios, both rubrics, the judges and the reports
@@ -1450,10 +1564,11 @@ sections 4.1 to 4.3, measured on both repositories.
 | L0 | Land the evaluation series in order, one signed commit each: the baseline, change set 1, change set 2, and change set 3 as stopped | Commits exist, repository checks pass, `feat/arbiter-final` is pushed |
 | L1 | Contract decisions and Core types: the new request, response and budget version, the ledger slots and token allowance, and the deadline ceiling, in the owning `CONTRACT.md` files, with generated TypeScript and Rust-emitted semantic cases | Contracts recorded; Core builds and its tests pass |
 | L2 | Time: the new ceiling through MCP, Core, kernel, supervisor, ledger and read attempt; per-stage budgets; partial results; progress notifications; which clients reset timeouts on progress or support asynchronous tasks, recorded | Tests show a disclosed partial result at the deadline on every layer |
-| L2b | Many agents (section 12.4.1), once the user has settled its open points: the service-owned Answer job table, attach-by-digest, tickets and continuations, the admission estimator, degrade-to-fit, earliest-deadline scheduling across Answers, the global gathering limit, and queue status | Tests with several concurrent Answers show no starved request, attach after a client timeout, and a ticket or disclosed degradation when the deadline cannot be met |
+| L2b | Many agents (section 12.4.1, accepted), with its global limit taken from L5b: the service-owned Answer job table, attach-by-digest, tickets and continuations, the admission estimator, degrade-to-fit, earliest-deadline scheduling across Answers, the global gathering limit, and queue status | Tests with several concurrent Answers show no starved request, attach after a client timeout, and a ticket or disclosed degradation when the deadline cannot be met |
 | L3 | Kernel loop: Split, then per part Plan, Retrieve per sub-need, Read and check coverage, Follow up and Compose inside `Gathering`, interleaved across parts with a shared read cache, then Union; with the deterministic no-model path, and the software follow-ups promoted from the evaluation layers | Kernel tests cover each stage, single-part and compound requests, budget hand-back between parts, Union dedup and frame sharing, early stop, budget and deadline stop, and the no-model path |
 | L4 | Service and retrieval: the split, plan, coverage and follow-up task policies, ledger slots, per-attempt lane admission for parts, cross-part candidate batching (and the Focus per-candidate question decision), and calibration rules fitted from the evaluation receipts | Service tests pass; policy identities are recorded |
 | L5 | Devices: the Focus CUDA route, Compact on CUDA as a product route, the Context ladder with typed reasons, and idle unload with pre-warm and reload handling (section 12.5) | Each route and fallback runs on the A6000 and on CPU, with receipts; reload and re-warm times measured per model and device; an Answer arriving during a reload starts on reads or a lower rung and does not time out |
+| L5b | Runtime capacity (section 12.5.1): the warm-time calibration run, device and queue measurements, concurrent runs on one session with per-run CUDA streams, overflow routing across devices by earliest finish, shed-and-recover, capacity-based lane admission, settings and status | Tests show no second copy is ever loaded, capacity rises only within the memory floor and when measured gain holds, sheds under injected memory pressure without interrupting running calls, and overflow records its device |
 | L6 | Workspace gate | Clippy and tests across the workspace on the matrix of CONTRIBUTING; known failures listed with their owners |
 | L7 | Measure with the evaluation harness: replays, then judged passes on both repositories, CPU and GPU cells | Report `05-answer-loop.md` and its results; then stop for the user's inspection |
 
