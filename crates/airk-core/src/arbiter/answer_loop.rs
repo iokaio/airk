@@ -576,6 +576,15 @@ pub struct LoopModelWork {
     pub context_calls: usize,
     pub focus_calls: usize,
     pub focus_pairs: usize,
+    /// The Focus profile every identified batched Focus receipt ran on, so a
+    /// delivery owner can bind the Focus stage from the reply alone (the
+    /// receipts stay in custody). Null when no Focus receipt is identified.
+    #[serde(deserialize_with = "required_nullable")]
+    #[schemars(required, schema_with = "nullable_profile")]
+    pub focus_profile: Option<Sha256Digest>,
+}
+fn nullable_profile(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    generator.subschema_for::<Option<Sha256Digest>>()
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -1358,6 +1367,10 @@ impl ContextResponseV3 {
                 && self.model_work.focus_calls == summary.focus_calls
                 && self.model_work.focus_pairs == summary.focus_pairs,
             "Answer model work differs from the decision log"
+        );
+        ensure!(
+            self.model_work.focus_profile.is_none() || summary.focus_calls > 0,
+            "a Focus profile without Focus calls"
         );
         ensure!(
             summary.focus_calls <= budget.focus_calls

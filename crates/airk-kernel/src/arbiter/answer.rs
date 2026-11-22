@@ -113,7 +113,7 @@ impl crate::Kernel {
     /// is returned, on every path.
     pub fn answer_with(
         &self,
-        request: v3::ContextRequestV3,
+        mut request: v3::ContextRequestV3,
         env: AnswerEnv<'_>,
     ) -> Result<AnswerOutcome> {
         request.validate()?;
@@ -123,6 +123,16 @@ impl crate::Kernel {
             .arbiter_context
             .as_ref()
             .context("Answer requires a native admitted index connection")?;
+        // A combined member never spends more than its allowance, whatever
+        // budget its request names.
+        if let Some(partition) = &context.answer_partition {
+            ensure!(
+                partition.index_id == context.authority.index_id,
+                "Answer partition names another index"
+            );
+            request.budget = partition.clamp(&request.budget)?;
+            request.validate()?;
+        }
         ensure!(
             self.scoped_read_fingerprint()? == Some(context.authority.fingerprint),
             "Answer source authority expired"

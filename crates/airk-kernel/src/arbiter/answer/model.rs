@@ -290,7 +290,7 @@ impl Loop<'_> {
             task_policy: decide::policy(stage),
             segments,
             attribution: attribution.clone(),
-            partition: None,
+            partition: self.context.answer_partition.clone(),
             remaining_ms,
             remaining_input_tokens: reserve,
         };

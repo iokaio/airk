@@ -123,3 +123,21 @@ frontend results and materialized Kernel results. With no structuredContent,
 canonical body bytes come from parsing the native JSON text; the enclosing tool
 envelope is never compared to that body. When both representations exist they
 must agree exactly. Structured-only results use their own complete native body.
+
+## Answer /3 (`airk.combined-context/2`, 22 November 2026)
+
+The combined Answer /3 path lives in `combined_context/answer.rs`, beside the
+/2 records above, which stay until the Answer /2 path is deleted. Its
+recorded contract decision is in the Core arbiter contract, "Combined Answer
+/3 allowance". In short: each member gets an L1 `PartitionAllowanceV3` whose
+card and Focus ordinals are the prefixes `1..=k`, with `LoopResources`
+(calls, input tokens, candidates, bytes, Focus pairs); `initial_allocations_v3`
+shares a BudgetV3 without minting; a member's use (`LoopUse`) is counted from
+its reply's work and decision log and the unused counts are handed to the
+next member; unknown model work holds the whole allowance and withdraws model
+work from later members; `CombinedContextSummaryV2` has no known-violation
+outcome (a /3 reply is validated under its clamped budget). The wrapper's
+`context` field is `CombinedContext` (/2 or /1). Delivery bindings of a /3
+reply come from `model_work.focus_profile` (Focus) and the reply's
+application profile when card calls were made (Context). Core selector:
+`test(combined_context::answer::tests::)`.

@@ -557,6 +557,11 @@ fn build(
         context_calls: summary.card_calls,
         focus_calls: summary.focus_calls,
         focus_pairs: summary.focus_pairs,
+        focus_profile: assembly
+            .ledger
+            .focus
+            .iter()
+            .find_map(|receipt| receipt.identity.as_ref().map(|identity| identity.profile)),
     };
     Ok(v3::ContextResponseV3 {
         schema: v3::CONTEXT_SCHEMA_V3.into(),

@@ -2536,7 +2536,8 @@
         "model_work": {
           "context_calls": 1,
           "focus_calls": 1,
-          "focus_pairs": 2
+          "focus_pairs": 2,
+          "focus_profile": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
         },
         "omitted_count": 0,
         "omitted_evidence": [],
@@ -2779,7 +2780,8 @@
         "model_work": {
           "context_calls": 0,
           "focus_calls": 0,
-          "focus_pairs": 0
+          "focus_pairs": 0,
+          "focus_profile": null
         },
         "omitted_count": 0,
         "omitted_evidence": [],

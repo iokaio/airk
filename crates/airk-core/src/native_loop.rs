@@ -17,7 +17,6 @@ use crate::{
         context_action::MAX_ACTION_CARDS,
         focus::MAX_RETURNED_CANDIDATES,
     },
-    context_records::Resources,
     identity::Sha256Digest,
     native_focus::FocusSourceWindow,
     read_attempt::{ReadAttemptBudget, ReadClock},
@@ -30,10 +29,29 @@ use std::time::Duration;
 
 pub const ALLOWANCE_SCHEMA_V3: &str = "airk.context-partition-allowance/3";
 
+/// What one Answer /3 partition may consume: the /2 counters plus Focus
+/// pairs. Card slots and Focus calls are the lengths of the allowance's
+/// ordinal prefixes.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LoopResources {
+    pub calls: usize,
+    pub input_tokens: usize,
+    pub candidates: usize,
+    pub bytes: usize,
+    pub focus_pairs: usize,
+}
+
 /// Native adapter metadata for one Answer /3 partition, with a BudgetV3
 /// parent. Never public Answer arguments or a grant. The /2 allowance is
 /// unchanged and stays with the /2 requests.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+///
+/// Each member of a combined Answer runs its own Answer, whose card slots and
+/// Focus call ordinals are numbered from 1. The ordinal lists are therefore
+/// the prefixes `1..=k`: counts in effect, with no cross-member meaning
+/// (recorded contract decision, Core arbiter CONTRACT.md, "Combined Answer
+/// /3 allowance").
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PartitionAllowanceV3 {
     pub schema: String,
@@ -41,13 +59,25 @@ pub struct PartitionAllowanceV3 {
     pub selection: Sha256Digest,
     pub index_id: crate::index_catalog::IndexId,
     pub parent_budget: BudgetV3,
-    pub resources: Resources,
-    /// Card slots this partition may use, strictly increasing.
+    pub resources: LoopResources,
+    /// Card slots this partition may use: exactly `1..=card slots`.
     pub card_ordinals: Vec<u8>,
-    /// Focus call ordinals this partition may use, strictly increasing.
+    /// Focus call ordinals this partition may use: exactly `1..=Focus calls`.
     pub focus_ordinals: Vec<u8>,
 }
+/// The ordinal prefix `1..=count`.
+pub fn ordinal_prefix(count: usize) -> Result<Vec<u8>> {
+    (1..=count)
+        .map(|ordinal| Ok(u8::try_from(ordinal)?))
+        .collect()
+}
 impl PartitionAllowanceV3 {
+    pub fn card_slots(&self) -> usize {
+        self.card_ordinals.len()
+    }
+    pub fn focus_calls(&self) -> usize {
+        self.focus_ordinals.len()
+    }
     pub fn validate(&self) -> Result<()> {
         self.parent_budget.validate()?;
         let budget = &self.parent_budget;
@@ -62,19 +92,26 @@ impl PartitionAllowanceV3 {
                 && self.resources.calls <= budget.calls
                 && self.resources.input_tokens <= budget.input_tokens
                 && self.resources.candidates <= budget.candidates
-                && self.resources.bytes <= budget.max_bytes,
+                && self.resources.bytes <= budget.max_bytes
+                && self.resources.focus_pairs <= budget.focus_pairs,
             "invalid context partition allocation"
         );
-        let increasing = |ordinals: &[u8], maximum: usize| {
-            ordinals.windows(2).all(|pair| pair[0] < pair[1])
+        let prefix = |ordinals: &[u8], maximum: usize| {
+            ordinals.len() <= maximum
                 && ordinals
                     .iter()
-                    .all(|ordinal| (1..=maximum).contains(&usize::from(*ordinal)))
+                    .enumerate()
+                    .all(|(offset, ordinal)| usize::from(*ordinal) == offset + 1)
         };
         ensure!(
-            increasing(&self.card_ordinals, budget.context_calls)
-                && increasing(&self.focus_ordinals, budget.focus_calls),
+            prefix(&self.card_ordinals, budget.context_calls)
+                && prefix(&self.focus_ordinals, budget.focus_calls),
             "invalid card slot or Focus ordinals"
+        );
+        ensure!(
+            self.focus_ordinals.is_empty() == (self.resources.focus_pairs == 0)
+                && self.focus_calls() <= self.resources.focus_pairs,
+            "Focus calls and Focus pairs disagree"
         );
         ensure!(
             (self.card_ordinals.is_empty() && self.focus_ordinals.is_empty())
@@ -82,6 +119,30 @@ impl PartitionAllowanceV3 {
             "model allowance and token allocation disagree"
         );
         Ok(())
+    }
+    /// The member Answer's own budget: the request budget bounded by this
+    /// allowance. Fields a BudgetV3 requires to be positive stay at least 1;
+    /// card and Focus requests carry the allowance, which refuses any slot,
+    /// ordinal or token it does not grant.
+    pub fn clamp(&self, request: &BudgetV3) -> Result<BudgetV3> {
+        self.validate()?;
+        request.validate()?;
+        let resources = &self.resources;
+        let mut budget = request.clone();
+        budget.calls = budget.calls.min(resources.calls);
+        budget.candidates = budget.candidates.min(resources.candidates);
+        budget.max_bytes = budget.max_bytes.min(resources.bytes);
+        budget.input_tokens = budget.input_tokens.min(resources.input_tokens).max(1);
+        budget.round_input_tokens = budget.round_input_tokens.min(budget.input_tokens);
+        budget.context_calls = budget.context_calls.min(self.card_slots()).max(1);
+        budget.focus_pairs = budget.focus_pairs.min(resources.focus_pairs).max(1);
+        budget.focus_calls = budget
+            .focus_calls
+            .min(self.focus_calls())
+            .max(1)
+            .min(budget.focus_pairs);
+        budget.validate()?;
+        Ok(budget)
     }
     pub fn validate_binding(
         &self,
@@ -567,6 +628,7 @@ impl NativeFocusRequestV3 {
             ensure!(
                 self.remaining_input_tokens <= partition.resources.input_tokens
                     && self.score_count <= partition.resources.candidates
+                    && self.score_count <= partition.resources.focus_pairs
                     && partition.focus_ordinals.contains(&self.ordinal),
                 "Focus exceeds captured partition allowance"
             );

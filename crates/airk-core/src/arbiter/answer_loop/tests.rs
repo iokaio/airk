@@ -491,6 +491,7 @@ fn response() -> ContextResponseV3 {
             context_calls: 1,
             focus_calls: 1,
             focus_pairs: 2,
+            focus_profile: Some(digest(10)),
         },
         elapsed_ms: 2_000,
         candidate_count: 2,
@@ -1368,6 +1369,21 @@ fn joined() -> Result<(ContextResponseV3, DecisionLog)> {
 fn reply_validates_against_its_log() -> Result<()> {
     let (packet, log) = joined()?;
     packet.validate_with_log(&log, &budget())?;
+    // The reply names the Focus profile its logged receipts ran on.
+    for profile in [None, Some(digest(77))] {
+        let mut foreign = packet.clone();
+        foreign.model_work.focus_profile = profile;
+        let error = foreign
+            .validate_with_log(&log, &budget())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("Focus profile"), "{error}");
+    }
+    let mut unfocused = packet.clone();
+    unfocused.model_work.focus_profile = Some(digest(10));
+    unfocused.model_work.focus_calls = 0;
+    unfocused.decision_log.focus_calls = 0;
+    assert!(unfocused.validate(&budget()).is_err(), "profile without calls");
     // Union omitted the oldest deterministic decision.
     let mut omitted = packet.clone();
     omitted.decisions.remove(0);
@@ -1881,6 +1897,7 @@ fn full_loop() -> ContextResponseV3 {
             context_calls: 24,
             focus_calls: 12,
             focus_pairs: 192,
+            focus_profile: Some(digest(10)),
         },
         elapsed_ms: 240_000,
         candidate_count: 48,

@@ -325,14 +325,15 @@ fn allowance() -> PartitionAllowanceV3 {
         selection: digest(8),
         index_id: index(5),
         parent_budget: BudgetV3::default(),
-        resources: Resources {
+        resources: LoopResources {
             calls: 33,
             input_tokens: 32_768,
             candidates: 33,
             bytes: 65_536,
+            focus_pairs: 48,
         },
-        card_ordinals: vec![1, 2, 12],
-        focus_ordinals: vec![1, 3],
+        card_ordinals: vec![1, 2, 3],
+        focus_ordinals: vec![1],
     }
 }
 
@@ -346,11 +347,24 @@ fn v3_allowance_has_a_budget_v3_parent_and_slot_ordinals() -> Result<()> {
             (|a: &mut PartitionAllowanceV3| a.card_ordinals = vec![2, 1])
                 as fn(&mut PartitionAllowanceV3),
         ),
-        ("slot over budget", |a| a.card_ordinals = vec![49]),
-        ("focus over budget", |a| a.focus_ordinals = vec![25]),
+        ("slots are not a prefix", |a| {
+            a.card_ordinals = vec![1, 2, 12]
+        }),
+        ("Focus ordinals are not a prefix", |a| {
+            a.focus_ordinals = vec![1, 3]
+        }),
+        ("slot over budget", |a| a.card_ordinals = (1..=49).collect()),
+        ("focus over budget", |a| {
+            a.focus_ordinals = (1..=25).collect();
+            a.resources.focus_pairs = 25;
+        }),
+        ("Focus calls without pairs", |a| a.resources.focus_pairs = 0),
+        ("Focus pairs without calls", |a| a.focus_ordinals.clear()),
+        ("pairs over parent", |a| a.resources.focus_pairs = 193),
         ("tokens without model use", |a| {
             a.card_ordinals.clear();
             a.focus_ordinals.clear();
+            a.resources.focus_pairs = 0;
         }),
         ("reads over parent", |a| a.resources.calls = 133),
         ("v2 schema", |a| {
@@ -372,6 +386,52 @@ fn v3_allowance_has_a_budget_v3_parent_and_slot_ordinals() -> Result<()> {
     validate_focus(&focus)?;
     focus.ordinal = 2;
     assert!(validate_focus(&focus).is_err(), "Focus ordinal not allowed");
+    let mut pairs = focus_request()?;
+    let mut narrow = allowance();
+    narrow.resources.focus_pairs = 1;
+    pairs.partition = Some(narrow);
+    assert_eq!(pairs.score_count, 2);
+    assert!(validate_focus(&pairs).is_err(), "Focus pairs not allowed");
+    Ok(())
+}
+
+#[test]
+fn v3_allowance_clamps_the_member_budget() -> Result<()> {
+    let clamped = allowance().clamp(&BudgetV3::default())?;
+    assert_eq!(
+        (
+            clamped.calls,
+            clamped.candidates,
+            clamped.max_bytes,
+            clamped.input_tokens,
+            clamped.round_input_tokens,
+            clamped.context_calls,
+            clamped.focus_calls,
+            clamped.focus_pairs,
+        ),
+        (33, 33, 65_536, 32_768, 32_768, 3, 1, 48)
+    );
+    assert_eq!(clamped.deadline_ms, BudgetV3::default().deadline_ms);
+    let mut reads_only = allowance();
+    reads_only.card_ordinals.clear();
+    reads_only.focus_ordinals.clear();
+    reads_only.resources.focus_pairs = 0;
+    reads_only.resources.input_tokens = 0;
+    let clamped = reads_only.clamp(&BudgetV3::default())?;
+    // The budget keeps its positive minimums; the allowance, carried by every
+    // card and Focus request, grants none of them.
+    assert_eq!(
+        (
+            clamped.input_tokens,
+            clamped.context_calls,
+            clamped.focus_calls
+        ),
+        (1, 1, 1)
+    );
+    let mut request = card_request();
+    request.partition = Some(reads_only);
+    assert!(validate_cards(&request).is_err(), "no slot granted");
+    assert_eq!(ordinal_prefix(3)?, vec![1, 2, 3]);
     Ok(())
 }
 

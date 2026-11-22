@@ -232,6 +232,8 @@ impl NativeController for Focused {
 pub(crate) struct Fixture {
     pub(crate) _temp: tempfile::TempDir,
     pub(crate) kernel: crate::Kernel,
+    /// The same native kernel before any read attempt is captured.
+    pub(crate) unattempted: crate::Kernel,
     pub(crate) owner: Arc<Owner>,
     /// The native controller the kernel was bound with.
     pub(crate) controller: Arc<dyn NativeController>,
@@ -313,20 +315,20 @@ pub(crate) fn fixture_with<T: NativeController + 'static>(
         project: authority.backing,
         fencing_generation: 1,
     };
-    let native = scoped
-        .with_native_arbiter(worker, reference, controller.clone())?
-        .with_context_attempt(ReadAttemptBudget {
-            schema: 1,
-            request_id: Incarnation::from_bytes([10; 16]),
-            clock: ReadClock::UnixMonotonic,
-            expires_monotonic_ns: 100_000_001_000,
-            remaining_ns: 100_000_000_000,
-            native_retry_expires_monotonic_ns: None,
-        })?;
+    let unattempted = scoped.with_native_arbiter(worker, reference, controller.clone())?;
+    let native = unattempted.with_context_attempt(ReadAttemptBudget {
+        schema: 1,
+        request_id: Incarnation::from_bytes([10; 16]),
+        clock: ReadClock::UnixMonotonic,
+        expires_monotonic_ns: 100_000_001_000,
+        remaining_ns: 100_000_000_000,
+        native_retry_expires_monotonic_ns: None,
+    })?;
     let publication = native.arbiter_publication()?;
     Ok(Fixture {
         _temp: temporary,
         kernel: native,
+        unattempted,
         owner,
         controller,
         publication,

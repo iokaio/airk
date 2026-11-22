@@ -5,6 +5,13 @@ use airk_core::combined_context::{
     Termination, initial_allocations,
 };
 
+/// The Answer /2 summary of a composed result.
+fn v1(result: &CombinedReadResult) -> &CombinedContextSummary {
+    match result.context.as_ref() {
+        Some(airk_core::combined_context::CombinedContext::Context(summary)) => summary,
+        _ => panic!("an Answer /2 summary"),
+    }
+}
 fn replace_scope(value: &mut Value, scope: &Value) {
     if value.get("authorization").is_some()
         && value.get("index_id").is_some()
@@ -143,9 +150,9 @@ fn combined_answer_preserves_both_complete_packets_publications_and_nested_ranki
                     .contains("/records/0/canonical_result/hits/0")
         }));
     }
-    assert_eq!(result.context.as_ref().unwrap().known_used.calls, 2);
+    assert_eq!(v1(&result).known_used.calls, 2);
     assert_eq!(
-        result.context.as_ref().unwrap().known_used.input_tokens,
+        v1(&result).known_used.input_tokens,
         200
     );
     assert!(result.read_retry.is_none());
@@ -311,7 +318,7 @@ fn combined_answer_counts_materialized_multi_hit_envelopes_without_changing_nati
         let result = compose_context(&request, inputs, summary)?;
         assert_eq!(result.ranking.len(), 4, "{representation}");
         assert_eq!(
-            serde_json::to_value(result.context.as_ref().unwrap())?,
+            serde_json::to_value(v1(&result))?,
             expected_summary
         );
         assert_eq!(request.budgets, original_budget);
@@ -363,6 +370,43 @@ fn ordinary_multi_hit_count_refusals_are_identical_for_text_and_structured_envel
     }
     Ok(())
 }
+/// Combined Answer /3 admission sizes the widest `airk.combined-context/2`
+/// summary inside the 131,072-byte Answer frame, never the 65,536 bytes of
+/// other tools.
+#[test]
+fn combined_answer_v3_admission_takes_the_answer_frame() -> Result<()> {
+    use airk_core::arbiter::answer_loop::{BudgetV3, MAX_ANSWER_RESPONSE_BYTES};
+    let (request, _, summary) = context_fixture()?;
+    let v2: Vec<_> = summary
+        .members
+        .iter()
+        .map(|m| m.allowance.clone())
+        .collect();
+    let ids: Vec<_> = summary.members.iter().map(|m| m.index_id).collect();
+    let budget = BudgetV3::default();
+    let allowances = airk_core::combined_context::initial_allocations_v3(
+        summary.attempt,
+        request.authority,
+        &ids,
+        &budget,
+    )?;
+    let answer = answer_payload_admission(&request, &budget, &allowances, 1024)?;
+    let context = context_payload_admission(&request, &summary.budget, &v2, 1024)?;
+    assert!(answer > context, "{answer} > {context}");
+    assert!(answer < MAX_ANSWER_RESPONSE_BYTES / 3);
+    assert!(answer_payload_admission(&request, &budget, &allowances, usize::MAX).is_err());
+    let tiny = BudgetV3 {
+        max_bytes: 4096,
+        ..budget.clone()
+    };
+    assert_eq!(
+        answer_payload_admission(&request, &tiny, &allowances, 1024)?,
+        0
+    );
+    assert!(answer_payload_admission(&request, &budget, &allowances[..1], 1024).is_err());
+    Ok(())
+}
+
 #[test]
 fn context_byte_admission_charges_closed_envelope_escaping_and_original_metadata() -> Result<()> {
     let (request, inputs, summary) = context_fixture()?;
@@ -475,8 +519,8 @@ fn context_stage_binding_sizing_preserves_baseline_and_reserves_both_stages_at_b
     let attachment = 1024;
     let baseline = context_admission_skeleton(&request, &budget, &allowances, false)?;
     let dual = context_admission_skeleton(&request, &budget, &allowances, true)?;
-    let baseline_bindings = &baseline.context.as_ref().unwrap().delivery_bindings;
-    let dual_bindings = &dual.context.as_ref().unwrap().delivery_bindings;
+    let baseline_bindings = &v1(&baseline).delivery_bindings;
+    let dual_bindings = &v1(&dual).delivery_bindings;
     assert_eq!(
         baseline_bindings
             .iter()
@@ -556,7 +600,7 @@ fn context_worst_roster_sizes_sixty_four_inert_stage_bindings() -> Result<()> {
         .collect();
     let allowances = vec![None; 32];
     let sizing = context_admission_skeleton(&request, &summary.budget, &allowances, true)?;
-    let bindings = &sizing.context.as_ref().unwrap().delivery_bindings;
+    let bindings = &v1(&sizing).delivery_bindings;
     assert_eq!(bindings.len(), 64);
     for number in 1..=32 {
         assert_eq!(
@@ -621,7 +665,7 @@ fn current_combined_context_retains_full_8192_token_120_second_parent() -> Resul
         assert_eq!(allowance.parent_budget.deadline_ms, 120_000);
     }
     let result = compose_context(&request, inputs, summary)?;
-    let context = result.context.as_ref().unwrap();
+    let context = v1(&result);
     assert_eq!(context.budget.input_tokens, 8192);
     assert_eq!(context.budget.deadline_ms, 120_000);
     assert_eq!(context.known_used.input_tokens, 200);

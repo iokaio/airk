@@ -138,6 +138,8 @@ pub(crate) struct NativeContext {
     owner: Arc<dyn NativeController>,
     attempt: Option<airk_core::read_attempt::ReadAttemptBudget>,
     partition: Option<airk_core::combined_context::PartitionAllowance>,
+    /// A combined Answer /3 member's allowance; card and Focus requests carry it.
+    answer_partition: Option<airk_core::native_loop::PartitionAllowanceV3>,
     focus: Arc<std::sync::Mutex<focus::Attempt>>,
     focus_reply_budget: Option<FocusReplyBudget>,
     context_reply_reserve: usize,
@@ -261,6 +263,7 @@ impl crate::Kernel {
             owner,
             attempt: None,
             partition: None,
+            answer_partition: None,
             focus: Arc::new(std::sync::Mutex::new(focus::Attempt::default())),
             focus_reply_budget: None,
             context_reply_reserve: 4096,
@@ -344,6 +347,32 @@ impl crate::Kernel {
             "context partition differs from installed authority"
         );
         context.partition = Some(allowance);
+        Ok(kernel)
+    }
+    /// A combined Answer /3 member: the worker checked whole-selection
+    /// authority; the installed index and the original attempt must match.
+    /// `answer_with` clamps the request budget to the allowance, and every
+    /// card and Focus request carries it.
+    pub fn with_answer_partition_for(
+        &self,
+        tool: &str,
+        allowance: airk_core::native_loop::PartitionAllowanceV3,
+        attempt: airk_core::read_attempt::ReadAttemptBudget,
+    ) -> Result<Self> {
+        allowance.validate()?;
+        ensure!(
+            allowance.attempt == attempt.request_id,
+            "context partition attempt mismatch"
+        );
+        let mut kernel = self.with_context_attempt_for(tool, attempt)?;
+        let context = Arc::get_mut(kernel.arbiter_context.as_mut().unwrap())
+            .context("new native context unexpectedly shared")?;
+        ensure!(
+            context.authority.index_id == allowance.index_id
+                && self.scoped_read_fingerprint()? == Some(context.authority.fingerprint),
+            "context partition differs from installed authority"
+        );
+        context.answer_partition = Some(allowance);
         Ok(kernel)
     }
     pub fn answer_with_reader(

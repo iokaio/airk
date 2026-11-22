@@ -603,7 +603,7 @@ impl<S: Session> Backend<S> {
         let bindings = response
             .context
             .as_ref()
-            .map(|summary| summary.delivery_bindings.as_slice())
+            .map(|summary| summary.delivery_bindings())
             .unwrap_or(&[]);
         match self
             .finalize_bound(

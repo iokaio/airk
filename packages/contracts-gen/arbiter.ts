@@ -1075,6 +1075,12 @@ export type LoopModelWork = {
     context_calls: number;
     focus_calls: number;
     focus_pairs: number;
+    /**
+     * The Focus profile every identified batched Focus receipt ran on, so a
+     * delivery owner can bind the Focus stage from the reply alone (the
+     * receipts stay in custody). Null when no Focus receipt is identified.
+     */
+    focus_profile: Sha256Digest | null;
 };
 
 /**

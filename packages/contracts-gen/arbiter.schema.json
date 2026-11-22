@@ -4169,12 +4169,24 @@
           "format": "uint",
           "minimum": 0,
           "type": "integer"
+        },
+        "focus_profile": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256Digest"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The Focus profile every identified batched Focus receipt ran on, so a\ndelivery owner can bind the Focus stage from the reply alone (the\nreceipts stay in custody). Null when no Focus receipt is identified."
         }
       },
       "required": [
         "context_calls",
         "focus_calls",
-        "focus_pairs"
+        "focus_pairs",
+        "focus_profile"
       ],
       "type": "object"
     },

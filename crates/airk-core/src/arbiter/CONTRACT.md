@@ -1473,7 +1473,9 @@ round runs at most one read per sub-need. One Context card call is at most
   when no deterministic decision remains included. ContextAbstained,
   `model_work`, slot counts, Focus work and round tokens reconcile against
   these counts, not against the included list.
-- **model_work:** card calls, Focus calls and Focus pairs, equal to the log's.
+- **model_work:** card calls, Focus calls and Focus pairs, equal to the log's,
+  and `focus_profile` (required, nullable), the one profile of the logged
+  identified Focus receipts (see "Combined Answer /3 allowance").
 - **records:** a v3 record (`LoopEvidence`) carries no scope: it is always
   the reply's `scope`, so 48 records do not repeat 587 bytes each. A loop
   search defers in-search Focus (L3 design), so a search record carries no
@@ -1560,6 +1562,73 @@ within that parent, and strictly increasing `card_ordinals` (card slots,
 1..=`context_calls`) and `focus_ordinals` (1..=`focus_calls`); model tokens
 are allocated exactly when either list is non-empty. The /2 allowance is
 unchanged.
+
+### Combined Answer /3 allowance (recorded contract decision, 22 November 2026)
+
+Recorded by the primary agent under plan section 12.9 (authorization to
+change Answer's wire shape and budgets, replacing v2 at once), amended on the
+L3 implementer's proposal. **Why:** the combined (multi-index) Answer hands
+each member a partition allowance, and the /2 `PartitionAllowance` has a /2
+`Budget` parent and one *global* assessment ordinal per assessment. In /3
+every member runs its own Answer, whose card slots and Focus call ordinals
+are numbered from 1 per reply, so global ordinals have no meaning; a second
+/3 allowance type beside L1's `PartitionAllowanceV3` would duplicate it.
+
+- **Reuse `PartitionAllowanceV3`** (`airk.context-partition-allowance/3`,
+  `native_loop.rs`) for each member. Its `card_ordinals` and
+  `focus_ordinals` must be exactly the prefixes `1..=k` (counts in effect,
+  with no cross-member meaning); its resources become `LoopResources`:
+  calls, input tokens, candidates, bytes and **`focus_pairs`** (new). Focus
+  calls require pairs (`focus_ordinals` empty exactly when `focus_pairs` is
+  0, and calls at most pairs); model tokens are allocated exactly when a
+  list is non-empty. A batched Focus request under a partition may score at
+  most `focus_pairs`.
+- **Clamping.** `PartitionAllowanceV3::clamp` bounds a request budget by the
+  allowance (fields a BudgetV3 requires to be positive stay at least 1; the
+  allowance carried by every card and Focus request refuses what it does not
+  grant). The kernel's `answer_with` applies it to whatever budget the member
+  request names, and card and Focus requests carry the allowance.
+- **Initial allocation** (`combined_context::initial_allocations_v3`): reads,
+  candidates and bytes are shared over the admitted members; card slots,
+  Focus calls and pairs over the members that can carry model work (at most
+  `max(context_calls, focus_calls)` and the token pool), which also share the
+  token pool. A member with no Focus calls gets no pairs. Nothing is minted:
+  the sum fits the parent BudgetV3.
+- **Hand-back by count** (`LoopUse`): a member's use is `work.calls`,
+  `work.input_tokens`, `max(candidate_count, work.candidates)`,
+  `max(work.bytes, reply bytes)` and the decision log's `card_calls`,
+  `focus_calls` and `focus_pairs`. Unused counts (allowance minus use) grow
+  the next member's allowance (`grow_allowance`) or make one for a member the
+  initial allocation could not admit (`returned_allowance`). A member reply
+  with unknown model work (`decision_log.work_unknown > 0`) or no valid reply
+  keeps its whole allowance charged, and later members get no model work
+  (`without_models`).
+- **Summary `airk.combined-context/2`** (`CombinedContextSummaryV2`): the
+  BudgetV3 parent, one `PartitionReportV3` per member (allowance and outcome
+  `unqueried`, `known {used, read_depth, peak_fanout}` or `unknown`), known
+  and held `LoopUse` totals, termination and delivery bindings. A /3 member
+  reply is validated under its clamped budget, so it cannot exceed its
+  allowance; there is no known-violation outcome and the summary refuses the
+  `accounting_violation` terminal. The combined wrapper's `context` field is
+  `CombinedContext`, `/2` for Answer /3 or `/1` for Answer /2 until /2 is
+  deleted.
+- **Delivery bindings** (`reply_delivery_bindings`): Focus when the reply's
+  `model_work.focus_profile` names the Focus profile, Context when any card
+  call was made, with the profile of the reply's own application; both bind
+  the reply's scope. `context_delivery_bindings` reads them from a singleton
+  /3 reply and re-validates every member reply of a `/2` summary under its
+  clamped budget.
+- **Frame and time:** the combined Answer takes the 131,072-byte Answer frame
+  and the 600 s Answer ceiling, for Answer only.
+- **Reply addition: `model_work.focus_profile`** (required, nullable). The
+  batched Focus receipts stay in custody, so a delivery owner holding only
+  the reply could not bind the Focus stage. The reply now names the one
+  Focus profile its identified receipts ran on; `validate` refuses it without
+  Focus calls and `validate_with_log` requires it to equal the logged
+  receipts' single profile. Change log entry 28.
+
+No airk-state/1 persisted format changes: the allowance travels in the
+read-attempt context and the host query, which are not persisted.
 
 ### Compact Focus receipt
 

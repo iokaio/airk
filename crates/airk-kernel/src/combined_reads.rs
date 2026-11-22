@@ -135,7 +135,7 @@ pub struct CombinedReadResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub read_retry: Option<airk_core::combined_reads::read_retry::SingleRequiredMemberRetry>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub context: Option<airk_core::combined_context::CombinedContextSummary>,
+    pub context: Option<airk_core::combined_context::CombinedContext>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -504,7 +504,17 @@ pub fn compose_context(
     inputs: Vec<MemberInput>,
     summary: airk_core::combined_context::CombinedContextSummary,
 ) -> Result<CombinedReadResult> {
-    compose_inner(request, inputs, false, Some(summary))
+    compose_inner(request, inputs, false, Some(summary.into()))
+}
+
+/// One whole-selection Answer /3 result under an `airk.combined-context/2`
+/// summary: the full member replies stay inline, within the Answer frame.
+pub fn compose_answer(
+    request: &CompositionRequest,
+    inputs: Vec<MemberInput>,
+    summary: airk_core::combined_context::CombinedContextSummaryV2,
+) -> Result<CombinedReadResult> {
+    compose_inner(request, inputs, false, Some(summary.into()))
 }
 
 /// Predispatch byte admission for the CURRENT closed Context tool-envelope.
@@ -644,7 +654,7 @@ fn context_admission_skeleton(
         partial: false,
         truncated: false,
         read_retry: None,
-        context: Some(CombinedContextSummary {
+        context: Some(CombinedContext::Context(CombinedContextSummary {
             schema: SUMMARY_SCHEMA.into(),
             attempt: token.incarnation,
             selection: request.authority,
@@ -654,7 +664,7 @@ fn context_admission_skeleton(
             unknown_held: max_resources,
             termination: Termination::AccountingViolation,
             delivery_bindings: bindings,
-        }),
+        })),
         error: Some(CombinedReadFailure {
             code: "budget_accounting_violation".into(),
             retryable: false,
@@ -667,6 +677,109 @@ fn context_admission_skeleton(
         }),
     };
     Ok(skeleton)
+}
+
+/// Predispatch byte admission for a combined Answer /3 envelope, as
+/// `context_payload_admission` for /2: the widest `airk.combined-context/2`
+/// summary (every counter at its widest, both stage bindings per member)
+/// within the 131,072-byte Answer frame.
+pub fn answer_payload_admission(
+    request: &CompositionRequest,
+    budget: &airk_core::arbiter::answer_loop::BudgetV3,
+    allowances: &[Option<airk_core::native_loop::PartitionAllowanceV3>],
+    attachment_reserve: usize,
+) -> Result<usize> {
+    use airk_core::combined_context::*;
+    budget.validate()?;
+    let mut skeleton = context_admission_skeleton(
+        request,
+        &airk_core::arbiter::Budget::default(),
+        &vec![None; request.selection.members.len()],
+        true,
+    )?;
+    ensure!(
+        allowances.len() == request.selection.members.len(),
+        "context byte admission roster mismatch"
+    );
+    let bindings = skeleton
+        .context
+        .as_ref()
+        .map(|summary| summary.delivery_bindings().to_vec())
+        .unwrap_or_default();
+    let widest = LoopUse {
+        calls: usize::MAX,
+        input_tokens: usize::MAX,
+        candidates: usize::MAX,
+        bytes: usize::MAX,
+        card_slots: usize::MAX,
+        focus_calls: usize::MAX,
+        focus_pairs: usize::MAX,
+    };
+    let members = request
+        .selection
+        .members
+        .iter()
+        .zip(allowances)
+        .map(|(member, allowance)| {
+            let allowance = allowance.clone().map(|mut allowed| {
+                allowed.resources = airk_core::native_loop::LoopResources {
+                    calls: usize::MAX,
+                    input_tokens: usize::MAX,
+                    candidates: usize::MAX,
+                    bytes: usize::MAX,
+                    focus_pairs: usize::MAX,
+                };
+                allowed.card_ordinals = vec![u8::MAX; budget.context_calls];
+                allowed.focus_ordinals = vec![u8::MAX; budget.focus_calls];
+                allowed
+            });
+            PartitionReportV3 {
+                index_id: member.index_id,
+                allowance,
+                outcome: PartitionOutcomeV3::Known {
+                    used: widest.clone(),
+                    read_depth: usize::MAX,
+                    peak_fanout: usize::MAX,
+                },
+            }
+        })
+        .collect();
+    skeleton.context = Some(CombinedContext::Answer(CombinedContextSummaryV2 {
+        schema: SUMMARY_SCHEMA_V2.into(),
+        attempt: airk_core::identity::Incarnation::from_bytes([1; 16]),
+        selection: request.authority,
+        budget: budget.clone(),
+        members,
+        known_used: widest.clone(),
+        unknown_held: widest,
+        termination: Termination::Partial,
+        delivery_bindings: bindings,
+    }));
+    let reserved = serde_json::to_vec(&skeleton)?
+        .len()
+        .checked_add(context_delivery_receipt_reserve()?)
+        .and_then(|bytes| bytes.checked_add(attachment_reserve))
+        .context("context admission byte overflow")?;
+    let maximum = airk_core::arbiter::answer_loop::reply_limit(budget);
+    Ok(maximum.saturating_sub(reserved) / 3)
+}
+
+/// The outer Focus binding bytes a member Answer /3 reply adds, as
+/// `context_packet_focus_binding_bytes` for /2.
+pub fn answer_reply_focus_binding_bytes(
+    reply: &airk_core::arbiter::answer_loop::ContextResponseV3,
+) -> Result<usize> {
+    airk_core::combined_context::reply_delivery_bindings(reply)?
+        .into_iter()
+        .filter(|binding| binding.stage == airk_core::arbiter::Stage::Focus)
+        .try_fold(0usize, |total, binding| {
+            total
+                .checked_add(context_focus_binding_bytes(
+                    &binding.scope,
+                    binding.profile,
+                )?)
+                .context("Focus delivery roster byte overflow")
+        })
 }
 
 /// Extra outer roster syntax beyond the existing Context slot. This inert byte
@@ -823,7 +936,7 @@ fn compose_inner(
     request: &CompositionRequest,
     inputs: Vec<MemberInput>,
     capabilities: bool,
-    context: Option<airk_core::combined_context::CombinedContextSummary>,
+    context: Option<airk_core::combined_context::CombinedContext>,
 ) -> Result<CombinedReadResult> {
     request.selection.validate()?;
     let mut allocations = request.budgets.allocate(&request.selection)?;
@@ -836,14 +949,14 @@ fn compose_inner(
             .collect();
         summary.validate(&ids)?;
         ensure!(
-            summary.selection == request.authority,
+            summary.selection() == request.authority,
             "combined context selection mismatch"
         );
-        for (allocation, report) in allocations.iter_mut().zip(&summary.members) {
-            match &report.allowance {
-                Some(allowance) => {
-                    allocation.max_bytes = allowance.resources.bytes;
-                    allocation.deadline_ms = summary.budget.deadline_ms;
+        for (allocation, (_, bytes)) in allocations.iter_mut().zip(summary.member_bytes()) {
+            match bytes {
+                Some(bytes) => {
+                    allocation.max_bytes = bytes;
+                    allocation.deadline_ms = summary.deadline_ms();
                 }
                 None => {
                     allocation.limit = 0;
@@ -879,17 +992,25 @@ fn compose_inner(
             "duplicate member execution"
         );
         validate_sources(&input.sources)?;
-        encoded_size(&input.result, airk_core::MAX_RESPONSE_BYTES)?;
+        // An Answer /3 member envelope may take the Answer frame, never more.
+        encoded_size(
+            &input.result,
+            context
+                .as_ref()
+                .map_or(airk_core::MAX_RESPONSE_BYTES, |summary| {
+                    summary.reply_bytes().max(airk_core::MAX_RESPONSE_BYTES)
+                }),
+        )?;
         inputs_by_id.insert(input.index_id, input);
     }
     if let Some(summary) = &context {
         // Native successful envelopes can retain JSON in text only. Count the
         // SAME authenticated/materialized body that ranking consumes below;
         // inspecting the pre-materialized envelope mistakes it for zero hits.
-        for (allocation, report) in allocations.iter_mut().zip(&summary.members) {
-            if report.allowance.is_some() {
+        for (allocation, (index_id, bytes)) in allocations.iter_mut().zip(summary.member_bytes()) {
+            if bytes.is_some() {
                 allocation.limit = inputs_by_id
-                    .get(&report.index_id)
+                    .get(&index_id)
                     .map(|input| records(body(&input.result).0).map(|rows| rows.len()))
                     .transpose()?
                     .unwrap_or(0)
@@ -1076,24 +1197,14 @@ fn compose_inner(
             result.ranking.truncate(request.budgets.limit);
             result.truncated = true;
         }
-        if summary.termination != airk_core::combined_context::Termination::Complete {
+        if summary.termination() != airk_core::combined_context::Termination::Complete {
             result.partial = true;
         }
-        if summary.termination == airk_core::combined_context::Termination::AccountingViolation {
+        if summary.termination() == airk_core::combined_context::Termination::AccountingViolation {
             result.error = Some(CombinedReadFailure {
                 code: "budget_accounting_violation".into(),
                 retryable: false,
-                failed_members: summary
-                    .members
-                    .iter()
-                    .filter(|member| {
-                        matches!(
-                            &member.outcome,
-                            airk_core::combined_context::PartitionOutcome::KnownViolation { .. }
-                        )
-                    })
-                    .map(|member| member.index_id)
-                    .collect(),
+                failed_members: summary.violation_members(),
             });
         }
     }
@@ -1149,11 +1260,7 @@ fn compose_inner(
         .context
         .as_ref()
         .map_or(airk_core::MAX_RESPONSE_BYTES, |summary| {
-            summary
-                .budget
-                .max_bytes
-                .min(airk_core::MAX_RESPONSE_BYTES)
-                .min(request.budgets.max_bytes)
+            summary.reply_bytes().min(request.budgets.max_bytes)
         });
     if result.context.is_some() {
         while !result.ranking.is_empty() && encoded_size(&result, maximum).is_err() {

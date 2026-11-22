@@ -525,6 +525,15 @@ impl ContextResponseV3 {
             self.decision_log == expected,
             "reply decision log summary differs from the log"
         );
+        let profiles: BTreeSet<Sha256Digest> = log
+            .focus_receipts
+            .iter()
+            .filter_map(|receipt| receipt.identity.as_ref().map(|identity| identity.profile))
+            .collect();
+        ensure!(
+            profiles.len() <= 1 && self.model_work.focus_profile == profiles.first().copied(),
+            "reply Focus profile differs from the logged Focus receipts"
+        );
         for entry in &log.entries {
             let decision = &entry.decision;
             let present = match (decision.part, decision.need, decision.round) {

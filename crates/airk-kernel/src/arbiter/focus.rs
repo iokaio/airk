@@ -986,7 +986,7 @@ impl crate::Kernel {
             order_digest,
             ordinal: u8::try_from(ordinal)?,
             attribution: attribution.clone(),
-            partition: None,
+            partition: context.answer_partition.clone(),
             remaining_ms,
             remaining_input_tokens: reservation,
         };

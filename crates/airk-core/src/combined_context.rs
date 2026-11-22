@@ -13,6 +13,13 @@ use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
+mod answer;
+pub use answer::{
+    CombinedContext, CombinedContextSummaryV2, LoopUse, PartitionOutcomeV3, PartitionReportV3,
+    SUMMARY_SCHEMA_V2, grow_allowance, initial_allocations_v3, reply_delivery_bindings,
+    reply_work_unknown, returned_allowance, widest_budget, without_models,
+};
+
 pub const SUMMARY_SCHEMA: &str = "airk.combined-context/1";
 pub const MAX_DELIVERY_BINDINGS: usize = 2 * MAX_SELECTION;
 
@@ -279,7 +286,9 @@ pub fn context_delivery_bindings(value: &serde_json::Value) -> Result<Vec<Contex
         for row in rows {
             ids.push(serde_json::from_value::<IndexId>(row["index_id"].clone())?);
         }
-        let has_packets = rows.iter().any(|row| packet_body(&row["result"]).is_some());
+        let has_packets = rows.iter().any(|row| {
+            packet_body(&row["result"]).is_some() || answer::reply_body(&row["result"]).is_some()
+        });
         let Some(raw) = body.get("context").filter(|value| !value.is_null()) else {
             ensure!(!has_packets, "combined context summary missing");
             let mut actual = Vec::new();
@@ -299,6 +308,9 @@ pub fn context_delivery_bindings(value: &serde_json::Value) -> Result<Vec<Contex
             validate_stage_roster(&actual)?;
             return Ok(actual);
         };
+        if raw.get("schema").and_then(Value::as_str) == Some(SUMMARY_SCHEMA_V2) {
+            return answer::combined_bindings(body, raw, &ids);
+        }
         let summary: CombinedContextSummary = serde_json::from_value(raw.clone())?;
         summary.validate(&ids)?;
         let mut actual = Vec::new();
@@ -402,6 +414,13 @@ pub fn context_delivery_bindings(value: &serde_json::Value) -> Result<Vec<Contex
         )?;
         return packet_delivery_bindings(&typed);
     }
+    if let Some(reply) = answer::reply_body(body) {
+        let typed = crate::arbiter::answer_loop::ContextResponseV3::from_canonical(
+            reply,
+            &widest_budget(),
+        )?;
+        return reply_delivery_bindings(&typed);
+    }
     if let Some(binding) = canonical_search_focus_binding(body)? {
         return Ok(vec![binding]);
     }
@@ -416,6 +435,7 @@ pub fn context_delivery_bindings(value: &serde_json::Value) -> Result<Vec<Contex
             && (matches!(
                 parsed.get("schema").and_then(Value::as_str),
                 Some(crate::arbiter::context_action::CONTEXT_SCHEMA_V2)
+                    | Some(crate::arbiter::answer_loop::CONTEXT_SCHEMA_V3)
                     | Some(crate::combined_reads::COMBINED_READ_SCHEMA)
             ) || (parsed.get("focus").is_some()
                 && parsed.get("hits").is_some()

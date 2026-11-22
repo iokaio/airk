@@ -278,9 +278,21 @@ What does not hold yet, with the follow-up owner:
   early stop and byte omissions, `partial` names the stop; omissions remain
   disclosed by `omitted_count`, `omitted_evidence`, `evidence_omitted` and
   `shortened`. Reporting both needs a Core wire decision.
-- **Combined (multi-index) Answer is /2 only** (L3-10). The /3 loop ignores
-  a context partition allowance (`partition: None` in card and Focus
-  requests); the /3 allowance contract is pending a recorded decision.
+- **Combined (multi-index) Answer is /2 only at the transports** (L3-10 b).
+  The kernel side holds since L3-10 (a): `with_answer_partition_for` installs
+  a `PartitionAllowanceV3`, `answer_with` clamps the request budget to it, and
+  card and Focus requests carry it (test
+  `a_combined_member_answer_stays_within_its_partition`);
+  `combined_reads::compose_answer` and `answer_payload_admission` compose
+  and size the `airk.combined-context/2` wrapper in the Answer frame. The MCP
+  handler, the read-attempt and host carriers and the frontend still run /2.
+  Known limit: a member's `max_bytes` is its share of the combined frame, and
+  in /3 the same field bounds retention, so a member gathers within its frame
+  share.
+- **An idle model reload is not named** (L3). An Answer that meets a reload
+  discloses only `context_absent` or `focus_absent`; naming it needs a typed
+  unavailable reason and a matching degradation (change log entries 24, 27
+  and 28).
 - **Coverage cards carry no evidence excerpts** (L3, after L3-10).
   `CardSegment` holds only the subject and card texts.
 
