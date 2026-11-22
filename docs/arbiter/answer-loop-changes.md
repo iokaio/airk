@@ -11,6 +11,13 @@ spell out, or that differ from it. The user reviews them after L7. Each
 entry gives the date, the step, what changed, why, the evidence, and where it
 is recorded in code and contracts.
 
+The user added the same day: "The goals have not changed but the constraints
+should only be a guide. When you need to change them to achieve the goal, do
+and document it for review." So section 12's limits, defaults, design choices,
+sequencing and gate mechanics are guides. Any change to them is logged here.
+The identity rules, honest reporting, the ban on weakening checks, and the
+limits on publication still apply in full.
+
 ## Entries
 
 ### 1. Answer reply limit 128 KiB (user decision, recorded for completeness)

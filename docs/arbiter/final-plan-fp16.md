@@ -1915,9 +1915,21 @@ complete L7."
 - **Where they are recorded:** each such change is logged in
   [answer-loop-changes.md](answer-loop-changes.md), with what changed, why,
   the evidence and where it lives.
-- **What it does not cover:** the limits of the assignment still hold. That
-  means no PR, publication or deployment; no new crate or external provider;
-  and nothing the permission classifier denies.
+- **Constraints are a guide (user, 22 November).** "The goals have not
+  changed but the constraints should only be a guide. When you need to
+  change them to achieve the goal, do and document it for review." Section
+  12's limits, defaults, budgets, numbers, design choices, sequencing and
+  gate mechanics may therefore be changed when the goal of section 1 needs
+  it. Each change is logged in the same file.
+- **What it does not cover:**
+  - the identity and ownership rules;
+  - honest reporting, and never weakening a check or re-pinning just to pass;
+  - no PR, publication or deployment;
+  - no external cloud provider;
+  - nothing the permission classifier denies.
+
+  A new crate is added only where the code clearly needs one, and it is
+  logged.
 
 **Authorized by the user's decisions on 22 November.**
 - **Contract changes.**
