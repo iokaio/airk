@@ -23,6 +23,16 @@ The plan (JSON) is a list of steps:
   receipt keeps release and warm time and the device memory before and after.
 * ``{"gate": {"command": "replays"|"agreement"|"outcomes"|"concurrency"|"performance"|"precision", ...}}``.
   Runs ``gate.py <command>`` with the step's other keys as ``--key value`` options (a list repeats it).
+* ``{"lifetimes": {"start": [<lifetime>, ...], "reserve_device_gib": 4, "reserve_host_gib": 16, "receipt": <file>}}``.
+  Side-by-side arm lifetimes: checks that the declared device and host memory of every listed lifetime, plus
+  the reserves, is free now (``nvidia-smi``; the OS's available memory), launches each with its own
+  ``--fixtures`` root (its own service and control root), waits until all are queryable and settled, and
+  enables each lifetime's stages. A lifetime (``make_loop_spec.py gate``) names its ``arm``, ``fixtures``,
+  ``lifetime``, ``launcher`` (``fixture.py`` or ``gpu_fixture.py``), ``start_args``, ``device_gib``,
+  ``host_gib``, ``repositories`` and ``stages``; placeholder ``<...>`` start options are refused.
+* ``{"stop_lifetimes": {"stop": [<lifetime>, ...]}}``. Disables each CUDA Context stage, stops each lifetime and
+  waits until each has closed.
+* ``{"parallel": [<step>, ...]}``. Runs the steps at once (e.g. the arms' replays).
 * ``sessions`` and ``second`` groups take ``"stager": "cuda"`` to stage through ``switch_context`` instead
   of ``set_stages.py``; a group of ``"@any", "@any"`` leaves the stages as they are (Search and Parse).
   ``second`` takes ``"jobs": [<second-jobs file>, ...]`` (``gate.py outcomes``) for the gate close calls.
@@ -246,6 +256,131 @@ class Plan:
     def pass_step(self, spec: Path, label: str, *args: str):
         self.run(label, [*PY, str(HERE / "run_pass.py"), "--spec", str(spec), "--r-root", str(self.r), *args])
 
+    # -------------------------------------------------------------- side-by-side arm lifetimes
+
+    @staticmethod
+    def device_memory():
+        import gate  # local: only the lifetime steps read device memory
+        return gate.nvidia_smi_memory()
+
+    @staticmethod
+    def host_available_bytes():
+        import gate
+        return gate.host_available_bytes()
+
+    def memory_check(self, rows: list[dict], reserve_device_gib: float, reserve_host_gib: float) -> dict:
+        """Refuse a launch whose declared device or host memory, plus the reserve, exceeds what is free now."""
+        gib = 1 << 30
+        device = self.device_memory()
+        need_device = sum(float(r.get("device_gib") or 0) for r in rows)
+        need_host = sum(float(r.get("host_gib") or 0) for r in rows)
+        check = {"at": common.now_iso(), "need_device_gib": need_device, "need_host_gib": need_host,
+                 "reserve_device_gib": reserve_device_gib, "reserve_host_gib": reserve_host_gib, "device": device}
+        if need_device > 0:
+            common.require(device is not None, "nvidia-smi gave no device memory; the launch is refused")
+            free = max(g["total_mib"] - g["used_mib"] for g in device.values()) / 1024
+            check["free_device_gib"] = round(free, 2)
+            common.require(free >= need_device + reserve_device_gib,
+                           f"device memory: {free:.1f} GiB free, {need_device + reserve_device_gib:.1f} GiB needed")
+        host = self.host_available_bytes()
+        check["free_host_gib"] = None if host is None else round(host / gib, 2)
+        if host is not None:
+            common.require(host / gib >= need_host + reserve_host_gib,
+                           f"host memory: {host / gib:.1f} GiB free, {need_host + reserve_host_gib:.1f} GiB needed")
+        return check
+
+    def launcher_command(self, row: dict, *tail: str) -> list[str]:
+        common.require(row["launcher"] in ("fixture.py", "gpu_fixture.py"), f"unknown launcher {row['launcher']}")
+        return [*PY, "-S", str(HERE / row["launcher"]), "--fixtures", str(row["fixtures"]), *tail]
+
+    def start_lifetimes(self, body: dict) -> dict:
+        """Launch every listed lifetime at once (each its own fixture root, service and control root), wait until
+        each is queryable and settled, then enable its stages. Placeholder start options are refused."""
+        rows = body["start"]
+        for row in rows:
+            bad = [a for a in row.get("start_args") or [] if str(a).startswith("<")]
+            common.require(not bad, f"lifetime {row['lifetime']} still has placeholder start options {bad}")
+        receipt = {"schema": "airk.private.answer-eval-lifetimes/1",
+                   "memory": self.memory_check(rows, float(body.get("reserve_device_gib", 4)),
+                                               float(body.get("reserve_host_gib", 16))),
+                   "lifetimes": []}
+        handles = {}
+        for row in rows:
+            Path(row["fixtures"]).mkdir(parents=True, exist_ok=True)
+            command = self.launcher_command(row, "start", "--lifetime", row["lifetime"], *row["start_args"])
+            log = (Path(row["fixtures"]) / f"{row['lifetime']}.start.log").open("wb")
+            proc = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                    cwd=str(common.REPO_ROOT), creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            self.children.append(proc)
+            handles[row["lifetime"]] = (row, proc, Path(row["fixtures"]) / row["lifetime"] / "handle.json")
+            self.log(event="start", lifetime=row["lifetime"], arm=row.get("arm"), command=command, pid=proc.pid)
+        end = time.monotonic() + float(body.get("ready_seconds", 3 * 3600))
+        pending = dict(handles)
+        while pending and time.monotonic() < end:
+            for name, (row, proc, handle) in list(pending.items()):
+                if proc.poll() is not None:
+                    raise common.HarnessError(f"{name} start exited ({proc.returncode}) before readiness")
+                if not handle.is_file():
+                    continue
+                raw = common.read_json(handle)
+                if raw.get("stop_reason"):
+                    raise common.HarnessError(f"{name} ended before readiness: {raw.get('stop_reason')}")
+                if raw.get("queryable") is not True:
+                    continue
+                ok, snaps = settled.check(str(handle), Path(row["fixtures"]),
+                                          [r for r in row.get("repositories", "airk,bookbuilder").split(",") if r], False)
+                if ok:
+                    del pending[name]
+                    self.log(event="ready", lifetime=name,
+                             tokens={s.get("repo"): s.get("publication_token") for s in snaps})
+            if pending:
+                time.sleep(float(body.get("poll_seconds", 30)))
+        common.require(not pending, f"lifetimes not ready in time: {sorted(pending)}")
+        for row in rows:
+            for stage in row.get("stages") or []:
+                self.run(f"stage-on-{row['arm']}-{stage['profile']}", self.launcher_command(
+                    row, "stage", "--lifetime", row["lifetime"], "--profile", stage["profile"], "--enable",
+                    "--repositories", row.get("repositories", "airk,bookbuilder")), 3600)
+            receipt["lifetimes"].append({k: row.get(k) for k in ("arm", "lifetime", "fixtures", "launcher",
+                                                                 "start_args", "device_gib", "host_gib", "stages")})
+        receipt["memory_after"] = self.device_memory()
+        if body.get("receipt"):
+            common.write_json(Path(body["receipt"]), receipt)
+        return receipt
+
+    def stop_lifetimes(self, body: dict) -> None:
+        """Disable each lifetime's CUDA Context stage (GPU_FIXTURE.md: before stop), stop it, wait for the close."""
+        rows = body["stop"]
+        for row in rows:
+            for stage in reversed(row.get("stages") or []):
+                if row["launcher"] == "gpu_fixture.py" and stage["stage"] == "context":
+                    self.run(f"stage-off-{row['arm']}-{stage['profile']}", self.launcher_command(
+                        row, "stage", "--lifetime", row["lifetime"], "--profile", stage["profile"], "--disable",
+                        "--repositories", row.get("repositories", "airk,bookbuilder")), 3600)
+            self.run(f"stop-{row['lifetime']}", self.launcher_command(row, "stop", "--lifetime", row["lifetime"]), 300)
+        end = time.monotonic() + float(body.get("close_seconds", 1800))
+        open_ = {row["lifetime"]: Path(row["fixtures"]) / row["lifetime"] / "handle.json" for row in rows}
+        while open_ and time.monotonic() < end:
+            for name, handle in list(open_.items()):
+                verdict = closed_verdict(common.read_json(handle), self.pid_alive) if handle.is_file() else "closed"
+                if verdict == "blocked":
+                    raise common.HarnessError(f"{name} is not restartable")
+                if verdict == "closed":
+                    del open_[name]
+                    self.log(event="stopped", lifetime=name)
+            if open_:
+                time.sleep(float(body.get("poll_seconds", 10)))
+        common.require(not open_, f"lifetimes did not close: {sorted(open_)}")
+
+    def parallel(self, steps: list[dict]) -> None:
+        """Run independent steps at once; the first failure is raised after all have finished."""
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(steps))) as pool:
+            futures = [pool.submit(self.step, item) for item in steps]
+            errors = [f.exception() for f in futures if f.exception() is not None]
+        if errors:
+            raise errors[0]
+
     def step(self, item: dict):
         kind, body = next(iter(item.items()))
         if kind == "restart":
@@ -272,6 +407,12 @@ class Plan:
             self.switch_context(body)
         elif kind == "gate":
             self.gate_step(body)
+        elif kind == "lifetimes":
+            self.start_lifetimes(body)
+        elif kind == "stop_lifetimes":
+            self.stop_lifetimes(body)
+        elif kind == "parallel":
+            self.parallel(body)
         elif kind == "grade":
             spec = Path(body["spec"])
             for stage in ("coverage", "judge", "grade"):

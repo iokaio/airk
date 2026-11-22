@@ -30,12 +30,15 @@ stage names are not what ``handle.stages()`` reports (recheck after L5).
 Gate entries do not reuse sessions across arms (``reuse: false``): later
 Answer calls in a session run the arm's own model.
 
-The in-lifetime Context switch is the named hook ``switch_context`` of
-``run_plan.py`` (plan 12.5.2 item 4: disable the current Context, wait for the
-release, enable the next profile, all through ordinary Configure via
-``gpu_fixture.py stage``), with a receipt of release and warm time.
+The arms run side by side: each arm has its own fixture lifetime (fixture
+root, service and control root), launched together by ``run_plan.py``'s
+``lifetimes`` step after a device and host memory check, so no Context switch
+is on the gate's path. The in-lifetime switch hook ``switch_context`` (plan
+12.5.2 item 4) stays for single-lifetime use. The gate's concurrency test is
+restored (the user widened LG to 24 hours; L2b wires the job table into the
+live Answer path): 2 and 4 concurrent Answers per arm, one arm at a time.
 
-``python -I -B make_loop_spec.py gate --series 05-gate-lg``
+``python -I -B make_loop_spec.py gate --series 05-gate-lg --lifetimes <L5C lifetimes.json>``
 ``python -I -B make_loop_spec.py l7 --series 06-loop-baseline --keep compact``
 ``python -I -B make_loop_spec.py template --out scripts/arbiter-answer-eval/l7_plan_template.json``
 """
@@ -57,12 +60,14 @@ import run_session  # noqa: E402
 
 # Profile names to recheck against fixture.py / gpu_fixture.py once L5 adds the FP16 CUDA rows.
 PROFILES = {
-    "focus": "focus-static1024-cuda-w8",
+    # The CUDA Focus seam is an open gap (GPU_FIXTURE.md): Focus runs on the CPU in every arm until it closes.
+    "focus": "focus-static1024-cpu",
     "focus_fp16": "focus-static1024-cuda-fp16",
     "focus_fp32": "focus-static1024-cuda-fp32",
-    "compact": "context-compact-cuda-fp16",
+    # The pair rows' names in GPU_FIXTURE.md; the FP32 rows are gpu_fixture.py's single-model CUDA rows.
+    "compact": "context-compact-fp16-cuda",
     "compact_fp32": "context-compact-cuda",
-    "large": "context-large-cuda-fp16",
+    "large": "context-large-fp16-cuda",
     "large_fp32": "context-large-cuda",
 }
 JUDGED_ARMS = ("F", "C", "L")
@@ -117,13 +122,80 @@ def base_spec(series: str, r_root: Path, repos: list[str], note: str, budget: di
     }
 
 
-def gate_spec(series: str, r_root: Path, profiles: dict, repos: list[str], budget: dict, note: str = "") -> dict:
-    """The LG series (plan 12.8): the judged arms run sessions; ``replay_only`` arms are left out of the
-    sessions stage by name (``run_plan`` sessions groups list only F, C and L)."""
+# Side-by-side arm lifetimes (coordinator, 22 Nov 2026): each arm runs in its own fixture lifetime, with its own
+# service, control root (the service's runtime directory, so no shared port or socket) and fixture root, so the
+# arms run at the same time instead of switching one lifetime. Device and host memory are declared per lifetime
+# and checked before launch (run_plan ``lifetimes``). Figures are the measured FP16 peaks rounded up with the
+# declared headroom (changes entry 17: Compact 8 + 2 GiB, Large 18 + 2 GiB) and the FP32 envelopes
+# (GPU_FIXTURE.md: Large about 40 GiB host and a 44 GiB device envelope). ``start_args`` are the launcher's
+# ``start`` options after ``--lifetime``; L5C supplies the real ones through ``--lifetimes <file>``.
+LIFETIME_DEFAULTS = {
+    "F": {"launcher": "fixture.py", "device_gib": 0, "host_gib": 8,
+          "start_args": ["--image", "<cpu image>", "--restart-from", "<closed lifetime of this root>"]},
+    "C": {"launcher": "gpu_fixture.py", "device_gib": 10, "host_gib": 16,
+          "start_args": ["--image", "<cuda image>", "--model", "pair", "--pair", "<pair.json>",
+                         "--pair-sha256", "<sha256>", "--restart-from", "<closed lifetime of this root>"]},
+    "L": {"launcher": "gpu_fixture.py", "device_gib": 20, "host_gib": 40,
+          "start_args": ["--image", "<cuda image>", "--model", "pair", "--pair", "<pair.json>",
+                         "--pair-sha256", "<sha256>", "--restart-from", "<closed lifetime of this root>"]},
+    "C32": {"launcher": "gpu_fixture.py", "device_gib": 16, "host_gib": 16,
+            "start_args": ["--image", "<cuda image>", "--model", "compact", "--restart-from", "<closed lifetime>"]},
+    "L32": {"launcher": "gpu_fixture.py", "device_gib": 44, "host_gib": 40,
+            "start_args": ["--image", "<cuda image>", "--model", "large", "--restart-from", "<closed lifetime>"]},
+    "CF16": {"launcher": "gpu_fixture.py", "device_gib": 13, "host_gib": 16,
+             "start_args": ["--image", "<cuda image>", "--model", "pair", "--pair", "<pair.json with a Focus row>",
+                            "--pair-sha256", "<sha256>", "--restart-from", "<closed lifetime>"]},
+    "CF32": {"launcher": "gpu_fixture.py", "device_gib": 14, "host_gib": 16,
+             "start_args": ["--image", "<cuda image>", "--model", "pair", "--pair", "<pair.json with a Focus row>",
+                            "--pair-sha256", "<sha256>", "--restart-from", "<closed lifetime>"]},
+}
+# Launch phases: the judged arms together, then the precision arms in groups that fit 48 GiB.
+JUDGED_PHASE = ("C", "L", "F")
+# Each phase is followed by its comparisons, so a phase that cannot launch (the CUDA Focus seam is an open gap)
+# stops the plan after the others have reported; the Focus phase is therefore last.
+PRECISION_PHASES = (("C32",), ("L32",), ("CF16", "CF32"))
+# Parallel headless sessions (item 6): every judged arm at once in one run_pass process, a few sessions per arm
+# so each arm's service sees a few concurrent Answers (more queue as tickets through the job table).
+# No account rate limit is known to the harness; 429s or overload surface as failed sessions, which the pass
+# records and resumes. Lower these if they appear.
+ARM_SESSIONS = 4
+JUDGE_SESSIONS = 12
+
+
+def gate_lifetimes(series: str, r_root: Path, overrides: dict | None = None) -> dict[str, dict]:
+    """One lifetime per arm: its fixture root, lifetime name, launcher, start options, memory and stages."""
+    out = {}
+    for arm, defaults in LIFETIME_DEFAULTS.items():
+        row = {**defaults, **((overrides or {}).get(arm) or {})}
+        row.setdefault("fixtures", str(r_root / f"fixture-{series}-{arm}"))
+        row.setdefault("lifetime", f"{series}-{arm}")
+        row["arm"] = arm
+        out[arm] = row
+    return out
+
+
+def handle_path(lifetime: dict) -> str:
+    return str(Path(lifetime["fixtures"]) / lifetime["lifetime"] / "handle.json")
+
+
+def gate_spec(series: str, r_root: Path, profiles: dict, repos: list[str], budget: dict, note: str = "",
+              lifetimes: dict | None = None) -> dict:
+    """The LG series (plan 12.8). Each arm entry names its own lifetime's handle; the judged arms run their
+    sessions together (``parallel_entries``); ``replay_only`` arms run no sessions unless named."""
     spec = base_spec(series, r_root, repos, note or "LG: plan 12.7.1, 12.7.2 and 12.7.3", budget)
+    lifetimes = lifetimes or gate_lifetimes(series, r_root)
     spec["gate"] = {"pairs": [list(p) for p in GATE_PAIRS], "precision_pairs": [list(p) for p in PRECISION_PAIRS],
-                    "profiles": dict(profiles)}
-    spec["results"] = gate_arms(profiles)
+                    "profiles": dict(profiles), "lifetimes": lifetimes, "concurrency_levels": [2, 4]}
+    spec["results"] = []
+    for entry in gate_arms(profiles):
+        entry["handle"] = handle_path(lifetimes[entry["arm"]])
+        entry["concurrency"] = ARM_SESSIONS
+        spec["results"].append(entry)
+    spec["parallel_entries"] = True
+    spec["settle_per_root"] = True
+    spec["concurrency"] = ARM_SESSIONS * len(JUDGED_ARMS)
+    spec["judge_concurrency"] = JUDGE_SESSIONS
+    spec["settle_repos"] = repos
     return spec
 
 
@@ -131,55 +203,69 @@ def result_name(entry: dict) -> str:
     return run_session.result_name(entry["configuration"], entry.get("device", "none"))
 
 
+def _arm_lifetime(lifetime: dict, arms: dict, repos: list[str]) -> dict:
+    stages = arms[lifetime["arm"]]["arm_stages"]
+    return {**lifetime, "repositories": ",".join(repos),
+            "stages": [{"stage": k, "profile": v} for k, v in (("focus", stages["focus"]),
+                                                                ("context", stages["context"])) if v]}
+
+
 def gate_plan(spec_path: Path, spec: dict, r_root: Path) -> list[dict]:
-    """run_plan steps for LG, in the L5 design's order: arm C and arm L in one lifetime, then arm F, then the
-    precision replays; then the judged sessions per arm, grading, the gate tests and the report inputs."""
+    """run_plan steps for LG: the three judged arms side by side in their own lifetimes (memory checked before
+    launch), their replays in parallel, all judged sessions at once, grading, second sessions on close calls,
+    the gate tests; then performance; then the precision arms one phase at a time, each with its comparisons. The concurrency
+    test (2 and 4 concurrent Answers per arm, tickets attached) runs one arm at a time before the sessions, so
+    the arms' services do not share the device while it measures throughput."""
     series_dir = r_root / "passes" / spec["series"]
     gate_dir = series_dir / "gate"
     arms = {e["arm"]: e for e in spec["results"]}
-    steps: list[dict] = []
-    switch_no = 0
+    lifetimes = spec["gate"]["lifetimes"]
+    repos = spec["repos"]
 
-    def switch(arm: str):
-        nonlocal switch_no
-        switch_no += 1
-        stages = arms[arm]["arm_stages"]
-        steps.append({"switch_context": {"focus": stages["focus"], "context": stages["context"],
-                                         "repositories": ",".join(spec["repos"]),
-                                         "receipt": str(gate_dir / "switches" / f"{switch_no:02d}-{arm}.json")}})
+    def launch(names):
+        return {"lifetimes": {"start": [_arm_lifetime(lifetimes[n], arms, repos) for n in names],
+                              "reserve_device_gib": 4, "reserve_host_gib": 16,
+                              "receipt": str(gate_dir / "lifetimes" / f"launch-{'-'.join(names)}.json")}}
 
-    for arm in ("C", "L", "F"):
-        switch(arm)
-        steps.append({"gate": {"command": "replays", "spec": str(spec_path), "arm": arm, "out": str(gate_dir / arm)}})
-        steps.append({"gate": {"command": "concurrency", "spec": str(spec_path), "arm": arm, "levels": "2,4",
+    def replays(names):
+        return {"parallel": [{"gate": {"command": "replays", "spec": str(spec_path), "arm": n,
+                                       "out": str(gate_dir / n)}} for n in names]}
+
+    def stop(names):
+        return {"stop_lifetimes": {"stop": [_arm_lifetime(lifetimes[n], arms, repos) for n in names]}}
+
+    judged = ",".join(result_name(arms[a]) for a in JUDGED_PHASE)
+    steps: list[dict] = [launch(JUDGED_PHASE), replays(JUDGED_PHASE)]
+    levels = ",".join(str(n) for n in spec["gate"].get("concurrency_levels") or [2, 4])
+    for arm in JUDGED_PHASE:
+        steps.append({"gate": {"command": "concurrency", "spec": str(spec_path), "arm": arm, "levels": levels,
                                "out": str(gate_dir / "concurrency" / arm)}})
-        steps.append({"sessions": {"spec": str(spec_path), "stager": "cuda", "groups": [
-            [arms[arm]["arm_stages"]["focus"], arms[arm]["arm_stages"]["context"], result_name(arms[arm])]]}})
-    for arm in PRECISION_ARMS:
-        switch(arm)
-        steps.append({"gate": {"command": "replays", "spec": str(spec_path), "arm": arm, "out": str(gate_dir / arm)}})
-    steps.append({"grade": {"spec": str(spec_path)}})
+    steps += [{"sessions": {"spec": str(spec_path), "groups": [["@any", "@any", judged]]}},
+              {"grade": {"spec": str(spec_path)}}]
     for a, b in GATE_PAIRS:
         steps.append({"gate": {"command": "outcomes", "pass_dir": str(series_dir), "a": result_name(arms[a]),
                                "b": result_name(arms[b]), "out": str(gate_dir / f"outcomes-{a}-{b}.json")}})
-    groups = [[arms[x]["arm_stages"]["focus"], arms[x]["arm_stages"]["context"], result_name(arms[x])]
-              for x in JUDGED_ARMS]
-    steps.append({"second": {"spec": str(spec_path), "stager": "cuda", "groups": groups,
+    steps.append({"second": {"spec": str(spec_path), "groups": [["@any", "@any", judged]],
                              "jobs": [str(gate_dir / f"outcomes-{a}-{b}.second-jobs.json") for a, b in GATE_PAIRS]}})
     for a, b in GATE_PAIRS:
         steps.append({"gate": {"command": "outcomes", "pass_dir": str(series_dir), "a": result_name(arms[a]),
                                "b": result_name(arms[b]), "out": str(gate_dir / f"outcomes-{a}-{b}.json")}})
         steps.append({"gate": {"command": "agreement", "a": str(gate_dir / a), "b": str(gate_dir / b),
                                "spec": str(spec_path), "out": str(gate_dir / f"agreement-{a}-{b}.json")}})
-    for stage, fp32, fp16 in PRECISION_PAIRS:
-        steps.append({"gate": {"command": "precision", "fp32": str(gate_dir / fp32), "fp16": str(gate_dir / fp16),
-                               "stage": stage, "spec": str(spec_path),
-                               "out": str(gate_dir / f"precision-{stage}-{fp32}-{fp16}.json")}})
+    steps.append(stop(JUDGED_PHASE))
     steps.append({"gate": {"command": "performance",
-                           "arm_dir": [f"{x}={gate_dir / x}" for x in (*JUDGED_ARMS, *PRECISION_ARMS)],
+                           "arm_dir": [f"{x}={gate_dir / x}" for x in JUDGED_ARMS],
                            "concurrency": [f"{x}={gate_dir / 'concurrency' / x}" for x in JUDGED_ARMS],
-                           "switch_dir": str(gate_dir / "switches"),
                            "out": str(gate_dir / "performance.json")}})
+    done = set(JUDGED_PHASE)
+    for phase in PRECISION_PHASES:
+        steps += [launch(phase), replays(phase), stop(phase)]
+        done |= set(phase)
+        for stage, fp32, fp16 in PRECISION_PAIRS:
+            if (fp32 in phase or fp16 in phase) and {fp32, fp16} <= done:
+                steps.append({"gate": {"command": "precision", "fp32": str(gate_dir / fp32),
+                                       "fp16": str(gate_dir / fp16), "stage": stage, "spec": str(spec_path),
+                                       "out": str(gate_dir / f"precision-{stage}-{fp32}-{fp16}.json")}})
     return steps
 
 
@@ -192,7 +278,7 @@ def gate_report_inputs(spec: dict, r_root: Path) -> dict:
             "outcomes": {f"{a}-{b}": str(gate_dir / f"outcomes-{a}-{b}.json") for a, b in GATE_PAIRS},
             "precision": [str(gate_dir / f"precision-{s}-{x}-{y}.json") for s, x, y in PRECISION_PAIRS],
             "performance": str(gate_dir / "performance.json"),
-            "switches": str(gate_dir / "switches")}
+            "lifetimes": str(gate_dir / "lifetimes")}
 
 
 # ---------------------------------------------------------------- L7
@@ -262,6 +348,9 @@ def main(argv: list[str] | None = None) -> int:
         sub.add_argument("--budget", default="{}", help="JSON fields over the default /3 budget")
         sub.add_argument("--profiles", default="{}", help="JSON profile-name overrides (keys of PROFILES)")
         sub.add_argument("--note", default="")
+        if name == "gate":
+            sub.add_argument("--lifetimes", type=Path,
+                             help="JSON {arm: {fixtures, lifetime, launcher, start_args, device_gib, host_gib}} overrides")
         if name == "l7":
             sub.add_argument("--keep", required=True, help="CUDA routes the gate decisions keep: compact,large")
     sub = commands.add_parser("template")
@@ -278,7 +367,12 @@ def main(argv: list[str] | None = None) -> int:
     budget = json.loads(args.budget)
     spec_path = args.r_root / "passes" / args.series / "spec.json"
     if args.command == "gate":
-        spec = gate_spec(args.series, args.r_root, profiles, repos, budget, args.note)
+        overrides = common.read_json(args.lifetimes) if args.lifetimes else None
+        if overrides:
+            unknown_arms = sorted(set(overrides) - set(LIFETIME_DEFAULTS))
+            common.require(not unknown_arms, f"unknown arms in --lifetimes: {unknown_arms}")
+        spec = gate_spec(args.series, args.r_root, profiles, repos, budget, args.note,
+                         gate_lifetimes(args.series, args.r_root, overrides))
         directory = _write(args.r_root, args.series, spec, gate_plan(spec_path, spec, args.r_root),
                            gate_report_inputs(spec, args.r_root))
     else:

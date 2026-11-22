@@ -85,7 +85,7 @@
         "path": "focus",
         "device": "gpu",
         "arm_stages": {
-          "focus": "focus-static1024-cuda-w8",
+          "focus": "focus-static1024-cpu",
           "context": null
         },
         "arm_check": {
@@ -101,8 +101,8 @@
         "path": "compact",
         "device": "gpu",
         "arm_stages": {
-          "focus": "focus-static1024-cuda-w8",
-          "context": "context-compact-cuda-fp16"
+          "focus": "focus-static1024-cpu",
+          "context": "context-compact-fp16-cuda"
         },
         "arm_check": {
           "context": "context_compact",
@@ -120,8 +120,8 @@
         "path": "large",
         "device": "gpu",
         "arm_stages": {
-          "focus": "focus-static1024-cuda-w8",
-          "context": "context-large-cuda-fp16"
+          "focus": "focus-static1024-cpu",
+          "context": "context-large-fp16-cuda"
         },
         "arm_check": {
           "context": "context_large",
@@ -154,18 +154,18 @@
         "stager": "cuda",
         "groups": [
           [
-            "focus-static1024-cuda-w8",
+            "focus-static1024-cpu",
             null,
             "focus-gpu"
           ],
           [
-            "focus-static1024-cuda-w8",
-            "context-compact-cuda-fp16",
+            "focus-static1024-cpu",
+            "context-compact-fp16-cuda",
             "compact-gpu"
           ],
           [
-            "focus-static1024-cuda-w8",
-            "context-large-cuda-fp16",
+            "focus-static1024-cpu",
+            "context-large-fp16-cuda",
             "large-gpu"
           ]
         ]
@@ -182,18 +182,18 @@
         "stager": "cuda",
         "groups": [
           [
-            "focus-static1024-cuda-w8",
+            "focus-static1024-cpu",
             null,
             "focus-gpu"
           ],
           [
-            "focus-static1024-cuda-w8",
-            "context-compact-cuda-fp16",
+            "focus-static1024-cpu",
+            "context-compact-fp16-cuda",
             "compact-gpu"
           ],
           [
-            "focus-static1024-cuda-w8",
-            "context-large-cuda-fp16",
+            "focus-static1024-cpu",
+            "context-large-fp16-cuda",
             "large-gpu"
           ]
         ]

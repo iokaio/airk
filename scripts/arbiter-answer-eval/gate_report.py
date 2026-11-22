@@ -8,7 +8,9 @@ documents of ``gate.py`` and the switch receipts. Output: one Markdown report
 for ``docs/arbiter/answer-evaluation/`` written for the user's personal review,
 and a JSON twin with every figure.
 
-Sections: the decisions asked of the user with the computed bars; for each
+Sections: what the bars indicate (recommendations; the user decides, plan
+12.9) with the evidence limits (sample size, close calls, undecided and
+pending scenarios, tests that did not run); for each
 gate the bar, the agreement tables, first-reply evidence, judged outcomes and
 a per-scenario side-by-side (each arm's evidence by location, the judges'
 grades and reasons); the precision check with the escalation rule; performance,
@@ -308,6 +310,8 @@ def performance_section(perf: dict) -> list[str]:
     if conc:
         out += table(["Arm", "Concurrent", "Answers", "Wall s", "Answers/min", "Median ms", "Tickets", "Partials",
                       "Peak MiB"], conc)
+    else:
+        out += ["Concurrency (2 and 4 concurrent Answers): not run, so not passed.", ""]
     switches = [[cell(s.get("from")), cell(s.get("to")), s.get("release_s"), s.get("warm_s"), s.get("total_s")]
                 for s in perf.get("switches", [])]
     if switches:
@@ -316,6 +320,36 @@ def performance_section(perf: dict) -> list[str]:
                "is device-wide.")
     out.append("")
     return out
+
+
+def evidence_limits(arm_docs: dict, outcomes: dict, precisions: list, perf: dict | None) -> list[str]:
+    """How far the figures carry: sample size, close calls, undecided and pending scenarios, arms whose identity
+    was not met, and tests that did not run. Stated so the user can weigh the recommendations."""
+    out = []
+    for pair, outcome in sorted(outcomes.items()):
+        if not outcome:
+            out.append(f"- {pair}: no judged sessions graded, so Rubric A and correct finishes are unknown.")
+            continue
+        seconds = sum(1 for s in outcome.get("scenarios", []) if "second_winner" in s)
+        out.append(f"- {pair}: {outcome.get('rows', len(outcome.get('scenarios', [])))} scenarios, one judged session "
+                   f"each, two judges; {len(outcome.get('close_calls') or [])} close calls, {seconds} with a second "
+                   f"session, {outcome.get('undecided', 0)} undecided and {outcome.get('pending', 0)} pending "
+                   "adjudication. A margin of one or two scenarios is within what a second sample can change.")
+    bad = [arm for arm, doc in arm_docs.items() if not doc.get("arm_ok")]
+    if bad:
+        out.append(f"- Arm identity not met on some replies for {', '.join(bad)}: those arms' figures may not "
+                   "describe the arm (see Arm identity).")
+    missing = [arm for arm in ("F", "C", "L") if arm not in arm_docs]
+    if missing:
+        out.append(f"- Arms not run: {', '.join(missing)}.")
+    if not precisions:
+        out.append("- The precision check (12.7.3) did not run.")
+    if not perf or not perf.get("concurrency"):
+        out.append("- The concurrency test (12.7.1 test 4) did not run, so it is not passed.")
+    out.append("- First-reply evidence and decisions come from one replay per scenario and arm; the loop is not "
+               "repeated, so run-to-run variation is not measured. Peak memory is device-wide, with the arms' "
+               "lifetimes side by side on one GPU.")
+    return out + [""]
 
 
 def identity_section(docs: dict[str, dict]) -> list[str]:
@@ -351,8 +385,10 @@ def build(inputs: dict) -> tuple[str, dict]:
     lines = [f"# Gate report: {inputs['series']}", "",
              "Model gates of plan section 12.7, on CUDA only, for the user's personal review: Large against "
              "Compact (12.7.1), Focus only against Focus with Compact (12.7.2), and the replay-only precision "
-             "check (12.7.3). Evidence is shown by location only; no source text is quoted.", ""]
-    summary: list[str] = ["## Decisions for the user", ""]
+             "check (12.7.3). Evidence is shown by location only; no source text is quoted.", "",
+             "The bars are applied as the plan proposes them. What follows are recommendations: the user decides "
+             "(plan 12.9, LG stops for the user's choices).", ""]
+    summary: list[str] = ["## What the bars indicate (recommendations; the user decides)", ""]
     body: list[str] = []
     for pair, (a, b), title, recommend in ((("C-L"), ("C", "L"), "12.7.1 Large on CUDA against Compact on CUDA",
                                             large_recommendation),
@@ -389,13 +425,15 @@ def build(inputs: dict) -> tuple[str, dict]:
     body += ["## Test 4: performance", ""]
     body += performance_section(perf) if perf else ["Not run.", ""]
     body += ["## Arm identity", ""] + identity_section(arm_docs)
+    summary += ["", "### Evidence limits", ""] + evidence_limits(arm_docs, outcomes, precisions, perf)[:-1]
     paths = [Path(p) / "arm-replays.json" if Path(p).is_dir() else Path(p) for p in inputs["arms"].values()]
     paths += [Path(p) for p in (*inputs.get("agreement", {}).values(), *inputs.get("outcomes", {}).values(),
                                 *inputs.get("precision", []))]
     if inputs.get("performance"):
         paths.append(Path(inputs["performance"]))
-    if inputs.get("switches") and Path(inputs["switches"]).is_dir():
-        paths += sorted(Path(inputs["switches"]).glob("*.json"))
+    for key in ("switches", "lifetimes"):
+        if inputs.get(key) and Path(inputs[key]).is_dir():
+            paths += sorted(Path(inputs[key]).glob("*.json"))
     body += ["## Receipts", ""] + table(["File", "SHA-256"], receipts(paths))
     figures["receipts"] = receipts(paths)
     return "\n".join(lines + summary + [""] + body).rstrip() + "\n", figures

@@ -242,10 +242,11 @@ class Pass:
                 self.log(event="end-snapshot-not-settled", repo=repo, problems=snap.get("problems"))
             if not snap.get("publication_token"):
                 problems.append(f"{repo} has no publication token at {phase}")
-            first = starts.get(repo)
+            key = self.settle_key(handle_path, repo)
+            first = starts.get(key)
             # Only a settled snapshot with a token can be the pass's reference start (a refused start is not).
             if first is None and phase == "start" and snap.get("settled") and snap.get("publication_token"):
-                starts[repo] = snap
+                starts[key] = snap
                 common.write_json(start_path, starts)
             elif first is not None and snap.get("publication_token"):
                 # A snapshot without a token is unsettled (refused above), not evidence of a changed token.
@@ -258,6 +259,16 @@ class Pass:
         if problems:
             self.log(event="settle-problems-recorded-pilot", phase=phase, problems=problems)
         return snaps
+
+    def settle_key(self, handle_path: str, repo: str) -> str:
+        """The settled-start key: the repository for the pass's own fixture root, else root and repository, so
+        side-by-side lifetimes (one fixture root each, their own indexes and tokens) are compared each with
+        itself. Only with the spec's ``settle_per_root`` (gate specs), so earlier passes keep their keys."""
+        if not self.spec.get("settle_per_root"):
+            return repo
+        root = Path(handle_path).resolve().parent.parent
+        own = (self.r_root / "fixture").resolve()
+        return repo if root == own else f"{root}::{repo}"
 
     def invalidate(self, comparison: dict, phase: str) -> None:
         path = self.pass_dir / "INVALID.json"
@@ -441,13 +452,34 @@ class Pass:
             self.check_stages(entry)
         self.guard("start", entries)
         try:
-            for entry in entries:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-                    futures = [pool.submit(self.run_one, s, entry) for s in self.entry_scenarios(entry)]
-                    for future in concurrent.futures.as_completed(futures):
-                        future.result()
+            if self.spec.get("parallel_entries"):
+                self.parallel_sessions(entries, workers)
+            else:
+                for entry in entries:
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+                        futures = [pool.submit(self.run_one, s, entry) for s in self.entry_scenarios(entry)]
+                        for future in concurrent.futures.as_completed(futures):
+                            future.result()
         finally:
             self.guard("end", entries)
+
+    def parallel_sessions(self, entries: list[dict], workers: int) -> None:
+        """All entries at once (the gate's side-by-side arms, each on its own lifetime): one pool of ``workers``
+        sessions, with at most an entry's ``concurrency`` sessions of that entry running together, scenarios
+        interleaved across entries so every arm starts at once."""
+        gates = {id(e): threading.Semaphore(int(e.get("concurrency") or workers)) for e in entries}
+
+        def one(scenario, entry):
+            with gates[id(entry)]:
+                return self.run_one(scenario, entry)
+
+        queues = [[(s, e) for s in self.entry_scenarios(e)] for e in entries]
+        longest = max((len(q) for q in queues), default=0)
+        jobs = [q[i] for i in range(longest) for q in queues if i < len(q)]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [pool.submit(one, s, e) for s, e in jobs]
+            for future in concurrent.futures.as_completed(futures):
+                future.result()
 
     def second_sessions(self, only: set[str] | None = None, jobs_file: Path | None = None) -> list[str]:
         """Second sessions of close calls (plan 3.5). By default the close calls against the better of Parse and

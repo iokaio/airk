@@ -177,7 +177,7 @@ digest ignores decisions and timings.
 
 | Arm | Result name | Focus | Context | Judged |
 | --- | --- | --- | --- | --- |
-| F | `focus-gpu` | the gate's Focus route (W8, 1,024 tokens) | none | yes (12.7.2) |
+| F | `focus-gpu` | the gate's Focus route (`focus-static1024-cpu` until the CUDA Focus seam closes) | none | yes (12.7.2) |
 | C | `compact-gpu` | the gate's Focus route | Compact FP16 CUDA, top score | yes (12.7.1, 12.7.2) |
 | L | `large-gpu` | the gate's Focus route | Large FP16 CUDA, top score | yes (12.7.1) |
 | C32, L32 | `compactFp32-gpu`, `largeFp32-gpu` | the gate's Focus route | Compact or Large FP32 CUDA | replays; sessions only if escalated |
@@ -188,10 +188,35 @@ digest ignores decisions and timings.
   whose live reply is not the arm's. Focus only means no decision names a
   Context model and `context_absent` is disclosed. C and L mean every model
   decision is the arm's model on CUDA at its precision by `top_score`, with no
-  abstention. Focus's own precision is not visible in a reply; the switch
+  abstention. Focus's own precision is not visible in a reply; the lifetime
   receipts record which profile was enabled.
-- **The in-lifetime Context switch** is the named hook `switch_context` of
-  `run_plan.py` (plan 12.5.2 item 4). It disables the live CUDA Context (the
+- **Arms side by side.** Each arm runs in its own fixture lifetime, with its
+  own fixture root (`R/fixture-<series>-<arm>`), service and control root (the
+  service's runtime directory, so the lifetimes share no port or socket). Each
+  arm entry names its own lifetime's handle. `run_plan.py`'s `lifetimes` step
+  first checks that the declared device and host memory of every listed
+  lifetime, plus a 4 GiB device and 16 GiB host reserve, is free now. It then
+  launches them together, waits until each is queryable and settled, and
+  enables each one's stages. `stop_lifetimes` disables the CUDA Context stage
+  before each stop (GPU_FIXTURE.md). The judged arms C, L and F run together
+  (10 + 20 + 0 GiB device). The precision arms follow in phases that fit
+  48 GiB: C32, then L32, then CF16 and CF32 (last, because the CUDA Focus
+  seam is an open gap), each phase followed by its precision comparisons; the
+  performance step runs before them. The start options of
+  each lifetime come from L5C through `make_loop_spec.py gate --lifetimes
+  <file>` (`{arm: {start_args, device_gib, host_gib, fixtures, lifetime,
+  launcher}}`). A launch with placeholder `<...>` options is refused. The
+  settled-index guard keys each lifetime's tokens by its fixture root
+  (`settle_per_root`).
+- **Parallel sessions.** The judged arms' sessions run at once in one
+  `run_pass.py` process (`parallel_entries`): 4 sessions an arm (12 in all),
+  interleaved so every arm starts together, and 12 judges. The harness knows
+  of no account rate limit for headless Haiku agents or Sonnet judges. An
+  overload shows as failed sessions, which the pass records and resumes; lower
+  `ARM_SESSIONS` and `JUDGE_SESSIONS` in `make_loop_spec.py` if it appears.
+- **The in-lifetime Context switch** stays available as the named hook
+  `switch_context` of `run_plan.py` (plan 12.5.2 item 4), for single-lifetime
+  use; the gate plan does not use it. It disables the live CUDA Context (the
   release) before it enables the next profile (the warm), through
   `gpu_fixture.py stage`, and writes a receipt with release and warm time and
   device memory. Sessions groups with `"stager": "cuda"` stage through it. A
@@ -200,7 +225,11 @@ digest ignores decisions and timings.
   `outcomes` (test 3, with the close calls written as a jobs file for
   `run_pass.py --stage second --second-jobs`), `concurrency` and
   `performance` (test 4), and `precision` (12.7.3). Gate sessions are never
-  reused across arms.
+  reused across arms. The concurrency test (2 and 4 concurrent Answers,
+  tickets attached) runs one arm at a time before the sessions, so the arms do
+  not share the device while it measures throughput. It needs L2b's job table
+  on the live Answer path. If it does not run, the report says "not run, so
+  not passed".
 - **Conventions (stated so they can be overruled).** A Rubric A win is the
   higher adjudicated grade, then fewer turns to a correct finish. A gate close
   call is two finishes within one turn, or one finish against one essential
@@ -217,7 +246,12 @@ digest ignores decisions and timings.
 - **The report.** `gate_report.py` builds the Markdown report for
   `docs/arbiter/answer-evaluation/` from `gate-report-inputs.json`. It shows
   evidence by location only, and removes quoted and code text from judges'
-  reasons on bookbuilder scenarios, so no bookbuilder source is quoted.
+  reasons on bookbuilder scenarios, so no bookbuilder source is quoted. It
+  applies the 12.7.1 and 12.7.2 bars and states what they indicate as
+  recommendations. LG stops for the user's choices (plan 12.9). The report
+  lists its evidence limits: sample size, close calls and second sessions,
+  undecided and pending scenarios, arms whose identity was not met, and tests
+  that did not run.
 - **L7.** `make_loop_spec.py l7 --keep compact[,large]` writes the new
   baseline's spec and plan: Search, Parse, the Focus-only loop and the kept
   CUDA routes, with no CPU cells. `l7_plan_template.json` is the same plan with
@@ -232,7 +266,7 @@ digest ignores decisions and timings.
 ```text
 # LG, after L5 and its short trial (R is the private root)
 python -I -B scripts/arbiter-answer-eval/prompts_freeze.py --refreeze R/design/prompts-freeze.json --reason "loop harness (Answer /3) for LG"
-python -I -B scripts/arbiter-answer-eval/make_loop_spec.py gate --series <NN>-gate-lg
+python -I -B scripts/arbiter-answer-eval/make_loop_spec.py gate --series <NN>-gate-lg --lifetimes <L5C lifetimes.json>
 python -I -B scripts/arbiter-answer-eval/run_plan.py --plan R/passes/<NN>-gate-lg/plan.json --log R/passes/<NN>-gate-lg/plan-log.jsonl
 python -I -B scripts/arbiter-answer-eval/gate_report.py --inputs R/passes/<NN>-gate-lg/gate-report-inputs.json --out docs/arbiter/answer-evaluation/<NN>-gate.md
 ```

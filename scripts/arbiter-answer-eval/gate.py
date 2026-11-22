@@ -99,6 +99,41 @@ def nvidia_smi_used() -> dict[str, int] | None:
         return None
 
 
+def nvidia_smi_memory() -> dict[str, dict[str, int]] | None:
+    """Total and used MiB per GPU (read-only ``nvidia-smi``); None when it cannot answer."""
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=index,memory.total,memory.used",
+                              "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=20,
+                             check=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+        rows = [line.split(",") for line in out.strip().splitlines() if line.strip()]
+        return {i.strip(): {"total_mib": int(t.strip()), "used_mib": int(u.strip())} for i, t, u in rows}
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+
+
+def host_available_bytes() -> int | None:
+    """The OS's available physical memory (Windows GlobalMemoryStatusEx, else /proc/meminfo); None if unknown."""
+    try:
+        if sys.platform == "win32":
+            import ctypes
+
+            class Status(ctypes.Structure):
+                _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                            ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                            ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                            ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                            ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+            status = Status()
+            status.dwLength = ctypes.sizeof(Status)
+            return int(status.ullAvailPhys) if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)) else None
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1]) * 1024
+    except (OSError, ValueError, AttributeError):
+        return None
+    return None
+
+
 class MemorySampler:
     """Samples device memory in a thread while an arm runs and keeps the peak per GPU. Device-wide: the peak
     includes Focus and anything else resident, which the report says."""

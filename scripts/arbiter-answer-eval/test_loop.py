@@ -551,6 +551,11 @@ class Report(TempDir):
         self.assertIn("## Receipts", text)
         self.assertIn("No stage is sensitive to precision", text)
         self.assertIn("proposed bar; the decision rule is the user's", text)
+        self.assertIn("recommendations; the user decides", text)
+        limits = text.split("### Evidence limits")[1].split("\n## ")[0]
+        self.assertIn("close calls", limits)
+        self.assertIn("concurrency test (12.7.1 test 4) did not run", limits)
+        self.assertIn("not run, so not passed", text)
 
     def test_bar_conditions(self):
         outcome = {"finishes_added": 3, "b_wins": 0, "b_losses": 0, "pending": 0}
@@ -601,12 +606,26 @@ class Specs(TempDir):
         plan = make_loop_spec.gate_plan(self.tmp / "spec.json", spec, self.tmp)
         kinds = [next(iter(step)) for step in plan]
         for index, step in enumerate(plan):
-            if "gate" in step and step["gate"]["command"] == "replays":
-                self.assertEqual(kinds[index - 1], "switch_context")
+            if "parallel" in step:
+                self.assertEqual(kinds[index - 1], "lifetimes")  # replays run on freshly launched lifetimes
+        self.assertNotIn("switch_context", kinds)
         sessions = [s["sessions"] for s in plan if "sessions" in s]
-        self.assertEqual([g[0][2] for g in (s["groups"] for s in sessions)], ["compact-gpu", "large-gpu", "focus-gpu"])
-        self.assertTrue(all(s["stager"] == "cuda" for s in sessions))
-        self.assertEqual(plan[0]["switch_context"]["context"], make_loop_spec.PROFILES["compact"])
+        self.assertEqual([s["groups"] for s in sessions], [[["@any", "@any", "compact-gpu,large-gpu,focus-gpu"]]])
+        launches = [s["lifetimes"]["start"] for s in plan if "lifetimes" in s]
+        self.assertEqual([[r["arm"] for r in rows] for rows in launches], [["C", "L", "F"], ["C32"], ["L32"],
+                                                                          ["CF16", "CF32"]])
+        for rows in launches:  # every launch phase fits the 48 GiB A6000 with the 4 GiB reserve
+            self.assertLessEqual(sum(r["device_gib"] for r in rows) + 4, 48)
+        self.assertEqual(launches[0][0]["stages"], [{"stage": "focus", "profile": make_loop_spec.PROFILES["focus"]},
+                                                    {"stage": "context", "profile": make_loop_spec.PROFILES["compact"]}])
+        self.assertEqual(len({r["fixtures"] for rows in launches for r in rows}), 7)  # one fixture root per arm
+        self.assertEqual(len({e["handle"] for e in spec["results"]}), 7)
+        self.assertTrue(spec["parallel_entries"] and spec["settle_per_root"])
+        self.assertEqual(kinds.index("lifetimes"), 0)
+        self.assertLess(kinds.index("stop_lifetimes"), kinds.index("lifetimes", 1))
+        conc = [s["gate"]["arm"] for s in plan if "gate" in s and s["gate"]["command"] == "concurrency"]
+        self.assertEqual(conc, ["C", "L", "F"])
+        self.assertLess(kinds.index("gate", 2), kinds.index("sessions"))
         commands = [s["gate"]["command"] for s in plan if "gate" in s]
         self.assertEqual(commands.count("precision"), len(make_loop_spec.PRECISION_PAIRS))
         self.assertLess(kinds.index("grade"), kinds.index("second"))
@@ -670,12 +689,102 @@ class PlanHook(TempDir):
         self.assertEqual(staged, [{"focus": "f", "context": "c"}, ("cpu", ("f", None))])
 
 
+class SideBySide(TempDir):
+    def plan(self, device=None, host=None):
+        args = argparse.Namespace(r_root=self.tmp, log=self.tmp / "plan.jsonl", plan=None, from_step=1, hold=False,
+                                  live_cuda=None)
+        plan = run_plan.Plan(args)
+        plan.device_memory = lambda: device
+        plan.host_available_bytes = lambda: host
+        plan.ran = []
+        plan.run = lambda label, command, timeout=0: plan.ran.append(command)
+        return plan
+
+    def rows(self):
+        spec = make_loop_spec.gate_spec("lg", self.tmp, make_loop_spec.PROFILES, ["airk"], {})
+        steps = make_loop_spec.gate_plan(self.tmp / "spec.json", spec, self.tmp)
+        return steps[0]["lifetimes"]["start"]
+
+    def test_memory_check_and_placeholders_refuse_a_launch(self):
+        rows = self.rows()
+        gib = 1 << 30
+        plan = self.plan({"0": {"total_mib": 49140, "used_mib": 1000}}, 200 * gib)
+        check = plan.memory_check(rows, 4, 16)
+        self.assertEqual((check["need_device_gib"], check["need_host_gib"]), (30.0, 64.0))
+        busy = self.plan({"0": {"total_mib": 49140, "used_mib": 30000}}, 200 * gib)
+        with self.assertRaises(common.HarnessError):
+            busy.memory_check(rows, 4, 16)
+        with self.assertRaises(common.HarnessError):
+            self.plan({"0": {"total_mib": 49140, "used_mib": 0}}, 40 * gib).memory_check(rows, 4, 16)
+        with self.assertRaises(common.HarnessError):
+            self.plan(None, 200 * gib).memory_check(rows, 4, 16)
+        with self.assertRaises(common.HarnessError):  # L5C's start options are still placeholders
+            plan.start_lifetimes({"start": rows})
+
+    def test_stop_disables_cuda_context_before_stopping(self):
+        rows = self.rows()
+        plan = self.plan()
+        for row in rows:
+            handle = Path(row["fixtures"]) / row["lifetime"] / "handle.json"
+            common.write_json(handle, {"state": "closed", "restartable": True})
+        with contextlib.redirect_stdout(io.StringIO()):
+            plan.stop_lifetimes({"stop": rows})
+        verbs = [(c[c.index("--fixtures") + 1].rsplit("-", 1)[-1], c[c.index("--fixtures") + 2],
+                  "--disable" in c) for c in plan.ran]
+        self.assertEqual(verbs, [("C", "stage", True), ("C", "stop", False), ("L", "stage", True), ("L", "stop", False),
+                                 ("F", "stop", False)])
+
+    def test_parallel_steps_run_together(self):
+        plan = self.plan()
+        import threading
+        barrier = threading.Barrier(3, timeout=10)
+        seen = []
+        plan.gate_step = lambda body: (barrier.wait(), seen.append(body["arm"]))
+        plan.parallel([{"gate": {"command": "replays", "arm": a}} for a in ("C", "L", "F")])
+        self.assertEqual(sorted(seen), ["C", "F", "L"])
+        plan.gate_step = lambda body: (_ for _ in ()).throw(common.HarnessError("arm failed"))
+        with self.assertRaises(common.HarnessError):
+            plan.parallel([{"gate": {"command": "replays", "arm": "C"}}])
+
+    def test_parallel_sessions_cap_each_arm_and_interleave(self):
+        paths = synthetic.write_fixture(self.tmp / "fx")
+        spec = make_loop_spec.gate_spec("lg", self.tmp / "R", make_loop_spec.PROFILES, ["airk"], {})
+        spec.update(scenarios_dir=str(paths["scenario"].parent.parent), freeze=None, prompts_freeze=None, pilot=True)
+        for entry in spec["results"]:
+            entry["handle"] = str(paths["handle"])
+        import threading
+        lock, running, peak, order = threading.Lock(), {}, {}, []
+
+        def session(**kwargs):
+            name = kwargs["configuration"]
+            with lock:
+                order.append(name)
+                running[name] = running.get(name, 0) + 1
+                peak[name] = max(peak.get(name, 0), running[name])
+            import time as t
+            t.sleep(0.05)
+            with lock:
+                running[name] -= 1
+            return {"status": "complete"}
+
+        flow = run_pass.Pass(spec, self.tmp / "R", session_runner=session,
+                             digest_fn=lambda s, e: {"ok": True, "digest": e["arm"], "arm_problems": []},
+                             settle_fn=lambda h, r: {"settled": True, "publication_token": "t", "repo": r})
+        flow.sessions()
+        self.assertEqual(order[:3], ["focus", "compact", "large"])
+        self.assertTrue(all(v <= make_loop_spec.ARM_SESSIONS for v in peak.values()))
+        self.assertEqual(flow.settle_key(str(paths["handle"]), "airk"), f"{paths['handle'].parent.parent.resolve()}::airk")
+        self.assertEqual(flow.settle_key(str(self.tmp / "R" / "fixture" / "L1" / "handle.json"), "airk"), "airk")
+
+
 class PassGate(TempDir):
     def test_replay_only_entries_wrong_arms_and_gate_second_jobs(self):
         paths = synthetic.write_fixture(self.tmp / "fx")
         spec = make_loop_spec.gate_spec("lg", self.tmp / "R", make_loop_spec.PROFILES, ["airk"], {})
         spec.update(scenarios_dir=str(paths["scenario"].parent.parent), freeze=None, handle=str(paths["handle"]),
                     prompts_freeze=None, pilot=False, start_retry_seconds=0)
+        for entry in spec["results"]:
+            entry["handle"] = str(paths["handle"])
         spec["pilot"] = True  # a judged spec pins prompts_freeze; the pilot flag lets the test build it
         ran = []
 
