@@ -47,6 +47,15 @@ pub trait NativeController: Send + Sync {
     ) -> Result<Option<airk_core::native_focus::NativeFocusResponse>> {
         Ok(None)
     }
+    /// Answer /3: one batched Focus call whose candidates each name their own
+    /// sub-need question. `None` means not dispatched and nothing charged.
+    fn focus_batch(
+        &self,
+        _request: airk_core::native_loop::NativeFocusRequestV3,
+        _deadline: Instant,
+    ) -> Result<Option<airk_core::native_loop::NativeFocusResponseV3>> {
+        Ok(None)
+    }
     fn application(
         &self,
         worker: airk_core::service::WorkerIdentity,

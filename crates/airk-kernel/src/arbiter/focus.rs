@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Optional ordering of complete canonical search results. No source authority.
 use super::*;
+use std::collections::BTreeMap;
 use airk_core::{
     SearchQuery, SearchResponse,
     arbiter::focus::{FocusObservation, focus_token_allowance, ordinary_search_allocation},
@@ -28,6 +29,14 @@ pub(super) struct Attempt {
     pair_cap: Option<usize>,
     /// Change 4: score a bounded window of each hit instead of its whole text.
     bounded_windows: bool,
+    /// Answer /3: loop searches skip in-search Focus; spans are scored in
+    /// batches (`rank_spans`), so Focus is never charged twice.
+    defer_in_search: bool,
+    /// Answer /3 batched Focus calls admitted, and their reserved tokens.
+    #[cfg_attr(not(test), allow(dead_code))]
+    loop_ordinal: usize,
+    #[cfg_attr(not(test), allow(dead_code))]
+    loop_tokens: usize,
 }
 
 fn state(context: &NativeContext) -> Result<std::sync::MutexGuard<'_, Attempt>> {
@@ -290,6 +299,9 @@ impl crate::Kernel {
         let Some(context) = &self.arbiter_context else {
             return Ok(response);
         };
+        if state(context)?.defer_in_search {
+            return Ok(response);
+        }
         let Some(publication) = response.publication.as_ref() else {
             return Ok(response);
         };
@@ -747,6 +759,279 @@ impl crate::Kernel {
             receipt: Box::new(ranking),
         });
         Ok(response)
+    }
+}
+
+// Answer /3 items; their driver caller lands in L3-7, which removes the
+// dead-code allowances below.
+/// One span of a batched Focus call: the sub-need question it is scored
+/// against, its hit, and the part and round its tokens are charged to.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(super) struct BatchSpan {
+    pub(super) question: u8,
+    pub(super) hit: Hit,
+    pub(super) part: u8,
+    pub(super) round: u8,
+}
+
+/// One batched Focus call over spans of every ready part (Answer /3).
+#[cfg_attr(not(test), allow(dead_code))]
+pub(super) struct SpanBatch {
+    pub(super) budget: airk_core::arbiter::answer_loop::BudgetV3,
+    /// The call's ordinal over the whole Answer, 1 first.
+    pub(super) ordinal: u8,
+    pub(super) questions: Vec<String>,
+    pub(super) spans: Vec<BatchSpan>,
+    pub(super) deadline: Instant,
+}
+
+/// A batched Focus call's compact receipt, and each span's relevance.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(super) struct SpanRanking {
+    pub(super) receipt: airk_core::arbiter::answer_loop::FocusBatchReceipt,
+    /// Relevance per span, `None` when unscored or not applied.
+    pub(super) relevance: Vec<Option<f32>>,
+    /// Submitted, but its outcome and work are unknown; nothing is replayed.
+    pub(super) unknown: bool,
+}
+
+/// Batched Focus work became stale after native scoring: not delivered.
+#[derive(Debug)]
+#[cfg_attr(not(test), allow(dead_code))]
+pub struct FocusBatchStale {
+    _custody: Box<airk_core::arbiter::answer_loop::FocusBatchReceipt>,
+}
+impl std::fmt::Display for FocusBatchStale {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Focus policy or source changed after batched native work; the Answer cannot be replayed automatically")
+    }
+}
+impl std::error::Error for FocusBatchStale {}
+
+#[cfg_attr(not(test), allow(dead_code))]
+impl crate::Kernel {
+    /// Answer /3 binds this once before its first read: loop searches defer
+    /// in-search Focus, and the original deadline can only shorten.
+    pub(super) fn bind_answer_loop(&self, deadline: Instant) -> Result<()> {
+        if let Some(context) = &self.arbiter_context {
+            let mut held = state(context)?;
+            ensure!(
+                !held.defer_in_search && held.ordinal == 0 && held.loop_ordinal == 0,
+                "Answer loop accounting already bound"
+            );
+            held.defer_in_search = true;
+            held.deadline = Some(held.deadline.map_or(deadline, |prior| prior.min(deadline)));
+        }
+        Ok(())
+    }
+
+    /// Score spans against their own sub-need questions in one native call.
+    /// `None` means Focus is absent or declined and nothing was charged.
+    /// The ordinal and token reservation are taken in one critical section,
+    /// so concurrent batches can never share or skip an allocation.
+    pub(super) fn rank_spans(&self, batch: SpanBatch) -> Result<Option<SpanRanking>> {
+        use airk_core::arbiter::answer_loop::{
+            FOCUS_BATCH_SCHEMA, FocusBatchReceipt, MAX_FOCUS_BATCH_PAIRS, TokenAttribution,
+            questions_digest, scope_digest,
+        };
+        use airk_core::native_loop::{NativeFocusCandidateV3, NativeFocusRequestV3};
+        let Some(context) = &self.arbiter_context else {
+            return Ok(None);
+        };
+        if batch.spans.is_empty() || batch.spans.len() > MAX_FOCUS_BATCH_PAIRS {
+            return Ok(None);
+        }
+        if self.scoped_read_fingerprint()? != Some(context.authority.fingerprint) {
+            return Err(airk_core::scoped_reads::ScopeReadRefused.into());
+        }
+        let publication = self.arbiter_publication()?;
+        let observed = match observe_focus_application(context, &publication) {
+            Ok(Some(observed)) => observed,
+            Err(error) if error.is::<airk_core::scoped_reads::ScopeReadRefused>() => {
+                return Err(error);
+            }
+            _ => return Ok(None),
+        };
+        let application = &observed.application;
+        if observed.validate().is_err()
+            || application.availability != Availability::Ready
+            || application.scope.publication != publication
+            || application.scope.index_id != context.authority.index_id
+            || application.scope.authorization != context.authority.fingerprint
+        {
+            return Ok(None);
+        }
+        let (Some(limits), Some(identity), Some(attempt)) =
+            (observed.limits.as_ref(), observed.identity.clone(), context.attempt)
+        else {
+            return Ok(None);
+        };
+        let Ok(Some((clock, now_ns))) = context.owner.focus_clock() else {
+            return Ok(None);
+        };
+        let pair_tokens = limits.pair_input_tokens;
+        let mut charges: BTreeMap<(u8, u8), usize> = BTreeMap::new();
+        for span in &batch.spans {
+            *charges.entry((span.part, span.round)).or_default() += pair_tokens;
+        }
+        let attribution: Vec<TokenAttribution> = charges
+            .into_iter()
+            .map(|((part, round), tokens)| TokenAttribution { part, round, tokens })
+            .collect();
+        let reservation: usize = attribution.iter().map(|charge| charge.tokens).sum();
+        let mut candidates = Vec::with_capacity(batch.spans.len());
+        for (position, span) in batch.spans.iter().enumerate() {
+            let question = batch
+                .questions
+                .get(usize::from(span.question))
+                .context("Focus span names an unknown question")?;
+            let (utf8_start, utf8_end) =
+                software::focus_window(&span.hit.text, question, pair_tokens);
+            let window = FocusSourceWindow { utf8_start, utf8_end };
+            match NativeFocusCandidateV3::new(
+                &application.scope,
+                &batch.questions,
+                span.question,
+                position,
+                span.hit.clone(),
+                window,
+            ) {
+                Ok(candidate) => candidates.push(candidate),
+                Err(_) => return Ok(None),
+            }
+        }
+        let order_digest = NativeFocusRequestV3::candidate_order_digest(&candidates)?;
+        let remaining_ms = batch
+            .deadline
+            .saturating_duration_since(Instant::now())
+            .as_millis()
+            .min(u128::from(batch.budget.deadline_ms)) as u64;
+        if remaining_ms == 0 {
+            return Ok(None);
+        }
+        let request = NativeFocusRequestV3 {
+            read_attempt: attempt,
+            parent_budget: batch.budget.clone(),
+            worker: context.worker,
+            authority: context.authority,
+            scope: application.scope.clone(),
+            questions: batch.questions.clone(),
+            score_count: candidates.len(),
+            candidates,
+            order_digest,
+            ordinal: batch.ordinal,
+            attribution: attribution.clone(),
+            partition: None,
+            remaining_ms,
+            remaining_input_tokens: reservation,
+        };
+        if request
+            .validate(context.worker, context.authority, clock, now_ns)
+            .is_err()
+        {
+            return Ok(None);
+        }
+        {
+            let mut held = state(context)?;
+            if held.blocked || usize::from(batch.ordinal) != held.loop_ordinal + 1 {
+                return Ok(None);
+            }
+            held.loop_ordinal += 1;
+            held.loop_tokens += reservation;
+        }
+        let returned = context.owner.focus_batch(request.clone(), batch.deadline);
+        let (mut receipt, unknown) = match returned {
+            Ok(Some(response)) if response.validate(&request).is_ok() => {
+                let mut held = state(context)?;
+                match response.ranking.observed_input_tokens {
+                    Some(tokens) => {
+                        held.loop_tokens = held.loop_tokens.saturating_sub(reservation) + tokens;
+                        held.blocked |= tokens > reservation;
+                    }
+                    None => held.blocked = true,
+                }
+                let unknown = response.ranking.observed_input_tokens.is_none();
+                (response.ranking, unknown)
+            }
+            Ok(None) => {
+                let mut held = state(context)?;
+                held.loop_ordinal -= 1;
+                held.loop_tokens = held.loop_tokens.saturating_sub(reservation);
+                return Ok(None);
+            }
+            Err(error) if error.is::<airk_core::scoped_reads::ScopeReadRefused>() => {
+                return Err(error);
+            }
+            _ => {
+                state(context)?.blocked = true;
+                let count = request.candidates.len();
+                (
+                    FocusBatchReceipt {
+                        schema: FOCUS_BATCH_SCHEMA.into(),
+                        scope_digest: scope_digest(&request.scope)?,
+                        identity: Some(identity.clone()),
+                        availability: Availability::Failed,
+                        reason: "Native Focus outcome and work are unknown; canonical order is retained and nothing is replayed.".into(),
+                        applied: false,
+                        input_digest: request.input_digest()?,
+                        order_digest,
+                        questions_digest: questions_digest(&request.questions)?,
+                        question_count: u8::try_from(request.questions.len())?,
+                        candidate_count: count,
+                        ranked: (0..count).map(|index| index as u16).collect(),
+                        pairs: vec![],
+                        reserved_input_tokens: reservation,
+                        observed_input_tokens: None,
+                        attribution,
+                        work: Work::default(),
+                    },
+                    true,
+                )
+            }
+        };
+        let fresh = observe_focus_application(context, &publication);
+        let valid = match fresh {
+            Ok(Some(fresh)) => {
+                fresh.validate().is_ok()
+                    && fresh.application.scope == application.scope
+                    && fresh.application.availability == Availability::Ready
+                    && fresh.identity.as_ref() == Some(&identity)
+            }
+            Err(error) if error.is::<airk_core::scoped_reads::ScopeReadRefused>() => {
+                return Err(error);
+            }
+            _ => false,
+        };
+        if !valid
+            || self.scoped_read_fingerprint()? != Some(context.authority.fingerprint)
+            || self.arbiter_publication()? != publication
+        {
+            return Err(FocusBatchStale {
+                _custody: Box::new(receipt),
+            }
+            .into());
+        }
+        if Instant::now() >= batch.deadline && receipt.applied {
+            receipt.applied = false;
+            receipt.availability = Availability::Failed;
+            receipt.reason = "Focus completed after its original deadline; canonical order is unchanged.".into();
+            receipt.ranked = (0..receipt.candidate_count).map(|index| index as u16).collect();
+        }
+        let mut relevance = vec![None; batch.spans.len()];
+        if receipt.applied {
+            let ids = request.candidate_order();
+            for pair in &receipt.pairs {
+                let score = receipt.relevance(pair, &ids)?;
+                if let Some(slot) = relevance.get_mut(usize::from(pair.candidate)) {
+                    *slot = Some(score.relevance);
+                }
+            }
+        }
+        Ok(Some(SpanRanking {
+            receipt,
+            relevance,
+            unknown,
+        }))
     }
 }
 

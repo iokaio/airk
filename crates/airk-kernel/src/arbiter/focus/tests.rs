@@ -35,6 +35,7 @@ struct Controller {
     mode: Mode,
     revision: AtomicU64,
     requests: Mutex<Vec<NativeFocusRequest>>,
+    batches: Mutex<Vec<airk_core::native_loop::NativeFocusRequestV3>>,
 }
 fn digest(byte: u8) -> Sha256Digest {
     Sha256Digest::from_bytes([byte; 32])
@@ -49,6 +50,66 @@ fn identity() -> FocusIdentity {
     }
 }
 impl NativeController for Controller {
+    fn focus_batch(
+        &self,
+        request: airk_core::native_loop::NativeFocusRequestV3,
+        _: Instant,
+    ) -> Result<Option<airk_core::native_loop::NativeFocusResponseV3>> {
+        use airk_core::arbiter::answer_loop::*;
+        request.validate(request.worker, request.authority, ReadClock::UnixMonotonic, 1000)?;
+        self.batches.lock().unwrap().push(request.clone());
+        if matches!(self.mode, Mode::Unknown) {
+            anyhow::bail!("synthetic lost native outcome");
+        }
+        let pairs: Vec<FocusPairScore> = request
+            .candidates
+            .iter()
+            .enumerate()
+            .map(|(index, candidate)| FocusPairScore {
+                candidate: index as u16,
+                question: candidate.question,
+                no_logit: 0.,
+                yes_logit: [0., 2., 1., -3.][index % 4],
+            })
+            .collect();
+        let mut ranked: Vec<u16> = (0..request.candidates.len() as u16).collect();
+        ranked.sort_by(|a, b| {
+            pairs[usize::from(*b)]
+                .yes_logit
+                .total_cmp(&pairs[usize::from(*a)].yes_logit)
+                .then(a.cmp(b))
+        });
+        let tokens = request.remaining_input_tokens;
+        Ok(Some(airk_core::native_loop::NativeFocusResponseV3 {
+            ranking: FocusBatchReceipt {
+                schema: FOCUS_BATCH_SCHEMA.into(),
+                scope_digest: scope_digest(&request.scope)?,
+                identity: Some(identity()),
+                availability: Availability::Ready,
+                reason: "Synthetic batched scoring".into(),
+                applied: true,
+                input_digest: request.input_digest()?,
+                order_digest: request.order_digest,
+                questions_digest: questions_digest(&request.questions)?,
+                question_count: request.questions.len() as u8,
+                candidate_count: request.candidates.len(),
+                ranked,
+                work: Work {
+                    input_tokens: tokens,
+                    candidates: pairs.len(),
+                    queue_us: Some(1),
+                    compile_us: Some(2),
+                    inference_us: Some(3),
+                    policy_us: Some(4),
+                    ..Work::default()
+                },
+                pairs,
+                reserved_input_tokens: tokens,
+                observed_input_tokens: Some(tokens),
+                attribution: request.attribution.clone(),
+            },
+        }))
+    }
     fn application(
         &self,
         _: WorkerIdentity,
@@ -286,6 +347,7 @@ fn fixture(
         mode,
         revision: AtomicU64::new(1),
         requests: Mutex::new(vec![]),
+        batches: Mutex::new(vec![]),
     });
     let native = scoped
         .with_native_arbiter(worker, reference, controller.clone())?
@@ -811,5 +873,80 @@ fn native_context_partition_keeps_snapshot_digest_separate_from_installed_select
         );
     }
     assert!(owner.requests.lock().unwrap().is_empty());
+    Ok(())
+}
+
+fn batch(original: &SearchResponse, ordinal: u8) -> SpanBatch {
+    SpanBatch {
+        budget: airk_core::arbiter::answer_loop::BudgetV3::default(),
+        ordinal,
+        questions: vec!["where is the rule".into(), "which tests cover it".into()],
+        spans: original
+            .hits
+            .iter()
+            .take(3)
+            .enumerate()
+            .map(|(index, hit)| BatchSpan {
+                question: u8::from(index == 2),
+                hit: hit.clone(),
+                part: if index == 2 { 2 } else { 1 },
+                round: 1,
+            })
+            .collect(),
+        deadline: Instant::now() + Duration::from_secs(30),
+    }
+}
+
+#[test]
+fn loop_search_defers_in_search_focus() -> Result<()> {
+    let (_temp, kernel, owner, original) = fixture(Mode::Ranked)?;
+    kernel.bind_answer_loop(Instant::now() + Duration::from_secs(30))?;
+    let result = kernel.focus_search(&query(), original.clone())?;
+    assert!(result.focus.is_none(), "no in-search Focus receipt or notice");
+    assert_eq!(serde_json::to_value(&result)?, serde_json::to_value(&original)?);
+    assert!(owner.requests.lock().unwrap().is_empty());
+    assert!(kernel.bind_answer_loop(Instant::now()).is_err(), "bound once");
+    Ok(())
+}
+
+#[test]
+fn one_focus_call_spans_all_ready_parts_with_per_candidate_questions() -> Result<()> {
+    let (_temp, kernel, owner, original) = fixture(Mode::Ranked)?;
+    kernel.bind_answer_loop(Instant::now() + Duration::from_secs(30))?;
+    let ranking = kernel
+        .rank_spans(batch(&original, 1))?
+        .context("Focus ran")?;
+    let batches = owner.batches.lock().unwrap();
+    assert_eq!(batches.len(), 1);
+    let questions: Vec<u8> = batches[0].candidates.iter().map(|candidate| candidate.question).collect();
+    assert_eq!(questions, [0, 0, 1]);
+    let charged: Vec<_> = batches[0]
+        .attribution
+        .iter()
+        .map(|charge| (charge.part, charge.round, charge.tokens))
+        .collect();
+    assert_eq!(charged, [(1, 1, 64), (2, 1, 32)], "pairs times pair tokens per part");
+    assert!(ranking.receipt.applied && !ranking.unknown);
+    assert!(ranking.relevance[1].unwrap() > ranking.relevance[0].unwrap());
+    assert!(owner.requests.lock().unwrap().is_empty());
+    drop(batches);
+    assert!(
+        kernel.rank_spans(batch(&original, 1))?.is_none(),
+        "an ordinal is allocated once"
+    );
+    assert!(kernel.rank_spans(batch(&original, 2))?.is_some());
+    Ok(())
+}
+
+#[test]
+fn unknown_batched_focus_outcome_keeps_its_reservation_and_blocks_more() -> Result<()> {
+    let (_temp, kernel, _owner, original) = fixture(Mode::Unknown)?;
+    kernel.bind_answer_loop(Instant::now() + Duration::from_secs(30))?;
+    let ranking = kernel.rank_spans(batch(&original, 1))?.context("submitted")?;
+    assert!(ranking.unknown && !ranking.receipt.applied);
+    assert_eq!(ranking.receipt.observed_input_tokens, None);
+    assert_eq!(ranking.receipt.reserved_input_tokens, 96);
+    assert!(ranking.relevance.iter().all(Option::is_none));
+    assert!(kernel.rank_spans(batch(&original, 2))?.is_none(), "no replay after unknown work");
     Ok(())
 }

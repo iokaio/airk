@@ -9,6 +9,8 @@ use airk_core::arbiter::answer_loop as v3;
 // The stage modules land one commit at a time; the driver (L3-7) is their
 // only product caller, and this allowance is removed with it.
 #[allow(dead_code)]
+mod coverage;
+#[allow(dead_code)]
 mod gather;
 #[allow(dead_code)]
 mod retrieve;
