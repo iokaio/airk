@@ -1,0 +1,2839 @@
+{
+  "budget_cases": [
+    {
+      "accepted": true,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 600000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "deadline_ms_maximum"
+    },
+    {
+      "accepted": false,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 600001,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "deadline_ms_over_maximum"
+    },
+    {
+      "accepted": true,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 1,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "deadline_ms_minimum"
+    },
+    {
+      "accepted": false,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 0,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "deadline_ms_under_minimum"
+    },
+    {
+      "accepted": true,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 524288,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "max_bytes_maximum"
+    },
+    {
+      "accepted": false,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 524289,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "max_bytes_over_maximum"
+    },
+    {
+      "accepted": true,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 1024,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "max_bytes_minimum"
+    },
+    {
+      "accepted": false,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 1023,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "max_bytes_under_minimum"
+    },
+    {
+      "accepted": true,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "max_parts_maximum"
+    },
+    {
+      "accepted": false,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 5,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "max_parts_over_maximum"
+    },
+    {
+      "accepted": true,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 1,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "max_parts_minimum"
+    },
+    {
+      "accepted": false,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 0,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "max_parts_under_minimum"
+    },
+    {
+      "accepted": true,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "max_sub_needs_maximum"
+    },
+    {
+      "accepted": false,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 5,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "max_sub_needs_over_maximum"
+    },
+    {
+      "accepted": true,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 1,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "max_sub_needs_minimum"
+    },
+    {
+      "accepted": false,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 0,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "max_sub_needs_under_minimum"
+    },
+    {
+      "accepted": true,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "rounds_maximum"
+    },
+    {
+      "accepted": false,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 4
+      },
+      "id": "rounds_over_maximum"
+    },
+    {
+      "accepted": true,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 1
+      },
+      "id": "rounds_minimum"
+    },
+    {
+      "accepted": false,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 0
+      },
+      "id": "rounds_under_minimum"
+    },
+    {
+      "accepted": true,
+      "budget": {
+        "calls": 160,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "calls_maximum"
+    },
+    {
+      "accepted": false,
+      "budget": {
+        "calls": 161,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "calls_over_maximum"
+    },
+    {
+      "accepted": true,
+      "budget": {
+        "calls": 1,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "calls_minimum"
+    },
+    {
+      "accepted": false,
+      "budget": {
+        "calls": 0,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "calls_under_minimum"
+    },
+    {
+      "accepted": true,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 12,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "fanout_maximum"
+    },
+    {
+      "accepted": false,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 13,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "fanout_over_maximum"
+    },
+    {
+      "accepted": true,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 1,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "fanout_minimum"
+    },
+    {
+      "accepted": false,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 0,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "fanout_under_minimum"
+    },
+    {
+      "accepted": true,
+      "budget": {
+        "calls": 132,
+        "candidates": 160,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "candidates_maximum"
+    },
+    {
+      "accepted": false,
+      "budget": {
+        "calls": 132,
+        "candidates": 161,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "candidates_over_maximum"
+    },
+    {
+      "accepted": true,
+      "budget": {
+        "calls": 132,
+        "candidates": 1,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "candidates_minimum"
+    },
+    {
+      "accepted": false,
+      "budget": {
+        "calls": 132,
+        "candidates": 0,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "candidates_under_minimum"
+    },
+    {
+      "accepted": true,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 262144,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "input_tokens_maximum"
+    },
+    {
+      "accepted": false,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 262145,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "input_tokens_over_maximum"
+    },
+    {
+      "accepted": true,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 1,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 1,
+        "rounds": 3
+      },
+      "id": "input_tokens_minimum"
+    },
+    {
+      "accepted": false,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 0,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 0,
+        "rounds": 3
+      },
+      "id": "input_tokens_under_minimum"
+    },
+    {
+      "accepted": true,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "round_input_tokens_maximum"
+    },
+    {
+      "accepted": false,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32769,
+        "rounds": 3
+      },
+      "id": "round_input_tokens_over_maximum"
+    },
+    {
+      "accepted": true,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 1,
+        "rounds": 3
+      },
+      "id": "round_input_tokens_minimum"
+    },
+    {
+      "accepted": false,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 0,
+        "rounds": 3
+      },
+      "id": "round_input_tokens_under_minimum"
+    },
+    {
+      "accepted": true,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 64,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "context_calls_maximum"
+    },
+    {
+      "accepted": false,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 65,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "context_calls_over_maximum"
+    },
+    {
+      "accepted": true,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 1,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "context_calls_minimum"
+    },
+    {
+      "accepted": false,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 0,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "context_calls_under_minimum"
+    },
+    {
+      "accepted": true,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 48,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "focus_calls_maximum"
+    },
+    {
+      "accepted": false,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 49,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "focus_calls_over_maximum"
+    },
+    {
+      "accepted": true,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 1,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "focus_calls_minimum"
+    },
+    {
+      "accepted": false,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 0,
+        "focus_pairs": 192,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "focus_calls_under_minimum"
+    },
+    {
+      "accepted": true,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 384,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "focus_pairs_maximum"
+    },
+    {
+      "accepted": false,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 385,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "focus_pairs_over_maximum"
+    },
+    {
+      "accepted": false,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 1,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "focus_pairs_minimum"
+    },
+    {
+      "accepted": false,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 0,
+        "input_tokens": 131072,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "focus_pairs_under_minimum"
+    },
+    {
+      "accepted": false,
+      "budget": {
+        "calls": 132,
+        "candidates": 132,
+        "context_calls": 48,
+        "deadline_ms": 300000,
+        "fanout": 8,
+        "focus_calls": 24,
+        "focus_pairs": 192,
+        "input_tokens": 16384,
+        "max_bytes": 262144,
+        "max_parts": 4,
+        "max_sub_needs": 4,
+        "round_input_tokens": 32768,
+        "rounds": 3
+      },
+      "id": "round_allowance_above_pool"
+    }
+  ],
+  "default_budget": {
+    "calls": 132,
+    "candidates": 132,
+    "context_calls": 48,
+    "deadline_ms": 300000,
+    "fanout": 8,
+    "focus_calls": 24,
+    "focus_pairs": 192,
+    "input_tokens": 131072,
+    "max_bytes": 262144,
+    "max_parts": 4,
+    "max_sub_needs": 4,
+    "round_input_tokens": 32768,
+    "rounds": 3
+  },
+  "minimum_reply_skeleton_bytes": 4096,
+  "packet_schema": "airk.arbiter.packet/2",
+  "qualification": false,
+  "refusal_cases": [
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "invalid Answer response schema",
+      "id": "wrong_packet_schema",
+      "replace": [
+        {
+          "pointer": "/packet_schema",
+          "value": "airk.arbiter.packet/1"
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "noncanonical Answer part id",
+      "id": "part_ids_out_of_order",
+      "replace": [
+        {
+          "pointer": "/parts/1/id",
+          "value": 3
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "invalid Answer part span",
+      "id": "overlapping_spans",
+      "replace": [
+        {
+          "pointer": "/parts/1/span/utf8_start",
+          "value": 3
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "invalid Answer part span",
+      "id": "span_past_question",
+      "replace": [
+        {
+          "pointer": "/parts/1/span/utf8_end",
+          "value": 72
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer part limit exceeded",
+      "id": "parts_degraded_below_observed",
+      "replace": [
+        {
+          "pointer": "/degradations",
+          "value": [
+            {
+              "count": 1,
+              "kind": "context_abstained"
+            },
+            {
+              "applied": 1,
+              "kind": "parts",
+              "reason": "deadline_estimate",
+              "requested": 4
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer coverage disagrees with cited evidence",
+      "id": "missing_need_cites_evidence",
+      "replace": [
+        {
+          "pointer": "/parts/0/sub_needs/0/coverage",
+          "value": "missing"
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "invalid Answer unrun reads",
+      "id": "covered_need_keeps_unrun_reads",
+      "replace": [
+        {
+          "pointer": "/parts/0/sub_needs/0/unrun_reads",
+          "value": [
+            {
+              "operation": "document_sections",
+              "reason": "not_chosen",
+              "target": "README.md"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer unrun read reason differs from its part's stop",
+      "id": "unrun_deadline_without_deadline_stop",
+      "replace": [
+        {
+          "pointer": "/parts/1/sub_needs/0/unrun_reads/0/reason",
+          "value": "deadline"
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer sub-need cites unknown or uncounted evidence",
+      "id": "cites_unknown_evidence",
+      "replace": [
+        {
+          "pointer": "/parts/1/sub_needs/0/evidence/0",
+          "value": "6363636363636363636363636363636363636363636363636363636363636363"
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer sub-need cites unknown or uncounted evidence",
+      "id": "omitted_citation_uncounted",
+      "replace": [
+        {
+          "pointer": "/candidate_count",
+          "value": 3
+        },
+        {
+          "pointer": "/omitted_count",
+          "value": 1
+        },
+        {
+          "pointer": "/omitted_evidence",
+          "value": [
+            "2121212121212121212121212121212121212121212121212121212121212121"
+          ]
+        },
+        {
+          "pointer": "/parts/1/sub_needs/0/evidence",
+          "value": [
+            "1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
+            "2121212121212121212121212121212121212121212121212121212121212121"
+          ]
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer part gaps disagree with its stop",
+      "id": "sufficient_gap_without_covered",
+      "replace": [
+        {
+          "pointer": "/parts/1/gaps/0",
+          "value": "sufficient"
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer part gaps disagree with its stop",
+      "id": "clarification_without_ambiguous",
+      "replace": [
+        {
+          "pointer": "/parts/1/stop",
+          "value": "clarification_required"
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer part stop disagrees with its rounds",
+      "id": "covered_stop_with_partial_need",
+      "replace": [
+        {
+          "pointer": "/parts/1/gaps/0",
+          "value": "sufficient"
+        },
+        {
+          "pointer": "/parts/1/stop",
+          "value": "covered"
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer part stop disagrees with its rounds",
+      "id": "no_progress_after_new_evidence",
+      "replace": [
+        {
+          "pointer": "/parts/1/rounds/1/new_evidence",
+          "value": 1
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer follow-ups run outside a follow-up round",
+      "id": "follow_up_in_round_one",
+      "replace": [
+        {
+          "pointer": "/parts/0/rounds/0/follow_ups_run",
+          "value": [
+            {
+              "operation": "search",
+              "target": "README search"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer round reads exceed its structural limit",
+      "id": "round_reads_over_structure",
+      "replace": [
+        {
+          "pointer": "/parts/0/rounds/0/calls",
+          "value": 8
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer round fanout exceeds its reads or budget",
+      "id": "fanout_over_budget",
+      "replace": [
+        {
+          "pointer": "/parts/0/rounds/0/calls",
+          "value": 7
+        },
+        {
+          "pointer": "/parts/0/rounds/0/fanout",
+          "value": 9
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer round token allowance exceeded",
+      "id": "round_tokens_over_allowance",
+      "replace": [
+        {
+          "pointer": "/parts/0/rounds/0/input_tokens",
+          "value": 32769
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer round limit exceeded",
+      "id": "rounds_degraded_below_observed",
+      "replace": [
+        {
+          "pointer": "/degradations",
+          "value": [
+            {
+              "count": 1,
+              "kind": "context_abstained"
+            },
+            {
+              "applied": 1,
+              "kind": "rounds",
+              "reason": "deadline_estimate",
+              "requested": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer record use names an unknown part, sub-need or round",
+      "id": "record_use_unknown_round",
+      "replace": [
+        {
+          "pointer": "/record_uses/0/round",
+          "value": 2
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer record without provenance",
+      "id": "record_without_provenance",
+      "replace": [
+        {
+          "pointer": "/record_uses",
+          "value": [
+            {
+              "cause": "part_search",
+              "part": 1,
+              "record": "1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
+              "round": 1
+            },
+            {
+              "cause": "need_search",
+              "need": 1,
+              "part": 2,
+              "record": "1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
+              "round": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer dedup count differs",
+      "id": "dedup_count_wrong",
+      "replace": [
+        {
+          "pointer": "/union/dedup_count",
+          "value": 0
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "invalid Answer conflict note",
+      "id": "definition_conflict_single_record",
+      "replace": [
+        {
+          "pointer": "/union/conflicts",
+          "value": [
+            {
+              "evidence": [
+                "1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f"
+              ],
+              "kind": "divergent_definition",
+              "note": "two definitions",
+              "parts": [
+                1,
+                2
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer conflict part found none of its evidence",
+      "id": "conflict_part_without_evidence",
+      "replace": [
+        {
+          "pointer": "/union/conflicts",
+          "value": [
+            {
+              "evidence": [
+                "2020202020202020202020202020202020202020202020202020202020202020"
+              ],
+              "kind": "divergent_verdict",
+              "note": "judged differently",
+              "parts": [
+                1,
+                2
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Large never runs on the CPU",
+      "id": "large_on_cpu",
+      "replace": [
+        {
+          "pointer": "/decisions/1/device",
+          "value": "cpu"
+        },
+        {
+          "pointer": "/decisions/1/model",
+          "value": "context_large"
+        },
+        {
+          "pointer": "/decisions/1/precision",
+          "remove": true
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer GPU decision precision must be stated",
+      "id": "gpu_without_precision",
+      "replace": [
+        {
+          "pointer": "/decisions/1/precision",
+          "remove": true
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "deterministic Answer decision carries model facts",
+      "id": "deterministic_with_scores",
+      "replace": [
+        {
+          "pointer": "/decisions/0/top",
+          "value": 1.0
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "only a Context model scores loop cards",
+      "id": "focus_model_scores_cards",
+      "replace": [
+        {
+          "pointer": "/decisions/1/model",
+          "value": "focus"
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer decision location differs from its stage",
+      "id": "split_with_location",
+      "replace": [
+        {
+          "pointer": "/decisions/0/part",
+          "value": 1
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "invalid Answer chosen cards",
+      "id": "class_of_other_stage",
+      "replace": [
+        {
+          "pointer": "/decisions/1/chosen/0/class",
+          "value": "follow_up_hop"
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "invalid Answer chosen cards",
+      "id": "coverage_chooses_two",
+      "replace": [
+        {
+          "pointer": "/decisions/1/chosen",
+          "value": [
+            {
+              "class": "covered",
+              "symbol": "A"
+            },
+            {
+              "class": "read_more_here",
+              "symbol": "B"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer decision margin differs from its top and runner-up",
+      "id": "margin_not_top_minus_runner_up",
+      "replace": [
+        {
+          "pointer": "/decisions/1/margin",
+          "value": 1.0
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "accepted Answer decision lacks its device, receipt, margin or rule",
+      "id": "rule_mode_without_rule",
+      "replace": [
+        {
+          "pointer": "/decisions/1/source/mode",
+          "value": "rule"
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "abstained Answer decision lacks its device, receipt or reason",
+      "id": "abstained_with_other_reason",
+      "replace": [
+        {
+          "pointer": "/decisions/2/source/reason",
+          "value": "token_budget"
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer model decision lacks a card slot within its budget",
+      "id": "slot_over_budget",
+      "replace": [
+        {
+          "pointer": "/decisions/1/card_slot",
+          "value": 49
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer batch peers do not share one card call",
+      "id": "batch_peer_not_symmetric",
+      "replace": [
+        {
+          "pointer": "/decisions/2/batched_with",
+          "value": []
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer batch peers do not share one card call",
+      "id": "batch_peer_other_slot",
+      "replace": [
+        {
+          "pointer": "/decisions/2/card_slot",
+          "value": 2
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer decision ordinals are not increasing within the log",
+      "id": "decision_ordinals_not_increasing",
+      "replace": [
+        {
+          "pointer": "/decisions/2/ordinal",
+          "value": 2
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "only the latest local decision can remain current",
+      "id": "stale_decision_stays_current",
+      "replace": [
+        {
+          "pointer": "/decisions/2/part",
+          "value": 1
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "decision log summary counts disagree",
+      "id": "log_counts_disagree",
+      "replace": [
+        {
+          "pointer": "/decision_log/included",
+          "value": 3
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "invalid decision log stage and source counts",
+      "id": "log_counts_do_not_sum",
+      "replace": [
+        {
+          "pointer": "/decision_log/counts/0/count",
+          "value": 2
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "reply decision of an uncounted stage and source",
+      "id": "decision_of_uncounted_source",
+      "replace": [
+        {
+          "pointer": "/decision_log/counts/1/source",
+          "value": "unavailable"
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Union omits deterministic decisions before model-scored ones",
+      "id": "model_decision_omitted_before_deterministic",
+      "replace": [
+        {
+          "pointer": "/decision_log/counts",
+          "value": [
+            {
+              "count": 1,
+              "source": "deterministic",
+              "stage": "split"
+            },
+            {
+              "count": 1,
+              "model": "context_compact",
+              "source": "model",
+              "stage": "coverage"
+            },
+            {
+              "count": 1,
+              "model": "context_compact",
+              "source": "abstained",
+              "stage": "coverage"
+            },
+            {
+              "count": 1,
+              "source": "deterministic",
+              "stage": "follow_up"
+            },
+            {
+              "count": 1,
+              "model": "context_compact",
+              "source": "model",
+              "stage": "follow_up"
+            }
+          ]
+        },
+        {
+          "pointer": "/decision_log/omitted",
+          "value": 1
+        },
+        {
+          "pointer": "/decision_log/total",
+          "value": 5
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "decision log card calls disagree with scored decisions or slots",
+      "id": "card_calls_over_scored",
+      "replace": [
+        {
+          "pointer": "/decision_log/card_calls",
+          "value": 3
+        },
+        {
+          "pointer": "/model_work/context_calls",
+          "value": 3
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer model work differs from the decision log",
+      "id": "model_work_differs_from_log",
+      "replace": [
+        {
+          "pointer": "/model_work/context_calls",
+          "value": 2
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer Focus work exceeds its budget",
+      "id": "focus_pairs_over_budget",
+      "replace": [
+        {
+          "pointer": "/decision_log/focus_pairs",
+          "value": 193
+        },
+        {
+          "pointer": "/model_work/focus_pairs",
+          "value": 193
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "attributed round tokens are not retained by the round",
+      "id": "attribution_not_retained",
+      "replace": [
+        {
+          "pointer": "/decision_log/attribution/1/tokens",
+          "value": 41
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "invalid model token attribution",
+      "id": "attribution_duplicated",
+      "replace": [
+        {
+          "pointer": "/decision_log/attribution",
+          "value": [
+            {
+              "part": 1,
+              "round": 1,
+              "tokens": 76
+            },
+            {
+              "part": 2,
+              "round": 1,
+              "tokens": 40
+            },
+            {
+              "part": 1,
+              "round": 1,
+              "tokens": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer abstention count differs from the decision log",
+      "id": "abstained_count_wrong",
+      "replace": [
+        {
+          "pointer": "/degradations/0/count",
+          "value": 2
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "absent Context model cannot have scored a card",
+      "id": "context_absent_with_scored",
+      "replace": [
+        {
+          "pointer": "/degradations",
+          "value": [
+            {
+              "count": 1,
+              "kind": "context_abstained"
+            },
+            {
+              "kind": "context_absent"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "FocusAbsent is disclosed exactly when no Focus call ran",
+      "id": "focus_absent_with_focus_calls",
+      "replace": [
+        {
+          "pointer": "/degradations",
+          "value": [
+            {
+              "count": 1,
+              "kind": "context_abstained"
+            },
+            {
+              "kind": "focus_absent"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "duplicate Answer degradation",
+      "id": "duplicate_degradation",
+      "replace": [
+        {
+          "pointer": "/degradations",
+          "value": [
+            {
+              "count": 1,
+              "kind": "context_abstained"
+            },
+            {
+              "count": 1,
+              "kind": "context_abstained"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "degraded Answer model still decided",
+      "id": "large_degraded_yet_decides",
+      "replace": [
+        {
+          "pointer": "/decisions/1/model",
+          "value": "context_large"
+        },
+        {
+          "pointer": "/degradations",
+          "value": [
+            {
+              "count": 1,
+              "kind": "context_abstained"
+            },
+            {
+              "applied": "context_compact",
+              "kind": "model",
+              "reason": "memory_unavailable",
+              "requested": "context_large",
+              "stage": "context"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "unknown model outcome without unknown logged work",
+      "id": "unknown_outcome_without_unknown_work",
+      "replace": [
+        {
+          "pointer": "/degradations",
+          "value": [
+            {
+              "count": 1,
+              "kind": "context_abstained"
+            },
+            {
+              "kind": "model_outcome_unknown"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "an unfinished Answer must be marked partial",
+      "id": "deadline_stop_without_partial",
+      "replace": [
+        {
+          "pointer": "/parts/1/stop",
+          "value": "deadline"
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer shortened parts disagree with omissions",
+      "id": "omission_without_shortened_part",
+      "replace": [
+        {
+          "pointer": "/candidate_count",
+          "value": 3
+        },
+        {
+          "pointer": "/omitted_count",
+          "value": 1
+        },
+        {
+          "pointer": "/partial",
+          "value": {
+            "part": 2,
+            "reason": "bytes",
+            "stage": "union"
+          }
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer partial reason is not observed",
+      "id": "queued_without_ticket",
+      "replace": [
+        {
+          "pointer": "/partial",
+          "value": {
+            "reason": "queued",
+            "stage": "coverage"
+          }
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer application scope mismatch",
+      "id": "application_revision_changed_undisclosed",
+      "replace": [
+        {
+          "pointer": "/applications/0/scope/configuration_revision",
+          "value": 2
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer loop searches defer in-search Focus",
+      "id": "search_carries_focus_receipt",
+      "replace": [
+        {
+          "pointer": "/records/0/canonical_result/collection",
+          "value": "fixture"
+        },
+        {
+          "pointer": "/records/0/canonical_result/focus",
+          "value": {
+            "kind": "receipt",
+            "receipt": {
+              "applied": true,
+              "availability": "ready",
+              "candidate_count": 4,
+              "identity": {
+                "calibration": "0909090909090909090909090909090909090909090909090909090909090909",
+                "compiler": "0808080808080808080808080808080808080808080808080808080808080808",
+                "profile": "0707070707070707070707070707070707070707070707070707070707070707",
+                "runtime": "onnxruntime-cpu/1.30.0",
+                "task_policy": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
+              },
+              "input_digest": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+              "observed_input_tokens": 90,
+              "omitted_count": 1,
+              "original_order": [
+                "1414141414141414141414141414141414141414141414141414141414141414",
+                "1515151515151515151515151515151515151515151515151515151515151515",
+                "1616161616161616161616161616161616161616161616161616161616161616",
+                "1717171717171717171717171717171717171717171717171717171717171717"
+              ],
+              "presentations": [
+                {
+                  "candidate": "1414141414141414141414141414141414141414141414141414141414141414",
+                  "source_bytes": 10,
+                  "utf8_end": 5,
+                  "utf8_start": 0
+                },
+                {
+                  "candidate": "1515151515151515151515151515151515151515151515151515151515151515",
+                  "source_bytes": 10,
+                  "utf8_end": 5,
+                  "utf8_start": 0
+                },
+                {
+                  "candidate": "1616161616161616161616161616161616161616161616161616161616161616",
+                  "source_bytes": 10,
+                  "utf8_end": 5,
+                  "utf8_start": 0
+                }
+              ],
+              "presented_count": 3,
+              "ranked_order": [
+                "1616161616161616161616161616161616161616161616161616161616161616",
+                "1414141414141414141414141414141414141414141414141414141414141414",
+                "1515151515151515151515151515151515151515151515151515151515151515",
+                "1717171717171717171717171717171717171717171717171717171717171717"
+              ],
+              "reason": "Synthetic complete prefix ranking; no model qualification",
+              "reserved_input_tokens": 100,
+              "schema": "airk.arbiter.focus.ranking/1",
+              "scope": {
+                "authorization": "0606060606060606060606060606060606060606060606060606060606060606",
+                "catalog": "02020202020202020202020202020202",
+                "configuration_revision": 1,
+                "index_id": "idx_05050505050505050505050505050505",
+                "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+                "publication": {
+                  "collection": "fixture",
+                  "generation": 1,
+                  "incarnation": "03030303030303030303030303030303",
+                  "revision": "0404040404040404040404040404040404040404040404040404040404040404",
+                  "token": "airk-r1:03030303030303030303030303030303:1:0404040404040404040404040404040404040404040404040404040404040404"
+                }
+              },
+              "scored_count": 3,
+              "scores": [
+                {
+                  "candidate": "1414141414141414141414141414141414141414141414141414141414141414",
+                  "no_logit": 0.0,
+                  "relevance": 0.7310585975646973,
+                  "yes_logit": 1.0
+                },
+                {
+                  "candidate": "1515151515151515151515151515151515151515151515151515151515151515",
+                  "no_logit": 0.0,
+                  "relevance": 0.5,
+                  "yes_logit": 0.0
+                },
+                {
+                  "candidate": "1616161616161616161616161616161616161616161616161616161616161616",
+                  "no_logit": 0.0,
+                  "relevance": 0.8807970285415649,
+                  "yes_logit": 2.0
+                }
+              ],
+              "work": {
+                "bytes": 0,
+                "calls": 0,
+                "candidates": 3,
+                "compile_us": 1,
+                "fanout": 0,
+                "inference_us": 2,
+                "input_tokens": 90,
+                "policy_us": null,
+                "queue_us": null,
+                "rounds": 0
+              }
+            }
+          }
+        },
+        {
+          "pointer": "/records/0/canonical_result/future_native_field",
+          "remove": true
+        },
+        {
+          "pointer": "/records/0/canonical_result/generation",
+          "value": 1
+        },
+        {
+          "pointer": "/records/0/canonical_result/hits",
+          "value": [
+            {
+              "citation": {
+                "content_hash": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c",
+                "end_line": 1,
+                "location": {
+                  "Lines": {
+                    "end": 1,
+                    "start": 1
+                  }
+                },
+                "path": "policy.md",
+                "start_line": 1
+              },
+              "text": "abcdefghij",
+              "truncated": false
+            },
+            {
+              "citation": {
+                "content_hash": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c",
+                "end_line": 1,
+                "location": {
+                  "Lines": {
+                    "end": 1,
+                    "start": 1
+                  }
+                },
+                "path": "policy.md",
+                "start_line": 1
+              },
+              "text": "abcdefghij",
+              "truncated": false
+            },
+            {
+              "citation": {
+                "content_hash": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c",
+                "end_line": 1,
+                "location": {
+                  "Lines": {
+                    "end": 1,
+                    "start": 1
+                  }
+                },
+                "path": "policy.md",
+                "start_line": 1
+              },
+              "text": "abcdefghij",
+              "truncated": false
+            },
+            {
+              "citation": {
+                "content_hash": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c",
+                "end_line": 1,
+                "location": {
+                  "Lines": {
+                    "end": 1,
+                    "start": 1
+                  }
+                },
+                "path": "policy.md",
+                "start_line": 1
+              },
+              "text": "abcdefghij",
+              "truncated": false
+            }
+          ]
+        },
+        {
+          "pointer": "/records/0/canonical_result/publication",
+          "value": {
+            "collection": "fixture",
+            "generation": 1,
+            "incarnation": "03030303030303030303030303030303",
+            "revision": "0404040404040404040404040404040404040404040404040404040404040404",
+            "token": "airk-r1:03030303030303030303030303030303:1:0404040404040404040404040404040404040404040404040404040404040404"
+          }
+        },
+        {
+          "pointer": "/records/0/canonical_result/truncated",
+          "value": false
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer evidence is not one exact deduplicated partition",
+      "id": "duplicate_record",
+      "replace": [
+        {
+          "pointer": "/records/1/id",
+          "value": "1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f"
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer elapsed time exceeds its deadline and tolerance",
+      "id": "elapsed_over_deadline",
+      "replace": [
+        {
+          "pointer": "/elapsed_ms",
+          "value": 301001
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "invalid decision log stage and source counts",
+      "id": "count_without_model",
+      "replace": [
+        {
+          "pointer": "/decision_log/counts/1/model",
+          "remove": true
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "only an empty decision log has the empty log digest",
+      "id": "empty_digest_on_nonempty_log",
+      "replace": [
+        {
+          "pointer": "/decision_log/digest",
+          "value": "ab089e739cf3e4ed3e1b500ace2b8f30b3ecf32c0dcbfe1a5c72de5e4a80ae63"
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "a ticket reply carries no work and is marked queued",
+      "id": "ticket_with_parts",
+      "replace": [
+        {
+          "pointer": "/ticket",
+          "value": {
+            "estimated_finish_ms": 400000,
+            "estimated_start_ms": 90000,
+            "id": "5050505050505050505050505050505050505050505050505050505050505050",
+            "queue_position": 3,
+            "retry_after_ms": 90000
+          }
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer work differs from its rounds",
+      "id": "work_calls_differ_from_rounds",
+      "replace": [
+        {
+          "pointer": "/work/calls",
+          "value": 5
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer work does not retain its round, Split, Plan and Focus tokens",
+      "id": "work_tokens_not_retained",
+      "replace": [
+        {
+          "pointer": "/work/input_tokens",
+          "value": 139
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer measured model timing not retained",
+      "id": "timing_not_retained",
+      "replace": [
+        {
+          "pointer": "/work/inference_us",
+          "value": 5
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer original work budget exceeded",
+      "id": "work_tokens_over_pool",
+      "replace": [
+        {
+          "pointer": "/work/input_tokens",
+          "value": 131073
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer original work budget exceeded",
+      "id": "candidates_exceed_reads",
+      "replace": [
+        {
+          "pointer": "/candidate_count",
+          "value": 7
+        },
+        {
+          "pointer": "/omitted_count",
+          "value": 5
+        },
+        {
+          "pointer": "/partial",
+          "value": {
+            "part": 2,
+            "reason": "bytes",
+            "stage": "union"
+          }
+        },
+        {
+          "pointer": "/parts/1/shortened",
+          "value": true
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer response exceeds the reply frame",
+      "id": "reply_over_frame",
+      "replace": [
+        {
+          "count": 140000,
+          "pointer": "/paragraphs/0/text",
+          "repeat": "x"
+        }
+      ]
+    }
+  ],
+  "reply_frame_bytes": 131072,
+  "request_schema": "airk.arbiter.context.request/3",
+  "response_cases": [
+    {
+      "accepted": true,
+      "id": "two_parts_valid",
+      "response": {
+        "applications": [
+          {
+            "availability": "ready",
+            "profile": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+            "reason": "Compact on CUDA",
+            "scope": {
+              "authorization": "0606060606060606060606060606060606060606060606060606060606060606",
+              "catalog": "02020202020202020202020202020202",
+              "configuration_revision": 1,
+              "index_id": "idx_05050505050505050505050505050505",
+              "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+              "publication": {
+                "collection": "fixture",
+                "generation": 1,
+                "incarnation": "03030303030303030303030303030303",
+                "revision": "0404040404040404040404040404040404040404040404040404040404040404",
+                "token": "airk-r1:03030303030303030303030303030303:1:0404040404040404040404040404040404040404040404040404040404040404"
+              }
+            }
+          }
+        ],
+        "candidate_count": 2,
+        "decision_log": {
+          "attribution": [
+            {
+              "part": 1,
+              "round": 1,
+              "tokens": 76
+            },
+            {
+              "part": 2,
+              "round": 1,
+              "tokens": 40
+            }
+          ],
+          "card_calls": 1,
+          "counts": [
+            {
+              "count": 1,
+              "source": "deterministic",
+              "stage": "split"
+            },
+            {
+              "count": 1,
+              "model": "context_compact",
+              "source": "model",
+              "stage": "coverage"
+            },
+            {
+              "count": 1,
+              "model": "context_compact",
+              "source": "abstained",
+              "stage": "coverage"
+            },
+            {
+              "count": 1,
+              "source": "deterministic",
+              "stage": "follow_up"
+            }
+          ],
+          "digest": "4646464646464646464646464646464646464646464646464646464646464646",
+          "focus_calls": 1,
+          "focus_pairs": 2,
+          "included": 4,
+          "omitted": 0,
+          "timings": {
+            "compile_us": 4,
+            "inference_us": 6
+          },
+          "total": 4,
+          "work_unknown": 0
+        },
+        "decisions": [
+          {
+            "applicability": "current",
+            "basis": {
+              "digest": "5e935b76fef2ede25e8259950ff0a16baf40806996cd2df060bd5fd247c78660",
+              "omitted": 0,
+              "presented": 0
+            },
+            "batched_with": [],
+            "chosen": [
+              {
+                "class": "split_at",
+                "symbol": "A"
+              }
+            ],
+            "ordinal": 1,
+            "roster_digest": "1e0e7d10889cdd344807f8aae0ab525c324474f4e1334d1925e1608520f1f893",
+            "source": {
+              "kind": "deterministic",
+              "rule": "explicit_breaks"
+            },
+            "stage": "split",
+            "work_unknown": false
+          },
+          {
+            "applicability": "current",
+            "basis": {
+              "digest": "4f03d70366e26f807d9162ff54fb606e84e67234b2a9d2c14688ef1953992d6d",
+              "omitted": 0,
+              "presented": 1
+            },
+            "batched_with": [
+              3
+            ],
+            "card_slot": 1,
+            "chosen": [
+              {
+                "class": "covered",
+                "symbol": "A"
+              }
+            ],
+            "device": "cuda",
+            "margin": 1.5,
+            "model": "context_compact",
+            "need": 1,
+            "ordinal": 2,
+            "part": 1,
+            "precision": "float16",
+            "receipt": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
+            "roster_digest": "554e83a73e6cdfc0ffc9c09fc5ecd83b64c834daaa58599ca1c7f5e809a19c7d",
+            "round": 1,
+            "runner_up": 0.5,
+            "source": {
+              "kind": "model",
+              "mode": "top_score"
+            },
+            "stage": "coverage",
+            "top": 2.0,
+            "work_unknown": false
+          },
+          {
+            "applicability": "current",
+            "basis": {
+              "digest": "210472cb94ddf49b76f767c48e37a56d841ace31e7e407e18a9e27807e421002",
+              "omitted": 0,
+              "presented": 1
+            },
+            "batched_with": [
+              2
+            ],
+            "card_slot": 1,
+            "chosen": [
+              {
+                "class": "read_more_here",
+                "symbol": "B"
+              }
+            ],
+            "device": "cuda",
+            "model": "context_compact",
+            "need": 1,
+            "ordinal": 3,
+            "part": 2,
+            "precision": "float16",
+            "receipt": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
+            "roster_digest": "554e83a73e6cdfc0ffc9c09fc5ecd83b64c834daaa58599ca1c7f5e809a19c7d",
+            "round": 1,
+            "runner_up": 0.10000000149011612,
+            "source": {
+              "fallback": "top_focus_span",
+              "kind": "abstained",
+              "reason": "abstained"
+            },
+            "stage": "coverage",
+            "top": 0.20000000298023224,
+            "work_unknown": false
+          },
+          {
+            "applicability": "current",
+            "basis": {
+              "digest": "5e935b76fef2ede25e8259950ff0a16baf40806996cd2df060bd5fd247c78660",
+              "omitted": 0,
+              "presented": 0
+            },
+            "batched_with": [],
+            "chosen": [
+              {
+                "class": "follow_up_query",
+                "symbol": "A"
+              }
+            ],
+            "need": 1,
+            "ordinal": 4,
+            "part": 2,
+            "roster_digest": "c15666c8d94e621abc680422893ed549184b43d64e7de3945b5c15ababe8bee5",
+            "round": 1,
+            "source": {
+              "kind": "deterministic",
+              "rule": "first_extracted_term"
+            },
+            "stage": "follow_up",
+            "work_unknown": false
+          }
+        ],
+        "degradations": [
+          {
+            "count": 1,
+            "kind": "context_abstained"
+          }
+        ],
+        "elapsed_ms": 2000,
+        "model_work": {
+          "context_calls": 1,
+          "focus_calls": 1,
+          "focus_pairs": 2
+        },
+        "omitted_count": 0,
+        "omitted_evidence": [],
+        "packet_schema": "airk.arbiter.packet/2",
+        "paragraphs": [
+          {
+            "evidence": [
+              "2020202020202020202020202020202020202020202020202020202020202020"
+            ],
+            "interpretation": false,
+            "text": "fn restart_guard() {}"
+          }
+        ],
+        "partial": null,
+        "parts": [
+          {
+            "deadline_share_ms": 120000,
+            "gaps": [
+              "sufficient"
+            ],
+            "id": 1,
+            "rounds": [
+              {
+                "calls": 3,
+                "fanout": 2,
+                "follow_ups_run": [],
+                "input_tokens": 100,
+                "new_evidence": 2,
+                "round": 1,
+                "sub_needs_covered": 1
+              }
+            ],
+            "shortened": false,
+            "span": {
+              "utf8_end": 35,
+              "utf8_start": 0
+            },
+            "stop": "covered",
+            "sub_needs": [
+              {
+                "coverage": "covered",
+                "evidence": [
+                  "2020202020202020202020202020202020202020202020202020202020202020"
+                ],
+                "evidence_omitted": 0,
+                "id": 1,
+                "kind": "definition",
+                "text": "where is the restart guard defined",
+                "unrun_reads": []
+              }
+            ]
+          },
+          {
+            "deadline_share_ms": 120000,
+            "gaps": [
+              "example"
+            ],
+            "id": 2,
+            "rounds": [
+              {
+                "calls": 2,
+                "fanout": 2,
+                "follow_ups_run": [],
+                "input_tokens": 40,
+                "new_evidence": 1,
+                "round": 1,
+                "sub_needs_covered": 0
+              },
+              {
+                "calls": 1,
+                "fanout": 1,
+                "follow_ups_run": [
+                  {
+                    "operation": "search",
+                    "target": "README search"
+                  }
+                ],
+                "input_tokens": 0,
+                "new_evidence": 0,
+                "round": 2,
+                "sub_needs_covered": 0
+              }
+            ],
+            "shortened": false,
+            "span": {
+              "utf8_end": 71,
+              "utf8_start": 36
+            },
+            "stop": "no_progress",
+            "sub_needs": [
+              {
+                "coverage": "partial",
+                "evidence": [
+                  "1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f"
+                ],
+                "evidence_omitted": 0,
+                "id": 1,
+                "kind": "documentation",
+                "text": "README section on search",
+                "unrun_reads": [
+                  {
+                    "operation": "document_sections",
+                    "reason": "not_chosen",
+                    "target": "README.md"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "question": "Where is the restart guard defined? Which README section covers search?",
+        "record_uses": [
+          {
+            "cause": "part_search",
+            "part": 1,
+            "record": "1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
+            "round": 1
+          },
+          {
+            "cause": "need_search",
+            "need": 1,
+            "part": 2,
+            "record": "1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
+            "round": 1
+          },
+          {
+            "cause": "structural_read",
+            "need": 1,
+            "part": 1,
+            "record": "2020202020202020202020202020202020202020202020202020202020202020",
+            "round": 1
+          }
+        ],
+        "records": [
+          {
+            "arguments": {
+              "query": "restart guard"
+            },
+            "canonical_result": {
+              "future_native_field": {
+                "retained": true
+              },
+              "hits": []
+            },
+            "id": "1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
+            "operation": "search",
+            "role": "definition"
+          },
+          {
+            "arguments": {
+              "query": "restart guard"
+            },
+            "canonical_result": {
+              "future_native_field": {
+                "retained": true
+              },
+              "hits": []
+            },
+            "id": "2020202020202020202020202020202020202020202020202020202020202020",
+            "operation": "symbols",
+            "role": "definition"
+          }
+        ],
+        "schema": "airk.arbiter.context/3",
+        "scope": {
+          "authorization": "0606060606060606060606060606060606060606060606060606060606060606",
+          "catalog": "02020202020202020202020202020202",
+          "configuration_revision": 1,
+          "index_id": "idx_05050505050505050505050505050505",
+          "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+          "publication": {
+            "collection": "fixture",
+            "generation": 1,
+            "incarnation": "03030303030303030303030303030303",
+            "revision": "0404040404040404040404040404040404040404040404040404040404040404",
+            "token": "airk-r1:03030303030303030303030303030303:1:0404040404040404040404040404040404040404040404040404040404040404"
+          }
+        },
+        "ticket": null,
+        "union": {
+          "conflicts": [],
+          "dedup_count": 1
+        },
+        "work": {
+          "bytes": 2048,
+          "calls": 6,
+          "candidates": 2,
+          "compile_us": 4,
+          "fanout": 2,
+          "inference_us": 6,
+          "input_tokens": 140,
+          "policy_us": null,
+          "queue_us": null,
+          "rounds": 2
+        }
+      }
+    },
+    {
+      "accepted": true,
+      "id": "ticket_valid",
+      "response": {
+        "applications": [
+          {
+            "availability": "ready",
+            "profile": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+            "reason": "Compact on CUDA",
+            "scope": {
+              "authorization": "0606060606060606060606060606060606060606060606060606060606060606",
+              "catalog": "02020202020202020202020202020202",
+              "configuration_revision": 1,
+              "index_id": "idx_05050505050505050505050505050505",
+              "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+              "publication": {
+                "collection": "fixture",
+                "generation": 1,
+                "incarnation": "03030303030303030303030303030303",
+                "revision": "0404040404040404040404040404040404040404040404040404040404040404",
+                "token": "airk-r1:03030303030303030303030303030303:1:0404040404040404040404040404040404040404040404040404040404040404"
+              }
+            }
+          }
+        ],
+        "candidate_count": 0,
+        "decision_log": {
+          "attribution": [],
+          "card_calls": 0,
+          "counts": [],
+          "digest": "ab089e739cf3e4ed3e1b500ace2b8f30b3ecf32c0dcbfe1a5c72de5e4a80ae63",
+          "focus_calls": 0,
+          "focus_pairs": 0,
+          "included": 0,
+          "omitted": 0,
+          "timings": {},
+          "total": 0,
+          "work_unknown": 0
+        },
+        "decisions": [],
+        "degradations": [],
+        "elapsed_ms": 5,
+        "model_work": {
+          "context_calls": 0,
+          "focus_calls": 0,
+          "focus_pairs": 0
+        },
+        "omitted_count": 0,
+        "omitted_evidence": [],
+        "packet_schema": "airk.arbiter.packet/2",
+        "paragraphs": [],
+        "partial": {
+          "reason": "queued",
+          "stage": "admission"
+        },
+        "parts": [],
+        "question": "Where is the restart guard defined? Which README section covers search?",
+        "record_uses": [],
+        "records": [],
+        "schema": "airk.arbiter.context/3",
+        "scope": {
+          "authorization": "0606060606060606060606060606060606060606060606060606060606060606",
+          "catalog": "02020202020202020202020202020202",
+          "configuration_revision": 1,
+          "index_id": "idx_05050505050505050505050505050505",
+          "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+          "publication": {
+            "collection": "fixture",
+            "generation": 1,
+            "incarnation": "03030303030303030303030303030303",
+            "revision": "0404040404040404040404040404040404040404040404040404040404040404",
+            "token": "airk-r1:03030303030303030303030303030303:1:0404040404040404040404040404040404040404040404040404040404040404"
+          }
+        },
+        "ticket": {
+          "estimated_finish_ms": 400000,
+          "estimated_start_ms": 90000,
+          "id": "5050505050505050505050505050505050505050505050505050505050505050",
+          "queue_position": 3,
+          "retry_after_ms": 90000
+        },
+        "union": {
+          "conflicts": [],
+          "dedup_count": 0
+        },
+        "work": {
+          "bytes": 0,
+          "calls": 0,
+          "candidates": 0,
+          "compile_us": null,
+          "fanout": 0,
+          "inference_us": null,
+          "input_tokens": 0,
+          "policy_us": null,
+          "queue_us": null,
+          "rounds": 0
+        }
+      }
+    }
+  ],
+  "response_schema": "airk.arbiter.context/3",
+  "schema": "airk.arbiter.answer-loop-cases/1"
+}

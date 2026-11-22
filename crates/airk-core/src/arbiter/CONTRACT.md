@@ -1277,3 +1277,332 @@ qualification false.
 
 Core tests give the planner literal candidates, opt-in state, adapter
 vendor, core count and remaining time, and compare literal reason lists.
+
+
+## Answer loop wire contract version 3 (decided 22 November 2026, America/Denver)
+
+Owner: Core `arbiter::answer_loop` (reply, decision log, card advice, compact
+Focus receipt, loop calibration), with the private native inputs in Core
+`native_loop`. This is the L1 contract decision of the final plan, section 12
+(12.1 stages, 12.3 contracts, 12.4 time, 12.4.1 queueing), recorded under the
+section 11 row "Answer becomes a local multi-round loop (section 12)": the
+user's decision to change Answer's wire shape, budgets and digest inputs, with
+the exact shapes settled here. The budget ranges, card tasks, decision record
+and log, record uses, conflict kinds, unrun reasons, degradation kinds,
+compact Focus receipt, loop calibration and calibration set, and the review
+corrections below, are the primary agent's L3, L4 and L5 design decisions of
+the same day. Version 3 lands beside version 2. Request and response /1 and
+/2, the /2 `PartitionAllowance`, `NativeContextActionRequest` and
+`NativeNextReadRequest` stay unchanged and compiling until L3 and L4 switch the
+kernel, MCP, frontend and CLI and delete them; there is no backward
+compatibility after that.
+
+### Reply frame: 128 KiB for Answer (user decision, 22 November 2026)
+
+The user raised the Answer reply limit to 128 KiB (plan section 12.9, which
+lets execution proceed on recorded decisions). `MAX_ANSWER_RESPONSE_BYTES`
+(131,072) is Answer /3 only. A reply, measured on the whole canonical
+envelope as transported (`ContextResponseV3::from_canonical`) and on its typed
+form, takes at most `min(max_bytes, 131,072)` (`reply_limit`); Union packs
+against that. `MAX_RESPONSE_BYTES` (65,536) stays for every other tool and for
+Answer /2. The full-loop test (`a_full_default_loop_with_realistic_records_is_shortened_to_the_frame`)
+builds the default loop (4 parts, 4 sub-needs, 3 rounds, all 85 decisions)
+with 48 search records at the median sizes of 115 real search records from
+the one-turn evaluation captures (four hits of about 1,000 bytes with content
+hash and location, about 2,300 bytes of metadata, no scope and no Focus
+receipt): 6,833 bytes a record. Unshortened, the reply is 393,844 bytes, three
+times the frame. Union keeps all 85 decisions and 9 of the 48 records, discloses
+the other 39 as omitted evidence and marks the parts shortened: 125,017
+bytes, with 6,055 bytes to spare. A full loop therefore always shortens its
+records; the cited ids of every omitted record stay in the reply.
+
+Transport ceilings an Answer /3 reply passes, as of this decision. Only the
+airk-core Answer constant is raised here; L2 changes the others for Answer.
+Caps below 128 KiB that would refuse or cut a full reply are marked **cuts**.
+
+| Ceiling | Where | Bytes | Effect on a 128 KiB reply |
+| --- | --- | --- | --- |
+| Core reply limit for all tools | `airk-core/src/lib.rs:93` `MAX_RESPONSE_BYTES` | 65,536 | Stays for other tools; Answer /3 uses `MAX_ANSWER_RESPONSE_BYTES` |
+| MCP rendered-result check | `airk-mcp/src/lib.rs:1619-1625` | 65,536 | **cuts**: replaces a larger scoped reply with a reply-budget error |
+| MCP scope renderer room | `airk-mcp/src/response.rs:36`, `:190` | 65,536 | **cuts** |
+| Remote MCP stdio line cap | `airk-mcp/src/remote.rs:1309` (`service::MAX_FRAME_BYTES`) | 65,536 | **cuts**: a longer line overflows |
+| Frontend read body budget | `airk-frontend/src/combined_frontend.rs:64`, `:78` | 65,536 | **cuts** |
+| Frontend Answer outer bytes | `airk-frontend/src/combined_frontend/answer.rs:182`, `:191`, `:213` | 65,536 | **cuts** |
+| Frontend Answer verification | `airk-frontend/src/combined_frontend/answer/verification.rs:25` | 65,536 | **cuts** verification room |
+| Frontend console frame | `airk-frontend/src/console_client.rs:113` | 65,540 | **cuts** if Answer replies use it |
+| Frontend public envelope | `airk-frontend/src/combined_frontend.rs:51` | 1,048,576 | Fits |
+| Kernel Focus reply budget | `airk-kernel/src/arbiter/focus.rs:800` | 65,536 | **cuts** search-Focus room inside Answer |
+| Kernel context reply reserve | `airk-kernel/src/arbiter.rs:229` (`context_reply_reserve`) | 4,096 reserved | Reserve only; recheck against 131,072 |
+| Service IPC default frame | `airk-core/src/service.rs:34`, `:1305` (`MAX_FRAME_BYTES`) | 65,536 | **cuts** for any Answer path on a default method |
+| Service tools-call and Arbiter frames | `airk-core/src/service.rs:1278`, `:1295`, `:1300` | 4,194,304 | Fits |
+| Host session response frame | `airk-host/src/session_protocol.rs:32` | 16,777,216 | Fits |
+| airkctl rpc request limit | `airkctl/src/cli.rs:2912` | 65,536 | Request side only |
+| VS Code stdio session response | `packages/vscode/src/airkctl/session.ts:30` | 16,777,216 | Fits |
+
+### Request
+
+`airk.arbiter.context.request/3` is `schema`, `question` (the /2 bound: not
+blank, at most 16,384 UTF-8 bytes), `budget` (`BudgetV3`) and an optional
+`continuation`, a ticket or continuation id used to attach to an existing job
+(behaviour in L2b; only the shape lands now). The request refuses a
+`max_bytes` smaller than the question plus `MIN_REPLY_SKELETON_BYTES` (4,096,
+the smallest reply around a question; a test measures it).
+
+### Budget
+
+Every field is required and validated, never silently replaced.
+
+| Field | Range | Default | Derivation |
+| --- | --- | --- | --- |
+| `deadline_ms` | 1..=600,000 | 300,000 | Section 12.4 |
+| `max_bytes` | 1,024..=524,288 | 262,144 | Retained while gathering; the reply takes `min(max_bytes, 131,072)` |
+| `max_parts` | 1..=4 | 4 | Section 12.1 |
+| `max_sub_needs` | 1..=4 | 4 | Per part |
+| `rounds` | 1..=3 | 3 | Per part |
+| `calls` | 1..=160 | 132 | Round one 4 x (1 + 4 x 6) = 100, later rounds 4 x 2 x 4 = 32; 28 spare |
+| `fanout` | 1..=12 | 8 | Peak concurrent reads in one round of one part; default as /2 |
+| `candidates` | 1..=160 | 132 | One candidate record per read before dedup, so equal to `calls` |
+| `input_tokens` | 1..=262,144 | 131,072 | Attempt pool |
+| `round_input_tokens` | 1..=32,768 | 32,768 | Two batched coverage calls and one follow-up call at 8,192, plus 16 Focus pairs at 512 |
+| `context_calls` | 1..=64 | 48 | Card calls (slots): 1 Split + 4 Plan + 12 x 2 coverage + 8 x 2 follow-up = 45 with two-sub-need batching |
+| `focus_calls` | 1..=48 | 24 | 4 x 3 x 4 unbatched; default two calls a part-round |
+| `focus_pairs` | 1..=384 | 192 | 12 part-rounds x 32, the batch ceiling; default 16 a part-round; 384 x 512 = 196,608 tokens fit the pool |
+
+`round_input_tokens` may not exceed `input_tokens` and `focus_calls` may not
+exceed `focus_pairs`. Structurally, round one of a part runs its one part
+search plus at most six reads for each sub-need (search, symbols, references,
+imports or outline, the governing CONTRACT.md or README, tests); each later
+round runs at most one read per sub-need. One Context card call is at most
+8,192 tokens. The log holds at most 1 + 4 x (1 + 3 x 4 x 2) = 101 decisions.
+
+### Reply
+
+`airk.arbiter.context/3` with packet `airk.arbiter.packet/2`.
+
+- **Kept from /2:** `question`, `records` (deduplicated canonical reads with
+  exact arguments and intact canonical results), `paragraphs` (grounded),
+  `work`, `candidate_count`, `omitted_count` and `applications`, plus `scope`
+  (the one index partition, as /2's `assessment.scope`).
+- **Where the other /2 fields went:** `gaps` became per-part `gaps` with the
+  same `Gap` kinds (definition, constraint, example, test, counterevidence,
+  ambiguous, unsupported, sufficient) beside the sub-need kinds; `stop`
+  became per-part `stop`, which keeps the /2 terminals clarification_required
+  and no_justified_read; `assessment_history` became `decisions` (compact)
+  plus the custody log; `assessment` became the parts' coverage. The /2 rules
+  carry over: sufficient only with covered, covered means exactly
+  `[sufficient]`, clarification needs ambiguous, no_justified_read needs a
+  gap. Each decision keeps a compact basis (presented and omitted source unit
+  counts and a basis digest) with the full EvidenceRef list in the log, its
+  typed `AssessmentUnavailable` reason for abstained and unavailable sources,
+  `work_unknown`, and validated applicability: only the latest decision per
+  (part, sub-need, stage) may be current.
+- **parts:** numbered from 1 in question order, each with its UTF-8 `span`
+  (ordered, not overlapping, on character boundaries), its deadline share
+  (shares sum to at most the deadline), sub-needs, gaps, per-round provenance
+  (`calls`, `fanout`, observed `input_tokens`, `new_evidence`,
+  `follow_ups_run`, `sub_needs_covered`), its `stop` (covered,
+  clarification_required, no_justified_read, no_progress, rounds, budget,
+  deadline, stale, refused, unsupported) and `shortened`.
+- **sub-needs:** numbered from 1 in their part, own query `text`, `kind`
+  (definition, callers, tests, contract, documentation, configuration,
+  other), `coverage` (covered and partial cite evidence, missing cites none),
+  cited record ids, `evidence_omitted` and `unrun_reads`, each with a reason
+  (deadline, budget, round_limit, not_chosen) consistent with the part's
+  stop. A cited record may be retained or listed in the reply's
+  `omitted_evidence` (ids the frame omitted); `evidence_omitted` counts the
+  latter. A covered sub-need has no unrun reads.
+- **record_uses:** every (record, part, sub-need, round, cause) finding of a
+  retained record; causes are part_search, need_search, structural_read
+  (round one), follow_up (later rounds) and shared_read.
+- **union:** `dedup_count` equals the findings merged into a record another
+  part also found when nothing was omitted, and is at least that otherwise;
+  `conflicts` are divergent_definition (two or more records) or
+  divergent_verdict (one or more), each naming two or more parts that found
+  its evidence. Conflicts are noted, never resolved.
+- **partial** (required, nullable) names the stage and reason (queued,
+  deadline, budget, bytes, stale, refused), an optional part and an optional
+  continuation. A part stopped on budget, deadline, stale or refused, or any
+  omission, requires it. Its reason must be observed: a part's stop, an
+  omission for bytes, or Compose or Union running out of deadline or budget
+  with no part stopped by it.
+- **ticket** (required, nullable): id, queue position, estimated start and
+  finish and `retry_after_ms`. A ticket reply carries no parts, records,
+  decisions or work and is marked partial at admission with reason queued.
+- **degradations:** context_absent (every logged decision deterministic),
+  context_abstained {count, equal to the logged abstentions}, focus_absent
+  (present exactly when no Focus ran: no batched call, and no search Focus,
+  which the loop defers), model_share {part, stage},
+  model_outcome_unknown (the log has unknown work), configuration_changed
+  (the only way an application may name another configuration revision),
+  batch_split, search_focus_deferred, and the 12.4.1 degrade-to-fit kinds
+  parts, sub_needs and rounds (the applied value then bounds the reply),
+  model (Large to Compact, or any model to none; the degraded model then
+  decides nothing among the included decisions) and device (a GPU to the
+  CPU). One per kind; model_share once per part and stage.
+- **decisions** (compact `DecisionRecord`): ordinal (the position in the whole
+  log, 1..=101), stage (split, plan, coverage, follow_up), part, need, round,
+  `roster_digest`, `card_slot` (present only for model-scored decisions, 1..=`context_calls`,
+  shared by the segments of one batched call), chosen cards (symbol and class;
+  several only for Plan, at most four), source (model {mode rule or
+  top_score, rule}, abstained {fallback, reason}, unavailable {fallback,
+  reason}, deterministic {rule}), top and runner-up raw scores and their
+  margin (exactly top minus runner-up), model, device, precision (GPU only),
+  `batched_with` (symmetric, same slot and receipt), applicability, receipt
+  id, basis and `work_unknown`. Only Compact or Large score cards; Large never
+  runs on the CPU. A deterministic decision carries no model facts.
+- **decision_log** (`DecisionLogSummary`): the custody log's digest, total,
+  included and omitted counts, card calls (distinct slots), counts per stage
+  and source, Focus calls and pairs, model tokens per part and round
+  (`attribution`), measured timings and unknown-work count. The reply's
+  decisions are a subset with increasing ordinals. Union omits decisions
+  oldest deterministic first: a model-scored decision may be omitted only
+  when no deterministic decision remains included. ContextAbstained,
+  `model_work`, slot counts, Focus work and round tokens reconcile against
+  these counts, not against the included list.
+- **model_work:** card calls, Focus calls and Focus pairs, equal to the log's.
+- **records:** a v3 record (`LoopEvidence`) carries no scope: it is always
+  the reply's `scope`, so 48 records do not repeat 587 bytes each. A loop
+  search defers in-search Focus (L3 design), so a search record carries no
+  native Focus receipt: `observed_focus_work` over the search records must
+  report no receipt, no work, no unknown work and no token overrun. Focus in
+  the loop is the batched Focus of the decision log only.
+- **Accounting:** `work.calls` is the sum of round reads, `work.fanout` their
+  peak and `work.rounds` the most rounds of any part. `work.input_tokens`
+  retains every round's tokens and the Split and Plan tokens (round 0); each
+  part-round charge is retained by its round. `elapsed_ms` is the wall-clock
+  time from admission to the reply, set by the kernel; it may exceed
+  `deadline_ms` by at most `DEADLINE_TOLERANCE_MS` (1,000 ms, for Compose,
+  Union and writing the reply after the last deadline check). Summed model
+  timings are disclosure only: they must be retained in `work`, but they
+  overlap across batched and concurrent calls and are not compared with the
+  deadline. `candidate_count` is at most `work.calls`.
+
+### Decision log (service custody, retained by L2b)
+
+`DecisionLog` (`airk.arbiter.decision-log/1`) holds the question, scope, one
+`DecisionLogEntry` per decision (the compact record, task policy, full cards
+with symbol, class, text digest and Split partition, all raw scores, chosen
+indexes, and the presented and omitted EvidenceRefs of the basis), every
+`CardAdvice` and every `FocusBatchReceipt`. Its validation: contiguous
+ordinals; at most one Split decision; only the latest decision per (part,
+sub-need, stage) is current; the compact record agrees with the entry (chosen
+cards, top and runner-up, presented and omitted basis counts and the basis
+digest over both, and `roster_digest`, recomputed from the stage and every
+card record, so a moved or swapped Split partition fails); a Split card is a
+whole partition of the question into one (KeepWhole) or two to four
+(SplitAt) contiguous, non-overlapping, covering ranges; decisions of one slot
+name one receipt; each receipt's task, policy and slot match; every
+decision's part and round is charged in its receipt; decisions sharing a
+receipt name each other; every receipt segment maps to a decision naming
+that receipt and agrees with its outcome, scores, rule and margin; Focus
+receipts are distinct and within the Focus budget. A native card's
+`text_digest` covers its text and partition, and a native roster digest is
+the same `roster_digest` over the cards' log records.
+
+`DecisionLog::summary` produces the reply's `decision_log`; its counts are
+per stage, source and model, so a Large-to-Compact degradation is checked
+against every logged decision. An empty log (no decisions, receipts or Focus
+calls) has the fixed digest
+`ab089e739cf3e4ed3e1b500ace2b8f30b3ecf32c0dcbfe1a5c72de5e4a80ae63`
+(`empty_log_digest`, framed domain `airk.arbiter.decision-log.empty/1` with
+no fields), whatever its question and scope; a reply with an empty summary
+must carry it, and no other summary may.
+
+`ContextResponseV3::validate_with_log` checks a reply against its log, and
+the kernel must call it before delivering an Answer /3 reply (L3). It
+validates the reply and then requires: the log's question and scope equal the
+reply's; the log is valid; the reply's summary digest is the log's digest and
+the summary equals `log.summary`; every logged decision's part, sub-need and
+round exist in the reply; every included decision equals its logged
+decision; the omitted decisions are exactly the oldest deterministic ones,
+then the oldest model-scored ones; and the chosen Split partition has one
+range per reply part, each containing its part's span, unless a Parts
+degradation explains the difference.
+
+### Card advice and native inputs
+
+`Task` gains `airk.context_split.v1`, `airk.context_plan.v1`,
+`airk.context_coverage.v1` and `airk.context_follow_up.v1`, one policy each in
+`Profile.task_policies`. `Stage::permits`, `SelectedModel::supported_tasks`
+and enrollment are unchanged; admitting the new tasks is L4's. `Decision`
+gains `loop_card` and `loop_cards`; Advice /1 and advice /2 refuse them.
+
+`CardAdvice` (`airk.arbiter.advice/3`) is one batched card call: the advice
+/2 bindings, its `card_slot` (1..=64), reserved and observed tokens (at most
+8,192), a per-part and per-round attribution equal to the observed tokens,
+and one segment per decision ordinal (1..=101) with raw scores and outcome.
+`NativeCardRequest` (`airk.arbiter.advice.request/3`) carries a BudgetV3
+parent, one task and policy, up to 16 segments that share one `card_slot`
+and name their decision ordinals, a reserved attribution that charges every
+segment's part and round and nothing else, and an optional
+`PartitionAllowanceV3`. `NativeFocusRequestV3` carries up to 16 distinct
+questions and up to 32 scored candidates that name their question by index;
+the candidate identity (`airk.arbiter.focus.candidate/2`) hashes the
+candidate's own question text.
+
+`PartitionAllowanceV3` (`airk.context-partition-allowance/3`) is a recorded
+wire-shape decision: attempt, selection, index, a BudgetV3 parent, resources
+within that parent, and strictly increasing `card_ordinals` (card slots,
+1..=`context_calls`) and `focus_ordinals` (1..=`focus_calls`); model tokens
+are allocated exactly when either list is non-empty. The /2 allowance is
+unchanged.
+
+### Compact Focus receipt
+
+`FocusBatchReceipt` (`airk.arbiter.focus.batch/1`) binds a scope digest,
+optional identity, a reason of at most 256 bytes, input, order and questions
+digests, the ranked permutation of candidate indexes, at most 32 (candidate,
+question) pairs of two finite logits, tokens and their attribution. It is
+bounded by 4,096 + 6 per candidate + 96 per pair; a full 32-pair batch over
+100 candidates is within 12,288 bytes of custody, against the full receipt's
+12,288 + 136 per candidate + 512 per score.
+
+### Loop calibration
+
+`LoopCalibration` (`airk.arbiter.loop-card.calibration/1`) binds model, card
+task, compiler, task policy, score ABI and the complete trained asset map,
+with at most 32 rules `{class, minimum_raw_margin}`, one per class of the
+task's stage; with zero rules every decision abstains. `LoopCalibrationSet`
+(`airk.arbiter.loop-card.calibration-set/1`) is one document per Context
+profile holding exactly one LoopCalibration per card task the profile admits,
+in card-task order. The profile keeps its one Calibration asset: the set's raw
+bytes are that asset, and their SHA-256 is both the asset digest and the
+profile's `calibration`, so the Profile shape is unchanged. The release ships
+every entry with zero rules; rules are fitted from L7.
+
+### Strictness
+
+Unit variants of internally tagged enums (for example `context_absent`) keep
+v2 parity: their strictness is serde's for such variants, as for the /2
+tagged enums. No new strictness is claimed for them.
+
+### Digest identities
+
+No digest input changes. The Context semantic closure (`context_action.rs`,
+`context_action/calibration.rs`, `context_action/calibration/terminal.rs` and
+the Focus digest) and the Focus closure (`focus.rs`, `native_focus.rs`,
+`device/receipt_runtime.rs`) keep their bytes; version 3 lives in new files
+(`arbiter/answer_loop*`, `native_loop*`). The current Focus and Context
+task-policy digests and the `cpu_source_transition` pins do not move in L1.
+The new files are outside both closures until the loop's task policies are
+hashed: L4 must bind the card and batched-Focus semantics into the new task
+policies' identities when it activates them, and moves the pins then through
+their own recorded decision. `mod.rs` and `schema.rs` changed and are not
+digest inputs.
+
+### Generated views
+
+`arbiter_contract` becomes 3. The Rust owner regenerates
+`packages/contracts-gen/arbiter.schema.json` (`AIRK_WRITE_CONTRACT_SCHEMA=1`);
+`scripts/dev/contract_types.py arbiter --write` then renders `arbiter.ts` and
+`packages/vscode/src/generated/arbiter.d.ts`. New roots: ContextRequestV3,
+ContextResponseV3, DecisionLog, FocusBatchReceipt, LoopCalibration and
+LoopCalibrationSet. Rust-emitted semantic cases live in
+`fixtures/split/arbiter/answer_loop_cases.json`
+(`answer_loop_semantic_case_emitter`, written only with
+`AIRK_WRITE_ANSWER_LOOP_CASES=1`): the default budget, each field's minimum
+and maximum with their neighbours, the valid two-part reply and ticket, and
+every refusal as JSON-pointer replacements of the valid reply with its
+expected error. All are qualification false. `download_origin_cases.json`
+embeds a schema snapshot written only on request; it is not compared and was
+not rewritten.

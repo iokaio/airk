@@ -85,6 +85,7 @@
     "fixtures/split/agents/open_access.json",
     "fixtures/split/agents/registry-policy3-descriptions.meta.json",
     "fixtures/split/agents/registry-policy3-descriptions.objects.json",
+    "fixtures/split/arbiter/answer_loop_cases.json",
     "fixtures/split/arbiter/budget_cases.json",
     "fixtures/split/arbiter/combined_answer_cases.json",
     "fixtures/split/arbiter/context_action_cases.json",

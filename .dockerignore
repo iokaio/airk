@@ -354,6 +354,7 @@ packages/vscode/src/test/fixtures/**
 !packages/vscode/src/workbenchRender.ts
 !packages/admin/src/ReviewScreen.tsx
 !fixtures/split/arbiter/budget_cases.json
+!fixtures/split/arbiter/answer_loop_cases.json
 !fixtures/split/arbiter/download_origin_cases.json
 !fixtures/split/arbiter/focus_only_allowance_cases.json
 !fixtures/split/arbiter/native_focus_request.json

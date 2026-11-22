@@ -56,6 +56,12 @@ pub fn document() -> serde_json::Value {
     root::<context_action::ContextRequestV2>(&mut generator, &mut roots);
     root::<context_action::ContextResponseV2>(&mut generator, &mut roots);
     root::<context_action::ContextActionRoster>(&mut generator, &mut roots);
+    root::<answer_loop::ContextRequestV3>(&mut generator, &mut roots);
+    root::<answer_loop::ContextResponseV3>(&mut generator, &mut roots);
+    root::<answer_loop::DecisionLog>(&mut generator, &mut roots);
+    root::<answer_loop::FocusBatchReceipt>(&mut generator, &mut roots);
+    root::<answer_loop::LoopCalibration>(&mut generator, &mut roots);
+    root::<answer_loop::LoopCalibrationSet>(&mut generator, &mut roots);
     root::<context_action::calibration::JointCalibration>(&mut generator, &mut roots);
     root::<context_action::calibration::terminal::TerminalQualification>(
         &mut generator,
@@ -71,7 +77,7 @@ pub fn document() -> serde_json::Value {
         .collect();
     serde_json::json!({
         "$schema":"https://json-schema.org/draft/2020-12/schema",
-        "title":"AIRK Arbiter Core contract","arbiter_contract":2,"arbiter_device_contract":2,
+        "title":"AIRK Arbiter Core contract","arbiter_contract":3,"arbiter_device_contract":2,
         "roots":roots,"$defs":definitions,
     })
 }

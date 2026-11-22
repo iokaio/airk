@@ -44,6 +44,15 @@ pub enum Task {
     ContextAction,
     #[serde(rename = "airk.focus_rank.v1")]
     FocusRank,
+    /// Answer loop card tasks (final plan section 12), each with its own policy.
+    #[serde(rename = "airk.context_split.v1")]
+    ContextSplit,
+    #[serde(rename = "airk.context_plan.v1")]
+    ContextPlan,
+    #[serde(rename = "airk.context_coverage.v1")]
+    ContextCoverage,
+    #[serde(rename = "airk.context_follow_up.v1")]
+    ContextFollowUp,
 }
 
 #[derive(
@@ -746,6 +755,10 @@ pub enum Decision {
     NextRead(Sha256Digest),
     Gap(Gap),
     ContextAction(Sha256Digest),
+    /// One chosen Answer loop card, by text digest.
+    LoopCard(Sha256Digest),
+    /// Several chosen Answer loop cards (Plan), in roster order.
+    LoopCards(Vec<Sha256Digest>),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -958,6 +971,7 @@ impl ContextResponse {
 mod downloads;
 pub use downloads::{DownloadOrigin, download_origin};
 
+pub mod answer_loop;
 pub mod context_action;
 pub mod literal;
 pub mod resource_policy;

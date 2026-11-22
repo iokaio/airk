@@ -59,6 +59,101 @@
       ],
       "type": "object"
     },
+    "AnswerPart": {
+      "additionalProperties": false,
+      "properties": {
+        "deadline_share_ms": {
+          "description": "This part's share of the deadline, after any early finisher's return.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "gaps": {
+          "description": "The /2 gap kinds that remain for this part, beside the sub-need kinds.",
+          "items": {
+            "$ref": "#/$defs/Gap"
+          },
+          "type": "array"
+        },
+        "id": {
+          "description": "Numbered from 1 in question order.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rounds": {
+          "items": {
+            "$ref": "#/$defs/RoundProvenance"
+          },
+          "type": "array"
+        },
+        "shortened": {
+          "description": "The part was shortened to fit the shared reply frame.",
+          "type": "boolean"
+        },
+        "span": {
+          "$ref": "#/$defs/QuestionSpan"
+        },
+        "stop": {
+          "$ref": "#/$defs/PartStop"
+        },
+        "sub_needs": {
+          "items": {
+            "$ref": "#/$defs/SubNeed"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "span",
+        "deadline_share_ms",
+        "sub_needs",
+        "gaps",
+        "rounds",
+        "stop",
+        "shortened"
+      ],
+      "type": "object"
+    },
+    "AnswerTicket": {
+      "additionalProperties": false,
+      "description": "Times are milliseconds from the reply.",
+      "properties": {
+        "estimated_finish_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "estimated_start_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "queue_position": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "retry_after_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "queue_position",
+        "estimated_start_ms",
+        "estimated_finish_ms",
+        "retry_after_ms"
+      ],
+      "type": "object"
+    },
     "AssessmentApplicability": {
       "enum": [
         "current",
@@ -349,6 +444,33 @@
       ],
       "type": "string"
     },
+    "BasisSummary": {
+      "additionalProperties": false,
+      "description": "The source units a decision saw; the full EvidenceRef list is in the log.",
+      "properties": {
+        "digest": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "omitted": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "presented": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "presented",
+        "omitted",
+        "digest"
+      ],
+      "type": "object"
+    },
     "BoundToken": {
       "additionalProperties": false,
       "properties": {
@@ -417,6 +539,102 @@
       ],
       "type": "object"
     },
+    "BudgetV3": {
+      "additionalProperties": false,
+      "properties": {
+        "calls": {
+          "description": "Canonical reads over the whole Answer.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "candidates": {
+          "description": "Candidate records over the whole Answer, before dedup.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "context_calls": {
+          "description": "Context card calls (slots).",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "deadline_ms": {
+          "description": "Whole Answer, Answer only.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "fanout": {
+          "description": "Peak concurrent reads in one round of one part.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "focus_calls": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "focus_pairs": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "input_tokens": {
+          "description": "Model input token pool of the whole attempt.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_bytes": {
+          "description": "Bytes retained while gathering; the reply takes at most the smaller\nof this and 131,072 bytes.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_parts": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_sub_needs": {
+          "description": "Per part.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "round_input_tokens": {
+          "description": "Model input tokens of one round of one part.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rounds": {
+          "description": "Per part.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "deadline_ms",
+        "max_bytes",
+        "max_parts",
+        "max_sub_needs",
+        "rounds",
+        "calls",
+        "fanout",
+        "candidates",
+        "input_tokens",
+        "round_input_tokens",
+        "context_calls",
+        "focus_calls",
+        "focus_pairs"
+      ],
+      "type": "object"
+    },
     "CandidateRejection": {
       "additionalProperties": false,
       "properties": {
@@ -442,6 +660,169 @@
       },
       "required": [
         "reason"
+      ],
+      "type": "object"
+    },
+    "CardAdvice": {
+      "additionalProperties": false,
+      "description": "Same immutable native bindings as advice /2, for one batched card call.",
+      "properties": {
+        "attribution": {
+          "items": {
+            "$ref": "#/$defs/TokenAttribution"
+          },
+          "type": "array"
+        },
+        "calibration": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "card_slot": {
+          "description": "The card call's slot, shared by all of its segments.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "compiler": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "input_digest": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "observed_input_tokens": {
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "policy": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "profile": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "reserved_input_tokens": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "runtime": {
+          "type": "string"
+        },
+        "schema": {
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/$defs/ScopeBinding"
+        },
+        "segments": {
+          "items": {
+            "$ref": "#/$defs/SegmentOutcome"
+          },
+          "type": "array"
+        },
+        "task": {
+          "$ref": "#/$defs/Task"
+        },
+        "task_policy": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "work": {
+          "$ref": "#/$defs/Work"
+        }
+      },
+      "required": [
+        "schema",
+        "task",
+        "profile",
+        "runtime",
+        "compiler",
+        "calibration",
+        "policy",
+        "task_policy",
+        "scope",
+        "input_digest",
+        "card_slot",
+        "reserved_input_tokens",
+        "observed_input_tokens",
+        "attribution",
+        "work",
+        "segments"
+      ],
+      "type": "object"
+    },
+    "CardClass": {
+      "description": "What a card proposes. Each class belongs to exactly one stage.",
+      "oneOf": [
+        {
+          "enum": [
+            "covered",
+            "read_more_here",
+            "search_for_term",
+            "follow_up_query",
+            "follow_up_hop"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "split_at",
+          "description": "A whole partition of the request into two to four ordered ranges.",
+          "type": "string"
+        },
+        {
+          "const": "keep_whole",
+          "description": "The partition of the request into one range.",
+          "type": "string"
+        },
+        {
+          "const": "plan_need",
+          "description": "Include a proposed sub-need.",
+          "type": "string"
+        }
+      ]
+    },
+    "CardRecord": {
+      "additionalProperties": false,
+      "description": "A presented card: decision symbol, class, text digest and, for Split\ncards, the ordered partition of the question it proposes.",
+      "properties": {
+        "class": {
+          "$ref": "#/$defs/CardClass"
+        },
+        "partition": {
+          "items": {
+            "$ref": "#/$defs/QuestionSpan"
+          },
+          "type": "array"
+        },
+        "symbol": {
+          "type": "string"
+        },
+        "text_digest": {
+          "$ref": "#/$defs/Sha256Digest"
+        }
+      },
+      "required": [
+        "symbol",
+        "class",
+        "text_digest"
+      ],
+      "type": "object"
+    },
+    "ChosenCard": {
+      "additionalProperties": false,
+      "properties": {
+        "class": {
+          "$ref": "#/$defs/CardClass"
+        },
+        "symbol": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "symbol",
+        "class"
       ],
       "type": "object"
     },
@@ -592,6 +973,53 @@
         "revision",
         "focus",
         "context"
+      ],
+      "type": "object"
+    },
+    "ConflictKind": {
+      "oneOf": [
+        {
+          "const": "divergent_definition",
+          "description": "Parts found different definitions for one name: two or more records.",
+          "type": "string"
+        },
+        {
+          "const": "divergent_verdict",
+          "description": "Parts judged the same evidence differently: one record or more.",
+          "type": "string"
+        }
+      ]
+    },
+    "ConflictNote": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "$ref": "#/$defs/ConflictKind"
+        },
+        "note": {
+          "type": "string"
+        },
+        "parts": {
+          "items": {
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind",
+        "parts",
+        "evidence",
+        "note"
       ],
       "type": "object"
     },
@@ -865,6 +1293,37 @@
       ],
       "type": "object"
     },
+    "ContextRequestV3": {
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "$ref": "#/$defs/BudgetV3"
+        },
+        "continuation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256Digest"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A ticket or continuation id, to attach to an existing job."
+        },
+        "question": {
+          "type": "string"
+        },
+        "schema": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "question",
+        "budget"
+      ],
+      "type": "object"
+    },
     "ContextResponse": {
       "additionalProperties": false,
       "properties": {
@@ -1018,6 +1477,154 @@
         "applications"
       ],
       "type": "object"
+    },
+    "ContextResponseV3": {
+      "additionalProperties": false,
+      "properties": {
+        "applications": {
+          "items": {
+            "$ref": "#/$defs/IndexApplication"
+          },
+          "type": "array"
+        },
+        "candidate_count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "decision_log": {
+          "$ref": "#/$defs/DecisionLogSummary"
+        },
+        "decisions": {
+          "description": "Compact card decisions, oldest deterministic ones omitted first.",
+          "items": {
+            "$ref": "#/$defs/DecisionRecord"
+          },
+          "type": "array"
+        },
+        "degradations": {
+          "items": {
+            "$ref": "#/$defs/Degradation"
+          },
+          "type": "array"
+        },
+        "elapsed_ms": {
+          "description": "Wall-clock milliseconds from admission to the reply, set by the kernel.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "model_work": {
+          "$ref": "#/$defs/LoopModelWork"
+        },
+        "omitted_count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "omitted_evidence": {
+          "description": "Ids of cited records the reply frame omitted.",
+          "items": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "type": "array"
+        },
+        "packet_schema": {
+          "type": "string"
+        },
+        "paragraphs": {
+          "items": {
+            "$ref": "#/$defs/GroundedParagraph"
+          },
+          "type": "array"
+        },
+        "partial": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PartialMarker"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "parts": {
+          "items": {
+            "$ref": "#/$defs/AnswerPart"
+          },
+          "type": "array"
+        },
+        "question": {
+          "type": "string"
+        },
+        "record_uses": {
+          "items": {
+            "$ref": "#/$defs/RecordUse"
+          },
+          "type": "array"
+        },
+        "records": {
+          "items": {
+            "$ref": "#/$defs/LoopEvidence"
+          },
+          "type": "array"
+        },
+        "schema": {
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/$defs/ScopeBinding",
+          "description": "The one index partition this Answer ran on."
+        },
+        "ticket": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AnswerTicket"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "union": {
+          "$ref": "#/$defs/UnionSummary"
+        },
+        "work": {
+          "$ref": "#/$defs/Work"
+        }
+      },
+      "required": [
+        "schema",
+        "packet_schema",
+        "question",
+        "scope",
+        "parts",
+        "records",
+        "omitted_evidence",
+        "record_uses",
+        "paragraphs",
+        "union",
+        "partial",
+        "ticket",
+        "degradations",
+        "decisions",
+        "decision_log",
+        "work",
+        "model_work",
+        "elapsed_ms",
+        "candidate_count",
+        "omitted_count",
+        "applications"
+      ],
+      "type": "object"
+    },
+    "Coverage": {
+      "enum": [
+        "covered",
+        "partial",
+        "missing"
+      ],
+      "type": "string"
     },
     "CpuFit": {
       "additionalProperties": false,
@@ -1176,6 +1783,790 @@
             "value"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "One chosen Answer loop card, by text digest.",
+          "properties": {
+            "kind": {
+              "const": "loop_card",
+              "type": "string"
+            },
+            "value": {
+              "$ref": "#/$defs/Sha256Digest"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Several chosen Answer loop cards (Plan), in roster order.",
+          "properties": {
+            "kind": {
+              "const": "loop_cards",
+              "type": "string"
+            },
+            "value": {
+              "items": {
+                "$ref": "#/$defs/Sha256Digest"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "DecisionLog": {
+      "additionalProperties": false,
+      "properties": {
+        "entries": {
+          "items": {
+            "$ref": "#/$defs/DecisionLogEntry"
+          },
+          "type": "array"
+        },
+        "focus_receipts": {
+          "items": {
+            "$ref": "#/$defs/FocusBatchReceipt"
+          },
+          "type": "array"
+        },
+        "question": {
+          "type": "string"
+        },
+        "receipts": {
+          "items": {
+            "$ref": "#/$defs/CardAdvice"
+          },
+          "type": "array"
+        },
+        "schema": {
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/$defs/ScopeBinding"
+        }
+      },
+      "required": [
+        "schema",
+        "question",
+        "scope",
+        "entries",
+        "receipts",
+        "focus_receipts"
+      ],
+      "type": "object"
+    },
+    "DecisionLogEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "basis": {
+          "description": "Source units presented, then those omitted from the roster.",
+          "items": {
+            "$ref": "#/$defs/EvidenceRef"
+          },
+          "type": "array"
+        },
+        "basis_omitted": {
+          "items": {
+            "$ref": "#/$defs/EvidenceRef"
+          },
+          "type": "array"
+        },
+        "cards": {
+          "items": {
+            "$ref": "#/$defs/CardRecord"
+          },
+          "type": "array"
+        },
+        "chosen": {
+          "description": "Indexes of the chosen cards.",
+          "items": {
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "decision": {
+          "$ref": "#/$defs/DecisionRecord"
+        },
+        "policy": {
+          "$ref": "#/$defs/Sha256Digest",
+          "description": "The roster's task policy identity."
+        },
+        "scores": {
+          "description": "Raw scores in card order; empty when no model scored.",
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "decision",
+        "policy",
+        "cards",
+        "scores",
+        "chosen",
+        "basis",
+        "basis_omitted"
+      ],
+      "type": "object"
+    },
+    "DecisionLogSummary": {
+      "additionalProperties": false,
+      "description": "What the reply says about the whole decision log.",
+      "properties": {
+        "attribution": {
+          "description": "Model tokens charged per part and round by every card and Focus receipt.",
+          "items": {
+            "$ref": "#/$defs/TokenAttribution"
+          },
+          "type": "array"
+        },
+        "card_calls": {
+          "description": "Distinct card slots used.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "counts": {
+          "description": "Decisions per stage and source, over the whole log.",
+          "items": {
+            "$ref": "#/$defs/StageSourceCount"
+          },
+          "type": "array"
+        },
+        "digest": {
+          "$ref": "#/$defs/Sha256Digest",
+          "description": "Digest of the complete custody log."
+        },
+        "focus_calls": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "focus_pairs": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "included": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "omitted": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "timings": {
+          "$ref": "#/$defs/LoopTimings",
+          "description": "Measured model timings summed over every receipt."
+        },
+        "total": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "work_unknown": {
+          "description": "Decisions and Focus calls whose work is unknown.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "digest",
+        "total",
+        "included",
+        "omitted",
+        "card_calls",
+        "counts",
+        "focus_calls",
+        "focus_pairs",
+        "attribution",
+        "timings",
+        "work_unknown"
+      ],
+      "type": "object"
+    },
+    "DecisionRecord": {
+      "additionalProperties": false,
+      "description": "The compact reply form of one card decision.",
+      "properties": {
+        "applicability": {
+          "$ref": "#/$defs/AssessmentApplicability"
+        },
+        "basis": {
+          "$ref": "#/$defs/BasisSummary"
+        },
+        "batched_with": {
+          "description": "Ordinals of the other decisions scored in the same card call.",
+          "items": {
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "card_slot": {
+          "description": "The card call this decision was scored in; batched segments share it.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "chosen": {
+          "items": {
+            "$ref": "#/$defs/ChosenCard"
+          },
+          "type": "array"
+        },
+        "device": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExecutionDevice"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "margin": {
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "model": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SelectedModel"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "need": {
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "ordinal": {
+          "description": "Position in the whole decision log, from 1.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "part": {
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "precision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DevicePrecision"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "receipt": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256Digest"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The card advice receipt's input digest, held in the decision log."
+        },
+        "roster_digest": {
+          "$ref": "#/$defs/Sha256Digest",
+          "description": "Digest of the presented roster (stage and every card record)."
+        },
+        "round": {
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "runner_up": {
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "source": {
+          "$ref": "#/$defs/DecisionSource"
+        },
+        "stage": {
+          "$ref": "#/$defs/LoopStage"
+        },
+        "top": {
+          "description": "Top and runner-up raw scores and their margin, in native units.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "work_unknown": {
+          "description": "A submitted call whose reply was lost: its work stays charged, unknown.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ordinal",
+        "stage",
+        "roster_digest",
+        "chosen",
+        "source",
+        "batched_with",
+        "applicability",
+        "basis",
+        "work_unknown"
+      ],
+      "type": "object"
+    },
+    "DecisionSource": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "model",
+              "type": "string"
+            },
+            "mode": {
+              "$ref": "#/$defs/ModelMode"
+            },
+            "rule": {
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "mode"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "fallback": {
+              "$ref": "#/$defs/DeterministicRule"
+            },
+            "kind": {
+              "const": "abstained",
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/$defs/AssessmentUnavailable"
+            }
+          },
+          "required": [
+            "kind",
+            "fallback",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "fallback": {
+              "$ref": "#/$defs/DeterministicRule"
+            },
+            "kind": {
+              "const": "unavailable",
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/$defs/AssessmentUnavailable"
+            }
+          },
+          "required": [
+            "kind",
+            "fallback",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "deterministic",
+              "type": "string"
+            },
+            "rule": {
+              "$ref": "#/$defs/DeterministicRule"
+            }
+          },
+          "required": [
+            "kind",
+            "rule"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Degradation": {
+      "description": "What was reduced or left out, and why.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "No Context model: every card decision took the deterministic order.",
+          "properties": {
+            "kind": {
+              "const": "context_absent",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Context decisions that abstained and fell back.",
+          "properties": {
+            "count": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "context_abstained",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "count"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "No Focus model ran: candidates kept their canonical order.",
+          "properties": {
+            "kind": {
+              "const": "focus_absent",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A part received less than its share of a model stage.",
+          "properties": {
+            "kind": {
+              "const": "model_share",
+              "type": "string"
+            },
+            "part": {
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "stage": {
+              "$ref": "#/$defs/LoopStage"
+            }
+          },
+          "required": [
+            "kind",
+            "part",
+            "stage"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A submitted model call's outcome is unknown; its slot stays charged.",
+          "properties": {
+            "kind": {
+              "const": "model_outcome_unknown",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The configuration changed during the Answer; later decisions are historical.",
+          "properties": {
+            "kind": {
+              "const": "configuration_changed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A batched model call was split to fit.",
+          "properties": {
+            "kind": {
+              "const": "batch_split",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Focus over the search results was deferred.",
+          "properties": {
+            "kind": {
+              "const": "search_focus_deferred",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Admission planned fewer parts (section 12.4.1).",
+          "properties": {
+            "applied": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "parts",
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/$defs/DegradationReason"
+            },
+            "requested": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "requested",
+            "applied",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "applied": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "sub_needs",
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/$defs/DegradationReason"
+            },
+            "requested": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "requested",
+            "applied",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "applied": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "rounds",
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/$defs/DegradationReason"
+            },
+            "requested": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "requested",
+            "applied",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Down the model ladder; no applied model is the no-model loop.",
+          "properties": {
+            "applied": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SelectedModel"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "kind": {
+              "const": "model",
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/$defs/DegradationReason"
+            },
+            "requested": {
+              "$ref": "#/$defs/SelectedModel"
+            },
+            "stage": {
+              "$ref": "#/$defs/Stage"
+            }
+          },
+          "required": [
+            "kind",
+            "stage",
+            "requested",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Down the device ladder, from a GPU to the CPU.",
+          "properties": {
+            "applied": {
+              "$ref": "#/$defs/ExecutionDevice"
+            },
+            "kind": {
+              "const": "device",
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/$defs/DegradationReason"
+            },
+            "requested": {
+              "$ref": "#/$defs/ExecutionDevice"
+            },
+            "stage": {
+              "$ref": "#/$defs/Stage"
+            }
+          },
+          "required": [
+            "kind",
+            "stage",
+            "requested",
+            "applied",
+            "reason"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "DegradationReason": {
+      "enum": [
+        "deadline_estimate",
+        "queue_wait",
+        "device_unavailable",
+        "memory_unavailable",
+        "model_unavailable"
+      ],
+      "type": "string"
+    },
+    "DeterministicRule": {
+      "description": "The deterministic order of section 12.2.",
+      "oneOf": [
+        {
+          "enum": [
+            "every_proposed_need",
+            "top_focus_span",
+            "first_extracted_term"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "explicit_breaks",
+          "description": "Split only on explicit enumerations and separate questions.",
+          "type": "string"
         }
       ]
     },
@@ -1862,6 +3253,15 @@
       ],
       "type": "string"
     },
+    "ExecutionDevice": {
+      "enum": [
+        "cpu",
+        "cuda",
+        "direct_ml",
+        "core_ml"
+      ],
+      "type": "string"
+    },
     "FocusApplication": {
       "additionalProperties": false,
       "properties": {
@@ -2009,6 +3409,116 @@
       ],
       "type": "object"
     },
+    "FocusBatchReceipt": {
+      "additionalProperties": false,
+      "properties": {
+        "applied": {
+          "type": "boolean"
+        },
+        "attribution": {
+          "items": {
+            "$ref": "#/$defs/TokenAttribution"
+          },
+          "type": "array"
+        },
+        "availability": {
+          "$ref": "#/$defs/Availability"
+        },
+        "candidate_count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "identity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FocusIdentity"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "input_digest": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "observed_input_tokens": {
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "order_digest": {
+          "$ref": "#/$defs/Sha256Digest",
+          "description": "Digest of the complete canonical candidate order, tail included."
+        },
+        "pairs": {
+          "items": {
+            "$ref": "#/$defs/FocusPairScore"
+          },
+          "type": "array"
+        },
+        "question_count": {
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "questions_digest": {
+          "$ref": "#/$defs/Sha256Digest",
+          "description": "Digest of the ordered distinct questions."
+        },
+        "ranked": {
+          "description": "The ranked permutation of candidate indexes.",
+          "items": {
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "reserved_input_tokens": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "schema": {
+          "type": "string"
+        },
+        "scope_digest": {
+          "$ref": "#/$defs/Sha256Digest",
+          "description": "Framed digest of the exact ScopeBinding; the record carries the scope."
+        },
+        "work": {
+          "$ref": "#/$defs/Work"
+        }
+      },
+      "required": [
+        "schema",
+        "scope_digest",
+        "availability",
+        "reason",
+        "applied",
+        "input_digest",
+        "order_digest",
+        "questions_digest",
+        "question_count",
+        "candidate_count",
+        "ranked",
+        "pairs",
+        "reserved_input_tokens",
+        "observed_input_tokens",
+        "attribution",
+        "work"
+      ],
+      "type": "object"
+    },
     "FocusIdentity": {
       "additionalProperties": false,
       "properties": {
@@ -2100,6 +3610,39 @@
         }
       ]
     },
+    "FocusPairScore": {
+      "additionalProperties": false,
+      "description": "One scored (candidate, question) pair, by index into the call's request.",
+      "properties": {
+        "candidate": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "no_logit": {
+          "format": "float",
+          "type": "number"
+        },
+        "question": {
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "yes_logit": {
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "candidate",
+        "question",
+        "no_logit",
+        "yes_logit"
+      ],
+      "type": "object"
+    },
     "FocusPresentation": {
       "additionalProperties": false,
       "properties": {
@@ -2182,6 +3725,23 @@
         "no_logit",
         "yes_logit",
         "relevance"
+      ],
+      "type": "object"
+    },
+    "FollowUp": {
+      "additionalProperties": false,
+      "properties": {
+        "operation": {
+          "$ref": "#/$defs/LoopRead"
+        },
+        "target": {
+          "description": "Query wording, identifier, path or name, from what was read.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "operation",
+        "target"
       ],
       "type": "object"
     },
@@ -2485,6 +4045,223 @@
         "allowed_relevance",
         "minimum_raw_margin"
       ],
+      "type": "object"
+    },
+    "LoopCalibration": {
+      "additionalProperties": false,
+      "properties": {
+        "assets": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JointAssetBinding"
+          },
+          "type": "object"
+        },
+        "compiler": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "model": {
+          "$ref": "#/$defs/ModelChoice"
+        },
+        "rules": {
+          "items": {
+            "$ref": "#/$defs/LoopRule"
+          },
+          "type": "array"
+        },
+        "schema": {
+          "type": "string"
+        },
+        "score_abi": {
+          "$ref": "#/$defs/ScoreAbi"
+        },
+        "task": {
+          "$ref": "#/$defs/Task",
+          "description": "The card task this policy admits decisions for."
+        },
+        "task_policy": {
+          "$ref": "#/$defs/Sha256Digest"
+        }
+      },
+      "required": [
+        "schema",
+        "model",
+        "task",
+        "compiler",
+        "task_policy",
+        "score_abi",
+        "assets",
+        "rules"
+      ],
+      "type": "object"
+    },
+    "LoopCalibrationSet": {
+      "additionalProperties": false,
+      "description": "One document per Context profile, holding a LoopCalibration per admitted\ncard task. The profile keeps its single Calibration asset: that asset's\nbytes are this document and its SHA-256 is the profile's `calibration`.",
+      "properties": {
+        "compiler": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "entries": {
+          "description": "In card-task order: Split, Plan, Coverage, FollowUp, each at most once.",
+          "items": {
+            "$ref": "#/$defs/LoopCalibration"
+          },
+          "type": "array"
+        },
+        "model": {
+          "$ref": "#/$defs/ModelChoice"
+        },
+        "schema": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "model",
+        "compiler",
+        "entries"
+      ],
+      "type": "object"
+    },
+    "LoopEvidence": {
+      "additionalProperties": false,
+      "description": "One deduplicated canonical read, merged by location and content digest.\nIts scope is the reply's `scope`; a v3 record never repeats it. A loop\nsearch defers in-search Focus, so it carries no Focus receipt.",
+      "properties": {
+        "arguments": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "canonical_result": true,
+        "id": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "operation": {
+          "$ref": "#/$defs/LoopRead"
+        },
+        "role": {
+          "$ref": "#/$defs/EvidenceRole"
+        }
+      },
+      "required": [
+        "id",
+        "operation",
+        "arguments",
+        "role",
+        "canonical_result"
+      ],
+      "type": "object"
+    },
+    "LoopModelWork": {
+      "additionalProperties": false,
+      "properties": {
+        "context_calls": {
+          "description": "Card calls (slots) used.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "focus_calls": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "focus_pairs": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "context_calls",
+        "focus_calls",
+        "focus_pairs"
+      ],
+      "type": "object"
+    },
+    "LoopRead": {
+      "description": "Canonical reads the loop may dispatch or propose.",
+      "enum": [
+        "search",
+        "symbols",
+        "definitions",
+        "references",
+        "imports",
+        "outline",
+        "read_file",
+        "document_sections",
+        "context"
+      ],
+      "type": "string"
+    },
+    "LoopRule": {
+      "additionalProperties": false,
+      "properties": {
+        "class": {
+          "$ref": "#/$defs/CardClass"
+        },
+        "minimum_raw_margin": {
+          "description": "Raw top-runner margin the unique global top card must reach.",
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "class",
+        "minimum_raw_margin"
+      ],
+      "type": "object"
+    },
+    "LoopStage": {
+      "description": "The loop's stages, step 0 to step 6, with admission before them.",
+      "enum": [
+        "admission",
+        "split",
+        "plan",
+        "retrieve",
+        "read",
+        "coverage",
+        "follow_up",
+        "compose",
+        "union"
+      ],
+      "type": "string"
+    },
+    "LoopTimings": {
+      "additionalProperties": false,
+      "properties": {
+        "compile_us": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "inference_us": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "policy_us": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "queue_us": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
       "type": "object"
     },
     "ManagementRequest": {
@@ -2861,6 +4638,20 @@
       ],
       "type": "string"
     },
+    "ModelMode": {
+      "oneOf": [
+        {
+          "const": "rule",
+          "description": "An accepted calibration rule admitted the top card.",
+          "type": "string"
+        },
+        {
+          "const": "top_score",
+          "description": "The top score, with no calibration rule in force.",
+          "type": "string"
+        }
+      ]
+    },
     "NativeRead": {
       "enum": [
         "search",
@@ -2960,6 +4751,92 @@
           "type": "object"
         }
       ]
+    },
+    "PartStop": {
+      "oneOf": [
+        {
+          "enum": [
+            "budget",
+            "deadline",
+            "stale",
+            "refused",
+            "unsupported"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "covered",
+          "description": "Every sub-need is covered.",
+          "type": "string"
+        },
+        {
+          "const": "clarification_required",
+          "description": "The question needs clarification (the /2 clarification terminal).",
+          "type": "string"
+        },
+        {
+          "const": "no_justified_read",
+          "description": "No proposed read is justified (the /2 no-read terminal).",
+          "type": "string"
+        },
+        {
+          "const": "no_progress",
+          "description": "A round added nothing new.",
+          "type": "string"
+        },
+        {
+          "const": "rounds",
+          "description": "The round limit was reached.",
+          "type": "string"
+        }
+      ]
+    },
+    "PartialMarker": {
+      "additionalProperties": false,
+      "properties": {
+        "continuation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sha256Digest"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The still-running job to attach to."
+        },
+        "part": {
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "reason": {
+          "$ref": "#/$defs/PartialReason"
+        },
+        "stage": {
+          "$ref": "#/$defs/LoopStage"
+        }
+      },
+      "required": [
+        "stage",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "PartialReason": {
+      "enum": [
+        "queued",
+        "deadline",
+        "budget",
+        "bytes",
+        "stale",
+        "refused"
+      ],
+      "type": "string"
     },
     "PartitionAssessment": {
       "additionalProperties": false,
@@ -3177,35 +5054,8 @@
           ]
         },
         "task_policies": {
-          "additionalProperties": false,
-          "properties": {
-            "airk.context_action.v1": {
-              "$ref": "#/$defs/Sha256Digest"
-            },
-            "airk.context_gap.v1": {
-              "$ref": "#/$defs/Sha256Digest"
-            },
-            "airk.context_next_read.v1": {
-              "$ref": "#/$defs/Sha256Digest"
-            },
-            "airk.evidence_relevance.v1": {
-              "$ref": "#/$defs/Sha256Digest"
-            },
-            "airk.evidence_role.v1": {
-              "$ref": "#/$defs/Sha256Digest"
-            },
-            "airk.focus_rank.v1": {
-              "$ref": "#/$defs/Sha256Digest"
-            },
-            "airk.recipe_choice.v1": {
-              "$ref": "#/$defs/Sha256Digest"
-            },
-            "airk.request_supported.v1": {
-              "$ref": "#/$defs/Sha256Digest"
-            },
-            "airk.retrieval_route.v1": {
-              "$ref": "#/$defs/Sha256Digest"
-            }
+          "additionalProperties": {
+            "$ref": "#/$defs/Sha256Digest"
           },
           "type": "object"
         },
@@ -3325,6 +5175,26 @@
       ],
       "type": "object"
     },
+    "QuestionSpan": {
+      "additionalProperties": false,
+      "properties": {
+        "utf8_end": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "utf8_start": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "utf8_start",
+        "utf8_end"
+      ],
+      "type": "object"
+    },
     "ReadChoice": {
       "additionalProperties": false,
       "properties": {
@@ -3352,6 +5222,47 @@
         "focus_yes_no"
       ],
       "type": "string"
+    },
+    "RecordUse": {
+      "additionalProperties": false,
+      "description": "One finding of a retained record: provenance naming every part and sub-need.",
+      "properties": {
+        "cause": {
+          "$ref": "#/$defs/UseCause"
+        },
+        "need": {
+          "description": "Absent for a part's own search.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "part": {
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "record": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "round": {
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "record",
+        "part",
+        "round",
+        "cause"
+      ],
+      "type": "object"
     },
     "RelevanceHypothesis": {
       "enum": [
@@ -3395,6 +5306,63 @@
     "RevisionToken": {
       "pattern": "^airk-r1:[0-9a-f]{32}:(0|[1-9][0-9]{0,19}):[0-9a-f]{64}$",
       "type": "string"
+    },
+    "RoundProvenance": {
+      "additionalProperties": false,
+      "properties": {
+        "calls": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "fanout": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "follow_ups_run": {
+          "description": "Follow-ups chosen at the end of the previous round and run in this one.",
+          "items": {
+            "$ref": "#/$defs/FollowUp"
+          },
+          "type": "array"
+        },
+        "input_tokens": {
+          "description": "Observed model input tokens charged to this part in this round.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "new_evidence": {
+          "description": "Candidate records first found by this part in this round, retained or not.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "round": {
+          "description": "Numbered from 1, consecutive within its part.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sub_needs_covered": {
+          "description": "Sub-needs judged covered at the end of this round.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "round",
+        "calls",
+        "fanout",
+        "input_tokens",
+        "new_evidence",
+        "follow_ups_run",
+        "sub_needs_covered"
+      ],
+      "type": "object"
     },
     "ScopeBinding": {
       "additionalProperties": false,
@@ -3531,6 +5499,51 @@
       ],
       "type": "object"
     },
+    "SegmentOutcome": {
+      "additionalProperties": false,
+      "properties": {
+        "margin": {
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "ordinal": {
+          "description": "The decision ordinal this roster segment answers.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "outcome": {
+          "$ref": "#/$defs/Outcome"
+        },
+        "raw_scores": {
+          "description": "Raw scores in card order and native units.",
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "type": "array"
+        },
+        "rule": {
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "ordinal",
+        "raw_scores",
+        "outcome"
+      ],
+      "type": "object"
+    },
     "SelectedModel": {
       "enum": [
         "focus",
@@ -3619,6 +5632,15 @@
       "pattern": "^[0-9a-f]{64}$",
       "type": "string"
     },
+    "SourceKind": {
+      "enum": [
+        "model",
+        "abstained",
+        "unavailable",
+        "deterministic"
+      ],
+      "type": "string"
+    },
     "SourceUnitKind": {
       "enum": [
         "hit"
@@ -3658,6 +5680,39 @@
       "required": [
         "enabled",
         "indexes"
+      ],
+      "type": "object"
+    },
+    "StageSourceCount": {
+      "additionalProperties": false,
+      "properties": {
+        "count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SelectedModel"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The scoring model; absent for deterministic decisions."
+        },
+        "source": {
+          "$ref": "#/$defs/SourceKind"
+        },
+        "stage": {
+          "$ref": "#/$defs/LoopStage"
+        }
+      },
+      "required": [
+        "stage",
+        "source",
+        "count"
       ],
       "type": "object"
     },
@@ -3764,19 +5819,96 @@
       ],
       "type": "string"
     },
-    "Task": {
+    "SubNeed": {
+      "additionalProperties": false,
+      "properties": {
+        "coverage": {
+          "$ref": "#/$defs/Coverage"
+        },
+        "evidence": {
+          "description": "Record ids this sub-need cites, retained or omitted by the frame.",
+          "items": {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          "type": "array"
+        },
+        "evidence_omitted": {
+          "description": "How many cited records the frame omitted.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "description": "Numbered from 1 within its part.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "kind": {
+          "$ref": "#/$defs/SubNeedKind"
+        },
+        "text": {
+          "description": "The sub-need's own query wording.",
+          "type": "string"
+        },
+        "unrun_reads": {
+          "description": "Reads chosen or proposed but not run, for the agent to run itself.",
+          "items": {
+            "$ref": "#/$defs/UnrunRead"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "text",
+        "kind",
+        "coverage",
+        "evidence",
+        "evidence_omitted",
+        "unrun_reads"
+      ],
+      "type": "object"
+    },
+    "SubNeedKind": {
       "enum": [
-        "airk.request_supported.v1",
-        "airk.retrieval_route.v1",
-        "airk.recipe_choice.v1",
-        "airk.evidence_relevance.v1",
-        "airk.evidence_role.v1",
-        "airk.context_next_read.v1",
-        "airk.context_gap.v1",
-        "airk.context_action.v1",
-        "airk.focus_rank.v1"
+        "definition",
+        "callers",
+        "tests",
+        "contract",
+        "documentation",
+        "configuration",
+        "other"
       ],
       "type": "string"
+    },
+    "Task": {
+      "oneOf": [
+        {
+          "enum": [
+            "airk.request_supported.v1",
+            "airk.retrieval_route.v1",
+            "airk.recipe_choice.v1",
+            "airk.evidence_relevance.v1",
+            "airk.evidence_role.v1",
+            "airk.context_next_read.v1",
+            "airk.context_gap.v1",
+            "airk.context_action.v1",
+            "airk.focus_rank.v1",
+            "airk.context_plan.v1",
+            "airk.context_coverage.v1",
+            "airk.context_follow_up.v1"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "airk.context_split.v1",
+          "description": "Answer loop card tasks (final plan section 12), each with its own policy.",
+          "type": "string"
+        }
+      ]
     },
     "TensorContract": {
       "additionalProperties": false,
@@ -4132,6 +6264,116 @@
       ],
       "type": "object"
     },
+    "TokenAttribution": {
+      "additionalProperties": false,
+      "description": "Model tokens charged to one part and round. Part 0 is the whole question\n(Split); round 0 is before the rounds (Split and Plan).",
+      "properties": {
+        "part": {
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "round": {
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tokens": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "part",
+        "round",
+        "tokens"
+      ],
+      "type": "object"
+    },
+    "UnionSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "conflicts": {
+          "description": "Noted, never silently resolved.",
+          "items": {
+            "$ref": "#/$defs/ConflictNote"
+          },
+          "type": "array"
+        },
+        "dedup_count": {
+          "description": "Findings merged into a record another part also found.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "dedup_count",
+        "conflicts"
+      ],
+      "type": "object"
+    },
+    "UnrunRead": {
+      "additionalProperties": false,
+      "properties": {
+        "operation": {
+          "$ref": "#/$defs/LoopRead"
+        },
+        "reason": {
+          "$ref": "#/$defs/UnrunReason"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "operation",
+        "target",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "UnrunReason": {
+      "enum": [
+        "deadline",
+        "budget",
+        "round_limit",
+        "not_chosen"
+      ],
+      "type": "string"
+    },
+    "UseCause": {
+      "oneOf": [
+        {
+          "const": "part_search",
+          "description": "The part's own search, in round one.",
+          "type": "string"
+        },
+        {
+          "const": "need_search",
+          "description": "A sub-need's search, in round one.",
+          "type": "string"
+        },
+        {
+          "const": "structural_read",
+          "description": "A structural read of round one.",
+          "type": "string"
+        },
+        {
+          "const": "follow_up",
+          "description": "A follow-up read of a later round.",
+          "type": "string"
+        },
+        {
+          "const": "shared_read",
+          "description": "Served from the shared read cache.",
+          "type": "string"
+        }
+      ]
+    },
     "VariantReference": {
       "additionalProperties": false,
       "description": "Exactly three logical model slots; variants do not add selected models.\nEach reference resolves only through the authenticated native catalog owner.",
@@ -4227,7 +6469,7 @@
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "arbiter_contract": 2,
+  "arbiter_contract": 3,
   "arbiter_device_contract": 2,
   "roots": [
     "DeviceConfiguration",
@@ -4255,6 +6497,12 @@
     "ContextRequestV2",
     "ContextResponseV2",
     "ContextActionRoster",
+    "ContextRequestV3",
+    "ContextResponseV3",
+    "DecisionLog",
+    "FocusBatchReceipt",
+    "LoopCalibration",
+    "LoopCalibrationSet",
     "JointCalibration",
     "TerminalQualification",
     "TerminalAnnotations",

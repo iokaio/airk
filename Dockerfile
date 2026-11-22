@@ -109,6 +109,7 @@ COPY fixtures/split/arbiter/public_answer_cases.json ./fixtures/split/arbiter/pu
 COPY fixtures/split/arbiter/context_action_cases.json ./fixtures/split/arbiter/context_action_cases.json
 COPY fixtures/split/arbiter/native_context_action_cases.json ./fixtures/split/arbiter/native_context_action_cases.json
 COPY fixtures/split/arbiter/budget_cases.json ./fixtures/split/arbiter/budget_cases.json
+COPY fixtures/split/arbiter/answer_loop_cases.json ./fixtures/split/arbiter/answer_loop_cases.json
 COPY fixtures/split/arbiter/download_origin_cases.json ./fixtures/split/arbiter/download_origin_cases.json
 COPY fixtures/split/arbiter/focus_only_allowance_cases.json ./fixtures/split/arbiter/focus_only_allowance_cases.json
 COPY fixtures/split/arbiter/native_focus_request.json ./fixtures/split/arbiter/native_focus_request.json
