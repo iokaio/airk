@@ -1,0 +1,78 @@
+diff --git a/crates/airk-retrieval/src/arbiter/runtime.rs b/crates/airk-retrieval/src/arbiter/runtime.rs
+--- a/crates/airk-retrieval/src/arbiter/runtime.rs
++++ b/crates/airk-retrieval/src/arbiter/runtime.rs
+@@ -46,6 +46,8 @@ pub mod cuda;
+ #[cfg(test)]
+ mod embedded_catalog_tests;
+ mod input;
++mod loop_tasks;
++pub use loop_tasks::admit_loop_tasks;
+ #[cfg(all(test, feature = "test-support"))]
+ mod local_test_catalog_emitter;
+ #[cfg(test)]
+@@ -60,21 +62,20 @@ pub(super) fn validate_selected_policies(profile: &Profile) -> Result<()> {
+     let Some(stage) = profile.model.stage() else {
+         return Ok(());
+     };
+-    let (task, task_policy, compiler_policy) = match stage {
++    let (task_policies, compiler_policy) = match stage {
+         Stage::Focus => {
+             let policy = super::compiler::focus::policy_digest()?;
+-            (Task::FocusRank, policy, policy)
++            (BTreeMap::from([(Task::FocusRank, policy)]), policy)
+         }
+         Stage::Context => (
+-            Task::ContextAction,
+-            super::context_action::policy_digest()?,
++            loop_tasks::context_task_policies(profile)?,
+             super::compiler::qwen::policy_digest()?,
+         ),
+     };
+     ensure!(
+         profile.stage == Some(stage)
+-            && profile.tasks == BTreeSet::from([task])
+-            && profile.task_policies == BTreeMap::from([(task, task_policy)])
++            && profile.tasks == task_policies.keys().copied().collect::<BTreeSet<_>>()
++            && profile.task_policies == task_policies
+             && profile.policy == compiler_policy,
+         "selected model compiler/task source policy is stale or inconsistent"
+     );
+@@ -396,6 +397,7 @@ pub struct Scorer {
+     bounded_hybrid: Option<bounded_hybrid::GraphEvidence>,
+     joint_calibration:
+         Option<Arc<airk_core::arbiter::context_action::calibration::JointCalibration>>,
++    loop_calibration: Option<Arc<airk_core::arbiter::answer_loop::LoopCalibrationSet>>,
+ }
+ 
+ fn bytes(source: &dyn AssetSource, asset: &Asset, maximum: u64) -> Result<Vec<u8>> {
+@@ -601,6 +603,9 @@ impl Scorer {
+         } else {
+             None
+         };
++        let loop_calibration = loop_tasks::calibration_set(profile.description(), |maximum| {
++            bytes(source, asset(AssetRole::Calibration)?, maximum)
++        })?;
+         let expected_recipe = match profile.description.model {
+             ModelChoice::SmallIntern | ModelChoice::LargeIntern => {
+                 CompilerRecipe::InternSingleChoiceV1
+@@ -1036,6 +1041,7 @@ impl Scorer {
+             ))]
+             bounded_hybrid,
+             joint_calibration,
++            loop_calibration,
+         }))
+     }
+     #[cfg(any(test, feature = "test-support"))]
+@@ -1076,6 +1082,12 @@ impl Scorer {
+     ) -> Option<Arc<airk_core::arbiter::context_action::calibration::JointCalibration>> {
+         self.joint_calibration.clone()
+     }
++    /// The loop calibration set authenticated once at open.
++    pub fn loop_calibration(
++        &self,
++    ) -> Option<Arc<airk_core::arbiter::answer_loop::LoopCalibrationSet>> {
++        self.loop_calibration.clone()
++    }
+     pub fn release_qualified(&self) -> bool {
+         self.profile.release_qualified()
+     }

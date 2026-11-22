@@ -2,6 +2,11 @@
 
 Maintained evaluation and independent reference recipes live here. Private inputs, models, execution plans and receipts remain under artifacts. Each component README and contract defines its supported entry points and required fresh source seals.
 
+## CPU Focus row replay
+
+[runtime_row_replay](runtime_row_replay/README.md) reproduces the inverse-replay
+proof of the L4 `runtime.rs` movement from Git history; it is read-only.
+
 ## Private Windows Compact FP32 Answer comparison
 
 Run the paired fixture on an idle Windows host from the checked human

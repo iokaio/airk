@@ -386,6 +386,10 @@ fn loop_admission_supplement_moves_the_runtime_row_without_relabelling_legacy_ev
     assert_eq!(record["legacy_runtime_source"], LEGACY_RUNTIME_SOURCE);
     assert_eq!(record["legacy_manifest"], LEGACY_MANIFEST);
     assert_eq!(record["current_task_policy"], CURRENT_TASK);
+    assert_eq!(
+        record["row"], "e0575e9418adc5340f741aaf039488e7ddd77349b962f242817630b09bc751a1",
+        "the new row is pinned"
+    );
     assert_ne!(
         record["row"], "09842b67ad09a739412ccdb6c20efe51c43f4b5dd0c0ca74f122c2f0b51e2f58",
         "the 7b465076 row bound to the static512 fixture is not relabelled"
