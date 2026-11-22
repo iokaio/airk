@@ -298,6 +298,42 @@ pub(super) const FIRST_CONTEXT_ESTIMATE_MS: u64 = 12_000;
 pub(super) const SINGLE_CONTEXT_CALL_MS: u64 = 30_000;
 pub(super) const READ_RESERVE_MS: u64 = 10_000;
 
+/// The software follow-ups promoted into the Answer /3 product path: change
+/// set 1's shape as constants, never an evaluation layer.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Shape {
+    /// Hits of a part's own search.
+    pub(crate) pool: usize,
+    /// Hits of a sub-need's search.
+    pub(crate) need_hits: usize,
+    /// Hits kept for whole chunks and follow-ups.
+    pub(crate) kept: usize,
+    /// The Focus relevance a span needs to count toward a sub-need.
+    pub(crate) keep_threshold: f32,
+    /// The Focus relevance that alone can cover a sub-need.
+    pub(crate) covered: f32,
+    /// Bytes of one excerpt, whole-chunk or governing read.
+    pub(crate) read_bytes: usize,
+    pub(crate) outlined_files: usize,
+    pub(crate) governing_documents: usize,
+    pub(crate) governing_probes: usize,
+    pub(crate) whole_chunk_lines: usize,
+}
+impl Shape {
+    pub(crate) const PRODUCT: Self = Self {
+        pool: POOL,
+        need_hits: 6,
+        kept: 2,
+        keep_threshold: FOCUS_KEEP,
+        covered: 0.5,
+        read_bytes: 3072,
+        outlined_files: OUTLINED_FILES,
+        governing_documents: GOVERNING_DOCUMENTS,
+        governing_probes: GOVERNING_PROBES,
+        whole_chunk_lines: WHOLE_CHUNK_LINES,
+    };
+}
+
 /// The kind of each change-set read; merge priority is declaration order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 #[serde(rename_all = "snake_case")]

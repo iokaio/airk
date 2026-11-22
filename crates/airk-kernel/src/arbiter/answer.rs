@@ -10,6 +10,8 @@ use airk_core::arbiter::answer_loop as v3;
 // only product caller, and this allowance is removed with it.
 #[allow(dead_code)]
 mod gather;
+#[allow(dead_code)]
+mod retrieve;
 
 #[cfg(test)]
 mod tests;
