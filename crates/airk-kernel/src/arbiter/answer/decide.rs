@@ -44,14 +44,10 @@ impl At {
     }
 }
 
-/// The roster policy identity of a card stage. The kernel builds these
-/// rosters; L4's task policies in airk-retrieval replace this identity with
-/// their own hashed policies when the model path is admitted.
-pub(crate) fn policy(stage: v3::LoopStage) -> Sha256Digest {
-    framed_digest(
-        b"airk.arbiter.loop-kernel-roster/1",
-        &[format!("{stage:?}").as_bytes()],
-    )
+/// The task policy identity of a card stage, owned by its retrieval task
+/// policy. Deterministic decisions record the same identity as scored ones.
+pub(crate) fn policy(stage: v3::LoopStage) -> Result<Sha256Digest> {
+    airk_retrieval::arbiter::loop_cards::policy_digest(stage)
 }
 
 /// A span shown to a decision, as the log's basis records it.
@@ -194,7 +190,7 @@ impl Ledger {
         self.supersede(at);
         self.entries.push(v3::DecisionLogEntry {
             decision,
-            policy: policy(at.stage),
+            policy: policy(at.stage)?,
             cards: records,
             scores: facts.scores,
             chosen: chosen.iter().map(|index| *index as u8).collect(),

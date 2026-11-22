@@ -11,10 +11,12 @@ mod calibration;
 mod cards;
 mod focus_batch;
 mod log;
+mod semantics;
 pub use calibration::*;
 pub use cards::*;
 pub use focus_batch::*;
 pub use log::*;
+pub use semantics::loop_semantic_policy_digest;
 
 pub const REQUEST_SCHEMA_V3: &str = "airk.arbiter.context.request/3";
 pub const CONTEXT_SCHEMA_V3: &str = "airk.arbiter.context/3";

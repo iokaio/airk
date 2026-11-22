@@ -287,7 +287,7 @@ impl Loop<'_> {
             authority: self.context.authority,
             scope: self.scope.clone(),
             task: v3::card_task(stage).context("card stage without a task")?,
-            task_policy: decide::policy(stage),
+            task_policy: decide::policy(stage)?,
             segments,
             attribution: attribution.clone(),
             partition: self.context.answer_partition.clone(),

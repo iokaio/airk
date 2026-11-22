@@ -10,7 +10,7 @@ use airk_core::native_loop::LoopCard;
 /// At most this many proposals, beside the reference card.
 pub(crate) const MAX_PROPOSALS: usize = 7;
 /// The reference card's text; a model chooses the cards scored above it.
-pub(crate) const REFERENCE: &str = "no further sub-need";
+pub(crate) const REFERENCE: &str = airk_retrieval::arbiter::loop_plan::REFERENCE;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Proposal {
