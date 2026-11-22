@@ -18,34 +18,43 @@ fn ordinary() -> LaneKey {
 }
 
 #[test]
-fn parts_of_one_attempt_each_queue_one_job_up_to_the_index_ceiling() {
-    let one = index(1);
+fn one_attempt_holds_at_most_three_jobs_so_another_always_has_a_slot() {
+    let (a, b) = (index(1), index(2));
     let mut holders = Vec::new();
-    for part in 1..=4 {
+    for part in 1..=3 {
         let lane = answer(7, &[part]);
-        assert!(admits(holders.iter().copied(), holders.len(), one, lane));
-        holders.push((one, lane));
+        assert!(admits(holders.iter().copied(), holders.len(), a, lane));
+        holders.push((a, lane));
     }
-    // A fifth job on the index waits, whatever attempt or part it serves.
-    assert!(!admits(
-        holders.iter().copied(),
-        holders.len(),
-        one,
-        answer(7, &[0])
-    ));
-    assert!(!admits(
-        holders.iter().copied(),
-        holders.len(),
-        one,
-        answer(8, &[1])
-    ));
-    // On another index the same attempt starts afresh.
-    assert!(admits(
-        holders.iter().copied(),
-        holders.len(),
-        index(2),
-        answer(7, &[1])
-    ));
+    // A 4-part Answer holds 3 of index A's 4 slots; its 4th part waits.
+    assert!(!admits(holders.iter().copied(), 3, a, answer(7, &[4])));
+    // A second Answer, or an ordinary job, takes the remaining slot.
+    assert!(admits(holders.iter().copied(), 3, a, answer(8, &[1])));
+    assert!(admits(holders.iter().copied(), 3, a, ordinary()));
+    holders.push((a, answer(8, &[1])));
+    // Now the index is full for everyone.
+    assert!(!admits(holders.iter().copied(), 4, a, answer(9, &[1])));
+    assert!(!admits(holders.iter().copied(), 4, a, ordinary()));
+    // Index B is untouched by A's jobs.
+    assert!(admits(holders.iter().copied(), 4, b, answer(7, &[1])));
+    assert!(admits(holders.iter().copied(), 4, b, ordinary()));
+    // Once the first Answer's part 1 completes and the second's slot frees,
+    // its 4th part is admitted.
+    let freed: Vec<_> = holders[1..3].to_vec();
+    assert!(admits(freed.iter().copied(), 2, a, answer(7, &[4])));
+}
+
+#[test]
+fn a_second_answer_is_admitted_while_the_first_holds_three() {
+    let a = index(1);
+    let first = [
+        (a, answer(7, &[1])),
+        (a, answer(7, &[2])),
+        (a, answer(7, &[3])),
+    ];
+    assert!(admits(first.iter().copied(), 3, a, answer(8, &[1])));
+    // After one of the first Answer's jobs finishes, its 4th part fits again.
+    assert!(admits(first[..2].iter().copied(), 2, a, answer(7, &[4])));
 }
 
 #[test]
@@ -64,8 +73,6 @@ fn several_attempts_share_one_index_ceiling_and_a_second_index_keeps_room() {
     // Index B is untouched by A's jobs: Answers and Search Focus both queue.
     assert!(admits(holders.iter().copied(), 4, b, answer(9, &[1])));
     assert!(admits(holders.iter().copied(), 4, b, ordinary()));
-    // Below the ceiling a second Answer on A is admitted beside the first.
-    assert!(admits(holders[..3].iter().copied(), 3, a, answer(8, &[1])));
 }
 
 #[test]
@@ -90,9 +97,17 @@ fn ordinary_jobs_keep_the_per_index_rule() {
     assert!(admits(held.iter().copied(), 1, one, ordinary()));
     let two = [(one, ordinary()), (one, ordinary())];
     assert!(!admits(two.iter().copied(), 2, one, ordinary()));
-    // Answer jobs on the index count against ordinary admission.
+    // Answer jobs on the index count against the index ceiling, not the
+    // ordinary limit: two Answer parts leave an ordinary job its slot.
     let answers = [(one, answer(7, &[1])), (one, answer(7, &[2]))];
-    assert!(!admits(answers.iter().copied(), 2, one, ordinary()));
+    assert!(admits(answers.iter().copied(), 2, one, ordinary()));
+    let full = [
+        (one, answer(7, &[1])),
+        (one, answer(7, &[2])),
+        (one, answer(8, &[1])),
+        (one, ordinary()),
+    ];
+    assert!(!admits(full.iter().copied(), 4, one, ordinary()));
 }
 
 #[test]

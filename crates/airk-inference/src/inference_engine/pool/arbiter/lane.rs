@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Lane fairness for the one model compute thread, with at most eight jobs
 //! queued in all.
-//! - Ordinary jobs (Search Focus, Answer /2) keep the per-index rule: fewer
-//!   than two jobs on an index, queued or running, counting every job on it.
-//! - Answer /3 jobs are admitted while fewer than four jobs of any kind
-//!   hold the index, across every Answer on it, so one index never takes more than half the queue
-//!   and another index always keeps room. Within it, one job per (attempt,
-//!   part): a job names every part it serves (a batched call spans parts), and
-//!   two jobs of one attempt may not share a part.
+//! - Every index holds fewer than four jobs of any kind, queued or running,
+//!   so one index never takes more than half the queue.
+//! - One Answer /3 attempt holds at most three of them, so a different
+//!   Answer or an ordinary job always has a slot on that index: a compound
+//!   request cannot monopolize it (plan 12.1 item 1).
+//! - Within an attempt, one job per part: a job names every part it serves (a
+//!   batched call spans parts), and two jobs of one attempt may not share one.
+//! - Ordinary jobs (Search Focus, Answer /2) also keep fewer than two
+//!   ordinary jobs per index, as before.
 use airk_core::{
     arbiter::{Task, answer_loop::is_card_task},
     identity::Incarnation,
@@ -16,9 +18,12 @@ use airk_core::{
 
 /// At most this many jobs are queued in all.
 pub(super) const MAX_QUEUED: usize = 8;
-/// An Answer /3 job is admitted only while fewer than this many jobs of any
-/// kind hold its index, across every attempt.
+/// Fewer than this many jobs of any kind hold one index.
 pub(super) const MAX_INDEX_JOBS: usize = airk_core::arbiter::answer_loop::MAX_PARTS;
+/// One Answer attempt holds at most this many jobs on one index.
+pub(super) const MAX_ATTEMPT_INDEX_JOBS: usize = MAX_INDEX_JOBS - 1;
+/// Ordinary jobs hold fewer than this many slots on one index.
+pub(super) const MAX_ORDINARY_INDEX_JOBS: usize = 2;
 
 /// The fairness key of one lane job.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -68,14 +73,17 @@ pub(super) fn admits(
         .filter(|(holder, _)| *holder == index)
         .map(|(_, key)| key)
         .collect();
+    if on_index.len() >= MAX_INDEX_JOBS {
+        return false;
+    }
+    let same =
+        |attempt: Option<Incarnation>| on_index.iter().filter(move |key| key.attempt == attempt);
     match lane.attempt {
-        None => on_index.len() < 2,
+        None => same(None).count() < MAX_ORDINARY_INDEX_JOBS,
         Some(attempt) => {
             lane.parts != 0
-                && on_index.len() < MAX_INDEX_JOBS
-                && !on_index
-                    .iter()
-                    .any(|key| key.attempt == Some(attempt) && key.parts & lane.parts != 0)
+                && same(Some(attempt)).count() < MAX_ATTEMPT_INDEX_JOBS
+                && !same(Some(attempt)).any(|key| key.parts & lane.parts != 0)
         }
     }
 }
