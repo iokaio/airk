@@ -209,6 +209,11 @@ fn typed_bare_error_result(error: &anyhow::Error) -> Option<rmcp::model::CallToo
             rmcp::model::ContentBlock::text(stale.receipt().to_string()),
         ]));
     }
+    if let Some(stale) = error.downcast_ref::<airk_kernel::arbiter::AnswerPostExecutionStale>() {
+        return Some(rmcp::model::CallToolResult::error(vec![
+            rmcp::model::ContentBlock::text(stale.receipt().to_string()),
+        ]));
+    }
     if let Some(invalid) = error.downcast_ref::<airk_core::read_arguments::ReadArgumentError>() {
         return Some(rmcp::model::CallToolResult::error(vec![
             rmcp::model::ContentBlock::text(invalid.receipt().to_string()),

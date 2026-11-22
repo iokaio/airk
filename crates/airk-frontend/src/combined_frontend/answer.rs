@@ -3,10 +3,11 @@
 use super::*;
 mod verification;
 use airk_core::{
-    arbiter::context_action::{AssessmentResult, ContextResponseV2},
+    arbiter::answer_loop::{ContextResponseV3, reply_limit},
     combined_context::{
-        CombinedContextSummary, PartitionOutcome, PartitionReport, Resources, SUMMARY_SCHEMA,
-        Termination, UnqueriedReason, initial_allocations,
+        CombinedContextSummaryV2, LoopUse, PartitionOutcomeV3, PartitionReportV3,
+        SUMMARY_SCHEMA_V2, Termination, UnqueriedReason, grow_allowance, initial_allocations_v3,
+        reply_delivery_bindings, reply_work_unknown, returned_allowance, without_models,
     },
 };
 use verification::AnswerVerification;
@@ -60,64 +61,51 @@ fn postexecution_failure(code: &str) -> Value {
     )
 }
 
+/// The fewest reply bytes a member Answer can run on: its request must hold
+/// the question and a minimal reply (`ContextRequestV3::validate`).
+fn member_minimum_bytes(question: &str) -> usize {
+    question
+        .len()
+        .saturating_add(airk_core::arbiter::answer_loop::MIN_REPLY_SKELETON_BYTES)
+}
+
+/// Each member reply is bounded by its share of the combined frame's
+/// payload (review finding 2 of L3-10 (a)), and a member is admitted only
+/// when that share holds `minimum` bytes (finding 3); the members the frame
+/// cannot carry lose their allowance and are reported unqueried.
+fn frame_shares(
+    allowances: &mut [Option<airk_core::native_loop::PartitionAllowanceV3>],
+    payload_bytes: usize,
+    minimum: usize,
+) {
+    let fits = payload_bytes / minimum.max(1);
+    let mut kept = 0usize;
+    for allowance in allowances.iter_mut() {
+        if allowance.is_some() {
+            if kept >= fits {
+                *allowance = None;
+            }
+            kept += 1;
+        }
+    }
+    let admitted = allowances.iter().flatten().count().max(1);
+    for (offset, allowance) in allowances.iter_mut().flatten().enumerate() {
+        let share = payload_bytes / admitted + usize::from(offset < payload_bytes % admitted);
+        allowance.resources.bytes = allowance.resources.bytes.min(share);
+    }
+    for allowance in allowances.iter_mut() {
+        if allowance
+            .as_ref()
+            .is_some_and(|value| value.resources.bytes < minimum.max(1024))
+        {
+            // No native dispatch may consume an invalid minimum allocation.
+            *allowance = None;
+        }
+    }
+}
+
 fn live(context: &airk_mcp::read_attempt::ReadAttemptContext) -> bool {
     !context.cancellation().is_cancelled() && Instant::now() < context.deadline()
-}
-
-fn packet_work(packet: &ContextResponseV2) -> Result<Resources> {
-    Resources::from_packet(packet)
-}
-
-fn packet_unknown(packet: &ContextResponseV2) -> Result<bool> {
-    Ok(packet.assessment_history.iter().any(|event| {
-        matches!(
-            &event.result,
-            AssessmentResult::Unavailable {
-                work_unknown: true,
-                ..
-            }
-        )
-    }) || airk_core::arbiter::focus::observed_focus_work(
-        &packet.records,
-        &airk_core::arbiter::focus::validation_budget(),
-    )?
-    .work_unknown)
-}
-
-fn charged_ordinals(packet: &ContextResponseV2) -> Vec<u8> {
-    packet
-        .assessment_history
-        .iter()
-        .filter_map(|event| {
-            let tokens = match &event.result {
-                AssessmentResult::Selected { advice, .. }
-                | AssessmentResult::Abstained { advice } => advice.work.input_tokens,
-                AssessmentResult::Unavailable { work, .. } => work.input_tokens,
-            };
-            (tokens > 0).then_some(event.ordinal)
-        })
-        .collect()
-}
-
-fn unused(reserved: &Resources, used: &Resources) -> Result<Resources> {
-    Ok(Resources {
-        calls: reserved
-            .calls
-            .checked_sub(used.calls)
-            .context("context call overrun")?,
-        input_tokens: reserved
-            .input_tokens
-            .checked_sub(used.input_tokens)
-            .context("context token overrun")?,
-        candidates: reserved
-            .candidates
-            .checked_sub(used.candidates)
-            .context("context candidate overrun")?,
-        bytes: reserved
-            .bytes
-            .checked_sub(used.bytes)
-            .context("context byte overrun")?,
-    })
 }
 
 fn retain_failure_or_unknown(value: Value) -> Value {
@@ -139,9 +127,9 @@ impl<S: Session> Backend<S> {
         before: Snapshot<S::Authority, S::Child>,
         context: airk_mcp::read_attempt::ReadAttemptContext,
     ) -> Result<Value> {
-        use airk_kernel::combined_reads::{CompositionRequest, MemberInput, compose_context};
+        use airk_kernel::combined_reads::{CompositionRequest, MemberInput, compose_answer};
         ensure!(
-            context.context_partition().is_none(),
+            context.context_partition().is_none() && context.answer_partition().is_none(),
             "allocated partition cannot recursively expand a combined scope"
         );
         context.begin_context_answer()?;
@@ -213,17 +201,23 @@ impl<S: Session> Backend<S> {
         let context = context.with_request_id(attempt)?;
         let captured = airk_host::read_attempt::encode(&context, attempt)?;
         let context = context.capture_transport_attempt(captured)?;
-        let mut allowances = initial_allocations(attempt, before.identity, &ids, &request.budget)?;
-        let outer_bytes = request.budget.max_bytes.min(ANSWER_REPLY_BYTES);
+        let mut allowances =
+            initial_allocations_v3(attempt, before.identity, &ids, &request.budget)?;
+        let outer_bytes = reply_limit(&request.budget);
         let byte_admission = CompositionRequest {
             selection: before.resolved.clone(),
             authority: before.identity,
             budgets: SharedBudgets {
                 limit: 100,
+                // `SharedBudgets` keeps the bounds of every other combined
+                // read (65,536 bytes, 120 s); an Answer wrapper takes its
+                // frame from the `airk.combined-context/2` summary, and its
+                // members run to the Answer deadline.
                 max_bytes: outer_bytes
                     .saturating_sub(delivery_reserve)
-                    .saturating_sub(attachment_reserve),
-                deadline_ms: request.budget.deadline_ms,
+                    .saturating_sub(attachment_reserve)
+                    .min(airk_core::MAX_RESPONSE_BYTES),
+                deadline_ms: request.budget.deadline_ms.min(120_000),
                 verification_max_sources: 0,
                 verification_max_bytes: 0,
                 verification_deadline_ms: 0,
@@ -237,73 +231,43 @@ impl<S: Session> Backend<S> {
                 .map(|member| (member.index.id, member.index.name.clone()))
                 .collect(),
         };
-        let payload_bytes = airk_kernel::combined_reads::context_payload_admission(
+        let payload_bytes = airk_kernel::combined_reads::answer_payload_admission(
             &byte_admission,
             &request.budget,
             &allowances,
             attachment_reserve,
         )?;
-        let admitted = allowances.iter().flatten().count();
-        for (offset, allowance) in allowances.iter_mut().flatten().enumerate() {
-            let share = payload_bytes / admitted + usize::from(offset < payload_bytes % admitted);
-            allowance.resources.bytes = allowance.resources.bytes.min(share);
-            if allowance.resources.bytes < 1024 {
-                // No native dispatch may consume an invalid minimum allocation.
-                allowance.resources.bytes = 0;
-            }
-        }
-        for allowance in &mut allowances {
-            if allowance
-                .as_ref()
-                .is_some_and(|value| value.resources.bytes == 0)
-            {
-                *allowance = None;
-            }
-        }
+        let minimum = member_minimum_bytes(&request.question);
+        frame_shares(&mut allowances, payload_bytes, minimum);
         let observed_from = now_ms();
         let mut inputs = Vec::new();
         let mut reports = Vec::with_capacity(ids.len());
-        let mut known = Resources::default();
-        let mut held = Resources::default();
+        let mut known = LoopUse::default();
+        let mut held = LoopUse::default();
         let mut unknown_seen = false;
-        let mut accounting_violation = false;
         let mut delivery_bindings = Vec::new();
-        let mut reclaimed = Resources::default();
-        let mut returned_ordinals = std::collections::BTreeSet::new();
+        // Unused work of a known member, handed to the next by count.
+        let mut reclaimed = LoopUse::default();
         let mut termination = Termination::Complete;
         for (member, mut allocation) in before.members.iter().zip(allowances) {
-            if !accounting_violation && !unknown_seen && live(&context) {
+            if !unknown_seen && live(&context) {
                 if let Some(current) = &mut allocation {
-                    current.resources = current.resources.checked_add(&reclaimed)?;
-                    current
-                        .assessment_ordinals
-                        .extend(returned_ordinals.iter().copied());
-                    current.assessment_ordinals.sort_unstable();
-                    reclaimed = Resources::default();
-                    returned_ordinals.clear();
-                } else if reclaimed.calls > 0 && reclaimed.candidates > 0 && reclaimed.bytes >= 1024
-                {
-                    allocation = Some(airk_core::combined_context::PartitionAllowance {
-                        schema: airk_core::combined_context::ALLOWANCE_SCHEMA.into(),
+                    grow_allowance(current, &std::mem::take(&mut reclaimed))?;
+                } else {
+                    allocation = returned_allowance(
                         attempt,
-                        selection: before.identity,
-                        index_id: member.index.id,
-                        parent_budget: request.budget.clone(),
-                        resources: std::mem::take(&mut reclaimed),
-                        assessment_ordinals: std::mem::take(&mut returned_ordinals)
-                            .into_iter()
-                            .collect(),
-                    });
-                }
-                if let Some(current) = &mut allocation
-                    && current.assessment_ordinals.is_empty()
-                {
-                    current.resources.input_tokens = 0;
+                        before.identity,
+                        member.index.id,
+                        &request.budget,
+                        &reclaimed,
+                        minimum,
+                    )?;
+                    if allocation.is_some() {
+                        reclaimed = LoopUse::default();
+                    }
                 }
             }
-            let reason = if accounting_violation {
-                Some(UnqueriedReason::AccountingViolation)
-            } else if context.cancellation().is_cancelled() {
+            let reason = if context.cancellation().is_cancelled() {
                 Some(UnqueriedReason::Canceled)
             } else if Instant::now() >= context.deadline() {
                 Some(UnqueriedReason::Deadline)
@@ -316,27 +280,21 @@ impl<S: Session> Backend<S> {
                 termination = match reason {
                     UnqueriedReason::Canceled => Termination::Canceled,
                     UnqueriedReason::Deadline => Termination::Deadline,
-                    UnqueriedReason::AccountingViolation => Termination::AccountingViolation,
                     _ => Termination::Budget,
                 };
-                reports.push(PartitionReport {
+                reports.push(PartitionReportV3 {
                     index_id: member.index.id,
                     allowance: None,
-                    outcome: PartitionOutcome::Unqueried { reason },
+                    outcome: PartitionOutcomeV3::Unqueried { reason },
                 });
                 continue;
             }
             let mut allocation = allocation.context("context allocation missing")?;
             if unknown_seen {
-                allocation.assessment_ordinals.clear();
-                allocation.resources.input_tokens = 0;
+                without_models(&mut allocation);
             }
             allocation.validate()?;
-            let mut child_budget = request.budget.clone();
-            child_budget.calls = allocation.resources.calls;
-            child_budget.input_tokens = allocation.resources.input_tokens.max(1);
-            child_budget.candidates = allocation.resources.candidates;
-            child_budget.max_bytes = allocation.resources.bytes;
+            let child_budget = allocation.clamp(&request.budget)?;
             let mut child_args = args.clone();
             child_args.insert("budget".into(), serde_json::to_value(&child_budget)?);
             child_args.insert("response_mode".into(), json!("full"));
@@ -349,7 +307,7 @@ impl<S: Session> Backend<S> {
                     "airk_answer".into(),
                     child_args,
                     1,
-                    context.clone().with_context_partition(allocation.clone())?,
+                    context.clone().with_answer_partition(allocation.clone())?,
                 ),
             )
             .await;
@@ -368,28 +326,28 @@ impl<S: Session> Backend<S> {
             };
             custody.packet(&value)?;
             let body = canonical_body(&value);
-            let packet = ContextResponseV2::from_canonical(&body, &child_budget);
+            let packet = ContextResponseV3::from_canonical(&body, &child_budget);
             let mut sources = Vec::new();
             let report = match packet {
                 Ok(packet) => {
                     ensure!(
                         packet.question == request.question
-                            && packet.assessment.scope.index_id == member.index.id
-                            && packet.assessment.scope.authorization
+                            && packet.scope.index_id == member.index.id
+                            && packet.scope.authorization
                                 == member.authority.member_fingerprint()?,
                         ScopeReadRefused
                     );
                     if let Some(expected) = &origin {
                         ensure!(
-                            packet.assessment.scope.publication.token.to_string() == *expected,
+                            packet.scope.publication.token.to_string() == *expected,
                             ScopeReadRefused
                         );
                     }
-                    let used = packet_work(&packet)?;
+                    let used = LoopUse::of_reply(&packet)?;
                     let body_bytes =
                         airk_kernel::combined_reads::context_member_payload_bytes(&value)?;
                     let focus_delivery_bytes =
-                        airk_kernel::combined_reads::context_packet_focus_binding_bytes(&packet)?;
+                        airk_kernel::combined_reads::answer_reply_focus_binding_bytes(&packet)?;
                     let reclaimable_body_bytes =
                         airk_kernel::combined_reads::context_reclaimable_body_bytes(
                             allocation.resources.bytes,
@@ -397,66 +355,30 @@ impl<S: Session> Backend<S> {
                             body_bytes,
                             focus_delivery_bytes,
                         )?;
-                    delivery_bindings.extend(
-                        airk_core::combined_context::packet_delivery_bindings(&packet)?,
-                    );
-                    let ordinals = charged_ordinals(&packet);
-                    ensure!(
-                        ordinals
-                            .iter()
-                            .all(|ordinal| allocation.assessment_ordinals.contains(ordinal)),
-                        "native context packet used unallocated assessment ordinal"
-                    );
-                    let unknown = packet_unknown(&packet)?;
-                    let report = if !used.fits(&allocation.resources) {
-                        ensure!(
-                            airk_core::combined_context::known_budget_failure(&packet),
-                            "successful native packet exceeded private allocation"
-                        );
-                        accounting_violation = true;
-                        termination = Termination::AccountingViolation;
-                        known = known.checked_add(&used)?;
-                        PartitionOutcome::KnownViolation {
-                            observed: used,
-                            assessment_ordinals: ordinals,
-                            read_depth: packet.work.rounds,
-                            peak_fanout: packet.work.fanout,
-                        }
-                    } else if unknown {
+                    delivery_bindings.extend(reply_delivery_bindings(&packet)?);
+                    let allowed = LoopUse::allowance(&allocation);
+                    // A reply validated under its clamped budget fits its
+                    // allowance; anything else keeps the whole allowance held.
+                    let report = if reply_work_unknown(&packet) || !used.fits(&allowed) {
                         unknown_seen = true;
                         termination = Termination::Partial;
-                        held = held.checked_add(&allocation.resources)?;
-                        PartitionOutcome::Unknown
+                        held = held.checked_add(&allowed)?;
+                        PartitionOutcomeV3::Unknown
                     } else {
-                        reclaimed = unused(&allocation.resources, &used)?;
+                        reclaimed = allowed.checked_sub(&used)?;
                         // Native Work has its unchanged packet-accounting meaning.
                         // Rendering metadata is separately consumed in the delivery
                         // admission pool and cannot be reallocated to another body.
                         reclaimed.bytes = reclaimable_body_bytes;
-                        returned_ordinals.extend(
-                            allocation
-                                .assessment_ordinals
-                                .iter()
-                                .filter(|ordinal| {
-                                    !packet.assessment_history.iter().any(|event| {
-                                        event.ordinal == **ordinal
-                                            && airk_core::combined_context::has_native_receipt(
-                                                event,
-                                            )
-                                    })
-                                })
-                                .copied(),
-                        );
                         known = known.checked_add(&used)?;
-                        PartitionOutcome::Known {
+                        PartitionOutcomeV3::Known {
                             used,
-                            assessment_ordinals: ordinals,
                             read_depth: packet.work.rounds,
                             peak_fanout: packet.work.fanout,
                         }
                     };
-                    if live(&context) && !accounting_violation {
-                        let expected = packet.assessment.scope.publication.token;
+                    if live(&context) {
+                        let expected = packet.scope.publication.token;
                         let projection = tokio::time::timeout_at(
                             tokio::time::Instant::from_std(context.deadline()),
                             child.call_native_with_context(
@@ -501,7 +423,7 @@ impl<S: Session> Backend<S> {
                             }
                             _ => value = source_projection_failure(&value, None),
                         }
-                    } else if !accounting_violation {
+                    } else {
                         value = source_projection_failure(&value, None);
                     }
                     report
@@ -511,27 +433,27 @@ impl<S: Session> Backend<S> {
                     // packet cannot prove no inner read/model work occurred.
                     unknown_seen = true;
                     termination = Termination::Partial;
-                    held = held.checked_add(&allocation.resources)?;
+                    held = held.checked_add(&LoopUse::allowance(&allocation))?;
                     value = retain_failure_or_unknown(value);
-                    PartitionOutcome::Unknown
+                    PartitionOutcomeV3::Unknown
                 }
             };
             inputs.push(MemberInput {
                 index_id: member.index.id,
-                is_error: accounting_violation || result_failed(&value),
+                is_error: result_failed(&value),
                 exhausted: false,
                 result: value,
                 sources,
                 elapsed_ms: Some(u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)),
             });
-            reports.push(PartitionReport {
+            reports.push(PartitionReportV3 {
                 index_id: member.index.id,
                 allowance: Some(allocation),
                 outcome: report,
             });
         }
-        let summary = CombinedContextSummary {
-            schema: SUMMARY_SCHEMA.into(),
+        let summary = CombinedContextSummaryV2 {
+            schema: SUMMARY_SCHEMA_V2.into(),
             attempt,
             selection: before.identity,
             budget: request.budget.clone(),
@@ -549,10 +471,15 @@ impl<S: Session> Backend<S> {
             authority: before.identity,
             budgets: SharedBudgets {
                 limit: 100,
+                // `SharedBudgets` keeps the bounds of every other combined
+                // read (65,536 bytes, 120 s); an Answer wrapper takes its
+                // frame from the `airk.combined-context/2` summary, and its
+                // members run to the Answer deadline.
                 max_bytes: outer_bytes
                     .saturating_sub(delivery_reserve)
-                    .saturating_sub(attachment_reserve),
-                deadline_ms: request.budget.deadline_ms,
+                    .saturating_sub(attachment_reserve)
+                    .min(airk_core::MAX_RESPONSE_BYTES),
+                deadline_ms: request.budget.deadline_ms.min(120_000),
                 verification_max_sources: 0,
                 verification_max_bytes: 0,
                 verification_deadline_ms: 0,
@@ -566,7 +493,7 @@ impl<S: Session> Backend<S> {
                 .map(|member| (member.index.id, member.index.name.clone()))
                 .collect(),
         };
-        let response = match compose_context(&composition, inputs, summary) {
+        let response = match compose_answer(&composition, inputs, summary) {
             Ok(response) => response,
             Err(error) => {
                 if let Some(oversized) =
@@ -637,120 +564,70 @@ impl<S: Session> Backend<S> {
 mod tests {
     use super::*;
 
+    /// Review findings 2 and 3 of L3-10 (a): member bytes are shares of the
+    /// frame payload, not of retention, and a share below the question plus
+    /// a minimal reply admits no member (the rest are unqueried).
     #[test]
-    fn focus_unknown_packet_holds_partition_and_both_stage_bindings_survive() -> Result<()> {
-        use airk_core::arbiter::{self, context_action::*, *};
-        use airk_core::native_focus::{FocusSourceWindow, NativeFocusCandidate};
+    fn member_bytes_are_frame_shares_and_admit_only_a_question_sized_reply() -> Result<()> {
+        use airk_core::{
+            arbiter::answer_loop::BudgetV3, combined_context::initial_allocations_v3,
+            identity::Incarnation, index_catalog::IndexId,
+        };
+        let ids: Vec<IndexId> = (1..=4)
+            .map(|byte| IndexId::from_identity(Incarnation::from_bytes([byte; 16])))
+            .collect();
+        let budget = BudgetV3::default();
+        let fresh = || {
+            initial_allocations_v3(
+                Incarnation::from_bytes([9; 16]),
+                Sha256Digest::from_bytes([8; 32]),
+                &ids,
+                &budget,
+            )
+        };
+        // Retention gives each of four members 65,536 bytes; a 40,000-byte
+        // payload gives each 10,000, enough for a 5,904-byte minimum.
+        let mut allowances = fresh()?;
+        assert_eq!(allowances[0].as_ref().unwrap().resources.bytes, 65_536);
+        frame_shares(&mut allowances, 40_000, 4096 + 5_904);
+        let bytes: Vec<_> = allowances
+            .iter()
+            .map(|allowance| allowance.as_ref().map(|a| a.resources.bytes))
+            .collect();
+        assert_eq!(bytes, vec![Some(10_000); 4]);
+        // A 16,384-byte question needs 20,480 bytes: only one member fits,
+        // with the whole payload; the others are not admitted.
+        let mut allowances = fresh()?;
+        frame_shares(&mut allowances, 40_000, member_minimum_bytes(&"q".repeat(16_384)));
+        let bytes: Vec<_> = allowances
+            .iter()
+            .map(|allowance| allowance.as_ref().map(|a| a.resources.bytes))
+            .collect();
+        assert_eq!(bytes, vec![Some(40_000), None, None, None]);
+        // Too small for any member.
+        let mut allowances = fresh()?;
+        frame_shares(&mut allowances, 4095, member_minimum_bytes("q"));
+        assert!(allowances.iter().all(Option::is_none));
+        Ok(())
+    }
+
+    /// A member Answer /3 reply binds both stages from its own facts, unknown
+    /// model work is read from its decision log, and its outer Focus binding
+    /// is never reclaimed as body bytes.
+    #[test]
+    fn answer_reply_binds_both_stages_and_unknown_work_holds_the_allowance() -> Result<()> {
+        use airk_core::arbiter::Stage;
         let fixtures: Value = serde_json::from_slice(include_bytes!(
-            "../../../../fixtures/split/arbiter/context_action_cases.json"
+            "../../../../fixtures/split/arbiter/answer_loop_cases.json"
         ))?;
         for unknown in [false, true] {
-            let mut packet: ContextResponseV2 =
-                serde_json::from_value(fixtures["cases"][0]["input"].clone())?;
-            let scope = packet.records[0].scope.clone();
-            let question = packet.records[0].arguments["query"]
-                .as_str()
-                .context("fixture search question")?;
-            let hit: airk_core::Hit =
-                serde_json::from_value(packet.records[0].canonical_result["hits"][0].clone())?;
-            let candidate = NativeFocusCandidate::new(
-                &scope,
-                question,
-                0,
-                hit.clone(),
-                FocusSourceWindow {
-                    utf8_start: 0,
-                    utf8_end: hit.text.len(),
-                },
-            )?;
-            let receipt = FocusApplicationReceipt {
-                schema: arbiter::focus::RANKING_SCHEMA.into(),
-                scope: scope.clone(),
-                identity: Some(FocusIdentity {
-                    profile: Sha256Digest::from_bytes([90; 32]),
-                    runtime: RUNTIME.into(),
-                    compiler: Sha256Digest::from_bytes([91; 32]),
-                    calibration: Sha256Digest::from_bytes([92; 32]),
-                    task_policy: Sha256Digest::from_bytes([93; 32]),
-                }),
-                availability: Availability::Failed,
-                reason: "Synthetic bounded native failure retains custody".into(),
-                applied: false,
-                input_digest: Sha256Digest::from_bytes([94; 32]),
-                original_order: vec![candidate.id],
-                ranked_order: vec![candidate.id],
-                scores: vec![],
-                presentations: vec![],
-                presented_count: 0,
-                candidate_count: 1,
-                scored_count: 0,
-                omitted_count: 1,
-                reserved_input_tokens: 32,
-                observed_input_tokens: (!unknown).then_some(16),
-                work: if unknown {
-                    Work::default()
-                } else {
-                    Work {
-                        input_tokens: 16,
-                        compile_us: Some(1),
-                        inference_us: Some(2),
-                        ..Work::default()
-                    }
-                },
-            };
-            receipt.validate(&Budget::default())?;
-            let original_body = packet.records[0].canonical_result.clone();
-            let complete = airk_core::SearchResponse {
-                generation: scope.publication.generation,
-                collection: scope.publication.collection.clone(),
-                publication: Some(scope.publication.clone()),
-                hits: vec![hit],
-                truncated: false,
-                execution: None,
-                semantic_readiness: None,
-                discovery_readiness: None,
-                focus: Some(FocusObservation::Receipt {
-                    receipt: Box::new(receipt),
-                }),
-            };
-            let complete = serde_json::to_value(&complete)?;
-            let body = packet.records[0]
-                .canonical_result
-                .as_object_mut()
-                .context("fixture canonical Search object")?;
-            for (field, value) in complete
-                .as_object()
-                .context("typed canonical Search object")?
-            {
-                // Retain the original full Hit objects and any future fields.
-                if field != "hits" {
-                    body.insert(field.clone(), value.clone());
-                }
-            }
-            assert_eq!(body.get("hits"), original_body.get("hits"));
-            assert_eq!(
-                body.get("future_native_field"),
-                original_body.get("future_native_field")
-            );
-            let _: airk_core::SearchResponse = serde_json::from_value(Value::Object(body.clone()))?;
+            let mut reply: ContextResponseV3 =
+                serde_json::from_value(fixtures["response_cases"][0]["response"].clone())?;
             if unknown {
-                for event in &mut packet.assessment_history {
-                    event.applicability = AssessmentApplicability::HistoricalAfterRead;
-                }
-                packet.stop = PartitionTermination::NoProgress;
-                packet.assessment.termination = packet.stop;
-                packet.assessment.coverage = PartitionCoverage::Unassessed {
-                    reason: AssessmentUnavailable::Unavailable,
-                };
-                packet.gaps = vec![Gap::Unsupported];
-            } else {
-                packet.work.input_tokens += 16;
-                packet.work.compile_us = Some(packet.work.compile_us.unwrap_or(0) + 1);
-                packet.work.inference_us = Some(packet.work.inference_us.unwrap_or(0) + 2);
+                reply.decision_log.work_unknown = 1;
             }
-            packet.validate(&Budget::default())?;
-            assert_eq!(packet_unknown(&packet)?, unknown);
-            let bindings = airk_core::combined_context::packet_delivery_bindings(&packet)?;
+            assert_eq!(reply_work_unknown(&reply), unknown);
+            let bindings = reply_delivery_bindings(&reply)?;
             assert_eq!(
                 bindings
                     .iter()
@@ -758,8 +635,8 @@ mod tests {
                     .collect::<Vec<_>>(),
                 vec![Stage::Focus, Stage::Context]
             );
-            let body_bytes = serde_json::to_vec(&packet)?.len();
-            let outer = airk_kernel::combined_reads::context_packet_focus_binding_bytes(&packet)?;
+            let body_bytes = serde_json::to_vec(&reply)?.len();
+            let outer = airk_kernel::combined_reads::answer_reply_focus_binding_bytes(&reply)?;
             assert!(outer > 0);
             assert_eq!(
                 airk_kernel::combined_reads::context_reclaimable_body_bytes(
@@ -773,7 +650,6 @@ mod tests {
         }
         Ok(())
     }
-
     #[test]
     fn malformed_context_success_is_unknown_nonreplayable_and_failure_bytes_stay_full() {
         let malformed = native_envelope(

@@ -36,7 +36,9 @@ impl AirkServer {
             self.answer_read,
             self.read_attempt
                 .as_ref()
-                .is_some_and(|context| context.context_partition().is_some()),
+                .is_some_and(|context| {
+                    context.context_partition().is_some() || context.answer_partition().is_some()
+                }),
         );
         if matches!(tool, "read_file" | "file_info" | "outline" | "context")
             && let Some(revision) = revision

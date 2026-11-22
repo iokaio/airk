@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
 fn arguments(ms: u64) -> serde_json::Map<String, serde_json::Value> {
-    let request = airk_core::arbiter::context_action::ContextRequestV2 {
-        schema: airk_core::arbiter::context_action::REQUEST_SCHEMA_V2.into(),
+    let request = airk_core::arbiter::answer_loop::ContextRequestV3 {
+        schema: airk_core::arbiter::answer_loop::REQUEST_SCHEMA_V3.into(),
         question: "original ceiling".into(),
-        budget: airk_core::arbiter::Budget {
+        budget: airk_core::arbiter::answer_loop::BudgetV3 {
             deadline_ms: ms,
             ..Default::default()
         },
+        continuation: None,
     };
     serde_json::to_value(request)
         .unwrap()

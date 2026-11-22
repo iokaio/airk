@@ -128,6 +128,25 @@ impl crate::Kernel {
         Ok(kernel)
     }
 
+    /// Answer /3 binds its loop accounting once per Answer
+    /// (`bind_answer_loop`). A kernel that serves several Answers (one MCP
+    /// session) gives each its own accounting, keeping only the original
+    /// deadline, which can only shorten.
+    pub fn with_fresh_answer_accounting(&self) -> Result<Self> {
+        let Some(context) = &self.arbiter_context else {
+            return Ok(self.clone());
+        };
+        let deadline = state(context)?.deadline;
+        let mut context = context.as_ref().clone();
+        context.focus = Arc::new(std::sync::Mutex::new(Attempt {
+            deadline,
+            ..Attempt::default()
+        }));
+        let mut kernel = self.clone();
+        kernel.arbiter_context = Some(Arc::new(context));
+        Ok(kernel)
+    }
+
     pub fn with_optional_deadline(&self, deadline: Instant) -> Result<Self> {
         if let Some(context) = &self.arbiter_context {
             let mut held = state(context)?;

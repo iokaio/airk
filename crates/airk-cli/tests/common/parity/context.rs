@@ -1,11 +1,32 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Strict /2 unassessed fallback comparison, after owning raw validation.
+//! Strict Answer /3 reply comparison, after owning raw validation.
+//!
+//! Both replies are first validated by the owning Core type
+//! (`ContextResponseV3::from_canonical` under the request budget, or a
+//! member's clamped allowance). The comparison then keeps every field and
+//! normalizes only:
+//! - transport identities: each canonical read's top-level `request_id`
+//!   (through `strict`), and the record ids derived from those bodies, which
+//!   are renamed by position and rebound everywhere the reply cites them;
+//! - digests the reply cannot recompute because they bind record ids, read
+//!   bodies or measured work (`decision_log.digest`, each decision's
+//!   `basis.digest` and `receipt`, each span projection's `full_digest`):
+//!   renamed by first appearance, so equal digests stay equal and different
+//!   ones stay different;
+//! - timing: `elapsed_ms`, the measured `work` and `decision_log.timings`
+//!   microseconds (present or absent stays compared), and each part's
+//!   `deadline_share_ms`, which a finished part trims to its elapsed time
+//!   (bounded here by the budget deadline).
+//! - order: lists the kernel keeps in record-id order (`record_uses` and
+//!   the evidence lists) are compared in logical-id order after rebinding.
+//!
+//! A /3 reply carries span projections of its canonical reads, not the read
+//! bodies, so the /2 replay of records through the owning `Gathering` has no
+//! /3 equivalent; the full normalized results are compared instead.
 use airk_core::{
-    arbiter::{
-        Budget,
-        context_action::{AssessmentResult, ContextResponseV2},
-    },
-    identity::{Incarnation, Sha256Digest, framed_digest},
+    arbiter::answer_loop::{BudgetV3, ContextResponseV3},
+    combined_context::CombinedContextSummaryV2,
+    identity::{Incarnation, framed_digest},
 };
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
@@ -62,146 +83,150 @@ fn primitive(raw: &Value) -> Result<Value> {
     Ok(result)
 }
 
-fn authenticated(raw: &Value, budget: &Budget) -> Result<ContextResponseV2> {
-    let typed = ContextResponseV2::from_canonical(raw, budget)?;
-    ensure!(
-        typed
-            .assessment_history
-            .iter()
-            .all(|event| matches!(&event.result, AssessmentResult::Unavailable { .. })),
-        "learned decisions require explicit prompt/decision parity, not fallback rebinding"
-    );
-    let scope = &typed.assessment.scope;
-    let application = typed
-        .applications
-        .iter()
-        .find(|application| application.scope == *scope)
-        .context("fallback replay requires the actual same-scope application")?
-        .clone();
-    let now = std::time::Instant::now();
-    let request = airk_core::arbiter::ContextRequest {
-        schema: airk_core::arbiter::REQUEST_SCHEMA.into(),
-        question: typed.question.clone(),
-        budget: budget.clone(),
-    };
-    let mut gathering =
-        airk_kernel::arbiter::Gathering::new(request, scope.clone(), application, now)?;
-    for record in &typed.records {
-        let dispatch = gathering
-            .next(now)?
-            .context("record is not in the owning fallback dispatch prefix")?;
-        ensure!(
-            dispatch.choice.operation == record.operation
-                && dispatch
-                    .arguments
-                    .clone()
-                    .into_iter()
-                    .collect::<BTreeMap<_, _>>()
-                    == record.arguments,
-            "raw record operation/arguments differ from owning dispatch"
-        );
-        let observed = if record.canonical_result["isError"] == true {
-            Err(airk_kernel::workbench::ReadFailure(record.canonical_result.clone()).into())
-        } else {
-            Ok(record.canonical_result.clone())
-        };
-        gathering.observe(observed, now)?;
-        let generated = gathering
-            .records()
-            .last()
-            .context("raw record was not retained by owning recipe")?;
-        ensure!(
-            serde_json::to_value(generated)? == serde_json::to_value(record)?,
-            "raw record digest/scope/body do not match owning canonical dispatch"
-        );
-    }
-    if typed.omitted_count > 0 {
-        prove_disclosed_prefix(&typed, &mut gathering, now)?;
-    }
-    Ok(typed)
+fn logical(domain: &[u8], position: usize) -> Result<Value> {
+    let ordinal = u64::try_from(position)?;
+    Ok(serde_json::to_value(framed_digest(
+        domain,
+        &[&ordinal.to_le_bytes()],
+    ))?)
 }
 
-/// Authenticate only the returned deterministic prefix. The owning packer
-/// removes suffix records, never the mandatory first Search; omitted contents
-/// are unavailable and are neither reconstructed nor declared equivalent.
-fn prove_disclosed_prefix(
-    packet: &ContextResponseV2,
-    gathering: &mut airk_kernel::arbiter::Gathering,
-    now: std::time::Instant,
-) -> Result<()> {
-    ensure!(
-        !packet.records.is_empty(),
-        "omitted packet lost mandatory initial native Search"
-    );
-    ensure!(
-        packet.records.len().checked_add(packet.omitted_count) == Some(packet.candidate_count)
-            && packet.work.calls >= packet.candidate_count,
-        "disclosed prefix counters contradict actual calls"
-    );
-    let retained_bytes =
-        packet
-            .records
-            .iter()
-            .try_fold(0usize, |total, record| -> Result<usize> {
-                total
-                    .checked_add(serde_json::to_vec(&record.canonical_result)?.len())
-                    .context("retained prefix bytes overflow")
-            })?;
-    ensure!(
-        packet.work.bytes >= retained_bytes,
-        "disclosed prefix native work lost retained byte charge"
-    );
-    ensure!(
-        gathering.next(now)?.is_some(),
-        "claimed omitted suffix has no next owning native dispatch"
-    );
-    Ok(())
-}
-fn packet(raw: &Value, budget: &Budget) -> Result<Value> {
-    let typed = authenticated(raw, budget)?;
-    let mut result = primitive(raw)?;
-    let mut records = BTreeMap::new();
-    for (position, record) in typed.records.iter().enumerate() {
-        let ordinal = u64::try_from(position)?;
-        let logical = framed_digest(
-            b"airk.test.context-record-position/1",
-            &[&ordinal.to_le_bytes()],
-        );
-        ensure!(
-            records.insert(record.id, logical).is_none(),
-            "duplicate raw record identity"
-        );
-        result["records"][position]["id"] = serde_json::to_value(logical)?;
-        result["records"][position]["canonical_result"] = primitive(&record.canonical_result)?;
-    }
-    let rebound = |id: Sha256Digest| -> Result<Value> {
-        serde_json::to_value(
-            records
-                .get(&id)
-                .context("orphaned raw evidence reference")?,
-        )
-        .map_err(Into::into)
-    };
-    for (position, paragraph) in typed.paragraphs.iter().enumerate() {
-        for (reference, id) in paragraph.evidence.iter().enumerate() {
-            result["paragraphs"][position]["evidence"][reference] = rebound(*id)?;
-        }
-    }
-    for (position, event) in typed.assessment_history.iter().enumerate() {
-        for (reference, unit) in event.basis.source_units_presented.iter().enumerate() {
-            result["assessment_history"][position]["basis"]["source_units_presented"][reference]
-                ["record"] = rebound(unit.record)?;
-        }
-        if let AssessmentResult::Unavailable {
-            advice: Some(advice),
-            ..
-        } = &event.result
-        {
-            for (reference, id) in advice.evidence.iter().enumerate() {
-                result["assessment_history"][position]["result"]["advice"]["evidence"][reference] =
-                    rebound(*id)?;
+/// Rebind every cited record id outside the canonical results.
+fn rebind(value: &mut Value, ids: &BTreeMap<String, Value>, in_records: bool) {
+    match value {
+        Value::String(text) => {
+            if let Some(logical) = ids.get(text.as_str()) {
+                *value = logical.clone();
             }
         }
+        Value::Array(items) => {
+            for item in items {
+                rebind(item, ids, in_records);
+            }
+        }
+        Value::Object(fields) => {
+            for (key, field) in fields.iter_mut() {
+                if in_records && key == "canonical_result" {
+                    continue;
+                }
+                rebind(field, ids, false);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn custody(value: &mut Value, seen: &mut BTreeMap<String, Value>) -> Result<()> {
+    if value.is_null() {
+        return Ok(());
+    }
+    let text = value
+        .as_str()
+        .context("custody digest is not a digest string")?
+        .to_owned();
+    let next = seen.len();
+    let name = seen
+        .entry(text)
+        .or_insert_with(|| json!(format!("<custody-digest:{next}>")))
+        .clone();
+    *value = name;
+    Ok(())
+}
+
+fn timing(value: &mut Value, pointer: &str) -> Result<()> {
+    let Some(field) = value.pointer_mut(pointer) else {
+        return Ok(());
+    };
+    if field.is_null() {
+        return Ok(());
+    }
+    ensure!(field.is_u64(), "invalid Answer timing at {pointer}");
+    *field = json!(format!("<timing:{pointer}>"));
+    Ok(())
+}
+
+fn reply(raw: &Value, budget: &BudgetV3) -> Result<Value> {
+    let typed = ContextResponseV3::from_canonical(raw, budget)?;
+    let mut result = primitive(raw)?;
+    let mut ids = BTreeMap::new();
+    let mut seen = BTreeMap::new();
+    for (position, record) in typed.records.iter().enumerate() {
+        ensure!(
+            ids.insert(
+                record.id.to_string(),
+                logical(b"airk.test.answer-record-position/1", position)?
+            )
+            .is_none(),
+            "duplicate raw record identity"
+        );
+        let mut projection = primitive(&record.canonical_result)?;
+        // A span projection names its full read body by digest; that body
+        // carries the read's transport request id.
+        if let Some(digest) = projection.get_mut("full_digest") {
+            custody(digest, &mut seen)?;
+        }
+        result["records"][position]["canonical_result"] = projection;
+    }
+    for (position, id) in typed.omitted_evidence.iter().enumerate() {
+        ensure!(
+            ids.insert(
+                id.to_string(),
+                logical(b"airk.test.answer-omitted-position/1", position)?
+            )
+            .is_none(),
+            "omitted evidence repeats a record identity"
+        );
+    }
+    if let Some(fields) = result.as_object_mut() {
+        for (key, field) in fields.iter_mut() {
+            rebind(field, &ids, key == "records");
+        }
+    }
+    // Lists the kernel keeps in record-id order are in a transport-derived
+    // order; after rebinding they are compared in logical-id order.
+    let sort = |list: &mut Value| {
+        if let Some(items) = list.as_array_mut() {
+            items.sort_by_key(Value::to_string);
+        }
+    };
+    sort(&mut result["record_uses"]);
+    sort(&mut result["omitted_evidence"]);
+    for part in result["parts"].as_array_mut().into_iter().flatten() {
+        for need in part["sub_needs"].as_array_mut().into_iter().flatten() {
+            sort(&mut need["evidence"]);
+        }
+    }
+    for paragraph in result["paragraphs"].as_array_mut().into_iter().flatten() {
+        sort(&mut paragraph["evidence"]);
+    }
+    for conflict in result["union"]["conflicts"]
+        .as_array_mut()
+        .into_iter()
+        .flatten()
+    {
+        sort(&mut conflict["evidence"]);
+    }
+    custody(&mut result["decision_log"]["digest"], &mut seen)?;
+    for position in 0..typed.decisions.len() {
+        custody(
+            &mut result["decisions"][position]["basis"]["digest"],
+            &mut seen,
+        )?;
+        if let Some(receipt) = result["decisions"][position].get_mut("receipt") {
+            custody(receipt, &mut seen)?;
+        }
+    }
+    timing(&mut result, "/elapsed_ms")?;
+    for field in ["queue_us", "compile_us", "inference_us", "policy_us"] {
+        timing(&mut result, &format!("/work/{field}"))?;
+        timing(&mut result, &format!("/decision_log/timings/{field}"))?;
+    }
+    for (position, part) in typed.parts.iter().enumerate() {
+        ensure!(
+            part.deadline_share_ms <= budget.deadline_ms,
+            "part deadline share exceeds the Answer deadline"
+        );
+        timing(&mut result, &format!("/parts/{position}/deadline_share_ms"))?;
     }
     if raw.get("source_verification").is_some() {
         result["source_verification"]["selection_digest"] =
@@ -210,17 +235,28 @@ fn packet(raw: &Value, budget: &Budget) -> Result<Value> {
     Ok(result)
 }
 
-/// Both full raw graphs are authenticated by the owning native recipe FIRST.
-pub fn pair(left: &Value, right: &Value, budget: &Budget) -> Result<(Value, Value)> {
-    Ok((packet(left, budget)?, packet(right, budget)?))
+/// Both full raw replies are validated by the owning Core type FIRST.
+pub fn pair(left: &Value, right: &Value, budget: &BudgetV3) -> Result<(Value, Value)> {
+    Ok((reply(left, budget)?, reply(right, budget)?))
 }
 
-/// Normalize the whole verifier's duplicate native packets only after the
-/// original complete projection and every retained packet have been proved.
+/// The budget a combined member ran under: its allowance clamped to the
+/// original request budget.
+pub fn member_budget(summary: &CombinedContextSummaryV2, position: usize) -> Result<BudgetV3> {
+    summary
+        .members
+        .get(position)
+        .and_then(|member| member.allowance.as_ref())
+        .context("queried member allowance")?
+        .clamp(&summary.budget)
+}
+
+/// Normalize the whole verifier's duplicate native replies only after the
+/// original complete projection and every retained reply have been proved.
 pub fn whole_verification(
     raw: &Value,
     normalized: &Value,
-    budget: &Budget,
+    budget: &BudgetV3,
     controls: airk_core::verification::VerificationControls,
 ) -> Result<Option<Value>> {
     airk_core::verification::validate_projection(raw)?;
@@ -247,11 +283,10 @@ pub fn whole_verification(
             serde_json::from_value::<airk_core::index_catalog::IndexId>(member["index_id"].clone())
         })
         .collect::<std::result::Result<Vec<_>, _>>()?;
-    let summary: airk_core::combined_context::CombinedContextSummary =
-        serde_json::from_value(raw["context"].clone())?;
+    let summary: CombinedContextSummaryV2 = serde_json::from_value(raw["context"].clone())?;
     summary.validate(&ids)?;
     ensure!(
-        serde_json::to_value(&summary.budget)? == serde_json::to_value(budget)?,
+        summary.budget == *budget,
         "whole proof original Answer budget changed"
     );
     let mut result = proof.clone();
@@ -312,31 +347,22 @@ pub fn whole_verification(
                     == json!([{"member_pointer":"/steps/0/result","result_pointer":format!("/members/{native}/result{}",if members[native]["result"].get("structuredContent").is_some(){"/structuredContent"}else{""})}]),
             "whole proof is not the owning one-member projection"
         );
-        let native_packet = if let Some(body) = members[native]["result"].get("structuredContent") {
+        let native_reply = if let Some(body) = members[native]["result"].get("structuredContent") {
             body.clone()
         } else {
             members[native]["result"].clone()
         };
         ensure!(
-            steps[0]["result"] == native_packet,
-            "whole verifier changed duplicated native packet bytes"
+            steps[0]["result"] == native_reply,
+            "whole verifier changed duplicated native reply bytes"
         );
-        let allowance = summary.members[native]
-            .allowance
-            .as_ref()
-            .context("whole proof has no original packet allowance")?;
-        let mut child = budget.clone();
-        child.calls = allowance.resources.calls;
-        child.input_tokens = allowance.resources.input_tokens.max(1);
-        child.candidates = allowance.resources.candidates;
-        child.max_bytes = allowance.resources.bytes;
-        let packet = packet(&native_packet, &child)?;
+        let normalized_reply = reply(&native_reply, &member_budget(&summary, native)?)?;
         ensure!(
-            normalized["members"][native]["result"] == packet,
-            "whole proof normalization differs from authenticated native packet"
+            normalized["members"][native]["result"] == normalized_reply,
+            "whole proof normalization differs from the validated native reply"
         );
         let mut copy = primitive(own)?;
-        copy["steps"][0]["result"] = packet;
+        copy["steps"][0]["result"] = normalized_reply;
         copy["source_verification"]["limits"]["deadline_ms"] =
             json!("<validated-member-source-window>");
         copy["source_verification"]["limits"]["effective_deadline_ms"] =
@@ -394,7 +420,7 @@ fn envelope_body(raw: &Value) -> Result<Value> {
     }
     Ok(body)
 }
-pub fn envelopes(left: &Value, right: &Value, budget: &Budget) -> Result<(Value, Value)> {
+pub fn envelopes(left: &Value, right: &Value, budget: &BudgetV3) -> Result<(Value, Value)> {
     let (a, b) = pair(&envelope_body(left)?, &envelope_body(right)?, budget)?;
     Ok((replace_body(left, a)?, replace_body(right, b)?))
 }
@@ -412,6 +438,7 @@ pub fn replace_body(raw: &Value, body: Value) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use airk_core::identity::Sha256Digest;
     #[test]
     fn dated_source_receipts_normalize_only_valid_clocks_and_keep_hashes_and_future_data()
     -> Result<()> {

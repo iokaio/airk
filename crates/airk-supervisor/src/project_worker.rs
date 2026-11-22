@@ -270,6 +270,7 @@ fn query_read_context(
     tool: &str,
     attempt: Option<airk_core::read_attempt::ReadAttemptBudget>,
     partition: Option<&airk_core::combined_context::PartitionAllowance>,
+    answer_partition: Option<&airk_core::native_loop::PartitionAllowanceV3>,
 ) -> Result<Option<airk_mcp::read_attempt::ReadAttemptContext>> {
     // The wire may carry an Answer's attempt into a nested read; every tool
     // other than Answer (and a native read, with no tool) is narrowed to its
@@ -289,9 +290,10 @@ fn query_read_context(
             })
         })
         .transpose()?
-        .map(|context| match partition {
-            Some(partition) => context.with_context_partition(partition.clone()),
-            None => Ok(context),
+        .map(|context| match (partition, answer_partition) {
+            (Some(partition), _) => context.with_context_partition(partition.clone()),
+            (None, Some(partition)) => context.with_answer_partition(partition.clone()),
+            (None, None) => Ok(context),
         })
         .transpose()
 }
@@ -393,7 +395,12 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
             let wire_attempt = request.read_attempt;
             let retry_budget_complete = request.native.is_none()
                 || wire_attempt.is_some_and(|budget| budget.native_retry_expires_monotonic_ns.is_some());
-            let read_context = query_read_context(&request.tool, wire_attempt, request.context_partition.as_ref())?;
+            let read_context = query_read_context(
+                &request.tool,
+                wire_attempt,
+                request.context_partition.as_ref(),
+                request.answer_partition.as_ref(),
+            )?;
             // Accepted blocking work keeps the existing hard reap boundary (125 s,
             // or Answer's 605 s); a shorter caller deadline must not kill this
             // shared worker early.

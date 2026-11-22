@@ -721,18 +721,32 @@ pub fn answer_payload_admission(
         .iter()
         .zip(allowances)
         .map(|(member, allowance)| {
-            let allowance = allowance.clone().map(|mut allowed| {
-                allowed.resources = airk_core::native_loop::LoopResources {
-                    calls: usize::MAX,
-                    input_tokens: usize::MAX,
-                    candidates: usize::MAX,
-                    bytes: usize::MAX,
-                    focus_pairs: usize::MAX,
-                };
-                allowed.card_ordinals = vec![u8::MAX; budget.context_calls];
-                allowed.focus_ordinals = vec![u8::MAX; budget.focus_calls];
-                allowed
-            });
+            // Every member is sized with the widest allowance, with or
+            // without an initial one: hand-back can admit a member later with
+            // a full allowance (review finding 5 of L3-10 (a)).
+            let mut allowed =
+                allowance
+                    .clone()
+                    .unwrap_or_else(|| airk_core::native_loop::PartitionAllowanceV3 {
+                        schema: airk_core::native_loop::ALLOWANCE_SCHEMA_V3.into(),
+                        attempt: airk_core::identity::Incarnation::from_bytes([1; 16]),
+                        selection: request.authority,
+                        index_id: member.index_id,
+                        parent_budget: budget.clone(),
+                        resources: Default::default(),
+                        card_ordinals: vec![],
+                        focus_ordinals: vec![],
+                    });
+            allowed.resources = airk_core::native_loop::LoopResources {
+                calls: usize::MAX,
+                input_tokens: usize::MAX,
+                candidates: usize::MAX,
+                bytes: usize::MAX,
+                focus_pairs: usize::MAX,
+            };
+            allowed.card_ordinals = vec![u8::MAX; budget.context_calls];
+            allowed.focus_ordinals = vec![u8::MAX; budget.focus_calls];
+            let allowance = Some(allowed);
             PartitionReportV3 {
                 index_id: member.index_id,
                 allowance,
@@ -1259,8 +1273,14 @@ fn compose_inner(
     let maximum = result
         .context
         .as_ref()
-        .map_or(airk_core::MAX_RESPONSE_BYTES, |summary| {
-            summary.reply_bytes().min(request.budgets.max_bytes)
+        .map_or(airk_core::MAX_RESPONSE_BYTES, |summary| match summary {
+            // Answer /3 takes its own frame (review finding 1 of L3-10 (a)):
+            // `SharedBudgets.max_bytes` is bounded by the 65,536-byte frame
+            // of every other tool and would refuse what admission sized.
+            airk_core::combined_context::CombinedContext::Answer(_) => summary.reply_bytes(),
+            airk_core::combined_context::CombinedContext::Context(_) => {
+                summary.reply_bytes().min(request.budgets.max_bytes)
+            }
         });
     if result.context.is_some() {
         while !result.ranking.is_empty() && encoded_size(&result, maximum).is_err() {

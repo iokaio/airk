@@ -28,10 +28,12 @@ Every public `airkctl` command and subcommand, exactly as `airkctl <command> --h
 - [`airkctl arbiter configure`](#airkctl-arbiter-configure)
 - [`airkctl arbiter import`](#airkctl-arbiter-import)
 - [`airkctl arbiter initialize`](#airkctl-arbiter-initialize)
+- [`airkctl arbiter migrate`](#airkctl-arbiter-migrate)
 - [`airkctl arbiter provision`](#airkctl-arbiter-provision)
 - [`airkctl arbiter recover`](#airkctl-arbiter-recover)
 - [`airkctl arbiter remove`](#airkctl-arbiter-remove)
 - [`airkctl arbiter status`](#airkctl-arbiter-status)
+- [`airkctl arbiter status-legacy`](#airkctl-arbiter-status-legacy)
 - [`airkctl changes`](#airkctl-changes)
 - [`airkctl code-facts`](#airkctl-code-facts)
 - [`airkctl configure`](#airkctl-configure)
@@ -1291,14 +1293,16 @@ Explicit optional model configuration, provisioning and recovery
 Usage: airkctl arbiter [OPTIONS] <COMMAND>
 
 Commands:
-  status      Inspect optional model readiness, selection and exact per-index enrollment
-  initialize  Explicitly create disabled Focus/Context state, preserving retained old consent and assets
-  configure   Apply one complete native Configure request. Enrollments are explicit immutable index IDs
-  provision   Explicitly acquire the compiled qualified profile asset closure
-  import      Import the exact compiled qualified asset closure from a read-only local bundle
-  cancel      Cancel this native optional operation; running native calls drain before removal
-  remove      Explicitly remove one optional profile after actual native pins drain
-  recover     Recover a retained optional model operation under the current configuration revision
+  status         Inspect optional model readiness, selection and exact per-index enrollment
+  status-legacy  Inspect retained CPU configuration/3 and status/2 without device migration
+  initialize     Explicitly create disabled Focus/Context state, preserving retained old consent and assets
+  migrate        Migrate the exact current CPU configuration to the device configuration under native custody
+  configure      Apply an exact current or retained CPU native Configure request
+  provision      Explicitly acquire the compiled qualified profile asset closure
+  import         Import the exact compiled qualified asset closure from a read-only local bundle
+  cancel         Cancel this native optional operation; running native calls drain before removal
+  remove         Explicitly remove one optional profile after actual native pins drain
+  recover        Recover a retained optional model operation under the current configuration revision
 
 Options:
       --output <OUTPUT>
@@ -1353,8 +1357,8 @@ Cancel this native optional operation; running native calls drain before removal
 Usage: airkctl arbiter cancel [OPTIONS] --expected-revision <EXPECTED_REVISION> --stage <STAGE>
 
 Options:
-      --expected-revision <EXPECTED_REVISION>
-
+      --legacy
+          Use retained CPU configuration/3 only; current device state refuses this path
 
       --output <OUTPUT>
           Result and error format: json writes one JSON document or error line
@@ -1362,14 +1366,17 @@ Options:
           [default: text]
           [possible values: json, text]
 
+      --expected-revision <EXPECTED_REVISION>
+
+
       --service-runtime-dir <SERVICE_RUNTIME_DIR>
           The AIRK service's control directory
 
-      --stage <STAGE>
-
-
       --service-project <SERVICE_PROJECT>
           A registered project binding
+
+      --stage <STAGE>
+
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
@@ -1406,19 +1413,22 @@ Options:
 ## airkctl arbiter configure
 
 ```text
-Apply one complete native Configure request. Enrollments are explicit immutable index IDs
+Apply an exact current or retained CPU native Configure request
 
 Usage: airkctl arbiter configure [OPTIONS] --file <FILE>
 
 Options:
-      --file <FILE>
-
+      --legacy
+          Use retained CPU configuration/3 only; current device state refuses this path
 
       --output <OUTPUT>
           Result and error format: json writes one JSON document or error line
 
           [default: text]
           [possible values: json, text]
+
+      --file <FILE>
+
 
       --service-runtime-dir <SERVICE_RUNTIME_DIR>
           The AIRK service's control directory
@@ -1466,8 +1476,8 @@ Import the exact compiled qualified asset closure from a read-only local bundle
 Usage: airkctl arbiter import [OPTIONS] --expected-revision <EXPECTED_REVISION> --profile <PROFILE> --directory <DIRECTORY>
 
 Options:
-      --expected-revision <EXPECTED_REVISION>
-
+      --legacy
+          Use retained CPU configuration/3 only; current device state refuses this path
 
       --output <OUTPUT>
           Result and error format: json writes one JSON document or error line
@@ -1475,13 +1485,13 @@ Options:
           [default: text]
           [possible values: json, text]
 
-      --profile <PROFILE>
+      --expected-revision <EXPECTED_REVISION>
 
 
       --service-runtime-dir <SERVICE_RUNTIME_DIR>
           The AIRK service's control directory
 
-      --directory <DIRECTORY>
+      --profile <PROFILE>
 
 
       --service-project <SERVICE_PROJECT>
@@ -1489,6 +1499,9 @@ Options:
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --directory <DIRECTORY>
+
 
       --combined-session <COMBINED_SESSION>
           Frozen reviewed multi-Project session JSON; indexes are executed once each
@@ -1527,7 +1540,65 @@ Explicitly create disabled Focus/Context state, preserving retained old consent 
 Usage: airkctl arbiter initialize [OPTIONS]
 
 Options:
+      --legacy
+          Use retained CPU configuration/3 only; current device state refuses this path
+
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
       --expected-legacy-configuration <EXPECTED_LEGACY_CONFIGURATION>
+
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
+```
+
+## airkctl arbiter migrate
+
+```text
+Migrate the exact current CPU configuration to the device configuration under native custody
+
+Usage: airkctl arbiter migrate [OPTIONS] --expected-revision <EXPECTED_REVISION> --expected-configuration <EXPECTED_CONFIGURATION>
+
+Options:
+      --expected-revision <EXPECTED_REVISION>
 
 
       --output <OUTPUT>
@@ -1535,6 +1606,9 @@ Options:
 
           [default: text]
           [possible values: json, text]
+
+      --expected-configuration <EXPECTED_CONFIGURATION>
+
 
       --service-runtime-dir <SERVICE_RUNTIME_DIR>
           The AIRK service's control directory
@@ -1582,8 +1656,8 @@ Explicitly acquire the compiled qualified profile asset closure
 Usage: airkctl arbiter provision [OPTIONS] --expected-revision <EXPECTED_REVISION> --profile <PROFILE>
 
 Options:
-      --expected-revision <EXPECTED_REVISION>
-
+      --legacy
+          Use retained CPU configuration/3 only; current device state refuses this path
 
       --output <OUTPUT>
           Result and error format: json writes one JSON document or error line
@@ -1591,11 +1665,14 @@ Options:
           [default: text]
           [possible values: json, text]
 
-      --profile <PROFILE>
+      --expected-revision <EXPECTED_REVISION>
 
 
       --service-runtime-dir <SERVICE_RUNTIME_DIR>
           The AIRK service's control directory
+
+      --profile <PROFILE>
+
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
@@ -1640,8 +1717,8 @@ Recover a retained optional model operation under the current configuration revi
 Usage: airkctl arbiter recover [OPTIONS] --expected-revision <EXPECTED_REVISION> --stage <STAGE>
 
 Options:
-      --expected-revision <EXPECTED_REVISION>
-
+      --legacy
+          Use retained CPU configuration/3 only; current device state refuses this path
 
       --output <OUTPUT>
           Result and error format: json writes one JSON document or error line
@@ -1649,14 +1726,17 @@ Options:
           [default: text]
           [possible values: json, text]
 
+      --expected-revision <EXPECTED_REVISION>
+
+
       --service-runtime-dir <SERVICE_RUNTIME_DIR>
           The AIRK service's control directory
 
-      --stage <STAGE>
-
-
       --service-project <SERVICE_PROJECT>
           A registered project binding
+
+      --stage <STAGE>
+
 
       --catalog-session <CATALOG_SESSION>
           Explicit reviewed single-index session JSON; preferences alone grant no access
@@ -1698,8 +1778,8 @@ Explicitly remove one optional profile after actual native pins drain
 Usage: airkctl arbiter remove [OPTIONS] --expected-revision <EXPECTED_REVISION> --profile <PROFILE>
 
 Options:
-      --expected-revision <EXPECTED_REVISION>
-
+      --legacy
+          Use retained CPU configuration/3 only; current device state refuses this path
 
       --output <OUTPUT>
           Result and error format: json writes one JSON document or error line
@@ -1707,11 +1787,14 @@ Options:
           [default: text]
           [possible values: json, text]
 
-      --profile <PROFILE>
+      --expected-revision <EXPECTED_REVISION>
 
 
       --service-runtime-dir <SERVICE_RUNTIME_DIR>
           The AIRK service's control directory
+
+      --profile <PROFILE>
+
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
@@ -1754,6 +1837,58 @@ Options:
 Inspect optional model readiness, selection and exact per-index enrollment
 
 Usage: airkctl arbiter status [OPTIONS]
+
+Options:
+      --output <OUTPUT>
+          Result and error format: json writes one JSON document or error line
+
+          [default: text]
+          [possible values: json, text]
+
+      --service-runtime-dir <SERVICE_RUNTIME_DIR>
+          The AIRK service's control directory
+
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
+      --combined-session <COMBINED_SESSION>
+          Frozen reviewed multi-Project session JSON; indexes are executed once each
+
+      --project-ids <PROJECT_IDS>
+          Narrow a combined read to explicit Projects from its reviewed session
+
+      --index-ids <INDEX_IDS>
+          Narrow a combined read to member indexes; requires explicit Project scope
+
+      --member-availability <MEMBER_AVAILABILITY>
+          Report member failures or require every selected member to answer
+
+          [possible values: report, require]
+
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
+
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
+
+      --collection <COLLECTION>
+          [default: default]
+
+  -h, --help
+          Print help
+```
+
+## airkctl arbiter status-legacy
+
+```text
+Inspect retained CPU configuration/3 and status/2 without device migration
+
+Usage: airkctl arbiter status-legacy [OPTIONS]
 
 Options:
       --output <OUTPUT>

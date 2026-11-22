@@ -2,10 +2,11 @@
 use super::*;
 
 fn args(mode: Option<&str>) -> Map<String, Value> {
-    let request = airk_core::arbiter::context_action::ContextRequestV2 {
-        schema: airk_core::arbiter::context_action::REQUEST_SCHEMA_V2.into(),
+    let request = airk_core::arbiter::answer_loop::ContextRequestV3 {
+        schema: airk_core::arbiter::answer_loop::REQUEST_SCHEMA_V3.into(),
         question: "exact evidence".into(),
         budget: Default::default(),
+        continuation: None,
     };
     let mut args = serde_json::to_value(request)
         .unwrap()

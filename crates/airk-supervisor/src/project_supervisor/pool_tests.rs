@@ -25,6 +25,7 @@ async fn search(worker: &mut ChildWorker, mode: &str) -> Result<serde_json::Valu
         &mut stream,
         &protocol::Query {
             context_partition: None,
+            answer_partition: None,
             read_attempt: None,
             frontend: None,
             tool: "airk_search".into(),

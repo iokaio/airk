@@ -528,6 +528,7 @@ impl Connection {
         self.exchange(
             Query {
                 context_partition: None,
+                answer_partition: None,
                 frontend: if tool == "airk_diagnostics" && !self.scoped {
                     Some(airk_supervisor::runtime_metadata::observe_process())
                 } else {
@@ -573,6 +574,7 @@ impl Connection {
         self.exchange(
             Query {
                 context_partition: None,
+                answer_partition: None,
                 frontend: None,
                 tool: String::new(),
                 arguments: Default::default(),
@@ -593,8 +595,10 @@ impl Connection {
         // already bounded original read parent after native acceptance.
         let context = self.admitted_read_context(context, Instant::now())?;
         query.context_partition = context.context_partition().cloned();
+        query.answer_partition = context.answer_partition().cloned();
         ensure!(
-            query.context_partition.is_none() || self.read_attempt_supported,
+            (query.context_partition.is_none() && query.answer_partition.is_none())
+                || self.read_attempt_supported,
             "context partitions require original native read attempts"
         );
         if self.read_attempt_supported {
@@ -622,6 +626,17 @@ impl Connection {
             ensure!(
                 query.native.is_none() && query.tool == canonical_tool,
                 "partition requires its canonical Search or Answer purpose"
+            );
+        }
+        if let Some(partition) = &query.answer_partition {
+            let attempt = query
+                .read_attempt
+                .as_ref()
+                .context("context partition original attempt missing")?;
+            partition.validate_binding(attempt, partition.selection, partition.index_id)?;
+            ensure!(
+                query.native.is_none() && query.tool == "airk_answer",
+                "an Answer /3 partition requires its canonical Answer purpose"
             );
         }
         loop {

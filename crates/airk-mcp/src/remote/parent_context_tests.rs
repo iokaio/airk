@@ -92,13 +92,14 @@ async fn canonical_transport_keeps_short_and_long_original_context_and_full_resu
 async fn routed_answer_admission_preserves_complete_canonical_arguments_and_reply()
 -> anyhow::Result<()> {
     let backend = Observed::default();
-    let mut request = serde_json::to_value(airk_core::arbiter::context_action::ContextRequestV2 {
-        schema: airk_core::arbiter::context_action::REQUEST_SCHEMA_V2.into(),
+    let mut request = serde_json::to_value(airk_core::arbiter::answer_loop::ContextRequestV3 {
+        schema: airk_core::arbiter::answer_loop::REQUEST_SCHEMA_V3.into(),
         question: "routed original allowance".into(),
-        budget: airk_core::arbiter::Budget {
+        budget: airk_core::arbiter::answer_loop::BudgetV3 {
             deadline_ms: 2000,
             ..Default::default()
         },
+        continuation: None,
     })?
     .as_object()
     .unwrap()

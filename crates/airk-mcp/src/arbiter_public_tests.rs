@@ -6,12 +6,9 @@ use crate::{
     unified,
 };
 use airk_core::{
-    arbiter::{
-        Budget,
-        context_action::{
-            CONTEXT_SCHEMA_V2 as CONTEXT_SCHEMA, ContextRequestV2 as ContextRequest,
-            REQUEST_SCHEMA_V2 as REQUEST_SCHEMA,
-        },
+    arbiter::answer_loop::{
+        BudgetV3, CONTEXT_SCHEMA_V3 as CONTEXT_SCHEMA, ContextRequestV3 as ContextRequest,
+        REQUEST_SCHEMA_V3 as REQUEST_SCHEMA,
     },
     identity::Incarnation,
     service::{ScopedReadRef, WorkerIdentity},
@@ -106,19 +103,26 @@ async fn public_answer_sdk_preserves_advertised_schema_full_utf8_question_and_bu
             "advertised Answer lost {field}"
         );
     }
-    let budget = Budget {
+    let budget = BudgetV3 {
         calls: 3,
         rounds: 1,
         fanout: 2,
         input_tokens: 1024,
+        round_input_tokens: 1024,
         candidates: 4,
         max_bytes: 65_536,
         deadline_ms: 20_000,
+        max_parts: 1,
+        max_sub_needs: 1,
+        context_calls: 1,
+        focus_calls: 1,
+        focus_pairs: 8,
     };
     let short = ContextRequest {
         schema: REQUEST_SCHEMA.into(),
         question: "amber_marker".into(),
         budget: budget.clone(),
+        continuation: None,
     };
     short.validate()?;
     let mut full_question = "amber_marker é中".to_owned();

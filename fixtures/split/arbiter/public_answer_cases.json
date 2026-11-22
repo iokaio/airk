@@ -6,14 +6,20 @@
         "budget": {
           "calls": 3,
           "candidates": 4,
+          "context_calls": 1,
           "deadline_ms": 20000,
           "fanout": 2,
+          "focus_calls": 1,
+          "focus_pairs": 8,
           "input_tokens": 1024,
           "max_bytes": 65536,
+          "max_parts": 1,
+          "max_sub_needs": 1,
+          "round_input_tokens": 1024,
           "rounds": 1
         },
         "question": "amber_marker",
-        "schema": "airk.arbiter.context.request/2"
+        "schema": "airk.arbiter.context.request/3"
       },
       "name": "complete_native_request"
     },
@@ -23,10 +29,16 @@
         "budget": {
           "calls": 3,
           "candidates": 4,
+          "context_calls": 1,
           "deadline_ms": 20000,
           "fanout": 2,
+          "focus_calls": 1,
+          "focus_pairs": 8,
           "input_tokens": 1024,
           "max_bytes": 65536,
+          "max_parts": 1,
+          "max_sub_needs": 1,
+          "round_input_tokens": 1024,
           "rounds": 1
         },
         "question": "amber_marker"
@@ -36,53 +48,99 @@
   ],
   "input_schema": {
     "$defs": {
-      "Budget": {
+      "BudgetV3": {
         "additionalProperties": false,
         "properties": {
           "calls": {
+            "description": "Canonical reads over the whole Answer.",
             "format": "uint",
             "minimum": 0,
             "type": "integer"
           },
           "candidates": {
+            "description": "Candidate records over the whole Answer, before dedup.",
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "context_calls": {
+            "description": "Context card calls (slots).",
             "format": "uint",
             "minimum": 0,
             "type": "integer"
           },
           "deadline_ms": {
+            "description": "Whole Answer, Answer only.",
             "format": "uint64",
             "minimum": 0,
             "type": "integer"
           },
           "fanout": {
+            "description": "Peak concurrent reads in one round of one part.",
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "focus_calls": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "focus_pairs": {
             "format": "uint",
             "minimum": 0,
             "type": "integer"
           },
           "input_tokens": {
+            "description": "Model input token pool of the whole attempt.",
             "format": "uint",
             "minimum": 0,
             "type": "integer"
           },
           "max_bytes": {
+            "description": "Bytes retained while gathering; the reply takes at most the smaller\nof this and 131,072 bytes.",
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_parts": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_sub_needs": {
+            "description": "Per part.",
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "round_input_tokens": {
+            "description": "Model input tokens of one round of one part.",
             "format": "uint",
             "minimum": 0,
             "type": "integer"
           },
           "rounds": {
+            "description": "Per part.",
             "format": "uint",
             "minimum": 0,
             "type": "integer"
           }
         },
         "required": [
-          "calls",
-          "rounds",
-          "fanout",
-          "input_tokens",
-          "candidates",
+          "deadline_ms",
           "max_bytes",
-          "deadline_ms"
+          "max_parts",
+          "max_sub_needs",
+          "rounds",
+          "calls",
+          "fanout",
+          "candidates",
+          "input_tokens",
+          "round_input_tokens",
+          "context_calls",
+          "focus_calls",
+          "focus_pairs"
         ],
         "type": "object"
       },
@@ -92,13 +150,28 @@
           "full"
         ],
         "type": "string"
+      },
+      "Sha256Digest": {
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
       }
     },
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
     "properties": {
       "budget": {
-        "$ref": "#/$defs/Budget"
+        "$ref": "#/$defs/BudgetV3"
+      },
+      "continuation": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/Sha256Digest"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "A ticket or continuation id, to attach to an existing job."
       },
       "include_status": {
         "default": false,

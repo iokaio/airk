@@ -752,7 +752,7 @@ fn body_with_budgets(
                 .as_array()
                 .context("combined member allocations missing")?;
             if let Some(context) = value.get("context") {
-                let summary: airk_core::combined_context::CombinedContextSummary =
+                let summary: airk_core::combined_context::CombinedContext =
                     serde_json::from_value(context.clone())?;
                 let indexes = members
                     .iter()
@@ -763,7 +763,7 @@ fn body_with_budgets(
                     let allocation: airk_core::combined_reads::MemberAllocation =
                         serde_json::from_value(member["allocation"].clone())?;
                     ensure!(
-                        allocation.deadline_ms <= summary.budget.deadline_ms,
+                        allocation.deadline_ms <= summary.deadline_ms(),
                         "context member exceeds its one shared original deadline"
                     );
                 }
@@ -786,6 +786,53 @@ fn body_with_budgets(
         }
     }
     Ok(value)
+}
+
+/// An Answer /3 reply, or its combined wrapper, under the 131,072-byte
+/// Answer frame (every other tool keeps the 65,536-byte frame of `body`).
+fn answer_body(envelope: &Value) -> Result<Value> {
+    let frame = airk_core::arbiter::answer_loop::MAX_ANSWER_RESPONSE_BYTES;
+    body_with_budgets(envelope, frame, 3 * frame + 4096)
+}
+
+fn answer_member_body(combined: &Value, member: &Value) -> Result<Value> {
+    let index: IndexId = serde_json::from_value(member["index_id"].clone())?;
+    let value = airk_core::combined_reads::shared_values::materialize_combined_member_result(
+        combined, index,
+    )
+    .with_context(|| format!("materialize native member {index}"))?;
+    answer_body(&value).with_context(|| format!("inspect expanded native member {index}"))
+}
+
+/// The `airk.combined-context/2` summary after its owner validated it: the
+/// attempt is a transport identity, and every byte counter is a function of
+/// member reply lengths, which carry timing digits (`LoopUse::of_reply`
+/// takes the larger of the read bytes and the reply's own length, and
+/// hand-back grows later allowances by it). Every other counter, outcome,
+/// termination and delivery binding stays compared, and each member reply
+/// is compared in full, including its `work.bytes`.
+fn answer_summary_copy(
+    value: &mut Value,
+    summary: &airk_core::combined_context::CombinedContextSummaryV2,
+) {
+    let context = &mut value["context"];
+    context["attempt"] = json!("<original-context-attempt>");
+    for counter in ["known_used", "unknown_held"] {
+        context[counter]["bytes"] = json!("<reply-length-bytes>");
+    }
+    for (position, member) in summary.members.iter().enumerate() {
+        let report = &mut context["members"][position];
+        if member.allowance.is_some() {
+            report["allowance"]["attempt"] = json!("<original-context-attempt>");
+            report["allowance"]["resources"]["bytes"] = json!("<reply-length-bytes>");
+        }
+        if matches!(
+            member.outcome,
+            airk_core::combined_context::PartitionOutcomeV3::Known { .. }
+        ) {
+            report["outcome"]["used"]["bytes"] = json!("<reply-length-bytes>");
+        }
+    }
 }
 
 fn member_body(combined: &Value, member: &Value) -> Result<Value> {
@@ -4190,12 +4237,64 @@ fn current_member_copy(raw: &Value, status: bool) -> Result<Value> {
     Ok(result)
 }
 
+/// The most a combined member's `allocation.deadline_ms` may declare. Every
+/// combined read shares one request clock of at most 120,000 ms. A combined
+/// Answer /3 wrapper alone declares, for each member that ran, the deadline of
+/// its `airk.combined-context/2` summary (kernel `compose_inner`), which the
+/// 600,000 ms Answer ceiling bounds (Core arbiter contract, "Combined Answer
+/// /3 allowance": frame and time, for Answer only).
+fn member_deadline_ceiling(raw: &Value) -> Result<u64> {
+    if raw["context"]["schema"] != airk_core::combined_context::SUMMARY_SCHEMA_V2 {
+        return Ok(120_000);
+    }
+    let summary: airk_core::combined_context::CombinedContextSummaryV2 =
+        serde_json::from_value(raw["context"].clone())?;
+    ensure!(
+        (1..=600_000).contains(&summary.budget.deadline_ms),
+        "Answer summary deadline is outside the 600000 ms Answer ceiling"
+    );
+    Ok(summary.budget.deadline_ms)
+}
+
+#[test]
+fn current_member_deadline_ceiling_exceeds_120s_only_for_an_answer_wrapper() -> Result<()> {
+    assert_eq!(
+        member_deadline_ceiling(&json!({"schema":"airk.combined-read/1"}))?,
+        120_000
+    );
+    // An Answer /2 summary keeps the ceiling of every other combined read.
+    assert_eq!(
+        member_deadline_ceiling(&json!({"schema":"airk.combined-read/1",
+            "context":{"schema":"airk.combined-context/1","budget":{"deadline_ms":600_000}}}))?,
+        120_000
+    );
+    let (budget, mut answer) = whole_verification_comparison_fixture(1)?;
+    assert_eq!(answer["context"]["schema"], "airk.combined-context/2");
+    assert_eq!(member_deadline_ceiling(&answer)?, budget.deadline_ms);
+    for (deadline, ceiling) in [
+        (120_001u64, Some(120_001u64)),
+        (300_000, Some(300_000)),
+        (600_000, Some(600_000)),
+        (600_001, None),
+        (0, None),
+    ] {
+        answer["context"]["budget"]["deadline_ms"] = json!(deadline);
+        assert_eq!(member_deadline_ceiling(&answer).ok(), ceiling, "{deadline}");
+    }
+    Ok(())
+}
+
 fn current_body_copy(raw: &Value, status: bool) -> Result<Value> {
     if raw["schema"] != "airk.combined-read/1" {
         return current_member_copy(raw, status);
     }
-    // Authenticate every raw byte before expanding the existing native codec.
-    body(raw)?;
+    // Authenticate every raw byte before expanding the existing native codec;
+    // a combined Answer /3 wrapper takes the Answer frame.
+    if raw["context"]["schema"] == airk_core::combined_context::SUMMARY_SCHEMA_V2 {
+        answer_body(raw)?;
+    } else {
+        body(raw)?;
+    }
     airk_core::verification::validate_projection(raw)?;
     let mut logical = airk_core::combined_reads::materialize_combined_read(raw)?;
     normalize_member_verification_timing(&mut logical)?;
@@ -4219,6 +4318,7 @@ fn current_body_copy(raw: &Value, status: bool) -> Result<Value> {
     logical["delivery_observation"] = raw["delivery_observation"].clone();
     logical["delivery_observation"]["receipt"]["result_digest"] =
         json!("<authenticated-raw-observation-digest>");
+    let deadline_ceiling = member_deadline_ceiling(raw)?;
     for member in logical["members"]
         .as_array_mut()
         .context("current members")?
@@ -4226,7 +4326,7 @@ fn current_body_copy(raw: &Value, status: bool) -> Result<Value> {
         let allocation: airk_core::combined_reads::MemberAllocation =
             serde_json::from_value(member["allocation"].clone())?;
         ensure!(
-            allocation.deadline_ms <= 120_000,
+            allocation.deadline_ms <= deadline_ceiling,
             "invalid original member allowance"
         );
         // Fixed count/byte/verification caps stay literal. The shared elapsed
@@ -5256,179 +5356,194 @@ async fn per_index_counts_apply_to_catalog_and_open_reads_and_bind_cursors() -> 
     f.assert_sources_unchanged()
 }
 
-fn authenticated_fallback_case(header: u8) -> Result<(airk_core::arbiter::Budget, Value)> {
-    authenticated_fallback_case_in_index(header, None)
+/// The valid two-part Answer /3 reply of the Core semantic cases, under the
+/// cases' default budget.
+fn answer_reply_case() -> Result<(airk_core::arbiter::answer_loop::BudgetV3, Value)> {
+    let cases: Value = serde_json::from_str(include_str!(
+        "../../../fixtures/split/arbiter/answer_loop_cases.json"
+    ))?;
+    let budget: airk_core::arbiter::answer_loop::BudgetV3 =
+        serde_json::from_value(cases["default_budget"].clone())?;
+    let reply = cases["response_cases"]
+        .as_array()
+        .context("Answer reply cases")?
+        .iter()
+        .find(|case| case["id"] == "two_parts_valid")
+        .context("valid two-part Answer reply")?["response"]
+        .clone();
+    airk_core::arbiter::answer_loop::ContextResponseV3::from_canonical(&reply, &budget)?;
+    Ok((budget, reply))
 }
-fn authenticated_fallback_case_in_index(
+
+/// The case reply as one transport observed it: every canonical read body
+/// carries this observation's request id, so its record ids and projected
+/// body digests differ, and every custody digest and timing differs; the
+/// evidence and decisions are the same.
+fn observed_answer_reply(
     header: u8,
     index: Option<IndexId>,
-) -> Result<(airk_core::arbiter::Budget, Value)> {
-    let cases: Value = serde_json::from_str(include_str!(
-        "../../../fixtures/split/arbiter/context_action_cases.json"
-    ))?;
-    let case = cases["cases"]
-        .as_array()
-        .context("joint cases")?
-        .iter()
-        .find(|case| case["name"] == "overrun_deadline_metadata_retained")
-        .context("native unassessed case")?;
-    let budget: airk_core::arbiter::Budget = serde_json::from_value(case["budget"].clone())?;
-    let mut packet = airk_core::arbiter::context_action::ContextResponseV2::from_canonical(
-        &case["input"],
-        &budget,
-    )?;
-    if let Some(index) = index {
-        packet.assessment.scope.index_id = index;
-        for record in &mut packet.records {
-            record.scope.index_id = index;
-        }
-        for event in &mut packet.assessment_history {
-            event.partition.index_id = index;
-            if let airk_core::arbiter::context_action::AssessmentResult::Unavailable {
-                advice: Some(advice),
-                ..
-            } = &mut event.result
-            {
-                advice.scope.index_id = index;
-            }
+) -> Result<(airk_core::arbiter::answer_loop::BudgetV3, Value)> {
+    let (budget, mut reply) = answer_reply_case()?;
+    let records = reply["records"].as_array().context("reply records")?.len();
+    let mut renamed = std::collections::BTreeMap::new();
+    for position in 0..records {
+        let record = &mut reply["records"][position];
+        record["canonical_result"]["full_digest"] = json!(Sha256Digest::from_bytes(
+            [header.wrapping_mul(16).wrapping_add(0x40 + u8::try_from(position)?); 32]
+        ));
+        let id = serde_json::to_value(Sha256Digest::from_bytes(
+            [header.wrapping_mul(16).wrapping_add(u8::try_from(position)?); 32],
+        ))?;
+        renamed.insert(
+            record["id"].as_str().context("record id")?.to_owned(),
+            id.clone(),
+        );
+        record["id"] = id;
+    }
+    // Every place the reply cites a record, named explicitly.
+    let mut citations = vec!["/omitted_evidence".to_string()];
+    for (part, value) in reply["parts"].as_array().context("parts")?.iter().enumerate() {
+        for need in 0..value["sub_needs"].as_array().context("sub-needs")?.len() {
+            citations.push(format!("/parts/{part}/sub_needs/{need}/evidence"));
         }
     }
-    ensure!(
-        packet.records.len() == 1,
-        "pure seed must have one canonical result"
-    );
-    let prior = packet.records[0].id;
-    let scope = packet.assessment.scope.clone();
-    let application = airk_core::arbiter::IndexApplication {
-        scope: scope.clone(),
-        profile: None,
-        availability: airk_core::arbiter::Availability::Disabled,
-        reason: "Pure native fallback replay; no model qualification claim".into(),
-    };
-    let mut canonical = packet.records[0].canonical_result.clone();
-    canonical["publication"] = serde_json::to_value(&scope.publication)?;
-    canonical["request_id"] = serde_json::to_value(Incarnation::from_bytes([header; 16]))?;
-    let now = Instant::now();
-    let mut gathering = airk_kernel::arbiter::Gathering::new(
-        airk_core::arbiter::ContextRequest {
-            schema: airk_core::arbiter::REQUEST_SCHEMA.into(),
-            question: packet.question.clone(),
-            budget: budget.clone(),
-        },
-        scope,
-        application.clone(),
-        now,
-    )?;
-    gathering.next(now)?.context("initial native dispatch")?;
-    gathering.observe(Ok(canonical), now)?;
-    packet.records[0] = gathering
-        .records()
-        .first()
-        .context("owning native record")?
-        .clone();
-    let actual = packet.records[0].id;
-    for paragraph in &mut packet.paragraphs {
-        for id in &mut paragraph.evidence {
-            if *id == prior {
-                *id = actual;
-            }
-        }
+    for paragraph in 0..reply["paragraphs"].as_array().context("paragraphs")?.len() {
+        citations.push(format!("/paragraphs/{paragraph}/evidence"));
     }
-    for event in &mut packet.assessment_history {
-        for unit in &mut event.basis.source_units_presented {
-            if unit.record == prior {
-                unit.record = actual;
-            }
-        }
-        if let airk_core::arbiter::context_action::AssessmentResult::Unavailable {
-            advice: Some(advice),
-            ..
-        } = &mut event.result
+    for conflict in 0..reply["union"]["conflicts"].as_array().context("conflicts")?.len() {
+        citations.push(format!("/union/conflicts/{conflict}/evidence"));
+    }
+    for pointer in citations {
+        for id in reply
+            .pointer_mut(&pointer)
+            .and_then(Value::as_array_mut)
+            .with_context(|| format!("citation list {pointer}"))?
         {
-            for id in &mut advice.evidence {
-                if *id == prior {
-                    *id = actual;
-                }
-            }
+            *id = renamed
+                .get(id.as_str().context("cited id")?)
+                .context("citation of an unknown record")?
+                .clone();
         }
     }
-    packet.applications = vec![application];
-    packet.validate(&budget)?;
-    Ok((budget, serde_json::to_value(packet)?))
+    for position in 0..reply["record_uses"].as_array().context("uses")?.len() {
+        let id = &mut reply["record_uses"][position]["record"];
+        *id = renamed
+            .get(id.as_str().context("used id")?)
+            .context("use of an unknown record")?
+            .clone();
+    }
+    // Custody digests: distinct before stay distinct after, equal stay equal.
+    let mut custody = std::collections::BTreeMap::new();
+    let mut digest = |value: &mut Value| -> Result<()> {
+        let next = u8::try_from(custody.len())?;
+        *value = custody
+            .entry(value.as_str().context("custody digest")?.to_owned())
+            .or_insert_with(|| {
+                json!(Sha256Digest::from_bytes(
+                    [header.wrapping_mul(16).wrapping_add(0x80 + next); 32]
+                ))
+            })
+            .clone();
+        Ok(())
+    };
+    digest(&mut reply["decision_log"]["digest"])?;
+    for position in 0..reply["decisions"].as_array().context("decisions")?.len() {
+        digest(&mut reply["decisions"][position]["basis"]["digest"])?;
+        if let Some(receipt) = reply["decisions"][position].get_mut("receipt") {
+            digest(receipt)?;
+        }
+    }
+    let timing = u64::from(header);
+    reply["elapsed_ms"] = json!(1000 + timing);
+    reply["work"]["compile_us"] = json!(40 + timing);
+    reply["work"]["inference_us"] = json!(60 + timing);
+    reply["decision_log"]["timings"]["compile_us"] = json!(30 + timing);
+    reply["decision_log"]["timings"]["inference_us"] = json!(50 + timing);
+    for part in reply["parts"].as_array_mut().context("parts")? {
+        part["deadline_share_ms"] = json!(100_000 + timing);
+    }
+    if let Some(index) = index {
+        reply["scope"]["index_id"] = json!(index);
+        for application in reply["applications"]
+            .as_array_mut()
+            .context("applications")?
+        {
+            application["scope"]["index_id"] = json!(index);
+        }
+    }
+    airk_core::arbiter::answer_loop::ContextResponseV3::from_canonical(&reply, &budget)?;
+    Ok((budget, reply))
 }
+
 #[test]
-fn context_fallback_comparison_retains_evidence_and_rejects_orphaned_or_unearned_identity_changes()
--> Result<()> {
-    let (budget, raw) = authenticated_fallback_case(1)?;
-    let (_, later) = authenticated_fallback_case(2)?;
+fn answer_reply_comparison_normalizes_only_transport_identities_custody_and_timing() -> Result<()>
+{
+    let (budget, raw) = observed_answer_reply(1, None)?;
+    let (_, later) = observed_answer_reply(2, None)?;
     let (left, right) = common::parity::context::pair(&raw, &later, &budget)?;
     assert_eq!(left, right);
-    for pointer in [
-        "/records/0/scope/authorization",
-        "/records/0/canonical_result/hits/0/text",
-        "/assessment/coverage/reason",
-        "/work/calls",
+    // Evidence, decisions, accounting and provenance stay compared.
+    for (pointer, value) in [
+        (
+            "/records/0/canonical_result/future_native_field/retained",
+            json!(false),
+        ),
+        ("/records/1/arguments/query", json!("changed query")),
+        ("/paragraphs/0/text", json!("changed paragraph")),
+        ("/decisions/1/chosen/0/symbol", json!("B")),
+        ("/decisions/1/roster_digest", json!("ab".repeat(32))),
+        ("/parts/0/rounds/0/new_evidence", json!(1)),
+        ("/parts/1/sub_needs/0/text", json!("changed need")),
+        ("/work/calls", json!(7)),
+        ("/work/bytes", json!(4096)),
+        ("/candidate_count", json!(1)),
+        ("/model_work/focus_pairs", json!(1)),
+        ("/applications/0/reason", json!("changed reason")),
+        ("/work/policy_us", json!(5)),
     ] {
-        let mut changed = raw.clone();
-        let value = changed
+        let mut changed = later.clone();
+        *changed
             .pointer_mut(pointer)
-            .with_context(|| format!("native tamper case pointer {pointer}"))?;
-        *value = match value {
-            Value::Number(_) => json!(2),
-            _ => json!("changed-native-evidence"),
-        };
+            .with_context(|| format!("tamper pointer {pointer}"))? = value;
         if let Ok((left, right)) = common::parity::context::pair(&raw, &changed, &budget) {
             assert_ne!(left, right, "{pointer}");
         }
     }
-    let mut rebound =
-        airk_core::arbiter::context_action::ContextResponseV2::from_canonical(&later, &budget)?;
-    let prior = rebound.records[0].id;
-    let replacement = Sha256Digest::from_bytes([0xee; 32]);
-    rebound.records[0].id = replacement;
-    for paragraph in &mut rebound.paragraphs {
-        for id in &mut paragraph.evidence {
-            if *id == prior {
-                *id = replacement;
-            }
-        }
+    // A citation moved to another record is a different reply.
+    let mut changed = later.clone();
+    changed["paragraphs"][0]["evidence"][0] = changed["records"][0]["id"].clone();
+    if let Ok((left, right)) = common::parity::context::pair(&raw, &changed, &budget) {
+        assert_ne!(left, right, "moved citation");
     }
-    for event in &mut rebound.assessment_history {
-        for unit in &mut event.basis.source_units_presented {
-            if unit.record == prior {
-                unit.record = replacement;
-            }
-        }
-        if let airk_core::arbiter::context_action::AssessmentResult::Unavailable {
-            advice: Some(advice),
-            ..
-        } = &mut event.result
-        {
-            for id in &mut advice.evidence {
-                if *id == prior {
-                    *id = replacement;
-                }
-            }
-        }
-    }
-    rebound.validate(&budget)?;
-    assert!(
-        common::parity::context::pair(&raw, &serde_json::to_value(rebound)?, &budget).is_err(),
-        "changed allowed header plus arbitrary changed digest/consistent references must fail native hash replay"
-    );
-    let mut changed = raw.clone();
-    changed["records"][0]["canonical_result"]["future"] =
-        json!({"request_id":"changed-evidence-owned","elapsed_ms":17});
-    assert!(
-        common::parity::context::pair(&raw, &changed, &budget).is_err(),
-        "unknown future bytes must remain bound by native digest"
-    );
-    let mut wire = raw.clone();
+    // Two decisions that saw different source units cannot become equal.
+    let mut changed = later.clone();
+    changed["decisions"][2]["basis"]["digest"] = changed["decisions"][1]["basis"]["digest"].clone();
+    let (left, right) = common::parity::context::pair(&raw, &changed, &budget)?;
+    assert_ne!(left, right, "custody digest equality pattern");
+    // Unknown fields stay compared; transport identities must be typed.
+    let mut wire = later.clone();
     wire["future"] = json!({"request_id":"evidence-owned","elapsed_ms":17});
     let mut changed = wire.clone();
     changed["future"]["request_id"] = json!("different-evidence-owned");
     let (left, right) = common::parity::context::pair(&wire, &changed, &budget)?;
     assert_ne!(left, right, "unknown outer fields cannot disappear");
+    let mut changed = later.clone();
+    changed["records"][0]["canonical_result"]["request_id"] = json!("not-an-incarnation");
+    assert!(common::parity::context::pair(&raw, &changed, &budget).is_err());
+    let mut changed = later.clone();
+    changed["records"][1]["canonical_result"]["full_digest"] =
+        changed["records"][0]["canonical_result"]["full_digest"].clone();
+    let (left, right) = common::parity::context::pair(&raw, &changed, &budget)?;
+    assert_ne!(left, right, "two different read bodies cannot become one");
+    let mut changed = later.clone();
+    changed["records"][0]["canonical_result"]["full_digest"] = json!(17);
+    assert!(common::parity::context::pair(&raw, &changed, &budget).is_err());
+    let mut changed = later.clone();
+    changed["parts"][0]["deadline_share_ms"] = json!(budget.deadline_ms + 1);
+    assert!(common::parity::context::pair(&raw, &changed, &budget).is_err());
+    let mut changed = later;
+    changed["elapsed_ms"] = json!("later");
+    assert!(common::parity::context::pair(&raw, &changed, &budget).is_err());
     let native = json!({"resultType":"complete","content":[]});
     let legacy = json!({"content":[]});
     let (left, right) =
@@ -5449,11 +5564,12 @@ fn context_fallback_comparison_retains_evidence_and_rejects_orphaned_or_unearned
     Ok(())
 }
 
-fn current_answer_request() -> Result<(airk_core::arbiter::Budget, Value)> {
-    let request = airk_core::arbiter::context_action::ContextRequestV2 {
-        schema: airk_core::arbiter::context_action::REQUEST_SCHEMA_V2.into(),
+fn current_answer_request() -> Result<(airk_core::arbiter::answer_loop::BudgetV3, Value)> {
+    let request = airk_core::arbiter::answer_loop::ContextRequestV3 {
+        schema: airk_core::arbiter::answer_loop::REQUEST_SCHEMA_V3.into(),
         question: "boundaryneedle".into(),
         budget: Default::default(),
+        continuation: None,
     };
     request.validate()?;
     let budget = request.budget.clone();
@@ -5464,58 +5580,44 @@ fn current_answer_request() -> Result<(airk_core::arbiter::Budget, Value)> {
 
 fn whole_verification_comparison_fixture(
     header: u8,
-) -> Result<(airk_core::arbiter::Budget, Value)> {
+) -> Result<(airk_core::arbiter::answer_loop::BudgetV3, Value)> {
     use airk_core::{combined_context::*, verification::*};
     let ids = [
         IndexId::from_identity(Incarnation::from_bytes([1; 16])),
         IndexId::from_identity(Incarnation::from_bytes([2; 16])),
     ];
     let authority = Sha256Digest::from_bytes([8; 32]);
-    let (budget, _) = authenticated_fallback_case(header)?;
-    let allowances =
-        initial_allocations(Incarnation::from_bytes([9; 16]), authority, &ids, &budget)?;
+    let attempt = Incarnation::from_bytes([9; 16]);
+    let (budget, _) = answer_reply_case()?;
+    let allowances = initial_allocations_v3(attempt, authority, &ids, &budget)?;
     let mut members = Vec::new();
     let mut reports = Vec::new();
     let mut proofs = Vec::new();
     let mut publications = Vec::new();
-    let mut used = Resources::default();
+    let mut used = LoopUse::default();
     let mut bindings = Vec::new();
     for (position, index) in ids.iter().copied().enumerate() {
-        let (_, mut raw) =
-            authenticated_fallback_case_in_index(header + u8::try_from(position)?, Some(index))?;
-        raw["applications"][0]["availability"] = json!("failed");
-        raw["applications"][0]["profile"] =
-            raw["assessment_history"][0]["result"]["advice"]["profile"].clone();
-        if position == 1 {
-            raw["assessment_history"][0]["ordinal"] = json!(3);
-        }
-        let packet: airk_core::arbiter::context_action::ContextResponseV2 =
-            serde_json::from_value(raw.clone())?;
-        bindings.push(
-            ContextDeliveryBinding::from_packet(&packet)?.context("native known-work binding")?,
-        );
-        let work = Resources::from_packet(&packet)?;
+        let (_, raw) = observed_answer_reply(header + u8::try_from(position)?, Some(index))?;
+        let allowance = allowances[position]
+            .clone()
+            .context("admitted member allowance")?;
+        let reply = airk_core::arbiter::answer_loop::ContextResponseV3::from_canonical(
+            &raw,
+            &allowance.clamp(&budget)?,
+        )?;
+        bindings.extend(reply_delivery_bindings(&reply)?);
+        let work = LoopUse::of_reply(&reply)?;
         used = used.checked_add(&work)?;
-        reports.push(PartitionReport {
+        reports.push(PartitionReportV3 {
             index_id: index,
-            allowance: allowances[position].clone(),
-            outcome: PartitionOutcome::Known {
+            allowance: Some(allowance),
+            outcome: PartitionOutcomeV3::Known {
                 used: work,
-                assessment_ordinals: vec![1],
-                read_depth: 0,
-                peak_fanout: 0,
+                read_depth: reply.work.rounds,
+                peak_fanout: reply.work.fanout,
             },
         });
-        if position == 1
-            && let PartitionOutcome::Known {
-                assessment_ordinals,
-                ..
-            } = &mut reports[position].outcome
-        {
-            *assessment_ordinals = vec![3];
-        }
-        publications
-            .push(json!({"index_id":index,"publication":packet.assessment.scope.publication}));
+        publications.push(json!({"index_id":index,"publication":reply.scope.publication}));
         members.push(json!({"index_id":index,"result":raw}));
         let mut own = json!({"steps":[{"result":raw}],"future_owner":{"preserved":[1,2,3]}});
         let receipt = VerificationReceipt {
@@ -5554,7 +5656,8 @@ fn whole_verification_comparison_fixture(
             references: vec![VerifiedReference {
                 id: "retained-reference".into(),
                 source_id: authority,
-                result_pointer: "/steps/0/result/records/0/canonical_result/hits/0/citation".into(),
+                result_pointer: "/steps/0/result/records/0/canonical_result/future_native_field"
+                    .into(),
                 kind: "citation".into(),
             }],
         };
@@ -5562,17 +5665,18 @@ fn whole_verification_comparison_fixture(
         proofs.push(json!({"index_id":index,"result":own,"allocation":VerificationAllocation {max_sources:4,max_bytes:8388608,deadline_ms:1000},
             "reference_bindings":[{"member_pointer":"/steps/0/result","result_pointer":format!("/members/{position}/result")}]}));
     }
-    let summary = CombinedContextSummary {
-        schema: SUMMARY_SCHEMA.into(),
-        attempt: Incarnation::from_bytes([9; 16]),
+    let summary = CombinedContextSummaryV2 {
+        schema: SUMMARY_SCHEMA_V2.into(),
+        attempt,
         selection: authority,
         budget: budget.clone(),
         members: reports,
         known_used: used,
-        unknown_held: Resources::default(),
+        unknown_held: LoopUse::default(),
         termination: Termination::Complete,
         delivery_bindings: bindings,
     };
+    summary.validate(&ids)?;
     let projection = json!({"schema":"airk.combined-read/1","members":members,"context":summary,
         "publication_vector":{"authority":authority,"observed_from_unix_ms":1,"observed_to_unix_ms":2,"members":publications},
         "member_verification":{"schema":"airk.combined-verification/1","scope_identity":authority,"members":proofs,"partial":true,"error":null}});
@@ -5582,7 +5686,7 @@ fn whole_verification_comparison_fixture(
 }
 
 #[test]
-fn whole_answer_verification_comparison_authenticates_duplicate_packets_and_keeps_native_proof_data()
+fn whole_answer_verification_comparison_validates_duplicate_replies_and_keeps_native_proof_data()
 -> Result<()> {
     let (budget, left) = whole_verification_comparison_fixture(1)?;
     let (_, mut right) = whole_verification_comparison_fixture(3)?;
@@ -5623,20 +5727,14 @@ fn whole_answer_verification_comparison_authenticates_duplicate_packets_and_keep
         member["result"]["source_verification"]["limits"]["effective_deadline_ms"] = json!(600);
     }
     let project = |raw: &Value| -> Result<Value> {
+        let summary: airk_core::combined_context::CombinedContextSummaryV2 =
+            serde_json::from_value(raw["context"].clone())?;
         let mut normalized = raw.clone();
         for position in 0..2 {
-            let summary: airk_core::combined_context::CombinedContextSummary =
-                serde_json::from_value(raw["context"].clone())?;
-            let allowance = summary.members[position].allowance.as_ref().unwrap();
-            let mut child = budget.clone();
-            child.calls = allowance.resources.calls;
-            child.input_tokens = allowance.resources.input_tokens.max(1);
-            child.candidates = allowance.resources.candidates;
-            child.max_bytes = allowance.resources.bytes;
             normalized["members"][position]["result"] = common::parity::context::pair(
                 &raw["members"][position]["result"],
                 &raw["members"][position]["result"],
-                &child,
+                &common::parity::context::member_budget(&summary, position)?,
             )?
             .0;
         }
@@ -5696,96 +5794,6 @@ fn whole_answer_verification_comparison_authenticates_duplicate_packets_and_keep
     changed["member_verification"]["members"][0]["result"]["source_verification"]["limits"]["deadline_ms"] =
         json!(801);
     assert!(project(&changed).is_err());
-    Ok(())
-}
-
-#[test]
-fn disclosed_fallback_prefix_replay_keeps_omissions_and_refuses_fake_counts_or_nonprefix_records()
--> Result<()> {
-    let (budget, raw) = authenticated_fallback_case(1)?;
-    let (_, later) = authenticated_fallback_case(2)?;
-    let disclose = |mut value: Value| -> Result<Value> {
-        value["omitted_count"] = json!(1);
-        value["candidate_count"] = json!(2);
-        value["work"]["calls"] = json!(2);
-        value["work"]["bytes"] =
-            json!(serde_json::to_vec(&value["records"][0]["canonical_result"])?.len());
-        Ok(value)
-    };
-    // Only the retained owner-generated initial record is supplied. No body
-    // or identity is invented for the explicitly disclosed omitted suffix.
-    let omitted = disclose(raw.clone())?;
-    let later_omitted = disclose(later)?;
-    let (left, right) = common::parity::context::pair(&omitted, &later_omitted, &budget)?;
-    assert_eq!(left, right);
-    assert_eq!(left["omitted_count"], 1);
-    assert_eq!(left["candidate_count"], 2);
-    for (pointer, value) in [
-        ("/candidate_count", json!(3)),
-        ("/work/calls", json!(1)),
-        ("/work/bytes", json!(0)),
-    ] {
-        let mut changed = omitted.clone();
-        *changed.pointer_mut(pointer).unwrap() = value;
-        assert!(
-            common::parity::context::pair(&omitted, &changed, &budget).is_err(),
-            "{pointer}"
-        );
-    }
-    let mut packet =
-        airk_core::arbiter::context_action::ContextResponseV2::from_canonical(&raw, &budget)?;
-    let now = Instant::now();
-    let mut owner = airk_kernel::arbiter::Gathering::new(
-        airk_core::arbiter::ContextRequest {
-            schema: airk_core::arbiter::REQUEST_SCHEMA.into(),
-            question: packet.question.clone(),
-            budget: budget.clone(),
-        },
-        packet.assessment.scope.clone(),
-        packet.applications[0].clone(),
-        now,
-    )?;
-    let canonical = packet.records[0].canonical_result.clone();
-    owner.next(now)?.context("initial owning dispatch")?;
-    owner.observe(Ok(canonical.clone()), now)?;
-    owner.next(now)?.context("next owning dispatch")?;
-    owner.observe(Ok(canonical), now)?;
-    let native = owner.finish(now)?;
-    ensure!(
-        native.records.len() == 2,
-        "negative controls need two actual owner-generated records"
-    );
-    packet.records = native.records;
-    packet.paragraphs = native.paragraphs;
-    packet.work = native.work;
-    packet.candidate_count = 2;
-    packet.omitted_count = 0;
-    packet.assessment_history.clear();
-    packet.assessment.coverage =
-        airk_core::arbiter::context_action::PartitionCoverage::Unassessed {
-            reason: airk_core::arbiter::context_action::AssessmentUnavailable::Disabled,
-        };
-    packet.stop = airk_core::arbiter::context_action::PartitionTermination::NoProgress;
-    packet.assessment.termination = packet.stop;
-    packet.gaps = vec![airk_core::arbiter::Gap::Unsupported];
-    packet.validate(&budget)?;
-    let full = serde_json::to_value(&packet)?;
-    common::parity::context::pair(&full, &full, &budget)?;
-    let mut reordered = packet.clone();
-    reordered.records.swap(0, 1);
-    reordered.validate(&budget)?;
-    assert!(
-        common::parity::context::pair(&full, &serde_json::to_value(reordered)?, &budget).is_err()
-    );
-    packet.records.remove(0);
-    packet.paragraphs.clear();
-    packet.candidate_count = 2;
-    packet.omitted_count = 1;
-    packet.validate(&budget)?;
-    assert!(
-        common::parity::context::pair(&full, &serde_json::to_value(packet)?, &budget).is_err(),
-        "skipped initial must fail owning replay even with consistent disclosure"
-    );
     Ok(())
 }
 async fn context_pipe_once(
@@ -5897,8 +5905,8 @@ fn compare_context_envelopes(
     let (left, right) = projected
         .as_ref()
         .map_or((left, right), |(left, right)| (left, right));
-    let left_body = body(left)?;
-    let right_body = body(right)?;
+    let left_body = answer_body(left)?;
+    let right_body = answer_body(right)?;
     let (a, b) = if left_body["schema"] == "airk.combined-read/1"
         || right_body["schema"] == "airk.combined-read/1"
     {
@@ -5918,54 +5926,37 @@ fn compare_context_envelopes(
             .iter()
             .map(|member| serde_json::from_value::<IndexId>(member["index_id"].clone()))
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        for value in [&mut a, &mut b] {
-            let summary: airk_core::combined_context::CombinedContextSummary =
-                serde_json::from_value(value["context"].clone())?;
+        let mut summaries = Vec::new();
+        for (value, body) in [(&mut a, &left_body), (&mut b, &right_body)] {
+            let summary: airk_core::combined_context::CombinedContextSummaryV2 =
+                serde_json::from_value(body["context"].clone())?;
             summary.validate(&indexes)?;
             ensure!(
-                serde_json::to_value(&summary.budget)? == serde_json::to_value(budget)?,
+                summary.budget == *budget,
                 "original Answer budget changed in summary"
             );
-            value["context"]["attempt"] = json!("<original-context-attempt>");
-            for (position, member) in summary.members.iter().enumerate() {
-                if member.allowance.is_some() {
-                    value["context"]["members"][position]["allowance"]["attempt"] =
-                        json!("<original-context-attempt>");
-                }
-            }
+            answer_summary_copy(value, &summary);
+            summaries.push(summary);
         }
         for (position, (lhs, rhs)) in left_members.iter().zip(&right_members).enumerate() {
             ensure!(
                 lhs["index_id"] == rhs["index_id"],
                 "Answer member order/identity differs"
             );
-            let left_packet = member_body(&left_body, &left_body["members"][position])?;
-            let right_packet = member_body(&right_body, &right_body["members"][position])?;
-            let left_summary: airk_core::combined_context::CombinedContextSummary =
-                serde_json::from_value(left_body["context"].clone())?;
-            let right_summary: airk_core::combined_context::CombinedContextSummary =
-                serde_json::from_value(right_body["context"].clone())?;
-            let left_allowance = left_summary.members[position]
-                .allowance
-                .as_ref()
-                .context("queried member allowance")?;
-            let right_allowance = right_summary.members[position]
-                .allowance
-                .as_ref()
-                .context("queried member allowance")?;
-            ensure!(
-                left_allowance.resources == right_allowance.resources,
-                "Answer child reservations differ"
-            );
-            let mut child_budget = left_allowance.parent_budget.clone();
-            child_budget.calls = left_allowance.resources.calls;
-            child_budget.input_tokens = left_allowance.resources.input_tokens.max(1);
-            child_budget.candidates = left_allowance.resources.candidates;
-            child_budget.max_bytes = left_allowance.resources.bytes;
-            let (left_packet, right_packet) =
-                common::parity::context::pair(&left_packet, &right_packet, &child_budget)?;
-            a["members"][position]["result"] = left_packet;
-            b["members"][position]["result"] = right_packet;
+            let left_reply = answer_member_body(&left_body, &left_body["members"][position])?;
+            let right_reply = answer_member_body(&right_body, &right_body["members"][position])?;
+            a["members"][position]["result"] = common::parity::context::pair(
+                &left_reply,
+                &left_reply,
+                &common::parity::context::member_budget(&summaries[0], position)?,
+            )?
+            .0;
+            b["members"][position]["result"] = common::parity::context::pair(
+                &right_reply,
+                &right_reply,
+                &common::parity::context::member_budget(&summaries[1], position)?,
+            )?
+            .0;
         }
         if let Some(proof) =
             common::parity::context::whole_verification(&left_body, &a, budget, verification)?
@@ -6178,8 +6169,8 @@ fn retained_current_answer_pair_validates_full_transport_results() -> Result<()>
     let arguments: airk_mcp::AnswerArgs = serde_json::from_value(capture["arguments"].clone())?;
     arguments.request.validate()?;
     ensure!(
-        arguments.request.schema == airk_core::arbiter::context_action::REQUEST_SCHEMA_V2,
-        "current /2 request required"
+        arguments.request.schema == airk_core::arbiter::answer_loop::REQUEST_SCHEMA_V3,
+        "current /3 request required"
     );
     let protocol = capture.get("right_mcp_protocol").and_then(Value::as_str);
     assert_context_envelopes(
@@ -6189,7 +6180,7 @@ fn retained_current_answer_pair_validates_full_transport_results() -> Result<()>
         &capture["arguments"],
         protocol,
     )?;
-    let owners: [(&str, &[u8]); 9] = [
+    let owners: [(&str, &[u8]); 10] = [
         (
             "crates/airk-cli/tests/combined_reads.rs",
             include_bytes!("combined_reads.rs").as_slice(),
@@ -6203,12 +6194,16 @@ fn retained_current_answer_pair_validates_full_transport_results() -> Result<()>
             include_bytes!("common/parity/strict.rs").as_slice(),
         ),
         (
-            "crates/airk-core/src/arbiter/context_action.rs",
-            include_bytes!("../../airk-core/src/arbiter/context_action.rs").as_slice(),
+            "crates/airk-core/src/arbiter/answer_loop.rs",
+            include_bytes!("../../airk-core/src/arbiter/answer_loop.rs").as_slice(),
         ),
         (
             "crates/airk-core/src/combined_context.rs",
             include_bytes!("../../airk-core/src/combined_context.rs").as_slice(),
+        ),
+        (
+            "crates/airk-core/src/combined_context/answer.rs",
+            include_bytes!("../../airk-core/src/combined_context/answer.rs").as_slice(),
         ),
         (
             "crates/airk-core/src/context_records.rs",
@@ -6223,8 +6218,8 @@ fn retained_current_answer_pair_validates_full_transport_results() -> Result<()>
             include_bytes!("../../airk-mcp/src/lib.rs").as_slice(),
         ),
         (
-            "fixtures/split/arbiter/public_answer_cases.json",
-            include_bytes!("../../../fixtures/split/arbiter/public_answer_cases.json").as_slice(),
+            "fixtures/split/arbiter/answer_loop_cases.json",
+            include_bytes!("../../../fixtures/split/arbiter/answer_loop_cases.json").as_slice(),
         ),
     ];
     let compiled_sources: std::collections::BTreeMap<_, _> = owners
@@ -6235,7 +6230,7 @@ fn retained_current_answer_pair_validates_full_transport_results() -> Result<()>
         "AIRK_CONTEXT_PARITY_VALIDATED {}",
         json!({"schema":1,"input_sha256":format!("{:x}",Sha256::digest(&bytes)),
         "validator_sha256":airk_cli::runtime_pair::digest_file(&std::env::current_exe()?)?,"compiled_sources":compiled_sources,
-        "scope":"validated-unassessed-fallback-only","full_envelopes_equal":true})
+        "scope":"validated-normalized-full-answer-v3","full_envelopes_equal":true})
     );
     Ok(())
 }

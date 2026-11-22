@@ -1619,7 +1619,10 @@ are numbered from 1 per reply, so global ordinals have no meaning; a second
   /3 reply and re-validates every member reply of a `/2` summary under its
   clamped budget.
 - **Frame and time:** the combined Answer takes the 131,072-byte Answer frame
-  and the 600 s Answer ceiling, for Answer only.
+  and the 600 s Answer ceiling, for Answer only. In the wrapper, a member
+  that ran declares the summary's budget deadline as its
+  `allocation.deadline_ms` (300,000 ms by default, above the 120,000 ms
+  request clock that every other combined read shares among its members).
 - **Reply addition: `model_work.focus_profile`** (required, nullable). The
   batched Focus receipts stay in custody, so a delivery owner holding only
   the reply could not bind the Focus stage. The reply now names the one
@@ -1629,6 +1632,37 @@ are numbered from 1 per reply, so global ordinals have no meaning; a second
 
 Landed in `594e9fbf` (mislabelled; see change log entry 28) and completed by
 the next `Complete L3-10 (a)` commit.
+
+Closed by the independent review of L3-10 (a), in the L3-10 (b) commit
+(change log entry 40):
+
+- **A configuration change after card work never delivers (finding 4).**
+  Choice: the typed stale refusal, not a second binding. Every card call
+  records a non-deterministic decision (model, abstained or unavailable), so
+  `Ledger::has_native_work` holds after any card or Focus call, and a
+  configuration change before delivery ends the Answer with
+  `AnswerPostExecutionStale` (`arbiter_context_action_stale`, not retryable,
+  not replay-safe). A delivered /3 reply with card calls therefore always has
+  its application on the reply's own scope, and `reply_delivery_bindings`
+  refuses one that claims otherwise. The finding's scenario did not
+  reproduce; the existing kernel test
+  `configuration_change_after_native_work_is_refused_without_replay` covers
+  it, and `delivered_card_work_binds_context_to_its_own_application` was
+  added.
+- **Model shares over the members that can carry model work (finding 6).**
+  `initial_allocations_v3` now shares card slots and Focus calls over the
+  model members, and Focus pairs over the members that get a Focus call, as
+  the bullet above says (before, they were shared over every admitted member
+  and the rest stranded). Test
+  `initial_v3_allocations_share_every_counter_with_ordinal_prefixes`.
+- **No model work after unknown model work (finding 7).** Members run in
+  roster order; `CombinedContextSummaryV2::validate` refuses a member after
+  an `unknown` outcome whose allowance keeps card or Focus ordinals, tokens
+  or pairs. Test `combined_context_v2_summary_reconciles_known_and_held_counts`.
+- **A member needs the question plus a minimal reply (finding 3).**
+  `returned_allowance` takes the caller's minimum (`question.len() +
+  MIN_REPLY_SKELETON_BYTES`); the frontend admits a member only when its
+  share of the frame holds it, and reports the rest unqueried.
 
 No airk-state/1 persisted format changes: the allowance travels in the
 read-attempt context and the host query, which are not persisted.

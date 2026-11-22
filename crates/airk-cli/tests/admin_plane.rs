@@ -76,7 +76,7 @@ fn settled_answer_publication(status: &Value) -> Result<bool> {
 fn retain_answer_comparison(
     control: &Path,
     request: &Value,
-    budget: &airk_core::arbiter::Budget,
+    budget: &airk_core::arbiter::answer_loop::BudgetV3,
     browser: &Value,
     native: &Value,
     normalized: Option<(&Value, &Value)>,
@@ -731,10 +731,11 @@ fn admin_sign_in_reads_and_cross_plane_refusals() -> Result<()> {
         }
         // The same A2 session and grant traverse real TLS and native I1 chunks.
         // Neither finite Answer is retried, including after an unknown outcome.
-        let answer = airk_core::arbiter::context_action::ContextRequestV2 {
-            schema: airk_core::arbiter::context_action::REQUEST_SCHEMA_V2.into(),
+        let answer = airk_core::arbiter::answer_loop::ContextRequestV3 {
+            schema: airk_core::arbiter::answer_loop::REQUEST_SCHEMA_V3.into(),
             question: "owned Admin fixture evidence".into(),
             budget: Default::default(),
+            continuation: None,
         };
         answer.validate()?;
         let budget = answer.budget.clone();

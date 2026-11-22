@@ -81,21 +81,40 @@ pub(super) fn validate_request(purpose: SessionPurpose, request: &protocol::Quer
                 "singleton Focus original read deadline expired"
             );
         } else {
-            let args: airk_mcp::AnswerArgs =
-                serde_json::from_value(serde_json::Value::Object(request.arguments.clone()))?;
-            args.request.validate()?;
-            let budget = args.request.budget;
-            ensure!(
-                budget.calls <= partition.resources.calls
-                    && budget.candidates <= partition.resources.candidates
-                    && budget.max_bytes <= partition.resources.bytes
-                    && budget.input_tokens <= partition.resources.input_tokens.max(1)
-                    && budget.rounds <= partition.parent_budget.rounds
-                    && budget.fanout <= partition.parent_budget.fanout
-                    && budget.deadline_ms <= partition.parent_budget.deadline_ms,
-                "context partition request exceeds reserved budget"
-            );
+            anyhow::bail!("a combined Answer member carries an Answer /3 partition");
         }
+    }
+    if let Some(partition) = &request.answer_partition {
+        partition.validate()?;
+        ensure!(
+            purpose == SessionPurpose::Evidence
+                && request.native.is_none()
+                && request.context_partition.is_none()
+                && request.tool == "airk_answer",
+            "an Answer /3 partition requires scoped canonical Answer"
+        );
+        let attempt = request
+            .read_attempt
+            .as_ref()
+            .context("context partition original attempt missing")?;
+        ensure!(
+            attempt.request_id == partition.attempt,
+            "context partition attempt mismatch"
+        );
+        let args: airk_mcp::AnswerArgs =
+            serde_json::from_value(serde_json::Value::Object(request.arguments.clone()))?;
+        args.request.validate()?;
+        let budget = args.request.budget;
+        let parent = &partition.parent_budget;
+        ensure!(
+            partition.clamp(&budget)? == budget
+                && budget.rounds <= parent.rounds
+                && budget.fanout <= parent.fanout
+                && budget.max_parts <= parent.max_parts
+                && budget.max_sub_needs <= parent.max_sub_needs
+                && budget.deadline_ms <= parent.deadline_ms,
+            "context partition request exceeds reserved budget"
+        );
     }
     if purpose == SessionPurpose::NativeAdministrativeRead {
         ensure!(
@@ -129,6 +148,16 @@ pub(super) fn validate_context_partition(
             partition.selection
         };
         partition.validate_binding(attempt, selection, authority.index_id)?;
+    }
+    if let Some(partition) = &request.answer_partition {
+        let authority =
+            authority.context("context partition requires installed index authority")?;
+        authority.validate()?;
+        let attempt = request
+            .read_attempt
+            .as_ref()
+            .context("context partition original attempt missing")?;
+        partition.validate_binding(attempt, partition.selection, authority.index_id)?;
     }
     Ok(())
 }

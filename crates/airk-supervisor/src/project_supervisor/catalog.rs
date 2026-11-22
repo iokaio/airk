@@ -208,6 +208,7 @@ impl NativeAdministrativeConnection {
         self.healthy = false;
         let query = protocol::Query {
             context_partition: None,
+            answer_partition: None,
             read_attempt: None,
             frontend: None,
             tool: String::new(),

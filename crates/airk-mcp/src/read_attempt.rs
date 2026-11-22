@@ -75,6 +75,7 @@ pub struct ReadAttemptContext {
     wire_attempt: Option<airk_core::read_attempt::ReadAttemptBudget>,
     wire_deadline: Option<Instant>,
     context_partition: Option<airk_core::combined_context::PartitionAllowance>,
+    answer_partition: Option<airk_core::native_loop::PartitionAllowanceV3>,
     deadline: Instant,
     canceled: CancellationToken,
     retry_spent: Arc<AtomicBool>,
@@ -101,6 +102,7 @@ impl ReadAttemptContext {
             wire_attempt: None,
             wire_deadline: None,
             context_partition: None,
+            answer_partition: None,
             deadline,
             canceled,
             retry_spent: Arc::new(AtomicBool::new(false)),
@@ -271,11 +273,40 @@ impl ReadAttemptContext {
             "partition differs from original read attempt"
         );
         anyhow::ensure!(
-            self.context_partition.is_none(),
+            self.context_partition.is_none() && self.answer_partition.is_none(),
             "read attempt already has a partition allocation"
         );
         self.context_partition = Some(allowance);
         Ok(self)
+    }
+    /// A combined Answer /3 member's allowance (`airk.context-partition-allowance/3`).
+    pub fn answer_partition(&self) -> Option<&airk_core::native_loop::PartitionAllowanceV3> {
+        self.answer_partition.as_ref()
+    }
+    pub fn with_answer_partition(
+        mut self,
+        allowance: airk_core::native_loop::PartitionAllowanceV3,
+    ) -> anyhow::Result<Self> {
+        allowance.validate()?;
+        anyhow::ensure!(
+            self.request_id == Some(allowance.attempt),
+            "partition differs from original read attempt"
+        );
+        anyhow::ensure!(
+            self.context_partition.is_none() && self.answer_partition.is_none(),
+            "read attempt already has a partition allocation"
+        );
+        self.answer_partition = Some(allowance);
+        Ok(self)
+    }
+    /// A combined member: an Answer /2 or /3 partition. An ordinary singleton
+    /// Focus allowance is not a member.
+    pub fn is_combined_member(&self) -> bool {
+        self.answer_partition.is_some()
+            || self
+                .context_partition
+                .as_ref()
+                .is_some_and(|partition| !partition.is_ordinary_focus())
     }
 
     pub fn cancellation(&self) -> &CancellationToken {
@@ -353,11 +384,7 @@ impl ReadAttemptContext {
         // A captured private member is not the whole reply owner. Its complete
         // native body is reconciled by the aggregate parent, which registers
         // exactly one full binding roster on the shared outer custody.
-        if self
-            .context_partition
-            .as_ref()
-            .is_some_and(|partition| !partition.is_ordinary_focus())
-        {
+        if self.is_combined_member() {
             return Ok(());
         }
         if let Some(factory) = &self.delivery_factory {

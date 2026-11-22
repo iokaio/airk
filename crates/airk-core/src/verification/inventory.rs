@@ -328,6 +328,74 @@ impl ReferenceInventory {
             }
             return;
         }
+        if read_projection
+            && object.get("schema").and_then(Value::as_str)
+                == Some(crate::arbiter::answer_loop::CONTEXT_SCHEMA_V3)
+        {
+            // Answer /3: one reply scope; each record is a span projection
+            // of one canonical read at that publication. Only the records
+            // carry locators; parts, needs and paragraphs cite record ids.
+            let scope = object
+                .get("scope")
+                .and_then(|raw| serde_json::from_value::<crate::arbiter::ScopeBinding>(raw.clone()).ok());
+            let records = object.get("records").and_then(Value::as_array);
+            let (Some(scope), Some(records)) = (scope, records) else {
+                self.complete = false;
+                return;
+            };
+            let publication = &scope.publication;
+            if self
+                .member_index
+                .is_some_and(|member| member != scope.index_id)
+                || publication.collection.is_empty()
+                || publication.collection.len() > 128
+                || publication.incarnation != publication.token.incarnation
+                || publication.generation != publication.token.generation
+                || publication.revision != publication.token.revision
+                || inherited.is_some_and(|prior| prior != publication.token)
+            {
+                self.complete = false;
+                return;
+            }
+            let limit = crate::arbiter::answer_loop::MAX_CANDIDATES;
+            if records.len() > limit {
+                self.complete = false;
+            }
+            let token = publication.token.to_string();
+            for (index, record) in records.iter().take(limit).enumerate() {
+                let result = &record["canonical_result"];
+                if result
+                    .get("revision")
+                    .filter(|revision| !revision.is_null())
+                    .is_some_and(|revision| revision.as_str() != Some(token.as_str()))
+                {
+                    self.complete = false;
+                    continue;
+                }
+                // A projection's spans are its hit locators (path and content
+                // hash at the reply's publication); its location rows carry
+                // no content hash and, as in a /2 read body, are not
+                // references.
+                let spans = result.get("spans").and_then(Value::as_array);
+                for (offset, span) in spans.into_iter().flatten().enumerate() {
+                    self.visited += 1;
+                    if span.get("path").is_some() && span.get("content_hash").is_some() {
+                        self.add(
+                            span,
+                            format!("{pointer}/records/{index}/canonical_result/spans/{offset}"),
+                            "citation",
+                            Some(publication.token),
+                            historical,
+                        );
+                    }
+                }
+                if self.visited > 32_768 || self.references_lower_bound > MAX_REFERENCES {
+                    self.complete = false;
+                    break;
+                }
+            }
+            return;
+        }
         if object.get("schema").and_then(Value::as_str) == Some("airk.combined-read/1") {
             self.contains_combined = true;
             let Some(members) = object.get("members").and_then(Value::as_array) else {
@@ -697,6 +765,35 @@ impl ReferenceInventory {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// An Answer /3 reply's span projections are its locators; nothing else
+    /// in the reply (needs, paragraphs, arguments) is.
+    #[test]
+    fn answer_v3_inventory_takes_projection_spans_at_the_reply_publication() {
+        let cases: Value = serde_json::from_slice(include_bytes!(
+            "../../../../fixtures/split/arbiter/answer_loop_cases.json"
+        ))
+        .unwrap();
+        let mut reply = cases["response_cases"][0]["response"].clone();
+        let token = reply["scope"]["publication"]["token"].clone();
+        let hash = "ab".repeat(32);
+        reply["records"][0]["canonical_result"] = json!({"revision":token,
+            "spans":[{"path":"src/a.rs","content_hash":hash,"start_line":1,"end_line":2,"text":"x"}],
+            "rows":[{"path":"src/b.rs","start_line":1,"end_line":1,"text":"b"}]});
+        reply["records"][1]["canonical_result"] = json!({"revision":token,"spans":[]});
+        reply["paragraphs"][0]["path"] = json!("never-a-locator.rs");
+        reply["paragraphs"][0]["content_hash"] = json!(hash);
+        let inventory = ReferenceInventory::collect(&reply);
+        assert!(inventory.complete);
+        assert_eq!(inventory.references.len(), 1);
+        assert_eq!(
+            inventory.references[0].pointer,
+            "/records/0/canonical_result/spans/0"
+        );
+        // A projection from another publication is not complete evidence.
+        reply["records"][1]["canonical_result"]["revision"] = json!("airk-r1:other");
+        assert!(!ReferenceInventory::collect(&reply).complete);
+    }
 
     #[test]
     fn combined_inventory_preserves_member_identity_and_counts_retained_evidence_once() {

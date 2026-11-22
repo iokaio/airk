@@ -419,6 +419,37 @@ fn configuration_change_after_native_work_is_refused_without_replay() -> Result<
     Ok(())
 }
 
+/// Review finding 4 of L3-10 (a): a delivered reply with card calls always
+/// has its application on the reply's own scope, so its Context delivery
+/// binding is built from the reply alone. A configuration change after a
+/// card call never delivers (the refusal above), and a reply that claims
+/// one with card work is refused by the binding owner.
+#[test]
+fn delivered_card_work_binds_context_to_its_own_application() -> Result<()> {
+    let (fixture, scorer) = scored(Mode::Accept)?;
+    let reply = answer(&fixture)?.response;
+    assert!(scorer.calls.load(Ordering::Acquire) >= 1);
+    assert!(reply.decision_log.card_calls > 0, "the reply made card calls");
+    let bindings = airk_core::combined_context::reply_delivery_bindings(&reply)?;
+    let context = bindings
+        .iter()
+        .find(|binding| binding.stage == airk_core::arbiter::Stage::Context)
+        .context("a Context delivery binding")?;
+    assert_eq!(context.scope, reply.scope);
+    assert_eq!(context.profile, reply.applications[0].profile);
+    assert!(context.profile.is_some());
+    let mut changed = reply;
+    changed.applications[0].scope.configuration_revision += 1;
+    changed
+        .degradations
+        .push(v3::Degradation::ConfigurationChanged);
+    assert!(
+        airk_core::combined_context::reply_delivery_bindings(&changed).is_err(),
+        "card work under another configuration has no delivery binding"
+    );
+    Ok(())
+}
+
 #[test]
 fn focus_and_card_tokens_share_one_pool() -> Result<()> {
     let (fixture, _) = scored_with(Mode::Accept, true)?;

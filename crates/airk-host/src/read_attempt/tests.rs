@@ -116,6 +116,7 @@ fn feature_gate_and_absent_budget_preserve_frozen_legacy_query() -> Result<()> {
     assert!(supported("1.9.0"));
     let query = crate::project_protocol::Query {
         context_partition: None,
+        answer_partition: None,
         read_attempt: None,
         frontend: None,
         tool: "airk_status".into(),

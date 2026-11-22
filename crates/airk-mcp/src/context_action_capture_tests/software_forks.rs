@@ -26,6 +26,19 @@ use airk_kernel::arbiter::NativeController;
 use anyhow::{Context, Result, bail, ensure};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
+/// The one-turn evaluation's Answer /2 arguments (history; AnswerArgs is /3).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AnswerArgsV2 {
+    #[serde(flatten)]
+    #[allow(dead_code)]
+    verification: crate::response::VerificationArgs,
+    #[serde(flatten)]
+    request: airk_core::arbiter::context_action::ContextRequestV2,
+    #[serde(flatten)]
+    #[allow(dead_code)]
+    response: crate::response::ResponseArgs,
+}
 use std::{
     collections::BTreeMap,
     io::{Read, Write},
@@ -478,7 +491,7 @@ impl Branch<'_> {
             seen: Mutex::default(),
             applied: Mutex::default(),
         });
-        let args: AnswerArgs = serde_json::from_value(self.call.arguments.clone())
+        let args: AnswerArgsV2 = serde_json::from_value(self.call.arguments.clone())
             .context("prepared airk_answer arguments")?;
         let reserve = args
             .verification

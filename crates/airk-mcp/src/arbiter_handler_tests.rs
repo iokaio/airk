@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Canonical handler/SDK transport tests; no installed-service/model claim.
 use super::*;
-use airk_core::arbiter::context_action::{
-    CONTEXT_SCHEMA_V2 as CONTEXT_SCHEMA, ContextActionAdvice, ContextRequestV2 as ContextRequest,
-    REQUEST_SCHEMA_V2 as REQUEST_SCHEMA,
+use airk_core::arbiter::answer_loop::{
+    self as v3, BudgetV3, CONTEXT_SCHEMA_V3 as CONTEXT_SCHEMA, ContextRequestV3 as ContextRequest,
+    REQUEST_SCHEMA_V3 as REQUEST_SCHEMA,
 };
-use airk_core::native_context_action::NativeContextActionRequest;
+use airk_core::native_loop::NativeCardRequest;
 use airk_core::{
     arbiter::*,
     identity::{Incarnation, Sha256Digest},
@@ -46,48 +46,38 @@ pub(super) fn body(reply: &CallToolResult) -> Result<Value> {
     serde_json::from_str(&reply.content[0].as_text().context("missing JSON")?.text)
         .map_err(Into::into)
 }
-fn stable(value: &mut Value) {
-    match value {
-        Value::Object(fields) => {
-            for key in [
-                "request_id",
-                "observed_unix_ms",
-                "cache_age_ms",
-                "cached",
-                "observed_from_unix_ms",
-                "observed_to_unix_ms",
-            ] {
-                fields.remove(key);
-            }
-            for value in fields.values_mut() {
-                stable(value);
-            }
-        }
-        Value::Array(values) => {
-            for value in values {
-                stable(value);
-            }
-        }
-        _ => {}
-    }
+fn request(question: &str, budget: BudgetV3) -> Result<serde_json::Map<String, Value>> {
+    let request = ContextRequest {
+        schema: REQUEST_SCHEMA.into(),
+        question: question.into(),
+        budget,
+        continuation: None,
+    };
+    request.validate()?;
+    let mut arguments = serde_json::to_value(&request)?;
+    arguments["response_mode"] = json!("full");
+    Ok(arguments.as_object().context("Answer arguments")?.clone())
 }
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn disabled_native_answer_expands_real_scoped_evidence_and_preserves_full_canonical_results()
--> Result<()> {
+
+struct Scoped {
+    kernel: Kernel,
+    _fixture: tempfile::TempDir,
+}
+fn scoped_kernel(
+    files: &[(&str, String)],
+    controller: Arc<dyn airk_kernel::arbiter::NativeController>,
+) -> Result<Scoped> {
     let fixture = tempfile::tempdir()?;
     let root = fixture.path().join("source");
-    std::fs::create_dir_all(root.join("public"))?;
-    std::fs::create_dir_all(root.join("private"))?;
-    let text: String = (1..=800).map(|line| if line == 400 {"amber_marker owns the original finite request deadline.\n".into()} else {format!("Line {line}: the delivery remains bound to its original source authority and unchanged publication.\n")}).collect();
-    std::fs::write(root.join("public/policy.txt"), &text)?;
-    std::fs::write(
-        root.join("private/secret.txt"),
-        "amber_marker must never expose SECRET_PRIVATE_ARCHIVE\n",
-    )?;
+    for (path, text) in files {
+        let path = root.join(path);
+        std::fs::create_dir_all(path.parent().context("fixture parent")?)?;
+        std::fs::write(path, text)?;
+    }
     let base = Kernel::open(&root, Some(fixture.path().join("data")))?;
     base.configure_vectors(false)?;
     base.index()?;
-    let authority = super::scoped_observation_tests::authority(&base)?;
+    let authority = crate::scoped_observation_tests::authority(&base)?;
     let kernel = base.with_scoped_reads(authority.clone())?;
     let reference = ScopedReadRef {
         schema: 1,
@@ -104,17 +94,85 @@ async fn disabled_native_answer_expands_real_scoped_evidence_and_preserves_full_
         project: authority.backing,
         fencing_generation: 1,
     };
-    let kernel = kernel.with_native_arbiter(worker, reference, Arc::new(Disabled))?;
+    Ok(Scoped {
+        kernel: kernel.with_native_arbiter(worker, reference, controller)?,
+        _fixture: fixture,
+    })
+}
+
+/// Every span of a reply's record projection is a hit the same canonical
+/// read returns directly: same location, content hash and (possibly
+/// shortened) text, at the same publication.
+async fn assert_projection_matches_direct_read(
+    tools: &mut local::LocalTools,
+    record: &Value,
+) -> Result<()> {
+    let operation = record["operation"].as_str().context("record operation")?;
+    let tool = format!("airk_{operation}");
+    let projection = &record["canonical_result"];
+    let mut args = record["arguments"].as_object().unwrap().clone();
+    args.insert("response_mode".into(), json!("full"));
+    // Answer owns saved-source verification on its complete outer result.
+    // Its canonical inner reader explicitly disables per-read verification.
+    args.insert("verification".into(), json!("off"));
+    if matches!(operation, "read_file" | "context") && !args.contains_key("revision") {
+        args.insert("revision".into(), projection["revision"].clone());
+    }
+    let direct = body(&tools.call(tool.clone(), args).await?)?;
+    let spans = projection["spans"].as_array().context("projection spans")?;
+    for span in spans {
+        let text = span["text"].as_str().context("span text")?;
+        // The span names the hit's pointer inside the read body.
+        let hit = span["pointer"]
+            .as_str()
+            .and_then(|pointer| direct.pointer(pointer))
+            .cloned();
+        ensure!(
+            hit.iter().any(|hit| {
+                let citation = &hit["citation"];
+                citation["path"] == span["path"]
+                    && citation["start_line"] == span["start_line"]
+                    && citation["end_line"] == span["end_line"]
+                    && citation["content_hash"] == span["content_hash"]
+                    && hit["text"].as_str().is_some_and(|full| {
+                        if span["truncated"] == true {
+                            full.starts_with(text.trim_end_matches('…'))
+                        } else {
+                            full == text
+                        }
+                    })
+            }),
+            "{tool}: projected span is not a hit of the same canonical read: {span}"
+        );
+    }
+    ensure!(
+        projection["hits_total"].as_u64() >= Some(spans.len() as u64),
+        "{tool}: projection lost its hit count"
+    );
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn disabled_native_answer_expands_real_scoped_evidence_and_preserves_full_canonical_results()
+-> Result<()> {
+    let text: String = (1..=800).map(|line| if line == 400 {"amber_marker owns the original finite request deadline.\n".into()} else {format!("Line {line}: the delivery remains bound to its original source authority and unchanged publication.\n")}).collect();
+    let fixture = scoped_kernel(
+        &[
+            ("public/policy.txt", text),
+            (
+                "private/secret.txt",
+                "amber_marker must never expose SECRET_PRIVATE_ARCHIVE\n".into(),
+            ),
+        ],
+        Arc::new(Disabled),
+    )?;
+    let kernel = fixture.kernel.clone();
     let mut tools = local::LocalTools::new(kernel.clone()).await?;
-    let request = ContextRequest {
-        schema: REQUEST_SCHEMA.into(),
-        question: "amber_marker".into(),
-        budget: Budget::default(),
-    };
-    let mut arguments = serde_json::to_value(&request)?;
-    arguments["response_mode"] = json!("full");
     let reply = tools
-        .call("airk_answer".into(), arguments.as_object().unwrap().clone())
+        .call(
+            "airk_answer".into(),
+            request("amber_marker", BudgetV3::default())?,
+        )
         .await?;
     let packet = body(&reply)?;
     assert_eq!(packet["schema"], CONTEXT_SCHEMA);
@@ -124,37 +182,15 @@ async fn disabled_native_answer_expands_real_scoped_evidence_and_preserves_full_
     assert!(
         records
             .iter()
-            .any(|record| record["operation"] == "context")
+            .any(|record| record["operation"] == "search")
     );
+    assert!(packet.to_string().contains("amber_marker owns"), "{packet}");
     assert!(!packet.to_string().contains("SECRET_PRIVATE_ARCHIVE"));
     assert!(!packet.to_string().contains("private/secret.txt"));
     for record in records {
-        let operation: NativeRead = serde_json::from_value(record["operation"].clone())?;
-        let tool = match operation {
-            NativeRead::Search => "airk_search",
-            NativeRead::ReadEvidence => "airk_read_file",
-            NativeRead::Context => "airk_context",
-            _ => anyhow::bail!("unexpected recipe operation"),
-        };
-        let mut args = record["arguments"].as_object().unwrap().clone();
-        args.insert("response_mode".into(), json!("full"));
-        args.insert("include_status".into(), json!(true));
-        // Answer owns saved-source verification on its complete outer result.
-        // Its canonical inner reader explicitly disables per-read verification.
-        args.insert("verification".into(), json!("off"));
-        if matches!(operation, NativeRead::ReadEvidence | NativeRead::Context) {
-            args.insert(
-                "revision".into(),
-                record["scope"]["publication"]["token"].clone(),
-            );
-        }
-        let mut direct = body(&tools.call(tool.into(), args).await?)?;
-        let mut retained = record["canonical_result"].clone();
-        stable(&mut direct);
-        stable(&mut retained);
-        assert_eq!(retained, direct, "full canonical result changed for {tool}");
+        assert_projection_matches_direct_read(&mut tools, record).await?;
     }
-    assert!(serde_json::to_vec(&reply)?.len() < airk_core::MAX_RESPONSE_BYTES);
+    assert!(serde_json::to_vec(&reply)?.len() <= v3::MAX_ANSWER_RESPONSE_BYTES);
     // The actual partial index cannot expose whole-index status as a shortcut.
     assert!(kernel.status().is_err());
     tools.close().await?;
@@ -169,14 +205,7 @@ async fn legacy_answer_refuses_without_a_native_lease_binding() -> Result<()> {
     let reply = tools
         .call(
             "airk_answer".into(),
-            serde_json::to_value(ContextRequest {
-                schema: REQUEST_SCHEMA.into(),
-                question: "original authority".into(),
-                budget: Budget::default(),
-            })?
-            .as_object()
-            .unwrap()
-            .clone(),
+            request("original authority", BudgetV3::default())?,
         )
         .await?;
     assert_eq!(reply.is_error, Some(true));
@@ -190,8 +219,8 @@ fn canonical_answer_retains_original_deadline_before_any_native_read() -> Result
     let kernel = Kernel::open(fixture.path(), Some(fixture.path().join("data")))?;
     let calls = std::sync::atomic::AtomicUsize::new(0);
     let result = kernel.answer_with_reader_v2(
-        ContextRequest {
-            schema: REQUEST_SCHEMA.into(),
+        airk_core::arbiter::context_action::ContextRequestV2 {
+            schema: airk_core::arbiter::context_action::REQUEST_SCHEMA_V2.into(),
             question: "original deadline".into(),
             budget: Budget::default(),
         },
@@ -236,35 +265,19 @@ async fn canonical_answer_context_handles_one_line_eof_and_late_verified_hits() 
             240usize,
         ),
     ] {
-        let fixture = tempfile::tempdir()?;
-        let root = fixture.path().join("source");
-        std::fs::create_dir_all(root.join("public"))?;
-        std::fs::write(root.join("public/eof.txt"), text)?;
-        let base = Kernel::open(&root, Some(fixture.path().join("data")))?;
-        base.configure_vectors(false)?;
-        base.index()?;
-        let authority = crate::scoped_observation_tests::authority(&base)?;
-        let kernel = base.with_scoped_reads(authority.clone())?;
-        let reference = ScopedReadRef {
-            schema: 1,
-            lease_generation: 1,
-            index_id: authority.index_id,
-            grant_id: Some(authority.grant.id),
-            grant_revision: Some(authority.grant.revision),
-            selection: None,
-            fingerprint: kernel.scoped_read_fingerprint()?.unwrap(),
-        };
-        let worker = WorkerIdentity {
-            service: Incarnation::from_bytes([8; 16]),
-            worker: Incarnation::from_bytes([9; 16]),
-            project: authority.backing,
-            fencing_generation: 1,
-        };
-        let kernel = kernel.with_native_arbiter(worker, reference, Arc::new(Disabled))?;
-        let mut tools = local::LocalTools::new(kernel).await?;
-        let packet=body(&tools.call("airk_answer".into(),json!({"schema":REQUEST_SCHEMA,"question":query,"budget":Budget::default(),"response_mode":"full"}).as_object().unwrap().clone()).await?)?;
-        assert_ne!(
-            packet["stop"], "refused",
+        let fixture = scoped_kernel(&[("public/eof.txt", text)], Arc::new(Disabled))?;
+        let mut tools = local::LocalTools::new(fixture.kernel.clone()).await?;
+        let packet = body(
+            &tools
+                .call("airk_answer".into(), request(query, BudgetV3::default())?)
+                .await?,
+        )?;
+        assert!(
+            packet["parts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|part| part["stop"] != "refused"),
             "{name}: EOF must clamp in owning canonical context: {packet}"
         );
         let expansion = packet["records"]
@@ -274,21 +287,45 @@ async fn canonical_answer_context_handles_one_line_eof_and_late_verified_hits() 
             .find(|record| record["operation"] == "context")
             .context("missing canonical context expansion")?;
         assert_eq!(expansion["arguments"]["before"], 0);
-        assert_eq!(expansion["arguments"]["after"], 32);
-        assert_eq!(
-            expansion["canonical_result"]["hits"][0]["citation"]["end_line"],
-            expected_line
-        );
-        assert!(
-            expansion["canonical_result"]["hits"][0]["text"]
-                .as_str()
-                .unwrap()
-                .contains("amber_eof")
-        );
-        assert!(expansion["arguments"]["line"].as_u64().unwrap() <= expected_line as u64);
+        let line = expansion["arguments"]["line"].as_u64().unwrap();
+        assert!(line <= expected_line as u64);
+        let span = expansion["canonical_result"]["spans"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|span| span["text"].as_str().is_some_and(|t| t.contains("amber_eof")))
+            .context("the expansion keeps the evidence line")?;
+        assert_eq!(span["end_line"], expected_line, "{name}: {span}");
+        assert_projection_matches_direct_read(&mut tools, expansion).await?;
         tools.close().await?;
     }
     Ok(())
+}
+
+/// The Host-captured original attempt a worker receives with the query.
+fn wire_attempt(id: u8, remaining_ns: u64) -> airk_core::read_attempt::ReadAttemptBudget {
+    airk_core::read_attempt::ReadAttemptBudget {
+        schema: 1,
+        request_id: Incarnation::from_bytes([id; 16]),
+        clock: wire_clock(),
+        expires_monotonic_ns: u64::MAX,
+        remaining_ns,
+        native_retry_expires_monotonic_ns: None,
+    }
+}
+fn wire_clock() -> airk_core::read_attempt::ReadClock {
+    if cfg!(windows) {
+        airk_core::read_attempt::ReadClock::WindowsPerformanceCounter
+    } else {
+        airk_core::read_attempt::ReadClock::UnixMonotonic
+    }
+}
+fn loop_model() -> airk_kernel::arbiter::LoopModel {
+    airk_kernel::arbiter::LoopModel {
+        model: device::SelectedModel::ContextCompact,
+        device: v3::ExecutionDevice::Cuda,
+        precision: Some(device::DevicePrecision::Float16),
+    }
 }
 
 struct OptionalFault {
@@ -315,11 +352,22 @@ impl airk_kernel::arbiter::NativeController for OptionalFault {
             "Private callback-failure fixture; no actual model qualification claim.".into();
         Ok(application)
     }
-    fn context_action(
+    fn focus_clock(&self) -> Result<Option<(airk_core::read_attempt::ReadClock, u64)>> {
+        Ok(Some((wire_clock(), 1000)))
+    }
+    fn card_model(
         &self,
-        _: NativeContextActionRequest,
+        _: WorkerIdentity,
+        _: ScopedReadRef,
+        _: &airk_core::evidence::RevisionEnvelope,
+    ) -> Result<Option<airk_kernel::arbiter::LoopModel>> {
+        Ok(Some(loop_model()))
+    }
+    fn score_cards(
+        &self,
+        _: NativeCardRequest,
         deadline: Instant,
-    ) -> Result<Option<ContextActionAdvice>> {
+    ) -> Result<Option<v3::CardAdvice>> {
         *self.observed_deadline.lock().unwrap() = Some(deadline);
         self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if self.scope_refusal {
@@ -333,65 +381,41 @@ impl airk_kernel::arbiter::NativeController for OptionalFault {
 async fn optional_callback_failure_keeps_canonical_evidence_but_typed_scope_refusal_stops_delivery()
 -> Result<()> {
     for scope_refusal in [false, true] {
-        let fixture = tempfile::tempdir()?;
-        let root = fixture.path().join("source");
-        std::fs::create_dir_all(root.join("public"))?;
-        for i in 0..3 {
-            std::fs::write(
-                root.join(format!("public/policy-{i}.txt")),
-                format!("amber_callback owns indexed policy {i}.\n"),
-            )?;
-        }
-        let base = Kernel::open(&root, Some(fixture.path().join("data")))?;
-        base.configure_vectors(false)?;
-        base.index()?;
-        let authority = crate::scoped_observation_tests::authority(&base)?;
-        let kernel = base.with_scoped_reads(authority.clone())?;
-        let reference = ScopedReadRef {
-            schema: 1,
-            lease_generation: 1,
-            index_id: authority.index_id,
-            grant_id: Some(authority.grant.id),
-            grant_revision: Some(authority.grant.revision),
-            selection: None,
-            fingerprint: kernel.scoped_read_fingerprint()?.unwrap(),
-        };
-        let worker = WorkerIdentity {
-            service: Incarnation::from_bytes([8; 16]),
-            worker: Incarnation::from_bytes([9; 16]),
-            project: authority.backing,
-            fencing_generation: 1,
-        };
         let fault = Arc::new(OptionalFault {
             scope_refusal,
             calls: std::sync::atomic::AtomicUsize::new(0),
             observed_deadline: std::sync::Mutex::new(None),
         });
-        let kernel = kernel.with_native_arbiter(worker, reference, fault.clone())?;
-        let mut tools = local::LocalTools::new(kernel).await?;
-        let original = Instant::now() + Duration::from_secs(2);
-        let budget = Budget {
-            deadline_ms: 30_000,
-            ..Budget::default()
-        };
-        let arguments=json!({"schema":REQUEST_SCHEMA,"question":"amber_callback","budget":budget,"response_mode":"full"}).as_object().unwrap().clone();
+        let files: Vec<_> = (0..3)
+            .map(|i| {
+                (
+                    ["public/policy-0.txt", "public/policy-1.txt", "public/policy-2.txt"][i],
+                    format!("amber_callback owns indexed policy {i}.\n"),
+                )
+            })
+            .collect();
+        let fixture = scoped_kernel(&files, fault.clone())?;
+        let mut tools = local::LocalTools::new(fixture.kernel.clone()).await?;
+        // Long enough to pass the 5 s dispatch reserve and admit a card call.
+        let original = Instant::now() + Duration::from_secs(60);
+        // The attempt ends no later than the original deadline.
+        let remaining = original
+            .saturating_duration_since(Instant::now())
+            .as_nanos() as u64;
+        let arguments = request(
+            "1. which policy does amber_callback own\n2. where is amber_callback indexed?",
+            BudgetV3 {
+                deadline_ms: 120_000,
+                ..BudgetV3::default()
+            },
+        )?;
         let reply = tools
             .call_with_read_context(
                 "airk_answer".into(),
                 arguments.clone(),
                 crate::read_attempt::ReadAttemptContext::new(original, Default::default())
-                    .with_wire_attempt(airk_core::read_attempt::ReadAttemptBudget {
-                        schema: 1,
-                        request_id: Incarnation::from_bytes([31; 16]),
-                        clock: if cfg!(windows) {
-                            airk_core::read_attempt::ReadClock::WindowsPerformanceCounter
-                        } else {
-                            airk_core::read_attempt::ReadClock::UnixMonotonic
-                        },
-                        expires_monotonic_ns: u64::MAX,
-                        remaining_ns: 2_000_000_000,
-                        native_retry_expires_monotonic_ns: None,
-                    })?,
+                    .with_wire_attempt(wire_attempt(31, remaining))?
+                    .capture_transport_attempt(wire_attempt(31, remaining))?,
             )
             .await?;
         assert!(
@@ -400,45 +424,49 @@ async fn optional_callback_failure_keeps_canonical_evidence_but_typed_scope_refu
                 .lock()
                 .unwrap()
                 .is_some_and(|observed| observed <= original),
-            "canonical Answer must intersect serialized30s with original2s before the native callback"
+            "canonical Answer must intersect serialized 120 s with original 60 s before the native callback: {:?} {:?}",
+            fault.calls,
+            reply
         );
         assert_eq!(
             fault.calls.load(std::sync::atomic::Ordering::SeqCst),
             1,
-            "optional failure must not replay native work"
+            "an unknown card outcome blocks later model work and is never replayed"
         );
         if scope_refusal {
             assert_eq!(
                 reply.is_error,
                 Some(true),
-                "typed native authority refusal must never become a partial successful packet"
+                "typed native authority refusal must never become a partial successful reply"
             );
         } else {
             let packet = body(&reply)?;
-            assert_eq!(packet["applications"][0]["availability"], "failed");
+            assert_eq!(packet["schema"], CONTEXT_SCHEMA);
             assert!(
-                packet["applications"][0]["reason"]
-                    .as_str()
-                    .unwrap()
-                    .contains("not applied")
-            );
-            assert!(packet["records"].as_array().unwrap().len() >= 2);
-            assert!(packet.get("advice").is_none());
-            assert_eq!(packet["assessment_history"].as_array().unwrap().len(), 1);
-            assert_eq!(
-                packet["assessment_history"][0]["result"]["status"],
-                "unavailable"
-            );
-            assert_eq!(
-                packet["assessment_history"][0]["result"]["work_unknown"],
-                true
-            );
-            assert!(
-                packet["records"][0]["canonical_result"]["hits"]
+                packet["degradations"]
                     .as_array()
                     .unwrap()
-                    .len()
-                    >= 2
+                    .iter()
+                    .any(|item| item["kind"] == "model_outcome_unknown"),
+                "{packet}"
+            );
+            assert!(packet["decision_log"]["work_unknown"].as_u64().unwrap() >= 1);
+            assert!(
+                packet["decisions"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|decision| decision["work_unknown"] == true
+                        && decision["source"]["kind"] == "unavailable")
+            );
+            assert!(
+                packet["records"].as_array().unwrap().iter().any(|record| {
+                    record["operation"] == "search"
+                        && record["canonical_result"]["spans"]
+                            .as_array()
+                            .is_some_and(|spans| spans.len() >= 2)
+                }),
+                "the canonical search evidence is kept: {packet}"
             );
         }
         let expired = tools
@@ -464,13 +492,16 @@ async fn optional_callback_failure_keeps_canonical_evidence_but_typed_scope_refu
     Ok(())
 }
 
-struct RevokingJoint {
+/// Accepts the first card call's top cards, then withdraws the policy (a new
+/// configuration revision) at the chosen application observation after the
+/// call returned. `revoke_after` = 0 never withdraws.
+struct RevokingScorer {
     returned: std::sync::atomic::AtomicBool,
     calls: std::sync::atomic::AtomicUsize,
-    observations: std::sync::atomic::AtomicUsize,
-    revoke_at: usize,
+    after_return: std::sync::atomic::AtomicUsize,
+    revoke_after: usize,
 }
-impl airk_kernel::arbiter::NativeController for RevokingJoint {
+impl airk_kernel::arbiter::NativeController for RevokingScorer {
     fn application(
         &self,
         worker: WorkerIdentity,
@@ -483,150 +514,142 @@ impl airk_kernel::arbiter::NativeController for RevokingJoint {
             authority,
             publication,
         )?;
-        let observation = self
-            .observations
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-            + 1;
-        if self.returned.load(std::sync::atomic::Ordering::SeqCst) && observation >= self.revoke_at
-        {
-            current.scope.configuration_revision = 2;
-            current.reason = "Policy was disabled during the native callback.".into();
-        } else {
-            current.availability = Availability::Ready;
-            current.profile = Some(Sha256Digest::from_bytes([33; 32]));
+        current.availability = Availability::Ready;
+        current.profile = Some(Sha256Digest::from_bytes([33; 32]));
+        if self.returned.load(std::sync::atomic::Ordering::SeqCst) {
+            let observation = self
+                .after_return
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                + 1;
+            if self.revoke_after > 0 && observation >= self.revoke_after {
+                current.scope.configuration_revision = 2;
+                current.availability = Availability::Disabled;
+                current.profile = None;
+                current.reason = "Policy was disabled after the native callback.".into();
+            }
         }
         Ok(current)
     }
-    fn context_action(
+    fn focus_clock(&self) -> Result<Option<(airk_core::read_attempt::ReadClock, u64)>> {
+        Ok(Some((wire_clock(), 1000)))
+    }
+    fn card_model(
         &self,
-        request: NativeContextActionRequest,
+        _: WorkerIdentity,
+        _: ScopedReadRef,
+        _: &airk_core::evidence::RevisionEnvelope,
+    ) -> Result<Option<airk_kernel::arbiter::LoopModel>> {
+        Ok(Some(loop_model()))
+    }
+    fn score_cards(
+        &self,
+        request: NativeCardRequest,
         _: Instant,
-    ) -> Result<Option<ContextActionAdvice>> {
-        use airk_core::arbiter::context_action::{ADVICE_SCHEMA_V2, ContextAction};
+    ) -> Result<Option<v3::CardAdvice>> {
+        if self.returned.load(std::sync::atomic::Ordering::SeqCst) {
+            // One model call is enough; later ones are declined, not
+            // dispatched and not charged.
+            return Ok(None);
+        }
         self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let card = request
-            .roster
-            .cards
+        let tokens = 100 * request.attribution.len();
+        let segments = request
+            .segments
             .iter()
-            .find(|card| card.action == ContextAction::Sufficient)
-            .unwrap();
-        // Deterministic event barrier: config changes while this exact native
-        // callback is outstanding, before the caller can apply its return.
-        self.returned
-            .store(true, std::sync::atomic::Ordering::SeqCst);
-        Ok(Some(ContextActionAdvice {
-            schema: ADVICE_SCHEMA_V2.into(),
-            task: Task::ContextAction,
+            .map(|segment| {
+                let count = segment.cards.len();
+                let scores: Vec<f32> = (0..count).map(|index| index as f32).collect();
+                let top = count - 1;
+                let digest = segment.cards[top].text_digest().unwrap();
+                v3::SegmentOutcome {
+                    ordinal: segment.ordinal,
+                    raw_scores: scores,
+                    outcome: Outcome::Accepted {
+                        decision: if segment.multiple {
+                            Decision::LoopCards(vec![digest])
+                        } else {
+                            Decision::LoopCard(digest)
+                        },
+                    },
+                    rule: None,
+                    margin: Some(if count > 1 { 1.0 } else { 0.0 }),
+                }
+            })
+            .collect();
+        let advice = v3::CardAdvice {
+            schema: v3::CARD_ADVICE_SCHEMA.into(),
+            task: request.task,
             profile: Sha256Digest::from_bytes([33; 32]),
-            runtime: RUNTIME.into(),
+            runtime: format!(
+                "onnxruntime-cuda/1.30.0/device-execution/{}",
+                "a".repeat(64)
+            ),
             compiler: Sha256Digest::from_bytes([34; 32]),
             calibration: Sha256Digest::from_bytes([35; 32]),
             policy: Sha256Digest::from_bytes([36; 32]),
-            task_policy: request.roster.policy,
-            scope: request.scope,
-            input_digest: Sha256Digest::from_bytes([37; 32]),
-            evidence: request
-                .roster
-                .basis
-                .source_units_presented
+            task_policy: request.task_policy,
+            scope: request.scope.clone(),
+            input_digest: request.input_digest()?,
+            card_slot: request.segments[0].card_slot,
+            reserved_input_tokens: request.remaining_input_tokens,
+            observed_input_tokens: Some(tokens),
+            attribution: request
+                .attribution
                 .iter()
-                .map(|unit| unit.record)
-                .collect::<std::collections::BTreeSet<_>>()
-                .into_iter()
+                .map(|charge| v3::TokenAttribution {
+                    tokens: 100,
+                    ..*charge
+                })
                 .collect(),
-            reserved_input_tokens: 10,
-            observed_input_tokens: Some(10),
             work: Work {
-                input_tokens: 10,
+                input_tokens: tokens,
                 compile_us: Some(0),
                 inference_us: Some(0),
                 ..Work::default()
             },
-            outcome: Outcome::Accepted {
-                decision: Decision::ContextAction(card.id),
-            },
-        }))
+            segments,
+        };
+        // Deterministic event barrier: the policy changes only after this
+        // exact native call returned, before the caller applies its result.
+        self.returned
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(Some(advice))
     }
 }
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn policy_withdrawal_during_joint_wait_refuses_stale_answer_without_replay_or_primitive_loss()
--> Result<()> {
-    // Immediate post-wait cut and the final post-packing observation cut.
-    for revoke_at in [0, 6] {
-        let fixture = tempfile::tempdir()?;
-        let root = fixture.path().join("source");
-        std::fs::create_dir_all(root.join("public"))?;
-        std::fs::create_dir_all(root.join("private"))?;
-        std::fs::write(
-            root.join("public/policy.txt"),
-            "amber_revoked AMBER_PRIVATE_MODEL_HISTORY owns this source rule.\n",
-        )?;
-        std::fs::write(root.join("private/secret.txt"), "SECRET_NOT_GRANTED\n")?;
-        let base = Kernel::open(&root, Some(fixture.path().join("data")))?;
-        base.configure_vectors(false)?;
-        base.index()?;
-        let authority = crate::scoped_observation_tests::authority(&base)?;
-        let kernel = base.with_scoped_reads(authority.clone())?;
-        let reference = ScopedReadRef {
-            schema: 1,
-            lease_generation: 1,
-            index_id: authority.index_id,
-            grant_id: Some(authority.grant.id),
-            grant_revision: Some(authority.grant.revision),
-            selection: None,
-            fingerprint: kernel.scoped_read_fingerprint()?.unwrap(),
-        };
-        let worker = WorkerIdentity {
-            service: Incarnation::from_bytes([8; 16]),
-            worker: Incarnation::from_bytes([9; 16]),
-            project: authority.backing,
-            fencing_generation: 1,
-        };
-        let controller = Arc::new(RevokingJoint {
-            returned: false.into(),
-            calls: 0.into(),
-            observations: 0.into(),
-            revoke_at,
-        });
-        let kernel = kernel.with_native_arbiter(worker, reference, controller.clone())?;
-        let mut tools = local::LocalTools::new(kernel).await?;
-        let context = crate::read_attempt::ReadAttemptContext::new(
-            Instant::now() + Duration::from_secs(5),
-            Default::default(),
+async fn revoking_answer(revoke_after: usize) -> Result<(CallToolResult, Arc<RevokingScorer>)> {
+    let controller = Arc::new(RevokingScorer {
+        returned: false.into(),
+        calls: 0.into(),
+        after_return: 0.into(),
+        revoke_after,
+    });
+    let fixture = scoped_kernel(
+        &[
+            (
+                "public/policy.txt",
+                "amber_revoked AMBER_PRIVATE_MODEL_HISTORY owns this source rule.\n".into(),
+            ),
+            ("private/secret.txt", "SECRET_NOT_GRANTED\n".into()),
+        ],
+        controller.clone(),
+    )?;
+    let mut tools = local::LocalTools::new(fixture.kernel.clone()).await?;
+    let context = crate::read_attempt::ReadAttemptContext::new(
+        Instant::now() + Duration::from_secs(60),
+        Default::default(),
+    )
+    .with_wire_attempt(wire_attempt(32, 60_000_000_000))?.capture_transport_attempt(wire_attempt(32, 60_000_000_000))?;
+    let reply = tools
+        .call_with_read_context(
+            "airk_answer".into(),
+            request(
+                "1. which rule does amber_revoked own\n2. where is amber_revoked defined?",
+                BudgetV3::default(),
+            )?,
+            context,
         )
-        .with_wire_attempt(airk_core::read_attempt::ReadAttemptBudget {
-            schema: 1,
-            request_id: Incarnation::from_bytes([32; 16]),
-            clock: if cfg!(windows) {
-                airk_core::read_attempt::ReadClock::WindowsPerformanceCounter
-            } else {
-                airk_core::read_attempt::ReadClock::UnixMonotonic
-            },
-            expires_monotonic_ns: u64::MAX,
-            remaining_ns: 5_000_000_000,
-            native_retry_expires_monotonic_ns: None,
-        })?;
-        let reply = tools
-            .call_with_read_context(
-                "airk_answer".into(),
-                json!({"schema":REQUEST_SCHEMA,
-        "question":"amber_revoked","budget":Budget::default(),"response_mode":"full"})
-                .as_object()
-                .unwrap()
-                .clone(),
-                context,
-            )
-            .await?;
-        assert_eq!(reply.is_error, Some(true));
-        let refusal: Value = serde_json::from_str(&reply.content[0].as_text().unwrap().text)?;
-        assert_eq!(refusal["error"]["code"], "arbiter_context_action_stale");
-        assert_eq!(refusal["error"]["retryable"], false);
-        assert_eq!(refusal["error"]["query_replay_safe"], false);
-        assert!(!serde_json::to_string(&reply)?.contains("AMBER_PRIVATE_MODEL_HISTORY"));
-        assert_eq!(
-            controller.calls.load(std::sync::atomic::Ordering::SeqCst),
-            1
-        );
+        .await?;
+    if reply.is_error == Some(true) {
         let ordinary = body(
             &tools
                 .call(
@@ -638,12 +661,41 @@ async fn policy_withdrawal_during_joint_wait_refuses_stale_answer_without_replay
                 )
                 .await?,
         )?;
-        assert!(!ordinary["hits"].as_array().unwrap().is_empty());
+        ensure!(
+            !ordinary["hits"].as_array().unwrap().is_empty(),
+            "a refused Answer must not lose the ordinary primitive"
+        );
+    }
+    tools.close().await?;
+    Ok((reply, controller))
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn policy_withdrawal_during_joint_wait_refuses_stale_answer_without_replay_or_primitive_loss()
+-> Result<()> {
+    // Without a withdrawal the accepted card work is delivered; count the
+    // application observations after the call returned, so the cuts below
+    // are the first one (immediately after the wait) and the last one (at
+    // delivery), whatever the loop's shape.
+    let (reply, controller) = revoking_answer(0).await?;
+    let packet = body(&reply)?;
+    assert!(packet["decision_log"]["card_calls"].as_u64().unwrap() >= 1);
+    let after = controller
+        .after_return
+        .load(std::sync::atomic::Ordering::SeqCst);
+    assert!(after >= 1, "the delivery fence observes the application");
+    for revoke_after in [1, after] {
+        let (reply, controller) = revoking_answer(revoke_after).await?;
+        assert_eq!(reply.is_error, Some(true), "cut {revoke_after}");
+        let refusal: Value = serde_json::from_str(&reply.content[0].as_text().unwrap().text)?;
+        assert_eq!(refusal["error"]["code"], "arbiter_context_action_stale");
+        assert_eq!(refusal["error"]["retryable"], false);
+        assert_eq!(refusal["error"]["query_replay_safe"], false);
+        assert!(!serde_json::to_string(&reply)?.contains("AMBER_PRIVATE_MODEL_HISTORY"));
         assert_eq!(
             controller.calls.load(std::sync::atomic::Ordering::SeqCst),
-            1
+            1,
+            "a stale model result is never replayed"
         );
-        tools.close().await?;
     }
     Ok(())
 }

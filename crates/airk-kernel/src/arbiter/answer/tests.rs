@@ -1101,3 +1101,31 @@ fn a_focus_batch_gone_stale_is_the_answer_stale_refusal() -> Result<()> {
     assert!(!stale._custody.log.entries.is_empty());
     Ok(())
 }
+
+/// A canonical read whose owner answered "repeat the same request" is
+/// repeated after the owner's delay; any other failure is the read's own.
+#[test]
+fn only_a_repeat_same_request_failure_is_repeated() {
+    let busy = json!({"action":"repeat_same_request","code":"publication_busy",
+        "retry_after_ms":25,"retryable":true});
+    let envelope = json!({"content":[{"type":"text","text":busy.to_string()}],"isError":true});
+    let failed = |value: Value| -> Result<Value> {
+        Err(crate::workbench::ReadFailure(value).into())
+    };
+    assert_eq!(
+        busy_retry(&failed(envelope)),
+        Some(Duration::from_millis(25))
+    );
+    assert_eq!(
+        busy_retry(&failed(json!({"structuredContent":busy.clone(),"isError":true}))),
+        Some(Duration::from_millis(25))
+    );
+    let mut final_failure = busy.clone();
+    final_failure["retryable"] = json!(false);
+    assert_eq!(busy_retry(&failed(final_failure)), None);
+    let mut long = busy.clone();
+    long["retry_after_ms"] = json!(5_000);
+    assert_eq!(busy_retry(&failed(long)), None);
+    assert_eq!(busy_retry(&Ok(busy)), None);
+    assert_eq!(busy_retry(&Err(anyhow::anyhow!("plain"))), None);
+}

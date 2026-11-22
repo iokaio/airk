@@ -147,6 +147,7 @@ impl Worker {
             airk_cli::local_ipc::write_message(&mut stream, &protocol::Query {
                 read_attempt: None,
                 context_partition: None,
+                answer_partition: None,
                 frontend: None,
                 tool: "airk_read_file".into(),
                 arguments: serde_json::json!({"path":"original.html","start_line":1,"end_line":1,"max_bytes":4096,"response_mode":"full"}).as_object().context("fixture arguments")?.clone(),

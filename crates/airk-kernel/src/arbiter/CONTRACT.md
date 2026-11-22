@@ -278,21 +278,33 @@ What does not hold yet, with the follow-up owner:
   early stop and byte omissions, `partial` names the stop; omissions remain
   disclosed by `omitted_count`, `omitted_evidence`, `evidence_omitted` and
   `shortened`. Reporting both needs a Core wire decision.
-- **Combined (multi-index) Answer is /2 only at the transports** (L3-10 b).
-  The kernel side holds since L3-10 (a): `with_answer_partition_for` installs
-  a `PartitionAllowanceV3`, `answer_with` clamps the request budget to it, and
-  card and Focus requests carry it (test
-  `a_combined_member_answer_stays_within_its_partition`);
-  `combined_reads::compose_answer` and `answer_payload_admission` compose
-  and size the `airk.combined-context/2` wrapper in the Answer frame. The MCP
-  handler, the read-attempt and host carriers and the frontend still run /2.
-  Known limit: a member's `max_bytes` is its share of the combined frame, and
-  in /3 the same field bounds retention, so a member gathers within its frame
-  share.
+- **Combined members gather within their frame share** (limit, L3). Combined
+  Answer runs /3 since L3-10: the kernel side in (a)
+  (`with_answer_partition_for`, the clamp in `answer_with`, card and Focus
+  requests carrying the allowance, `combined_reads::compose_answer` and
+  `answer_payload_admission`), the MCP handler, the read-attempt and host
+  carriers and the frontend in (b). Core's initial allocation shares the
+  retention bytes; the frontend then clamps each member's bytes to its share
+  of the frame's admitted payload (`frame_shares`), and in /3 the same field
+  bounds the member's retention and reply, so a member gathers within its
+  frame share. A member whose share cannot hold the question and a minimal
+  reply is not dispatched and is reported unqueried.
+- **Answer clients still send /2** (owner: the client owner the primary
+  assigns). The VS Code Workbench (`packages/vscode/src/workbenchView.ts`),
+  the Admin Search screen (`packages/admin/src/SearchScreen.tsx`, built into
+  `crates/airk-cli/admin-assets`) and `scripts/check-service-clients.py`
+  build `airk.arbiter.context.request/2` requests and render /2 replies.
+  Since L3-10 (b) the MCP handler takes /3 only, so their Answer is refused
+  until they move to /3. Change log entry 40.
 - **An idle model reload is not named** (L3). An Answer that meets a reload
   discloses only `context_absent` or `focus_absent`; naming it needs a typed
   unavailable reason and a matching degradation (change log entries 24, 27
   and 28).
+- **The /2 kernel path is not deleted yet** (L3-10 (c), deferred by the
+  primary to after the LG gate). The joint path, the v1 `Gathering`,
+  `pack_native_response`, `native_response_bytes`, `software::Layers` and
+  `focus::bind_focus_shape` remain, with their tests; the MCP handler no
+  longer reaches them. Change log entry 40.
 - **Coverage cards carry no evidence excerpts** (L3, after L3-10).
   `CardSegment` holds only the subject and card texts.
 
@@ -300,6 +312,29 @@ What does not hold yet, with the follow-up owner:
 
 Each line: what was wrong, what changed, the commit, the evidence. Test
 counts are for `nextest -p airk-kernel -E test(/arbiter::/)` at that commit.
+
+Review of L3-10 (a) (`594e9fbf`, `f60fce96`), closed in the L3-10 (b)
+commit (change log entry 40):
+
+- 1 (high), `compose_answer` capped the wrapper at
+  `SharedBudgets.max_bytes` (at most 65,536), below the Answer frame that
+  admission sized. An Answer summary now takes `reply_bytes()` alone. Test
+  `combined_answer_v3_composes_a_wrapper_above_the_ordinary_frame`.
+- 2 (medium), member bytes were shares of retention, not of the frame. The
+  frontend clamps them to the frame payload shares (`frame_shares`); the
+  "Known limit" text above is corrected. Test
+  `member_bytes_are_frame_shares_and_admit_only_a_question_sized_reply`.
+- 3 (medium), a member with fewer than question + 4,096 bytes failed
+  `answer_with`. It is no longer dispatched; it is reported unqueried
+  (frontend and `returned_allowance`). Same test, and the Core hand-back test.
+- 4 (medium), the configuration-changed delivery binding: did not
+  reproduce; the stale refusal already covers it (Core contract, "Combined
+  Answer /3 allowance"). Test
+  `delivered_card_work_binds_context_to_its_own_application`.
+- 5 (low), admission sized members without an initial allowance as `None`.
+  Every member is now sized with the widest allowance. Test
+  `combined_answer_v3_admission_takes_the_answer_frame`.
+- 6 and 7 (low): Core, see the Core contract.
 
 First review (L3-7, L3-8, `ed2e0926`), closed in `7b65167a` (165 passed):
 

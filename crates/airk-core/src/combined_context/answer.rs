@@ -148,8 +148,13 @@ pub fn returned_allowance(
     index_id: IndexId,
     budget: &BudgetV3,
     returned: &LoopUse,
+    minimum_bytes: usize,
 ) -> Result<Option<PartitionAllowanceV3>> {
-    if returned.calls == 0 || returned.candidates == 0 || returned.bytes < 1024 {
+    // A member needs room for the question and a minimal reply (review
+    // finding 3 of L3-10 (a)); `minimum_bytes` is the caller's
+    // `question.len() + MIN_REPLY_SKELETON_BYTES`.
+    if returned.calls == 0 || returned.candidates == 0 || returned.bytes < minimum_bytes.max(1024)
+    {
         return Ok(None);
     }
     let mut allowance = PartitionAllowanceV3 {
@@ -221,6 +226,10 @@ pub fn initial_allocations_v3(
     let model_members = admitted
         .min(budget.context_calls.max(budget.focus_calls))
         .min(budget.input_tokens);
+    // Model work is shared over the members that can carry it, and Focus
+    // pairs over the members that get a Focus call (review finding 6 of
+    // L3-10 (a): sharing over every admitted member stranded the rest).
+    let focus_members = model_members.min(budget.focus_calls);
     let mut result = Vec::with_capacity(members.len());
     for (offset, index_id) in members.iter().copied().enumerate() {
         if offset >= admitted {
@@ -229,19 +238,19 @@ pub fn initial_allocations_v3(
         }
         let model = offset < model_members;
         let slots = if model {
-            share(budget.context_calls, admitted, offset)
+            share(budget.context_calls, model_members, offset)
         } else {
             0
         };
         let focus_calls = if model {
-            share(budget.focus_calls, admitted, offset)
+            share(budget.focus_calls, model_members, offset)
         } else {
             0
         };
         let focus_pairs = if focus_calls == 0 {
             0
         } else {
-            share(budget.focus_pairs, admitted, offset)
+            share(budget.focus_pairs, focus_members, offset)
         };
         let allowance = PartitionAllowanceV3 {
             schema: ALLOWANCE_SCHEMA_V3.into(),
@@ -332,7 +341,21 @@ impl CombinedContextSummaryV2 {
         let mut known = LoopUse::default();
         let mut held = LoopUse::default();
         let mut complete = true;
+        // Members run in roster order. After unknown model work no later
+        // member may hold model work (review finding 7 of L3-10 (a)): an
+        // unknown member's token use is not bounded by its accounting.
+        let mut unknown_seen = false;
         for report in &self.members {
+            if unknown_seen && let Some(allowance) = &report.allowance {
+                ensure!(
+                    allowance.card_ordinals.is_empty()
+                        && allowance.focus_ordinals.is_empty()
+                        && allowance.resources.input_tokens == 0
+                        && allowance.resources.focus_pairs == 0,
+                    "model work allowed after unknown model work"
+                );
+            }
+            unknown_seen |= matches!(report.outcome, PartitionOutcomeV3::Unknown);
             match (&report.allowance, &report.outcome) {
                 (None, PartitionOutcomeV3::Unqueried { reason }) => {
                     ensure!(

@@ -25,12 +25,34 @@ pub struct AnswerArgs {
     #[serde(flatten)]
     pub verification: response::VerificationArgs,
     #[serde(flatten)]
-    pub request: airk_core::arbiter::context_action::ContextRequestV2,
+    pub request: airk_core::arbiter::answer_loop::ContextRequestV3,
     #[serde(flatten, skip_serializing)]
     pub response: ResponseArgs,
 }
 pub mod combined;
-pub mod explorer_offline;
+/// A kernel Answer progress observation as its MCP progress notification.
+fn answer_progress(item: airk_kernel::arbiter::AnswerProgress) -> progress::AnswerProgress {
+    use airk_core::arbiter::answer_loop::LoopStage;
+    let stage = match item.stage {
+        LoopStage::Admission => progress::AnswerStage::Queued,
+        LoopStage::Split => progress::AnswerStage::Split,
+        LoopStage::Plan => progress::AnswerStage::Plan,
+        LoopStage::Retrieve | LoopStage::Read => progress::AnswerStage::Gather,
+        LoopStage::Coverage => progress::AnswerStage::Coverage,
+        LoopStage::FollowUp => progress::AnswerStage::FollowUp,
+        LoopStage::Compose => progress::AnswerStage::Compose,
+        LoopStage::Union => progress::AnswerStage::Union,
+    };
+    let count = |value: usize| u8::try_from(value).unwrap_or(u8::MAX);
+    progress::AnswerProgress {
+        part: item.part,
+        parts: item.parts,
+        round: item.round,
+        stage,
+        sub_needs_covered: count(item.covered),
+        sub_needs: count(item.sub_needs),
+    }
+}pub mod explorer_offline;
 pub mod help;
 pub mod local;
 pub mod open;
@@ -743,21 +765,32 @@ impl AirkServer {
             open_world_hint = false
         )
     )]
-    async fn answer(&self, Parameters(args): Parameters<AnswerArgs>) -> CallToolResult {
+    async fn answer(
+        &self,
+        Parameters(args): Parameters<AnswerArgs>,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> CallToolResult {
         let mut reader = self.clone();
         reader.plan_read = true;
         reader.answer_read = true;
         let handle = tokio::runtime::Handle::current();
+        let reporter = progress::ProgressReporter::from_request(&context.meta, context.peer.clone());
+        let sink = reporter
+            .as_ref()
+            .map_or_else(progress::no_progress, |reporter| reporter.sink());
         let deadline = std::time::Instant::now()
             .checked_add(std::time::Duration::from_millis(
-                args.request.budget.deadline_ms.min(120_000),
+                args.request
+                    .budget
+                    .deadline_ms
+                    .min(airk_core::arbiter::answer_loop::MAX_DEADLINE_MS),
             ))
             .unwrap_or_else(std::time::Instant::now);
         let deadline = self
             .read_attempt
             .as_ref()
             .map_or(deadline, |context| deadline.min(context.deadline()));
-        self.execute_verified_response(
+        let answered = self.execute_verified_response(
             UsageOperation::Answer,
             args.response,
             args.verification.controls(),
@@ -772,24 +805,38 @@ impl AirkServer {
                     })
                     .transpose()?
                     .unwrap_or(4096);
-                let kernel = kernel.with_context_reply_reserve(reserve)?;
+                let kernel = kernel
+                    .with_context_reply_reserve(reserve)?
+                    .with_fresh_answer_accounting()?;
                 reader.kernel = kernel.clone();
-                kernel.answer_with_reader_v2(
-                    args.request,
-                    deadline,
-                    &|| {
-                        if let Some(context) = &reader.read_attempt {
-                            context.require_live()?;
-                        }
-                        Ok(())
-                    },
-                    &|tool, args, revision| {
-                        handle.block_on(reader.workbench_read(tool, args, revision))
-                    },
-                )
+                // Custody is dropped after delivery until the service job
+                // table keeps it (change log entry 21); the reply keeps the
+                // decision log digest.
+                kernel
+                    .answer_with(
+                        args.request,
+                        airk_kernel::arbiter::AnswerEnv {
+                            deadline,
+                            require_live: &|| {
+                                if let Some(context) = &reader.read_attempt {
+                                    context.require_live()?;
+                                }
+                                Ok(())
+                            },
+                            reader: &|tool, args, revision| {
+                                handle.block_on(reader.workbench_read(tool, args, revision))
+                            },
+                            clock: &std::time::Instant::now,
+                            progress: &|item| sink(answer_progress(item)),
+                        },
+                    )
+                    .map(|outcome| outcome.response)
             },
-        )
-        .await
+        );
+        match &reporter {
+            Some(reporter) => reporter.while_running(answered).await,
+            None => answered.await,
+        }
     }
 
     #[tool(

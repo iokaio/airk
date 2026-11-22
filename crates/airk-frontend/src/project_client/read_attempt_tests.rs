@@ -251,34 +251,81 @@ async fn crossed_request_or_worker_proof_fails_closed_without_replay() -> Result
     exchange_fixture("scope", true, false).await
 }
 
+/// A fixture row's allowance in the form its purpose now takes: an ordinary
+/// Focus Search keeps its `airk.context-allowance/1` row; an Answer row is a
+/// combined Answer /3 member, so it becomes the `PartitionAllowanceV3` the
+/// whole-selection allocation gives that member under the default /3 budget
+/// (an Answer /2 partition is refused by the supervisor).
+enum Purpose {
+    Focus(airk_core::combined_context::PartitionAllowance),
+    Answer(airk_core::native_loop::PartitionAllowanceV3),
+}
+impl Purpose {
+    fn attempt(&self) -> airk_core::identity::Incarnation {
+        match self {
+            Self::Focus(allowance) => allowance.attempt,
+            Self::Answer(allowance) => allowance.attempt,
+        }
+    }
+    fn attach(
+        &self,
+        context: airk_mcp::read_attempt::ReadAttemptContext,
+    ) -> Result<airk_mcp::read_attempt::ReadAttemptContext> {
+        match self {
+            Self::Focus(allowance) => context.with_context_partition(allowance.clone()),
+            Self::Answer(allowance) => context.with_answer_partition(allowance.clone()),
+        }
+    }
+    fn malformed(&self) -> Self {
+        match self {
+            Self::Focus(allowance) => {
+                let mut malformed = allowance.clone();
+                malformed.resources.calls = malformed.parent_budget.calls + 1;
+                Self::Focus(malformed)
+            }
+            Self::Answer(allowance) => {
+                let mut malformed = allowance.clone();
+                malformed.resources.calls = malformed.parent_budget.calls + 1;
+                Self::Answer(malformed)
+            }
+        }
+    }
+}
+
 async fn partition_purpose_exchange(row: &str, refusals: bool) -> Result<()> {
     use airk_core::combined_context::PartitionAllowance;
     let fixtures: serde_json::Value = serde_json::from_slice(include_bytes!(
         "../../../../fixtures/split/arbiter/focus_only_allowance_cases.json"
     ))?;
-    let allowance: PartitionAllowance = serde_json::from_value(fixtures[row]["allowance"].clone())?;
-    allowance.validate()?;
+    let original: PartitionAllowance = serde_json::from_value(fixtures[row]["allowance"].clone())?;
+    original.validate()?;
     let canonical = match fixtures[row]["canonical_tool"].as_str() {
         Some("search") => "airk_search",
         Some("answer") => "airk_answer",
         _ => anyhow::bail!("fixture canonical operation missing"),
     }
     .to_owned();
-    let arguments = if canonical == "airk_search" {
-        serde_json::json!({"query":"fixed native purpose control", "limit":allowance.resources.candidates, "max_bytes":4096})
+    let (purpose, arguments) = if canonical == "airk_search" {
+        let arguments = serde_json::json!({"query":"fixed native purpose control", "limit":original.resources.candidates, "max_bytes":4096});
+        (Purpose::Focus(original), arguments)
     } else {
-        let mut budget = allowance.parent_budget.clone();
-        budget.calls = allowance.resources.calls;
-        budget.candidates = allowance.resources.candidates;
-        budget.max_bytes = allowance.resources.bytes;
-        budget.input_tokens = allowance.resources.input_tokens.max(1);
-        let request = airk_core::arbiter::context_action::ContextRequestV2 {
-            schema: airk_core::arbiter::context_action::REQUEST_SCHEMA_V2.into(),
+        let parent = airk_core::arbiter::answer_loop::BudgetV3::default();
+        let allowance = airk_core::combined_context::initial_allocations_v3(
+            original.attempt,
+            original.selection,
+            &[original.index_id],
+            &parent,
+        )?
+        .remove(0)
+        .context("one admitted Answer member")?;
+        let request = airk_core::arbiter::answer_loop::ContextRequestV3 {
+            schema: airk_core::arbiter::answer_loop::REQUEST_SCHEMA_V3.into(),
             question: "fixed native purpose control".into(),
-            budget,
+            budget: allowance.clamp(&parent)?,
+            continuation: None,
         };
         request.validate()?;
-        serde_json::to_value(request)?
+        (Purpose::Answer(allowance), serde_json::to_value(request)?)
     };
     if canonical == "airk_search" {
         let _: airk_mcp::SearchArgs = serde_json::from_value(arguments.clone())?;
@@ -293,7 +340,11 @@ async fn partition_purpose_exchange(row: &str, refusals: bool) -> Result<()> {
     local_ipc::prepare_root(&root)?;
     let endpoint = local_ipc::endpoint(&root, "partition-purpose")?;
     let mut listener = local_ipc::Listener::bind(&endpoint)?;
-    let expected = allowance.clone();
+    let (expected_focus, expected_answer) = match &purpose {
+        Purpose::Focus(allowance) => (Some(allowance.clone()), None),
+        Purpose::Answer(allowance) => (None, Some(allowance.clone())),
+    };
+    let expected_attempt = purpose.attempt();
     let expected_arguments = arguments.clone();
     let expected_tool = canonical.clone();
     let peer = tokio::spawn(async move {
@@ -311,12 +362,14 @@ async fn partition_purpose_exchange(row: &str, refusals: bool) -> Result<()> {
         );
         ensure!(
             serde_json::to_value(&query.context_partition)?
-                == serde_json::to_value(Some(&expected))?,
+                == serde_json::to_value(&expected_focus)?
+                && serde_json::to_value(&query.answer_partition)?
+                    == serde_json::to_value(&expected_answer)?,
             "original partition changed"
         );
         let attempt = query.read_attempt.context("original attempt omitted")?;
         ensure!(
-            attempt.request_id == expected.attempt,
+            attempt.request_id == expected_attempt,
             "original attempt identity changed"
         );
         ensure!(
@@ -357,12 +410,13 @@ async fn partition_purpose_exchange(row: &str, refusals: bool) -> Result<()> {
         read_attempt_supported: true,
         status_receipt: Default::default(),
     };
-    let context = airk_mcp::read_attempt::ReadAttemptContext::new(
-        now + Duration::from_secs(5),
-        Default::default(),
-    )
-    .with_request_id(allowance.attempt)?
-    .with_context_partition(allowance.clone())?;
+    let context = purpose.attach(
+        airk_mcp::read_attempt::ReadAttemptContext::new(
+            now + Duration::from_secs(5),
+            Default::default(),
+        )
+        .with_request_id(purpose.attempt())?,
+    )?;
     if refusals {
         let wrong = if canonical == "airk_search" {
             "airk_answer"
@@ -401,16 +455,17 @@ async fn partition_purpose_exchange(row: &str, refusals: bool) -> Result<()> {
             "unsupported attempt reached submission"
         );
         connection.read_attempt_supported = true;
-        let mut malformed = allowance.clone();
-        malformed.resources.calls = malformed.parent_budget.calls + 1;
+        let malformed = purpose.malformed();
         assert!(
-            airk_mcp::read_attempt::ReadAttemptContext::new(
-                now + Duration::from_secs(5),
-                Default::default()
-            )
-            .with_request_id(malformed.attempt)?
-            .with_context_partition(malformed)
-            .is_err()
+            malformed
+                .attach(
+                    airk_mcp::read_attempt::ReadAttemptContext::new(
+                        now + Duration::from_secs(5),
+                        Default::default()
+                    )
+                    .with_request_id(malformed.attempt())?
+                )
+                .is_err()
         );
     }
     let reply = connection

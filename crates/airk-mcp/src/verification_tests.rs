@@ -791,8 +791,8 @@ async fn answer_verification_controls_reach_the_saved_source_owner_through_actua
     )?;
     let mut client = local::LocalTools::new(kernel).await?;
     let mut arguments = json!({
-        "schema":airk_core::arbiter::context_action::REQUEST_SCHEMA_V2,
-        "question":"amber_callback", "budget":airk_core::arbiter::Budget::default(),
+        "schema":airk_core::arbiter::answer_loop::REQUEST_SCHEMA_V3,
+        "question":"amber_callback", "budget":airk_core::arbiter::answer_loop::BudgetV3::default(),
         "response_mode":"full", "verification":"report"
     });
     let verified = client
@@ -800,7 +800,11 @@ async fn answer_verification_controls_reach_the_saved_source_owner_through_actua
         .await?;
     ensure!(verified.is_error != Some(true), "{verified:?}");
     let verified = body(&verified)?;
-    assert_eq!(verified["source_verification"]["status"], "verified");
+    assert_eq!(
+        verified["source_verification"]["status"],
+        "verified",
+        "{verified}"
+    );
     assert!(
         verified["source_verification"]["counts"]["checked_sources"]
             .as_u64()

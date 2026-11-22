@@ -84,6 +84,42 @@ fn initial_v3_allocations_share_every_counter_with_ordinal_prefixes() -> Result<
     };
     let allowances = initial_allocations_v3(attempt(), selection(), &ids(2), &tight)?;
     assert!(allowances[0].is_some() && allowances[1].is_none());
+    // Review finding 6: model work is shared over the members that can carry
+    // it. Two tokens carry two of four members: each gets half of the 48
+    // slots and 24 Focus calls, and the Focus pairs go to those two only.
+    let scarce = BudgetV3 {
+        input_tokens: 2,
+        round_input_tokens: 2,
+        ..BudgetV3::default()
+    };
+    let allowances = initial_allocations_v3(attempt(), selection(), &ids(4), &scarce)?;
+    let model: Vec<_> = allowances
+        .iter()
+        .map(|allowance| {
+            let allowance = allowance.as_ref().unwrap();
+            (
+                allowance.card_ordinals.len(),
+                allowance.focus_ordinals.len(),
+                allowance.resources.focus_pairs,
+                allowance.resources.input_tokens,
+            )
+        })
+        .collect();
+    assert_eq!(
+        model,
+        vec![(24, 12, 96, 1), (24, 12, 96, 1), (0, 0, 0, 0), (0, 0, 0, 0)]
+    );
+    // One Focus call over three model members: its member takes every pair.
+    let one_focus = BudgetV3 {
+        focus_calls: 1,
+        ..BudgetV3::default()
+    };
+    let allowances = initial_allocations_v3(attempt(), selection(), &ids(3), &one_focus)?;
+    let pairs: Vec<_> = allowances
+        .iter()
+        .map(|allowance| allowance.as_ref().unwrap().resources.focus_pairs)
+        .collect();
+    assert_eq!(pairs, vec![192, 0, 0]);
     Ok(())
 }
 
@@ -126,15 +162,25 @@ fn unused_v3_work_is_handed_back_by_count() -> Result<()> {
     };
     assert!(LoopUse::allowance(&first).checked_sub(&over).is_err());
     // A member the initial allocation did not admit runs on returned work.
-    let returned = returned_allowance(attempt(), selection(), ids(1)[0], &budget, &unused)?
+    let returned = returned_allowance(attempt(), selection(), ids(1)[0], &budget, &unused, 0)?
         .expect("returned work carries a read");
     returned.validate()?;
+    // Returned bytes below the question plus a minimal reply admit no member.
+    assert!(
+        returned_allowance(attempt(), selection(), ids(1)[0], &budget, &unused, 111_073)?
+            .is_none()
+    );
+    assert!(
+        returned_allowance(attempt(), selection(), ids(1)[0], &budget, &unused, 111_072)?
+            .is_some()
+    );
     let reads_only = LoopUse {
         input_tokens: 0,
         ..unused.clone()
     };
-    let returned = returned_allowance(attempt(), selection(), ids(1)[0], &budget, &reads_only)?
-        .expect("reads alone");
+    let returned =
+        returned_allowance(attempt(), selection(), ids(1)[0], &budget, &reads_only, 0)?
+            .expect("reads alone");
     assert!(returned.card_ordinals.is_empty() && returned.focus_ordinals.is_empty());
     assert_eq!(returned.resources.focus_pairs, 0);
     returned.validate()?;
@@ -142,7 +188,7 @@ fn unused_v3_work_is_handed_back_by_count() -> Result<()> {
         bytes: 1023,
         ..unused
     };
-    assert!(returned_allowance(attempt(), selection(), ids(1)[0], &budget, &tiny)?.is_none());
+    assert!(returned_allowance(attempt(), selection(), ids(1)[0], &budget, &tiny, 0)?.is_none());
     let mut withdrawn = first;
     without_models(&mut withdrawn);
     withdrawn.validate()?;
@@ -226,6 +272,49 @@ fn combined_context_v2_summary_reconciles_known_and_held_counts() -> Result<()> 
         mutate(&mut wrong);
         assert!(wrong.validate(&members).is_err(), "{id}");
     }
+    // Review finding 7: after unknown model work, a later member holding
+    // model work is refused; the same member without models is accepted.
+    let three = ids(3);
+    let budget = BudgetV3::default();
+    let allowances = initial_allocations_v3(attempt(), selection(), &three, &budget)?;
+    let held = LoopUse::allowance(allowances[0].as_ref().unwrap());
+    let later = |allowance: PartitionAllowanceV3| -> Result<CombinedContextSummaryV2> {
+        let second = LoopUse::allowance(&allowance);
+        Ok(CombinedContextSummaryV2 {
+            schema: SUMMARY_SCHEMA_V2.into(),
+            attempt: attempt(),
+            selection: selection(),
+            budget: budget.clone(),
+            members: vec![
+                PartitionReportV3 {
+                    index_id: three[0],
+                    allowance: allowances[0].clone(),
+                    outcome: PartitionOutcomeV3::Unknown,
+                },
+                PartitionReportV3 {
+                    index_id: three[1],
+                    allowance: Some(allowance),
+                    outcome: PartitionOutcomeV3::Unknown,
+                },
+                PartitionReportV3 {
+                    index_id: three[2],
+                    allowance: None,
+                    outcome: PartitionOutcomeV3::Unqueried {
+                        reason: UnqueriedReason::Budget,
+                    },
+                },
+            ],
+            known_used: LoopUse::default(),
+            unknown_held: held.checked_add(&second)?,
+            termination: Termination::Partial,
+            delivery_bindings: vec![],
+        })
+    };
+    let with_models = allowances[1].clone().unwrap();
+    assert!(later(with_models.clone())?.validate(&three).is_err());
+    let mut withdrawn = with_models;
+    without_models(&mut withdrawn);
+    later(withdrawn)?.validate(&three)?;
     Ok(())
 }
 

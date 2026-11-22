@@ -234,12 +234,28 @@ pub struct Query {
         deserialize_with = "partition_present"
     )]
     pub context_partition: Option<airk_core::combined_context::PartitionAllowance>,
+    /// Native combined Answer /3 member allowance, appended after
+    /// `context_partition`; never a public Answer argument.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "answer_partition_present"
+    )]
+    pub answer_partition: Option<airk_core::native_loop::PartitionAllowanceV3>,
 }
 
 fn partition_present<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<airk_core::combined_context::PartitionAllowance>, D::Error> {
     let allowance = airk_core::combined_context::PartitionAllowance::deserialize(deserializer)?;
+    allowance.validate().map_err(serde::de::Error::custom)?;
+    Ok(Some(allowance))
+}
+
+fn answer_partition_present<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<airk_core::native_loop::PartitionAllowanceV3>, D::Error> {
+    let allowance = airk_core::native_loop::PartitionAllowanceV3::deserialize(deserializer)?;
     allowance.validate().map_err(serde::de::Error::custom)?;
     Ok(Some(allowance))
 }

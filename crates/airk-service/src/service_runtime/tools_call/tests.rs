@@ -3,14 +3,15 @@ use super::*;
 use serde_json::json;
 
 fn short_answer_arguments() -> Result<Map<String, Value>> {
-    let budget = airk_core::arbiter::Budget {
+    let budget = airk_core::arbiter::answer_loop::BudgetV3 {
         deadline_ms: 2000,
         ..Default::default()
     };
-    let request = airk_core::arbiter::context_action::ContextRequestV2 {
-        schema: airk_core::arbiter::context_action::REQUEST_SCHEMA_V2.into(),
+    let request = airk_core::arbiter::answer_loop::ContextRequestV3 {
+        schema: airk_core::arbiter::answer_loop::REQUEST_SCHEMA_V3.into(),
         question: "synthetic bounded source question".into(),
         budget,
+        continuation: None,
     };
     Ok(serde_json::to_value(request)?.as_object().unwrap().clone())
 }

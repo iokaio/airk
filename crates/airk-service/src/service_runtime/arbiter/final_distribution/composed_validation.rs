@@ -844,7 +844,17 @@ fn original_call(
     let arguments: Value = serde_json::from_slice(&bytes)?;
     let canonical = canonical_call(&completion, health, limits)?;
     let submitted_budget = if limits.current && request["tool"] == "answer" {
-        let arguments: airk_mcp::AnswerArgs = serde_json::from_value(arguments.clone())?;
+        // Retained final-distribution receipts are Answer /2 history.
+        #[derive(serde::Deserialize)]
+        struct AnswerArgsV2 {
+            #[serde(flatten)]
+            _verification: airk_mcp::response::VerificationArgs,
+            #[serde(flatten)]
+            request: airk_core::arbiter::context_action::ContextRequestV2,
+            #[serde(flatten)]
+            _response: airk_mcp::response::ResponseArgs,
+        }
+        let arguments: AnswerArgsV2 = serde_json::from_value(arguments.clone())?;
         arguments.request.validate()?;
         limits.budget(&arguments.request.budget, Some(&arguments.request.budget))?;
         ensure!(

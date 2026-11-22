@@ -184,7 +184,8 @@ impl LocalTools {
         let context = crate::read_attempt::admit_tool_context(&name, &arguments, context);
         let mut server = self.direct_server.clone();
         let answer = matches!(name.as_str(), "airk_answer" | "answer")
-            || context.context_partition().is_some();
+            || context.context_partition().is_some()
+            || context.answer_partition().is_some();
         anyhow::ensure!(
             !answer
                 || context.wire_attempt().is_none()
@@ -201,6 +202,10 @@ impl LocalTools {
             }),
             "native partition purpose differs from the canonical operation"
         );
+        anyhow::ensure!(
+            context.answer_partition().is_none() || matches!(name.as_str(), "airk_answer" | "answer"),
+            "an Answer /3 partition serves only Answer"
+        );
         if let Some(attempt) = context.captured_transport_attempt()
             && matches!(
                 name.as_str(),
@@ -212,18 +217,24 @@ impl LocalTools {
                     | "diagnostics"
             )
         {
-            server.kernel = match context.context_partition() {
-                Some(partition) => server
+            server.kernel = match (context.context_partition(), context.answer_partition()) {
+                (Some(partition), _) => server
                     .kernel
                     .with_context_partition_for(&name, partition.clone(), attempt)?
                     .with_optional_deadline(context.deadline())?,
-                None => server
+                (None, Some(partition)) => server
                     .kernel
-                    .with_optional_read_attempt_for(&name, attempt, context.deadline())?,
+                    .with_answer_partition_for(&name, partition.clone(), attempt)?
+                    .with_optional_deadline(context.deadline())?,
+                (None, None) => server.kernel.with_optional_read_attempt_for(
+                    &name,
+                    attempt,
+                    context.deadline(),
+                )?,
             };
         } else if context.wire_attempt().is_none() {
             anyhow::ensure!(
-                context.context_partition().is_none(),
+                context.context_partition().is_none() && context.answer_partition().is_none(),
                 "context partition has no original wire attempt"
             );
         }

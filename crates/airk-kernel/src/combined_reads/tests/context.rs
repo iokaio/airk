@@ -404,6 +404,95 @@ fn combined_answer_v3_admission_takes_the_answer_frame() -> Result<()> {
         0
     );
     assert!(answer_payload_admission(&request, &budget, &allowances[..1], 1024).is_err());
+    // Review finding 5: a member without an initial allowance is sized as
+    // widely as one with it, since hand-back may admit it later.
+    let mut later = allowances.clone();
+    later[1] = None;
+    assert_eq!(
+        answer_payload_admission(&request, &budget, &later, 1024)?,
+        answer
+    );
+    Ok(())
+}
+
+/// Review finding 1 of L3-10 (a): a combined Answer /3 wrapper takes the
+/// 131,072-byte Answer frame, not the 65,536-byte (here 8,192-byte)
+/// `SharedBudgets.max_bytes` of every other combined read.
+#[test]
+fn combined_answer_v3_composes_a_wrapper_above_the_ordinary_frame() -> Result<()> {
+    use airk_core::{
+        arbiter::answer_loop::{BudgetV3, ContextResponseV3},
+        combined_context::*,
+    };
+    let request = request()?;
+    let cases: Value = serde_json::from_str(include_str!(
+        "../../../../../fixtures/split/arbiter/answer_loop_cases.json"
+    ))?;
+    let budget = BudgetV3::default();
+    let ids = vec![index(1), index(2)];
+    let attempt = Incarnation::from_bytes([9; 16]);
+    let allowances = initial_allocations_v3(attempt, request.authority, &ids, &budget)?;
+    let mut reports = Vec::new();
+    let mut inputs = Vec::new();
+    let mut known = LoopUse::default();
+    let mut bindings = Vec::new();
+    for (offset, allowance) in allowances.into_iter().enumerate() {
+        let i = u8::try_from(offset + 1)?;
+        let mut reply = cases["response_cases"][0]["response"].clone();
+        let mut scope = reply["scope"].clone();
+        scope["index_id"] = json!(index(i));
+        scope["publication"] = serde_json::to_value(revision(u64::from(i)))?;
+        reply["scope"] = scope.clone();
+        reply["applications"][0]["scope"] = scope;
+        reply["records"][0]["canonical_result"]["padding"] = json!("p".repeat(40_000));
+        let allowance = allowance.context("admitted member")?;
+        let typed = ContextResponseV3::from_canonical(&reply, &allowance.clamp(&budget)?)?;
+        let used = LoopUse::of_reply(&typed)?;
+        known = known.checked_add(&used)?;
+        bindings.extend(reply_delivery_bindings(&typed)?);
+        reports.push(PartitionReportV3 {
+            index_id: index(i),
+            allowance: Some(allowance),
+            outcome: PartitionOutcomeV3::Known {
+                used,
+                read_depth: typed.work.rounds,
+                peak_fanout: typed.work.fanout,
+            },
+        });
+        inputs.push(MemberInput {
+            index_id: index(i),
+            is_error: false,
+            exhausted: false,
+            result: reply,
+            sources: sources()?,
+            elapsed_ms: Some(1),
+        });
+    }
+    let summary = CombinedContextSummaryV2 {
+        schema: SUMMARY_SCHEMA_V2.into(),
+        attempt,
+        selection: request.authority,
+        budget,
+        members: reports,
+        known_used: known,
+        unknown_held: LoopUse::default(),
+        termination: Termination::Complete,
+        delivery_bindings: bindings,
+    };
+    let result = compose_answer(&request, inputs, summary)?;
+    let bytes = serde_json::to_vec(&result)?.len();
+    assert!(
+        (airk_core::MAX_RESPONSE_BYTES + 1..=131_072).contains(&bytes),
+        "{bytes}"
+    );
+    for i in [1, 2] {
+        assert_eq!(
+            member_result(&result, index(i))?["records"][0]["canonical_result"]["padding"]
+                .as_str()
+                .map(str::len),
+            Some(40_000)
+        );
+    }
     Ok(())
 }
 
