@@ -48,11 +48,17 @@ PATH_TOOLS: dict[str, list[str]] = {
 ANSWER_PATHS = ("answer", "noModel", "focus", "compact", "large")
 PRIMARY_ARG = {"airk_answer": "question", "airk_search": "query", "airk_parse": "text"}
 
-ANSWER_SCHEMA = "airk.arbiter.context.request/2"
+# Answer /3, the local loop (plan section 12; CONTRACT.md "Answer loop wire contract version 3"). The
+# request refuses a budget that lacks any field, so the default is the contract's whole default budget.
+ANSWER_SCHEMA = "airk.arbiter.context.request/3"
 PARSE_SCHEMA = "airk.parse.request/1"
-# Plan 3.7 / arbiter/mod.rs defaults: 8 calls, 3 rounds, 262,144 bytes, 120 s.
-ANSWER_BUDGET_DEFAULT = {"calls": 8, "rounds": 3, "fanout": 8, "input_tokens": 8192,
-                         "candidates": 32, "max_bytes": 262144, "deadline_ms": 120000}
+ANSWER_BUDGET_DEFAULT = {"deadline_ms": 300000, "max_bytes": 262144, "max_parts": 4, "max_sub_needs": 4,
+                         "rounds": 3, "calls": 132, "fanout": 8, "candidates": 132, "input_tokens": 131072,
+                         "round_input_tokens": 32768, "context_calls": 48, "focus_calls": 24, "focus_pairs": 192}
+# History only (the one-turn evaluation, 21-22 Nov 2026): the /2 request and plan 3.7's defaults.
+ANSWER_SCHEMA_V2 = "airk.arbiter.context.request/2"
+ANSWER_BUDGET_DEFAULT_V2 = {"calls": 8, "rounds": 3, "fanout": 8, "input_tokens": 8192,
+                            "candidates": 32, "max_bytes": 262144, "deadline_ms": 120000}
 # Arguments the wrapper hides from the agent's schemas and sets itself.
 HIDDEN_ARGS = {"index", "project"}
 FORCED_HIDDEN = {"airk_answer": {"schema", "budget"}, "airk_parse": {"schema"}}

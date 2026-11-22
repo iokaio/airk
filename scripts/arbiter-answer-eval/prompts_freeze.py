@@ -34,7 +34,11 @@ if str(HERE) not in sys.path:
 import common  # noqa: E402
 
 SCHEMA = "airk.private.answer-eval-prompts-freeze/1"
-HARNESS_FILES = ("common.py", "coverage.py", "cs_replay.py", "depth.py", "evidence.py", "grade.py", "judge.py", "mcp_wrapper.py",
+# The loop (plan section 12) adds loop_reply.py (Answer /3 replies, used by evidence, coverage, replay, depth,
+# run_pass and the wrapper) and gate.py (the LG tests, run by run_plan). The freeze written for the one-turn
+# evaluation no longer verifies: it must be re-frozen (--refreeze) before the first judged loop pass (LG).
+HARNESS_FILES = ("common.py", "coverage.py", "cs_replay.py", "depth.py", "evidence.py", "gate.py", "grade.py", "judge.py",
+                 "loop_reply.py", "mcp_wrapper.py",
                  "pass_digests.py", "pass_report.py", "prompts_freeze.py", "rejudge.py", "replay.py", "rescore.py",
                  "run_baseline.py", "run_pass.py", "run_plan.py", "run_session.py", "search_replay.py", "settled.py",
                  "verify_restart.py")

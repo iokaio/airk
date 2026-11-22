@@ -16,6 +16,16 @@ The plan (JSON) is a list of steps:
 * ``{"second": {"spec": ..., "groups": [[focus, context, "name,name"], ...]}}``. Runs the second
   sessions of the close calls for the named results, under each group's stages, then grades again.
 * ``{"compare": {"a": <pass dir>, "b": <pass dir>, "out": <file>}}``. Runs ``compare_passes.py``.
+* ``{"switch_context": {"focus": <profile>|null, "context": <profile>|null, "repositories": "airk,bookbuilder",
+  "receipt": <file>}}``. The named hook for switching the Context model within one lifetime (plan 12.5.2
+  item 4; ``Plan.switch_context``): disable the live CUDA Context (the release), then enable the wanted
+  Focus and Context profiles (the warm), through ``gpu_fixture.py stage`` (ordinary Configure). The
+  receipt keeps release and warm time and the device memory before and after.
+* ``{"gate": {"command": "replays"|"agreement"|"outcomes"|"concurrency"|"performance"|"precision", ...}}``.
+  Runs ``gate.py <command>`` with the step's other keys as ``--key value`` options (a list repeats it).
+* ``sessions`` and ``second`` groups take ``"stager": "cuda"`` to stage through ``switch_context`` instead
+  of ``set_stages.py``; a group of ``"@any", "@any"`` leaves the stages as they are (Search and Parse).
+  ``second`` takes ``"jobs": [<second-jobs file>, ...]`` (``gate.py outcomes``) for the gate close calls.
 
 The first failing step stops the plan. Each step is logged in ``--log`` with its exit code and
 time. The plan leaves the newest lifetime running; its ``start`` process is a child of this
@@ -70,6 +80,8 @@ class Plan:
         self.fixture_dir = self.r / "fixture"
         self.log_path = args.log
         self.children: list[subprocess.Popen] = []
+        # On a resumed plan (--from-step) the live CUDA stages are given, so the first switch releases them.
+        self.live_cuda = json.loads(args.live_cuda) if getattr(args, "live_cuda", None) else None
 
     def log(self, **event):
         common.append_jsonl(self.log_path, {"at": common.now_iso(), **event})
@@ -163,6 +175,74 @@ class Plan:
                  [*PY, str(HERE / "set_stages.py"), "--focus", focus or "none", "--context", context or "none",
                   "--log-dir", str(log_dir)], 1800)
 
+    # The live CUDA stages as this plan last set them (switch_context); None until the first switch.
+    live_cuda: dict | None = None
+
+    def lifetime_name(self) -> str:
+        return self.newest().parent.name
+
+    def switch_context(self, body: dict) -> dict:
+        """The in-lifetime Context switch hook (plan 12.5.2 item 4, L5 design section 5.3): release first, then
+        warm, so the two Context models are never resident together. A step whose stages are already live
+        records a receipt with ``unchanged`` and runs nothing."""
+        wanted = {"focus": body.get("focus"), "context": body.get("context")}
+        lifetime = self.lifetime_name()
+        repos = body.get("repositories") or "airk,bookbuilder"
+        receipt = {"schema": "airk.private.answer-eval-switch/1", "at": common.now_iso(), "lifetime": lifetime,
+                   "from": dict(self.live_cuda) if self.live_cuda else None, "to": wanted}
+        receipt["memory_before"] = self.gpu_memory()
+        began = time.monotonic()
+        if self.live_cuda == wanted:
+            receipt.update(unchanged=True, release_s=0.0, warm_s=0.0)
+        else:
+            current = self.live_cuda or {}
+            release_began = time.monotonic()
+            for stage in ("context", "focus"):
+                if current.get(stage) and current.get(stage) != wanted.get(stage):
+                    self.stage_command(lifetime, current[stage], False, repos, stage)
+            receipt["release_s"] = round(time.monotonic() - release_began, 3)
+            warm_began = time.monotonic()
+            for stage in ("focus", "context"):
+                if wanted.get(stage) and wanted.get(stage) != current.get(stage):
+                    self.stage_command(lifetime, wanted[stage], True, repos, stage)
+            receipt["warm_s"] = round(time.monotonic() - warm_began, 3)
+            self.live_cuda = wanted
+        receipt["total_s"] = round(time.monotonic() - began, 3)
+        receipt["memory_after"] = self.gpu_memory()
+        receipt["ok"] = True
+        if body.get("receipt"):
+            common.write_json(Path(body["receipt"]), receipt)
+        self.log(event="switch_context", **{k: receipt[k] for k in ("from", "to", "release_s", "warm_s")})
+        return receipt
+
+    def stage_command(self, lifetime: str, profile: str, enable: bool, repos: str, stage: str):
+        self.run(f"stage-{'on' if enable else 'off'}-{profile}",
+                 [*PY, "-S", str(HERE / "gpu_fixture.py"), "stage", "--lifetime", lifetime, "--profile", profile,
+                  "--enable" if enable else "--disable", "--repositories", repos], 3600)
+
+    @staticmethod
+    def gpu_memory():
+        import gate  # local: only the gate steps sample device memory
+        return gate.nvidia_smi_used()
+
+    def stage_group(self, focus, context, log_dir: Path, stager: str | None):
+        if focus == "@any" and context == "@any":
+            return
+        if stager == "cuda":
+            self.switch_context({"focus": focus, "context": context})
+        else:
+            self.stages(focus, context, log_dir)
+
+    def gate_step(self, body: dict):
+        command = [*PY, str(HERE / "gate.py"), "--r-root", str(self.r), body["command"]]
+        for key, value in body.items():
+            if key == "command":
+                continue
+            for item in value if isinstance(value, list) else [value]:
+                command += [f"--{key.replace('_', '-')}", str(item)]
+        self.run(f"gate-{body['command']}-{body.get('arm') or Path(str(body.get('out', ''))).stem}", command,
+                 8 * 3600)
+
     def pass_step(self, spec: Path, label: str, *args: str):
         self.run(label, [*PY, str(HERE / "run_pass.py"), "--spec", str(spec), "--r-root", str(self.r), *args])
 
@@ -179,12 +259,19 @@ class Plan:
         elif kind in ("sessions", "second"):
             spec = Path(body["spec"])
             pass_dir = self.r / "passes" / common.read_json(spec)["series"]
+            jobs = body.get("jobs") or [None]
             for focus, context, names in body["groups"]:
-                self.stages(focus, context, pass_dir)
+                self.stage_group(focus, context, pass_dir, body.get("stager"))
                 if kind == "sessions":
                     self.pass_step(spec, f"sessions-{names}", "--stage", "sessions", "--only", names)
                 else:
-                    self.pass_step(spec, f"second-{names}", "--stage", "second", "--only-second", names)
+                    for job in jobs:
+                        extra = ["--second-jobs", str(job)] if job else []
+                        self.pass_step(spec, f"second-{names}", "--stage", "second", "--only-second", names, *extra)
+        elif kind == "switch_context":
+            self.switch_context(body)
+        elif kind == "gate":
+            self.gate_step(body)
         elif kind == "grade":
             spec = Path(body["spec"])
             for stage in ("coverage", "judge", "grade"):
@@ -220,6 +307,7 @@ def main(argv=None):
     parser.add_argument("--log", type=Path, required=True)
     parser.add_argument("--r-root", type=Path, default=common.DEFAULT_R)
     parser.add_argument("--from-step", type=int, default=1, help="resume at this 1-based step")
+    parser.add_argument("--live-cuda", help='JSON {"focus": ..., "context": ...}: the CUDA stages live at a resume')
     parser.add_argument("--hold", dest="hold", action="store_true", default=True)
     parser.add_argument("--no-hold", dest="hold", action="store_false")
     args = parser.parse_args(argv)

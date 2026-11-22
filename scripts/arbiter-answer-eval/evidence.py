@@ -13,6 +13,10 @@ Result shapes (read from crates/airk-mcp and the crates it serializes):
   read; ``records[].arguments`` are the read's arguments, not evidence.
 * parse: ``evidence[] = {citation, text, fact, step}`` plus ``steps[].result``.
 * combined sessions: ``members[].result`` with the per-tool body.
+* answer /3 (the loop): ``records[].canonical_result`` as above (a record has
+  no scope); ``parts[].sub_needs[]`` cite record ids. A compact span
+  ``{path, lines: [s, e] | start_line/end_line, excerpt}`` (changes entry 16,
+  L3) is evidence text at that place. The v3 bookkeeping keys are skipped.
 
 Coverage rule 2 (decision of 21 Nov 2026): a text span covers a note only
 when it overlaps at least min(5, the note's line count) lines of the note's
@@ -40,6 +44,11 @@ SKIP_KEYS = frozenset({
     "assessment", "applications", "work", "gaps", "scope", "guidance", "provenance", "execution",
     "publication", "current_publication", "scope_observation", "semantic_readiness", "discovery_readiness",
     "freshness", "indexing", "bind",
+    # Answer /3 bookkeeping (CONTRACT.md "Answer loop wire contract version 3"): decisions, the decision log
+    # summary, record uses, Union, partial and ticket markers, degradations, model work, the ids the frame
+    # omitted, and per-part rounds, follow-ups run and unrun reads. None of them is evidence.
+    "decisions", "decision_log", "record_uses", "union", "partial", "ticket", "degradations", "model_work",
+    "omitted_evidence", "rounds", "follow_ups_run", "unrun_reads",
 })
 
 
@@ -130,7 +139,13 @@ def _walk(node: Any, spans: list[Span]) -> None:
             spans.append(span)
     elif isinstance(node.get("path"), str) and "citation" not in node:
         start, end = _int(node.get("start_line")), _int(node.get("end_line"))
-        if start is not None:
+        lines = node.get("lines")
+        if start is None and isinstance(lines, list) and len(lines) == 2:
+            start, end = _int(lines[0]), _int(lines[1])
+        excerpt = node.get("excerpt")
+        if start is not None and isinstance(excerpt, str) and excerpt:
+            spans.append(Span(norm_path(node["path"]), start, end if end is not None else start, excerpt, "text"))
+        elif start is not None:
             spans.append(Span(norm_path(node["path"]), start, end if end is not None else start, "", "pointer"))
         else:
             rest = {k: v for k, v in node.items() if k != "path" and isinstance(v, (str, int))}

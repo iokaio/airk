@@ -9,6 +9,11 @@ Two modes:
   wrapper sent, optionally overridden by ``--answer-defaults``. Coverage of
   the scenario notes is computed over the replayed calls, and the first
   reply's evidence digest is compared with the recorded one.
+* Answer /3 tickets: a reply queued at admission (``ticket``) is attached to,
+  after its ``retry_after_ms`` (at most ``MAX_TICKET_WAIT_MS`` a wait, at most
+  ``MAX_TICKET_ATTACHES`` times), by the same request with ``continuation`` set
+  to the ticket id. The row records every ticket and the time queued, and its
+  ``elapsed_ms`` includes them; ``final_attempt_ms`` is the attached call alone.
 * ``--canonical``: for every scenario, issue the canonical first call of a path
   (the instruction verbatim as question/query/text, the wrapper's forced
   arguments) and record coverage and digest. run_pass uses this for the
@@ -33,6 +38,7 @@ if str(HERE) not in sys.path:
 import common  # noqa: E402
 import coverage  # noqa: E402
 import evidence  # noqa: E402
+import loop_reply  # noqa: E402
 
 REPLAY_SCHEMA = "airk.private.answer-eval-replay/1"
 
@@ -61,26 +67,64 @@ def apply_defaults(tool: str, sent: dict, answer_defaults: dict | None) -> dict:
     return args
 
 
-def issue(handle: common.Handle, repo: str, tool: str, args: dict, out: Path, stem: str,
-          timeout_s: float, backend=None) -> dict:
-    # Same environment as an agent's tool call (decision 2): the product's default response mode.
-    call = backend or (lambda t, a: common.call_tool(handle, t, repo, a, timeout_s, strip_env=common.AGENT_STRIPPED_ENV))
+MAX_TICKET_ATTACHES = 16
+MAX_TICKET_WAIT_MS = 30000
+
+
+def _retrying(call, tool: str, args: dict, sleep) -> tuple[common.CallOutcome, int]:
     outcome = call(tool, args)
     retries = 0
     while retries < 8 and common.typed_retry(outcome.envelope)[0]:  # the same typed-retry rule as the wrapper
-        time.sleep(min(max(common.typed_retry(outcome.envelope)[1], 25) * (2 ** retries), 2000) / 1000)
+        sleep(min(max(common.typed_retry(outcome.envelope)[1], 25) * (2 ** retries), 2000) / 1000)
         retries += 1
         outcome = call(tool, args)
+    return outcome, retries
+
+
+def attach_tickets(call, tool: str, args: dict, outcome: common.CallOutcome, sleep=time.sleep,
+                   max_attaches: int = MAX_TICKET_ATTACHES) -> tuple[common.CallOutcome, list[dict], int]:
+    """Attach to queued Answer /3 tickets until a reply that is not a ticket (or the attach limit)."""
+    tickets, retries = [], 0
+    while len(tickets) < max_attaches:
+        body = common.envelope_body(outcome.envelope) if outcome.ok else None
+        queued, after_ms, ticket_id = loop_reply.ticket_wait(body)
+        if not queued or not ticket_id:
+            break
+        waited = min(max(after_ms, 250), MAX_TICKET_WAIT_MS)
+        sleep(waited / 1000)
+        tickets.append({"id": ticket_id, "queue_position": body["ticket"].get("queue_position"),
+                        "retry_after_ms": after_ms, "waited_ms": waited, "attempt_ms": outcome.elapsed_ms})
+        outcome, more = _retrying(call, tool, {**args, "continuation": ticket_id}, sleep)
+        retries += more
+    return outcome, tickets, retries
+
+
+def issue(handle: common.Handle, repo: str, tool: str, args: dict, out: Path, stem: str,
+          timeout_s: float, backend=None, sleep=time.sleep) -> dict:
+    # Same environment as an agent's tool call (decision 2): the product's default response mode.
+    call = backend or (lambda t, a: common.call_tool(handle, t, repo, a, timeout_s, strip_env=common.AGENT_STRIPPED_ENV))
+    outcome, retries = _retrying(call, tool, args, sleep)
+    tickets: list[dict] = []
+    if tool == "airk_answer":
+        outcome, tickets, more = attach_tickets(call, tool, args, outcome, sleep)
+        retries += more
     out.mkdir(parents=True, exist_ok=True)
     raw = out / f"{stem}.stdout.json"
     common.write_bytes(raw, outcome.stdout)
     body = common.raw_body(outcome.stdout) if outcome.ok else None
-    return {"tool": tool, "arguments": args, "ok": outcome.ok, "error": outcome.error, "elapsed_ms": outcome.elapsed_ms,
-            "bytes": len(common.envelope_text(outcome.envelope).encode("utf-8")) if outcome.envelope else 0,
-            "result_path": str(raw), "result_sha256": common.sha256_bytes(outcome.stdout),
-            "digest": evidence.evidence_digest(body) if body is not None else None,
-            "response_mode": common.effective_response_mode(handle, args, common.AGENT_STRIPPED_ENV),
-            "typed_retries": retries}
+    queued_ms = sum(t["waited_ms"] + t["attempt_ms"] for t in tickets)
+    row = {"tool": tool, "arguments": args, "ok": outcome.ok, "error": outcome.error,
+           "elapsed_ms": outcome.elapsed_ms + queued_ms, "final_attempt_ms": outcome.elapsed_ms,
+           "bytes": len(common.envelope_text(outcome.envelope).encode("utf-8")) if outcome.envelope else 0,
+           "result_path": str(raw), "result_sha256": common.sha256_bytes(outcome.stdout),
+           "digest": evidence.evidence_digest(body) if body is not None else None,
+           "response_mode": common.effective_response_mode(handle, args, common.AGENT_STRIPPED_ENV),
+           "typed_retries": retries}
+    if tickets:
+        row.update(tickets=tickets, queued_ms=queued_ms)
+    if loop_reply.is_v3(body):
+        row["loop"] = loop_reply.summary(body)
+    return row
 
 
 def replay_session(session_dir: Path, scenario: dict, handle: common.Handle, out: Path, *, all_calls: bool,
@@ -106,9 +150,9 @@ def replay_session(session_dir: Path, scenario: dict, handle: common.Handle, out
 
 
 def replay_canonical(scenario: dict, path: str, handle: common.Handle, out: Path, *, answer_defaults: dict | None,
-                     timeout_s: float, backend=None) -> dict:
+                     timeout_s: float, backend=None, sleep=time.sleep) -> dict:
     tool, args = canonical_first_call(path, scenario["instruction"], answer_defaults)
-    row = issue(handle, scenario["repository"], tool, args, out, "canonical", timeout_s, backend)
+    row = issue(handle, scenario["repository"], tool, args, out, "canonical", timeout_s, backend, sleep)
     row["turn"] = 1
     cov = coverage.compute(scenario, [row])
     return {"scenario_id": scenario["id"], "path": path, "call": row, "coverage": cov, "first_digest": row["digest"]}

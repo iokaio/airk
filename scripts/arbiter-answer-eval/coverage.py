@@ -23,6 +23,7 @@ if str(HERE) not in sys.path:
 
 import common  # noqa: E402
 import evidence  # noqa: E402
+import loop_reply  # noqa: E402
 
 COVERAGE_SCHEMA = "airk.private.answer-eval-coverage/1"
 
@@ -47,9 +48,14 @@ def compute(scenario: dict, turns: list[dict], count_fact_rows: bool = False,
         total_bytes += int(row.get("bytes") or 0)
         total_ms += int(row.get("elapsed_ms") or 0)
         essential_so_far = [n for n in essential if n in seen]
-        per_turn.append({"turn": row["turn"], "tool": row.get("tool"), "ok": bool(row.get("ok")),
-                         "bytes": row.get("bytes"), "elapsed_ms": row.get("elapsed_ms"),
-                         "covered": covered, "new": new, "essential_cumulative": essential_so_far})
+        turn_row = {"turn": row["turn"], "tool": row.get("tool"), "ok": bool(row.get("ok")),
+                    "bytes": row.get("bytes"), "elapsed_ms": row.get("elapsed_ms"),
+                    "covered": covered, "new": new, "essential_cumulative": essential_so_far}
+        if loop_reply.is_v3(body):
+            loop = loop_reply.summary(body)
+            turn_row["answer_v3"] = {"partial": (loop["partial"] or {}).get("reason"), "ticket": loop["ticket"],
+                                     "stops": loop["stops"], "sub_needs": loop["sub_needs"]}
+        per_turn.append(turn_row)
         if all_turn is None and len(essential_so_far) == len(essential):
             all_turn = row["turn"]
     first = per_turn[0]["covered"] if per_turn else []
@@ -63,6 +69,26 @@ def compute(scenario: dict, turns: list[dict], count_fact_rows: bool = False,
             "essential_uncovered": [n for n in essential if n not in seen],
             "all_essential_turn": all_turn, "covered_any": sorted(seen),
             "total_bytes": total_bytes, "total_elapsed_ms": total_ms}
+
+
+def first_reply(scenario: dict, body, reply_bytes: int | None = None, count_fact_rows: bool = False,
+                rule: int = evidence.COVERAGE_RULE) -> dict:
+    """Gate test 2 (plan 12.7.1): the essential and supporting notes one reply covers, its bytes, and, for an
+    Answer /3 reply, its sub-needs covered, partial and missing. Supporting notes are the non-essential marks."""
+    notes = scenario["notes"]
+    spans = evidence.extract(body) if body is not None else []
+    covered = set(evidence.covered_notes(spans, notes, count_fact_rows, rule))
+    essential = [n["id"] for n in notes if n["mark"] == "essential"]
+    supporting = [n["id"] for n in notes if n["mark"] != "essential"]
+    loop = loop_reply.summary(body)
+    return {"scenario_id": scenario.get("id"), "coverage_rule": rule, "bytes": reply_bytes,
+            "essential_covered": [n for n in essential if n in covered],
+            "essential_missing": [n for n in essential if n not in covered],
+            "supporting_covered": [n for n in supporting if n in covered],
+            "essential_total": len(essential), "supporting_total": len(supporting),
+            "sub_needs": None if loop is None else loop["sub_needs"],
+            "partial": None if loop is None else (loop["partial"] or {}).get("reason"),
+            "ticket": None if loop is None else loop["ticket"]}
 
 
 def for_session(scenario: dict, directory: Path, count_fact_rows: bool = False, write: bool = True,

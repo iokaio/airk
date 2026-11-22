@@ -36,6 +36,10 @@ Python 3.13, standard library only. Run every script as
 | `rejudge.py` | Re-judges a pass's identical packets with another judge model and effort, then compares grades, per-fact verdicts and Rubric B with the original verdicts |
 | `probe_tools.py` | One real call per tool through the wrapper against a live handle, with the spans `evidence.py` finds in each result |
 | `mock_cli.py`, `synthetic.py` | A stand-in CLI serving canned synthetic results, and the invented fixture (the "lantern" repository) used by the tests and the smoke run |
+| `loop_reply.py` | Answer /3 (the loop) replies: decisions keyed by stage, part, sub-need and round, sub-needs and their coverage, records, tickets, the reply summary, and the gate arms' identity check |
+| `gate.py` | The LG gate tests (plan 12.7): first-reply replays per arm (tests 1 and 2), decision agreement, judged outcomes between two arms (test 3), concurrency and performance (test 4), and the FP32 against FP16 precision check with its escalation rule |
+| `gate_report.py` | The gate report for the user's personal review: bars and recommendations, agreement, evidence, outcomes, a per-scenario side by side, precision, performance and receipts |
+| `make_loop_spec.py` | The LG series spec and run plan (arms F, C, L and the precision arms), the L7 baseline spec and plan, and `l7_plan_template.json` |
 
 ## Paths and tools
 
@@ -52,10 +56,21 @@ tools.
   `tools list --json`). The wrapper removes `index` and `project` from every
   schema. It also removes `schema` and `budget` from `airk_answer`, and
   `schema` from `airk_parse`.
-- **`airk_answer`.** The wrapper always sets `schema` and `budget`. The budget
-  defaults to the plan's 8 calls, 3 rounds, fanout 8, 8,192 input tokens,
-  32 candidates, 262,144 bytes and 120 s. `--answer-defaults` can change it,
-  or add other fields, for a configuration.
+- **`airk_answer`.** The wrapper always sets `schema` and `budget`. Since the
+  loop (plan section 12) the schema is `airk.arbiter.context.request/3` and
+  the budget is the contract's whole default /3 budget
+  (`common.ANSWER_BUDGET_DEFAULT`: 300 s, 262,144 bytes, 4 parts, 4 sub-needs,
+  3 rounds, 132 calls, fanout 8, 132 candidates, 131,072 input tokens, 32,768
+  a round, 48 card calls, 24 Focus calls, 192 Focus pairs). The one-turn
+  evaluation's /2 request and budget stay as `ANSWER_SCHEMA_V2` and
+  `ANSWER_BUDGET_DEFAULT_V2`, for history only. `--answer-defaults` can change
+  budget fields, or add other fields, for a configuration.
+- **Answer tickets.** A /3 reply queued at admission carries a `ticket`. The
+  wrapper, `replay.py` and `gate.py` wait its `retry_after_ms` (at most 30 s a
+  wait, at most 16 times) and attach with `continuation` set to the ticket id,
+  like a typed retry, so the agent sees the Answer and not the queue. Each
+  ticket reply is kept beside the turn and logged as a retry with code
+  `ticket`; the time queued counts in the turn's `elapsed_ms`.
 - **`airk_parse`.** It defaults to `mode: execute`, which the agent may
   override.
 - **The first-call rule.** If a call breaks it, uses a tool outside the path,
@@ -142,6 +157,83 @@ python -I -B scripts/arbiter-answer-eval/run_pass.py --spec <spec.json> [--stage
 python -I -B scripts/arbiter-answer-eval/run_pass.py --spec <spec.json> --stage second   # close calls
 # replay recorded Answer calls with a change set's defaults
 python -I -B scripts/arbiter-answer-eval/replay.py --handle ... --sessions R/sessions/01-baseline --out R/replays/cs1-a
+```
+
+## The loop: gates (LG) and the new baseline (L7)
+
+Answer /3 is read by `loop_reply.py` against the Core contract
+(`crates/airk-core/src/arbiter/CONTRACT.md`, "Answer loop wire contract
+version 3"), the generated schema
+(`packages/contracts-gen/arbiter.schema.json`) and the Rust-emitted cases
+(`fixtures/split/arbiter/answer_loop_cases.json`), which the tests use.
+`evidence.py` takes spans from the records' canonical results and from compact
+per-sub-need spans (`{path, lines, excerpt}`). It skips the v3 bookkeeping
+(decisions, decision log, record uses, Union, partial, ticket, degradations,
+model work, omitted ids, rounds, follow-ups and unrun reads), so the evidence
+digest ignores decisions and timings.
+
+**Arms** (`make_loop_spec.py gate`, one series on both repositories):
+
+| Arm | Result name | Focus | Context | Judged |
+| --- | --- | --- | --- | --- |
+| F | `focus-gpu` | the gate's Focus route (W8, 1,024 tokens) | none | yes (12.7.2) |
+| C | `compact-gpu` | the gate's Focus route | Compact FP16 CUDA, top score | yes (12.7.1, 12.7.2) |
+| L | `large-gpu` | the gate's Focus route | Large FP16 CUDA, top score | yes (12.7.1) |
+| C32, L32 | `compactFp32-gpu`, `largeFp32-gpu` | the gate's Focus route | Compact or Large FP32 CUDA | replays; sessions only if escalated |
+| CF16, CF32 | `compactFocusFp16-gpu`, `compactFocusFp32-gpu` | Focus FP16 or FP32 CUDA | Compact FP16 CUDA | replays; sessions only if escalated |
+
+- **Arm identity.** Each entry's `arm_check` is checked on every gate replay
+  and on the digest call before any session; `run_pass.py` refuses a session
+  whose live reply is not the arm's. Focus only means no decision names a
+  Context model and `context_absent` is disclosed. C and L mean every model
+  decision is the arm's model on CUDA at its precision by `top_score`, with no
+  abstention. Focus's own precision is not visible in a reply; the switch
+  receipts record which profile was enabled.
+- **The in-lifetime Context switch** is the named hook `switch_context` of
+  `run_plan.py` (plan 12.5.2 item 4). It disables the live CUDA Context (the
+  release) before it enables the next profile (the warm), through
+  `gpu_fixture.py stage`, and writes a receipt with release and warm time and
+  device memory. Sessions groups with `"stager": "cuda"` stage through it. A
+  resumed plan names the live stages with `--live-cuda`.
+- **Tests.** `gate.py replays` (tests 1 and 2), `agreement` (test 1),
+  `outcomes` (test 3, with the close calls written as a jobs file for
+  `run_pass.py --stage second --second-jobs`), `concurrency` and
+  `performance` (test 4), and `precision` (12.7.3). Gate sessions are never
+  reused across arms.
+- **Conventions (stated so they can be overruled).** A Rubric A win is the
+  higher adjudicated grade, then fewer turns to a correct finish. A gate close
+  call is two finishes within one turn, or one finish against one essential
+  fact short. Where a second session exists and its winner differs, the
+  scenario is `undecided`. Decisions are compared like for like only: equal
+  `roster_digest` gives `agree` or `differ`, otherwise `diverged`. Where they
+  differ, the reference notes favour the arm whose evidence for that sub-need
+  covers more essential, then supporting, notes. For Focus, a changed
+  presented basis counts as a different choice, because Focus's ranking is in
+  the decision log, not in the reply.
+- **Precision escalation (12.7.3).** An FP32 arm gets judged sessions only if
+  more than 5% of its stage's decisions flip, or the essential notes covered
+  differ on any scenario.
+- **The report.** `gate_report.py` builds the Markdown report for
+  `docs/arbiter/answer-evaluation/` from `gate-report-inputs.json`. It shows
+  evidence by location only, and removes quoted and code text from judges'
+  reasons on bookbuilder scenarios, so no bookbuilder source is quoted.
+- **L7.** `make_loop_spec.py l7 --keep compact[,large]` writes the new
+  baseline's spec and plan: Search, Parse, the Focus-only loop and the kept
+  CUDA routes, with no CPU cells. `l7_plan_template.json` is the same plan with
+  placeholders, regenerated by `make_loop_spec.py template`; a test keeps it
+  current.
+- **Prompts freeze.** `loop_reply.py` and `gate.py` are runtime harness files
+  in `prompts_freeze.HARNESS_FILES`. The freeze written for the one-turn
+  evaluation no longer verifies, because the Answer request and budget
+  changed. It is re-frozen with `prompts_freeze.py --refreeze` before the first
+  judged loop pass. That re-freeze is the operator's first step at LG.
+
+```text
+# LG, after L5 and its short trial (R is the private root)
+python -I -B scripts/arbiter-answer-eval/prompts_freeze.py --refreeze R/design/prompts-freeze.json --reason "loop harness (Answer /3) for LG"
+python -I -B scripts/arbiter-answer-eval/make_loop_spec.py gate --series <NN>-gate-lg
+python -I -B scripts/arbiter-answer-eval/run_plan.py --plan R/passes/<NN>-gate-lg/plan.json --log R/passes/<NN>-gate-lg/plan-log.jsonl
+python -I -B scripts/arbiter-answer-eval/gate_report.py --inputs R/passes/<NN>-gate-lg/gate-report-inputs.json --out docs/arbiter/answer-evaluation/<NN>-gate.md
 ```
 
 ### How Claude Code is started
@@ -284,7 +376,11 @@ agent can overrule them.
 python -I -B -m unittest discover -s scripts/arbiter-answer-eval
 ```
 
-`test_harness.py` covers the wrapper over real stdio (newline and
+`test_loop.py` covers Answer /3 parsing on the Rust-emitted cases (every
+refusal case parses), the arm checks, v3 evidence, coverage and attribution,
+ticket attach in the wrapper and in replays, the gate tests, the escalation
+rule, the report's bars and redaction, the LG and L7 specs and plans, the
+switch hook and the template's currency. `test_harness.py` covers the wrapper over real stdio (newline and
 `Content-Length` framing), the tool lists, the first-call rule, the turn cap,
 argument injection, the log format, the coverage edge cases, the grade and
 case tables, the configuration rule, headroom, the CSV columns, the audit,

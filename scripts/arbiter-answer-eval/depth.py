@@ -15,6 +15,11 @@ after, and the publication token must not change.
 writes ``depth.json`` and the raw results. If the requested limit is above the
 catalog's maximum, the maximum is used and both are recorded. The search
 cannot page (it has no cursor), so the pool is capped there.
+
+``answer_attribution`` is the same question asked of one Answer /3 reply: for
+each essential note, the first record (1-based, in reply order) that covers
+it, that record's operation and its uses (part, sub-need, round, cause), and
+the sub-needs that cite it.
 """
 
 from __future__ import annotations
@@ -30,6 +35,7 @@ if str(HERE) not in sys.path:
 
 import common  # noqa: E402
 import evidence  # noqa: E402
+import loop_reply  # noqa: E402
 import settled  # noqa: E402
 
 DEPTH_SCHEMA = "airk.private.answer-eval-depth/1"
@@ -62,6 +68,38 @@ def measure(scenario: dict, body: dict) -> dict:
             "notes": notes,
             "essential_in_pool": len(found), "essential_total": len(notes),
             "deepest_rank": max(found) if found else None}
+
+
+def answer_attribution(scenario: dict, body) -> dict:
+    """Where an Answer /3 reply holds each essential note (rule 2): record rank, operation, uses, citing needs."""
+    recs = loop_reply.records(body)
+    spans = loop_reply.record_spans(body)
+    uses: dict[str, list[dict]] = {}
+    for use in loop_reply.record_uses(body):
+        uses.setdefault(str(use.get("record")), []).append(
+            {k: use.get(k) for k in ("part", "need", "round", "cause")})
+    citing: dict[str, list[list]] = {}
+    for need in loop_reply.sub_needs(body):
+        for record_id in need["evidence"]:
+            citing.setdefault(record_id, []).append([need["part"], need["need"]])
+    need_spans = loop_reply.sub_need_spans(body)
+    notes = []
+    for note in scenario["notes"]:
+        if note["mark"] != "essential":
+            continue
+        row = {"id": note["id"], "record_rank": None, "record": None, "operation": None, "uses": [],
+               "cited_by": [], "sub_needs_covering": sorted([list(k) for k, v in need_spans.items()
+                                                             if evidence.covers(v, note)])}
+        for rank, record in enumerate(recs, start=1):
+            record_id = str(record.get("id"))
+            if evidence.covers(spans.get(record_id, []), note):
+                row.update(record_rank=rank, record=record_id, operation=record.get("operation"),
+                           uses=uses.get(record_id, []), cited_by=citing.get(record_id, []))
+                break
+        notes.append(row)
+    return {"scenario_id": scenario["id"], "records": len(recs), "notes": notes,
+            "essential_in_reply": sum(1 for n in notes if n["record_rank"] is not None),
+            "essential_total": len(notes)}
 
 
 def depth_query(instruction: str, limit: int, max_bytes: int) -> dict:

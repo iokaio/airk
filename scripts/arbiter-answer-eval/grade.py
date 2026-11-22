@@ -48,6 +48,12 @@ ANSWER_CONFIGS = ("noModel", "focus", "compact", "large", "answer")
 BASELINES = ("parse", "search")
 
 
+def is_answer(configuration: str, path: str | None = None) -> bool:
+    """An Answer result: a named Answer configuration, or any configuration on an Answer path (the gate's
+    precision arms, e.g. ``compactFp32`` on path ``compact``)."""
+    return configuration in ANSWER_CONFIGS or (path is not None and path in common.ANSWER_PATHS)
+
+
 # ---------------------------------------------------------------- Rubric A
 
 
@@ -232,6 +238,7 @@ def build_rows(index: dict, adjudications: dict) -> list[dict]:
         rows.append({
             "key": entry["key"], "series": index["series"], "repo": entry["repo"], "slot": entry["slot"],
             "kind": entry["kind"], "configuration": entry["configuration"], "device": entry["device"],
+            "path": entry.get("path"), "arm": entry.get("arm"),
             "sample": entry.get("sample", 1), "session_id": session.get("session_id"),
             "reused_from": entry.get("reused_from") or "",
             "judge1_grade": None if g[0] is None else g[0]["grade"],
@@ -277,7 +284,7 @@ def summarize(rows: list[dict], series: str) -> dict:
     meta = {scen(r): (r["repo"], r["kind"]) for r in first}
     configs = {}
     for (configuration, device), by_scen in sorted(results.items()):
-        if configuration not in ANSWER_CONFIGS:
+        if not is_answer(configuration, next(iter(by_scen.values())).get("path")):
             continue
         per = []
         for s, row in sorted(by_scen.items()):
@@ -322,6 +329,63 @@ def summarize(rows: list[dict], series: str) -> dict:
             "reused": [{"key": r["key"], "reused_from": r["reused_from"]} for r in rows if r["reused_from"]],
             "cost_usd": {"agents": round(sum(r["cost_usd"] or 0 for r in rows), 4),
                          "judges": round(sum(r["judge_cost_usd"] or 0 for r in rows), 4)}}
+
+
+def rubric_a_winner(a: dict | None, b: dict | None) -> str:
+    """Who wins Rubric A on one scenario between two arms: the higher adjudicated grade; at equal grades with
+    both finishing, fewer turns to the finish; otherwise a tie. ``pending`` while a grade is missing.
+    (Harness convention for the gates of plan 12.7.1 and 12.7.2, stated so it can be overruled.)"""
+    if a is None or b is None or a.get("adjudicated_grade") is None or b.get("adjudicated_grade") is None:
+        return "pending"
+    if a["adjudicated_grade"] != b["adjudicated_grade"]:
+        return "a" if a["adjudicated_grade"] > b["adjudicated_grade"] else "b"
+    ta, tb = finish_turns(a), finish_turns(b)
+    if ta is not None and tb is not None and ta != tb:
+        return "a" if ta < tb else "b"
+    return "tie"
+
+
+def arm_close_call(a: dict | None, b: dict | None) -> bool:
+    """A gate close call (plan 12.7.1 test 3, as in 3.5): one turn or one fact would change the winner. Both
+    finish within one turn of each other, or one finishes and the other is one essential fact short."""
+    if a is None or b is None:
+        return False
+    ta, tb = finish_turns(a), finish_turns(b)
+    if ta is not None and tb is not None:
+        return abs(ta - tb) <= 1
+    if (ta is None) != (tb is None):
+        other = b if ta is not None else a
+        return other.get("adjudicated_grade") == 1
+    return False
+
+
+def arm_compare(a_rows: dict, b_rows: dict) -> dict:
+    """Gate test 3 between arm A and arm B (``{scenario: row}``, first samples): correct finishes, turns to a
+    correct finish, Rubric A wins and losses for B against A, Rubric B means and the close calls."""
+    shared = sorted(set(a_rows) | set(b_rows))
+    per = []
+    for scenario in shared:
+        a, b = a_rows.get(scenario), b_rows.get(scenario)
+        per.append({"scenario": scenario, "repo": (a or b)["repo"], "kind": (a or b)["kind"],
+                    "a_grade": None if a is None else a.get("adjudicated_grade"),
+                    "b_grade": None if b is None else b.get("adjudicated_grade"),
+                    "a_turns": None if a is None else finish_turns(a), "b_turns": None if b is None else finish_turns(b),
+                    "a_finish": bool(a and a.get("correct_finish") is True),
+                    "b_finish": bool(b and b.get("correct_finish") is True),
+                    "winner": rubric_a_winner(a, b), "close_call": arm_close_call(a, b)})
+
+    def b_mean(rows):
+        values = [v for r in rows.values() for v in (r.get("rubric_b_j1"), r.get("rubric_b_j2")) if v is not None]
+        return round(mean(values), 3) if values else None
+
+    return {"scenarios": per, "rows": len(per),
+            "a_correct_finishes": sum(1 for p in per if p["a_finish"]),
+            "b_correct_finishes": sum(1 for p in per if p["b_finish"]),
+            "finishes_added": sum(1 for p in per if p["b_finish"]) - sum(1 for p in per if p["a_finish"]),
+            "b_wins": sum(1 for p in per if p["winner"] == "b"), "b_losses": sum(1 for p in per if p["winner"] == "a"),
+            "ties": sum(1 for p in per if p["winner"] == "tie"), "pending": sum(1 for p in per if p["winner"] == "pending"),
+            "a_rubric_b_mean": b_mean(a_rows), "b_rubric_b_mean": b_mean(b_rows),
+            "close_calls": [p["scenario"] for p in per if p["close_call"]]}
 
 
 def _sample(samples, configuration, scenario, k):

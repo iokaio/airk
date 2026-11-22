@@ -164,7 +164,35 @@ class Wrapper:
             retries.append({"code": code, "elapsed_ms": outcome.elapsed_ms, "waited_ms": wait,
                             "result_path": str(path), "result_sha256": common.sha256_bytes(outcome.stdout)})
             outcome = self.backend(tool, sent)
+        if tool == "airk_answer":
+            outcome = self._attach_tickets(tool, sent, stem, outcome, retries)
         return outcome, retries
+
+    MAX_TICKET_ATTACHES = 16
+    MAX_TICKET_WAIT_MS = 30000
+
+    def _attach_tickets(self, tool: str, sent: dict, stem: str, outcome, retries: list):
+        """Answer /3 queueing (plan 12.4.1): a reply queued at admission is a ticket. Like a typed retry, the
+        wrapper waits ``retry_after_ms`` and attaches with ``continuation`` = the ticket id, so the agent sees
+        the Answer itself, not the queue; each ticket reply is kept beside the turn and logged as a retry
+        with code ``ticket``. Harness convention, 22 Nov 2026."""
+        import loop_reply  # local: the wrapper's other paths do not need it
+        attaches = 0
+        while attaches < self.MAX_TICKET_ATTACHES:
+            body = common.envelope_body(outcome.envelope) if outcome.ok else None
+            queued, after_ms, ticket_id = loop_reply.ticket_wait(body)
+            if not queued or not ticket_id:
+                break
+            attaches += 1
+            path = self.results_dir / f"{stem}.ticket-{attaches}.stdout.json"
+            common.write_bytes(path, outcome.stdout)
+            wait = min(max(after_ms, 250), self.MAX_TICKET_WAIT_MS)
+            time.sleep(wait / 1000)
+            retries.append({"code": "ticket", "ticket": ticket_id, "elapsed_ms": outcome.elapsed_ms,
+                            "waited_ms": wait, "result_path": str(path),
+                            "result_sha256": common.sha256_bytes(outcome.stdout)})
+            outcome = self.backend(tool, {**sent, "continuation": ticket_id})
+        return outcome
 
     @staticmethod
     def _reply(outcome: common.CallOutcome) -> dict:

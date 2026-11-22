@@ -25,6 +25,12 @@ result::
         "reuse": true}
      ]}
 
+Loop gate entries (``make_loop_spec.py``) may also carry ``arm`` and
+``arm_check`` (the canonical digest reply must be that arm's, ``loop_reply.check_arm``,
+or no session runs), ``reuse: false``, and ``replay_only`` (the precision arms:
+their sessions run only when named with ``--only``). ``--stage second
+--second-jobs <file>`` runs the gate's close calls listed by ``gate.py outcomes``.
+
 Entries run in spec order; within an entry, scenarios run with bounded
 parallelism (default 4). Before a session, the path's canonical first call is
 replayed against the entry's handle and its evidence digest stored in
@@ -73,6 +79,7 @@ import common  # noqa: E402
 import coverage  # noqa: E402
 import grade  # noqa: E402
 import judge  # noqa: E402
+import loop_reply  # noqa: E402
 import prompts_freeze  # noqa: E402
 import replay  # noqa: E402
 import run_session  # noqa: E402
@@ -270,10 +277,16 @@ class Pass:
         result = replay.replay_canonical(scenario, entry["path"], handle, out,
                                          answer_defaults=entry.get("answer_defaults"),
                                          timeout_s=float(entry.get("call_timeout", 300)))
-        return {"digest": result["first_digest"], "elapsed_ms": result["call"]["elapsed_ms"],
-                "bytes": result["call"]["bytes"], "readiness": handle.readiness(),
-                "ok": result["call"]["ok"], "handle_sha256": handle.sha256,
-                "first_call_yield": result["coverage"]["first_call_yield"], "at": common.now_iso()}
+        value = {"digest": result["first_digest"], "elapsed_ms": result["call"]["elapsed_ms"],
+                 "bytes": result["call"]["bytes"], "readiness": handle.readiness(),
+                 "ok": result["call"]["ok"], "handle_sha256": handle.sha256,
+                 "first_call_yield": result["coverage"]["first_call_yield"], "at": common.now_iso()}
+        if result["call"].get("loop") is not None:
+            value["loop"] = result["call"]["loop"]
+        if entry.get("arm_check") is not None and result["call"]["ok"]:
+            body = common.raw_body(Path(result["call"]["result_path"]).read_bytes())
+            value["arm_problems"] = loop_reply.check_arm(body, entry["arm_check"])
+        return value
 
     def digest(self, scenario: dict, entry: dict) -> dict:
         key = self.key(scenario, entry)
@@ -377,6 +390,9 @@ class Pass:
             if done.is_file() and common.read_json(done).get("status") in ("complete", "failed", "timeout"):
                 return {"key": key, "status": common.read_json(done).get("status"), "resumed": True}
             digest = self.digest(scenario, entry)
+            # Gate arms (plan 12.7): the live configuration must be the arm's before any agent session runs.
+            if digest.get("arm_problems") and not self.pilot:
+                raise common.HarnessError(f"{key} is not arm {entry.get('arm')}: {digest['arm_problems']}")
             source = self.reuse_source(scenario, entry, digest)
             if source:
                 self.record_reuse(key, source)
@@ -414,7 +430,9 @@ class Pass:
     def sessions(self, only: set[str] | None = None) -> None:
         self.check_names(only)
         workers = int(self.spec.get("concurrency", 4))
-        entries = [e for e in self.spec["results"] if not only or self.result_name(e) in only]
+        # A replay-only entry (the gate's precision arms, plan 12.7.3) runs sessions only when named.
+        entries = [e for e in self.spec["results"]
+                   if (not only and not e.get("replay_only")) or (only and self.result_name(e) in only)]
         if not entries:
             return
         for entry in entries:
@@ -431,20 +449,31 @@ class Pass:
         finally:
             self.guard("end", entries)
 
-    def second_sessions(self, only: set[str] | None = None) -> list[str]:
+    def second_sessions(self, only: set[str] | None = None, jobs_file: Path | None = None) -> list[str]:
+        """Second sessions of close calls (plan 3.5). By default the close calls against the better of Parse and
+        Search in ``summary.json``; with ``jobs_file`` (``gate.py outcomes`` writes one for the gate arms,
+        plan 12.7.1 test 3) the listed ``[scenario, result name]`` pairs."""
         self.check_names(only)
-        summary_path = self.pass_dir / "summary.json"
-        common.require(summary_path.is_file(), "grade the pass before running second sessions")
-        summary = common.read_json(summary_path)
         by_name = {self.result_name(e): e for e in self.spec["results"]}
         by_id = {f"{s['repository']}-{s['slot']}": s for s in self.scenarios}
         jobs = set()
-        for name, config in summary["configurations"].items():
-            for row in config["scenarios"]:
-                if row["scenario"] in config["close_calls"]:
-                    jobs.add((row["scenario"], name))
-                    if row.get("best_path"):
-                        jobs.add((row["scenario"], row["best_path"]))
+        if jobs_file is not None:
+            listed = common.read_json(jobs_file)
+            common.require(isinstance(listed, dict) and isinstance(listed.get("second_sessions"), list),
+                           f"{jobs_file} lists no second_sessions")
+            jobs = {(str(a), str(b)) for a, b in listed["second_sessions"]}
+            unknown = sorted({b for _a, b in jobs} - set(by_name))
+            common.require(not unknown, f"{jobs_file} names results the spec does not have: {unknown}")
+        else:
+            summary_path = self.pass_dir / "summary.json"
+            common.require(summary_path.is_file(), "grade the pass before running second sessions")
+            summary = common.read_json(summary_path)
+            for name, config in summary["configurations"].items():
+                for row in config["scenarios"]:
+                    if row["scenario"] in config["close_calls"]:
+                        jobs.add((row["scenario"], name))
+                        if row.get("best_path"):
+                            jobs.add((row["scenario"], row["best_path"]))
         scheduled = []
         workers = int(self.spec.get("concurrency", 4))
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
@@ -563,6 +592,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--stage", default="all", choices=["all", "sessions", "coverage", "judge", "grade", "second"])
     parser.add_argument("--only", help="comma-separated result names for the sessions stage (e.g. focus-cpu)")
     parser.add_argument("--only-second", help="comma-separated result names for the second stage")
+    parser.add_argument("--second-jobs", type=Path, help="gate close calls (gate.py outcomes) for the second stage")
     args = parser.parse_args(argv)
     run = Pass(common.read_json(args.spec), args.r_root)
     only = set(args.only.split(",")) if args.only else None
@@ -570,7 +600,7 @@ def main(argv: list[str] | None = None) -> int:
         run.sessions(only)
     if args.stage == "second":
         print(json.dumps({"second_sessions": run.second_sessions(
-            set(args.only_second.split(",")) if args.only_second else None)}))
+            set(args.only_second.split(",")) if args.only_second else None, args.second_jobs)}))
     if args.stage in ("all", "coverage", "second"):
         run.coverage()
     if args.stage in ("all", "judge", "second"):
