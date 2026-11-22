@@ -15530,7 +15530,7 @@ generated TypeScript, and change-log entry 28. It was pushed.
 - **Prevention.** In a tree another agent uses, the primary agent inspects the
   index and commits only with explicit pathspecs (`git commit -s -- <paths>`).
 
-### 22 November 2026 at 21:45 UTC — munarium replaces airk in the evaluation; old targets and airk indexes removed
+### 22 November 2026 at 21:20 UTC — munarium replaces airk in the evaluation; old targets and airk indexes removed
 
 **Resumed** after an editor restart at 21:03 UTC, as `TYAI\tdotn` (SID
 `S-1-5-21-3678370870-3858642417-826968105-1002`, owner equal, the logged-in
@@ -15605,7 +15605,7 @@ bounded evidence excerpts into the coverage cards, review the combined
 change, re-emit the FP16 CUDA profiles, build the gate image, freeze the
 munarium scenarios and run LG.
 
-### 22 November 2026 at 22:10 UTC — the old persistent Cargo target removed on the user's word
+### 22 November 2026 at 21:31 UTC — the old persistent Cargo target removed on the user's word
 
 The user answered the open point of the previous entry: "You can delete that
 old cargo target and remove the instruction that says preserve it. A lot has
@@ -15625,7 +15625,7 @@ changed since then."
   `docs/arbiter/whatsleft.md` now says the target was deleted. The other
   documents that name it are dated history and are unchanged.
 
-### 22 November 2026 at 22:40 UTC — L3-10 (b) committed: Answer /3 through the MCP handler and every transport
+### 22 November 2026 at 21:51 UTC — L3-10 (b) committed: Answer /3 through the MCP handler and every transport
 
 **Commit** `6d74bb81` (47 files, signed off, pushed). The MCP `airk_answer`
 handler, the read-attempt and host carriers, the frontend combined Answer and
@@ -15670,3 +15670,59 @@ is left warm for the L4 integration; pruning it is no longer needed.
 **Next action.** In the main tree: cherry-pick `loop/l4`, then pass bounded
 evidence excerpts into the coverage cards. In the L2b worktree: wire the job
 table onto the live Answer path, rebased onto `6d74bb81`.
+
+### 22 November 2026 at 22:50 UTC — L4 integrated in the main tree; Coverage cards now show evidence text
+
+**Correction first.** The three entries above were headed 21:45, 22:10 and
+22:40 UTC. Those were my estimates, not clock readings, and they were late by
+20 to 50 minutes. The headings now carry the times of the commits that
+recorded them: 21:20, 21:31 and 21:51 UTC.
+
+**L4 integrated** (`502f5960..545c5025`, 14 commits cherry-picked from
+`loop/l4` onto `5f42e11a`, messages and sign-offs kept, pushed). Only the
+change log conflicted; L4's entries 30 to 39 sit before entry 40.
+- Workspace Clippy `-D warnings`, all targets and features: exit 0.
+- nextest, L4's selection: 1,428 run, 1,427 passed, 1 failed (Core 492, IPC
+  34, supervisor 122, kernel 171, inference 127, retrieval 308, service 173
+  of 174).
+- Of the three service arbiter tests that failed at the base, two pass now:
+  `diagnostic_clock_refuses_…` and `cpu_focus_receipt_uses_…`. L4-2 removed
+  the evaluation routing from `runtime.rs`, which had left the closed CPU
+  Focus row's source pins stale.
+
+**Coverage cards show evidence** (`54b1e7a2`, change-log entry 43, pushed).
+- **What was wrong:** a Coverage card held only locations, so the Context
+  model judged "covered, partly covered or missing" without seeing any text.
+- **Now:** each Coverage segment carries excerpts of its sub-need's spans in
+  Focus rank order, cut deterministically within the call's reserved tokens
+  (6,144 bytes at the 8,192-token reservation), with every cut recorded in
+  the decision log. The no-model path is unchanged. The subject also names
+  the sub-need's kind.
+- **Wire and identities:** the private advice request gains an optional
+  `evidence` field. The Core loop semantics, the four card task policies and
+  the batched Focus policy moved, as recorded decisions with the old-pin
+  failure as proof (retrieval compiler CONTRACT, "Fourth move").
+- **Validation:** workspace Clippy exit 0; nextest 1,058 run, 1,058 passed
+  (Core 497, IPC 34, kernel 179, retrieval 309, service 23, supervisor 9,
+  MCP 7); `check-repo` passed for 10,658 files.
+
+**Open, with owner.**
+
+| Item | State | Owner |
+| --- | --- | --- |
+| Follow-up cards show the model neither the verdict nor any text read | Fix before the FP16 profiles are re-emitted, because it moves the same identities | integration agent, now |
+| Excerpt allowance of one byte per token | Measured headroom is large (a full call used 2,046 to 4,549 of 8,192 tokens). Re-measure on munarium and bookbuilder text and raise it if no real span is refused | integration agent, now |
+| `failure_tests::ambiguous_or_corrupt_configuration_status_…` | Fails since `c02643ade` (17 November): the status guard parses the configuration strictly before the tolerant branch runs. Outside the loop; deferred, not on the LG path | the D08 device-configuration owner |
+| CLI transport parity (`combined_reads`) after the kernel change | Not re-run; the no-model reply is unchanged by construction | rechecked with the gate image |
+| `crates/airk-ipc/CONTRACT.md` lacks the three loop methods' deadlines | Open from L4 (change-log entry 37) | L4 follow-up, after LG |
+
+**For the profile re-emission.** `runtime.rs` moved to `c9008eef…` (L4-2). The
+FP16 math-policy digests move to Focus `7ace4470…`, Compact `0a3b7bd2…`,
+Large `055dcfc9…`. Nothing under the index build path changed since
+`feb72c94`, so closed index bases built with the older image stay valid.
+
+**Disk.** D: free 1,142,475,304,960 bytes; `target\` grew 19.0 GB.
+
+**Next action.** Follow-up evidence and the allowance measurement; an
+independent review of the coverage change in parallel; then the re-emission,
+the gate image and the short trial.

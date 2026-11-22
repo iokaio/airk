@@ -1250,8 +1250,8 @@ Numbered 30 until 22 November 2026; renumbered because L4's entries take
 - **Not repeated (user: "Do not repeat tests"):** checks that passed on
   unchanged inputs, and every one-turn measurement.
 - **Where:** plan sections 2, 3.1, 3.2, 5.4, 11, 12.6 and 12.7;
-  `docs/agent-current-work.md`; the ledger entries of 22 November at 21:45 and
-  22:10 UTC; the harness changes on `loop/l5c`.
+  `docs/agent-current-work.md`; the ledger entries of 22 November at 21:20 and
+  21:31 UTC; the harness changes on `loop/l5c`.
 
 ### 43. Coverage rosters show bounded evidence excerpts
 
