@@ -326,6 +326,154 @@ impl NativeController for Controller {
             _ => anyhow::bail!("joint native assessment unavailable"),
         }
     }
+    fn card_model(
+        &self,
+        worker: WorkerIdentity,
+        authority: ScopedReadRef,
+        publication: &airk_core::evidence::RevisionEnvelope,
+    ) -> Result<Option<airk_kernel::arbiter::LoopModel>> {
+        let response = drive_control(|| async {
+            airk_installer::control_client::request_for_version_and_instance_once(
+                &self.0,
+                ControlMethod::ArbiterCardModel {
+                    worker,
+                    authority,
+                    publication: publication.clone(),
+                },
+                env!("CARGO_PKG_VERSION"),
+                worker.service,
+            )
+            .await
+        })?;
+        match response {
+            ControlResponse::ArbiterCardModel { model } => Ok(model
+                .filter(|model| model.validate().is_ok())
+                .map(|model| airk_kernel::arbiter::LoopModel {
+                    model: model.model,
+                    device: model.device,
+                    precision: model.precision,
+                })),
+            ControlResponse::Failure { code } if code == "scoped_read_unavailable" => {
+                Err(airk_core::scoped_reads::ScopeReadRefused.into())
+            }
+            ControlResponse::Failure { code } if code == "arbiter_catalog_required" => Ok(None),
+            _ => anyhow::bail!("loop card model observation unavailable"),
+        }
+    }
+    fn score_cards(
+        &self,
+        mut request: airk_core::native_loop::NativeCardRequest,
+        deadline: Instant,
+    ) -> Result<Option<airk_core::arbiter::answer_loop::CardAdvice>> {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        // Loop card calls are Answer-only: Answer's ceiling.
+        request.remaining_ms = request
+            .remaining_ms
+            .min(remaining.as_millis().min(u128::from(
+                airk_core::read_attempt::MAX_ANSWER_ARBITER_REMAINING_MS,
+            )) as u64);
+        ensure!(
+            request.remaining_ms > 0,
+            "loop card original deadline exhausted"
+        );
+        // Preserve the ORIGINAL request ID, clock and absolute expiry.
+        let clock = if cfg!(windows) {
+            airk_core::read_attempt::ReadClock::WindowsPerformanceCounter
+        } else {
+            airk_core::read_attempt::ReadClock::UnixMonotonic
+        };
+        let original = request
+            .read_attempt
+            .remaining_at(clock, airk_process::monotonic::now_ns()?)?;
+        request.read_attempt.remaining_ns = request
+            .read_attempt
+            .remaining_ns
+            .min(original.as_nanos().min(remaining.as_nanos()) as u64);
+        ensure!(
+            request.read_attempt.remaining_ns > 0,
+            "loop card original attempt expired"
+        );
+        let worker = request.worker;
+        let response = drive_control(|| async {
+            tokio::time::timeout_at(
+                tokio::time::Instant::from_std(deadline),
+                airk_installer::control_client::request_for_version_and_instance_once(
+                    &self.0,
+                    ControlMethod::ArbiterScoreCards {
+                        request: Box::new(request),
+                    },
+                    env!("CARGO_PKG_VERSION"),
+                    worker.service,
+                ),
+            )
+            .await
+            .context("loop card original deadline exhausted in native transport")?
+        })?;
+        match response {
+            ControlResponse::ArbiterCardAdvice { advice } => Ok(advice.map(|advice| *advice)),
+            ControlResponse::Failure { code } if code == "scoped_read_unavailable" => {
+                Err(airk_core::scoped_reads::ScopeReadRefused.into())
+            }
+            _ => anyhow::bail!("loop card native call unavailable"),
+        }
+    }
+    fn focus_batch(
+        &self,
+        mut request: airk_core::native_loop::NativeFocusRequestV3,
+        deadline: Instant,
+    ) -> Result<Option<airk_core::native_loop::NativeFocusResponseV3>> {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        request.remaining_ms = request
+            .remaining_ms
+            .min(remaining.as_millis().min(u128::from(
+                airk_core::read_attempt::MAX_ANSWER_ARBITER_REMAINING_MS,
+            )) as u64);
+        ensure!(
+            request.remaining_ms > 0,
+            "batched Focus original deadline exhausted"
+        );
+        let clock = if cfg!(windows) {
+            airk_core::read_attempt::ReadClock::WindowsPerformanceCounter
+        } else {
+            airk_core::read_attempt::ReadClock::UnixMonotonic
+        };
+        let original = request
+            .read_attempt
+            .remaining_at(clock, airk_process::monotonic::now_ns()?)?;
+        request.read_attempt.remaining_ns = request
+            .read_attempt
+            .remaining_ns
+            .min(original.as_nanos().min(remaining.as_nanos()) as u64);
+        ensure!(
+            request.read_attempt.remaining_ns > 0,
+            "batched Focus original attempt expired"
+        );
+        let worker = request.worker;
+        let response = drive_control(|| async {
+            tokio::time::timeout_at(
+                tokio::time::Instant::from_std(deadline),
+                airk_installer::control_client::request_for_version_and_instance_once(
+                    &self.0,
+                    ControlMethod::ArbiterFocusBatch {
+                        request: Box::new(request),
+                    },
+                    env!("CARGO_PKG_VERSION"),
+                    worker.service,
+                ),
+            )
+            .await
+            .context("batched Focus original deadline exhausted in native transport")?
+        })?;
+        match response {
+            ControlResponse::ArbiterFocusBatch { response } => {
+                Ok(response.map(|response| *response))
+            }
+            ControlResponse::Failure { code } if code == "scoped_read_unavailable" => {
+                Err(airk_core::scoped_reads::ScopeReadRefused.into())
+            }
+            _ => anyhow::bail!("batched Focus native call unavailable"),
+        }
+    }
     fn application(
         &self,
         worker: WorkerIdentity,

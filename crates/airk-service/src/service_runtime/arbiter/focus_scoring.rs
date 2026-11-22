@@ -227,6 +227,7 @@ impl StageOwner {
                             resident,
                             admission,
                             max_input_tokens: profile.max_tokens,
+                            lane: Default::default(),
                         },
                     )
                 };
@@ -430,7 +431,7 @@ fn validate_partition_selection(
 mod tests;
 
 #[cfg(feature = "local-inference")]
-fn validated_focus_task_policy(
+pub(super) fn validated_focus_task_policy(
     profile: &Profile,
     execution: Option<&airk_retrieval::arbiter::runtime::ExecutionProfile>,
 ) -> Result<airk_core::identity::Sha256Digest> {

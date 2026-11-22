@@ -689,3 +689,21 @@ timing-only. Load and score require exactly eight usable physical cores and
 keep the real ServiceLease and NativeInferenceOwner. The owner sets no
 qualification, qualified target, download, catalog row, wire shape or
 persisted format, and its figures are development observations.
+
+## Lane fairness for Answer /3 parts (L4, 22 November 2026)
+
+`ScoreRequest.lane` (`LaneKey { attempt, part }`) keys each job. Admission
+(`lane::admits`), with at most 8 jobs queued in all:
+- `attempt: None` (Search Focus, Answer /2): fewer than two jobs on the
+  index, queued or running, counting every job on it, as before;
+- `attempt: Some(a)`: no job with the same (index, attempt, part), and fewer
+  than four jobs of attempt `a` on the index, so the parts of one compound
+  Answer each queue their next call while one Answer cannot fill the lane,
+  and a second Answer on the index is not blocked by the first's parts.
+
+Scheduling (`lane::next_position`) runs the first queued job whose (index,
+attempt) differs from the last run's, otherwise the oldest, so neither one
+index nor one Answer holds the lane while another waits. Earliest-deadline
+ordering across Answers is L2b's. The resident's `LoopCalibrationSet`,
+authenticated at warm, is kept per stage beside the joint calibration and
+served by `Handle::loop_calibration(profile, task)`.

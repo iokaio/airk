@@ -802,6 +802,73 @@ Further entries are added as implementation proceeds.
   - Clippy clean for the service (all features, `gpu-cuda`,
     `local-inference`, none) and for the retrieval tests.
 
+### 30. Loop task policies check roster shape instead of rebuilding rosters
+
+- **Step:** L4.
+- **What:** the Split, Plan, Coverage and Follow-up task policies in
+  `airk-retrieval` check each segment's roster shape before compile (symbol
+  order, stage classes, keep-whole first for Split, the reference card last
+  for Plan, covered first for Coverage, at least two reads for Follow-up). The
+  design's "rebuild the roster from the proposals and refuse on mismatch" was
+  not built.
+- **Why:** L3 put the proposers in the kernel and the decision log already
+  binds each roster by `roster_digest`; rebuilding in retrieval would have
+  duplicated the kernel's proposers in a second owner.
+- **Identity:** each policy hashes its own source, the shared `loop_cards.rs`,
+  its question and a new Core loop semantics digest (card, calibration,
+  batched-Focus, log and native loop sources). Values are pinned by a control
+  and recorded in `crates/airk-retrieval/src/arbiter/compiler/CONTRACT.md`.
+
+### 31. Loop card tasks run under the Context enrollment
+
+- **Step:** L4.
+- **What:** a Context profile declares either the one-turn task or exactly the
+  four card tasks. A card call is admitted when the index is enrolled for the
+  Context stage's existing task; the persisted configuration and
+  `Stage::permits` are unchanged.
+- **Why:** adding the card tasks to persisted enrollments would change an
+  `airk-state/1` format without need.
+- **Consequence:** the release catalog's Context descriptors still declare
+  only the historical one-turn task, so product Answer uses the deterministic
+  order until a Context profile is re-emitted with the card tasks
+  (`runtime::admit_loop_tasks`, zero-rule calibration set). That is L5's
+  profile work and the product rollout after L7.
+
+### 32. Evaluation routing removed from `runtime.rs`; the CPU row moved
+
+- **Step:** L4.
+- **What:** `runtime.rs` no longer routes option-B Context or
+  SoftwareEvidenceV1 Focus profiles. The closed CPU Focus row moves to the new
+  source by a recorded decision with an inverse-replay proof
+  (`cpu_source_transition/CONTRACT.md`, "Answer loop admission supplement").
+  The 8 transition controls and the embedded-catalog control pass again.
+- **Consequence:** `runtime.rs` is an input of the FP16 math policy, so the
+  FP16 CUDA profiles emitted in L5 no longer open and must be re-emitted (with
+  the card tasks, for the gates). Recorded in the CUDA `CONTRACT.md`.
+- **Evidence:** `answer-loop/L4/proof/` (patches, intermediate source, hook
+  diff) and the nextest receipts in `answer-loop/L4/`.
+
+### 33. A separate Answer /3 ledger beside the /2 joint ledger
+
+- **Step:** L4.
+- **What:** `loop_ledger.rs` holds card slots up to `context_calls`, Focus
+  ordinals up to `focus_calls`, the attempt pool and the per-part, per-round
+  allowance. `joint_ledger.rs` is not edited.
+- **Why:** Answer /2 still runs until L3-10 deletes it; one ledger serving
+  both budget shapes would have changed /2's slot rules underneath it.
+
+### 34. Focus: one call per batch with per-candidate questions
+
+- **Step:** L4. The plan left this to L4 "by measured cost".
+- **What:** a batched Focus call carries up to 16 questions and each pair job
+  carries its candidate's own question. One batch is one Focus ordinal and
+  one reservation.
+- **Why:** every pair is already its own lane job, so the per-pair model work
+  is identical either way; one call per sub-need group would add per-call
+  overhead (IPC, two application observations, a reservation) and spend the
+  `focus_calls` slots. The wall-clock overhead was not measured in L4, which
+  ran no GPU work; L5/LG measure it on the A6000.
+
 ### 40. Answer /3 through the MCP handler and every transport; /3 parity; the review of L3-10 (a) closed
 
 - **Step:** L3-10 (b). Numbered after L4's entries 30 to 39.

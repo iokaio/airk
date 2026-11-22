@@ -141,6 +141,7 @@ impl StageOwner {
                         resident,
                         admission,
                         max_input_tokens: request.remaining_input_tokens,
+                        lane: Default::default(),
                     },
                 )
             };

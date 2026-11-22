@@ -584,6 +584,20 @@ impl EvaluationOwner {
         self.owner.context.context_observer = Some(sink);
         self
     }
+    /// The loop card decision mode of this private evaluation owner. Only
+    /// this owner, which exists only with the actual native evaluation
+    /// catalog, can set the top-score mode; no public path constructs it.
+    pub fn with_decision_mode(
+        mut self,
+        mode: airk_retrieval::arbiter::loop_cards::DecisionMode,
+    ) -> Result<Self> {
+        ensure!(
+            self.owner.context.evaluation.is_some(),
+            "The card decision mode requires the private native evaluation catalog"
+        );
+        self.owner.context.decision_mode = Some(mode);
+        Ok(self)
+    }
     /// Observation only; actual service composition still checks the SAME native lease/gate.
     pub fn observe_execution(
         mut self,

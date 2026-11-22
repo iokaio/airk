@@ -9,6 +9,7 @@ use airk_core::{
 use anyhow::Context;
 #[cfg(feature = "local-inference")]
 mod assets;
+mod card_scoring;
 #[cfg(all(feature = "local-inference", feature = "test-support"))]
 pub(super) mod catalog_only;
 pub(super) mod device_management;
@@ -22,6 +23,7 @@ pub(super) mod evaluation;
 mod failure_tests;
 #[cfg(all(test, feature = "local-inference", feature = "test-support"))]
 mod final_distribution;
+mod focus_batch;
 mod focus_scoring;
 #[cfg(any(feature = "local-inference", test))]
 mod joint_ledger;
@@ -32,6 +34,8 @@ mod idle;
 mod release;
 #[cfg(feature = "local-inference")]
 mod lifecycle;
+#[cfg(any(feature = "local-inference", test))]
+mod loop_ledger;
 pub(super) mod policy_delivery;
 mod read_device_status;
 mod scoring;
@@ -69,6 +73,10 @@ impl Owner {
             devices: context.devices.clone(),
             #[cfg(feature = "local-inference")]
             joint_ledger: context.joint_ledger.clone(),
+            #[cfg(feature = "local-inference")]
+            loop_ledger: context.loop_ledger.clone(),
+            #[cfg(all(feature = "local-inference", feature = "test-support"))]
+            decision_mode: None,
             #[cfg(all(feature = "local-inference", feature = "test-support"))]
             evaluation: None,
             #[cfg(all(feature = "local-inference", feature = "test-support"))]
@@ -500,6 +508,13 @@ struct StageOwner {
     devices: Arc<device_management::Shared>,
     #[cfg(feature = "local-inference")]
     joint_ledger: Arc<Mutex<joint_ledger::Ledger>>,
+    /// Answer /3 model accounting, shared by the Focus and Context stages.
+    #[cfg(feature = "local-inference")]
+    loop_ledger: Arc<Mutex<loop_ledger::Ledger>>,
+    /// Private evaluation only: the top-score card decision mode, set only
+    /// through `EvaluationOwner::with_decision_mode`.
+    #[cfg(all(feature = "local-inference", feature = "test-support"))]
+    decision_mode: Option<airk_retrieval::arbiter::loop_cards::DecisionMode>,
     #[cfg(all(feature = "local-inference", feature = "test-support"))]
     evaluation: Option<airk_retrieval::arbiter::runtime::EvaluationCatalog>,
     #[cfg(all(feature = "local-inference", feature = "test-support"))]
@@ -539,6 +554,10 @@ impl StageOwner {
             devices: Arc::new(device_management::Shared::default()),
             #[cfg(feature = "local-inference")]
             joint_ledger: Arc::new(Mutex::new(joint_ledger::Ledger::default())),
+            #[cfg(feature = "local-inference")]
+            loop_ledger: Arc::new(Mutex::new(loop_ledger::Ledger::default())),
+            #[cfg(all(feature = "local-inference", feature = "test-support"))]
+            decision_mode: None,
             #[cfg(all(feature = "local-inference", feature = "test-support"))]
             evaluation: None,
             #[cfg(all(feature = "local-inference", feature = "test-support"))]

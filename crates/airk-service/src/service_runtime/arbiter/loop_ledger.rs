@@ -26,6 +26,13 @@ enum Slot {
     Focus(IndexId, u8),
 }
 
+/// One batched Focus call: its index and its ordinal over the Answer.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct FocusCall {
+    pub(super) index_id: IndexId,
+    pub(super) ordinal: u8,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Ticket {
     attempt: Incarnation,
@@ -127,12 +134,12 @@ impl Ledger {
         &mut self,
         attempt: ReadAttemptBudget,
         parent: &BudgetV3,
-        index_id: IndexId,
-        ordinal: u8,
+        call: FocusCall,
         attribution: &[TokenAttribution],
         partition: Option<&PartitionAllowanceV3>,
         now_ns: u64,
     ) -> Result<Ticket> {
+        let FocusCall { index_id, ordinal } = call;
         if let Some(part) = partition {
             ensure!(
                 part.index_id == index_id,
@@ -166,9 +173,9 @@ impl Ledger {
             .saturating_mul(1_000_000);
         ensure!(
             !attribution.is_empty()
-                && attribution.windows(2).all(|pair| {
-                    (pair[0].part, pair[0].round) < (pair[1].part, pair[1].round)
-                }),
+                && attribution
+                    .windows(2)
+                    .all(|pair| { (pair[0].part, pair[0].round) < (pair[1].part, pair[1].round) }),
             "loop reservation attribution must be ordered and unique per part and round"
         );
         let requested: usize = attribution.iter().map(|charge| charge.tokens).sum();

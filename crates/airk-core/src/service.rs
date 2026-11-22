@@ -192,6 +192,20 @@ pub enum ControlMethod {
     ArbiterFocusRank {
         request: Box<crate::native_focus::NativeFocusRequest>,
     },
+    /// Answer /3: the Context model that would score loop card calls now.
+    ArbiterCardModel {
+        worker: WorkerIdentity,
+        authority: ScopedReadRef,
+        publication: crate::evidence::RevisionEnvelope,
+    },
+    /// Answer /3: one batched loop card call.
+    ArbiterScoreCards {
+        request: Box<crate::native_loop::NativeCardRequest>,
+    },
+    /// Answer /3: one batched Focus call with per-candidate questions.
+    ArbiterFocusBatch {
+        request: Box<crate::native_loop::NativeFocusRequestV3>,
+    },
     ArbiterImport {
         request: Box<crate::native_offline_import::NativeOfflineImportRequest>,
     },
@@ -816,7 +830,7 @@ impl ControlMethod {
             Self::ValidateCombinedDelivery {context_bindings,..} if !context_bindings.is_empty()=> {
                 return Some("console_private_setup_forbidden");
             }
-            Self::Arbiter { .. } | Self::ArbiterDeviceRead { .. } | Self::ArbiterApplication { .. } | Self::ArbiterNextRead { .. } | Self::ArbiterContextAction { .. } | Self::ArbiterFocusApplication { .. } | Self::ArbiterFocusRank { .. } | Self::ArbiterImport { .. } | Self::ArbiterImportDevice { .. } => {
+            Self::Arbiter { .. } | Self::ArbiterDeviceRead { .. } | Self::ArbiterApplication { .. } | Self::ArbiterNextRead { .. } | Self::ArbiterContextAction { .. } | Self::ArbiterFocusApplication { .. } | Self::ArbiterFocusRank { .. } | Self::ArbiterCardModel { .. } | Self::ArbiterScoreCards { .. } | Self::ArbiterFocusBatch { .. } | Self::ArbiterImport { .. } | Self::ArbiterImportDevice { .. } => {
                 return Some("console_private_setup_forbidden");
             }
             Self::Connect { .. } | Self::ConnectScoped { .. } => {
@@ -1291,6 +1305,9 @@ impl ControlMethod {
             | Self::ArbiterDeviceRead { .. }
             | Self::ArbiterFocusApplication { .. }
             | Self::ArbiterFocusRank { .. }
+            | Self::ArbiterCardModel { .. }
+            | Self::ArbiterScoreCards { .. }
+            | Self::ArbiterFocusBatch { .. }
             | Self::ArbiterImport { .. }
             | Self::ArbiterImportDevice { .. } => MAX_TOOLS_CALL_RESPONSE_BYTES,
             Self::AdminNativeCall { .. } | Self::AdminNativeRead { .. } => {
@@ -1315,6 +1332,9 @@ impl ControlMethod {
             | Self::ArbiterContextAction { .. }
             | Self::ArbiterFocusApplication { .. }
             | Self::ArbiterFocusRank { .. }
+            | Self::ArbiterCardModel { .. }
+            | Self::ArbiterScoreCards { .. }
+            | Self::ArbiterFocusBatch { .. }
             | Self::ArbiterImport { .. }
             | Self::ArbiterImportDevice { .. } => MAX_TOOLS_CALL_REQUEST_BYTES,
             Self::AdminNativeCall { .. } => MAX_TOOLS_CALL_REQUEST_BYTES,
@@ -1436,6 +1456,18 @@ pub enum ControlResponse {
     ArbiterFocusRank {
         #[serde(deserialize_with = "crate::arbiter::context_action::required_nullable")]
         response: Option<Box<crate::native_focus::NativeFocusResponse>>,
+    },
+    ArbiterCardModel {
+        #[serde(deserialize_with = "crate::arbiter::context_action::required_nullable")]
+        model: Option<crate::native_loop::NativeCardModel>,
+    },
+    ArbiterCardAdvice {
+        #[serde(deserialize_with = "crate::arbiter::context_action::required_nullable")]
+        advice: Option<Box<crate::arbiter::answer_loop::CardAdvice>>,
+    },
+    ArbiterFocusBatch {
+        #[serde(deserialize_with = "crate::arbiter::context_action::required_nullable")]
+        response: Option<Box<crate::native_loop::NativeFocusResponseV3>>,
     },
     ArbiterImport {
         observation: Box<crate::arbiter::Status>,

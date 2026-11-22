@@ -1018,6 +1018,41 @@ fn canonical_control(
                     code: "arbiter_catalog_required".into(),
                 },
             },
+            ControlMethod::ArbiterCardModel {
+                worker,
+                authority,
+                publication,
+            } => match &state.arbiter {
+                Some(owner) => match owner.card_model(worker, authority, publication) {
+                    Ok(model) => ControlResponse::ArbiterCardModel { model },
+                    Err(error) => arbiter::failure(error),
+                },
+                None => ControlResponse::Failure {
+                    code: "arbiter_catalog_required".into(),
+                },
+            },
+            ControlMethod::ArbiterScoreCards { request } => match &state.arbiter {
+                Some(owner) => match owner.score_cards(*request, &state.supervisor).await {
+                    Ok(advice) => ControlResponse::ArbiterCardAdvice {
+                        advice: advice.map(Box::new),
+                    },
+                    Err(error) => arbiter::failure(error),
+                },
+                None => ControlResponse::Failure {
+                    code: "arbiter_catalog_required".into(),
+                },
+            },
+            ControlMethod::ArbiterFocusBatch { request } => match &state.arbiter {
+                Some(owner) => match owner.focus_batch(*request, &state.supervisor).await {
+                    Ok(response) => ControlResponse::ArbiterFocusBatch {
+                        response: response.map(Box::new),
+                    },
+                    Err(error) => arbiter::failure(error),
+                },
+                None => ControlResponse::Failure {
+                    code: "arbiter_catalog_required".into(),
+                },
+            },
             ControlMethod::ArbiterNextRead { request } => match &state.arbiter {
                 Some(owner) => match owner.next_read(*request, &state.supervisor).await {
                     Ok(advice) => ControlResponse::ArbiterAdvice {

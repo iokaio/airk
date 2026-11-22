@@ -868,3 +868,67 @@ Configure, scope, enrollment, hardware admission, warm and the deadlines
 still govern Ready. No receipt, persisted format or wire field is added.
 
 The service resource policy owns global GPU eligibility. A change to allow_gpu applies to both stages while preserving their stored selections and revision. GPU use is opt-in under the Core decision "Service-wide GPU use is opt-in" in the `airk_core::arbiter` contract. At startup the service applies the configuration in effect before it restores any stage: a missing value is off, and an enabled value stored under the earlier default is off with its reset notice pending. Only a value the user set through the service-wide setting allows GPU use. Answering that notice with off changes no GPU state. A configuration error closes GPU admission until the resource policy is repaired. A disable transition fences pending GPU probes, activation, resident reuse and delivery, revokes device readiness and schedules same-model CPU selection for active automatic stages. A stage without active work stays idle. The ordinary warm, drain, fit, permission and deadline checks apply on each transition.
+
+## Answer /3 card scoring, batched Focus and the loop ledger (L4, 22 November 2026)
+
+Owners: `card_scoring.rs` (card model observation and one batched card
+call), `focus_batch.rs` (one batched Focus call), `loop_ledger.rs` (model
+accounting). They serve the kernel's `NativeController::card_model`,
+`score_cards` and `focus_batch` through the private control methods
+`ArbiterCardModel`, `ArbiterScoreCards` and `ArbiterFocusBatch`, which are
+refused by the metadata relay and framed like the other private Arbiter
+methods. Answer /2's `joint_ledger.rs` and `joint_scoring.rs` are unchanged
+and are deleted with v2.
+
+**Card model.** `ArbiterCardModel` returns the selected Context profile's
+model, device and (GPU only) precision when the stage is ready, the index is
+enrolled for Context and the profile declares all four card tasks; otherwise
+`None`, and the kernel's deterministic order decides. Large is never
+reported on the CPU.
+
+**Enrollment.** Loop card tasks run under the Context stage's existing
+per-index enrollment (`airk.context_action.v1`); the persisted configuration,
+`Stage::permits` and enrollment validation are unchanged. The lane maps card
+tasks to that enrollment (`pool::arbiter::enrollment_task`).
+
+**One card call.** After the scope issue and structural validation, the
+service refuses before any reservation or compile, with a known zero-work
+`Unsupported` advice, when the selected profile does not declare the task
+under the request's policy or the roster breaks its task policy's rules. It
+then reserves the call's slot and its per-part, per-round attribution in the
+loop ledger, compiles the task policy's view, and scores it on the resident
+session under the lane key (original attempt, lowest part). Observed
+completion re-attributes the measured tokens in proportion to the reserved
+attribution, the remainder to the lowest part and round, so the advice's
+attribution equals its observed tokens and charges every segment's part and
+round. Selection is per segment from the authenticated `LoopCalibration` of
+the resident profile: margins are exactly top minus runner-up; zero rules
+abstain. A lost outcome keeps the whole reservation and every segment
+unavailable; a known input refusal releases the tokens and keeps the slot; a
+late scope or configuration change discards decisions and keeps the work.
+
+**Batched Focus: per-candidate questions.** Each pair is already its own
+lane job, so a per-candidate question costs no extra model work: a pair job
+carries `questions[candidate.question]`. One batch takes one Focus ordinal and
+one ledger reservation (pair tokens times scored pairs, attributed per part
+and round), instead of one call per sub-need group, which would have spent
+the `focus_calls` slots on fixed per-call overhead (IPC, application
+observations and a reservation each). This is the plan 12.9 decision "by
+measured cost": the structural cost is equal per pair either way, and
+grouping saves the per-call overhead. A wall-clock measurement of that
+overhead against per-pair time on the A6000 belongs to L5/LG; it was not run
+here (no GPU work in L4). Ranking applies only when every scored pair
+completed with finite logits before the deadline and authority still holds.
+
+**Ledger.** Card slots are valid in `1..=context_calls`, Focus ordinals in
+`1..=focus_calls`, one card call at most 8,192 tokens, one Focus call at
+most `round_input_tokens`; the attempt pool is `input_tokens` and each part
+and round (round 1 or later) at most `round_input_tokens`. Split and Plan
+(round 0) draw on the pool only. A partition limits its card and Focus
+ordinals and tokens. Slots are never reused; the parent budget and attempt
+identity are fixed once charged; the window is the parent deadline, at most
+600 s.
+
+**Decision mode.** `DecisionMode::TopScore` (evaluation only) is set only by
+`EvaluationOwner::with_decision_mode`, which requires the private native
+evaluation catalog; product builds have no constructor for it.

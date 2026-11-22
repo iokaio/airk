@@ -1719,6 +1719,15 @@ moves every loop task identity and needs a recorded decision (values in
 `crates/airk-retrieval/src/arbiter/compiler/CONTRACT.md`). It is a new
 closure; the Context and Focus closures and their digests are unchanged.
 
+L4 also adds `native_loop::NativeCardModel` (the selected Context model,
+device and GPU precision a card call would use; observation only) and the
+private control methods `ArbiterCardModel`, `ArbiterScoreCards` and
+`ArbiterFocusBatch` with their nullable responses `ArbiterCardModel`,
+`ArbiterCardAdvice` and `ArbiterFocusBatch`. They are refused by the
+metadata relay and use the private Arbiter request and response frames.
+`PROTOCOL_VERSION` is unchanged: the variants are additive and only the
+same-version native supervisor sends them.
+
 ### Generated views
 
 `arbiter_contract` becomes 3. The Rust owner regenerates

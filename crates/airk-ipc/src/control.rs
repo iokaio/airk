@@ -82,6 +82,35 @@ pub async fn request_once(
                     .context("Joint Arbiter native deadline overflow")?,
             )
         }
+        // Answer /3 loop calls: Answer's ceiling, from the original attempt.
+        ControlMethod::ArbiterScoreCards { request } => {
+            let sampled_at = tokio::time::Instant::now();
+            let remaining = answer_arbiter_remaining(
+                Some(request.read_attempt),
+                request.remaining_ms,
+                host_read_clock(),
+                airk_process::monotonic::now_ns()?,
+            )?;
+            Some(
+                sampled_at
+                    .checked_add(remaining)
+                    .context("loop card native deadline overflow")?,
+            )
+        }
+        ControlMethod::ArbiterFocusBatch { request } => {
+            let sampled_at = tokio::time::Instant::now();
+            let remaining = answer_arbiter_remaining(
+                Some(request.read_attempt),
+                request.remaining_ms,
+                host_read_clock(),
+                airk_process::monotonic::now_ns()?,
+            )?;
+            Some(
+                sampled_at
+                    .checked_add(remaining)
+                    .context("batched Focus native deadline overflow")?,
+            )
+        }
         ControlMethod::ArbiterNextRead { request } => {
             // Sample Tokio first so clock conversion can only shorten the
             // original same-host absolute expiry, never add sampling time.

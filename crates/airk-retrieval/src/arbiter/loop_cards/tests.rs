@@ -389,19 +389,19 @@ fn recorded_loop_policy_identities() -> Result<()> {
     let recorded = [
         (
             Task::ContextSplit,
-            "791878e0d81e7d83e4caf6cf9eab8e0841e71c8e20fbf459efeb76d88c398651",
+            "42669ee164c7a620926274a1efe6f0597ca971c7c52fecf20e8d7f0b0c873ccc",
         ),
         (
             Task::ContextPlan,
-            "422d82cc5959ab16c4687b6129deab6a7129c6a69c35e28cf88f84e45fe0b695",
+            "28c43b34d4859710908dde7fe5e2c3fd390027d01af82e6f67021626b286a0d6",
         ),
         (
             Task::ContextCoverage,
-            "c1175ea5f91e1be3dd0f95fcb8adb626ac92b167fb950c77cc0427ca7e3d5047",
+            "5eb717cf1d4c6b3484e77c1c275bf93e4e85ebbda0ea34c1a50357e9354fe1a7",
         ),
         (
             Task::ContextFollowUp,
-            "d556d7e8b435d74b6fa99d5336842eb1eed01973c048cdf3d249487f418c6829",
+            "a3bbaf848d2c2e983f24e8af0a4627dc7e8f1e53730dc2bbdec81c7d51d86781",
         ),
     ];
     let core = airk_core::arbiter::answer_loop::loop_semantic_policy_digest()?.to_string();
@@ -410,7 +410,7 @@ fn recorded_loop_policy_identities() -> Result<()> {
         .map(|(task, _)| task_policy(*task).map(|policy| policy.to_string()))
         .collect::<Result<_>>()?;
     assert_eq!(
-        core, "e55c997509a5dd3156d223326145b788807c1c55f15dc216b4239c917b57c000",
+        core, "3b919cb0193f7bcdea4f58a23d7543ff6e980d7da38aec474035e5798b031357",
         "live {live:?}"
     );
     for ((task, expected), live) in recorded.iter().zip(&live) {

@@ -26,6 +26,8 @@ pub use airk_kernel::arbiter::device_runtime::NativeConfiguration;
 /// completion. A disconnected delivery never releases this reservation early.
 pub use airk_kernel::service_resources::OptionalReservation as Reservation;
 pub type Authority = Arc<dyn Fn(&ScopeBinding) -> bool + Send + Sync>;
+mod lane;
+pub use lane::{LaneKey, enrollment_task};
 pub struct ScoreRequest {
     pub worker: Incarnation,
     pub scope: ScopeBinding,
@@ -38,6 +40,9 @@ pub struct ScoreRequest {
     pub resident: ResidentPermit,
     pub admission: airk_kernel::service_resources::OptionalReuse,
     pub max_input_tokens: usize,
+    /// The lane this job is fair-shared under: ordinary Search Focus has no
+    /// Answer attempt; an Answer /3 job names its attempt and part.
+    pub lane: LaneKey,
 }
 /// Opaque proof of the exact charged resident session, never a second charge.
 pub struct ResidentPermit {
@@ -227,6 +232,7 @@ pub struct Observation {
 struct Job {
     queued_at: Instant,
     max_input_tokens: usize,
+    lane: LaneKey,
     scope: ScopeBinding,
     task: Task,
     deadline: Instant,
@@ -378,11 +384,12 @@ struct Queue {
     probes: VecDeque<device::Probe>,
     jobs: VecDeque<Job>,
     warm: VecDeque<Warm>,
-    last_index: Option<airk_core::index_catalog::IndexId>,
-    running_index: Option<airk_core::index_catalog::IndexId>,
+    last_index: Option<(airk_core::index_catalog::IndexId, Option<Incarnation>)>,
+    running_index: Option<(airk_core::index_catalog::IndexId, LaneKey)>,
     active_profiles: BTreeMap<Stage, Sha256Digest>,
     joint_calibrations:
         BTreeMap<Stage, Arc<airk_core::arbiter::context_action::calibration::JointCalibration>>,
+    loop_calibrations: BTreeMap<Stage, Arc<airk_core::arbiter::answer_loop::LoopCalibrationSet>>,
     residents: BTreeMap<Stage, std::sync::Weak<Reservation>>,
     warming_profile: Option<(Stage, Sha256Digest)>,
     running_stage: Option<Stage>,
@@ -435,6 +442,7 @@ impl Drop for LaneCompleted {
         queue.warm.clear();
         queue.active_profiles.clear();
         queue.joint_calibrations.clear();
+        queue.loop_calibrations.clear();
         queue.warming_profile = None;
         queue.running_index = None;
         queue.running_stage = None;
@@ -480,7 +488,11 @@ fn permitted(
             && config.catalog() == job.scope.catalog
             && config.revision() == job.scope.configuration_revision
             && config.selected_profile(stage_for_task(job.task)) == Some(profile)
-            && config.eligible_for(stage_for_task(job.task), job.scope.index_id, job.task)
+            && config.eligible_for(
+                stage_for_task(job.task),
+                job.scope.index_id,
+                enrollment_task(job.task),
+            )
     }) && Instant::now() < job.deadline
 }
 impl Handle {
@@ -1049,6 +1061,34 @@ impl Handle {
             })
             .context("resident has no authenticated joint calibration")
     }
+    /// The loop card task's calibration of the active resident `profile`,
+    /// authenticated when that resident warmed.
+    pub fn loop_calibration(
+        &self,
+        profile: Sha256Digest,
+        task: Task,
+    ) -> Result<airk_core::arbiter::answer_loop::LoopCalibration> {
+        let queue = self
+            .0
+            .queue
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Arbiter queue unavailable"))?;
+        ensure!(
+            !queue.closed && !queue.release_profiles.contains(&profile),
+            "loop resident profile unavailable"
+        );
+        let stage = queue
+            .active_profiles
+            .iter()
+            .find_map(|(stage, active)| (*active == profile).then_some(*stage))
+            .context("loop resident profile unavailable")?;
+        queue
+            .loop_calibrations
+            .get(&stage)
+            .and_then(|set| set.entries.iter().find(|entry| entry.task == task))
+            .cloned()
+            .context("resident has no authenticated loop calibration for this task")
+    }
     pub fn score(&self, request: ScoreRequest) -> Result<PendingScore> {
         self.score_inner(
             request,
@@ -1081,6 +1121,7 @@ impl Handle {
             resident,
             admission,
             max_input_tokens,
+            lane,
         } = request;
         // No source-authority callback runs under the optional queue lock.
         ensure!(authority(&scope), "Arbiter source authority expired");
@@ -1105,14 +1146,16 @@ impl Handle {
             "Arbiter admission closed"
         );
         ensure!(
-            queue.jobs.len() < 8
-                && queue
+            lane::admits(
+                queue
                     .jobs
                     .iter()
-                    .filter(|job| job.scope.index_id == scope.index_id)
-                    .count()
-                    + usize::from(queue.running_index == Some(scope.index_id))
-                    < 2,
+                    .map(|job| (job.scope.index_id, job.lane))
+                    .chain(queue.running_index),
+                queue.jobs.len(),
+                scope.index_id,
+                lane,
+            ),
             "Arbiter queue constrained"
         );
         let stage = stage_for_task(task);
@@ -1136,6 +1179,7 @@ impl Handle {
         let job = Job {
             queued_at: Instant::now(),
             max_input_tokens,
+            lane,
             compiled: Some(compiled),
             #[cfg(feature = "test-support")]
             observer,
@@ -1245,6 +1289,7 @@ impl Lane {
                         queue.eligibility.reconcile(&residents)?;
                         queue.active_profiles.retain(|stage, _| residents.contains_key(stage));
                         queue.joint_calibrations.retain(|stage, _| residents.contains_key(stage));
+                        queue.loop_calibrations.retain(|stage, _| residents.contains_key(stage));
                         queue.residents.retain(|stage, _| residents.contains_key(stage));
                         shared.accounting.arbiter_cached_count(residents.len());
                         shared.changed.notify_waiters();
@@ -1282,14 +1327,16 @@ impl Lane {
                             continue;
                         }
                         if !queue.jobs.is_empty() {
-                            let position = queue
-                                .jobs
-                                .iter()
-                                .position(|job| Some(job.scope.index_id) != queue.last_index)
-                                .unwrap_or(0);
+                            let position = lane::next_position(
+                                queue
+                                    .jobs
+                                    .iter()
+                                    .map(|job| (job.scope.index_id, job.lane.attempt)),
+                                queue.last_index,
+                            );
                             let mut job = queue.jobs.remove(position).unwrap();
-                            queue.last_index = Some(job.scope.index_id);
-                            queue.running_index = Some(job.scope.index_id);
+                            queue.last_index = Some((job.scope.index_id, job.lane.attempt));
+                            queue.running_index = Some((job.scope.index_id, job.lane));
                             let stage = stage_for_task(job.task);
                             queue.running_stage = Some(stage);
                             let allowed = residents.get(&stage).is_some_and(|resident| {
@@ -1405,6 +1452,7 @@ impl Lane {
                         queue.eligibility.invalidate();
                         queue.active_profiles.clear();
                         queue.joint_calibrations.clear();
+                        queue.loop_calibrations.clear();
                         queue.residents.clear();
                         queue.warming_profile = None;
                         queue.running_stage = None;

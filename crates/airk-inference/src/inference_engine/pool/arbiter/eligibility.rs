@@ -847,6 +847,15 @@ pub(super) fn warm(
                     .map(|calibration| (*stage, calibration))
             })
             .collect();
+        queue.loop_calibrations = residents
+            .iter()
+            .filter_map(|(stage, resident)| {
+                resident
+                    .scorer()
+                    .loop_calibration()
+                    .map(|calibration| (*stage, calibration))
+            })
+            .collect();
         queue.warming_profile = None;
         queue.running_stage = None;
     }

@@ -37,11 +37,12 @@ fn partition(byte: u8, cards: Vec<u8>, focus: Vec<u8>, tokens: usize) -> Partiti
         selection: Sha256Digest::from_bytes([2; 32]),
         index_id: index(byte),
         parent_budget: budget(),
-        resources: airk_core::context_records::Resources {
+        resources: airk_core::native_loop::LoopResources {
             calls: 4,
             input_tokens: tokens,
             candidates: 16,
             bytes: 131_072,
+            focus_pairs: 16,
         },
         card_ordinals: cards,
         focus_ordinals: focus,
@@ -193,8 +194,10 @@ fn focus_calls_charge_each_part_round_for_its_own_pairs() -> Result<()> {
     let ticket = ledger.reserve_focus(
         attempt(),
         &parent,
-        index(3),
-        1,
+        FocusCall {
+            index_id: index(3),
+            ordinal: 1,
+        },
         &[charge(1, 1, 1_024), charge(2, 1, 2_048)],
         None,
         10,
@@ -208,21 +211,43 @@ fn focus_calls_charge_each_part_round_for_its_own_pairs() -> Result<()> {
     assert_eq!(settled, vec![charge(1, 1, 300), charge(2, 1, 600)]);
     assert!(
         ledger
-            .reserve_focus(attempt(), &parent, index(3), 3, &[charge(1, 1, 1)], None, 11)
+            .reserve_focus(
+                attempt(),
+                &parent,
+                FocusCall {
+                    index_id: index(3),
+                    ordinal: 3,
+                },
+                &[charge(1, 1, 1)],
+                None,
+                11
+            )
             .is_err(),
         "Focus ordinals run up to focus_calls"
     );
     assert!(
         ledger
-            .reserve_focus(attempt(), &parent, index(3), 2, &[charge(0, 0, 1)], None, 11)
+            .reserve_focus(
+                attempt(),
+                &parent,
+                FocusCall {
+                    index_id: index(3),
+                    ordinal: 2,
+                },
+                &[charge(0, 0, 1)],
+                None,
+                11
+            )
             .is_err(),
         "Focus is charged to a part and round"
     );
     let other = ledger.reserve_focus(
         attempt(),
         &parent,
-        index(3),
-        2,
+        FocusCall {
+            index_id: index(3),
+            ordinal: 2,
+        },
         &[charge(1, 1, 100)],
         None,
         12,
@@ -241,7 +266,14 @@ fn partitions_limit_their_card_and_focus_ordinals_and_tokens() -> Result<()> {
     let mut ledger = Ledger::default();
     let parent = budget();
     let part = partition(3, vec![1], vec![1], 5_000);
-    ledger.reserve_card(attempt(), &parent, 1, &[charge(1, 1, 4_000)], Some(&part), 10)?;
+    ledger.reserve_card(
+        attempt(),
+        &parent,
+        1,
+        &[charge(1, 1, 4_000)],
+        Some(&part),
+        10,
+    )?;
     assert!(
         ledger
             .reserve_card(attempt(), &parent, 2, &[charge(1, 1, 10)], Some(&part), 11)
@@ -253,8 +285,10 @@ fn partitions_limit_their_card_and_focus_ordinals_and_tokens() -> Result<()> {
             .reserve_focus(
                 attempt(),
                 &parent,
-                index(3),
-                1,
+                FocusCall {
+                    index_id: index(3),
+                    ordinal: 1,
+                },
                 &[charge(1, 1, 1_001)],
                 Some(&part),
                 12
@@ -267,8 +301,10 @@ fn partitions_limit_their_card_and_focus_ordinals_and_tokens() -> Result<()> {
             .reserve_focus(
                 attempt(),
                 &parent,
-                index(4),
-                1,
+                FocusCall {
+                    index_id: index(4),
+                    ordinal: 1,
+                },
                 &[charge(1, 1, 10)],
                 Some(&part),
                 13
@@ -309,7 +345,14 @@ fn attempt_identity_and_parent_budget_are_fixed_once_charged() -> Result<()> {
     expired.remaining_ns = 0;
     assert!(
         Ledger::default()
-            .reserve_card(expired, &budget(), 1, &[charge(1, 1, 10)], None, 600_000_000_100)
+            .reserve_card(
+                expired,
+                &budget(),
+                1,
+                &[charge(1, 1, 10)],
+                None,
+                600_000_000_100
+            )
             .is_err()
     );
     Ok(())

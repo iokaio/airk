@@ -581,6 +581,9 @@ pub(super) fn outcome(response: &ControlResponse) -> NativeOutcome {
         | ControlResponse::ArbiterContextActionAdvice { .. }
         | ControlResponse::ArbiterFocusApplication { .. }
         | ControlResponse::ArbiterFocusRank { .. }
+        | ControlResponse::ArbiterCardModel { .. }
+        | ControlResponse::ArbiterCardAdvice { .. }
+        | ControlResponse::ArbiterFocusBatch { .. }
         | ControlResponse::ArbiterImport { .. }
         | ControlResponse::ModelCatalog { .. }
         | ControlResponse::UsageDocument { .. }

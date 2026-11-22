@@ -442,6 +442,70 @@ impl NativeCardResponse {
     }
 }
 
+/// The Context model that would score loop card calls now, as the native
+/// owner observes its selected profile: model, device and (GPU only)
+/// precision. Large never runs on the CPU. Observation only; no authority.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeCardModel {
+    pub model: crate::arbiter::device::SelectedModel,
+    pub device: crate::arbiter::answer_loop::ExecutionDevice,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub precision: Option<crate::arbiter::device::DevicePrecision>,
+}
+impl NativeCardModel {
+    /// The card model of a profile that declares every loop card task, or
+    /// `None` when it declares none of them or cannot score cards.
+    pub fn from_profile(profile: &crate::arbiter::Profile) -> Result<Option<Self>> {
+        use crate::arbiter::{
+            answer_loop::ExecutionDevice,
+            device::{GpuBackend, SelectedModel},
+        };
+        let tasks = [
+            LoopStage::Split,
+            LoopStage::Plan,
+            LoopStage::Coverage,
+            LoopStage::FollowUp,
+        ]
+        .into_iter()
+        .filter_map(card_task);
+        if !tasks.clone().all(|task| profile.tasks.contains(&task)) {
+            return Ok(None);
+        }
+        let model = SelectedModel::from_model(profile.model)?;
+        let (device, precision) = match &profile.device_execution {
+            None => (ExecutionDevice::Cpu, None),
+            Some(execution) => (
+                match execution.backend {
+                    GpuBackend::Cuda => ExecutionDevice::Cuda,
+                    GpuBackend::DirectMl => ExecutionDevice::DirectMl,
+                    GpuBackend::CoreMl => ExecutionDevice::CoreMl,
+                },
+                Some(execution.precision),
+            ),
+        };
+        let value = Self {
+            model,
+            device,
+            precision,
+        };
+        Ok(value.validate().is_ok().then_some(value))
+    }
+    pub fn validate(&self) -> Result<()> {
+        use crate::arbiter::{answer_loop::ExecutionDevice, device::SelectedModel};
+        let cpu = self.device == ExecutionDevice::Cpu;
+        ensure!(
+            matches!(
+                self.model,
+                SelectedModel::ContextCompact | SelectedModel::ContextLarge
+            ) && !(self.model == SelectedModel::ContextLarge && cpu)
+                && cpu == self.precision.is_none(),
+            "invalid loop card model observation"
+        );
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeFocusCandidateV3 {

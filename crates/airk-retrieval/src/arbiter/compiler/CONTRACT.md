@@ -192,15 +192,17 @@ loop_semantic_policy_digest])`. The Core digest
 `calibration.rs`, `focus_batch.rs`, `log.rs`, `semantics.rs`,
 `native_loop.rs` and the Focus Core semantics, so the card and batched-Focus
 semantics are part of every loop identity. Recorded values (control
-`recorded_loop_policy_identities`):
+`recorded_loop_policy_identities`; they moved once within L4, when
+`NativeCardModel` joined `native_loop.rs`, and the first values are not
+current):
 
 | Task | Policy |
 | --- | --- |
-| Core loop semantics | `e55c997509a5dd3156d223326145b788807c1c55f15dc216b4239c917b57c000` |
-| `airk.context_split.v1` | `791878e0d81e7d83e4caf6cf9eab8e0841e71c8e20fbf459efeb76d88c398651` |
-| `airk.context_plan.v1` | `422d82cc5959ab16c4687b6129deab6a7129c6a69c35e28cf88f84e45fe0b695` |
-| `airk.context_coverage.v1` | `c1175ea5f91e1be3dd0f95fcb8adb626ac92b167fb950c77cc0427ca7e3d5047` |
-| `airk.context_follow_up.v1` | `d556d7e8b435d74b6fa99d5336842eb1eed01973c048cdf3d249487f418c6829` |
+| Core loop semantics | `3b919cb0193f7bcdea4f58a23d7543ff6e980d7da38aec474035e5798b031357` |
+| `airk.context_split.v1` | `42669ee164c7a620926274a1efe6f0597ca971c7c52fecf20e8d7f0b0c873ccc` |
+| `airk.context_plan.v1` | `28c43b34d4859710908dde7fe5e2c3fd390027d01af82e6f67021626b286a0d6` |
+| `airk.context_coverage.v1` | `5eb717cf1d4c6b3484e77c1c275bf93e4e85ebbda0ea34c1a50357e9354fe1a7` |
+| `airk.context_follow_up.v1` | `a3bbaf848d2c2e983f24e8af0a4627dc7e8f1e53730dc2bbdec81c7d51d86781` |
 
 **Rosters.** Kernel code proposes every card; this owner never adds, drops
 or rewrites one. Before compile it checks each segment's shape beyond Core's

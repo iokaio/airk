@@ -166,6 +166,7 @@ fn request_fixture(
         },
         admission,
         max_input_tokens: 2048,
+        lane: LaneKey::default(),
     })
 }
 #[test]
@@ -192,7 +193,7 @@ fn per_index_capacity_includes_the_actual_running_request() -> Result<()> {
             tasks: std::collections::BTreeSet::from([Task::ContextAction]),
         });
     handle.configure(configuration)?;
-    shared.queue.lock().unwrap().running_index = Some(first.scope.index_id);
+    shared.queue.lock().unwrap().running_index = Some((first.scope.index_id, LaneKey::default()));
     let _accepted = handle.score(first)?;
     assert!(
         handle
