@@ -169,6 +169,7 @@ fn segment(ordinal: u8, part: u8) -> CardSegment {
             },
         ],
         multiple: false,
+        evidence: vec![],
     }
 }
 fn card_request() -> NativeCardRequest {
@@ -298,6 +299,7 @@ fn split_segments_propose_whole_partitions() -> Result<()> {
             },
         ],
         multiple: false,
+        evidence: vec![],
     }];
     request.attribution = vec![TokenAttribution {
         part: 0,
@@ -462,6 +464,211 @@ fn card_digests_bind_split_partitions_and_match_the_log() -> Result<()> {
         segment.roster_digest()?,
         crate::arbiter::answer_loop::roster_digest(segment.stage, &[first.record()?])?,
         "the log recomputes the native roster digest"
+    );
+    Ok(())
+}
+
+fn evidence(path: &str, focus: Option<f32>, excerpt: &str, cut_bytes: usize) -> CardEvidence {
+    CardEvidence {
+        path: path.into(),
+        start_line: 10,
+        end_line: 40,
+        focus,
+        excerpt: excerpt.into(),
+        cut_bytes,
+    }
+}
+
+/// A two-segment Coverage call with 8,192 reserved tokens, all charged to
+/// part 1 and round 1.
+fn evidence_request() -> NativeCardRequest {
+    let mut request = card_request();
+    request.segments[1].part = 1;
+    request.segments[1].need = 2;
+    request.attribution = vec![TokenAttribution {
+        part: 1,
+        round: 1,
+        tokens: 8192,
+    }];
+    request.remaining_input_tokens = 8192;
+    request
+}
+
+#[test]
+fn the_excerpt_allowance_is_the_reservation_above_the_frame() {
+    assert_eq!(CARD_FRAME_TOKENS, 2048);
+    for (reserved, bytes) in [
+        (0, 0),
+        (1, 0),
+        (2047, 0),
+        (2048, 0),
+        (2049, 1),
+        (4096, 2048),
+        (8192, 6144),
+    ] {
+        assert_eq!(evidence_allowance(reserved), bytes, "{reserved} tokens");
+    }
+}
+
+#[test]
+fn coverage_segments_carry_ranked_evidence_within_the_reservation() -> Result<()> {
+    let mut request = evidence_request();
+    request.segments[0].evidence = vec![
+        evidence("src/guard.rs", Some(0.93), "pub fn restart_guard() {", 120),
+        evidence("src/caller.rs", Some(0.93), "restart_guard();", 0),
+        evidence("docs/guard.md", Some(0.25), "# Restart guard", 0),
+        evidence("tests/guard.rs", None, "fn restart_guard_test() {}", 0),
+        evidence("tests/other.rs", None, "fn other() {}", 0),
+    ];
+    // A sub-need with no span shows no evidence.
+    assert!(request.segments[1].evidence.is_empty());
+    validate_cards(&request)?;
+
+    let refused = |mutate: fn(&mut NativeCardRequest)| {
+        let mut wrong = evidence_request();
+        wrong.segments[0].evidence = vec![
+            evidence("src/guard.rs", Some(0.5), "pub fn restart_guard() {", 0),
+            evidence("docs/guard.md", None, "# Restart guard", 0),
+        ];
+        validate_cards(&wrong).expect("the unchanged request is valid");
+        mutate(&mut wrong);
+        validate_cards(&wrong).is_err()
+    };
+    assert!(
+        refused(|r| r.segments[0].evidence.swap(0, 1)),
+        "an unscored span never precedes a scored one"
+    );
+    assert!(
+        refused(|r| r.segments[0].evidence[1].focus = Some(0.75)),
+        "scored spans fall in relevance"
+    );
+    assert!(refused(|r| r.segments[0].evidence[0].focus = Some(1.5)));
+    assert!(refused(|r| r.segments[0].evidence[0].focus = Some(f32::NAN)));
+    assert!(refused(|r| r.segments[0].evidence[0].excerpt.clear()));
+    assert!(refused(|r| r.segments[0].evidence[0].path.clear()));
+    assert!(refused(|r| r.segments[0].evidence[0].start_line = 0));
+    assert!(refused(|r| r.segments[0].evidence[0].end_line = 9));
+    assert!(
+        refused(|r| r.segments[0].evidence[0].cut_bytes = 524_289),
+        "no span is larger than the retention ceiling"
+    );
+    assert!(
+        refused(|r| {
+            let unscored = r.segments[0].evidence[1].clone();
+            r.segments[0].evidence.extend(vec![unscored; 7]);
+        }),
+        "at most eight spans a segment"
+    );
+    Ok(())
+}
+
+#[test]
+fn only_coverage_segments_carry_evidence() -> Result<()> {
+    let shown = vec![evidence(
+        "src/guard.rs",
+        None,
+        "pub fn restart_guard() {",
+        0,
+    )];
+    let mut follow_up = evidence_request();
+    follow_up.task = Task::ContextFollowUp;
+    for segment in &mut follow_up.segments {
+        segment.stage = LoopStage::FollowUp;
+        for card in &mut segment.cards {
+            card.class = CardClass::FollowUpHop;
+        }
+    }
+    validate_cards(&follow_up)?;
+    follow_up.segments[0].evidence = shown.clone();
+    assert!(validate_cards(&follow_up).is_err(), "Follow-up shows none");
+
+    let mut plan = evidence_request();
+    plan.task = Task::ContextPlan;
+    plan.segments.truncate(1);
+    plan.segments[0].stage = LoopStage::Plan;
+    plan.segments[0].need = 0;
+    plan.segments[0].round = 0;
+    plan.segments[0].multiple = true;
+    plan.attribution[0].round = 0;
+    for card in &mut plan.segments[0].cards {
+        card.class = CardClass::PlanNeed;
+    }
+    validate_cards(&plan)?;
+    plan.segments[0].evidence = shown;
+    assert!(validate_cards(&plan).is_err(), "Plan shows none");
+    Ok(())
+}
+
+#[test]
+fn a_call_s_excerpts_stay_within_its_reservation_s_allowance() -> Result<()> {
+    // 2,124 reserved tokens leave 76 excerpt bytes for the whole call.
+    let mut request = evidence_request();
+    request.attribution[0].tokens = 2124;
+    request.remaining_input_tokens = 2124;
+    request.segments[0].evidence = vec![evidence("src/a.rs", None, &"a".repeat(40), 0)];
+    request.segments[1].evidence = vec![evidence("src/b.rs", None, &"b".repeat(36), 0)];
+    validate_cards(&request)?;
+    request.segments[1].evidence[0].excerpt.push('b');
+    assert!(
+        validate_cards(&request).is_err(),
+        "77 bytes pass the 76-byte allowance"
+    );
+    // At the frame or below, a call shows no excerpt at all.
+    let mut bare = evidence_request();
+    bare.attribution[0].tokens = 2048;
+    bare.remaining_input_tokens = 2048;
+    validate_cards(&bare)?;
+    bare.segments[0].evidence = vec![evidence("src/a.rs", None, "a", 0)];
+    assert!(validate_cards(&bare).is_err());
+    // The full reservation: 8,192 tokens allow 6,144 bytes.
+    let mut full = evidence_request();
+    full.segments[0].evidence = vec![evidence("src/a.rs", None, &"a".repeat(6144), 0)];
+    validate_cards(&full)?;
+    full.segments[0].evidence[0].excerpt.push('a');
+    assert!(validate_cards(&full).is_err());
+    Ok(())
+}
+
+#[test]
+fn a_segment_without_evidence_keeps_its_wire_form() -> Result<()> {
+    let bare = serde_json::to_value(segment(2, 1))?;
+    let mut keys: Vec<&str> = bare
+        .as_object()
+        .expect("an object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        [
+            "card_slot",
+            "cards",
+            "multiple",
+            "need",
+            "ordinal",
+            "part",
+            "round",
+            "stage",
+            "subject"
+        ],
+        "no evidence key, so an evidence-free request hashes as before"
+    );
+    let read: CardSegment = serde_json::from_value(bare)?;
+    assert!(read.evidence.is_empty());
+    let mut shown = segment(2, 1);
+    shown.evidence = vec![
+        evidence("src/guard.rs", Some(0.5), "pub fn restart_guard() {", 7),
+        evidence("docs/guard.md", None, "# Restart guard", 0),
+    ];
+    assert_eq!(
+        serde_json::to_value(&shown)?["evidence"],
+        serde_json::json!([
+            {"path":"src/guard.rs","start_line":10,"end_line":40,"focus":0.5,
+             "excerpt":"pub fn restart_guard() {","cut_bytes":7},
+            {"path":"docs/guard.md","start_line":10,"end_line":40,
+             "excerpt":"# Restart guard","cut_bytes":0}
+        ])
     );
     Ok(())
 }

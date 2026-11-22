@@ -263,6 +263,31 @@ What holds:
   per projection (`hits_total`, `rows_total`, `truncated`); a part is
   `shortened` only when records are omitted, as Core validates against
   `omitted_count`.
+- **Coverage rosters show bounded evidence excerpts** (change log entry 43).
+  - A Coverage card call shows each sub-need the spans gathered for it this
+    round, in Focus rank order, as `CardEvidence` rows of its `CardSegment`.
+  - The call's excerpts total at most its excerpt allowance (Core
+    `native_loop::evidence_allowance` of the tokens the call reserves: 6,144
+    bytes at 8,192 tokens). The existing reservation bounds it; no budget,
+    share or pool rule changed.
+  - `coverage::excerpt_cuts` decides the cut. Every span of the call first
+    gets an equal share of the allowance. What the shorter texts leave goes
+    to the cut ones in call order (segment order, then rank). Each excerpt
+    then ends on a character boundary. The result depends only on the texts,
+    their order and the allowance.
+  - Excerpts are prefixes of hits of records already read and retained under
+    the Answer's revision fence. Building them reads nothing.
+  - The roster's subject names the sub-need's kind in the words of its Plan
+    card (`plan::wording`, for example `need callers: restart_guard`). A
+    definition and a callers sub-need of one identifier have the same query,
+    so the bare query did not say what evidence to look for.
+- **The log says what a Coverage call showed.**
+  - For a decision taken in a dispatched Coverage call (model, abstained or
+    unavailable), the entry's `basis` is the byte range of each excerpt, and
+    `basis_omitted` is every cut tail and every span not shown at all. The
+    reply's compact basis counts both, so a cut is visible in the reply.
+  - A decision taken without a card call is unchanged. No excerpt is built,
+    and its basis names the whole spans the deterministic rule read.
 
 What does not hold yet, with the follow-up owner:
 
@@ -305,8 +330,18 @@ What does not hold yet, with the follow-up owner:
   `pack_native_response`, `native_response_bytes`, `software::Layers` and
   `focus::bind_focus_shape` remain, with their tests; the MCP handler no
   longer reaches them. Change log entry 40.
-- **Coverage cards carry no evidence excerpts** (L3, after L3-10).
-  `CardSegment` holds only the subject and card texts.
+- **Follow-up rosters show no evidence** (owner: the primary agent assigns;
+  found while closing the Coverage gap, change log entry 43). A Follow-up
+  roster's subject is the sub-need's bare query, without its kind, and its
+  cards are the candidate reads. The model sees neither the coverage verdict
+  nor any text that was read. Core refuses evidence on a segment that is not
+  Coverage, so showing it there needs a recorded wire decision, and that
+  moves the loop identities again. Naming the kind in the subject is a
+  kernel-only change that moves no identity.
+- **A span is cut from its start only** (limit). An excerpt is the first
+  bytes of its span's text. A span whose relevant lines come after the cut
+  shows the model its beginning; the cut is disclosed (`cut` in the view,
+  `basis_omitted` in the log), not corrected.
 
 ### Review findings and resolutions (Answer /3 loop)
 

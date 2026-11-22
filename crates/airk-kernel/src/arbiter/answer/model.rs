@@ -17,7 +17,11 @@ pub(super) struct Seg {
     pub(super) cards: Vec<LoopCard>,
     /// The text the roster is about: the question, a part or a sub-need.
     pub(super) subject: String,
+    /// The whole spans a decision taken without a card call rests on.
     pub(super) basis: Vec<EvidenceRef>,
+    /// A Coverage roster's ranked spans, which a card call shows as bounded
+    /// excerpts; empty for every other stage.
+    pub(super) spans: Vec<coverage::Span>,
     /// The deterministic choice.
     pub(super) fallback: Vec<usize>,
     pub(super) rule: v3::DeterministicRule,
@@ -30,6 +34,8 @@ pub(super) struct Choice {
 }
 
 type Scored = (v3::DecisionSource, Vec<usize>, ModelFacts);
+/// What a dispatched card call presented to a decision, and what it left out.
+type Basis = (Vec<EvidenceRef>, Vec<EvidenceRef>);
 
 /// The ModelShare disclosure is defined for these stages only.
 fn shared_stage(stage: v3::LoopStage) -> bool {
@@ -118,15 +124,17 @@ impl Loop<'_> {
             }
             let group = &segs[index..end];
             match self.call(group, model)? {
-                Some(results) => {
-                    for (seg, (source, chosen, facts)) in group.iter().zip(results) {
+                Some((results, shown)) => {
+                    for ((seg, (source, chosen, facts)), basis) in
+                        group.iter().zip(results).zip(shown)
+                    {
                         let model = source.kind() == v3::SourceKind::Model;
                         self.ledger.record(
                             seg.at,
                             &seg.cards,
                             &chosen,
                             source,
-                            seg.basis.clone(),
+                            basis,
                             Some(facts),
                         )?;
                         out.push(Choice { chosen, model });
@@ -155,7 +163,13 @@ impl Loop<'_> {
     }
 
     /// One batched card call. `None`: not dispatched, decide deterministically.
-    fn call(&mut self, group: &[Seg], model: LoopModel) -> Result<Option<Vec<Scored>>> {
+    /// A dispatched call returns each roster's decision with what the call
+    /// presented to it.
+    fn call(
+        &mut self,
+        group: &[Seg],
+        model: LoopModel,
+    ) -> Result<Option<(Vec<Scored>, Vec<Basis>)>> {
         let budget = &self.request.budget;
         let stage = group[0].at.stage;
         let Some(attempt) = self.context.attempt else {
@@ -254,10 +268,26 @@ impl Loop<'_> {
         }
         let slot = u8::try_from(self.card_slots + 1)?;
         let first = self.ledger.next_ordinal()?;
+        // Coverage shows each sub-need's ranked spans as excerpts, cut to
+        // the excerpt allowance of this call's token reservation. The log
+        // then records exactly the byte ranges shown and the ones left out.
+        let mut shown = if stage == v3::LoopStage::Coverage {
+            let needs: Vec<&[coverage::Span]> =
+                group.iter().map(|seg| seg.spans.as_slice()).collect();
+            coverage::present(
+                &self.gather,
+                &needs,
+                airk_core::native_loop::evidence_allowance(reserve),
+            )
+        } else {
+            vec![]
+        };
+        shown.resize_with(group.len(), coverage::Shown::default);
         let segments: Vec<CardSegment> = group
             .iter()
+            .zip(&shown)
             .enumerate()
-            .map(|(offset, seg)| CardSegment {
+            .map(|(offset, (seg, shown))| CardSegment {
                 ordinal: first + offset as u8,
                 card_slot: slot,
                 stage,
@@ -267,6 +297,18 @@ impl Loop<'_> {
                 subject: seg.subject.clone(),
                 cards: seg.cards.clone(),
                 multiple: stage == v3::LoopStage::Plan,
+                evidence: shown.evidence.clone(),
+            })
+            .collect();
+        let basis: Vec<Basis> = group
+            .iter()
+            .zip(shown)
+            .map(|(seg, shown)| {
+                if stage == v3::LoopStage::Coverage {
+                    (shown.presented, shown.omitted)
+                } else {
+                    (seg.basis.clone(), vec![])
+                }
             })
             .collect();
         // A model call never runs into the Compose and Union reserve.
@@ -408,7 +450,7 @@ impl Loop<'_> {
                         .or_default() += charge.tokens;
                 }
                 self.ledger.receipts.push(advice);
-                Ok(Some(results))
+                Ok(Some((results, basis)))
             }
             _ => {
                 // Lost or unusable after dispatch: the reservation stays
@@ -424,7 +466,7 @@ impl Loop<'_> {
                         .entry((charge.part, charge.round))
                         .or_default() += charge.tokens;
                 }
-                Ok(Some(
+                Ok(Some((
                     group
                         .iter()
                         .enumerate()
@@ -439,7 +481,8 @@ impl Loop<'_> {
                             )
                         })
                         .collect(),
-                ))
+                    basis,
+                )))
             }
         }
     }

@@ -1252,3 +1252,142 @@ Numbered 30 until 22 November 2026; renumbered because L4's entries take
 - **Where:** plan sections 2, 3.1, 3.2, 5.4, 11, 12.6 and 12.7;
   `docs/agent-current-work.md`; the ledger entries of 22 November at 21:45 and
   22:10 UTC; the harness changes on `loop/l5c`.
+
+### 43. Coverage rosters show bounded evidence excerpts
+
+- **Step:** L3, item (d), done in the main tree after L4 was integrated.
+  It closes the open item entry 37 lists ("Coverage rosters carry no
+  evidence excerpts").
+- **What was wrong:**
+  - The Coverage question asks which verdict fits each sub-need "given only
+    its shown evidence". No evidence was shown.
+  - A Coverage roster held the sub-need's query as its subject and its
+    cards: `s1 covered: <two locations>`, then read-more and search cards.
+    The model saw paths and line numbers, and no text of what was read.
+  - The subject was the bare query. A definition sub-need and a callers
+    sub-need of one identifier have the same query, so the model could not
+    tell what kind of evidence the sub-need asked for.
+  - The decision log recorded every span as presented in full, for model
+    decisions too.
+- **What changed:**
+  - **Core (`native_loop.rs`):** `CardSegment` gains `evidence`, a list of
+    `CardEvidence` rows: path, lines, the Focus relevance when Focus scored
+    the span, an excerpt and the bytes cut after it. Only Coverage segments
+    carry it, at most eight rows, in Focus rank order.
+  - **The bound:** one call's excerpts total at most
+    `evidence_allowance(reserved tokens)` bytes, which is the reservation
+    less 2,048 tokens for the rest of the view, at one byte a token. The
+    8,192-token reservation allows 6,144 bytes, 768 for each of eight
+    spans. Core refuses a request above its allowance.
+  - **Kernel (`answer/coverage.rs`, `model.rs`):** a Coverage call shows
+    each sub-need the spans gathered for it this round, ranked by Focus.
+    Every span of the call first gets an equal share of the allowance; what
+    the shorter texts leave goes to the cut ones in call order; each excerpt
+    ends on a character boundary. The cut depends only on the texts, their
+    order and the allowance. Excerpts are prefixes of hits already read and
+    retained under the Answer's revision fence; nothing new is read.
+  - **Subject:** a Coverage roster's subject is now the sub-need in the
+    words of its Plan card, for example `need callers: restart_guard`.
+  - **Retrieval (`loop_cards.rs`):** the Coverage view shows each segment's
+    `evidence` rows as `{at, focus, text, cut}`, with `at` in the
+    `path:start-end` form the Covered card cites, and two more sentences of
+    rules. A sub-need with nothing to show has `evidence: []`.
+  - **Decision log:** for a decision taken in a dispatched Coverage call,
+    `basis` is the byte range of each excerpt and `basis_omitted` is every
+    cut tail and every span not shown. The reply's compact basis counts
+    both, so the agent can see that something was cut.
+- **What did not change:**
+  - The no-model path. A decision taken without a card call builds no
+    excerpt and logs the whole spans, as before. Card texts, rosters,
+    roster digests, selection and the reply shape are unchanged.
+  - The budget. No budget field, ledger rule, share or token pool changed;
+    the bound comes from the reservation each call already holds (plan
+    12.3). The call still compiles under its reservation as the ceiling.
+  - Split, Plan and Follow-up views. They are byte-identical to before.
+- **Wire change:** the private native request
+  `airk.arbiter.advice.request/3` gains the optional segment field
+  `evidence`. It is absent when empty, so a request without evidence
+  serializes and hashes as before. Kernel and service ship together, and
+  only the same-version supervisor sends it. No public schema, generated
+  TypeScript view or persisted format changed.
+- **Identities moved** (recorded decision in
+  `crates/airk-retrieval/src/arbiter/compiler/CONTRACT.md`, "Fourth move").
+  `native_loop.rs` is an input of the Core loop semantics digest and
+  `loop_cards.rs` of every card policy:
+
+  | Identity | Before | After |
+  | --- | --- | --- |
+  | Core loop semantics | `488496bc…` | `307cb4a3…` |
+  | Split | `ccea442c…` | `fecca3cb…` |
+  | Plan | `5d219860…` | `487f22fd…` |
+  | Coverage | `c6711506…` | `846f1db0…` |
+  | Follow-up | `89809e2d…` | `104b24bb…` |
+  | Batched Focus (release pair policy) | `50ba5c85…` | `19e85647…` |
+
+  `runtime.rs` (`c9008eef…`), the CPU Focus row, the release Focus pair
+  policy and the one-turn Context policy did not move. The proof that the
+  old values no longer describe the source is the control
+  `recorded_loop_policy_identities` failing with the old pins on the new
+  source (private receipt `answer-loop/L4/int-nextest-2c-ids-old-pins.log`).
+  The FP16 profiles for the gate are emitted with the new card task
+  policies.
+- **Why one byte a token, and 2,048 tokens for the frame:** the kernel has
+  no tokenizer, so it bounds excerpts in bytes. Measured with the gate
+  profiles' tokenizer on this repository's text
+  (`scripts/arbiter/evaluation/card_excerpt_tokens`), no chunk needed more
+  than 0.7 tokens a byte, the view around the excerpts of a full
+  two-sub-need call needed about 1,060 tokens, and a full call used between
+  about 2,000 and 4,600 of its 8,192 tokens. A span made only of digits,
+  quotes, line breaks or control characters can need more than one token a
+  byte. Such a call is refused by the lane's token ceiling before any model
+  work, its reservation is released and the decision takes the
+  deterministic order with the refusal recorded, as for any oversized
+  input.
+- **Limits, for the review:**
+  - An excerpt is the start of its span. Where the relevant lines come
+    after the cut, the model sees the beginning and the cut is disclosed,
+    not corrected.
+  - Follow-up rosters still show no evidence and their subject is still the
+    bare query. Showing evidence there needs another wire decision and
+    moves the identities again; naming the kind in the subject is a
+    kernel-only change. Recorded in the kernel arbiter `CONTRACT.md`, "What
+    does not hold yet".
+  - A Coverage call may now use up to its whole reservation, where it used
+    a few hundred tokens before. The pool and the per-round allowance
+    already assume 8,192-token card calls (plan 12.3), so no limit changed,
+    but a full loop spends more of its pool on Coverage than it did.
+  - No model has scored these rosters yet. Whether the excerpts improve the
+    Coverage decisions is what the gate measures.
+- **Evidence (tests with hand-written expectations):**
+  - Core `native_loop::tests`:
+    `the_excerpt_allowance_is_the_reservation_above_the_frame`,
+    `coverage_segments_carry_ranked_evidence_within_the_reservation`,
+    `only_coverage_segments_carry_evidence`,
+    `a_call_s_excerpts_stay_within_its_reservation_s_allowance`,
+    `a_segment_without_evidence_keeps_its_wire_form`.
+  - Kernel `answer::coverage::tests`:
+    `excerpt_cuts_share_the_allowance_equally_then_in_call_order`,
+    `excerpt_cuts_end_on_character_boundaries`,
+    `a_covered_a_partial_and_a_missing_sub_need_show_their_own_spans`,
+    `excerpts_follow_the_focus_rank_and_disclose_every_cut`.
+  - Kernel `answer::model::tests`, through the whole loop with the
+    synthetic scorer:
+    `coverage_calls_show_each_sub_need_its_spans_and_log_what_was_shown`,
+    `a_long_span_is_cut_to_the_excerpt_allowance_and_the_log_names_the_cut`,
+    `evidence_carries_each_span_s_focus_score_in_rank_order`,
+    `without_a_model_the_log_names_whole_spans_and_nothing_is_cut`.
+  - Retrieval `loop_cards::tests`:
+    `coverage_prompt_shows_each_sub_need_s_evidence_in_request_order`, and
+    the moved pins in `recorded_loop_policy_identities`.
+- **Validation (main tree, all features):**
+  - workspace Clippy with `-D warnings` over all targets: exit 0;
+  - nextest over Core and IPC in full, and the arbiter tests of kernel,
+    retrieval, supervisor and MCP with the service's card, loop ledger and
+    Focus batch tests: 1,058 run, 1,058 passed (Core 497, IPC 34, kernel
+    179, retrieval 309, service 23, supervisor 9, MCP 7);
+  - not run again: the CLI transport parity tests. They run without a
+    model, and the no-model reply did not change.
+- **Where:** Core, kernel and retrieval compiler `CONTRACT.md` files (Core:
+  "Coverage evidence excerpts"; kernel: "Coverage rosters show bounded
+  evidence excerpts"; retrieval: "Coverage evidence in the view" and
+  "Fourth move").

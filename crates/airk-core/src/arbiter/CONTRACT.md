@@ -1556,6 +1556,45 @@ questions and up to 32 scored candidates that name their question by index;
 the candidate identity (`airk.arbiter.focus.candidate/2`) hashes the
 candidate's own question text.
 
+**Coverage evidence excerpts (recorded wire decision, 22 November 2026;
+change log entry 43).** A `CardSegment` gains `evidence`: the spans gathered
+for its sub-need, as `CardEvidence` rows (`path`, `start_line`, `end_line`,
+an optional `focus` relevance in 0..=1, `excerpt` and `cut_bytes`).
+
+- **Why:** the Coverage question asks which verdict fits a sub-need "given
+  only its shown evidence", and no evidence was shown. The model saw the
+  sub-need's query and card texts that cite locations.
+- **Which segments:** only Coverage segments carry evidence, at most eight
+  rows each. A segment without spans carries none; the field is then absent
+  on the wire, so a request without evidence serializes and hashes as before.
+- **Order:** Focus rank order. Scored spans come first by falling relevance,
+  then the spans Focus did not score.
+- **Excerpt:** a non-empty prefix of the span's text, cut on a character
+  boundary. `cut_bytes` is the rest of that text, which is not shown.
+- **Allowance:** the excerpts of one call total at most
+  `evidence_allowance(remaining_input_tokens)` bytes: the call's reserved
+  tokens less `CARD_FRAME_TOKENS` (2,048), at one byte a token. The
+  8,192-token reservation allows 6,144 bytes. `NativeCardRequest::validate`
+  refuses a request above its allowance.
+- **No new budget shape:** the bound comes from the reservation the call
+  already holds. `BudgetV3`, the loop ledger, the token pool and the
+  per-part, per-round allowance are unchanged.
+- **Assumptions and their evidence:** an excerpt needs at most one token a
+  byte, and the rest of the model view at most 2,048 tokens. With the gate
+  profiles' tokenizer, no measured chunk of repository text needed more than
+  0.7 tokens a byte, and a two-sub-need call with eight cards and eight
+  located spans needed about 1,060 tokens around its excerpts
+  (`scripts/arbiter/evaluation/card_excerpt_tokens`). Text made only of
+  digits, quotes, line breaks or control characters can need more. Such a
+  call is refused by the lane's token ceiling before any model work, like any
+  oversized input, and the decision takes the deterministic order.
+- **Binding:** the request's `input_digest` covers the evidence, so a receipt
+  binds exactly what was shown. The decision log keeps its shape: an entry's
+  `basis` holds the byte range shown of each span, and `basis_omitted` the
+  cut tails and the spans not shown (kernel arbiter contract).
+- **Generated views:** unchanged. `CardSegment` and `CardEvidence` are
+  private native inputs outside the generated schema.
+
 `PartitionAllowanceV3` (`airk.context-partition-allowance/3`) is a recorded
 wire-shape decision: attempt, selection, index, a BudgetV3 parent, resources
 within that parent, and strictly increasing `card_ordinals` (card slots,
@@ -1718,6 +1757,12 @@ The retrieval loop task policies hash it, so editing any of these files now
 moves every loop task identity and needs a recorded decision (values in
 `crates/airk-retrieval/src/arbiter/compiler/CONTRACT.md`). It is a new
 closure; the Context and Focus closures and their digests are unchanged.
+
+The Coverage evidence decision above (change log entry 43) edits
+`native_loop.rs`, so the loop semantics digest and every loop task identity
+moved with it. The old and new values are recorded in the retrieval compiler
+contract. `answer_loop/cards.rs`, `calibration.rs`, `focus_batch.rs`,
+`log.rs` and `semantics.rs` did not change.
 
 L4 also adds `native_loop::NativeCardModel` (the selected Context model,
 device and GPU precision a card call would use; observation only, in

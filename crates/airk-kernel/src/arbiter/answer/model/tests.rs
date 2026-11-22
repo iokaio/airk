@@ -677,6 +677,291 @@ fn a_combined_member_answer_stays_within_its_partition() -> Result<()> {
     Ok(())
 }
 
+const EVIDENCE_QUESTION: &str = "where is `restart_guard` defined?";
+const GUARD: &str = "pub fn restart_guard() {\n    budget_refusal();\n}\n";
+const GUIDE: &str = "# Restart guard\nThe guard replays nothing.";
+const GUARD_PATH: &str = "crates/k/src/guard.rs";
+const GUIDE_PATH: &str = "docs/guard.md";
+
+/// 9,000 bytes of ASCII source: the guard, then filler lines.
+fn long_guard() -> String {
+    let mut text = String::from(GUARD);
+    while text.len() < 9000 {
+        text.push_str("// filler line\n");
+    }
+    text.truncate(9000);
+    text
+}
+
+/// One Answer to `EVIDENCE_QUESTION` over reads in which every search finds
+/// the same two hits (`guard` at the guard path, then the guide) and every
+/// other read finds nothing. Its part plans a definition and a callers
+/// sub-need of `restart_guard`, and both gather those two spans.
+fn answer_over_two_hits(
+    kernel: &crate::Kernel,
+    publication: &airk_core::evidence::RevisionEnvelope,
+    guard: &str,
+) -> Result<AnswerOutcome> {
+    kernel.answer(
+        request(EVIDENCE_QUESTION),
+        Instant::now() + Duration::from_secs(600),
+        &|| Ok(()),
+        &|tool, _, _| {
+            let mut body = json!({"publication":publication,"generation":1,
+                "collection":"fixture","truncated":false});
+            match tool {
+                "search" => {
+                    body["hits"] = json!([
+                        super::super::tests::hit(GUARD_PATH, 10, 40, guard),
+                        super::super::tests::hit(GUIDE_PATH, 1, 12, GUIDE)
+                    ]);
+                }
+                "symbols" | "references" | "outline" | "imports" => body["facts"] = json!([]),
+                _ => body["hits"] = json!([]),
+            }
+            Ok(body)
+        },
+    )
+}
+
+fn shown(
+    path: &str,
+    lines: (usize, usize),
+    excerpt: &str,
+    cut_bytes: usize,
+) -> airk_core::native_loop::CardEvidence {
+    airk_core::native_loop::CardEvidence {
+        path: path.into(),
+        start_line: lines.0,
+        end_line: lines.1,
+        focus: None,
+        excerpt: excerpt.into(),
+        cut_bytes,
+    }
+}
+
+/// The first Coverage card call: the part's two sub-needs in one call.
+fn coverage_call(requests: &[NativeCardRequest]) -> Result<&NativeCardRequest> {
+    let call = requests
+        .iter()
+        .find(|request| request.task == airk_core::arbiter::Task::ContextCoverage)
+        .context("a Coverage card call")?;
+    assert_eq!(
+        call.segments
+            .iter()
+            .map(|segment| (segment.part, segment.need, segment.round))
+            .collect::<Vec<_>>(),
+        [(1, 1, 1), (1, 2, 1)]
+    );
+    Ok(call)
+}
+
+/// A byte range of one hit of the sub-needs' own search, as the log names it.
+fn search_unit(
+    outcome: &AnswerOutcome,
+    hit: usize,
+    range: (usize, usize),
+) -> Result<airk_core::arbiter::context_action::EvidenceRef> {
+    let record = outcome
+        .custody
+        .records
+        .iter()
+        .find(|record| {
+            record.tool == "search"
+                && record.arguments["query"] == "restart_guard"
+                && record.arguments["full_chunks"] == false
+        })
+        .context("the sub-needs' own search")?;
+    Ok(airk_core::arbiter::context_action::EvidenceRef {
+        record: record.id,
+        kind: airk_core::arbiter::context_action::SourceUnitKind::Hit,
+        result_pointer: format!("/hits/{hit}"),
+        utf8_start: range.0,
+        utf8_end: range.1,
+    })
+}
+
+#[test]
+fn coverage_calls_show_each_sub_need_its_spans_and_log_what_was_shown() -> Result<()> {
+    let (fixture, scorer) = scored(Mode::Accept)?;
+    let outcome = answer_over_two_hits(&fixture.kernel, &fixture.publication, GUARD)?;
+    let requests = scorer.requests.lock().unwrap();
+    let call = coverage_call(&requests)?;
+    assert_eq!(call.remaining_input_tokens, 8192);
+    // The model is told what kind of sub-need each roster judges.
+    assert_eq!(
+        call.segments
+            .iter()
+            .map(|segment| segment.subject.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "need definition: restart_guard",
+            "need callers: restart_guard"
+        ]
+    );
+    // Both spans fit the allowance whole, in gathered order (no Focus ran).
+    let whole = [
+        shown(GUARD_PATH, (10, 40), GUARD, 0),
+        shown(GUIDE_PATH, (1, 12), GUIDE, 0),
+    ];
+    for segment in &call.segments {
+        assert_eq!(segment.evidence, whole, "sub-need {}", segment.need);
+        assert_eq!(
+            segment.cards[0].text,
+            format!(
+                "s{} covered: crates/k/src/guard.rs:10-40, docs/guard.md:1-12",
+                segment.need
+            ),
+            "the Covered card cites the same locations"
+        );
+        let entry = &outcome.custody.log.entries[usize::from(segment.ordinal) - 1];
+        assert_eq!(entry.decision.stage, v3::LoopStage::Coverage);
+        assert_eq!(entry.decision.need, Some(segment.need));
+        assert_eq!(
+            entry.basis,
+            [
+                search_unit(&outcome, 0, (0, 49))?,
+                search_unit(&outcome, 1, (0, 42))?
+            ]
+        );
+        assert!(entry.basis_omitted.is_empty());
+        assert_eq!(
+            (entry.decision.basis.presented, entry.decision.basis.omitted),
+            (2, 0)
+        );
+    }
+    // No other stage's roster carries evidence.
+    assert!(
+        requests
+            .iter()
+            .filter(|request| request.task != airk_core::arbiter::Task::ContextCoverage)
+            .all(|request| request
+                .segments
+                .iter()
+                .all(|segment| segment.evidence.is_empty()))
+    );
+    assert!(
+        requests
+            .iter()
+            .any(|request| request.task == airk_core::arbiter::Task::ContextFollowUp),
+        "a Follow-up call ran"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_long_span_is_cut_to_the_excerpt_allowance_and_the_log_names_the_cut() -> Result<()> {
+    let long = long_guard();
+    let (fixture, scorer) = scored(Mode::Accept)?;
+    let outcome = answer_over_two_hits(&fixture.kernel, &fixture.publication, &long)?;
+    let requests = scorer.requests.lock().unwrap();
+    let call = coverage_call(&requests)?;
+    // 8,192 reserved tokens leave 6,144 excerpt bytes for the call's four
+    // spans, 1,536 each. The two 42-byte guide spans leave 2,988 over, which
+    // go to the first cut span: 1,536 + 2,988 = 4,524 of its 9,000 bytes.
+    assert_eq!(call.remaining_input_tokens, 8192);
+    assert_eq!(
+        call.segments[0].evidence,
+        [
+            shown(GUARD_PATH, (10, 40), &long[..4524], 4476),
+            shown(GUIDE_PATH, (1, 12), GUIDE, 0),
+        ]
+    );
+    assert_eq!(
+        call.segments[1].evidence,
+        [
+            shown(GUARD_PATH, (10, 40), &long[..1536], 7464),
+            shown(GUIDE_PATH, (1, 12), GUIDE, 0),
+        ]
+    );
+    let total: usize = call
+        .segments
+        .iter()
+        .flat_map(|segment| &segment.evidence)
+        .map(|evidence| evidence.excerpt.len())
+        .sum();
+    assert_eq!(total, 6144, "exactly the allowance");
+    // The log names the ranges shown, and the cut tails as omitted.
+    for (segment, cut) in call.segments.iter().zip([4524, 1536]) {
+        let entry = &outcome.custody.log.entries[usize::from(segment.ordinal) - 1];
+        assert_eq!(
+            entry.basis,
+            [
+                search_unit(&outcome, 0, (0, cut))?,
+                search_unit(&outcome, 1, (0, 42))?
+            ]
+        );
+        assert_eq!(
+            entry.basis_omitted,
+            [search_unit(&outcome, 0, (cut, 9000))?]
+        );
+        assert_eq!(
+            (entry.decision.basis.presented, entry.decision.basis.omitted),
+            (2, 1)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn evidence_carries_each_span_s_focus_score_in_rank_order() -> Result<()> {
+    let (fixture, scorer) = scored_with(Mode::Accept, true)?;
+    answer_over_two_hits(&fixture.kernel, &fixture.publication, GUARD)?;
+    let requests = scorer.requests.lock().unwrap();
+    let call = coverage_call(&requests)?;
+    for segment in &call.segments {
+        let focus: Vec<f32> = segment
+            .evidence
+            .iter()
+            .map(|evidence| evidence.focus.context("Focus scored every span"))
+            .collect::<Result<_>>()?;
+        assert_eq!(focus.len(), 2);
+        assert!(focus[0] >= focus[1], "{focus:?}");
+        assert!(focus.iter().all(|score| (0.0..=1.0).contains(score)));
+    }
+    Ok(())
+}
+
+/// The deterministic path builds no excerpt: its decisions rest on the whole
+/// spans, as before, however long they are.
+#[test]
+fn without_a_model_the_log_names_whole_spans_and_nothing_is_cut() -> Result<()> {
+    let long = long_guard();
+    let fixture = super::super::tests::fixture()?;
+    let outcome = answer_over_two_hits(&fixture.kernel, &fixture.publication, &long)?;
+    let log = &outcome.custody.log;
+    assert!(log.receipts.is_empty(), "no card call was made");
+    let coverage: Vec<_> = log
+        .entries
+        .iter()
+        .filter(|entry| {
+            entry.decision.stage == v3::LoopStage::Coverage && entry.decision.round == Some(1)
+        })
+        .collect();
+    assert_eq!(coverage.len(), 2, "one decision a sub-need");
+    for entry in coverage {
+        assert!(matches!(
+            entry.decision.source,
+            v3::DecisionSource::Deterministic {
+                rule: v3::DeterministicRule::TopFocusSpan
+            }
+        ));
+        assert_eq!(
+            entry.basis,
+            [
+                search_unit(&outcome, 0, (0, 9000))?,
+                search_unit(&outcome, 1, (0, 42))?
+            ]
+        );
+        assert!(entry.basis_omitted.is_empty());
+        assert_eq!(
+            (entry.decision.basis.presented, entry.decision.basis.omitted),
+            (2, 0)
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn top_score_plan_is_accepted_when_the_reference_card_scores_highest() -> Result<()> {
     // In Accept mode every roster's last card scores highest; for Plan that

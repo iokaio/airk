@@ -57,6 +57,7 @@ fn coverage(ordinal: u8, need: u8) -> CardSegment {
             ),
         ],
         multiple: false,
+        evidence: vec![],
     }
 }
 fn plan() -> CardSegment {
@@ -75,6 +76,7 @@ fn plan() -> CardSegment {
             card("D", CardClass::PlanNeed, "no further sub-need"),
         ],
         multiple: true,
+        evidence: vec![],
     }
 }
 fn calibration(task: Task, rules: Vec<LoopRule>) -> Result<LoopCalibration> {

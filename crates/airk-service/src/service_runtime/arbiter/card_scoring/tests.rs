@@ -34,6 +34,7 @@ fn coverage(ordinal: u8, need: u8) -> CardSegment {
             ),
         ],
         multiple: false,
+        evidence: vec![],
     }
 }
 fn plan() -> CardSegment {
@@ -51,6 +52,7 @@ fn plan() -> CardSegment {
             card("C", CardClass::PlanNeed, "no further sub-need"),
         ],
         multiple: true,
+        evidence: vec![],
     }
 }
 fn advice(segments: &[CardSegment]) -> CardAdvice {

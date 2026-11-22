@@ -7,7 +7,8 @@
 use super::gather::{Gathering, Record};
 use super::retrieve::{Need, NeedKind};
 use super::*;
-use airk_core::native_loop::LoopCard;
+use airk_core::arbiter::context_action::{EvidenceRef, SourceUnitKind};
+use airk_core::native_loop::{CardEvidence, LoopCard};
 use software::{FollowUp, Shape};
 
 /// Spans per sub-need and round scored by Focus.
@@ -347,6 +348,87 @@ pub(crate) fn cards(need: u8, spans: &[Span], alternatives: &[Alternative]) -> V
         });
     }
     out
+}
+
+/// How many bytes of each span's text one card call shows. `texts` are the
+/// spans of every sub-need in the call, in call order (segment order, then
+/// Focus rank), and `allowance` is the call's excerpt bytes
+/// (`native_loop::evidence_allowance` of its token reservation). Every span
+/// first gets an equal share; what the shorter texts leave goes to the cut
+/// ones in call order. Each length then moves back to a character boundary.
+/// The result depends only on the texts, their order and the allowance.
+pub(crate) fn excerpt_cuts(texts: &[&str], allowance: usize) -> Vec<usize> {
+    if texts.is_empty() {
+        return vec![];
+    }
+    let share = allowance / texts.len();
+    let mut cuts: Vec<usize> = texts.iter().map(|text| text.len().min(share)).collect();
+    let mut left = allowance - cuts.iter().sum::<usize>();
+    for (cut, text) in cuts.iter_mut().zip(texts) {
+        let more = (text.len() - *cut).min(left);
+        *cut += more;
+        left -= more;
+    }
+    for (cut, text) in cuts.iter_mut().zip(texts) {
+        while !text.is_char_boundary(*cut) {
+            *cut -= 1;
+        }
+    }
+    cuts
+}
+
+/// What one card call shows of one sub-need's spans: the excerpts its roster
+/// carries, and the decision log's account of them. A shown span is logged
+/// as the byte range of its excerpt; the tail a cut removed, and a span not
+/// shown at all, are logged as omitted.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct Shown {
+    pub(crate) evidence: Vec<CardEvidence>,
+    pub(crate) presented: Vec<EvidenceRef>,
+    pub(crate) omitted: Vec<EvidenceRef>,
+}
+
+/// The excerpts of one card call: each sub-need's ranked spans, cut to the
+/// call's excerpt allowance. The texts are those of records already read and
+/// retained under the Answer's revision fence; nothing is read here.
+pub(crate) fn present(gather: &Gathering, needs: &[&[Span]], allowance: usize) -> Vec<Shown> {
+    let texts: Vec<&str> = needs
+        .iter()
+        .flat_map(|spans| spans.iter().map(|span| span.hit.text.as_str()))
+        .collect();
+    let mut cuts = excerpt_cuts(&texts, allowance).into_iter();
+    needs
+        .iter()
+        .map(|spans| {
+            let mut shown = Shown::default();
+            for span in *spans {
+                let cut = cuts.next().unwrap_or(0);
+                let text = &span.hit.text;
+                let unit = |utf8_start, utf8_end| EvidenceRef {
+                    record: gather.records[span.record].id,
+                    kind: SourceUnitKind::Hit,
+                    result_pointer: span.pointer.clone(),
+                    utf8_start,
+                    utf8_end,
+                };
+                if cut > 0 {
+                    shown.evidence.push(CardEvidence {
+                        path: span.hit.citation.path.clone(),
+                        start_line: span.hit.citation.start_line,
+                        end_line: span.hit.citation.end_line,
+                        focus: span.focus,
+                        excerpt: text[..cut].to_owned(),
+                        cut_bytes: text.len() - cut,
+                    });
+                    shown.presented.push(unit(0, cut));
+                }
+                if cut < text.len() {
+                    shown.omitted.push(unit(cut, text.len()));
+                }
+            }
+            shown
+        })
+        .collect()
 }
 
 /// The questions and spans of one batched Focus call. Each sub-need's query

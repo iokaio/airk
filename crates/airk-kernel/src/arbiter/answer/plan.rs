@@ -287,6 +287,19 @@ pub(crate) fn deterministic(proposals: &[Proposal], max_sub_needs: usize) -> Vec
         .collect()
 }
 
+/// A sub-need in words: its kind, its query and, when it differs, its
+/// subject. A Plan card proposes a sub-need in this wording, and a Coverage
+/// roster names the sub-need it judges the same way, so the model is told
+/// what kind of evidence the sub-need asks for.
+pub(crate) fn wording(kind: NeedKind, subject: Option<&str>, query: &str) -> String {
+    match subject {
+        Some(subject) if subject != query => {
+            format!("need {}: {query} (subject {subject})", kind.name())
+        }
+        _ => format!("need {}: {query}", kind.name()),
+    }
+}
+
 /// The roster: one card per proposal, then the reference card.
 pub(crate) fn cards(proposals: &[Proposal]) -> Vec<LoopCard> {
     let symbols = ["A", "B", "C", "D", "E", "F", "G", "H"];
@@ -296,14 +309,7 @@ pub(crate) fn cards(proposals: &[Proposal]) -> Vec<LoopCard> {
         .map(|(index, proposal)| LoopCard {
             symbol: symbols[index].into(),
             class: v3::CardClass::PlanNeed,
-            text: match &proposal.subject {
-                Some(subject) if *subject != proposal.query => format!(
-                    "need {}: {} (subject {subject})",
-                    proposal.kind.name(),
-                    proposal.query
-                ),
-                _ => format!("need {}: {}", proposal.kind.name(), proposal.query),
-            },
+            text: wording(proposal.kind, proposal.subject.as_deref(), &proposal.query),
             partition: vec![],
         })
         .chain(std::iter::once(LoopCard {

@@ -195,6 +195,55 @@ impl LoopCard {
     }
 }
 
+/// Tokens of a card call's reservation kept for the model view around its
+/// evidence: the prompt frame, the question, subjects, locations and cards.
+/// A two-sub-need Coverage call with eight cards and eight located spans was
+/// measured at about half of this.
+pub const CARD_FRAME_TOKENS: usize = 2048;
+
+/// The excerpt bytes one card call may present under its token reservation:
+/// one byte for each reserved token above the frame. At the 8,192-token
+/// reservation that is 6,144 bytes, 768 for each of eight spans. The Context
+/// tokenizers are byte-level, so text needs at most one token a byte before
+/// the model view quotes it; a call whose compiled input still passes its
+/// reservation is refused by the native lane before any model work.
+pub fn evidence_allowance(reserved_input_tokens: usize) -> usize {
+    reserved_input_tokens.saturating_sub(CARD_FRAME_TOKENS)
+}
+
+/// One span gathered for a sub-need, as a Coverage roster shows it: its
+/// location, its Focus relevance when Focus scored it, and the start of its
+/// text.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CardEvidence {
+    pub path: String,
+    pub start_line: usize,
+    pub end_line: usize,
+    /// Absent when Focus did not score the span.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focus: Option<f32>,
+    /// The first bytes of the span's text, cut on a character boundary.
+    pub excerpt: String,
+    /// Bytes of the span's text after the excerpt, which are not shown.
+    pub cut_bytes: usize,
+}
+impl CardEvidence {
+    fn validate(&self) -> Result<()> {
+        ensure!(
+            !self.path.is_empty()
+                && self.path.len() <= 4096
+                && self.start_line > 0
+                && self.end_line >= self.start_line
+                && !self.excerpt.is_empty()
+                && self.cut_bytes <= crate::arbiter::answer_loop::MAX_RETENTION_BYTES
+                && self.focus.is_none_or(|focus| (0.0..=1.0).contains(&focus)),
+            "invalid card segment evidence"
+        );
+        Ok(())
+    }
+}
+
 /// One roster of a batched card call, answering one decision.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -215,6 +264,11 @@ pub struct CardSegment {
     pub cards: Vec<LoopCard>,
     /// Several cards may be chosen (Plan only).
     pub multiple: bool,
+    /// Excerpts of the spans gathered for the sub-need, in Focus rank order
+    /// (Coverage only). Empty when the sub-need has no span, or when the
+    /// call's token reservation leaves no room for one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence: Vec<CardEvidence>,
 }
 impl CardSegment {
     /// The same roster digest the decision log recomputes from its records.
@@ -271,6 +325,23 @@ impl CardSegment {
                     "only Split cards carry a partition"
                 ),
             }
+        }
+        // Evidence is in Focus rank order: scored spans by falling relevance,
+        // then the spans Focus did not score.
+        ensure!(
+            (self.stage == LoopStage::Coverage || self.evidence.is_empty())
+                && self.evidence.len() <= MAX_ACTION_CARDS
+                && self.evidence.windows(2).all(|pair| {
+                    match (pair[0].focus, pair[1].focus) {
+                        (Some(higher), Some(lower)) => higher >= lower,
+                        (None, Some(_)) => false,
+                        _ => true,
+                    }
+                }),
+            "only Coverage segments carry evidence, at most eight spans in Focus rank order"
+        );
+        for evidence in &self.evidence {
+            evidence.validate()?;
         }
         Ok(())
     }
@@ -358,6 +429,16 @@ impl NativeCardRequest {
                     .iter()
                     .any(|charge| segment.part == charge.part && segment.round == charge.round)),
             "native card token attribution differs from its segments or reservation"
+        );
+        let excerpt_bytes: usize = self
+            .segments
+            .iter()
+            .flat_map(|segment| &segment.evidence)
+            .map(|evidence| evidence.excerpt.len())
+            .sum();
+        ensure!(
+            excerpt_bytes <= evidence_allowance(self.remaining_input_tokens),
+            "native card evidence exceeds the excerpt allowance of its token reservation"
         );
         ensure!(
             (1..=MAX_DEADLINE_MS).contains(&self.remaining_ms)

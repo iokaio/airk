@@ -7,6 +7,12 @@ Maintained evaluation and independent reference recipes live here. Private input
 [runtime_row_replay](runtime_row_replay/README.md) reproduces the inverse-replay
 proof of the L4 `runtime.rs` movement from Git history; it is read-only.
 
+## Card excerpt token cost
+
+[card_excerpt_tokens](card_excerpt_tokens/README.md) measures, with a profile's
+tokenizer, how many tokens the Answer loop's Coverage evidence excerpts need a
+byte and how large a whole Coverage card call is; it is read-only.
+
 ## Private Windows Compact FP32 Answer comparison
 
 Run the paired fixture on an idle Windows host from the checked human

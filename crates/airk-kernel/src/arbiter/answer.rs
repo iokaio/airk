@@ -366,6 +366,7 @@ impl Loop<'_> {
                 cards,
                 subject: question.to_owned(),
                 basis: vec![],
+                spans: vec![],
                 fallback: vec![plan.deterministic],
                 rule: v3::DeterministicRule::ExplicitBreaks,
             }],
@@ -420,6 +421,7 @@ impl Loop<'_> {
                     cards,
                     subject: self.parts[index].text.clone(),
                     basis: vec![],
+                    spans: vec![],
                     fallback: fallback.clone(),
                     rule: v3::DeterministicRule::EveryProposedNeed,
                 }],
@@ -1033,8 +1035,13 @@ impl Loop<'_> {
                 segs.push(model::Seg {
                     at: decide::At::need(v3::LoopStage::Coverage, id, need, round),
                     cards: roster,
-                    subject: state.need.query.clone(),
+                    subject: plan::wording(
+                        state.need.kind,
+                        state.need.subject.as_deref(),
+                        &state.need.query,
+                    ),
                     basis: self.spans_basis(&assessed.spans),
+                    spans: assessed.spans.clone(),
                     fallback: vec![usize::from(!covered)],
                     rule: v3::DeterministicRule::TopFocusSpan,
                 });
@@ -1118,6 +1125,7 @@ impl Loop<'_> {
                         cards: follow::cards(need, &candidates, size),
                         subject: state.need.query.clone(),
                         basis: self.spans_basis(&state.spans),
+                        spans: vec![],
                         fallback: vec![0],
                         rule: v3::DeterministicRule::FirstExtractedTerm,
                     });

@@ -200,16 +200,38 @@ earlier values are not current: once when `NativeCardModel` joined
 `native_loop.rs`, and again in the review fixes (`9fea69ae`), when the
 choice-to-decision mapping moved into `loop_cards.rs`, Plan selection took
 `max_sub_needs`, and `NativeCardModel` moved out to
-`native_loop/card_model.rs`:
+`native_loop/card_model.rs`.
 
-| Task | Policy |
-| --- | --- |
-| Core loop semantics | `488496bcf1c6d6879400eeb7b61fbb4534ac787861f6f9bf142c3a3480a817d4` |
-| `airk.context_split.v1` | `ccea442cabb436794ae09f9fda204aa0359f08c1aba0d667099b65e9874a03ce` |
-| `airk.context_plan.v1` | `5d219860d09afdd727fb2e3da50fbc04d990e8462da1de400076850894548215` |
-| `airk.context_coverage.v1` | `c671150649dcd1deeb7e0b1d528182357f7eb1347cb728156256a027d15921fa` |
-| `airk.context_follow_up.v1` | `89809e2d8377aaa29a14c86d87d2243336e079a0b1cbf9e378498f45fa62de15` |
-| Batched Focus over the release pair policy | `50ba5c856d5f3ed81d86eacd62094de14599f56fcb39939126643758a7fae04a` |
+**Fourth move: Coverage evidence excerpts (recorded decision, 22 November
+2026; change log entry 43).** The values below are current.
+
+- **Why they moved:** two digest inputs changed. Core `native_loop.rs`
+  gained `CardEvidence`, the `evidence` field of `CardSegment`, their
+  validation and the excerpt allowance, which moves the Core loop semantics
+  digest and so every identity that hashes it. `loop_cards.rs`, hashed by
+  the four card policies, now renders the evidence into the Coverage view.
+- **What a Context model is shown changed for Coverage only.** Split, Plan
+  and Follow-up views are byte-identical to before; their identities moved
+  because they share the two inputs. Batched Focus ranking did not change;
+  its identity moved because it hashes the Core loop semantics.
+- **Proof that the old values no longer describe the source:** the control
+  `recorded_loop_policy_identities`, run on the changed source with the
+  values of `545c5025` still pinned, fails at the first identity (private
+  receipt `answer-loop/L4/int-nextest-2c-ids-old-pins.log`). The pins were
+  then moved to the values the source produces. No check was removed.
+- **What did not move:** `runtime.rs`, the closed CPU Focus row, the release
+  Focus pair policy and the one-turn Context policy. A profile that declares
+  the card tasks must be emitted with the new task policies; one emitted
+  with the old ones is refused at admission.
+
+| Identity | Before (`545c5025`) | Now |
+| --- | --- | --- |
+| Core loop semantics | `488496bcf1c6d6879400eeb7b61fbb4534ac787861f6f9bf142c3a3480a817d4` | `307cb4a31434224446ee3712207c0aacbb6ab71d1fa556058e0eba789f35bb50` |
+| `airk.context_split.v1` | `ccea442cabb436794ae09f9fda204aa0359f08c1aba0d667099b65e9874a03ce` | `fecca3cb9efebbe23abf2c9e029608fe377b07eed20acbe859c37e5c2c9f8377` |
+| `airk.context_plan.v1` | `5d219860d09afdd727fb2e3da50fbc04d990e8462da1de400076850894548215` | `487f22fdf94b0eabeb396184e7abc3cafc48ae6a826eeade9a91a19de84f1db5` |
+| `airk.context_coverage.v1` | `c671150649dcd1deeb7e0b1d528182357f7eb1347cb728156256a027d15921fa` | `846f1db0ae1af64921166cc29e872e1094b842606cf6824353e32204e8f4bf58` |
+| `airk.context_follow_up.v1` | `89809e2d8377aaa29a14c86d87d2243336e079a0b1cbf9e378498f45fa62de15` | `104b24bbda6baccb77609f1bbe1490f8c9beacc526c839ba920665c291f391b1` |
+| Batched Focus over the release pair policy | `50ba5c856d5f3ed81d86eacd62094de14599f56fcb39939126643758a7fae04a` | `19e8564765aaa68cad46fb08c287c22f78399657ab3e9e1ae345790b2dda0df4` |
 
 **Rosters.** Kernel code proposes every card; this owner never adds, drops
 or rewrites one. Before compile it checks each segment's shape beyond Core's
@@ -226,6 +248,26 @@ already binds each roster by `roster_digest`.
 `{task, segments: [{s, part, need, round, subject, cards}], rules}` of at most
 65,536 bytes, the stage question, and candidates `c1..c8` in call order with
 text `[s<k>] <card text>`. Machine identities never enter it.
+
+**Coverage evidence in the view (change log entry 43).** Before this change
+the Coverage view held no evidence text, although its question asks for the
+verdict "given only its shown evidence". Now every Coverage segment has an
+`evidence` list, in the request's order (Focus rank order, checked by Core):
+
+- each row is `{at, focus, text, cut}`: `at` is `path:start-end`, the form a
+  Covered card cites; `focus` is the span's relevance to three decimals, and
+  is absent when Focus did not score it; `text` is the excerpt; `cut` is the
+  bytes of the span's text left out, and is absent when nothing was cut;
+- a sub-need with no excerpt has `evidence: []`, so the view says there is no
+  text to judge by;
+- the Coverage `rules` text gains two sentences that explain the rows; the
+  other stages' views and rules are unchanged, and carry no `evidence` key;
+- the view shows what the request carries and never cuts or reorders it. The
+  kernel bounds the excerpts by the call's token reservation and Core
+  refuses a request above the allowance (Core arbiter contract, "Coverage
+  evidence excerpts").
+
+Card texts, rosters, selection and the decision mapping are unchanged.
 
 **Selection** (`loop_cards::select`), per segment from that segment's slice
 of the call's scores:

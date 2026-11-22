@@ -123,19 +123,21 @@ impl Ledger {
             cards,
             chosen,
             v3::DecisionSource::Deterministic { rule },
-            basis,
+            (basis, vec![]),
             None,
         )
     }
 
     /// Record one decision. `model` carries the facts of a model-scored one.
+    /// `basis` is the source units the decision was shown, then the ones (or
+    /// the cut tails of shown ones) a card call left out of its excerpts.
     pub(crate) fn record(
         &mut self,
         at: At,
         cards: &[LoopCard],
         chosen: &[usize],
         source: v3::DecisionSource,
-        basis: Vec<EvidenceRef>,
+        (basis, basis_omitted): (Vec<EvidenceRef>, Vec<EvidenceRef>),
         model: Option<ModelFacts>,
     ) -> Result<u8> {
         let ordinal = self.next_ordinal()?;
@@ -151,8 +153,8 @@ impl Ledger {
             .collect::<Result<Vec<_>>>()?;
         let basis_summary = v3::BasisSummary {
             presented: u16::try_from(basis.len())?,
-            omitted: 0,
-            digest: v3::basis_digest(&basis, &[])?,
+            omitted: u16::try_from(basis_omitted.len())?,
+            digest: v3::basis_digest(&basis, &basis_omitted)?,
         };
         let facts = model.clone().unwrap_or_default();
         let mut sorted = facts.scores.clone();
@@ -195,7 +197,7 @@ impl Ledger {
             scores: facts.scores,
             chosen: chosen.iter().map(|index| *index as u8).collect(),
             basis,
-            basis_omitted: vec![],
+            basis_omitted,
         });
         Ok(ordinal)
     }
