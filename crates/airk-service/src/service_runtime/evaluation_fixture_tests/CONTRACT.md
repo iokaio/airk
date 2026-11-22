@@ -98,7 +98,16 @@ claims release qualification.
   roster stays the restart identity. A lifetime may switch between the two
   entries through ordinary Configure; the selector itself does not issue such
   a switch, and no GPU lifetime has run one yet (owner: the LG preparation
-  run). Closed (L5C review M3): the first version accepted a receipt whose CPU
+  run). The harness side exists: `scripts/arbiter-answer-eval/cuda_pair.py`
+  builds hard-linked, authenticated asset directories (no model byte copied)
+  and the pinned roster, review list and adapter. `gpu_fixture.py --model pair`
+  starts the lifetime and records the pair's profile rows, so
+  `stage --disable/--enable` and `run_plan.py` `switch_context` name both
+  entries in one lifetime. The CUDA rows must be the post-L4 re-emitted FP16
+  profiles with the four card tasks (procedure in `GPU_FIXTURE.md`).
+  This seam attaches Context entries only: a CUDA Focus row is refused, as a
+  manifest outside the lifetime's Ready, and Focus runs on the CPU (open gap;
+  owner: the L5 phase C implementer). Closed (L5C review M3): the first version accepted a receipt whose CPU
   payload check had failed, or a receipt of another profile of the same model.
   Both are now refused (`review_pin_tests`, 2 tests); the ignored `l5c_switch`
   selector applies the same rule and needs `L5C_<MODEL>_PASS1_PROFILE_SHA256`.

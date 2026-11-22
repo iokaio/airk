@@ -6,7 +6,8 @@ reuses it unchanged and runs one lifetime on the CUDA selector
 ``cuda_answer::same_install::actual_private_arbiter_fixture_cuda_same_install``.
 That selector reopens the same installation as the CPU selector (same control
 root, catalog, CPU weights and indexes) and adds one CUDA Context profile,
-Compact or Large, to the evaluation catalog only. Its weights are read from
+Compact or Large, to the evaluation catalog only (or both with `--model pair`,
+switched by `stage`; see cuda_pair.py). Its weights are read from
 the pinned roster's files and never copied into the installation.
 
 Commands: ``start`` (blocks for the lifetime), ``stage`` (CPU or CUDA
@@ -109,6 +110,49 @@ def profiles():
     return merged
 
 
+PAIR = "pair"
+PAIR_SCHEMA = "airk.private.answer-eval-cuda-pair/1"
+
+
+def read_pair(path, digest):
+    """The pinned two-entry inputs written by cuda_pair.py pair (plan 12.5.2 item 4)."""
+    pair = read_json(FX.pin({"path": str(path), "sha256": digest}))
+    require(pair.get("schema") == PAIR_SCHEMA, "not a CUDA pair spec")
+    FX.pin(pair["roster"])
+    require(1 <= len(pair["reviews"]) <= 2 and all(set(r) == {"path", "sha256", "profile_sha256"}
+                                                   for r in pair["reviews"]), "one review pin per CUDA entry")
+    for review in pair["reviews"]:
+        FX.pin(review)
+    uuid = pair["adapter_uuid"]
+    require(isinstance(uuid, list) and len(uuid) == 16 and any(uuid), "the pair names no adapter")
+    for name, row in pair["profiles"].items():
+        require(name not in FX.PROFILES and row["device"] == "cuda" and row["stage"] in ("focus", "context")
+                and len(row["manifest"]) == 64, f"pair row {name} must be a new CUDA name with a manifest")
+    return pair
+
+
+def pair_environment(path, digest, seed=None):
+    """Service variables of a two-entry lifetime: the roster, one review pin per entry, the adapter."""
+    pair = read_pair(path, digest)
+    env = {"AIRK_ARBITER_EVALUATION_CUDA_INPUTS": pair["roster"]["path"],
+           "AIRK_ARBITER_EVALUATION_CUDA_INPUTS_SHA256": pair["roster"]["sha256"],
+           "AIRK_ARBITER_EVALUATION_CUDA_REVIEWS": json.dumps(pair["reviews"]),
+           "AIRK_ARBITER_EVALUATION_CUDA_ADAPTER_UUID": json.dumps(pair["adapter_uuid"])}
+    if seed is not None:
+        require(seed in SEEDS, "seed is all, focus or none")
+        env["AIRK_ARBITER_EVALUATION_CUDA_SEED_CPU"] = seed
+    return env
+
+
+def lifetime_rows(life):
+    """The CUDA profile rows a lifetime was started with (gpu.json), so `stage` names them."""
+    path = Path(life) / "gpu.json"
+    if not path.is_file():
+        return {}
+    return {name: {key: row[key] for key in ("stage", "device", "manifest")}
+            for name, row in (read_json(path).get("cuda_rows") or {}).items()}
+
+
 def cuda_environment(model, seed=None):
     spec = MODELS[model]
     roster = FX.pin({"path": str(spec["roster"]), "sha256": spec["roster_sha256"]})
@@ -163,7 +207,10 @@ def worker(args):
         args.selector, args.answer_layers = "software-v2", None
         seed = None if args.restart_from else args.seed_cpu
         args.seed_cpu = None  # the same-install seed travels in its own variable below
-        FX.ENVIRONMENT.update(cuda_environment(args.model, seed))
+        if args.model == PAIR:
+            FX.ENVIRONMENT.update(pair_environment(args.pair, args.pair_sha256, seed))
+        else:
+            FX.ENVIRONMENT.update(cuda_environment(args.model, seed))
     if args.synthetic_root:
         FX.REPOSITORIES[SYNTHETIC] = Path(args.synthetic_root)
         FX.EXCLUSIONS[SYNTHETIC] = []
@@ -181,7 +228,14 @@ def start(args):
         require(repo in FX.REPOSITORIES or (repo == SYNTHETIC and args.synthetic_root), "unknown repository " + repo)
     images = FX.image_pins(Path(args.image))
     # Pins checked before launch.
-    if args.change_set_inputs:
+    pair = None
+    if args.model == PAIR:
+        require(bool(args.pair and args.pair_sha256) and not args.change_set_inputs,
+                "--model pair needs --pair and --pair-sha256, without change-set inputs")
+        pair = read_pair(args.pair, args.pair_sha256)
+        pair_environment(args.pair, args.pair_sha256, args.seed_cpu)
+        cs1 = None
+    elif args.change_set_inputs:
         cuda_environment(args.model)
         cs1 = cs1_environment(args)
     else:
@@ -192,13 +246,17 @@ def start(args):
         "schema": "airk.private.answer-eval-gpu-lifetime/1", "at": utc(), "model": args.model,
         "selector": CS1_SELECTOR if cs1 else SELECTOR, "change_set": cs1,
         "image": images, "seed_cpu": args.seed_cpu, "restart_from": args.restart_from,
-        "cuda": {k: str(v) for k, v in MODELS[args.model].items()},
+        "cuda": ({"pair": str(args.pair), "pair_sha256": args.pair_sha256} if pair
+                 else {k: str(v) for k, v in MODELS[args.model].items()}),
+        "cuda_rows": pair["profiles"] if pair else CUDA_PROFILES,
         "helpers": {"gpu_fixture.py": sha256(Path(__file__)), "fixture.py": sha256(HERE / "fixture.py"),
                     "evidence.py": sha256(HERE / "evidence.py")}})
     argv = [sys.executable, "-I", "-B", "-S", str(Path(__file__).resolve()), "--fixtures", str(fixtures),
             "worker", "--lifetime-path", str(life), "--image", str(Path(args.image).resolve()),
             "--inputs", str(args.inputs), "--inputs-sha256", args.inputs_sha256, "--seconds", str(args.seconds),
             "--repositories", ",".join(args.repositories), "--model", args.model]
+    if pair:
+        argv += ["--pair", str(Path(args.pair).resolve()), "--pair-sha256", args.pair_sha256]
     if args.restart_from:
         argv += ["--restart-from", args.restart_from]
     if args.seed_cpu:
@@ -232,6 +290,8 @@ def set_stage(life, handle, profile_name, enabled, repositories, seconds=900, ro
     `row` names a profile by manifest ({stage, device, manifest}), such as a change-set
     catalog-only profile or a CUDA provisional-read variant listed in this lifetime's Ready."""
     table = profiles()
+    # The lifetime's own CUDA rows (a pair's Compact, Large and any CUDA Focus row).
+    table.update(lifetime_rows(life))
     if row is not None:
         require(row["stage"] in ("focus", "context") and row["device"] in ("cpu", "cuda")
                 and len(row["manifest"]) == 64, "a manifest row names stage, device and manifest")
@@ -380,7 +440,10 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
 
     def lifetime_options(sub):
-        sub.add_argument("--model", choices=sorted(MODELS), required=True)
+        sub.add_argument("--model", choices=sorted([*MODELS, PAIR]), required=True)
+        # --model pair: the pinned two-entry inputs of cuda_pair.py pair.
+        sub.add_argument("--pair")
+        sub.add_argument("--pair-sha256")
         sub.add_argument("--inputs", default=str(FX.DEFAULT_INPUTS))
         sub.add_argument("--inputs-sha256", default=FX.DEFAULT_INPUTS_SHA256)
         sub.add_argument("--seconds", type=int, default=FX.MAX_SECONDS)

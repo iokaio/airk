@@ -688,3 +688,32 @@ Further entries are added as implementation proceeds.
   `context_absent` or `focus_absent`; naming the reload needs a typed
   unavailable reason and a matching degradation (entries 24 and 27). It was
   not folded into this change, which does not touch degradations.
+
+### 29. LG preparation: two-entry inputs by hard link, a pair launcher mode, and the re-emission procedure
+
+- **Step:** L5, LG preparation. It does not depend on L4's code.
+- **Asset directories by hard link, not copies:**
+  - `cuda_pair.py assets` links every declared asset of a profile into a
+    fresh directory, after checking each file's size and SHA-256 against the
+    profile.
+  - The Compact and Large FP16 directories (7 assets each) were built with 0
+    bytes copied. D: free space stayed at 1,111,712,440,320 bytes.
+  - The plan's disk estimate had assumed about 11.5 GB of copies.
+- **Pair launcher mode:**
+  - `cuda_pair.py pair` writes the roster, the review pins and the profile
+    rows. It applies the review rule of entry 27 again.
+  - `gpu_fixture.py --model pair` starts a lifetime with both entries.
+  - `stage` resolves the lifetime's own rows by name, so `run_plan.py`
+    `switch_context` switches Compact and Large in one lifetime.
+  - Tests: `test_cuda_pair.py` (7). The existing `test_gpu_fixture.py` (7)
+    and `test_harness.py` (75) still pass.
+- **Gap, CUDA Focus:** the service seam attaches Context entries only, so a
+  CUDA Focus row is refused and Focus runs on the CPU. Owner: the L5 phase C
+  implementer; closing it needs a GPU run.
+- **Re-emission:** the exact procedure for the FP16 profiles with the four
+  card tasks (`admit_loop_tasks`) once L4 integrates is in `GPU_FIXTURE.md`,
+  section "Re-emitting the FP16 profiles for the loop". It adds a test-only
+  `L5A_LOOP_TASKS=1` switch to the emitter, so no digest-input file moves.
+  It then needs a new pass-1 graph run and a confirmation on the GPU.
+- **Built so far:** `pair-r1` names the pre-L4 profiles. It proves the tooling
+  on the real files and is rebuilt after the re-emission.

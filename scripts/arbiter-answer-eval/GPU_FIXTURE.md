@@ -133,19 +133,146 @@ variant inputs and pin, and manifest `9bc9831e…a5e1`. Run one CUDA model per
 lifetime. Disable the CUDA stage before `stop`, so the next CPU lifetime starts
 from a CPU selection.
 
+## Two CUDA Context entries in one lifetime (`--model pair`)
+
+Plan 12.5.2 item 4 and the LG gate: Compact and Large on CUDA in one lifetime,
+on one installation and one set of indexes. The Context model is switched by
+ordinary Configure: `stage --disable` for the live entry, then `stage --enable`
+for the other. The service warm releases the old model before it loads the new
+one. `run_plan.py`'s `switch_context` hook issues exactly those two commands.
+
+### Inputs (`cuda_pair.py`)
+
+1. **One asset directory per profile.** `cuda_pair.py assets` hard-links every
+   declared asset from the profile's asset map into a fresh directory. It
+   authenticates each file first, against the profile's declared size and
+   SHA-256. It copies no model byte and writes `<dir>.receipt.json` beside the
+   directory. Every source must be on the same volume, under `artifacts`.
+   Pass `--artifacts D:\code\Github\airk\artifacts` when running from a
+   worktree inside the main tree.
+2. **One entry file per CUDA Context profile**, with these fields:
+   - `profile`, `profile_sha256`;
+   - `assets` (the directory from step 1);
+   - `review`, `review_sha256` (the pass-1 graph diagnostic receipt);
+   - `pass1_profile_sha256` (the pass-1 profile that receipt reviewed).
+3. **The pair.** `cuda_pair.py pair --entry NAME=ENTRY.json ... [--row NAME=STAGE:MANIFEST ...] --out DIR`
+   writes `roster.json` and `pair.json`.
+   - It re-authenticates every asset and the review: complete, CPU payload
+     check null, no errors, the pinned pass-1 profile, the same id, model and
+     device execution except `placement` and `memory`, and a placement that
+     names the review's policy.
+   - It refuses two entries of one model and entries on different adapters.
+   - `pair.json` carries the roster pin, the review pins
+     (`AIRK_ARBITER_EVALUATION_CUDA_REVIEWS`), the adapter and the profile
+     rows by name.
+
+### Use
+
+```text
+%PY% start --image <dir> --lifetime <name> --model pair --pair <DIR>\pair.json --pair-sha256 <sha> --restart-from <prior>
+%PY% stage --lifetime <name> --profile context-compact-fp16-cuda --enable
+%PY% stage --lifetime <name> --profile context-compact-fp16-cuda --disable
+%PY% stage --lifetime <name> --profile context-large-fp16-cuda --enable
+```
+
+The lifetime's `gpu.json` records the pair's rows as `cuda_rows`. `stage`
+resolves a profile name from the CPU rows, the single-model CUDA rows and these
+lifetime rows, so the names in a `run_plan.py` `switch_context` step work
+unchanged. A `--row` adds a CUDA Focus (or other) row by name and manifest.
+
+**Gap: CUDA Focus.** The service's private CUDA seam attaches Context entries
+only. A CUDA Focus manifest is not in the lifetime's Ready, so `stage` on a
+CUDA Focus row refuses ("profile is not part of this fixture installation"), and Focus runs on the
+CPU. Owner: the L5 phase C implementer. Closing it needs a Focus entry in the
+seam, warmed under the probe binding, and its GPU validation.
+
+### Built so far (22 November 2026, pre-L4 identities)
+
+Under `R\answer-loop\L5C\lg-inputs\` there are hard links only (0 bytes
+copied, D: free unchanged at 1,111,712,440,320 bytes):
+
+| Item | Value |
+| --- | --- |
+| `compact-fp16-assets` | 7 assets; receipt SHA `c15ce4eb4bd3edd9c8ba260e74e331dce42fbc88fd23c7372af6aee6789e431f` |
+| `large-fp16-assets` | 7 assets; receipt SHA `456e401ec5de39447350691a1aa259a345363598babfe5eabc8dfa78d40f226d` |
+| `pair-r1/pair.json` | `d42a000cf353305445a3a9db7d7665b6913369b5bf523bb3ee69a949ea46391c` (roster `e98faf31e1f4a2dec3a5d3e9e382052aa20bc582375158334bb324604832aac6`) |
+
+These name the L5 FP16 profiles, which stop opening once L4's `runtime.rs`
+change integrates. They prove the tooling on the real files. After the
+re-emission below, they are rebuilt with the new profiles. The weight links
+are unchanged; only the profile and the calibration asset change.
+
+### Re-emitting the FP16 profiles for the loop (run when L4 integrates)
+
+L4 moves `runtime.rs` (to `c9008eef…`). That file is an input of the FP16
+math-policy digest, so the G5 and protected-MHA identities and every
+bounded-context policy move, and both FP16 profiles must be emitted again.
+They must also declare the four card tasks through
+`airk_retrieval::arbiter::runtime::admit_loop_tasks`. That function replaces
+the JointCalibration with a zero-rule `LoopCalibrationSet` and sets the
+Calibration asset and the `calibration` digest.
+
+**Code step.** In `crates/airk-retrieval/tests/cuda_l5a_diagnostics.rs`
+`l5a_prepare`, protected branch, add an opt-in `L5A_LOOP_TASKS=1`:
+1. after `prepare_protected_mha_profile` returns, call
+   `admit_loop_tasks(&mut profile)`;
+2. take the returned bytes as the calibration bytes, under the same asset
+   name;
+3. recompute the manifest under a distinct domain,
+   `airk.private.cuda-protected-mha-loop-profile/1`, over the base manifest,
+   the runtime-manifest SHA and the loop profile with its manifest zeroed;
+4. run `profile.validate()` and `validate_selected_policies`.
+
+The edit is in a test file only, so no digest-input file moves. Pass 1 needs
+the same switch, because the bounded policy is computed over the emitted
+profile.
+
+**Steps.** Per model, as the Cargo owner and then the GPU owner, with the
+image staged beside the CUDA payload (`cu15\gpu-provider-stage`):
+
+1. Build:
+   `cargo test -p airk-retrieval --features gpu-cuda,test-support --test cuda_l5a_diagnostics --locked --offline --timings --no-run`.
+2. Pass 1 (metadata only), `l5a_prepare` with:
+   - `L5A_PRECISION=protected`, `L5A_LOOP_TASKS=1`;
+   - `L5A_CPU_PROFILE` and `L5A_ASSET_MAP` from `L5A\inputs` (Compact
+     `compact-cpu-profile.json` `571de801…`, `compact-cpu-asset-map.json`
+     `a0f909ba…`; Large `large-cpu-profile.json` `7a444c76…`,
+     `large-cpu-asset-map.json` `3797800f…`);
+   - `L5A_RUNTIME_MANIFEST=...\gpu-provider-stage\airk-cuda-runtime.json`
+     (`94337535…`);
+   - `L5A_FP16_MODEL` and `L5A_FP16_WEIGHTS` from the final asset maps
+     (`compact-cutlass-protected-staged-r1`, and
+     `large-direct-fp32-stage-r2\model.onnx` with
+     `large-fp16-conversion-owned-r5\candidate\weights.bin`);
+   - `L5A_MEASUREMENT` and `L5A_MEASUREMENT_RECEIPT` as in the final
+     prepare receipts (Compact receipt `phaseB\runs\b6-compact-pass2-strict.json`
+     `82c2b345…`; Large `review\runs\large-final-confirm.json` `cdc627f8…`);
+   - `L5A_PLAN` (Compact `8589934592,3221225472,2147483648`; Large
+     `19327352832,8589934592,2147483648`);
+   - a fresh `L5A_OUTPUT`.
+3. Pass-1 graph diagnostic on the GPU: `l5a_gpu` with `L5A_STEP=graph` and
+   `ORT_ENABLE_ATTENTION_KERNEL_DEBUG_INFO=1`. Its receipt's
+   `bounded_policy` is the new review pin. It must have a null
+   `cpu_payload_check`.
+4. Pass 2: `l5a_prepare` again with `L5A_POLICY=<bounded_policy>`.
+5. Confirm on the GPU: `l5a_gpu` with `L5A_STEP=strict` and debug 0. Then
+   replay with `l5a_replay` against the new review receipt, and compare
+   with `l5a_replay_compare.py`.
+6. Rebuild the inputs: `cuda_pair.py assets` for each new profile (new
+   directories), then the entry files (pass-1 SHA = step 2's
+   `profile.json`), then `cuda_pair.py pair`.
+7. Build the fixture image:
+   `cargo test -p airk-service -p airk-kernel --lib --all-features --no-run`,
+   staged like `cs1e-cuda`. Then start `--model pair`.
+
 ## Tests
 
 From this folder: `python -I -B -m unittest discover -s . -p test_gpu_fixture.py`
-(synthetic data only; starts no service).
+and `-p test_cuda_pair.py` (synthetic data only; they start no service and use no GPU).
 
 ## Limits
 
-`gpu_fixture.py` starts one CUDA Context profile per lifetime. The selector
-itself accepts two (one Compact and one Large, plan 12.5.2 item 4): a two-entry
-CUDA roster plus `AIRK_ARBITER_EVALUATION_CUDA_REVIEWS`, one pinned pass-1
-graph diagnostic receipt per entry. Switching between them is an ordinary
-`stage --disable` / `stage --enable`, or a direct Configure: the warm releases
-the old model before it loads the new one. The launcher options for that mode
-are not written yet. Large on CUDA needs about 40 GiB of host reservation and
+`gpu_fixture.py` starts one CUDA Context profile per lifetime with `--model compact|large`,
+or two with `--model pair` (see above). Large on CUDA needs about 40 GiB of host reservation and
 a 44 GiB device envelope. Results describe this private
 image, driver and adapter, not the installed product.
