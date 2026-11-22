@@ -1388,6 +1388,36 @@ times per call.
 - **Platform order.** WebGPU for Radeon and macOS stays decision A3 and
   follows CUDA, with the same ladder.
 
+**Unloading idle models.** Today a loaded model stays resident until its
+stage is disabled, its profile changes, its device faults or the service
+stops; there is no idle timeout. Large holds about 17 GB of GPU memory and
+Compact about 9 GB, or up to 12 GiB of RAM on the CPU. Most users will run
+Compact on a desktop GPU they also use for other work, and agent use comes
+in bursts. So:
+
+1. **Default on, with a long timeout.** A stage's model unloads after 30
+   minutes with no Answer call, so a working session never sees a reload. A
+   setting changes the time, and 0 means never unload (for a dedicated
+   GPU).
+2. **Unload through the existing safe path.** The release and drain used
+   when a profile changes (`release_profile`) runs only when nothing for
+   that stage is queued or running.
+3. **The reload is handled inside an Answer, not by blocking it.**
+   - The admission estimator of section 12.4.1 counts the reload time.
+   - While a model reloads, Answer begins with reads, which need no model,
+     or starts one step down the ladder: Compact while Large reloads, or
+     the no-model loop. The reply says so.
+   - An Answer never times out because of a reload.
+4. **Optional pre-warm.** A client starting a working session may ask the
+   service to warm the models before its first Answer. Status shows whether
+   each stage is loaded, unloading or warming.
+5. **Per stage.** Focus and Context each have their own timeout setting.
+   Both start with the same default; Focus, being smaller, may later keep a
+   longer one.
+
+The reload and re-warm time is unmeasured. L5 measures it for each model on
+each device, and those figures feed the admission estimator.
+
 ### 12.6 What is kept from the evaluation
 
 - The harness, the 20 scenarios, both rubrics, the judges and the reports
@@ -1423,7 +1453,7 @@ sections 4.1 to 4.3, measured on both repositories.
 | L2b | Many agents (section 12.4.1), once the user has settled its open points: the service-owned Answer job table, attach-by-digest, tickets and continuations, the admission estimator, degrade-to-fit, earliest-deadline scheduling across Answers, the global gathering limit, and queue status | Tests with several concurrent Answers show no starved request, attach after a client timeout, and a ticket or disclosed degradation when the deadline cannot be met |
 | L3 | Kernel loop: Split, then per part Plan, Retrieve per sub-need, Read and check coverage, Follow up and Compose inside `Gathering`, interleaved across parts with a shared read cache, then Union; with the deterministic no-model path, and the software follow-ups promoted from the evaluation layers | Kernel tests cover each stage, single-part and compound requests, budget hand-back between parts, Union dedup and frame sharing, early stop, budget and deadline stop, and the no-model path |
 | L4 | Service and retrieval: the split, plan, coverage and follow-up task policies, ledger slots, per-attempt lane admission for parts, cross-part candidate batching (and the Focus per-candidate question decision), and calibration rules fitted from the evaluation receipts | Service tests pass; policy identities are recorded |
-| L5 | Devices: the Focus CUDA route, Compact on CUDA as a product route, and the Context ladder with typed reasons | Each route and fallback runs on the A6000 and on CPU, with receipts |
+| L5 | Devices: the Focus CUDA route, Compact on CUDA as a product route, the Context ladder with typed reasons, and idle unload with pre-warm and reload handling (section 12.5) | Each route and fallback runs on the A6000 and on CPU, with receipts; reload and re-warm times measured per model and device; an Answer arriving during a reload starts on reads or a lower rung and does not time out |
 | L6 | Workspace gate | Clippy and tests across the workspace on the matrix of CONTRIBUTING; known failures listed with their owners |
 | L7 | Measure with the evaluation harness: replays, then judged passes on both repositories, CPU and GPU cells | Report `05-answer-loop.md` and its results; then stop for the user's inspection |
 
