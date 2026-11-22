@@ -1055,6 +1055,7 @@ Receipts are in the private GPU-track folder and in the CUDA image records;
 | Implementation starts after the user reviews this revision | Set by the user on 22 November |
 | Many-agent queueing (section 12.4.1) | Reviewed and accepted by the user on 22 November; its open points take the stated defaults unless the user changes them |
 | Large-against-Compact decision gate on CUDA (section 12.7.1) | Set by the user on 22 November. Runs before L7's comparisons with Parse and Search. The user reviews the results personally and may drop Large altogether |
+| Precision check, FP32 against FP16 per stage (section 12.7.3) | Set by the user on 22 November. Replays only. Judged sessions run only if a stage shows a real difference. The data informs the decisions after L7; rule A1 is unchanged meanwhile |
 | Section 12 is CUDA only (section 12.0) | Set by the user on 22 November. No CPU fallback is tested in section 12. GPU memory is recorded rather than held to the 8, 16 and 24 GB tiers, and work does not stop if Large exceeds 24 GB. Next steps are decided after L7 |
 | Focus-only against Focus-with-Compact decision gate (section 12.7.2) | Set by the user on 22 November. Runs in the same series as 12.7.1. How the decision is made is deferred until the loop is built and tested; the user reviews the results personally |
 | No second loaded copy of a model on any device | Set by the user on 22 November. Capacity comes from batching, concurrent runs on one session and overflow to another device, decided at runtime (section 12.5.1) |
@@ -1631,7 +1632,9 @@ of section 12.7.
    then warm). Both arms then run on the same installation and indexes. A
    test covers the switch. The evaluation fixture's refusal to restart
    across profiles is no longer in the way.
-5. **A short trial before LG:** a few loop calls with each model on the
+5. **A Focus FP32 CUDA profile** beside the Focus FP16 CUDA route, for the
+   precision check of section 12.7.3.
+6. **A short trial before LG:** a few loop calls with each model on the
    evaluation indexes, to confirm the routes work and to settle the timing.
    It records peak GPU memory, per-call time and reload time.
 
@@ -1820,6 +1823,63 @@ personal review, in the form of 12.7.1. It contains:
 
 Until the decision, Compact keeps its full place in the plan.
 
+### 12.7.3 Precision check: FP32 against FP16, per stage
+
+Set by the user on 22 November 2026. Its data informs the decisions taken
+after L7. It is not a gate of its own.
+
+**The question.** The CUDA routes ship FP16 weights with FP32 arithmetic
+(rule A1). Could FP32 weights do better? For example:
+- Focus at FP32;
+- Compact at FP32 beside Large at FP16;
+- Focus at FP32 with Compact at FP16.
+
+**My expectation, to be tested.** The models only score candidates, and
+FP16 weights moved raw scores by about 0.00001 to 0.00005 against FP32 in
+the earlier FP16 work, against a 0.007 release limit. The observed winning
+margins are several points. So the top choice should flip only at
+near-ties. Model size (Large has about 2.4 times Compact's parameters) is
+far more likely to matter than precision.
+
+**The test, replays only.**
+- **Arms:** for each stage separately, the FP32 route against its FP16
+  counterpart, with everything else held at FP16:
+  - Focus FP32 against Focus FP16, once Focus has a CUDA route (L5);
+  - Compact FP32 against Compact FP16;
+  - Large FP32 against Large FP16.
+- **Runs:** each arm runs the gate's tests 1 and 2 (decision agreement
+  and first-reply evidence) on all 20 scenarios, on CUDA, with no agent
+  sessions. The FP32 profiles for Compact and Large already exist, and the
+  A6000 holds them. A Focus FP32 CUDA profile is built with the Focus CUDA
+  route.
+- **Measurements:**
+  - decisions where the top choice differs, by stage and by decision type;
+  - whether the reference notes favour the FP32 choice or the FP16 one;
+  - essential and supporting notes covered;
+  - per-call time and peak GPU memory, at both precisions.
+
+**Escalation.** An FP32 arm gets judged agent sessions (gate test 3) only if
+its replays show a real difference:
+- the top choice differs on more than 5% of that stage's decisions; or
+- the essential notes covered differ on any scenario.
+
+A mixed combination is tested only if a stage turns out to be sensitive. The
+combination is then that stage at FP32 with the others at FP16, for example
+Focus FP32 with Compact FP16. If no stage is sensitive, the Large gate
+already answers the question of Compact FP32 against Large FP16.
+
+**Reporting.** The check is a section of the gate report:
+- decision flips and evidence differences per stage;
+- time and memory at each precision;
+- any escalated sessions.
+
+It is reported whatever it finds.
+
+**Effect on the product.** Shipping FP32 weights would change rule A1,
+which ships FP16 for size. Compact is about 6.8 GB at FP32 against 3.4 GB
+at FP16, and Large 16 GB against 8 GB. Any precision finding goes to the
+user for the decisions after L7. It is not acted on during section 12.
+
 ### 12.8 Work order
 
 | Step | Work | Done when |
@@ -1832,7 +1892,7 @@ Until the decision, Compact keeps its full place in the plan.
 | L4 | Service and retrieval: the split, plan, coverage and follow-up task policies, ledger slots, per-attempt lane admission for parts, cross-part candidate batching (and the Focus per-candidate question decision), and the calibration format with the deterministic order used where the model abstains | Service tests pass; policy identities are recorded |
 | L5 | CUDA devices: the Focus CUDA route; the FP16 CUDA profiles for Compact and Large with the loop's tasks, the gates' decision mode, switching the Context model within a lifetime, and the short trial (section 12.5.2); the Context ladder's GPU rungs with typed reasons; idle unload with pre-warm and reload handling (section 12.5) | Each CUDA route runs the loop on the A6000, with receipts recording peak GPU memory, per-call time and reload time; an Answer arriving during a reload starts on reads or a lower rung and does not time out. No CPU route is tested (section 12.0) |
 | L5b | Runtime capacity on CUDA (section 12.5.1): the warm-time calibration run, GPU and queue measurements, concurrent runs on one session with per-run CUDA streams, shed-and-recover, capacity-based lane admission, settings and status. Overflow to another device is deferred (section 12.0) | Tests show no second copy is ever loaded, capacity rises only within the memory floor and when measured gain holds, and the stage sheds under injected memory pressure without interrupting running calls; peak GPU memory recorded |
-| LG | The two model gates in one series: Large against Compact on CUDA (section 12.7.1), and Focus only against Focus with Compact on CUDA (section 12.7.2), CUDA only. Arm C's runs serve both | Gate report and commit; **stop for the user's personal review and decisions on Large and on Compact**, while work not depending on those decisions continues |
+| LG | The two model gates in one series: Large against Compact on CUDA (section 12.7.1), and Focus only against Focus with Compact on CUDA (section 12.7.2), CUDA only, with the replay-only precision check of section 12.7.3. Arm C's runs serve both | Gate report and commit; **stop for the user's personal review and decisions on Large and on Compact**, while work not depending on those decisions continues |
 | L6 | Workspace gate | Clippy and tests across the workspace on the matrix of CONTRIBUTING; known failures listed with their owners |
 | L7 | The evaluation starts over on the loop, on CUDA only. First, a new baseline on both repositories: the loop on the CUDA routes the gate decisions keep, the Focus-only loop, Parse and Search. There are no CPU cells. Then change sets with weight and calibration refinement as in section 5, each series judged and committed on its own | The new baseline report, then one report and commit per series; stop for the user's inspection after the iterations the user sets |
 
