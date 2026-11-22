@@ -23,6 +23,11 @@ directed that Answer itself become a local, multi-round inference loop
 (section 12). The goal of section 1 is unchanged; only the Answer
 implementation that serves it changes. Implementation starts after the user
 has reviewed this revision.
+**Repositories changed on 22 November 2026.** At about 21:00 UTC the user
+replaced airk by munarium as the second evaluation repository, so that the
+index under test holds nothing about the experiment. From then on "both
+repositories" means munarium and bookbuilder. The airk index is no longer
+built or used (section 2, "munarium replaces airk").
 [Parent plan](final-plan.md) · [Ledger](../simplify/one-process-ledger.md)
 
 ## 1. The question
@@ -209,6 +214,46 @@ agent turns with costly tokens." The user set these points.
       the evaluation, testing and weight refinement start over, because
       results against the one-turn Answer say nothing about the loop.
 
+### Changed by the user on 22 November: munarium replaces airk
+
+On 22 November 2026 at about 21:00 UTC, while the LG gate was being
+prepared, the user wrote: "Update fp16 plan to use bookbuilder index and
+munarium index and create a new index for D:\code\Github\munarium\. Then stop
+indexing the airk code itself. In this way, we don't have to worry about the
+index providing answers about the experiment and the results should be more
+valid in spite of having to wait for the index to build. Do not repeat tests.
+Just move forward with completing section 12 through LG."
+
+- **The pair is munarium and bookbuilder.** Every later step that says "both
+  repositories" (the gates of sections 12.7.1 to 12.7.3, L7, the sealed set)
+  means these two. Section 3.1 describes the indexes.
+- **Why.** The airk repository holds this plan, the reports, the ledger, the
+  harness and the Answer code under test. The exclusions and the leak probe
+  of section 3.1 kept the benchmark's own files out of the airk index, but
+  the code being changed and its contracts stayed searchable. With munarium
+  that question does not arise.
+- **The airk index is no longer built or used.** No evaluation lifetime
+  indexes airk. The airk indexes built for the one-turn evaluation and for
+  the first LG roots were removed on the user's word the same day ("Clean out
+  the old airk index and the old targets"); their small receipts are kept.
+- **airk's ten scenarios are history.** They stay in the private campaign
+  folder with the one-turn results and take no part in the gates or in L7.
+- **munarium gets ten new development scenarios**, of the same ten kinds
+  (section 3.2), with reference notes written by reading the repository
+  directly (section 3.6). They are frozen before any run. bookbuilder's ten
+  scenarios and their notes are kept unchanged.
+- **Nothing is repeated.** Checks that passed on unchanged inputs are not run
+  again, and no one-turn result is measured again on munarium. The loop's
+  first measurements on either repository are the gates'.
+- **Open points, taken by my reading until the user corrects them.**
+  - The munarium sealed set (ten more scenarios for E8) is written after the
+    LG gate, before any L7 change set is fitted. It is not needed for LG.
+  - Training pairs for weights (section 5.4) would come from munarium and
+    bookbuilder. No training runs before the LG decisions, so this waits for
+    the user's word at the LG review.
+  - Reports treat munarium as they treat bookbuilder: locations and note
+    identifiers, and no quoted source.
+
 ## 3. The test
 
 ### 3.1 Service and indexes
@@ -220,10 +265,19 @@ this branch has changed a great deal beyond Arbiter.
   builds today. It is the same service runtime as the product, hosted in a
   test image, because the installed product refuses the unqualified model
   profiles this work uses.
-- **Indexes.** Two new indexes with MiniLM vectors, one for
-  `D:\code\github\airk` (Rust, TypeScript and documentation; 10,457 tracked
-  files) and one for `D:\code\github\bookbuilder` (WritingForge Pro: C# and
-  .NET with a Vue and TypeScript front end; 8,250 tracked files).
+- **Indexes.** Two indexes with MiniLM vectors. From 22 November 2026 they
+  are (section 2, "munarium replaces airk"):
+  - `D:\code\Github\munarium` (a Rust server with SQL migrations, clients in
+    Python, Java and .NET, and documentation; 1,038 tracked files), indexed
+    at commit `9948345d`;
+  - `D:\code\github\bookbuilder` (WritingForge Pro: C# and .NET with a Vue
+    and TypeScript front end; 8,250 tracked files), indexed as
+    `bookbuilder-v2` at commit `238b22a7`.
+
+  Each index is built from a `git archive` export of its commit, placed in
+  the evaluation root. The one-turn evaluation used an index of
+  `D:\code\github\airk` (10,457 tracked files) in place of munarium; that
+  index is no longer built or used.
 - **Read-only sources.** Nothing is written into either repository. Index
   data, service state, session logs and raw results live under the private
   campaign folder
@@ -236,8 +290,14 @@ this branch has changed a great deal beyond Arbiter.
 - **Fixed for a test.** Watching is off. Each index is built once at a
   recorded commit and is not rebuilt during a test unless an adjustment
   requires it, in which case every path is run again.
-- **The benchmark is excluded from the airk index.** These paths describe the
-  test itself and are denied through the index's own source policy: this
+- **The benchmark is not in either index (from 22 November).** Neither
+  munarium nor bookbuilder holds any file of this experiment, so no benchmark
+  path needs excluding. Each lifetime is checked to hold no airk index. The
+  credential check and the probe below still run on every build, per
+  repository. The rest of this bullet and the next describe the one-turn
+  evaluation's airk index and are history.
+- **The benchmark was excluded from the airk index.** These paths describe the
+  test itself and were denied through the index's own source policy: this
   plan, the report folder `docs/arbiter/answer-evaluation/`, the ledger
   `docs/simplify/one-process-ledger.md`, the assignment file
   `docs/agent-current-work.md` and the harness folder
@@ -274,6 +334,14 @@ them to an agent. That is 20 scenarios in all.
 These are drafts so the user can see the kind of task I mean. The final
 wording is written against the code in step E2 and frozen before any run. The
 airk scenarios stay away from the Arbiter files this work is changing.
+
+**From 22 November 2026 the airk column is history.** munarium takes airk's
+place (section 2, "munarium replaces airk"). Its ten development scenarios
+are of the same ten kinds, C1 to A3. They were written against munarium at
+commit `9948345d` by reading the repository directly, and are frozen with
+their reference notes before any run. Their wording is in the private
+campaign folder (`scenarios/munarium/`), and each gate report lists the
+instructions it used. bookbuilder's column and scenarios are unchanged.
 
 ### 3.3 Five results per scenario
 
@@ -719,6 +787,12 @@ candidate trained this way may be proposed for delivery like any other.
 Pairs and weight files stay in the private campaign folder until a
 candidate is chosen.
 
+From 22 November 2026 the evaluation's two repositories are munarium and
+bookbuilder (section 2, "munarium replaces airk"). By my reading, training
+pairs then come from those two (Rust, SQL, Python, Java and .NET clients, and
+documentation; C#, .NET and Vue). No training runs before the LG decisions,
+so the user confirms or corrects this at the LG review.
+
 ### 5.5 Guards
 
 - **Fitting the test.** The sealed set of section 4.5.
@@ -1043,7 +1117,8 @@ Receipts are in the private GPU-track folder and in the CUDA image records;
 | Agent on Haiku, judge on Sonnet, both headless Claude Code at medium effort | Set on 21 November (first Sonnet and Opus, changed during execution). The harness is evaluation tooling, not product |
 | One commit per series of reports and evaluations | Set on 21 November |
 | Three iterations, then a stop for manual inspection | Set on 21 November. The user may change the number at each inspection |
-| Training data for weights | Set on 21 November: every candidate trains on pairs from both repositories, for a broader fit to general programming work |
+| Training data for weights | Set on 21 November: every candidate trains on pairs from both repositories, for a broader fit to general programming work. Which two, after the change of 22 November, is confirmed at the LG review (section 2) |
+| The evaluation repositories are munarium and bookbuilder | Set by the user on 22 November at about 21:00 UTC. A new munarium index; the airk index is no longer built or used; nothing already measured is repeated (section 2, "munarium replaces airk") |
 | Other gates of the parent plan's assignment (the 0.007 raw-score ceiling, the 98% paired comparison, held-out confirmation) | Suspended for this campaign. This plan replaces them as acceptance evidence |
 | Answer becomes a local multi-round loop (section 12) | Set by the user on 22 November. This is the recorded decision to change Answer's wire shape, budgets and digest inputs; the exact shapes are settled in L1 and recorded in the owning contracts |
 | Evaluation runs stopped; no script prototype | Set by the user on 22 November. The harness, scenarios and rubrics are kept for measuring the loop (L7) |
@@ -1653,6 +1728,8 @@ of section 12.7.
 - **Kept tools:** the harness, the 20 scenarios, both rubrics, the judges
   and the reports folder measure the loop. The question asked of them is
   unchanged.
+  - **From 22 November the 20 scenarios are** bookbuilder's ten, unchanged,
+    and ten new ones for munarium, which replaces airk (section 2).
 - **Kept findings and fixes:**
   - the search roster fix and the settled-index guard;
   - `search_v2`, which finds slightly more on the same queries;
@@ -1664,7 +1741,8 @@ of section 12.7.
 ### 12.7 Acceptance
 
 The loop is accepted when the gates below are met. The gates are those of
-sections 4.1 to 4.3, measured on both repositories.
+sections 4.1 to 4.3, measured on both repositories: munarium and bookbuilder
+from 22 November 2026 (section 2, "munarium replaces airk").
 
 - **First priority, agent turns:** Answer with the loop reaches correct
   finishes in fewer turns than the better of Parse and Search.

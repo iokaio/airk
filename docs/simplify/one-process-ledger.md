@@ -15529,3 +15529,78 @@ generated TypeScript, and change-log entry 28. It was pushed.
   the shared branch, which requires the user's word.
 - **Prevention.** In a tree another agent uses, the primary agent inspects the
   index and commits only with explicit pathspecs (`git commit -s -- <paths>`).
+
+### 22 November 2026 at 21:45 UTC — munarium replaces airk in the evaluation; old targets and airk indexes removed
+
+**Resumed** after an editor restart at 21:03 UTC, as `TYAI\tdotn` (SID
+`S-1-5-21-3678370870-3858642417-826968105-1002`, owner equal, the logged-in
+human). No campaign process was running. The AIRK MCP `status` call timed out
+(`scoped_status_timeout`), so local tools are used.
+
+**State found.**
+- L3-10 (b) was uncommitted in the main tree (47 files), with Clippy clean
+  and one test failing: `airk-cli::combined_reads
+  current_answer_many_and_open_keep_complete_cli_pipe_and_https_mcp_packets`
+  ("invalid original member allowance").
+- Unmerged: `loop/l4` (14 commits past `feb72c94`), `loop/l5c` (3 past
+  `3b7c06d9`), `loop/l2b-wire`.
+- All three `05-gate-lg` CPU base lifetimes had failed after indexing airk
+  (about 2,570 s each): C and L at `index-bookbuilder-v2 failed (exit 1)`,
+  F at a `source_change_busy` trim refusal. No LG root was usable.
+
+**User direction, about 21:00 UTC.** "Update fp16 plan to use bookbuilder
+index and munarium index and create a new index for D:\code\Github\munarium\.
+Then stop indexing the airk code itself. … Do not repeat tests. Just move
+forward with completing section 12 through LG so we can make some choices
+about how to move forward." Then: "Clean out the old airk index and the old
+targets."
+
+**Decisions and readings.**
+- The evaluation pair is munarium (commit `9948345d`, 1,038 tracked files)
+  and bookbuilder (`bookbuilder-v2`, commit `238b22a7`). No evaluation
+  lifetime indexes airk. Recorded in the plan (section 2, "munarium replaces
+  airk"; sections 3.1, 3.2, 5.4, 11, 12.6 and 12.7), in
+  `docs/agent-current-work.md` and in the current-assignment rules.
+- My readings, for the user to correct: munarium's sealed set is written
+  after LG; training pairs would come from munarium and bookbuilder, confirmed
+  at the LG review; reports treat munarium like bookbuilder (no quoted
+  source); "stop indexing the airk code" applies to the evaluation, so the
+  user's installed AIRK service and its own airk index were not touched.
+- The LG roots restart as series `06-gate-lg`, with fresh closed CPU bases
+  holding munarium and bookbuilder-v2.
+- L4 is integrated in the main tree after (b), not in its worktree, because
+  its Cargo target was removed. L2b's wiring follows in the main tree if it
+  can be reviewed before the gate image is built; otherwise the gate's
+  concurrency test reports the unqueued path and says so.
+
+**Removed on the user's word** (receipts in the private `answer-loop` folder:
+`reclaim-old-targets-20261122.json`,
+`reclaim-original-airk-index-20261122.json`):
+
+| Removed | Bytes |
+| --- | --- |
+| `answer-loop\target-l2`, `target-l4`, `target-l2b`, `target-cuda` (timing reports kept) and `target\x86_64-pc-windows-msvc` (stale since 20 November) | 100,087,746,560 |
+| The original evaluation root's airk index and airk source export (state receipts kept) | 3,635,576,802 |
+
+D: free rose from 931,953,479,680 to 1,035,796,824,064 bytes, 180.1 GB above
+the 842,404,241,408-byte floor. The three failed `05-gate-lg` roots are
+reclaimed by the LG preparation agent with its own receipt. **Not removed:**
+the active `target\debug` (176.6 GB, in use by the L3 build; its stale
+incremental data is pruned between Cargo owners) and
+`artifacts\v190\p10-target` (181.5 GB, last used 16 November), which the
+assignment file says to preserve; it waits for the user's word.
+
+**Running at this entry** (each as the verified human, each with named file
+ownership):
+- munarium scenarios: ten development scenarios with reference notes, written
+  by reading the repository directly; the primary agent freezes them.
+- L3-10 (b): fix the failing parity test and commit (b); main tree, the only
+  owner of `target\`.
+- LG preparation: reclaim the failed roots, add munarium to the fixture
+  tooling, build the `06-gate-lg` bases, and make the harness use the pair;
+  worktree `loop/l5c`, no Cargo and no GPU.
+
+**Next action.** After (b): cherry-pick `loop/l4` in the main tree, pass the
+bounded evidence excerpts into the coverage cards, review the combined
+change, re-emit the FP16 CUDA profiles, build the gate image, freeze the
+munarium scenarios and run LG.

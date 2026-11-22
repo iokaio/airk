@@ -66,6 +66,31 @@ The user resumed the Windows and Linux FP16 campaign after D: cleanup. Keep new 
     deletions, L5b concurrent runs, the job-table wiring and the gate's
     concurrency test, and the combined multi-index Answer if it is not on the
     gate's path. Each deferral is logged in answer-loop-changes.md.
+- **munarium replaces airk, 22 November 2026 at about 21:00 UTC (user).**
+  "Update fp16 plan to use bookbuilder index and munarium index and create a
+  new index for D:\code\Github\munarium\. Then stop indexing the airk code
+  itself. … Do not repeat tests. Just move forward with completing section 12
+  through LG so we can make some choices about how to move forward."
+  - The evaluation's two repositories are munarium (commit `9948345d`) and
+    bookbuilder (as `bookbuilder-v2`, commit `238b22a7`). No evaluation
+    lifetime indexes airk. Both sources are read-only: indexes are built from
+    `git archive` exports inside the evaluation root.
+  - munarium gets ten new development scenarios with reference notes, frozen
+    before any run; bookbuilder's ten are unchanged; airk's ten are history.
+  - Checks that passed on unchanged inputs are not repeated, and no one-turn
+    result is measured again.
+  - The user then wrote: "Clean out the old airk index and the old targets."
+    Removed the same day, with receipts in the private `answer-loop` folder:
+    the finished agents' Cargo targets (`target-l2`, `target-l4`,
+    `target-l2b`, `target-cuda`; timing reports kept), the stale
+    `target\x86_64-pc-windows-msvc` folder, and the original evaluation
+    root's airk index and source export. The three failed `05-gate-lg`
+    roots' data is reclaimed by the LG preparation agent under its own
+    receipt. Left in place: the active `target\debug` and
+    `artifacts\v190\p10-target`, which this file says to preserve; it waits
+    for the user's word.
+  - The LG roots are the new series `06-gate-lg`. The plan records the
+    change in section 2, "munarium replaces airk".
 - **D: allowance doubled, 22 November 2026.** The user doubled the D: growth
   allowance for the Answer-loop campaign: "Allow more disk if needed. Just
   watch available space." The D budget against the original Windows baseline
