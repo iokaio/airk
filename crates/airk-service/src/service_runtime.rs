@@ -17,6 +17,13 @@ use tokio::{
 };
 mod agent_plane;
 mod agents;
+// Wired into the service's Answer path once the v3 MCP switch lands
+// (answer_jobs/CONTRACT.md, "Wiring").
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the Answer path calls it after the v3 MCP switch")
+)]
+mod answer_jobs;
 mod arbiter;
 #[cfg(all(feature = "local-inference", feature = "test-support"))]
 pub use arbiter::evaluation::{EvaluationOwner, EvaluationResult};

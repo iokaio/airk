@@ -317,4 +317,79 @@ limits on publication still apply in full.
   their existing 10 to 35 s owner stop periods rather than waiting up to
   605 s for it.
 
+### 19. The Answer job table: choices made where section 12.4.1 left room
+
+- **Step:** L2b, on branch `loop/l2b`. Entry 18 is L2's entry.
+- **What was built:** the service-owned job table in
+  `crates/airk-service/src/service_runtime/answer_jobs/`. It covers
+  attach-by-digest, tickets and continuations, the admission estimator,
+  degrade-to-fit, earliest-deadline dispatch with ageing, the gathering
+  limit, 10-minute retention and aggregate queue status. Its contract is
+  `answer_jobs/CONTRACT.md`.
+- **Choices, each a guide the plan left open:**
+  1. **The request digest leaves out `deadline_ms`.** A retry usually sends
+     less time, and it must still attach. The continuation is left out too.
+  2. **The degrade order:** rounds to two, Large to Compact, rounds to one,
+     sub-needs and parts to two, then to one, and last the no-model loop.
+     The aim is to keep more of the question before cutting model quality
+     to nothing.
+  3. **No ticket when a ticket cannot help.** If even the smallest answer
+     cannot fit the request's own deadline with no wait, the request is
+     admitted at the smallest shape and disclosed. It is not ticketed. The
+     kernel's partial at the deadline is then the answer.
+  4. **A ticketed job gets its full deadline** from its actual dispatch. An
+     admitted job whose wait outran its deadline also runs on a fresh window
+     (`requeued`), because the work outlives the call.
+  5. **The ageing guard** is the dispatch key `due + 1 x enqueued`. This
+     bounds every job's wait. A test shows a 600 s Answer under a stream of
+     20 s Answers starting by 295 s; under pure EDF it would start at 585 s.
+  6. **The gathering limit** is `max(2, min(capacity, user cap))`. The user
+     cap does not go below the floor of 2. The capacity is 2 until L5b
+     injects it through `set_runtime_capacity`.
+  7. **Per-scope fairness:** at most 8 queued and running jobs per scope
+     and 4,096 in the table. A call past these limits gets `Busy` with a
+     retry time, and no job is made.
+  8. **Failures are retained** for the same 10 minutes, so a retry attaches
+     to the failure instead of replaying uncertain work.
+  9. **Retained bytes** are capped at 64 MiB, and the oldest result is
+     evicted first.
+  10. **The estimator costs are placeholders until L5b and L7 measure
+      them:**
+      - no model: 2 s fixed, 0.5 s per part, 2 s per sub-need-round;
+      - Compact: 4, 2 and 4 s;
+      - Large: 8, 4 and 8 s.
+
+      A learned correction (an EWMA of elapsed over estimated, kept
+      between 0.25 and 4) adjusts them in the meantime.
+- **Security:** a job is visible only within its `AnswerScope`, which is the
+  installation, catalog, index and the caller's source-authority
+  fingerprint. A foreign, unknown and expired continuation all get one
+  identical refusal. Job ids are salted per table. Status carries no ids,
+  scopes or questions. Details are in the contract's security section, for
+  the separate security review.
+- **Wiring, a follow-up:** the table is not yet on the live call path. The
+  L3 agent is switching the MCP Answer handler to v3 and deleting v1 and v2
+  at the same sites. The remaining steps are:
+  1. **Kernel (L3 owner).** Accept an admission plan in `AnswerEnv`
+     (`crates/airk-kernel/src/arbiter/answer.rs`, `Kernel::answer_with`):
+     the applied shape bounds `Gathering`, and the degradations join the
+     reply.
+  2. **Core or kernel.** Add a builder for the ticket reply (a ticket,
+     partial `admission`/`queued`, and no work), and one for the running
+     partial with its continuation.
+  3. **Service.** Call `AnswerJobTable::call` for Answer /3 where the
+     service admits Answer: at `tools_call::admit_context` and its callers,
+     which are `tools_call::response`, `tools_call::window_response`,
+     `tools_call::selection_read` and `open_reads::response`. The runner
+     reopens its own backend and runs to `run_ms`, so the job does not
+     depend on the caller's connection. The scope is built from the
+     selection's verified authority, never from client input.
+  4. **MCP stdio.** In the local path (`crates/airk-mcp/src/lib.rs`, the
+     `answer` tool), the kernel runs in the MCP process. The table needs a
+     trait in `airk-mcp` that the service implements, because `airk-mcp`
+     cannot depend on `airk-service`.
+  5. **Status.** Expose `QueueStatus` on the service status surface.
+- **Evidence:** the `answer_jobs::` tests in `airk-service`, listed in the
+  contract's focused checks.
+
 Further entries are added as implementation proceeds.
