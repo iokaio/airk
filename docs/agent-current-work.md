@@ -50,11 +50,12 @@ The user resumed the Windows and Linux FP16 campaign after D: cleanup. Keep new 
   user needs results to review together within 12 hours (by about 07:00 UTC on
   23 November): "We're not after perfection. We're after a decision gate and
   data to allow that decision to be made relatively reliably." Decisions:
-  - LG does not stop for the user: the 12.7.1 and 12.7.2 bars are applied as
-    written (keep Large only if it meets the 12.7.1 outcome bar; keep Compact
-    only if it meets 12.7.2), and work continues into L7. LG and L7 are
-    reviewed together at the end.
-  - L7 runs one change set after the new baseline, then stops for review.
+  - **Corrected by the user shortly after:** "The LG is where we need to get
+    to in order to make choices." The 12-hour target is the LG gate report.
+    LG stops for the user's choices as plan 12.9 says; the report states
+    what the 12.7.1 and 12.7.2 bars indicate, with the evidence limits, as
+    input to those choices. L7 waits for them. (The earlier "no stop" and
+    "one change set" answers are withdrawn.)
   - Work not needed for a reliable gate moves after the review: L3-10 (c)
     deletions, L5b concurrent runs, the job-table wiring and the gate's
     concurrency test, and the combined multi-index Answer if it is not on the
