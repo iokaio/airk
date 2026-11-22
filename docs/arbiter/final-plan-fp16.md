@@ -1055,6 +1055,7 @@ Receipts are in the private GPU-track folder and in the CUDA image records;
 | Implementation starts after the user reviews this revision | Set by the user on 22 November |
 | Many-agent queueing (section 12.4.1) | Reviewed and accepted by the user on 22 November; its open points take the stated defaults unless the user changes them |
 | Large-against-Compact decision gate on CUDA (section 12.7.1) | Set by the user on 22 November. Runs before L7's comparisons with Parse and Search. The user reviews the results personally and may drop Large altogether |
+| Section 12 is CUDA only (section 12.0) | Set by the user on 22 November. No CPU fallback is tested in section 12. GPU memory is recorded rather than held to the 8, 16 and 24 GB tiers, and work does not stop if Large exceeds 24 GB. Next steps are decided after L7 |
 | Focus-only against Focus-with-Compact decision gate (section 12.7.2) | Set by the user on 22 November. Runs in the same series as 12.7.1. How the decision is made is deferred until the loop is built and tested; the user reviews the results personally |
 | No second loaded copy of a model on any device | Set by the user on 22 November. Capacity comes from batching, concurrent runs on one session and overflow to another device, decided at runtime (section 12.5.1) |
 
@@ -1065,6 +1066,30 @@ loop"). This section is the design that implementation follows once the user
 has reviewed it. Section 1 remains the goal: one Answer call should do
 locally, with local models, the query, read, notice-a-gap and query-again
 work that an agent otherwise pays for in turns and tokens.
+
+### 12.0 Scope: CUDA only
+
+Set by the user on 22 November 2026. Every effort in this section is built,
+tested and gated on CUDA, on the RTX A6000 (48 GB), and on nothing else.
+
+- **CPU fallback is not tested.** No time goes into CPU fallback in this
+  section:
+  - no CPU performance or quality measurements;
+  - no CPU cells in the gates or in L7;
+  - no CPU overflow lane;
+  - no CPU timing work.
+- **The design keeps its CPU rungs** (sections 12.4, 12.5 and 12.5.1) as
+  the shape the product will take. Implementation only keeps the existing
+  CPU paths compiling and their existing unit tests passing.
+- **GPU memory is measured, not enforced.**
+  - Where a model's CUDA route does not fit its tier on a smaller card (Focus
+    8 GB, Compact 16 GB, Large 24 GB), work does not stop. It runs on the
+    A6000, and the GPU memory it actually uses is recorded in every receipt
+    and report.
+  - Fitting the tiers is decided with the next steps.
+- **Next steps after L7.** CPU fallback, WebGPU, other platforms, memory
+  tiers and product rollout are decided once the user has made the gate and
+  L7 decisions.
 
 ### 12.1 The stages
 
@@ -1488,8 +1513,9 @@ Set by the user on 22 November 2026.
    - **On the CPU:** concurrent runs split the cores. They help only when
      one run leaves cores idle, which is common for Focus with short
      inputs.
-3. **Overflow to another device.** A model loaded on one device may be
-   loaded once on another, for example Compact on the GPU and Compact on
+3. **Overflow to another device.** This is designed here but not built or
+   tested in this section (section 12.0); it is decided with the next steps
+   after L7. A model loaded on one device may be loaded once on another, for example Compact on the GPU and Compact on
    the CPU. That is a second route, not a second copy on the same memory.
    - **Which device takes a job:** each job goes to whichever route
      finishes it soonest, counting the queue wait and the run time.
@@ -1552,8 +1578,8 @@ Set by the user on 22 November 2026.
   because their arithmetic is ordered differently, and that could change a
   close selection.
   - Every decision records the device it ran on.
-  - L7 checks whether overflow changes evidence. If it does, overflow is
-    restricted to the same device class.
+  - Whether overflow changes evidence is checked when overflow is built,
+    after L7. If it does, overflow is restricted to the same device class.
 - **Settings and status:**
   - Capacity defaults to "auto", capped at 2 concurrent runs per stage until
     L7 measures more.
@@ -1562,6 +1588,52 @@ Set by the user on 22 November 2026.
   - Status shows, per stage and device, the current runs and why each was
     added or removed.
   - These figures also set the global gathering limit of section 12.4.1.
+
+### 12.5.2 Preparing the CUDA routes for the gates
+
+The CUDA routes that ran in the one-turn evaluation are not fit for the gates
+of section 12.7.
+
+- **They are FP32 private profiles.**
+  - Large is a Qwen3 4B model. Its profile runs the 16 GB FP32 weights,
+    declares a 40 GiB peak plus 4 GiB of headroom, and requires 16 physical
+    cores.
+  - Compact's profile is FP32 too, declaring a 16 GiB peak.
+  - The weight rule A1 ships FP16 only. A gate run on these profiles would
+    judge a setup that no user would get.
+- **The FP16 candidates exist but have never run in Answer.**
+  - The FP16 Large weights (8.05 GB) were exported and measured on WebGPU
+    and the CPU on 21 November, and one FP16 Large CUDA graph is admitted
+    in test builds.
+  - The FP16 Compact CUDA work is further along. Neither model has a
+    reviewed product profile, and neither has run end to end in Answer.
+- **The profiles admit only today's Context task** (`airk.context_action.v1`).
+- **Real-work measurement is thin.** Large on CUDA has run only a few
+  calls, on a synthetic repository and on the change set 1 variants.
+
+**Preparation, in L5 before LG:**
+1. **FP16 CUDA profiles for Compact and Large,** built from the FP16
+   candidates. Each profile gets:
+   - a numeric check against the FP32 reference;
+   - memory and core declarations measured on the A6000, not copied from
+     the FP32 profiles.
+
+   If Large's FP16 route does not fit 24 GB, work does not stop. It runs on
+   the A6000 and the memory it uses is recorded (section 12.0). If the FP16
+   Large route cannot be made to work at all, the gate runs Large on its
+   FP32 route on the A6000. The report says so, and gives the memory used.
+2. **The loop's tasks admitted in both profiles:** Split, Plan, coverage
+   and follow-up.
+3. **The gates' decision mode:** every Context decision by top score, with
+   no abstention. It is an evaluation-only switch.
+4. **Switching the Context model within one service lifetime** between
+   Compact and Large, through the normal configuration change (release,
+   then warm). Both arms then run on the same installation and indexes. A
+   test covers the switch. The evaluation fixture's refusal to restart
+   across profiles is no longer in the way.
+5. **A short trial before LG:** a few loop calls with each model on the
+   evaluation indexes, to confirm the routes work and to settle the timing.
+   It records peak GPU memory, per-call time and reload time.
 
 ### 12.6 What is kept from the evaluation
 
@@ -1595,8 +1667,8 @@ sections 4.1 to 4.3, measured on both repositories.
   that Search covers. The new baseline of L7 measures Parse and Search
   again beside the loop; the one-turn figures (Search at 22 of 53 on airk and
   26 of 61 on bookbuilder) are history only.
-- **Every device and fallback route** answers within its deadline or
-  returns a disclosed partial result.
+- **Every CUDA route** answers within its deadline or returns a disclosed
+  partial result. CPU fallback is not part of this acceptance (section 12.0).
 
 ### 12.7.1 Decision gate: Large on CUDA against Compact on CUDA
 
@@ -1614,8 +1686,12 @@ scenarios and Focus device, with the Context model as the only
 difference:
 - **arm C:** Compact on CUDA;
 - **arm L:** Large on CUDA.
-- **Focus device:** Focus runs on the GPU if its CUDA route is ready (L5),
-  otherwise on the CPU in both arms.
+- **Routes:** both arms run the FP16 CUDA routes prepared in section
+  12.5.2. An FP32 run is kept as a reference reading only. Each arm's
+  peak GPU memory is recorded.
+- **Focus device:** Focus runs on the GPU if its CUDA route is ready (L5).
+  Otherwise it runs on the CPU in both arms, as a recorded dependency of the
+  gate, not as a test of CPU fallback.
 - **Decision rule:** both arms take every Context decision by top score,
   with no abstention and no calibration rules.
   - **Why:** under today's zero-rule calibration both models abstain and
@@ -1712,9 +1788,8 @@ device. The only difference is whether a Context model takes part:
   gate, so its runs serve both gates.
 - **Focus device:** Focus runs on the GPU if its CUDA route is ready,
   otherwise on the CPU, the same in both arms.
-- **Compact on the CPU:** the same comparison is also run with Compact on
-  the CPU, as a second reading. This is the route most users without a
-  suitable GPU would get.
+- **No CPU reading.** The gate is CUDA only (section 12.0). Whether Compact
+  is worth its cost on the CPU is decided with the next steps after L7.
 
 **Tests.** The four tests of 12.7.1, applied to arms F and C:
 1. **Where Compact changes the loop:** the scenarios and stages (split,
@@ -1738,8 +1813,8 @@ personal review, in the form of 12.7.1. It contains:
 
 **Possible outcomes, decided by the user.**
 - Compact stays as the loop's Context stage.
-- Compact stays only on routes where its cost is small, for example on the
-  GPU but not on the CPU.
+- Compact stays on CUDA, and its place on other routes is decided with the
+  next steps after L7.
 - The loop ships with Focus only, and Compact's development stops, like
   Large's under 12.7.1.
 
@@ -1755,11 +1830,11 @@ Until the decision, Compact keeps its full place in the plan.
 | L2b | Many agents (section 12.4.1, accepted), with its global limit taken from L5b: the service-owned Answer job table, attach-by-digest, tickets and continuations, the admission estimator, degrade-to-fit, earliest-deadline scheduling across Answers, the global gathering limit, and queue status | Tests with several concurrent Answers show no starved request, attach after a client timeout, and a ticket or disclosed degradation when the deadline cannot be met |
 | L3 | Kernel loop: Split, then per part Plan, Retrieve per sub-need, Read and check coverage, Follow up and Compose inside `Gathering`, interleaved across parts with a shared read cache, then Union; with the deterministic no-model path, and the software follow-ups promoted from the evaluation layers | Kernel tests cover each stage, single-part and compound requests, budget hand-back between parts, Union dedup and frame sharing, early stop, budget and deadline stop, and the no-model path |
 | L4 | Service and retrieval: the split, plan, coverage and follow-up task policies, ledger slots, per-attempt lane admission for parts, cross-part candidate batching (and the Focus per-candidate question decision), and the calibration format with the deterministic order used where the model abstains | Service tests pass; policy identities are recorded |
-| L5 | Devices: the Focus CUDA route, Compact on CUDA as a product route, the Context ladder with typed reasons, and idle unload with pre-warm and reload handling (section 12.5) | Each route and fallback runs on the A6000 and on CPU, with receipts; reload and re-warm times measured per model and device; an Answer arriving during a reload starts on reads or a lower rung and does not time out |
-| L5b | Runtime capacity (section 12.5.1): the warm-time calibration run, device and queue measurements, concurrent runs on one session with per-run CUDA streams, overflow routing across devices by earliest finish, shed-and-recover, capacity-based lane admission, settings and status | Tests show no second copy is ever loaded, capacity rises only within the memory floor and when measured gain holds, sheds under injected memory pressure without interrupting running calls, and overflow records its device |
-| LG | The two model gates in one series: Large against Compact on CUDA (section 12.7.1), and Focus only against Focus with Compact on CUDA, with a CPU reading (section 12.7.2). Arm C's runs serve both | Gate report and commit; **stop for the user's personal review and decisions on Large and on Compact**, while work not depending on those decisions continues |
+| L5 | CUDA devices: the Focus CUDA route; the FP16 CUDA profiles for Compact and Large with the loop's tasks, the gates' decision mode, switching the Context model within a lifetime, and the short trial (section 12.5.2); the Context ladder's GPU rungs with typed reasons; idle unload with pre-warm and reload handling (section 12.5) | Each CUDA route runs the loop on the A6000, with receipts recording peak GPU memory, per-call time and reload time; an Answer arriving during a reload starts on reads or a lower rung and does not time out. No CPU route is tested (section 12.0) |
+| L5b | Runtime capacity on CUDA (section 12.5.1): the warm-time calibration run, GPU and queue measurements, concurrent runs on one session with per-run CUDA streams, shed-and-recover, capacity-based lane admission, settings and status. Overflow to another device is deferred (section 12.0) | Tests show no second copy is ever loaded, capacity rises only within the memory floor and when measured gain holds, and the stage sheds under injected memory pressure without interrupting running calls; peak GPU memory recorded |
+| LG | The two model gates in one series: Large against Compact on CUDA (section 12.7.1), and Focus only against Focus with Compact on CUDA (section 12.7.2), CUDA only. Arm C's runs serve both | Gate report and commit; **stop for the user's personal review and decisions on Large and on Compact**, while work not depending on those decisions continues |
 | L6 | Workspace gate | Clippy and tests across the workspace on the matrix of CONTRIBUTING; known failures listed with their owners |
-| L7 | The evaluation starts over on the loop. First, a new baseline: the loop on every device route, the no-model loop, Parse and Search, on both repositories, with CPU and GPU cells. Then change sets with weight and calibration refinement as in section 5, each series judged and committed on its own | The new baseline report, then one report and commit per series; stop for the user's inspection after the iterations the user sets |
+| L7 | The evaluation starts over on the loop, on CUDA only. First, a new baseline on both repositories: the loop on the CUDA routes the gate decisions keep, the Focus-only loop, Parse and Search. There are no CPU cells. Then change sets with weight and calibration refinement as in section 5, each series judged and committed on its own | The new baseline report, then one report and commit per series; stop for the user's inspection after the iterations the user sets |
 
 E8 (the sealed set) and E9 (the final report) follow L7 on the user's word.
 The new evaluation's reports are numbered after the one-turn reports, which
@@ -1875,7 +1950,9 @@ and is listed in every validation record until resolved:
 1. The gate report (LG), for the user's personal decisions on Large
    (12.7.1) and on Compact against Focus only (12.7.2). Work that does not
    depend on those decisions continues.
-2. The inspection after L7's iterations.
+2. The inspection after L7's iterations. Next steps are decided there: CPU
+   fallback, WebGPU, other platforms, memory tiers and product rollout
+   (section 12.0).
 3. Anything the permission classifier denies, or anything outside this
    assignment: a new crate, a new external provider or service, a PR,
    publication or deployment. These are reported to the user and not worked
