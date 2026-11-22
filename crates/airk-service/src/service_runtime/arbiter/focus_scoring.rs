@@ -49,6 +49,11 @@ impl StageOwner {
             .checked_add(remaining)
             .context("Focus deadline overflow")?;
         validate_partition_selection(request.partition.as_ref(), request.authority.selection)?;
+        // Count the call before reading availability, so an idle unload that
+        // claims the stage afterwards sees it in flight (or this call sees the
+        // stage not Ready).
+        #[cfg(feature = "local-inference")]
+        let _model_use = self.begin_model_use(supervisor).await?;
         let application = self.application(
             request.worker,
             request.authority,
@@ -58,8 +63,6 @@ impl StageOwner {
             application.scope == request.scope,
             "Focus source publication changed"
         );
-        #[cfg(feature = "local-inference")]
-        let _model_use = self.begin_model_use(supervisor).await?;
         let configuration = self.read_configuration()?;
         if configuration.revision() != request.scope.configuration_revision
             || !configuration.eligible_for(Stage::Focus, request.scope.index_id, Task::FocusRank)

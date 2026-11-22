@@ -415,12 +415,18 @@ pub(super) async fn release_actual(
     release: airk_kernel::service_resources::OptionalRelease,
     deadline: Instant,
 ) -> Result<()> {
-    handle.release_profile(manifest)?;
-    handle.wait_profile_released(manifest, deadline).await?;
-    tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), release.wait())
-        .await
-        .context("Actual Arbiter memory charge did not finish draining")??;
-    Ok(())
+    // A drain after failure or cancellation always runs to its observed end.
+    super::release::release_then(
+        &super::release::NativeRelease {
+            handle,
+            charge: release,
+        },
+        manifest,
+        deadline,
+        &CancellationToken::new(),
+        async { Ok(()) },
+    )
+    .await
 }
 /// The resident a warm must release before it reserves: a different active
 /// profile of the same stage that holds private device memory. Any other
@@ -432,6 +438,12 @@ pub(super) fn device_switch_release(
     prior_private_device: bool,
 ) -> Option<Sha256Digest> {
     prior.filter(|old| *old != incoming && prior_private_device)
+}
+
+/// A refused restore may mark the stage Failed only if no operation claimed
+/// or changed the lifecycle since the restore began.
+fn restore_failure_applies(current_serial: u64, started_serial: u64, busy: bool) -> bool {
+    current_serial == started_serial && !busy
 }
 
 /// Private entries a GPU-use revocation releases: every entry the native owner
@@ -469,16 +481,18 @@ struct DrainContext<'a, 'b> {
     admission: Option<&'a DeferredAdmission>,
 }
 
-/// Releases the prior resident and observes its native release and final
-/// charge drain. A store-backed prior keeps its verified files pinned for
-/// rollback; a private CUDA prior keeps its held descriptors instead.
-async fn drain_prior(
+/// Releases the prior resident, observes its native release and final charge
+/// drain, and only then runs `next` (the new reservation), through the one
+/// order of `release::release_then`. A store-backed prior keeps its verified
+/// files pinned for rollback; a private CUDA prior keeps its held descriptors.
+async fn drain_prior<T>(
     handle: &Handle,
     old: Sha256Digest,
     private_old: bool,
     context: DrainContext<'_, '_>,
     reason: &str,
-) -> Result<()> {
+    next: impl std::future::Future<Output = Result<T>>,
+) -> Result<T> {
     let DrainContext {
         stage,
         expected,
@@ -507,15 +521,26 @@ async fn drain_prior(
     admitted_current(configuration, expected, stage, cancel, admission)?;
     let release = handle.resident(old)?.reservation().release_observer();
     phase(shared, serial, Availability::Draining, reason)?;
-    release_actual(handle, old, release, Instant::now() + Duration::from_secs(30)).await?;
-    phase(
-        shared,
-        serial,
-        Availability::Requested,
-        "Prior native session and its actual final charge were released; admitting the selected cached warm.",
-    )?;
-    admitted_current(configuration, expected, stage, cancel, admission)?;
-    Ok(())
+    super::release::release_then(
+        &super::release::NativeRelease {
+            handle,
+            charge: release,
+        },
+        old,
+        Instant::now() + Duration::from_secs(30),
+        cancel,
+        async {
+            phase(
+                shared,
+                serial,
+                Availability::Requested,
+                "Prior native session and its actual final charge were released; admitting the selected cached warm.",
+            )?;
+            admitted_current(configuration, expected, stage, cancel, admission)?;
+            next.await
+        },
+    )
+    .await
 }
 
 async fn warm(
@@ -625,9 +650,8 @@ async fn warm(
         let handle = existing
             .as_ref()
             .context("Arbiter device switch has no prior resident to drain")?;
-        #[cfg(all(test, feature = "test-support"))]
         let released_at = Instant::now();
-        drain_prior(
+        let switched = drain_prior(
             handle,
             old,
             prior_private,
@@ -644,18 +668,24 @@ async fn warm(
                 admission,
             },
             "Switching device profiles; draining the old native session and its actual final memory charge before the new one is reserved, so both are never resident together.",
+            async {
+                let release_ms = u64::try_from(released_at.elapsed().as_millis()).ok();
+                let reservation = management
+                    .reserve(host_bytes)
+                    .await
+                    .context("New device profile cannot fit after actual prior charge release")?;
+                Ok((reservation, release_ms))
+            },
         )
         .await
-        .context("Device profile switch: prior resident drain incomplete")?;
+        .context("Device profile switch: prior resident drain or new reservation incomplete")?;
+        let (reservation, _release_ms) = switched;
         #[cfg(all(test, feature = "test-support"))]
         if let Some(observation) = observation.as_mut() {
             observation.released_prior = Some(old);
-            observation.release_ms = u64::try_from(released_at.elapsed().as_millis()).ok();
+            observation.release_ms = _release_ms;
         }
-        management
-            .reserve(host_bytes)
-            .await
-            .context("New device profile cannot fit after actual prior charge release")?
+        reservation
     } else {
         match management.reserve(host_bytes).await {
             Ok(reservation) => reservation,
@@ -686,13 +716,15 @@ async fn warm(
                         admission,
                     },
                     "The budget cannot retain both profiles; draining the old native session and its actual final memory charge while verified rollback assets remain pinned.",
+                    async {
+                        management
+                            .reserve(host_bytes)
+                            .await
+                            .context("New profile still cannot fit after actual prior charge release")
+                    },
                 )
                 .await
-                .with_context(|| format!("New profile reservation refused ({original:#}); prior resident drain incomplete"))?;
-                management
-                    .reserve(host_bytes)
-                    .await
-                    .context("New profile still cannot fit after actual prior charge release")?
+                .with_context(|| format!("New profile reservation refused ({original:#}); prior resident drain or new reservation incomplete"))?
             }
         }
     };
@@ -1916,8 +1948,18 @@ impl StageOwner {
         supervisor: &Supervisor,
     ) -> Result<super::idle::UseGuard> {
         let start = super::idle::begin_use(&self.lifecycle)?;
-        if start.reload {
-            self.restore_verified(supervisor).await?;
+        if let Some(manifest) = start.reload {
+            let serial = self
+                .lifecycle
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Arbiter lifecycle unavailable"))?
+                .serial;
+            if let Err(error) = self.reload_after_idle(supervisor).await {
+                // A refused reload (for example, a Configure claimed the
+                // lifecycle first) keeps the marker for the next call.
+                super::idle::restore_marker(&self.lifecycle, manifest);
+                self.record_restore_failure(serial, &error);
+            }
         }
         Ok(start.guard)
     }
@@ -1934,23 +1976,38 @@ impl StageOwner {
         super::idle::ensure_watch(&self.lifecycle);
         Ok(())
     }
+    #[cfg(feature = "test-support")]
     pub(in crate::service_runtime) async fn restore_verified(
         &self,
         supervisor: &Supervisor,
     ) -> Result<()> {
+        let serial = self
+            .lifecycle
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .serial;
         if let Err(error) = self.try_restore_verified(supervisor).await {
-            let mut state = self
-                .lifecycle
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            self.record_restore_failure(serial, &error);
+        }
+        Ok(())
+    }
+    /// Records a refused restore as Failed only when no other operation has
+    /// claimed or changed the lifecycle since the restore began; otherwise
+    /// that operation owns the phase and its reason.
+    fn record_restore_failure(&self, serial: u64, error: &anyhow::Error) {
+        let mut state = self
+            .lifecycle
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if restore_failure_applies(state.serial, serial, state.busy) {
             state.phase = Availability::Failed;
             state.reason = bounded_reason(format!(
                 "Optional Arbiter restore refused; ordinary service remains available: {error:#}"
             ));
         }
-        Ok(())
     }
-    async fn try_restore_verified(&self, supervisor: &Supervisor) -> Result<()> {
+    #[cfg(feature = "test-support")]
+    pub(super) async fn try_restore_verified(&self, supervisor: &Supervisor) -> Result<()> {
         let configuration = self.configuration()?;
         if !configuration.stage(self.stage).enabled {
             return Ok(());
@@ -2329,6 +2386,13 @@ mod tests {
         assert_eq!(device_switch_release(None, large, true), None);
         assert_eq!(device_switch_release(Some(cpu), large, false), None);
         assert_eq!(device_switch_release(Some(cpu), digest(4), false), None);
+    }
+    #[test]
+    fn a_refused_restore_never_overwrites_a_newer_operation() {
+        assert!(restore_failure_applies(4, 4, false));
+        // A Configure claimed the lifecycle meanwhile: it owns the phase.
+        assert!(!restore_failure_applies(4, 4, true));
+        assert!(!restore_failure_applies(5, 4, false));
     }
     #[test]
     fn gpu_revocation_releases_every_private_entry_the_owner_holds() {

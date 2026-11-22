@@ -159,12 +159,15 @@ fn prepare_cuda_entry(input: &super::super::Input, artifacts: &Path) -> Result<P
 }
 
 /// One pinned review receipt per CUDA roster entry, in roster order, from
-/// `AIRK_ARBITER_EVALUATION_CUDA_REVIEWS`: a JSON list of `{path, sha256}`.
+/// `AIRK_ARBITER_EVALUATION_CUDA_REVIEWS`: a JSON list of
+/// `{path, sha256, profile_sha256}`, the last naming the reviewed pass-1 profile.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ReviewPin {
     path: PathBuf,
     sha256: Sha256Digest,
+    /// SHA-256 of the pass-1 profile the receipt reviewed.
+    profile_sha256: Sha256Digest,
 }
 
 /// The graph inputs of every CUDA entry: the protected review receipts when
@@ -207,6 +210,7 @@ fn cuda_graphs(
                 artifacts,
                 &review.path,
                 review.sha256,
+                review.profile_sha256,
                 &entry.profile,
                 adapter,
                 expires,

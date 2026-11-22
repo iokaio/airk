@@ -592,22 +592,8 @@ impl Owner {
     }
 
     pub(super) fn current_device_configuration(&self) -> Result<DeviceConfiguration> {
-        let profiles = runtime::catalog_profiles()?;
-        let binding = binding()?;
-        if let Some(observed) = self
-            .configuration
-            .device(binding.clone())
-            .inspect_device_binding()?
-        {
-            ensure!(
-                observed.binding == binding,
-                "configuration4 requires an exact authenticated compiled catalog transition; no unknown source rebind is authorized"
-            );
-        }
-        self.configuration.device(binding).load_or_migrate(
-            |id| profiles.iter().find(|p| p.manifest == id),
-            || catalog_live(&self.context, None),
-        )
+        // The owner's store is the Context stage's store.
+        self.context.current_device_configuration()
     }
     fn device_status(&self) -> Result<DeviceStatus> {
         let binding = binding()?;
@@ -2785,6 +2771,42 @@ mod tests;
 
 #[cfg(feature = "local-inference")]
 impl StageOwner {
+    /// The current device configuration from this stage's store.
+    pub(super) fn current_device_configuration(&self) -> Result<DeviceConfiguration> {
+        let profiles = runtime::catalog_profiles()?;
+        let binding = binding()?;
+        if let Some(observed) = self
+            .configuration
+            .device(binding.clone())
+            .inspect_device_binding()?
+        {
+            ensure!(
+                observed.binding == binding,
+                "configuration4 requires an exact authenticated compiled catalog transition; no unknown source rebind is authorized"
+            );
+        }
+        self.configuration.device(binding).load_or_migrate(
+            |id| profiles.iter().find(|p| p.manifest == id),
+            || catalog_live(self, None),
+        )
+    }
+    /// Starts the reload after an idle unload through the same route a
+    /// service start uses: the private evaluation's verified restore, or the
+    /// device-configured warm of the current document.
+    pub(super) async fn reload_after_idle(
+        &self,
+        supervisor: &airk_supervisor::project_supervisor::Supervisor,
+    ) -> Result<()> {
+        #[cfg(feature = "test-support")]
+        if self.evaluation.is_some() {
+            return self.try_restore_verified(supervisor).await;
+        }
+        let document = self.current_device_configuration()?;
+        if !document.stage(self.stage).enabled {
+            return Ok(());
+        }
+        self.launch_device(document, supervisor, None, DeviceAction::Warm)
+    }
     fn require_initialization_idle(&self) -> Result<()> {
         let state = self
             .lifecycle

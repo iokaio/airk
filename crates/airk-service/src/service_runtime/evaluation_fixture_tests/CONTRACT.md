@@ -89,11 +89,19 @@ claims release qualification.
   profiles (at most one Compact and one Large), each with a new manifest and a
   CPU twin of the same model. With one entry, the reviewed graph result must
   name that exact manifest. With `AIRK_ARBITER_EVALUATION_CUDA_REVIEWS` (a JSON
-  list of `{path, sha256}`, one per roster entry in order), each entry's pin is
-  its pass-1 graph diagnostic receipt's bounded policy, which the profile's
-  placement must name; two entries require it. The CPU roster stays the
-  restart identity. The lifetime switches between the two entries through
-  ordinary Configure.
+  list of `{path, sha256, profile_sha256}`, one per roster entry in order),
+  each entry's pin is its pass-1 graph diagnostic receipt's bounded policy,
+  which the profile's placement must name; two entries require it. The receipt
+  must be complete, without a diagnostic error, with a passing CPU payload
+  check, and of the pinned pass-1 profile (`profile_sha256`) with the same id,
+  model and device execution as the entry except placement and memory. The CPU
+  roster stays the restart identity. A lifetime may switch between the two
+  entries through ordinary Configure; the selector itself does not issue such
+  a switch, and no GPU lifetime has run one yet (owner: the LG preparation
+  run). Closed (L5C review M3): the first version accepted a receipt whose CPU
+  payload check had failed, or a receipt of another profile of the same model.
+  Both are now refused (`review_pin_tests`, 2 tests); the ignored `l5c_switch`
+  selector applies the same rule and needs `L5C_<MODEL>_PASS1_PROFILE_SHA256`.
 - `cuda_answer::cs1` (`actual_private_arbiter_fixture_change_set_1_cuda`, plus
   the emitter `emit_private_cuda_provisional_read_variants`): runs the
   change-set lifetime with exactly one CUDA Context variant and no Focus

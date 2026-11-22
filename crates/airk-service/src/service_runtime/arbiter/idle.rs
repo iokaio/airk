@@ -102,8 +102,11 @@ impl Drop for UseGuard {
 /// What a call found when it began.
 pub(super) struct UseStart {
     pub(super) guard: UseGuard,
-    /// The stage was unloaded for idleness; the caller starts the reload.
-    pub(super) reload: bool,
+    /// The manifest an idle unload left, when this call is the one to start
+    /// its reload. The marker is taken only when no lifecycle operation owns
+    /// the stage, so the reload can actually start; the caller puts it back
+    /// with [`restore_marker`] if the reload is refused.
+    pub(super) reload: Option<Sha256Digest>,
 }
 
 pub(super) fn begin_use(shared: &Arc<Mutex<lifecycle::State>>) -> Result<UseStart> {
@@ -116,13 +119,29 @@ pub(super) fn begin_use(shared: &Arc<Mutex<lifecycle::State>>) -> Result<UseStar
         .checked_add(1)
         .context("Arbiter call count exhausted")?;
     state.idle.last_use = Instant::now();
-    let reload = state.idle.unloaded.take().is_some() && !state.busy && !state.stopping;
+    let reload = if !state.busy && !state.stopping {
+        state.idle.unloaded.take()
+    } else {
+        None
+    };
     drop(state);
     let guard = UseGuard {
         shared: Arc::downgrade(shared),
     };
     ensure_watch(shared);
     Ok(UseStart { guard, reload })
+}
+
+/// Puts an idle-unload marker back after its reload was refused, unless a
+/// newer marker exists or the selection moved on.
+pub(super) fn restore_marker(shared: &Arc<Mutex<lifecycle::State>>, manifest: Sha256Digest) {
+    if let Ok(mut state) = shared.lock()
+        && state.idle.unloaded.is_none()
+        && state.profile == Some(manifest)
+        && state.phase != Availability::Ready
+    {
+        state.idle.unloaded = Some(manifest);
+    }
 }
 
 /// Starts this stage's watcher if none runs and a runtime is present.
@@ -187,57 +206,102 @@ async fn unload(shared: &Arc<Mutex<lifecycle::State>>) -> Result<()> {
     // wins, and this attempt is simply skipped.
     let (serial, _cancel) =
         lifecycle::start(shared, manifest, None).context("idle unload not admitted")?;
-    let started = Instant::now();
-    let mut released = false;
-    let result = async {
-        let release = {
-            let state = shared
-                .lock()
-                .map_err(|_| anyhow::anyhow!("Arbiter lifecycle unavailable"))?;
-            ensure!(
-                state.idle.in_flight == 0,
-                "a model call arrived; idle unload skipped"
-            );
-            handle.resident(manifest)?.reservation().release_observer()
-        };
-        lifecycle::phase(
-            shared,
-            serial,
-            Availability::Draining,
-            "Idle: unloading the model through the ordinary release; the next call reloads it.",
-        )?;
-        released = true;
-        lifecycle::release_actual(
-            &handle,
-            manifest,
-            release,
-            Instant::now() + Duration::from_secs(30),
-        )
-        .await?;
-        let mut state = shared
-            .lock()
-            .map_err(|_| anyhow::anyhow!("Arbiter lifecycle unavailable"))?;
-        state.charges.retain(|(profile, _)| *profile != manifest);
-        state.idle.unloaded = Some(manifest);
-        state.idle.last_unload_ms = u64::try_from(started.elapsed().as_millis()).ok();
-        drop(state);
-        lifecycle::phase(
-            shared,
-            serial,
-            Availability::Requested,
-            "Unloaded after the idle timeout. The next Answer starts the reload and runs on reads or without the model until it is Ready.",
-        )
-    }
-    .await;
-    lifecycle::complete(shared, serial, &result);
-    if result.is_err()
-        && !released
-        && let Ok(mut state) = shared.lock()
+    let charge = match handle.resident(manifest) {
+        Ok(resident) => resident.reservation().release_observer(),
+        Err(error) => {
+            let result = Err(error.context("idle unload found no resident"));
+            settle_skipped(shared, serial, before, &result);
+            return result;
+        }
+    };
+    unload_claimed(
+        shared,
+        serial,
+        manifest,
+        before,
+        &super::release::NativeRelease {
+            handle: &handle,
+            charge,
+        },
+    )
+    .await
+}
+
+/// Settles a claimed unload that released nothing: the stage stays as it was.
+fn settle_skipped(
+    shared: &Arc<Mutex<lifecycle::State>>,
+    serial: u64,
+    before: (Availability, String),
+    result: &Result<()>,
+) {
+    lifecycle::complete(shared, serial, result);
+    if let Ok(mut state) = shared.lock()
         && state.serial == serial
         && !state.busy
     {
-        // Nothing was released: the resident stays exactly as it was.
         (state.phase, state.reason) = before;
+    }
+}
+
+/// The claimed part of an unload, with the release steps supplied.
+///
+/// The in-flight check and the switch to Draining happen in one critical
+/// section, so a call that counts itself afterwards reads a stage that is not
+/// Ready and never scores against the resident being released. A drain that
+/// fails or times out keeps Draining and still leaves the reload marker, so
+/// the next call retries the reload instead of finding a stranded stage.
+pub(super) async fn unload_claimed<S: super::release::ReleaseSteps>(
+    shared: &Arc<Mutex<lifecycle::State>>,
+    serial: u64,
+    manifest: Sha256Digest,
+    before: (Availability, String),
+    steps: &S,
+) -> Result<()> {
+    let started = Instant::now();
+    let admitted = {
+        let mut state = shared
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Arbiter lifecycle unavailable"))?;
+        let admitted = state.serial == serial && state.idle.in_flight == 0;
+        if admitted {
+            state.phase = Availability::Draining;
+            state.reason = "Idle: unloading the model through the ordinary release; the next call reloads it.".into();
+        }
+        admitted
+    };
+    if !admitted {
+        let result = Err(anyhow::anyhow!("a model call arrived; idle unload skipped"));
+        settle_skipped(shared, serial, before, &result);
+        return result;
+    }
+    let result = super::release::release_then(
+        steps,
+        manifest,
+        Instant::now() + Duration::from_secs(30),
+        &tokio_util::sync::CancellationToken::new(),
+        async { Ok(()) },
+    )
+    .await;
+    {
+        let mut state = shared
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Arbiter lifecycle unavailable"))?;
+        state.idle.unloaded = Some(manifest);
+        if result.is_ok() && state.serial == serial {
+            state.charges.retain(|(profile, _)| *profile != manifest);
+            state.idle.last_unload_ms = u64::try_from(started.elapsed().as_millis()).ok();
+            state.phase = Availability::Requested;
+            state.reason = "Unloaded after the idle timeout. The next Answer starts the reload and runs on reads or without the model until it is Ready.".into();
+        }
+    }
+    lifecycle::complete(shared, serial, &result);
+    if let Err(error) = &result
+        && let Ok(mut state) = shared.lock()
+        && state.serial == serial
+    {
+        state.reason = bounded_reason(format!(
+            "Idle unload did not finish draining ({error:#}); the next call retries the reload."
+        ));
     }
     result
 }
@@ -307,7 +371,7 @@ mod tests {
             state.idle.last_use = Instant::now() - Duration::from_secs(3600);
         }
         let first = begin_use(&shared)?;
-        assert!(first.reload);
+        assert_eq!(first.reload, Some(manifest));
         {
             let state = shared.lock().unwrap();
             assert_eq!(state.idle.in_flight, 1);
@@ -316,17 +380,115 @@ mod tests {
         }
         // Only the first call after an unload starts the reload.
         let second = begin_use(&shared)?;
-        assert!(!second.reload);
+        assert_eq!(second.reload, None);
         drop(first);
         drop(second);
         assert_eq!(shared.lock().unwrap().idle.in_flight, 0);
-        // A call during another lifecycle operation leaves the reload to it.
+        Ok(())
+    }
+
+    #[test]
+    fn the_reload_marker_survives_a_busy_lifecycle_and_a_refused_reload() -> Result<()> {
+        let shared = Arc::new(Mutex::new(lifecycle::State::default()));
+        let manifest = Sha256Digest::from_bytes([7; 32]);
         {
             let mut state = shared.lock().unwrap();
+            state.profile = Some(manifest);
+            state.phase = Availability::Requested;
             state.idle.unloaded = Some(manifest);
             state.busy = true;
         }
-        assert!(!begin_use(&shared)?.reload);
+        // While an operation (such as the unload itself) owns the lifecycle,
+        // the marker stays for a later call.
+        assert_eq!(begin_use(&shared)?.reload, None);
+        assert_eq!(shared.lock().unwrap().idle.unloaded, Some(manifest));
+        shared.lock().unwrap().busy = false;
+        let taken = begin_use(&shared)?;
+        assert_eq!(taken.reload, Some(manifest));
+        // A refused reload puts the marker back for the next call.
+        restore_marker(&shared, manifest);
+        assert_eq!(begin_use(&shared)?.reload, Some(manifest));
+        // A marker is not restored once the stage is Ready again.
+        shared.lock().unwrap().phase = Availability::Ready;
+        restore_marker(&shared, manifest);
+        assert_eq!(shared.lock().unwrap().idle.unloaded, None);
+        Ok(())
+    }
+
+    fn ready_stage(manifest: Sha256Digest) -> Arc<Mutex<lifecycle::State>> {
+        let shared = Arc::new(Mutex::new(lifecycle::State::default()));
+        {
+            let mut state = shared.lock().unwrap();
+            state.profile = Some(manifest);
+            state.phase = Availability::Ready;
+            state.reason = "ready".into();
+        }
+        shared
+    }
+    fn claim(shared: &Arc<Mutex<lifecycle::State>>, manifest: Sha256Digest) -> Result<(u64, (Availability, String))> {
+        let before = {
+            let state = shared.lock().unwrap();
+            (state.phase, state.reason.clone())
+        };
+        let (serial, _) = lifecycle::start(shared, manifest, None)?;
+        Ok((serial, before))
+    }
+
+    #[tokio::test]
+    async fn an_idle_unload_releases_in_order_and_leaves_the_reload_marker() -> Result<()> {
+        let manifest = Sha256Digest::from_bytes([5; 32]);
+        let shared = ready_stage(manifest);
+        let (serial, before) = claim(&shared, manifest)?;
+        let steps = super::super::release::tests::Recorder::default();
+        unload_claimed(&shared, serial, manifest, before, &steps).await?;
+        assert_eq!(steps.seen(), vec!["release", "released", "charge-drained"]);
+        let state = shared.lock().unwrap();
+        assert_eq!(state.phase, Availability::Requested);
+        assert!(!state.busy);
+        assert_eq!(state.idle.unloaded, Some(manifest));
+        assert!(state.idle.last_unload_ms.is_some());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_call_in_flight_skips_the_unload_and_keeps_the_resident_ready() -> Result<()> {
+        let manifest = Sha256Digest::from_bytes([5; 32]);
+        let shared = ready_stage(manifest);
+        let call = begin_use(&shared)?;
+        let (serial, before) = claim(&shared, manifest)?;
+        let steps = super::super::release::tests::Recorder::default();
+        assert!(unload_claimed(&shared, serial, manifest, before, &steps).await.is_err());
+        assert!(steps.seen().is_empty());
+        {
+            let state = shared.lock().unwrap();
+            assert_eq!(state.phase, Availability::Ready);
+            assert_eq!(state.reason, "ready");
+            assert!(!state.busy);
+            assert_eq!(state.idle.unloaded, None);
+        }
+        drop(call);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_failed_drain_is_never_stranded() -> Result<()> {
+        let manifest = Sha256Digest::from_bytes([5; 32]);
+        let shared = ready_stage(manifest);
+        let (serial, before) = claim(&shared, manifest)?;
+        let steps = super::super::release::tests::Recorder {
+            fail_charge_wait: true,
+            ..Default::default()
+        };
+        assert!(unload_claimed(&shared, serial, manifest, before, &steps).await.is_err());
+        {
+            let state = shared.lock().unwrap();
+            // The unknown drain stays visible, and the lifecycle is free.
+            assert_eq!(state.phase, Availability::Draining);
+            assert!(!state.busy);
+            assert!(state.reason.contains("retries the reload"));
+        }
+        // The next call takes the marker and starts the reload.
+        assert_eq!(begin_use(&shared)?.reload, Some(manifest));
         Ok(())
     }
 }

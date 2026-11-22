@@ -874,16 +874,50 @@ fn switch_route(name: &str) -> Result<SwitchRoute> {
     let (review_path, raw_review, review_sha) = pinned(&format!("L5C_{upper}_REVIEW"))?;
     let profile: Profile = serde_json::from_slice(&raw_profile)?;
     let review: Value = serde_json::from_slice(&raw_review)?;
+    // Same review rule as the service fixture's `review_pin`: a complete,
+    // passing graph diagnostic of the operator-pinned pass-1 profile, whose
+    // device execution the final profile keeps except placement and memory.
+    let pass1: Sha256Digest = env(&format!("L5C_{upper}_PASS1_PROFILE_SHA256"))?.parse()?;
     ensure!(
         review["schema"] == "airk.private.l5a-gpu/1"
             && review["step"] == "graph"
-            && review["complete"] == true,
-        "{name} review receipt is not a complete graph diagnostic"
+            && review["complete"] == true
+            && review["cpu_payload_check"].is_null()
+            && review.get("diagnostic_error").is_none()
+            && review.get("error").is_none(),
+        "{name} review receipt is not a complete, passing graph diagnostic"
     );
+    let reviewed = &review["profile"];
+    let final_profile = serde_json::to_value(&profile)?;
+    ensure!(
+        reviewed["sha256"].as_str() == Some(pass1.to_string().as_str())
+            && reviewed["id"] == final_profile["profile_id"]
+            && reviewed["model"] == final_profile["model"],
+        "{name} review receipt is of another profile"
+    );
+    let (Some(before), Some(after)) = (
+        reviewed["device_execution"].as_object(),
+        final_profile["device_execution"].as_object(),
+    ) else {
+        anyhow::bail!("{name} review or profile has no device execution");
+    };
+    for key in before.keys().chain(after.keys()) {
+        ensure!(
+            key == "placement" || key == "memory" || before.get(key) == after.get(key),
+            "{name} profile device execution differs from its review in {key}"
+        );
+    }
     let pin: Sha256Digest = review["bounded_policy"]
         .as_str()
         .context("review policy missing")?
         .parse()?;
+    ensure!(
+        matches!(
+            profile.device_execution.as_ref().map(|d| &d.placement),
+            Some(airk_core::arbiter::device::PlacementPolicy::BoundedHybrid { policy }) if *policy == pin
+        ),
+        "{name} profile placement does not name its reviewed policy"
+    );
     Ok(SwitchRoute {
         name: name.into(),
         receipt: json!({"profile": {"path": profile_path, "sha256": profile_sha, "manifest": profile.manifest,
@@ -921,8 +955,10 @@ fn wait_released(
     }
 }
 
-/// Plan 12.5.2 item 6 and design L5 5.4: the Context switch within one process
-/// and one service lease, Compact -> Large -> Compact by default. Each phase
+/// Plan 12.5.2 item 6 and design L5 5.4, at the scorer level: Compact ->
+/// Large -> Compact by default, in one process and one service lease. It opens
+/// and drops the private Answer scorer directly; it does not go through
+/// Configure, the service warm or its release-before-reserve path. Each phase
 /// opens its route through the private Answer path, scores the same pinned CAL
 /// panel rows, releases the session and observes the device memory return
 /// before the next route opens, so the two models are never resident together.
@@ -933,6 +969,7 @@ fn wait_released(
 /// ```text
 /// L5C_COMPACT_PROFILE(_SHA256), L5C_COMPACT_ASSET_MAP(_SHA256), L5C_COMPACT_REVIEW(_SHA256)
 /// L5C_LARGE_PROFILE(_SHA256),   L5C_LARGE_ASSET_MAP(_SHA256),   L5C_LARGE_REVIEW(_SHA256)
+/// L5C_COMPACT_PASS1_PROFILE_SHA256, L5C_LARGE_PASS1_PROFILE_SHA256 (the reviewed pass-1 profiles)
 /// L5C_PHASES (default compact,large,compact), L5A_PANEL(_SHA256), L5A_PANEL_LIMIT
 /// L5C_RELEASE_SLACK_BYTES (default 512 MiB), L5A_CONTROL_PARENT, L5A_DEADLINE_S, L5C_OUTPUT
 /// ```

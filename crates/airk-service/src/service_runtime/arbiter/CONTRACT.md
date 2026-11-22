@@ -736,11 +736,35 @@ rollback, exactly as the budget-driven drain does; a private CUDA prior keeps
 its held descriptors instead. A failed new warm rolls back through the
 existing restoration path, which reloads the prior. Other switches keep the
 existing budget-driven drain; product device variants already drain in device
-management before their own load. The private warm observer records the
-released prior and its release time. Measured on the RTX A6000 through the
-private Answer scorer path (Compact FP16, Large FP16, Compact FP16 in one
-lease): release under 0.2 s, reload 7.8 s (Compact) and 16.9 s (Large), and
-bit-identical Compact scores before and after the switch.
+management before their own load. Every such release, and the idle unload,
+goes through one order (`release::release_then`): request the release,
+observe it, observe the final charge drain, and only then reserve. A
+cancellation before the release keeps the resident; one during the drain lets
+the drain finish and reserves nothing; a failed or timed-out drain never
+reserves. Unit tests drive that order with recorded fake steps. The private
+warm observer records the released prior and its release time.
+
+No live service lifetime has run this switch on the GPU yet. The A6000
+figures (reload 7.8 s for Compact and 16.9 s for Large, release under 0.2 s,
+bit-identical Compact scores across the switch) come from the ignored
+`l5c_switch` selector, which opens and drops the private Answer scorer
+directly in one lease. They are scorer-level measurements, not measurements
+of Configure, the service warm or `drain_prior`.
+
+- **Holds:** the switch and revocation selectors
+  (`lifecycle::tests::device_switch_releases_a_different_resident_before_reserving`,
+  `gpu_revocation_releases_every_private_entry_the_owner_holds`) and the
+  release order (`release::tests`, 4 tests: order, drain timeout, cancellation
+  before and during the drain).
+- **Does not hold yet:** no live service lifetime has switched two CUDA
+  entries on the GPU, and the warm path around the release order (charges,
+  phases, rollback) is not driven by a test, because the service unit tests
+  have no native model owner. Owner: the LG preparation run (two-entry
+  roster, a `gpu_fixture.py` two-entry mode and a fixture image).
+- **Closed (L5C review M4):** the first version had no test of the order at
+  all and described the scorer-level figures as the switch measurement. The
+  order is now one function with a test seam, and the text says what was
+  measured.
 
 ### Idle unload (plan 12.5)
 
@@ -749,16 +773,51 @@ minutes; `None` or zero never unloads). A per-stage watcher, started on the
 first model call, applies a pure rule with the clock supplied: only a settled
 Ready stage with no call in flight and no lifecycle operation unloads. The
 unload claims the lifecycle like Configure (a Configure that arrived first
-wins), then uses the same release and drain as a profile change. Status shows
-Draining while it unloads and then Requested with an "unloaded after the idle
-timeout" reason. The first model call after an unload starts the reload
-through the verified-restore path (private CUDA entries included) and is
-answered at once from the not-yet-Ready stage, so it returns no advice and the
-Answer runs on reads or the no-model loop. A reload never blocks or times out
-an Answer. The time is set per stage; only the private evaluation sets it
-today (`with_idle_unload`). A product setting is a persisted-configuration
-change and remains a follow-up, as do an explicit pre-warm request on the
-wire and the admission estimator's use of the measured reload time.
+wins), then uses the same release and drain as a profile change. Each model
+call is counted before it reads the stage's availability. The unload checks
+that no call is in flight and sets Draining in the same critical section, so a
+call either holds the unload off or reads a stage that is not Ready. Status
+shows Draining while it unloads, then Requested with an "unloaded after the
+idle timeout" reason. A drain that fails or times out stays Draining and still
+leaves the reload marker. The first model call after an unload starts the
+reload through the verified-restore path (private CUDA entries included). It
+takes the marker only when no lifecycle operation owns the stage, and puts it
+back if the restore is refused. A refused restore marks the stage Failed only
+when no operation has claimed the lifecycle since. That call is answered at
+once from the not-yet-Ready stage, so it returns no advice and the Answer runs
+on reads or the no-model loop. The reply discloses this as the existing
+`context_absent` or `focus_absent` degradation; a reload-specific reason in the
+reply needs a wire addition. A reload never blocks or times out an Answer.
+In the product the reload is the device-configured warm of the current
+document, the same route a service start takes; in the private evaluation it is
+the verified restore.
+
+- **Holds:** the rule (`idle::tests`), the claimed unload with recorded fake
+  release steps (in order, skipped while a call is in flight, a failed drain
+  left reloadable), the marker rules, and the refused-restore rule
+  (`lifecycle::tests::a_refused_restore_never_overwrites_a_newer_operation`).
+- **Does not hold yet, with owners:**
+  - The time is settable only from the private evaluation
+    (`with_idle_unload`). A product setting and an explicit pre-warm request
+    change persisted configuration and the wire; owner L1 (contract
+    decision).
+  - A reload-specific reason in the Answer reply needs a typed unavailable
+    reason in the service's scoring reply and a matching degradation; owner
+    L1/L3.
+  - The admission estimator's use of the measured reload time; owner L2b.
+  - No live service lifetime has run an idle unload on the GPU; owner: the
+    LG preparation run.
+- **Closed (L5C review M1, M2):**
+  - M1: a call could read Ready before it was counted, so an unload could
+    release under it, and a failed drain left the stage Draining with no
+    marker. Calls are now counted before availability is read; the unload
+    checks for calls and sets Draining in one critical section; a failed
+    drain leaves the marker.
+  - M2: the reload marker could be taken while the unload itself still held
+    the lifecycle, and a refused restore lost it and overwrote the phase. The
+    marker is now taken only when no operation owns the lifecycle, and
+    restored when the reload is refused; a refused restore marks Failed only
+    when nothing claimed the lifecycle since.
 
 The ignored `emit_paired_compact_cpu_comparator` selector stages only private
 CPU profile metadata. It takes the reviewed CPU profile, held CUDA profile and

@@ -466,8 +466,11 @@ Further entries are added as implementation proceeds.
 - **Why:** plan 12.5.2 item 4. Both gate arms then run on one installation
   and one set of indexes without a restart, and each arm's peak memory is its
   own model's.
-- **Measured** on the RTX A6000, in one process and one lease, through the
-  private Answer open path, with 20 CAL panel rows per phase:
+- **Measured** on the RTX A6000 at the scorer level: in one process and one
+  lease, the ignored `l5c_switch` selector opened and dropped the private
+  Answer scorer directly, with 20 CAL panel rows per phase. It did not go
+  through Configure, the service warm or its release path, so these figures
+  are not a measurement of the service switch itself:
 
   | Phase | Reload (cold open) | First call | Warm median | Peak GPU memory | Release |
   | --- | --- | --- | --- | --- | --- |
@@ -477,12 +480,20 @@ Further entries are added as implementation proceeds.
 
   - The second Compact phase gave bit-identical scores to the first.
   - The process's sampled peak was 14.24 GiB, below the 20.05 GiB sum of the
-    two models, so they were never resident together.
+    two models, so the scorer-level switch never held both.
+  - The service's release order (release, observed release, charge drain,
+    then reserve, including drain timeout and cancellation) is covered by
+    unit tests with recorded fake steps.
   - The rows are about 1,400 tokens each.
 - **Where:** service `arbiter/lifecycle.rs` (`device_switch_release`,
   `drain_prior`), `arbiter/evaluation.rs` (`with_private_gpu`), the fixture's
   `cuda_answer/same_install.rs`; the service arbiter `CONTRACT.md` section
   "Context switch within one lifetime". Receipt: `L5C/runs/s2-switch.json`.
+- **Run record:** the first launch, `s1-switch`, exited in 0.4 s before any
+  GPU work, because the private launch wrapper passed no SHA pins. The rerun,
+  `s2-switch`, used unchanged inputs. Both are in `L5C/logs/gpu-commands.log`.
+- **Still open:** no live service lifetime has switched the two entries on the
+  GPU. Owner: the LG preparation run.
 
 ### 23. The short trial ran on the scorer path, not on the evaluation indexes
 
@@ -495,8 +506,15 @@ Further entries are added as implementation proceeds.
   - profiles that admit the loop's card tasks, which wait on L4's card
     policies;
   - a rebuilt fixture image and a two-entry FP16 asset directory.
-- **Still to do before LG:** one indexed lifetime with both FP16 entries,
-  once L3 and L4 land. The service code for it is built and unit-tested.
+- **Still to do before LG** (owner: the LG preparation run): one indexed
+  lifetime with both FP16 entries, once L3 and L4 land. It needs:
+  - FP16 profiles re-emitted with the four card tasks, because L4's
+    `runtime.rs` change moves the FP16 math-policy digest;
+  - a two-entry roster and asset directory;
+  - a two-entry mode in `gpu_fixture.py`;
+  - a fixture image rebuild.
+
+  The service code for it is built and unit-tested.
 
 ### 24. Idle unload: built, with the setting reachable only from the evaluation
 
@@ -515,8 +533,13 @@ Further entries are added as implementation proceeds.
   - The per-stage time can be set only through the private evaluation for
     now.
   - A product setting and an explicit pre-warm request change persisted
-    configuration and the wire, so they wait for a contract decision.
+    configuration and the wire, so they wait for a contract decision (owner L1).
 - **Reload times** for the admission estimator (L2b) are in entry 22.
+- **The reply:** an Answer that meets a reload discloses `context_absent` or
+  `focus_absent`, which the loop already reports when a model did not run. A
+  reason that names the reload needs a wire addition (a typed unavailable
+  reason from the service's scoring reply and a matching degradation); that is
+  left for L1/L3.
 - **Where:** service `arbiter/idle.rs` and the service arbiter `CONTRACT.md`
   section "Idle unload".
 
@@ -531,7 +554,7 @@ Further entries are added as implementation proceeds.
     not change.
 - **Changed from the plan:** product device selection does not call it yet.
   There is no product CUDA Context route to step down from. Wiring it into
-  selection waits for the Compact FP16 product route.
+  selection waits for the Compact FP16 product route (owner: L5, design item 1.6).
 - **Where:** airk-core `arbiter/device/ladder.rs` and the Core arbiter
   `CONTRACT.md` section "Context ladder".
 
@@ -551,8 +574,36 @@ Further entries are added as implementation proceeds.
   injected memory pressure.
 - **Not built:** concurrent runs on one session. `Scorer` serializes every
   run behind one session mutex in retrieval `runtime.rs`, which L4 is
-  editing now. Per-run CUDA streams need that change first.
+  editing now. Per-run CUDA streams need that change first. Owner: L5b, after L4 integrates.
 - **Not measured:** the gain. Measuring it without concurrent runs would need
   a second session, which is a second copy and forbidden by 12.5.1.
 - **One copy only** already holds structurally: one resident per stage, and
   the switch of entry 22 releases before it loads.
+
+### 27. Review of the L5 phase C commit: findings closed
+
+- **Step:** L5 phase C, review fixes. The fixes are in the commit that adds
+  this entry; the reviewed commit is the phase C commit before it.
+- **Review:** an independent read-only review found four medium and four low
+  findings (private record `L5C/review-8028001.md`).
+- **Closures:**
+
+  | Finding | What was wrong | What changed | Evidence |
+  | --- | --- | --- | --- |
+  | M1 | A call could read Ready before it was counted, so an idle unload could release under it. A failed drain left the stage Draining with no way back. | Calls are counted before availability is read. The unload checks for calls and sets Draining in one critical section. A failed drain leaves the reload marker. | `idle::tests`: `a_call_in_flight_skips_the_unload_and_keeps_the_resident_ready`, `a_failed_drain_is_never_stranded` |
+  | M2 | The reload marker could be taken while the unload still held the lifecycle, or lost when a restore was refused, and a refused restore overwrote the phase. | The marker is taken only when no operation owns the lifecycle, and put back when the reload is refused. A refused restore marks Failed only when nothing claimed the lifecycle since. The product reload now uses the device-configured warm that a service start uses. | `the_reload_marker_survives_a_busy_lifecycle_and_a_refused_reload`, `a_refused_restore_never_overwrites_a_newer_operation` |
+  | M3 | A pass-1 review receipt was accepted even when its CPU payload check had failed, and a receipt of another profile of the same model was accepted. | The receipt must be complete and error-free, with a passing CPU payload check. It must name the operator-pinned pass-1 profile, with the same id, model and device execution except placement and memory. The same rule applies in `l5c_switch`. | `review_pin_tests` (2 tests) |
+  | M4 | No test covered the release-before-reserve order, and the scorer-level GPU figures were described as the switch measurement. | The order is one function with a test seam, used by the switch, the budget drain, the idle unload and every release. The text now says the figures are scorer-level. | `release::tests` (4 tests); entry 22 and the service contract |
+  | L1 | A reload was not named in the Answer reply. | Not closed in code. The reply still discloses `context_absent` or `focus_absent`. A reload-specific reason needs a wire addition. | Owner L1/L3; recorded in the service contract |
+  | L2 | Ladder truncation could drop the Large-on-CPU refusal row. | The step-down rows are kept as one group. | `the_large_cpu_refusal_survives_the_reason_limit` |
+  | L3 | A lowered user cap was ignored during a capacity trial. | The cap applies first. | `a_lowered_user_cap_ends_a_pending_trial` |
+  | L4 | The ignored GPU selector polls with short sleeps. | Kept: bounded and reported, in an ignored hardware selector. | — |
+
+- **Validation:**
+  - Service arbiter lib tests (all features): 154 run, 151 passed. The 3 that
+    fail also fail on the base without these changes.
+  - Core device tests: 69 run, 69 passed.
+  - Clippy is clean for the service (all features, `gpu-cuda`,
+    `gpu-cuda,test-support`, `local-inference`, none), Core and the
+    retrieval tests.
+  - No GPU run was needed for these fixes.

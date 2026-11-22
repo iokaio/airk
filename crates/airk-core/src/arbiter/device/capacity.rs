@@ -132,6 +132,16 @@ impl Capacity {
             };
             return self.decision(reason);
         }
+        // A lowered user cap applies at once, before any pending trial.
+        let cap = observed
+            .user_cap
+            .unwrap_or(AUTO_MAX_RUNS)
+            .clamp(1, AUTO_MAX_RUNS);
+        if self.runs > cap {
+            self.runs = cap;
+            self.trial = false;
+            return self.decision(CapacityReason::Capped);
+        }
         if self.trial {
             let Some(proof) = proof else {
                 return self.decision(CapacityReason::AwaitingProof);
@@ -145,14 +155,6 @@ impl Capacity {
             self.runs -= 1;
             self.quiet_until = Some(observed.now + RECOVERY_QUIET);
             return self.decision(CapacityReason::RemovedNoGain);
-        }
-        let cap = observed
-            .user_cap
-            .unwrap_or(AUTO_MAX_RUNS)
-            .clamp(1, AUTO_MAX_RUNS);
-        if self.runs > cap {
-            self.runs = cap;
-            return self.decision(CapacityReason::Capped);
         }
         if self.runs == cap {
             return self.decision(if cap == 1 {
@@ -298,6 +300,25 @@ mod tests {
         let mut one = observed(now, 30 * GIB);
         one.user_cap = Some(1);
         assert_eq!(capacity.step(&one, None).runs, 1);
+        assert_eq!(capacity.step(&one, None).reason, CapacityReason::Single);
+    }
+
+    #[test]
+    fn a_lowered_user_cap_ends_a_pending_trial() {
+        let now = Instant::now();
+        let mut capacity = Capacity::default();
+        capacity.step(&observed(now, 30 * GIB), None);
+        assert_eq!(capacity.runs(), 2);
+        let mut one = observed(now, 30 * GIB);
+        one.user_cap = Some(1);
+        // Even with a passing proof in hand, the cap wins.
+        assert_eq!(
+            capacity.step(&one, Some(proof(2.0))),
+            CapacityDecision {
+                runs: 1,
+                reason: CapacityReason::Capped
+            }
+        );
         assert_eq!(capacity.step(&one, None).reason, CapacityReason::Single);
     }
 

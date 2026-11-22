@@ -1629,7 +1629,39 @@ CPU. Large never runs on the CPU: a Large CPU selection is refused with a
 `no_qualified_gpu_route` row. A step down from Large adds the
 `smaller_model_selected` row, the existing reserved reason, so the wire list is
 unchanged. Every reason is kept in order within the status limit, and the
-step-down row always survives truncation. With no rung, the outcome is `None`
-and Answer runs the no-model loop. The function is advisory like `select`; the
-service's product device selection does not call it yet, because no product
-CUDA Context route exists to step down from (recorded follow-up).
+step-down rows always survive truncation: the Large-on-CPU refusal row and the
+`smaller_model_selected` row are kept first, then the earlier and later reasons
+fill the room left. With no rung, the outcome is `None` and Answer runs the
+no-model loop. The function is advisory like `select`.
+
+- **Holds:** the rung rule and its typed reasons, tested in
+  `device::ladder::tests` (7 tests).
+- **Does not hold yet:** the service's product device selection does not call
+  it, because no product CUDA Context route exists to step down from.
+  Follow-up owner: the Compact FP16 product route (L5, design item 1.6).
+- **Closed (L5C review L2):** the first version could drop the Large-on-CPU
+  refusal row when many Large reasons filled the limit. The rows are now kept
+  as one group (test `the_large_cpu_refusal_survives_the_reason_limit`).
+
+## Runtime capacity (plan 12.5.1)
+
+`device::capacity::Capacity::step` is the per-stage, per-device rule for
+concurrent runs on one loaded session, with the clock and observations
+supplied by the caller. Auto allows at most 2 runs; a user cap lowers it at
+once, also during a pending trial. A run is added only for sustained need and
+only if free memory after its measured working memory stays at or above the
+reserve floor, the larger of 1.5 GB and 10% of the device (other stages'
+pending working memory on the device counts). An added run stays only if
+throughput rises at least 1.3 times with every run within budget. Below the
+floor or under external load the stage sheds to one run at once, and adds runs
+back one at a time after a 120 s quiet period.
+
+- **Holds:** the rule, tested in `device::capacity::tests` (6 tests), including
+  shedding under injected memory pressure.
+- **Does not hold yet:** nothing calls it. Concurrent runs on one session are
+  not built, because `Scorer` serializes every run behind its session mutex in
+  retrieval `runtime.rs`, and per-run CUDA streams need that change first. The
+  gain was not measured, since a second session would be a second copy of the
+  model. Follow-up owner: L5b, after L4's `runtime.rs` change integrates.
+- **Closed (L5C review L3):** a lowered user cap was ignored while a trial was
+  pending. It now applies first (test `a_lowered_user_cap_ends_a_pending_trial`).

@@ -59,28 +59,30 @@ pub fn context_ladder(
             && large.is_none_or(|large| large.model == SelectedModel::ContextLarge),
         "Context ladder requires the Large and Compact selections"
     );
-    let mut reasons = Vec::new();
+    // Large's own reasons, then the rows a step down must always show (the
+    // Large-on-CPU refusal and the step itself), then Compact's reasons.
+    let mut large_reasons = Vec::new();
+    let mut step = Vec::new();
     if let Some(large) = large {
-        reasons.extend(large.reasons.iter().cloned());
+        large_reasons.extend(large.reasons.iter().cloned());
         match &large.selected {
             Some(variant) if variant.backend.is_some() => {
                 return Ok(LadderOutcome {
                     rung: ContextRung::LargeGpu,
                     selected: Some(variant.clone()),
                     model: Some(SelectedModel::ContextLarge),
-                    reasons: bounded(reasons),
+                    reasons: bounded(large_reasons, Vec::new(), Vec::new()),
                 });
             }
-            Some(variant) => reasons.push(CandidateRejection {
+            Some(variant) => step.push(CandidateRejection {
                 manifest: Some(variant.manifest),
                 adapter_key: Some(variant.adapter_key.clone()),
                 reason: SelectionReason::NoQualifiedGpuRoute,
             }),
             None => {}
         }
-        reasons.push(global(SelectionReason::SmallerModelSelected));
+        step.push(global(SelectionReason::SmallerModelSelected));
     }
-    reasons.extend(compact.reasons.iter().cloned());
     let rung = match &compact.selected {
         Some(variant) if variant.backend.is_some() => ContextRung::CompactGpu,
         Some(_) => ContextRung::CompactCpu,
@@ -90,26 +92,24 @@ pub fn context_ladder(
         rung,
         model: compact.selected.as_ref().map(|_| SelectedModel::ContextCompact),
         selected: compact.selected.clone(),
-        reasons: bounded(reasons),
+        reasons: bounded(large_reasons, step, compact.reasons.clone()),
     })
 }
 
-/// Keeps the first reasons and the step-down row within the status limit.
-fn bounded(mut reasons: Vec<CandidateRejection>) -> Vec<CandidateRejection> {
-    if reasons.len() <= MAX_SELECTION_REASONS {
-        return reasons;
-    }
-    let step = reasons
-        .iter()
-        .position(|row| row.reason == SelectionReason::SmallerModelSelected);
-    let mut kept: Vec<_> = reasons.drain(..MAX_SELECTION_REASONS - 1).collect();
-    match step {
-        Some(index) if index >= MAX_SELECTION_REASONS - 1 => {
-            kept.push(global(SelectionReason::SmallerModelSelected));
-        }
-        _ => kept.push(reasons.remove(0)),
-    }
-    kept
+/// Joins the reasons in order within the status limit. The step-down rows
+/// always survive; the rows before them fill the room left, then the rows
+/// after them.
+fn bounded(
+    mut before: Vec<CandidateRejection>,
+    step: Vec<CandidateRejection>,
+    mut after: Vec<CandidateRejection>,
+) -> Vec<CandidateRejection> {
+    let room = MAX_SELECTION_REASONS.saturating_sub(step.len());
+    before.truncate(room);
+    after.truncate(room - before.len());
+    before.extend(step);
+    before.extend(after);
+    before
 }
 
 #[cfg(test)]
@@ -241,6 +241,33 @@ mod tests {
         assert_eq!(
             outcome.reasons.last().map(|r| r.reason),
             Some(SelectionReason::SmallerModelSelected)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn the_large_cpu_refusal_survives_the_reason_limit() -> Result<()> {
+        let many: Vec<_> = (0..MAX_SELECTION_REASONS as u8)
+            .map(|byte| row(byte, SelectionReason::AllocationFailed))
+            .collect();
+        let large = selection(SelectedModel::ContextLarge, Some(variant(50, false)), many);
+        let compact = selection(
+            SelectedModel::ContextCompact,
+            Some(variant(40, true)),
+            vec![row(41, SelectionReason::GpuNotOptedIn)],
+        );
+        let outcome = context_ladder(Some(&large), &compact)?;
+        assert_eq!(outcome.reasons.len(), MAX_SELECTION_REASONS);
+        let tail: Vec<_> = outcome.reasons[MAX_SELECTION_REASONS - 2..]
+            .iter()
+            .map(|r| (r.manifest, r.reason))
+            .collect();
+        assert_eq!(
+            tail,
+            vec![
+                (Some(digest(50)), SelectionReason::NoQualifiedGpuRoute),
+                (None, SelectionReason::SmallerModelSelected),
+            ]
         );
         Ok(())
     }

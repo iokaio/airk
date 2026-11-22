@@ -52,6 +52,7 @@ impl Input {
         artifacts: &Path,
         receipt: &Path,
         expected: Sha256Digest,
+        pass1_profile_sha256: Sha256Digest,
         profile: &Profile,
         adapter: [u8; 16],
         expires: Instant,
@@ -65,17 +66,7 @@ impl Input {
             "private CUDA review receipt size or SHA differs"
         );
         let review: serde_json::Value = serde_json::from_slice(&raw)?;
-        ensure!(
-            review["schema"] == "airk.private.l5a-gpu/1"
-                && review["step"] == "graph"
-                && review["complete"] == true
-                && review["profile"]["model"] == serde_json::to_value(profile.model)?,
-            "private CUDA review receipt is not a complete graph diagnostic of this model"
-        );
-        let pin: Sha256Digest = review["bounded_policy"]
-            .as_str()
-            .context("private CUDA review policy missing")?
-            .parse()?;
+        let pin = review_pin(&review, &serde_json::to_value(profile)?, pass1_profile_sha256)?;
         ensure!(
             matches!(
                 profile.device_execution.as_ref().map(|device| &device.placement),
@@ -126,6 +117,111 @@ impl Input {
             graph: EvaluationAnswerGraph::new(graph.into(), expected, expires),
             pin: expected,
         })
+    }
+}
+
+/// The device-execution fields a pass-2 profile may change from its pass-1
+/// profile: the bounded policy the review produced, and the measured memory.
+const PASS2_FIELDS: [&str; 2] = ["placement", "memory"];
+
+/// Validates a pass-1 graph diagnostic receipt as the review pin of `profile`
+/// (the final, pass-2 profile as JSON) and returns its bounded policy.
+///
+/// The receipt must be a complete, error-free graph diagnostic whose CPU
+/// payload check passed. Its profile must be the operator-pinned pass-1
+/// profile (`pass1_profile_sha256`). A pass-2 profile has a new manifest by
+/// construction, so the binding to `profile` is its identity instead: the
+/// same profile id and model, and the same device execution except
+/// [`PASS2_FIELDS`].
+fn review_pin(
+    review: &serde_json::Value,
+    profile: &serde_json::Value,
+    pass1_profile_sha256: Sha256Digest,
+) -> Result<Sha256Digest> {
+    ensure!(
+        review["schema"] == "airk.private.l5a-gpu/1"
+            && review["step"] == "graph"
+            && review["complete"] == true
+            && review["cpu_payload_check"].is_null()
+            && review.get("diagnostic_error").is_none()
+            && review.get("error").is_none(),
+        "private CUDA review receipt is not a complete, passing graph diagnostic"
+    );
+    let reviewed = &review["profile"];
+    ensure!(
+        reviewed["sha256"].as_str() == Some(pass1_profile_sha256.to_string().as_str()),
+        "private CUDA review receipt names another pass-1 profile"
+    );
+    ensure!(
+        reviewed["id"] == profile["profile_id"] && reviewed["model"] == profile["model"],
+        "private CUDA review receipt is of another profile or model"
+    );
+    let (Some(before), Some(after)) = (
+        reviewed["device_execution"].as_object(),
+        profile["device_execution"].as_object(),
+    ) else {
+        anyhow::bail!("private CUDA review or profile has no device execution");
+    };
+    let keys: BTreeSet<&String> = before.keys().chain(after.keys()).collect();
+    for key in keys {
+        ensure!(
+            PASS2_FIELDS.contains(&key.as_str()) || before.get(key) == after.get(key),
+            "private CUDA profile device execution differs from its review in {key}"
+        );
+    }
+    review["bounded_policy"]
+        .as_str()
+        .context("private CUDA review policy missing")?
+        .parse()
+}
+
+#[cfg(test)]
+mod review_pin_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn digest(byte: u8) -> Sha256Digest {
+        Sha256Digest::from_bytes([byte; 32])
+    }
+    fn device(policy: Sha256Digest, peak: u64) -> serde_json::Value {
+        json!({"backend": "cuda", "graph": digest(1), "math_policy": digest(2),
+               "precision": "float16", "placement": {"mode": "bounded_hybrid", "policy": policy},
+               "memory": {"kind": "dedicated", "required_peak_bytes": peak, "headroom_bytes": 2}})
+    }
+    fn review() -> serde_json::Value {
+        json!({"schema": "airk.private.l5a-gpu/1", "step": "graph", "complete": true,
+               "cpu_payload_check": null, "bounded_policy": digest(9),
+               "profile": {"id": "private-compact", "model": "arbiter-context-qwen3-17b",
+                           "sha256": digest(4), "manifest": digest(5), "device_execution": device(digest(0), 1)}})
+    }
+    fn profile() -> serde_json::Value {
+        json!({"profile_id": "private-compact", "model": "arbiter-context-qwen3-17b",
+               "manifest": digest(6), "device_execution": device(digest(9), 8)})
+    }
+
+    #[test]
+    fn a_passing_review_of_the_pinned_pass1_profile_gives_its_policy() -> Result<()> {
+        assert_eq!(review_pin(&review(), &profile(), digest(4))?, digest(9));
+        Ok(())
+    }
+
+    #[test]
+    fn failed_unbound_or_foreign_reviews_are_refused() {
+        let mut failed_cpu = review();
+        failed_cpu["cpu_payload_check"] = json!("CPU payload exceeds its cap");
+        let mut errored = review();
+        errored["diagnostic_error"] = json!({"error": "placement refused"});
+        let mut incomplete = review();
+        incomplete["complete"] = json!(false);
+        let mut other_id = review();
+        other_id["profile"]["id"] = json!("private-large");
+        let mut other_graph = review();
+        other_graph["profile"]["device_execution"]["graph"] = json!(digest(7));
+        for refused in [failed_cpu, errored, incomplete, other_id, other_graph] {
+            assert!(review_pin(&refused, &profile(), digest(4)).is_err());
+        }
+        // The receipt must be of the operator-pinned pass-1 profile.
+        assert!(review_pin(&review(), &profile(), digest(8)).is_err());
     }
 }
 
