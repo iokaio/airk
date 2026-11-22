@@ -19,7 +19,9 @@ pub(crate) use schedule::{AnswerScope, JobOutcome, JobTableConfig, QueueStatus, 
 
 use airk_core::{
     arbiter::answer_loop::{AnswerTicket, ContextRequestV3, Degradation},
+    evidence::RevisionEnvelope,
     identity::Sha256Digest,
+    index_catalog::IndexId,
 };
 use anyhow::{Context, Result, anyhow};
 use schedule::{JobView, Schedule, Submitted};
@@ -68,7 +70,8 @@ pub(crate) type RunFuture<R> = Pin<Box<dyn Future<Output = Result<Finished<R>>> 
 /// with its applied shape and disclosed degradations.
 pub(crate) type Runner<R> = Arc<dyn Fn(StartedJob) -> RunFuture<R> + Send + Sync>;
 
-/// One call's result.
+/// One call's result. Degradations are the ones fitted at dispatch, the same
+/// for the caller that made the job and for every caller that attached.
 #[derive(Debug)]
 pub(crate) enum CallReply<R> {
     /// The job finished within the call; `attached` when another call made it.
@@ -80,7 +83,11 @@ pub(crate) enum CallReply<R> {
     },
     /// The call's deadline came first; the job keeps running. A queued job's
     /// reply is a ticket, a running job's a partial with this continuation.
-    Pending { running: bool, ticket: AnswerTicket },
+    Pending {
+        running: bool,
+        ticket: AnswerTicket,
+        degradations: Vec<Degradation>,
+    },
     /// Nothing could be queued; nothing was made.
     Busy { retry_after_ms: u64 },
 }
@@ -90,6 +97,11 @@ struct Shared<R> {
     done: Mutex<HashMap<Sha256Digest, Signal<R>>>,
     clock: Arc<dyn Clock>,
     runner: Runner<R>,
+    /// Jobs are spawned here, whatever thread dispatches them.
+    runtime: tokio::runtime::Handle,
+    /// Test hook: the number of calls that have started waiting.
+    #[cfg(test)]
+    waiting: watch::Sender<usize>,
 }
 
 pub(crate) struct AnswerJobTable<R> {
@@ -104,6 +116,7 @@ impl<R> Clone for AnswerJobTable<R> {
 }
 
 impl<R: Send + Sync + 'static> AnswerJobTable<R> {
+    /// Built inside the service's Tokio runtime, whose handle it keeps.
     pub(crate) fn new(
         config: JobTableConfig,
         clock: Arc<dyn Clock>,
@@ -112,22 +125,27 @@ impl<R: Send + Sync + 'static> AnswerJobTable<R> {
         let mut salt = [0; 32];
         ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut salt)
             .map_err(|_| anyhow!("Answer job table salt unavailable"))?;
-        Ok(Self::with_salt(config, clock, runner, salt))
+        Self::with_salt(config, clock, runner, salt)
     }
     pub(crate) fn with_salt(
         config: JobTableConfig,
         clock: Arc<dyn Clock>,
         runner: Runner<R>,
         salt: [u8; 32],
-    ) -> Self {
-        Self {
+    ) -> Result<Self> {
+        let runtime = tokio::runtime::Handle::try_current()
+            .context("the Answer job table needs the service's Tokio runtime")?;
+        Ok(Self {
             shared: Arc::new(Shared {
                 schedule: Mutex::new(Schedule::new(config, salt)),
                 done: Mutex::new(HashMap::new()),
                 clock,
                 runner,
+                runtime,
+                #[cfg(test)]
+                waiting: watch::channel(0).0,
             }),
-        }
+        })
     }
 
     fn schedule(&self) -> Result<std::sync::MutexGuard<'_, Schedule<R>>> {
@@ -158,16 +176,20 @@ impl<R: Send + Sync + 'static> AnswerJobTable<R> {
                         retry_after_ms: *retry_after_ms,
                     });
                 }
-                Submitted::Attached(id) | Submitted::Admitted { id, .. } => *id,
+                Submitted::Attached(id) | Submitted::Admitted(id) => *id,
                 Submitted::Ticketed(ticket) => ticket.id,
             };
             // Under the schedule lock: a job not finished now signals the
             // receiver made here, because finishing takes this lock first.
-            if let Some(JobView::Finished(outcome)) = schedule.view(&scope, &id, now) {
+            if let Some(JobView::Finished {
+                outcome,
+                degradations,
+            }) = schedule.view(&scope, &id, now)
+            {
                 return Ok(CallReply::Finished {
                     id,
                     attached: true,
-                    degradations: vec![],
+                    degradations,
                     outcome,
                 });
             }
@@ -177,18 +199,19 @@ impl<R: Send + Sync + 'static> AnswerJobTable<R> {
             self.spawn(started);
             (submitted, receiver)
         };
-        let (id, attached, degradations) = match submitted {
+        let (id, attached) = match submitted {
             Submitted::Ticketed(ticket) => {
                 return Ok(CallReply::Pending {
                     running: false,
                     ticket,
+                    degradations: vec![],
                 });
             }
-            Submitted::Attached(id) => (id, true, vec![]),
-            Submitted::Admitted { id, degradations } => (id, false, degradations),
+            Submitted::Attached(id) => (id, true),
+            Submitted::Admitted(id) => (id, false),
             Submitted::Busy { .. } => unreachable!("returned above"),
         };
-        self.wait(scope, id, attached, degradations, receiver, call_deadline)
+        self.wait(scope, id, attached, receiver, call_deadline)
             .await
     }
 
@@ -197,36 +220,61 @@ impl<R: Send + Sync + 'static> AnswerJobTable<R> {
         scope: AnswerScope,
         id: Sha256Digest,
         attached: bool,
-        degradations: Vec<Degradation>,
         mut receiver: Signalled<R>,
         call_deadline: tokio::time::Instant,
     ) -> Result<CallReply<R>> {
-        let finished = |outcome| CallReply::Finished {
-            id,
-            attached,
-            degradations: degradations.clone(),
-            outcome,
-        };
-        let waited = tokio::time::timeout_at(
+        #[cfg(test)]
+        self.shared.waiting.send_modify(|count| *count += 1);
+        let waited = match tokio::time::timeout_at(
             call_deadline,
             receiver.wait_for(|outcome| outcome.is_some()),
         )
-        .await;
-        if let Ok(Ok(outcome)) = waited {
-            let outcome = outcome.clone().expect("waited for an outcome");
-            return Ok(finished(outcome));
-        }
-        match self.view(&scope, &id)? {
-            Some(JobView::Finished(outcome)) => Ok(finished(outcome)),
-            Some(JobView::Running(ticket)) => Ok(CallReply::Pending {
+        .await
+        {
+            Ok(Ok(outcome)) => outcome.clone(),
+            _ => None,
+        };
+        // An outcome sent just after the timeout is still this call's, even
+        // if the table has dropped the entry since (review C6).
+        let signalled = waited.or_else(|| receiver.borrow().clone());
+        match (signalled, self.view(&scope, &id)?) {
+            (
+                _,
+                Some(JobView::Finished {
+                    outcome,
+                    degradations,
+                }),
+            ) => Ok(CallReply::Finished {
+                id,
+                attached,
+                degradations,
+                outcome,
+            }),
+            // Finished and no longer retained (a stale publication, the
+            // caps): the outcome is delivered; its disclosures went with it.
+            (Some(outcome), _) => Ok(CallReply::Finished {
+                id,
+                attached,
+                degradations: vec![],
+                outcome,
+            }),
+            (
+                None,
+                Some(JobView::Running {
+                    ticket,
+                    degradations,
+                }),
+            ) => Ok(CallReply::Pending {
                 running: true,
                 ticket,
+                degradations,
             }),
-            Some(JobView::Queued(ticket)) => Ok(CallReply::Pending {
+            (None, Some(JobView::Queued(ticket))) => Ok(CallReply::Pending {
                 running: false,
                 ticket,
+                degradations: vec![],
             }),
-            None => Err(anyhow!("Answer job ended without a retained result")),
+            (None, None) => Err(anyhow!("Answer job ended without a retained result")),
         }
     }
 
@@ -248,13 +296,16 @@ impl<R: Send + Sync + 'static> AnswerJobTable<R> {
     }
 
     /// Run each started job on its own task, so a caller dropping its call
-    /// never cancels the work; a panicking runner still frees its slot.
+    /// never cancels the work. The runner is called inside the task, and the
+    /// task is spawned on the kept handle, so neither a panicking runner nor
+    /// a dispatch from a non-Tokio thread can strand a slot (review C2).
     fn spawn(&self, started: Vec<StartedJob>) {
         for job in started {
             let id = job.id;
-            let run = tokio::spawn((self.shared.runner)(job));
+            let runner = self.shared.runner.clone();
+            let run = self.shared.runtime.spawn(async move { runner(job).await });
             let table = self.clone();
-            tokio::spawn(async move {
+            self.shared.runtime.spawn(async move {
                 let outcome = match run.await {
                     Ok(Ok(finished)) => JobOutcome::Done {
                         value: finished.value,
@@ -294,6 +345,7 @@ impl<R: Send + Sync + 'static> AnswerJobTable<R> {
     }
 
     /// L5b's runtime capacity figure; a larger limit starts queued jobs now.
+    /// Safe from any thread.
     pub(crate) fn set_runtime_capacity(&self, capacity: Option<usize>) -> Result<()> {
         let mut schedule = self.schedule()?;
         schedule.set_runtime_capacity(capacity);
@@ -309,15 +361,25 @@ impl<R: Send + Sync + 'static> AnswerJobTable<R> {
         Ok(())
     }
 
-    /// A new publication of the scope's index drops older results at once.
+    /// For the service's own publication observer only, never a caller: a
+    /// new publication of `index` drops other publications' results,
+    /// failures included, and supersedes jobs running on them. An older
+    /// generation of the same incarnation is ignored (`Ok(false)`).
     pub(crate) fn publication_changed(
         &self,
-        scope: &AnswerScope,
-        current: Sha256Digest,
-    ) -> Result<()> {
-        self.schedule()
-            .context("Answer job table unavailable")?
-            .publication_changed(scope.index(), current);
-        Ok(())
+        index: IndexId,
+        publication: &RevisionEnvelope,
+    ) -> Result<bool> {
+        self.schedule()?.publication_changed(index, publication)
+    }
+
+    /// Test hook: resolves once `count` calls have started waiting.
+    #[cfg(test)]
+    pub(crate) async fn waiting_at_least(&self, count: usize) {
+        let mut waiting = self.shared.waiting.subscribe();
+        waiting
+            .wait_for(|waiting| *waiting >= count)
+            .await
+            .expect("the table outlives its waiters");
     }
 }

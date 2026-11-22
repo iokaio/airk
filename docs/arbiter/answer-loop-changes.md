@@ -329,30 +329,41 @@ limits on publication still apply in full.
 - **Choices, each a guide the plan left open:**
   1. **The request digest leaves out `deadline_ms`.** A retry usually sends
      less time, and it must still attach. The continuation is left out too.
-  2. **The degrade order:** rounds to two, Large to Compact, rounds to one,
+     A retry that would get more on its own never takes a shorter run's
+     more degraded answer (review note on `ab31451e`). It attaches only
+     when the existing job gives it no less than its own admission would;
+     otherwise it runs as a separate job. The full rule is in the
+     contract, "Attaching without loss".
+  2. **The degrade order:** rounds to two, the model step, rounds to one,
      sub-needs and parts to two, then to one, and last the no-model loop.
      The aim is to keep more of the question before cutting model quality
-     to nothing.
+     to nothing. The model step moves to Compact only where Compact is
+     cheaper; after it, each shape takes the cheaper of Large and Compact
+     (review C7).
   3. **No ticket when a ticket cannot help.** If even the smallest answer
      cannot fit the request's own deadline with no wait, the request is
      admitted at the smallest shape and disclosed. It is not ticketed. The
      kernel's partial at the deadline is then the answer.
   4. **A ticketed job gets its full deadline** from its actual dispatch. An
-     admitted job whose wait outran its deadline also runs on a fresh window
-     (`requeued`), because the work outlives the call.
+     admitted job whose wait consumed its deadline also runs on a fresh
+     window (`requeued`), because the work outlives the call. A job that
+     never waited is never `requeued` (review C4).
   5. **The ageing guard** is the dispatch key `due + 1 x enqueued`. This
      bounds every job's wait. A test shows a 600 s Answer under a stream of
      20 s Answers starting by 295 s; under pure EDF it would start at 585 s.
   6. **The gathering limit** is `max(2, min(capacity, user cap))`. The user
      cap does not go below the floor of 2. The capacity is 2 until L5b
      injects it through `set_runtime_capacity`.
-  7. **Per-scope fairness:** at most 8 queued and running jobs per scope
-     and 4,096 in the table. A call past these limits gets `Busy` with a
-     retry time, and no job is made.
-  8. **Failures are retained** for the same 10 minutes, so a retry attaches
-     to the failure instead of replaying uncertain work.
-  9. **Retained bytes** are capped at 64 MiB, and the oldest result is
-     evicted first.
+  7. **Fairness:** at most 8 queued and running jobs per scope, 32 per
+     principal (installation and source-authority fingerprint) across its
+     scopes (review S3), and 4,096 in the table. A call past these limits
+     gets `Busy` with a retry time, and no job is made.
+  8. **Failures are retained** for the same 10 minutes on their own
+     publication, so a retry attaches to the failure instead of replaying
+     uncertain work. A new publication drops them (review C1).
+  9. **Retained entries** are capped at 64 MiB and 1,024 entries, and the
+     oldest is evicted first. Every entry is charged its result, its
+     question and 1 KiB, so no entry is free (review S1).
   10. **The estimator costs are placeholders until L5b and L7 measure
       them:**
       - no model: 2 s fixed, 0.5 s per part, 2 s per sub-need-round;
@@ -360,13 +371,29 @@ limits on publication still apply in full.
       - Large: 8, 4 and 8 s.
 
       A learned correction (an EWMA of elapsed over estimated, kept
-      between 0.25 and 4) adjusts them in the meantime.
+      between 0.25 and 4) adjusts them in the meantime. It skips runs that
+      reached their deadline (review C5).
+  11. **Publications (review C1 and S4).** The table records the
+      publication a job is expected to run on at dispatch, and the runner's
+      report replaces it.
+      - The service's observer reports each new publication of an index;
+        an older generation of the same incarnation is ignored.
+      - On a new publication, every result and failure of another
+        publication is dropped, and running jobs on another publication are
+        superseded: never attached, their continuations refused, and their
+        outcomes delivered to waiters but not kept.
+  12. **Degradations in replies** are the ones fitted at dispatch, the same
+      for every caller, whether it made the job or attached (review C3).
 - **Security:** a job is visible only within its `AnswerScope`, which is the
-  installation, catalog, index and the caller's source-authority
-  fingerprint. A foreign, unknown and expired continuation all get one
-  identical refusal. Job ids are salted per table. Status carries no ids,
-  scopes or questions. Details are in the contract's security section, for
-  the separate security review.
+  installation, catalog, index, the caller's source-authority fingerprint
+  and the configuration revision (review S2). A foreign, unknown and expired
+  continuation all get one identical refusal. Job ids are salted per table.
+  Status carries no ids, scopes or questions. Details are in the contract's
+  security section, for the separate security review.
+- **Review of `ab31451e`:** findings C1 to C7, T1 to T3 and S1 to S4 were
+  all confirmed against the source and fixed in the follow-up commit, with
+  regression tests. The resolutions are in
+  `answer-loop/L2b/review-ab31451e.md`, under the private run root.
 - **Wiring, a follow-up:** the table is not yet on the live call path. The
   L3 agent is switching the MCP Answer handler to v3 and deleting v1 and v2
   at the same sites. The remaining steps are:
@@ -389,7 +416,7 @@ limits on publication still apply in full.
      trait in `airk-mcp` that the service implements, because `airk-mcp`
      cannot depend on `airk-service`.
   5. **Status.** Expose `QueueStatus` on the service status surface.
-- **Evidence:** the `answer_jobs::` tests in `airk-service`, listed in the
-  contract's focused checks.
+- **Evidence:** the `answer_jobs::` tests in `airk-service` (25 tests),
+  listed in the contract's focused checks.
 
 Further entries are added as implementation proceeds.

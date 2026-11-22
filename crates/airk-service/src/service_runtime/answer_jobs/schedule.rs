@@ -12,7 +12,9 @@ use airk_core::{
             MAX_ESTIMATE_MS, MAX_QUEUE_POSITION,
         },
     },
-    identity::{Sha256Digest, framed_digest},
+    evidence::RevisionEnvelope,
+    identity::{Incarnation, Sha256Digest, framed_digest},
+    index_catalog::IndexId,
 };
 use anyhow::{Result, bail, ensure};
 use std::{
@@ -26,19 +28,26 @@ pub(crate) const GATHERING_FLOOR: usize = 2;
 /// Finished results are kept this long after they finish.
 pub(crate) const DEFAULT_RETENTION_MS: u64 = 600_000;
 pub(crate) const DEFAULT_RETAINED_BYTES: usize = 64 << 20;
+pub(crate) const DEFAULT_RETAINED_RESULTS: usize = 1024;
 pub(crate) const DEFAULT_ACTIVE_PER_SCOPE: usize = 8;
+pub(crate) const DEFAULT_ACTIVE_PER_PRINCIPAL: usize = 32;
+/// Bytes every retained entry is charged beyond its question and result.
+pub(crate) const ENTRY_OVERHEAD_BYTES: usize = 1024;
 /// Learned correction bounds, in thousandths of the cost table.
 const CORRECTION_MIN: u64 = 250;
 const CORRECTION_MAX: u64 = 4000;
 const RECENT_SAMPLES: usize = 16;
 
 /// Who may see a job. Two callers share a job only when their authority
-/// digests are equal: the installation, catalog, index and the caller's
-/// source-authority fingerprint all match. The publication is not part of
-/// it; a finished result additionally requires the same publication.
+/// digests are equal: the installation, catalog, index, the caller's
+/// source-authority fingerprint and the configuration revision all match.
+/// The principal (installation and fingerprint) bounds one caller across its
+/// scopes. The publication is not part of either; results are matched on it
+/// separately.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) struct AnswerScope {
     authority: Sha256Digest,
+    principal: Sha256Digest,
     index: [u8; 16],
 }
 impl AnswerScope {
@@ -46,27 +55,33 @@ impl AnswerScope {
         let index = *binding.index_id.identity().as_bytes();
         Self {
             authority: framed_digest(
-                b"airk.answer.job.scope/1",
+                b"airk.answer.job.scope/2",
                 &[
                     binding.installation.as_bytes(),
                     binding.catalog.as_bytes(),
                     &index,
+                    binding.authorization.as_bytes(),
+                    &binding.configuration_revision.to_be_bytes(),
+                ],
+            ),
+            principal: framed_digest(
+                b"airk.answer.job.principal/1",
+                &[
+                    binding.installation.as_bytes(),
                     binding.authorization.as_bytes(),
                 ],
             ),
             index,
         }
     }
-    /// The publication digest a finished result is matched on.
-    pub(crate) fn publication(binding: &ScopeBinding) -> Result<Sha256Digest> {
-        Ok(framed_digest(
-            b"airk.answer.job.publication/1",
-            &[&serde_json::to_vec(&binding.publication)?],
-        ))
-    }
-    pub(crate) fn index(&self) -> [u8; 16] {
-        self.index
-    }
+}
+
+/// The digest a publication is matched on.
+pub(crate) fn publication_digest(publication: &RevisionEnvelope) -> Result<Sha256Digest> {
+    Ok(framed_digest(
+        b"airk.answer.job.publication/1",
+        &[&serde_json::to_vec(publication)?],
+    ))
 }
 
 /// The digest a retry attaches by: the question and every budget field but
@@ -88,6 +103,7 @@ pub(crate) fn request_digest(request: &ContextRequestV3) -> Result<Sha256Digest>
 pub(crate) struct JobTableConfig {
     pub(crate) retention_ms: u64,
     pub(crate) max_retained_bytes: usize,
+    pub(crate) max_retained_results: usize,
     /// Concurrent gatherings the model lanes can serve, from L5b's runtime
     /// capacity rules. `None` until that figure exists.
     pub(crate) runtime_capacity: Option<usize>,
@@ -95,6 +111,8 @@ pub(crate) struct JobTableConfig {
     pub(crate) user_cap: Option<usize>,
     /// Queued and running jobs one scope may hold.
     pub(crate) max_active_per_scope: usize,
+    /// Queued and running jobs one principal may hold across its scopes.
+    pub(crate) max_active_per_principal: usize,
     /// Queued and running jobs in the whole table.
     pub(crate) max_jobs: usize,
     /// Ageing weight: the EDF key is `due + ageing x enqueued`.
@@ -106,9 +124,11 @@ impl Default for JobTableConfig {
         Self {
             retention_ms: DEFAULT_RETENTION_MS,
             max_retained_bytes: DEFAULT_RETAINED_BYTES,
+            max_retained_results: DEFAULT_RETAINED_RESULTS,
             runtime_capacity: None,
             user_cap: None,
             max_active_per_scope: DEFAULT_ACTIVE_PER_SCOPE,
+            max_active_per_principal: DEFAULT_ACTIVE_PER_PRINCIPAL,
             max_jobs: MAX_QUEUE_POSITION as usize,
             ageing: 1,
             costs: CostTable::default(),
@@ -143,12 +163,14 @@ pub(crate) struct StartedJob {
     pub(crate) id: Sha256Digest,
     pub(crate) request: ContextRequestV3,
     pub(crate) shape: Shape,
-    /// Admission's degrade-to-fit disclosures, for the reply.
+    /// Degrade-to-fit disclosures, fitted at dispatch, for the reply.
     pub(crate) degradations: Vec<Degradation>,
     /// Milliseconds from dispatch to the job's own deadline.
     pub(crate) run_ms: u64,
     /// The job waited past its caller's deadline and runs on a fresh window.
     pub(crate) requeued: bool,
+    /// The publication the table expects the job to run on, when known.
+    pub(crate) publication: Option<Sha256Digest>,
 }
 
 #[derive(Debug)]
@@ -156,22 +178,26 @@ pub(crate) enum Submitted {
     /// Joined an existing job with the same scope and request.
     Attached(Sha256Digest),
     /// A new job whose estimate fits the deadline, perhaps degraded.
-    Admitted {
-        id: Sha256Digest,
-        degradations: Vec<Degradation>,
-    },
+    Admitted(Sha256Digest),
     /// A new queued job that cannot fit even degraded; come back later.
     Ticketed(AnswerTicket),
-    /// The scope or the table is full; no job was made.
+    /// The scope, the principal or the table is full; no job was made.
     Busy { retry_after_ms: u64 },
 }
 
-/// A job as its caller sees it.
+/// A job as its caller sees it. Degradations are the dispatched ones, the
+/// same for the caller that made the job and every caller that attached.
 #[derive(Debug)]
 pub(crate) enum JobView<R> {
     Queued(AnswerTicket),
-    Running(AnswerTicket),
-    Finished(Arc<JobOutcome<R>>),
+    Running {
+        ticket: AnswerTicket,
+        degradations: Vec<Degradation>,
+    },
+    Finished {
+        outcome: Arc<JobOutcome<R>>,
+        degradations: Vec<Degradation>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -196,6 +222,8 @@ pub(crate) struct CostSample {
     pub(crate) model: Option<ContextRung>,
     pub(crate) estimated_ms: u64,
     pub(crate) elapsed_ms: u64,
+    /// The run reached its deadline, so it taught the correction nothing.
+    pub(crate) cut: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -214,8 +242,8 @@ enum State<R> {
     Queued,
     Running {
         started_ms: u64,
-        shape: Shape,
         estimated_ms: u64,
+        run_ms: u64,
     },
     Finished {
         finished_ms: u64,
@@ -235,6 +263,12 @@ struct Job<R> {
     /// Admitted without a fit; its window opens at dispatch.
     ticketed: bool,
     seq: u64,
+    /// Expected at dispatch, then the one the runner reports.
+    publication: Option<Sha256Digest>,
+    /// A newer publication arrived while it ran: never attached, not kept.
+    superseded: bool,
+    /// The shape and disclosures fitted at dispatch.
+    applied: Option<Fitted>,
     state: State<R>,
 }
 impl<R> Job<R> {
@@ -248,11 +282,24 @@ impl<R> Job<R> {
     fn active(&self) -> bool {
         !matches!(self.state, State::Finished { .. })
     }
+    fn degradations(&self) -> Vec<Degradation> {
+        self.applied
+            .as_ref()
+            .map(|fitted| fitted.degradations.clone())
+            .unwrap_or_default()
+    }
 }
 
 struct Planned {
     start_ms: u64,
     finish_ms: u64,
+}
+
+#[derive(Clone, Copy)]
+struct Observed {
+    incarnation: Incarnation,
+    generation: u64,
+    digest: Sha256Digest,
 }
 
 pub(crate) struct Schedule<R> {
@@ -261,6 +308,8 @@ pub(crate) struct Schedule<R> {
     seq: u64,
     jobs: BTreeMap<Sha256Digest, Job<R>>,
     by_request: HashMap<(AnswerScope, Sha256Digest), Sha256Digest>,
+    /// The newest publication observed per index.
+    current: HashMap<[u8; 16], Observed>,
     correction_permille: u64,
     recent: VecDeque<CostSample>,
 }
@@ -273,6 +322,7 @@ impl<R> Schedule<R> {
             seq: 0,
             jobs: BTreeMap::new(),
             by_request: HashMap::new(),
+            current: HashMap::new(),
             correction_permille: 1000,
             recent: VecDeque::new(),
         }
@@ -289,9 +339,31 @@ impl<R> Schedule<R> {
         self.config.costs = costs;
     }
 
+    fn current_of(&self, index: &[u8; 16]) -> Option<Sha256Digest> {
+        self.current.get(index).map(|observed| observed.digest)
+    }
+
+    /// A started or finished job may serve a caller on `caller`'s
+    /// publication (or, when the caller does not know it, the newest one
+    /// observed). Queued jobs have not run yet and always may.
+    fn publication_ok(&self, job: &Job<R>, caller: Option<Sha256Digest>) -> bool {
+        if matches!(job.state, State::Queued) {
+            return true;
+        }
+        if job.superseded {
+            return false;
+        }
+        match (
+            caller.or(self.current_of(&job.scope.index)),
+            job.publication,
+        ) {
+            (Some(known), Some(ran_on)) => known == ran_on,
+            _ => true,
+        }
+    }
+
     /// Admit, attach or ticket one request (plan section 12.4.1, ideas 1 to 3).
-    /// `publication` is the caller's current publication when it is known;
-    /// a finished result on another publication is never attached.
+    /// `publication` is the caller's current publication when it is known.
     pub(crate) fn submit(
         &mut self,
         scope: AnswerScope,
@@ -317,51 +389,20 @@ impl<R> Schedule<R> {
                 job.request_digest == digest,
                 "Answer continuation belongs to a different request"
             );
+            ensure!(
+                self.publication_ok(job, publication),
+                "Answer continuation superseded by a newer publication"
+            );
             return Ok(Submitted::Attached(continuation));
         }
-        if let Some(id) = self.by_request.get(&(scope, digest)).copied()
-            && let Some(job) = self.jobs.get(&id)
-        {
-            let reusable = match &job.state {
-                State::Finished { outcome, .. } => match outcome.as_ref() {
-                    JobOutcome::Done {
-                        publication: ran_on,
-                        ..
-                    } => publication.is_none_or(|current| current == *ran_on),
-                    JobOutcome::Failed(_) => true,
-                },
-                _ => true,
-            };
-            if reusable {
-                return Ok(Submitted::Attached(id));
-            }
-        }
-        let active = self.jobs.values().filter(|job| job.active());
-        let (scope_active, total_active) = active.fold((0, 0), |(mine, all), job| {
-            (mine + usize::from(job.scope == scope), all + 1)
-        });
-        if scope_active >= self.config.max_active_per_scope || total_active >= self.config.max_jobs
-        {
-            return Ok(Submitted::Busy {
-                retry_after_ms: self.next_free_ms(now).clamp(1, MAX_DEADLINE_MS),
-            });
-        }
 
+        // What this call would get on its own, to decide whether attaching
+        // to an existing job would give it less.
         let deadline_ms = request.budget.deadline_ms;
         let requested = Shape::requested(&request.budget, model);
         let due_ms = now.saturating_add(deadline_ms);
         self.seq += 1;
         let seq = self.seq;
-        let id = framed_digest(
-            b"airk.answer.job.id/1",
-            &[
-                &self.salt,
-                scope.authority.as_bytes(),
-                &scope.index,
-                digest.as_bytes(),
-                &seq.to_be_bytes(),
-            ],
-        );
         let mut job = Job {
             scope,
             request_digest: digest,
@@ -372,49 +413,109 @@ impl<R> Schedule<R> {
             due_ms,
             ticketed: false,
             seq,
+            publication,
+            superseded: false,
+            applied: None,
             state: State::Queued,
         };
         let start_ms = self.start_for(&job, now);
-        let available = due_ms.saturating_sub(start_ms);
         let costs = self.config.costs;
         let correction = self.correction_permille;
-        let fitted =
-            estimate::degrade_to_fit(&costs, correction, requested, available, deadline_ms);
+        let fitted = estimate::degrade_to_fit(
+            &costs,
+            correction,
+            requested,
+            due_ms.saturating_sub(start_ms),
+            deadline_ms,
+        );
         let smallest_fits_alone = costs
             .work_ms(&Shape::SMALLEST, correction)
             .is_some_and(|work| work <= deadline_ms);
-        let submitted = match fitted {
-            Some(fitted) => Submitted::Admitted {
-                id,
-                degradations: fitted.degradations,
-            },
-            None if !smallest_fits_alone => Submitted::Admitted {
-                id,
-                degradations: estimate::smallest(&costs, correction, requested, deadline_ms)
-                    .degradations,
-            },
-            None => {
-                // Degrade first, then a ticket: its window opens at its
-                // estimated start, and it is ordered by that window.
-                job.ticketed = true;
-                job.due_ms = start_ms.saturating_add(deadline_ms);
-                Submitted::Ticketed(AnswerTicket {
-                    id,
-                    queue_position: 1,
-                    estimated_start_ms: 0,
-                    estimated_finish_ms: 1,
-                    retry_after_ms: 1,
-                })
-            }
+        let own: Option<Shape> = match &fitted {
+            Some(fitted) => Some(fitted.shape),
+            None if !smallest_fits_alone => Some(Shape::SMALLEST),
+            None => None,
         };
+
+        if let Some(id) = self.by_request.get(&(scope, digest)).copied()
+            && let Some(existing) = self.jobs.get(&id)
+            && self.attachable(existing, publication, own, due_ms, deadline_ms)
+        {
+            return Ok(Submitted::Attached(id));
+        }
+
+        let (mut scope_active, mut principal_active, mut total_active) = (0, 0, 0);
+        for active in self.jobs.values().filter(|job| job.active()) {
+            scope_active += usize::from(active.scope == scope);
+            principal_active += usize::from(active.scope.principal == scope.principal);
+            total_active += 1;
+        }
+        if scope_active >= self.config.max_active_per_scope
+            || principal_active >= self.config.max_active_per_principal
+            || total_active >= self.config.max_jobs
+        {
+            return Ok(Submitted::Busy {
+                retry_after_ms: self.next_free_ms(now).clamp(1, MAX_DEADLINE_MS),
+            });
+        }
+
+        let id = framed_digest(
+            b"airk.answer.job.id/1",
+            &[
+                &self.salt,
+                scope.authority.as_bytes(),
+                &scope.index,
+                digest.as_bytes(),
+                &seq.to_be_bytes(),
+            ],
+        );
+        let ticketed = own.is_none();
+        if ticketed {
+            // Degrade first, then a ticket: its window opens at its
+            // estimated start, and it is ordered by that window.
+            job.ticketed = true;
+            job.due_ms = start_ms.saturating_add(deadline_ms);
+        }
         self.by_request.insert((scope, digest), id);
         self.jobs.insert(id, job);
-        Ok(match submitted {
-            Submitted::Ticketed(_) => {
-                Submitted::Ticketed(self.ticket(&id, now).expect("the job was just queued"))
-            }
-            other => other,
+        Ok(if ticketed {
+            Submitted::Ticketed(self.ticket(&id, now).expect("the job was just queued"))
+        } else {
+            Submitted::Admitted(id)
         })
+    }
+
+    /// Attach by digest only when the existing job gives this call no less
+    /// than its own admission would: a retry with a longer deadline never
+    /// silently receives a shorter run's more degraded answer.
+    fn attachable(
+        &self,
+        existing: &Job<R>,
+        publication: Option<Sha256Digest>,
+        own: Option<Shape>,
+        due_ms: u64,
+        deadline_ms: u64,
+    ) -> bool {
+        if !self.publication_ok(existing, publication) {
+            return false;
+        }
+        match &existing.state {
+            State::Finished { outcome, .. }
+                if matches!(outcome.as_ref(), JobOutcome::Failed(_)) =>
+            {
+                // Uncertain work is never replayed on the same publication.
+                true
+            }
+            State::Queued if existing.ticketed => existing.deadline_ms >= deadline_ms,
+            State::Queued => existing.due_ms >= due_ms,
+            _ => match (existing.applied.as_ref(), own) {
+                (Some(applied), Some(own)) => applied.shape.covers(&own),
+                // This call could only have a ticket: the running or
+                // finished job is sooner and discloses what it reduced.
+                (_, None) => true,
+                (None, Some(_)) => false,
+            },
+        }
     }
 
     /// Start queued jobs, earliest key first, while the gathering limit allows.
@@ -434,57 +535,60 @@ impl<R> Schedule<R> {
             };
             let costs = self.config.costs;
             let correction = self.correction_permille;
+            let current = self.current_of(&self.jobs[&id].scope.index);
             let job = self.jobs.get_mut(&id).expect("selected job exists");
-            let mut requeued = false;
             if job.ticketed {
                 job.due_ms = now.saturating_add(job.deadline_ms);
             }
-            let fitted = estimate::degrade_to_fit(
+            let remaining = job.due_ms.saturating_sub(now);
+            let mut requeued = false;
+            let mut fitted = estimate::degrade_to_fit(
                 &costs,
                 correction,
                 job.requested,
-                job.due_ms.saturating_sub(now),
+                remaining,
                 job.deadline_ms,
-            )
-            .or_else(|| {
-                // The wait outran the caller's deadline: the work outlives the
-                // call, so it runs on a fresh window and the caller attaches.
+            );
+            if fitted.is_none() && remaining < job.deadline_ms {
+                // The wait consumed the caller's window: the work outlives
+                // the call, so it runs on a fresh window and callers attach.
                 requeued = !job.ticketed;
                 job.due_ms = now.saturating_add(job.deadline_ms);
-                estimate::degrade_to_fit(
+                fitted = estimate::degrade_to_fit(
                     &costs,
                     correction,
                     job.requested,
                     job.deadline_ms,
                     job.deadline_ms,
-                )
-            })
-            .unwrap_or_else(|| {
+                );
+            }
+            let fitted = fitted.unwrap_or_else(|| {
                 estimate::smallest(&costs, correction, job.requested, job.deadline_ms)
             });
-            let Fitted {
-                shape,
-                work_ms,
-                degradations,
-            } = fitted;
+            let run_ms = job.due_ms.saturating_sub(now).max(1);
+            job.publication = current.or(job.publication);
             job.state = State::Running {
                 started_ms: now,
-                shape,
-                estimated_ms: work_ms,
+                estimated_ms: fitted.work_ms,
+                run_ms,
             };
             started.push(StartedJob {
                 id,
                 request: job.request.clone(),
-                shape,
-                degradations,
-                run_ms: job.due_ms.saturating_sub(now).max(1),
+                shape: fitted.shape,
+                degradations: fitted.degradations.clone(),
+                run_ms,
                 requeued,
+                publication: job.publication,
             });
+            job.applied = Some(fitted);
         }
         started
     }
 
-    /// Record a running job's outcome and learn from its elapsed time.
+    /// Record a running job's outcome and learn from its elapsed time. A
+    /// result of a superseded or no longer current publication goes to its
+    /// waiters but is not kept.
     pub(crate) fn finish(
         &mut self,
         id: &Sha256Digest,
@@ -492,35 +596,53 @@ impl<R> Schedule<R> {
         now: u64,
     ) -> Arc<JobOutcome<R>> {
         let outcome = Arc::new(outcome);
+        let mut stale = false;
+        let current = self
+            .jobs
+            .get(id)
+            .and_then(|job| self.current_of(&job.scope.index));
         if let Some(job) = self.jobs.get_mut(id) {
             if let State::Running {
                 started_ms,
-                shape,
                 estimated_ms,
+                run_ms,
             } = job.state
             {
                 let elapsed_ms = now.saturating_sub(started_ms);
-                if matches!(outcome.as_ref(), JobOutcome::Done { .. }) && estimated_ms > 0 {
+                // A run that reached its deadline, or one admitted smallest
+                // beyond it, says only that the work was at least that long.
+                let cut = estimated_ms > run_ms
+                    || elapsed_ms.saturating_add(DEADLINE_TOLERANCE_MS) >= run_ms;
+                if matches!(outcome.as_ref(), JobOutcome::Done { .. }) && estimated_ms > 0 && !cut {
                     let ratio = (elapsed_ms.saturating_mul(1000) / estimated_ms)
                         .clamp(CORRECTION_MIN, CORRECTION_MAX);
                     self.correction_permille = ((self.correction_permille * 3 + ratio) / 4)
                         .clamp(CORRECTION_MIN, CORRECTION_MAX);
                 }
                 self.recent.push_back(CostSample {
-                    model: shape.model,
+                    model: job.applied.as_ref().and_then(|fitted| fitted.shape.model),
                     estimated_ms,
                     elapsed_ms,
+                    cut,
                 });
                 if self.recent.len() > RECENT_SAMPLES {
                     self.recent.pop_front();
                 }
             }
+            if let JobOutcome::Done { publication, .. } = outcome.as_ref() {
+                job.publication = Some(*publication);
+            }
+            stale =
+                job.superseded || current.is_some_and(|current| job.publication != Some(current));
             job.state = State::Finished {
                 finished_ms: now,
                 outcome: outcome.clone(),
             };
         }
-        self.enforce_bytes();
+        if stale {
+            self.remove(id);
+        }
+        self.enforce_limits();
         outcome
     }
 
@@ -541,22 +663,45 @@ impl<R> Schedule<R> {
         }
     }
 
-    /// A new publication of `index`: results of every other publication on
-    /// it are dropped at once.
-    pub(crate) fn publication_changed(&mut self, index: [u8; 16], current: Sha256Digest) {
-        let stale: Vec<_> = self
-            .jobs
-            .iter()
-            .filter(|(_, job)| {
-                job.scope.index == index
-                    && matches!(&job.state, State::Finished { outcome, .. }
-                        if matches!(outcome.as_ref(), JobOutcome::Done { publication, .. } if *publication != current))
-            })
-            .map(|(id, _)| *id)
-            .collect();
+    /// The service's publication observer reports `publication` for `index`.
+    /// An older generation of the same incarnation is ignored (`false`).
+    /// Otherwise every finished result of another publication, failures
+    /// included, is dropped, and jobs running on another one are superseded.
+    pub(crate) fn publication_changed(
+        &mut self,
+        index: IndexId,
+        publication: &RevisionEnvelope,
+    ) -> Result<bool> {
+        let index = *index.identity().as_bytes();
+        let observed = Observed {
+            incarnation: publication.incarnation,
+            generation: publication.generation,
+            digest: publication_digest(publication)?,
+        };
+        if let Some(last) = self.current.get(&index)
+            && last.incarnation == observed.incarnation
+            && observed.generation < last.generation
+        {
+            return Ok(false);
+        }
+        self.current.insert(index, observed);
+        let mut stale = vec![];
+        for (id, job) in self.jobs.iter_mut() {
+            if job.scope.index != index || job.publication == Some(observed.digest) {
+                continue;
+            }
+            match job.state {
+                State::Finished { .. } => stale.push(*id),
+                State::Running { .. } => job.superseded = true,
+                State::Queued => {}
+            }
+        }
         for id in stale {
             self.remove(&id);
         }
+        self.by_request
+            .retain(|_, id| self.jobs.get(id).is_some_and(|job| !job.superseded));
+        Ok(true)
     }
 
     /// The caller's view of one job, only within its own scope.
@@ -568,8 +713,14 @@ impl<R> Schedule<R> {
     ) -> Option<JobView<R>> {
         let job = self.jobs.get(id).filter(|job| job.scope == *scope)?;
         Some(match &job.state {
-            State::Finished { outcome, .. } => JobView::Finished(outcome.clone()),
-            State::Running { .. } => JobView::Running(self.ticket(id, now)?),
+            State::Finished { outcome, .. } => JobView::Finished {
+                outcome: outcome.clone(),
+                degradations: job.degradations(),
+            },
+            State::Running { .. } => JobView::Running {
+                ticket: self.ticket(id, now)?,
+                degradations: job.degradations(),
+            },
             State::Queued => JobView::Queued(self.ticket(id, now)?),
         })
     }
@@ -608,15 +759,16 @@ impl<R> Schedule<R> {
             .jobs
             .values()
             .filter_map(|job| match job.state {
-                State::Running {
-                    started_ms, shape, ..
-                } => Some(StatusEntry {
+                State::Running { started_ms, .. } => Some(StatusEntry {
                     state: EntryState::Running,
                     position: 0,
                     waited_ms: started_ms.saturating_sub(job.enqueued_ms),
                     estimated_start_ms: 0,
                     estimated_finish_ms: self.running_end(job, now).saturating_sub(now),
-                    shape,
+                    shape: job
+                        .applied
+                        .as_ref()
+                        .map_or(job.requested, |fitted| fitted.shape),
                 }),
                 _ => None,
             })
@@ -778,20 +930,21 @@ impl<R> Schedule<R> {
         }
     }
 
-    fn enforce_bytes(&mut self) {
-        let limit = self.config.max_retained_bytes;
+    /// Keep retained results within the byte and count caps, oldest first.
+    fn enforce_limits(&mut self) {
         loop {
             let finished = self.jobs.values().filter(|job| !job.active());
-            if finished.clone().map(retained_bytes).sum::<usize>() <= limit {
+            let count = finished.clone().count();
+            let bytes: usize = finished.map(retained_bytes).sum();
+            if bytes <= self.config.max_retained_bytes && count <= self.config.max_retained_results
+            {
                 return;
             }
             let oldest = self
                 .jobs
                 .iter()
                 .filter_map(|(id, job)| match job.state {
-                    State::Finished { finished_ms, .. } if retained_bytes(job) > 0 => {
-                        Some((finished_ms, job.seq, *id))
-                    }
+                    State::Finished { finished_ms, .. } => Some((finished_ms, job.seq, *id)),
                     _ => None,
                 })
                 .min();
@@ -801,12 +954,19 @@ impl<R> Schedule<R> {
     }
 }
 
+/// A finished entry's charge: its result or failure, its question and a
+/// fixed overhead, so no entry is ever free.
 fn retained_bytes<R>(job: &Job<R>) -> usize {
     match &job.state {
-        State::Finished { outcome, .. } => match outcome.as_ref() {
-            JobOutcome::Done { retained_bytes, .. } => *retained_bytes,
-            JobOutcome::Failed(message) => message.len(),
-        },
+        State::Finished { outcome, .. } => {
+            let result = match outcome.as_ref() {
+                JobOutcome::Done { retained_bytes, .. } => *retained_bytes,
+                JobOutcome::Failed(message) => message.len(),
+            };
+            result
+                .saturating_add(job.request.question.len())
+                .saturating_add(ENTRY_OVERHEAD_BYTES)
+        }
         _ => 0,
     }
 }

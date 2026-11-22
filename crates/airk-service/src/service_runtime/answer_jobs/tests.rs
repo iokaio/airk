@@ -3,7 +3,10 @@
 //! values; table tests run on paused Tokio time with a runner the test
 //! releases through events, waiting on them under deadlines, never sleeping.
 use super::estimate::{Shape, StageCosts};
-use super::schedule::{EntryState, JobView, Schedule, Submitted, gathering_limit, request_digest};
+use super::schedule::{
+    ENTRY_OVERHEAD_BYTES, EntryState, JobView, Schedule, Submitted, gathering_limit,
+    publication_digest, request_digest,
+};
 use super::*;
 use airk_core::{
     arbiter::{
@@ -23,29 +26,36 @@ use tokio::sync::{mpsc, oneshot};
 
 const SECOND: u64 = 1000;
 const STEP: Duration = Duration::from_secs(5);
+const RETENTION: u64 = schedule::DEFAULT_RETENTION_MS;
 
-fn binding(authorization: u8, publication: u8) -> ScopeBinding {
+fn index() -> IndexId {
+    IndexId::from_identity(Incarnation::from_bytes([3; 16]))
+}
+fn envelope(generation: u8) -> RevisionEnvelope {
+    RevisionEnvelope::new(
+        "fixture".into(),
+        RevisionToken {
+            incarnation: Incarnation::from_bytes([5; 16]),
+            generation: u64::from(generation),
+            revision: Sha256Digest::from_bytes([generation; 32]),
+        },
+    )
+}
+fn binding(authorization: u8, configuration_revision: u64) -> ScopeBinding {
     ScopeBinding {
         installation: Sha256Digest::from_bytes([1; 32]),
         catalog: Incarnation::from_bytes([2; 16]),
-        index_id: IndexId::from_identity(Incarnation::from_bytes([3; 16])),
+        index_id: index(),
         authorization: Sha256Digest::from_bytes([authorization; 32]),
-        configuration_revision: 1,
-        publication: RevisionEnvelope::new(
-            "fixture".into(),
-            RevisionToken {
-                incarnation: Incarnation::from_bytes([5; 16]),
-                generation: u64::from(publication),
-                revision: Sha256Digest::from_bytes([publication; 32]),
-            },
-        ),
+        configuration_revision,
+        publication: envelope(1),
     }
 }
 fn scope(authorization: u8) -> AnswerScope {
     AnswerScope::from_binding(&binding(authorization, 1))
 }
 fn publication(generation: u8) -> Sha256Digest {
-    AnswerScope::publication(&binding(4, generation)).unwrap()
+    publication_digest(&envelope(generation)).unwrap()
 }
 
 fn request(question: &str, deadline_ms: u64) -> ContextRequestV3 {
@@ -66,6 +76,10 @@ fn small(question: &str, deadline_ms: u64) -> ContextRequestV3 {
     request.budget.rounds = 1;
     request
 }
+fn continued(mut request: ContextRequestV3, id: Sha256Digest) -> ContextRequestV3 {
+    request.continuation = Some(id);
+    request
+}
 
 /// A table whose every job costs exactly `ms` on the no-model rung.
 fn flat(ms: u64) -> CostTable {
@@ -82,18 +96,30 @@ fn flat(ms: u64) -> CostTable {
 fn schedule(config: JobTableConfig) -> Schedule<&'static str> {
     Schedule::new(config, [9; 32])
 }
-fn done(value: &'static str, bytes: usize) -> JobOutcome<&'static str> {
+fn flat_schedule(ms: u64) -> Schedule<&'static str> {
+    schedule(JobTableConfig {
+        costs: flat(ms),
+        ..JobTableConfig::default()
+    })
+}
+fn done_on(value: &'static str, bytes: usize, generation: u8) -> JobOutcome<&'static str> {
     JobOutcome::Done {
         value,
-        publication: publication(1),
+        publication: publication(generation),
         retained_bytes: bytes,
     }
 }
+fn done(value: &'static str, bytes: usize) -> JobOutcome<&'static str> {
+    done_on(value, bytes, 1)
+}
 fn admitted(submitted: Submitted) -> Sha256Digest {
     match submitted {
-        Submitted::Admitted { id, .. } => id,
+        Submitted::Admitted(id) => id,
         other => panic!("expected admission, got {other:?}"),
     }
+}
+fn submit(table: &mut Schedule<&'static str>, request: ContextRequestV3, now: u64) -> Sha256Digest {
+    admitted(table.submit(scope(4), request, None, None, now).unwrap())
 }
 fn check_ticket(ticket: &AnswerTicket) {
     assert!((1..=MAX_QUEUE_POSITION).contains(&ticket.queue_position));
@@ -103,6 +129,9 @@ fn check_ticket(ticket: &AnswerTicket) {
         (1..=airk_core::arbiter::answer_loop::MAX_DEADLINE_MS).contains(&ticket.retry_after_ms)
     );
     assert!(ticket.retry_after_ms <= ticket.estimated_finish_ms);
+}
+fn is_finished(view: Option<JobView<&'static str>>) -> bool {
+    matches!(view, Some(JobView::Finished { .. }))
 }
 
 #[test]
@@ -188,6 +217,47 @@ fn degrade_to_fit_discloses_each_reduction_cheapest_loss_first() {
     ));
 }
 
+/// Review C7: Compact on a slower device than Large must not push the fit
+/// down to the no-model loop while Large at one round would have fitted.
+#[test]
+fn the_model_step_keeps_large_when_compact_costs_more() {
+    let costs = CostTable {
+        compact: Some(StageCosts {
+            fixed_ms: 20_000,
+            per_part_ms: 20_000,
+            per_sub_need_round_ms: 20_000,
+        }),
+        large: Some(StageCosts {
+            fixed_ms: 2_000,
+            per_part_ms: 1_000,
+            per_sub_need_round_ms: 2_000,
+        }),
+        ..CostTable::default()
+    };
+    let requested = Shape {
+        parts: 4,
+        sub_needs: 4,
+        rounds: 3,
+        model: Some(ContextRung::Large),
+    };
+    // Large: 2 + 4 x (1 + 12 x 2) = 102 s; at one round 2 + 4 x (1 + 8) = 38 s.
+    let fitted =
+        estimate::degrade_to_fit(&costs, 1000, requested, 40 * SECOND, 40 * SECOND).unwrap();
+    assert_eq!(
+        fitted.shape,
+        Shape {
+            rounds: 1,
+            ..requested
+        }
+    );
+    assert!(
+        fitted
+            .degradations
+            .iter()
+            .all(|degradation| !matches!(degradation, Degradation::Model { .. }))
+    );
+}
+
 #[test]
 fn an_unavailable_rung_is_disclosed_as_model_unavailable() {
     let costs = CostTable {
@@ -216,18 +286,8 @@ fn an_unavailable_rung_is_disclosed_as_model_unavailable() {
 #[test]
 fn the_same_request_in_the_same_scope_attaches_and_never_across_scopes() {
     let mut table = schedule(JobTableConfig::default());
-    let id = admitted(
-        table
-            .submit(
-                scope(4),
-                request("where is admission", 300_000),
-                None,
-                None,
-                0,
-            )
-            .unwrap(),
-    );
-    // A retry with another deadline is the same request.
+    let id = submit(&mut table, request("where is admission", 300_000), 0);
+    // A retry with a shorter deadline is the same request and loses nothing.
     assert!(matches!(
         table.submit(scope(4), request("where is admission", 120_000), None, None, 10),
         Ok(Submitted::Attached(attached)) if attached == id
@@ -246,28 +306,49 @@ fn the_same_request_in_the_same_scope_attaches_and_never_across_scopes() {
     );
     assert_ne!(other, id);
     assert!(table.view(&scope(7), &id, 20).is_none());
+    // Review S2: a new configuration revision is another scope.
+    let reconfigured = AnswerScope::from_binding(&binding(4, 2));
+    assert_ne!(reconfigured, scope(4));
+    assert!(table.view(&reconfigured, &id, 20).is_none());
     // A foreign continuation is refused exactly like an unknown one.
-    let mut foreign = request("where is admission", 300_000);
-    foreign.continuation = Some(id);
     let refused = table
-        .submit(scope(7), foreign, None, None, 30)
+        .submit(
+            scope(7),
+            continued(request("where is admission", 300_000), id),
+            None,
+            None,
+            30,
+        )
         .unwrap_err()
         .to_string();
-    let mut unknown = request("where is admission", 300_000);
-    unknown.continuation = Some(Sha256Digest::from_bytes([0xee; 32]));
     let missing = table
-        .submit(scope(4), unknown, None, None, 30)
+        .submit(
+            scope(4),
+            continued(
+                request("where is admission", 300_000),
+                Sha256Digest::from_bytes([0xee; 32]),
+            ),
+            None,
+            None,
+            30,
+        )
         .unwrap_err()
         .to_string();
     assert_eq!(refused, missing);
     // Within the scope, a continuation must name the same request.
-    let mut mismatched = request("something else", 300_000);
-    mismatched.continuation = Some(id);
-    assert!(table.submit(scope(4), mismatched, None, None, 30).is_err());
-    let mut own = request("where is admission", 300_000);
-    own.continuation = Some(id);
+    assert!(
+        table
+            .submit(
+                scope(4),
+                continued(request("something else", 300_000), id),
+                None,
+                None,
+                30
+            )
+            .is_err()
+    );
     assert!(matches!(
-        table.submit(scope(4), own, None, None, 30),
+        table.submit(scope(4), continued(request("where is admission", 300_000), id), None, None, 30),
         Ok(Submitted::Attached(attached)) if attached == id
     ));
     // Ids are salted: the same table inputs with another salt differ.
@@ -288,28 +369,49 @@ fn the_same_request_in_the_same_scope_attaches_and_never_across_scopes() {
     );
 }
 
+/// The reviewer's note: a retry that would get more on its own does not
+/// receive a shorter run's more degraded answer; it runs separately.
+#[test]
+fn a_retry_wanting_more_runs_separately_and_one_wanting_no_more_attaches() {
+    let mut table = schedule(JobTableConfig::default());
+    let large = Some(ContextRung::Large);
+    let short = admitted(
+        table
+            .submit(scope(4), request("q", 200_000), large, None, 0)
+            .unwrap(),
+    );
+    let [started] = <[StartedJob; 1]>::try_from(table.dispatch(0)).unwrap();
+    assert_eq!(started.shape.model, Some(ContextRung::Compact));
+    // 600 s would admit Large at the full shape (408 s): a separate job.
+    let long = admitted(
+        table
+            .submit(scope(4), request("q", 600_000), large, None, 1)
+            .unwrap(),
+    );
+    assert_ne!(long, short);
+    // The latest job now answers the digest; a call wanting no more than
+    // what it applies attaches to it.
+    assert!(matches!(
+        table.submit(scope(4), request("q", 600_000), large, None, 1),
+        Ok(Submitted::Attached(attached)) if attached == long
+    ));
+    // The short job's own continuation still reaches it, with the
+    // disclosures fitted at its dispatch for every caller.
+    table.finish(&short, done("short", 10), 50 * SECOND);
+    let Some(JobView::Finished { degradations, .. }) = table.view(&scope(4), &short, 50 * SECOND)
+    else {
+        panic!("the short job is retained");
+    };
+    assert_eq!(degradations.len(), started.degradations.len());
+    assert!(!degradations.is_empty());
+}
+
 #[test]
 fn dispatch_takes_the_earliest_deadline_within_the_gathering_limit() {
-    let config = JobTableConfig {
-        costs: flat(10 * SECOND),
-        ..JobTableConfig::default()
-    };
-    let mut table = schedule(config);
-    let late = admitted(
-        table
-            .submit(scope(4), small("late", 300_000), None, None, 0)
-            .unwrap(),
-    );
-    let early = admitted(
-        table
-            .submit(scope(4), small("early", 60_000), None, None, 0)
-            .unwrap(),
-    );
-    let middle = admitted(
-        table
-            .submit(scope(4), small("middle", 120_000), None, None, 0)
-            .unwrap(),
-    );
+    let mut table = flat_schedule(10 * SECOND);
+    let late = submit(&mut table, small("late", 300_000), 0);
+    let early = submit(&mut table, small("early", 60_000), 0);
+    let middle = submit(&mut table, small("middle", 120_000), 0);
     let started: Vec<_> = table.dispatch(0).into_iter().map(|job| job.id).collect();
     assert_eq!(started, vec![early, middle]);
     assert!(
@@ -343,11 +445,7 @@ fn long_answer_start(ageing: u64) -> u64 {
         ..JobTableConfig::default()
     };
     let mut table = schedule(config);
-    let long = admitted(
-        table
-            .submit(scope(4), small("long", 600_000), None, None, 0)
-            .unwrap(),
-    );
+    let long = submit(&mut table, small("long", 600_000), 0);
     let mut running: Vec<Sha256Digest> = vec![];
     let mut sequence = 0;
     for tick in 0..200 {
@@ -358,9 +456,7 @@ fn long_answer_start(ageing: u64) -> u64 {
         for _ in 0..2 {
             sequence += 1;
             let question = format!("short {sequence}");
-            let short = small(&question, 20_000);
-            let submitted = table.submit(scope(4), short, None, None, now).unwrap();
-            assert!(matches!(submitted, Submitted::Admitted { .. }));
+            submit(&mut table, small(&question, 20_000), now);
         }
         for job in table.dispatch(now) {
             if job.id == long {
@@ -383,20 +479,10 @@ fn ageing_guards_a_long_deadline_against_starvation() {
 
 #[test]
 fn a_ticket_when_the_smallest_answer_cannot_fit_after_the_wait() {
-    let config = JobTableConfig {
-        costs: flat(100 * SECOND),
-        ..JobTableConfig::default()
-    };
-    let mut table = schedule(config);
+    let mut table = flat_schedule(100 * SECOND);
     let running: Vec<_> = ["a", "b"]
         .into_iter()
-        .map(|question| {
-            admitted(
-                table
-                    .submit(scope(4), small(question, 300_000), None, None, 0)
-                    .unwrap(),
-            )
-        })
+        .map(|question| submit(&mut table, small(question, 300_000), 0))
         .collect();
     assert_eq!(table.dispatch(0).len(), 2);
     // Both slots are busy for 100 s; 150 s cannot hold a 100 s wait and 100 s.
@@ -413,29 +499,11 @@ fn a_ticket_when_the_smallest_answer_cannot_fit_after_the_wait() {
     assert_eq!(ticket.retry_after_ms, 200 * SECOND);
     // A request whose work alone exceeds its deadline is admitted smallest
     // and disclosed, since a ticket would never help it.
-    let Submitted::Admitted {
-        id: hopeless,
-        degradations,
-    } = table
-        .submit(scope(5), request("d", 50_000), None, None, 0)
-        .unwrap()
-    else {
-        panic!("expected a disclosed admission");
-    };
-    assert_eq!(degradations.len(), 3);
-    assert!(degradations.iter().all(|degradation| matches!(
-        degradation,
-        Degradation::Parts {
-            reason: DegradationReason::DeadlineEstimate,
-            ..
-        } | Degradation::SubNeeds {
-            reason: DegradationReason::DeadlineEstimate,
-            ..
-        } | Degradation::Rounds {
-            reason: DegradationReason::DeadlineEstimate,
-            ..
-        }
-    )));
+    let hopeless = admitted(
+        table
+            .submit(scope(5), request("d", 50_000), None, None, 0)
+            .unwrap(),
+    );
     // The ticketed job's window opens at dispatch with its whole deadline;
     // the hopeless one, past its deadline, runs smallest on a fresh window.
     for id in &running {
@@ -448,32 +516,41 @@ fn a_ticket_when_the_smallest_answer_cannot_fit_after_the_wait() {
     let late = started.iter().find(|job| job.id == hopeless).unwrap();
     assert!(late.requeued);
     assert_eq!((late.shape, late.run_ms), (Shape::SMALLEST, 50_000));
+    assert_eq!(late.degradations.len(), 3);
+    assert!(late.degradations.iter().all(|degradation| matches!(
+        degradation,
+        Degradation::Parts {
+            reason: DegradationReason::DeadlineEstimate,
+            ..
+        } | Degradation::SubNeeds {
+            reason: DegradationReason::DeadlineEstimate,
+            ..
+        } | Degradation::Rounds {
+            reason: DegradationReason::DeadlineEstimate,
+            ..
+        }
+    )));
+}
+
+/// Review C4: a smallest-disclosed job dispatched at once never waited.
+#[test]
+fn a_job_that_never_waited_is_not_requeued() {
+    let mut table = flat_schedule(100 * SECOND);
+    let id = submit(&mut table, request("d", 50_000), 0);
+    let [job] = <[StartedJob; 1]>::try_from(table.dispatch(0)).unwrap();
+    assert_eq!(job.id, id);
+    assert!(!job.requeued);
+    assert_eq!((job.shape, job.run_ms), (Shape::SMALLEST, 50_000));
 }
 
 #[test]
 fn a_wait_past_the_deadline_requeues_on_a_fresh_window() {
-    let config = JobTableConfig {
-        costs: flat(10 * SECOND),
-        ..JobTableConfig::default()
-    };
-    let mut table = schedule(config);
-    let first = admitted(
-        table
-            .submit(scope(4), small("a", 300_000), None, None, 0)
-            .unwrap(),
-    );
-    let second = admitted(
-        table
-            .submit(scope(4), small("b", 300_000), None, None, 0)
-            .unwrap(),
-    );
+    let mut table = flat_schedule(10 * SECOND);
+    let first = submit(&mut table, small("a", 300_000), 0);
+    let second = submit(&mut table, small("b", 300_000), 0);
     assert_eq!(table.dispatch(0).len(), 2);
     // Estimated to start at 10 s and finish at 20 s: admitted.
-    let late = admitted(
-        table
-            .submit(scope(4), small("c", 30_000), None, None, 0)
-            .unwrap(),
-    );
+    let late = submit(&mut table, small("c", 30_000), 0);
     // The estimates were wrong: both slots stayed busy for 60 s.
     table.finish(&first, done("a", 1), 60 * SECOND);
     let started = table.dispatch(60 * SECOND);
@@ -487,123 +564,173 @@ fn a_wait_past_the_deadline_requeues_on_a_fresh_window() {
 }
 
 #[test]
-fn results_are_kept_ten_minutes_and_dropped_on_a_new_publication() {
-    let mut table = schedule(JobTableConfig::default());
-    let id = admitted(
-        table
-            .submit(scope(4), small("kept", 300_000), None, None, 0)
-            .unwrap(),
-    );
-    table.dispatch(0);
-    table.finish(&id, done("kept", 100), 5 * SECOND);
+fn results_are_kept_ten_minutes_then_dropped() {
     let finished_at = 5 * SECOND;
-    let retry = |table: &mut Schedule<&'static str>, now, current| {
-        table.submit(scope(4), small("kept", 300_000), None, current, now)
-    };
+    let mut table = schedule(JobTableConfig::default());
+    let id = submit(&mut table, small("kept", 300_000), 0);
+    table.dispatch(0);
+    table.finish(&id, done("kept", 100), finished_at);
     assert!(matches!(
-        retry(&mut table, finished_at + DEFAULT_RETENTION - 1, Some(publication(1))),
+        table.submit(scope(4), small("kept", 300_000), None, Some(publication(1)), finished_at + RETENTION - 1),
         Ok(Submitted::Attached(attached)) if attached == id
     ));
     // On another publication the finished result is not attached.
-    let fresh = admitted(retry(&mut table, finished_at + 1, Some(publication(2))).unwrap());
-    assert_ne!(fresh, id);
-    // At ten minutes the result is gone, and so is its continuation.
-    let mut table = schedule(JobTableConfig::default());
-    let id = admitted(
+    let fresh = admitted(
         table
-            .submit(scope(4), small("kept", 300_000), None, None, 0)
+            .submit(
+                scope(4),
+                small("kept", 300_000),
+                None,
+                Some(publication(2)),
+                finished_at + 1,
+            )
             .unwrap(),
     );
-    table.dispatch(0);
-    table.finish(&id, done("kept", 100), finished_at);
-    table.purge(finished_at + DEFAULT_RETENTION);
+    assert_ne!(fresh, id);
+    table.purge(finished_at + RETENTION);
     assert!(
         table
-            .view(&scope(4), &id, finished_at + DEFAULT_RETENTION)
+            .view(&scope(4), &id, finished_at + RETENTION)
             .is_none()
     );
-    assert_eq!(
-        table
-            .status(finished_at + DEFAULT_RETENTION)
-            .retained_results,
-        0
+}
+
+/// Review C1 and S4: results, failures and running jobs of an older
+/// publication are never attached once a newer one is observed, and an
+/// out-of-order older notification changes nothing.
+#[test]
+fn a_new_publication_supersedes_every_older_result() {
+    let mut table = flat_schedule(10 * SECOND);
+    let finished = submit(&mut table, small("finished", 300_000), 0);
+    let failed = submit(&mut table, small("failed", 300_000), 0);
+    table.dispatch(0);
+    table.finish(&finished, done("finished", 10), SECOND);
+    table.finish(
+        &failed,
+        JobOutcome::Failed("index mid-publication".into()),
+        SECOND,
     );
-    // A new publication drops the older result at once.
-    let mut table = schedule(JobTableConfig::default());
-    let id = admitted(
+    // Running on publication 1, as the caller knew it.
+    let running = admitted(
         table
-            .submit(scope(4), small("kept", 300_000), None, None, 0)
+            .submit(
+                scope(4),
+                small("running", 300_000),
+                None,
+                Some(publication(1)),
+                SECOND,
+            )
             .unwrap(),
     );
-    table.dispatch(0);
-    table.finish(&id, done("kept", 100), finished_at);
-    table.publication_changed(scope(4).index(), publication(1));
-    assert!(table.view(&scope(4), &id, finished_at).is_some());
-    table.publication_changed(scope(4).index(), publication(2));
-    assert!(table.view(&scope(4), &id, finished_at).is_none());
-}
-const DEFAULT_RETENTION: u64 = schedule::DEFAULT_RETENTION_MS;
+    let [started] = <[StartedJob; 1]>::try_from(table.dispatch(SECOND)).unwrap();
+    assert_eq!(started.publication, Some(publication(1)));
+    // A caller already on publication 2 does not attach to it.
+    let separate = admitted(
+        table
+            .submit(
+                scope(4),
+                small("running", 300_000),
+                None,
+                Some(publication(2)),
+                SECOND,
+            )
+            .unwrap(),
+    );
+    assert_ne!(separate, running);
 
+    assert!(table.publication_changed(index(), &envelope(2)).unwrap());
+    assert!(table.view(&scope(4), &finished, 2 * SECOND).is_none());
+    assert!(table.view(&scope(4), &failed, 2 * SECOND).is_none());
+    // The running job is superseded: its continuation is refused, and a
+    // retry without a known publication makes a new job.
+    let superseded = table
+        .submit(
+            scope(4),
+            continued(small("running", 300_000), running),
+            None,
+            None,
+            2 * SECOND,
+        )
+        .unwrap_err()
+        .to_string();
+    assert!(superseded.contains("superseded"), "{superseded}");
+    // It finishes later on publication 1 and is not kept.
+    table.finish(&running, done_on("running", 10, 1), 3 * SECOND);
+    assert!(table.view(&scope(4), &running, 3 * SECOND).is_none());
+    // A result that ran on publication 2 is kept and attached.
+    let current = submit(&mut table, small("current", 300_000), 3 * SECOND);
+    table.dispatch(3 * SECOND);
+    table.finish(&current, done_on("current", 10, 2), 4 * SECOND);
+    // An older notification arriving late is ignored.
+    assert!(!table.publication_changed(index(), &envelope(1)).unwrap());
+    assert!(is_finished(table.view(&scope(4), &current, 4 * SECOND)));
+    assert!(matches!(
+        table.submit(scope(4), small("current", 300_000), None, None, 5 * SECOND),
+        Ok(Submitted::Attached(attached)) if attached == current
+    ));
+    // A result finishing on an older publication than the observed one is
+    // delivered but not kept.
+    let lagging = submit(&mut table, small("lagging", 300_000), 5 * SECOND);
+    table.dispatch(5 * SECOND);
+    table.finish(&lagging, done_on("lagging", 10, 1), 6 * SECOND);
+    assert!(table.view(&scope(4), &lagging, 6 * SECOND).is_none());
+}
+
+/// Review S1: every entry is charged its question and an overhead, so
+/// zero-byte results and failures are evicted too, and the count is capped.
 #[test]
-fn retained_bytes_are_bounded_oldest_first_and_failures_are_kept() {
+fn retention_charges_every_entry_and_caps_the_count() {
+    let entry = ENTRY_OVERHEAD_BYTES + 3;
     let config = JobTableConfig {
-        max_retained_bytes: 250,
+        max_retained_bytes: 2 * entry + 10,
+        costs: flat(SECOND),
         ..JobTableConfig::default()
     };
     let mut table = schedule(config);
-    let ids: Vec<_> = ["one", "two", "three"]
+    let ids: Vec<_> = ["one", "two", "six"]
         .into_iter()
-        .map(|question| {
-            admitted(
-                table
-                    .submit(scope(4), small(question, 300_000), None, None, 0)
-                    .unwrap(),
-            )
-        })
+        .map(|question| submit(&mut table, small(question, 300_000), 0))
         .collect();
-    let failed = admitted(
-        table
-            .submit(scope(4), small("four", 300_000), None, None, 0)
-            .unwrap(),
-    );
     table.dispatch(0);
-    table.finish(&ids[0], done("one", 100), 1);
-    table.finish(&ids[1], done("two", 100), 2);
+    table.finish(&ids[0], done("one", 0), 1);
+    table.finish(&ids[1], JobOutcome::Failed(String::new()), 2);
     table.dispatch(2);
-    table.finish(&ids[2], done("three", 100), 3);
-    table.dispatch(3);
-    table.finish(&failed, JobOutcome::Failed("worker gone".into()), 4);
-    assert!(table.view(&scope(4), &ids[0], 4).is_none());
-    assert!(matches!(
-        table.view(&scope(4), &ids[2], 4),
-        Some(JobView::Finished(_))
-    ));
-    assert!(table.status(4).retained_bytes <= 250);
+    table.finish(&ids[2], done("six", 0), 3);
+    assert!(table.view(&scope(4), &ids[0], 3).is_none());
+    assert!(is_finished(table.view(&scope(4), &ids[1], 3)));
+    assert_eq!(table.status(3).retained_bytes, 2 * entry);
     // A failed job is not replayed: the retry attaches to the failure.
     assert!(matches!(
-        table.submit(scope(4), small("four", 300_000), None, None, 5),
-        Ok(Submitted::Attached(attached)) if attached == failed
+        table.submit(scope(4), small("two", 300_000), None, None, 5),
+        Ok(Submitted::Attached(attached)) if attached == ids[1]
     ));
+
+    let config = JobTableConfig {
+        max_retained_results: 1,
+        costs: flat(SECOND),
+        ..JobTableConfig::default()
+    };
+    let mut table = schedule(config);
+    let first = submit(&mut table, small("first", 300_000), 0);
+    let second = submit(&mut table, small("second", 300_000), 0);
+    table.dispatch(0);
+    table.finish(&first, done("first", 0), 1);
+    table.finish(&second, done("second", 0), 2);
+    assert!(table.view(&scope(4), &first, 2).is_none());
+    assert_eq!(table.status(2).retained_results, 1);
 }
 
 #[test]
-fn one_scope_cannot_fill_the_table() {
+fn one_scope_or_one_principal_cannot_fill_the_table() {
     let config = JobTableConfig {
         max_active_per_scope: 2,
+        max_active_per_principal: 3,
         costs: flat(10 * SECOND),
         ..JobTableConfig::default()
     };
     let mut table = schedule(config);
-    admitted(
-        table
-            .submit(scope(4), small("a", 300_000), None, None, 0)
-            .unwrap(),
-    );
-    admitted(
-        table
-            .submit(scope(4), small("b", 300_000), None, None, 0)
-            .unwrap(),
-    );
+    submit(&mut table, small("a", 300_000), 0);
+    submit(&mut table, small("b", 300_000), 0);
     table.dispatch(0);
     assert!(matches!(
         table.submit(scope(4), small("c", 300_000), None, None, 0),
@@ -616,10 +743,23 @@ fn one_scope_cannot_fill_the_table() {
             .submit(scope(5), small("c", 300_000), None, None, 0)
             .unwrap(),
     );
+    // Review S3: the same principal in another scope (a new configuration
+    // revision here) shares its principal's cap.
+    let same_principal = AnswerScope::from_binding(&binding(4, 2));
+    admitted(
+        table
+            .submit(same_principal, small("d", 300_000), None, None, 0)
+            .unwrap(),
+    );
+    let third = AnswerScope::from_binding(&binding(4, 3));
+    assert!(matches!(
+        table.submit(third, small("e", 300_000), None, None, 0),
+        Ok(Submitted::Busy { .. })
+    ));
 }
 
 #[test]
-fn status_carries_no_identity_and_learns_measured_cost() {
+fn status_carries_no_identity_and_learns_only_from_uncut_runs() {
     let config = JobTableConfig {
         costs: flat(10 * SECOND),
         runtime_capacity: Some(1),
@@ -628,13 +768,7 @@ fn status_carries_no_identity_and_learns_measured_cost() {
     let mut table = schedule(config);
     let ids: Vec<_> = ["a", "b", "c"]
         .into_iter()
-        .map(|question| {
-            admitted(
-                table
-                    .submit(scope(4), small(question, 300_000), None, None, 0)
-                    .unwrap(),
-            )
-        })
+        .map(|question| submit(&mut table, small(question, 300_000), 0))
         .collect();
     assert_eq!(table.dispatch(0).len(), 2);
     let status = table.status(0);
@@ -659,18 +793,23 @@ fn status_carries_no_identity_and_learns_measured_cost() {
     assert!(!rendered.contains("\"a\""));
     // Jobs ran twice as long as estimated: the correction rises.
     table.finish(&ids[0], done("a", 1), 20 * SECOND);
-    assert!(table.status(20 * SECOND).correction_permille > 1000);
-    assert_eq!(table.status(20 * SECOND).recent.len(), 1);
+    let learned = table.status(20 * SECOND).correction_permille;
+    assert!(learned > 1000);
+    // Review C5: a run that reached its deadline teaches nothing.
+    table.finish(&ids[1], done("b", 1), 300 * SECOND);
+    let status = table.status(300 * SECOND);
+    assert_eq!(status.correction_permille, learned);
+    assert_eq!(status.recent.len(), 2);
+    assert!(status.recent[1].cut && !status.recent[0].cut);
     table.set_runtime_capacity(Some(4));
-    assert_eq!(table.status(20 * SECOND).gathering_limit, 4);
+    assert_eq!(table.status(300 * SECOND).gathering_limit, 4);
     table.set_costs(CostTable::default());
 }
 
 #[test]
 fn the_request_digest_ignores_the_deadline_and_the_continuation() {
     let a = request("q", 300_000);
-    let mut b = request("q", 10_000);
-    b.continuation = Some(Sha256Digest::from_bytes([1; 32]));
+    let b = continued(request("q", 10_000), Sha256Digest::from_bytes([1; 32]));
     assert_eq!(request_digest(&a).unwrap(), request_digest(&b).unwrap());
     let mut c = request("q", 300_000);
     c.budget.rounds = 2;
@@ -715,7 +854,8 @@ fn harness(config: JobTableConfig) -> Harness {
         })
     };
     Harness {
-        table: AnswerJobTable::with_salt(config, Arc::new(TokioClock::new()), runner, [3; 32]),
+        table: AnswerJobTable::with_salt(config, Arc::new(TokioClock::new()), runner, [3; 32])
+            .unwrap(),
         starts,
         runs,
         peak,
@@ -729,71 +869,62 @@ impl Harness {
             .expect("a job starts")
             .expect("runner alive")
     }
+    async fn waiting(&self, count: usize) {
+        tokio::time::timeout(Duration::from_secs(60), self.table.waiting_at_least(count))
+            .await
+            .expect("the call is waiting");
+    }
 }
 
 fn deadline_in(duration: Duration) -> tokio::time::Instant {
     tokio::time::Instant::now() + duration
 }
 
+/// Review T2: the disconnecting call and the retry are both observed
+/// waiting on the running job before it is released.
 #[tokio::test(start_paused = true)]
 async fn a_retry_after_a_client_timeout_attaches_to_the_job() {
     let mut harness = harness(JobTableConfig::default());
     let table = harness.table.clone();
-    // The client gives up after 5 s; the job is the service's and keeps going.
-    let first = tokio::spawn({
+    let call = |deadline_ms, wait| {
         let table = table.clone();
-        async move {
+        tokio::spawn(async move {
             table
                 .call(
                     scope(4),
-                    request("long", 300_000),
+                    request("long", deadline_ms),
                     None,
                     None,
-                    deadline_in(STEP),
+                    deadline_in(wait),
                 )
                 .await
-        }
-    });
+        })
+    };
+    // The client gives up after 5 s; the job is the service's and keeps going.
+    let first = call(300_000, STEP);
     let (job, release) = harness.next_start().await;
-    let CallReply::Pending { running, ticket } = first.await.unwrap().unwrap() else {
+    let CallReply::Pending {
+        running,
+        ticket,
+        degradations,
+    } = first.await.unwrap().unwrap()
+    else {
         panic!("the client timed out first");
     };
     assert!(running);
+    // No-model 4 x 4 x 3 is 100 s, inside 300 s: nothing was reduced.
+    assert!(degradations.is_empty());
     assert_eq!(ticket.id, job.id);
     check_ticket(&ticket);
-    // A second client disconnects outright.
-    let dropped = tokio::spawn({
-        let table = table.clone();
-        async move {
-            table
-                .call(
-                    scope(4),
-                    request("long", 300_000),
-                    None,
-                    None,
-                    deadline_in(STEP * 100),
-                )
-                .await
-        }
-    });
+    // A second client attaches, then disconnects outright.
+    let dropped = call(300_000, STEP * 100);
+    harness.waiting(2).await;
     dropped.abort();
     assert!(dropped.await.unwrap_err().is_cancelled());
-    // The retry attaches and receives the one run's result.
-    let retry = tokio::spawn({
-        let table = table.clone();
-        async move {
-            table
-                .call(
-                    scope(4),
-                    request("long", 120_000),
-                    None,
-                    None,
-                    deadline_in(STEP * 10),
-                )
-                .await
-        }
-    });
-    tokio::task::yield_now().await;
+    // The retry attaches to the running job and is notified when it ends.
+    let retry = call(120_000, STEP * 10);
+    harness.waiting(3).await;
+    assert_eq!(harness.table.status().unwrap().running, 1);
     release.send(Ok("answer")).unwrap();
     let CallReply::Finished {
         id,
@@ -814,13 +945,11 @@ async fn a_retry_after_a_client_timeout_attaches_to_the_job() {
         }
     ));
     // The kept ticket's continuation attaches after the finish too.
-    let mut continued = request("long", 300_000);
-    continued.continuation = Some(ticket.id);
     assert!(matches!(
         table
             .call(
                 scope(4),
-                continued,
+                continued(request("long", 300_000), ticket.id),
                 None,
                 Some(publication(1)),
                 deadline_in(STEP)
@@ -830,28 +959,33 @@ async fn a_retry_after_a_client_timeout_attaches_to_the_job() {
         CallReply::Finished { attached: true, .. }
     ));
     // Another caller cannot use the continuation.
-    let mut foreign = request("long", 300_000);
-    foreign.continuation = Some(ticket.id);
     assert!(
         table
-            .call(scope(9), foreign, None, None, deadline_in(STEP))
+            .call(
+                scope(9),
+                continued(request("long", 300_000), ticket.id),
+                None,
+                None,
+                deadline_in(STEP)
+            )
             .await
             .is_err()
     );
     assert_eq!(harness.runs.load(Ordering::SeqCst), 1);
 }
 
+/// Review T1: later arrivals have earlier deadlines, so the order shows
+/// earliest-deadline dispatch rather than arrival order.
 #[tokio::test(start_paused = true)]
-async fn several_concurrent_answers_all_finish_within_the_limit() {
-    let config = JobTableConfig {
+async fn several_concurrent_answers_run_earliest_deadline_first_within_the_limit() {
+    let mut harness = harness(JobTableConfig {
         costs: flat(5 * SECOND),
         ..JobTableConfig::default()
-    };
-    let mut harness = harness(config);
+    });
     let calls: Vec<_> = (0..6u8)
         .map(|index| {
             let table = harness.table.clone();
-            let deadline_ms = 60_000 + u64::from(index) * 10_000;
+            let deadline_ms = 110_000 - u64::from(index) * 10_000;
             tokio::spawn(async move {
                 let question = format!("question {index}");
                 table
@@ -880,8 +1014,10 @@ async fn several_concurrent_answers_all_finish_within_the_limit() {
         order.push(job.request.question);
         release.send(Ok("done")).unwrap();
     }
-    // Earliest deadline first, and every Answer ran.
-    let expected: Vec<_> = (0..6).map(|index| format!("question {index}")).collect();
+    let expected: Vec<_> = [0, 1, 5, 4, 3, 2]
+        .into_iter()
+        .map(|index| format!("question {index}"))
+        .collect();
     assert_eq!(order, expected);
     for call in calls {
         assert!(matches!(
@@ -961,6 +1097,7 @@ async fn a_ticket_or_a_disclosed_degradation_when_the_deadline_cannot_be_met() {
     let CallReply::Pending {
         running: false,
         ticket,
+        ..
     } = reply
     else {
         panic!("expected a ticket, got {reply:?}");
@@ -982,23 +1119,53 @@ async fn a_ticket_or_a_disclosed_degradation_when_the_deadline_cannot_be_met() {
     assert_eq!(job.id, ticket.id);
     assert_eq!(job.run_ms, 100_000);
     release.send(Err(anyhow!("worker gone"))).unwrap();
-    let mut retry = small("third", 100_000);
-    retry.continuation = Some(ticket.id);
     let CallReply::Finished { outcome, .. } = table
-        .call(scope(5), retry, None, None, deadline_in(STEP))
+        .call(
+            scope(5),
+            continued(small("third", 100_000), ticket.id),
+            None,
+            None,
+            deadline_in(STEP),
+        )
         .await
         .unwrap()
     else {
         panic!("the ticket's job finished");
     };
     assert!(matches!(outcome.as_ref(), JobOutcome::Failed(message) if message == "worker gone"));
-    // Raising the capacity is accepted at runtime; costs can be replaced.
-    table.set_runtime_capacity(Some(3)).unwrap();
     table.set_costs(CostTable::default()).unwrap();
-    table
-        .publication_changed(&scope(5), publication(2))
-        .unwrap();
-    assert_eq!(table.status().unwrap().gathering_limit, 3);
+}
+
+/// Review C1 through the table: a waiter still receives the outcome of a
+/// job superseded while it ran, which the table then does not keep.
+#[tokio::test(start_paused = true)]
+async fn a_waiter_receives_a_superseded_outcome_that_is_not_kept() {
+    let mut harness = harness(JobTableConfig::default());
+    let table = harness.table.clone();
+    let call = tokio::spawn({
+        let table = table.clone();
+        async move {
+            table
+                .call(
+                    scope(4),
+                    small("q", 300_000),
+                    None,
+                    Some(publication(1)),
+                    deadline_in(STEP * 100),
+                )
+                .await
+        }
+    });
+    let (_job, release) = harness.next_start().await;
+    harness.waiting(1).await;
+    assert!(table.publication_changed(index(), &envelope(2)).unwrap());
+    release.send(Ok("old")).unwrap();
+    assert!(matches!(
+        call.await.unwrap().unwrap(),
+        CallReply::Finished { outcome, .. }
+            if matches!(outcome.as_ref(), JobOutcome::Done { value: "old", .. })
+    ));
+    assert_eq!(table.status().unwrap().retained_results, 0);
 }
 
 #[tokio::test(start_paused = true)]
@@ -1024,6 +1191,91 @@ async fn a_panicking_runner_frees_its_slot() {
             if matches!(outcome.as_ref(), JobOutcome::Failed(message) if message.starts_with("Answer job task failed"))
     ));
     assert_eq!(table.status().unwrap().running, 0);
+}
+
+/// Review T3 and C2: a runner that panics before returning its future still
+/// finishes its job as failed and frees its slot.
+#[tokio::test(start_paused = true)]
+async fn a_synchronous_runner_panic_frees_its_slot() {
+    let started = Arc::new(AtomicUsize::new(0));
+    let runner: Runner<&'static str> = {
+        let started = started.clone();
+        Arc::new(move |_job| -> RunFuture<&'static str> {
+            started.fetch_add(1, Ordering::SeqCst);
+            panic!("runner fault before its future")
+        })
+    };
+    let config = JobTableConfig {
+        costs: flat(10 * SECOND),
+        ..JobTableConfig::default()
+    };
+    let table =
+        AnswerJobTable::with_salt(config, Arc::new(TokioClock::new()), runner, [3; 32]).unwrap();
+    for question in ["a", "b", "c"] {
+        let reply = table
+            .call(
+                scope(4),
+                small(question, 60_000),
+                None,
+                None,
+                deadline_in(STEP),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            reply,
+            CallReply::Finished { outcome, .. }
+                if matches!(outcome.as_ref(), JobOutcome::Failed(message) if message.starts_with("Answer job task failed"))
+        ));
+    }
+    assert_eq!(table.status().unwrap().running, 0);
+    assert_eq!(started.load(Ordering::SeqCst), 3);
+}
+
+/// Review C2: a capacity observer on a plain thread, outside the runtime,
+/// starts a queued job on the table's kept handle.
+#[tokio::test(start_paused = true)]
+async fn a_dispatch_from_a_foreign_thread_starts_the_job() {
+    let mut harness = harness(JobTableConfig {
+        costs: flat(10 * SECOND),
+        ..JobTableConfig::default()
+    });
+    let table = harness.table.clone();
+    let calls: Vec<_> = ["a", "b", "c"]
+        .into_iter()
+        .map(|question| {
+            let table = table.clone();
+            tokio::spawn(async move {
+                table
+                    .call(
+                        scope(4),
+                        small(question, 300_000),
+                        None,
+                        None,
+                        deadline_in(STEP * 50),
+                    )
+                    .await
+            })
+        })
+        .collect();
+    let mut held = vec![harness.next_start().await, harness.next_start().await];
+    harness.waiting(3).await;
+    assert_eq!(table.status().unwrap().queued, 1);
+    let observer = std::thread::spawn({
+        let table = table.clone();
+        move || table.set_runtime_capacity(Some(3))
+    });
+    observer.join().unwrap().unwrap();
+    held.push(harness.next_start().await);
+    for (_, release) in held {
+        release.send(Ok("done")).unwrap();
+    }
+    for call in calls {
+        assert!(matches!(
+            call.await.unwrap().unwrap(),
+            CallReply::Finished { .. }
+        ));
+    }
 }
 
 #[tokio::test(start_paused = true)]

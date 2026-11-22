@@ -6,6 +6,7 @@ use airk_core::arbiter::{
     answer_loop::{BudgetV3, Degradation, DegradationReason},
     device::SelectedModel,
 };
+use std::cmp::Reverse;
 
 /// The Context model rung an Answer plans with. `None` in a [`Shape`] is the
 /// no-model loop, the bottom of the ladder.
@@ -40,6 +41,14 @@ impl Shape {
             rounds: budget.rounds,
             model,
         }
+    }
+    /// At least as much of every dimension and as good a rung as `other`:
+    /// a caller wanting `other` loses nothing by receiving `self`.
+    pub(crate) fn covers(&self, other: &Self) -> bool {
+        self.parts >= other.parts
+            && self.sub_needs >= other.sub_needs
+            && self.rounds >= other.rounds
+            && self.model >= other.model
     }
     /// The smallest disclosed answer: one part, one sub-need, one round and
     /// the no-model loop.
@@ -135,14 +144,16 @@ pub(crate) struct Fitted {
     pub(crate) degradations: Vec<Degradation>,
 }
 
-/// One reduction step, cheapest loss first: rounds down to two, Large to
-/// Compact, rounds to one, sub-needs and parts down to two, then to one, and
-/// last the no-model loop.
-fn reduce(shape: &mut Shape) -> bool {
+/// One reduction step, cheapest loss first: rounds down to two, the model
+/// step, rounds to one, sub-needs and parts down to two, then to one, and
+/// last the no-model loop. The model step leaves Large for Compact only when
+/// Compact is cheaper for the shape (review C7); once it is taken, every
+/// later shape runs on the cheaper available rung.
+fn reduce(shape: &mut Shape, model_step: &mut bool) -> bool {
     if shape.rounds > 2 {
         shape.rounds -= 1;
-    } else if shape.model == Some(ContextRung::Large) {
-        shape.model = Some(ContextRung::Compact);
+    } else if !*model_step && shape.model == Some(ContextRung::Large) {
+        *model_step = true;
     } else if shape.rounds > 1 {
         shape.rounds -= 1;
     } else if shape.sub_needs > 2 {
@@ -159,6 +170,23 @@ fn reduce(shape: &mut Shape) -> bool {
         return false;
     }
     true
+}
+
+/// The cheaper of Large and Compact for `shape`, ties to Large.
+fn cheapest_rung(costs: &CostTable, correction_permille: u64, shape: Shape) -> Option<ContextRung> {
+    [ContextRung::Large, ContextRung::Compact]
+        .into_iter()
+        .filter_map(|rung| {
+            let candidate = Shape {
+                model: Some(rung),
+                ..shape
+            };
+            costs
+                .work_ms(&candidate, correction_permille)
+                .map(|work| (work, rung))
+        })
+        .min_by_key(|(work, rung)| (*work, Reverse(*rung)))
+        .map(|(_, rung)| rung)
 }
 
 /// The first shape on the ladder whose work fits `available_ms`, or `None`
@@ -212,7 +240,11 @@ fn fit(
 ) -> Option<Fitted> {
     let start = start_of(costs, requested);
     let mut shape = start;
+    let mut model_step = false;
     loop {
+        if model_step && start.model == Some(ContextRung::Large) && shape.model.is_some() {
+            shape.model = cheapest_rung(costs, correction_permille, shape);
+        }
         let work = costs
             .work_ms(&shape, correction_permille)
             .expect("ladder rungs are available");
@@ -226,7 +258,7 @@ fn fit(
                 deadline_ms,
             ));
         }
-        if !reduce(&mut shape) {
+        if !reduce(&mut shape, &mut model_step) {
             return None;
         }
     }
