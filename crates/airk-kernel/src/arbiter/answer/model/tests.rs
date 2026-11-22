@@ -494,7 +494,7 @@ fn model_calls_end_before_the_compose_reserve() -> Result<()> {
 
 #[test]
 fn card_slots_follow_each_parts_share() -> Result<()> {
-    let (fixture, _) = scored(Mode::Accept)?;
+    let (fixture, scorer) = scored(Mode::Accept)?;
     let mut tight = request(
         "1. where is `restart_guard` defined, who calls it, which tests cover it and where is it documented?\n2. explain the retry budget refusal",
     );
@@ -522,5 +522,14 @@ fn card_slots_follow_each_parts_share() -> Result<()> {
         })
         .count();
     assert!(coverage_one >= 3, "part 1 had more rosters than its share");
+    // A call never batches two parts' rosters.
+    for request in scorer.requests.lock().unwrap().iter() {
+        let parts: BTreeSet<u8> = request
+            .segments
+            .iter()
+            .map(|segment| segment.part)
+            .collect();
+        assert_eq!(parts.len(), 1, "{parts:?}");
+    }
     Ok(())
 }

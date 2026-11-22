@@ -816,50 +816,64 @@ fn configuration_change_marks_decisions_historical() -> Result<()> {
     Ok(())
 }
 
-/// Holds concurrent reads so they complete out of dispatch order: a read
-/// waits until a read that arrived after it has completed; the latest
-/// arrival waits a short grace for another arrival, then goes first. Reads
-/// on the driver's own thread (single-read waves, probes) are not held.
+/// Holds concurrent reads so they complete out of dispatch order, with no
+/// timed wait. The wave runner announces each threaded wave's size; a read
+/// waits until every read of the wave still to finish is inside the reader
+/// (at most four), then the latest arrival goes first and each earlier one
+/// goes once a later arrival has completed. Reads on the driver's own
+/// thread (single-read waves, probes) are not held.
 struct Reversing {
     driver: std::thread::ThreadId,
-    board: Mutex<(u64, Vec<u64>, u64)>,
+    board: Mutex<Board>,
     changed: std::sync::Condvar,
 }
+#[derive(Default)]
+struct Board {
+    arrivals: u64,
+    /// The current wave's size and how many of its reads completed.
+    wave: usize,
+    wave_done: usize,
+    inside: Vec<u64>,
+    done: Vec<u64>,
+    inverted: u64,
+}
 impl Reversing {
+    fn wave(&self, size: usize) {
+        let mut board = self.board.lock().unwrap();
+        board.wave = size;
+        board.wave_done = 0;
+    }
     fn hold(&self) {
         if std::thread::current().id() == self.driver {
             return;
         }
         let mut board = self.board.lock().unwrap();
-        let me = board.0;
-        board.0 += 1;
+        let me = board.arrivals;
+        board.arrivals += 1;
+        board.inside.push(me);
         self.changed.notify_all();
-        let arrived = std::time::Instant::now();
-        let fail_at = arrived + Duration::from_secs(30);
+        let fail_at = std::time::Instant::now() + Duration::from_secs(30);
         loop {
-            let later_done = board.1.iter().any(|done| *done > me);
-            let latest = board.0 == me + 1;
-            let grace_over = arrived.elapsed() >= Duration::from_millis(30);
-            if later_done || (latest && grace_over) {
+            let expected = wave::READS_IN_FLIGHT.min(board.wave - board.wave_done);
+            let all_in = board.inside.len() >= expected;
+            let latest = board.inside.iter().all(|other| *other <= me);
+            let later_done = board.done.iter().any(|done| *done > me);
+            if all_in && (latest || later_done) {
                 break;
             }
             let now = std::time::Instant::now();
             assert!(now < fail_at, "read {me} was never released");
-            let wait = if latest {
-                Duration::from_millis(30).saturating_sub(arrived.elapsed())
-            } else {
-                fail_at - now
-            };
-            board = self.changed.wait_timeout(board, wait).unwrap().0;
+            board = self.changed.wait_timeout(board, fail_at - now).unwrap().0;
         }
-        if board.1.iter().any(|done| *done > me) {
-            board.2 += 1;
+        if board.done.iter().any(|done| *done > me) {
+            board.inverted += 1;
         }
-        board.1.push(me);
+        board.inside.retain(|other| *other != me);
+        board.done.push(me);
+        board.wave_done += 1;
         self.changed.notify_all();
     }
 }
-
 /// One Answer on a fresh attempt of the fixture's kernel, so two runs share
 /// every identity and differ only in read completion order.
 fn answer_by(
@@ -909,11 +923,21 @@ fn decisions_are_independent_of_read_completion_order() -> Result<()> {
     let in_order = answer_by(&fixture, request(question), None)?;
     let reversing = Reversing {
         driver: std::thread::current().id(),
-        board: Mutex::new((0, vec![], 0)),
+        board: Mutex::new(Board::default()),
         changed: std::sync::Condvar::new(),
     };
-    let reversed = answer_by(&fixture, request(question), Some(&reversing))?;
-    let (arrivals, _, inverted) = *reversing.board.lock().unwrap();
+    let reversing = Arc::new(reversing);
+    let reversed = {
+        let gate = reversing.clone();
+        wave::ON_WAVE.with(|hook| *hook.borrow_mut() = Some(Box::new(move |size| gate.wave(size))));
+        let reversed = answer_by(&fixture, request(question), Some(&reversing));
+        wave::ON_WAVE.with(|hook| *hook.borrow_mut() = None);
+        reversed?
+    };
+    let (arrivals, inverted) = {
+        let board = reversing.board.lock().unwrap();
+        (board.arrivals, board.inverted)
+    };
     assert!(arrivals > 4, "the reads ran on wave threads");
     assert!(
         inverted > 0,

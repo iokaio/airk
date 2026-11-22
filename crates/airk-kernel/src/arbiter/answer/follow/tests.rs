@@ -146,3 +146,14 @@ fn a_repeated_error_literal_is_skipped_whole() {
         r#"log("open failed"); retry(); log("open failed"); then the call failed done("ok")"#;
     assert_eq!(error_strings(text), ["open failed"]);
 }
+
+#[test]
+fn a_rejected_literal_is_skipped_whole() {
+    let text = r#"log("ok"); then the call failed; log("done"); err("open failed")"#;
+    assert_eq!(error_strings(text), ["open failed"]);
+    // A single-quoted literal after an apostrophe word is still found.
+    assert_eq!(
+        error_strings("it's 'fine' but the call failed: 'retry refused'"),
+        ["retry refused"]
+    );
+}

@@ -420,3 +420,31 @@ limits on publication still apply in full.
   listed in the contract's focused checks.
 
 Further entries are added as implementation proceeds.
+
+### 20. Canonical reads in flight are not bounded by the Answer reserve
+
+- **Step:** L3 (review fix M5 in `7b65167a`; wider since L3-9's four reads
+  in flight).
+- **Plan constraint:** section 12.4, a call past its deadline is never an
+  empty failure.
+- **What holds:** card and Focus calls end at `deadline - compose_union_ms`;
+  a canonical read is started only before the 5 s dispatch reserve.
+- **What does not:** `CanonicalReadFn` has no deadline and local reads are
+  bounded only by the read attempt, so up to four reads already in flight
+  at the reserve point can outlast it, and then the reply fails
+  `validate_work` instead of returning a Deadline partial.
+- **Follow-up owner:** L4/L2b, bound reads by the Answer deadline in the
+  service read attempt. Kernel contract: `airk-kernel/src/arbiter/CONTRACT.md`,
+  "Answer /3 loop".
+
+### 21. Answer custody is dropped after delivery until the job table keeps it
+
+- **Step:** L3-10 (primary ruling, 22 November 2026).
+- **Plan constraint:** section 12.4.1, result retention.
+- **What holds:** the kernel returns `AnswerCustody` (the complete decision
+  log and every intact canonical result) beside the reply, and the reply
+  carries the log digest.
+- **What does not:** the MCP handler keeps only the reply; custody is not
+  retained for continuation or audit.
+- **Follow-up owner:** L2b, keep custody in the Answer job table keyed by the
+  log digest.

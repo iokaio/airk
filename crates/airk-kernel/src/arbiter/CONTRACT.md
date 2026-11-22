@@ -221,3 +221,142 @@ test-support builds. It binds once per process, and a second binding must
 repeat the same layers. Without a binding, and always in a product build,
 `evaluation_layers()` is `Layers::default()`: every layer off and every value
 unset, so the product's gathering, roster and Focus shape are unchanged.
+
+## Answer /3 loop (`answer/`), what holds and what does not
+
+`Kernel::answer_with` runs the section 12 loop: Split, per-part Plan,
+Retrieve, Read and Coverage, Follow-up and Compose, then Union. Every read is
+a canonical dispatch through the one shared read owner (`answer/gather.rs`);
+models only choose among cards the kernel proposes. The design and its
+recorded deviations are in the private L3 notes; the ones that bear on
+callers are listed here.
+
+What holds:
+
+- **Concurrent reads, deterministic reply.** A wave's reads run on at most
+  four scoped threads (`answer/wave.rs`). Claims follow dispatch order, every
+  claimed read runs, and the reads that ran are a prefix of the wave; the
+  rest are released. Accounting and observation run after the wave in
+  dispatch order, so completion order never changes the reply, the decision
+  log or custody. A read that panics halts the wave and its panic (the
+  lowest-index one) is raised again. Governing `file_info` probes, batched
+  Focus and card calls run on the driver thread at the round barrier.
+- **Per-part model shares.** Shares are cut after Split. A card call batches
+  rosters of one part only and is charged to that part's slot share; its
+  reservation is capped by the part's token share. Focus is sized by each
+  part's token and pair shares and half the part-round allowance, and spans
+  past it stay in coverage unscored. A finished part hands back what it did
+  not use. Every roster a present model could not score is disclosed as
+  `ModelShare`.
+- **Card estimate per call.** Model-time admission estimates one batched
+  call (one forward pass), not one per segment; Focus is bounded by the
+  model deadline, its shares and the original deadline instead of a time
+  estimate.
+- **Model calls end before the Compose and Union reserve**
+  (`deadline - compose_union_ms`).
+- **Stale refusal.** `AnswerPostExecutionStale` is returned when the
+  configuration changed after native work, and also when a Focus batch went
+  stale mid-loop; it holds the custody so far, the optional reply and the
+  cause privately, and its receipt is nonreplayable.
+- **Presentation trimming is not omission.** Union levels 1 to 4 shorten
+  records (uncited hits, excerpt cuts, compact paragraphs) and disclose it
+  per projection (`hits_total`, `rows_total`, `truncated`); a part is
+  `shortened` only when records are omitted, as Core validates against
+  `omitted_count`.
+
+What does not hold yet, with the follow-up owner:
+
+- **Canonical reads are not cancelled at the reserve** (L4/L2b). A read
+  starts only before the 5 s dispatch reserve, but `CanonicalReadFn` takes
+  no deadline, so a read that outlasts the reserve still makes the reply
+  fail validation. The service read attempt must bound reads by the Answer
+  deadline. Change log entry 20.
+- **Custody is not retained** (L2b). Until the Answer job table keeps it,
+  the MCP handler delivers `outcome.response` and drops `outcome.custody`;
+  the reply keeps the log digest. Change log entry 21.
+- **The partial marker names one reason** (Core contract). With both an
+  early stop and byte omissions, `partial` names the stop; omissions remain
+  disclosed by `omitted_count`, `omitted_evidence`, `evidence_omitted` and
+  `shortened`. Reporting both needs a Core wire decision.
+- **Combined (multi-index) Answer is /2 only** (L3-10). The /3 loop ignores
+  a context partition allowance (`partition: None` in card and Focus
+  requests); the /3 allowance contract is pending a recorded decision.
+- **Coverage cards carry no evidence excerpts** (L3, after L3-10).
+  `CardSegment` holds only the subject and card texts.
+
+### Review findings and resolutions (Answer /3 loop)
+
+Each line: what was wrong, what changed, the commit, the evidence. Test
+counts are for `nextest -p airk-kernel -E test(/arbiter::/)` at that commit.
+
+First review (L3-7, L3-8, `ed2e0926`), closed in `7b65167a` (165 passed):
+
+- H1, Focus sizing deleted spans from coverage. Now only the spans that fit
+  are sent and the rest stay unscored. Test
+  `focus_short_of_tokens_leaves_spans_unscored_not_dropped`.
+- H2, Focus and card tokens could pass the token pool together. The pool is
+  checked before each batch, cards included. Test
+  `focus_and_card_tokens_share_one_pool`.
+- H3, an unretainable failure receipt counted as an omission with no
+  shortened part. It is now a failure without a receipt, no omission and no
+  stop. Test `an_unretainable_failure_receipt_is_not_an_omission`.
+- H4, conflict notes kept parts whose evidence Union removed. Parts are
+  recomputed from retained evidence (`union::surviving`). Test
+  `a_conflict_keeps_only_parts_whose_evidence_survives`.
+- M1, per-part model shares were not enforced. Slot, token and pair shares
+  are cut after Split, checked and handed back as used. Test
+  `card_slots_follow_each_parts_share`.
+- M2, deterministic fallback was undisclosed. ContextAbsent follows Core's
+  rule; every fallback a present model could not score is a ModelShare.
+  Assertions in `abstained_or_none_falls_back_with_recorded_rule`.
+- M3, a re-tagged shared read reacted twice and duplicates filled the
+  round-one cap. It reacts once; the cap counts new dispatches only. No
+  driver test (the re-tag timing cannot be forced); see M4's test.
+- M4, stopped parts kept planning reads and could be handed shared reads.
+  They plan nothing and are removed from queued reads. Test
+  `a_stopped_waiter_is_never_handed_a_shared_read`.
+- M5, model calls ran into the Compose reserve. They end at the model
+  deadline. Test `model_calls_end_before_the_compose_reserve`. Reads stay
+  open: "What does not hold", change log entry 20.
+- M6, Plan advice above the sub-need limit was logged then truncated. It is
+  refused as unusable advice. Test
+  `plan_advice_beyond_the_sub_need_limit_is_refused`.
+- M7, top-score advice was not checked against its scores. Chosen cards
+  must be the highest-scoring ones. Tests
+  `top_score_advice_must_choose_the_highest_card` and the argmax assertion
+  in `batched_segments_argmax_per_segment`.
+- M8, no driver test ran with Focus. Synthetic Focus owners now drive the
+  barrier path (H1, H2, M9 tests).
+- M9, a stale Focus batch surfaced as another error and lost custody. It is
+  `AnswerPostExecutionStale` with custody. Test
+  `a_focus_batch_gone_stale_is_the_answer_stale_refusal`.
+- L1, the shares doc said Split was charged first; it now is (M1).
+- L2, disputed: model time at barrier r of n divides by n - r + 1 barriers,
+  this one included; a comment says so.
+- L3, L6, L7: recorded above ("Card estimate per call", "Presentation
+  trimming is not omission", "The partial marker names one reason").
+- L4, token attribution could charge a part 0 tokens. Every charged part
+  and round gets at least 1.
+- L5, a repeated error literal restarted the scan at its closing quote. It
+  is skipped whole. Test `a_repeated_error_literal_is_skipped_whole`.
+
+Second review (L3-9 `038472de` and `7b65167a`), no high or medium findings;
+the lows are closed in the commit after `7b65167a`:
+
+- N1, a card call grouping two parts' rosters was charged to the first part
+  only, so a part out of slots took the other part's roster down. Calls now
+  batch rosters of one part only. Assertion in
+  `card_slots_follow_each_parts_share`.
+- N2, a rejected literal advanced only past its opening quote, so text
+  between two literals could become an error term. A literal that closes on
+  its line is skipped whole; a quote right after a letter or digit
+  (an apostrophe) opens nothing. Test `a_rejected_literal_is_skipped_whole`.
+- N3, a panicking wave read neither halted the wave nor kept its payload.
+  It halts the wave, and the lowest-index panic is raised again. Test
+  `a_panicking_read_halts_the_wave_and_the_lowest_panic_is_raised`.
+- N4, the wave doc overstated the stop: a worker that passed its check may
+  claim one more read after another saw the stop. The doc now says so.
+- Test note: `decisions_are_independent_of_read_completion_order` used a
+  30 ms timed grace. It now waits on events only: the wave runner announces
+  each wave's size (`wave::ON_WAVE`, test builds only) and reads are released
+  latest first once the wave's in-flight reads are all inside the reader.

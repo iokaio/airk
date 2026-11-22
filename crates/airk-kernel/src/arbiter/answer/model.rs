@@ -105,8 +105,11 @@ impl Loop<'_> {
             };
             let mut end = index + 1;
             let mut cards = segs[index].cards.len();
+            // A call batches rosters of one part only, so a part out of its
+            // card share never takes another part's roster down with it.
             while end < segs.len()
                 && end - index < per_call
+                && segs[end].at.part == segs[index].at.part
                 && segs[end].cards.len() >= 2
                 && cards + segs[end].cards.len() <= v3::MAX_ACTION_CARDS
             {

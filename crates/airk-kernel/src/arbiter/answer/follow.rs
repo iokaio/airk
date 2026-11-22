@@ -75,21 +75,27 @@ fn error_strings(text: &str) -> Vec<String> {
             let after = &rest[start + 1..];
             let Some(end) = after.find(mark) else { break };
             let literal = &after[..end];
-            let lower = literal.to_ascii_lowercase();
-            let error =
-                !literal.contains('\n') && ERROR_WORDS.iter().any(|word| lower.contains(word));
-            if error && let Some(literal) = bounded(literal) {
-                // A repeated error literal is still a literal: skip past its
-                // closing quote, so the text between two literals is never
-                // read as one.
-                if !found.contains(&literal) {
-                    found.push(literal);
-                }
-                rest = &after[end + 1..];
-            } else {
-                // A rejected opening quote may still close nothing: move past it only.
+            // A quote right after a letter or digit (an apostrophe, as in
+            // "don't") opens nothing, and neither does one whose closing
+            // quote is on another line: move past it only.
+            let opens = rest[..start]
+                .chars()
+                .next_back()
+                .is_none_or(|before| !before.is_alphanumeric());
+            if !opens || literal.contains('\n') {
                 rest = &rest[start + 1..];
+                continue;
             }
+            // Any other literal, kept or not, is skipped whole, so the text
+            // between two literals is never read as one.
+            let lower = literal.to_ascii_lowercase();
+            if ERROR_WORDS.iter().any(|word| lower.contains(word))
+                && let Some(literal) = bounded(literal)
+                && !found.contains(&literal)
+            {
+                found.push(literal);
+            }
+            rest = &after[end + 1..];
         }
     }
     found

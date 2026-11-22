@@ -130,3 +130,28 @@ fn no_read_is_claimed_after_the_reserve_or_a_halting_read() {
     assert!(run(5, &|| true, &|index| index, &|_| false).is_empty());
     assert!(run(0, &|| false, &|index| index, &|_| false).is_empty());
 }
+
+#[test]
+fn a_panicking_read_halts_the_wave_and_the_lowest_panic_is_raised() {
+    let calls = AtomicUsize::new(0);
+    let raised = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        run(
+            40,
+            &|| false,
+            &|index| {
+                calls.fetch_add(1, Ordering::AcqRel);
+                if index == 1 || index == 2 {
+                    panic!("read {index} failed");
+                }
+                index
+            },
+            &|_| false,
+        )
+    }))
+    .unwrap_err();
+    assert_eq!(
+        raised.downcast_ref::<String>().map(String::as_str),
+        Some("read 1 failed")
+    );
+    assert!(calls.load(Ordering::Acquire) >= 3, "reads 0 to 2 ran");
+}
