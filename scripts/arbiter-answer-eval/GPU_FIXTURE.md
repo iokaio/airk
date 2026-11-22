@@ -245,6 +245,80 @@ worktree's `artifacts`. An image built in the main tree uses the main
 - **Rebuild:** after the re-emission below, build the Compact and Large
   directories again by copy.
 
+### LG arms side by side (changes entry 30)
+
+Arms C (Focus + Compact FP16), L (Focus + Large FP16) and F (Focus only) each
+run in their own fixture root, service and lifetime, at the same time on the
+A6000. `lg_lifetimes.py` writes the `--lifetimes` file for
+`make_loop_spec.py gate`.
+
+**Memory.** Declared per arm from the measured peaks, rounded up with
+headroom:
+
+| Arm | Device GiB | Host GiB |
+| --- | --- | --- |
+| C | 10 | 16 |
+| L | 18 | 24 |
+| F | 3 | 8 |
+
+- **Device:** 31 GiB, plus run_plan's 4 GiB reserve, fits 48 GiB.
+- **Host:** 48 GiB, plus the 16 GiB reserve, against 128 GiB physical (about
+  95 GiB free when measured).
+- **Accounting is larger than residency.** The services' own host
+  reservations (32 GiB for Compact and 40 GiB for Large, lifecycle constants)
+  are accounting within each service, not resident memory.
+- **Probes.** Each private probe checks live free VRAM against its cold peak
+  plus headroom: Focus 10, Compact 10 and Large 20 GiB. Launched in order F,
+  C, L, every probe fits beside the earlier residents.
+
+**Disk.** Each root is a fresh installation, `--seed-cpu focus`:
+- about 1.1 GB of CPU Focus weights;
+- the airk and bookbuilder indexes, about 5.3 GB.
+
+That is about 20 GB for three roots. Indexing takes about 41 + 25 minutes per
+root. Copying a settled root is not isolated: its handle and restart record
+name the original control root, so the copy would serve the original
+installation.
+
+**Image.** The image must come from one commit that holds:
+- L4 and the re-emitted profiles;
+- the Focus seam: `loop/l5c` 3cc8bebd, 604b7675 and 3e5dc40b, or their
+  integrated forms.
+
+A worktree image checks inputs against `<worktree>\artifacts`, fixed at
+compile time. Make that path a directory junction to the campaign's
+`D:\code\Github\airk\artifacts`; the check canonicalizes, so the junction
+resolves to the main `artifacts` and the rule is unchanged:
+
+```text
+cmd /c mklink /J <worktree>\artifacts D:\code\Github\airk\artifacts
+```
+
+Remove the junction only with `cmd /c rmdir <worktree>\artifacts`. Never use
+a recursive delete: it would delete through the junction.
+
+**Commands** (after the re-emission):
+1. Build the asset directories by copy and three pairs: C = Compact FP16 +
+   Focus 1024, L = Large FP16 + Focus 1024, F = the C pair. Each CUDA Focus
+   entry pins `R\answer-loop\L5C\runs\p1-focus-parity.json`.
+2. Write the lifetimes file:
+
+```text
+python -I -B scripts/arbiter-answer-eval/lg_lifetimes.py --series 05-gate-lg --r-root R ^
+  --image <runnable CUDA image dir> --pair C=<C pair.json>:<sha> --pair L=<L pair.json>:<sha> ^
+  --pair F=<C pair.json>:<sha> --out R\answer-loop\L5C\lg-inputs\lifetimes-05-gate-lg.json
+python -I -B scripts/arbiter-answer-eval/make_loop_spec.py gate --series 05-gate-lg ^
+  --lifetimes R\answer-loop\L5C\lg-inputs\lifetimes-05-gate-lg.json
+```
+
+**Precision arms.**
+- C32 and L32 use the existing FP32 single-entry models (`--model compact`
+  or `--model large`).
+- CF16 and CF32 cannot attach through the seam. The Focus binding refuses an
+  FP16 Focus, and refuses a Focus whose weights differ from its CPU twin
+  (review M2). Their Focus precision readings come from scorer-level replays
+  (`l5c_focus_parity`, `l5a_replay`) instead. Owner: LG.
+
 ### Re-emitting the FP16 profiles for the loop (run when L4 integrates)
 
 L4 moves `runtime.rs` (to `c9008eef…`). That file is an input of the FP16
