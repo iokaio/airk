@@ -400,8 +400,9 @@ Owner: the L2b implementer.
   unmeasured. Owner: L5b and L7.
 - **Custody** (change log entry 21): the job's reply is kept; its custody is
   still dropped. Owner: L2b.
-- **Progress for attached callers**, and turn-taking per round across Answers
-  in the model lane. Owner: L4 and L5b.
+- **Progress for attached callers:** a call that attached hears only its own
+  reporter's heartbeat, not the job's stages. Owner: L2b.
+- **A job past its maker's deadline** (above): not built. Owner: L2b.
 
 `expect(dead_code)` stays only on those unwired entry points and on fields
 that only the tests read. The separate security review of the wired path

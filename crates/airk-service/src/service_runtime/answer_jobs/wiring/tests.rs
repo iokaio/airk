@@ -310,6 +310,17 @@ fn assert_complete(body: &Value) {
             .is_some_and(|records| !records.is_empty()),
         "{body}"
     );
+    assert_deliverable(body);
+}
+/// The check the delivery planes make on a singleton Answer before it leaves
+/// the service: Core validation under the widest budget. A reply without
+/// model work binds no stage.
+fn assert_deliverable(body: &Value) {
+    let bindings = airk_core::combined_context::context_delivery_bindings(body);
+    assert!(
+        bindings.as_ref().is_ok_and(Vec::is_empty),
+        "{bindings:?}: {body}"
+    );
 }
 fn admission_kinds(body: &Value) -> Vec<&str> {
     body["degradations"]
@@ -544,6 +555,8 @@ async fn a_request_that_cannot_start_in_time_gets_a_ticket_at_once_and_an_answer
         "{ticketed}"
     );
     assert_eq!(ticket["id"].as_str().map(str::len), Some(64), "{ticketed}");
+    // A ticket-shaped reply passes the delivery planes' check as well.
+    assert_deliverable(&ticketed);
 
     wired.gate.open.send_replace(true);
     for call in running {

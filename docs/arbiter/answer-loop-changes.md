@@ -537,7 +537,18 @@ limits on publication still apply in full.
     queue status on the status surface (deferred until after LG, primary's
     decision of 22 November 2026; owner L2b), `publication_changed` (L2b),
     `set_runtime_capacity` (L5b with L2b), `set_costs` (L5b and L7), custody
-    (entry 21, L2b) and progress for attached callers (L4 and L5b).
+    (entry 21, L2b) and progress for attached callers (L2b).
+  - **With L4's model lane.** The table decides which Answers gather, by
+    earliest deadline with ageing and within the gathering limit. The lane
+    then shares the one model thread among those Answers, by attempt and
+    part and not by deadline: one attempt holds at most three of an index's
+    four lane jobs. One table job is one lane attempt, because a job runs
+    under its maker's native attempt. At the floor of two, two Answers on
+    one index both get model turns. Above it, what the lane cannot admit is
+    not queued but decided deterministically and disclosed, so the limit
+    must come from L5b's capacity. The estimator prices a job as if it had
+    the lane to itself; the learned correction absorbs the rest. The
+    contract's "Scheduling" section has the detail.
 - **Evidence:**
   - `airk-service`, `answer_jobs::` tests: the table (29) and the wired
     path (`answer_jobs::wiring::`, 11), which runs the real `airk_answer`
