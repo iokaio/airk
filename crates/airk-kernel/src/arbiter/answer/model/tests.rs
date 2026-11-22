@@ -533,3 +533,93 @@ fn card_slots_follow_each_parts_share() -> Result<()> {
     }
     Ok(())
 }
+
+fn answer_on(
+    fixture: &Fixture,
+    kernel: &crate::Kernel,
+    request: v3::ContextRequestV3,
+) -> Result<AnswerOutcome> {
+    let publication = fixture.publication.clone();
+    kernel.answer(
+        request,
+        Instant::now() + Duration::from_secs(600),
+        &|| Ok(()),
+        &|tool, arguments, _| canned(&publication, tool, arguments),
+    )
+}
+
+/// A combined Answer member runs under its `PartitionAllowanceV3`: the
+/// request budget is clamped to it, every card and Focus request carries it,
+/// and the reply's work stays within it.
+#[test]
+fn a_combined_member_answer_stays_within_its_partition() -> Result<()> {
+    use airk_core::native_loop::{ALLOWANCE_SCHEMA_V3, LoopResources, PartitionAllowanceV3};
+    let (fixture, scorer) = scored_with(Mode::Accept, true)?;
+    let baseline = answer_to(&fixture, request(QUESTION))?.response;
+    assert!(
+        baseline.decision_log.card_calls > 2,
+        "unbounded uses more slots"
+    );
+    assert!(
+        baseline.decision_log.focus_calls > 0,
+        "unbounded runs Focus"
+    );
+    scorer.requests.lock().unwrap().clear();
+    let attempt = airk_core::read_attempt::ReadAttemptBudget {
+        schema: 1,
+        request_id: airk_core::identity::Incarnation::from_bytes([10; 16]),
+        clock: ReadClock::UnixMonotonic,
+        expires_monotonic_ns: 100_000_001_000,
+        remaining_ns: 100_000_000_000,
+        native_retry_expires_monotonic_ns: None,
+    };
+    let allowance = PartitionAllowanceV3 {
+        schema: ALLOWANCE_SCHEMA_V3.into(),
+        attempt: attempt.request_id,
+        selection: Sha256Digest::from_bytes([41; 32]),
+        index_id: baseline.scope.index_id,
+        parent_budget: v3::BudgetV3::default(),
+        resources: LoopResources {
+            calls: 20,
+            input_tokens: 16_384,
+            candidates: 20,
+            bytes: 65_536,
+            focus_pairs: 0,
+        },
+        card_ordinals: vec![1, 2],
+        focus_ordinals: vec![],
+    };
+    let mut foreign = allowance.clone();
+    foreign.index_id = airk_core::index_catalog::IndexId::from_identity(
+        airk_core::identity::Incarnation::from_bytes([99; 16]),
+    );
+    assert!(
+        fixture
+            .unattempted
+            .with_answer_partition_for("airk_answer", foreign, attempt)
+            .is_err(),
+        "an allowance for another index is refused"
+    );
+    let member =
+        fixture
+            .unattempted
+            .with_answer_partition_for("airk_answer", allowance.clone(), attempt)?;
+    let request = request(QUESTION);
+    let clamped = allowance.clamp(&request.budget)?;
+    let outcome = answer_on(&fixture, &member, request)?;
+    let reply = &outcome.response;
+    reply.validate_with_log(&outcome.custody.log, &clamped)?;
+    assert!(reply.work.calls <= 20 && reply.candidate_count <= 20);
+    assert!(reply.work.input_tokens <= 16_384);
+    assert!(reply.decision_log.card_calls <= 2 && reply.decision_log.card_calls > 0);
+    assert!(reply.decision_log.focus_calls == 0 && reply.decision_log.focus_pairs == 0);
+    let requests = scorer.requests.lock().unwrap();
+    assert!(!requests.is_empty());
+    assert!(
+        requests
+            .iter()
+            .all(|request| request.partition.as_ref() == Some(&allowance)
+                && request.parent_budget == clamped)
+    );
+    Ok(())
+}

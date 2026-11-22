@@ -1627,6 +1627,9 @@ are numbered from 1 per reply, so global ordinals have no meaning; a second
   Focus calls and `validate_with_log` requires it to equal the logged
   receipts' single profile. Change log entry 28.
 
+Landed in `594e9fbf` (mislabelled; see change log entry 28) and completed by
+the next `Complete L3-10 (a)` commit.
+
 No airk-state/1 persisted format changes: the allowance travels in the
 read-attempt context and the host query, which are not persisted.
 
