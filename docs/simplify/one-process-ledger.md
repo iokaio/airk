@@ -15618,7 +15618,7 @@ changed since then."
   `cargo-timings` reports are kept, because dated documents cite them.
   Receipt: `reclaim-p10-target-20261122.json` in the private `answer-loop`
   folder.
-- **Disk:** D: free rose from 1,117,860,118,528 to 1,306,809,548,800 bytes,
+- **Disk:** D: free rose from 1,117,873,840,128 to 1,306,809,548,800 bytes,
   432.5 GB above the 842,404,241,408-byte floor.
 - **Instruction removed:** the "preserve `artifacts/v190/p10-target`" rule is
   gone from `docs/agent-current-work.md`, and the dated note in
