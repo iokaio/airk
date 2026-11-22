@@ -15443,3 +15443,65 @@ Identity: `TYAI\tdotn`, SID `S-1-5-21-3678370870-3858642417-826968105-1002`.
 
 **Resume action.** After the user's final review of plan section 12, start L1
 (contract decisions and Core types).
+
+### 22 November 2026 at 16:53 UTC — Answer loop resumed after the editor restart; integrated steps, reviews and open gaps
+
+**Resumed** from the 15:19 UTC checkpoint at `ed2e0926`, as `TYAI\tdotn`
+(SID `S-1-5-21-3678370870-3858642417-826968105-1002`, owner equal, the
+logged-in human). Agents L2, L3, L4, L2b, L5C, the harness and independent
+reviewers were relaunched. Each owns its own Cargo target; L4, L2b and L5C
+work in private worktrees on `loop/l4`, `loop/l2b` and `loop/l5c`, and the
+primary agent integrates them after review. Only L5C owns the GPU.
+
+**Integrated and pushed** (`ed2e0926..cc35b57c`):
+- `038472de` L3-9: wave reads on scoped threads, four in flight. Kernel
+  Answer tests 154/154.
+- `b5cc6a77` harness: Answer /3 parsing and the LG gate tooling. Unittest
+  discover 145/145. No session, service or GPU run.
+- `f5451e2a` L2 review fixes: HTTP Answer streams to its ceiling, sessions
+  with a call in flight stay open, no progress after the reply, Codex
+  timeout repair. Clippy clean on four crates; nextest 679 run, 653 passed,
+  26 failed (24 airkctl environment, 2 v2 arbiter handler tests), the same
+  set as the unmodified base.
+- `7b65167a` fixes for the independent review of L3-7, L3-8 and
+  `ed2e0926` (4 high, 9 medium, 7 low; L2 correctly disputed; L3, L6, L7
+  recorded as deviations). Kernel Answer tests 165/165.
+- `01e893c1`, `cc35b57c` L2b: the service Answer job table and the fixes
+  for its independent correctness and security review (C1–C7, T1–T3,
+  S1–S4). 25/25 job-table tests, 20 stress iterations; not wired.
+
+**Reviews.** The second review of L3-9 and `7b65167a` found no high or
+medium findings; four lows (N1–N4) go to L3. The review of L5C
+`8028001` found four medium (idle-unload races M1, M2; review pin M3;
+untested switch ordering M4) and four lows; fixes are in progress. The
+review of L4 (`24ee5098`, `18eb400b`, `d40ceabc`) is running. Review files
+are in the private `answer-loop/<step>/` folders.
+
+**Measured (scorer level, not the switch path).** On the A6000, Compact
+FP16 cold load 7.9 s, warm median 265 ms, peak 6.0 GiB; Large FP16
+16.9 s, 589 ms, 14.0 GiB; Compact again bit-identical. Receipt
+`L5C/runs/s2-switch.json`, SHA-256
+`a02fc09ba28c4c58f90606fa249a53238dc2a569529f1016fc9f56c0ab6d0d41`.
+
+**Open gaps, each with an owner.**
+
+| Gap | Resolution | Owner and order |
+| --- | --- | --- |
+| L3-10 not landed: combined Answer, about 15 test files and the CLI parity harness still parse /2 | Three green commits: /3 beside /2 in Core and kernel; handler, frontend and tests together with a normalized full-result parity comparison; deletions with evidence. Also the airk-mcp dev feature `tokio/test-util` | L3, now |
+| Coverage cards carry no evidence excerpts | Pass bounded excerpts through Core and the kernel, with a test; log the wire change; L4 updates the coverage policy identity | L3 after L3-10, then L4 |
+| L4 v2 deletions, service model-path test, supervisor attempt test | After the L4 review fixes and rebase onto L3-10 | L4 |
+| Known failures: two Core tests pinned to a CRLF fixture copy; `read_device_status::diagnostic_clock…` expecting 126 s refused; `failure_tests::ambiguous_or_corrupt_configuration_status…` | Fix the line-ending dependence without moving the pin; update the clock test to the 605 s Answer ceiling while keeping other tools at 125 s; run the last on the base, then fix or record | L4 (first two), primary (base run) |
+| FP16 gate profiles stop opening once L4 moves the `runtime.rs` digest | Re-emit with the four card tasks and a calibration set under the private review rule | L5C after L4 integrates |
+| Indexed Compact → Large → Compact trial not run; Focus batching cost not measured | Two-entry asset folder, two-entry `gpu_fixture.py` mode, image rebuild, one indexed lifetime with receipts | L5C after L3-10, L4 and the profiles |
+| L5b concurrent runs not built | Per-run streams on one session in place of the single session lock, then the 1.3× gain measurement | L5C after L4 integrates |
+| Context ladder not called by product device selection | Wire it with the product CUDA Context route | L5C |
+| Idle-unload time and pre-warm not a product setting | Needs a persisted-configuration contract decision; the evaluation-only setting suffices for LG and L7 | deferred to the post-L7 inspection |
+| Job table not on the live Answer path | The five wiring steps in change-log entry 19, then a security check of the wired path | L2b after L3-10 |
+| Untested: a live connection past 120 s; service stop stages against the 60 s `airkctl` wait | A live-connection test; measure the stop sequence and shorten it if it exceeds 60 s | L2b's wiring round |
+| Harness assumptions on reply shape, field and profile names; prompt freeze not redone | Recheck against real /3 replies and L5's profile names, then refreeze | harness after L3-10 and the profiles |
+
+**Disk.** D: about 1,097 GB free, about 59 GB above the floor. The
+finished L2 target (44.5 GB) is the first to reclaim if needed.
+
+**Resume action.** Land L3-10; integrate L4 and L5C after their review
+fixes; then the profile re-emission, the indexed trial and LG.
