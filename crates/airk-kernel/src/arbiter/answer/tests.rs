@@ -682,6 +682,132 @@ fn configuration_change_marks_decisions_historical() -> Result<()> {
     Ok(())
 }
 
+/// Holds concurrent reads so they complete out of dispatch order: a read
+/// waits until a read that arrived after it has completed; the latest
+/// arrival waits a short grace for another arrival, then goes first. Reads
+/// on the driver's own thread (single-read waves, probes) are not held.
+struct Reversing {
+    driver: std::thread::ThreadId,
+    board: Mutex<(u64, Vec<u64>, u64)>,
+    changed: std::sync::Condvar,
+}
+impl Reversing {
+    fn hold(&self) {
+        if std::thread::current().id() == self.driver {
+            return;
+        }
+        let mut board = self.board.lock().unwrap();
+        let me = board.0;
+        board.0 += 1;
+        self.changed.notify_all();
+        let arrived = std::time::Instant::now();
+        let fail_at = arrived + Duration::from_secs(30);
+        loop {
+            let later_done = board.1.iter().any(|done| *done > me);
+            let latest = board.0 == me + 1;
+            let grace_over = arrived.elapsed() >= Duration::from_millis(30);
+            if later_done || (latest && grace_over) {
+                break;
+            }
+            let now = std::time::Instant::now();
+            assert!(now < fail_at, "read {me} was never released");
+            let wait = if latest {
+                Duration::from_millis(30).saturating_sub(arrived.elapsed())
+            } else {
+                fail_at - now
+            };
+            board = self.changed.wait_timeout(board, wait).unwrap().0;
+        }
+        if board.1.iter().any(|done| *done > me) {
+            board.2 += 1;
+        }
+        board.1.push(me);
+        self.changed.notify_all();
+    }
+}
+
+/// One Answer on a fresh attempt of the fixture's kernel, so two runs share
+/// every identity and differ only in read completion order.
+fn answer_by(
+    fixture: &Fixture,
+    question: &str,
+    reversing: Option<&Reversing>,
+) -> Result<AnswerOutcome> {
+    let context = fixture.kernel.arbiter_context.as_ref().unwrap();
+    let kernel = fixture
+        .kernel
+        .with_native_arbiter(context.worker, context.authority, fixture.owner.clone())?
+        .with_context_attempt(ReadAttemptBudget {
+            schema: 1,
+            request_id: Incarnation::from_bytes([10; 16]),
+            clock: ReadClock::UnixMonotonic,
+            expires_monotonic_ns: 100_000_001_000,
+            remaining_ns: 100_000_000_000,
+            native_retry_expires_monotonic_ns: None,
+        })?;
+    let clock = Clock::new();
+    let publication = fixture.publication.clone();
+    kernel.answer_with(
+        request(question),
+        AnswerEnv {
+            deadline: clock.now() + Duration::from_secs(600),
+            require_live: &|| Ok(()),
+            reader: &|tool, arguments, _| {
+                if let Some(reversing) = reversing {
+                    reversing.hold();
+                }
+                canned(&publication, tool, arguments)
+            },
+            clock: &|| clock.now(),
+            progress: &|_| {},
+        },
+    )
+}
+
+#[test]
+fn decisions_are_independent_of_read_completion_order() -> Result<()> {
+    let question = "Please answer both:\n1. where is `restart_guard` defined and who calls it?\n2. which tests and documentation cover the restart guard replay policy?";
+    let fixture = fixture()?;
+    let in_order = answer_by(&fixture, question, None)?;
+    let reversing = Reversing {
+        driver: std::thread::current().id(),
+        board: Mutex::new((0, vec![], 0)),
+        changed: std::sync::Condvar::new(),
+    };
+    let reversed = answer_by(&fixture, question, Some(&reversing))?;
+    let (arrivals, _, inverted) = *reversing.board.lock().unwrap();
+    assert!(arrivals > 4, "the reads ran on wave threads");
+    assert!(
+        inverted > 0,
+        "some reads completed before reads dispatched earlier"
+    );
+    assert!(in_order.response.parts.len() > 1, "a compound question");
+    assert_eq!(
+        serde_json::to_value(&in_order.response)?,
+        serde_json::to_value(&reversed.response)?
+    );
+    assert_eq!(
+        serde_json::to_value(&in_order.custody.log)?,
+        serde_json::to_value(&reversed.custody.log)?
+    );
+    let records = |outcome: &AnswerOutcome| -> Vec<(Sha256Digest, String, Value)> {
+        outcome
+            .custody
+            .records
+            .iter()
+            .map(|record| {
+                (
+                    record.id,
+                    record.tool.clone(),
+                    record.canonical_result.clone(),
+                )
+            })
+            .collect()
+    };
+    assert_eq!(records(&in_order), records(&reversed));
+    Ok(())
+}
+
 #[test]
 fn only_an_answer_attempt_may_hold_the_answer_read_budget() -> Result<()> {
     let fixture = fixture()?;

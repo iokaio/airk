@@ -5,7 +5,8 @@
 //! only choose among cards deterministic code proposes.
 //!
 //! The parts run in lockstep rounds. Within a round, reads go out in waves:
-//! a wave's reads are dispatched, then observed in dispatch order, and the
+//! a wave's reads run concurrently (at most four in flight, `wave`), then
+//! are observed in dispatch order, and the
 //! structural reads they plan join the next wave. Decisions are taken only
 //! at a round barrier, from state ordered by dispatch, so neither read
 //! completion order nor concurrency can change the reply.
@@ -29,6 +30,7 @@ mod shares;
 mod split;
 mod state;
 mod union;
+mod wave;
 
 /// A canonical read the loop may call from several threads.
 pub type CanonicalReadFn<'a> =
@@ -584,13 +586,7 @@ impl Loop<'_> {
                 return Ok(self.gather.stop);
             }
             wave.sort_by_key(|read| read.seq);
-            let mut results = Vec::with_capacity(wave.len());
-            for read in &wave {
-                if self.stop_due() {
-                    break;
-                }
-                results.push(self.read(read)?);
-            }
+            let results = self.read_wave(&wave)?;
             // Reads the reserve stopped before they started go back unrun.
             for read in wave[results.len()..].iter().rev() {
                 self.gather.release(read.seq);
@@ -653,18 +649,41 @@ impl Loop<'_> {
         }
     }
 
-    /// One canonical read. The outer `Result` is a refusal the whole Answer
-    /// must propagate; the inner one is the read's own outcome.
-    fn read(&self, read: &gather::Dispatch) -> Result<Result<Value>> {
-        let result = (self.env.reader)(read.tool, &read.arguments, Some(&read.revision));
-        match &result {
-            Ok(body) => self.kernel.observe_optional_source_reply(read.tool, body)?,
-            Err(error) if error.is::<airk_core::scoped_reads::ScopeReadRefused>() => {
-                return Err(anyhow::anyhow!(airk_core::scoped_reads::ScopeReadRefused));
+    /// A wave's canonical reads, up to `wave::READS_IN_FLIGHT` at once, in
+    /// dispatch order. No read starts inside the reserve, so the result is a
+    /// prefix of the wave; the caller releases the rest. A scope refusal
+    /// stops further reads and is returned for the whole Answer; every other
+    /// read error is that read's own outcome. Source-reply accounting runs
+    /// here, in dispatch order, after the wave.
+    fn read_wave(&self, wave: &[gather::Dispatch]) -> Result<Vec<Result<Value>>> {
+        let reader = self.env.reader;
+        let clock = self.env.clock;
+        let reserve = Duration::from_millis(self.shares.reserve.total_ms());
+        let deadline = self.deadline;
+        let refused = |result: &Result<Value>| {
+            result
+                .as_ref()
+                .is_err_and(|error| error.is::<airk_core::scoped_reads::ScopeReadRefused>())
+        };
+        let results = wave::run(
+            wave.len(),
+            &|| clock() + reserve >= deadline,
+            &|index| {
+                let read = &wave[index];
+                reader(read.tool, &read.arguments, Some(&read.revision))
+            },
+            &refused,
+        );
+        for (read, result) in wave.iter().zip(&results) {
+            match result {
+                Ok(body) => self.kernel.observe_optional_source_reply(read.tool, body)?,
+                Err(_) if refused(result) => {
+                    return Err(anyhow::anyhow!(airk_core::scoped_reads::ScopeReadRefused));
+                }
+                Err(_) => {}
             }
-            Err(_) => {}
         }
-        Ok(result)
+        Ok(results)
     }
 
     fn stage_of(round: u8) -> v3::LoopStage {
