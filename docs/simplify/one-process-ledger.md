@@ -15604,3 +15604,23 @@ ownership):
 bounded evidence excerpts into the coverage cards, review the combined
 change, re-emit the FP16 CUDA profiles, build the gate image, freeze the
 munarium scenarios and run LG.
+
+### 22 November 2026 at 22:10 UTC — the old persistent Cargo target removed on the user's word
+
+The user answered the open point of the previous entry: "You can delete that
+old cargo target and remove the instruction that says preserve it. A lot has
+changed since then."
+
+- **Checked first:** `artifacts\v190\p10-target` was a plain directory with no
+  links inside, no process used it, and a sample of 400 files was owned by
+  `TYAI\tdotn`. It was last written on 16 November.
+- **Removed:** its `debug`, `release-local` and `tmp` folders. Its
+  `cargo-timings` reports are kept, because dated documents cite them.
+  Receipt: `reclaim-p10-target-20261122.json` in the private `answer-loop`
+  folder.
+- **Disk:** D: free rose from 1,117,860,118,528 to 1,306,809,548,800 bytes,
+  432.5 GB above the 842,404,241,408-byte floor.
+- **Instruction removed:** the "preserve `artifacts/v190/p10-target`" rule is
+  gone from `docs/agent-current-work.md`, and the dated note in
+  `docs/arbiter/whatsleft.md` now says the target was deleted. The other
+  documents that name it are dated history and are unchanged.

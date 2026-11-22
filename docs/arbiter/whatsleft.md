@@ -411,9 +411,11 @@ the separate authorized workflow and verification of downloaded published bytes.
 - Root was the sole Cargo owner. The active build was stopped; no owned model
   fixture remains live. Agents were instructed to stop. Do not restart work
   until the user authorizes the successor to continue.
-- Persistent Windows target: `artifacts/v190/p10-target`. Do not routinely clean
-  it. Approximately 375 GiB was free at the preceding disk check; recheck before
-  cleanup. The user permits `cargo clean` when D drive space requires it.
+- Persistent Windows target at the time of this note:
+  `artifacts/v190/p10-target`. Approximately 375 GiB was free at the preceding
+  disk check. That target was deleted on 22 November 2026 on the user's word;
+  the current Cargo target is `target/`
+  ([current assignment](../agent-current-work.md#build-targets-and-private-state)).
 - Static ORT 1.30 environment owner:
   `artifacts/advanced-split/ort130-x64-owned-r5/cargo-aggregate-env.json`.
   Load its five environment values through the existing build/receipt owners.

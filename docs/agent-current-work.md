@@ -86,9 +86,9 @@ The user resumed the Windows and Linux FP16 campaign after D: cleanup. Keep new 
     `target\x86_64-pc-windows-msvc` folder, and the original evaluation
     root's airk index and source export. The three failed `05-gate-lg`
     roots' data is reclaimed by the LG preparation agent under its own
-    receipt. Left in place: the active `target\debug` and
-    `artifacts\v190\p10-target`, which this file says to preserve; it waits
-    for the user's word.
+    receipt. The user then released the old persistent target
+    `artifacts\v190\p10-target`, and it was deleted as well (see "Build
+    targets and private state"). Left in place: the active `target\debug`.
   - The LG roots are the new series `06-gate-lg`. The plan records the
     change in section 2, "munarium replaces airk".
 - **D: allowance doubled, 22 November 2026.** The user doubled the D: growth
@@ -385,15 +385,19 @@ Windows and Linux CUDA target under Authority and deadline.
 
 - Retained training data, checkpoints, calibration/reference inputs and receipts
   under artifacts/ are not disposable Cargo caches. The current Cargo target is
-  target/; an explicitly selected artifacts/v190/p10-target clean affects that
-  target only. Never delete all artifacts/ as a build cleanup. Preserve exact
+  target/. Never delete all artifacts/ as a build cleanup. Preserve exact
   research outputs and use reviewed build-output cleanup when space requires it.
 - Build target for this execution: target/ (human-owned checkout target).
   The user requested Cargo cleanup on 19 November due to low D: space. The
   target was removed after the retained build and diagnostic receipts were
-  verified. The next necessary Rust build will recreate it. Preserve the
-  designated foreign-owned artifacts/v190/p10-target root and keep one Cargo
+  verified. The next necessary Rust build will recreate it. Keep one Cargo
   owner per target.
+- The old persistent target artifacts/v190/p10-target was deleted on
+  22 November 2026 on the user's word ("You can delete that old cargo target
+  and remove the instruction that says preserve it. A lot has changed since
+  then."). Only its cargo-timings reports remain, because dated documents
+  cite them. Earlier documents that name it as the persistent target are
+  history.
 - Mac Neo: existing SSH setup, POSIX sh batches, checkout ~/code/airk;
   connection details in ignored artifacts/v190/neo-connection.local.json.
   Verify the host's logged-in user before any batch. Preserve evidence outside
