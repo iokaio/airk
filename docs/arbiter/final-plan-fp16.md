@@ -1055,6 +1055,7 @@ Receipts are in the private GPU-track folder and in the CUDA image records;
 | Implementation starts after the user reviews this revision | Set by the user on 22 November |
 | Many-agent queueing (section 12.4.1) | Reviewed and accepted by the user on 22 November; its open points take the stated defaults unless the user changes them |
 | Large-against-Compact decision gate on CUDA (section 12.7.1) | Set by the user on 22 November. Runs before L7's comparisons with Parse and Search. The user reviews the results personally and may drop Large altogether |
+| Focus-only against Focus-with-Compact decision gate (section 12.7.2) | Set by the user on 22 November. Runs in the same series as 12.7.1. How the decision is made is deferred until the loop is built and tested; the user reviews the results personally |
 | No second loaded copy of a model on any device | Set by the user on 22 November. Capacity comes from batching, concurrent runs on one session and overflow to another device, decided at runtime (section 12.5.1) |
 
 ## 12. Answer as a local multi-round loop
@@ -1690,6 +1691,60 @@ The gate and its report are one series with one commit.
   Compact on the CPU. Large's catalog entries, profiles and code paths are
   removed with evidence, under the deletion rule of the assignment.
 
+### 12.7.2 Decision gate: Focus only against Focus with Compact
+
+Set by the user on 22 November 2026. This gate asks whether Compact earns
+its place in the loop over Focus alone. Like 12.7.1, it stands apart from
+the comparisons with Parse and Search, and the user reviews the results
+personally. **How the decision is made is deferred** until the loop is built
+and these tests have run. It will be similar to 12.7.1, and the report
+proposes a bar for the user to set.
+
+**What is compared.** The same loop, build, indexes, scenarios and Focus
+device. The only difference is whether a Context model takes part:
+- **arm F, Focus only.** No Context model is loaded.
+  - Split, Plan, coverage and Follow-up decisions use the loop's
+    deterministic order of section 12.2.
+  - This is the product path a user gets with no Context model. It is not
+    the old no-model control.
+- **arm C, Focus with Compact on CUDA.** Compact takes every Context
+  decision by top score, as in 12.7.1. It is the same arm C as the Large
+  gate, so its runs serve both gates.
+- **Focus device:** Focus runs on the GPU if its CUDA route is ready,
+  otherwise on the CPU, the same in both arms.
+- **Compact on the CPU:** the same comparison is also run with Compact on
+  the CPU, as a second reading. This is the route most users without a
+  suitable GPU would get.
+
+**Tests.** The four tests of 12.7.1, applied to arms F and C:
+1. **Where Compact changes the loop:** the scenarios and stages (split,
+   sub-needs, coverage verdicts, follow-ups) where Compact's choice differs
+   from the deterministic order, and which choice the reference notes
+   favour.
+2. **First-reply evidence:** essential and supporting notes covered, bytes,
+   and sub-needs covered and missing.
+3. **Judged agent sessions:** Rubric A and Rubric B, correct finishes and
+   turns to a correct finish, with second sessions on close calls.
+4. **Performance:** end-to-end and per-stage time, peak memory, reload
+   time and concurrency. This shows what Compact costs for what it adds.
+
+**The report.** A section of the gate report written for the user's
+personal review, in the form of 12.7.1. It contains:
+- the per-scenario side-by-side, with each arm's evidence and the judges'
+  reasons;
+- the tables and the receipts;
+- a proposed decision bar;
+- my recommendation.
+
+**Possible outcomes, decided by the user.**
+- Compact stays as the loop's Context stage.
+- Compact stays only on routes where its cost is small, for example on the
+  GPU but not on the CPU.
+- The loop ships with Focus only, and Compact's development stops, like
+  Large's under 12.7.1.
+
+Until the decision, Compact keeps its full place in the plan.
+
 ### 12.8 Work order
 
 | Step | Work | Done when |
@@ -1702,7 +1757,7 @@ The gate and its report are one series with one commit.
 | L4 | Service and retrieval: the split, plan, coverage and follow-up task policies, ledger slots, per-attempt lane admission for parts, cross-part candidate batching (and the Focus per-candidate question decision), and the calibration format with the deterministic order used where the model abstains | Service tests pass; policy identities are recorded |
 | L5 | Devices: the Focus CUDA route, Compact on CUDA as a product route, the Context ladder with typed reasons, and idle unload with pre-warm and reload handling (section 12.5) | Each route and fallback runs on the A6000 and on CPU, with receipts; reload and re-warm times measured per model and device; an Answer arriving during a reload starts on reads or a lower rung and does not time out |
 | L5b | Runtime capacity (section 12.5.1): the warm-time calibration run, device and queue measurements, concurrent runs on one session with per-run CUDA streams, overflow routing across devices by earliest finish, shed-and-recover, capacity-based lane admission, settings and status | Tests show no second copy is ever loaded, capacity rises only within the memory floor and when measured gain holds, sheds under injected memory pressure without interrupting running calls, and overflow records its device |
-| LG | The Large-against-Compact gate on CUDA (section 12.7.1) | Gate report and commit; **stop for the user's personal review and decision on Large**, while work not depending on Large continues |
+| LG | The two model gates in one series: Large against Compact on CUDA (section 12.7.1), and Focus only against Focus with Compact on CUDA, with a CPU reading (section 12.7.2). Arm C's runs serve both | Gate report and commit; **stop for the user's personal review and decisions on Large and on Compact**, while work not depending on those decisions continues |
 | L6 | Workspace gate | Clippy and tests across the workspace on the matrix of CONTRIBUTING; known failures listed with their owners |
 | L7 | The evaluation starts over on the loop. First, a new baseline: the loop on every device route, the no-model loop, Parse and Search, on both repositories, with CPU and GPU cells. Then change sets with weight and calibration refinement as in section 5, each series judged and committed on its own | The new baseline report, then one report and commit per series; stop for the user's inspection after the iterations the user sets |
 
@@ -1817,8 +1872,9 @@ and is listed in every validation record until resolved:
   browser teardown of section 10.
 
 **The only stops.**
-1. The Large-against-Compact gate report (LG), for the user's personal
-   decision on Large. Work that does not depend on Large continues.
+1. The gate report (LG), for the user's personal decisions on Large
+   (12.7.1) and on Compact against Focus only (12.7.2). Work that does not
+   depend on those decisions continues.
 2. The inspection after L7's iterations.
 3. Anything the permission classifier denies, or anything outside this
    assignment: a new crate, a new external provider or service, a PR,
