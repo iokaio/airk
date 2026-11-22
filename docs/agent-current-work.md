@@ -46,6 +46,13 @@ The user resumed the Windows and Linux FP16 campaign after D: cleanup. Keep new 
   one-turn evaluation work is committed and pushed as it stands (L0); its
   results are history, and the evaluation and weight refinement start over on
   the loop (L7).
+- **D: allowance doubled, 22 November 2026.** The user doubled the D: growth
+  allowance for the Answer-loop campaign: "Allow more disk if needed. Just
+  watch available space." The D budget against the original Windows baseline
+  1233246265344 bytes rises from 195421011968 to 390842023936 bytes, so the D:
+  free-space floor falls from 1037825253376 to 842404241408 bytes. The 100 GiB
+  physical floor, per-job reservations, cleanup owners and monitoring of
+  actual free space still apply.
 - Previous task: implement all steps of docs/arbiter/final-plan.md, authorized
   by the user on 15 November 2026. Execution T0 is recorded in the ledger.
   The user authorized continuing past the earlier 72-hour checkpoint.
