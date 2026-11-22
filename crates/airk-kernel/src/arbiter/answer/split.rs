@@ -34,6 +34,7 @@ pub(crate) struct Partition(pub(crate) Vec<(usize, usize)>);
 /// Split's roster: card 0 keeps the request whole.
 #[derive(Clone, Debug)]
 pub(crate) struct SplitPlan {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) breaks: Vec<Break>,
     pub(crate) cards: Vec<Partition>,
     /// The deterministic choice: explicit enumerations and questions.

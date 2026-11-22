@@ -134,7 +134,6 @@ impl Dispatch {
 #[derive(Clone, Debug)]
 pub(crate) struct Record {
     pub(crate) id: Sha256Digest,
-    pub(crate) key: ReadKey,
     pub(crate) tool: &'static str,
     pub(crate) operation: v3::LoopRead,
     pub(crate) arguments: Map<String, Value>,
@@ -181,6 +180,8 @@ pub(crate) enum GlobalStop {
     Stale,
     /// Calls, candidates or retention bytes are exhausted.
     Budget,
+    /// The deadline reserve for Compose and Union is reached.
+    Deadline,
 }
 
 /// The result of one observed read.
@@ -211,7 +212,6 @@ pub(crate) enum Offer {
 
 pub(crate) struct Gathering {
     pub(crate) budget: v3::BudgetV3,
-    pub(crate) scope: ScopeBinding,
     pub(crate) revision: String,
     queue: VecDeque<Dispatch>,
     pending: BTreeMap<u32, Dispatch>,
@@ -233,7 +233,6 @@ impl Gathering {
         let revision = scope.publication.token.to_string();
         Ok(Self {
             budget,
-            scope,
             revision,
             queue: VecDeque::new(),
             pending: BTreeMap::new(),
@@ -321,9 +320,7 @@ impl Gathering {
     pub(crate) fn queued_for(&self, part: u8) -> usize {
         self.queue.iter().filter(|item| item.part == part).count()
     }
-    pub(crate) fn queued(&self) -> impl Iterator<Item = &Dispatch> {
-        self.queue.iter()
-    }
+    #[cfg(test)]
     pub(crate) fn pending(&self) -> usize {
         self.pending.len()
     }
@@ -362,6 +359,18 @@ impl Gathering {
             taken.push(dispatch);
         }
         taken
+    }
+
+    /// Return an admitted read that was never started to the front of its
+    /// queue; it is no longer counted as a call.
+    pub(crate) fn release(&mut self, seq: u32) {
+        if let Some(dispatch) = self.pending.remove(&seq) {
+            if let Some(Entry::Pending(uses)) = self.reads.remove(&dispatch.key) {
+                self.reads.insert(dispatch.key, Entry::Queued(uses));
+            }
+            self.calls -= 1;
+            self.queue.push_front(dispatch);
+        }
     }
 
     /// Observe one admitted read. The driver calls this in `seq` order.
@@ -448,7 +457,6 @@ impl Gathering {
         let index = self.records.len();
         self.records.push(Record {
             id,
-            key: dispatch.key,
             tool: dispatch.tool,
             operation: dispatch.operation,
             arguments: dispatch.arguments.clone(),

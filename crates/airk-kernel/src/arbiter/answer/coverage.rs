@@ -280,6 +280,7 @@ pub(crate) fn verdict(
 /// A model's coverage choice: Covered only with evidence; otherwise partial
 /// when the top Focus score reaches the keep threshold (or, without Focus,
 /// when any evidence exists), else missing.
+#[cfg_attr(not(test), allow(dead_code))] // the model path (L3-8)
 pub(crate) fn from_card(covered: bool, spans: &[Span], evidence: usize) -> v3::Coverage {
     if evidence == 0 {
         return v3::Coverage::Missing;
@@ -331,6 +332,7 @@ pub(crate) fn cards(need: u8, spans: &[Span], alternatives: &[Alternative]) -> V
 
 /// The questions and spans of one batched Focus call. Each sub-need's query
 /// is its spans' question; equal queries share one question.
+#[cfg_attr(not(test), allow(dead_code))] // the model path (L3-8)
 pub(crate) fn batch(
     ready: &[(u8, &Need, u8, &[Span])],
     limit: usize,
