@@ -192,21 +192,24 @@ loop_semantic_policy_digest])`. The Core digest
 `calibration.rs`, `focus_batch.rs`, `log.rs`, `semantics.rs`,
 `native_loop.rs` and the Focus Core semantics, so the card and batched-Focus
 semantics are part of every loop identity. Recorded values (control
-`recorded_loop_policy_identities`). They moved twice within L4 and the
+`recorded_loop_policy_identities`). They moved a third time when L4 was
+rebased onto L3-10 (a), whose Core edits to `native_loop.rs` and
+`answer_loop/log.rs` moved the loop semantics digest (change-log entry 37).
+Before that they moved twice within L4 and the
 earlier values are not current: once when `NativeCardModel` joined
-`native_loop.rs`, and again in the review fixes (`7634237c`), when the
+`native_loop.rs`, and again in the review fixes (`03aa3bbf`), when the
 choice-to-decision mapping moved into `loop_cards.rs`, Plan selection took
 `max_sub_needs`, and `NativeCardModel` moved out to
 `native_loop/card_model.rs`:
 
 | Task | Policy |
 | --- | --- |
-| Core loop semantics | `0da27971742ec98aa9f4651587a43149a54f3fec5c5a027933774ec785d2f274` |
-| `airk.context_split.v1` | `c63c95f9771fd72a3015c32b927a1498c2da82d7252dcd6c8976b9e7be622676` |
-| `airk.context_plan.v1` | `472634155dbf5b16fe3d65fe25959f5bca7dada2fbedb144cacca71279ce2002` |
-| `airk.context_coverage.v1` | `32c7f08cf11cf35aaf4d5f284ad8f03e10e970651c04f7261995a66226c4dd20` |
-| `airk.context_follow_up.v1` | `ce541ca1056959b09b7725c14ef5b0a4bcf6c53dfc54fa01bb5904f523a91c15` |
-| Batched Focus over the release pair policy | `f67a532ba7b48e2980afcdd8db6bdde555536e58a2146627302128acc68cad7d` |
+| Core loop semantics | `488496bcf1c6d6879400eeb7b61fbb4534ac787861f6f9bf142c3a3480a817d4` |
+| `airk.context_split.v1` | `ccea442cabb436794ae09f9fda204aa0359f08c1aba0d667099b65e9874a03ce` |
+| `airk.context_plan.v1` | `5d219860d09afdd727fb2e3da50fbc04d990e8462da1de400076850894548215` |
+| `airk.context_coverage.v1` | `c671150649dcd1deeb7e0b1d528182357f7eb1347cb728156256a027d15921fa` |
+| `airk.context_follow_up.v1` | `89809e2d8377aaa29a14c86d87d2243336e079a0b1cbf9e378498f45fa62de15` |
+| Batched Focus over the release pair policy | `50ba5c856d5f3ed81d86eacd62094de14599f56fcb39939126643758a7fae04a` |
 
 **Rosters.** Kernel code proposes every card; this owner never adds, drops
 or rewrites one. Before compile it checks each segment's shape beyond Core's

@@ -871,15 +871,15 @@ Further entries are added as implementation proceeds.
 
 ### 34. Review of L4-1 to L4-3: findings and their closure
 
-- **Step:** L4. An independent review of `24ee5098`, `18eb400b` and
-  `d40ceabc` found three medium and five low findings. All are closed in
-  `7634237c` (code and tests), `c6073f70` (the replay script and row pin) and
+- **Step:** L4. An independent review of `34260ab2`, `cbd60694` and
+  `77dffbd4` found three medium and five low findings. All are closed in
+  `03aa3bbf` (code and tests), `5140c051` (the replay script and row pin) and
   this documentation commit. Test counts are from the receipts in
   `answer-loop/L4/` (`nextest-l4-r*.log`).
 
 | Finding | What was wrong | What changed | Evidence |
 | --- | --- | --- | --- |
-| M1 | Answer /3 jobs had no per-index bound across attempts, so one index's Answers could fill all 8 queue slots | Fewer than 4 jobs of any kind per index, across every attempt; one attempt holds at most 3 of them, so a different Answer or an ordinary job always has a slot; no two jobs of one attempt share a part; ordinary jobs keep fewer than 2 ordinary jobs per index. The first fix (`7634237c`) still let one 4-part Answer take all 4 slots; corrected in `8119d7f8` | `lane::tests::one_attempt_holds_at_most_three_jobs_so_another_always_has_a_slot`, `a_second_answer_is_admitted_while_the_first_holds_three`, `several_attempts_share_one_index_ceiling_and_a_second_index_keeps_room`; the test that asserted the old behaviour was replaced |
+| M1 | Answer /3 jobs had no per-index bound across attempts, so one index's Answers could fill all 8 queue slots | Fewer than 4 jobs of any kind per index, across every attempt; one attempt holds at most 3 of them, so a different Answer or an ordinary job always has a slot; no two jobs of one attempt share a part; ordinary jobs keep fewer than 2 ordinary jobs per index. The first fix (`03aa3bbf`) still let one 4-part Answer take all 4 slots; corrected in `84eceda4` | `lane::tests::one_attempt_holds_at_most_three_jobs_so_another_always_has_a_slot`, `a_second_answer_is_admitted_while_the_first_holds_three`, `several_attempts_share_one_index_ceiling_and_a_second_index_keeps_room`; the test that asserted the old behaviour was replaced |
 | M2 | Plan selection ignored the request's `max_sub_needs`, so a log could record more chosen sub-needs than the reply had | `loop_cards::select` takes `max_sub_needs` (clamped to 1..=4) and Plan chooses at most that many; the service passes `parent_budget.max_sub_needs`; the kernel's acceptance check limits Plan to `budget.max_sub_needs.clamp(1, 4)` (kernel edit, `answer/model.rs`) | `loop_cards::tests::plan_never_chooses_more_than_the_request_s_max_sub_needs`, `settlement_tests::plan_settlement_never_chooses_more_than_max_sub_needs` |
 | M3 | A lane refusal before queueing was reported as unknown work, so it kept its reservation and burned a slot | Every error of the lane's `score` is now a typed `AdmissionRefused` (it precedes queueing); the card and Focus paths release such a call through `loop_ledger::refused` and report a known non-dispatch (`Unavailable` with zero observed tokens). The slot or ordinal stays used | `pool::arbiter::tests::per_index_capacity_includes_the_actual_running_request` (typed refusal), `settlement_tests::a_refusal_before_queueing_releases_the_reservation`, `focus_batch::tests::a_batch_with_no_queued_pair_is_released_as_known_zero_work` |
 | L1 | Batched Focus re-attributed observed tokens by the reservation, not by the pairs that ran | Recorded, not changed: the native Focus request has no candidate-to-part map, so the service cannot attribute exactly; a batch cut short charges every reserved part-round in proportion. The ledger doc comment now says so. Exact attribution needs a per-candidate part in `NativeFocusRequestV3` (Core and kernel, L3's owner) | `focus_batch::tests::a_batch_cut_short_keeps_canonical_order_and_charges_known_work` pins the recorded behaviour |
@@ -904,12 +904,12 @@ Further entries are added as implementation proceeds.
   hash of a CRLF working copy, while the committed blob is LF
   (`.gitattributes` `eol=lf`), so they failed on any clean checkout. They now
   hash the fixture in its CRLF form, whatever the checkout; the pin is
-  unchanged. Closed in `4bd13a72`; evidence `downloads::tests::empty_backups_preserve_exact_retained_part_and_profile_identity`
+  unchanged. Closed in `ac9e5f4e`; evidence `downloads::tests::empty_backups_preserve_exact_retained_part_and_profile_identity`
   and `stage_tests::retained_profile_bytes_have_no_stage_insertion_or_digest_reidentification` pass in a clean (LF) worktree.
 - **Scoped device status and the Answer ceiling.** The control expected a
   126 s parent to be refused; since L2, an Answer read attempt may run to
   605 s. It now asserts 605 s accepted, one nanosecond more refused, and
-  every other tool still refused above 125 s. Closed in `4bd13a72`; evidence
+  every other tool still refused above 125 s. Closed in `ac9e5f4e`; evidence
   `read_device_status::tests::diagnostic_clock_refuses_expiry_wrong_clock_and_oversized_parent`.
 - **`failure_tests::ambiguous_or_corrupt_configuration_status_…`** fails at
   the base `ed2e0926` as well (run in the L4 worktree, receipt
@@ -920,7 +920,7 @@ Further entries are added as implementation proceeds.
 ### 36. L4 deviations from the design, recorded
 
 These were listed in the private `answer-loop/L4/deviations.md`; this is
-their committed record. Entries 19 to 23 cover the roster check, the Context
+their committed record. Entries 29 to 33 cover the roster check, the Context
 enrollment, the routing removal, the separate ledger and the Focus decision.
 
 - **No `LoopRoster` type.** L3 sends `CardSegment`s; retrieval renders and
@@ -951,6 +951,54 @@ enrollment, the routing removal, the separate ledger and the Focus decision.
     deadlines, after L2 commits it.
 
 Further entries are added as implementation proceeds.
+
+### 37. L4 rebased onto L3-10 (a): identities, kernel edits and follow-ups
+
+- **Step:** L4, rebased onto `feat/arbiter-final` at `89ae826e`. The L4
+  entries were renumbered after upstream's 28, so L4's former entries 19 to 26
+  are entries 29 to 36. The commit hashes in them and in the owning
+  `CONTRACT.md` files were mapped to the rebased commits.
+- **Identities moved with L3's Core edits.** L3-10 (a) changed Core
+  `native_loop.rs` and `answer_loop/log.rs`, both inputs of the loop semantics
+  digest, so every loop identity moved. No L4 source changed for this. The
+  recorded values in `crates/airk-retrieval/src/arbiter/compiler/CONTRACT.md`
+  and the control `recorded_loop_policy_identities` were updated:
+
+  | Identity | Before | After |
+  | --- | --- | --- |
+  | Core loop semantics | `0da27971…` | `488496bc…` |
+  | Split | `c63c95f9…` | `ccea442c…` |
+  | Plan | `47263415…` | `5d219860…` |
+  | Coverage | `32c7f08c…` | `c6711506…` |
+  | Follow-up | `ce541ca1…` | `89809e2d…` |
+  | Batched Focus (release pair policy) | `f67a532b…` | `50ba5c85…` |
+
+  The CPU Focus row and `runtime.rs` (`c9008eef…`) did not move.
+- **Kernel edits merged.** `answer/decide.rs` (the policy from retrieval)
+  and `answer/plan.rs` (`REFERENCE` from retrieval) applied unchanged. In
+  `answer/model.rs`, L3 had already limited Plan acceptance to
+  `budget.max_sub_needs.min(MAX_SUB_NEEDS)`; that equals the L4 rule
+  (`clamp(1, MAX_SUB_NEEDS)`), because the budget refuses `max_sub_needs`
+  below 1, so L3's line was kept and the L4 edit there reduced to
+  `decide::policy(stage)?`.
+- **Partition allowance /3.** L3 changed `PartitionAllowanceV3.resources` to
+  `LoopResources` (with `focus_pairs`) and made the ordinals prefixes. The
+  loop ledger's tests were updated to the new type. Open, owner L4: the
+  ledger checks a partition's card and Focus ordinals and tokens but not its
+  `focus_pairs`; the kernel's member accounting bounds them today.
+- **Open, owner L3 (found while merging):** the kernel's acceptance check now
+  requires a top-score decision to leave out no card scoring above a chosen
+  one. In the evaluation-only top-score mode, a Plan segment whose reference
+  card scores highest chooses the best proposal (at least one sub-need) while
+  the reference scores above it, so the kernel refuses that advice and the
+  deterministic order decides. Calibrated mode is not affected (it carries a
+  rule). One of the two rules must yield before LG uses top-score Plan.
+- **Validation after the rebase:** workspace Clippy with `-D warnings` exit 0.
+  nextest over Core, IPC and the supervisor (all) and the arbiter tests of
+  kernel, inference, retrieval and service: 1,421 run, 1,419 passed; the two
+  failures were the identity pin, re-pinned in `a154a44c` (then 48 of 48 in the
+  affected loop, transition, ledger, card and Focus settlement tests), and
+  the base failure recorded in entry 35.
 
 ### 40. Answer /3 through the MCP handler and every transport; /3 parity; the review of L3-10 (a) closed
 

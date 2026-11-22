@@ -967,5 +967,5 @@ evaluation catalog; product builds have no constructor for it.
   ceiling: 605 s accepted, one nanosecond more refused, other tools refused
   above 125 s.
 
-All closed in `7634237c`; counts in `docs/arbiter/answer-loop-changes.md`
-entry 24.
+All closed in `03aa3bbf`; counts in `docs/arbiter/answer-loop-changes.md`
+entry 34.
