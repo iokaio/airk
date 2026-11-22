@@ -12,7 +12,7 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
-    time::{Duration, Instant},
+    time::Instant,
 };
 mod imported_legacy;
 mod open;
@@ -383,15 +383,10 @@ impl RemoteTools for LazyBackend {
         tool: String,
         arguments: serde_json::Map<String, serde_json::Value>,
     ) -> RemoteFuture<'_> {
-        self.call_with_read_context(
-            tool,
-            arguments,
-            self.query_concurrency(),
-            ReadAttemptContext::new(
-                Instant::now() + Duration::from_secs(125),
-                Default::default(),
-            ),
-        )
+        // The tool's own ceiling: Answer's 605 s, 125 s for the others.
+        let context =
+            airk_mcp::read_attempt::ReadAttemptContext::for_tool(&tool, Default::default());
+        self.call_with_read_context(tool, arguments, self.query_concurrency(), context)
     }
     fn call_with_read_context(
         &self,

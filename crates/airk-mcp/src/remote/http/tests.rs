@@ -793,3 +793,99 @@ async fn http_answer_streams_progress_before_its_result_and_other_calls_stay_jso
     service.close().await;
     Ok(())
 }
+
+/// An Answer may run to its 605 s ceiling with no message at all (no progress
+/// token). Its HTTP session neither idles out (300 s) nor loses its worker, and
+/// it idles out normally once the call ends. Tokio time is paused.
+#[tokio::test(start_paused = true)]
+async fn an_answer_in_flight_keeps_its_http_session_past_the_idle_timeout() -> anyhow::Result<()> {
+    struct Slow;
+    impl RemoteTools for Slow {
+        fn catalog(&self) -> Vec<Tool> {
+            ["airk_answer"].into_iter().map(|name| serde_json::from_value(json!({"name":name,"description":"Slow HTTP fixture","inputSchema":{"type":"object","additionalProperties":true},"annotations":{"readOnlyHint":true}})).unwrap()).collect()
+        }
+        fn client(&self, _: airk_core::usage::ClientFamily) {}
+        fn close(&self) {}
+        fn local_help(&self) -> bool {
+            false
+        }
+        fn call(&self, name: String, _: serde_json::Map<String, Value>) -> RemoteFuture<'_> {
+            Box::pin(async move {
+                tokio::time::sleep(Duration::from_secs(400)).await;
+                Ok(serde_json::to_value(CallToolResult::structured(
+                    json!({"tool":name}),
+                ))?)
+            })
+        }
+    }
+    let backend: AuthenticatedBackendFactory =
+        Arc::new(|| Ok(Arc::new(Slow) as Arc<dyn RemoteTools>));
+    let limits = HttpReadLimits::default();
+    assert_eq!(limits.idle_timeout, Duration::from_secs(300));
+    let service = HttpReadService::new(
+        ReadSessionFactory::default(),
+        HttpSessionBudget::new(8)?,
+        backend,
+        ReadSessionPreferences {
+            response_mode: crate::response::ResponseMode::Terse,
+            client: airk_core::usage::ClientFamily::Unknown,
+        },
+        "127.0.0.1:57421".into(),
+        vec![],
+        limits,
+    )?;
+    let response = service
+        .handle(request(
+            Method::POST,
+            "/mcp",
+            json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"claude-code","version":"2.1.330"}}}),
+        ))
+        .await;
+    let session = response.headers().get("mcp-session-id").unwrap().clone();
+    value(response).await?;
+    let with_session = |mut request: Request<Full<Bytes>>| {
+        request
+            .headers_mut()
+            .insert("mcp-session-id", session.clone());
+        request
+    };
+    let ready = with_session(request(
+        Method::POST,
+        "/mcp",
+        json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+    ));
+    assert!(service.handle(ready).await.status().is_success());
+    let started = tokio::time::Instant::now();
+    let call = with_session(request(
+        Method::POST,
+        "/mcp",
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"airk_answer","arguments":{}}}),
+    ));
+    let response = service.handle(call).await;
+    let bytes = tokio::time::timeout(Duration::from_secs(1_000), response.into_body().collect())
+        .await??
+        .to_bytes();
+    let text = std::str::from_utf8(&bytes)?;
+    assert!(started.elapsed() >= Duration::from_secs(400));
+    assert!(text.contains(r#""id":2"#), "{text}");
+    assert!(text.contains(r#""tool":"airk_answer""#), "{text}");
+    // The session is still usable after the 400 s call...
+    let listed = with_session(request(
+        Method::POST,
+        "/mcp",
+        json!({"jsonrpc":"2.0","id":3,"method":"tools/list","params":{}}),
+    ));
+    let listed = service.handle(listed).await;
+    assert_eq!(listed.status(), StatusCode::OK);
+    assert_eq!(value(listed).await?["id"], 3);
+    // ...and idles out normally once nothing is in flight.
+    tokio::time::sleep(Duration::from_secs(301)).await;
+    let late = with_session(request(
+        Method::POST,
+        "/mcp",
+        json!({"jsonrpc":"2.0","id":4,"method":"tools/list","params":{}}),
+    ));
+    assert_eq!(service.handle(late).await.status(), StatusCode::NOT_FOUND);
+    service.close().await;
+    Ok(())
+}

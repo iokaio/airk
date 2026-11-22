@@ -271,4 +271,50 @@ limits on publication still apply in full.
 - **Recorded in:** the CUDA `CONTRACT.md` section "L5 evaluation diagnostics
   and protected admission".
 
+### 18. Answer's own time ceilings, reply limit, progress and client timeouts
+
+- **Step:** L2, commit `756e0448`.
+- **Ceilings for Answer:**
+  - a 600 s deadline (300 s default) and a 605 s read-attempt ceiling, set in
+    Core, the host, MCP, IPC, the supervisor, the service, the frontend, the
+    HTTPS gateway, `airkctl`, `airk-cli` and the VS Code extension;
+  - a 131,072-byte reply limit.
+  - Every other tool keeps 125 s and 65,536 bytes. The persisted resource
+    policy is unchanged.
+  - Nested reads may run to 605 s, so that an Answer's own reads keep
+    working without moving the Focus digest closure. The entry points still
+    refuse other tools above 125 s.
+- **A fix found on the way:** the HTTPS gateway was capping every HTTP
+  Answer at 125 s. It no longer does.
+- **Progress:** MCP progress notifications for Answer, at most 1 per second,
+  with a heartbeat every 15 s. Across processes, only the heartbeat travels
+  for now. Carrying the driver's part, round and stage events across the
+  worker, service and frontend needs a streaming IPC channel, which is a
+  follow-up.
+- **Codex:** `tool_timeout_sec` is set to 605 where `airkctl` writes agent
+  configuration. The documentation section "Long Answer calls and client
+  timeouts" covers Claude Code and Codex.
+- **Measured:** headless Claude Code, version 2.1.330, against a test
+  server.
+
+  | Transport | Call length | Progress sent | Result |
+  | --- | --- | --- | --- |
+  | stdio | up to 610 s | yes or no | waited |
+  | HTTP | 330 s | every 10 s | waited |
+  | HTTP | 330 s | none | aborted at 300 s, "sent no response or progress for 300s" |
+
+  So over HTTP, which is AIRK's agent transport, progress is required. The
+  loop's driver reports at every stage change, and the heartbeat is the
+  floor.
+- **Kept:** the 300 s default.
+- **Review fixes** (L2's second commit): the HTTPS output stream of an
+  Answer call now runs to Answer's ceiling instead of the ordinary 120 s, and
+  an HTTP session with a call in flight no longer idles out (rmcp's
+  keep-alive closed it after the idle timeout even while an Answer ran). No
+  progress notification follows a call's result. `agents repair` also
+  raises a missing or short Codex `tool_timeout_sec` on an otherwise healthy
+  entry. Service stop and upgrade still cancel an in-flight Answer within
+  their existing 10 to 35 s owner stop periods rather than waiting up to
+  605 s for it.
+
 Further entries are added as implementation proceeds.

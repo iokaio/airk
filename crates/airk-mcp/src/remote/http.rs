@@ -88,6 +88,9 @@ struct SessionLease {
     _global: OwnedSemaphorePermit,
     _client: OwnedSemaphorePermit,
     expires: tokio::time::Instant,
+    /// Requests whose response stream is still open. A session with one is
+    /// never idle: an Answer may run to its 605 s ceiling with no message.
+    in_flight: usize,
 }
 struct SessionState {
     inner: Arc<LocalSessionManager>,
@@ -112,7 +115,10 @@ impl BoundedSessions {
     fn new(global: HttpSessionBudget, limits: HttpReadLimits, closed: CancellationToken) -> Self {
         let mut inner = LocalSessionManager::default();
         inner.session_config.channel_capacity = 8;
-        inner.session_config.keep_alive = Some(limits.idle_timeout);
+        // Idle expiry is this manager's own lease (`expire`), which exempts a
+        // session with a request in flight. rmcp's keep-alive would close the
+        // worker after `idle` with no message even while an Answer runs.
+        inner.session_config.keep_alive = None;
         inner.session_config.init_timeout = Some(limits.handshake_timeout);
         inner.session_config.completed_cache_ttl = Duration::from_secs(5);
         inner.session_config.sse_retry = None;
@@ -133,7 +139,7 @@ impl BoundedSessions {
         let mut sessions = self.0.sessions.lock().map_err(|_| SessionError)?;
         let session = sessions.get_mut(id).ok_or(SessionError)?;
         let now = tokio::time::Instant::now();
-        if now >= session.expires {
+        if now >= session.expires && session.in_flight == 0 {
             return Err(SessionError);
         }
         if renew {
@@ -165,6 +171,50 @@ impl BoundedSessions {
         }
     }
 }
+/// One request's open response stream; it keeps its session from idling out
+/// and renews the idle lease when it ends.
+struct InFlight {
+    state: Weak<SessionState>,
+    id: SessionId,
+}
+impl InFlight {
+    fn begin(state: &Arc<SessionState>, id: &SessionId) -> Result<Self, SessionError> {
+        let mut sessions = state.sessions.lock().map_err(|_| SessionError)?;
+        sessions.get_mut(id).ok_or(SessionError)?.in_flight += 1;
+        Ok(Self {
+            state: Arc::downgrade(state),
+            id: id.clone(),
+        })
+    }
+}
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        let Some(state) = self.state.upgrade() else {
+            return;
+        };
+        let Ok(mut sessions) = state.sessions.lock() else {
+            return;
+        };
+        if let Some(entry) = sessions.get_mut(&self.id) {
+            entry.in_flight = entry.in_flight.saturating_sub(1);
+            entry.expires = tokio::time::Instant::now() + state.idle;
+        }
+    }
+}
+struct InFlightStream<S> {
+    inner: std::pin::Pin<Box<S>>,
+    _guard: InFlight,
+}
+impl<S: futures::Stream> futures::Stream for InFlightStream<S> {
+    type Item = S::Item;
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<S::Item>> {
+        self.inner.as_mut().poll_next(cx)
+    }
+}
+
 async fn expire(weak: Weak<SessionState>, id: SessionId) {
     loop {
         let Some(state) = weak.upgrade() else {
@@ -189,10 +239,15 @@ async fn expire(weak: Weak<SessionState>, id: SessionId) {
                 .sessions
                 .lock()
                 .ok()
-                .and_then(|sessions| {
-                    sessions
-                        .get(&id)
-                        .map(|entry| tokio::time::Instant::now() >= entry.expires)
+                .and_then(|mut sessions| {
+                    sessions.get_mut(&id).map(|entry| {
+                        let now = tokio::time::Instant::now();
+                        if entry.in_flight > 0 && now >= entry.expires {
+                            // Still answering: renew instead of expiring.
+                            entry.expires = now + state.idle;
+                        }
+                        now >= entry.expires
+                    })
                 })
                 .unwrap_or(true);
         if expired {
@@ -233,6 +288,7 @@ impl SessionManager for BoundedSessions {
                 _global: global,
                 _client: client,
                 expires: tokio::time::Instant::now() + self.0.handshake.min(self.0.idle),
+                in_flight: 0,
             },
         );
         tokio::spawn(expire(Arc::downgrade(&self.0), id.clone()));
@@ -274,11 +330,17 @@ impl SessionManager for BoundedSessions {
         Self::Error,
     > {
         self.touch(id, true)?;
-        self.0
+        let guard = InFlight::begin(&self.0, id)?;
+        let stream = self
+            .0
             .inner
             .create_stream(id, message)
             .await
-            .map_err(|_| SessionError)
+            .map_err(|_| SessionError)?;
+        Ok(InFlightStream {
+            inner: Box::pin(stream),
+            _guard: guard,
+        })
     }
     async fn accept_message(
         &self,
@@ -504,6 +566,12 @@ impl HttpReadService {
                     .extensions_mut()
                     .insert(ReadResponsePreference(preference));
             }
+            // This outer bound stays at the transport context's Answer ceiling:
+            // rmcp parses the JSON-RPC body inside `handle`, so the request kind
+            // is not known here. Each tool call narrows its own clone (`for_call`:
+            // 125 s for non-Answer tools), so a non-Answer call ends on that inner
+            // bound first; a streamed body is further bounded by the HTTPS
+            // gateway's `OutputBody` (120 s unless the call was marked an Answer).
             let response = tokio::select! {
                 _=context.cancellation().cancelled()=>return error(StatusCode::SERVICE_UNAVAILABLE,"request_canceled"),
                 response=tokio::time::timeout_at(tokio::time::Instant::from_std(context.deadline()),self.0.mcp.handle(request))=>match response {

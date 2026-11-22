@@ -7,7 +7,6 @@ use anyhow::{Result, ensure};
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
 };
 
 pub(crate) fn create_imported_backend(
@@ -43,15 +42,10 @@ impl airk_mcp::remote::RemoteTools for ImportedBackend {
         tool: String,
         arguments: serde_json::Map<String, serde_json::Value>,
     ) -> airk_mcp::remote::RemoteFuture<'_> {
-        self.call_with_read_context(
-            tool,
-            arguments,
-            self.query_concurrency(),
-            airk_mcp::read_attempt::ReadAttemptContext::new(
-                Instant::now() + Duration::from_secs(125),
-                Default::default(),
-            ),
-        )
+        // The tool's own ceiling: Answer's 605 s, 125 s for the others.
+        let context =
+            airk_mcp::read_attempt::ReadAttemptContext::for_tool(&tool, Default::default());
+        self.call_with_read_context(tool, arguments, self.query_concurrency(), context)
     }
     fn call_with_read_context(
         &self,

@@ -90,6 +90,7 @@ pub struct ReadAttemptContext {
     worker_settlement_requester: Option<WorkerSettlementRequester>,
     native_unsettled: Arc<AtomicBool>,
     read_ceiling: Duration,
+    answer_call: Arc<AtomicBool>,
 }
 
 impl ReadAttemptContext {
@@ -115,6 +116,7 @@ impl ReadAttemptContext {
             worker_settlement_requester: None,
             native_unsettled: Arc::new(AtomicBool::new(false)),
             read_ceiling: airk_core::read_attempt::MAX_READ_BUDGET,
+            answer_call: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -138,6 +140,9 @@ impl ReadAttemptContext {
     /// This context for one tool call: a non-Answer tool is narrowed to its own
     /// 125 s and keeps the ordinary ceiling; Answer keeps up to its 605 s.
     pub fn for_call(self, tool: &str) -> Self {
+        if airk_core::read_attempt::is_answer_tool(tool) {
+            self.mark_answer_call();
+        }
         let ceiling = airk_core::read_attempt::read_budget_for_tool(tool);
         let limit = Instant::now() + ceiling;
         let context = if self.deadline > limit {
@@ -149,6 +154,16 @@ impl ReadAttemptContext {
             read_ceiling: context.read_ceiling.min(ceiling),
             ..context
         }
+    }
+
+    /// Record, on every clone of this transport context, that its tool call is
+    /// an Answer, so the transport's output stream may run to Answer's
+    /// ceiling instead of the ordinary 120 s (`airk-https` `OutputBody`).
+    pub fn mark_answer_call(&self) {
+        self.answer_call.store(true, Ordering::Release);
+    }
+    pub fn is_answer_call(&self) -> bool {
+        self.answer_call.load(Ordering::Acquire)
     }
 
     /// The longest native attempt this context may mint for the wire

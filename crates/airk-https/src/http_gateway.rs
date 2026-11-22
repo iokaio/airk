@@ -70,6 +70,16 @@ const AUTH_TASKS: usize = 16;
 const OUTPUT_BYTES: usize = 32 * 1024 * 1024;
 const MAX_FRAME: usize = 1024 * 1024;
 const STREAM_SECONDS: u64 = 120;
+
+/// Waits before the request body names its tool (native credential validation,
+/// a previous response still draining) keep the ordinary 125 s even though the
+/// transport context is minted at Answer's ceiling: they are admission, not
+/// the Answer's work.
+fn admission_deadline(context: &ReadAttemptContext) -> Instant {
+    context
+        .deadline()
+        .min(Instant::now() + airk_core::read_attempt::MAX_READ_BUDGET)
+}
 /// Concurrent MCP sessions across every agent (U110: all share one client).
 const SESSIONS: usize = 128;
 
@@ -511,7 +521,7 @@ impl Gateway {
             .clone()
             .with_lifetime_guard(Arc::new((context.lifetime_guard(), validation_permit)));
         let backend = tokio::select! {_=context.cancellation().cancelled()=>return Err(error(StatusCode::SERVICE_UNAVAILABLE,"request_canceled")),
-        result=tokio::time::timeout_at(tokio::time::Instant::from_std(context.deadline()),(self.0.validate)(authenticated.clone(),validation_context))=>match result {
+        result=tokio::time::timeout_at(tokio::time::Instant::from_std(admission_deadline(context)),(self.0.validate)(authenticated.clone(),validation_context))=>match result {
             Ok(Ok(backend))=>backend,Ok(Err(_))=>{self.retire_context(authenticated.connection_id).await;return Err(error(StatusCode::FORBIDDEN,"native_grant_refused"));},
             Err(_)=>{context.cancellation().cancel();return Err(error(StatusCode::GATEWAY_TIMEOUT,"request_deadline_exhausted"));}
         }};
@@ -837,6 +847,7 @@ impl ConnectionFence {
         }
     }
     async fn bind_request(&self, context: ReadAttemptContext) -> anyhow::Result<()> {
+        let wait_until = admission_deadline(&context);
         loop {
             let changed = self.flushed.notified();
             tokio::pin!(changed);
@@ -859,7 +870,7 @@ impl ConnectionFence {
             tokio::select! {
                 _ = &mut changed => {},
                 _ = context.cancellation().cancelled() => { self.fail_requests(); anyhow::bail!("request canceled while previous output drains"); },
-                _ = tokio::time::sleep_until(tokio::time::Instant::from_std(context.deadline())) => { self.fail_requests(); anyhow::bail!("previous output did not drain within request deadline"); },
+                _ = tokio::time::sleep_until(tokio::time::Instant::from_std(wait_until)) => { self.fail_requests(); anyhow::bail!("previous output did not drain within request deadline"); },
             }
         }
     }
@@ -883,6 +894,19 @@ impl ConnectionFence {
             .as_mut()
         {
             active.deadline = active.deadline.min(deadline);
+        }
+    }
+    /// Widen the active request's IO deadline to an Answer stream's bound,
+    /// never past its own context's deadline (OutputBody::widen_for_answer).
+    fn widen_output_deadline(&self, deadline: Instant) {
+        if let Some(active) = self
+            .requests
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .active
+            .as_mut()
+        {
+            active.deadline = active.deadline.max(deadline.min(active.context.deadline()));
         }
     }
     fn complete_flush(&self) {
@@ -1428,6 +1452,10 @@ pub struct OutputBody {
     context: ReadAttemptContext,
     done: bool,
     delivery: Option<ConnectionFence>,
+    /// When the stream began, for the Answer bound below.
+    started: tokio::time::Instant,
+    /// Whether the bound has been widened for an Answer call.
+    answer_bound: bool,
 }
 impl OutputBody {
     fn new(
@@ -1436,9 +1464,14 @@ impl OutputBody {
         remaining: usize,
         context: ReadAttemptContext,
     ) -> Self {
+        // Every response starts with the 120 s stream bound. The tool is often
+        // not yet known here (rmcp returns the event-stream head before the
+        // call runs), so poll_frame widens it once the call is marked an
+        // Answer (nswer_bound).
+        let started = tokio::time::Instant::now();
         let deadline = tokio::time::Instant::from_std(context.deadline())
-            .min(tokio::time::Instant::now() + Duration::from_secs(STREAM_SECONDS));
-        Self {
+            .min(started + Duration::from_secs(STREAM_SECONDS));
+        let mut body = Self {
             inner,
             budget,
             remaining,
@@ -1446,6 +1479,27 @@ impl OutputBody {
             context,
             done: false,
             delivery: None,
+            started,
+            answer_bound: false,
+        };
+        body.widen_for_answer();
+        body
+    }
+    /// An Answer call's stream (progress, then its result) runs to Answer's
+    /// own ceiling, within the request context's deadline; the connection's
+    /// IO deadline is widened to match. Every other response keeps 120 s.
+    fn widen_for_answer(&mut self) {
+        if self.answer_bound || !self.context.is_answer_call() {
+            return;
+        }
+        self.answer_bound = true;
+        let deadline = tokio::time::Instant::from_std(self.context.deadline())
+            .min(self.started + airk_core::read_attempt::MAX_ANSWER_READ_BUDGET);
+        if deadline > self.deadline.deadline() {
+            self.deadline.as_mut().reset(deadline);
+            if let Some(delivery) = &self.delivery {
+                delivery.widen_output_deadline(deadline.into_std());
+            }
         }
     }
     fn with_delivery(mut self, delivery: ConnectionFence) -> Self {
@@ -1478,6 +1532,7 @@ impl Body for OutputBody {
         if self.done {
             return Poll::Ready(None);
         }
+        self.widen_for_answer();
         if self.context.cancellation().is_cancelled() || self.deadline.as_mut().poll(cx).is_ready()
         {
             return self.fail();

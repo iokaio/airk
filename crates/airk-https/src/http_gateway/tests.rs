@@ -166,10 +166,28 @@ impl RemoteTools for Echo {
         args: serde_json::Map<String, serde_json::Value>,
     ) -> RemoteFuture<'_> {
         Box::pin(async move {
+            // A held call stands in for a long Answer (final plan 12.4).
+            if let Some(seconds) = args.get("hold_seconds").and_then(serde_json::Value::as_u64) {
+                tokio::time::sleep(Duration::from_secs(seconds)).await;
+            }
             Ok(
                 serde_json::json!({"content":[],"structuredContent":{"tool":name,"args":args,"future":{"retained":true}},"isError":false}),
             )
         })
+    }
+    fn call_with_read_context(
+        &self,
+        tool: String,
+        mut arguments: serde_json::Map<String, serde_json::Value>,
+        _limit: usize,
+        context: airk_mcp::read_attempt::ReadAttemptContext,
+    ) -> RemoteFuture<'_> {
+        // A held call reports whether its transport context was marked an
+        // Answer call (the mark that widens OutputBody).
+        if arguments.contains_key("hold_seconds") {
+            arguments.insert("answer_call".into(), context.is_answer_call().into());
+        }
+        self.call(tool, arguments)
     }
 }
 struct Fixture {
@@ -1922,5 +1940,152 @@ async fn narrowed_deadline_expiring_inside_source_gate_refuses_actual_http_cut()
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert_eq!(writes.load(Ordering::SeqCst), 0);
     f.gateway.close().await;
+    Ok(())
+}
+
+/// Final plan 12.4.1 item 5 through the real gateway: an Answer call's
+/// transport context is marked as one (so `OutputBody` may widen its bound),
+/// a search's is not, and the Answer's progress precedes its result. Tokio
+/// time is paused. The hold stays short: rmcp's SSE keep-alive timer is
+/// measured on the real clock, so a long jump of paused time makes it fire
+/// without end; the bound past 120 s is tested on `OutputBody` directly.
+#[tokio::test(start_paused = true)]
+async fn gateway_marks_an_answer_call_and_sends_its_progress_before_the_result()
+-> anyhow::Result<()> {
+    let f = fixture(57441)?;
+    let post = |body: serde_json::Value, session: Option<&http::HeaderValue>| {
+        let mut builder = Request::builder()
+            .method(http::Method::POST)
+            .uri("/mcp")
+            .header("host", &f.gateway.0.authority)
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream");
+        if let Some(session) = session {
+            builder = builder.header("mcp-session-id", session);
+        }
+        builder
+            .body(Full::new(Bytes::from(body.to_string())))
+            .unwrap()
+    };
+    let response = f
+        .gateway
+        .handle(
+            post(
+                serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"claude-code","version":"2.1.330"}}}),
+                None,
+            ),
+            CancellationToken::new(),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let session = response.headers()["mcp-session-id"].clone();
+    response.into_body().collect().await?;
+    let ready = f
+        .gateway
+        .handle(
+            post(
+                serde_json::json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+                Some(&session),
+            ),
+            CancellationToken::new(),
+        )
+        .await;
+    assert!(ready.status().is_success());
+    ready.into_body().collect().await?;
+    for (id, tool, answer) in [(2, "airk_answer", true), (3, "airk_search", false)] {
+        let started = tokio::time::Instant::now();
+        let response = f
+            .gateway
+            .handle(
+                post(
+                    serde_json::json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"name":tool,"arguments":{"hold_seconds":2},"_meta":{"progressToken":format!("gateway-{id}")}}}),
+                    Some(&session),
+                ),
+                CancellationToken::new(),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            response.headers()[http::header::CONTENT_TYPE]
+                .to_str()?
+                .starts_with("text/event-stream")
+        );
+        let bytes = tokio::time::timeout(Duration::from_secs(60), response.into_body().collect())
+            .await?
+            .map_err(|error| anyhow::anyhow!("{error}"))?
+            .to_bytes();
+        let text = std::str::from_utf8(&bytes)?;
+        assert!(started.elapsed() >= Duration::from_secs(2));
+        assert!(text.contains(&format!(r#""tool":"{tool}""#)), "{text}");
+        assert!(
+            text.contains(&format!(r#""answer_call":{answer}"#)),
+            "{text}"
+        );
+        if answer {
+            assert!(text.contains(r#""progressToken":"gateway-2""#), "{text}");
+            assert!(
+                text.find("notifications/progress") < text.find(r#""result""#),
+                "{text}"
+            );
+        } else {
+            assert!(!text.contains("notifications/progress"), "{text}");
+        }
+    }
+    f.gateway.close().await;
+    Ok(())
+}
+
+struct ChannelBody(tokio::sync::mpsc::UnboundedReceiver<Bytes>);
+impl Body for ChannelBody {
+    type Data = Bytes;
+    type Error = Infallible;
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, Infallible>>> {
+        self.0
+            .poll_recv(cx)
+            .map(|bytes| bytes.map(|bytes| Ok(Frame::data(bytes))))
+    }
+}
+
+/// H1 at the output bound. rmcp returns the event-stream head before the call
+/// names its tool, so an Answer is marked after its `OutputBody` exists and has
+/// been polled. The marked stream still delivers its result at 130 s, past the
+/// 120 s stream bound; an unmarked stream ends at 120 s.
+#[tokio::test(start_paused = true)]
+async fn an_answer_marked_after_its_stream_began_outlives_the_120_second_bound()
+-> anyhow::Result<()> {
+    for answer in [true, false] {
+        let (send, receive) = tokio::sync::mpsc::unbounded_channel();
+        let context = ReadAttemptContext::for_transport(CancellationToken::new());
+        let mut body = OutputBody::new(
+            http_body_util::combinators::BoxBody::new(ChannelBody(receive)),
+            Arc::new(Semaphore::new(OUTPUT_BYTES)),
+            OUTPUT_BYTES,
+            context.clone(),
+        );
+        let mut cx = Context::from_waker(std::task::Waker::noop());
+        assert!(Pin::new(&mut body).poll_frame(&mut cx).is_pending());
+        if answer {
+            let _call = context.clone().for_call("airk_answer");
+        } else {
+            let _call = context.clone().for_call("airk_search");
+        }
+        tokio::time::sleep(Duration::from_secs(130)).await;
+        send.send(Bytes::from_static(b"data: result\n\n"))?;
+        let frame = std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await;
+        match frame {
+            Some(Ok(frame)) => {
+                assert!(answer, "an unmarked stream must end at 120 s");
+                assert_eq!(
+                    frame.into_data().ok().as_deref(),
+                    Some(&b"data: result\n\n"[..])
+                );
+            }
+            Some(Err(OutputError)) => assert!(!answer, "the Answer stream ended early"),
+            None => anyhow::bail!("the stream ended without a frame"),
+        }
+    }
     Ok(())
 }

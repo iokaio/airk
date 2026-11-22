@@ -1097,3 +1097,42 @@ fn canonical_manual_entries_match_native_writer_for_every_supported_client_scope
         }
     }
 }
+
+#[test]
+fn a_healthy_codex_entry_below_answers_ceiling_is_found_for_repair() {
+    let target = Target {
+        container_path: vec!["mcp_servers".into()],
+        server_key: "airk".into(),
+    };
+    let entry = |timeout: &str| {
+        format!(
+            "[mcp_servers.airk]\nurl = \"https://127.0.0.1:4433/mcp\"\n{timeout}\n[mcp_servers.airk.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n"
+        )
+    };
+    for (timeout, short) in [
+        ("", true),
+        ("tool_timeout_sec = 60", true),
+        ("tool_timeout_sec = 604.9", true),
+        ("tool_timeout_sec = 605", false),
+        ("tool_timeout_sec = 900", false),
+    ] {
+        assert_eq!(
+            codex_timeout_short(Agent::Codex, &entry(timeout), &target),
+            short,
+            "{timeout:?}"
+        );
+    }
+    // Other agents and other keys are never selected for this.
+    assert!(!codex_timeout_short(Agent::Claude, "{}", &target));
+    let other = Target {
+        container_path: vec!["mcp_servers".into()],
+        server_key: "docs".into(),
+    };
+    assert!(!codex_timeout_short(Agent::Codex, &entry(""), &other));
+    // Repair of such a healthy entry adds the timeout and nothing else.
+    let source = entry("");
+    assert_eq!(
+        repair(Agent::Codex, Scope::Project, &source, &target, OLD_URL).unwrap(),
+        source.replace("/mcp\"\n\n", "/mcp\"\ntool_timeout_sec = 605\n\n")
+    );
+}

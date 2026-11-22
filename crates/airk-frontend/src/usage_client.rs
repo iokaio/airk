@@ -274,8 +274,9 @@ async fn collect_selected(
     let mut bytes = 0usize;
     let mut scope_headers = None;
     for _ in 0..256 {
+        // Usage document pages are not Answer; they keep the ordinary 125 s.
         let context = airk_mcp::read_attempt::ReadAttemptContext::new(
-            std::time::Instant::now() + std::time::Duration::from_secs(125),
+            std::time::Instant::now() + airk_core::read_attempt::MAX_READ_BUDGET,
             Default::default(),
         );
         let value = if let Some(selection) = selection {

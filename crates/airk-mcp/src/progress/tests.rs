@@ -93,6 +93,25 @@ fn reports_are_rate_limited_and_the_latest_pending_one_is_sent_next() {
     }
 }
 
+#[tokio::test]
+async fn nothing_is_sent_after_the_call_completes() {
+    let (reporter, clock, sent) = reporter();
+    let sink = reporter.sink();
+    let output = reporter
+        .while_running(async {
+            sink(progress(1, AnswerStage::Plan, 0));
+            7
+        })
+        .await;
+    assert_eq!(output, 7);
+    assert_eq!(sent.lock().unwrap().len(), 1);
+    // A late report or heartbeat after completion sends nothing.
+    clock.advance(HEARTBEAT_INTERVAL * 2);
+    sink(progress(2, AnswerStage::Union, 3));
+    reporter.heartbeat();
+    assert_eq!(sent.lock().unwrap().len(), 1);
+}
+
 #[test]
 fn heartbeats_name_the_latest_stage_and_elapsed_time_only_when_quiet() {
     let (reporter, clock, sent) = reporter();
@@ -182,10 +201,8 @@ async fn progress_reaches_an_mcp_client_on_its_own_token_and_never_without_one()
             break message;
         }
     };
-    // The reply may overtake the ordered notification task; wait for it.
-    if progress.is_empty() {
-        progress.push(next().await?);
-    }
+    // `finish` drains the sender before the result, so progress comes first.
+    assert!(!progress.is_empty(), "progress must precede the result");
     assert_eq!(reply["id"], 2);
     assert_eq!(reply["result"]["content"][0]["text"], "true");
     let params = &progress[0]["params"];

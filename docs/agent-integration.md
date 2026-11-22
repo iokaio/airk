@@ -159,7 +159,9 @@ a call off first, so raise it where the client has one:
   ([Codex configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference)).
   `rk agents connect --client codex` and `rk agents repair` write
   `tool_timeout_sec = 605` into AIRK's `[mcp_servers.<key>]` table, keeping a
-  larger value you set. For an entry you wrote yourself, add
+  larger value you set. `rk agents repair` also raises a missing or shorter
+  `tool_timeout_sec` on an otherwise healthy Codex entry, and its action then
+  reports `"toolTimeoutSec": 605`. For an entry you wrote yourself, add
   `tool_timeout_sec = 605`.
 - **Claude Code.** The wall-clock tool limit `MCP_TOOL_TIMEOUT` defaults to
   about 28 hours, and a per-server `"timeout"` (milliseconds) in `.mcp.json`

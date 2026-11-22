@@ -94,6 +94,24 @@ fn find<'a>(rows: &'a [Declaration], target: &Target) -> Option<&'a Declaration>
         .find(|row| row.container == target.container_path && row.server_key == target.server_key)
 }
 
+/// Whether the Codex entry at `target` asks for less than
+/// `CODEX_TOOL_TIMEOUT_SEC` (or nothing, Codex's 60 s default), so `agents
+/// repair` raises it even when the entry is otherwise healthy.
+pub(crate) fn codex_timeout_short(agent: Agent, source: &str, target: &Target) -> bool {
+    if agent.parser() != Parser::Codex {
+        return false;
+    }
+    let Ok(rows) = recognize::declarations(agent.parser(), source) else {
+        return false;
+    };
+    find(&rows, target).is_some_and(|row| {
+        row.fields
+            .get("tool_timeout_sec")
+            .and_then(Value::as_f64)
+            .is_none_or(|seconds| seconds < super::CODEX_TOOL_TIMEOUT_SEC as f64)
+    })
+}
+
 /// The recognized declaration at `target`, or a refusal.
 fn owned(
     agent: Agent,

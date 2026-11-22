@@ -77,9 +77,13 @@ Answer /3 runs to `MAX_DEADLINE_MS` (600,000 ms, default 300,000), so its read
 attempt gets its own ceiling: `MAX_ANSWER_READ_BUDGET` = 600,000 + 5,000 ms
 for delivery, the same 5 s that `MAX_READ_BUDGET` (125,000 ms) keeps over
 120 s. `MAX_ANSWER_DEADLINE` names the operation ceiling and
-`MAX_ANSWER_ARBITER_REMAINING_MS` (600,000) the remaining-time ceiling of
-Answer-only Arbiter IPC methods (Context actions now, card scoring in L4);
-Focus and next-read methods keep 120,000 ms. `is_answer_tool` names Answer
+`MAX_ANSWER_ARBITER_REMAINING_MS` (600,000) the remaining-time ceiling that
+Answer-only Arbiter IPC clamps accept. Only the v3 card and Focus paths that
+L3 and L4 build reach it: the /2 Context-action path stays at 120,000 ms,
+because `NativeContextActionRequest` still validates `remaining_ms` in
+`1..=120_000` against a /2 `Budget` of at most 120 s (the joint ledger's
+window is bounded by that same parent budget). Focus and next-read methods
+keep 120,000 ms. `is_answer_tool` names Answer
 (`airk_answer` or `answer`) and `read_budget_for_tool` gives each tool its
 ceiling. No wire shape, schema number, persisted state or digest input
 changes; the digest-bearing resource policy (`arbiter::resource_policy`) is

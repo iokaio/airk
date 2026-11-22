@@ -20,6 +20,8 @@ pub const MIN_PROGRESS_INTERVAL: Duration = Duration::from_secs(1);
 /// While an Answer runs with no newer report, one notification is sent this
 /// often so a client's idle timer sees the call advancing.
 pub const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
+/// The longest `finish` waits for queued notifications before the result.
+const FINISH_WAIT: Duration = Duration::from_secs(5);
 
 /// The stage an Answer part is in (plan section 12.1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -101,6 +103,16 @@ struct State {
     pending: Option<AnswerProgress>,
     latest: Option<AnswerProgress>,
     step: u64,
+    /// Set when the call has completed: nothing more is sent.
+    finished: bool,
+}
+
+type Channel = Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<ProgressNotificationParam>>>>;
+
+/// The ordered sender task of a reporter made by `from_request`.
+struct Sender {
+    channel: Channel,
+    task: tokio::task::JoinHandle<()>,
 }
 
 /// Rate-limited progress for one request's progress token.
@@ -109,17 +121,19 @@ pub struct ProgressReporter {
     send: NotifyFn,
     clock: ProgressClock,
     state: Mutex<State>,
+    sender: Mutex<Option<Sender>>,
 }
 
 impl ProgressReporter {
     /// The reporter for one MCP request, or `None` when the client sent no
     /// progress token. Must be called inside a Tokio runtime: notifications
-    /// are sent in order by one task that ends when the reporter is dropped.
+    /// are sent in order by one task that [`Self::finish`] (or dropping the
+    /// reporter) ends.
     pub fn from_request(meta: &RequestMetaObject, peer: Peer<RoleServer>) -> Option<Arc<Self>> {
         let token = meta.get_progress_token()?;
         let (sender, mut receiver) =
             tokio::sync::mpsc::unbounded_channel::<ProgressNotificationParam>();
-        tokio::spawn(async move {
+        let task = tokio::spawn(async move {
             while let Some(param) = receiver.recv().await {
                 // A failed send (the client went away) never affects the call.
                 if peer.notify_progress(param).await.is_err() {
@@ -127,13 +141,21 @@ impl ProgressReporter {
                 }
             }
         });
-        Some(Self::with_sender(
+        let channel: Channel = Arc::new(Mutex::new(Some(sender)));
+        let open = channel.clone();
+        let reporter = Self::with_sender(
             token,
             Arc::new(move |param| {
-                let _ = sender.send(param);
+                if let Some(sender) = open.lock().ok().as_deref().and_then(Option::as_ref) {
+                    let _ = sender.send(param);
+                }
             }),
             Arc::new(Instant::now),
-        ))
+        );
+        if let Ok(mut slot) = reporter.sender.lock() {
+            *slot = Some(Sender { channel, task });
+        }
+        Some(reporter)
     }
 
     /// A reporter with an injected sender and clock (tests and other
@@ -150,7 +172,9 @@ impl ProgressReporter {
                 pending: None,
                 latest: None,
                 step: 0,
+                finished: false,
             }),
+            sender: Mutex::new(None),
         })
     }
 
@@ -218,16 +242,41 @@ impl ProgressReporter {
         ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         ticks.tick().await;
         tokio::pin!(future);
-        loop {
+        let output = loop {
             tokio::select! {
                 biased;
-                output = &mut future => return output,
+                output = &mut future => break output,
                 _ = ticks.tick() => self.heartbeat(),
+            }
+        };
+        self.finish().await;
+        output
+    }
+
+    /// End this reporter before the call's result is written: later reports
+    /// are dropped, and the channel closes so the task sends what is already
+    /// queued and stops. This waits for it, so no notification follows the
+    /// result.
+    pub async fn finish(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.finished = true;
+        }
+        let sender = self.sender.lock().ok().and_then(|mut slot| slot.take());
+        if let Some(Sender { channel, mut task }) = sender {
+            if let Ok(mut open) = channel.lock() {
+                open.take();
+            }
+            // A client that stops reading cannot hold the result back.
+            if tokio::time::timeout(FINISH_WAIT, &mut task).await.is_err() {
+                task.abort();
             }
         }
     }
 
     fn emit(&self, state: &mut State, now: Instant, message: String) {
+        if state.finished {
+            return;
+        }
         // Progress increases with every notification, as the specification asks.
         state.step += 1;
         state.last_sent = Some(now);

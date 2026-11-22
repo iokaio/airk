@@ -19,14 +19,14 @@
       "file": ".codex/config.toml",
       "format": "toml",
       "scope": "project",
-      "text": "[mcp_servers.airk]\nurl = \"https://127.0.0.1:57421/mcp\"\n\n[mcp_servers.airk.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n"
+      "text": "[mcp_servers.airk]\nurl = \"https://127.0.0.1:57421/mcp\"\ntool_timeout_sec = 605\n\n[mcp_servers.airk.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n"
     },
     {
       "client": "codex",
       "file": ".codex/config.toml",
       "format": "toml",
       "scope": "project",
-      "text": "[mcp_servers.\"airk-\\\"scope\\\\x\"]\nurl = \"https://127.0.0.1:57429/mcp\"\n\n[mcp_servers.\"airk-\\\"scope\\\\x\".http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n"
+      "text": "[mcp_servers.\"airk-\\\"scope\\\\x\"]\nurl = \"https://127.0.0.1:57429/mcp\"\ntool_timeout_sec = 605\n\n[mcp_servers.\"airk-\\\"scope\\\\x\".http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n"
     },
     {
       "client": "vscode",

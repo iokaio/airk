@@ -246,5 +246,9 @@ Codex cuts a tool call off after 60 s by default (`tool_timeout_sec`). A
 connected Codex table carries `tool_timeout_sec = 605` after its `url`
 (Answer's 600 s plus 5 s for delivery, `CODEX_TOOL_TIMEOUT_SEC`). Repair sets
 it when the entry has none or a smaller value, and keeps a larger one the user
-chose. The shared `fixtures/split/agents/config_cases.json` connect and repair
-expectations include it; recognition and removal are unchanged.
+chose. `agents repair` also selects an otherwise healthy (`Class::Ok`) Codex
+entry whose timeout is missing or below 605 (`codex_timeout_short`), edits only
+that field, and reports `"toolTimeoutSec": 605` on its action; entries that are
+healthy and already at 605 or more see no edit attempt. The shared
+`fixtures/split/agents/config_cases.json` connect and repair expectations
+include it; recognition and removal are unchanged.

@@ -308,7 +308,9 @@ fn project_root_of(entry: &config::Entry, inputs: &Inputs<'_>) -> Option<PathBuf
 
 /// `agents repair` (U110): rewrite every recognized connectable HTTPS entry
 /// that names another endpoint or still carries legacy credential fields to
-/// the URL-only form. `_replacement` (`--connection-id`) is ignored:
+/// the URL-only form, and raise a healthy Codex entry's `tool_timeout_sec`
+/// that is below Answer's ceiling (final plan 12.4; its action reports
+/// `"toolTimeoutSec"`). `_replacement` (`--connection-id`) is ignored:
 /// connections no longer exist.
 pub fn repair(inputs: &Inputs<'_>, _replacement: Option<Incarnation>) -> Result<Value, ErrorLine> {
     let report = report(inputs);
@@ -323,13 +325,20 @@ pub fn repair(inputs: &Inputs<'_>, _replacement: Option<Incarnation>) -> Result<
                 | Class::HttpsUnknownConnection
                 | Class::HttpsHelperMissing
         );
-        if !stale || !entry.agent.connectable() {
-            continue;
-        }
         let target = Target {
             container_path: entry.container_path.clone(),
             server_key: entry.server_key.clone(),
         };
+        // A healthy Codex entry is read first and edited only when its tool
+        // timeout is short, so unaffected entries see no edit attempt.
+        let short_timeout = !stale
+            && status == Class::Ok
+            && entry.agent == Agent::Codex
+            && std::fs::read_to_string(&entry.file)
+                .is_ok_and(|source| config::codex_timeout_short(entry.agent, &source, &target));
+        if !(stale || short_timeout) || !entry.agent.connectable() {
+            continue;
+        }
         let root = project_root_of(entry, inputs);
         let outcome = config::edit_file_for(
             config::EditOperation::Repair,
@@ -355,6 +364,9 @@ pub fn repair(inputs: &Inputs<'_>, _replacement: Option<Incarnation>) -> Result<
             "changed": outcome.as_ref().ok(),
             "error": outcome.err().map(|error| error.to_string()),
         }));
+        if short_timeout && let Some(action) = actions.last_mut() {
+            action["toolTimeoutSec"] = json!(config::CODEX_TOOL_TIMEOUT_SEC);
+        }
     }
     Ok(json!({"schema": 1, "actions": actions, "blockers": report.blockers}))
 }
