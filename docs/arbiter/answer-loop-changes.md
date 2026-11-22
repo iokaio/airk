@@ -869,6 +869,89 @@ Further entries are added as implementation proceeds.
   `focus_calls` slots. The wall-clock overhead was not measured in L4, which
   ran no GPU work; L5/LG measure it on the A6000.
 
+### 34. Review of L4-1 to L4-3: findings and their closure
+
+- **Step:** L4. An independent review of `24ee5098`, `18eb400b` and
+  `d40ceabc` found three medium and five low findings. All are closed in
+  `7634237c` (code and tests), `c6073f70` (the replay script and row pin) and
+  this documentation commit. Test counts are from the receipts in
+  `answer-loop/L4/` (`nextest-l4-r*.log`).
+
+| Finding | What was wrong | What changed | Evidence |
+| --- | --- | --- | --- |
+| M1 | Answer /3 jobs had no per-index bound across attempts, so one index's Answers could fill all 8 queue slots | An Answer job is admitted only while fewer than 4 jobs of any kind hold its index, across every attempt; within that, no two jobs of one attempt share a part. Ordinary jobs keep fewer than 2 per index | `lane::tests::several_attempts_share_one_index_ceiling_and_a_second_index_keeps_room` (several attempts on one index plus Answer and Search jobs on a second index), `parts_of_one_attempt_each_queue_one_job_up_to_the_index_ceiling`; the test that asserted the old behaviour was replaced |
+| M2 | Plan selection ignored the request's `max_sub_needs`, so a log could record more chosen sub-needs than the reply had | `loop_cards::select` takes `max_sub_needs` (clamped to 1..=4) and Plan chooses at most that many; the service passes `parent_budget.max_sub_needs`; the kernel's acceptance check limits Plan to `budget.max_sub_needs.clamp(1, 4)` (kernel edit, `answer/model.rs`) | `loop_cards::tests::plan_never_chooses_more_than_the_request_s_max_sub_needs`, `settlement_tests::plan_settlement_never_chooses_more_than_max_sub_needs` |
+| M3 | A lane refusal before queueing was reported as unknown work, so it kept its reservation and burned a slot | Every error of the lane's `score` is now a typed `AdmissionRefused` (it precedes queueing); the card and Focus paths release such a call through `loop_ledger::refused` and report a known non-dispatch (`Unavailable` with zero observed tokens). The slot or ordinal stays used | `pool::arbiter::tests::per_index_capacity_includes_the_actual_running_request` (typed refusal), `settlement_tests::a_refusal_before_queueing_releases_the_reservation`, `focus_batch::tests::a_batch_with_no_queued_pair_is_released_as_known_zero_work` |
+| L1 | Batched Focus re-attributed observed tokens by the reservation, not by the pairs that ran | Recorded, not changed: the native Focus request has no candidate-to-part map, so the service cannot attribute exactly; a batch cut short charges every reserved part-round in proportion. The ledger doc comment now says so. Exact attribution needs a per-candidate part in `NativeFocusRequestV3` (Core and kernel, L3's owner) | `focus_batch::tests::a_batch_cut_short_keeps_canonical_order_and_charges_known_work` pins the recorded behaviour |
+| L2 | The transition control did not encode the inverse-replay proof and did not pin the new row | The control now pins the new row `e0575e94…`; `scripts/arbiter/evaluation/runtime_row_replay/replay.py` (README beside it) reproduces the chain from Git history and the retained hook patch | `replay.py` exit 0, 8 checks (receipt `answer-loop/L4/proof/replay-receipt.txt`); control `loop_admission_supplement_moves_the_runtime_row_without_relabelling_legacy_evidence` |
+| L3 | The lane key used a batch's lowest part, so "one job per (index, attempt, part)" was not exact | `LaneKey.parts` is the set of every part a job serves; two jobs of one attempt conflict when their sets intersect | `lane::tests::a_job_may_not_share_a_part_with_another_job_of_its_attempt`, `part_masks_name_every_served_part` |
+| L4 | The service's choice-to-decision mapping was not a digest input; an observation-only type moved every card identity; the batch receipt's identity did not cover batched Focus | The mapping moved to `loop_cards::outcomes` (hashed with the policies); `NativeCardModel` moved to `native_loop/card_model.rs`, outside the hashed `native_loop.rs`; the batch ranking moved to the new `loop_focus.rs`, and a batch receipt's identity is `loop_focus::policy_digest(pair policy)`. The identities moved once more, recorded in the retrieval compiler `CONTRACT.md` | `loop_cards::tests::outcomes_map_choices_to_card_digests_rules_and_abstentions`, `loop_focus::tests::*`, `recorded_loop_policy_identities` |
+| L5 | Only helpers of the service path were tested | The settlement of a card call and of a Focus batch was extracted (`settle_card_call`, `settle_focus_batch`) and is driven by a fake lane through the ledger, selection and outcome mapping; the supervisor's narrowing is one helper with its own test. Not covered: the stage owner's own admission checks against a live configuration and supervisor, which need a native resident | `card_scoring::settlement_tests` (4), `focus_batch::tests` (4), `runtime_metadata::arbiter::tests::answer_loop_calls_keep_the_original_attempt_and_clamp_to_the_answer_ceiling` |
+
+- **Validation of the fixes:** `cargo clippy --workspace --all-targets
+  --all-features -- -D warnings` exit 0. nextest over Core, IPC and the
+  supervisor (all tests) and the arbiter tests of kernel, inference,
+  retrieval and service: 1,369 run, 1,367 passed; the two failures were the
+  pending Batched Focus identity pin, filled in the same commit and then
+  passing in the retrieval rerun (308 of 308), and the base failure of
+  entry 35. Per area: lane 8, card settlement 4, Focus settlement 4,
+  `loop_focus` 2, supervisor narrowing 1, loop ledger 9, CPU transition 13.
+
+### 35. Checks that failed outside L4 code, and their state
+
+- **Core fixture pins and line endings.** Two Core controls hashed
+  `fixtures/arbiter/profile-downloads.json` as checked out. Their pin is the
+  hash of a CRLF working copy, while the committed blob is LF
+  (`.gitattributes` `eol=lf`), so they failed on any clean checkout. They now
+  hash the fixture in its CRLF form, whatever the checkout; the pin is
+  unchanged. Closed in `4bd13a72`; evidence `downloads::tests::empty_backups_preserve_exact_retained_part_and_profile_identity`
+  and `stage_tests::retained_profile_bytes_have_no_stage_insertion_or_digest_reidentification` pass in a clean (LF) worktree.
+- **Scoped device status and the Answer ceiling.** The control expected a
+  126 s parent to be refused; since L2, an Answer read attempt may run to
+  605 s. It now asserts 605 s accepted, one nanosecond more refused, and
+  every other tool still refused above 125 s. Closed in `4bd13a72`; evidence
+  `read_device_status::tests::diagnostic_clock_refuses_expiry_wrong_clock_and_oversized_parent`.
+- **`failure_tests::ambiguous_or_corrupt_configuration_status_…`** fails at
+  the base `ed2e0926` as well (run in the L4 worktree, receipt
+  `nextest-base-ed2e0926-failure-tests.log`: 2 run, 0 passed). It fails in
+  airk-store `DeviceConfigurationStore::inspect_device_binding` with a JSON
+  parse error. Not caused by L4; open, owner primary agent.
+
+### 36. L4 deviations from the design, recorded
+
+These were listed in the private `answer-loop/L4/deviations.md`; this is
+their committed record. Entries 19 to 23 cover the roster check, the Context
+enrollment, the routing removal, the separate ledger and the Focus decision.
+
+- **No `LoopRoster` type.** L3 sends `CardSegment`s; retrieval renders and
+  selects over them.
+- **A Core loop semantics digest was added** (`answer_loop/semantics.rs`),
+  because Core had none and L1 required the card and batched-Focus semantics
+  in the policy identities.
+- **Loop admission lives in `runtime/loop_tasks.rs`**, so `runtime.rs`, a
+  pinned source and an FP16 math-policy input, moved once, by hooks only.
+- **Attribution uses the Core `TokenAttribution`**, remainder to the lowest
+  (part, round), matching the kernel's reservation.
+- **Ordinary lane jobs** keep fewer than two jobs per index, counting Answer
+  jobs on it.
+- **`ArbiterCardModel` and Core `NativeCardModel`** were added for the card
+  model observation.
+- **Open, not done in L4:**
+  - `force_single_segment` (design 5.3) belongs to the kernel's batching (L3);
+  - the deletion of `scoring.rs`, `joint_scoring.rs`, `context_wide.rs`,
+    next-read in `tasks.rs` and the supervisor v2 methods waits for L3-10;
+  - the Focus per-call overhead measurement needs the A6000 (L5/LG);
+  - Coverage rosters carry no evidence excerpts (`CardSegment` has only the
+    subject and card texts), which limits what a model can judge; this needs
+    a Core and kernel change;
+  - the release Context profiles must be re-emitted with the card tasks
+    before product Answer scores cards; L5's FP16 gate profiles must be
+    re-emitted because `runtime.rs` moved;
+  - `crates/airk-ipc/CONTRACT.md` still needs the three loop methods'
+    deadlines, after L2 commits it.
+
+Further entries are added as implementation proceeds.
+
 ### 40. Answer /3 through the MCP handler and every transport; /3 parity; the review of L3-10 (a) closed
 
 - **Step:** L3-10 (b). Numbered after L4's entries 30 to 39.

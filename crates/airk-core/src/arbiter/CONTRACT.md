@@ -1720,7 +1720,9 @@ moves every loop task identity and needs a recorded decision (values in
 closure; the Context and Focus closures and their digests are unchanged.
 
 L4 also adds `native_loop::NativeCardModel` (the selected Context model,
-device and GPU precision a card call would use; observation only) and the
+device and GPU precision a card call would use; observation only, in
+`native_loop/card_model.rs` so it stays outside the loop semantics digest,
+review L4) and the
 private control methods `ArbiterCardModel`, `ArbiterScoreCards` and
 `ArbiterFocusBatch` with their nullable responses `ArbiterCardModel`,
 `ArbiterCardAdvice` and `ArbiterFocusBatch`. They are refused by the

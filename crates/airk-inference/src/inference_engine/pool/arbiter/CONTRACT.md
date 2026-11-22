@@ -692,14 +692,16 @@ persisted format, and its figures are development observations.
 
 ## Lane fairness for Answer /3 parts (L4, 22 November 2026)
 
-`ScoreRequest.lane` (`LaneKey { attempt, part }`) keys each job. Admission
-(`lane::admits`), with at most 8 jobs queued in all:
+`ScoreRequest.lane` (`LaneKey { attempt, parts }`) keys each job; `parts` is
+the set of every part the job serves (bit 0 is Split), so a batched call over
+several parts holds all of them. Admission (`lane::admits`), with at most 8
+jobs queued in all:
 - `attempt: None` (Search Focus, Answer /2): fewer than two jobs on the
   index, queued or running, counting every job on it, as before;
-- `attempt: Some(a)`: no job with the same (index, attempt, part), and fewer
-  than four jobs of attempt `a` on the index, so the parts of one compound
-  Answer each queue their next call while one Answer cannot fill the lane,
-  and a second Answer on the index is not blocked by the first's parts.
+- `attempt: Some(a)`: fewer than four jobs of any kind on the index, across
+  every attempt, so one index never takes more than half the queue and
+  another index keeps room; and no job of attempt `a` on the index serves a
+  part this job serves.
 
 Scheduling (`lane::next_position`) runs the first queued job whose (index,
 attempt) differs from the last run's, otherwise the oldest, so neither one
@@ -707,3 +709,14 @@ index nor one Answer holds the lane while another waits. Earliest-deadline
 ordering across Answers is L2b's. The resident's `LoopCalibrationSet`,
 authenticated at warm, is kept per stage beside the joint calibration and
 served by `Handle::loop_calibration(profile, task)`.
+
+Every error of `Handle::score` precedes queueing and is a typed
+`AdmissionRefused`: the job never entered the queue and no native work ran,
+so a caller may release what it reserved.
+
+**Review closure (L4 review M1 and L3, 22 November 2026).** The first L4
+rule counted only one attempt's jobs, so the Answers of one index could fill
+the queue (M1), and keyed a batched call by its lowest part, so another job
+of the attempt could hold one of its other parts (L3). Both were changed as
+above in `7634237c`; evidence `lane::tests` (8 tests, including
+`several_attempts_share_one_index_ceiling_and_a_second_index_keeps_room`).

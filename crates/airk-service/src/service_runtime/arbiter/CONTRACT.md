@@ -932,3 +932,40 @@ identity are fixed once charged; the window is the parent deadline, at most
 **Decision mode.** `DecisionMode::TopScore` (evaluation only) is set only by
 `EvaluationOwner::with_decision_mode`, which requires the private native
 evaluation catalog; product builds have no constructor for it.
+
+### L4 review closures (22 November 2026)
+
+- **Known non-dispatch (M3).** Everything before a card job enters the lane
+  queue (the resident lookup, the reuse admission, and `score`, whose every
+  error is a typed `AdmissionRefused`) is a known non-dispatch; a deadline can
+  expire only while awaiting the reuse admission, before `score` runs. Such a
+  card call is released through `loop_ledger::refused` and reported
+  `Unavailable` with zero observed tokens; the slot stays used. A Focus batch
+  that queued no pair is released the same way. Before, these kept the whole
+  reservation as unknown work.
+- **Plan limit (M2).** The service passes the parent budget's
+  `max_sub_needs` into selection, so Plan never accepts more sub-needs than
+  the reply can hold.
+- **Batched Focus attribution (L1), recorded.** The native Focus request does
+  not say which part a candidate serves. Observed tokens are re-attributed in
+  proportion to the reservation (pairs reserved per part and round), so a
+  batch cut short charges every reserved part-round in proportion, not only
+  those whose pairs ran. Exact attribution needs a per-candidate part in
+  `NativeFocusRequestV3`.
+- **Lane keys (L3).** A card call names every part its segments serve; a
+  Focus batch every part it charges.
+- **Identity (L4).** The choice-to-decision mapping is
+  `loop_cards::outcomes` (part of the card policy identities); a batch
+  receipt's identity is `loop_focus::policy_digest(pair policy)` and its
+  ranking is `loop_focus::rank`.
+- **Tests (L5).** `settle_card_call` and `settle_focus_batch` hold the
+  settlement after the reservation and are driven by a fake lane in
+  `card_scoring::settlement_tests` and `focus_batch::tests`. The stage
+  owner's admission against a live configuration and supervisor is not
+  covered; it needs a native resident.
+- **Scoped device status.** Its control now follows the Answer read
+  ceiling: 605 s accepted, one nanosecond more refused, other tools refused
+  above 125 s.
+
+All closed in `7634237c`; counts in `docs/arbiter/answer-loop-changes.md`
+entry 24.

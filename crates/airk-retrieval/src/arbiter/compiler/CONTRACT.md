@@ -192,17 +192,21 @@ loop_semantic_policy_digest])`. The Core digest
 `calibration.rs`, `focus_batch.rs`, `log.rs`, `semantics.rs`,
 `native_loop.rs` and the Focus Core semantics, so the card and batched-Focus
 semantics are part of every loop identity. Recorded values (control
-`recorded_loop_policy_identities`; they moved once within L4, when
-`NativeCardModel` joined `native_loop.rs`, and the first values are not
-current):
+`recorded_loop_policy_identities`). They moved twice within L4 and the
+earlier values are not current: once when `NativeCardModel` joined
+`native_loop.rs`, and again in the review fixes (`7634237c`), when the
+choice-to-decision mapping moved into `loop_cards.rs`, Plan selection took
+`max_sub_needs`, and `NativeCardModel` moved out to
+`native_loop/card_model.rs`:
 
 | Task | Policy |
 | --- | --- |
-| Core loop semantics | `3b919cb0193f7bcdea4f58a23d7543ff6e980d7da38aec474035e5798b031357` |
-| `airk.context_split.v1` | `42669ee164c7a620926274a1efe6f0597ca971c7c52fecf20e8d7f0b0c873ccc` |
-| `airk.context_plan.v1` | `28c43b34d4859710908dde7fe5e2c3fd390027d01af82e6f67021626b286a0d6` |
-| `airk.context_coverage.v1` | `5eb717cf1d4c6b3484e77c1c275bf93e4e85ebbda0ea34c1a50357e9354fe1a7` |
-| `airk.context_follow_up.v1` | `a3bbaf848d2c2e983f24e8af0a4627dc7e8f1e53730dc2bbdec81c7d51d86781` |
+| Core loop semantics | `0da27971742ec98aa9f4651587a43149a54f3fec5c5a027933774ec785d2f274` |
+| `airk.context_split.v1` | `c63c95f9771fd72a3015c32b927a1498c2da82d7252dcd6c8976b9e7be622676` |
+| `airk.context_plan.v1` | `472634155dbf5b16fe3d65fe25959f5bca7dada2fbedb144cacca71279ce2002` |
+| `airk.context_coverage.v1` | `32c7f08cf11cf35aaf4d5f284ad8f03e10e970651c04f7261995a66226c4dd20` |
+| `airk.context_follow_up.v1` | `ce541ca1056959b09b7725c14ef5b0a4bcf6c53dfc54fa01bb5904f523a91c15` |
+| Batched Focus over the release pair policy | `f67a532ba7b48e2980afcdd8db6bdde555536e58a2146627302128acc68cad7d` |
 
 **Rosters.** Kernel code proposes every card; this owner never adds, drops
 or rewrites one. Before compile it checks each segment's shape beyond Core's
@@ -240,3 +244,21 @@ and binds its single Calibration asset to a zero-rule `LoopCalibrationSet`
 (one entry per card task, in card-task order); the emitter recomputes the
 manifest. `Scorer::loop_calibration()` returns the set authenticated at open;
 the inference lane looks up one card task's entry in it.
+
+**Decision mapping.** `loop_cards::outcomes` turns each segment's choice
+into its advice outcome: one accepted card (Plan: several, in chosen order)
+by text digest with its rule and margin, or the abstention and its reason.
+It lives here, so the mapping is part of every card policy identity (review
+L4).
+
+**Batched Focus (`loop_focus.rs`).** A batch receipt records
+`loop_focus::policy_digest(pair policy)` =
+`framed_digest(b"airk.arbiter.loop-focus-batch-policy/1", [pair policy, LF
+source of loop_focus.rs, Core loop semantics])`, so a change to batched
+ranking or the batch receipt moves the identity recorded on the receipt it
+changes, while the pair policy and the closed CPU Focus row stay put.
+`loop_focus::rank` orders a complete batch's scored prefix by relevance
+(ties to the lower index), then the unscored tail in canonical order.
+
+**Plan limit.** `select` takes the request's `max_sub_needs` (clamped to
+1..=4); Plan never chooses more (review M2).

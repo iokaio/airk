@@ -452,3 +452,12 @@ Consequences recorded elsewhere:
   and service callers until Answer v2 is deleted, but no runtime admission
   path selects them, so an option-B or SoftwareEvidenceV1 profile now
   refuses at admission.
+
+**Review closure (L4 review L2, 22 November 2026).** The first control
+asserted the live hash and then that it differed from the historical ones,
+which only restated constants, and did not pin the new row. The control now
+pins the row `e0575e9418adc5340f741aaf039488e7ddd77349b962f242817630b09bc751a1`, and
+`scripts/arbiter/evaluation/runtime_row_replay/replay.py` reproduces the three
+inverse replays above from Git history and the retained
+`l4-runtime-hooks.patch` (8 checks, exit 0; receipt
+`answer-loop/L4/proof/replay-receipt.txt`). Closed in `c6073f70`.
