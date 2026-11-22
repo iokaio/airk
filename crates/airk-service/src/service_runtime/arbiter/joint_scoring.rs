@@ -122,6 +122,8 @@ impl StageOwner {
             application.scope == request.scope,
             "joint assessment source identity changed"
         );
+        #[cfg(feature = "local-inference")]
+        let _model_use = self.begin_model_use(supervisor).await?;
         let configuration = self.read_configuration()?;
         if configuration.revision() != request.scope.configuration_revision
             || !configuration.eligible(request.scope.index_id, Task::ContextAction)

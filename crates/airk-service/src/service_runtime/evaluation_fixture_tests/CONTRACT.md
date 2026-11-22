@@ -85,10 +85,15 @@ claims release qualification.
 - `cuda_answer::same_install`
   (`actual_private_arbiter_fixture_cuda_same_install`): reopens, or freshly
   creates (`AIRK_ARBITER_EVALUATION_CUDA_SEED_CPU=all|focus|none`), the CPU
-  fixture's installation. It adds one unqualified CUDA Compact or Large
-  Context profile with a new manifest and a CPU twin of the same model. The
-  reviewed graph result must name that exact manifest. The CPU roster stays
-  the restart identity.
+  fixture's installation. It adds one or two unqualified CUDA Context
+  profiles (at most one Compact and one Large), each with a new manifest and a
+  CPU twin of the same model. With one entry, the reviewed graph result must
+  name that exact manifest. With `AIRK_ARBITER_EVALUATION_CUDA_REVIEWS` (a JSON
+  list of `{path, sha256}`, one per roster entry in order), each entry's pin is
+  its pass-1 graph diagnostic receipt's bounded policy, which the profile's
+  placement must name; two entries require it. The CPU roster stays the
+  restart identity. The lifetime switches between the two entries through
+  ordinary Configure.
 - `cuda_answer::cs1` (`actual_private_arbiter_fixture_change_set_1_cuda`, plus
   the emitter `emit_private_cuda_provisional_read_variants`): runs the
   change-set lifetime with exactly one CUDA Context variant and no Focus

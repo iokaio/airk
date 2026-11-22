@@ -35,9 +35,15 @@ pub(super) struct State {
         feature = "test-support",
         feature = "gpu-cuda"
     ))]
-    pub(super) cuda_answer: Option<Arc<super::evaluation::CudaAnswerEvaluation>>,
+    /// Private CUDA evaluation entries keyed by profile manifest: at most one
+    /// per Context model, all bound to the same lease and gate. Only the
+    /// selected entry is ever resident; a switch releases the old one first.
+    pub(super) private_gpu:
+        std::collections::BTreeMap<Sha256Digest, Arc<super::evaluation::CudaAnswerEvaluation>>,
     #[cfg(all(test, feature = "test-support"))]
     pub(super) warm_observer: Option<super::warm_observer::Observer>,
+    /// Idle unload state (plan 12.5).
+    pub(super) idle: super::idle::Idle,
 }
 impl State {
     fn has_private_cuda_assets(&self, manifest: Sha256Digest) -> bool {
@@ -48,9 +54,7 @@ impl State {
             feature = "gpu-cuda"
         ))]
         {
-            self.cuda_answer
-                .as_ref()
-                .is_some_and(|answer| answer.manifest == manifest)
+            self.private_gpu.contains_key(&manifest)
         }
         #[cfg(not(all(
             windows,
@@ -87,9 +91,10 @@ impl Default for State {
                 feature = "test-support",
                 feature = "gpu-cuda"
             ))]
-            cuda_answer: None,
+            private_gpu: std::collections::BTreeMap::new(),
             #[cfg(all(test, feature = "test-support"))]
             warm_observer: None,
+            idle: super::idle::Idle::default(),
         }
     }
 }
@@ -417,6 +422,102 @@ pub(super) async fn release_actual(
         .context("Actual Arbiter memory charge did not finish draining")??;
     Ok(())
 }
+/// The resident a warm must release before it reserves: a different active
+/// profile of the same stage that holds private device memory. Any other
+/// switch keeps the ordinary budget-driven drain (product device variants
+/// drain in device management before their own load).
+pub(super) fn device_switch_release(
+    prior: Option<Sha256Digest>,
+    incoming: Sha256Digest,
+    prior_private_device: bool,
+) -> Option<Sha256Digest> {
+    prior.filter(|old| *old != incoming && prior_private_device)
+}
+
+/// Private entries a GPU-use revocation releases: every entry the native owner
+/// holds active or warming, and the selected entry while its operation runs.
+#[cfg(any(test, all(windows, target_arch = "x86_64", feature = "test-support", feature = "gpu-cuda")))]
+pub(super) fn private_release_targets(
+    entries: impl IntoIterator<Item = Sha256Digest>,
+    active: Option<Sha256Digest>,
+    warming: Option<Sha256Digest>,
+    selected_in_progress: Option<Sha256Digest>,
+) -> Vec<Sha256Digest> {
+    let mut targets: Vec<_> = entries
+        .into_iter()
+        .filter(|manifest| {
+            active == Some(*manifest)
+                || warming == Some(*manifest)
+                || selected_in_progress == Some(*manifest)
+        })
+        .collect();
+    targets.sort();
+    targets.dedup();
+    targets
+}
+
+struct DrainContext<'a, 'b> {
+    stage: Stage,
+    expected: &'a Configuration,
+    configuration: &'a Arc<airk_store::service::arbiter::ConfigurationStore>,
+    shared: &'a Arc<Mutex<State>>,
+    serial: u64,
+    cancel: &'a CancellationToken,
+    store: &'a Arc<AssetStore>,
+    rollback_profile: Option<&'a Profile>,
+    rollback_pins: &'b mut Vec<PinnedAssets>,
+    admission: Option<&'a DeferredAdmission>,
+}
+
+/// Releases the prior resident and observes its native release and final
+/// charge drain. A store-backed prior keeps its verified files pinned for
+/// rollback; a private CUDA prior keeps its held descriptors instead.
+async fn drain_prior(
+    handle: &Handle,
+    old: Sha256Digest,
+    private_old: bool,
+    context: DrainContext<'_, '_>,
+    reason: &str,
+) -> Result<()> {
+    let DrainContext {
+        stage,
+        expected,
+        configuration,
+        shared,
+        serial,
+        cancel,
+        store,
+        rollback_profile,
+        rollback_pins,
+        admission,
+    } = context;
+    admitted_current(configuration, expected, stage, cancel, admission)?;
+    if !private_old {
+        let rollback = rollback_profile
+            .filter(|profile| profile.manifest == old)
+            .context("Arbiter prior disk rollback is unproven; its resident was preserved")?;
+        // Keep the old verified files pinned through new activation/rollback.
+        let rollback = rollback.clone();
+        let rollback_store = store.clone();
+        rollback_pins.push(
+            super::assets::owned_asset_operation(async move { rollback_store.pin(&rollback) })
+                .await?,
+        );
+    }
+    admitted_current(configuration, expected, stage, cancel, admission)?;
+    let release = handle.resident(old)?.reservation().release_observer();
+    phase(shared, serial, Availability::Draining, reason)?;
+    release_actual(handle, old, release, Instant::now() + Duration::from_secs(30)).await?;
+    phase(
+        shared,
+        serial,
+        Availability::Requested,
+        "Prior native session and its actual final charge were released; admitting the selected cached warm.",
+    )?;
+    admitted_current(configuration, expected, stage, cancel, admission)?;
+    Ok(())
+}
+
 async fn warm(
     profile: ExecutionProfile,
     source: Box<dyn airk_retrieval::arbiter::runtime::AssetSource + Send>,
@@ -442,7 +543,7 @@ async fn warm(
     #[cfg(all(windows, target_arch = "x86_64", feature = "test-support", feature = "gpu-cuda"))]
     let cuda_answer = shared.lock()
         .map_err(|_| anyhow::anyhow!("private CUDA Answer lifecycle unavailable"))?
-        .cuda_answer.as_ref()
+        .private_gpu.get(&manifest)
         .filter(|answer| answer.manifest == manifest)
         .cloned()
         .map(|answer| -> Result<_> { let grant = super::evaluation::private_gpu_grant(&answer.devices)?; Ok((answer, grant)) })
@@ -506,49 +607,93 @@ async fn warm(
         Availability::Verifying,
         "Verifying complete compiled Arbiter asset closure.",
     )?;
-    let reservation = match management
-        .reserve(host_bytes)
+    // A private device resident never shares the GPU with the next profile of
+    // its stage: it is released, its release observed, and only then is the
+    // new one reserved and warmed (plan 12.5.2 item 4).
+    let prior = existing
+        .as_ref()
+        .map(|handle| handle.observation_for(stage))
+        .transpose()?
+        .and_then(|observation| observation.active_profile);
+    let prior_private = prior.is_some_and(|old| {
+        shared
+            .lock()
+            .is_ok_and(|state| state.has_private_cuda_assets(old))
+    });
+    let device_switch = device_switch_release(prior, manifest, prior_private);
+    let reservation = if let Some(old) = device_switch {
+        let handle = existing
+            .as_ref()
+            .context("Arbiter device switch has no prior resident to drain")?;
+        #[cfg(all(test, feature = "test-support"))]
+        let released_at = Instant::now();
+        drain_prior(
+            handle,
+            old,
+            prior_private,
+            DrainContext {
+                stage,
+                expected,
+                configuration,
+                shared,
+                serial,
+                cancel,
+                store,
+                rollback_profile,
+                rollback_pins: &mut *rollback_pins,
+                admission,
+            },
+            "Switching device profiles; draining the old native session and its actual final memory charge before the new one is reserved, so both are never resident together.",
+        )
         .await
-    {
-        Ok(reservation) => reservation,
-        Err(original) => {
-            admitted_current(configuration, expected, stage, cancel, admission)?;
-            let handle = existing
-                .as_ref()
-                .context("Arbiter warm has no prior resident to drain")?;
-            let old=handle.observation_for(stage)?.active_profile.filter(|old|*old!=manifest)
-                .context("Arbiter warm cannot fit its new charge and has no distinct resident to release")?;
-            let rollback = rollback_profile
-                .filter(|profile| profile.manifest == old)
-                .context("Arbiter prior disk rollback is unproven; its resident was preserved")?;
-            // Keep the old verified files pinned through new activation/rollback.
-            let rollback = rollback.clone();
-            let rollback_store = store.clone();
-            rollback_pins.push(
-                super::assets::owned_asset_operation(async move { rollback_store.pin(&rollback) })
-                    .await?,
-            );
-            admitted_current(configuration, expected, stage, cancel, admission)?;
-            let release = handle.resident(old)?.reservation().release_observer();
-            phase(
-                shared,
-                serial,
-                Availability::Draining,
-                "The budget cannot retain both profiles; draining the old native session and its actual final memory charge while verified rollback assets remain pinned.",
-            )?;
-            release_actual(handle,old,release,Instant::now()+Duration::from_secs(30)).await
-                .with_context(||format!("New profile reservation refused ({original:#}); prior resident drain incomplete"))?;
-            phase(
-                shared,
-                serial,
-                Availability::Requested,
-                "Prior native session and its actual final charge were released; admitting the selected cached warm.",
-            )?;
-            admitted_current(configuration, expected, stage, cancel, admission)?;
-            management
-                .reserve(host_bytes)
+        .context("Device profile switch: prior resident drain incomplete")?;
+        #[cfg(all(test, feature = "test-support"))]
+        if let Some(observation) = observation.as_mut() {
+            observation.released_prior = Some(old);
+            observation.release_ms = u64::try_from(released_at.elapsed().as_millis()).ok();
+        }
+        management
+            .reserve(host_bytes)
+            .await
+            .context("New device profile cannot fit after actual prior charge release")?
+    } else {
+        match management.reserve(host_bytes).await {
+            Ok(reservation) => reservation,
+            Err(original) => {
+                admitted_current(configuration, expected, stage, cancel, admission)?;
+                let handle = existing
+                    .as_ref()
+                    .context("Arbiter warm has no prior resident to drain")?;
+                let old = handle
+                    .observation_for(stage)?
+                    .active_profile
+                    .filter(|old| *old != manifest)
+                    .context("Arbiter warm cannot fit its new charge and has no distinct resident to release")?;
+                drain_prior(
+                    handle,
+                    old,
+                    prior_private && prior == Some(old),
+                    DrainContext {
+                        stage,
+                        expected,
+                        configuration,
+                        shared,
+                        serial,
+                        cancel,
+                        store,
+                        rollback_profile,
+                        rollback_pins: &mut *rollback_pins,
+                        admission,
+                    },
+                    "The budget cannot retain both profiles; draining the old native session and its actual final memory charge while verified rollback assets remain pinned.",
+                )
                 .await
-                .context("New profile still cannot fit after actual prior charge release")?
+                .with_context(|| format!("New profile reservation refused ({original:#}); prior resident drain incomplete"))?;
+                management
+                    .reserve(host_bytes)
+                    .await
+                    .context("New profile still cannot fit after actual prior charge release")?
+            }
         }
     };
     let release = reservation.release_observer();
@@ -1762,6 +1907,33 @@ impl StageOwner {
         }
         self.status()
     }
+    /// Counts one model call of this stage for the idle rule (plan 12.5). The
+    /// first call after an idle unload starts the reload and is answered at
+    /// once from the current, not yet Ready, stage: it never waits for the
+    /// reload and so never times out because of it.
+    pub(super) async fn begin_model_use(
+        &self,
+        supervisor: &Supervisor,
+    ) -> Result<super::idle::UseGuard> {
+        let start = super::idle::begin_use(&self.lifecycle)?;
+        if start.reload {
+            self.restore_verified(supervisor).await?;
+        }
+        Ok(start.guard)
+    }
+    /// Sets this stage's idle unload time; `None` or zero never unloads.
+    /// Only the private evaluation sets it today; the product setting is a
+    /// persisted-configuration change recorded as a follow-up.
+    #[cfg(feature = "test-support")]
+    pub(super) fn set_idle_unload(&self, timeout: Option<Duration>) -> Result<()> {
+        self.lifecycle
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Arbiter lifecycle unavailable"))?
+            .idle
+            .timeout = timeout;
+        super::idle::ensure_watch(&self.lifecycle);
+        Ok(())
+    }
     pub(in crate::service_runtime) async fn restore_verified(
         &self,
         supervisor: &Supervisor,
@@ -1789,7 +1961,13 @@ impl StageOwner {
         let Ok(profile) = self.execution_profile(manifest) else {
             return Ok(());
         };
-        if self.catalog_only_held(manifest)?
+        let private_device = self
+            .lifecycle
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Arbiter lifecycle unavailable"))?
+            .has_private_cuda_assets(manifest);
+        if private_device
+            || self.catalog_only_held(manifest)?
             || self.assets.phase(profile.description())? == Some(Phase::Ready)
         {
             self.validate_enrollments(&configuration)?;
@@ -2062,6 +2240,8 @@ struct WarmCapture {
     native_revision: Option<u64>,
     cancel: CancellationToken,
     captured_configure_revision: u64,
+    released_prior: Option<Sha256Digest>,
+    release_ms: Option<u64>,
     _guard: super::warm_observer::Guard,
 }
 #[cfg(all(test, feature = "test-support"))]
@@ -2084,6 +2264,8 @@ impl WarmCapture {
             native_profile: None,
             native_revision: None,
             captured_configure_revision,
+            released_prior: None,
+            release_ms: None,
             _guard: guard,
         })
     }
@@ -2122,6 +2304,8 @@ impl WarmCapture {
                 .as_ref()
                 .err()
                 .map(|error| format!("{error:#}").chars().take(1024).collect()),
+            released_prior: self.released_prior,
+            release_ms: self.release_ms,
         });
         self._guard.complete();
     }
@@ -2130,6 +2314,48 @@ impl WarmCapture {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn device_switch_releases_a_different_resident_before_reserving() {
+        let digest = |byte| Sha256Digest::from_bytes([byte; 32]);
+        let (compact, large, cpu) = (digest(1), digest(2), digest(3));
+        // A private device resident is released before the next profile loads,
+        // whether that profile is the other device entry or a CPU profile.
+        assert_eq!(device_switch_release(Some(compact), large, true), Some(compact));
+        assert_eq!(device_switch_release(Some(large), compact, true), Some(large));
+        assert_eq!(device_switch_release(Some(large), cpu, true), Some(large));
+        // The same profile, no resident, or a CPU resident: no early release;
+        // the budget-driven drain still applies.
+        assert_eq!(device_switch_release(Some(large), large, true), None);
+        assert_eq!(device_switch_release(None, large, true), None);
+        assert_eq!(device_switch_release(Some(cpu), large, false), None);
+        assert_eq!(device_switch_release(Some(cpu), digest(4), false), None);
+    }
+    #[test]
+    fn gpu_revocation_releases_every_private_entry_the_owner_holds() {
+        let digest = |byte| Sha256Digest::from_bytes([byte; 32]);
+        let (compact, large, other) = (digest(1), digest(2), digest(9));
+        let entries = [large, compact];
+        assert_eq!(
+            private_release_targets(entries, Some(compact), None, None),
+            vec![compact]
+        );
+        // A warm of the other entry in progress is released too.
+        assert_eq!(
+            private_release_targets(entries, Some(compact), Some(large), None),
+            vec![compact, large]
+        );
+        // The selected entry whose operation is still running is a target.
+        assert_eq!(
+            private_release_targets(entries, None, None, Some(large)),
+            vec![large]
+        );
+        // A resident that is not a private entry is never touched here.
+        assert!(private_release_targets(entries, Some(other), Some(other), None).is_empty());
+        assert_eq!(
+            private_release_targets(entries, Some(large), Some(large), Some(large)),
+            vec![large]
+        );
+    }
     #[test]
     fn initialization_status_formatter_retains_actual_native_observation_and_unknown_drain_phase()
     -> Result<()> {

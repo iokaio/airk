@@ -3,8 +3,10 @@
 //!
 //! The CPU roster stays the installation's identity: a same-install restart pins
 //! the original Ready, Closed and final status exactly as the CPU selector does.
-//! One extra CUDA Context profile (Compact or Large) joins the evaluation catalog
-//! only; its assets are held as read descriptors and never seeded into the store.
+//! One or two extra CUDA Context profiles (at most one Compact and one Large)
+//! join the evaluation catalog only; their assets are held as read descriptors
+//! and never seeded into the store. With two, the lifetime switches between them
+//! through ordinary Configure, and only the selected one is ever resident.
 
 use super::*;
 
@@ -87,10 +89,10 @@ fn require_cuda_profile(cpu: &[Facts<'_>], cuda: Facts<'_>) -> Result<()> {
     Ok(())
 }
 
-/// One pinned CUDA roster entry, prepared with the same checks as each CPU
-/// roster entry: pinned profile bytes, authenticated asset closure under
-/// artifacts and held read descriptors of the original bytes.
-fn prepare_cuda(path: &Path, expected: Sha256Digest) -> Result<(Vec<u8>, Prepared)> {
+/// The pinned CUDA roster (one or two entries), each prepared with the same
+/// checks as each CPU roster entry: pinned profile bytes, authenticated asset
+/// closure under artifacts and held read descriptors of the original bytes.
+fn prepare_cuda(path: &Path, expected: Sha256Digest) -> Result<(Vec<u8>, Vec<Prepared>)> {
     let artifacts = artifact_root()?;
     let (_parent, mut file) = source_file(path, &artifacts)?;
     let raw_inputs = bounded(&mut file)?;
@@ -98,13 +100,20 @@ fn prepare_cuda(path: &Path, expected: Sha256Digest) -> Result<(Vec<u8>, Prepare
         sha(&raw_inputs) == expected,
         "private CUDA roster hash differs"
     );
-    let mut inputs: Vec<super::super::Input> = serde_json::from_slice(&raw_inputs)?;
+    let inputs: Vec<super::super::Input> = serde_json::from_slice(&raw_inputs)?;
     ensure!(
-        inputs.len() == 1,
-        "private CUDA roster names exactly one profile"
+        (1..=2).contains(&inputs.len()),
+        "private CUDA roster names one or two profiles"
     );
-    let input = inputs.remove(0);
-    let (_parent, mut file) = source_file(&input.profile, &artifacts)?;
+    let mut prepared = Vec::new();
+    for input in &inputs {
+        prepared.push(prepare_cuda_entry(input, &artifacts)?);
+    }
+    Ok((raw_inputs, prepared))
+}
+
+fn prepare_cuda_entry(input: &super::super::Input, artifacts: &Path) -> Result<Prepared> {
+    let (_parent, mut file) = source_file(&input.profile, artifacts)?;
     let raw = bounded(&mut file)?;
     ensure!(
         sha(&raw) == input.profile_sha256,
@@ -114,7 +123,7 @@ fn prepare_cuda(path: &Path, expected: Sha256Digest) -> Result<(Vec<u8>, Prepare
     profile.validate()?;
     let root = input.assets.canonicalize()?;
     ensure!(
-        root.starts_with(&artifacts),
+        root.starts_with(artifacts),
         "private CUDA model assets leave artifacts"
     );
     let assets = OpenedDirectory::open(&root)?;
@@ -139,17 +148,81 @@ fn prepare_cuda(path: &Path, expected: Sha256Digest) -> Result<(Vec<u8>, Prepare
         );
         sources.insert(asset.name.clone(), source);
     }
-    Ok((
-        raw_inputs,
-        Prepared {
-            profile,
-            raw,
-            sha256: input.profile_sha256,
-            sources,
-            _profile_file: file,
-            _assets: assets,
-        },
-    ))
+    Ok(Prepared {
+        profile,
+        raw,
+        sha256: input.profile_sha256,
+        sources,
+        _profile_file: file,
+        _assets: assets,
+    })
+}
+
+/// One pinned review receipt per CUDA roster entry, in roster order, from
+/// `AIRK_ARBITER_EVALUATION_CUDA_REVIEWS`: a JSON list of `{path, sha256}`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReviewPin {
+    path: PathBuf,
+    sha256: Sha256Digest,
+}
+
+/// The graph inputs of every CUDA entry: the protected review receipts when
+/// they are named, else the original single reviewed graph result.
+fn cuda_graphs(
+    artifacts: &Path,
+    cuda: &[Prepared],
+    expires: Instant,
+) -> Result<Vec<Input>> {
+    let Some(reviews) = std::env::var_os("AIRK_ARBITER_EVALUATION_CUDA_REVIEWS") else {
+        ensure!(
+            cuda.len() == 1,
+            "two CUDA entries require AIRK_ARBITER_EVALUATION_CUDA_REVIEWS"
+        );
+        let manifest = cuda[0].profile.manifest;
+        return Ok(vec![Input::read_matching(artifacts, expires, |named| {
+            ensure!(
+                named == manifest,
+                "reviewed CUDA graph result names another profile"
+            );
+            Ok(())
+        })?]);
+    };
+    let reviews: Vec<ReviewPin> = serde_json::from_str(
+        reviews
+            .to_str()
+            .context("CUDA review list is not Unicode")?,
+    )?;
+    ensure!(
+        reviews.len() == cuda.len(),
+        "one CUDA review receipt per CUDA roster entry"
+    );
+    let adapter: [u8; 16] =
+        serde_json::from_str(&std::env::var("AIRK_ARBITER_EVALUATION_CUDA_ADAPTER_UUID")?)?;
+    reviews
+        .iter()
+        .zip(cuda)
+        .map(|(review, entry)| {
+            Input::read_review(
+                artifacts,
+                &review.path,
+                review.sha256,
+                &entry.profile,
+                adapter,
+                expires,
+            )
+        })
+        .collect()
+}
+
+/// Two CUDA entries are one Compact and one Large, never two of one model.
+fn require_distinct_models(cuda: &[Facts<'_>]) -> Result<()> {
+    let models: BTreeSet<_> = cuda.iter().map(|facts| facts.model).collect();
+    ensure!(
+        models.len() == cuda.len(),
+        "the CUDA roster holds at most one profile per Context model"
+    );
+    Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -217,22 +290,23 @@ async fn run(
     );
     let (inputs, mut prepared) = prepare(&input, expected)?;
     let (cuda_inputs, cuda) = prepare_cuda(&cuda_input, cuda_expected)?;
-    require_cuda_profile(
-        &prepared
+    let cpu_facts = prepared
+        .iter()
+        .map(|entry| Facts::of(&entry.profile))
+        .collect::<Vec<_>>();
+    for entry in &cuda {
+        require_cuda_profile(&cpu_facts, Facts::of(&entry.profile))?;
+    }
+    require_distinct_models(
+        &cuda
             .iter()
             .map(|entry| Facts::of(&entry.profile))
             .collect::<Vec<_>>(),
-        Facts::of(&cuda.profile),
     )?;
-    let cuda_manifest = cuda.profile.manifest;
-    let cuda_model = cuda.profile.model;
-    let graph = Input::read_matching(&artifacts, started + Duration::from_secs(seconds), |manifest| {
-        ensure!(
-            manifest == cuda_manifest,
-            "reviewed CUDA graph result names another profile"
-        );
-        Ok(())
-    })?;
+    let cuda_manifests: Vec<Sha256Digest> =
+        cuda.iter().map(|entry| entry.profile.manifest).collect();
+    let cuda_models: Vec<ModelChoice> = cuda.iter().map(|entry| entry.profile.model).collect();
+    let graphs = cuda_graphs(&artifacts, &cuda, started + Duration::from_secs(seconds))?;
     let parent_pin = OpenedDirectory::open(&parent)?;
     let work_pin = crate::ipc::endpoint::create_root_at(
         &parent_pin,
@@ -266,9 +340,9 @@ async fn run(
         LIMIT,
         false,
     )?;
-    // CPU roster first in its original order, then the CUDA profile, so the
+    // CPU roster first in its original order, then the CUDA profiles, so the
     // configuration emitter finds every manifest in this lifetime's Ready.
-    prepared.push(cuda);
+    prepared.extend(cuda);
     for (index, entry) in prepared.iter().enumerate() {
         crate::ipc::private_record::write_private(
             &work,
@@ -290,9 +364,12 @@ async fn run(
             "cpu_seed": format!("{seed:?}"),
             "cpu_inputs_sha256": expected,
             "cuda_inputs_sha256": cuda_expected,
-            "cuda_manifest": cuda_manifest,
-            "cuda_model": cuda_model,
-            "graph_sha256": std::env::var("AIRK_ARBITER_EVALUATION_CUDA_GRAPH_SHA256")?,
+            "cuda_manifests": cuda_manifests,
+            "cuda_models": cuda_models,
+            "graph_pins": graphs
+                .iter()
+                .map(|graph| graph.pin)
+                .collect::<Vec<_>>(),
         }),
     )?;
     let lease = airk_store::service::ServiceLease::acquire(&control)?;
@@ -357,21 +434,38 @@ async fn run(
         } else {
             EvaluationOwner::new(lease, gate, profiles)?
         };
-        let entry = source
-            .iter()
-            .find(|entry| entry.profile.manifest == graph.manifest)
-            .context("private CUDA Answer asset profile missing")?;
-        owner = owner.with_cuda_answer(graph.manifest, graph.adapter, graph.graph, |asset| {
-            entry
-                .sources
-                .get(&asset.name)
-                .context("original private CUDA asset descriptor missing")?
-                .try_clone()
-                .map_err(Into::into)
-        })?;
+        let mut readers = Vec::new();
+        for graph in &graphs {
+            let entry = source
+                .iter()
+                .find(|entry| entry.profile.manifest == graph.manifest)
+                .context("private CUDA Answer asset profile missing")?;
+            readers.push(move |asset: &Asset| -> Result<std::fs::File> {
+                entry
+                    .sources
+                    .get(&asset.name)
+                    .context("original private CUDA asset descriptor missing")?
+                    .try_clone()
+                    .map_err(Into::into)
+            });
+        }
+        let cuda_manifests: Vec<Sha256Digest> = graphs.iter().map(|graph| graph.manifest).collect();
+        owner = owner.with_private_gpu(
+            graphs
+                .into_iter()
+                .zip(readers.iter_mut())
+                .map(|(graph, reader)| crate::service_runtime::arbiter::evaluation::PrivateGpuEntry {
+                    manifest: graph.manifest,
+                    adapter: graph.adapter,
+                    graph: graph.graph,
+                    source: reader,
+                })
+                .collect(),
+        )?;
         if let Some(seed) = seed {
             for entry in source.iter().filter(|entry| {
-                entry.profile.manifest != graph.manifest && seed.includes(entry.profile.model)
+                !cuda_manifests.contains(&entry.profile.manifest)
+                    && seed.includes(entry.profile.model)
             }) {
                 owner.seed(entry.profile.manifest, &mut |asset| {
                     entry
@@ -683,6 +777,19 @@ fn same_install_cuda_profile_must_be_a_distinct_unqualified_cuda_context_profile
     ] {
         assert!(require_cuda_profile(&cpu, refused).is_err());
     }
+    // Two CUDA entries are one Compact and one Large; two of one model are refused.
+    require_distinct_models(&[compact, large])?;
+    require_distinct_models(&[large])?;
+    assert!(
+        require_distinct_models(&[
+            large,
+            Facts {
+                manifest: digest(5),
+                ..large
+            }
+        ])
+        .is_err()
+    );
     // Refused: a roster without a CPU twin, or with a device profile of its own.
     assert!(require_cuda_profile(&cpu[..2], large).is_err());
     let mut with_device = cpu;

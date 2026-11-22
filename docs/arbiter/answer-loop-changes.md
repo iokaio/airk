@@ -448,3 +448,111 @@ Further entries are added as implementation proceeds.
   retained for continuation or audit.
 - **Follow-up owner:** L2b, keep custody in the Answer job table keyed by the
   log digest.
+
+### 22. The Context model switches within one lifetime, never resident together
+
+- **Step:** L5 phase C.
+- **What:**
+  - The evaluation fixture's single CUDA slot is now a map keyed by manifest.
+    One lifetime may attach two CUDA Context profiles, one Compact and one
+    Large, on the same lease, gate and adapter.
+  - Switching between them is an ordinary Configure. Before a warm reserves,
+    it releases a different private CUDA resident of the same stage, observes the release and the final charge drain,
+    and only then loads the new model. The existing rollback path reloads
+    the old model if the new one fails.
+  - A protected FP16 profile carries no graph result. Its review pin is the
+    bounded policy from its pass-1 graph diagnostic receipt.
+  - GPU revocation releases every private entry the owner holds.
+- **Why:** plan 12.5.2 item 4. Both gate arms then run on one installation
+  and one set of indexes without a restart, and each arm's peak memory is its
+  own model's.
+- **Measured** on the RTX A6000, in one process and one lease, through the
+  private Answer open path, with 20 CAL panel rows per phase:
+
+  | Phase | Reload (cold open) | First call | Warm median | Peak GPU memory | Release |
+  | --- | --- | --- | --- | --- | --- |
+  | Compact FP16 | 7.9 s | 420 ms | 265 ms | 6.03 GiB | 0.10 s |
+  | Large FP16 | 16.9 s | 732 ms | 589 ms | 14.02 GiB | 0.16 s |
+  | Compact FP16 again | 7.8 s | 325 ms | 270 ms | 6.03 GiB | 0.10 s |
+
+  - The second Compact phase gave bit-identical scores to the first.
+  - The process's sampled peak was 14.24 GiB, below the 20.05 GiB sum of the
+    two models, so they were never resident together.
+  - The rows are about 1,400 tokens each.
+- **Where:** service `arbiter/lifecycle.rs` (`device_switch_release`,
+  `drain_prior`), `arbiter/evaluation.rs` (`with_private_gpu`), the fixture's
+  `cuda_answer/same_install.rs`; the service arbiter `CONTRACT.md` section
+  "Context switch within one lifetime". Receipt: `L5C/runs/s2-switch.json`.
+
+### 23. The short trial ran on the scorer path, not on the evaluation indexes
+
+- **Step:** L5 phase C. This changes plan 12.5.2 item 6 for now.
+- **What:** the Compact, Large, Compact trial of entry 22 ran as an ignored
+  retrieval test (`l5c_switch`) on frozen CAL panel rows, not as loop calls
+  in a service lifetime on the evaluation indexes.
+- **Why:** three things the indexed trial needs are not ready:
+  - the loop over MCP v3, which L3 is switching now;
+  - profiles that admit the loop's card tasks, which wait on L4's card
+    policies;
+  - a rebuilt fixture image and a two-entry FP16 asset directory.
+- **Still to do before LG:** one indexed lifetime with both FP16 entries,
+  once L3 and L4 land. The service code for it is built and unit-tested.
+
+### 24. Idle unload: built, with the setting reachable only from the evaluation
+
+- **Step:** L5 phase C.
+- **What:**
+  - Each stage's model unloads after 30 minutes with no model call (plan
+    12.5). The unload runs only on a settled Ready stage with no call in
+    flight, claims the lifecycle like Configure, and uses the ordinary
+    release and drain.
+  - The first call after an unload starts the reload and returns at once
+    without advice. The Answer runs on reads or without the model, so a
+    reload never blocks it or times it out.
+  - Status shows Draining during the unload, then Requested with the
+    reason.
+- **Changed from the plan:**
+  - The per-stage time can be set only through the private evaluation for
+    now.
+  - A product setting and an explicit pre-warm request change persisted
+    configuration and the wire, so they wait for a contract decision.
+- **Reload times** for the admission estimator (L2b) are in entry 22.
+- **Where:** service `arbiter/idle.rs` and the service arbiter `CONTRACT.md`
+  section "Idle unload".
+
+### 25. The Context ladder is a Core rule; product selection does not call it yet
+
+- **Step:** L5 phase C.
+- **What:** `device::context_ladder` walks Large on the GPU, then Compact on
+  the GPU, then Compact on the CPU.
+  - Large never runs on the CPU.
+  - A step down carries the typed reasons collected so far, plus the
+    existing reserved `smaller_model_selected` reason, so the wire list does
+    not change.
+- **Changed from the plan:** product device selection does not call it yet.
+  There is no product CUDA Context route to step down from. Wiring it into
+  selection waits for the Compact FP16 product route.
+- **Where:** airk-core `arbiter/device/ladder.rs` and the Core arbiter
+  `CONTRACT.md` section "Context ladder".
+
+### 26. L5b runtime capacity: the rule is built, concurrent runs are not
+
+- **Step:** L5b.
+- **What:** the capacity rule of plan 12.5.1 is in
+  `airk_core::arbiter::device::capacity`:
+  - Auto allows at most 2 runs per stage;
+  - the reserve floor is the larger of 1.5 GB and 10% of the device;
+  - a run is added only for sustained need, and kept only with a gain of at
+    least 1.3 times and every run within budget;
+  - under pressure it sheds to one run at once, and adds runs back one at a
+    time after a quiet period.
+
+  Tests cover the floor, the gain proof, the cap and shedding under
+  injected memory pressure.
+- **Not built:** concurrent runs on one session. `Scorer` serializes every
+  run behind one session mutex in retrieval `runtime.rs`, which L4 is
+  editing now. Per-run CUDA streams need that change first.
+- **Not measured:** the gain. Measuring it without concurrent runs would need
+  a second session, which is a second copy and forbidden by 12.5.1.
+- **One copy only** already holds structurally: one resident per stage, and
+  the switch of entry 22 releases before it loads.

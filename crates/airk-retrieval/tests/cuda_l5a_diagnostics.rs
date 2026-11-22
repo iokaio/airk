@@ -858,3 +858,247 @@ fn l5a_replay() -> Result<()> {
     flush(&output, &receipt)?;
     run
 }
+/// One Context route of the L5C switch trial: its pinned profile, asset map and
+/// independently recorded pass-1 review pin (the graph diagnostic receipt's policy).
+struct SwitchRoute {
+    name: String,
+    profile: Profile,
+    source: Files,
+    pin: Sha256Digest,
+    receipt: Value,
+}
+fn switch_route(name: &str) -> Result<SwitchRoute> {
+    let upper = name.to_ascii_uppercase();
+    let (profile_path, raw_profile, profile_sha) = pinned(&format!("L5C_{upper}_PROFILE"))?;
+    let (map_path, raw_map, map_sha) = pinned(&format!("L5C_{upper}_ASSET_MAP"))?;
+    let (review_path, raw_review, review_sha) = pinned(&format!("L5C_{upper}_REVIEW"))?;
+    let profile: Profile = serde_json::from_slice(&raw_profile)?;
+    let review: Value = serde_json::from_slice(&raw_review)?;
+    ensure!(
+        review["schema"] == "airk.private.l5a-gpu/1"
+            && review["step"] == "graph"
+            && review["complete"] == true,
+        "{name} review receipt is not a complete graph diagnostic"
+    );
+    let pin: Sha256Digest = review["bounded_policy"]
+        .as_str()
+        .context("review policy missing")?
+        .parse()?;
+    Ok(SwitchRoute {
+        name: name.into(),
+        receipt: json!({"profile": {"path": profile_path, "sha256": profile_sha, "manifest": profile.manifest,
+            "id": profile.profile_id, "model": profile.model, "device_execution": profile.device_execution},
+            "asset_map": {"path": map_path, "sha256": map_sha}, "review": {"path": review_path, "sha256": review_sha},
+            "policy_pin": pin}),
+        source: files(&raw_map)?,
+        profile,
+        pin,
+    })
+}
+
+/// Waits, under the original deadline and at most 30 s, until device free
+/// memory is back within `slack` bytes of `baseline` after a release. Returns
+/// the elapsed time, the last observation and whether it settled; a release
+/// that never settles is reported, not hidden.
+fn wait_released(
+    device: &cuda::CudaDevice,
+    baseline: u64,
+    slack: u64,
+    deadline: Instant,
+) -> Result<(u128, cuda::AdapterObservation, bool)> {
+    let started = Instant::now();
+    loop {
+        let observed = device.observation(deadline)?;
+        if observed.free_bytes.saturating_add(slack) >= baseline {
+            return Ok((started.elapsed().as_micros(), observed, true));
+        }
+        if Instant::now() + Duration::from_millis(50) >= deadline
+            || started.elapsed() >= Duration::from_secs(30)
+        {
+            return Ok((started.elapsed().as_micros(), observed, false));
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// Plan 12.5.2 item 6 and design L5 5.4: the Context switch within one process
+/// and one service lease, Compact -> Large -> Compact by default. Each phase
+/// opens its route through the private Answer path, scores the same pinned CAL
+/// panel rows, releases the session and observes the device memory return
+/// before the next route opens, so the two models are never resident together.
+/// It records per phase the cold open (reload) time, per-call time, the device
+/// memory in use and the release time, and checks that repeated phases of one
+/// route give bit-identical scores.
+///
+/// ```text
+/// L5C_COMPACT_PROFILE(_SHA256), L5C_COMPACT_ASSET_MAP(_SHA256), L5C_COMPACT_REVIEW(_SHA256)
+/// L5C_LARGE_PROFILE(_SHA256),   L5C_LARGE_ASSET_MAP(_SHA256),   L5C_LARGE_REVIEW(_SHA256)
+/// L5C_PHASES (default compact,large,compact), L5A_PANEL(_SHA256), L5A_PANEL_LIMIT
+/// L5C_RELEASE_SLACK_BYTES (default 512 MiB), L5A_CONTROL_PARENT, L5A_DEADLINE_S, L5C_OUTPUT
+/// ```
+#[test]
+#[ignore = "L5C GPU: Context switch Compact -> Large -> Compact in one lease on the actual A6000"]
+fn l5c_switch() -> Result<()> {
+    let started = Instant::now();
+    let phases: Vec<String> = std::env::var("L5C_PHASES")
+        .unwrap_or_else(|_| "compact,large,compact".into())
+        .split(',')
+        .map(|v| v.trim().to_ascii_lowercase())
+        .collect();
+    ensure!(
+        !phases.is_empty() && phases.len() <= 6,
+        "L5C_PHASES names one to six phases"
+    );
+    let mut routes = BTreeMap::new();
+    for name in &phases {
+        ensure!(
+            name == "compact" || name == "large",
+            "L5C phase {name} is not compact or large"
+        );
+        if !routes.contains_key(name) {
+            routes.insert(name.clone(), switch_route(name)?);
+        }
+    }
+    let slack: u64 = std::env::var("L5C_RELEASE_SLACK_BYTES")
+        .ok()
+        .map(|v| v.parse())
+        .transpose()?
+        .unwrap_or(512 << 20);
+    let rows = panel_rows()?;
+    ensure!(!rows.is_empty(), "L5C needs at least one panel row");
+    let output = PathBuf::from(env("L5C_OUTPUT")?);
+    let mut receipt = json!({
+        "schema": "airk.private.l5c-switch/1", "complete": false, "phases_requested": phases,
+        "routes": routes.values().map(|r| (r.name.clone(), r.receipt.clone())).collect::<BTreeMap<_, _>>(),
+        "panel": env("L5A_PANEL")?, "panel_sha256": env("L5A_PANEL_SHA256")?, "rows_per_phase": rows.len(),
+        "release_slack_bytes": slack, "math_environment": math_environment(), "pid": std::process::id(),
+        "image": std::env::current_exe()?, "qualification": false, "product_admission": false,
+    });
+    write_fresh(&output, &receipt)?;
+    let mut done = Vec::new();
+    let run = (|| -> Result<()> {
+        let overall = Instant::now()
+            + Duration::from_secs(
+                std::env::var("L5A_DEADLINE_S")
+                    .ok()
+                    .map(|v| v.parse())
+                    .transpose()?
+                    .unwrap_or(900),
+            );
+        let n = native((Instant::now() + Duration::from_secs(110)).min(overall))?;
+        let adapters = n.runtime.adapters(overall)?;
+        ensure!(adapters.len() == 1, "exactly one adapter required");
+        let device = n.runtime.device(adapters[0].uuid, overall)?;
+        let baseline = device.observation(overall)?;
+        receipt["adapter_baseline"] = serde_json::to_value(&baseline)?;
+        // SAFETY: the actual exclusive lease is retained by `n` throughout.
+        let catalog = unsafe {
+            EvaluationCatalog::from_native_lease(
+                n.lease.clone(),
+                routes.values().map(|r| r.profile.clone()).collect(),
+            )?
+        };
+        let mut first_scores: BTreeMap<String, Vec<Vec<f32>>> = BTreeMap::new();
+        for (index, name) in phases.iter().enumerate() {
+            let route = &routes[name];
+            let before = device.observation(overall)?;
+            // Never resident together: the previous route's memory is back first.
+            ensure!(
+                before.free_bytes.saturating_add(slack) >= baseline.free_bytes,
+                "phase {index} ({name}) would open while the previous route still holds device memory"
+            );
+            let unbound = catalog.execution_profile(route.profile.manifest)?;
+            let plan = Scorer::private_compact_answer_capacity(&unbound, route.pin)?;
+            let load_deadline = (Instant::now() + Duration::from_secs(110)).min(overall);
+            let execution = unbound.bind_cuda_probe(device.clone(), plan, load_deadline)?;
+            let t = Instant::now();
+            let (scorer, provenance) = Scorer::open_private_compact_answer(
+                execution,
+                &route.source,
+                &[],
+                route.pin,
+                overall,
+                None,
+            )?;
+            let open_us = t.elapsed().as_micros();
+            let after_open = device.observation(overall)?;
+            let mut calls = Vec::new();
+            let mut scores = Vec::new();
+            let mut min_free = after_open.free_bytes;
+            for (ordinal, input) in &rows {
+                let deadline = (Instant::now() + Duration::from_secs(110)).min(overall);
+                let t = Instant::now();
+                let value = scorer.score_with_deadline(input, deadline)?;
+                scorer.synchronize(deadline)?;
+                let call_us = t.elapsed().as_micros() as u64;
+                let observed = device.observation(overall)?;
+                min_free = min_free.min(observed.free_bytes);
+                calls.push(json!({"ordinal": ordinal, "tokens": input.input_ids.len(),
+                    "cards": input.candidate_positions.len(), "call_us": call_us}));
+                scores.push(value);
+            }
+            let settled = scorer.device_settled();
+            let mut sorted: Vec<u64> = calls
+                .iter()
+                .skip(1)
+                .filter_map(|c| c["call_us"].as_u64())
+                .collect();
+            sorted.sort_unstable();
+            let drop_started = Instant::now();
+            drop(scorer);
+            let drop_us = drop_started.elapsed().as_micros();
+            let (wait_us, after_release, released) =
+                wait_released(&device, baseline.free_bytes, slack, overall)?;
+            let identical = first_scores.get(name).map(|first| first == &scores);
+            if identical.is_none() {
+                first_scores.insert(name.clone(), scores.clone());
+            }
+            done.push(json!({
+                "phase": index, "route": name, "manifest": route.profile.manifest,
+                "policy_identity": provenance.policy_identity(),
+                "free_before_bytes": before.free_bytes,
+                "open_us": open_us, "free_after_open_bytes": after_open.free_bytes,
+                "first_call_us": calls.first().and_then(|c| c["call_us"].as_u64()),
+                "warm_median_us": sorted.get(sorted.len() / 2), "warm_max_us": sorted.last(),
+                "min_free_during_calls_bytes": min_free,
+                "peak_device_used_bytes": baseline.free_bytes.saturating_sub(min_free),
+                "device_settled": settled,
+                "release_drop_us": drop_us, "release_wait_us": wait_us, "released": released,
+                "free_after_release_bytes": after_release.free_bytes,
+                "scores_identical_to_first_phase_of_route": identical,
+                "calls": calls, "scores": scores,
+                "host_after_phase": serde_json::to_value(host_memory())?,
+            }));
+            receipt["phases"] = json!(done);
+            flush(&output, &receipt)?;
+            ensure!(
+                released,
+                "phase {index} ({name}) release did not return device memory within 30 s"
+            );
+            ensure!(
+                identical != Some(false),
+                "phase {index} ({name}) scores differ from the first phase of its route"
+            );
+        }
+        Ok(())
+    })();
+    // Per-route peaks against their sum: a switch never holds both routes.
+    let mut peaks = BTreeMap::<String, u64>::new();
+    for phase in &done {
+        let name = phase["route"].as_str().unwrap_or_default().to_string();
+        let peak = phase["peak_device_used_bytes"].as_u64().unwrap_or_default();
+        let entry = peaks.entry(name).or_insert(0);
+        *entry = (*entry).max(peak);
+    }
+    receipt["peak_device_used_bytes_by_route"] = json!(peaks);
+    receipt["peak_device_used_bytes_sum"] = json!(peaks.values().sum::<u64>());
+    receipt["host_final"] = serde_json::to_value(host_memory())?;
+    receipt["elapsed_s"] = json!(started.elapsed().as_secs_f64());
+    receipt["process_cuda_poisoned"] = json!(cuda::process_poisoned());
+    match &run {
+        Ok(()) => receipt["complete"] = json!(true),
+        Err(error) => receipt["error"] = error_value(error),
+    }
+    flush(&output, &receipt)?;
+    run
+}

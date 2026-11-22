@@ -513,7 +513,7 @@ pub enum SelectionReason {
     GpuNotOptedIn,
     // GPU use is on and no qualified route or variant serves this model here.
     NoQualifiedGpuRoute,
-    // Reserved for the smaller-model fallback. Nothing emits it yet.
+    // The Context ladder's step from Large down to Compact (device/ladder.rs).
     SmallerModelSelected,
 }
 /// available_bytes is an actual native observation after existing real device
@@ -869,6 +869,9 @@ mod state;
 pub use state::*;
 mod disclosure;
 pub use disclosure::*;
+mod ladder;
+pub use ladder::*;
+pub mod capacity;
 
 mod receipt_runtime;
 pub use receipt_runtime::valid_advice_runtime;

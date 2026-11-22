@@ -140,6 +140,12 @@ From this folder: `python -I -B -m unittest discover -s . -p test_gpu_fixture.py
 
 ## Limits
 
-One CUDA Context profile per lifetime. Large on CUDA needs about 40 GiB of
-host reservation and a 44 GiB device envelope. Results describe this private
+`gpu_fixture.py` starts one CUDA Context profile per lifetime. The selector
+itself accepts two (one Compact and one Large, plan 12.5.2 item 4): a two-entry
+CUDA roster plus `AIRK_ARBITER_EVALUATION_CUDA_REVIEWS`, one pinned pass-1
+graph diagnostic receipt per entry. Switching between them is an ordinary
+`stage --disable` / `stage --enable`, or a direct Configure: the warm releases
+the old model before it loads the new one. The launcher options for that mode
+are not written yet. Large on CUDA needs about 40 GiB of host reservation and
+a 44 GiB device envelope. Results describe this private
 image, driver and adapter, not the installed product.

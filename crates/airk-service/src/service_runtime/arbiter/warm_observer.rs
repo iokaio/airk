@@ -44,6 +44,12 @@ pub(in crate::service_runtime) struct Record {
     pub operation_succeeded: bool,
     pub outcome: Outcome,
     pub error: Option<String>,
+    /// The different resident released before this warm reserved (device switch).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub released_prior: Option<Sha256Digest>,
+    /// Time from the start of that release to its observed drain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_ms: Option<u64>,
 }
 impl Record {
     pub fn classify(&self) -> Outcome {

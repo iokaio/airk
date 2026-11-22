@@ -27,6 +27,8 @@ mod focus_scoring;
 mod joint_ledger;
 mod joint_scoring;
 #[cfg(feature = "local-inference")]
+mod idle;
+#[cfg(feature = "local-inference")]
 mod lifecycle;
 pub(super) mod policy_delivery;
 mod read_device_status;

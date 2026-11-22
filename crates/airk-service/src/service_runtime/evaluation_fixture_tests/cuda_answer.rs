@@ -23,6 +23,9 @@ pub(super) struct Input {
     pub(super) manifest: Sha256Digest,
     pub(super) adapter: [u8; 16],
     pub(super) graph: EvaluationAnswerGraph,
+    /// The review pin the graph carries: the reviewed graph result's SHA-256,
+    /// or a protected route's pass-1 bounded policy.
+    pub(super) pin: Sha256Digest,
 }
 
 impl Input {
@@ -37,6 +40,54 @@ impl Input {
                 "exact CUDA Compact graph profile missing from the isolated fixture"
             );
             Ok(())
+        })
+    }
+
+    /// A protected-MHA route (AnswerRecipe::ProtectedMha) carries no graph
+    /// result: its review pin is the bounded policy recorded independently by
+    /// the pass-1 graph diagnostic receipt, never read back from the profile.
+    /// The profile's own placement must name that policy; the scorer checks it
+    /// again against the live session when it opens.
+    pub(super) fn read_review(
+        artifacts: &Path,
+        receipt: &Path,
+        expected: Sha256Digest,
+        profile: &Profile,
+        adapter: [u8; 16],
+        expires: Instant,
+    ) -> Result<Self> {
+        ensure!(adapter != [0; 16], "private CUDA Answer adapter identity missing");
+        let (_directory, file) = source_file(receipt, artifacts)?;
+        let mut raw = Vec::new();
+        file.take(MAX_GRAPH_BYTES + 1).read_to_end(&mut raw)?;
+        ensure!(
+            !raw.is_empty() && raw.len() as u64 <= MAX_GRAPH_BYTES && sha(&raw) == expected,
+            "private CUDA review receipt size or SHA differs"
+        );
+        let review: serde_json::Value = serde_json::from_slice(&raw)?;
+        ensure!(
+            review["schema"] == "airk.private.l5a-gpu/1"
+                && review["step"] == "graph"
+                && review["complete"] == true
+                && review["profile"]["model"] == serde_json::to_value(profile.model)?,
+            "private CUDA review receipt is not a complete graph diagnostic of this model"
+        );
+        let pin: Sha256Digest = review["bounded_policy"]
+            .as_str()
+            .context("private CUDA review policy missing")?
+            .parse()?;
+        ensure!(
+            matches!(
+                profile.device_execution.as_ref().map(|device| &device.placement),
+                Some(PlacementPolicy::BoundedHybrid { policy }) if *policy == pin
+            ),
+            "private CUDA profile placement does not name its reviewed bounded policy"
+        );
+        Ok(Self {
+            manifest: profile.manifest,
+            adapter,
+            graph: EvaluationAnswerGraph::new(Vec::new().into(), pin, expires),
+            pin,
         })
     }
 
@@ -73,6 +124,7 @@ impl Input {
             manifest,
             adapter,
             graph: EvaluationAnswerGraph::new(graph.into(), expected, expires),
+            pin: expected,
         })
     }
 }

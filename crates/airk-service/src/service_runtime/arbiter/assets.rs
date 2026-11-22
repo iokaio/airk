@@ -80,9 +80,9 @@ impl StageOwner {
             .lifecycle
             .lock()
             .map_err(|_| anyhow::anyhow!("private CUDA Answer lifecycle unavailable"))?
-            .cuda_answer
-            .as_ref()
-            .filter(|answer| answer.manifest == manifest)
+            .private_gpu
+            .get(&manifest)
+            .cloned()
         {
             ensure!(
                 Instant::now() < answer.graph.expires(),

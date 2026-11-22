@@ -17,30 +17,40 @@ impl Owner {
         let mut state = lifecycle
             .lock()
             .map_err(|_| anyhow::anyhow!("private GPU lifecycle unavailable"))?;
-        let Some(manifest) = state.cuda_answer.as_ref().map(|answer| answer.manifest) else {
+        if state.private_gpu.is_empty() {
             return Ok(());
-        };
-        let selected = state.profile == Some(manifest);
-        let in_progress = selected && (state.busy || state.phase == Availability::Ready);
+        }
+        // The selected private entry, and every private entry the native owner
+        // holds active or warming. Each is released and drained.
+        let selected = state
+            .profile
+            .filter(|manifest| state.private_gpu.contains_key(manifest));
+        let in_progress = selected.is_some() && (state.busy || state.phase == Availability::Ready);
         let native = state
             .handle
             .as_ref()
             .map(|handle| handle.observation_for(Stage::Context))
             .transpose()?;
-        let resident = native.is_some_and(|snapshot| {
-            snapshot.active_profile == Some(manifest) || snapshot.warming_profile == Some(manifest)
-        });
-        if !in_progress && !resident {
+        let targets = super::lifecycle::private_release_targets(
+            state.private_gpu.keys().copied(),
+            native.as_ref().and_then(|snapshot| snapshot.active_profile),
+            native.as_ref().and_then(|snapshot| snapshot.warming_profile),
+            selected.filter(|_| in_progress),
+        );
+        if targets.is_empty() {
             return Ok(());
         }
-        if selected {
+        let selected_target = selected.filter(|manifest| targets.contains(manifest));
+        if selected_target.is_some() {
             super::lifecycle::cancel_current(&mut state);
             state.cancel.cancel();
             state.phase = Availability::Draining;
             state.reason = "GPU use disabled; waiting for the private CUDA operation and memory reservation to settle.".into();
         }
         if let Some(handle) = &state.handle {
-            handle.release_profile(manifest)?;
+            for manifest in &targets {
+                handle.release_profile(*manifest)?;
+            }
         }
         state.device_tasks = state
             .device_tasks
@@ -60,13 +70,13 @@ impl Owner {
                         let state = lifecycle
                             .lock()
                             .map_err(|_| anyhow::anyhow!("private GPU lifecycle unavailable"))?;
-                        if !selected || state.serial != serial || !state.busy {
+                        if selected_target.is_none() || state.serial != serial || !state.busy {
                             break (
                                 state.handle.clone(),
                                 state
                                     .charges
                                     .iter()
-                                    .filter(|(profile, _)| *profile == manifest)
+                                    .filter(|(profile, _)| targets.contains(profile))
                                     .map(|(_, charge)| charge.clone())
                                     .collect::<Vec<_>>(),
                             );
@@ -77,7 +87,9 @@ impl Owner {
                         .context("private GPU activation did not settle")?;
                 };
                 if let Some(handle) = handle {
-                    handle.wait_profile_released(manifest, deadline).await?;
+                    for manifest in &targets {
+                        handle.wait_profile_released(*manifest, deadline).await?;
+                    }
                 }
                 for charge in charges {
                     tokio::time::timeout_at(
@@ -94,7 +106,11 @@ impl Owner {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             state.device_tasks -= 1;
-            if state.serial == serial && state.profile == Some(manifest) {
+            if state.serial == serial
+                && state
+                    .profile
+                    .is_some_and(|manifest| state.private_gpu.contains_key(&manifest))
+            {
                 match result {
                     Ok(()) => {
                         // The isolated fixture authenticates exactly one variant per model.
@@ -184,6 +200,20 @@ pub(super) struct CudaAnswerEvaluation {
     pub(super) adapter: [u8; 16],
     pub(super) assets: CudaAnswerAssets,
     pub(super) graph: airk_inference::inference_engine::pool::arbiter::EvaluationAnswerGraph,
+}
+
+/// One private CUDA Context entry for [`EvaluationOwner::with_private_gpu`].
+#[cfg(all(
+    windows,
+    target_arch = "x86_64",
+    feature = "test-support",
+    feature = "gpu-cuda"
+))]
+pub struct PrivateGpuEntry<'a> {
+    pub manifest: Sha256Digest,
+    pub adapter: [u8; 16],
+    pub graph: airk_inference::inference_engine::pool::arbiter::EvaluationAnswerGraph,
+    pub source: &'a mut (dyn FnMut(&Asset) -> Result<File> + 'a),
 }
 
 #[cfg(all(windows, target_arch = "x86_64", feature = "gpu-cuda"))]
@@ -352,22 +382,72 @@ impl EvaluationOwner {
         manifest: Sha256Digest,
         adapter: [u8; 16],
         graph: airk_inference::inference_engine::pool::arbiter::EvaluationAnswerGraph,
-        source: impl FnMut(&Asset) -> Result<File>,
+        mut source: impl FnMut(&Asset) -> Result<File>,
     ) -> Result<Self> {
-        let profile = self.owner.context.execution_profile(manifest)?;
+        self.with_private_gpu(vec![PrivateGpuEntry {
+            manifest,
+            adapter,
+            graph,
+            source: &mut source,
+        }])
+    }
+
+    /// Attaches every private CUDA Context entry of this lifetime at once, keyed
+    /// by manifest: at most one Compact and one Large, all on the same lease,
+    /// gate and adapter. Only one is ever resident: selecting another releases
+    /// the resident one first (plan 12.5.2 item 4). A second attach is refused.
+    #[cfg(all(
+        windows,
+        target_arch = "x86_64",
+        feature = "test-support",
+        feature = "gpu-cuda"
+    ))]
+    pub fn with_private_gpu(self, entries: Vec<PrivateGpuEntry<'_>>) -> Result<Self> {
         ensure!(
-            profile.evaluation()
-                && !profile.release_qualified()
-                && matches!(
-                    profile.description().model,
-                    ModelChoice::ContextQwenCompact | ModelChoice::ContextQwenLarge
-                )
-                && profile.description().device_execution.is_some()
-                && adapter != [0; 16]
-                && Instant::now() < graph.expires(),
-            "private CUDA Answer requires an exact Compact or Large evaluation graph and adapter"
+            (1..=2).contains(&entries.len()),
+            "private CUDA Answer attaches one or two Context entries"
         );
-        let assets = CudaAnswerAssets::retain(profile.description(), source, graph.expires())?;
+        let mut prepared = std::collections::BTreeMap::new();
+        let mut models = std::collections::BTreeSet::new();
+        let adapter = entries[0].adapter;
+        for entry in entries {
+            let profile = self.owner.context.execution_profile(entry.manifest)?;
+            let model = profile.description().model;
+            ensure!(
+                profile.evaluation()
+                    && !profile.release_qualified()
+                    && matches!(
+                        model,
+                        ModelChoice::ContextQwenCompact | ModelChoice::ContextQwenLarge
+                    )
+                    && profile.description().device_execution.is_some()
+                    && entry.adapter != [0; 16]
+                    && entry.adapter == adapter
+                    && Instant::now() < entry.graph.expires(),
+                "private CUDA Answer requires an exact Compact or Large evaluation graph and adapter"
+            );
+            ensure!(
+                models.insert(model) && !prepared.contains_key(&entry.manifest),
+                "private CUDA Answer holds at most one entry per Context model"
+            );
+            let assets = CudaAnswerAssets::retain(
+                profile.description(),
+                &mut *entry.source,
+                entry.graph.expires(),
+            )?;
+            prepared.insert(
+                entry.manifest,
+                Arc::new(CudaAnswerEvaluation {
+                    devices: Arc::downgrade(&self.owner.context.devices),
+                    lease: self.owner.ownership.clone(),
+                    gate: self.owner.gate.clone(),
+                    manifest: entry.manifest,
+                    adapter: entry.adapter,
+                    assets,
+                    graph: entry.graph,
+                }),
+            );
+        }
         let mut state = self
             .owner
             .context
@@ -375,18 +455,10 @@ impl EvaluationOwner {
             .lock()
             .map_err(|_| anyhow::anyhow!("private CUDA Answer lifecycle unavailable"))?;
         ensure!(
-            state.cuda_answer.is_none() && !state.busy && !state.stopping,
+            state.private_gpu.is_empty() && !state.busy && !state.stopping,
             "private CUDA Answer must be attached to an idle, isolated evaluation owner"
         );
-        state.cuda_answer = Some(Arc::new(CudaAnswerEvaluation {
-            devices: Arc::downgrade(&self.owner.context.devices),
-            lease: self.owner.ownership.clone(),
-            gate: self.owner.gate.clone(),
-            manifest,
-            adapter,
-            assets,
-            graph,
-        }));
+        state.private_gpu = prepared;
         drop(state);
         Ok(self)
     }
@@ -414,6 +486,17 @@ impl EvaluationOwner {
     ) -> Result<Self> {
         super::lifecycle::observe_warm(&self.owner.focus.lifecycle, observer.clone())?;
         super::lifecycle::observe_warm(&self.owner.context.lifecycle, observer)?;
+        Ok(self)
+    }
+    /// Sets the idle unload time of each stage for this private lifetime
+    /// (plan 12.5; default 30 minutes, `None` or zero never unloads).
+    pub fn with_idle_unload(
+        self,
+        focus: Option<Duration>,
+        context: Option<Duration>,
+    ) -> Result<Self> {
+        self.owner.focus.set_idle_unload(focus)?;
+        self.owner.context.set_idle_unload(context)?;
         Ok(self)
     }
     pub fn configuration(&self) -> Result<EvaluationResult<Configuration>> {

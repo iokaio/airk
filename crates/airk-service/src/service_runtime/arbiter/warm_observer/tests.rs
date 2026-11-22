@@ -28,6 +28,8 @@ fn ready() -> Record {
         operation_succeeded: true,
         outcome: Outcome::Failed,
         error: None,
+        released_prior: None,
+        release_ms: None,
     }
 }
 #[test]

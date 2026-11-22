@@ -710,12 +710,55 @@ opens through the reviewed Large resource route under the same Answer limits
 and original deadline checks. Its host charge is the profile's 40 GiB
 reservation and its device envelope is the 44 GiB (40 GiB cold, 8 GiB warm,
 4 GiB headroom) the corrected graph ran its four widths under; Compact keeps
-its 32 GiB host and 24 GiB device bounds. One CUDA Context profile is attached
-per isolated lifetime. The ignored `cuda_answer::same_install` selector can
-attach it to a same-install restart of the CPU evaluation fixture: the CPU
-roster stays the restart identity, and the CUDA profile joins only the
-evaluation catalog, with its weights held as read descriptors and never
-seeded. Focus has no CUDA route in this seam.
+its 32 GiB host and 24 GiB device bounds. Up to two CUDA Context profiles,
+at most one Compact and one Large, are attached per isolated lifetime, at once
+and once (`with_private_gpu`; `with_cuda_answer` is its one-entry form). The
+lifecycle keeps them in a map keyed by manifest, all bound to the same lease,
+gate and adapter. The ignored `cuda_answer::same_install` selector can
+attach them to a same-install restart of the CPU evaluation fixture: the CPU
+roster stays the restart identity, and the CUDA profiles join only the
+evaluation catalog, with their weights held as read descriptors and never
+seeded. A protected FP16 profile (bounded-hybrid placement) carries no graph
+result: its review pin is the pass-1 graph diagnostic receipt's bounded
+policy, which the profile's placement must name and the scorer checks again
+against the live session. GPU revocation releases and drains every private
+entry the native owner holds. Focus has no CUDA route in this seam.
+
+### Context switch within one lifetime (plan 12.5.2 item 4)
+
+Switching between device profiles goes through ordinary Configure. Before a
+warm reserves its host charge, it releases a different active resident of the
+same stage when that resident is a private CUDA entry: `release_profile`, the observed release, then
+the final charge drain, and only then the new reservation and load. The two
+models are therefore never resident together, and per-model peak memory is
+the model's own. A store-backed prior keeps its verified files pinned for
+rollback, exactly as the budget-driven drain does; a private CUDA prior keeps
+its held descriptors instead. A failed new warm rolls back through the
+existing restoration path, which reloads the prior. Other switches keep the
+existing budget-driven drain; product device variants already drain in device
+management before their own load. The private warm observer records the
+released prior and its release time. Measured on the RTX A6000 through the
+private Answer scorer path (Compact FP16, Large FP16, Compact FP16 in one
+lease): release under 0.2 s, reload 7.8 s (Compact) and 16.9 s (Large), and
+bit-identical Compact scores before and after the switch.
+
+### Idle unload (plan 12.5)
+
+Each stage's resident unloads after a period with no model call (default 30
+minutes; `None` or zero never unloads). A per-stage watcher, started on the
+first model call, applies a pure rule with the clock supplied: only a settled
+Ready stage with no call in flight and no lifecycle operation unloads. The
+unload claims the lifecycle like Configure (a Configure that arrived first
+wins), then uses the same release and drain as a profile change. Status shows
+Draining while it unloads and then Requested with an "unloaded after the idle
+timeout" reason. The first model call after an unload starts the reload
+through the verified-restore path (private CUDA entries included) and is
+answered at once from the not-yet-Ready stage, so it returns no advice and the
+Answer runs on reads or the no-model loop. A reload never blocks or times out
+an Answer. The time is set per stage; only the private evaluation sets it
+today (`with_idle_unload`). A product setting is a persisted-configuration
+change and remains a follow-up, as do an explicit pre-warm request on the
+wire and the admission estimator's use of the measured reload time.
 
 The ignored `emit_paired_compact_cpu_comparator` selector stages only private
 CPU profile metadata. It takes the reviewed CPU profile, held CUDA profile and
@@ -732,8 +775,8 @@ evidence.
 
 The private CUDA fixture authenticates the complete declared asset closure
 through the retained read-only source descriptors under its original
-deadline. Only the exact graph-bound Compact manifest can use that source
-for this fresh, same-lease Context activation. Its ordinary native scorer
+deadline. Only the exact graph-bound manifests can use that source for a
+fresh, same-lease Context activation. Its ordinary native scorer
 also verifies the bytes it consumes. Status projects the private source
 availability while the normal Configure, scope, graph and model load
 checks continue to govern Ready. No legacy or device asset receipt is

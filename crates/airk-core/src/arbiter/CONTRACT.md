@@ -1620,3 +1620,16 @@ every refusal as JSON-pointer replacements of the valid reply with its
 expected error. All are qualification false. `download_origin_cases.json`
 embeds a schema snapshot written only on request; it is not compared and was
 not rewritten.
+
+## Context ladder (plan 12.5)
+
+`device::context_ladder` reads the finished Large and Compact selections and
+names the rung: Large on the GPU, then Compact on the GPU, then Compact on the
+CPU. Large never runs on the CPU: a Large CPU selection is refused with a
+`no_qualified_gpu_route` row. A step down from Large adds the
+`smaller_model_selected` row, the existing reserved reason, so the wire list is
+unchanged. Every reason is kept in order within the status limit, and the
+step-down row always survives truncation. With no rung, the outcome is `None`
+and Answer runs the no-model loop. The function is advisory like `select`; the
+service's product device selection does not call it yet, because no product
+CUDA Context route exists to step down from (recorded follow-up).
