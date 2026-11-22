@@ -696,12 +696,14 @@ persisted format, and its figures are development observations.
 the set of every part the job serves (bit 0 is Split), so a batched call over
 several parts holds all of them. Admission (`lane::admits`), with at most 8
 jobs queued in all:
-- `attempt: None` (Search Focus, Answer /2): fewer than two jobs on the
-  index, queued or running, counting every job on it, as before;
-- `attempt: Some(a)`: fewer than four jobs of any kind on the index, across
-  every attempt, so one index never takes more than half the queue and
-  another index keeps room; and no job of attempt `a` on the index serves a
-  part this job serves.
+- every index holds fewer than four jobs of any kind, queued or running, so
+  one index never takes more than half the queue;
+- one Answer attempt holds at most three of them (the index ceiling less
+  one), so a different Answer or an ordinary job always has a slot on that
+  index and a compound request cannot monopolize it (plan 12.1 item 1);
+- no two jobs of one attempt serve a common part;
+- ordinary jobs (`attempt: None`: Search Focus, Answer /2) also keep fewer
+  than two ordinary jobs per index.
 
 Scheduling (`lane::next_position`) runs the first queued job whose (index,
 attempt) differs from the last run's, otherwise the oldest, so neither one
@@ -717,6 +719,14 @@ so a caller may release what it reserved.
 **Review closure (L4 review M1 and L3, 22 November 2026).** The first L4
 rule counted only one attempt's jobs, so the Answers of one index could fill
 the queue (M1), and keyed a batched call by its lowest part, so another job
-of the attempt could hold one of its other parts (L3). Both were changed as
-above in `7634237c`; evidence `lane::tests` (8 tests, including
+of the attempt could hold one of its other parts (L3). Both were changed in `7634237c`; evidence `lane::tests` (8 tests, including
 `several_attempts_share_one_index_ceiling_and_a_second_index_keeps_room`).
+
+**M1 correction (primary review, 22 November 2026).** The first fix let one
+4-part Answer hold all four of an index's slots, so a second Answer on that
+index waited for it: the monopoly plan 12.1 item 1 rules out. One attempt now
+holds at most three jobs per index, and ordinary jobs count against the
+index ceiling and their own limit of two, not against Answer jobs. Closed in
+8119d7f8; evidence `lane::tests::one_attempt_holds_at_most_three_jobs_so_another_always_has_a_slot`
+and `a_second_answer_is_admitted_while_the_first_holds_three` (lane tests:
+9 passed, within 127 of 127 pool arbiter tests).
