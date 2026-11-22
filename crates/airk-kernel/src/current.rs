@@ -24,6 +24,9 @@ pub(crate) mod progress;
 mod publication;
 pub(crate) mod runtime;
 mod search;
+/// Private Answer evaluation only: binds the `search_v2` switch for the process.
+#[cfg(feature = "test-support")]
+pub use search::v2::bind_evaluation_search;
 pub use search::{
     CurrentSearchEvidence, CurrentSearchMode, DefinitionHint, DefinitionPointer,
     SearchWithDefinitionsResponse, search_current,

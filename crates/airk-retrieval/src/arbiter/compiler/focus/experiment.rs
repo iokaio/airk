@@ -39,6 +39,42 @@ impl Instruction {
         ))
     }
 }
+/// Private evaluation change set 1 (change 5): the Focus pair policy of a
+/// profile compiled with the SoftwareEvidenceV1 instruction. It binds the
+/// product publisher policy, this instruction and this module's source, so
+/// the product policy and every existing Focus profile are unchanged.
+pub fn software_policy_digest() -> Result<Sha256Digest> {
+    let source = std::str::from_utf8(include_bytes!("experiment.rs"))?.replace("\r\n", "\n");
+    ensure!(!source.contains('\r'), "lone CR in experiment source");
+    Ok(framed_digest(
+        b"airk.private.focus-pair-policy/software-evidence-v1",
+        &[
+            super::policy_digest()?.as_bytes(),
+            SOFTWARE.as_bytes(),
+            source.as_bytes(),
+        ],
+    ))
+}
+
+/// The same publisher recipe and admission as `compile_focus`, with the
+/// SoftwareEvidenceV1 instruction; the input digest also binds its policy.
+pub fn compile_software(
+    compiler: &Compiler,
+    state: &str,
+    question: &str,
+    options: &[Candidate],
+) -> Result<CompiledInput> {
+    let mut input = compiler.compile_focus_instruction(state, question, options, SOFTWARE)?;
+    input.input_digest = framed_digest(
+        b"airk.private.focus-compiled-input/software-evidence-v1",
+        &[
+            input.input_digest.as_bytes(),
+            software_policy_digest()?.as_bytes(),
+        ],
+    );
+    Ok(input)
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Pair {
@@ -279,5 +315,7 @@ pub fn score_raw(
     Ok(result)
 }
 
+#[cfg(test)]
+mod software_tests;
 #[cfg(test)]
 mod tests;

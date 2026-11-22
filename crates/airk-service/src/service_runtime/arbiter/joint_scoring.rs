@@ -140,23 +140,63 @@ impl StageOwner {
             use airk_inference::inference_engine::pool::arbiter::{
                 CompiledReceipt, KnownInputRefusal, KnownScoreFailure, ScoreRequest,
             };
-            use airk_retrieval::arbiter::context_action;
             let execution = self.profile_description(
                 configuration
                     .selected_profile(stage)
                     .context("joint selected profile missing")?,
             )?;
             let profile = execution;
-            let task_policy = context_action::policy_digest()?;
+            // Change set 2: an option-B profile is scored under its own policy.
+            let task_policy = airk_retrieval::arbiter::context_wide::policy_for(&profile)?;
             if !profile.tasks.contains(&Task::ContextAction)
                 || profile.task_policies.get(&Task::ContextAction) != Some(&task_policy)
             {
                 return Ok(None);
             }
-            ensure!(
-                request.roster.policy == task_policy,
-                "joint roster task policy changed"
-            );
+            if request.roster.policy != task_policy {
+                // Change set 2: a product roster under an option-B profile, or
+                // the reverse, is refused before any reservation, compile or
+                // scoring dispatch; nothing ran, so nothing is charged.
+                let advice = ContextActionAdvice {
+                    schema: ADVICE_SCHEMA_V2.into(),
+                    task: Task::ContextAction,
+                    profile: profile.manifest,
+                    runtime: profile.advice_runtime()?,
+                    compiler: profile.compiler,
+                    calibration: profile.calibration,
+                    policy: profile.policy,
+                    task_policy,
+                    scope: request.scope.clone(),
+                    input_digest: framed_digest(
+                        b"airk.private.context-roster-policy-mismatch/1",
+                        &[
+                            request.roster.input_digest.as_bytes(),
+                            request.roster.policy.as_bytes(),
+                            task_policy.as_bytes(),
+                        ],
+                    ),
+                    evidence: request
+                        .roster
+                        .basis
+                        .source_units_presented
+                        .iter()
+                        .map(|unit| unit.record)
+                        .collect::<std::collections::BTreeSet<_>>()
+                        .into_iter()
+                        .collect(),
+                    reserved_input_tokens: reserved_input_tokens(
+                        request.remaining_input_tokens,
+                        profile.max_tokens,
+                    ),
+                    observed_input_tokens: Some(0),
+                    work: Work::default(),
+                    outcome: Outcome::Unsupported {
+                        reason: "Context roster task policy differs from the selected profile's (product and option-B rosters are not interchangeable); no Context compile or scoring was dispatched.".into(),
+                    },
+                };
+                advice.validate()?;
+                return Ok(Some(advice));
+            }
             #[cfg(all(feature = "local-inference", feature = "test-support"))]
             if let Some(observer) = &self.context_observer {
                 ensure!(
@@ -198,7 +238,7 @@ impl StageOwner {
             calibration.validate(&profile, task_policy)?;
             let reserved =
                 reserved_input_tokens(request.remaining_input_tokens, profile.max_tokens);
-            let prompt = context_action::prompt(&request)?;
+            let prompt = airk_retrieval::arbiter::context_wide::prompt_for(&request)?;
             let planned_digest = framed_digest(
                 b"airk.arbiter.planned-task-input/1",
                 &[&serde_json::to_vec(&prompt)?],
@@ -352,8 +392,11 @@ impl StageOwner {
                     return Ok(Some(advice));
                 }
                 let policy_started = Instant::now();
-                advice.outcome=match context_action::selected_action(&scored.scores,&request.roster,&calibration) {
+                let option_b =
+                    request.roster.policy == airk_retrieval::arbiter::context_wide::policy_digest()?;
+                advice.outcome=match airk_retrieval::arbiter::context_wide::selected_action_for(&scored.scores,&request.roster,&calibration) {
                     Ok(Some(card))=>Outcome::Accepted {decision:Decision::ContextAction(card)},
+                    Ok(None) if option_b=>Outcome::Abstained {reason:"Option B: no Read card was offered, the best Read tied another Read, or the calibration did not accept it at its margin over the next Read.".into()},
                     Ok(None)=>Outcome::Abstained {reason:"The complete global top card was tied, unsupported, or below its independently fitted raw-score margin.".into()},
                     Err(_)=>Outcome::InvalidInput {reason:"Known native scoring completed, but its score shape, finiteness or whole-card policy was invalid; measured work is retained without a decision.".into()},
                 };
@@ -421,7 +464,7 @@ fn captured_without_dispatch(
     task_policy: airk_core::identity::Sha256Digest,
 ) -> Result<ContextActionAdvice> {
     use airk_core::{arbiter::context_action::ADVICE_SCHEMA_V2, identity::framed_digest};
-    let prompt = airk_retrieval::arbiter::context_action::prompt(request)?;
+    let prompt = airk_retrieval::arbiter::context_wide::prompt_for(request)?;
     let input_digest = framed_digest(
         b"airk.arbiter.planned-task-input/1",
         &[&serde_json::to_vec(&prompt)?],

@@ -53,3 +53,30 @@ existing reviewed full-rebuild owner handles replacement; no automatic destructi
 fallback is added. Backend availability, current data coverage and release/platform
 qualification are independent facts. CAL/A6 requires the actual selected new
 pipeline and observed full readiness before capture or fitting.
+
+## Pipelined semantic batches and multi-batch service turns (22 November 2026)
+
+These are indexer speed fixes, included in the Answer evaluation images and
+not yet adopted for the product. They change no stored bytes. On the
+evaluation's samples the graph records, lexical documents, artifact and
+source objects and embedding packs were identical with and without them.
+
+- **Pipelining (`update.rs`).** Each bounded batch is selected first. The
+  keys that the previous batch will still insert count as registered, and
+  the registry and membership limits count them. The batch is then embedded
+  on the compute-owner thread while a helper thread inserts the previous
+  batch into the graph. The helper carries the worker's owner bindings and
+  grant allowance, so its checkpoints observe cancel, stall, expiry and pause.
+  Registry choices, vectors, insertion order and occurrences equal the
+  sequential order's. The membership work limit can trip up to one batch
+  earlier than a sequential count.
+- **Multi-batch turns (`service_enrichment.rs`, `enrichment.rs`).** A service
+  vectors turn publishes up to 8 bounded 32-artifact batches, each its own
+  atomic publication. It starts no further batch after a 120-second soft
+  deadline, in place of 1 batch and 30 seconds. A paused turn ends at a batch
+  boundary (`paused_at_boundary`), releases its pause wait and returns
+  admission instead of parking with its writer and model. Object reclamation
+  is deferred to the next turn when the turn yields or pauses. A source hint
+  still yields before model admission or after the current batch. Before
+  product adoption, this needs a recorded decision that weighs the longer
+  unhinted turn against issue #64.

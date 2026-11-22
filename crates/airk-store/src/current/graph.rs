@@ -30,7 +30,10 @@ static NEXT_OVERLAY: AtomicU64 = AtomicU64::new(0);
 const MAX_OVERLAY_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 const MAX_DIRTY_RECORDS: u64 = 1_000_000;
 const PAGE_ROWS: usize = 64;
-const MAX_BASE_PROOFS: usize = 256;
+/// The update-local proof cache is bounded by payload bytes alone: about 2,900
+/// proofs of 384-dimension records. A DiskANN insertion into a large graph reads
+/// several hundred distinct records, so a small entry count would evict most of
+/// them before the next insertion revisits its neighborhood.
 const MAX_BASE_PROOF_CACHE_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug)]
@@ -185,7 +188,7 @@ impl GraphOverlay {
                     sql::read_proof(connection, &self.base_head, id)
                 })?;
                 let bytes = usize::try_from(self.base_head.scope.record_bytes)? + 32 * 32;
-                let capacity = (MAX_BASE_PROOF_CACHE_BYTES / bytes).clamp(1, MAX_BASE_PROOFS);
+                let capacity = (MAX_BASE_PROOF_CACHE_BYTES / bytes).max(1);
                 if state.base_proof_order.len() == capacity {
                     let old = state
                         .base_proof_order

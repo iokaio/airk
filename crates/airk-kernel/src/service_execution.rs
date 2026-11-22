@@ -21,6 +21,8 @@ use std::{
     time::{Duration, Instant},
 };
 mod progress;
+#[cfg(test)]
+mod tests;
 struct Owner {
     root: PathBuf,
     identity: WorkerIdentity,
@@ -143,15 +145,33 @@ impl ExecutionScope {
 /// The calling thread's worker bindings, carried into a helper thread that
 /// performs part of the same work. Unbound threads carry nothing, so a child
 /// process keeps observing its process owner and connector.
+/// A helper thread also carries the accepted grant's allowance, so its
+/// [`checkpoint`] observes cancellation, stall, expiry and pause exactly as the
+/// grant's own thread does. Byte pacing and source hints stay with that thread.
 pub(crate) struct Inherited {
     execution: Option<ExecutionScope>,
     connector: Option<airk_retrieval::embedding_worker::ConnectorScope>,
+    grant_ttl_ms: Option<u64>,
+}
+thread_local! { static HELPER_TTL: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) }; }
+/// Restores the helper thread's previous inherited allowance when dropped.
+pub(crate) struct HelperGrant(Option<u64>);
+impl Drop for HelperGrant {
+    fn drop(&mut self) {
+        let previous = self.0.take();
+        let _ = HELPER_TTL.try_with(|slot| slot.set(previous));
+    }
+}
+fn grant_ttl_ms() -> Option<u64> {
+    WORK.with(|slot| slot.borrow().as_ref().map(|work| work.grant.ttl_ms))
+        .or_else(|| HELPER_TTL.with(std::cell::Cell::get))
 }
 impl Inherited {
     pub(crate) fn capture() -> Self {
         Self {
             execution: ExecutionScope::current(),
             connector: airk_retrieval::embedding_worker::ConnectorScope::current(),
+            grant_ttl_ms: grant_ttl_ms(),
         }
     }
     pub(crate) fn bind(
@@ -159,12 +179,14 @@ impl Inherited {
     ) -> (
         Option<ScopeBinding>,
         Option<airk_retrieval::embedding_worker::ConnectorBinding>,
+        HelperGrant,
     ) {
         (
             self.execution.as_ref().map(ExecutionScope::bind_thread),
             self.connector
                 .as_ref()
                 .map(airk_retrieval::embedding_worker::ConnectorScope::bind_thread),
+            HelperGrant(HELPER_TTL.with(|slot| slot.replace(self.grant_ttl_ms))),
         )
     }
 }
@@ -254,6 +276,9 @@ struct Work {
     grant: WorkAllowance,
     started: Instant,
     bytes: u64,
+    /// Set when this work ended its batches on a pause: its remaining
+    /// bookkeeping no longer parks, so the job returns admission.
+    pause_released: bool,
 }
 thread_local! { static WORK: RefCell<Option<Work>> = const { RefCell::new(None) }; }
 impl Owner {
@@ -412,8 +437,14 @@ pub fn checkpoint() -> Result<()> {
     // without one (and possibly before its owner is installed).
     ensure!(!bound_scope_draining(), Draining);
     with_owner(|owner| {
-        let ttl = WORK.with(|slot| slot.borrow().as_ref().map(|work| work.grant.ttl_ms));
-        let Some(ttl) = ttl else { return Ok(()) };
+        let Some(ttl) = grant_ttl_ms() else {
+            return Ok(());
+        };
+        let released = WORK.with(|slot| {
+            slot.borrow()
+                .as_ref()
+                .is_some_and(|work| work.pause_released)
+        });
         loop {
             ensure!(!bound_scope_draining(), Draining);
             ensure!(!owner.canceled.load(Ordering::Acquire), Canceled);
@@ -423,13 +454,69 @@ pub fn checkpoint() -> Result<()> {
                 elapsed.saturating_sub(owner.renewed.load(Ordering::Acquire)) < ttl,
                 "service work allowance expired"
             );
-            if !owner.paused.load(Ordering::Acquire) {
+            if released || !owner.paused.load(Ordering::Acquire) {
                 return Ok(());
             }
             std::thread::sleep(Duration::from_millis(100));
         }
     })
     .unwrap_or(Ok(()))
+}
+/// Non-blocking: accepted work is paused and not also draining, canceled or
+/// stalled, which [`checkpoint`] reports first. A multi-batch service turn ends
+/// at a batch boundary instead of parking there with its writer and model.
+pub(crate) fn paused_at_boundary() -> bool {
+    if bound_scope_draining() || grant_ttl_ms().is_none() {
+        return false;
+    }
+    with_owner(|owner| {
+        owner.paused.load(Ordering::Acquire)
+            && !owner.canceled.load(Ordering::Acquire)
+            && !owner.stalled.load(Ordering::Acquire)
+    })
+    .unwrap_or(false)
+}
+/// After [`paused_at_boundary`] ended a turn's batches, the rest of that turn's
+/// checkpoints still stop for drain, cancel, stall and expiry but no longer park
+/// for the pause, so the turn finishes its report and returns admission. The
+/// release lasts only until the enclosing [`PauseTurn`] guard drops.
+pub(crate) fn release_pause_wait() {
+    set_pause_released(true);
+}
+/// Whether this grant's current turn already ended on a pause.
+pub(crate) fn pause_released() -> bool {
+    WORK.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .is_some_and(|work| work.pause_released)
+    })
+}
+fn set_pause_released(released: bool) {
+    WORK.with(|slot| {
+        if let Some(work) = slot.borrow_mut().as_mut() {
+            work.pause_released = released;
+        }
+    });
+}
+/// Scopes a [`release_pause_wait`] to one service turn. A grant may run several
+/// turns (a split destination build does); a later turn must park on the pause
+/// again, so the release is cleared when the turn starts and when it returns.
+#[must_use]
+pub(crate) struct PauseTurn(());
+impl Drop for PauseTurn {
+    fn drop(&mut self) {
+        let _ = WORK.try_with(|slot| {
+            if let Ok(mut slot) = slot.try_borrow_mut()
+                && let Some(work) = slot.as_mut()
+            {
+                work.pause_released = false;
+            }
+        });
+    }
+}
+pub(crate) fn pause_turn() -> PauseTurn {
+    set_pause_released(false);
+    PauseTurn(())
 }
 pub(crate) fn installed() -> bool {
     with_owner(|_| ()).is_some()
@@ -446,6 +533,7 @@ pub fn run<T>(grant: WorkAllowance, work: impl FnOnce() -> Result<T>) -> Result<
             grant,
             started: Instant::now(),
             bytes: 0,
+            pause_released: false,
         });
         Ok::<_, anyhow::Error>(())
     })?;

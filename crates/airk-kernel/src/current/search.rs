@@ -6,7 +6,7 @@ use airk_core::search_execution::{
 };
 use airk_core::{Hit, SearchFilters, SearchQuery, SearchResponse, identity::Sha256Digest};
 use airk_retrieval::{bounded::Charge, terms, truncate_utf8, vector::mutable::MutableDiskIndex};
-use airk_store::current::lexical::{CurrentLexicalCandidate, stable_id};
+use airk_store::current::lexical::{CurrentLexicalCandidate, TermGroup, stable_id};
 use airk_store::{
     FileStore,
     current::{
@@ -20,6 +20,10 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
 };
+
+pub(crate) mod v2;
+#[cfg(test)]
+mod v2_tests;
 
 const BRANCH_CANDIDATES: usize = 100;
 const MAX_SCOPED_PATHS: usize = 4096;
@@ -93,11 +97,23 @@ pub struct CurrentSearchEvidence {
 enum Candidate {
     Lexical(CurrentLexicalCandidate),
     Vector(Arc<OccurrencePointer>),
+    /// Evaluation switch only: a ranked any-term match of these groups.
+    LexicalAny(CurrentLexicalCandidate, Arc<Vec<TermGroup>>),
+}
+
+impl Candidate {
+    fn path(&self) -> &str {
+        match self {
+            Self::Lexical(candidate) | Self::LexicalAny(candidate, _) => &candidate.citation.path,
+            Self::Vector(pointer) => &pointer.path,
+        }
+    }
 }
 
 struct Branch {
     values: Vec<(Sha256Digest, usize, Candidate)>,
     incomplete: bool,
+    kind: v2::BranchKind,
 }
 
 #[derive(Default)]
@@ -199,6 +215,19 @@ pub(crate) fn search_current_read_with_filters(
     _charge: Charge,
     options: SearchOptions<'_>,
 ) -> Result<CurrentSearchEvidence> {
+    search_with_switch(store, read, expected, mode, query, options, v2::active()?)
+}
+
+/// `search_v2` is the process's evaluation switch; tests pass it explicitly.
+fn search_with_switch(
+    store: &FileStore,
+    read: Arc<CurrentRead>,
+    expected: Option<&CurrentToken>,
+    mode: CurrentSearchMode,
+    query: &SearchQuery,
+    options: SearchOptions<'_>,
+    search_v2: bool,
+) -> Result<CurrentSearchEvidence> {
     let SearchOptions {
         requested_mode,
         snippet_bytes,
@@ -291,10 +320,23 @@ pub(crate) fn search_current_read_with_filters(
     } else {
         filtered_paths(&read, query, filters)?
     };
+    // Evaluation switch only; `None` keeps every step below the product's.
+    let plan = if search_v2 && matches!(mode, CurrentSearchMode::Hybrid) {
+        v2::Plan::for_query(&query.text)
+    } else {
+        None
+    };
+    let branch_limit = if plan.is_some() {
+        v2::BRANCH_CANDIDATES
+    } else {
+        BRANCH_CANDIDATES
+    };
     let mut branches = Vec::new();
     if matches!(mode, CurrentSearchMode::Lexical | CurrentSearchMode::Hybrid) {
         let lexical = open_selected_lexical(store, &read)?;
         let mut selection = query.clone();
+        // SearchQuery bounds a request at 100; the switch widens only the
+        // vector and ranked branches below.
         selection.limit = if matches!(mode, CurrentSearchMode::Hybrid) {
             BRANCH_CANDIDATES
         } else {
@@ -314,6 +356,7 @@ pub(crate) fn search_current_read_with_filters(
                 .map(|(rank, candidate)| (candidate.stable_id, rank, Candidate::Lexical(candidate)))
                 .collect(),
             incomplete: candidates.incomplete,
+            kind: v2::BranchKind::Conjunctive,
         });
     }
     if matches!(mode, CurrentSearchMode::Vector | CurrentSearchMode::Hybrid) {
@@ -321,7 +364,13 @@ pub(crate) fn search_current_read_with_filters(
         if matches!(mode, CurrentSearchMode::Hybrid) {
             selection.limit = BRANCH_CANDIDATES;
         }
-        match vector_candidates(store, &read, &selection, scoped_paths.as_ref()) {
+        match vector_candidates(
+            store,
+            &read,
+            &selection,
+            scoped_paths.as_ref(),
+            branch_limit,
+        ) {
             Ok(branch) => branches.push(branch),
             Err(error)
                 if error
@@ -351,6 +400,47 @@ pub(crate) fn search_current_read_with_filters(
             Err(error) => return Err(error),
         }
     }
+    if let Some(plan) = plan
+        .as_ref()
+        .filter(|_| matches!(mode, CurrentSearchMode::Hybrid))
+    {
+        for (kind, groups) in [
+            (v2::BranchKind::Key, &plan.key),
+            (v2::BranchKind::Named, &plan.named),
+        ] {
+            if groups.is_empty() {
+                continue;
+            }
+            let ranked = read.lexical_search_ranked_any(
+                groups,
+                query.path_prefix.as_deref(),
+                scoped_paths.as_ref().map(|scope| &scope.paths),
+                branch_limit,
+            )?;
+            ensure!(
+                ranked.candidates.manifest_digest == read.head().lexical_commit,
+                "current lexical candidate manifest mismatch"
+            );
+            let groups = Arc::new(groups.clone());
+            branches.push(Branch {
+                values: ranked
+                    .candidates
+                    .values
+                    .into_iter()
+                    .enumerate()
+                    .map(|(rank, candidate)| {
+                        (
+                            candidate.stable_id,
+                            rank,
+                            Candidate::LexicalAny(candidate, groups.clone()),
+                        )
+                    })
+                    .collect(),
+                incomplete: ranked.candidates.incomplete,
+                kind,
+            });
+        }
+    }
     let mut incomplete = branches.iter().any(|branch| branch.incomplete)
         || scoped_paths.as_ref().is_some_and(|scope| scope.incomplete)
         || discovery_readiness.state != airk_core::readiness::DiscoveryState::Ready;
@@ -358,8 +448,13 @@ pub(crate) fn search_current_read_with_filters(
     // passages can span multiple chunks; their occurrence is emitted only once.
     let mut merged = BTreeMap::<Sha256Digest, (f64, Candidate)>::new();
     for branch in branches {
+        let kind = branch.kind;
         for (identity, rank, candidate) in branch.values {
-            let score = 1.0 / (61.0 + rank as f64);
+            let score = if plan.is_some() {
+                v2::Plan::weight(kind) / (61.0 + rank as f64)
+            } else {
+                1.0 / (61.0 + rank as f64)
+            };
             match merged.entry(identity) {
                 std::collections::btree_map::Entry::Vacant(entry) => {
                     entry.insert((score, candidate));
@@ -374,7 +469,27 @@ pub(crate) fn search_current_read_with_filters(
         }
     }
     let mut ranked: Vec<_> = merged.into_iter().collect();
+    if plan.is_some() {
+        for (_, (score, candidate)) in &mut ranked {
+            *score *= v2::prior(candidate.path());
+        }
+    }
     ranked.sort_by(|a, b| b.1.0.total_cmp(&a.1.0).then(a.0.cmp(&b.0)));
+    let ranked = if plan.is_some() {
+        // Drop repeated passages first, as the loop below would, so they do
+        // not count against their file's place in the order.
+        let mut passages = BTreeSet::new();
+        ranked.retain(|(_, (_, candidate))| match candidate {
+            Candidate::Vector(pointer) => passages.insert(pointer.occurrence_id),
+            _ => true,
+        });
+        v2::diversify(ranked, |(_, (_, candidate))| candidate.path().to_owned())
+    } else {
+        ranked
+    };
+    let focus_text = plan
+        .as_ref()
+        .map_or(query.text.as_str(), |plan| &plan.focus);
     let mut emitted = BTreeSet::new();
     let mut hits = Vec::new();
     let mut remaining = query.max_bytes;
@@ -393,7 +508,7 @@ pub(crate) fn search_current_read_with_filters(
         let mut hit = materialize(store, &read, query, candidate, &mut read_bytes)?;
         let allowance = snippet_bytes.unwrap_or(remaining).min(remaining);
         if snippet_bytes.is_some() || semantic {
-            focus_hit(&mut hit, &query.text, allowance);
+            focus_hit(&mut hit, focus_text, allowance);
         }
         let (text, cut) = truncate_utf8(&hit.text, remaining);
         remaining -= text.len();
@@ -435,7 +550,12 @@ fn filtered_paths(
     query: &SearchQuery,
     filters: &SearchFilters,
 ) -> Result<Option<ScopedPaths>> {
-    if filters.is_empty() && !read.restricts_paths() {
+    // A permanent source-policy deny is enforced by its removal publication
+    // (reads are admitted only once it is applied) and by the per-pointer and
+    // per-artifact path checks of every branch. Only a selected scope that
+    // omits sources of this publication needs a bounded roster; a policy alone
+    // must not reduce every search to the first roster page of paths.
+    if filters.is_empty() && !read.selected_scope_restricts_paths() {
         return Ok(None);
     }
     let lookup = filters
@@ -603,6 +723,7 @@ fn vector_candidates(
     read: &Arc<CurrentRead>,
     query: &SearchQuery,
     filtered_paths: Option<&ScopedPaths>,
+    branch_limit: usize,
 ) -> Result<Branch> {
     let state = read
         .collection_state()?
@@ -616,7 +737,12 @@ fn vector_candidates(
         .embed_text(&query.text)?
         .context("semantic retrieval not ready: no recognized model tokens")?;
     let graph = MutableDiskIndex::open(read.clone(), model.dimensions(), objects.pipeline_digest)?;
-    let wanted = (query.limit * 4).clamp(64, 1000);
+    // Only the evaluation switch passes a different branch limit.
+    let wanted = if branch_limit == BRANCH_CANDIDATES {
+        (query.limit * 4).clamp(64, 1000)
+    } else {
+        (branch_limit * 4).clamp(64, 1000)
+    };
     let mut budget = PointerBudget::default();
     let mut incomplete = false;
     let mut selected = Vec::<Arc<OccurrencePointer>>::new();
@@ -715,7 +841,7 @@ fn vector_candidates(
     let mut seen = BTreeSet::new();
     let mut values = Vec::new();
     for (rank, pointer) in selected.into_iter().enumerate() {
-        if rank == BRANCH_CANDIDATES {
+        if rank == branch_limit {
             incomplete = true;
             break;
         }
@@ -726,7 +852,11 @@ fn vector_candidates(
             }
         }
     }
-    Ok(Branch { values, incomplete })
+    Ok(Branch {
+        values,
+        incomplete,
+        kind: v2::BranchKind::Vector,
+    })
 }
 
 fn materialize(
@@ -736,10 +866,7 @@ fn materialize(
     candidate: Candidate,
     read_bytes: &mut u64,
 ) -> Result<Hit> {
-    let path = match &candidate {
-        Candidate::Lexical(c) => &c.citation.path,
-        Candidate::Vector(p) => &p.path,
-    };
+    let path = candidate.path();
     ensure!(
         query
             .path_prefix
@@ -767,62 +894,78 @@ fn materialize(
     match candidate {
         Candidate::Vector(pointer) => read.occurrence_hit(store, &pointer),
         Candidate::Lexical(candidate) => {
-            let path = &candidate.citation.path;
-            ensure!(
-                candidate.stable_id == stable_id(&compact.path, candidate.local)?,
-                "current lexical document identity mismatch"
-            );
-            let private = read.private_query_eligible()?;
-            let text = if private {
-                read.observe_private_integrity(read.text_range_projection(store, path))?
-            } else {
-                None
-            };
-            let chunk = if let Some(text) = text {
-                read.observe_private_integrity(
-                    text.chunk_private(usize::try_from(candidate.local)?),
-                )?
-            } else {
-                let result = (|| -> Result<_> {
-                    let full = super::load_lexical_artifact(store, &compact)?;
-                    Ok(full
-                        .chunks
-                        .get(usize::try_from(candidate.local)?)
-                        .context("current lexical local chunk missing")?
-                        .clone())
-                })();
-                if private {
-                    read.observe_private_integrity(result)?
-                } else {
-                    result?
-                }
-            };
-            read.observe_private_integrity((|| -> Result<()> {
-                ensure!(
-                    compact.content_hash == candidate.citation.content_hash
-                        && chunk.start_line == candidate.citation.start_line
-                        && chunk.end_line == candidate.citation.end_line
-                        && chunk.location == candidate.citation.location,
-                    airk_store::current::PrivateIntegrityFailure
-                );
-                Ok(())
-            })())?;
             let wanted = terms(&query.text);
-            read.observe_private_integrity((|| -> Result<()> {
-                ensure!(
-                    !wanted.is_empty()
-                        && wanted.is_subset(&terms(&format!("{} {}", compact.path, chunk.text))),
-                    airk_store::current::PrivateIntegrityFailure
-                );
-                Ok(())
-            })())?;
-            Ok(Hit {
-                citation: candidate.citation,
-                text: chunk.text.clone(),
-                truncated: false,
+            lexical_hit(store, read, &compact, candidate, |found| {
+                !wanted.is_empty() && wanted.is_subset(found)
+            })
+        }
+        Candidate::LexicalAny(candidate, groups) => {
+            lexical_hit(store, read, &compact, candidate, |found| {
+                groups.iter().any(|group| group.matches(found))
             })
         }
     }
+}
+
+/// One lexical chunk, verified against its retained extraction; `matches`
+/// confirms the chunk's own terms satisfy the query that selected it.
+fn lexical_hit(
+    store: &FileStore,
+    read: &CurrentRead,
+    compact: &airk_core::Artifact,
+    candidate: CurrentLexicalCandidate,
+    matches: impl FnOnce(&BTreeSet<String>) -> bool,
+) -> Result<Hit> {
+    let path = &candidate.citation.path;
+    ensure!(
+        candidate.stable_id == stable_id(&compact.path, candidate.local)?,
+        "current lexical document identity mismatch"
+    );
+    let private = read.private_query_eligible()?;
+    let text = if private {
+        read.observe_private_integrity(read.text_range_projection(store, path))?
+    } else {
+        None
+    };
+    let chunk = if let Some(text) = text {
+        read.observe_private_integrity(text.chunk_private(usize::try_from(candidate.local)?))?
+    } else {
+        let result = (|| -> Result<_> {
+            let full = super::load_lexical_artifact(store, compact)?;
+            Ok(full
+                .chunks
+                .get(usize::try_from(candidate.local)?)
+                .context("current lexical local chunk missing")?
+                .clone())
+        })();
+        if private {
+            read.observe_private_integrity(result)?
+        } else {
+            result?
+        }
+    };
+    read.observe_private_integrity((|| -> Result<()> {
+        ensure!(
+            compact.content_hash == candidate.citation.content_hash
+                && chunk.start_line == candidate.citation.start_line
+                && chunk.end_line == candidate.citation.end_line
+                && chunk.location == candidate.citation.location,
+            airk_store::current::PrivateIntegrityFailure
+        );
+        Ok(())
+    })())?;
+    read.observe_private_integrity((|| -> Result<()> {
+        ensure!(
+            matches(&terms(&format!("{} {}", compact.path, chunk.text))),
+            airk_store::current::PrivateIntegrityFailure
+        );
+        Ok(())
+    })())?;
+    Ok(Hit {
+        citation: candidate.citation,
+        text: chunk.text.clone(),
+        truncated: false,
+    })
 }
 
 /// Focus before response budget accounting, preserving original document locations.

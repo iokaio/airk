@@ -121,3 +121,49 @@ mixture, fresh FINAL, ranking/retention quality or promotion.
 General QASPER replay retains the original publisher instruction; only software code rows use the DEV-selected instruction. Both are native-emitted. Code comparisons use the identical selected instruction for original/adapted weights; replay is original human paragraph relevance, never complete evidence.
 
 The private instruction-census emitter additionally reports native_focus_task_policy from the actual owning Rust policy_digest and focus_compiler_source_lf_sha256 from the actual compiled focus.rs bytes with CRLF→LF normalization and lone-CR refusal. These are emitted source identities, not guessed caller/profile values. A pending exact CPU compatibility row may consume them only after actual original1955publisher full-view/refusal parity,13focused compiler controls and the closed-row refusal controls. No arbitrary stale policy is accepted or old numeric/CAL proof transferred.
+
+## Private Answer evaluation policy routing (22 November 2026)
+
+This section covers the private evaluation build only. Product code paths,
+product policies and every existing profile identity are unchanged.
+
+**Focus SoftwareEvidenceV1 (change set 1).** `experiment::software_policy_digest`
+binds the product publisher policy, the SoftwareEvidenceV1 instruction and
+the LF-normalized `experiment.rs` source in the domain
+`airk.private.focus-pair-policy/software-evidence-v1`. `compile_software` uses
+the publisher recipe and admission of `compile_focus` with that instruction,
+and it binds that policy into the input digest. In `runtime.rs`, under
+`cfg(any(test, feature = "test-support"))` only, a profile whose `FocusRank`
+task policy is exactly that digest validates against it and compiles through
+`compile_software`. Every other profile keeps the publisher policy and
+`Compiler::compile`.
+
+**Context option B, `context_wide.rs` (change set 2).** This is a separate
+task owner. `context_action.rs`, whose policy hashes that whole file, stays
+byte-identical. Option B's policy (`airk.private.context-action-task-policy/option-b1`)
+binds the product policy and the LF-normalized `context_wide.rs` source. Its
+roster presents up to 8 source units (the product presents 4) and up to 6
+Read cards (the product offers 5), with Sufficient and Clarify. It adds
+NoJustifiedRead only into a free slot under the Core bound of 8 cards. Its
+prompt repeats the product's request and rebuild checks and uses the
+product's compact rendering. A kernel parity test holds that rendering equal
+on product rosters. Selection takes the highest-scoring Read even when a
+terminal card wins. The margin is measured over the next Read, a tie between
+Reads abstains, and the calibration still decides acceptance.
+`policy_for`, `prompt_for` and `selected_action_for` choose option B only in
+test-support builds and only for a profile or roster that declares exactly
+that policy. `runtime.rs` uses `policy_for` for Context policy validation, the
+evaluation catalog check and joint calibration parsing.
+
+**Digest-input change.** `runtime.rs` is a digest input. Its LF-normalized
+source is pinned by the legacy CPU Focus source transition
+(`cpu_source_transition`) and included in the CUDA FP16 math-policy digest
+(`cuda/fp16.rs`). The routing above moves it from
+`7b4650767610eafdfea4b6c273e042008e4eae4654dde516d438c6ee2f8449b3` to
+`258d43714a14169d8ca0dd5993890bdcaa26204c13a8e583f83bb6e63bb698e0` (working
+tree at 04:01 UTC on 22 November). This is a recorded digest-input change of
+the private evaluation build, not a re-pin: the transition pin is not
+updated, and its 8 `cpu_source_transition` tests are a known failing check
+(owner: primary agent). The FP16 math-policy digest changes with it. The
+evaluation's CUDA cells are FP32. Any product or FP16 CUDA use needs this
+routing reverted or a recorded decision with a reviewed source row.

@@ -13,8 +13,10 @@ use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 pub(super) mod cache;
+mod ranked;
 mod reference;
 mod seal;
+pub use ranked::{MAX_RANKED_GROUPS, RankedLexicalCandidates, TermGroup, valid_alternative};
 pub use reference::LexicalReferencePosition;
 pub(crate) use seal::Snapshot;
 

@@ -152,6 +152,77 @@ fn unresolved_native_names_refuse_removal_and_new_capture_without_source_changes
     Ok(())
 }
 
+/// A permanent deny is enforced by removing its evidence. It must not turn
+/// every later search into a bounded subset of the alphabetically first paths:
+/// a retained file after that first roster page stays findable by vector,
+/// hybrid and lexical search, and the denied file stays absent.
+#[test]
+fn permanent_deny_searches_the_whole_retained_corpus_not_a_first_path_page() -> Result<()> {
+    use sha2::{Digest, Sha256};
+    let owned = owner()?;
+    let root = owned.path().join("source");
+    let data = owned.path().join("data");
+    let model = data.join("models/local");
+    fs::create_dir_all(&root)?;
+    fs::create_dir_all(&model)?;
+    let vocabulary = br#"{"common":[1.0,0.0],"beacon":[0.0,1.0]}"#;
+    fs::write(model.join("vocabulary.json"), vocabulary)?;
+    fs::write(
+        model.join("model.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "schema":1,"name":"original-policy-roster-fixture","license":"Apache-2.0",
+            "dimensions":2,"sha256":format!("{:x}", Sha256::digest(vocabulary))
+        }))?,
+    )?;
+    // More retained paths than one 4,096-path roster page, all before the target.
+    // Distinct texts keep each vector's occurrence fan-out within its bound.
+    for n in 0..4200 {
+        fs::write(
+            root.join(format!("a{n:04}.txt")),
+            format!("common item{n}\n"),
+        )?;
+    }
+    fs::write(root.join("private.txt"), "beacon common\n")?;
+    fs::write(root.join("zz-late.txt"), "beacon\n")?;
+    let kernel = Kernel::open(&root, Some(data))?;
+    kernel.index()?;
+    let search = |kernel: &Kernel| -> Result<[Vec<String>; 3]> {
+        let query = SearchQuery {
+            text: "beacon".into(),
+            path_prefix: None,
+            limit: 5,
+            max_bytes: 4096,
+        };
+        Ok([
+            kernel.semantic_search(&query)?.hits,
+            kernel.default_search(&query)?.hits,
+            kernel.search(&query)?.hits,
+        ]
+        .map(|hits| hits.into_iter().map(|hit| hit.citation.path).collect()))
+    };
+    for before in search(&kernel)? {
+        ensure!(
+            before.iter().any(|path| path == "zz-late.txt"),
+            "fixture target missing before the deny: {before:?}"
+        );
+    }
+    let denied = policy(&kernel, "private.txt", PathScope::Exact)?;
+    kernel.apply_source_policy(&denied, Incarnation::from_bytes([71; 16]))?;
+    for (family, after) in ["vector", "hybrid", "lexical"]
+        .into_iter()
+        .zip(search(&kernel)?)
+    {
+        ensure!(
+            after.first().map(String::as_str) == Some("zz-late.txt"),
+            "{family} search lost a retained path after a permanent deny: {after:?}"
+        );
+        ensure!(
+            !after.iter().any(|path| path == "private.txt"),
+            "{family} search returned denied evidence: {after:?}"
+        );
+    }
+    Ok(())
+}
 fn owner() -> Result<tempfile::TempDir> {
     Ok(match std::env::var_os("AIRK_PRIVATE_CENSUS_BASE") {
         Some(base) => tempfile::Builder::new()

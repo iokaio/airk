@@ -36,6 +36,68 @@ Only the question is filled from this native emitter's fixed synthetic prompt;
 no Python layer reconstructs or rewrites the request contract or model budget.
 
 
+## External read-only sources for the configuration emitter
+
+`emit_private_arbiter_configuration` admits only frozen scope roots under
+`artifacts`, unless `AIRK_ARBITER_EVALUATION_EXTERNAL_SOURCES` holds
+`{"mode":"read-only","source_roots":[...]}` naming, after canonicalization,
+exactly the roots of the SHA-pinned scope file that lie outside `artifacts`.
+A different, extra or duplicate root, another mode or an unknown field is
+refused. The emitter still reads only service state and writes only its
+private outputs under the fixture work root; it never writes into a source.
+Every other emitter check is unchanged. The declaration exists so an
+evaluation can enroll existing checkouts indexed in place; it adds no
+authority over those checkouts.
+
+## Answer evaluation change-set selectors (22 November 2026)
+
+Every selector below is ignored, private and test-only. Each reads only
+SHA-pinned inputs under `artifacts` and writes only to a fresh work or output
+folder there. None creates a public wire or persisted product format, and none
+claims release qualification.
+
+- `restart::change_set`
+  (`actual_private_arbiter_fixture_change_set_1`): the CPU fixture with
+  change-set layers bound once for the process
+  (`AIRK_ARBITER_EVALUATION_ANSWER_LAYERS`, default `all`). The CPU roster
+  stays the restart identity. A restart may also reopen a prior change-set
+  lifetime whose roster is that roster plus the same extras. Between one and
+  eight extras (`AIRK_ARBITER_EVALUATION_CHANGE_SET_INPUTS` and its SHA-256)
+  join only the evaluation catalog through `arbiter::catalog_only`. They are
+  never seeded or copied. Each extra must be an unqualified `private-` CPU
+  profile with a new manifest that reuses its roster twin's `Model` and
+  `ExternalWeights` assets. A pinned replacement file (override) may supply an
+  asset only when its SHA-256 equals the profile's declaration. A *listed
+  candidate* is the one exception for weights. The input names a SHA-pinned
+  candidate file in fixture format that lists exactly this profile, asset
+  folder and fixture. The profile must be Focus, share the twin's `Model`
+  assets and count, and differ only in its single `ExternalWeights` asset. A
+  fresh installation must name `AIRK_ARBITER_EVALUATION_CHANGE_SET_SEED_CPU=all|focus|none`;
+  a restart never seeds. The CAL observer must stay off. The emitter
+  `emit_private_change_set_1_profiles` writes the width-16 Focus variants and
+  the provisional-Read Context variants. It never reads or copies weights.
+- `restart::change_set_2` (`emit_private_change_set_2_context_b_profiles`):
+  for each CPU Context roster profile, writes one option-B variant. The
+  variant has the `context_wide` task policy, a provisional calibration bound
+  to that policy and a new manifest, in change set 1's input format, so the
+  change-set selector runs it unchanged. The kernel builds option-B rosters
+  only when the `context_b` layer is bound.
+- `cuda_answer::same_install`
+  (`actual_private_arbiter_fixture_cuda_same_install`): reopens, or freshly
+  creates (`AIRK_ARBITER_EVALUATION_CUDA_SEED_CPU=all|focus|none`), the CPU
+  fixture's installation. It adds one unqualified CUDA Compact or Large
+  Context profile with a new manifest and a CPU twin of the same model. The
+  reviewed graph result must name that exact manifest. The CPU roster stays
+  the restart identity.
+- `cuda_answer::cs1` (`actual_private_arbiter_fixture_change_set_1_cuda`, plus
+  the emitter `emit_private_cuda_provisional_read_variants`): runs the
+  change-set lifetime with exactly one CUDA Context variant and no Focus
+  candidate. The variant may differ from its pinned reviewed CUDA base only in
+  its calibration and identity. The reviewed graph result must name the base.
+  The variant joins through the private CUDA Answer seam, not as a
+  catalog-only extra. The bounded-hybrid gate checks graph, placement and
+  adapter against the base.
+
 ## Actual private Large storage/control regression
 
 The ignored `actual_large_finalization_and_cached_verification_keep_native_control_and_lease_custody`

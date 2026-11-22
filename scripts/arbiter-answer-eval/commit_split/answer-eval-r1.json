@@ -1,0 +1,761 @@
+{
+  "schema": "airk.answer-eval.commit-split-spec/1",
+  "description": "Answer evaluation r1 split: A baseline (image baseline-1fe7b600-o2-fix3 plus harness, GPU-track baseline seams, docs), B change set 1 (cs1d/cs1e/cs2 images minus A and C), C change set 2 (search_v2, Context option B, Focus training, cs2 harness), D change set 3 (cs3 tokens, the L38-cs2a2 unidle-close exception, cs3 harness). Rulings of the primary agent on 22 November 2026 included. Line ranges and change-block indices refer to the working tree of 22 November 2026 about 07:00 UTC (rehearsal 4: about 10:30 UTC); re-check them when those files change. Roots cs2-end and pre-cs2-harness are snapshots in commit-prep/split-roots (provenance.json). Add a series name and rules for later series.",
+  "series": [
+    "A",
+    "B",
+    "C",
+    "D"
+  ],
+  "roots": {
+    "fix3-source": {
+      "dir": "vectors-diag/src-1fe7b600"
+    },
+    "cs2-prep-originals": {
+      "dir": "change-set-2/prep-originals",
+      "flatten": true
+    },
+    "cs2-end": {
+      "dir": "commit-prep/split-roots/cs2-end",
+      "flatten": true
+    },
+    "pre-cs2-harness": {
+      "dir": "commit-prep/split-roots/pre-cs2-harness",
+      "flatten": true
+    }
+  },
+  "excluded": {},
+  "globs": {
+    "scripts/arbiter-answer-eval/*": {
+      "series": "A",
+      "reason": "evaluation harness (does not run in the service)"
+    },
+    "scripts/arbiter/training/answer_eval_pairs/*": {
+      "series": "A",
+      "reason": "training-pair miner, assigned to A by the primary"
+    },
+    "scripts/arbiter/training/focus_answer_eval_r1/*": {
+      "series": "C",
+      "reason": "Focus training tooling, change-set-2 candidate"
+    },
+    "scripts/arbiter/training/context_answer_eval_r1/*": {
+      "series": "C",
+      "reason": "Context trainer gate-1 oracle-leverage collector scripts (change-set-2 decision tooling); primary ruling: C"
+    },
+    "docs/arbiter/answer-evaluation/*": {
+      "series": "A",
+      "reason": "evaluation docs, baseline report and results (setup pilot goes into the baseline commit); a later series' report and results need their own file rule"
+    },
+    "docs/arbiter/answer-evaluation/results/*": {
+      "series": "A",
+      "reason": "baseline results file"
+    }
+  },
+  "files": {
+    "AGENTS.md": {
+      "series": "A",
+      "reason": "standing rules, assigned to A"
+    },
+    "CLAUDE.md": {
+      "series": "A",
+      "reason": "standing rules, assigned to A"
+    },
+    "docs/agent-current-work.md": {
+      "series": "A",
+      "reason": "assignment doc, assigned to A"
+    },
+    "docs/arbiter/final-plan-fp16.md": {
+      "series": "A",
+      "reason": "plan, assigned to A"
+    },
+    "docs/current-index-runtime.md": {
+      "series": "A",
+      "reason": "indexer-fix docs (in image baseline-1fe7b600-o2-fix3)"
+    },
+    "docs/service-freshness.md": {
+      "series": "A",
+      "reason": "indexer-fix docs (fix3 image)"
+    },
+    "docs/service-jobs.md": {
+      "series": "A",
+      "reason": "indexer-fix docs (fix3 image)"
+    },
+    "docs/service-resources.md": {
+      "series": "A",
+      "reason": "indexer-fix docs (fix3 image)"
+    },
+    "docs/service-vector-regeneration.md": {
+      "series": "A",
+      "reason": "indexer-fix docs (fix3 image); working copy is CRLF, committed LF (equals fix3 LF bytes)"
+    },
+    "crates/airk-kernel/src/current/enrichment.rs": {
+      "series": "A",
+      "reason": "indexer r3 patch (fix3 image) plus review fix B1/N2 pause"
+    },
+    "crates/airk-kernel/src/current/enrichment/CONTRACT.md": {
+      "series": "A",
+      "reason": "indexer-fix contract (pipelined batches, multi-batch turns, pause) for the fix3 code; working copy CRLF, committed LF"
+    },
+    "crates/airk-kernel/src/current/update.rs": {
+      "series": "A",
+      "reason": "indexer r3 patch (fix3 image)"
+    },
+    "crates/airk-kernel/src/service_enrichment.rs": {
+      "series": "A",
+      "reason": "indexer r3 patch (fix3 image) plus review fix B1/N2 pause_turn guard"
+    },
+    "crates/airk-kernel/src/service_execution.rs": {
+      "series": "A",
+      "reason": "indexer r3 patch (fix3 image) plus review fix B1/N2 PauseTurn"
+    },
+    "crates/airk-kernel/src/service_execution/tests.rs": {
+      "series": "A",
+      "reason": "indexer r3 tests (fix3 image) plus B1/N2 test"
+    },
+    "crates/airk-kernel/tests/current_runtime.rs": {
+      "series": "A",
+      "reason": "indexer r3 patch (fix3 image)"
+    },
+    "crates/airk-kernel/tests/service_enrichment.rs": {
+      "series": "A",
+      "reason": "indexer r3 tests (fix3 image) plus B1/N2 two-turn regression"
+    },
+    "crates/airk-kernel/tests/source_policy.rs": {
+      "series": "A",
+      "reason": "roster-fix regression test (fix3 image)"
+    },
+    "crates/airk-store/src/current/graph.rs": {
+      "series": "A",
+      "reason": "indexer r3 patch (fix3 image)"
+    },
+    "crates/airk-store/src/current/graph/tests.rs": {
+      "series": "A",
+      "reason": "indexer r3 patch (fix3 image)"
+    },
+    "crates/airk-service/src/service_runtime/evaluation_fixture_tests.rs": {
+      "series": "A",
+      "reason": "E1 emitter change (fix3 image, identical bytes)"
+    },
+    "crates/airk-service/src/service_runtime/arbiter/evaluation.rs": {
+      "series": "A",
+      "reason": "GPU-track baseline seam: private CUDA Answer admits Compact or Large (in baseline-1fe7b600-cuda status); no change-set-1 hunk"
+    },
+    "crates/airk-service/src/service_runtime/evaluation_fixture_tests/cuda_answer/same_install.rs": {
+      "series": "A",
+      "reason": "GPU-track baseline selector (baseline-1fe7b600-cuda)"
+    },
+    "crates/airk-kernel/src/current/search.rs": {
+      "states": {
+        "A": {
+          "root": "fix3-source"
+        },
+        "C": {
+          "root": "cs2-end"
+        }
+      },
+      "hunks": {
+        "A": "roster fix hunk only = fix3 image bytes a947018d (vectors-diag/src-1fe7b600)",
+        "C": "search_v2 switch hunks (v2 mount, TermGroup import, LexicalAny, Branch.kind, search_with_switch, branch_limit, ranked branches, weights/prior/diversify, lexical_hit refactor)"
+      },
+      "reason": "split"
+    },
+    "crates/airk-kernel/src/current/search/CONTRACT.md": {
+      "states": {
+        "A": {
+          "from_final": {
+            "drop": [
+              [
+                25,
+                53
+              ]
+            ]
+          }
+        },
+        "C": {
+          "root": "cs2-end"
+        }
+      },
+      "hunks": {
+        "A": "lines 1-24: header and 'Permanent denies and the scoped path roster' section (header names search/v2.rs as owner; text kept verbatim)",
+        "C": "lines 25-53: 'Private evaluation switch search_v2' section"
+      },
+      "reason": "split"
+    },
+    "crates/airk-store/src/current/CONTRACT.md": {
+      "states": {
+        "A": {
+          "from_final": {
+            "drop": [
+              [
+                31,
+                35
+              ]
+            ]
+          }
+        },
+        "C": {
+          "root": "cs2-end"
+        }
+      },
+      "hunks": {
+        "A": "lines 21-30: graph update proof-cache bound (fix3 graph.rs)",
+        "C": "lines 31-35: search switch reads lexical::ranked"
+      },
+      "reason": "split"
+    },
+    "crates/airk-service/src/service_runtime/arbiter/lifecycle.rs": {
+      "states": {
+        "A": {
+          "from_final": {
+            "revert": [
+              5,
+              6,
+              7
+            ]
+          }
+        },
+        "B": "final"
+      },
+      "hunks": {
+        "A": "hunks @448 and @595: private CUDA Answer Large host/device envelopes (GPU track, before change set 1; equals lifecycle-before-cs1c.diff)",
+        "B": "hunks @1170, @1544, @1777: the three authorized catalog_only_held hunks"
+      },
+      "reason": "split"
+    },
+    "crates/airk-service/src/service_runtime/evaluation_fixture_tests/cuda_answer.rs": {
+      "states": {
+        "A": {
+          "from_final": {
+            "drop": [
+              [
+                16,
+                16
+              ]
+            ]
+          }
+        },
+        "B": "final"
+      },
+      "hunks": {
+        "A": "mod same_install; Input::read_matching refactor (used by same_install.rs)",
+        "B": "line 16 'mod cs1;'"
+      },
+      "reason": "split"
+    },
+    "crates/airk-retrieval/src/arbiter/runtime/bounded_hybrid/layer0/answer.rs": {
+      "states": {
+        "A": {
+          "from_final": {
+            "replace": [
+              [
+                "        overall_deadline: Instant,\n        calibration_base: Option<Profile>,\n    ) -> Result<(Self, CompactBoundedHybridAnswerProvenance)> {",
+                "        overall_deadline: Instant,\n    ) -> Result<(Self, CompactBoundedHybridAnswerProvenance)> {",
+                2
+              ],
+              [
+                "open_compact_bounded_hybrid_answer_variant(",
+                "open_compact_bounded_hybrid_answer(",
+                1
+              ],
+              [
+                "open_large_bounded_hybrid_resource_variant(",
+                "open_large_bounded_hybrid_resource(",
+                1
+              ],
+              [
+                "                    calibration_base,\n",
+                "",
+                2
+              ],
+              [
+                "            calibration_base,\n",
+                "",
+                1
+              ],
+              [
+                "            AnswerRecipe::ProtectedQkv => ensure!(\n                calibration_base.is_none(),\n                \"the protected QKV Answer recipe admits no calibration-only variant\"\n            ),\n",
+                "            AnswerRecipe::ProtectedQkv => {}\n",
+                1
+              ]
+            ],
+            "absent": [
+              "calibration_base"
+            ]
+          }
+        },
+        "B": "final"
+      },
+      "hunks": {
+        "A": "Large batch-view recipe (identify_large, LargeBatchView capacity, open_private_large_answer via HEAD open_large_bounded_hybrid_resource, test), dispatch as a match with ProtectedQkv => {}, HEAD's 5-argument open_private_compact_answer",
+        "B": "option A: calibration_base parameter, *_variant open calls, ProtectedQkv refuses a variant"
+      },
+      "reason": "split; A version reconstructed by text replacement (no retained baseline-cuda copy); primary ruling: accepted as compile-checked only"
+    },
+    "crates/airk-service/src/service_runtime/evaluation_fixture_tests/CONTRACT.md": {
+      "states": {
+        "A": {
+          "from_final": {
+            "drop": [
+              [
+                59,
+                84
+              ],
+              [
+                92,
+                99
+              ]
+            ]
+          }
+        },
+        "B": {
+          "from_final": {
+            "drop": [
+              [
+                79,
+                84
+              ]
+            ]
+          }
+        },
+        "C": {
+          "root": "cs2-end"
+        }
+      },
+      "hunks": {
+        "A": "section header lines 52-58 and the cuda_answer::same_install item 85-91",
+        "B": "restart::change_set item 59-78 and cuda_answer::cs1 item 92-99",
+        "C": "restart::change_set_2 item 79-84"
+      },
+      "reason": "split"
+    },
+    "crates/airk-service/src/service_runtime/arbiter/CONTRACT.md": {
+      "states": {
+        "A": {
+          "from_final": {
+            "revert": [
+              1
+            ]
+          }
+        },
+        "B": "final"
+      },
+      "hunks": {
+        "A": "insert @707: Large FP32 private seam and same_install selector",
+        "B": "insert @731: Private catalog-only evaluation profiles"
+      },
+      "reason": "split"
+    },
+    "crates/airk-retrieval/src/arbiter/runtime/cuda/CONTRACT.md": {
+      "states": {
+        "A": {
+          "from_final": {
+            "drop": [
+              [
+                769,
+                787
+              ]
+            ]
+          }
+        },
+        "B": "final"
+      },
+      "hunks": {
+        "A": "heading and first paragraph (Large FP32 batch-view route), lines 763-768",
+        "B": "option A calibration-only variants paragraph, lines 769-787"
+      },
+      "reason": "split"
+    },
+    "crates/airk-retrieval/src/arbiter/compiler/CONTRACT.md": {
+      "states": {
+        "A": "HEAD",
+        "B": {
+          "from_final": {
+            "drop": [
+              [
+                140,
+                156
+              ]
+            ]
+          }
+        },
+        "C": {
+          "root": "cs2-end"
+        }
+      },
+      "hunks": {
+        "B": "section header, Focus SoftwareEvidenceV1 paragraph and Digest-input paragraph (which names the C-state runtime.rs hash 258d4371)",
+        "C": "Context option B, context_wide.rs paragraph, lines 140-156"
+      },
+      "reason": "split; working copy CRLF, committed LF"
+    },
+    "crates/airk-retrieval/src/arbiter/runtime.rs": {
+      "states": {
+        "A": "HEAD",
+        "B": {
+          "root": "cs2-prep-originals"
+        },
+        "C": {
+          "root": "cs2-end"
+        }
+      },
+      "hunks": {
+        "B": "change-set-1 SoftwareEvidenceV1 routing = prep-original 20b05895 (cs1b-cuda image)",
+        "C": "3 option-B lines: context_wide::policy_for at @67, @372, @588"
+      },
+      "reason": "split"
+    },
+    "crates/airk-kernel/src/arbiter/joint.rs": {
+      "states": {
+        "A": "HEAD",
+        "B": {
+          "root": "cs2-prep-originals"
+        },
+        "C": {
+          "root": "cs2-end"
+        }
+      },
+      "hunks": {
+        "B": "change set 1 = prep-original b6cc6de0 (cs1b-cuda image)",
+        "C": "option-B roster build switch @392 and context_b_tests mount",
+        "D": "ContextGate::with_deadline(layers.device, layers.deadline_strict) (change set 3)"
+      },
+      "reason": "split"
+    },
+    "crates/airk-service/src/service_runtime/evaluation_fixture_tests/restart.rs": {
+      "states": {
+        "A": "HEAD",
+        "B": {
+          "root": "cs2-prep-originals"
+        },
+        "C": {
+          "root": "cs2-end"
+        }
+      },
+      "hunks": {
+        "B": "change_set mount = prep-original b59bcac2",
+        "C": "mod change_set_2",
+        "D": "UNIDLE_CLOSE_EXCEPTIONS (L38-cs2a2), unidle_exception_accepts, unidle_exception, gate settled() || unidle_exception(), test; primary ruling: belongs to the cs3 commit"
+      },
+      "reason": "split"
+    },
+    "crates/airk-inference/src/inference_engine/pool/arbiter.rs": {
+      "series": "B",
+      "reason": "option A calibration_base plumbing (change set 1 GPU cells; cs1b-cuda)"
+    },
+    "crates/airk-inference/src/inference_engine/pool/arbiter/eligibility.rs": {
+      "series": "B",
+      "reason": "option A calibration_base plumbing (cs1b-cuda)"
+    },
+    "crates/airk-kernel/src/arbiter.rs": {
+      "states": {
+        "B": {
+          "root": "cs2-end"
+        }
+      },
+      "hunks": {
+        "B": "kernel arbiter change set 1",
+        "D": "Gathering: strict_deadline_stops before each dispatch (deadline=strict)"
+      },
+      "reason": "split; B = the previous split's C content (cs2-end snapshot), D = change set 3"
+    },
+    "crates/airk-kernel/src/arbiter/CONTRACT.md": {
+      "series": "B",
+      "reason": "change set 1 contract incl. layer tokens; primary ruling: B: also documents context_b/focus_keep/focus_threshold, kept in B with the software family"
+    },
+    "crates/airk-kernel/src/arbiter/focus.rs": {
+      "series": "B",
+      "reason": "kernel arbiter change set 1"
+    },
+    "crates/airk-kernel/src/arbiter/joint/change_set_tests.rs": {
+      "series": "B",
+      "reason": "change set 1 tests"
+    },
+    "crates/airk-kernel/src/arbiter/software.rs": {
+      "states": {
+        "B": {
+          "root": "cs2-end"
+        }
+      },
+      "hunks": {
+        "B": "change set 1 + cs1e tuning tokens; primary ruling: B: also holds the focus_keep/focus_threshold/context_b token fields, which cs1e's kept= alias, names() and tests share",
+        "D": "change set 3 tokens (keyword_searches, deadline=strict, pool cap MAX_POOL 48, wide-pool presentation) and their tests"
+      },
+      "reason": "split; B = the previous split's C content (cs2-end snapshot), D = change set 3"
+    },
+    "crates/airk-kernel/src/arbiter/software/gathering_tests.rs": {
+      "series": "B",
+      "reason": "change set 1 + cs1e tests"
+    },
+    "crates/airk-kernel/src/arbiter/software/plan.rs": {
+      "states": {
+        "B": {
+          "root": "cs2-end"
+        }
+      },
+      "hunks": {
+        "B": "change set 1 + cs1e; primary ruling: B: select_kept_with uses kept()/keep_threshold() (focus_keep/threshold)",
+        "D": "change set 3 tokens (keyword_searches, deadline=strict, pool cap MAX_POOL 48, wide-pool presentation) and their tests"
+      },
+      "reason": "split; B = the previous split's C content (cs2-end snapshot), D = change set 3"
+    },
+    "crates/airk-kernel/src/arbiter/software/tests.rs": {
+      "states": {
+        "B": {
+          "root": "cs2-end"
+        }
+      },
+      "hunks": {
+        "B": "change set 1 + cs1e tests; primary ruling: B: includes the two change_set_2_switches_* token tests",
+        "D": "change set 3 tokens (keyword_searches, deadline=strict, pool cap MAX_POOL 48, wide-pool presentation) and their tests"
+      },
+      "reason": "split; B = the previous split's C content (cs2-end snapshot), D = change set 3"
+    },
+    "crates/airk-retrieval/src/arbiter/compiler/focus/experiment.rs": {
+      "series": "B",
+      "reason": "SoftwareEvidenceV1 Focus instruction (change set 1)"
+    },
+    "crates/airk-retrieval/src/arbiter/compiler/focus/experiment/software_tests.rs": {
+      "series": "B",
+      "reason": "change set 1 tests"
+    },
+    "crates/airk-retrieval/src/arbiter/runtime/bounded_hybrid.rs": {
+      "series": "B",
+      "reason": "option A calibration-only variant gate (change set 1 GPU cells)"
+    },
+    "crates/airk-retrieval/src/arbiter/runtime/bounded_hybrid/tests.rs": {
+      "series": "B",
+      "reason": "option A tests"
+    },
+    "crates/airk-retrieval/src/arbiter/runtime/cpu_source_transition/CONTRACT.md": {
+      "series": "B",
+      "reason": "records the change-set-1 runtime.rs digest-input change"
+    },
+    "crates/airk-service/src/service_runtime/arbiter.rs": {
+      "series": "B",
+      "reason": "catalog_only mount (change set 1)"
+    },
+    "crates/airk-service/src/service_runtime/arbiter/assets.rs": {
+      "series": "B",
+      "reason": "catalog_only asset hook (change set 1)"
+    },
+    "crates/airk-service/src/service_runtime/arbiter/catalog_only.rs": {
+      "series": "B",
+      "reason": "catalog-only profiles incl. review fixes N1/N6/N7"
+    },
+    "crates/airk-service/src/service_runtime/evaluation_fixture_tests/cuda_answer/cs1.rs": {
+      "series": "B",
+      "reason": "change set 1 GPU cells selector"
+    },
+    "crates/airk-service/src/service_runtime/evaluation_fixture_tests/restart/change_set.rs": {
+      "series": "B",
+      "reason": "change-set selector incl. N7 extended restart roster"
+    },
+    "crates/airk-kernel/src/current.rs": {
+      "series": "C",
+      "reason": "search_v2 bind export"
+    },
+    "crates/airk-kernel/src/current/search/v2.rs": {
+      "series": "C",
+      "reason": "search_v2"
+    },
+    "crates/airk-kernel/src/current/search/v2_tests.rs": {
+      "series": "C",
+      "reason": "search_v2 tests"
+    },
+    "crates/airk-store/src/current/lexical.rs": {
+      "series": "C",
+      "reason": "search_v2 ranked mount/export"
+    },
+    "crates/airk-store/src/current/lexical/ranked.rs": {
+      "series": "C",
+      "reason": "search_v2 ranked lexical reader"
+    },
+    "crates/airk-retrieval/src/arbiter/mod.rs": {
+      "series": "C",
+      "reason": "context_wide mounts (prep-original = HEAD)"
+    },
+    "crates/airk-retrieval/src/arbiter/context_wide.rs": {
+      "series": "C",
+      "reason": "Context option B"
+    },
+    "crates/airk-retrieval/src/arbiter/context_wide_tests.rs": {
+      "series": "C",
+      "reason": "Context option B tests"
+    },
+    "crates/airk-service/src/service_runtime/arbiter/joint_scoring.rs": {
+      "series": "C",
+      "reason": "option B scoring (prep-original = HEAD)"
+    },
+    "crates/airk-kernel/src/arbiter/joint/context_b_tests.rs": {
+      "series": "C",
+      "reason": "option B tests"
+    },
+    "crates/airk-service/src/service_runtime/evaluation_fixture_tests/restart/change_set_2.rs": {
+      "series": "C",
+      "reason": "option B profile emitter"
+    },
+    "crates/airk-retrieval/tests/focus_answer_eval_candidate.rs": {
+      "series": "C",
+      "reason": "Focus training candidate test"
+    },
+    "crates/airk-mcp/src/context_action_capture_tests.rs": {
+      "series": "C",
+      "reason": "mount of the Context fork collector; primary ruling: C; working copy CRLF, committed LF"
+    },
+    "crates/airk-mcp/src/context_action_capture_tests/software_forks.rs": {
+      "series": "C",
+      "reason": "Context trainer gate-1 oracle-leverage collector; primary ruling: C"
+    },
+    "docs/arbiter/answer-evaluation/README.md": {
+      "reason": "split: each series commit adds its own README row (plan 5.6)",
+      "states": {
+        "A": {
+          "from_final": {
+            "drop": [
+              [
+                24,
+                25
+              ]
+            ]
+          }
+        },
+        "B": {
+          "from_final": {
+            "drop": [
+              [
+                25,
+                25
+              ]
+            ]
+          }
+        },
+        "C": "final"
+      },
+      "hunks": {
+        "A": "rows 00 Setup and 01 Baseline (incl. the bookbuilder-v2 baseline outcome) replace the placeholder row (lines 22-23)",
+        "B": "row 02 Change set 1 (line 24)",
+        "C": "row 03 Change set 2 (line 25)",
+        "D": "row 04 Change set 3, when written (then give C a drop rule)"
+      }
+    },
+    "docs/arbiter/answer-evaluation/02-change-set-1.md": {
+      "series": "B",
+      "reason": "change set 1 series report (plan 5.6)"
+    },
+    "docs/arbiter/answer-evaluation/results/02-change-set-1.csv": {
+      "series": "B",
+      "reason": "change set 1 results file (plan 5.6)"
+    },
+    "crates/airk-kernel/src/arbiter/software/cs3_tests.rs": {
+      "series": "D",
+      "reason": "change set 3 token tests"
+    },
+    "scripts/arbiter-answer-eval/run_pass.py": {
+      "states": {
+        "A": {
+          "root": "pre-cs2-harness"
+        },
+        "C": {
+          "root": "cs2-end"
+        }
+      },
+      "hunks": {
+        "A": "harness as of the previous split",
+        "C": "check_lifetime (freeze b6ac6cea, 07:37 UTC) and check_names (freeze f78d3dc0, 08:35 UTC); cs2-end equals the f78d3dc0 files hash"
+      },
+      "reason": "split: harness by the series whose run first used each hunk"
+    },
+    "scripts/arbiter-answer-eval/run_plan.py": {
+      "states": {
+        "C": {
+          "root": "cs2-end"
+        }
+      },
+      "hunks": {
+        "C": "unattended plan driver, frozen d86a78aa (08:08 UTC) before the CS2 plan; cs2-end equals the f78d3dc0 files hash",
+        "D": "later changes, if any"
+      },
+      "reason": "new in change set 2"
+    },
+    "scripts/arbiter-answer-eval/prompts_freeze.py": {
+      "states": {
+        "A": {
+          "root": "pre-cs2-harness"
+        },
+        "C": {
+          "root": "cs2-end"
+        }
+      },
+      "hunks": {
+        "A": "harness as of the previous split",
+        "C": "run_plan.py in HARNESS_FILES (freeze d86a78aa); cs2-end equals the f78d3dc0 files hash",
+        "D": "refreeze with kept manifests and computed prompts_changed, scenario_freeze, search_replay.py and verify_restart.py in HARNESS_FILES"
+      },
+      "reason": "split: harness by first use"
+    },
+    "scripts/arbiter-answer-eval/test_harness.py": {
+      "states": {
+        "A": {
+          "root": "pre-cs2-harness"
+        },
+        "C": {
+          "root": "cs2-end"
+        }
+      },
+      "hunks": {
+        "A": "harness tests as of the previous split",
+        "C": "run_plan import, test_lifetime_search_and_layers_must_match, test_plan_*, test_only_names_must_match_a_result",
+        "D": "search_replay and verify_restart imports, test_search_replay_*, test_verify_restart_*, test_refreeze_*"
+      },
+      "reason": "split: tests go with the code they test"
+    },
+    "scripts/arbiter-answer-eval/fixture.py": {
+      "states": {
+        "A": {
+          "root": "cs2-end"
+        }
+      },
+      "hunks": {
+        "A": "harness as of the previous split (no change-set-2 hunk since)",
+        "D": "UNIDLE_CLOSE_EXCEPTIONS / unidle_close_exception / --accept-unidle-close (first used by L39-cs2def, a refused start after the cs2 passes) and attach_verification (verify_restart receipt, first used by L40-cs3def)"
+      },
+      "reason": "split: harness by first use"
+    },
+    "scripts/arbiter-answer-eval/test_fixture.py": {
+      "states": {
+        "A": {
+          "root": "cs2-end"
+        }
+      },
+      "hunks": {
+        "A": "harness tests as of the previous split",
+        "D": "unidle-close exception and attach_verification tests"
+      },
+      "reason": "split: tests go with the code they test"
+    },
+    "scripts/arbiter-answer-eval/search_replay.py": {
+      "series": "D",
+      "reason": "no-session Search replay; the used runs (change-set-2/search-replay/default and search_v2) ran on L40-cs3def after the cs2 passes; the L38 attempt was interrupted and is not used"
+    },
+    "scripts/arbiter-answer-eval/verify_restart.py": {
+      "series": "D",
+      "reason": "post-restart verification, first used by L40-cs3def"
+    },
+    "docs/arbiter/answer-evaluation/01-baseline.md": {
+      "series": "A",
+      "reason": "baseline series report (plan 5.6)"
+    },
+    "docs/arbiter/answer-evaluation/results/01-baseline.csv": {
+      "series": "A",
+      "reason": "baseline results file (plan 5.6)"
+    },
+    "docs/arbiter/answer-evaluation/03-change-set-2.md": {
+      "series": "C",
+      "reason": "change set 2 series report (plan 5.6); not yet in the tree at rehearsal 4"
+    },
+    "docs/arbiter/answer-evaluation/results/03-change-set-2.csv": {
+      "series": "C",
+      "reason": "change set 2 results file (plan 5.6); not yet in the tree at rehearsal 4"
+    }
+  }
+}

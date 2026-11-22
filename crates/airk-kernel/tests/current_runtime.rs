@@ -130,6 +130,55 @@ fn shared_embedding_survives_more_than_128_file_occurrences() -> Result<()> {
     Ok(())
 }
 
+/// One publication whose units span several 32-unit embedding batches. Graph
+/// insertion of one batch overlaps inference of the next; a unit text repeated
+/// across a batch boundary must still share the first batch's graph node.
+#[test]
+fn pipelined_semantic_batches_share_aliases_across_batch_boundaries() -> Result<()> {
+    let root = unlinked_tempdir()?;
+    let data = unlinked_tempdir()?;
+    model(&data.path().join("models/local"), 2)?;
+    std::fs::write(
+        root.path().join("long.txt"),
+        "authenticate\n".repeat(24_000),
+    )?;
+    std::fs::write(root.path().join("short.txt"), "login\n")?;
+    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    let report = kernel.index()?;
+    eprintln!(
+        "units={} nodes={} reused={} batches={} vectors={}",
+        report.vector_units,
+        report.vector_graph_nodes,
+        report.vector_reused_inputs,
+        report.embedding_batches,
+        kernel.status()?.indexed_vectors
+    );
+    assert!(
+        report.vector_units > 64,
+        "fixture must span at least three embedding batches"
+    );
+    assert_eq!(
+        report.vector_graph_nodes + report.vector_reused_inputs,
+        report.vector_units,
+        "every unit is either inserted once or reuses an earlier node"
+    );
+    assert_eq!(
+        u64::try_from(kernel.status()?.indexed_vectors)?,
+        report.vector_graph_nodes
+    );
+    let query = SearchQuery {
+        text: "authenticate".into(),
+        path_prefix: Some("short.txt".into()),
+        limit: 1,
+        max_bytes: 4096,
+    };
+    assert_eq!(
+        kernel.semantic_search(&query)?.hits[0].citation.path,
+        "short.txt"
+    );
+    Ok(())
+}
+
 #[test]
 fn public_runtime_indexes_updates_and_reads_current_evidence() -> Result<()> {
     let directory = unlinked_tempdir()?;

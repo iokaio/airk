@@ -13,6 +13,9 @@ use airk_core::{
 };
 use airk_inference::inference_engine::pool::arbiter::EvaluationAnswerGraph;
 
+mod cs1;
+mod same_install;
+
 const MAX_GRAPH_BYTES: u64 = 16 << 20;
 const COMPARATOR_CALIBRATION_NAME: &str = "context-action-calibration.json";
 
@@ -24,6 +27,26 @@ pub(super) struct Input {
 
 impl Input {
     pub(super) fn read(artifacts: &Path, prepared: &[Prepared], expires: Instant) -> Result<Self> {
+        Self::read_matching(artifacts, expires, |manifest| {
+            ensure!(
+                prepared.iter().any(|item| {
+                    item.profile.manifest == manifest
+                        && item.profile.model == ModelChoice::ContextQwenCompact
+                        && item.profile.device_execution.is_some()
+                }),
+                "exact CUDA Compact graph profile missing from the isolated fixture"
+            );
+            Ok(())
+        })
+    }
+
+    /// Reads the pinned reviewed graph result and lets the caller bind the
+    /// profile it names. The original selector keeps its Compact-only binding.
+    fn read_matching(
+        artifacts: &Path,
+        expires: Instant,
+        bind: impl FnOnce(Sha256Digest) -> Result<()>,
+    ) -> Result<Self> {
         let graph_path = PathBuf::from(
             std::env::var_os("AIRK_ARBITER_EVALUATION_CUDA_GRAPH")
                 .context("private CUDA Answer requires a reviewed graph result")?,
@@ -45,14 +68,7 @@ impl Input {
         );
         let result: serde_json::Value = serde_json::from_slice(&graph)?;
         let manifest = serde_json::from_value(result["profile"].clone())?;
-        ensure!(
-            prepared.iter().any(|item| {
-                item.profile.manifest == manifest
-                    && item.profile.model == ModelChoice::ContextQwenCompact
-                    && item.profile.device_execution.is_some()
-            }),
-            "exact CUDA Compact graph profile missing from the isolated fixture"
-        );
+        bind(manifest)?;
         Ok(Self {
             manifest,
             adapter,

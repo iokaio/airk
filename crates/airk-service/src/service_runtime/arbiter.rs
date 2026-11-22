@@ -9,6 +9,8 @@ use airk_core::{
 use anyhow::Context;
 #[cfg(feature = "local-inference")]
 mod assets;
+#[cfg(all(feature = "local-inference", feature = "test-support"))]
+pub(super) mod catalog_only;
 pub(super) mod device_management;
 #[cfg(feature = "local-inference")]
 mod download;

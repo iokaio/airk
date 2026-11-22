@@ -293,6 +293,8 @@ pub struct EvaluationAnswerGraph {
     reviewed_result: Arc<[u8]>,
     expected_sha256: Sha256Digest,
     expires: Instant,
+    /// The reviewed base when the scored profile is its calibration-only variant.
+    calibration_base: Option<Arc<airk_core::arbiter::Profile>>,
 }
 #[cfg(all(
     windows,
@@ -332,7 +334,16 @@ impl EvaluationAnswerGraph {
             reviewed_result,
             expected_sha256,
             expires,
+            calibration_base: None,
         }
+    }
+
+    /// The reviewed graph result names `base`; the scored profile must be a
+    /// calibration-only variant of it (checked again by the bounded-hybrid gate).
+    #[must_use]
+    pub fn with_calibration_base(mut self, base: airk_core::arbiter::Profile) -> Self {
+        self.calibration_base = Some(Arc::new(base));
+        self
     }
 
     pub fn capacity_plan(

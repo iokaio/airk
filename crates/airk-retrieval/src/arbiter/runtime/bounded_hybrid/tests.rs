@@ -319,3 +319,150 @@ fn compact_fp16_bounded_graph_refuses_caller_selected_evidence() {
     assert!(GraphGate::new_compact_fp16(raw, sha).is_err());
     assert!(GraphGate::new_compact_fp16(raw, COMPACT_FP16_GRAPH_SHA.parse().unwrap()).is_err());
 }
+
+fn reviewed_cuda_base() -> Result<Profile> {
+    use airk_core::arbiter::device::{
+        DEVICE_EXECUTION_SCHEMA, DeviceExecution, DeviceMemory, DevicePrecision, GpuBackend,
+        PlacementPolicy,
+    };
+    let mut profile: Profile = serde_json::from_slice(include_bytes!(
+        "../../../../../../fixtures/arbiter/profile-downloads.json"
+    ))?;
+    profile.model = ModelChoice::ContextQwenLarge;
+    profile.qualification = None;
+    profile.qualified_targets.clear();
+    profile.downloads.clear();
+    profile.profile_id = "private-cuda-fp32-context-large-batch-view-v1".into();
+    profile.manifest = Sha256Digest::from_bytes([1; 32]);
+    let digest = Sha256Digest::from_bytes([9; 32]);
+    profile.device_execution = Some(DeviceExecution {
+        schema: DEVICE_EXECUTION_SCHEMA.into(),
+        backend: GpuBackend::Cuda,
+        runtime_build: digest,
+        compatibility_policy: digest,
+        provider_options: digest,
+        math_policy: digest,
+        precision: DevicePrecision::Float32,
+        tf32: false,
+        placement: PlacementPolicy::StrictGpu,
+        graph: BATCH_VIEW_GRAPH.parse()?,
+        host_fit: Default::default(),
+        memory: DeviceMemory::Dedicated {
+            required_peak_bytes: 40 << 30,
+            headroom_bytes: 4 << 30,
+        },
+    });
+    if !profile
+        .assets
+        .iter()
+        .any(|asset| asset.role == AssetRole::Calibration)
+    {
+        profile.assets.push(Asset {
+            name: "context-action-calibration.json".into(),
+            role: AssetRole::Calibration,
+            bytes: 10,
+            sha256: Sha256Digest::from_bytes([2; 32]),
+        });
+    }
+    let calibration = profile
+        .assets
+        .iter_mut()
+        .find(|asset| asset.role == AssetRole::Calibration)
+        .context("calibration asset")?;
+    calibration.sha256 = Sha256Digest::from_bytes([2; 32]);
+    calibration.bytes = 10;
+    profile.calibration = calibration.sha256;
+    profile.assets.retain(|asset| {
+        asset.role != AssetRole::Calibration || asset.sha256 == Sha256Digest::from_bytes([2; 32])
+    });
+    Ok(profile)
+}
+
+fn provisional_variant(base: &Profile) -> Result<Profile> {
+    let mut variant = base.clone();
+    let calibration = variant
+        .assets
+        .iter_mut()
+        .find(|asset| asset.role == AssetRole::Calibration)
+        .context("calibration asset")?;
+    calibration.sha256 = Sha256Digest::from_bytes([3; 32]);
+    calibration.bytes = 42;
+    variant.calibration = calibration.sha256;
+    variant.profile_id = format!("{}-cs1-provisional-read", base.profile_id);
+    variant.manifest = Sha256Digest::from_bytes([4; 32]);
+    Ok(variant)
+}
+
+#[test]
+fn calibration_only_cuda_variant_is_checked_against_its_reviewed_base() -> Result<()> {
+    let base = reviewed_cuda_base()?;
+    let variant = provisional_variant(&base)?;
+    // Accepted: the reviewed result names the base; checks then run on the base.
+    let reviewed = reviewed_profile(base.manifest, Some(&base), &variant)?;
+    assert_eq!(reviewed.manifest, base.manifest);
+    // Without a base the opened profile itself is checked, unchanged.
+    assert_eq!(reviewed_profile(variant.manifest, None, &variant)?.manifest, variant.manifest);
+    let mut compact = base.clone();
+    compact.model = ModelChoice::ContextQwenCompact;
+    let compact_variant = Profile {
+        model: ModelChoice::ContextQwenCompact,
+        ..variant.clone()
+    };
+    require_calibration_only_variant(&compact, &compact_variant)?;
+    Ok(())
+}
+
+#[test]
+fn calibration_only_cuda_variant_refuses_every_other_difference() -> Result<()> {
+    let base = reviewed_cuda_base()?;
+    let variant = provisional_variant(&base)?;
+    let refused = |changed: Profile| require_calibration_only_variant(&base, &changed).is_err();
+    // A graph change.
+    let mut graph = variant.clone();
+    graph.device_execution.as_mut().context("device")?.graph = Sha256Digest::from_bytes([5; 32]);
+    assert!(refused(graph));
+    // A non-calibration asset change.
+    let mut asset = variant.clone();
+    let other = asset
+        .assets
+        .iter_mut()
+        .find(|asset| asset.role != AssetRole::Calibration)
+        .context("non-calibration asset")?;
+    other.sha256 = Sha256Digest::from_bytes([6; 32]);
+    assert!(refused(asset));
+    // Any other field, a qualified profile, a public id, a CPU profile.
+    let mut tokens = variant.clone();
+    tokens.max_tokens += 1;
+    assert!(refused(tokens));
+    let mut qualified = variant.clone();
+    qualified.qualification = base_qualification()?;
+    assert!(refused(qualified));
+    let mut public = variant.clone();
+    public.profile_id = "arbiter-context-large".into();
+    assert!(refused(public));
+    let mut cpu = variant.clone();
+    cpu.device_execution = None;
+    assert!(refused(cpu));
+    // An identity alias: same calibration, or the base's own manifest.
+    let mut alias = base.clone();
+    alias.manifest = Sha256Digest::from_bytes([4; 32]);
+    alias.profile_id = variant.profile_id.clone();
+    assert!(refused(alias));
+    let mut same_manifest = variant.clone();
+    same_manifest.manifest = base.manifest;
+    assert!(refused(same_manifest));
+    // An unreviewed base: the reviewed result names another profile.
+    assert!(reviewed_profile(Sha256Digest::from_bytes([8; 32]), Some(&base), &variant).is_err());
+    // A base that is itself not a reviewed private CUDA profile.
+    let mut public_base = base.clone();
+    public_base.profile_id = "arbiter-context-large".into();
+    assert!(require_calibration_only_variant(&public_base, &variant).is_err());
+    Ok(())
+}
+
+fn base_qualification() -> Result<Option<Sha256Digest>> {
+    let profile: Profile = serde_json::from_slice(include_bytes!(
+        "../../../../../../fixtures/arbiter/profile-downloads.json"
+    ))?;
+    Ok(profile.qualification)
+}

@@ -15340,3 +15340,106 @@ and the sealed set.
 
 Nothing was built, indexed, launched or run. **Resume action.** None until
 the user says to start. Then step E1 of the Arbiter plan.
+### 22 November 2026 at about 11:30 UTC — One-turn Answer evaluation committed as history; plan redirected to the Answer loop
+
+**What ran, 21–22 November.** E1–E6 of the Arbiter plan, and E7 in part, all on
+private evaluation images built from this branch. Agents were headless Claude
+Code on Haiku and judges on Sonnet, both at medium effort.
+- **Judged passes.** Five, each with publication tokens unchanged across every
+  snapshot:
+  - the baseline on airk and on bookbuilder (a fresh index with its denies
+    applied before the first pass);
+  - change set 1 on airk;
+  - change set 2 on both repositories.
+- **Results.** No Answer configuration produced a correct finish where Search
+  did not:
+  - Headroom stayed 10/10 on both repositories.
+  - Search finished 2 of 10 on the airk baseline.
+  - Answer configurations gained 1–4 essential notes per change set, at 1.5–2.6
+    times the call time.
+  - On the first reply, the wider pool and `search_v2` doubled coverage, but
+    that reply still covered at most 6 of 53 notes on airk and 10 of 61 on
+    bookbuilder.
+- **Change set 3.** Stopped during its replays.
+- **Reports.** `docs/arbiter/answer-evaluation/00-setup.md` to `03-change-set-2.md`,
+  with the results files.
+- **Receipts.** Under the private campaign root
+  `artifacts/v190/final-plan/exec-20261116T052942Z/answer-eval-r1/`.
+
+**Product fixes found and kept.**
+- **Search roster cap.** Any index with a permanent deny searched only its
+  first 4,096 paths. Fixed in `current/search.rs`, with a test in
+  `tests/source_policy.rs`. The fresh bookbuilder index's depth equals the
+  pre-deny publication on all 10 scenarios.
+- **Indexer.**
+  - Embed and insert are pipelined, and a turn takes 8 batches.
+  - The graph proof cache is bounded by bytes.
+  - The pause-turn guard is fixed (S1, S2, N1, B1).
+  - The result is about 45% faster enrichment.
+- **`search_v2`.** It finds slightly more essential notes on the same queries:
+  13→15 and 6→7 of 53.
+
+**Decisions.** All are recorded in plan sections 2, 11 and 12.
+- The user stopped the evaluation and redirected the plan: Answer becomes a
+  local multi-round loop (Split; per part Plan, Retrieve, Read and check
+  coverage, Follow up, Compose; then Union).
+- The other settings for the loop:
+  - selection by the scoring models;
+  - a 600 s ceiling with a 300 s default;
+  - the accepted many-agent queueing;
+  - one loaded copy of each model;
+  - idle unload;
+  - Large on the GPU only, falling back to Compact on the GPU, then Compact on
+    the CPU;
+  - no backward compatibility.
+- The one-turn results are history, not a baseline. The evaluation and weight
+  refinement start over on the loop.
+- At the user's word, the pending evaluation work is committed as one commit,
+  replacing one commit per series for these one-turn rounds.
+
+**Evaluation-only deviations, kept out of the product path.**
+- **Restart exception.** After an unclean close of lifetime L38 (one
+  in-flight Focus read), a one-time restart exception was decided by the
+  primary agent under the user's autonomy grant. It is named by digest in
+  `fixture.py` and in `evaluation_fixture_tests/restart.rs`. The tokens were
+  verified after the restart.
+- **Digest change, not re-pinned.** `runtime.rs` routing for `SoftwareEvidenceV1`
+  is a recorded digest-input change that is not re-pinned. The 8
+  `cpu_source_transition` tests are known failing.
+- **Version-boundary test.** The retrieval test
+  `embedded_catalog_tests::selected_local_test_profiles_are_admitted_at_1_8_201_and_refused_from_1_9_0`
+  also fails. Owner: primary. It has not yet been checked at `1fe7b600`.
+- **Flaky store test.** The store cache test
+  `release_drops_guards_under_the_released_collection_only` is intermittent at
+  clean `1fe7b600` (12 of 28 runs failed).
+
+**Security.**
+- **Leak.** Two bookbuilder key-setting scripts (`set-rss-key.ps1`,
+  `set-sendgrid-key.ps1`) were indexed before the denies. Their text reached
+  two pilot sessions and the model provider.
+- **Fix.** The scripts are now denied, and bookbuilder was re-indexed fresh.
+  The session folders were deleted (private deletion receipt).
+- **Rotate.** The user should rotate the RSS and SendGrid keys.
+- **Read-only breach.** A delegated agent ran one `git status` in bookbuilder
+  without `GIT_OPTIONAL_LOCKS=0`. No files changed, and the rule was restated
+  to every agent.
+
+**Validation for this commit.**
+- **Clippy.** `cargo clippy --workspace --all-targets --all-features --locked
+  --offline --timings -- -D warnings` exited 0 in 69 s. It ran on 22 November
+  at 10:23 UTC in the cs3x environment: target `target`, opt level 2,
+  incremental on. A later formatting-only rustfmt change to
+  `restart/change_set.rs` followed.
+- **Repository checks.** `scripts/check-repo.ps1` passed for 10,555 files, and
+  `git diff --check` was clean.
+- **Python tests.**
+  - The harness: 116 tests passed.
+  - The commit split: 5 passed.
+  - Focus tooling: 14 passed. Context tooling: 8 passed.
+  - Pair mining: 1 skipped, because it needs a private root.
+- **Not run for this commit:** workspace `cargo test`.
+
+Identity: `TYAI\tdotn`, SID `S-1-5-21-3678370870-3858642417-826968105-1002`.
+
+**Resume action.** After the user's final review of plan section 12, start L1
+(contract decisions and Core types).

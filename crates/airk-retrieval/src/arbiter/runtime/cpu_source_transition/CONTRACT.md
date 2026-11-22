@@ -370,3 +370,14 @@ new transition row 09842b67ad09a739412ccdb6c20efe51c43f4b5dd0c0ca74f122c2f0b51e2
 The other two fixture rows are publisher diagnostic pairs. The original
 descriptor, legacy source identity and task qualification retain their
 recorded scope.
+
+### Private Answer evaluation build (22 November 2026)
+
+The Answer evaluation's test-support policy routing (recorded in
+`../../compiler/CONTRACT.md`, "Private Answer evaluation policy routing")
+moves the live LF-normalized runtime.rs away from
+7b4650767610eafdfea4b6c273e042008e4eae4654dde516d438c6ee2f8449b3. No
+transition row or pin was added or changed, so the transition's runtime
+source check does not match in that private build, and its 8
+`cpu_source_transition` tests fail there as a known failing check. Product use requires reverting the routing or a reviewed
+source row.

@@ -334,7 +334,15 @@ impl crate::Kernel {
             "Arbiter owner supplied a foreign binding"
         );
         let scope = application.scope.clone();
-        let mut gathering = Gathering::new(request.clone(), scope.clone(), application, started)?;
+        let layers = software::evaluation_layers();
+        self.bind_focus_shape(layers)?;
+        let mut gathering = Gathering::with_layers(
+            request.clone(),
+            scope.clone(),
+            application,
+            started,
+            layers,
+        )?;
         loop {
             require_live()?;
             ensure!(
@@ -400,6 +408,8 @@ impl crate::Kernel {
                 gathering.select(advice)?;
                 gathering.optional_stopped |= stopped;
             }
+            require_live()?;
+            gathering.resolve_governing(reader)?;
             let Some(dispatch) = gathering.next(Instant::now())? else {
                 break;
             };
@@ -484,6 +494,10 @@ pub struct Dispatch {
     pub arguments: Map<String, Value>,
     pub revision: String,
     pub round: usize,
+    /// Change-set kind; `Initial` and `Literal` under product gathering.
+    pub kind: software::FollowUp,
+    /// The identifier or document a change-set read is about.
+    subject: String,
 }
 
 /// Native callers supply this binding from installed authority, never request
@@ -501,6 +515,8 @@ pub struct Gathering {
     excerpts: BTreeSet<Sha256Digest>,
     output: ContextResponse,
     focus_work: Work,
+    /// Private evaluation change-set state; all layers off for product reads.
+    plan: software::plan::State,
 }
 
 fn token(value: &Value) -> Option<&str> {
@@ -525,6 +541,23 @@ impl Gathering {
         application: IndexApplication,
         now: Instant,
     ) -> Result<Self> {
+        Self::with_layers(
+            request,
+            scope,
+            application,
+            now,
+            software::Layers::default(),
+        )
+    }
+
+    /// Private evaluation change set 1; `Layers::default()` is `new`.
+    pub fn with_layers(
+        request: ContextRequest,
+        scope: ScopeBinding,
+        application: IndexApplication,
+        now: Instant,
+        layers: software::Layers,
+    ) -> Result<Self> {
         request.validate()?;
         application.validate()?;
         ensure!(
@@ -546,9 +579,21 @@ impl Gathering {
             target: request.question.clone(),
         };
         let max_bytes = (request.budget.max_bytes / 8).clamp(1024, 4096);
-        let dispatch = Dispatch {choice, tool:"search", arguments:json!({"query":request.question,
+        let arguments = if layers.pool {
+            software::initial_search(&request.question, &request.budget)
+        } else {
+            json!({"query":request.question,
             "limit":request.budget.fanout.min(8).min(request.budget.candidates),"max_bytes":max_bytes,"full_chunks":true})
-            .as_object().unwrap().clone(),revision,round:1};
+        };
+        let dispatch = Dispatch {
+            choice,
+            tool: "search",
+            arguments: arguments.as_object().unwrap().clone(),
+            revision,
+            round: 1,
+            kind: software::FollowUp::Initial,
+            subject: request.question.clone(),
+        };
         let output = ContextResponse {
             schema: CONTEXT_SCHEMA.into(),
             packet_schema: PACKET_SCHEMA.into(),
@@ -577,6 +622,7 @@ impl Gathering {
             excerpts: BTreeSet::new(),
             output,
             focus_work: Work::default(),
+            plan: software::plan::State::new(layers),
         })
     }
 
@@ -698,6 +744,10 @@ impl Gathering {
             self.output.stop = StopReason::Budget;
             return Ok(None);
         }
+        if self.strict_deadline_stops(now) {
+            self.output.stop = StopReason::Deadline;
+            return Ok(None);
+        }
         let Some(dispatch) = self.queue.pop_front() else {
             return Ok(None);
         };
@@ -722,6 +772,18 @@ impl Gathering {
             .context("Arbiter observation has no admitted read")?;
         let body = match result {
             Ok(body) => body,
+            Err(error) if self.plan.layers.followups && dispatch.round > 1 => {
+                // Change set 1: an optional follow-up may fail legitimately (an
+                // ambiguous definition, a moved file). Its canonical failure
+                // receipt is retained; the other queued reads continue.
+                if let Some(failure) = error.downcast_ref::<crate::workbench::ReadFailure>()
+                    && self.retain(&dispatch, failure.0.clone(), EvidenceRole::Unknown)?
+                {
+                    self.plan.record(&self.output.records, dispatch.kind);
+                }
+                self.plan.failed += 1;
+                return Ok(());
+            }
             Err(error) => {
                 self.output.stop = StopReason::Refused;
                 self.queue.clear();
@@ -746,6 +808,7 @@ impl Gathering {
             self.queue.clear();
             return Ok(());
         }
+        self.plan.record(&self.output.records, dispatch.kind);
         let focus = airk_core::arbiter::focus::observed_focus_work(
             &self.output.records,
             &self.request.budget,
@@ -810,7 +873,16 @@ impl Gathering {
             self.output.paragraphs.push(GroundedParagraph{text:format!("Native literal search {:?} came from returned UTF-8 bytes {}..{} at {}:{}; its complete canonical search result is retained separately.",source.query,source.returned_utf8_start,source.returned_utf8_end,source.path,source.line),evidence:vec![source.record,result_record],interpretation:true});
         }
         let mut progress = false;
-        if let Some(hits) = body.get("hits").and_then(Value::as_array) {
+        if self.plan.layers.followups {
+            // Definitions, references and outlines carry evidence outside
+            // top-level hits; each is progress under the same excerpt digest.
+            for value in software::plan::evidence_units(&body) {
+                let bytes = serde_json::to_vec(value)?;
+                progress |= self
+                    .excerpts
+                    .insert(framed_digest(b"airk.arbiter.source-excerpt/1", &[&bytes]));
+            }
+        } else if let Some(hits) = body.get("hits").and_then(Value::as_array) {
             for hit in hits {
                 let bytes = serde_json::to_vec(hit)?;
                 progress |= self
@@ -830,6 +902,9 @@ impl Gathering {
             self.output.stop = StopReason::Deadline;
             self.queue.clear();
             return Ok(());
+        }
+        if self.plan.layers.followups {
+            return self.plan_followups(&dispatch, &body);
         }
         if matches!(
             dispatch.choice.operation,
@@ -895,7 +970,7 @@ impl Gathering {
                     && !self.seen.contains(&id)
                     && !self.queue.iter().any(|choice| choice.choice.id == id)
                 {
-                    self.queue.push_back(Dispatch{choice:ReadChoice{id,operation:NativeRead::Context,target},tool:"context",arguments:json!({"path":path,"line":start,"before":0,"after":32,"max_bytes":max_bytes}).as_object().unwrap().clone(),revision:dispatch.revision.clone(),round});
+                    self.queue.push_back(Dispatch{choice:ReadChoice{id,operation:NativeRead::Context,target},tool:"context",arguments:json!({"path":path,"line":start,"before":0,"after":32,"max_bytes":max_bytes}).as_object().unwrap().clone(),revision:dispatch.revision.clone(),round,kind:software::FollowUp::WholeChunk,subject:String::new()});
                     added += 1;
                 }
                 for (start, end) in literal::source_spans(&hit.text) {
@@ -933,7 +1008,7 @@ impl Gathering {
                     {
                         continue;
                     }
-                    self.queue.push_back(Dispatch{choice:ReadChoice{id,operation:NativeRead::Search,target},tool:"search",arguments:json!({"query":query,"limit":4,"max_bytes":max_bytes,"full_chunks":true}).as_object().unwrap().clone(),revision:dispatch.revision.clone(),round});
+                    self.queue.push_back(Dispatch{choice:ReadChoice{id,operation:NativeRead::Search,target},tool:"search",arguments:json!({"query":query,"limit":4,"max_bytes":max_bytes,"full_chunks":true}).as_object().unwrap().clone(),revision:dispatch.revision.clone(),round,kind:software::FollowUp::Literal,subject:query.into()});
                     added += 1;
                 }
                 if self.queue.len() >= capacity {
@@ -1008,6 +1083,13 @@ impl Gathering {
         if now >= self.deadline {
             self.output.stop = StopReason::Deadline;
         }
+        if self.plan.layers.present {
+            self.present()?;
+            if validate {
+                self.output.validate(&self.request.budget)?;
+            }
+            return Ok(self.output);
+        }
         // Intact excerpts are source facts. Organization and optional learned
         // roles remain separate from the complete canonical read receipts.
         let mut presented = BTreeSet::new();
@@ -1056,6 +1138,7 @@ impl Gathering {
 
 mod focus;
 mod joint;
+pub mod software;
 pub use joint::JointPostExecutionStale;
 #[cfg(test)]
 mod tests;

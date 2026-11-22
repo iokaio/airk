@@ -1039,7 +1039,20 @@ impl Kernel {
         let captures = writer.capture_objects();
         let mut generation = None;
         let mut yield_to_source = false;
+        let mut paused = false;
         for batch in 0..max_batches {
+            // A paused service turn returns admission at a batch boundary rather
+            // than parking here with the writer, execution slot and model.
+            // At batch 0 the boundary applies only once this turn has already
+            // released its pause; a fresh turn parks in the checkpoint below.
+            if (batch > 0 || crate::service_execution::pause_released())
+                && self.service_collection.is_some()
+                && crate::service_execution::paused_at_boundary()
+            {
+                paused = true;
+                crate::service_execution::release_pause_wait();
+                break;
+            }
             crate::service_execution::checkpoint()?;
             if self.service_collection.is_some()
                 && crate::service_execution::source_yield_requested()
@@ -1228,6 +1241,11 @@ impl Kernel {
             });
             // The accepted batch has durably published before relinquishing its
             // writer. A hint never interrupts an inference call or atomic commit.
+            if self.service_collection.is_some() && crate::service_execution::paused_at_boundary() {
+                paused = true;
+                crate::service_execution::release_pause_wait();
+                break;
+            }
             crate::service_execution::checkpoint()?;
             if self.service_collection.is_some()
                 && crate::service_execution::source_yield_requested()
@@ -1237,7 +1255,10 @@ impl Kernel {
             }
         }
         drop(captures);
-        let maintenance_error = if generation.is_some() && !yield_to_source {
+        // A turn that yields or ends on a pause skips reclamation and returns its
+        // writer at once; the next drain that runs to completion reclaims. Garbage
+        // objects only wait longer; they never become reachable again.
+        let maintenance_error = if generation.is_some() && !yield_to_source && !paused {
             super::update::reclaim_current_objects(&self.store, &quota, &scope, &writer)
                 .err()
                 .map(|error| format!("current object cleanup: {error:#}"))

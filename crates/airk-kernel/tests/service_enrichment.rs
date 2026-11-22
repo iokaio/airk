@@ -668,7 +668,20 @@ fn source_and_replacement_publish_without_helper_and_semantics_resume_in_bounded
         queued_token,
         "same accepted job requeued the manifest"
     );
-    let partial = work(identity, 8, || current.service_enrichment_turn())?
+    // A turn publishes up to eight batches; a source hint after the first
+    // batch keeps this regeneration partial between turns.
+    let bounded = current.clone().with_index_progress(move |event| {
+        if event.phase == "enrichment_prepared" {
+            let _ = service_execution::control(
+                identity,
+                Incarnation::from_bytes([8; 16]),
+                false,
+                false,
+                true,
+            );
+        }
+    });
+    let partial = work(identity, 8, || bounded.service_enrichment_turn())?
         .semantic_readiness
         .unwrap();
     assert_eq!(partial.completed_artifacts, 32);
@@ -738,11 +751,118 @@ fn source_and_replacement_publish_without_helper_and_semantics_resume_in_bounded
     work(identity, 13, || {
         current.begin_service_vector_regeneration(Sha256Digest::from_bytes([13; 32]))
     })?;
-    work(identity, 14, || current.service_enrichment_turn())?;
+    // Without a source hint, one turn publishes both batches of the 39 inputs.
+    let turn = work(identity, 14, || current.service_enrichment_turn())?;
+    let drained = turn.semantic_readiness.unwrap();
+    assert_eq!(
+        (drained.state, drained.completed_artifacts),
+        (SemanticState::Ready, 39),
+        "one turn did not continue past its first batch"
+    );
+    assert!(!turn.yield_to_source);
     work(identity, 15, || current.service_enrichment_turn())?;
     let ready = current.status()?.semantic_readiness;
     assert_eq!(ready.state, SemanticState::Ready);
     assert_eq!(ready.completed_artifacts, 39);
+    // A pause after the first batch ends the multi-batch turn at that boundary,
+    // returning admission instead of parking inside the turn's checkpoint.
+    work(identity, 16, || {
+        current.begin_service_vector_regeneration(Sha256Digest::from_bytes([16; 32]))
+    })?;
+    let pausing = current.clone().with_index_progress(move |event| {
+        if event.phase == "enrichment_committed" {
+            let _ = service_execution::control(
+                identity,
+                Incarnation::from_bytes([17; 16]),
+                true,
+                false,
+                false,
+            );
+        }
+    });
+    // Release a turn that wrongly parks, so a regression fails instead of hanging.
+    let released = Arc::new(AtomicBool::new(false));
+    let release = released.clone();
+    let releaser = std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !release.load(Ordering::Acquire) && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let _ = service_execution::control(
+            identity,
+            Incarnation::from_bytes([17; 16]),
+            false,
+            false,
+            false,
+        );
+    });
+    let started = std::time::Instant::now();
+    let paused = work(identity, 17, || pausing.service_enrichment_turn());
+    let elapsed = started.elapsed();
+    released.store(true, Ordering::Release);
+    releaser.join().expect("pause releaser panicked");
+    let paused = paused?.semantic_readiness.unwrap();
+    assert!(
+        elapsed < std::time::Duration::from_secs(15),
+        "a paused turn parked at its batch boundary for {elapsed:?}"
+    );
+    assert_eq!(
+        (paused.state, paused.completed_artifacts),
+        (SemanticState::Partial, 32)
+    );
+    work(identity, 18, || current.service_enrichment_turn())?;
+    let ready = current.status()?.semantic_readiness;
+    assert_eq!(ready.state, SemanticState::Ready);
+    assert_eq!(ready.completed_artifacts, 39); // Two turns under one grant (a split destination build repeats turns): the
+    // first ends on a pause, and the second must park on that pause instead of
+    // inheriting the first turn's release and publishing while paused.
+    work(identity, 19, || {
+        current.begin_service_vector_regeneration(Sha256Digest::from_bytes([19; 32]))
+    })?;
+    let pausing = current.clone().with_index_progress(move |event| {
+        if event.phase == "enrichment_committed" {
+            let _ = service_execution::control(
+                identity,
+                Incarnation::from_bytes([20; 16]),
+                true,
+                false,
+                false,
+            );
+        }
+    });
+    let (first, second, parked) = work(identity, 20, || {
+        let first = pausing
+            .service_enrichment_turn()?
+            .semantic_readiness
+            .unwrap();
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+            service_execution::control(
+                identity,
+                Incarnation::from_bytes([20; 16]),
+                false,
+                false,
+                false,
+            )
+        });
+        let started = std::time::Instant::now();
+        let second = current.service_enrichment_turn();
+        let parked = started.elapsed();
+        releaser.join().expect("pause releaser panicked")?;
+        Ok((first, second?.semantic_readiness.unwrap(), parked))
+    })?;
+    assert_eq!(
+        (first.state, first.completed_artifacts),
+        (SemanticState::Partial, 32)
+    );
+    assert!(
+        parked >= std::time::Duration::from_millis(1000),
+        "a later turn of the same grant ran while paused ({parked:?})"
+    );
+    assert_eq!(
+        (second.state, second.completed_artifacts),
+        (SemanticState::Ready, 39)
+    );
     assert!(
         !current
             .semantic_search(&SearchQuery {

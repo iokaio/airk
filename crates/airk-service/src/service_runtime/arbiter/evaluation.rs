@@ -358,11 +358,14 @@ impl EvaluationOwner {
         ensure!(
             profile.evaluation()
                 && !profile.release_qualified()
-                && profile.description().model == ModelChoice::ContextQwenCompact
+                && matches!(
+                    profile.description().model,
+                    ModelChoice::ContextQwenCompact | ModelChoice::ContextQwenLarge
+                )
                 && profile.description().device_execution.is_some()
                 && adapter != [0; 16]
                 && Instant::now() < graph.expires(),
-            "private CUDA Answer requires an exact Compact evaluation graph and adapter"
+            "private CUDA Answer requires an exact Compact or Large evaluation graph and adapter"
         );
         let assets = CudaAnswerAssets::retain(profile.description(), source, graph.expires())?;
         let mut state = self

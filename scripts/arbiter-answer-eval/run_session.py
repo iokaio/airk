@@ -1,0 +1,285 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Run one headless agent session (plan 3.5) for one scenario and path.
+
+The agent is headless Claude Code on ``claude-sonnet-5-5``, started in a fresh
+empty folder ``<sessions>/<series>/<repo>-<slot>/<path>[.s<k>]/work`` with an
+MCP configuration naming only the wrapper. ``--setting-sources ''`` keeps
+user, project and local settings, CLAUDE.md files and memory out (verified by
+probe: the instruction files load without it and not with it);
+``--strict-mcp-config`` drops every other MCP server; ``--tools`` naming only
+the wrapper's tools leaves no built-in tool offered (probe, Claude Code
+2.1.118: ``--tools ''`` also hides MCP tools, so it is not used); only the
+wrapper's tools are allowed and
+``--permission-mode dontAsk`` refuses anything else.
+
+Writes ``session.json`` (command, version, model, usage, cost, times, audit),
+``stream.jsonl`` (the stream-json transcript), ``brief.md`` and the wrapper's
+``wrapper/turns.jsonl`` with raw results.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+
+import common  # noqa: E402
+import evidence  # noqa: E402
+
+SYSTEM_PROMPT = """You are preparing to carry out a software development task in a code repository that you cannot see directly. You can reach the repository only through the tools you have been given; they only read it. There is no shell, file system or web access.
+
+Your job now is to gather the context needed to do the task, then stop and write a short work brief. Do not do the task itself: write no code, documentation or tests.
+
+Rules:
+- Your first tool call must be {primary} with the task text, exactly as it was given to you, as its "{field}" argument. After that, choose your own follow-up calls.
+- You may make at most 12 tool calls. Stop as soon as you have what you need; fewer calls are better.
+
+When you stop, write the work brief as your final message, with these three headings:
+## Where I would work
+## What I must respect
+## What I still do not know
+Cite every location as path:start-end (the repository-relative path and the inclusive line range), using only locations that appeared in your tool results. Write the full path with every range, also for a second place in the same file; never write a bare line number such as "lines 14-26" or "at 236". Keep the brief under 400 words."""
+
+SESSION_SCHEMA = "airk.private.answer-eval-session/1"
+BUILTIN_DENY = ["Bash", "PowerShell", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Glob", "Grep", "LS",
+                "WebFetch", "WebSearch", "Agent", "Task", "TodoWrite", "Skill", "ToolSearch", "SlashCommand",
+                "BashOutput", "KillShell", "ExitPlanMode", "Monitor"]
+
+
+def result_name(configuration: str, device: str) -> str:
+    """Folder name of a result: the configuration, with its device when one applies (focus-cpu)."""
+    return configuration if device in (None, "", "none") else f"{configuration}-{device}"
+
+
+def session_dir(sessions_root: Path, series: str, repo: str, slot: str, path: str, sample: int = 1) -> Path:
+    name = path if sample == 1 else f"{path}.s{sample}"
+    return Path(sessions_root) / series / f"{repo}-{slot}" / name
+
+
+def system_prompt(path: str) -> str:
+    primary = common.PATH_TOOLS[path][0]
+    return SYSTEM_PROMPT.format(primary=primary, field=common.PRIMARY_ARG[primary])
+
+
+def wrapper_command(handle: Path, repo: str, path: str, instruction_file: Path, log_dir: Path,
+                    catalog: Path | None, answer_defaults: dict | None, call_timeout: float,
+                    accept_queryable: bool = False) -> list[str]:
+    command = [sys.executable, "-I", "-B", str(HERE / "mcp_wrapper.py"), "--handle", str(handle), "--repo", repo,
+               "--path", path, "--instruction-file", str(instruction_file), "--log-dir", str(log_dir),
+               "--call-timeout", str(call_timeout)]
+    if catalog is not None:
+        command += ["--catalog", str(catalog)]
+    if answer_defaults:
+        command += ["--answer-defaults", json.dumps(answer_defaults, separators=(",", ":"))]
+    if accept_queryable:
+        command += ["--accept-queryable"]
+    return command
+
+
+def claude_command(claude: str, model: str, mcp_config: Path, path: str, max_budget_usd: float | None,
+                   effort: str | None = common.AGENT_EFFORT) -> list[str]:
+    allowed = [f"mcp__{common.SERVER_NAME}__{tool}" for tool in common.PATH_TOOLS[path]]
+    common.require(effort is None or effort in common.EFFORTS, f"unknown effort {effort!r}")
+    command = [claude, "-p", "--model", model, *(["--effort", effort] if effort else []),
+               "--setting-sources", "", "--strict-mcp-config",
+               "--mcp-config", str(mcp_config), "--tools", ",".join(allowed), "--allowedTools", ",".join(allowed),
+               "--disallowedTools", ",".join(BUILTIN_DENY), "--permission-mode", "dontAsk",
+               "--disable-slash-commands", "--no-session-persistence", "--system-prompt", system_prompt(path),
+               "--output-format", "stream-json", "--verbose"]
+    if max_budget_usd is not None:
+        command += ["--max-budget-usd", str(max_budget_usd)]
+    return command
+
+
+def audit(stream: dict, path: str, turns: list[dict], brief: str) -> dict:
+    """Discard checks (tools outside the wrapper) and the brief's citation audit.
+
+    ``turns`` is the whole wrapper log: counted calls back the citations; every
+    call, refused ones included, is compared with the stream's tool uses.
+    """
+    allowed = {f"mcp__{common.SERVER_NAME}__{tool}" for tool in common.PATH_TOOLS[path]}
+    reasons = []
+    init = stream.get("init") or {}
+    outside_tools = [t for t in init.get("tools") or [] if t not in allowed]
+    if init and outside_tools:
+        reasons.append(f"tools offered outside the wrapper: {outside_tools}")
+    servers = [s.get("name") for s in init.get("mcp_servers") or []]
+    if init and servers != [common.SERVER_NAME]:
+        reasons.append(f"MCP servers other than the wrapper: {servers}")
+    used_outside = [u["name"] for u in stream.get("tool_uses") or [] if u.get("name") not in allowed]
+    if used_outside:
+        reasons.append(f"tool uses outside the wrapper: {used_outside}")
+    if not init:
+        reasons.append("no init event in the stream")
+    spans = []
+    counted = [row for row in turns if row.get("turn")]
+    for row in counted:
+        if row.get("turn") and row.get("result_path") and Path(row["result_path"]).is_file():
+            spans += evidence.extract(common.raw_body(Path(row["result_path"]).read_bytes()))
+    cited = evidence.cited_locations(brief)
+    unbacked = [c for c in cited if not evidence.backed(c, spans)]
+    # Pilot finding: briefs also wrote "lines 14-26" or "at 236" after a named file; those cannot be audited.
+    bare = re.findall(r"\blines?\s+\d+(?:\s*[-\u2013]\s*\d+)?|\bat\s+\d{2,}\b", brief or "", re.I)
+    wrapper_calls = len(turns)
+    stream_calls = sum(1 for u in stream.get("tool_uses") or [] if u.get("name") in allowed)
+    return {"discard": bool(reasons), "discard_reasons": reasons,
+            "citations": {"cited": cited, "unbacked": unbacked, "ok": not unbacked, "unaudited_bare_refs": len(bare)},
+            "tool_use_count": {"stream": stream_calls, "wrapper_logged": wrapper_calls, "counted": len(counted),
+                               "refused": wrapper_calls - len(counted), "agree": stream_calls == wrapper_calls},
+            "permission_denials": (stream.get("result") or {}).get("permission_denials", [])}
+
+
+def run(*, scenario: dict, path: str, handle: Path, series: str, sessions_root: Path, configuration: str | None = None,
+        device: str = "none", sample: int = 1, catalog: Path | None = None, answer_defaults: dict | None = None,
+        model: str = common.AGENT_MODEL, effort: str | None = common.AGENT_EFFORT,
+        timeout_s: float = 1800.0, call_timeout_s: float = 300.0,
+        max_budget_usd: float | None = None, claude: str | None = None, rerun: bool = False,
+        accept_queryable: bool = False) -> dict:
+    repo, slot = scenario["repository"], scenario["slot"]
+    directory = session_dir(sessions_root, series, repo, slot, result_name(configuration or path, device), sample)
+    record_path = directory / "session.json"
+    if record_path.is_file() and not rerun:
+        record = common.read_json(record_path)
+        if record.get("status") in ("complete", "discarded", "failed", "timeout"):
+            return record
+    if directory.exists():
+        attempt = 1
+        while directory.with_name(f"{directory.name}.attempt-{attempt}").exists():
+            attempt += 1
+        directory.rename(directory.with_name(f"{directory.name}.attempt-{attempt}"))
+    work, log_dir = directory / "work", directory / "wrapper"
+    work.mkdir(parents=True)
+    log_dir.mkdir()
+    instruction = scenario["instruction"]
+    instruction_file = directory / "instruction.txt"
+    common.write_text(instruction_file, instruction)
+    mcp_config = directory / "mcp-config.json"
+    loaded = common.load_handle(handle, accept_queryable=accept_queryable)  # refuse an unready handle up front
+    wrapper = wrapper_command(handle, repo, path, instruction_file, log_dir, catalog, answer_defaults, call_timeout_s,
+                              accept_queryable)
+    common.write_json(mcp_config, {"mcpServers": {common.SERVER_NAME: {"type": "stdio", "command": wrapper[0],
+                                                                         "args": wrapper[1:], "env": {}}}})
+    claude = claude or common.find_claude()
+    version = common.claude_version(claude)
+    command = claude_command(claude, model, mcp_config, path, max_budget_usd, effort)
+    stream_path, stderr_path = directory / "stream.jsonl", directory / "stderr.txt"
+    record = {"schema": SESSION_SCHEMA, "series": series, "repo": repo, "slot": slot, "scenario_id": scenario.get("id"),
+              "scenario_sha256": scenario.get("_sha256"), "kind": scenario.get("kind"), "path": path,
+              "configuration": configuration or path, "device": device, "sample": sample,
+              "handle": {"path": str(handle), "sha256": common.sha256_file(handle),
+                         "index_id": loaded.index_id(repo), "accept_queryable": accept_queryable},
+              "handle_readiness_start": loaded.readiness(),
+              "answer_defaults": answer_defaults, "claude_version": version, "model_requested": model,
+              "effort_requested": effort, "claude_path": claude,
+              "command": command, "stdin": "instruction.txt", "cwd": str(work),
+              "mcp_config_sha256": common.sha256_file(mcp_config), "status": "running", "started": common.now_iso()}
+    common.write_json(record_path, record)
+    began = time.monotonic()
+    with stream_path.open("wb") as out, stderr_path.open("wb") as err:
+        proc = subprocess.Popen(command, cwd=work, stdin=subprocess.PIPE, stdout=out, stderr=err,
+                                env=common.clean_child_env(), creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        proc.stdin.write(instruction.encode("utf-8"))
+        proc.stdin.close()
+        try:
+            exit_code = proc.wait(timeout=timeout_s)
+            timed_out = False
+        except subprocess.TimeoutExpired:
+            common.kill_tree(proc.pid)
+            exit_code = proc.wait(timeout=60)
+            timed_out = True
+    record["ended"] = common.now_iso()
+    record["elapsed_ms"] = int((time.monotonic() - began) * 1000)
+    record["exit_code"] = exit_code
+    stream = common.parse_stream(stream_path)
+    result = stream.get("result") or {}
+    brief = result.get("result") if isinstance(result.get("result"), str) else ""
+    common.write_text(directory / "brief.md", brief)
+    turns = common.read_jsonl(log_dir / "turns.jsonl")
+    counted = [t for t in turns if t.get("turn")]
+    checks = audit(stream, path, turns, brief)
+    checks["rejected_calls"] = [t for t in turns if t.get("rejected")]
+    init = stream.get("init") or {}
+    record.update({
+        "session_id": result.get("session_id") or init.get("session_id"),
+        "init": {k: init.get(k) for k in ("tools", "mcp_servers", "model", "claude_code_version", "permissionMode",
+                                          "skills", "agents", "plugins", "slash_commands", "apiKeySource")},
+        "models_used": sorted((result.get("modelUsage") or {}).keys()),
+        "cost_usd": result.get("total_cost_usd"), "usage": result.get("usage"), "model_usage": result.get("modelUsage"),
+        "num_turns": result.get("num_turns"), "duration_ms": result.get("duration_ms"),
+        "result_subtype": result.get("subtype"), "is_error": result.get("is_error"),
+        "stream_sha256": common.sha256_file(stream_path), "brief_sha256": common.sha256_file(directory / "brief.md"),
+        "wrapper_turns": len(counted), "audit": checks,
+        "handle_readiness_end": loaded.readiness(),
+    })
+    if timed_out:
+        record["status"] = "timeout"
+    elif checks["discard"]:
+        record["status"] = "discarded"
+    elif exit_code != 0 or not result or result.get("is_error"):
+        record["status"] = "failed"
+    else:
+        record["status"] = "complete"
+    common.write_json(record_path, record)
+    return record
+
+
+def reaudit(directory: Path) -> dict:
+    """Recompute a finished session's audit from its stored stream, wrapper log and brief."""
+    directory = Path(directory)
+    record = common.read_json(directory / "session.json")
+    stream = common.parse_stream(directory / "stream.jsonl")
+    turns = common.read_jsonl(directory / "wrapper" / "turns.jsonl")
+    brief = (directory / "brief.md").read_text(encoding="utf-8") if (directory / "brief.md").is_file() else ""
+    checks = audit(stream, record["path"], turns, brief)
+    checks["rejected_calls"] = [t for t in turns if t.get("rejected")]
+    record.setdefault("audit_history", []).append({"at": common.now_iso(), "previous": record.get("audit")})
+    record["audit"] = checks
+    if record.get("status") in ("complete", "discarded"):
+        record["status"] = "discarded" if checks["discard"] else "complete"
+    common.write_json(directory / "session.json", record)
+    return record
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--scenario", type=Path, required=True)
+    parser.add_argument("--path", choices=sorted(common.PATH_TOOLS), required=True)
+    parser.add_argument("--handle", type=Path, required=True)
+    parser.add_argument("--series", required=True)
+    parser.add_argument("--sessions-root", type=Path, default=common.DEFAULT_R / "sessions")
+    parser.add_argument("--configuration", help="result name when it differs from the path (e.g. focus)")
+    parser.add_argument("--device", default="none", choices=["none", "cpu", "gpu"])
+    parser.add_argument("--sample", type=int, default=1)
+    parser.add_argument("--catalog", type=Path)
+    parser.add_argument("--answer-defaults", help="JSON object forced into airk_answer calls")
+    parser.add_argument("--model", default=common.AGENT_MODEL)
+    parser.add_argument("--effort", default=common.AGENT_EFFORT, choices=common.EFFORTS)
+    parser.add_argument("--timeout", type=float, default=1800.0)
+    parser.add_argument("--call-timeout", type=float, default=300.0)
+    parser.add_argument("--max-budget-usd", type=float)
+    parser.add_argument("--rerun", action="store_true", help="keep the old folder as .attempt-N and run again")
+    parser.add_argument("--claude", help="Claude Code executable (default: common.find_claude())")
+    parser.add_argument("--accept-queryable", action="store_true", help="pilot only (see common.load_handle)")
+    args = parser.parse_args(argv)
+    record = run(scenario=common.load_scenario(args.scenario), path=args.path, handle=args.handle, series=args.series,
+                 sessions_root=args.sessions_root, configuration=args.configuration, device=args.device,
+                 sample=args.sample, catalog=args.catalog,
+                 answer_defaults=json.loads(args.answer_defaults) if args.answer_defaults else None,
+                 model=args.model, effort=args.effort, timeout_s=args.timeout, call_timeout_s=args.call_timeout,
+                 max_budget_usd=args.max_budget_usd, rerun=args.rerun, claude=args.claude,
+                 accept_queryable=args.accept_queryable)
+    print(json.dumps({k: record.get(k) for k in ("status", "session_id", "cost_usd", "wrapper_turns", "elapsed_ms")}))
+    return 0 if record["status"] == "complete" else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

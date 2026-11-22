@@ -368,3 +368,6 @@ fn capture_publisher_context_action_native_requests_and_counterfactuals() -> Res
     std::fs::write(output, serde_json::to_vec_pretty(&final_document)?)?;
     Ok(())
 }
+
+/// Oracle leverage forks of change-set gatherings (Context trainer design, gate 1).
+mod software_forks;

@@ -691,6 +691,7 @@ pub(super) fn warm(
                 &graph.reviewed_result,
                 graph.expected_sha256,
                 graph.expires,
+                graph.calibration_base.as_deref().cloned(),
             )?;
             let authority = admission.gpu_current;
             evaluation_answer_deadline = Some(Box::new(move |deadline| {

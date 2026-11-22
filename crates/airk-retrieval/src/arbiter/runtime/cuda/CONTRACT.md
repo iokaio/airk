@@ -760,6 +760,32 @@ ORT profiling and uses a separate policy identity. Cold load and unprofiled
 T8192/N8 warm operations retain their original operation and experiment
 expiries through the existing resource-scoring guard.
 
+### Private Answer routes and calibration-only variants (22 November 2026)
+
+The test-support Answer dispatch identifies Large FP32 only by the corrected
+batch-view graph and its placement (`BATCH_VIEW_GRAPH`,
+`BATCH_VIEW_PLACEMENT`). It opens through the Large resource route under the
+40/8/4 GiB plan with ORT profiling disabled.
+
+Option A of the Answer evaluation, "Context rules on the GPU": the Compact
+original-FP32 and Large batch-view Answer routes may take a
+`calibration_base`, which is the reviewed base profile the graph result
+names. The opened profile must then be a calibration-only variant of that
+base. Both profiles must be unqualified `private-` Context Compact or Large
+profiles with a device binding, no downloads or qualified targets, and one
+Calibration asset. They may differ only in the Calibration asset's bytes and
+SHA-256, the calibration field, the profile id and the manifest, and each of
+these must differ. Graph, placement (including Large `BATCH_VIEW_PLACEMENT`),
+adapter and every reviewed binding are verified against the base, never the
+variant. The protected-QKV recipe admits no variant. Without a base every
+route is unchanged. `bounded_hybrid.rs` is a digest input: its validator
+identity `airk.private.cuda.bounded-hybrid-validator/2` hashes this source
+and changes with it (LF SHA-256
+`34110d176024ad8259d79a4458c13154d8a7c54df11204ce5b785c1631e61781` at HEAD,
+`4b6c33f9b24a62ae2188c0abc237d5fff2e78dd66715f1236008e3c601566d8e` in the
+working tree at 04:01 UTC). That change is allowed in the private evaluation
+build and needs a recorded decision before any product use.
+
 ## Private fixed-graph Compact FP16 T32 scoring
 
 The Windows x64 test-support profiled open requires the exact unqualified

@@ -27,8 +27,8 @@ walk, model opening or registry work into retrieval calls. Pending/finished job
 observation races return a quiet false hint; a wrong project or missing job
 still fails validation.
 
-The existing 32-artifact/30-second turn limits are soft budgets. Inference and an
-atomic publication are not interrupted to promise a hard 30-second deadline.
+The 32-artifact batch and 8-batch/120-second turn limits are soft budgets. Inference and an
+atomic publication are not interrupted to promise a hard deadline.
 Native fairness fixtures measure the existing turn and bounded admission/source
 publication overhead separately, and require subsequent Vector progress. Current
 qualification and remaining platform limits are in the

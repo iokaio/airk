@@ -448,12 +448,18 @@ async fn warm(
         .map(|answer| -> Result<_> { let grant = super::evaluation::private_gpu_grant(&answer.devices)?; Ok((answer, grant)) })
         .transpose()?;
     let host_bytes = profile.description().memory_reservation_bytes;
+    // Private CUDA Answer host and device envelopes: Compact keeps its original
+    // 32 GiB host and 24 GiB device bounds; Large uses its profile's 40 GiB host
+    // reservation and the 44 GiB device envelope its reviewed graph ran under.
     #[cfg(all(windows, target_arch = "x86_64", feature = "test-support", feature = "gpu-cuda"))]
-    let host_bytes = if let Some((answer, _)) = &cuda_answer {
+    let (host_bytes, device_limit_bytes) = if let Some((answer, _)) = &cuda_answer {
         ensure!(Instant::now() < answer.graph.expires(), "private CUDA Answer fixture expired");
-        32 << 30
+        match profile.description().model {
+            airk_core::arbiter::ModelChoice::ContextQwenLarge => (host_bytes.max(40 << 30), 44 << 30),
+            _ => (32 << 30, 24 << 30),
+        }
     } else {
-        host_bytes
+        (host_bytes, 24 << 30)
     };
     admitted_current(configuration, expected, stage, cancel, admission)?;
     ensure!(
@@ -595,7 +601,7 @@ async fn warm(
             airk_core::arbiter::device::GpuProbeReservation {
                 schema: "airk.arbiter.gpu-probe-reservation/1".into(),
                 host_limit_bytes: host_bytes,
-                device_limit_bytes: 24 << 30,
+                device_limit_bytes,
                 deadline_ms: 120_000,
             },
             deadline,
@@ -1170,6 +1176,11 @@ impl StageOwner {
                         Availability::Requested,
                         "Verified read-only private CUDA assets are retained for the exact graph-bound fixture.".into(),
                     )
+                } else if self.catalog_only_held(profile.manifest)? {
+                    (
+                        Availability::Requested,
+                        "Authenticated read-only private catalog-only assets are held for this evaluation lease.".into(),
+                    )
                 } else {
                     match self.assets.phase(profile)?{Some(Phase::Ready)=>(Availability::Requested,"Completed provisioning receipt retained; native activation requires re-verification and the selected enabled choice.".into()),Some(Phase::Downloading)|Some(Phase::Failed)|Some(Phase::Canceled)=>(Availability::Failed,"Asset acquisition did not complete. Use a new explicit Provision or verified local Import; Recover does not download.".into()),Some(Phase::Removing)=>(Availability::Failed,"An unfinished asset removal requires local Recover; no download was resumed.".into()),_=>(Availability::MissingAssets,"Explicit provisioning is required.".into())}
                 };
@@ -1544,6 +1555,7 @@ impl StageOwner {
                         .map_err(|_| anyhow::anyhow!("Arbiter lifecycle unavailable"))?
                         .has_private_cuda_assets(manifest);
                     let assets_ready = has_private_assets
+                        || self.catalog_only_held(manifest)?
                         || self.assets.phase(profile.description())? == Some(Phase::Ready);
                     if cached_intent_eligible(&selected, self.stage, assets_ready) {
                         if busy {
@@ -1777,7 +1789,9 @@ impl StageOwner {
         let Ok(profile) = self.execution_profile(manifest) else {
             return Ok(());
         };
-        if self.assets.phase(profile.description())? == Some(Phase::Ready) {
+        if self.catalog_only_held(manifest)?
+            || self.assets.phase(profile.description())? == Some(Phase::Ready)
+        {
             self.validate_enrollments(&configuration)?;
             self.launch(
                 configuration,

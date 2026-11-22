@@ -62,12 +62,12 @@ pub(super) fn validate_selected_policies(profile: &Profile) -> Result<()> {
     };
     let (task, task_policy, compiler_policy) = match stage {
         Stage::Focus => {
-            let policy = super::compiler::focus::policy_digest()?;
+            let policy = focus_policy_for(profile)?;
             (Task::FocusRank, policy, policy)
         }
         Stage::Context => (
             Task::ContextAction,
-            super::context_action::policy_digest()?,
+            super::context_wide::policy_for(profile)?,
             super::compiler::qwen::policy_digest()?,
         ),
     };
@@ -79,6 +79,22 @@ pub(super) fn validate_selected_policies(profile: &Profile) -> Result<()> {
         "selected model compiler/task source policy is stale or inconsistent"
     );
     Ok(())
+}
+
+/// The Focus pair policy a profile is compiled under: the product publisher
+/// policy, or (private evaluation builds only) the SoftwareEvidenceV1 policy
+/// of change set 1 when the profile declares exactly that policy.
+fn focus_policy_for(profile: &Profile) -> Result<Sha256Digest> {
+    let current = super::compiler::focus::policy_digest()?;
+    #[cfg(any(test, feature = "test-support"))]
+    {
+        let software = super::compiler::focus::experiment::software_policy_digest()?;
+        if profile.task_policies.get(&Task::FocusRank) == Some(&software) {
+            return Ok(software);
+        }
+    }
+    let _ = profile;
+    Ok(current)
 }
 
 pub trait AssetSource {
@@ -356,7 +372,7 @@ impl EvaluationCatalog {
         if description.tasks.contains(&Task::ContextAction) {
             ensure!(
                 description.task_policies.get(&Task::ContextAction)
-                    == Some(&super::context_action::policy_digest()?),
+                    == Some(&super::context_wide::policy_for(&description)?),
                 "evaluation joint action policy differs from native constructor"
             );
         }
@@ -364,7 +380,7 @@ impl EvaluationCatalog {
             ensure!(
                 source_transition.is_some()
                     || description.task_policies.get(&Task::FocusRank)
-                        == Some(&super::compiler::focus::policy_digest()?),
+                        == Some(&focus_policy_for(&description)?),
                 "evaluation Focus source policy differs from native constructor"
             );
         }
@@ -572,7 +588,7 @@ impl Scorer {
         let joint_calibration = if profile.description.tasks.contains(&Task::ContextAction) {
             Some(Arc::new(airk_core::arbiter::context_action::calibration::JointCalibration::parse_and_validate(
                 &bytes(source, asset(AssetRole::Calibration)?, 64 << 10)?,
-                profile.description(), super::context_action::policy_digest()?)?))
+                profile.description(), super::context_wide::policy_for(profile.description())?)?))
         } else {
             None
         };
@@ -1039,6 +1055,17 @@ impl Scorer {
         candidates: &[super::compiler::Candidate],
     ) -> Result<CompiledInput> {
         self.profile.validate_native_source()?;
+        #[cfg(any(test, feature = "test-support"))]
+        if self.profile.description.task_policies.get(&Task::FocusRank)
+            == Some(&super::compiler::focus::experiment::software_policy_digest()?)
+        {
+            return super::compiler::focus::experiment::compile_software(
+                &self.compiler,
+                state,
+                question,
+                candidates,
+            );
+        }
         self.compiler.compile(state, question, candidates)
     }
     pub fn source_transition_record(&self) -> Result<Option<serde_json::Value>> {

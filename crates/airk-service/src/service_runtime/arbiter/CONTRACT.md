@@ -704,6 +704,19 @@ frozen request, corpus and underlying model assets. The observed backend
 and compiled input must agree with the intended measurement. The paired
 timing is private component and transport evidence.
 
+The same private seam also admits one Context Large FP32 profile: the
+corrected batch-view graph with its retained reviewed placement result. It
+opens through the reviewed Large resource route under the same Answer limits
+and original deadline checks. Its host charge is the profile's 40 GiB
+reservation and its device envelope is the 44 GiB (40 GiB cold, 8 GiB warm,
+4 GiB headroom) the corrected graph ran its four widths under; Compact keeps
+its 32 GiB host and 24 GiB device bounds. One CUDA Context profile is attached
+per isolated lifetime. The ignored `cuda_answer::same_install` selector can
+attach it to a same-install restart of the CPU evaluation fixture: the CPU
+roster stays the restart identity, and the CUDA profile joins only the
+evaluation catalog, with its weights held as read descriptors and never
+seeded. Focus has no CUDA route in this seam.
+
 The ignored `emit_paired_compact_cpu_comparator` selector stages only private
 CPU profile metadata. It takes the reviewed CPU profile, held CUDA profile and
 its exact raw all-unavailable CAL/2 as three SHA-pinned inputs. It requires
@@ -727,5 +740,29 @@ checks continue to govern Ready. No legacy or device asset receipt is
 created for that GPU manifest. Legacy seeding for the other profiles keeps
 its existing Store contract. Private CUDA failures retain their original
 result without a legacy cached continuation.
+
+### Private catalog-only evaluation profiles (22 November 2026)
+
+`catalog_only.rs` compiles only with local-inference and test-support, and
+only the ignored private fixture can register (`register` is `cfg(test)`).
+A registration holds every asset of one unqualified `private-` CPU profile
+with no downloads and no device binding. Each original file's length and
+SHA-256 are authenticated once and its read descriptor is kept. Nothing is
+written to the asset store, no weights are copied, and the Scorer still
+checks the SHA-256 of the bytes it consumes. A registration is bound to the
+registering `ServiceLease` by a weak reference. Another lease, a dead lease
+or an unregistered manifest sees nothing. A live registration cannot be
+replaced.
+
+The `assets.rs` hook (`StageOwner::catalog_only_held` and the asset-source
+lookup) answers only for a stage with an evaluation catalog. A product build
+or product stage always gets `false` and the ordinary store source.
+
+Three `lifecycle.rs` availability hunks, authorized by the user on 22
+November 2026, treat exactly a held registration as provisioned in place of a
+store receipt: Status projects `Requested`, the cached-intent gate counts the
+assets as ready, and the restore path validates enrollments and launches.
+Configure, scope, enrollment, hardware admission, warm and the deadlines
+still govern Ready. No receipt, persisted format or wire field is added.
 
 The service resource policy owns global GPU eligibility. A change to allow_gpu applies to both stages while preserving their stored selections and revision. GPU use is opt-in under the Core decision "Service-wide GPU use is opt-in" in the `airk_core::arbiter` contract. At startup the service applies the configuration in effect before it restores any stage: a missing value is off, and an enabled value stored under the earlier default is off with its reset notice pending. Only a value the user set through the service-wide setting allows GPU use. Answering that notice with off changes no GPU state. A configuration error closes GPU admission until the resource policy is repaired. A disable transition fences pending GPU probes, activation, resident reuse and delivery, revokes device readiness and schedules same-model CPU selection for active automatic stages. A stage without active work stays idle. The ordinary warm, drain, fit, permission and deadline checks apply on each transition.

@@ -34,6 +34,22 @@ impl StageOwner {
         }
         airk_retrieval::arbiter::runtime::ExecutionProfile::from_release(manifest)
     }
+    /// Private evaluation only: authenticated catalog-only descriptors held for
+    /// this stage's lease stand in for a store provisioning receipt.
+    pub(super) fn catalog_only_held(
+        &self,
+        manifest: airk_core::identity::Sha256Digest,
+    ) -> Result<bool> {
+        #[cfg(feature = "test-support")]
+        {
+            super::catalog_only::held(self.evaluation.is_some(), manifest, &self.ownership)
+        }
+        #[cfg(not(feature = "test-support"))]
+        {
+            let _ = manifest;
+            Ok(false)
+        }
+    }
     pub(super) fn profile_descriptions(&self) -> Result<Vec<Profile>> {
         #[cfg(feature = "test-support")]
         if let Some(catalog) = &self.evaluation {
@@ -46,6 +62,14 @@ impl StageOwner {
         manifest: airk_core::identity::Sha256Digest,
     ) -> Result<Box<dyn AssetSource + Send>> {
         let profile = self.execution_profile(manifest)?;
+        // Private evaluation only: a catalog-only profile reads the original
+        // descriptors its fixture authenticated for this exact service lease.
+        #[cfg(feature = "test-support")]
+        if self.evaluation.is_some()
+            && let Some(held) = super::catalog_only::lookup(manifest, &self.ownership)?
+        {
+            return Ok(Box::new(held));
+        }
         #[cfg(all(
             windows,
             target_arch = "x86_64",

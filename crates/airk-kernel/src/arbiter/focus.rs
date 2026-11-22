@@ -24,6 +24,10 @@ pub(super) struct Attempt {
     nested: bool,
     ordinal: usize,
     blocked: bool,
+    /// Change 4 (kernel half): pairs this Answer may still score, all searches.
+    pair_cap: Option<usize>,
+    /// Change 4: score a bounded window of each hit instead of its whole text.
+    bounded_windows: bool,
 }
 
 fn state(context: &NativeContext) -> Result<std::sync::MutexGuard<'_, Attempt>> {
@@ -154,6 +158,23 @@ impl crate::Kernel {
         held.nested = true;
         held.deadline = Some(held.deadline.map_or(deadline, |prior| prior.min(deadline)));
         Ok(self.clone())
+    }
+
+    /// Private evaluation change set 1: bound once per Answer with its layers.
+    pub(super) fn bind_focus_shape(&self, layers: software::Layers) -> Result<()> {
+        if !layers.focus {
+            return Ok(());
+        }
+        if let Some(context) = &self.arbiter_context {
+            let mut held = state(context)?;
+            // Each Host-captured request has fresh accounting; a reused
+            // in-process session keeps the shape it was first given.
+            if held.ordinal == 0 && held.pair_cap.is_none() {
+                held.pair_cap = Some(software::FOCUS_PAIRS);
+                held.bounded_windows = true;
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn bind_initial_context_readiness(&self, ready: bool) -> Result<()> {
@@ -346,7 +367,7 @@ impl crate::Kernel {
             .limits
             .as_ref()
             .context("ready Focus limits absent")?;
-        let (parent, local, deadline, available, ordinal, retained, mandatory, nested) = {
+        let (parent, local, deadline, available, ordinal, retained, mandatory, nested, pair_cap, bounded) = {
             let mut held = state(context)?;
             let Some(deadline) = held.deadline else {
                 drop(held);
@@ -484,6 +505,8 @@ impl crate::Kernel {
                     .saturating_add(held.mandatory_records.saturating_mul(1024))
                     .saturating_add(held.context_history_bytes),
                 held.nested,
+                held.pair_cap,
+                held.bounded_windows,
             )
         };
         let mut score_count = response
@@ -491,7 +514,8 @@ impl crate::Kernel {
             .len()
             .min(local.candidates)
             .min(limits.max_candidates)
-            .min(available / limits.pair_input_tokens);
+            .min(available / limits.pair_input_tokens)
+            .min(pair_cap.unwrap_or(usize::MAX));
         let outer_focus_bytes = if nested && context.partition.is_some() {
             crate::combined_reads::context_focus_binding_bytes(
                 &application.scope,
@@ -539,9 +563,14 @@ impl crate::Kernel {
         }
         let mut candidates = Vec::with_capacity(response.hits.len());
         for (position, hit) in response.hits.iter().cloned().enumerate() {
+            let (utf8_start, utf8_end) = if bounded {
+                software::focus_window(&hit.text, &query.text, limits.pair_input_tokens)
+            } else {
+                (0, hit.text.len())
+            };
             let window = FocusSourceWindow {
-                utf8_start: 0,
-                utf8_end: hit.text.len(),
+                utf8_start,
+                utf8_end,
             };
             let candidate = match NativeFocusCandidate::new(
                 &application.scope,
@@ -625,6 +654,9 @@ impl crate::Kernel {
             held.ordinal = ordinal;
             held.tokens += reservation;
             held.focus_tokens += reservation;
+            if let Some(cap) = &mut held.pair_cap {
+                *cap = cap.saturating_sub(score_count);
+            }
         }
         let returned = context.owner.focus_rank(request.clone(), deadline);
         let mut ranking = match returned {

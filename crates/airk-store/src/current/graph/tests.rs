@@ -226,6 +226,96 @@ fn nonempty_base_changes_remain_proven_and_seal_releases_the_reader() -> Result<
 }
 
 #[test]
+fn base_proof_cache_is_bounded_by_payload_bytes_not_a_small_entry_count() -> Result<()> {
+    use crate::{
+        FileStore,
+        current::{CurrentHead, CurrentScope},
+    };
+    // 32-byte records: each cached proof charges 32 + 32 * 32 bytes, so the
+    // 8 MiB payload bound admits 7,943 proofs.
+    const RECORDS: u32 = 8_000;
+    const RETAINED: u64 = (8 * 1024 * 1024 / (32 + 32 * 32)) as u64;
+    let directory = tempfile::tempdir()?;
+    let quota = Quota::open(directory.path())?;
+    let store = FileStore::new(quota.root().join("collections-1.2/graph-fixture"));
+    let graph_scope = scope();
+    let scope = CurrentScope {
+        root: graph_scope.root.clone(),
+        collection: graph_scope.collection.clone(),
+        incarnation: graph_scope.incarnation,
+    };
+    let head = CurrentHead {
+        version: 2,
+        scope: scope.clone(),
+        sequence: 0,
+        artifact_root: crate::current::map::empty_root(&scope)?,
+        lexical_sequence: 0,
+        lexical_commit: Sha256Digest::from_bytes([5; 32]),
+        graph_head: GraphHead::empty(graph_scope)?,
+    };
+    let capacity = 64 * 1024 * 1024;
+    {
+        let lock = store.lock()?;
+        store
+            .current_write(&lock, &quota, &scope, capacity)?
+            .initialize(head.clone())?;
+    }
+    {
+        let reservation = quota.reserve("graph-fixture", 32 * 1024 * 1024)?;
+        let read = store.current_read(&scope)?;
+        let overlay = GraphOverlay::new(
+            &reservation,
+            read,
+            GraphOverlayLimits {
+                maximum_bytes: 32 * 1024 * 1024,
+                ..Default::default()
+            },
+        )?;
+        for id in 0..RECORDS {
+            overlay.append(id, record(id))?;
+        }
+        let sealed = overlay.seal()?;
+        let mut target = head.clone();
+        target.sequence += 1;
+        target.graph_head = sealed.descriptor().target.clone();
+        let lock = store.lock()?;
+        let mut writer = store.current_write(&lock, &quota, &scope, capacity)?;
+        let pending = writer.prepare(&head.token()?, target.clone(), &sealed, &[], None)?;
+        writer.mark_applying(&pending)?;
+        writer.commit(&pending, target.lexical_commit)?;
+    }
+    let reservation = quota.reserve("graph-fixture", 2 * 1024 * 1024)?;
+    let overlay = GraphOverlay::new(&reservation, store.current_read(&scope)?, limits())?;
+    // Far more than the former 256-entry limit stays resident for a revisit.
+    for _ in 0..2 {
+        for id in 1..=600 {
+            assert_eq!(overlay.read(id)?, record(id));
+        }
+    }
+    let statistics = overlay.statistics()?;
+    assert_eq!(
+        (
+            statistics.base_record_reads,
+            statistics.base_proof_cache_hits,
+            statistics.base_proof_cache_evictions
+        ),
+        (600, 600, 0)
+    );
+    // The payload bound still evicts once it is reached.
+    for id in 601..RECORDS {
+        assert_eq!(overlay.read(id)?, record(id));
+    }
+    let statistics = overlay.statistics()?;
+    assert_eq!(statistics.base_record_reads, u64::from(RECORDS - 1));
+    assert_eq!(
+        statistics.base_proof_cache_evictions,
+        u64::from(RECORDS - 1) - RETAINED
+    );
+    drop(overlay.seal()?);
+    Ok(())
+}
+
+#[test]
 fn invalid_mutation_quota_limits_and_explicit_poison_prevent_sealing() -> Result<()> {
     let directory = tempfile::tempdir()?;
     let quota = Quota::open(directory.path())?;

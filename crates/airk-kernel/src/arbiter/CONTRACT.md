@@ -145,3 +145,79 @@ member.result; it never fuses authorities or global enrollment state. Complete
 copy/export retains precision, native fallback reasons and all variant metadata.
 The additional observation is bounded256KiB inside unchanged original reply/frame
 ceilings. No retries or replacement clock are introduced.
+
+## Private evaluation change set 1 (`software.rs`)
+
+Every layer is off unless the private evaluation fixture binds layers for its
+process (`software::bind_evaluation_layers`); product gathering, packing and
+Focus are unchanged and `Gathering::new` keeps the product shape. With layers
+bound, one Gathering state machine still issues every read through the same
+canonical reader under the original revision fence and call, round, candidate,
+byte and deadline budgets:
+
+- `followups`: whole chunks of the kept hits, `symbols`/`references` lookups
+  for identifiers of the question and kept hits, their `read_file` excerpts
+  (with the recipe's `known_hash`), callers and tests, file outlines, and
+  contract or README documents that govern a hit's folder. A governing
+  document is queued only after a canonical `file_info` read at the same
+  revision shows it indexed. A failed optional follow-up (round 2 or later)
+  keeps its canonical failure receipt and the remaining queue; a failed
+  initial search still refuses.
+- `spread`: follow-ups merge one read per kind per cycle; the queue may hold up
+  to `fanout.min(candidates)` reads.
+- `pool`: the first search returns 16 focused snippets.
+- `focus`: Focus scores at most six pairs per Answer, each over a bounded
+  window; kept hits follow Focus relevance. Focus still removes nothing from a
+  record.
+- `present`: every hit is presented once (contained or mostly overlapping
+  ranges are dropped), grouped by purpose with exact locations, with a closing
+  disclosure; packing omits the least useful kinds first.
+- `device`: a Context call is admitted only when its measured cost plus a read
+  reserve fits the deadline.
+
+Records, receipts and paragraph grounding keep their existing validation.
+
+### Layer tokens and binding (22 November 2026)
+
+`Layers::parse` parses the value the private fixture reads from
+`AIRK_ARBITER_EVALUATION_ANSWER_LAYERS`. It accepts `all`, `none`, the layer
+names above, `-name` to remove one, and three change-set-2 tokens:
+
+- `context_b`: Context option B. Joint assessment builds its roster with
+  `airk_retrieval::arbiter::context_wide` (wider roster, its own task policy,
+  the best Read taken even when a terminal card scores highest). Only a
+  profile that declares the option-B policy is scored under it. Product rosters
+  are otherwise unchanged.
+- `focus_keep=<1..=16>`: hits kept for whole chunks and follow-ups
+  (default 4).
+- `focus_threshold=<0..=1, at most three decimals>`: the Focus relevance a
+  scored hit needs to be kept (default 0.10).
+
+Replay tuning tokens (change set 1 tuning). Each default, and each second
+value below, is change set 1's behaviour, so `all` serializes unchanged:
+
+- `pool=<1..=16>`: first-search pool size (default 16); needs `pool`.
+- `pool_full=<0..=16>`: top pool hits fetched with full chunks. At or above
+  the pool, the first search returns full chunks; 0 keeps snippets; between,
+  the snippet search is followed next by one full-chunk `search` of the same
+  question for the top hits, its byte bound reserved from the per-read split.
+  Default: full chunks only when the pool is at most 8.
+- `read_floor=<512..=8192>`: lower clamp of the per-read byte split (default 1536).
+- `kept=<1..=16>`: an alias of `focus_keep`.
+- `subjects=strict|loose`: strict looks up only snake_case or multi-word
+  CamelCase names that a kept hit's text names; loose is the first-three rule.
+- `governing=project|any`: project probes governing documents only inside a
+  hit's project folder (the folder after the first `crates`, `packages`,
+  `apps`, `libs` or `src`, otherwise the top-level folder).
+
+The first search's `pool` and `pool_full` come from the process binding
+(`evaluation_layers()`), the same layers `Gathering::with_layers` receives in a
+service.
+
+`all` turns on exactly the six change-set-1 layers, never `context_b`. `all`
+and `none` reset the values, so values must come after them. An empty,
+repeated or unknown token is refused. `bind_evaluation_layers` exists only in
+test-support builds. It binds once per process, and a second binding must
+repeat the same layers. Without a binding, and always in a product build,
+`evaluation_layers()` is `Layers::default()`: every layer off and every value
+unset, so the product's gathering, roster and Focus shape are unchanged.

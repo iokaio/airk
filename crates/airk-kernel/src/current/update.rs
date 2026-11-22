@@ -25,7 +25,10 @@ use airk_store::{
     quota::{Quota, Reservation},
 };
 use anyhow::{Context, Result, ensure};
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 const MAX_CAPTURED_BYTES: usize = 8 * 1024 * 1024 * 1024;
 
@@ -120,13 +123,42 @@ struct PendingVectorUnit {
     unit: PreparedVectorUnit,
 }
 
+/// One bounded batch after registry selection: `missing` lists the first unit
+/// index of each key that needs inference, in captured-unit order.
+struct SelectedBatch {
+    units: Vec<PendingVectorUnit>,
+    keys: Vec<Sha256Digest>,
+    missing: Vec<(Sha256Digest, usize)>,
+    vectors: Vec<Option<Vec<f32>>>,
+}
+
+impl SelectedBatch {
+    fn pending_keys(&self) -> BTreeSet<Sha256Digest> {
+        self.missing.iter().map(|(key, _)| *key).collect()
+    }
+}
+
+/// Registry and membership entries that the next batch's selection added
+/// before this batch's insertion. Insertion subtracts them, so its registry and
+/// membership limits keep their sequential counts; see `VectorPlan::existing`
+/// for the one selection-time bound that is instead conservative.
+#[derive(Clone, Copy, Default)]
+struct LookAhead {
+    registry: usize,
+    memberships: usize,
+}
+
 enum Planned {
     Unit(PendingVectorUnit),
     Stats(bool, airk_retrieval::vector_units::VectorUnitStats),
 }
 
 impl VectorPlan<'_> {
-    fn existing(&mut self, key: Sha256Digest) -> Result<Option<u32>> {
+    /// `pending` counts the keys the previous batch will still insert. Each may
+    /// add one membership, so the work limit stays sound before they land; it
+    /// can trip up to that many entries (at most one batch) earlier than a
+    /// fully sequential count would.
+    fn existing(&mut self, key: Sha256Digest, pending: usize) -> Result<Option<u32>> {
         if let Some(binding) = self.memberships.get(&key) {
             return Ok(Some(binding.id));
         }
@@ -137,7 +169,7 @@ impl VectorPlan<'_> {
             return Ok(None);
         };
         ensure!(
-            self.memberships.len() < MAX_PENDING_VECTOR_INPUTS,
+            self.memberships.len() + pending < MAX_PENDING_VECTOR_INPUTS,
             "current vector membership work limit exceeded"
         );
         let id = binding.graph_id;
@@ -179,7 +211,7 @@ impl VectorPlan<'_> {
                         && pointer.source_hash == index.source_hash,
                     "current occurrence differs from changed path"
                 );
-                self.existing(pointer.embedding_key)?
+                self.existing(pointer.embedding_key, 0)?
                     .context("current vector binding missing")?;
                 let binding = self
                     .read
@@ -202,31 +234,31 @@ impl VectorPlan<'_> {
         Ok(())
     }
 
-    fn batch(
+    /// Decide which units of one bounded batch need inference. `pending` holds
+    /// the keys that the previous batch will insert: they count as registered,
+    /// exactly as they would after that batch's insertion.
+    fn select(
         &mut self,
-        units: &mut Vec<PendingVectorUnit>,
+        units: Vec<PendingVectorUnit>,
         descriptor: &EmbeddingDescriptor,
-        semantic: &mut SemanticUpdate<'_>,
-        graph: &mut MutableDiskIndex,
-    ) -> Result<()> {
-        if units.is_empty() {
-            return Ok(());
-        }
+        bypass: bool,
+        pending: &BTreeSet<Sha256Digest>,
+    ) -> Result<SelectedBatch> {
         crate::service_execution::checkpoint()?;
         let mut keys = Vec::new();
         let mut missing = BTreeMap::new();
         for (index, unit) in units.iter().enumerate() {
             let key = embedding_key(descriptor, unit.unit.input.as_bytes())?;
             keys.push(key);
-            if self.registry.contains_key(&key) {
+            if self.registry.contains_key(&key) || pending.contains(&key) {
                 continue;
             }
             ensure!(
-                self.registry.len() < MAX_PENDING_VECTOR_INPUTS,
+                self.registry.len() + pending.len() < MAX_PENDING_VECTOR_INPUTS,
                 "current vector registry work limit exceeded"
             );
-            if let Some(id) = self.existing(key)?
-                && (!semantic.cache.bypass
+            if let Some(id) = self.existing(key, pending.len())?
+                && (!bypass
                     || self
                         .recomputed_from
                         .is_some_and(|first_id| u64::from(id) >= first_id))
@@ -241,24 +273,37 @@ impl VectorPlan<'_> {
         // changes approximate-search tie behavior for repeated passages.
         let mut missing: Vec<_> = missing.into_iter().collect();
         missing.sort_by_key(|(_, index)| *index);
-        let texts = missing
-            .iter()
-            .map(|(_, index)| units[*index].unit.input.as_str())
-            .collect::<Vec<_>>();
-        let vectors = if texts.is_empty() {
-            Vec::new()
-        } else {
-            semantic.model.embed_batch(&texts, &mut semantic.cache)?
-        };
+        Ok(SelectedBatch {
+            units,
+            keys,
+            missing,
+            vectors: Vec::new(),
+        })
+    }
+
+    /// Insert one embedded batch into the graph in captured-unit order, then
+    /// bind its occurrences. Runs strictly after the previous batch's insertion.
+    fn insert(
+        &mut self,
+        batch: SelectedBatch,
+        graph: &mut MutableDiskIndex,
+        stats: &mut airk_retrieval::model::EmbeddingCacheStats,
+        ahead: LookAhead,
+    ) -> Result<()> {
+        let SelectedBatch {
+            units,
+            keys,
+            missing,
+            vectors,
+        } = batch;
         ensure!(
             vectors.len() == missing.len(),
             "current embedding result count differs"
         );
-        semantic.cache.stats.vector_reused_inputs += (units.len() - missing.len()) as u64;
         for ((key, _), vector) in missing.into_iter().zip(vectors) {
             crate::service_execution::checkpoint()?;
             ensure!(
-                self.registry.len() < MAX_PENDING_VECTOR_INPUTS,
+                self.registry.len() - ahead.registry < MAX_PENDING_VECTOR_INPUTS,
                 "current vector registry work limit exceeded"
             );
             let retained_members = if let Some(prior) = self.memberships.get(&key) {
@@ -269,12 +314,12 @@ impl VectorPlan<'_> {
             };
             let id = if let Some(vector) = vector {
                 ensure!(
-                    self.memberships.len() < MAX_PENDING_VECTOR_INPUTS,
+                    self.memberships.len() - ahead.memberships < MAX_PENDING_VECTOR_INPUTS,
                     "current vector membership work limit exceeded"
                 );
                 let started = std::time::Instant::now();
                 let id = graph.insert(key, &vector)?;
-                semantic.cache.stats.graph_insert_us +=
+                stats.graph_insert_us +=
                     u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
                 self.memberships.insert(
                     key,
@@ -283,7 +328,7 @@ impl VectorPlan<'_> {
                         remaining: retained_members,
                     },
                 );
-                semantic.cache.stats.vector_graph_nodes += 1;
+                stats.vector_graph_nodes += 1;
                 Some(id)
             } else {
                 ensure!(
@@ -295,7 +340,7 @@ impl VectorPlan<'_> {
             self.registry.insert(key, id);
             crate::service_execution::progress_semantic_prepared();
         }
-        for (pending, key) in units.drain(..).zip(keys) {
+        for (pending, key) in units.into_iter().zip(keys) {
             let Some(id) = self.registry[&key] else {
                 continue;
             };
@@ -347,6 +392,67 @@ impl VectorPlan<'_> {
         crate::service_execution::progress_semantic_prepared();
         Ok(())
     }
+}
+
+/// Select `units`, then embed them while the previous batch's vectors enter the
+/// graph. Inference does not read the graph, so this keeps every decision of
+/// the sequential order (select, embed, insert per batch): the same registry
+/// choices, vectors, insertion order and occurrences, on two threads instead of one.
+fn pipeline_batch(
+    plan: &mut VectorPlan<'_>,
+    units: Vec<PendingVectorUnit>,
+    previous: Option<SelectedBatch>,
+    descriptor: &EmbeddingDescriptor,
+    semantic: &mut SemanticUpdate<'_>,
+    graph: &mut MutableDiskIndex,
+) -> Result<SelectedBatch> {
+    let pending = previous
+        .as_ref()
+        .map(SelectedBatch::pending_keys)
+        .unwrap_or_default();
+    let before = (plan.registry.len(), plan.memberships.len());
+    let mut next = plan.select(units, descriptor, semantic.cache.bypass, &pending)?;
+    let ahead = LookAhead {
+        registry: plan.registry.len() - before.0,
+        memberships: plan.memberships.len() - before.1,
+    };
+    semantic.cache.stats.vector_reused_inputs += (next.units.len() - next.missing.len()) as u64;
+    let texts = next
+        .missing
+        .iter()
+        .map(|(_, index)| next.units[*index].unit.input.as_str())
+        .collect::<Vec<_>>();
+    let mut inserted_stats = airk_retrieval::model::EmbeddingCacheStats::default();
+    let inserted_stats_ref = &mut inserted_stats;
+    // Native inference stays on this (compute-owner) thread. The graph helper
+    // is part of this worker's job: keep its owner bindings.
+    let inherited = crate::service_execution::Inherited::capture();
+    let (inserted, vectors) = std::thread::scope(|scope| {
+        let inserter = previous.map(|previous| {
+            scope.spawn(move || {
+                let _bound = inherited.bind();
+                plan.insert(previous, graph, inserted_stats_ref, ahead)
+            })
+        });
+        let vectors = if texts.is_empty() {
+            Ok(Vec::new())
+        } else {
+            semantic.model.embed_batch(&texts, &mut semantic.cache)
+        };
+        let inserted = match inserter {
+            Some(inserter) => inserter
+                .join()
+                .map_err(|_| anyhow::anyhow!("vector graph worker panicked"))
+                .and_then(|result| result),
+            None => Ok(()),
+        };
+        (inserted, vectors)
+    });
+    semantic.cache.stats.graph_insert_us += inserted_stats.graph_insert_us;
+    semantic.cache.stats.vector_graph_nodes += inserted_stats.vector_graph_nodes;
+    inserted?;
+    next.vectors = vectors?;
+    Ok(next)
 }
 
 impl CurrentUpdater<'_> {
@@ -843,6 +949,8 @@ impl CurrentUpdater<'_> {
             });
             let result = (|| -> Result<()> {
                 let mut units = Vec::with_capacity(MAX_BATCH_CHUNKS);
+                // The previous batch, embedded and awaiting graph insertion.
+                let mut embedded: Option<SelectedBatch> = None;
                 for message in receiver.iter() {
                     let message = message?;
                     let semantic = semantic
@@ -859,20 +967,35 @@ impl CurrentUpdater<'_> {
                         Planned::Unit(unit) => units.push(unit),
                     }
                     if units.len() == MAX_BATCH_CHUNKS {
-                        plan.batch(
-                            &mut units,
+                        let full =
+                            std::mem::replace(&mut units, Vec::with_capacity(MAX_BATCH_CHUNKS));
+                        embedded = Some(pipeline_batch(
+                            &mut plan,
+                            full,
+                            embedded.take(),
                             descriptor.as_ref().expect("semantic descriptor"),
                             semantic,
                             graph.as_mut().expect("semantic graph"),
-                        )?;
+                        )?);
                     }
                 }
                 if !units.is_empty() {
-                    plan.batch(
-                        &mut units,
+                    embedded = Some(pipeline_batch(
+                        &mut plan,
+                        units,
+                        embedded.take(),
                         descriptor.as_ref().expect("semantic descriptor"),
                         semantic.as_mut().expect("semantic model"),
                         graph.as_mut().expect("semantic graph"),
+                    )?);
+                }
+                if let Some(last) = embedded {
+                    let semantic = semantic.as_mut().expect("semantic model");
+                    plan.insert(
+                        last,
+                        graph.as_mut().expect("semantic graph"),
+                        &mut *semantic.cache.stats,
+                        LookAhead::default(),
                     )?;
                 }
                 Ok(())

@@ -303,7 +303,9 @@ impl crate::Kernel {
             native_budget.deadline_ms > 0,
             "joint original deadline exhausted"
         );
-        let mut gather = Gathering::new(
+        let layers = software::evaluation_layers();
+        self.bind_focus_shape(layers)?;
+        let mut gather = Gathering::with_layers(
             ContextRequest {
                 schema: REQUEST_SCHEMA.into(),
                 question: request.question.clone(),
@@ -312,7 +314,10 @@ impl crate::Kernel {
             scope.clone(),
             application,
             started,
+            layers,
         )?;
+        #[cfg(feature = "local-inference")]
+        let mut context_gate = software::plan::ContextGate::with_deadline(layers.device, layers.deadline_strict);
         #[cfg(not(feature = "local-inference"))]
         let _ = (&ordinals, token_limit, &parent_budget);
         let initial_reason = initial_reason(
@@ -349,6 +354,18 @@ impl crate::Kernel {
                 joint.configuration_changed();
             }
             gather.refresh_application(current.clone())?;
+            // Change 8: no Context call the measured cost cannot finish while
+            // leaving the canonical reads and packing their reserve.
+            #[cfg(feature = "local-inference")]
+            if !joint.blocked
+                && !gather.output.records.is_empty()
+                && joint.history.len() < joint.ordinals.len()
+                && current.availability == Availability::Ready
+                && !context_gate.admits(deadline, Instant::now())
+            {
+                joint.blocked = true;
+                joint.invalidate(AssessmentUnavailable::Deadline);
+            }
             #[cfg(feature = "local-inference")]
             if !gather.output.records.is_empty()
                 && !joint.blocked
@@ -372,7 +389,14 @@ impl crate::Kernel {
                     } else {
                         BTreeSet::new()
                     };
-                    match airk_retrieval::arbiter::context_action::build_roster_with_eligible(
+                    // Change set 2 (`context_b`): option B's wider roster under
+                    // its own task policy; product rosters otherwise.
+                    let build = if layers.context_b {
+                        airk_retrieval::arbiter::context_wide::build_roster_with_eligible
+                    } else {
+                        airk_retrieval::arbiter::context_action::build_roster_with_eligible
+                    };
+                    match build(
                         &request.question,
                         &scope,
                         &gather.output.records,
@@ -407,7 +431,9 @@ impl crate::Kernel {
                                 joint.blocked = true;
                                 joint.invalidate(AssessmentUnavailable::TokenBudget);
                             } else {
+                                let call_started = Instant::now();
                                 let returned = context.owner.context_action(call, deadline);
+                                context_gate.observe(call_started.elapsed());
                                 let fresh = observed_application(
                                     context,
                                     &publication,
@@ -466,6 +492,8 @@ impl crate::Kernel {
             if joint.terminal.is_some() {
                 break;
             }
+            require_live()?;
+            gather.resolve_governing(reader)?;
             let Some(dispatch) = gather.next(Instant::now())? else {
                 break;
             };
@@ -514,6 +542,7 @@ impl crate::Kernel {
             _ => PartitionTermination::NoProgress,
         });
         let optional_failure = gather.optional_failure.clone();
+        let kinds = gather.plan.omission_kinds();
         let native = gather.finish_native(Instant::now(), false)?;
         let mut response = ContextResponseV2 {
             schema: CONTEXT_SCHEMA_V2.into(),
@@ -542,7 +571,7 @@ impl crate::Kernel {
         }
         let organized = organize(&response)?;
         response.paragraphs.extend(organized.iter().cloned());
-        pack(
+        pack_ranked(
             &mut response,
             self.scope_observation()
                 .map(serde_json::to_value)
@@ -551,6 +580,7 @@ impl crate::Kernel {
             request.budget.max_bytes,
             context.partition.is_some(),
             context.context_reply_reserve,
+            kinds.as_ref(),
         )?;
         let focus_overrun =
             airk_core::arbiter::focus::observed_focus_work(&response.records, &request.budget)?
@@ -630,7 +660,7 @@ impl crate::Kernel {
         }
         // Deadline/application observations above may change metadata after
         // the first pack. Preserve the same original render/verification space.
-        pack(
+        pack_ranked(
             &mut response,
             self.scope_observation()
                 .map(serde_json::to_value)
@@ -639,6 +669,7 @@ impl crate::Kernel {
             request.budget.max_bytes,
             context.partition.is_some(),
             context.context_reply_reserve,
+            kinds.as_ref(),
         )?;
         response.validate(&request.budget)?;
         Ok(response)
@@ -763,12 +794,32 @@ fn organize(response: &ContextResponseV2) -> Result<Vec<GroundedParagraph>> {
     Ok(paragraphs)
 }
 
+#[cfg(test)]
 fn pack(
     response: &mut ContextResponseV2,
     scope: Option<&Value>,
     maximum: usize,
     reserve_outer_focus: bool,
     reply_reserve: usize,
+) -> Result<()> {
+    pack_ranked(
+        response,
+        scope,
+        maximum,
+        reserve_outer_focus,
+        reply_reserve,
+        None,
+    )
+}
+
+/// `kinds` (change 7) chooses which later record to omit; `None` is product packing.
+fn pack_ranked(
+    response: &mut ContextResponseV2,
+    scope: Option<&Value>,
+    maximum: usize,
+    reserve_outer_focus: bool,
+    reply_reserve: usize,
+    kinds: Option<&std::collections::BTreeMap<Sha256Digest, software::FollowUp>>,
 ) -> Result<()> {
     let maximum = if reserve_outer_focus {
         maximum
@@ -836,7 +887,24 @@ fn pack(
             response.records.len() > 1,
             "joint mandatory initial receipt/metadata does not fit native packet"
         );
-        let omitted_position = if focus_custody {
+        let omitted_position = if let Some(kinds) = kinds {
+            // Change 7: omit the least useful kind first, newest among equals.
+            let mut position = None;
+            let mut lowest = u8::MAX;
+            for index in (1..response.records.len()).rev() {
+                let rank = kinds
+                    .get(&response.records[index].id)
+                    .map_or(0, |kind| kind.keep_rank());
+                if rank < lowest
+                    && (!focus_custody || !charged_focus_record(&response.records[index])?)
+                {
+                    lowest = rank;
+                    position = Some(index);
+                }
+            }
+            position
+                .context("joint mandatory Focus custody cannot fit the original reply budget")?
+        } else if focus_custody {
             let mut position = None;
             for index in (1..response.records.len()).rev() {
                 if !charged_focus_record(&response.records[index])? {
@@ -896,5 +964,10 @@ fn charged_focus_record(record: &EvidenceRecord) -> Result<bool> {
 #[cfg(test)]
 mod focus_pack_tests;
 
+#[cfg(all(test, feature = "local-inference"))]
+mod change_set_tests;
+/// Option-B profiles are admitted only with retrieval test-support.
+#[cfg(all(test, feature = "local-inference", feature = "test-support"))]
+mod context_b_tests;
 #[cfg(all(test, feature = "local-inference"))]
 mod tests;

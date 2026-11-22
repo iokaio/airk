@@ -1404,6 +1404,118 @@ fn actual_status_token_projection_binds_top_level_collection_and_refuses_unknown
     Ok(())
 }
 
+/// Read-only checkouts outside `artifacts` that an evaluation names twice:
+/// once in the SHA-pinned scope file and once in this explicit declaration.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExternalSources {
+    mode: String,
+    source_roots: Vec<PathBuf>,
+}
+
+/// Canonical scope roots keyed to their frozen spelling. A root outside
+/// `artifacts` is admitted only when `external` (the value of
+/// `AIRK_ARBITER_EVALUATION_EXTERNAL_SOURCES`) declares `read-only` and names
+/// exactly the frozen roots that lie outside `artifacts`.
+fn admitted_source_roots(
+    roots: Vec<PathBuf>,
+    artifacts: &Path,
+    external: Option<&str>,
+) -> Result<BTreeMap<PathBuf, PathBuf>> {
+    let declared = match external {
+        None => None,
+        Some(raw) => {
+            let declaration: ExternalSources = serde_json::from_str(raw)?;
+            ensure!(
+                declaration.mode == "read-only",
+                "external evaluation sources must be declared read-only"
+            );
+            let mut declared = BTreeSet::new();
+            for root in declaration.source_roots {
+                ensure!(
+                    declared.insert(root.canonicalize()?),
+                    "duplicate external evaluation source"
+                );
+            }
+            Some(declared)
+        }
+    };
+    let mut expected_roots = BTreeMap::new();
+    let mut outside = BTreeSet::new();
+    for root in roots {
+        let canonical = root.canonicalize()?;
+        let admitted = canonical.starts_with(artifacts)
+            || declared
+                .as_ref()
+                .is_some_and(|declared| declared.contains(&canonical));
+        if !canonical.starts_with(artifacts) {
+            outside.insert(canonical.clone());
+        }
+        ensure!(
+            admitted && expected_roots.insert(canonical, root).is_none(),
+            "duplicate or foreign private source root"
+        );
+    }
+    ensure!(
+        declared.is_none_or(|declared| declared == outside),
+        "external source declaration differs from the frozen scope roots"
+    );
+    Ok(expected_roots)
+}
+
+#[test]
+fn external_source_roots_need_the_pinned_scope_and_an_exact_read_only_declaration() -> Result<()> {
+    let base = tempfile::tempdir()?;
+    let artifacts = base.path().join("artifacts");
+    let inside = artifacts.join("menu");
+    let outside = base.path().join("checkout");
+    let other = base.path().join("other");
+    for path in [&inside, &outside, &other] {
+        std::fs::create_dir_all(path)?;
+    }
+    let artifacts = artifacts.canonicalize()?;
+    let declare = |mode: &str, roots: &[&PathBuf]| {
+        serde_json::json!({"mode": mode, "source_roots": roots}).to_string()
+    };
+    // Unchanged default: a root outside artifacts is refused without a declaration.
+    assert!(admitted_source_roots(vec![outside.clone()], &artifacts, None).is_err());
+    assert_eq!(
+        admitted_source_roots(vec![inside.clone()], &artifacts, None)?.len(),
+        1
+    );
+    // Refused: wrong mode, a different root, an extra root, unknown fields.
+    for refused in [
+        declare("read-write", &[&outside]),
+        declare("read-only", &[&other]),
+        declare("read-only", &[&outside, &other]),
+        serde_json::json!({"mode": "read-only", "source_roots": [&outside], "write": true})
+            .to_string(),
+    ] {
+        assert!(
+            admitted_source_roots(vec![outside.clone()], &artifacts, Some(&refused)).is_err(),
+            "{refused}"
+        );
+    }
+    // Refused: a duplicate frozen root stays a duplicate.
+    assert!(
+        admitted_source_roots(
+            vec![outside.clone(), outside.clone()],
+            &artifacts,
+            Some(&declare("read-only", &[&outside]))
+        )
+        .is_err()
+    );
+    // Accepted: the declaration names exactly the outside roots of the scope.
+    let admitted = admitted_source_roots(
+        vec![outside.clone(), inside.clone()],
+        &artifacts,
+        Some(&declare("read-only", &[&outside])),
+    )?;
+    assert_eq!(admitted.len(), 2);
+    assert_eq!(admitted.get(&outside.canonicalize()?), Some(&outside));
+    Ok(())
+}
+
 /// Observe canonical setup results and emit a Core-owned request instance.
 /// This never creates indexes, mutates configuration or claims native warm.
 #[tokio::test]
@@ -1469,15 +1581,13 @@ async fn emit_private_arbiter_configuration() -> Result<()> {
         !roots.is_empty() && roots.len() <= 64,
         "private frozen source roster bound"
     );
-    let mut expected_roots = BTreeMap::new();
-    for root in roots {
-        let canonical = root.canonicalize()?;
-        ensure!(
-            canonical.starts_with(artifact_root()?)
-                && expected_roots.insert(canonical, root).is_none(),
-            "duplicate or foreign private source root"
-        );
-    }
+    let external = std::env::var("AIRK_ARBITER_EVALUATION_EXTERNAL_SOURCES");
+    let external = match &external {
+        Ok(value) => Some(value.as_str()),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(_) => bail!("external source declaration must be UTF-8"),
+    };
+    let expected_roots = admitted_source_roots(roots, &artifact_root()?, external)?;
     let mut registry =
         airk_store::service::registry::ServiceRegistry::open_saved(&ready.control_root)?;
     let catalog = registry

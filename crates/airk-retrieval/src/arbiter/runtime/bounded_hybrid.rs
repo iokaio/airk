@@ -66,6 +66,74 @@ pub(super) struct GraphGate {
     expected_rows: Value,
     expected_counts: Value,
     policy: GraphPolicy,
+    /// The reviewed base of a calibration-only private variant. Graph,
+    /// placement, adapter and every reviewed binding are checked against it.
+    calibration_base: Option<Profile>,
+}
+
+/// A private evaluation variant may differ from its reviewed CUDA Context base
+/// only in its Calibration asset, its calibration field, its profile id and its
+/// manifest. Both stay unqualified and private; the variant is a new identity.
+fn require_calibration_only_variant(base: &Profile, variant: &Profile) -> Result<()> {
+    fn normalized(profile: &Profile) -> Result<Value> {
+        let mut copy = profile.clone();
+        copy.manifest = Sha256Digest::from_bytes([0; 32]);
+        copy.calibration = Sha256Digest::from_bytes([0; 32]);
+        copy.profile_id = String::new();
+        for asset in copy
+            .assets
+            .iter_mut()
+            .filter(|asset| asset.role == AssetRole::Calibration)
+        {
+            asset.bytes = 0;
+            asset.sha256 = Sha256Digest::from_bytes([0; 32]);
+        }
+        Ok(serde_json::to_value(copy)?)
+    }
+    let calibrations = |profile: &Profile| {
+        profile
+            .assets
+            .iter()
+            .filter(|asset| asset.role == AssetRole::Calibration)
+            .count()
+    };
+    ensure!(
+        [base, variant].iter().all(|profile| {
+            profile.qualification.is_none()
+                && profile.qualified_targets.is_empty()
+                && profile.downloads.is_empty()
+                && profile.profile_id.starts_with("private-")
+                && profile.device_execution.is_some()
+                && matches!(
+                    profile.model,
+                    ModelChoice::ContextQwenCompact | ModelChoice::ContextQwenLarge
+                )
+                && calibrations(profile) == 1
+        }) && variant.manifest != base.manifest
+            && variant.calibration != base.calibration
+            && variant.profile_id != base.profile_id
+            && normalized(variant)? == normalized(base)?,
+        "calibration-only CUDA variant differs from its reviewed base outside its calibration and identity"
+    );
+    Ok(())
+}
+
+/// The profile a reviewed graph result is checked against: the opened profile
+/// itself, or the reviewed base of an admitted calibration-only variant.
+fn reviewed_profile<'a>(
+    reviewed_manifest: Sha256Digest,
+    base: Option<&'a Profile>,
+    opened: &'a Profile,
+) -> Result<&'a Profile> {
+    let Some(base) = base else {
+        return Ok(opened);
+    };
+    ensure!(
+        base.manifest == reviewed_manifest,
+        "calibration-only CUDA variant names an unreviewed base"
+    );
+    require_calibration_only_variant(base, opened)?;
+    Ok(base)
 }
 
 pub(super) struct GraphEvidence {
@@ -239,10 +307,18 @@ impl GraphGate {
             expected_rows,
             expected_counts,
             policy,
+            calibration_base: None,
         })
     }
 
+    /// Admit a calibration-only variant of the reviewed base profile.
+    fn with_calibration_base(mut self, base: Option<Profile>) -> Self {
+        self.calibration_base = base;
+        self
+    }
+
     fn verify_profile(&self, profile: &Profile, adapter: cuda::AdapterObservation) -> Result<()> {
+        let profile = reviewed_profile(self.profile, self.calibration_base.as_ref(), profile)?;
         let current = serde_json::to_value(adapter)?;
         let model = match self.policy {
             GraphPolicy::ContextFp32(model) => model,
@@ -721,13 +797,34 @@ impl Scorer {
         reviewed_graph_sha: Sha256Digest,
         overall_deadline: Instant,
     ) -> Result<BoundedHybridScorer> {
-        Self::open_large_bounded_hybrid(
+        Self::open_large_bounded_hybrid_resource_variant(
+            profile,
+            source,
+            reviewed_graph_result,
+            reviewed_graph_sha,
+            overall_deadline,
+            None,
+        )
+    }
+
+    /// The Large resource route for the reviewed profile or, with
+    /// `calibration_base`, for a calibration-only variant of that reviewed base.
+    pub fn open_large_bounded_hybrid_resource_variant(
+        profile: ExecutionProfile,
+        source: &dyn AssetSource,
+        reviewed_graph_result: &[u8],
+        reviewed_graph_sha: Sha256Digest,
+        overall_deadline: Instant,
+        calibration_base: Option<Profile>,
+    ) -> Result<BoundedHybridScorer> {
+        Self::open_large_bounded_hybrid_based(
             profile,
             source,
             reviewed_graph_result,
             reviewed_graph_sha,
             OpenExperiment::Resource(overall_deadline),
             None,
+            calibration_base,
         )
     }
 
@@ -738,6 +835,26 @@ impl Scorer {
         reviewed_graph_sha: Sha256Digest,
         experiment: OpenExperiment<'_>,
         cut: Option<Layer0Cut>,
+    ) -> Result<BoundedHybridScorer> {
+        Self::open_large_bounded_hybrid_based(
+            profile,
+            source,
+            reviewed_graph_result,
+            reviewed_graph_sha,
+            experiment,
+            cut,
+            None,
+        )
+    }
+
+    fn open_large_bounded_hybrid_based(
+        profile: ExecutionProfile,
+        source: &dyn AssetSource,
+        reviewed_graph_result: &[u8],
+        reviewed_graph_sha: Sha256Digest,
+        experiment: OpenExperiment<'_>,
+        cut: Option<Layer0Cut>,
+        calibration_base: Option<Profile>,
     ) -> Result<BoundedHybridScorer> {
         cuda::diagnostic::require_graph_diagnostic_profile(&profile)?;
         let binding = profile
@@ -790,7 +907,8 @@ impl Scorer {
                 (overall_deadline, None, Profiling::Disabled)
             }
         };
-        let mut gate = GraphGate::new(reviewed_graph_result, reviewed_graph_sha, profile.description().model)?;
+        let mut gate = GraphGate::new(reviewed_graph_result, reviewed_graph_sha, profile.description().model)?
+            .with_calibration_base(calibration_base);
         if let Some(cut) = cut {
             ensure!(matches!(gate.policy, GraphPolicy::LargeFp16) && profiling == Profiling::Active,
                 "Large projection capture requires the reviewed FP16 source and active profiler");
@@ -839,6 +957,26 @@ impl Scorer {
         reviewed_graph_sha: Sha256Digest,
         overall_deadline: Instant,
     ) -> Result<(Self, CompactBoundedHybridAnswerProvenance)> {
+        Self::open_compact_bounded_hybrid_answer_variant(
+            profile,
+            source,
+            reviewed_graph_result,
+            reviewed_graph_sha,
+            overall_deadline,
+            None,
+        )
+    }
+
+    /// The Compact Answer route for the reviewed profile or, with
+    /// `calibration_base`, for a calibration-only variant of that reviewed base.
+    pub fn open_compact_bounded_hybrid_answer_variant(
+        profile: ExecutionProfile,
+        source: &dyn AssetSource,
+        reviewed_graph_result: &[u8],
+        reviewed_graph_sha: Sha256Digest,
+        overall_deadline: Instant,
+        calibration_base: Option<Profile>,
+    ) -> Result<(Self, CompactBoundedHybridAnswerProvenance)> {
         cuda::diagnostic::require_diagnostic_profile(&profile)?;
         let description = profile.description();
         let policy = ResourcePolicy::software_v2();
@@ -865,13 +1003,13 @@ impl Scorer {
             overall_deadline,
             maximum_operation,
         )?;
-        let (scorer, mut evidence) = Self::open_reviewed_graph(
-            profile,
-            source,
+        let gate = GraphGate::new(
             reviewed_graph_result,
             reviewed_graph_sha,
-            None,
-        )?;
+            profile.description().model,
+        )?
+        .with_calibration_base(calibration_base);
+        let (scorer, mut evidence) = Self::open_reviewed_gate(profile, source, None, gate)?;
         cuda::in_time(load_deadline)?;
         evidence.policy_identity = framed_digest(
             b"airk.private.compact-cuda-bounded-hybrid-answer/1",

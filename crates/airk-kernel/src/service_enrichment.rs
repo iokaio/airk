@@ -2,6 +2,12 @@
 //! Service source publication and semantic turns have independent durable jobs.
 use crate::Kernel;
 use anyhow::{Result, ensure};
+
+/// Semantic batches one service vectors turn may publish.
+const SERVICE_TURN_BATCHES: usize = 8;
+/// No further batch starts after this much of a turn has elapsed.
+const SERVICE_TURN_SOFT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(120);
+
 impl Kernel {
     /// Typed temporary exclusion, independent of durable semantic failure.
     /// Native workers may repeat a retained semantic turn under the same grant.
@@ -47,21 +53,27 @@ impl Kernel {
             })
         })
     }
-    /// One bounded 32-artifact semantic batch; the soft deadline is checked at
-    /// publication boundaries. Native inference still has its own hard budgets.
-    /// An admitted source hint yields before model admission or after the current
-    /// atomic batch, retaining the saved semantic watermark and pending inputs.
+    /// Up to eight bounded 32-artifact semantic batches, each its own atomic
+    /// publication. The soft deadline is checked at publication boundaries, so a
+    /// turn starts no further batch once it has run for two minutes. Native
+    /// inference still has its own hard budgets. Cancellation and pause stop at
+    /// the next checkpoint; an admitted source hint yields before model admission
+    /// or after the current atomic batch, retaining the saved semantic watermark
+    /// and pending inputs. Several batches per turn share one turn's fixed setup
+    /// and object reclamation.
     pub fn service_enrichment_turn(&self) -> Result<airk_ingest::IndexReport> {
         self.source_policy_for_work()?;
         ensure!(
             self.is_service_collection(),
             "service enrichment requires its project owner"
         );
+        // A pause that ends this turn's batches releases only this turn.
+        let _pause = crate::service_execution::pause_turn();
         crate::service_execution::with_database_admission(|| {
             self.observe_service_index(airk_core::usage::UsageOperation::Index, || {
                 self.resume_current_enrichment_batches_bounded(
-                    1,
-                    Some(std::time::Duration::from_secs(30)),
+                    SERVICE_TURN_BATCHES,
+                    Some(SERVICE_TURN_SOFT_DEADLINE),
                 )
                 .map(|(_, report)| report)
             })
