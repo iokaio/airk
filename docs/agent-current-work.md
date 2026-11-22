@@ -41,7 +41,11 @@ The user resumed the Windows and Linux FP16 campaign after D: cleanup. Keep new 
   only, falling back to Compact on the GPU and then Compact on the CPU; Focus
   and Compact GPU routes become product priorities. Answer's time allowance
   rises above 120 s. Implementation (plan section 12.8, L1 onward) starts only
-  after the user has reviewed the plan revision and its commit.
+  after the user has reviewed the plan revision and its commit. No backward
+  compatibility: the new Answer version replaces v2 at once. The pending
+  one-turn evaluation work is committed and pushed as it stands (L0); its
+  results are history, and the evaluation and weight refinement start over on
+  the loop (L7).
 - Previous task: implement all steps of docs/arbiter/final-plan.md, authorized
   by the user on 15 November 2026. Execution T0 is recorded in the ledger.
   The user authorized continuing past the earlier 72-hour checkpoint.

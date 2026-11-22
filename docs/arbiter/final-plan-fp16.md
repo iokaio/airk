@@ -195,6 +195,19 @@ agent turns with costly tokens." The user set these points.
   runs on the CPU (section 12.5).
 - **The user reviews this revision and its commit before implementation
   starts.**
+- **Decisions after review, 22 November:**
+  - **Accepted as I recommended:**
+    - selection by the scoring models, with no text generation;
+    - a 600 s ceiling and a 300 s default;
+    - the many-agent design of section 12.4.1;
+    - no second loaded copy of any model.
+  - **Changed by the user:**
+    - **No backward compatibility.** The new Answer version replaces v2 at
+      once.
+    - **The one-turn evaluation is history.** Its pending work is committed
+      and pushed now, as it stands. The new Answer comes first, and then
+      the evaluation, testing and weight refinement start over, because
+      results against the one-turn Answer say nothing about the loop.
 
 ## 3. The test
 
@@ -1035,7 +1048,10 @@ Receipts are in the private GPU-track folder and in the CUDA image records;
 | Answer becomes a local multi-round loop (section 12) | Set by the user on 22 November. This is the recorded decision to change Answer's wire shape, budgets and digest inputs; the exact shapes are settled in L1 and recorded in the owning contracts |
 | Evaluation runs stopped; no script prototype | Set by the user on 22 November. The harness, scenarios and rubrics are kept for measuring the loop (L7) |
 | Device ladder: Large on GPU only, then Compact on GPU, then Compact on CPU; Focus on GPU where available, else CPU | Set by the user on 22 November. Replaces the "Large not offered without GPU opt-in" wording of section 2 by a fallback, and makes the Focus and Compact GPU routes product priorities |
-| Answer's time allowance raised above 120 s | Set by the user on 22 November; the numbers in section 12.4 are my proposal for the user's review |
+| Answer's time allowance raised above 120 s | Set by the user on 22 November: a 600 s ceiling and a 300 s default, accepted the same day, with the default lowered if L2 finds client timeouts shorter |
+| Selection by the scoring models, no text generation | Accepted by the user on 22 November. Generation is a later option, decided only after the loop has been measured |
+| No backward compatibility for Answer | Set by the user on 22 November. The new request and response replace v2 at once; v1 and v2 are removed |
+| The one-turn evaluation is history | Set by the user on 22 November. Its pending work is committed and pushed now as it stands; the loop comes first, then the evaluation and weight refinement start over with a new baseline. Nothing is compared against or fitted from the one-turn results |
 | Implementation starts after the user reviews this revision | Set by the user on 22 November |
 | Many-agent queueing (section 12.4.1) | Reviewed and accepted by the user on 22 November; its open points take the stated defaults unless the user changes them |
 | No second loaded copy of a model on any device | Set by the user on 22 November. Capacity comes from batching, concurrent runs on one session and overflow to another device, decided at runtime (section 12.5.1) |
@@ -1184,11 +1200,15 @@ works by **selection**:
 - **Generating text, in plan steps, gap descriptions or the final summary,
   is not part of this design.** It would need a new decode runtime on CPU,
   CUDA and later WebGPU. It is listed as a later option, decided only after
-  the selection loop has been measured. **For the user's review.**
+  the selection loop has been measured. **Accepted by the user on 22
+  November.**
 - **Calibration.** Compact's decisions need accepted rules, not the
-  zero-rule calibration. Rules are fitted from the evaluation's receipts on
-  both repositories (section 5.4), and the loop records each decision with
-  its score and rule, as joint scoring does today.
+  zero-rule calibration. The receipts of the one-turn evaluation do not
+  describe the loop's decisions, so rules are fitted from the new
+  evaluation on the loop (L7), on both repositories (section 5.4). Until
+  then the loop runs its deterministic order wherever the model abstains.
+  The loop records each decision with its score and rule, as joint scoring
+  does today.
 
 ### 12.3 Contracts and shapes that change
 
@@ -1205,8 +1225,12 @@ in the owning `CONTRACT.md` files.
     ceiling.
   - The TypeScript mirror comes from the approved schema-to-TypeScript
     generation, and the semantic cases are emitted by Rust.
-  - **For the user's review:** whether v2 stays accepted beside the new
-    version for one release. I recommend it.
+  - **No backward compatibility (user, 22 November).** The new version
+    replaces v2 at once. v2's request and response types, the v1 types and
+    `Kernel::answer_with_reader` (which has no production caller) are
+    removed in the same change, with their callers and tests moved to the
+    new version. The CLI, the VS Code extension and the MCP schema switch
+    together in one release.
 - **Ledger and token pool.** Today the joint ledger allows at most
   `min(rounds, 3)` Context slots and `min(calls, 12)` Focus slots, all in one
   8,192-token pool.
@@ -1230,8 +1254,8 @@ in the owning `CONTRACT.md` files.
 ### 12.4 Time
 
 Several local model turns per call make Answer much slower than one search.
-The user accepts that: the loop is worth it if it saves agent turns. My
-proposal, for the user's review:
+The user accepts that: the loop is worth it if it saves agent turns. These
+numbers were accepted by the user on 22 November:
 
 - **Deadline.** Answer's product ceiling rises from 120 s to 600 s, with a
   default of 300 s. Search and the other reads keep their present limits.
@@ -1266,6 +1290,11 @@ proposal, for the user's review:
   - **With Compact on CPU:** 10 s or more per Compact step. Three rounds
     with two to four sub-needs can then take several minutes, which is why
     the ceiling is 600 s.
+- **The default against client timeouts.** Section 12.4.1 keeps the default
+  inside common client tool timeouts. If L2 finds that Claude Code or other
+  supported clients cut calls off sooner than 300 s, the default is lowered
+  to fit them, and 600 s stays the ceiling for clients that ask for more.
+  That is a measurement recorded in L2, not a new decision.
 
 ### 12.4.1 Many agents at once: queueing without abandoned calls
 
@@ -1534,8 +1563,17 @@ Set by the user on 22 November 2026.
 
 ### 12.6 What is kept from the evaluation
 
-- The harness, the 20 scenarios, both rubrics, the judges and the reports
-  folder measure the loop (L7). The question asked of them is unchanged.
+- **The evaluation starts over on the loop (user, 22 November).** The
+  results measured against the one-turn Answer are kept as history in their
+  reports, but they are not a baseline for the loop. Nothing is compared
+  against them, and no weight or calibration is fitted from them. After
+  the loop is built (L1 to L6), L7 runs:
+  - a new baseline;
+  - the change sets and weight refinement of section 5;
+  - the per-series reports and commits of section 5.6.
+- **Kept tools:** the harness, the 20 scenarios, both rubrics, the judges
+  and the reports folder measure the loop. The question asked of them is
+  unchanged.
 - **Kept findings and fixes:**
   - the search roster fix and the settled-index guard;
   - `search_v2`, which finds slightly more on the same queries;
@@ -1552,8 +1590,9 @@ sections 4.1 to 4.3, measured on both repositories.
 - **First priority, agent turns:** Answer with the loop reaches correct
   finishes in fewer turns than the better of Parse and Search.
 - **Coverage over a session:** Answer covers at least the essential notes
-  that Search covers. Today that is 22 of 53 on airk and 26 of 61 on
-  bookbuilder.
+  that Search covers. The new baseline of L7 measures Parse and Search
+  again beside the loop; the one-turn figures (Search at 22 of 53 on airk and
+  26 of 61 on bookbuilder) are history only.
 - **Every device and fallback route** answers within its deadline or
   returns a disclosed partial result.
 
@@ -1561,15 +1600,17 @@ sections 4.1 to 4.3, measured on both repositories.
 
 | Step | Work | Done when |
 | --- | --- | --- |
-| L0 | Land the evaluation series in order, one signed commit each: the baseline, change set 1, change set 2, and change set 3 as stopped | Commits exist, repository checks pass, `feat/arbiter-final` is pushed |
-| L1 | Contract decisions and Core types: the new request, response and budget version, the ledger slots and token allowance, and the deadline ceiling, in the owning `CONTRACT.md` files, with generated TypeScript and Rust-emitted semantic cases | Contracts recorded; Core builds and its tests pass |
+| L0 | Commit and push the pending one-turn evaluation work now, as it stands (user, 22 November). Include the harness, the reports, the results files, the change-set code, the indexer and search fixes, and the ledger entry. Leave out private roots. Its results are history and not a baseline | One signed commit on `feat/arbiter-final` with repository checks passing; the branch is pushed |
+| L1 | Contract decisions and Core types: the new request, response and budget version replacing v2 at once (v1 and v2 removed), the ledger slots and token allowance, and the deadline ceiling, in the owning `CONTRACT.md` files, with generated TypeScript and Rust-emitted semantic cases | Contracts recorded; Core builds and its tests pass |
 | L2 | Time: the new ceiling through MCP, Core, kernel, supervisor, ledger and read attempt; per-stage budgets; partial results; progress notifications; which clients reset timeouts on progress or support asynchronous tasks, recorded | Tests show a disclosed partial result at the deadline on every layer |
 | L2b | Many agents (section 12.4.1, accepted), with its global limit taken from L5b: the service-owned Answer job table, attach-by-digest, tickets and continuations, the admission estimator, degrade-to-fit, earliest-deadline scheduling across Answers, the global gathering limit, and queue status | Tests with several concurrent Answers show no starved request, attach after a client timeout, and a ticket or disclosed degradation when the deadline cannot be met |
 | L3 | Kernel loop: Split, then per part Plan, Retrieve per sub-need, Read and check coverage, Follow up and Compose inside `Gathering`, interleaved across parts with a shared read cache, then Union; with the deterministic no-model path, and the software follow-ups promoted from the evaluation layers | Kernel tests cover each stage, single-part and compound requests, budget hand-back between parts, Union dedup and frame sharing, early stop, budget and deadline stop, and the no-model path |
-| L4 | Service and retrieval: the split, plan, coverage and follow-up task policies, ledger slots, per-attempt lane admission for parts, cross-part candidate batching (and the Focus per-candidate question decision), and calibration rules fitted from the evaluation receipts | Service tests pass; policy identities are recorded |
+| L4 | Service and retrieval: the split, plan, coverage and follow-up task policies, ledger slots, per-attempt lane admission for parts, cross-part candidate batching (and the Focus per-candidate question decision), and the calibration format with the deterministic order used where the model abstains | Service tests pass; policy identities are recorded |
 | L5 | Devices: the Focus CUDA route, Compact on CUDA as a product route, the Context ladder with typed reasons, and idle unload with pre-warm and reload handling (section 12.5) | Each route and fallback runs on the A6000 and on CPU, with receipts; reload and re-warm times measured per model and device; an Answer arriving during a reload starts on reads or a lower rung and does not time out |
 | L5b | Runtime capacity (section 12.5.1): the warm-time calibration run, device and queue measurements, concurrent runs on one session with per-run CUDA streams, overflow routing across devices by earliest finish, shed-and-recover, capacity-based lane admission, settings and status | Tests show no second copy is ever loaded, capacity rises only within the memory floor and when measured gain holds, sheds under injected memory pressure without interrupting running calls, and overflow records its device |
 | L6 | Workspace gate | Clippy and tests across the workspace on the matrix of CONTRIBUTING; known failures listed with their owners |
-| L7 | Measure with the evaluation harness: replays, then judged passes on both repositories, CPU and GPU cells | Report `05-answer-loop.md` and its results; then stop for the user's inspection |
+| L7 | The evaluation starts over on the loop. First, a new baseline: the loop on every device route, the no-model loop, Parse and Search, on both repositories, with CPU and GPU cells. Then change sets with weight and calibration refinement as in section 5, each series judged and committed on its own | The new baseline report, then one report and commit per series; stop for the user's inspection after the iterations the user sets |
 
 E8 (the sealed set) and E9 (the final report) follow L7 on the user's word.
+The new evaluation's reports are numbered after the one-turn reports, which
+are kept as history.
