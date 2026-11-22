@@ -460,4 +460,4 @@ pins the row `e0575e9418adc5340f741aaf039488e7ddd77349b962f242817630b09bc751a1`,
 `scripts/arbiter/evaluation/runtime_row_replay/replay.py` reproduces the three
 inverse replays above from Git history and the retained
 `l4-runtime-hooks.patch` (8 checks, exit 0; receipt
-`answer-loop/L4/proof/replay-receipt.txt`). Closed in `5140c051`.
+`answer-loop/L4/proof/replay-receipt.txt`). Closed in `a2275554`.

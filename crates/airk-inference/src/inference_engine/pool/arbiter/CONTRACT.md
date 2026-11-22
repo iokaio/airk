@@ -719,7 +719,7 @@ so a caller may release what it reserved.
 **Review closure (L4 review M1 and L3, 22 November 2026).** The first L4
 rule counted only one attempt's jobs, so the Answers of one index could fill
 the queue (M1), and keyed a batched call by its lowest part, so another job
-of the attempt could hold one of its other parts (L3). Both were changed in `03aa3bbf`; evidence `lane::tests` (8 tests, including
+of the attempt could hold one of its other parts (L3). Both were changed in `9fea69ae`; evidence `lane::tests` (8 tests, including
 `several_attempts_share_one_index_ceiling_and_a_second_index_keeps_room`).
 
 **M1 correction (primary review, 22 November 2026).** The first fix let one
@@ -727,6 +727,6 @@ of the attempt could hold one of its other parts (L3). Both were changed in `03a
 index waited for it: the monopoly plan 12.1 item 1 rules out. One attempt now
 holds at most three jobs per index, and ordinary jobs count against the
 index ceiling and their own limit of two, not against Answer jobs. Closed in
-84eceda4; evidence `lane::tests::one_attempt_holds_at_most_three_jobs_so_another_always_has_a_slot`
+f24460d2; evidence `lane::tests::one_attempt_holds_at_most_three_jobs_so_another_always_has_a_slot`
 and `a_second_answer_is_admitted_while_the_first_holds_three` (lane tests:
 9 passed, within 127 of 127 pool arbiter tests).

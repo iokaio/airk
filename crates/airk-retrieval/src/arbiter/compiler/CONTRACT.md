@@ -194,10 +194,10 @@ loop_semantic_policy_digest])`. The Core digest
 semantics are part of every loop identity. Recorded values (control
 `recorded_loop_policy_identities`). They moved a third time when L4 was
 rebased onto L3-10 (a), whose Core edits to `native_loop.rs` and
-`answer_loop/log.rs` moved the loop semantics digest (change-log entry 37).
+`answer_loop/log.rs` moved the loop semantics digest (change-log entry 38).
 Before that they moved twice within L4 and the
 earlier values are not current: once when `NativeCardModel` joined
-`native_loop.rs`, and again in the review fixes (`03aa3bbf`), when the
+`native_loop.rs`, and again in the review fixes (`9fea69ae`), when the
 choice-to-decision mapping moved into `loop_cards.rs`, Plan selection took
 `max_sub_needs`, and `NativeCardModel` moved out to
 `native_loop/card_model.rs`:

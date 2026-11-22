@@ -372,6 +372,13 @@ First review (L3-7, L3-8, `ed2e0926`), closed in `7b65167a` (165 passed):
   must be the highest-scoring ones. Tests
   `top_score_advice_must_choose_the_highest_card` and the argmax assertion
   in `batched_segments_argmax_per_segment`.
+  Refined in L4 (change-log entry 39): Plan's reference card ("no further
+  sub-need", the last card) is a threshold, never choosable. Advice that
+  chooses it is refused, and the top-score check ignores it: no choosable
+  card left out may score above a chosen one. Before, top-score Plan advice
+  was refused whenever the reference scored highest, although retrieval's
+  Plan selection then takes the best proposal. Test
+  `top_score_plan_is_accepted_when_the_reference_card_scores_highest`.
 - M8, no driver test ran with Focus. Synthetic Focus owners now drive the
   barrier path (H1, H2, M9 tests).
 - M9, a stale Focus batch surfaced as another error and lost custody. It is

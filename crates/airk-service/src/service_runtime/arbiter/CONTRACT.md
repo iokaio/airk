@@ -925,7 +925,8 @@ completed with finite logits before the deadline and authority still holds.
 most `round_input_tokens`; the attempt pool is `input_tokens` and each part
 and round (round 1 or later) at most `round_input_tokens`. Split and Plan
 (round 0) draw on the pool only. A partition limits its card and Focus
-ordinals and tokens. Slots are never reused; the parent budget and attempt
+ordinals, tokens and Focus pairs, and the attempt's Focus pairs stay within
+the parent's `focus_pairs` (added in `38e141a0`, change-log entry 39). Slots are never reused; the parent budget and attempt
 identity are fixed once charged; the window is the parent deadline, at most
 600 s.
 
@@ -967,5 +968,5 @@ evaluation catalog; product builds have no constructor for it.
   ceiling: 605 s accepted, one nanosecond more refused, other tools refused
   above 125 s.
 
-All closed in `03aa3bbf`; counts in `docs/arbiter/answer-loop-changes.md`
-entry 34.
+All closed in `9fea69ae`; counts in `docs/arbiter/answer-loop-changes.md`
+entry 35.
