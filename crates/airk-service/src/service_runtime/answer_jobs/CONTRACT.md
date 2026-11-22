@@ -268,14 +268,18 @@ before returning.
      bounded by the read attempt. At that deadline a running job's kernel
      returns its own partial, so a ticket reply results only when the job
      waited or was requeued.
-5. **Status.** `QueueStatus` needs a place on the service status surface.
-   Adding fields to a status response changes a wire shape, so this needs a
-   recorded contract decision before it is built.
+5. **Status: deferred until after LG** (primary's decision, 22 November
+   2026). Exposing `QueueStatus` on the status surface is within the plan's
+   authorized many-agent work (sections 12.8 and 12.9). The LG gate does not
+   need it, because its concurrency test reads tickets and replies. Owner:
+   the L2b implementer. The status response gains fields, so the wire-shape
+   change is recorded with the item when it is built.
 
 **After wiring:** tests through the real handler must show several
 concurrent Answers, attach after a client timeout, and a ticket or a
-disclosed degradation. Then remove `expect(dead_code)` on `mod answer_jobs`,
-and the separate security review follows.
+disclosed degradation. `expect(dead_code)` then stays only on items that
+remain unused (the status path, until step 5). The separate security review
+of the wired path follows.
 
 ## Focused checks
 

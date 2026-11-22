@@ -473,8 +473,10 @@ limits on publication still apply in full.
     - the kernel `AdmissionPlan` in `AnswerEnv`, and `answer_scope`;
     - the job-owned read context and `JobWork`;
     - the MCP trait, its injection and the handler branch;
-    - status, which needs a contract decision because it adds fields to a
-      wire shape.
+    - status: **deferred until after LG** (primary's decision, 22 November
+      2026). It is within the authorized many-agent work, but the gate's
+      concurrency test reads tickets and replies, not status. Owner: the L2b
+      implementer.
   - **Timing:** all of it lands after L3-10 (b), whose files it touches.
 - **Evidence:** the `answer_jobs::` tests in `airk-service` (29 tests),
   listed in the contract's focused checks.
