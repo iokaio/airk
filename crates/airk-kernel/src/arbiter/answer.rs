@@ -13,6 +13,8 @@ mod gather;
 #[allow(dead_code)]
 mod retrieve;
 #[allow(dead_code)]
+mod plan;
+#[allow(dead_code)]
 mod split;
 
 #[cfg(test)]

@@ -723,6 +723,29 @@ const KEY_NOUN_STOP: &[&str] = &[
     "where", "which", "while", "with", "without", "would", "your", "work", "works", "write",
 ];
 
+/// Key nouns of an instruction in first-seen order: lowercase words of four
+/// or more letters outside a closed stop list and the named identifiers.
+pub(crate) fn key_nouns(question: &str, limit: usize) -> Vec<String> {
+    let named: Vec<String> = identifiers(question, 8)
+        .iter()
+        .map(|name| name.to_lowercase())
+        .collect();
+    let mut nouns: Vec<String> = Vec::new();
+    for word in question.split(|c: char| !c.is_ascii_alphabetic()) {
+        let lower = word.to_ascii_lowercase();
+        if nouns.len() < limit
+            && lower.len() >= 4
+            && word.chars().all(|c| c.is_ascii_lowercase())
+            && !KEY_NOUN_STOP.contains(&lower.as_str())
+            && !named.contains(&lower)
+            && !nouns.contains(&lower)
+        {
+            nouns.push(lower);
+        }
+    }
+    nouns
+}
+
 /// Change set 3: up to `count` follow-up search queries for an instruction:
 /// its named identifiers one by one, then its key nouns two at a time
 /// (lowercase words of four or more letters outside a closed stop list).
