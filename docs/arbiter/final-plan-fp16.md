@@ -1054,6 +1054,7 @@ Receipts are in the private GPU-track folder and in the CUDA image records;
 | The one-turn evaluation is history | Set by the user on 22 November. Its pending work is committed and pushed now as it stands; the loop comes first, then the evaluation and weight refinement start over with a new baseline. Nothing is compared against or fitted from the one-turn results |
 | Implementation starts after the user reviews this revision | Set by the user on 22 November |
 | Many-agent queueing (section 12.4.1) | Reviewed and accepted by the user on 22 November; its open points take the stated defaults unless the user changes them |
+| Large-against-Compact decision gate on CUDA (section 12.7.1) | Set by the user on 22 November. Runs before L7's comparisons with Parse and Search. The user reviews the results personally and may drop Large altogether |
 | No second loaded copy of a model on any device | Set by the user on 22 November. Capacity comes from batching, concurrent runs on one session and overflow to another device, decided at runtime (section 12.5.1) |
 
 ## 12. Answer as a local multi-round loop
@@ -1596,6 +1597,99 @@ sections 4.1 to 4.3, measured on both repositories.
 - **Every device and fallback route** answers within its deadline or
   returns a disclosed partial result.
 
+### 12.7.1 Decision gate: Large on CUDA against Compact on CUDA
+
+Set by the user on 22 November 2026. This gate decides whether Large is worth
+further development. It stands on its own, apart from the later comparisons
+with Parse and Search in L7.
+
+- **If Large is not significantly better than Compact,** further
+  development of Large may be dropped altogether.
+- **The user reviews the results personally** from the gate report and
+  makes the decision.
+
+**What is compared.** The same loop, on the same build, indexes,
+scenarios and Focus device, with the Context model as the only
+difference:
+- **arm C:** Compact on CUDA;
+- **arm L:** Large on CUDA.
+- **Focus device:** Focus runs on the GPU if its CUDA route is ready (L5),
+  otherwise on the CPU in both arms.
+- **Decision rule:** both arms take every Context decision by top score,
+  with no abstention and no calibration rules.
+  - **Why:** under today's zero-rule calibration both models abstain and
+    the arms would be identical; fitted rules would compare the rules as
+    much as the models.
+  - **Calibrated arms:** if L7 later fits rules for both models, the gate's
+    tests are repeated with them as a second reading.
+
+**Tests.**
+1. **Decision agreement.** Run all 20 development scenarios on both
+   repositories without agent sessions, and count:
+   - how often the two models choose the same split, sub-needs, coverage
+     verdicts and follow-ups;
+   - where they differ, which choice the reference notes favour.
+
+   Near-total agreement already says Large adds little.
+2. **Evidence quality, first reply.** For each scenario and arm, record:
+   - essential and supporting notes covered (coverage rule 2);
+   - bytes;
+   - sub-needs covered and missing.
+3. **Agent sessions.** One judged session per scenario and arm, with the
+   harness and judges of section 4 (Haiku agent, two Sonnet judges at
+   medium effort). Measure, under Rubric A and Rubric B:
+   - correct finishes;
+   - turns to a correct finish;
+   - the judges' verdicts.
+
+   A close call gets a second session, as in section 4.5.
+4. **Performance.** For each arm, record:
+   - end-to-end Answer time;
+   - per-stage and per-call model time;
+   - rounds used;
+   - partial results at the deadline;
+   - peak GPU memory;
+   - warm and reload times;
+   - throughput with 2 and 4 concurrent Answers, using the queueing of
+     section 12.4.1.
+
+**What counts as significantly better.** This is my proposed bar. The user
+decides.
+- **Correct finishes:** Large wins at least 3 more correct finishes than
+  Compact across the 20 scenarios.
+- **Or a clear Rubric A lead:** Large wins Rubric A on at least 8 scenarios
+  and loses on at most 3, with the rest tied.
+- **Coverage:** in both cases, Large's first-reply essential coverage is no
+  lower than Compact's on either repository.
+- **Time:** in both cases, Large's median end-to-end time is no more than
+  twice Compact's.
+
+If none of the outcome conditions is met, the report recommends dropping
+Large.
+
+**The report.** `docs/arbiter/answer-evaluation/` gets a gate report. It
+is written for the user's personal review and contains:
+- a per-scenario side-by-side for both arms, with the evidence each
+  returned, the judges' verdicts and the reasons;
+- the agreement tables and the performance tables;
+- the receipts;
+- my recommendation.
+
+The gate and its report are one series with one commit.
+
+**Order and what continues during the review.**
+- **When it runs:** as soon as both CUDA routes run the loop, after L5 and
+  before L7.
+- **During the user's review:** work that does not depend on Large
+  continues, which is everything except Large-specific tuning.
+- **Large waits:** calibration fitting, runtime-capacity tuning and the
+  memory and placement work for Large wait for the user's decision. Until
+  then Large keeps only the CUDA route and the ladder position the gate
+  needs.
+- **If Large is dropped:** the ladder becomes Compact on the GPU, then
+  Compact on the CPU. Large's catalog entries, profiles and code paths are
+  removed with evidence, under the deletion rule of the assignment.
+
 ### 12.8 Work order
 
 | Step | Work | Done when |
@@ -1608,9 +1702,128 @@ sections 4.1 to 4.3, measured on both repositories.
 | L4 | Service and retrieval: the split, plan, coverage and follow-up task policies, ledger slots, per-attempt lane admission for parts, cross-part candidate batching (and the Focus per-candidate question decision), and the calibration format with the deterministic order used where the model abstains | Service tests pass; policy identities are recorded |
 | L5 | Devices: the Focus CUDA route, Compact on CUDA as a product route, the Context ladder with typed reasons, and idle unload with pre-warm and reload handling (section 12.5) | Each route and fallback runs on the A6000 and on CPU, with receipts; reload and re-warm times measured per model and device; an Answer arriving during a reload starts on reads or a lower rung and does not time out |
 | L5b | Runtime capacity (section 12.5.1): the warm-time calibration run, device and queue measurements, concurrent runs on one session with per-run CUDA streams, overflow routing across devices by earliest finish, shed-and-recover, capacity-based lane admission, settings and status | Tests show no second copy is ever loaded, capacity rises only within the memory floor and when measured gain holds, sheds under injected memory pressure without interrupting running calls, and overflow records its device |
+| LG | The Large-against-Compact gate on CUDA (section 12.7.1) | Gate report and commit; **stop for the user's personal review and decision on Large**, while work not depending on Large continues |
 | L6 | Workspace gate | Clippy and tests across the workspace on the matrix of CONTRIBUTING; known failures listed with their owners |
 | L7 | The evaluation starts over on the loop. First, a new baseline: the loop on every device route, the no-model loop, Parse and Search, on both repositories, with CPU and GPU cells. Then change sets with weight and calibration refinement as in section 5, each series judged and committed on its own | The new baseline report, then one report and commit per series; stop for the user's inspection after the iterations the user sets |
 
 E8 (the sealed set) and E9 (the final report) follow L7 on the user's word.
 The new evaluation's reports are numbered after the one-turn reports, which
 are kept as history.
+
+### 12.9 Proceeding without interruption
+
+This section lists what implementation may do without asking, the defaults
+it uses, and the only points where it stops. It applies once the user has
+given the final word on section 12.
+
+**Authorized by the user's decisions on 22 November.**
+- **Contract changes.**
+  - Change Answer's wire shape, budgets and response, replacing v2 at once.
+  - Remove v1, v2 and `Kernel::answer_with_reader`.
+  - Raise Answer's time limits on every layer named in 12.4.
+  - Change the joint ledger's slots and token pool.
+  - Add the split, plan, coverage and follow-up task policies.
+- **Digest inputs and identities.** Edit the source files that are digest
+  inputs for these changes, and update the identities they move: Core
+  context and Focus semantics, retrieval task policies, `runtime.rs` and the
+  compiler, the `cpu_source_transition` pins, the CUDA FP16 math-policy
+  digest, and the bounded-hybrid validator.
+  - Each update is a recorded decision in the owning `CONTRACT.md`, with
+    its retained-fixture proof.
+  - The proof shows the old identity no longer describes the new source,
+    not that a check now passes.
+  - The 8 `cpu_source_transition` tests that fail today are resolved this
+    way in L4, when the evaluation routing in `runtime.rs` is replaced by
+    the product loop.
+- **Promotion.** Move the software follow-ups out of the test-support gate
+  into product code. Remove the evaluation layer tokens once the loop
+  replaces them. Keep the evaluation fixture's restart exception
+  evaluation-only.
+- **Focus on CUDA.** Build the Focus CUDA profile for the 1,024-token graph,
+  its placement and its warm route. Emit them as reviewed private profiles,
+  under the same review rule as the existing CUDA Context profiles.
+  - Product profiles need the independent review below.
+  - If the Focus CUDA route cannot be made to work, Focus stays on the
+    CPU, the gate and L7 run with Focus on the CPU, and the blocker is
+    recorded. Neither stops.
+- **Compact on CUDA.** Make it a reviewed product route. Retire the
+  calibration-only variant mechanism from the product path, or record it as
+  a decision if the product needs it.
+- **Device work.** The Context ladder, idle unload, the many-agent queueing
+  and runtime capacity, as specified in 12.4.1, 12.5 and 12.5.1.
+- **Commits and pushes.**
+  - Each L step is reviewed, validated and committed with sign-off, and
+    `feat/arbiter-final` is pushed after each step.
+  - No PR, merge, publication or deployment.
+
+**Defaults that implementation uses.** Each is recorded in the owning
+contract when it is made.
+- **Limits per call.**
+  - At most 4 parts per request, and at most 4 sub-needs per part.
+  - At most 3 rounds of read and follow-up per part.
+  - The budget's call and candidate limits are raised to what these allow.
+  - The reply frame stays at 64 KiB, shared by all parts. It is raised only
+    if L7 shows it truncates essential evidence.
+- **Deadline.** 300 s by default and 600 s at most. Answer-only. A reserve
+  is kept for Compose and Union.
+- **Many agents.** As in 12.4.1:
+  - degrade first, then a ticket;
+  - 10-minute retention of finished results;
+  - the global limit set from runtime capacity, with a floor of 2.
+- **Idle unload.** 30 minutes, per stage.
+- **Runtime capacity.** "Auto", with at most 2 concurrent runs per stage.
+  - Reserve floor: the larger of 1.5 GB and 10% of the device.
+  - A concurrent run stays only if it gains at least 1.3 times.
+- **Focus batching across parts.** The per-candidate question is decided in
+  L4 by measured cost.
+- **Test models in L7 and the gate.** Haiku agents and Sonnet judges at
+  medium effort, through headless Claude Code, as in section 2.
+  - The 20 development scenarios with their frozen reference notes, on the
+    existing evaluation indexes: airk at publication 330 and bookbuilder-v2
+    at 268.
+  - The sealed set stays unused.
+- **L7 iterations.** Three change sets after the new baseline, back to back,
+  then a stop for inspection. That is the user's last setting for
+  iterations.
+- **Version.** Workspace and extension versions are synchronized and bumped
+  once, before the first installer or PR that carries the loop, as the
+  assignment requires. No installer or PR is built in L1 to L7 without the
+  user's word.
+
+**Reviews.**
+- Contract and wire changes (L1), the kernel loop (L3), and the service,
+  device and capacity work (L4, L5, L5b) each get an independent review by
+  a delegated agent before their commit. The agent is given the code, not my
+  conclusions.
+- Findings are fixed before the commit.
+- Work done alone is labelled self-review.
+- The security-relevant parts get a separate security review: the job table
+  and its retention, attach-by-digest, and the queue status.
+
+**Resources.**
+- One Cargo owner and one GPU owner at a time, with the marker files of the
+  one-turn evaluation.
+- Disk is budgeted per CLAUDE.md before any large write. The Large CUDA
+  weight copy and the evaluation installation are reused.
+- Builds use the pinned toolchain and the offline Cargo home already in use.
+
+**Known failing checks carried in.** Each has an owner, the primary agent,
+and is listed in every validation record until resolved:
+- the 8 `cpu_source_transition` tests, resolved in L4;
+- the retrieval version-boundary test, checked at `1fe7b600` in L1 and
+  fixed or recorded;
+- the intermittent store cache test, pre-existing at `1fe7b600`;
+- the module-cycle boundary check, the formatting quarantine and the Admin
+  browser teardown of section 10.
+
+**The only stops.**
+1. The Large-against-Compact gate report (LG), for the user's personal
+   decision on Large. Work that does not depend on Large continues.
+2. The inspection after L7's iterations.
+3. Anything the permission classifier denies, or anything outside this
+   assignment: a new crate, a new external provider or service, a PR,
+   publication or deployment. These are reported to the user and not worked
+   around.
+
+A failed check, a blocked dependency or a review finding is not a stop. It
+is fixed, or recorded with its owner, while independent work continues.
