@@ -1058,6 +1058,7 @@ Receipts are in the private GPU-track folder and in the CUDA image records;
 | Precision check, FP32 against FP16 per stage (section 12.7.3) | Set by the user on 22 November. Replays only. Judged sessions run only if a stage shows a real difference. The data informs the decisions after L7; rule A1 is unchanged meanwhile |
 | Section 12 is CUDA only (section 12.0) | Set by the user on 22 November. No CPU fallback is tested in section 12. GPU memory is recorded rather than held to the 8, 16 and 24 GB tiers, and work does not stop if Large exceeds 24 GB. Next steps are decided after L7 |
 | Focus-only against Focus-with-Compact decision gate (section 12.7.2) | Set by the user on 22 November. Runs in the same series as 12.7.1. How the decision is made is deferred until the loop is built and tested; the user reviews the results personally |
+| Standing authorization for changes section 12 needs | Set by the user on 22 November. Each change is logged in `answer-loop-changes.md` for the user's review after L7 |
 | Answer reply frame 128 KiB | Set by the user on 22 November. Answer only; every other tool keeps 64 KiB (section 12.9) |
 | No second loaded copy of a model on any device | Set by the user on 22 November. Capacity comes from batching, concurrent runs on one session and overflow to another device, decided at runtime (section 12.5.1) |
 
@@ -1906,6 +1907,17 @@ are kept as history.
 This section lists what implementation may do without asking, the defaults
 it uses, and the only points where it stops. It applies once the user has
 given the final word on section 12.
+
+**Standing authorization (user, 22 November).** "You are authorized to make
+all the changes necessary that you would recommend to make section 12 work
+properly. Document each of these changes so that I can review them after you
+complete L7."
+- **Where they are recorded:** each such change is logged in
+  [answer-loop-changes.md](answer-loop-changes.md), with what changed, why,
+  the evidence and where it lives.
+- **What it does not cover:** the limits of the assignment still hold. That
+  means no PR, publication or deployment; no new crate or external provider;
+  and nothing the permission classifier denies.
 
 **Authorized by the user's decisions on 22 November.**
 - **Contract changes.**
