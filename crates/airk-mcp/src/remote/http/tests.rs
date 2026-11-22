@@ -797,6 +797,13 @@ async fn http_answer_streams_progress_before_its_result_and_other_calls_stay_jso
 /// An Answer may run to its 605 s ceiling with no message at all (no progress
 /// token). Its HTTP session neither idles out (300 s) nor loses its worker, and
 /// it idles out normally once the call ends. Tokio time is paused.
+///
+/// rmcp's SSE keep-alive is timed on the real clock, so the 400 s paused-time
+/// jump made it emit pings in a tight loop (about 385 s of real time) and the
+/// unbounded `collect()` grew until a 128 GiB allocation aborted the process.
+/// The service is built without that keep-alive (the session lease must hold
+/// with no message at all), and the body is read under a byte bound so a
+/// returning ping loop fails fast instead of exhausting memory.
 #[tokio::test(start_paused = true)]
 async fn an_answer_in_flight_keeps_its_http_session_past_the_idle_timeout() -> anyhow::Result<()> {
     struct Slow;
@@ -822,7 +829,7 @@ async fn an_answer_in_flight_keeps_its_http_session_past_the_idle_timeout() -> a
         Arc::new(|| Ok(Arc::new(Slow) as Arc<dyn RemoteTools>));
     let limits = HttpReadLimits::default();
     assert_eq!(limits.idle_timeout, Duration::from_secs(300));
-    let service = HttpReadService::new(
+    let service = HttpReadService::with_sse_keep_alive(
         ReadSessionFactory::default(),
         HttpSessionBudget::new(8)?,
         backend,
@@ -833,7 +840,11 @@ async fn an_answer_in_flight_keeps_its_http_session_past_the_idle_timeout() -> a
         "127.0.0.1:57421".into(),
         vec![],
         limits,
+        None,
     )?;
+    // One reply is a few hundred bytes; 64 KiB is reached within milliseconds
+    // if keep-alive pings (or any other unbounded stream) come back.
+    const BODY_GUARD: usize = 64 * 1024;
     let response = service
         .handle(request(
             Method::POST,
@@ -862,9 +873,13 @@ async fn an_answer_in_flight_keeps_its_http_session_past_the_idle_timeout() -> a
         json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"airk_answer","arguments":{}}}),
     ));
     let response = service.handle(call).await;
-    let bytes = tokio::time::timeout(Duration::from_secs(1_000), response.into_body().collect())
-        .await??
-        .to_bytes();
+    let bytes = tokio::time::timeout(
+        Duration::from_secs(1_000),
+        http_body_util::Limited::new(response.into_body(), BODY_GUARD).collect(),
+    )
+    .await?
+    .map_err(|error| anyhow::anyhow!("Answer body exceeded {BODY_GUARD} bytes: {error}"))?
+    .to_bytes();
     let text = std::str::from_utf8(&bytes)?;
     assert!(started.elapsed() >= Duration::from_secs(400));
     assert!(text.contains(r#""id":2"#), "{text}");

@@ -316,6 +316,18 @@ limits on publication still apply in full.
   entry. Service stop and upgrade still cancel an in-flight Answer within
   their existing 10 to 35 s owner stop periods rather than waiting up to
   605 s for it.
+- **Closed gap (22 November 2026, branch `loop/mcp-idle`):** the review-fix
+  test `an_answer_in_flight_keeps_its_http_session_past_the_idle_timeout`
+  aborted after about 280 s on a 128 GiB allocation. The cause was in the
+  test only. Its 400 s paused-time sleep made rmcp's real-clock SSE
+  keep-alive send pings in a tight loop, and the test collected the body
+  without a bound. The keep-alive is now a private constructor parameter,
+  and production keeps 15 s. The test turns it off and reads the body under a
+  64 KiB bound. With the keep-alive turned back on, it now fails in 0.024 s
+  with "length limit exceeded". Production cannot buffer without bound: on
+  the real clock, a ping is sent at most every 15 s, and the stream is
+  pulled only as the client reads, under the gateway's `OutputBody` budget.
+  Record and evidence: `crates/airk-mcp/src/remote/CONTRACT.md`.
 
 ### 19. The Answer job table: choices made where section 12.4.1 left room
 

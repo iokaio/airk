@@ -407,6 +407,12 @@ impl Drop for HttpState {
         self.client.close();
     }
 }
+/// rmcp's SSE comment keep-alive on every streamed response (its default,
+/// named here). It is timed on the real clock (`sse_stream` resets it from
+/// `std::time::Instant::now()`), so under paused Tokio time a jump past it
+/// makes it fire in a tight loop; tests that jump time turn it off with
+/// `HttpReadService::with_sse_keep_alive`.
+const SSE_KEEP_ALIVE: Option<Duration> = Some(Duration::from_secs(15));
 impl HttpReadService {
     pub fn new(
         factory: ReadSessionFactory,
@@ -416,6 +422,28 @@ impl HttpReadService {
         authority: String,
         origins: Vec<String>,
         limits: HttpReadLimits,
+    ) -> anyhow::Result<Self> {
+        Self::with_sse_keep_alive(
+            factory,
+            budget,
+            backend,
+            preferences,
+            authority,
+            origins,
+            limits,
+            SSE_KEEP_ALIVE,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn with_sse_keep_alive(
+        factory: ReadSessionFactory,
+        budget: HttpSessionBudget,
+        backend: AuthenticatedBackendFactory,
+        preferences: ReadSessionPreferences,
+        authority: String,
+        origins: Vec<String>,
+        limits: HttpReadLimits,
+        sse_keep_alive: Option<Duration>,
     ) -> anyhow::Result<Self> {
         limits.validate()?;
         let parsed: http::uri::Authority = authority.parse()?;
@@ -440,7 +468,8 @@ impl HttpReadService {
             .with_json_response(true)
             .with_max_request_body_bytes(limits.request_bytes)
             .with_cancellation_token(closed.clone())
-            .with_sse_retry(None);
+            .with_sse_retry(None)
+            .with_sse_keep_alive(sse_keep_alive);
         let mcp = StreamableHttpService::new(
             move || {
                 create()
