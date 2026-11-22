@@ -539,7 +539,9 @@ class Report(TempDir):
 
     def test_report_recommends_dropping_large_without_an_outcome_condition(self):
         (text, figures), secret = self.build([("airk-C1", "tie"), ("bookbuilder-C1", "tie")])
-        self.assertIn("I recommend dropping Large", text)
+        self.assertIn("The 12.7.1 bar indicates dropping Large: no outcome condition was met.", text)
+        self.assertIn("The 12.7.2 bar indicates shipping the loop with Focus only", text)
+        self.assertNotIn("I recommend", text)  # the report states what the bars indicate; the user decides
         self.assertFalse(figures["bars"]["C-L"]["met"])
         for section in text.split("#### bookbuilder-C1")[1:]:
             self.assertNotIn(secret, section.split("\n## ")[0].split("\n#### ")[0])
@@ -572,7 +574,7 @@ class Report(TempDir):
         self.assertFalse(gate_report.model_bar(outcome, a, thin)["coverage_condition"]["airk"])
         rubric = gate_report.model_bar({"finishes_added": 0, "b_wins": 8, "b_losses": 3, "pending": 0}, a, b)
         self.assertTrue(rubric["rubric_a_condition"] and rubric["met"])
-        self.assertIn("continuing Large", gate_report.large_recommendation(rubric))
+        self.assertIn("indicates continuing Large", gate_report.large_recommendation(rubric))
 
     def test_redact(self):
         self.assertEqual(gate_report.redact('uses `fn x()` and "a b" here'),

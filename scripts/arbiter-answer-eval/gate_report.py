@@ -23,8 +23,9 @@ Bars:
   it wins Rubric A on at least 8 scenarios and loses at most 3; and in both
   cases its first-reply essential coverage is no lower than Compact's on
   either repository and its median end-to-end time is at most twice
-  Compact's. If neither outcome condition is met, the report recommends
-  dropping Large.
+  Compact's. If neither outcome condition is met, the report states that
+  the bar indicates dropping Large. Statements are neutral (what each bar
+  indicates); the user decides.
 * 12.7.2: the decision rule is deferred (plan); the report proposes the same
   bar with Compact in Large's place and Focus only in Compact's.
 * 12.7.3: an FP32 arm is escalated to judged sessions when more than 5% of its
@@ -126,23 +127,23 @@ def large_recommendation(bar: dict) -> str:
         return (f"Not yet decidable: {bar['pending']} scenarios await adjudication. The bar is computed on the "
                 "decided scenarios only.")
     if not bar["outcome_condition"]:
-        return "Large is not significantly better than Compact under the proposed bar: I recommend dropping Large."
+        return "The 12.7.1 bar indicates dropping Large: no outcome condition was met."
     if not bar["met"]:
         failed = [k for k in ("coverage_condition", "time_condition")
                   if not (all(bar[k].values()) if isinstance(bar[k], dict) else bar[k])]
-        return ("Large meets an outcome condition but not the " + " and ".join(f.split("_")[0] for f in failed)
-                + " condition, so it is not significantly better under the proposed bar: I recommend dropping Large.")
-    return "Large is significantly better than Compact under the proposed bar: I recommend continuing Large."
+        return ("The 12.7.1 bar indicates dropping Large: an outcome condition was met, but not the "
+                + " and ".join(f.split("_")[0] for f in failed) + " condition.")
+    return "The 12.7.1 bar indicates continuing Large: an outcome condition and the coverage and time conditions were met."
 
 
 def compact_recommendation(bar: dict) -> str:
     if bar["pending"]:
         return f"Not yet decidable: {bar['pending']} scenarios await adjudication."
     if bar["met"]:
-        return ("Compact is significantly better than Focus only under the proposed bar: I recommend keeping "
-                "Compact as the loop's Context stage.")
-    return ("Compact is not significantly better than Focus only under the proposed bar: I recommend shipping the "
-            "loop with Focus only, unless the user sets a different bar.")
+        return ("The 12.7.2 bar indicates keeping Compact as the loop's Context stage: it met the proposed bar "
+                "against Focus only.")
+    return ("The 12.7.2 bar indicates shipping the loop with Focus only: Compact did not meet the proposed bar "
+            "against Focus only.")
 
 
 # ---------------------------------------------------------------- side by side
