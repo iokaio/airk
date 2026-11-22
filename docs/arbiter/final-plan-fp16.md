@@ -1058,6 +1058,7 @@ Receipts are in the private GPU-track folder and in the CUDA image records;
 | Precision check, FP32 against FP16 per stage (section 12.7.3) | Set by the user on 22 November. Replays only. Judged sessions run only if a stage shows a real difference. The data informs the decisions after L7; rule A1 is unchanged meanwhile |
 | Section 12 is CUDA only (section 12.0) | Set by the user on 22 November. No CPU fallback is tested in section 12. GPU memory is recorded rather than held to the 8, 16 and 24 GB tiers, and work does not stop if Large exceeds 24 GB. Next steps are decided after L7 |
 | Focus-only against Focus-with-Compact decision gate (section 12.7.2) | Set by the user on 22 November. Runs in the same series as 12.7.1. How the decision is made is deferred until the loop is built and tested; the user reviews the results personally |
+| Answer reply frame 128 KiB | Set by the user on 22 November. Answer only; every other tool keeps 64 KiB (section 12.9) |
 | No second loaded copy of a model on any device | Set by the user on 22 November. Capacity comes from batching, concurrent runs on one session and overflow to another device, decided at runtime (section 12.5.1) |
 
 ## 12. Answer as a local multi-round loop
@@ -1143,7 +1144,7 @@ on 22 November.
      unrun follow-ups are reported per part.
    - **Conflicts:** evidence in one part that contradicts evidence in
      another is noted, not silently resolved.
-   - **Bytes:** parts share the 64 KiB reply frame. A part shortened to fit
+   - **Bytes:** parts share the 128 KiB Answer reply frame (section 12.9). A part shortened to fit
      says so.
    - **One part:** the reply is that part's Compose output, unchanged.
 
@@ -1952,8 +1953,10 @@ contract when it is made.
   - At most 4 parts per request, and at most 4 sub-needs per part.
   - At most 3 rounds of read and follow-up per part.
   - The budget's call and candidate limits are raised to what these allow.
-  - The reply frame stays at 64 KiB, shared by all parts. It is raised only
-    if L7 shows it truncates essential evidence.
+  - **The Answer reply frame is 128 KiB** (131,072 bytes), shared by all
+    parts. The user set this on 22 November. It applies to Answer only;
+    every other tool keeps 64 KiB. Each transport an Answer reply passes
+    through is raised to carry it, for Answer only.
 - **Deadline.** 300 s by default and 600 s at most. Answer-only. A reserve
   is kept for Compose and Union.
 - **Many agents.** As in 12.4.1:
