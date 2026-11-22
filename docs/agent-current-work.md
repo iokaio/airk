@@ -46,6 +46,19 @@ The user resumed the Windows and Linux FP16 campaign after D: cleanup. Keep new 
   one-turn evaluation work is committed and pushed as it stands (L0); its
   results are history, and the evaluation and weight refinement start over on
   the loop (L7).
+- **Deadline and gate rule, 22 November 2026 at about 19:00 UTC (user).** The
+  user needs results to review together within 12 hours (by about 07:00 UTC on
+  23 November): "We're not after perfection. We're after a decision gate and
+  data to allow that decision to be made relatively reliably." Decisions:
+  - LG does not stop for the user: the 12.7.1 and 12.7.2 bars are applied as
+    written (keep Large only if it meets the 12.7.1 outcome bar; keep Compact
+    only if it meets 12.7.2), and work continues into L7. LG and L7 are
+    reviewed together at the end.
+  - L7 runs one change set after the new baseline, then stops for review.
+  - Work not needed for a reliable gate moves after the review: L3-10 (c)
+    deletions, L5b concurrent runs, the job-table wiring and the gate's
+    concurrency test, and the combined multi-index Answer if it is not on the
+    gate's path. Each deferral is logged in answer-loop-changes.md.
 - **D: allowance doubled, 22 November 2026.** The user doubled the D: growth
   allowance for the Answer-loop campaign: "Allow more disk if needed. Just
   watch available space." The D budget against the original Windows baseline
