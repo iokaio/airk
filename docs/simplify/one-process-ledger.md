@@ -15624,3 +15624,49 @@ changed since then."
   gone from `docs/agent-current-work.md`, and the dated note in
   `docs/arbiter/whatsleft.md` now says the target was deleted. The other
   documents that name it are dated history and are unchanged.
+
+### 22 November 2026 at 22:40 UTC — L3-10 (b) committed: Answer /3 through the MCP handler and every transport
+
+**Commit** `6d74bb81` (47 files, signed off, pushed). The MCP `airk_answer`
+handler, the read-attempt and host carriers, the frontend combined Answer and
+their tests now run Answer /3. Details are in change-log entry 40.
+
+**The failing test was wrong, not the product.** The parity helper
+`current_body_copy` in `crates/airk-cli/tests/combined_reads.rs` still held
+every member's deadline to 120,000 ms, a line unchanged from /2. A combined
+Answer /3 member correctly declares its summary's budget deadline (300,000 ms
+by default, 600,000 ms at most; Core arbiter CONTRACT, "Combined Answer /3
+allowance"). The helper now allows that for an Answer wrapper only, and a new
+test refuses 600,001 and 0. No product code changed for this fix.
+
+**Validation** (logs in the private `answer-loop\L3` folder):
+- `clippy-l3-10b-k`: Clippy `-D warnings` over kernel, mcp, frontend, service,
+  cli, https, supervisor, airkctl and host, all targets and features: exit 0.
+- `nextest-l3-10b-k`: the whole `airk-cli` `combined_reads` binary, 64 run,
+  64 passed, 3 ignored.
+- `nextest-l3-10b-h`, the earlier broad run over eleven crates: 2,458 run,
+  2,431 passed, 27 failed. All 27 are explained: 22 airkctl agent-entry tests
+  and 3 airk-service arbiter tests fail identically at the base, and the 2
+  Answer parity tests pass since.
+- `scripts/check-repo.ps1` passed for 10,632 public files.
+
+**Not verified.**
+- The mcp, https, frontend, supervisor, host, airkctl, ipc and service tests
+  last ran before the busy-read repeat went into the kernel's `answer.rs`. No
+  such test sets up that failure, by reading only.
+- `cargo fmt --all -- --check` differs in 50 files, 15 of them in this commit.
+  Owner: the L6 workspace gate.
+- The three service arbiter base failures (`diagnostic_clock_refuses_…`,
+  `ambiguous_or_corrupt_configuration_status_…`,
+  `cpu_focus_receipt_uses_native_admitted_declared_policy_…`) stay open. L4
+  carries a fix for the first; all three are rechecked after L4 integrates.
+
+**Also in this commit's push:** change-log entry 42 (munarium), and the LG
+arms entry renumbered from 30 to 41, because L4's entries take 30 to 39.
+
+**Disk.** D: free 1,282,350,678,016 bytes. The main target's incremental data
+is left warm for the L4 integration; pruning it is no longer needed.
+
+**Next action.** In the main tree: cherry-pick `loop/l4`, then pass bounded
+evidence excerpts into the coverage cards. In the L2b worktree: wire the job
+table onto the live Answer path, rebased onto `6d74bb81`.

@@ -802,33 +802,6 @@ Further entries are added as implementation proceeds.
   - Clippy clean for the service (all features, `gpu-cuda`,
     `local-inference`, none) and for the retrieval tests.
 
-### 30. The LG arms run in separate lifetimes, side by side on the A6000
-
-- **Step:** LG preparation. This changes a constraint: plan 12.5.2 item 4 and
-  12.7.1 had both Context arms in one lifetime, switched by Configure.
-- **What:** arms C (Focus and Compact FP16), L (Focus and Large FP16) and F
-  (Focus only) each run in their own fixture lifetime, with their own
-  installation and indexes. The lifetimes run at the same time on the one
-  A6000.
-- **Why:** the user set a deadline for the gate. Side-by-side lifetimes run
-  the arms in parallel instead of in series.
-- **Memory:** measured peaks, per lifetime:
-
-  | Arm | GPU memory | Total |
-  | --- | --- | --- |
-  | C | Focus about 1.8 GiB + Compact 6.0 GiB | about 8 GiB |
-  | L | Focus about 1.8 GiB + Large 14.0 GiB | about 16 GiB |
-  | F | Focus about 1.8 GiB | about 2 GiB |
-
-  Together that is about 26 GiB of the A6000's 48 GiB, leaving room for the
-  reserve floor (4.8 GiB) and the display.
-- **Kept:**
-  - one loaded copy of each model per lifetime;
-  - the same build, indexes (copied, settled), scenarios and Focus route in
-    every arm.
-- **Changed:** the arms no longer share a process. Device contention between
-  them is a measured condition of the gate, recorded with each arm's timing.
-
 ### 40. Answer /3 through the MCP handler and every transport; /3 parity; the review of L3-10 (a) closed
 
 - **Step:** L3-10 (b). Numbered after L4's entries 30 to 39.
@@ -963,3 +936,75 @@ Further entries are added as implementation proceeds.
   `answer_loop/{cards,calibration,focus_batch,log}.rs` or `native_loop.rs`;
   changed: `combined_context/answer.rs` (and its tests),
   `verification/inventory.rs`, `arbiter/CONTRACT.md`.
+
+### 41. The LG arms run in separate lifetimes, side by side on the A6000
+
+Numbered 30 until 22 November 2026; renumbered because L4's entries take
+30 to 39.
+
+- **Step:** LG preparation. This changes a constraint: plan 12.5.2 item 4 and
+  12.7.1 had both Context arms in one lifetime, switched by Configure.
+- **What:** arms C (Focus and Compact FP16), L (Focus and Large FP16) and F
+  (Focus only) each run in their own fixture lifetime, with their own
+  installation and indexes. The lifetimes run at the same time on the one
+  A6000.
+- **Why:** the user set a deadline for the gate. Side-by-side lifetimes run
+  the arms in parallel instead of in series.
+- **Memory:** measured peaks, per lifetime:
+
+  | Arm | GPU memory | Total |
+  | --- | --- | --- |
+  | C | Focus about 1.8 GiB + Compact 6.0 GiB | about 8 GiB |
+  | L | Focus about 1.8 GiB + Large 14.0 GiB | about 16 GiB |
+  | F | Focus about 1.8 GiB | about 2 GiB |
+
+  Together that is about 26 GiB of the A6000's 48 GiB, leaving room for the
+  reserve floor (4.8 GiB) and the display.
+- **Kept:**
+  - one loaded copy of each model per lifetime;
+  - the same build, indexes (copied, settled), scenarios and Focus route in
+    every arm.
+- **Changed:** the arms no longer share a process. Device contention between
+  them is a measured condition of the gate, recorded with each arm's timing.
+
+### 42. munarium replaces airk as the second evaluation repository; LG restarts as series 06
+
+- **Step:** LG preparation. Recorded for completeness: the user decided it on
+  22 November 2026 at about 21:00 UTC (plan section 2, "munarium replaces
+  airk").
+- **What:**
+  - The evaluation's two indexes are munarium (commit `9948345d`, 1,038
+    tracked files) and bookbuilder (`bookbuilder-v2`, commit `238b22a7`). No
+    evaluation lifetime indexes airk.
+  - munarium gets ten new development scenarios with reference notes, of the
+    same ten kinds. bookbuilder's ten are unchanged. airk's ten are history.
+  - The LG roots start again as series `06-gate-lg`, each with a fresh closed
+    CPU base holding only those two indexes. The `05-gate-lg` roots are
+    withdrawn: all three base lifetimes had failed after indexing airk (C and
+    L at the bookbuilder-v2 index step, F at a busy source change).
+  - The leak probe becomes a check per repository, plus a check that a
+    lifetime holds no airk index. Neither repository holds a file of this
+    experiment, so no benchmark path needs excluding.
+- **Why:** the user wrote that with munarium "we don't have to worry about the
+  index providing answers about the experiment and the results should be more
+  valid in spite of having to wait for the index to build."
+- **Readings I took, for the user to correct:**
+  - munarium's sealed set is written after LG; LG does not use it.
+  - Training pairs would come from munarium and bookbuilder; nothing trains
+    before the LG decisions.
+  - Reports treat munarium like bookbuilder: locations and note identifiers,
+    no quoted source.
+  - "Stop indexing the airk code" applies to the evaluation. The user's
+    installed AIRK service and its own airk index were not touched.
+- **Sequencing changed with it:**
+  - L4 is integrated in the main tree after L3-10 (b), not in its worktree,
+    because the finished agents' Cargo targets were removed on the user's
+    word.
+  - The job-table wiring enters the gate image only if it is built and
+    reviewed before that image; otherwise the gate's concurrency test runs on
+    the unqueued path and the report says so.
+- **Not repeated (user: "Do not repeat tests"):** checks that passed on
+  unchanged inputs, and every one-turn measurement.
+- **Where:** plan sections 2, 3.1, 3.2, 5.4, 11, 12.6 and 12.7;
+  `docs/agent-current-work.md`; the ledger entries of 22 November at 21:45 and
+  22:10 UTC; the harness changes on `loop/l5c`.
