@@ -100,7 +100,7 @@ async fn a_selection_that_cannot_resolve_is_a_typed_failure() {
         },
         ToolResponseMode::Full,
         airk_core::usage::ClientFamily::Cli,
-        read_context(None).unwrap(),
+        read_context("airk_status", None).unwrap(),
     )
     .await;
     match response {
@@ -121,7 +121,7 @@ async fn without_a_project_only_the_in_process_help_answers() {
             ToolSelection::Unselected,
             ToolResponseMode::Terse,
             airk_core::usage::ClientFamily::Cli,
-            read_context(None).unwrap(),
+            read_context("airk_status", None).unwrap(),
         )
         .await
         {
@@ -138,7 +138,7 @@ async fn without_a_project_only_the_in_process_help_answers() {
         ToolSelection::Unselected,
         ToolResponseMode::Terse,
         airk_core::usage::ClientFamily::Cli,
-        read_context(None).unwrap(),
+        read_context("airk_status", None).unwrap(),
     )
     .await
     {
@@ -181,14 +181,17 @@ fn supplied_short_and_long_parents_are_validated_before_selection() {
     };
     let now = airk_process::monotonic::now_ns().unwrap();
     for seconds in [2u64, 90] {
-        let context = read_context(Some(airk_core::read_attempt::ReadAttemptBudget {
-            schema: 1,
-            request_id: Incarnation::from_bytes([9; 16]),
-            clock: host_clock,
-            expires_monotonic_ns: now + seconds * 1_000_000_000,
-            remaining_ns: seconds * 1_000_000_000,
-            native_retry_expires_monotonic_ns: None,
-        }))
+        let context = read_context(
+            "airk_search",
+            Some(airk_core::read_attempt::ReadAttemptBudget {
+                schema: 1,
+                request_id: Incarnation::from_bytes([9; 16]),
+                clock: host_clock,
+                expires_monotonic_ns: now + seconds * 1_000_000_000,
+                remaining_ns: seconds * 1_000_000_000,
+                native_retry_expires_monotonic_ns: None,
+            }),
+        )
         .unwrap();
         let remaining = context
             .deadline()
@@ -199,14 +202,17 @@ fn supplied_short_and_long_parents_are_validated_before_selection() {
         }
     }
     assert!(
-        read_context(Some(airk_core::read_attempt::ReadAttemptBudget {
-            schema: 1,
-            request_id: Incarnation::from_bytes([9; 16]),
-            clock: host_clock,
-            expires_monotonic_ns: now,
-            remaining_ns: 2_000_000_000,
-            native_retry_expires_monotonic_ns: None
-        }))
+        read_context(
+            "airk_search",
+            Some(airk_core::read_attempt::ReadAttemptBudget {
+                schema: 1,
+                request_id: Incarnation::from_bytes([9; 16]),
+                clock: host_clock,
+                expires_monotonic_ns: now,
+                remaining_ns: 2_000_000_000,
+                native_retry_expires_monotonic_ns: None
+            })
+        )
         .is_err()
     );
 }
@@ -228,4 +234,37 @@ fn explicit_subset_controls_use_native_combined_owner_even_for_one_index() {
     ] {
         assert!(!uses_combined_arguments(arguments.as_object().unwrap()));
     }
+}
+
+#[test]
+fn answer_parents_run_to_their_own_ceiling_and_other_tools_keep_125_seconds() {
+    let host_clock = if cfg!(windows) {
+        airk_core::read_attempt::ReadClock::WindowsPerformanceCounter
+    } else {
+        airk_core::read_attempt::ReadClock::UnixMonotonic
+    };
+    let now = airk_process::monotonic::now_ns().unwrap();
+    let parent = |seconds: u64| airk_core::read_attempt::ReadAttemptBudget {
+        schema: 1,
+        request_id: Incarnation::from_bytes([10; 16]),
+        clock: host_clock,
+        expires_monotonic_ns: now + seconds * 1_000_000_000,
+        remaining_ns: seconds * 1_000_000_000,
+        native_retry_expires_monotonic_ns: None,
+    };
+    let left = |context: ReadAttemptContext| {
+        context
+            .deadline()
+            .saturating_duration_since(std::time::Instant::now())
+    };
+    let answer = read_context("airk_answer", Some(parent(600))).unwrap();
+    assert!(left(answer) > std::time::Duration::from_secs(590));
+    assert!(read_context("airk_search", Some(parent(600))).is_err());
+    assert!(read_context("airk_answer", Some(parent(606))).is_err());
+    let minted = read_context("airk_answer", None).unwrap();
+    assert!(left(minted.clone()) > std::time::Duration::from_secs(600));
+    assert_eq!(minted.read_ceiling(), std::time::Duration::from_secs(605));
+    let minted = read_context("airk_search", None).unwrap();
+    assert!(left(minted.clone()) <= std::time::Duration::from_secs(125));
+    assert_eq!(minted.read_ceiling(), std::time::Duration::from_secs(125));
 }

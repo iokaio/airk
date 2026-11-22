@@ -141,8 +141,13 @@ fn tools_call_attempt_malformed_budget_never_reaches_validated_effect() -> Resul
     let effects = AtomicUsize::new(0);
     for row in cases["invalid"].as_array().unwrap() {
         let clock: ReadClock = serde_json::from_value(row["clock"].clone())?;
-        let admitted = typed_budget(row["bytes"].as_str().unwrap()).and_then(|budget| {
-            let left = budget.remaining_at(clock, row["now_ns"].as_u64().unwrap())?;
+        let raw = row["bytes"].as_str().unwrap();
+        let admitted = typed_budget(raw).and_then(|budget| {
+            let ControlMethod::ToolsCall { tool, .. } = serde_json::from_str(raw)? else {
+                anyhow::bail!("tools call required")
+            };
+            // Admission knows the tool: these rows are airk_search, held to 125 s.
+            let left = budget.remaining_for_tool(&tool, clock, row["now_ns"].as_u64().unwrap())?;
             anyhow::ensure!(!left.is_zero(), "expired original budget");
             Ok(())
         });

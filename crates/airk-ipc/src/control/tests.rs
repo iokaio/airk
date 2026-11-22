@@ -176,13 +176,49 @@ fn tools_call_remaining_keeps_long_queries_and_never_refreshes_short_parents() -
         original.expires_monotonic_ns = seconds * 1_000_000_000;
         original.remaining_ns = original.expires_monotonic_ns;
         assert_eq!(
-            read_remaining(original, ReadClock::UnixMonotonic, 1_000_000_000)?,
+            read_remaining(
+                "airk_search",
+                original,
+                ReadClock::UnixMonotonic,
+                1_000_000_000
+            )?,
             Duration::from_secs(seconds - 1)
         );
         assert!(
-            read_remaining(original, ReadClock::UnixMonotonic, seconds * 1_000_000_000).is_err()
+            read_remaining(
+                "airk_search",
+                original,
+                ReadClock::UnixMonotonic,
+                seconds * 1_000_000_000
+            )
+            .is_err()
         );
     }
+    Ok(())
+}
+
+#[test]
+fn answer_methods_run_to_answer_ceiling_and_focus_keeps_120_seconds() -> Result<()> {
+    let mut long = attempt();
+    long.expires_monotonic_ns = 605_000_000_000;
+    long.remaining_ns = 605_000_000_000;
+    // ToolsCall: the tool's own ceiling.
+    assert_eq!(
+        read_remaining("airk_answer", long, ReadClock::UnixMonotonic, 0)?,
+        Duration::from_secs(605)
+    );
+    assert!(read_remaining("airk_search", long, ReadClock::UnixMonotonic, 0).is_err());
+    // Context actions: up to 600,000 ms; Focus and next-read stay at 120,000.
+    assert_eq!(
+        answer_arbiter_remaining(Some(long), 600_000, ReadClock::UnixMonotonic, 0)?,
+        Duration::from_secs(600)
+    );
+    assert!(answer_arbiter_remaining(Some(long), 600_001, ReadClock::UnixMonotonic, 0).is_err());
+    assert_eq!(
+        arbiter_remaining(Some(long), 120_000, ReadClock::UnixMonotonic, 0)?,
+        Duration::from_secs(120)
+    );
+    assert!(arbiter_remaining(Some(long), 120_001, ReadClock::UnixMonotonic, 0).is_err());
     Ok(())
 }
 

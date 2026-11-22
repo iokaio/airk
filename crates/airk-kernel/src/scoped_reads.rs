@@ -1066,6 +1066,15 @@ impl Kernel {
     /// Shared canonical response decoration used by native/MCP/Workbench
     /// adapters before verification allocation and final response framing.
     pub fn annotate_scoped_read(&self, value: &mut serde_json::Value) -> Result<()> {
+        self.annotate_scoped_read_within(value, airk_core::MAX_RESPONSE_BYTES)
+    }
+    /// As [`Self::annotate_scoped_read`], bounded by the caller's reply frame:
+    /// Answer's 131,072 bytes, or every other tool's 65,536.
+    pub fn annotate_scoped_read_within(
+        &self,
+        value: &mut serde_json::Value,
+        maximum_bytes: usize,
+    ) -> Result<()> {
         let Some(scope) = &self.read_scope else {
             return Ok(());
         };
@@ -1079,10 +1088,10 @@ impl Kernel {
             .len()
             .saturating_add(2048);
         ensure!(
-            required_bytes <= airk_core::MAX_RESPONSE_BYTES,
+            required_bytes <= maximum_bytes,
             airk_core::scoped_reads::ScopeReplyBudget {
                 required_bytes,
-                maximum_bytes: airk_core::MAX_RESPONSE_BYTES
+                maximum_bytes
             }
         );
         Ok(())

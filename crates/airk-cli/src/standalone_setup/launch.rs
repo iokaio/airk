@@ -126,9 +126,10 @@ fn client_arguments(
             // Replaces only the named AIRK server for this process, including an
             // obsolete command field. Other configured servers stay untouched.
             let value = format!(
-                "mcp_servers.airk={{enabled=true,url={},bearer_token_env_var={},http_headers={{X-AIRK-Response-Mode=\"terse\"}}}}",
+                "mcp_servers.airk={{enabled=true,url={},bearer_token_env_var={},tool_timeout_sec={},http_headers={{X-AIRK-Response-Mode=\"terse\"}}}}",
                 serde_json::to_string(&connection.endpoint.url)?,
-                serde_json::to_string(&variable(connection))?
+                serde_json::to_string(&variable(connection))?,
+                airk_core::read_attempt::MAX_ANSWER_READ_BUDGET.as_secs()
             );
             arguments.extend([OsString::from("-c"), OsString::from(value)]);
             arguments.extend_from_slice(extra);

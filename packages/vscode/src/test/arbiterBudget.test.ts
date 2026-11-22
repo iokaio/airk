@@ -5,7 +5,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import test from 'node:test';
 import * as ts from 'typescript';
-import { DEFAULT_CONTEXT_BUDGET, READ_OPERATION_DEADLINE_MS, READ_TRANSPORT_OVERHEAD_MS, READ_TRANSPORT_DEADLINE_MS } from '../generated/arbiterBudget';
+import { ANSWER_DEFAULT_DEADLINE_MS, ANSWER_OPERATION_DEADLINE_MS, ANSWER_TRANSPORT_DEADLINE_MS, DEFAULT_CONTEXT_BUDGET, READ_OPERATION_DEADLINE_MS, READ_TRANSPORT_OVERHEAD_MS, READ_TRANSPORT_DEADLINE_MS } from '../generated/arbiterBudget';
+import { invokeDeadlineLimitFor, isAnswerTool, transportDeadlineFor } from '../answerDeadline';
 import { WORKBENCH_CONTEXT_BUDGET } from '../workbenchContracts';
 const fixture = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../../../fixtures/split/arbiter/budget_cases.json'), 'utf8'));
 
@@ -27,7 +28,20 @@ test('delivery overhead is exactly5000 beyond the120000 operation without granti
     assert.equal(READ_OPERATION_DEADLINE_MS, fixture.operation_deadline_ms);
     assert.equal(READ_TRANSPORT_DEADLINE_MS, fixture.transport_deadline_ms);
 });
-test('the generated runtime budget module contains only the four declared literal data exports', () => {
+test('Answer alone runs to its Rust-emitted 600000 ms ceiling plus the same 5000 ms delivery', () => {
+    assert.equal(ANSWER_DEFAULT_DEADLINE_MS, 300000);
+    assert.equal(ANSWER_OPERATION_DEADLINE_MS, 600000);
+    assert.equal(ANSWER_TRANSPORT_DEADLINE_MS, ANSWER_OPERATION_DEADLINE_MS + READ_TRANSPORT_OVERHEAD_MS);
+    assert.equal(ANSWER_DEFAULT_DEADLINE_MS, fixture.answer_default_deadline_ms);
+    assert.equal(ANSWER_OPERATION_DEADLINE_MS, fixture.answer_operation_deadline_ms);
+    assert.equal(ANSWER_TRANSPORT_DEADLINE_MS, fixture.answer_transport_deadline_ms);
+    for (const tool of ['airk_answer', 'answer']) { assert.ok(isAnswerTool(tool)); assert.equal(transportDeadlineFor(tool), 605000); }
+    for (const tool of ['airk_search', 'search', 'airk_answers', undefined]) { assert.ok(!isAnswerTool(tool)); assert.equal(transportDeadlineFor(tool), 125000); }
+    assert.equal(invokeDeadlineLimitFor(['tools', 'call', 'airk_answer', '--args', '{}']), 605000);
+    assert.equal(invokeDeadlineLimitFor(['tools', 'call', 'airk_search', '--args', '{}']), 125000);
+    assert.equal(invokeDeadlineLimitFor(['version']), 125000);
+});
+test('the generated runtime budget module contains only the declared literal data exports', () => {
     const file = path.resolve(__dirname, '../../src/generated/arbiterBudget.ts');
     const tree = ts.createSourceFile(file, fs.readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
     const names: string[] = [];
@@ -42,5 +56,5 @@ test('the generated runtime budget module contains only the four declared litera
             }
         }
     }
-    assert.deepEqual(names.sort(), ['DEFAULT_CONTEXT_BUDGET', 'READ_OPERATION_DEADLINE_MS', 'READ_TRANSPORT_DEADLINE_MS', 'READ_TRANSPORT_OVERHEAD_MS'].sort());
+    assert.deepEqual(names.sort(), ['ANSWER_DEFAULT_DEADLINE_MS', 'ANSWER_OPERATION_DEADLINE_MS', 'ANSWER_TRANSPORT_DEADLINE_MS', 'DEFAULT_CONTEXT_BUDGET', 'READ_OPERATION_DEADLINE_MS', 'READ_TRANSPORT_DEADLINE_MS', 'READ_TRANSPORT_OVERHEAD_MS'].sort());
 });

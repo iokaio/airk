@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { requireNativeExecution } from './nativeGate';
+import { isAnswerTool } from './answerDeadline';
+import { ANSWER_TRANSPORT_DEADLINE_MS } from './generated/arbiterBudget';
 
 export class McpSessionError extends Error {
     constructor(readonly code: 'exited' | 'invalid_json' | 'oversize' | 'timeout' | 'closed' | 'rpc' | 'overloaded' | 'stdio_mcp_retired', message: string, readonly detail?: unknown) {
@@ -68,7 +70,13 @@ export class McpStdioSession {
         if (this.failure) { listener(this.failure); } else { this.closeListeners.push(listener); }
     }
 
-    request(method: string, params: unknown, timeout = 120000): Promise<any> {
+    /** The default timeout: Answer's transport ceiling for an Answer call, 120000 ms otherwise. */
+    static defaultTimeout(method: string, params: unknown): number {
+        const name = method === 'tools/call' && params && typeof params === 'object' ? (params as { name?: unknown }).name : undefined;
+        return isAnswerTool(name) ? ANSWER_TRANSPORT_DEADLINE_MS : 120000;
+    }
+
+    request(method: string, params: unknown, timeout = McpStdioSession.defaultTimeout(method, params)): Promise<any> {
         if (this.failure) { return Promise.reject(this.failure); }
         if (this.pending.size >= 64 || this.child.stdin.writableLength > 1024 * 1024) { return Promise.reject(new McpSessionError('overloaded', 'AIRK MCP request queue is full.')); }
         const id = this.nextId++;

@@ -110,9 +110,11 @@ impl Ledger {
     ) -> Result<Ticket> {
         parent_budget.validate()?;
         let parent_bytes = serde_json::to_vec(parent_budget)?;
+        // The ledger serves Answer alone, so its window is Answer's ceiling
+        // (600 s); the parent budget's own deadline still bounds it.
         let budget_window_ns = parent_budget
             .deadline_ms
-            .min(120_000)
+            .min(airk_core::read_attempt::MAX_ANSWER_ARBITER_REMAINING_MS)
             .saturating_mul(1_000_000);
         let valid_slot = match slot {
             Slot::Context(ordinal) => {

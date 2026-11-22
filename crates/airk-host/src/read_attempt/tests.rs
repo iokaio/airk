@@ -173,3 +173,37 @@ fn legacy_results_omit_internal_admission_proof() -> Result<()> {
     assert!(current.read_admission.is_none());
     Ok(())
 }
+
+#[test]
+fn answer_contexts_encode_to_their_own_ceiling_and_other_tools_to_125_seconds() -> Result<()> {
+    use std::time::Duration;
+    let base = Instant::now();
+    let id = Incarnation::from_bytes([21; 16]);
+    let long = base + Duration::from_secs(900);
+    let search = ReadAttemptContext::new(long, Default::default());
+    let encoded = encode_sampled(&search, id, 1_000, base)?;
+    assert_eq!(encoded.remaining_ns, 125_000_000_000);
+    let answer = search
+        .clone()
+        .with_read_ceiling(airk_core::read_attempt::MAX_ANSWER_READ_BUDGET);
+    let encoded = encode_sampled(&answer, id, 1_000, base)?;
+    assert_eq!(encoded.remaining_ns, 605_000_000_000);
+    // The ceiling never exceeds Answer's.
+    let wider = search.with_read_ceiling(Duration::from_secs(3_600));
+    assert_eq!(wider.read_ceiling(), Duration::from_secs(605));
+    // A decoded Answer attempt round-trips; tool-aware admission refuses it
+    // for any other tool.
+    let decoded = decode_sampled(encoded, base, 1_000)?;
+    assert_eq!(decoded.deadline(), base + Duration::from_secs(605));
+    assert!(
+        encoded
+            .remaining_for_tool("airk_answer", clock(), 1_000)
+            .is_ok()
+    );
+    assert!(
+        encoded
+            .remaining_for_tool("airk_search", clock(), 1_000)
+            .is_err()
+    );
+    Ok(())
+}

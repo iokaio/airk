@@ -616,7 +616,7 @@ fn connect_writes_only_the_endpoint_url_and_response_mode() {
     let codex = connect(Agent::Codex, Scope::Project, None, "airk", OLD_URL).unwrap();
     assert_eq!(
         codex,
-        "[mcp_servers.airk]\nurl = \"https://127.0.0.1:4433/mcp\"\n\n[mcp_servers.airk.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n"
+        "[mcp_servers.airk]\nurl = \"https://127.0.0.1:4433/mcp\"\ntool_timeout_sec = 605\n\n[mcp_servers.airk.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n"
     );
     let codex_beside = connect(
         Agent::Codex,
@@ -628,7 +628,7 @@ fn connect_writes_only_the_endpoint_url_and_response_mode() {
     .unwrap();
     assert_eq!(
         codex_beside,
-        "model = \"gpt-5\"\n\n[mcp_servers.docs]\ncommand = \"npx\"\n\n[mcp_servers.airk]\nurl = \"https://127.0.0.1:4433/mcp\"\n\n[mcp_servers.airk.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n"
+        "model = \"gpt-5\"\n\n[mcp_servers.docs]\ncommand = \"npx\"\n\n[mcp_servers.airk]\nurl = \"https://127.0.0.1:4433/mcp\"\ntool_timeout_sec = 605\n\n[mcp_servers.airk.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n"
     );
     let commented = "{\n  // project servers\n  \"mcpServers\": {\n    \"docs\": { \"command\": \"npx\", \"args\": [\"docs-mcp\"] } // keep me\n  }\n}\n";
     assert_eq!(
@@ -822,15 +822,40 @@ fn legacy_codex_helper_placeholder_is_listed_and_repaired() {
     .unwrap();
     assert_eq!(
         repaired,
-        "# AIRK\n[mcp_servers.airk]\nurl = \"https://127.0.0.1:5544/mcp\"\nenabled_tools = [\"search\"] # policy\n\n[mcp_servers.airk.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n\n[mcp_servers.docs]\ncommand = \"npx\"\n"
+        "# AIRK\n[mcp_servers.airk]\nurl = \"https://127.0.0.1:5544/mcp\"\nenabled_tools = [\"search\"] # policy\ntool_timeout_sec = 605\n\n[mcp_servers.airk.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n\n[mcp_servers.docs]\ncommand = \"npx\"\n"
     );
     let report = Classifier::new(&live).file(Agent::Codex, Scope::Project, "/p/c.toml", &repaired);
     assert_eq!(report.entries[0].status, Some(Class::Ok));
+    // A repair keeps a longer timeout the user chose and raises a shorter one.
+    for (before, after) in [("900", "900"), ("30", "605"), ("604.5", "605")] {
+        let source = format!(
+            "[mcp_servers.airk]
+url = \"https://127.0.0.1:5544/mcp\"
+tool_timeout_sec = {before}
+
+[mcp_servers.airk.http_headers]
+\"X-AIRK-Response-Mode\" = \"terse\"
+"
+        );
+        assert_eq!(
+            repair(Agent::Codex, Scope::Project, &source, &target, LIVE_URL).unwrap(),
+            source.replace(
+                &format!(
+                    "= {before}
+"
+                ),
+                &format!(
+                    "= {after}
+"
+                )
+            )
+        );
+    }
 
     let bearer = "[mcp_servers.airk]\nurl = \"https://127.0.0.1:4433/mcp\"\nbearer_token_env_var = \"AIRK_MCP_TOKEN_0123456789ABCDEF0123456789ABCDEF\"\n\n[mcp_servers.docs]\ncommand = \"npx\"\n";
     assert_eq!(
         repair(Agent::Codex, Scope::Project, bearer, &target, OLD_URL).unwrap(),
-        "[mcp_servers.airk]\nurl = \"https://127.0.0.1:4433/mcp\"\n\n[mcp_servers.airk.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n\n[mcp_servers.docs]\ncommand = \"npx\"\n"
+        "[mcp_servers.airk]\nurl = \"https://127.0.0.1:4433/mcp\"\ntool_timeout_sec = 605\n\n[mcp_servers.airk.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n\n[mcp_servers.docs]\ncommand = \"npx\"\n"
     );
     assert_eq!(
         remove(Agent::Codex, Scope::Project, LEGACY_CODEX, &target).unwrap(),

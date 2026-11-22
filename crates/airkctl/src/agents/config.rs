@@ -45,6 +45,13 @@ pub(crate) use io::{edit_file_for, expand_user_files, path_exists, preflight_edi
 pub(crate) use locations::{PROJECT_FILES, Platform, UserEnv, user_locations};
 pub(crate) use retention::{EditFailure, EditFailureKind};
 
+/// Codex's `tool_timeout_sec` for an AIRK entry. Codex cuts a tool call off
+/// after 60 s by default; Answer runs to 600 s plus 5 s for delivery
+/// (airk-core `read_attempt::MAX_ANSWER_READ_BUDGET`), so every connected or
+/// repaired Codex entry asks for at least that.
+pub(crate) const CODEX_TOOL_TIMEOUT_SEC: u64 =
+    airk_core::read_attempt::MAX_ANSWER_READ_BUDGET.as_secs();
+
 impl Agent {
     pub(crate) fn name(self) -> &'static str {
         match self {

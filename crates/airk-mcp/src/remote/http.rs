@@ -422,10 +422,8 @@ impl HttpReadService {
     {
         self.handle_with_context(
             request,
-            crate::read_attempt::ReadAttemptContext::new(
-                std::time::Instant::now() + Duration::from_secs(125),
-                self.0.closed.child_token(),
-            ),
+            // The tool is not known yet: each call narrows it (`for_call`).
+            crate::read_attempt::ReadAttemptContext::for_transport(self.0.closed.child_token()),
         )
         .await
     }

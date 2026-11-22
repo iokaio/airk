@@ -1,4 +1,7 @@
 {
+  "answer_default_deadline_ms": 300000,
+  "answer_operation_deadline_ms": 600000,
+  "answer_transport_deadline_ms": 605000,
   "cases": [
     {
       "accepted": true,

@@ -2,7 +2,8 @@
 
 Core owns ReadAttemptBudget schema1 and the optional ToolsCall field. This
 contract changes no protocol number, persisted state, digest framing, public
-MCP input, I2 Invoke frame or existing125-second read ceiling.
+MCP input, I2 Invoke frame or existing125-second read ceiling of every tool
+other than Answer (see "Answer's own ceiling" below).
 
 ## Wire and compatibility
 
@@ -69,3 +70,38 @@ consumers do not mirror JSON fields. Sampling later may only narrow that same
 context. Non-Answer reads retain their supported original ceiling. Invalid
 arguments keep the canonical handler's existing error projection; early budget
 admission does not invent a second malformed-argument envelope.
+
+## Answer's own ceiling (final plan 12.4, step L2, 22 November 2026)
+
+Answer /3 runs to `MAX_DEADLINE_MS` (600,000 ms, default 300,000), so its read
+attempt gets its own ceiling: `MAX_ANSWER_READ_BUDGET` = 600,000 + 5,000 ms
+for delivery, the same 5 s that `MAX_READ_BUDGET` (125,000 ms) keeps over
+120 s. `MAX_ANSWER_DEADLINE` names the operation ceiling and
+`MAX_ANSWER_ARBITER_REMAINING_MS` (600,000) the remaining-time ceiling of
+Answer-only Arbiter IPC methods (Context actions now, card scoring in L4);
+Focus and next-read methods keep 120,000 ms. `is_answer_tool` names Answer
+(`airk_answer` or `answer`) and `read_budget_for_tool` gives each tool its
+ceiling. No wire shape, schema number, persisted state or digest input
+changes; the digest-bearing resource policy (`arbiter::resource_policy`) is
+unchanged.
+
+- **Entry points apply the tool's ceiling.** `remaining_for_tool` refuses an
+  attempt longer than the tool's ceiling, so a non-Answer ToolsCall above
+  125,000 ms is still refused (the retained `above_existing_125_second_limit`
+  row). Transports that mint an attempt use the tool's ceiling.
+- **Nested reads accept the parent's.** `remaining_at` now accepts up to
+  `MAX_ANSWER_READ_BUDGET`: a search, Focus or card call inside an Answer
+  carries the Answer's attempt, and each still clamps its own operation
+  (Focus `min(120_000)`, `NativeFocusRequest` and Focus allocation unchanged).
+  The Focus semantic closure (`arbiter/focus.rs`, `native_focus.rs`) keeps its
+  bytes.
+- **Consumers** (each recorded in its own contract): host `encode` mints up
+  to the context's `read_ceiling` and `decode_for_tool` admits per tool; the
+  airk-mcp `ReadAttemptContext` carries that ceiling (`for_tool`,
+  `for_transport`, `for_call`); the service ToolsCall decode, the worker
+  query reap (125 s or 605 s), the IPC ToolsCall response wait (ceiling +
+  10 s), the frontend worker-reply wait (ceiling + 5 s), the HTTPS gateway
+  (Answer's ceiling before the body names a tool, narrowed per call), the
+  airkctl Invoke envelope (`MAX_ANSWER_INVOKE_DEADLINE_MS` 605,000 for
+  `tools call airk_answer`) and the extension's Rust-emitted
+  `ANSWER_TRANSPORT_DEADLINE_MS`.

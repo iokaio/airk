@@ -11,7 +11,7 @@ fn manual_entries_pin_all_clients_paths_formats_and_current_port() {
     assert_eq!(entries[1].format, ManualFormat::Toml);
     assert_eq!(
         entries[1].text,
-        "[mcp_servers.airk]\nurl = \"https://127.0.0.1:57429/mcp\"\n\n[mcp_servers.airk.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n"
+        "[mcp_servers.airk]\nurl = \"https://127.0.0.1:57429/mcp\"\ntool_timeout_sec = 605\n\n[mcp_servers.airk.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n"
     );
     for (index, container) in [(0, "mcpServers"), (2, "servers")] {
         assert_eq!(entries[index].format, ManualFormat::Json);
@@ -36,7 +36,7 @@ fn manual_text_escapes_keys_and_preserves_exact_selected_target() {
     assert_eq!(manual.file, "C:\\Users\\a b\\.codex\\config.toml");
     assert_eq!(
         manual.text,
-        "[mcp_servers.\"airk-\\\"scope\\\\x\"]\nurl = \"https://127.0.0.1:65535/mcp\"\n\n[mcp_servers.\"airk-\\\"scope\\\\x\".http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n"
+        "[mcp_servers.\"airk-\\\"scope\\\\x\"]\nurl = \"https://127.0.0.1:65535/mcp\"\ntool_timeout_sec = 605\n\n[mcp_servers.\"airk-\\\"scope\\\\x\".http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n"
     );
     for key in ["foreign", "airk-\n", "airk_\0"] {
         assert!(

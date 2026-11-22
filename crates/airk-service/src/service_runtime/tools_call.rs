@@ -25,15 +25,14 @@ pub(super) mod singleton_focus;
 
 /// Decode a supplied original parent before any scope/backend work. None is
 /// the current standalone default, minted once here rather than after selection.
+/// Both are held to the tool's ceiling: Answer's 605 s, 125 s for the others.
 pub(super) fn read_context(
+    tool: &str,
     attempt: Option<airk_core::read_attempt::ReadAttemptBudget>,
 ) -> Result<ReadAttemptContext> {
     let context = match attempt {
-        Some(attempt) => airk_host::read_attempt::decode(attempt)?,
-        None => ReadAttemptContext::new(
-            std::time::Instant::now() + airk_core::read_attempt::MAX_READ_BUDGET,
-            Default::default(),
-        ),
+        Some(attempt) => airk_host::read_attempt::decode_for_tool(attempt, tool)?,
+        None => ReadAttemptContext::for_tool(tool, Default::default()),
     };
     require_live(&context)?;
     Ok(context)

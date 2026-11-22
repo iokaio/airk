@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { READ_TRANSPORT_DEADLINE_MS } from './generated/arbiterBudget';
+import { transportDeadlineFor } from './answerDeadline';
 import * as path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { readRetryDelay } from './readRetry';
@@ -128,7 +128,7 @@ export class EvidenceClient {
 
     private async run(task: Task): Promise<ToolResult> {
         const deadline = Date.now() + (this.options.retryBudget ?? 5000);
-        const requestDeadline=Date.now()+(task.options.timeout??this.options.timeout??READ_TRANSPORT_DEADLINE_MS);
+        const requestDeadline=Date.now()+(task.options.timeout??this.options.timeout??transportDeadlineFor(task.tool));
         const originalArguments=structuredClone(task.args);
         let expectedScope:unknown,scopeCaptured=false,previous:any,retries=0;
         while (true) {

@@ -394,3 +394,15 @@ Status/2. Versioned configuration migration creates and fsyncs an exact archived
 configuration/3 before atomic replacement; no read/missing-state inspection
 performs migration or model acquisition. Core/Store own the migration, actual
 DeviceCatalog/source binding and assets/4 plus partial/4 custody.
+
+
+## Answer's Invoke envelope (final plan 12.4, step L2, 22 November 2026)
+
+An Invoke whose command is `tools call airk_answer` (or `answer`), after the
+session's value options, may ask for up to `MAX_ANSWER_INVOKE_DEADLINE_MS`
+(605,000 ms: Answer's 600,000-ms operation plus the same 5,000 ms for
+delivery; [Core's read-attempt contract](../../../airk-core/src/read_attempt/CONTRACT.md)).
+Every other Invoke and every AdminCall keeps `MAX_INVOKE_DEADLINE_MS`
+(125,000 ms). The retained frame fixtures and `transport_budget.json` are
+unchanged; `invoke_deadline_limit` is tested directly. The VS Code session
+client applies the same rule to the argv it builds (`tools call <tool>`).

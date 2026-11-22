@@ -699,9 +699,10 @@ fn http_configuration(
     let url = connection.endpoint.url.to_string();
     let configuration = match client {
         SetupClient::Codex => format!(
-            "[mcp_servers.airk]\nurl = {}\nbearer_token_env_var = {}\n[mcp_servers.airk.http_headers]\nX-AIRK-Response-Mode = \"terse\"\n",
+            "[mcp_servers.airk]\nurl = {}\nbearer_token_env_var = {}\ntool_timeout_sec = {}\n[mcp_servers.airk.http_headers]\nX-AIRK-Response-Mode = \"terse\"\n",
             serde_json::to_string(&url)?,
             serde_json::to_string(&name)?,
+            airk_core::read_attempt::MAX_ANSWER_READ_BUDGET.as_secs(),
         ),
         SetupClient::Claude | SetupClient::Vscode => {
             let input_id = format!("airkToken_{}", connection.connection_id);

@@ -22,7 +22,7 @@ impl AnswerVerification {
                 .request
                 .budget
                 .max_bytes
-                .min(airk_core::MAX_RESPONSE_BYTES),
+                .min(super::ANSWER_REPLY_BYTES),
         })
     }
     pub(super) fn child_arguments(&self, arguments: &mut Map<String, Value>) {

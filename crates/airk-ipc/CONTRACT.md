@@ -290,3 +290,16 @@ member.result; it never fuses authorities or global enrollment state. Complete
 copy/export retains precision, native fallback reasons and all variant metadata.
 The additional observation is bounded256KiB inside unchanged original reply/frame
 ceilings. No retries or replacement clock are introduced.
+
+
+## Answer's own ceiling (final plan 12.4, step L2, 22 November 2026)
+
+[Core's read-attempt contract](../airk-core/src/read_attempt/CONTRACT.md)
+gives Answer a 605,000-ms read attempt. In this adapter: a ToolsCall's
+supplied attempt is admitted with `remaining_for_tool`, so only `airk_answer`
+may carry more than 125,000 ms, and the ToolsCall response window is the
+tool's ceiling plus 10 s (135 s, or 615 s for Answer). `ArbiterContextAction`
+is Answer-only and intersects with `MAX_ANSWER_ARBITER_REMAINING_MS`
+(600,000 ms, `answer_arbiter_remaining`); the loop's card-scoring method that
+L4 adds uses the same helper. `ArbiterFocusRank` and `ArbiterNextRead` keep
+the 120,000-ms ceiling even inside an Answer attempt.

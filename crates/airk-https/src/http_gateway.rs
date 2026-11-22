@@ -318,12 +318,13 @@ impl Gateway {
         B::Error: fmt::Display + Into<Box<dyn std::error::Error + Send + Sync>>,
     {
         let native_gate = self.0.native_gate.clone();
-        let mut context =
-            ReadAttemptContext::new(Instant::now() + Duration::from_secs(125), canceled)
-                .with_worker_reap_observer(Arc::new(move |identity| {
-                    native_gate.worker_was_reaped(identity)
-                }))
-                .with_worker_settlement_requester(self.0.settle.clone());
+        // Minted before the body names a tool: Answer's ceiling, which each MCP
+        // or JSON API tool call narrows to its own (`ReadAttemptContext::for_call`).
+        let mut context = ReadAttemptContext::for_transport(canceled)
+            .with_worker_reap_observer(Arc::new(move |identity| {
+                native_gate.worker_was_reaped(identity)
+            }))
+            .with_worker_settlement_requester(self.0.settle.clone());
         let mut cleanup = CancelOnDrop {
             token: context.cancellation().clone(),
             armed: true,

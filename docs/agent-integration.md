@@ -145,6 +145,45 @@ ownership or incomplete retirement remains an explicit blocker.
 | Codex | Literal `mcp_servers.airk.url` and nested `http_headers` with the mode header. URL interpolation is not invented. | Add the public issuer through `CODEX_CA_CERTIFICATE`, preserving an existing CA bundle/`SSL_CERT_FILE`. |
 | Claude Code | `mcpServers.airk` with `type: "http"`, literal actual `url` and the mode header. | Preserve `NODE_EXTRA_CA_CERTS` while adding the public native issuer. |
 
+### Long Answer calls and client timeouts
+
+`airk_answer` runs a local multi-round loop and may take minutes: its
+`budget.deadline_ms` defaults to 300,000 ms and may be raised to 600,000 ms.
+AIRK delivers within that deadline plus 5 s, returning a partial reply rather
+than nothing when time runs out. Every other tool keeps its 120 s operation
+and 125 s transport limits. A client asks for less time by sending a smaller
+`deadline_ms`; AIRK honours it. A client's own tool-call timeout can still cut
+a call off first, so raise it where the client has one:
+
+- **Codex.** `tool_timeout_sec` defaults to 60 s per tool call
+  ([Codex configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference)).
+  `rk agents connect --client codex` and `rk agents repair` write
+  `tool_timeout_sec = 605` into AIRK's `[mcp_servers.<key>]` table, keeping a
+  larger value you set. For an entry you wrote yourself, add
+  `tool_timeout_sec = 605`.
+- **Claude Code.** The wall-clock tool limit `MCP_TOOL_TIMEOUT` defaults to
+  about 28 hours, and a per-server `"timeout"` (milliseconds) in `.mcp.json`
+  overrides it as a hard limit that progress does not extend; leave both unset
+  or at least 605,000 ms. The idle limit `CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT`
+  (30 minutes on stdio, 5 minutes on HTTP by default) is reset by progress
+  notifications ([Claude Code MCP documentation](https://code.claude.com/docs/en/mcp)).
+  AIRK sends an MCP progress notification on the request's progress token at
+  least every 15 s while an Answer runs, which keeps that idle limit from
+  being reached. Claude Code moves a call to a background task after 2 minutes
+  only for servers that support MCP tasks, which AIRK does not. Measured with
+  headless Claude Code 2.1.330 on 22 November 2026: on stdio it waited for
+  150 s, 330 s and 610 s calls, with or without progress; on HTTP it waited
+  for a 330 s call that sent progress and aborted one that sent nothing for
+  300 s ("sent no response or progress for 300s").
+- **VS Code / GitHub Copilot.** Its documentation states no tool-call timeout
+  or progress handling ([MCP servers in VS Code](https://code.visualstudio.com/docs/copilot/customization/mcp-servers)).
+  If long Answers are cut off, send a smaller `deadline_ms`.
+
+The MCP specification lets a client reset its timeout on progress but asks it
+to keep a maximum regardless
+([MCP lifecycle, timeouts](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle)),
+so progress cannot replace a large enough client timeout.
+
 ### Legacy credential entries
 
 Before U110, Claude Code's `headersHelper` and Codex's

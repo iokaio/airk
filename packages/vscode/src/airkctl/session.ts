@@ -19,7 +19,8 @@ import type {
 } from '../generated/i2';
 import { airkctlEnvironment, EXIT_CLASSES, parseErrorLine } from './runner';
 import { createAdminChunks } from './adminChunks';
-import { READ_TRANSPORT_DEADLINE_MS } from '../generated/arbiterBudget';
+import { ANSWER_TRANSPORT_DEADLINE_MS, READ_TRANSPORT_DEADLINE_MS } from '../generated/arbiterBudget';
+import { invokeDeadlineLimitFor } from '../answerDeadline';
 
 export const SESSION_PROTOCOL = 2;
 export const CLIENT_NAME = 'airk-vscode';
@@ -30,6 +31,8 @@ export const MAX_INVOKE_ARG_BYTES = 32 * 1024;
 export const MAX_RESPONSE_FRAME_BYTES = 16 * 1024 * 1024;
 export const MAX_IN_FLIGHT = 8;
 export const MAX_INVOKE_DEADLINE_MS = READ_TRANSPORT_DEADLINE_MS;
+/** `tools call airk_answer` alone may ask for Answer's ceiling (airkctl `MAX_ANSWER_INVOKE_DEADLINE_MS`). */
+export const MAX_ANSWER_INVOKE_DEADLINE_MS = ANSWER_TRANSPORT_DEADLINE_MS;
 const HEALTHY_MS = 60_000;
 const ID = /^[0-9a-f]{32}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -112,7 +115,7 @@ function requestShapeValid(request: unknown): boolean {
             const argv = body.argv, deadline = body.deadline_ms;
             return Array.isArray(argv) && argv.length <= MAX_INVOKE_ARGS && argv.every(arg => typeof arg === 'string' && utf8(arg) <= MAX_INVOKE_ARG_BYTES)
                 && (body.stdin === undefined || typeof body.stdin === 'string' && utf8(body.stdin) <= MAX_INVOKE_STDIN_BYTES)
-                && Number.isSafeInteger(deadline) && (deadline as number) >= 1 && (deadline as number) <= MAX_INVOKE_DEADLINE_MS;
+                && Number.isSafeInteger(deadline) && (deadline as number) >= 1 && (deadline as number) <= invokeDeadlineLimitFor(argv as string[]);
         }
         case 'cancel': return keys(body, ['target']) && typeof body.target === 'string' && ID.test(body.target);
         case 'control': return keys(body, ['method']);
@@ -315,7 +318,7 @@ export class AirkctlSession {
 
     /** Run one allowlisted `airkctl` command; the complete three channels return. */
     async invoke(argv: readonly string[], options: { stdin?: string; deadlineMs?: number; signal?: AbortSignal } = {}): Promise<InvokeResult> {
-        const deadline = Math.max(1, Math.min(options.deadlineMs ?? 60_000, MAX_INVOKE_DEADLINE_MS));
+        const deadline = Math.max(1, Math.min(options.deadlineMs ?? 60_000, invokeDeadlineLimitFor(argv)));
         const outcome = await this.exchange({ invoke: { argv: [...argv], ...(options.stdin === undefined ? {} : { stdin: options.stdin }), deadline_ms: deadline } }, 'invoke', deadline, options.signal);
         if (outcome.status === 'invoked') {
             return { exitCode: outcome.exit_code, class: outcome.class, stdout: outcome.stdout, stderr: outcome.stderr, ...(outcome.error ? { error: outcome.error } : {}) };

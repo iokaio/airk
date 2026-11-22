@@ -563,15 +563,9 @@ impl RemoteTools for RootNative {
         *self.client.lock().unwrap() = client;
     }
     fn call(&self, tool: String, arguments: Map<String, Value>) -> RemoteFuture<'_> {
-        self.call_with_read_context(
-            tool,
-            arguments,
-            self.query_concurrency(),
-            airk_mcp::read_attempt::ReadAttemptContext::new(
-                Instant::now() + Duration::from_secs(125),
-                Default::default(),
-            ),
-        )
+        let context =
+            airk_mcp::read_attempt::ReadAttemptContext::for_tool(&tool, Default::default());
+        self.call_with_read_context(tool, arguments, self.query_concurrency(), context)
     }
     fn call_with_read_context(
         &self,
@@ -788,15 +782,9 @@ impl RemoteTools for Native {
         arguments: Map<String, Value>,
         capacity: usize,
     ) -> RemoteFuture<'_> {
-        self.call_with_read_context(
-            tool,
-            arguments,
-            capacity,
-            airk_mcp::read_attempt::ReadAttemptContext::new(
-                std::time::Instant::now() + Duration::from_secs(125),
-                Default::default(),
-            ),
-        )
+        let context =
+            airk_mcp::read_attempt::ReadAttemptContext::for_tool(&tool, Default::default());
+        self.call_with_read_context(tool, arguments, capacity, context)
     }
     fn call_with_read_context(
         &self,

@@ -1339,6 +1339,20 @@ Caps below 128 KiB that would refuse or cut a full reply are marked **cuts**.
 | airkctl rpc request limit | `airkctl/src/cli.rs:2912` | 65,536 | Request side only |
 | VS Code stdio session response | `packages/vscode/src/airkctl/session.ts:30` | 16,777,216 | Fits |
 
+**L2 outcome (22 November 2026).** Raised for Answer only, through
+`MAX_ANSWER_RESPONSE_BYTES`: the MCP rendered-result check and the kernel's
+scoped reply check it calls (`airk-mcp` `response::reply_limit`, airk-kernel
+`annotate_scoped_read_within`), the frontend `ReplyBudget::Context` body
+budget, the combined Answer outer bytes and its verification room. Found not
+to carry an Answer reply, so unchanged: the remote MCP stdio line cap bounds
+the server's *input* (requests), not replies; the console client refuses
+`ToolsCall` (`metadata_relay_refusal`), so no Answer reply uses its frame; the
+MCP scope renderer room (`response.rs` `focus_reply_headroom`) is Search's
+Focus room and `with_scope_observation` wraps only help, scope discovery and
+errors. The kernel Focus reply budget (`arbiter/focus.rs`) and
+`context_reply_reserve` belong to L3. Time ceilings for Answer are recorded in
+the [read-attempt contract](../read_attempt/CONTRACT.md).
+
 ### Request
 
 `airk.arbiter.context.request/3` is `schema`, `question` (the /2 bound: not

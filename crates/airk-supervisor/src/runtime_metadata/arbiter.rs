@@ -272,9 +272,12 @@ impl NativeController for Controller {
         deadline: Instant,
     ) -> Result<Option<airk_core::arbiter::context_action::ContextActionAdvice>> {
         let remaining = deadline.saturating_duration_since(Instant::now());
+        // Context actions are Answer-only: Answer's ceiling, not Focus's 120 s.
         request.remaining_ms = request
             .remaining_ms
-            .min(remaining.as_millis().min(120_000) as u64);
+            .min(remaining.as_millis().min(u128::from(
+                airk_core::read_attempt::MAX_ANSWER_ARBITER_REMAINING_MS,
+            )) as u64);
         ensure!(
             request.remaining_ms > 0,
             "joint original deadline exhausted"

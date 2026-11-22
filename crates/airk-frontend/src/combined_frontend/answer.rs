@@ -11,6 +11,10 @@ use airk_core::{
 };
 use verification::AnswerVerification;
 
+/// The combined Answer's outer reply frame: Answer's 131,072 bytes, not the
+/// 65,536 of every other tool.
+const ANSWER_REPLY_BYTES: usize = airk_core::arbiter::answer_loop::MAX_ANSWER_RESPONSE_BYTES;
+
 /// Bounded transient native-result custody; no Context or guard references.
 struct ContextResultCustody(std::sync::Mutex<(Vec<Value>, Option<Value>)>);
 const NATIVE_CUSTODY_PACKET_BYTES: usize = 3 * airk_core::service::MAX_FRAME_BYTES + 4096;
@@ -179,7 +183,7 @@ impl<S: Session> Backend<S> {
         let request = parsed.request;
         let mut verification = AnswerVerification::parse(&args)?;
         let delivery_reserve = airk_kernel::combined_reads::context_delivery_receipt_reserve()?;
-        if request.budget.max_bytes.min(airk_core::MAX_RESPONSE_BYTES) <= delivery_reserve {
+        if request.budget.max_bytes.min(ANSWER_REPLY_BYTES) <= delivery_reserve {
             return Ok(failure(
                 "context_delivery_admission_budget",
                 Some(false),
@@ -188,7 +192,7 @@ impl<S: Session> Backend<S> {
         }
         verification.reserve_delivery_bytes(delivery_reserve)?;
         let attachment_reserve = verification.minimum_attachment_bytes()?;
-        if request.budget.max_bytes.min(airk_core::MAX_RESPONSE_BYTES)
+        if request.budget.max_bytes.min(ANSWER_REPLY_BYTES)
             <= delivery_reserve.saturating_add(attachment_reserve)
         {
             return Ok(failure(
@@ -210,7 +214,7 @@ impl<S: Session> Backend<S> {
         let captured = airk_host::read_attempt::encode(&context, attempt)?;
         let context = context.capture_transport_attempt(captured)?;
         let mut allowances = initial_allocations(attempt, before.identity, &ids, &request.budget)?;
-        let outer_bytes = request.budget.max_bytes.min(airk_core::MAX_RESPONSE_BYTES);
+        let outer_bytes = request.budget.max_bytes.min(ANSWER_REPLY_BYTES);
         let byte_admission = CompositionRequest {
             selection: before.resolved.clone(),
             authority: before.identity,

@@ -283,7 +283,7 @@ fn admin_selection_reader(
                     code: "service_draining".into(),
                 };
             };
-            let decoded = match tools_call::read_context(read.read_attempt) {
+            let decoded = match tools_call::read_context(&read.tool, read.read_attempt) {
                 Ok(context) => context,
                 Err(error) => return tools_call::failed(&error),
             };
@@ -421,7 +421,7 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 arguments,
                 read_attempt,
                 ..
-            } => match tools_call::read_context(*read_attempt)
+            } => match tools_call::read_context(tool, *read_attempt)
                 .and_then(|context| tools_call::admit_context(tool, arguments, context))
             {
                 Ok(context) => Some(
@@ -513,8 +513,11 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                     context_bindings.is_empty() || read_attempt.is_some(),
                     "context delivery requires original native attempt"
                 );
+                // A delivery check inside a read, not an entry point: it accepts
+                // the read's attempt up to Answer's ceiling (context bindings are
+                // Answer's), and the read's own entry already applied its tool's.
                 let policy_context = read_attempt
-                    .map(|attempt| tools_call::read_context(Some(attempt)))
+                    .map(|attempt| tools_call::read_context("airk_answer", Some(attempt)))
                     .transpose()?;
                 let policy_guard = match policy_context.as_ref() {
                     Some(context) => Some(arbiter::policy_delivery::factory(&state)(
@@ -1395,7 +1398,7 @@ fn canonical_control(
                 read_attempt,
             } => {
                 let context = match captured_context
-                    .map_or_else(|| tools_call::read_context(read_attempt), Ok)
+                    .map_or_else(|| tools_call::read_context(&tool, read_attempt), Ok)
                 {
                     Ok(context) => context,
                     Err(error) => return Ok((tools_call::failed(&error), false)),
@@ -1428,7 +1431,7 @@ fn canonical_control(
                 read_attempt,
             } => {
                 let context = match captured_context
-                    .map_or_else(|| tools_call::read_context(read_attempt), Ok)
+                    .map_or_else(|| tools_call::read_context(&tool, read_attempt), Ok)
                 {
                     Ok(context) => context,
                     Err(error) => return Ok((tools_call::failed(&error), false)),
@@ -1458,7 +1461,7 @@ fn canonical_control(
                 read_attempt,
             } => {
                 let context = match captured_context
-                    .map_or_else(|| tools_call::read_context(read_attempt), Ok)
+                    .map_or_else(|| tools_call::read_context(&tool, read_attempt), Ok)
                 {
                     Ok(context) => context,
                     Err(error) => return Ok((tools_call::failed(&error), false)),

@@ -800,6 +800,37 @@ fn relay_rule(method: &ControlMethod) -> Relay {
 }
 
 /// Whether `argv` (program name excluded) names a one-shot-only command.
+/// The longest Invoke deadline this argv may ask for: Answer's
+/// `MAX_ANSWER_INVOKE_DEADLINE_MS` for `tools call airk_answer` (or `answer`),
+/// `MAX_INVOKE_DEADLINE_MS` for every other command.
+fn invoke_deadline_limit(argv: &[String]) -> u64 {
+    let words = command_words(argv);
+    let answer = matches!(words.as_slice(), ["tools", "call", tool, ..]
+        if airk_core::read_attempt::is_answer_tool(tool));
+    if answer {
+        crate::contract::MAX_ANSWER_INVOKE_DEADLINE_MS
+    } else {
+        MAX_INVOKE_DEADLINE_MS
+    }
+}
+
+fn command_words(argv: &[String]) -> Vec<&str> {
+    let mut words = Vec::new();
+    let mut arguments = argv.iter();
+    while let Some(argument) = arguments.next() {
+        if argument == "--" {
+            words.extend(arguments.by_ref().map(String::as_str));
+        } else if argument.starts_with('-') {
+            if VALUE_OPTIONS.contains(&argument.as_str()) {
+                arguments.next();
+            }
+        } else {
+            words.push(argument.as_str());
+        }
+    }
+    words
+}
+
 fn refused_command(argv: &[String]) -> bool {
     let mut words = Vec::new();
     let mut arguments = argv.iter();
@@ -2128,7 +2159,7 @@ impl Session {
                     && stdin
                         .as_ref()
                         .is_none_or(|stdin| stdin.len() <= MAX_INVOKE_STDIN_BYTES)
-                    && (1..=MAX_INVOKE_DEADLINE_MS).contains(&deadline_ms);
+                    && (1..=invoke_deadline_limit(&argv)).contains(&deadline_ms);
                 if !valid {
                     return self.respond(id, failed(SessionFailure::SessionInvalidRequest));
                 }

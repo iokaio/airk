@@ -837,7 +837,7 @@
         "serverKey": "airk",
         "url": "https://127.0.0.1:5544/mcp",
         "expect": {
-          "text": "# Codex project settings\nmodel = \"gpt-5\"\n\n[mcp_servers.docs]\ncommand = \"npx\"\nargs = [\"docs-mcp\"]\nenabled = false\n\n# AIRK\n[mcp_servers.airk]\nurl = \"https://127.0.0.1:5544/mcp\"\nenabled_tools = [\"search\", \"read_file\"] # policy\n\n[mcp_servers.airk.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n"
+          "text": "# Codex project settings\nmodel = \"gpt-5\"\n\n[mcp_servers.docs]\ncommand = \"npx\"\nargs = [\"docs-mcp\"]\nenabled = false\n\n# AIRK\n[mcp_servers.airk]\nurl = \"https://127.0.0.1:5544/mcp\"\nenabled_tools = [\"search\", \"read_file\"] # policy\ntool_timeout_sec = 605\n\n[mcp_servers.airk.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n"
         }
       },
       "remove": {
@@ -887,7 +887,7 @@
         "serverKey": "airk",
         "url": "https://127.0.0.1:4433/mcp",
         "expect": {
-          "text": "# Codex project settings\nmodel = \"gpt-5\"\n\n[mcp_servers.docs]\ncommand = \"npx\"\nargs = [\"docs-mcp\"]\nenabled = false\n\n# AIRK\n[mcp_servers.airk]\nurl = \"https://127.0.0.1:4433/mcp\"\nenabled_tools = [\"search\", \"read_file\"] # policy\n\n[mcp_servers.airk.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n"
+          "text": "# Codex project settings\nmodel = \"gpt-5\"\n\n[mcp_servers.docs]\ncommand = \"npx\"\nargs = [\"docs-mcp\"]\nenabled = false\n\n# AIRK\n[mcp_servers.airk]\nurl = \"https://127.0.0.1:4433/mcp\"\nenabled_tools = [\"search\", \"read_file\"] # policy\ntool_timeout_sec = 605\n\n[mcp_servers.airk.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n"
         }
       }
     },
@@ -942,7 +942,7 @@
         "serverKey": "airk",
         "url": "https://127.0.0.1:4433/mcp",
         "expect": {
-          "text": "model = \"gpt-5\"\n\n[mcp_servers.docs]\ncommand = \"npx\"\n\n[mcp_servers.airk]\nurl = \"https://127.0.0.1:4433/mcp\"\n\n[mcp_servers.airk.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n"
+          "text": "model = \"gpt-5\"\n\n[mcp_servers.docs]\ncommand = \"npx\"\n\n[mcp_servers.airk]\nurl = \"https://127.0.0.1:4433/mcp\"\ntool_timeout_sec = 605\n\n[mcp_servers.airk.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n"
         }
       }
     },
@@ -962,7 +962,7 @@
         "serverKey": "airk",
         "url": "https://127.0.0.1:4433/mcp",
         "expect": {
-          "text": "[mcp_servers.airk]\nurl = \"https://127.0.0.1:4433/mcp\"\n\n[mcp_servers.airk.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n"
+          "text": "[mcp_servers.airk]\nurl = \"https://127.0.0.1:4433/mcp\"\ntool_timeout_sec = 605\n\n[mcp_servers.airk.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n"
         }
       }
     },
@@ -1018,7 +1018,7 @@
         "serverKey": "airk",
         "url": "https://127.0.0.1:4433/mcp",
         "expect": {
-          "text": "[mcp_servers.airk]\nurl = \"https://127.0.0.1:4433/mcp\"\n\n[mcp_servers.airk.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n\n[mcp_servers.airk_helper]\nurl = \"https://127.0.0.1:4433/mcp\"\nhttp_headers_helper = \"/opt/airk/airk runtime http-credential --install-dir /opt/airk --connection-id 0123456789abcdef0123456789abcdef --format header-json\"\n"
+          "text": "[mcp_servers.airk]\nurl = \"https://127.0.0.1:4433/mcp\"\ntool_timeout_sec = 605\n\n[mcp_servers.airk.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n\n[mcp_servers.airk_helper]\nurl = \"https://127.0.0.1:4433/mcp\"\nhttp_headers_helper = \"/opt/airk/airk runtime http-credential --install-dir /opt/airk --connection-id 0123456789abcdef0123456789abcdef --format header-json\"\n"
         }
       },
       "remove": {

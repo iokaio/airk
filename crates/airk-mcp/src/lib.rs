@@ -34,6 +34,7 @@ pub mod explorer_offline;
 pub mod help;
 pub mod local;
 pub mod open;
+pub mod progress;
 pub mod query_capacity;
 pub mod remote;
 pub mod scope_instructions;
@@ -1565,9 +1566,11 @@ fn render<T: Serialize>(
     {
         object.insert("request_id".into(), id.into());
     }
-    let scope_error = logical
-        .as_mut()
-        .and_then(|logical| kernel.annotate_scoped_read(logical).err());
+    let scope_error = logical.as_mut().and_then(|logical| {
+        kernel
+            .annotate_scoped_read_within(logical, response::reply_limit(operation))
+            .err()
+    });
     let mut display = if scope_error.is_none() {
         logical.clone()
     } else {
@@ -1615,14 +1618,13 @@ fn render<T: Serialize>(
         Err(error) => response::scoped_error_result(kernel, &error),
     };
     let mut bytes = serde_json::to_vec(&rendered).map_or(0, |v| v.len());
-    if kernel.scope_observation().is_some()
-        && bytes.saturating_add(2048) > airk_core::MAX_RESPONSE_BYTES
-    {
+    let reply_limit = response::reply_limit(operation);
+    if kernel.scope_observation().is_some() && bytes.saturating_add(2048) > reply_limit {
         rendered = response::scoped_error_result(
             kernel,
             &airk_core::scoped_reads::ScopeReplyBudget {
                 required_bytes: bytes.saturating_add(2048),
-                maximum_bytes: airk_core::MAX_RESPONSE_BYTES,
+                maximum_bytes: reply_limit,
             }
             .into(),
         );

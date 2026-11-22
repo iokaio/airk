@@ -89,6 +89,7 @@ pub struct ReadAttemptContext {
     worker_reap_observer: Option<WorkerReapObserver>,
     worker_settlement_requester: Option<WorkerSettlementRequester>,
     native_unsettled: Arc<AtomicBool>,
+    read_ceiling: Duration,
 }
 
 impl ReadAttemptContext {
@@ -113,7 +114,54 @@ impl ReadAttemptContext {
             worker_reap_observer: None,
             worker_settlement_requester: None,
             native_unsettled: Arc::new(AtomicBool::new(false)),
+            read_ceiling: airk_core::read_attempt::MAX_READ_BUDGET,
         }
+    }
+
+    /// A transport's default attempt for one tool call, minted from now:
+    /// Answer gets its own ceiling, every other tool keeps 125 s.
+    pub fn for_tool(tool: &str, canceled: CancellationToken) -> Self {
+        let ceiling = airk_core::read_attempt::read_budget_for_tool(tool);
+        Self {
+            read_ceiling: ceiling,
+            ..Self::new(Instant::now() + ceiling, canceled)
+        }
+    }
+
+    /// A transport context minted before the tool is known (an HTTP request
+    /// before its body is parsed): Answer's ceiling, narrowed per tool by
+    /// [`Self::for_call`] once the call names its tool.
+    pub fn for_transport(canceled: CancellationToken) -> Self {
+        Self::for_tool("airk_answer", canceled)
+    }
+
+    /// This context for one tool call: a non-Answer tool is narrowed to its own
+    /// 125 s and keeps the ordinary ceiling; Answer keeps up to its 605 s.
+    pub fn for_call(self, tool: &str) -> Self {
+        let ceiling = airk_core::read_attempt::read_budget_for_tool(tool);
+        let limit = Instant::now() + ceiling;
+        let context = if self.deadline > limit {
+            self.narrowed(limit)
+        } else {
+            self
+        };
+        Self {
+            read_ceiling: context.read_ceiling.min(ceiling),
+            ..context
+        }
+    }
+
+    /// The longest native attempt this context may mint for the wire
+    /// (`airk_host::read_attempt::encode`).
+    pub fn read_ceiling(&self) -> Duration {
+        self.read_ceiling
+    }
+
+    /// Allow an attempt decoded from the wire to be re-encoded up to the
+    /// ceiling the wire was admitted under; never longer than its own expiry.
+    pub fn with_read_ceiling(mut self, ceiling: Duration) -> Self {
+        self.read_ceiling = ceiling.min(airk_core::read_attempt::MAX_ANSWER_READ_BUDGET);
+        self
     }
 
     pub fn deadline(&self) -> Instant {
@@ -564,7 +612,9 @@ fn admit_tool_context_at(
     else {
         return context;
     };
-    context.narrowed(deadline)
+    context
+        .with_read_ceiling(airk_core::read_attempt::MAX_ANSWER_READ_BUDGET)
+        .narrowed(deadline)
 }
 
 #[cfg(test)]

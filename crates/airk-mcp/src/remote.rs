@@ -539,15 +539,8 @@ impl ReadSession {
         arguments: serde_json::Map<String, serde_json::Value>,
         canceled: tokio_util::sync::CancellationToken,
     ) -> Result<CallToolResult, ReadCallError> {
-        self.call_read_with_context(
-            name,
-            arguments,
-            crate::read_attempt::ReadAttemptContext::new(
-                std::time::Instant::now() + Duration::from_secs(125),
-                canceled,
-            ),
-        )
-        .await
+        let context = crate::read_attempt::ReadAttemptContext::for_tool(&name, canceled);
+        self.call_read_with_context(name, arguments, context).await
     }
     pub async fn call_read_with_context(
         &self,
@@ -565,6 +558,7 @@ impl ReadSession {
             })
             .map(|tool| tool.name.into_owned())
             .ok_or(ReadCallError::UnknownTool)?;
+        let context = context.for_call(&name);
         self.dispatch(
             name,
             arguments,
@@ -765,11 +759,9 @@ impl ServerHandler for Bridge {
             })
             .cloned()
             .unwrap_or_else(|| {
-                crate::read_attempt::ReadAttemptContext::new(
-                    std::time::Instant::now() + Duration::from_secs(125),
-                    context.ct.clone(),
-                )
-            });
+                crate::read_attempt::ReadAttemptContext::for_tool(&request.name, context.ct.clone())
+            })
+            .for_call(&request.name);
         let mut arguments = request.arguments.unwrap_or_default();
         if self.backend.fills_workspace(&request.name) && names_no_scope(&arguments) {
             let roots_supported = context
@@ -789,10 +781,25 @@ impl ServerHandler for Bridge {
         {
             session.response_mode = preference.0;
         }
-        let result = session
-            .dispatch(request.name.to_string(), arguments, client, attempt)
-            .await
-            .unwrap_or_else(admission_failure);
+        // A long Answer keeps the client's idle clock alive: the work runs in
+        // the service, so this bridge sends heartbeats on the caller's token.
+        let progress = airk_core::read_attempt::is_answer_tool(&request.name)
+            .then(|| {
+                request
+                    .meta
+                    .as_ref()
+                    .filter(|meta| meta.get_progress_token().is_some())
+                    .unwrap_or(&context.meta)
+            })
+            .and_then(|meta| {
+                crate::progress::ProgressReporter::from_request(meta, context.peer.clone())
+            });
+        let dispatched = session.dispatch(request.name.to_string(), arguments, client, attempt);
+        let result = match &progress {
+            Some(reporter) => reporter.while_running(dispatched).await,
+            None => dispatched.await,
+        }
+        .unwrap_or_else(admission_failure);
         cancellation.complete();
         Ok(result.into())
     }
@@ -840,16 +847,11 @@ pub async fn call_observed(
     tool: String,
     arguments: serde_json::Map<String, serde_json::Value>,
 ) -> anyhow::Result<serde_json::Value> {
-    call_observed_with_context(
-        backend,
-        tool,
-        arguments,
-        crate::read_attempt::ReadAttemptContext::new(
-            std::time::Instant::now() + Duration::from_secs(125),
-            tokio_util::sync::CancellationToken::new(),
-        ),
-    )
-    .await
+    let context = crate::read_attempt::ReadAttemptContext::for_tool(
+        &tool,
+        tokio_util::sync::CancellationToken::new(),
+    );
+    call_observed_with_context(backend, tool, arguments, context).await
 }
 
 /// The original caller's admitted allowance, preserving shared capacity and

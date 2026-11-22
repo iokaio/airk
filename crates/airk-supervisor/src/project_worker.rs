@@ -267,11 +267,27 @@ fn observe_maintenance(
 /// Connection expiry owns NEW admission only. Decode the same bounded parent
 /// without replacing it with the connection's shorter cache/admission window.
 fn query_read_context(
+    tool: &str,
     attempt: Option<airk_core::read_attempt::ReadAttemptBudget>,
     partition: Option<&airk_core::combined_context::PartitionAllowance>,
 ) -> Result<Option<airk_mcp::read_attempt::ReadAttemptContext>> {
+    // The wire may carry an Answer's attempt into a nested read; every tool
+    // other than Answer (and a native read, with no tool) is narrowed to its
+    // own 125 s, so only Answer runs past it.
+    let ceiling = airk_core::read_attempt::read_budget_for_tool(tool);
     attempt
-        .map(airk_host::read_attempt::decode)
+        .map(|attempt| {
+            airk_host::read_attempt::decode(attempt).map(|context| {
+                let limit = std::time::Instant::now() + ceiling;
+                // Narrow only a longer parent, so a captured attempt within the
+                // tool's ceiling is carried unchanged.
+                if context.deadline() > limit {
+                    context.narrowed(limit)
+                } else {
+                    context
+                }
+            })
+        })
         .transpose()?
         .map(|context| match partition {
             Some(partition) => context.with_context_partition(partition.clone()),
@@ -377,10 +393,11 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
             let wire_attempt = request.read_attempt;
             let retry_budget_complete = request.native.is_none()
                 || wire_attempt.is_some_and(|budget| budget.native_retry_expires_monotonic_ns.is_some());
-            let read_context = query_read_context(wire_attempt, request.context_partition.as_ref())?;
-            // Accepted blocking work keeps the existing hard reap boundary; a
-            // shorter caller deadline must not kill this shared worker early.
-            let query_deadline = received + Duration::from_secs(125);
+            let read_context = query_read_context(&request.tool, wire_attempt, request.context_partition.as_ref())?;
+            // Accepted blocking work keeps the existing hard reap boundary (125 s,
+            // or Answer's 605 s); a shorter caller deadline must not kill this
+            // shared worker early.
+            let query_deadline = received + airk_core::read_attempt::read_budget_for_tool(&request.tool);
             let admission_deadline = (received + Duration::from_secs(2))
                 .min(tokio::time::Instant::from_std(authorized_until))
                 .min(read_context.as_ref().map_or(query_deadline, |context| tokio::time::Instant::from_std(context.deadline())));

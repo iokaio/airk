@@ -66,6 +66,14 @@ fn default_budget_native_fixture_emitter() -> Result<()> {
         cases.push(json!({"id":id,"budget":budget,"accepted":accepted}));
     }
     assert_eq!(crate::read_attempt::MAX_READ_BUDGET.as_millis(), 125_000);
+    // Answer /3 alone runs to 600 s (default 300 s) with the same 5 s delivery.
+    let answer_operation = crate::arbiter::answer_loop::MAX_DEADLINE_MS;
+    let answer_default = crate::arbiter::answer_loop::DEFAULT_DEADLINE_MS;
+    let answer_transport = crate::read_attempt::MAX_ANSWER_READ_BUDGET.as_millis();
+    assert_eq!(
+        (answer_operation, answer_default, answer_transport),
+        (600_000, 300_000, 605_000)
+    );
     let document = json!({
         "schema":"airk.arbiter.budget-cases/1",
         "qualification":false,
@@ -74,6 +82,9 @@ fn default_budget_native_fixture_emitter() -> Result<()> {
         "operation_deadline_ms":120000,
         "transport_overhead_ms":5000,
         "transport_deadline_ms":125000,
+        "answer_default_deadline_ms":answer_default,
+        "answer_operation_deadline_ms":answer_operation,
+        "answer_transport_deadline_ms":answer_transport,
         "selected_focus_pair_tokens":512,
         "cases":cases
     });
@@ -95,10 +106,16 @@ fn default_budget_native_fixture_emitter() -> Result<()> {
          export const DEFAULT_CONTEXT_BUDGET = {} as const;\n\
          export const READ_OPERATION_DEADLINE_MS = {};\n\
          export const READ_TRANSPORT_OVERHEAD_MS = 5000;\n\
-         export const READ_TRANSPORT_DEADLINE_MS = {};\n",
+         export const READ_TRANSPORT_DEADLINE_MS = {};\n\
+         export const ANSWER_DEFAULT_DEADLINE_MS = {};\n\
+         export const ANSWER_OPERATION_DEADLINE_MS = {};\n\
+         export const ANSWER_TRANSPORT_DEADLINE_MS = {};\n",
         serde_json::to_string(&default)?,
         default.deadline_ms,
         crate::read_attempt::MAX_READ_BUDGET.as_millis(),
+        answer_default,
+        answer_operation,
+        answer_transport,
     );
     if let Some(path) = std::env::var_os("AIRK_WRITE_ARBITER_BUDGET_TYPESCRIPT") {
         std::fs::write(path, typescript.as_bytes())?;

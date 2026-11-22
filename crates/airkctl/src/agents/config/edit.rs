@@ -200,6 +200,17 @@ pub(crate) fn repair(
                 _ => return Err("Unexpected AIRK credential field; review it manually.".into()),
             };
         }
+        // Codex cuts a tool call off after 60 s by default; Answer may run to
+        // its 605 s transport ceiling. A longer setting the user chose stays.
+        let timeout = row.fields.get("tool_timeout_sec").and_then(Value::as_f64);
+        if timeout.is_none_or(|seconds| seconds < super::CODEX_TOOL_TIMEOUT_SEC as f64) {
+            result = toml::set_integer(
+                &result,
+                key,
+                "tool_timeout_sec",
+                super::CODEX_TOOL_TIMEOUT_SEC,
+            )?;
+        }
         if !has_mode(&row, "http_headers") {
             result = toml::set_string(&result, key, Some("http_headers"), MODE, "terse")?;
         }

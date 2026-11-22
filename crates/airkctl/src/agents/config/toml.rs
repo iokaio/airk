@@ -648,12 +648,51 @@ pub(super) fn set_string(
     field: &str,
     value: &str,
 ) -> Result<String, String> {
+    set_rendered(
+        source,
+        key,
+        nested,
+        field,
+        &quoted(value),
+        &Value::String(value.into()),
+    )
+}
+
+/// Set the integer `field` of `[mcp_servers.<key>]` (not of a subtable), as
+/// [`set_string`] does for strings.
+pub(super) fn set_integer(
+    source: &str,
+    key: &str,
+    field: &str,
+    value: u64,
+) -> Result<String, String> {
+    set_rendered(
+        source,
+        key,
+        None,
+        field,
+        &value.to_string(),
+        &Value::Number(value.into()),
+    )
+}
+
+fn set_rendered(
+    source: &str,
+    key: &str,
+    nested: Option<&str>,
+    field: &str,
+    rendered: &str,
+    value: &Value,
+) -> Result<String, String> {
     let (statements, tables) = server_tables(source, key)?;
     let Some(table) = tables
         .iter()
         .find(|table| table.nested.as_deref() == nested)
     else {
         let nested = nested.ok_or("AIRK TOML table missing")?;
+        let value = value
+            .as_str()
+            .ok_or("AIRK TOML subtable fields are strings")?;
         return append_subtable(source, &statements, &tables, key, nested, field, value);
     };
     let mut last = &statements[table.header];
@@ -675,7 +714,7 @@ pub(super) fn set_string(
         let offset = cursor.at;
         let current = cursor.value(0)?;
         cursor.complete()?;
-        if current.as_str() == Some(value) {
+        if &current == value {
             return Ok(source.to_string());
         }
         let Some((begin, end)) = statement
@@ -689,7 +728,7 @@ pub(super) fn set_string(
         return Ok(format!(
             "{}{}{}",
             &source[..begin + offset],
-            quoted(value),
+            rendered,
             &source[end..]
         ));
     }
@@ -704,7 +743,7 @@ pub(super) fn set_string(
         "{}{gap}{} = {}{eol}{}",
         &source[..at],
         field_key(field),
-        quoted(value),
+        rendered,
         &source[at..]
     ))
 }
@@ -816,8 +855,9 @@ pub(super) fn remove_server(source: &str, key: &str) -> Result<String, String> {
     Ok(out)
 }
 
-/// Append the U110 HTTPS server table for Codex (the endpoint URL and the
-/// response-mode header only), after one blank line.
+/// Append the U110 HTTPS server table for Codex (the endpoint URL, the tool
+/// timeout Answer needs and the response-mode header only), after one blank
+/// line.
 pub(super) fn append_server(source: &str, key: &str, url: &str) -> String {
     let eol = eol(source);
     let header = if bare(key) {
@@ -835,8 +875,9 @@ pub(super) fn append_server(source: &str, key: &str, url: &str) -> String {
         }
     }
     out.push_str(&format!(
-        "[mcp_servers.{header}]{eol}url = {}{eol}{eol}[mcp_servers.{header}.http_headers]{eol}\"X-AIRK-Response-Mode\" = \"terse\"{eol}",
-        quoted(url)
+        "[mcp_servers.{header}]{eol}url = {}{eol}tool_timeout_sec = {}{eol}{eol}[mcp_servers.{header}.http_headers]{eol}\"X-AIRK-Response-Mode\" = \"terse\"{eol}",
+        quoted(url),
+        super::CODEX_TOOL_TIMEOUT_SEC
     ));
     out
 }

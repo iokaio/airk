@@ -91,8 +91,9 @@ pub fn entry(
             (
                 ManualFormat::Toml,
                 format!(
-                    "[mcp_servers.{key}]\nurl = {}\n\n[mcp_servers.{key}.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n",
-                    serde_json::to_string(&url)?
+                    "[mcp_servers.{key}]\nurl = {}\ntool_timeout_sec = {}\n\n[mcp_servers.{key}.http_headers]\n\"X-AIRK-Response-Mode\" = \"terse\"\n",
+                    serde_json::to_string(&url)?,
+                    crate::read_attempt::MAX_ANSWER_READ_BUDGET.as_secs()
                 ),
             )
         }

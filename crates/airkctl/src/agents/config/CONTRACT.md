@@ -238,3 +238,13 @@ private Git/npm fixture as retained-writer regressions and compares the complete
 canonical action/error/blocker result. The fixture is shared crate-locally only
 under `cfg(test)`; production eligibility, ownership and recovery checks remain
 the actual writer's checks, with refusal coverage retained separately.
+
+
+## Codex tool timeout (final plan 12.4, step L2, 22 November 2026)
+
+Codex cuts a tool call off after 60 s by default (`tool_timeout_sec`). A
+connected Codex table carries `tool_timeout_sec = 605` after its `url`
+(Answer's 600 s plus 5 s for delivery, `CODEX_TOOL_TIMEOUT_SEC`). Repair sets
+it when the entry has none or a smaller value, and keeps a larger one the user
+chose. The shared `fixtures/split/agents/config_cases.json` connect and repair
+expectations include it; recognition and removal are unchanged.

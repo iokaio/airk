@@ -515,15 +515,9 @@ impl Connection {
         tool: String,
         arguments: serde_json::Map<String, serde_json::Value>,
     ) -> Result<serde_json::Value> {
-        self.call_with_read_context(
-            tool,
-            arguments,
-            airk_mcp::read_attempt::ReadAttemptContext::new(
-                Instant::now() + Duration::from_secs(125),
-                Default::default(),
-            ),
-        )
-        .await
+        let context =
+            airk_mcp::read_attempt::ReadAttemptContext::for_tool(&tool, Default::default());
+        self.call_with_read_context(tool, arguments, context).await
     }
     pub async fn call_with_read_context(
         &mut self,
@@ -1074,10 +1068,7 @@ impl Backend {
         context: Option<airk_mcp::read_attempt::ReadAttemptContext>,
     ) -> airk_mcp::remote::RemoteFuture<'_> {
         let context = context.unwrap_or_else(|| {
-            airk_mcp::read_attempt::ReadAttemptContext::new(
-                Instant::now() + Duration::from_secs(125),
-                Default::default(),
-            )
+            airk_mcp::read_attempt::ReadAttemptContext::for_tool(&tool, Default::default())
         });
         let context =
             source_expires.map_or_else(|| context.clone(), |expires| context.narrowed(expires));

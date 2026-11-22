@@ -325,15 +325,35 @@ mod admitted_lifetime_tests {
         )
         .with_request_id(id)?;
         let wire = airk_host::read_attempt::encode(&parent, id)?;
-        let decoded =
-            super::super::query_read_context(Some(wire), None)?.context("original read missing")?;
+        let decoded = super::super::query_read_context("airk_search", Some(wire), None)?
+            .context("original read missing")?;
         let carried = decoded
             .captured_transport_attempt()
             .context("original absolute parent was narrowed/replaced")?;
         assert_eq!(carried.expires_monotonic_ns, wire.expires_monotonic_ns);
         assert_eq!(carried.request_id, id);
         assert_eq!(decoded.request_id(), Some(id));
-        assert!(super::super::query_read_context(None, None)?.is_none());
+        assert!(super::super::query_read_context("airk_search", None, None)?.is_none());
+        Ok(())
+    }
+    #[test]
+    fn worker_carries_an_answer_attempt_to_its_ceiling_and_narrows_other_tools() -> Result<()> {
+        let now = Instant::now();
+        let id = airk_core::identity::Incarnation::from_bytes([86; 16]);
+        let parent = airk_mcp::read_attempt::ReadAttemptContext::new(
+            now + Duration::from_secs(600),
+            Default::default(),
+        )
+        .with_read_ceiling(airk_core::read_attempt::MAX_ANSWER_READ_BUDGET)
+        .with_request_id(id)?;
+        let wire = airk_host::read_attempt::encode(&parent, id)?;
+        let answer = super::super::query_read_context("airk_answer", Some(wire), None)?
+            .context("original read missing")?;
+        assert!(answer.deadline() > now + Duration::from_secs(590));
+        assert!(answer.captured_transport_attempt().is_some());
+        let search = super::super::query_read_context("airk_search", Some(wire), None)?
+            .context("original read missing")?;
+        assert!(search.deadline() <= Instant::now() + Duration::from_secs(125));
         Ok(())
     }
     #[test]

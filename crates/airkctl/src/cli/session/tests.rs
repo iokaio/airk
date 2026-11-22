@@ -1430,3 +1430,36 @@ fn current_i2_transport_budget_cases_match_native_invoke_and_admin_admission() {
         .unwrap();
     }
 }
+
+#[test]
+fn answer_invokes_may_ask_for_answers_ceiling_and_other_commands_keep_125_seconds() {
+    let argv = |line: &[&str]| {
+        line.iter()
+            .map(|word| (*word).to_owned())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(crate::contract::MAX_ANSWER_INVOKE_DEADLINE_MS, 605_000);
+    assert_eq!(MAX_INVOKE_DEADLINE_MS, 125_000);
+    for answer in [
+        argv(&[
+            "tools",
+            "call",
+            "airk_answer",
+            "--index",
+            "idx",
+            "--args",
+            "{}",
+        ]),
+        argv(&["--output", "json", "tools", "call", "answer"]),
+    ] {
+        assert_eq!(invoke_deadline_limit(&answer), 605_000);
+    }
+    for other in [
+        argv(&["tools", "call", "airk_search", "--args", "{}"]),
+        argv(&["tools", "call", "search"]),
+        argv(&["version"]),
+        argv(&["tools", "list"]),
+    ] {
+        assert_eq!(invoke_deadline_limit(&other), 125_000);
+    }
+}

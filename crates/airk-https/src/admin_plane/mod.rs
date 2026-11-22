@@ -1083,11 +1083,12 @@ impl AdminPlane {
             match selection {
                 ToolSelection::Unselected => {}
                 ToolSelection::Admin => {
+                    // The tool's own ceiling: Answer's 605 s, 125 s for the others.
                     let parent = match read_attempt {
-                        Some(attempt) => airk_host::read_attempt::decode(*attempt)
+                        Some(attempt) => airk_host::read_attempt::decode_for_tool(*attempt, tool)
                             .map_err(|_| AdminCode::AdminInternal)?,
-                        None => airk_mcp::read_attempt::ReadAttemptContext::new(
-                            std::time::Instant::now() + airk_core::read_attempt::MAX_READ_BUDGET,
+                        None => airk_mcp::read_attempt::ReadAttemptContext::for_tool(
+                            tool,
                             Default::default(),
                         ),
                     };

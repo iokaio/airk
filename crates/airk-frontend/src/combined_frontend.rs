@@ -75,7 +75,8 @@ impl ReplyBudget {
                     (1024..=524288).contains(&max_bytes),
                     "invalid context output budget"
                 );
-                Ok(max_bytes.min(airk_core::MAX_RESPONSE_BYTES))
+                // Answer alone: its 131,072-byte reply frame.
+                Ok(max_bytes.min(airk_core::arbiter::answer_loop::MAX_ANSWER_RESPONSE_BYTES))
             }
         }
     }
@@ -2753,16 +2754,9 @@ impl<S: Session> RemoteTools for Backend<S> {
         })
     }
     fn call(&self, tool: String, args: Map<String, Value>) -> RemoteFuture<'_> {
-        self.dispatch(
-            tool,
-            args,
-            false,
-            self.query_concurrency(),
-            airk_mcp::read_attempt::ReadAttemptContext::new(
-                Instant::now() + Duration::from_secs(125),
-                Default::default(),
-            ),
-        )
+        let context =
+            airk_mcp::read_attempt::ReadAttemptContext::for_tool(&tool, Default::default());
+        self.dispatch(tool, args, false, self.query_concurrency(), context)
     }
     fn call_with_capacity(
         &self,
@@ -2770,16 +2764,9 @@ impl<S: Session> RemoteTools for Backend<S> {
         args: Map<String, Value>,
         capacity: usize,
     ) -> RemoteFuture<'_> {
-        self.dispatch(
-            tool,
-            args,
-            false,
-            capacity,
-            airk_mcp::read_attempt::ReadAttemptContext::new(
-                Instant::now() + Duration::from_secs(125),
-                Default::default(),
-            ),
-        )
+        let context =
+            airk_mcp::read_attempt::ReadAttemptContext::for_tool(&tool, Default::default());
+        self.dispatch(tool, args, false, capacity, context)
     }
     fn call_with_read_context(
         &self,

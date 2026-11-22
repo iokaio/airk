@@ -13,6 +13,17 @@ pub use open_status::OpenStatusSession;
 mod open_status_tests;
 use std::sync::Mutex;
 
+/// The rendered reply ceiling of one tool call: Answer /3's
+/// `MAX_ANSWER_RESPONSE_BYTES` (131,072) for Answer, `MAX_RESPONSE_BYTES`
+/// (65,536) for every other tool.
+pub fn reply_limit(operation: airk_core::usage::UsageOperation) -> usize {
+    if operation == airk_core::usage::UsageOperation::Answer {
+        airk_core::arbiter::answer_loop::MAX_ANSWER_RESPONSE_BYTES
+    } else {
+        airk_core::MAX_RESPONSE_BYTES
+    }
+}
+
 /// Bound optional receipt bytes in the actual native SDK representation before
 /// scoring. The existing result/envelope ceiling is not widened for Focus.
 pub(crate) fn focus_reply_headroom(

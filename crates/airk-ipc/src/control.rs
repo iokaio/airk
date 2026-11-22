@@ -46,9 +46,10 @@ pub async fn request_once(
         Duration::from_secs(10)
     } else if matches!(method, ControlMethod::Connect { .. }) {
         Duration::from_secs(20)
-    } else if matches!(method, ControlMethod::ToolsCall { .. }) {
-        // The service runs the call under the CLI's 125 s tool context.
-        Duration::from_secs(135)
+    } else if let ControlMethod::ToolsCall { tool, .. } = &method {
+        // The service runs the call under the tool's context (125 s, or
+        // Answer's 605 s), plus 10 s for the reply.
+        airk_core::read_attempt::read_budget_for_tool(tool) + Duration::from_secs(10)
     } else {
         Duration::from_secs(5)
     };
@@ -69,7 +70,7 @@ pub async fn request_once(
         }
         ControlMethod::ArbiterContextAction { request } => {
             let sampled_at = tokio::time::Instant::now();
-            let remaining = arbiter_remaining(
+            let remaining = answer_arbiter_remaining(
                 Some(request.read_attempt),
                 request.remaining_ms,
                 host_read_clock(),
@@ -98,11 +99,13 @@ pub async fn request_once(
             )
         }
         ControlMethod::ToolsCall {
+            tool,
             read_attempt: Some(attempt),
             ..
         } => {
             let sampled_at = tokio::time::Instant::now();
             let remaining = read_remaining(
+                tool,
                 *attempt,
                 host_read_clock(),
                 airk_process::monotonic::now_ns()?,
@@ -163,11 +166,12 @@ fn host_read_clock() -> airk_core::read_attempt::ReadClock {
 }
 
 fn read_remaining(
+    tool: &str,
     attempt: airk_core::read_attempt::ReadAttemptBudget,
     clock: airk_core::read_attempt::ReadClock,
     now_ns: u64,
 ) -> Result<Duration> {
-    let remaining = attempt.remaining_at(clock, now_ns)?;
+    let remaining = attempt.remaining_for_tool(tool, clock, now_ns)?;
     ensure!(
         !remaining.is_zero(),
         "Original native read deadline exhausted before send"
@@ -175,21 +179,49 @@ fn read_remaining(
     Ok(remaining)
 }
 
+/// Focus and next-read methods: 120,000 ms, even inside an Answer attempt.
 fn arbiter_remaining(
     attempt: Option<airk_core::read_attempt::ReadAttemptBudget>,
     remaining_ms: u64,
     clock: airk_core::read_attempt::ReadClock,
     now_ns: u64,
 ) -> Result<Duration> {
+    arbiter_remaining_within(attempt, remaining_ms, 120_000, clock, now_ns)
+}
+
+/// Answer-only methods (Context actions, and the loop's card scoring added in
+/// L4): Answer's ceiling, `MAX_ANSWER_ARBITER_REMAINING_MS` (600,000 ms).
+fn answer_arbiter_remaining(
+    attempt: Option<airk_core::read_attempt::ReadAttemptBudget>,
+    remaining_ms: u64,
+    clock: airk_core::read_attempt::ReadClock,
+    now_ns: u64,
+) -> Result<Duration> {
+    arbiter_remaining_within(
+        attempt,
+        remaining_ms,
+        airk_core::read_attempt::MAX_ANSWER_ARBITER_REMAINING_MS,
+        clock,
+        now_ns,
+    )
+}
+
+fn arbiter_remaining_within(
+    attempt: Option<airk_core::read_attempt::ReadAttemptBudget>,
+    remaining_ms: u64,
+    ceiling_ms: u64,
+    clock: airk_core::read_attempt::ReadClock,
+    now_ns: u64,
+) -> Result<Duration> {
     ensure!(
-        (1..=120_000).contains(&remaining_ms),
+        (1..=ceiling_ms).contains(&remaining_ms),
         "invalid Arbiter remaining budget"
     );
     let remaining = attempt
         .context("native Arbiter attempt budget required")?
         .remaining_at(clock, now_ns)?
         .min(Duration::from_millis(remaining_ms))
-        .min(Duration::from_secs(120));
+        .min(Duration::from_millis(ceiling_ms));
     ensure!(
         !remaining.is_zero(),
         "Original native read deadline exhausted before send"

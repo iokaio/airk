@@ -67,6 +67,11 @@ pub const MAX_IN_FLIGHT: usize = 8;
 /// Session transport envelope: the 120000 ms operation plus 5000 ms for delivery.
 /// One original receipt-time deadline; native operation budgets are never reset.
 pub const MAX_INVOKE_DEADLINE_MS: u64 = 125_000;
+/// Answer's Invoke envelope (`tools call airk_answer`): its 600,000 ms
+/// operation plus the same 5000 ms for delivery (final plan 12.4). Every other
+/// command keeps [`MAX_INVOKE_DEADLINE_MS`].
+pub const MAX_ANSWER_INVOKE_DEADLINE_MS: u64 =
+    airk_core::read_attempt::MAX_ANSWER_READ_BUDGET.as_millis() as u64;
 /// Event buffer per session, kept separate from reply budgets. Overflow drops
 /// the buffer and emits one `resync`; it never reports a gap as history.
 pub const MAX_BUFFERED_EVENTS: usize = 256;

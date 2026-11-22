@@ -2,7 +2,7 @@
 //! Native read budget conversion samples monotonic clocks conservatively.
 use airk_core::{
     identity::Incarnation,
-    read_attempt::{MAX_READ_BUDGET, ReadAttemptBudget, ReadClock},
+    read_attempt::{MAX_ANSWER_READ_BUDGET, ReadAttemptBudget, ReadClock},
 };
 use airk_mcp::read_attempt::ReadAttemptContext;
 use anyhow::Result;
@@ -39,7 +39,7 @@ fn encode_sampled(
     let remaining = context
         .deadline()
         .saturating_duration_since(now)
-        .min(MAX_READ_BUDGET);
+        .min(context.read_ceiling());
     let remaining_ns = u64::try_from(remaining.as_nanos())?;
     anyhow::ensure!(remaining_ns > 0, "native read deadline expired");
     if let Some(captured) = context.captured_transport_attempt() {
@@ -93,6 +93,15 @@ fn encode_sampled(
     })
 }
 
+/// Decode a wire attempt whose tool is known at this entry point: refuses an
+/// attempt longer than that tool's ceiling (`read_budget_for_tool`).
+pub fn decode_for_tool(budget: ReadAttemptBudget, tool: &str) -> Result<ReadAttemptContext> {
+    budget.remaining_for_tool(tool, clock(), airk_process::monotonic::now_ns()?)?;
+    decode(budget)
+}
+
+/// Decode a wire attempt. The attempt may be an Answer's (up to its 605 s);
+/// the context never outlives the wire expiry, whatever its ceiling.
 pub fn decode(budget: ReadAttemptBudget) -> Result<ReadAttemptContext> {
     // Instant first, tick second: IPC/decoding and sampling overhead are charged.
     let now = Instant::now();
@@ -107,6 +116,7 @@ fn decode_sampled(
 ) -> Result<ReadAttemptContext> {
     let remaining = budget.remaining_at(clock(), ticks)?;
     let mut context = ReadAttemptContext::new(now + remaining, Default::default())
+        .with_read_ceiling(MAX_ANSWER_READ_BUDGET)
         .with_wire_attempt(budget)?
         .remote_admission();
     if let Some(deadline) = budget.native_retry_expires_monotonic_ns {

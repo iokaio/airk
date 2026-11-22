@@ -177,7 +177,7 @@ async fn listing(state: &State, sources: bool) -> Result<CatalogListing, &'stati
 
 /// Answer one open read (M3 `ToolSelection::Open`).
 pub(super) async fn response(state: &Arc<State>, call: OpenCall) -> ControlResponse {
-    match tools_call::read_context(None) {
+    match tools_call::read_context(&call.tool, None) {
         Ok(context) => response_with_context(state, call, context).await,
         Err(error) => tools_call::failed(&error),
     }

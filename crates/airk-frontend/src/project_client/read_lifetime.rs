@@ -44,11 +44,12 @@ where
         Ok(()) => {
             // The complete frame may already be executing. A caller deadline or
             // canceled HTTP wait suppresses delivery, never the accepted owner.
-            // The worker's existing hard-reap budget is 125 s. A later transport
-            // timeout is still UNKNOWN and must await native reap below.
+            // The worker's existing hard-reap budget is the tool's ceiling (125 s,
+            // or Answer's 605 s). A later transport timeout is still UNKNOWN and
+            // must await native reap below.
             local_ipc::read_message::<_, protocol::QueryResult>(
                 &mut stream,
-                Duration::from_secs(130),
+                airk_core::read_attempt::read_budget_for_tool(&query.tool) + Duration::from_secs(5),
             )
             .await
             .and_then(|response| response.context("native query disconnected before completion"))

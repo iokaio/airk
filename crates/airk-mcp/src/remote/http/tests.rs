@@ -669,3 +669,127 @@ async fn modern_http_schema_validation_rechecks_unknown_and_changed_tools() -> a
     service.close().await;
     Ok(())
 }
+
+/// Final plan 12.4.1 item 5: over HTTP (AIRK's agent transport) Claude Code
+/// aborts a call that sends no response or progress for 300 s. An Answer call
+/// with a progress token streams heartbeats as SSE before its result; a call
+/// without one stays a plain JSON reply.
+#[tokio::test]
+async fn http_answer_streams_progress_before_its_result_and_other_calls_stay_json()
+-> anyhow::Result<()> {
+    struct Held(Arc<tokio::sync::Notify>);
+    impl RemoteTools for Held {
+        fn catalog(&self) -> Vec<Tool> {
+            ["airk_answer", "search"].into_iter().map(|name| serde_json::from_value(json!({"name":name,"description":"Held HTTP fixture","inputSchema":{"type":"object","additionalProperties":true},"annotations":{"readOnlyHint":true}})).unwrap()).collect()
+        }
+        fn client(&self, _: airk_core::usage::ClientFamily) {}
+        fn close(&self) {}
+        fn local_help(&self) -> bool {
+            false
+        }
+        fn call(&self, name: String, _: serde_json::Map<String, Value>) -> RemoteFuture<'_> {
+            let release = self.0.clone();
+            Box::pin(async move {
+                if name == "airk_answer" {
+                    release.notified().await;
+                }
+                Ok(serde_json::to_value(CallToolResult::structured(
+                    json!({"tool":name}),
+                ))?)
+            })
+        }
+    }
+    let release = Arc::new(tokio::sync::Notify::new());
+    let held = release.clone();
+    let backend: AuthenticatedBackendFactory =
+        Arc::new(move || Ok(Arc::new(Held(held.clone())) as Arc<dyn RemoteTools>));
+    let service = HttpReadService::new(
+        ReadSessionFactory::default(),
+        HttpSessionBudget::new(8)?,
+        backend,
+        ReadSessionPreferences {
+            response_mode: crate::response::ResponseMode::Terse,
+            client: airk_core::usage::ClientFamily::Unknown,
+        },
+        "127.0.0.1:57421".into(),
+        vec![],
+        HttpReadLimits::default(),
+    )?;
+    let response = service
+        .handle(request(
+            Method::POST,
+            "/mcp",
+            json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"claude-code","version":"2.1.330"}}}),
+        ))
+        .await;
+    let session = response.headers().get("mcp-session-id").unwrap().clone();
+    value(response).await?;
+    let mut ready = request(
+        Method::POST,
+        "/mcp",
+        json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+    );
+    ready
+        .headers_mut()
+        .insert("mcp-session-id", session.clone());
+    assert!(service.handle(ready).await.status().is_success());
+    let call = |id: u64, name: &str, meta: Value| {
+        let mut call = request(
+            Method::POST,
+            "/mcp",
+            json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"name":name,"arguments":{},"_meta":meta}}),
+        );
+        call.headers_mut().insert("mcp-session-id", session.clone());
+        call
+    };
+    let response = service
+        .handle(call(2, "airk_answer", json!({"progressToken":"answer-2"})))
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        response.headers()[http::header::CONTENT_TYPE]
+            .to_str()?
+            .starts_with("text/event-stream")
+    );
+    let mut body = response.into_body();
+    let mut text = String::new();
+    let mut next = async |text: &mut String| -> anyhow::Result<()> {
+        let frame = tokio::time::timeout(Duration::from_secs(10), body.frame())
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("stream ended"))?
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+        if let Ok(data) = frame.into_data() {
+            text.push_str(std::str::from_utf8(&data)?);
+        }
+        Ok(())
+    };
+    // The heartbeat arrives while the Answer is still held.
+    while !text.contains("notifications/progress") {
+        next(&mut text).await?;
+    }
+    assert!(text.contains(r#""progressToken":"answer-2""#), "{text}");
+    assert!(
+        !text.contains(r#""result""#),
+        "progress precedes the result: {text}"
+    );
+    release.notify_one();
+    while !text.contains(r#""result""#) {
+        next(&mut text).await?;
+    }
+    assert!(text.contains(r#""tool":"airk_answer""#), "{text}");
+    // A search with a token, and an Answer without one, send no progress.
+    for (id, name, meta) in [
+        (3, "search", json!({"progressToken":"search-3"})),
+        (4, "airk_answer", json!({})),
+    ] {
+        if name == "airk_answer" {
+            release.notify_one();
+        }
+        let response = service.handle(call(id, name, meta)).await;
+        let reply = value(response).await?;
+        assert_eq!(reply["id"], id, "{reply}");
+        assert!(reply.get("result").is_some(), "{reply}");
+    }
+    service.close().await;
+    Ok(())
+}
