@@ -163,9 +163,18 @@ one. `run_plan.py`'s `switch_context` hook issues exactly those two commands.
    - `review`, `review_sha256` (the pass-1 graph diagnostic receipt);
    - `pass1_profile_sha256` (the pass-1 profile that receipt reviewed).
 
-   A CUDA Focus entry (strict-GPU placement) names only `profile`,
-   `profile_sha256` and `assets`. The service verifies its placement against
-   the live session when it opens.
+   A CUDA Focus entry (strict-GPU placement) names `profile`,
+   `profile_sha256`, `assets` and `parity`/`parity_sha256`.
+   - The parity file is the receipt of the ignored `l5c_focus_parity`
+     selector: the CPU twin and the CUDA profile score the same fixed pairs
+     in one process.
+   - The service checks four things:
+     - the profile shares the CPU twin's compiler, tokenizer and fixture
+       assets, task, limits, graph and weights;
+     - the parity receipt passes (at least 8 pairs, every winner agreeing,
+       within 1e-3);
+     - the receipt names this exact manifest;
+     - the placement is strict, checked against the live session.
 3. **The pair.** `cuda_pair.py pair --entry NAME=ENTRY.json ... [--row NAME=STAGE:MANIFEST ...] --out DIR`
    writes `roster.json` and `pair.json`.
    - It re-authenticates every asset and the review: complete, CPU payload
@@ -211,6 +220,15 @@ Measured on the A6000 (receipt `R\answer-loop\L5C\runs\f3-focus-seam-summary.jso
 - **GPU memory used** (nvidia-smi, sampled every 200 ms): 557 MiB before, a
   2,357 MiB peak, 791 MiB after disable while the service still ran, and
   562 MiB after stop.
+- **Parity with the CPU twin** (`R\answer-loop\L5C\runs\p1-focus-parity.json`,
+  SHA `835017fbd8dd7987d41e4a631355a951c4edf5e55dafabb576b20c0373b43236`):
+  - 15 pairs: the worst-case full-width pair and 14 fixture pairs;
+  - all 15 winners agree; largest raw difference 1.7e-5, against a recorded
+    tolerance of 1e-3;
+  - median call 3.87 s on CPU and 111 ms on CUDA;
+  - sampled process GPU peak 2.68 GB.
+- **Revocation:** it releases both stages even if one fails, and runs again
+  on every revocation.
 
 **An image built in a worktree** checks every input against that worktree's
 `artifacts` root, which is fixed at compile time. The check therefore needs

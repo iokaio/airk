@@ -28,7 +28,7 @@ Python 3.13, standard library only. Run every script as
 | `evidence.py` | Locations and evidence text in tool results, the coverage rule, the evidence digest and the citation audit |
 | `common.py` | Handles (readiness, enabled stages), the tools catalog, one CLI process per tool call, scenarios and Claude Code process helpers |
 | `pass_digests.py` | Computes a pass's canonical first-call digests for named results while their stage configuration is live, and prints which results agree |
-| `cuda_pair.py` | Inputs of a two-entry CUDA lifetime (`gpu_fixture.py --model pair`): copied, authenticated asset directories (the fixture refuses hard links) and the pinned roster, review pins and profile rows. See [GPU_FIXTURE.md](GPU_FIXTURE.md) |
+| `cuda_pair.py` | Inputs of a CUDA pair lifetime (up to Compact, Large and Focus) (`gpu_fixture.py --model pair`): copied, authenticated asset directories (the fixture refuses hard links) and the pinned roster, review pins and profile rows. See [GPU_FIXTURE.md](GPU_FIXTURE.md) |
 | `pass_report.py` | Per-session and per-path figures of a graded pass (turns, bytes, tool and wall time, grades, agent and judge cost) for reports and cost projections |
 | `settled.py` | The settled-index guard: semantic readiness `ready`, served mode `hybrid`, no index or vectors job queued or running, and the publication token at start and end (read-only) |
 | `prompts_freeze.py` | Writes and verifies `R/design/prompts-freeze.json`: the SHA-256 and text of every agent prompt, the judge prompt and its schema, the default models and efforts, and the hashes of the runtime harness files |

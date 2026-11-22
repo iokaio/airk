@@ -115,7 +115,7 @@ PAIR_SCHEMA = "airk.private.answer-eval-cuda-pair/1"
 
 
 def read_pair(path, digest):
-    """The pinned two-entry inputs written by cuda_pair.py pair (plan 12.5.2 item 4)."""
+    """The pinned pair inputs written by cuda_pair.py pair (plan 12.5.2 item 4)."""
     pair = read_json(FX.pin({"path": str(path), "sha256": digest}))
     require(pair.get("schema") == PAIR_SCHEMA, "not a CUDA pair spec")
     FX.pin(pair["roster"])
@@ -125,6 +125,11 @@ def read_pair(path, digest):
             "one review pin per CUDA Context entry")
     for review in pair["reviews"]:
         FX.pin(review)
+    focus = [row for row in pair["profiles"].values() if row["stage"] == "focus" and "model" in row]
+    require(len(focus) <= 1 and (not focus or set(pair.get("focus_parity") or {}) == {"path", "sha256"}),
+            "a CUDA Focus entry needs its pinned parity receipt")
+    if focus:
+        FX.pin(pair["focus_parity"])
     uuid = pair["adapter_uuid"]
     require(isinstance(uuid, list) and len(uuid) == 16 and any(uuid), "the pair names no adapter")
     for name, row in pair["profiles"].items():
@@ -134,12 +139,14 @@ def read_pair(path, digest):
 
 
 def pair_environment(path, digest, seed=None):
-    """Service variables of a two-entry lifetime: the roster, one review pin per entry, the adapter."""
+    """Service variables of a pair lifetime: the roster, one review pin per Context entry, the adapter."""
     pair = read_pair(path, digest)
     env = {"AIRK_ARBITER_EVALUATION_CUDA_INPUTS": pair["roster"]["path"],
            "AIRK_ARBITER_EVALUATION_CUDA_INPUTS_SHA256": pair["roster"]["sha256"],
            "AIRK_ARBITER_EVALUATION_CUDA_REVIEWS": json.dumps(pair["reviews"]),
            "AIRK_ARBITER_EVALUATION_CUDA_ADAPTER_UUID": json.dumps(pair["adapter_uuid"])}
+    if pair.get("focus_parity"):
+        env["AIRK_ARBITER_EVALUATION_CUDA_FOCUS_PARITY"] = json.dumps(pair["focus_parity"])
     if seed is not None:
         require(seed in SEEDS, "seed is all, focus or none")
         env["AIRK_ARBITER_EVALUATION_CUDA_SEED_CPU"] = seed
@@ -443,7 +450,7 @@ def main():
 
     def lifetime_options(sub):
         sub.add_argument("--model", choices=sorted([*MODELS, PAIR]), required=True)
-        # --model pair: the pinned two-entry inputs of cuda_pair.py pair.
+        # --model pair: the pinned pair inputs of cuda_pair.py pair.
         sub.add_argument("--pair")
         sub.add_argument("--pair-sha256")
         sub.add_argument("--inputs", default=str(FX.DEFAULT_INPUTS))

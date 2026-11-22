@@ -100,6 +100,40 @@ class PairTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.assets(self.compact, "compact-assets")
 
+    def test_asset_names_must_be_plain_file_names(self):
+        for bad in ("..\\escape.bin", "sub/weights.bin", "C:weights.bin", ".."):
+            value = json.loads(self.compact.profile.read_text())
+            value["assets"][0]["name"] = bad
+            mapping = json.loads(self.compact.map.read_text())
+            mapping[bad] = mapping["weights.bin"]
+            profile_sha = write(self.root / "bad-profile.json", value)
+            map_sha = write(self.root / "bad-map.json", mapping)
+            with self.assertRaisesRegex(ValueError, "plain file name"):
+                cp.build_assets(self.root / "bad-profile.json", profile_sha, self.root / "bad-map.json", map_sha,
+                                self.root / "bad-assets", artifacts=self.root)
+            self.assertFalse((self.root / "bad-assets").exists())
+
+    def test_a_failed_copy_removes_the_partial_output_and_keeps_a_receipt(self):
+        saved = cp.sha256
+        calls = {"n": 0}
+
+        def flaky(path, chunk=4 << 20):
+            # Sources hash correctly; the first copy reads back wrong.
+            if Path(path).parent.name == "partial-assets":
+                calls["n"] += 1
+                return "0" * 64
+            return saved(path, chunk)
+        cp.sha256 = flaky
+        try:
+            with self.assertRaises(ValueError):
+                self.assets(self.compact, "partial-assets")
+        finally:
+            cp.sha256 = saved
+        self.assertFalse((self.root / "partial-assets").exists())
+        failed = json.loads((self.root / "partial-assets.failed.json").read_text())
+        self.assertTrue(failed["removed"])
+        self.assertEqual(calls["n"], 1)
+
     def test_an_aliased_source_is_refused(self):
         source = self.root / "compact-sources" / "weights.bin"
         os.link(source, self.root / "alias.bin")
@@ -134,21 +168,36 @@ class PairTests(unittest.TestCase):
         focus.profile_sha = write(focus.profile, focus.profile_value)
         compact, _ = self.assets(self.compact, "compact-assets")
         focus_assets, _ = self.assets(focus, "focus-assets")
-        entry = {"profile": str(focus.profile), "profile_sha256": focus.profile_sha, "assets": str(focus_assets)}
+        parity = {"schema": "airk.private.l5c-focus-parity/1", "complete": True, "passed": True,
+                  "tolerance": 0.001, "row_count": 15, "winners_agree": 15, "max_abs": 1.7e-5,
+                  "cuda": {"manifest": digest(7)}, "cpu": {"manifest": digest(2)}}
+        parity_sha = write(self.root / "parity.json", parity)
+        entry = {"profile": str(focus.profile), "profile_sha256": focus.profile_sha, "assets": str(focus_assets),
+                 "parity": str(self.root / "parity.json"), "parity_sha256": parity_sha}
         pair, _ = cp.build_pair({"context-compact-fp16-cuda": self.compact.entry(compact),
                                  "focus-1024-cuda": entry}, {}, self.root / "pair")
         roster = json.loads((self.root / "pair" / "roster.json").read_text())
         self.assertEqual(len(roster), 2)
-        # Only the Context entry has a review pin; the Focus row is a Focus stage row.
+        # Only the Context entry has a review pin; the Focus entry pins its parity.
         self.assertEqual(len(pair["reviews"]), 1)
         self.assertEqual(pair["profiles"]["focus-1024-cuda"]["stage"], "focus")
+        self.assertEqual(pair["focus_parity"]["sha256"], parity_sha)
+        # A failed parity, or one of another profile, is refused.
+        for change in ({"passed": False}, {"cuda": {"manifest": digest(8)}}, {"winners_agree": 14}):
+            bad_sha = write(self.root / "bad-parity.json", parity | change)
+            with self.assertRaisesRegex(ValueError, "parity"):
+                cp.build_pair({"context-compact-fp16-cuda": self.compact.entry(compact),
+                               "focus-1024-cuda": entry | {"parity": str(self.root / "bad-parity.json"),
+                                                           "parity_sha256": bad_sha}}, {}, self.root / "p6")
         # A Focus entry that names a review, or a bounded Focus profile, is refused.
         with self.assertRaises(ValueError):
             cp.build_pair({"f": entry | {"review": "x"}}, {}, self.root / "p4")
         focus.profile_value["device_execution"]["placement"] = {"mode": "bounded_hybrid", "policy": digest(9)}
         focus.profile_sha = write(focus.profile, focus.profile_value)
-        with self.assertRaises(ValueError):
-            cp.build_pair({"f": entry | {"profile_sha256": focus.profile_sha}}, {}, self.root / "p5")
+        # With a valid Context entry beside it, only the strict-GPU rule can refuse.
+        with self.assertRaisesRegex(ValueError, "strict-GPU"):
+            cp.build_pair({"context-compact-fp16-cuda": self.compact.entry(compact),
+                           "f": entry | {"profile_sha256": focus.profile_sha}}, {}, self.root / "p5")
 
     def test_failed_foreign_or_doubled_entries_are_refused(self):
         compact, _ = self.assets(self.compact, "compact-assets")

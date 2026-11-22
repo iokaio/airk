@@ -109,9 +109,27 @@ claims release qualification.
   twin and no review pin. It joins the Focus stage's map on the same lease and
   adapter, is probed under the evaluation binding, and warms through the
   standard charged route, where the scorer verifies strict placement.
-  Revocation, idle unload and the release order cover it. Closed (22 November
-  2026; earlier the seam attached Context entries only, so a CUDA Focus row
-  was refused): measured on the A6000 with the W8 1,024-token Focus profile
+  Revocation, idle unload and the release order cover it. It is bound to a
+  CPU Focus twin in the roster:
+  - the same compiler, tokenizer and fixture assets;
+  - the same task, policies, ABI, and token and candidate limits;
+  - the same graph and weights, which only an FP32-activation route can
+    show (an FP16 Focus route is refused for unverifiable lineage);
+  - a pinned passing parity receipt (`AIRK_ARBITER_EVALUATION_CUDA_FOCUS_PARITY`,
+    from the ignored `l5c_focus_parity` selector): at least 8 pairs, every
+    winner agreeing, every raw score within at most 1e-3, of exactly this
+    CUDA manifest against that twin.
+
+  Revocation releases both stages even when one fails, joins the errors, and
+  runs on every revocation, so a repeated revocation retries a failed release.
+  Tests: `a_failed_focus_release_still_releases_context_and_reports_both`,
+  `the_cuda_roster_shape_follows_its_review_pins`,
+  `a_cuda_focus_profile_must_match_its_cpu_twin` and
+  `a_cuda_focus_entry_needs_a_passing_parity_receipt_for_its_twin`. Parity
+  measured on the A6000: 15 pairs, 15 winners agreeing, largest difference
+  1.7e-5 (receipt `L5C/runs/p1-focus-parity.json`, `835017fb…`). Closed (22
+  November 2026; earlier the seam attached Context entries only, so a CUDA
+  Focus row was refused): measured on the A6000 with the W8 1,024-token Focus profile
   `a3157dd1` (warm 8.6 s, 106-112 ms per warm call, peak 2,357 MiB used
   against a 557 MiB baseline; receipt `L5C/runs/f3-focus-seam-summary.json`). Closed (L5C review M3): the first version accepted a receipt whose CPU
   payload check had failed, or a receipt of another profile of the same model.

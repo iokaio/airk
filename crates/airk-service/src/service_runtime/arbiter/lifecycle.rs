@@ -35,9 +35,10 @@ pub(super) struct State {
         feature = "test-support",
         feature = "gpu-cuda"
     ))]
-    /// Private CUDA evaluation entries keyed by profile manifest: at most one
-    /// per Context model, all bound to the same lease and gate. Only the
-    /// selected entry is ever resident; a switch releases the old one first.
+    /// This stage's private CUDA evaluation entries keyed by profile manifest:
+    /// at most one per model (Compact and Large for Context, one Focus for
+    /// Focus), all bound to the same lease and gate. Only the selected entry is
+    /// ever resident; a switch releases the old one first.
     pub(super) private_gpu:
         std::collections::BTreeMap<Sha256Digest, Arc<super::evaluation::CudaAnswerEvaluation>>,
     #[cfg(all(test, feature = "test-support"))]

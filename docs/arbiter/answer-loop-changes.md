@@ -783,3 +783,48 @@ Further entries are added as implementation proceeds.
   section "Re-emitting the FP16 profiles for the loop". It adds a test-only
   `L5A_LOOP_TASKS=1` switch to the emitter, so no digest-input file moves.
   It then needs a new pass-1 graph run and a confirmation on the GPU.
+- **Review of the Focus seam (closed; private record `L5C/review-focus-seam.md`):**
+
+  | Finding | What was wrong | What changed | Evidence |
+  | --- | --- | --- | --- |
+  | M1 | A Focus release error skipped the Context release, and a repeated revocation never retried. | Both stages are released and the errors joined. The private release runs on every revocation, changed or not. | `a_failed_focus_release_still_releases_context_and_reports_both` |
+  | M2 | Nothing bound the CUDA Focus profile to its CPU twin or to a numeric check. | It must share the twin's compiler, tokenizer, fixture, task, policies, ABI, limits, graph and weights (FP16 Focus is refused), and it pins a passing parity receipt. | `a_cuda_focus_profile_must_match_its_cpu_twin`, `a_cuda_focus_entry_needs_a_passing_parity_receipt_for_its_twin`; A6000 parity: 15 of 15 winners, largest difference 1.7e-5 within 1e-3 (`L5C/runs/p1-focus-parity.json`) |
+  | L1 | The negative Python test passed for the wrong reason. | It now includes a Context entry and asserts the strict-GPU message. | `test_a_strict_gpu_focus_entry_joins_without_a_review` |
+  | L2 | The Focus paths had no Rust unit tests. | Tests cover the roster shape, the twin rule, the parity rule, both-stage release and route stages. | the four tests above, `private_routes_name_their_stage` |
+  | L3 | The post-revocation reason said no CPU variant exists. | It now points to the stage's CPU profile. | text |
+  | L4 | `assets` trusted asset names and left partial copies on failure. | Plain file names only; a failure removes the partial copy and writes `<dir>.failed.json`. | `test_asset_names_must_be_plain_file_names`, `test_a_failed_copy_removes_the_partial_output_and_keeps_a_receipt` |
+  | L5 | Some comments and docs were stale. | Updated. | — |
+
+- **Validation:**
+  - service arbiter lib tests 156 of 159 (the 3 base failures);
+  - Python `test_cuda_pair.py` 12, `test_gpu_fixture.py` 7,
+    `test_harness.py` 75 and `test_fixture.py` 34;
+  - Clippy clean for the service (all features, `gpu-cuda`,
+    `local-inference`, none) and for the retrieval tests.
+
+### 30. The LG arms run in separate lifetimes, side by side on the A6000
+
+- **Step:** LG preparation. This changes a constraint: plan 12.5.2 item 4 and
+  12.7.1 had both Context arms in one lifetime, switched by Configure.
+- **What:** arms C (Focus and Compact FP16), L (Focus and Large FP16) and F
+  (Focus only) each run in their own fixture lifetime, with their own
+  installation and indexes. The lifetimes run at the same time on the one
+  A6000.
+- **Why:** the user set a deadline for the gate. Side-by-side lifetimes run
+  the arms in parallel instead of in series.
+- **Memory:** measured peaks, per lifetime:
+
+  | Arm | GPU memory | Total |
+  | --- | --- | --- |
+  | C | Focus about 1.8 GiB + Compact 6.0 GiB | about 8 GiB |
+  | L | Focus about 1.8 GiB + Large 14.0 GiB | about 16 GiB |
+  | F | Focus about 1.8 GiB | about 2 GiB |
+
+  Together that is about 26 GiB of the A6000's 48 GiB, leaving room for the
+  reserve floor (4.8 GiB) and the display.
+- **Kept:**
+  - one loaded copy of each model per lifetime;
+  - the same build, indexes (copied, settled), scenarios and Focus route in
+    every arm.
+- **Changed:** the arms no longer share a process. Device contention between
+  them is a measured condition of the gate, recorded with each arm's timing.

@@ -3,10 +3,11 @@
 //!
 //! The CPU roster stays the installation's identity: a same-install restart pins
 //! the original Ready, Closed and final status exactly as the CPU selector does.
-//! One or two extra CUDA Context profiles (at most one Compact and one Large)
-//! join the evaluation catalog only; their assets are held as read descriptors
-//! and never seeded into the store. With two, the lifetime switches between them
-//! through ordinary Configure, and only the selected one is ever resident.
+//! Up to three extra CUDA profiles (at most one Compact, one Large and one
+//! strict-GPU Focus) join the evaluation catalog only; their assets are held as
+//! read descriptors and never seeded into the store. Each stage switches between
+//! its entries through ordinary Configure, and only the selected one per stage is
+//! ever resident.
 
 use super::*;
 
@@ -91,7 +92,7 @@ fn require_cuda_profile(cpu: &[Facts<'_>], cuda: Facts<'_>) -> Result<()> {
     Ok(())
 }
 
-/// The pinned CUDA roster (one or two entries), each prepared with the same
+/// The pinned CUDA roster (one to three entries), each prepared with the same
 /// checks as each CPU roster entry: pinned profile bytes, authenticated asset
 /// closure under artifacts and held read descriptors of the original bytes.
 fn prepare_cuda(path: &Path, expected: Sha256Digest) -> Result<(Vec<u8>, Vec<Prepared>)> {
@@ -160,7 +161,7 @@ fn prepare_cuda_entry(input: &super::super::Input, artifacts: &Path) -> Result<P
     })
 }
 
-/// One pinned review receipt per CUDA roster entry, in roster order, from
+/// One pinned review receipt per CUDA Context roster entry, in roster order, from
 /// `AIRK_ARBITER_EVALUATION_CUDA_REVIEWS`: a JSON list of
 /// `{path, sha256, profile_sha256}`, the last naming the reviewed pass-1 profile.
 #[derive(Deserialize)]
@@ -186,8 +187,14 @@ struct PlannedEntry {
 /// receipts when they are named, in Context roster order, else the original
 /// single reviewed graph result. A Focus entry takes no review: its strict
 /// placement is checked against the live session when it opens.
-fn cuda_graphs(artifacts: &Path, cuda: &[Prepared], expires: Instant) -> Result<Vec<PlannedEntry>> {
+fn cuda_graphs(
+    artifacts: &Path,
+    cpu: &[Prepared],
+    cuda: &[Prepared],
+    expires: Instant,
+) -> Result<Vec<PlannedEntry>> {
     use crate::service_runtime::arbiter::evaluation::PrivateGpuRoute;
+    let models: Vec<ModelChoice> = cuda.iter().map(|entry| entry.profile.model).collect();
     let (focus, context): (Vec<&Prepared>, Vec<&Prepared>) = cuda
         .iter()
         .partition(|entry| entry.profile.model == ModelChoice::FocusQwenReranker06B);
@@ -198,6 +205,7 @@ fn cuda_graphs(artifacts: &Path, cuda: &[Prepared], expires: Instant) -> Result<
     let mut planned = Vec::new();
     match std::env::var_os("AIRK_ARBITER_EVALUATION_CUDA_REVIEWS") {
         None => {
+            require_plan_shape(&models, None)?;
             ensure!(
                 context.len() <= 1 && focus.is_empty(),
                 "two CUDA Context entries or a CUDA Focus entry require AIRK_ARBITER_EVALUATION_CUDA_REVIEWS"
@@ -225,10 +233,7 @@ fn cuda_graphs(artifacts: &Path, cuda: &[Prepared], expires: Instant) -> Result<
                     .to_str()
                     .context("CUDA review list is not Unicode")?,
             )?;
-            ensure!(
-                reviews.len() == context.len(),
-                "one CUDA review receipt per CUDA Context roster entry"
-            );
+            require_plan_shape(&models, Some(reviews.len()))?;
             let adapter: [u8; 16] =
                 serde_json::from_str(&std::env::var("AIRK_ARBITER_EVALUATION_CUDA_ADAPTER_UUID")?)?;
             for (review, entry) in reviews.iter().zip(&context) {
@@ -250,10 +255,30 @@ fn cuda_graphs(artifacts: &Path, cuda: &[Prepared], expires: Instant) -> Result<
             }
             for entry in focus {
                 ensure!(adapter != [0; 16], "private CUDA adapter identity missing");
+                let parity: ParityPin = serde_json::from_str(
+                    &std::env::var("AIRK_ARBITER_EVALUATION_CUDA_FOCUS_PARITY")
+                        .context("a CUDA Focus entry requires its pinned parity receipt")?,
+                )?;
+                let (_directory, mut file) = source_file(&parity.path, artifacts)?;
+                let raw = bounded(&mut file)?;
+                ensure!(
+                    sha(&raw) == parity.sha256,
+                    "CUDA Focus parity receipt SHA differs"
+                );
+                let cpu_focus: Vec<Sha256Digest> = cpu
+                    .iter()
+                    .filter(|twin| twin.profile.model == ModelChoice::FocusQwenReranker06B)
+                    .map(|twin| twin.profile.manifest)
+                    .collect();
+                require_focus_parity(
+                    &serde_json::from_slice(&raw)?,
+                    entry.profile.manifest,
+                    &cpu_focus,
+                )?;
                 planned.push(PlannedEntry {
                     manifest: entry.profile.manifest,
                     adapter,
-                    pin: "strict_gpu".into(),
+                    pin: format!("strict_gpu+parity:{}", parity.sha256),
                     route: PrivateGpuRoute::Focus { expires },
                 });
             }
@@ -261,6 +286,124 @@ fn cuda_graphs(artifacts: &Path, cuda: &[Prepared], expires: Instant) -> Result<
     }
     ensure!(!planned.is_empty(), "the CUDA roster has no entry");
     Ok(planned)
+}
+
+/// The shape of a CUDA roster: at most one Focus entry; without review pins at
+/// most one Context entry and no Focus entry; with them, one pin per Context
+/// entry.
+fn require_plan_shape(models: &[ModelChoice], reviews: Option<usize>) -> Result<()> {
+    let focus = models
+        .iter()
+        .filter(|model| **model == ModelChoice::FocusQwenReranker06B)
+        .count();
+    let context = models.len() - focus;
+    ensure!(focus <= 1, "the CUDA roster holds at most one Focus entry");
+    match reviews {
+        None => ensure!(
+            context <= 1 && focus == 0,
+            "two CUDA Context entries or a CUDA Focus entry require AIRK_ARBITER_EVALUATION_CUDA_REVIEWS"
+        ),
+        Some(count) => ensure!(
+            count == context,
+            "one CUDA review receipt per CUDA Context roster entry"
+        ),
+    }
+    Ok(())
+}
+
+/// The parity a CUDA Focus entry must show against its CPU twin, from the
+/// pinned `l5c_focus_parity` receipt (`AIRK_ARBITER_EVALUATION_CUDA_FOCUS_PARITY`,
+/// `{path, sha256}`): complete and passed, at least 8 compiled pairs, every
+/// winner agreeing and every raw score within a tolerance of at most 1e-3, for
+/// exactly this CUDA manifest against a CPU Focus profile of the roster.
+const FOCUS_PARITY_TOLERANCE: f64 = 1e-3;
+const FOCUS_PARITY_ROWS: u64 = 8;
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ParityPin {
+    path: PathBuf,
+    sha256: Sha256Digest,
+}
+
+fn require_focus_parity(
+    receipt: &serde_json::Value,
+    cuda_manifest: Sha256Digest,
+    cpu_manifests: &[Sha256Digest],
+) -> Result<()> {
+    let tolerance = receipt["tolerance"].as_f64().unwrap_or(f64::INFINITY);
+    let rows = receipt["row_count"].as_u64().unwrap_or(0);
+    let worst = receipt["max_abs"].as_f64().unwrap_or(f64::INFINITY);
+    let cuda: Option<Sha256Digest> =
+        serde_json::from_value(receipt["cuda"]["manifest"].clone()).ok();
+    let cpu: Option<Sha256Digest> = serde_json::from_value(receipt["cpu"]["manifest"].clone()).ok();
+    ensure!(
+        receipt["schema"] == "airk.private.l5c-focus-parity/1"
+            && receipt["complete"] == true
+            && receipt["passed"] == true
+            && receipt.get("error").is_none()
+            && tolerance <= FOCUS_PARITY_TOLERANCE
+            && rows >= FOCUS_PARITY_ROWS
+            && receipt["winners_agree"].as_u64() == Some(rows)
+            && worst <= tolerance,
+        "the CUDA Focus parity receipt does not show a passing parity within 1e-3"
+    );
+    ensure!(
+        cuda == Some(cuda_manifest) && cpu.is_some_and(|cpu| cpu_manifests.contains(&cpu)),
+        "the CUDA Focus parity receipt is of another profile or CPU twin"
+    );
+    Ok(())
+}
+
+/// The roles a CUDA Focus profile must share byte for byte with its CPU twin.
+const FOCUS_TWIN_ROLES: [&str; 3] = ["compiler", "tokenizer", "fixture"];
+/// The profile fields a CUDA Focus profile must share with its CPU twin.
+const FOCUS_TWIN_FIELDS: [&str; 8] = [
+    "model",
+    "tasks",
+    "task_policies",
+    "max_tokens",
+    "max_candidates",
+    "compiler",
+    "abi",
+    "policy",
+];
+
+/// Binds an unreviewed strict-GPU CUDA Focus profile to a CPU twin in the
+/// roster: the same compiler, tokenizer and fixture assets, the same task,
+/// policies and limits, and, for an FP32-activation route, the same graph and
+/// weights. An FP16 Focus route has no verifiable weight lineage here and is
+/// refused. Numeric parity with the twin is not checked here; it is an LG item.
+fn require_focus_twin(cpu: &[serde_json::Value], cuda: &serde_json::Value) -> Result<()> {
+    let assets = |profile: &serde_json::Value, roles: &[&str]| -> BTreeSet<String> {
+        profile["assets"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|asset| roles.iter().any(|role| asset["role"] == *role))
+            .map(|asset| asset.to_string())
+            .collect()
+    };
+    let precision = cuda["device_execution"]["precision"].as_str();
+    ensure!(
+        precision == Some("float32"),
+        "a CUDA Focus entry needs an FP32-activation route; FP16 Focus weight lineage is not verifiable here"
+    );
+    let weights = ["model", "external_weights"];
+    let bound = cpu.iter().any(|twin| {
+        twin["device_execution"].is_null()
+            && FOCUS_TWIN_FIELDS
+                .iter()
+                .all(|field| twin[field] == cuda[field])
+            && assets(twin, &FOCUS_TWIN_ROLES) == assets(cuda, &FOCUS_TWIN_ROLES)
+            && assets(twin, &weights) == assets(cuda, &weights)
+            && !assets(cuda, &weights).is_empty()
+    });
+    ensure!(
+        bound,
+        "the CUDA Focus profile differs from every CPU Focus profile in its assets, task or limits"
+    );
+    Ok(())
 }
 
 /// The CUDA entries are distinct models: at most one Compact, one Large and
@@ -343,8 +486,15 @@ async fn run(
         .iter()
         .map(|entry| Facts::of(&entry.profile))
         .collect::<Vec<_>>();
+    let cpu_values = prepared
+        .iter()
+        .map(|entry| serde_json::to_value(&entry.profile))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
     for entry in &cuda {
         require_cuda_profile(&cpu_facts, Facts::of(&entry.profile))?;
+        if entry.profile.model == ModelChoice::FocusQwenReranker06B {
+            require_focus_twin(&cpu_values, &serde_json::to_value(&entry.profile)?)?;
+        }
     }
     require_distinct_models(
         &cuda
@@ -355,7 +505,12 @@ async fn run(
     let cuda_manifests: Vec<Sha256Digest> =
         cuda.iter().map(|entry| entry.profile.manifest).collect();
     let cuda_models: Vec<ModelChoice> = cuda.iter().map(|entry| entry.profile.model).collect();
-    let graphs = cuda_graphs(&artifacts, &cuda, started + Duration::from_secs(seconds))?;
+    let graphs = cuda_graphs(
+        &artifacts,
+        &prepared,
+        &cuda,
+        started + Duration::from_secs(seconds),
+    )?;
     let parent_pin = OpenedDirectory::open(&parent)?;
     let work_pin = crate::ipc::endpoint::create_root_at(
         &parent_pin,
@@ -852,4 +1007,101 @@ fn same_install_cuda_profile_must_be_a_distinct_unqualified_cuda_context_profile
     with_device[1].device = true;
     assert!(require_cuda_profile(&with_device, compact).is_err());
     Ok(())
+}
+
+#[test]
+fn the_cuda_roster_shape_follows_its_review_pins() -> Result<()> {
+    use ModelChoice::{ContextQwenCompact as C, ContextQwenLarge as L, FocusQwenReranker06B as F};
+    require_plan_shape(&[C], None)?;
+    require_plan_shape(&[C, L, F], Some(2))?;
+    require_plan_shape(&[F], Some(0))?;
+    // A Focus entry or two Context entries need review pins.
+    assert!(require_plan_shape(&[F], None).is_err());
+    assert!(require_plan_shape(&[C, L], None).is_err());
+    // One pin per Context entry, never per Focus entry.
+    assert!(require_plan_shape(&[C, F], Some(2)).is_err());
+    assert!(require_plan_shape(&[C, L], Some(1)).is_err());
+    // At most one Focus entry.
+    assert!(require_plan_shape(&[F, F], Some(0)).is_err());
+    Ok(())
+}
+
+#[test]
+fn a_cuda_focus_profile_must_match_its_cpu_twin() -> Result<()> {
+    use serde_json::json;
+    let asset = |name: &str, role: &str, byte: u8| json!({"name": name, "role": role, "bytes": 10, "sha256": format!("{byte:02x}").repeat(32)});
+    let cpu = json!({
+        "model": "arbiter-focus-qwen3-reranker-06b", "tasks": ["airk.focus_rank.v1"],
+        "task_policies": {"airk.focus_rank.v1": "aa"}, "max_tokens": 1024, "max_candidates": 4,
+        "compiler": "cc", "abi": {"readout": "focus_yes_no"}, "policy": "pp", "device_execution": null,
+        "assets": [asset("compiler.json", "compiler", 1), asset("tokenizer.json", "tokenizer", 2),
+                   asset("fixture.json", "fixture", 3), asset("model.onnx", "model", 4),
+                   asset("model.onnx.data", "external_weights", 5),
+                   asset("focus-relevance-metadata.json", "calibration", 6)],
+    });
+    let mut cuda = cpu.clone();
+    cuda["device_execution"] = json!({"precision": "float32", "placement": {"mode": "strict_gpu"}});
+    // A device-specific calibration asset may differ.
+    cuda["assets"][5] = asset("focus-relevance-metadata.json", "calibration", 7);
+    require_focus_twin(std::slice::from_ref(&cpu), &cuda)?;
+    for (field, value) in [
+        ("max_tokens", json!(512)),
+        ("max_candidates", json!(8)),
+        ("tasks", json!(["airk.context_action.v1"])),
+        ("compiler", json!("other")),
+    ] {
+        let mut changed = cuda.clone();
+        changed[field] = value;
+        assert!(
+            require_focus_twin(std::slice::from_ref(&cpu), &changed).is_err(),
+            "{field}"
+        );
+    }
+    for (index, role) in [
+        (0, "compiler"),
+        (1, "tokenizer"),
+        (2, "fixture"),
+        (4, "external_weights"),
+    ] {
+        let mut changed = cuda.clone();
+        changed["assets"][index] = asset("x", role, 9);
+        assert!(
+            require_focus_twin(std::slice::from_ref(&cpu), &changed).is_err(),
+            "{role}"
+        );
+    }
+    let mut fp16 = cuda.clone();
+    fp16["device_execution"]["precision"] = json!("float16");
+    assert!(require_focus_twin(std::slice::from_ref(&cpu), &fp16).is_err());
+    // The twin must be a CPU profile.
+    assert!(require_focus_twin(&[cuda.clone()], &cuda).is_err());
+    Ok(())
+}
+
+#[test]
+fn a_cuda_focus_entry_needs_a_passing_parity_receipt_for_its_twin() {
+    use serde_json::json;
+    let digest = |byte| Sha256Digest::from_bytes([byte; 32]);
+    let receipt = json!({"schema": "airk.private.l5c-focus-parity/1", "complete": true, "passed": true,
+        "tolerance": 0.001, "row_count": 15, "winners_agree": 15, "max_abs": 1.7e-5,
+        "cuda": {"manifest": digest(1)}, "cpu": {"manifest": digest(2)}});
+    assert!(require_focus_parity(&receipt, digest(1), &[digest(2)]).is_ok());
+    for (field, value) in [
+        ("passed", json!(false)),
+        ("complete", json!(false)),
+        ("tolerance", json!(0.01)),
+        ("row_count", json!(4)),
+        ("winners_agree", json!(14)),
+        ("max_abs", json!(0.002)),
+    ] {
+        let mut changed = receipt.clone();
+        changed[field] = value;
+        assert!(
+            require_focus_parity(&changed, digest(1), &[digest(2)]).is_err(),
+            "{field}"
+        );
+    }
+    // The receipt must be of this CUDA profile and of a CPU twin in the roster.
+    assert!(require_focus_parity(&receipt, digest(3), &[digest(2)]).is_err());
+    assert!(require_focus_parity(&receipt, digest(1), &[digest(4)]).is_err());
 }

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Inputs of a two-entry CUDA lifetime (plan 12.5.2 item 4): asset directories and the pair spec.
+"""Inputs of a CUDA pair lifetime (plan 12.5.2 item 4): asset directories and the pair spec.
 
 Evaluation tooling, never product. Runs as the verified human with ``python -I -B``.
 
@@ -29,7 +29,9 @@ extra CUDA rows:
 An entry file names ``profile``/``profile_sha256``, ``assets`` (a directory built by
 ``assets``), ``review``/``review_sha256`` (the pass-1 graph diagnostic receipt) and
 ``pass1_profile_sha256``. A CUDA Focus entry (a strict-GPU profile) names no
-review: the service verifies its placement against the live session.
+review; it names ``parity``/``parity_sha256``, the ``l5c_focus_parity`` receipt
+against its CPU twin. The service verifies its placement against the live
+session and re-checks the parity receipt.
 """
 
 import argparse
@@ -98,6 +100,10 @@ def build_assets(profile_path, profile_sha256, map_path, map_sha256, out, artifa
     require(under(out.parent, artifacts) and not out.exists(), "the asset directory must be fresh and under artifacts")
     names = [asset["name"] for asset in profile["assets"]]
     require(len(set(names)) == len(names) and set(names) <= set(mapping), "the asset map must name every asset")
+    for name in names:
+        # A plain file name only: no directory part, drive or parent step.
+        require(isinstance(name, str) and name and Path(name).name == name and not os.path.splitdrive(name)[0]
+                and name not in (".", ".."), f"asset name {name!r} is not a plain file name")
     sources = {}
     for asset in profile["assets"]:
         source = Path(mapping[asset["name"]].removeprefix("\\\\?\\"))
@@ -108,15 +114,24 @@ def build_assets(profile_path, profile_sha256, map_path, map_sha256, out, artifa
         sources[asset["name"]] = source
     out.mkdir()
     rows, copied = [], 0
-    for asset in profile["assets"]:
-        target = out / asset["name"]
-        with open(sources[asset["name"]], "rb") as reader, open(target, "xb") as writer:
-            shutil.copyfileobj(reader, writer, 4 << 20)
-        require(target.stat().st_size == asset["bytes"] and sha256(target) == asset["sha256"] and links(target) == 1
-                and links(sources[asset["name"]]) == 1, f"copy of {asset['name']} differs from its declaration")
-        copied += asset["bytes"]
-        rows.append({"name": asset["name"], "role": asset["role"], "bytes": asset["bytes"], "sha256": asset["sha256"],
-                     "source": str(sources[asset["name"]]), "copy": str(target)})
+    try:
+        for asset in profile["assets"]:
+            target = out / asset["name"]
+            with open(sources[asset["name"]], "rb") as reader, open(target, "xb") as writer:
+                shutil.copyfileobj(reader, writer, 4 << 20)
+            require(target.stat().st_size == asset["bytes"] and sha256(target) == asset["sha256"]
+                    and links(target) == 1 and links(sources[asset["name"]]) == 1,
+                    f"copy of {asset['name']} differs from its declaration")
+            copied += asset["bytes"]
+            rows.append({"name": asset["name"], "role": asset["role"], "bytes": asset["bytes"],
+                         "sha256": asset["sha256"], "source": str(sources[asset["name"]]), "copy": str(target)})
+    except BaseException as error:
+        # The named cleanup point: remove the partial copy and keep a receipt of why.
+        shutil.rmtree(out, ignore_errors=True)
+        write_new(out.parent / (out.name + ".failed.json"),
+                  {"schema": ASSETS_SCHEMA + "/failed", "directory": str(out), "removed": not out.exists(),
+                   "copied_bytes_before_failure": copied, "error": f"{type(error).__name__}: {error}"})
+        raise
     receipt = {"schema": ASSETS_SCHEMA, "profile": {"path": str(profile_path), "sha256": profile_sha256,
                "manifest": profile["manifest"], "id": profile["profile_id"], "model": profile["model"]},
                "asset_map": {"path": str(map_path), "sha256": map_sha256}, "directory": str(out),
@@ -142,10 +157,17 @@ def entry_input(entry):
            "fixtures": str(fixture)}
     device = profile.get("device_execution") or {}
     if MODELS.get(profile["model"]) == "focus":
-        require(set(entry) == {"profile", "profile_sha256", "assets"}, "a Focus entry names no review")
+        require(set(entry) == {"profile", "profile_sha256", "assets", "parity", "parity_sha256"},
+                "a Focus entry names its parity receipt and no review")
         require(device.get("backend") == "cuda" and (device.get("placement") or {}).get("mode") == "strict_gpu",
                 "a CUDA Focus entry is a strict-GPU profile")
-        return profile, row, None, None
+        parity = read_pinned(entry["parity"], entry["parity_sha256"])
+        require(parity.get("schema") == "airk.private.l5c-focus-parity/1" and parity.get("complete") is True
+                and parity.get("passed") is True and (parity.get("cuda") or {}).get("manifest") == profile["manifest"]
+                and (parity.get("tolerance") or 1) <= 1e-3 and (parity.get("row_count") or 0) >= 8
+                and parity.get("winners_agree") == parity.get("row_count"),
+                "the Focus parity receipt is not a passing parity of this profile")
+        return profile, row, {"path": str(entry["parity"]), "sha256": entry["parity_sha256"]}, None
     review = read_pinned(entry["review"], entry["review_sha256"])
     reviewed = review.get("profile") or {}
     require(review.get("schema") == "airk.private.l5a-gpu/1" and review.get("step") == "graph"
@@ -174,14 +196,17 @@ def build_pair(entries, rows, out):
     require(under(out.parent, ARTIFACTS) and not out.exists(), "the pair directory must be fresh and under artifacts")
     require(1 <= len(entries) <= 3, "a pair has one to three CUDA entries")
     roster, reviews, adapters, profile_rows, models = [], [], set(), {}, set()
+    focus_parity = None
     for name, entry in sorted(entries.items()):
         profile, row, pin, uuid = entry_input(entry)
         model = MODELS.get(profile["model"])
-        require(model is not None and model not in models, "one Compact and one Large entry at most")
+        require(model is not None and model not in models, "at most one Compact, one Large and one Focus entry")
         models.add(model)
         roster.append(row)
         stage = "focus" if model == "focus" else "context"
-        if pin is not None:
+        if stage == "focus":
+            focus_parity = pin
+        elif pin is not None:
             # Review pins follow the Context entries in roster order, as the service zips them.
             reviews.append(pin)
             adapters.add(json.dumps(uuid))
@@ -195,6 +220,8 @@ def build_pair(entries, rows, out):
     roster_sha = write_new(out / "roster.json", roster)
     pair = {"schema": PAIR_SCHEMA, "roster": {"path": str(out / "roster.json"), "sha256": roster_sha},
             "reviews": reviews, "adapter_uuid": json.loads(adapters.pop()), "profiles": profile_rows}
+    if focus_parity is not None:
+        pair["focus_parity"] = focus_parity
     pair_sha = write_new(out / "pair.json", pair)
     return pair, pair_sha
 

@@ -532,24 +532,29 @@ impl Owner {
         use std::sync::atomic::Ordering;
 
         let shared = &self.context.devices;
-        let active: Vec<_> = {
+        let active: Option<Vec<_>> = {
             let state = shared
                 .state
                 .lock()
                 .map_err(|_| anyhow::anyhow!("GPU policy unavailable"))?;
-            if !shared.apply_gpu_allowed(allowed) {
-                return Ok(());
+            if shared.apply_gpu_allowed(allowed) {
+                shared.generation.fetch_add(1, Ordering::AcqRel);
+                Some(
+                    [Stage::Focus, Stage::Context]
+                        .into_iter()
+                        .filter(|stage| {
+                            state.runners.contains(stage)
+                                || state.ready.contains(stage)
+                                || state.devices.contains_key(stage)
+                        })
+                        .collect(),
+                )
+            } else {
+                None
             }
-            shared.generation.fetch_add(1, Ordering::AcqRel);
-            [Stage::Focus, Stage::Context]
-                .into_iter()
-                .filter(|stage| {
-                    state.runners.contains(stage)
-                        || state.ready.contains(stage)
-                        || state.devices.contains_key(stage)
-                })
-                .collect()
         };
+        // Private evaluation entries are released on every revocation, even an
+        // unchanged one, so a repeated revocation retries a failed release.
         #[cfg(all(
             windows,
             target_arch = "x86_64",
@@ -557,6 +562,9 @@ impl Owner {
             feature = "gpu-cuda"
         ))]
         self.apply_evaluation_gpu_policy(allowed)?;
+        let Some(active) = active else {
+            return Ok(());
+        };
         if active.is_empty() {
             return Ok(());
         }

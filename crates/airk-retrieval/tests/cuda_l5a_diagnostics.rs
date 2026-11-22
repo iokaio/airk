@@ -1139,3 +1139,152 @@ fn l5c_switch() -> Result<()> {
     flush(&output, &receipt)?;
     run
 }
+
+/// Name -> path map of every file in one asset directory (a CPU roster entry).
+fn directory_files(directory: &Path) -> Result<Files> {
+    let mut map = BTreeMap::new();
+    for entry in std::fs::read_dir(directory)? {
+        let entry = entry?;
+        if entry.file_type()?.is_file() {
+            map.insert(entry.file_name().to_string_lossy().into_owned(), entry.path());
+        }
+    }
+    Ok(Files(map))
+}
+
+/// The parity rule a CUDA Focus entry must meet against its CPU twin: every
+/// winner agrees and every raw score is within the recorded tolerance.
+const L5C_FOCUS_TOLERANCE: f64 = 1e-3;
+
+/// Focus parity on the actual A6000 (review M2 of the CUDA Focus seam): the
+/// CPU Focus profile and its CUDA twin score the same compiled pairs (the
+/// worst-case full-width pair and the profile fixture's real pairs) in one
+/// process and one lease, CPU first, then CUDA. The receipt records every
+/// raw score of both, the largest difference, winner agreement and the
+/// tolerance, and the seam pins it.
+///
+/// ```text
+/// L5C_CPU_FOCUS_PROFILE(_SHA256), L5C_CPU_FOCUS_ASSETS (directory)
+/// L5C_CUDA_FOCUS_PROFILE(_SHA256), L5C_CUDA_FOCUS_ASSET_MAP(_SHA256), L5A_PLAN
+/// L5A_CONTROL_PARENT, L5A_DEADLINE_S, L5C_OUTPUT (fresh file)
+/// ```
+#[test]
+#[ignore = "L5C GPU: CPU against CUDA Focus parity on fixed pairs on the actual A6000"]
+fn l5c_focus_parity() -> Result<()> {
+    let started = Instant::now();
+    let (cpu_path, raw_cpu, cpu_sha) = pinned("L5C_CPU_FOCUS_PROFILE")?;
+    let (cuda_path, raw_cuda, cuda_sha) = pinned("L5C_CUDA_FOCUS_PROFILE")?;
+    let (map_path, raw_map, map_sha) = pinned("L5C_CUDA_FOCUS_ASSET_MAP")?;
+    let cpu: Profile = serde_json::from_slice(&raw_cpu)?;
+    let cuda: Profile = serde_json::from_slice(&raw_cuda)?;
+    ensure!(
+        cpu.model == ModelChoice::FocusQwenReranker06B
+            && cuda.model == cpu.model
+            && cpu.device_execution.is_none()
+            && cuda.device_execution.is_some(),
+        "parity needs a CPU Focus profile and its CUDA twin"
+    );
+    let cpu_assets = PathBuf::from(env("L5C_CPU_FOCUS_ASSETS")?);
+    let cpu_source = directory_files(&cpu_assets)?;
+    let cuda_source = files(&raw_map)?;
+    let plan = plan()?;
+    let output = PathBuf::from(env("L5C_OUTPUT")?);
+    let mut receipt = json!({
+        "schema": "airk.private.l5c-focus-parity/1", "complete": false, "passed": false,
+        "cpu": {"path": cpu_path, "sha256": cpu_sha, "manifest": cpu.manifest, "id": cpu.profile_id,
+                "assets": cpu_assets},
+        "cuda": {"path": cuda_path, "sha256": cuda_sha, "manifest": cuda.manifest, "id": cuda.profile_id,
+                 "asset_map": {"path": map_path, "sha256": map_sha}},
+        "tolerance": L5C_FOCUS_TOLERANCE, "math_environment": math_environment(),
+        "pid": std::process::id(), "image": std::env::current_exe()?,
+        "qualification": false, "product_admission": false,
+    });
+    write_fresh(&output, &receipt)?;
+    let run = (|| -> Result<()> {
+        let deadline = deadline_from_env(900)?;
+        let n = native((Instant::now() + Duration::from_secs(110)).min(deadline))?;
+        // SAFETY: the actual exclusive lease is retained by `n` throughout.
+        let catalog = unsafe {
+            EvaluationCatalog::from_native_lease(n.lease.clone(), vec![cpu.clone(), cuda.clone()])?
+        };
+        let compiler_asset = cpu.assets.iter().find(|a| a.role == AssetRole::Compiler).context("compiler")?;
+        let tokenizer_asset = cpu.assets.iter().find(|a| a.role == AssetRole::Tokenizer).context("tokenizer")?;
+        let compiler = Compiler::from_verified(
+            &cpu_source.read_asset(compiler_asset)?,
+            &cpu_source.read_asset(tokenizer_asset)?,
+        )?;
+        let fixture = cpu
+            .assets
+            .iter()
+            .find(|a| a.role == AssetRole::Fixture)
+            .map(|a| cpu_source.read_asset(a))
+            .transpose()?;
+        let inputs = focus_inputs(&compiler, fixture.as_deref(), cpu.max_tokens)?;
+        let score = |scorer: &Scorer| -> Result<(Vec<Vec<f32>>, Vec<u64>)> {
+            let mut scores = Vec::new();
+            let mut times = Vec::new();
+            for (_, input, _) in &inputs {
+                let t = Instant::now();
+                scores.push(scorer.score_with_deadline(input, deadline)?);
+                scorer.synchronize(deadline)?;
+                times.push(t.elapsed().as_micros() as u64);
+            }
+            Ok((scores, times))
+        };
+        let t = Instant::now();
+        let scorer = Scorer::open(catalog.execution_profile(cpu.manifest)?, &cpu_source)?;
+        receipt["cpu"]["open_us"] = json!(t.elapsed().as_micros());
+        let (cpu_scores, cpu_times) = score(&scorer)?;
+        drop(scorer);
+        let adapters = n.runtime.adapters(deadline)?;
+        ensure!(adapters.len() == 1, "exactly one adapter required");
+        let device = n.runtime.device(adapters[0].uuid, deadline)?;
+        let execution = catalog
+            .execution_profile(cuda.manifest)?
+            .bind_cuda_probe(device.clone(), plan, deadline)?;
+        let t = Instant::now();
+        let scorer = Scorer::open(execution, &cuda_source)?;
+        receipt["cuda"]["open_us"] = json!(t.elapsed().as_micros());
+        receipt["cuda"]["placement"] = json!(scorer.device_placement()?.as_ref().map(placement_summary));
+        let (cuda_scores, cuda_times) = score(&scorer)?;
+        drop(scorer);
+        let mut rows = Vec::new();
+        let mut worst = 0.0f64;
+        let mut winners = 0usize;
+        for (index, (id, input, _)) in inputs.iter().enumerate() {
+            let (a, b) = (&cpu_scores[index], &cuda_scores[index]);
+            ensure!(a.len() == b.len() && !a.is_empty(), "score widths differ");
+            let diff = a
+                .iter()
+                .zip(b)
+                .map(|(x, y)| (f64::from(*x) - f64::from(*y)).abs())
+                .fold(0.0, f64::max);
+            let winner = |v: &[f32]| {
+                v.iter()
+                    .enumerate()
+                    .max_by(|x, y| x.1.total_cmp(y.1))
+                    .map(|(i, _)| i)
+            };
+            let agree = winner(a) == winner(b);
+            winners += usize::from(agree);
+            worst = worst.max(diff);
+            rows.push(json!({"id": id, "tokens": input.input_ids.len(), "cpu": a, "cuda": b,
+                "max_abs": diff, "winner_agrees": agree,
+                "cpu_us": cpu_times[index], "cuda_us": cuda_times[index]}));
+        }
+        receipt["rows"] = json!(rows);
+        receipt["row_count"] = json!(inputs.len());
+        receipt["winners_agree"] = json!(winners);
+        receipt["max_abs"] = json!(worst);
+        receipt["passed"] = json!(winners == inputs.len() && worst <= L5C_FOCUS_TOLERANCE);
+        Ok(())
+    })();
+    receipt["elapsed_s"] = json!(started.elapsed().as_secs_f64());
+    receipt["process_cuda_poisoned"] = json!(cuda::process_poisoned());
+    match &run {
+        Ok(()) => receipt["complete"] = json!(true),
+        Err(error) => receipt["error"] = error_value(error),
+    }
+    flush(&output, &receipt)?;
+    run
+}

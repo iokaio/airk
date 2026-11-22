@@ -13,10 +13,31 @@ impl Owner {
         if allowed {
             return Ok(());
         }
-        // Every stage that holds private CUDA entries: Focus and Context.
-        release_private_gpu(&self.focus, Stage::Focus)?;
-        release_private_gpu(&self.context, Stage::Context)
+        // Every stage that holds private CUDA entries. Each stage is released
+        // even when another stage's release fails, and the errors are joined.
+        release_every_stage([
+            Box::new(|| release_private_gpu(&self.context, Stage::Context))
+                as Box<dyn FnOnce() -> Result<()> + '_>,
+            Box::new(|| release_private_gpu(&self.focus, Stage::Focus)),
+        ])
     }
+}
+
+/// Runs every stage's release, then joins any failures into one error, so one
+/// stage's failure never leaves another stage's private entries resident.
+fn release_every_stage<'a>(
+    releases: impl IntoIterator<Item = Box<dyn FnOnce() -> Result<()> + 'a>>,
+) -> Result<()> {
+    let failures: Vec<String> = releases
+        .into_iter()
+        .filter_map(|release| release().err().map(|error| format!("{error:#}")))
+        .collect();
+    ensure!(
+        failures.is_empty(),
+        "private GPU release incomplete: {}",
+        failures.join("; ")
+    );
+    Ok(())
 }
 
 /// Releases and drains every private CUDA entry one stage's native owner
@@ -124,7 +145,7 @@ fn release_private_gpu(owner: &StageOwner, stage: Stage) -> Result<()> {
                 Ok(()) => {
                     // The isolated fixture authenticates exactly one variant per model.
                     state.phase = Availability::Constrained;
-                    state.reason = "The private CUDA profile was released. This fixture has no same-model CPU variant.".into();
+                    state.reason = "GPU use is off; the private CUDA profile was released. Select this stage's CPU profile to use the model again.".into();
                 }
                 Err(error) => {
                     state.phase = Availability::Draining;
@@ -237,7 +258,7 @@ impl PrivateGpuRoute {
             Self::Focus { expires } => *expires,
         }
     }
-    fn stage(&self) -> Stage {
+    pub(super) fn stage(&self) -> Stage {
         match self {
             Self::Answer(_) => Stage::Context,
             Self::Focus { .. } => Stage::Focus,
@@ -708,6 +729,46 @@ impl EvaluationOwner {
 #[cfg(test)]
 mod execution_observer_tests {
     use super::*;
+
+    #[cfg(all(windows, target_arch = "x86_64", feature = "gpu-cuda"))]
+    #[test]
+    fn a_failed_focus_release_still_releases_context_and_reports_both() {
+        let context_released = std::cell::Cell::new(false);
+        let result = release_every_stage([
+            Box::new(|| -> Result<()> {
+                context_released.set(true);
+                Ok(())
+            }) as Box<dyn FnOnce() -> Result<()> + '_>,
+            Box::new(|| anyhow::bail!("focus lifecycle unavailable")),
+        ]);
+        assert!(context_released.get());
+        assert!(format!("{:#}", result.unwrap_err()).contains("focus lifecycle unavailable"));
+        // Order does not matter: a failure first still runs the rest.
+        let focus_released = std::cell::Cell::new(false);
+        let result = release_every_stage([
+            Box::new(|| anyhow::bail!("context drain")) as Box<dyn FnOnce() -> Result<()> + '_>,
+            Box::new(|| -> Result<()> {
+                focus_released.set(true);
+                Ok(())
+            }),
+        ]);
+        assert!(focus_released.get() && result.is_err());
+        assert!(release_every_stage(Vec::new()).is_ok());
+    }
+
+    #[cfg(all(
+        windows,
+        target_arch = "x86_64",
+        feature = "test-support",
+        feature = "gpu-cuda"
+    ))]
+    #[test]
+    fn private_routes_name_their_stage() {
+        let expires = Instant::now() + Duration::from_secs(60);
+        let focus = PrivateGpuRoute::Focus { expires };
+        assert_eq!(focus.stage(), Stage::Focus);
+        assert_eq!(focus.expires(), expires);
+    }
 
     #[cfg(all(windows, target_arch = "x86_64", feature = "gpu-cuda"))]
     #[test]
