@@ -17,12 +17,6 @@ use tokio::{
 };
 mod agent_plane;
 mod agents;
-// Wired into the service's Answer path once the v3 MCP switch lands
-// (answer_jobs/CONTRACT.md, "Wiring").
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the Answer path calls it after the v3 MCP switch")
-)]
 mod answer_jobs;
 mod arbiter;
 #[cfg(all(feature = "local-inference", feature = "test-support"))]
@@ -109,6 +103,10 @@ struct State {
     admin: Arc<airk_https::admin_plane::AdminPlane>,
     /// U105/U106(d): open agent selection leases, in memory.
     agents: Mutex<agent_plane::AgentPlane>,
+    /// The Answer job table (final plan section 12.4.1), in memory. The
+    /// project owners that run in this service find it by control root
+    /// (`answer_jobs::for_control`) for as long as this state holds it.
+    _answer_jobs: Arc<answer_jobs::ServiceAnswerJobs>,
 }
 
 /// The system clock in Unix milliseconds, as the planes read it.
@@ -1625,6 +1623,9 @@ async fn serve_owned(
         instance,
         log.clone(),
     )?;
+    // The Answer job table exists before any project owner can ask for it.
+    let answer_jobs = answer_jobs::ServiceAnswerJobs::start()?;
+    answer_jobs::install(&root.canonicalize()?, &answer_jobs);
     let supervisor = airk_supervisor::project_supervisor::Supervisor::start(
         root.canonicalize()?,
         instance,
@@ -1633,7 +1634,8 @@ async fn serve_owned(
         sources.telemetry_complete.clone(),
         log.clone(),
         _ownership.clone(),
-        airk_supervisor::runtime_metadata::project_worker_hooks(),
+        airk_supervisor::runtime_metadata::project_worker_hooks()
+            .with_answer_jobs(answer_jobs::for_control),
     )?;
     let mut legacy_connections = false;
     let catalog_gate = match airk_store::service::registry::ServiceRegistry::open(root, instance) {
@@ -1786,6 +1788,7 @@ async fn serve_owned(
         selection_control,
         admin: Arc::new(admin),
         agents: Mutex::new(agents(instance, catalog_gate_for_agents)),
+        _answer_jobs: answer_jobs,
     });
     #[cfg(feature = "local-inference")]
     if let Some(owner) = &state.arbiter {

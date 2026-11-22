@@ -18,6 +18,8 @@ use retrieve::Probe;
 use state::{NeedState, PartState, RoundState};
 use std::collections::BTreeMap;
 
+mod admission;
+pub use admission::AdmissionPlan;
 mod compose;
 mod coverage;
 mod decide;
@@ -143,8 +145,19 @@ impl crate::Kernel {
     /// is returned, on every path.
     pub fn answer_with(
         &self,
+        request: v3::ContextRequestV3,
+        env: AnswerEnv<'_>,
+    ) -> Result<AnswerOutcome> {
+        self.answer_run(request, env, None)
+    }
+
+    /// The loop behind `answer_with` and `answer_admitted`; `plan` is the
+    /// service's admission plan (`admission`), when there is one.
+    fn answer_run(
+        &self,
         mut request: v3::ContextRequestV3,
         env: AnswerEnv<'_>,
+        plan: Option<&AdmissionPlan>,
     ) -> Result<AnswerOutcome> {
         request.validate()?;
         (env.require_live)()?;
@@ -163,6 +176,9 @@ impl crate::Kernel {
             request.budget = partition.clamp(&request.budget)?;
             request.validate()?;
         }
+        // The service's admission plan bounds the loop from here on; the
+        // reply is validated against the budget as asked.
+        let admitted = admission::apply(plan, &mut request.budget)?;
         ensure!(
             self.scoped_read_fingerprint()? == Some(context.authority.fingerprint),
             "Answer source authority expired"
@@ -216,7 +232,8 @@ impl crate::Kernel {
                 .owner
                 .card_model(context.worker, context.authority, &publication_for_model)
                 .ok()
-                .flatten(),
+                .flatten()
+                .filter(|_| admitted.context_model),
             model_blocked: false,
             focus_blocked: false,
             cost: shares::CostModel::default(),
@@ -226,6 +243,7 @@ impl crate::Kernel {
             unknown_tokens: BTreeMap::new(),
             model_share: vec![],
             batch_split: false,
+            admitted,
         };
         run.split()?;
         run.plan()?;
@@ -273,6 +291,8 @@ struct Loop<'a> {
     unknown_tokens: BTreeMap<(u8, u8), usize>,
     model_share: Vec<(u8, v3::LoopStage)>,
     batch_split: bool,
+    /// The budget as asked and what the service's admission plan took away.
+    admitted: admission::Admitted,
 }
 
 struct Assessed {
@@ -1266,6 +1286,7 @@ impl Loop<'_> {
         {
             out.push(v3::Degradation::SearchFocusDeferred);
         }
+        out.extend(self.admitted.degradations.iter().cloned());
         out
     }
 
@@ -1328,7 +1349,7 @@ impl Loop<'_> {
             }
             .into());
         }
-        response.validate_with_log(&custody.log, &self.request.budget)?;
+        response.validate_with_log(&custody.log, &self.admitted.asked)?;
         if !self.parts.is_empty() {
             self.progress(0, v3::LoopStage::Union);
         }

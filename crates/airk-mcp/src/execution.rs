@@ -85,8 +85,20 @@ struct State {
     control_workers: u32,
     shared: bool,
     closing: AtomicBool,
+    /// Cancelled with `closing`, for work that waits on something else.
+    closed: tokio_util::sync::CancellationToken,
+    /// Service-owned Answer jobs running under this owner (`answer_jobs`).
+    jobs: AtomicU64,
     queued: AtomicU64,
     rejected: AtomicU64,
+}
+
+/// One running Answer job of this owner, counted until it is dropped.
+pub(crate) struct RunningJob(Arc<State>);
+impl Drop for RunningJob {
+    fn drop(&mut self) {
+        self.0.jobs.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 
 impl Default for Admission {
@@ -98,6 +110,8 @@ impl Default for Admission {
             control_workers: CONTROL_WORKERS,
             shared: false,
             closing: AtomicBool::new(false),
+            closed: Default::default(),
+            jobs: AtomicU64::new(0),
             queued: AtomicU64::new(0),
             rejected: AtomicU64::new(0),
         }))
@@ -137,6 +151,8 @@ impl Admission {
             control_workers: capacity,
             shared: true,
             closing: AtomicBool::new(false),
+            closed: Default::default(),
+            jobs: AtomicU64::new(0),
             queued: AtomicU64::new(0),
             rejected: AtomicU64::new(0),
         }))
@@ -197,6 +213,24 @@ impl Admission {
 
     pub(crate) fn close(&self) {
         self.0.closing.store(true, Ordering::Release);
+        self.0.closed.cancel();
+    }
+
+    /// Cancelled once admission is closing: an Answer waiting on the
+    /// service's job table, or running as one of its jobs, stops here.
+    pub(crate) fn closed(&self) -> tokio_util::sync::CancellationToken {
+        self.0.closed.clone()
+    }
+
+    /// Count one Answer job running under this owner until the guard drops.
+    /// Such a job may have no connection left, so its owner asks here before
+    /// it leaves as idle.
+    pub(crate) fn job_started(&self) -> RunningJob {
+        self.0.jobs.fetch_add(1, Ordering::AcqRel);
+        RunningJob(self.0.clone())
+    }
+    pub(crate) fn jobs_in_flight(&self) -> u64 {
+        self.0.jobs.load(Ordering::Acquire)
     }
 
     pub(crate) async fn shutdown(&self) {

@@ -97,6 +97,9 @@ pub(crate) enum Delivered {
     },
     /// The job failed; the same failure answers every attached call.
     Failed(String),
+    /// The job did nothing a retry could repeat and is no longer in the
+    /// table; `not_run` when it never started.
+    Dropped { message: String, not_run: bool },
     /// Nothing was queued; retry after this long.
     Busy { retry_after_ms: u64 },
 }
@@ -128,6 +131,10 @@ pub(crate) fn deliver(
                 }
             }
             JobOutcome::Failed(message) => Delivered::Failed(message.clone()),
+            JobOutcome::Dropped { message, not_run } => Delivered::Dropped {
+                message: message.clone(),
+                not_run: *not_run,
+            },
         },
         CallReply::Pending {
             ticket,

@@ -399,7 +399,9 @@ limits on publication still apply in full.
   4. **A ticketed job gets its full deadline** from its actual dispatch. An
      admitted job whose wait consumed its deadline also runs on a fresh
      window (`requeued`), because the work outlives the call. A job that
-     never waited is never `requeued` (review C4).
+     never waited is never `requeued` (review C4). On the live path a job
+     cannot run past its maker's deadline, so such a job is dropped and its
+     place in line kept: see "Wiring" below.
   5. **The ageing guard** is the dispatch key `due + 1 x enqueued`. This
      bounds every job's wait. A test shows a 600 s Answer under a stream of
      20 s Answers starting by 295 s; under pure EDF it would start at 585 s.
@@ -424,7 +426,8 @@ limits on publication still apply in full.
 
       A learned correction (an EWMA of elapsed over estimated, kept
       between 0.25 and 4) adjusts them in the meantime. It skips runs that
-      reached their deadline (review C5).
+      reached their deadline (review C5). While unmeasured, they never
+      reduce a request that did not wait: see "Wiring" below.
   11. **Publications (review C1 and S4).** The table records the
       publication a job is expected to run on at dispatch, and the runner's
       report replaces it.
@@ -446,40 +449,111 @@ limits on publication still apply in full.
   all confirmed against the source and fixed in the follow-up commit, with
   regression tests. The resolutions are in
   `answer-loop/L2b/review-ab31451e.md`, under the private run root.
-- **Wiring (design revised 22 November 2026, branch `loop/l2b-wire`):** the
-  table is not yet on the live call path. The full design is in the
-  contract's "Wiring" section, against L3-10 (b)'s handler shape.
-  - **Built now, in airk-service:**
-    - per-call work (`call_with_work`);
-    - the ticket-shaped reply for queued and running jobs
-      (`reply::pending_reply`), validated against the request budget;
-    - `reply::finished` and `reply::deliver`.
-  - **Choice: the running-job reply is a ticket.** The Core contract allows
-    a reply without parts only in the ticket shape. So a running job's reply
-    is a ticket with position 1, start 0 and the degradations fitted at its
+- **Wiring (built 22 November 2026, branch `loop/l2b-wire`):** the table is
+  on the live Answer path of every project owner that runs in the service.
+  The contract's "On the live path" section describes it. What follows is
+  each choice made and each gap found while wiring, with the fix that closed
+  it.
+  - **The call site is the MCP Answer handler, through an `airk-mcp` trait
+    the service implements** (`AnswerJobs`), as designed. Every transport
+    ends in that handler inside the owner, and only it holds the kernel's
+    verified binding (`Kernel::answer_scope`) and the kernel call the job's
+    work runs. The service state owns the table. Owners find it by control
+    root through the supervisor hook `Hooks::with_answer_jobs`, because an
+    owner reaches its service only through plain functions. A server without
+    a table, and a combined Answer member, call the kernel directly as
+    before.
+  - **Kernel: `Kernel::answer_admitted` instead of a field in `AnswerEnv`.**
+    The design named `AnswerEnv.admission`. A separate entry leaves
+    `AnswerEnv`, `answer_with` and every existing caller and test untouched,
+    which keeps this change apart from the loop work in progress. The plan
+    is `AdmissionPlan` (`answer/admission.rs`); the reply is validated
+    against the budget as asked, with the plan's reductions disclosed.
+  - **The running-job reply is a ticket.** The Core contract allows a reply
+    without parts only in the ticket shape. So a running job's reply is a
+    ticket with position 1, start 0 and the degradations fitted at its
     dispatch, rather than a partial with a continuation.
-  - **Choice: the call site is the MCP Answer handler, through an
-    `airk-mcp` trait the service implements.** It is no longer the service's
-    `tools_call` paths, which this entry first proposed. Every transport,
-    including the service's HTTPS and IPC paths, ends in that handler inside
-    the in-process owner. Only the handler holds the kernel's verified scope
-    binding (`Kernel::answer_scope`, to add) and the kernel call that the
-    job's work runs.
-  - **Choice: the configured rung only.** Until the kernel can choose a
-    Context rung per Answer (L5's lifetime switch), the service gives the
-    estimator only the configured rung and the no-model loop. Degrading
-    therefore moves only to the no-model loop.
-  - **Remaining:**
-    - the kernel `AdmissionPlan` in `AnswerEnv`, and `answer_scope`;
-    - the job-owned read context and `JobWork`;
-    - the MCP trait, its injection and the handler branch;
-    - status: **deferred until after LG** (primary's decision, 22 November
-      2026). It is within the authorized many-agent work, but the gate's
-      concurrency test reads tickets and replies, not status. Owner: the L2b
-      implementer.
-  - **Timing:** all of it lands after L3-10 (b), whose files it touches.
-- **Evidence:** the `answer_jobs::` tests in `airk-service` (29 tests),
-  listed in the contract's focused checks.
+  - **The configured rung only, now enforced by the table**
+    (`configured_rung_only`). The kernel cannot choose a Context rung per
+    Answer until L5's lifetime switch, so each job is fitted with its own
+    rung and the no-model loop alone. Before this, a Large job under
+    deadline pressure could be planned on Compact, which the kernel cannot
+    honour.
+  - **Gap found and closed: a job cannot outlive its maker's native
+    attempt.**
+    - **Plan constraint:** section 12.4.1, idea 2, the work outlives the
+      call.
+    - **What holds:** a job survives its maker's disconnect or client
+      timeout until the maker's original deadline, and a retry attaches to
+      it.
+    - **What does not:** a job cannot run past that deadline. The native
+      attempt every card and Focus call carries ends there, and the
+      kernel's original deadline can only shorten.
+    - **What was wrong:** a job the table re-windows past it (a ticketed
+      job at its dispatch, or a requeued one) would have run with an
+      expired attempt, failed at its first owner observation, and left a
+      failure that every retry attached to for ten minutes.
+    - **Fix:** such a job is not run. It is dropped without a kept failure
+      (`JobOutcome::Dropped`), its place in line is kept as a claim, and
+      the retry, by digest or by the ticket's id, is admitted in that place
+      with a window of its own. A call still waiting on the dropped job is
+      submitted again once. So a ticket holds a place in line, not a
+      running job.
+    - **Not built:** running a job past its maker's deadline needs a native
+      attempt of the job's own. That is a kernel and service attempt
+      contract change and needs a security review. Owner: L2b.
+  - **Gap found and closed: an idle owner would have stopped a running
+    job.** A project owner leaves after 15 s without a connection. A job
+    whose maker had gone would then have been ended by its own owner, and the
+    retry would have found nothing to attach to. A running job is now
+    counted as its owner's (`LocalTools::answer_jobs_in_flight`), and an
+    owner with one is not idle. A queued job keeps no owner; if its owner has
+    left when its turn comes, it is dropped as not run and its place is kept.
+  - **Gap found and closed: failures a retry may safely repeat were kept.**
+    Choice 8 keeps every failure for ten minutes. A job ended by a stopping
+    owner, by its own closed context, or by a refusal typed safe to repeat
+    (`read_retry_hint`) is no longer kept; the calls waiting on it get the
+    outcome and the next call is admitted afresh. Every other failure is
+    kept as before, now with the typed receipt the direct path renders.
+  - **Gap found and closed: placeholder costs reduced a request that did
+    not wait.** With the placeholders of choice 10, the full default request
+    on Large is estimated at 408 s against the 300 s default deadline. The
+    first Answers of every service lifetime would have lost a round on a
+    figure nobody measured. Unmeasured costs (`costs_measured` false, the
+    service's setting) now only order and bound the queue: a request that
+    has its whole window runs as asked, as it did before the table. A
+    request that waited is still fitted to what is left of its window.
+    `set_costs` makes the costs measured.
+  - **Choice: the reply reserve is part of the scope.** A reply is packed to
+    its maker's reserve for verification metadata. Calls with different
+    reserves therefore never share a job.
+  - **Choice: a call waits a little less than its deadline** (a tenth of
+    its time, at most 2 s), so that a ticket for a job still queued or
+    running is delivered inside the deadline.
+  - **New typed tool error `answer_queue_busy`** (`retryable`,
+    `retry_after_ms`, `query_submitted: false`) for a call that could not be
+    queued, as designed.
+  - **Still not wired, each with its owner** (contract, "Not wired yet"):
+    queue status on the status surface (deferred until after LG, primary's
+    decision of 22 November 2026; owner L2b), `publication_changed` (L2b),
+    `set_runtime_capacity` (L5b with L2b), `set_costs` (L5b and L7), custody
+    (entry 21, L2b) and progress for attached callers (L4 and L5b).
+- **Evidence:**
+  - `airk-service`, `answer_jobs::` tests: the table (29) and the wired
+    path (`answer_jobs::wiring::`, 11), which runs the real `airk_answer`
+    handler, the real kernel loop over a real index and the real table. They
+    show two and four concurrent Answers completing two at a time with none
+    starved, attach after a client's transport cancelled the call, a ticket
+    at once and a complete answer on the retry, a disclosed reduction, and
+    `answer_queue_busy`.
+  - `airk-mcp`, `answer_jobs::` tests (4): how a failure travels, when a
+    caller's wait ends, and that a job's work runs the admitted plan and
+    only inside its maker's window.
+  - `airk-kernel`, `arbiter::answer::admission::` tests (4): the plan
+    bounds the budget, discloses each reduction against the budget asked,
+    never widens, and refuses what it cannot honour.
+  - The handler tests use a disabled native controller. They claim nothing
+    about models, devices or an installed service.
 
 Further entries are added as implementation proceeds.
 

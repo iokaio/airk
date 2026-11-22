@@ -87,3 +87,22 @@ expiry while a new one is refused. These establish clock ownership and no-replay
 behavior; they do not qualify a model, live service or real R154 outcome.
 
 Before acknowledging activation, the project worker asks the registry whether its own project already has a terminal canceled job. That receipt vetoes semantic setup, so the worker can return from setup reconciliation without inspecting the complete publication. All other projects retain the existing semantic inspection and transactional enrollment checks.
+
+## Answer job table hook (final plan section 12.4.1, L2b)
+
+`Hooks::answer_jobs` is a lookup by control root, supplied by the service
+composition root (`Hooks::with_answer_jobs`). The default finds nothing. After
+a query connection has built its session tools, and after its native Arbiter
+session when it has one, the worker asks the lookup once and, when it returns a
+table, gives it to that session (`LocalTools::set_answer_jobs`). The session's
+`airk_answer` calls then go through the service's Answer job table; every
+other tool, and every session without a table, is unchanged. The worker does
+not own the table, its queue or its results: the service does
+(`airk-service` `service_runtime/answer_jobs/CONTRACT.md`). A child-process
+owner has no table in its process, so its Answers keep the direct path.
+
+A job of that table outlives the connection of the call that made it. While
+one runs under this owner (`LocalTools::answer_jobs_in_flight`), the owner is
+not idle, so the 15-second idle exit does not end it. Every other exit (a
+drain, a quarantine, the bounded generation lifetime) is unchanged: the job
+then stops at its next fence and the table keeps no failure for it.

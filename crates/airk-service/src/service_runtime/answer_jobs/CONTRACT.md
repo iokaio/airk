@@ -8,9 +8,12 @@ still owns everything inside the Answer.
 
 ## Interface
 
-`AnswerJobTable::call(scope, request, model, publication, call_deadline)` is
-the one entry point for the service's Answer path. The other entry points are
-`status`, `set_runtime_capacity`, `set_costs` and `publication_changed`.
+`AnswerJobTable::call_with_work(scope, request, model, publication,
+call_deadline, work)` is the one entry point for the service's Answer path
+(`ServiceAnswerJobs`, see "On the live path"). `call` is the same without
+work, for the table's own tests. The other entry points are `status`,
+`set_runtime_capacity`, `set_costs` and `publication_changed`; none of them
+is wired yet.
 
 - **Construction.** The table is built inside the service's Tokio runtime and
   keeps its handle. It spawns every job on that handle, so it may be
@@ -49,6 +52,11 @@ the one entry point for the service's Answer path. The other entry points are
 
   It returns the value, the publication the job actually ran on and the
   bytes to count against retention.
+- **A job that did nothing a retry could repeat.** A runner or a work that
+  returns `Unretained` ends its job as `JobOutcome::Dropped`: the outcome
+  goes to the calls waiting on the job, and the table keeps nothing and
+  learns nothing from it. With `not_run`, the job never started, and its
+  place in line is kept for a retry (see "Scheduling").
 
 ## Admission
 
@@ -108,6 +116,28 @@ correction: an EWMA of elapsed over estimated time, kept between 0.25 and 4.
 - The default costs are placeholders until L5b and L7 measure them per
   device (answer-loop-changes entry 19).
 
+**Unmeasured costs.** While the costs are placeholders (`costs_measured` is
+false, the service's setting until `set_costs` feeds measured figures), they
+order and bound the queue, but they never reduce a job that still has its
+whole window. A request that did not wait runs as asked, as it did before
+the table existed. A job that waited is fitted to what is left of its window,
+as above. A run under unmeasured costs teaches the correction whenever it
+finished inside its window.
+
+Known limit: a job that waited is fitted with the placeholders and the
+correction learned so far. Until a few runs have taught the correction, a
+waiting job can lose more than it needed to. (Before step LH, Large's
+placeholder put the full default request at 408 s; the Arbiter's puts it at
+204 s.) Every such reduction is disclosed. Measured costs (`set_costs`)
+remove the limit.
+
+**One rung per job.** With `configured_rung_only` (the service's setting),
+each job is fitted with its own Context rung and the no-model loop alone,
+because the kernel cannot change the rung per Answer. The ladder ends at the
+no-model loop. Since step LH retired Large, the Arbiter is the only rung and
+the ladder never climbs, so this setting changes no plan today; it is kept so
+that a second rung could never be chosen per job by accident.
+
 **Busy.** The limits on queued and running jobs are:
 - 8 per scope;
 - 32 per principal, meaning the installation and source-authority
@@ -129,12 +159,48 @@ Past any of them, the call gets `Busy` and no job is made.
     x t0`, so every job's wait is bounded and no request starves.
   - Turn-taking per round inside the model lane is the lane's job (L4 and
     L5b), not the table's.
+- **With the model lane** (L4, `airk-inference`
+  `pool/arbiter/CONTRACT.md`, "Lane fairness for Answer /3 parts"). The two
+  bound different things and do not overlap:
+  - **The table** decides which Answers gather at all, service-wide and
+    across indexes: at most the gathering limit, earliest deadline first with
+    ageing. A queued Answer holds no lane job.
+  - **The lane** shares the one model compute thread among the Answers that
+    are gathering. It keys every card call and Focus pair by the Answer's
+    native attempt and its parts, lets one attempt hold at most three of an
+    index's four jobs, and runs next a job of another index or attempt than
+    the last. This is the turn-taking of plan section 12.4.1, idea 4; it is
+    not by deadline.
+  - **One table job is one lane attempt.** A job runs under its maker's
+    native attempt, so every call attached to it shares that one lane
+    identity, and no call adds lane jobs by attaching.
+  - **At the floor of two**, two Answers on one index both get model turns:
+    one holds at most three lane jobs, so the other always has one.
+  - **Above two**, the lane does not queue what it cannot admit: a card call
+    or Focus pair refused at the lane (four jobs on the index, or eight
+    queued in all) is a known non-dispatch, and the loop takes the
+    deterministic order for it and discloses that. So a gathering limit
+    above what the lanes serve costs model share, not time. That is why the
+    limit is to come from L5b's runtime capacity and not from a guess.
+  - **The estimator prices a job as if it had the lane to itself.** Two
+    Answers gathering on one model thread each take longer than one alone.
+    The learned correction (up to four times) absorbs that from observed
+    runs; the cost table does not model it.
 - **Each started job runs on its own task**, and the runner is called inside
   that task. Dropping or timing out a call never cancels the job. A runner
   that panics, before or after returning its future, finishes the job as
   `Failed` and frees its slot.
 - **Waiting.** A caller still receives an outcome that is signalled at its
   deadline, or one that the table has since stopped retaining.
+- **A place in line.** A job that reports it never ran is removed, and its
+  order key (the deadline and arrival it was ordered by) is kept as a claim
+  for its scope and request, for the retention time and at most one per
+  scope and request.
+  - The next call for that scope and request, by digest or with the dropped
+    job's id as its continuation, is admitted afresh with that order key and
+    a window of its own. It goes where the dropped job stood, ahead of every
+    request that arrived after it.
+  - A claim is used once, and it is never visible to another scope.
 
 ## Security: attach, retention and status
 
@@ -145,6 +211,10 @@ Past any of them, the call gets `Busy` and no job is made.
     old configuration are not attached.
   - The service must build the scope only from the caller's own verified
     binding. A client-supplied value is never a scope.
+  - On the live path the scope also folds in the caller's reply reserve
+    (`with_reply_reserve`), so a reply packed for one reserve is never
+    delivered to a call that needs another. The principal and the index, and
+    so every limit, are unchanged by it.
 - **Attach by digest.** A request attaches to an existing job only when its
   scope and request digest are both equal, and only under the no-loss rule
   above.
@@ -155,6 +225,10 @@ Past any of them, the call gets `Busy` and no job is made.
   scope, and only to the same request on a current publication.
   - An unknown, expired or foreign continuation id gets one identical
     refusal, so an id never reveals whether another scope's job exists.
+  - The id of a job that was dropped without running is honoured once,
+    within its own scope and for the same request, while its claim lasts:
+    the call is admitted afresh in that job's place. In any other scope, and
+    after the claim is used or expired, it is an unknown id like any other.
   - A mismatched request and a superseded publication are refused
     separately, but only within the scope that owns the job.
 - **Ids.** A job id is a framed SHA-256 over a random 32-byte salt generated
@@ -194,21 +268,56 @@ Past any of them, the call gets `Busy` and no job is made.
   carries the cost correction and the recent cost samples. It never carries a
   job id, digest, scope, question or result.
 
-## Wiring
+## On the live path
 
-The table is not yet on the live call path. Built and tested now, in this
-crate:
-- the table;
-- per-call work;
-- the reply builder `reply::pending_reply`;
-- the outcome adapter `reply::finished`;
-- delivery, `reply::deliver`.
+An `airk_answer` call that reaches a project owner running in the service goes
+through the table. Every other composition (stdio, a child-process owner, a
+local session, a server without a table) calls the kernel directly, exactly as
+before. So does a combined Answer member, which runs under its parent's
+allowance and is never a job of its own.
 
-The remaining steps are designed below. They touch files that L3-10 (b) is
-still editing, so they land after it, against its handler shape: the
-`answer` tool takes `RequestContext`, reports progress through
-`ProgressReporter`, and calls `kernel.answer_with(request, AnswerEnv {..})`
-inside `execute_verified_response`.
+**The pieces.**
+- **Kernel** (`airk-kernel`, `arbiter/answer/admission.rs`): `AdmissionPlan`,
+  `Kernel::answer_admitted`, `Kernel::answer_scope` and
+  `Kernel::answer_context_model`. Their contract is in the kernel arbiter
+  contract, "Admission plan".
+- **MCP seam** (`airk-mcp`, `answer_jobs.rs`): the `AnswerJobs` trait with
+  `AnswerCall`, `AnswerAdmission`, `AnswerFailure` and `AnswerDelivery`, the
+  handler's caller side (`run`) and the job's work. `airk-mcp` cannot depend
+  on this crate, so the service implements the trait.
+- **Service** (`wiring.rs`): `ServiceAnswerJobs` implements `AnswerJobs` for
+  the table, and the service state owns it. `install` and `for_control` make
+  it findable by control root, because a project owner reaches its service
+  only through the supervisor's plain-function `Hooks`
+  (`Hooks::with_answer_jobs`).
+- **Owner** (`airk-supervisor`, `project_worker.rs`): each query connection's
+  session is given the table once (`LocalTools::set_answer_jobs`).
+
+**One call.**
+1. The handler admits the call and selects its read snapshot as for any read.
+   It validates the request and asks the kernel for the verified binding
+   (`answer_scope`) and the Context model. Nothing a client sent is part of
+   the scope.
+2. It hands the table the binding, the request with its deadline clipped to
+   the time the call really has, the Context model, its reply reserve, the
+   deadline of its wait and its work.
+3. The table attaches, admits, tickets or refuses, as above. The scope is the
+   binding's digest with the reply reserve folded in
+   (`AnswerScope::with_reply_reserve`): a reply is packed to its maker's
+   reserve, so calls with different reserves never share a job. The
+   publication is the binding's.
+4. The call waits for the job until shortly before its own deadline, or until
+   its own cancellation, or until its owner stops. A tenth of its time, at
+   most 2 s, is kept back so that a ticket is delivered inside the deadline.
+   A caller that is cancelled or times out ends only its own wait.
+5. The calling handler renders what comes back under the caller's own
+   response mode, verification controls, usage span and delivery guard:
+   - a finished reply, also for a call that attached;
+   - a ticket-shaped reply for a job still queued or running (below);
+   - `answer_queue_busy` when nothing was queued: a typed, retryable tool
+     error with `retry_after_ms` and `query_submitted: false`;
+   - the job's failure, with the typed receipt the direct path would have
+     rendered when the job kept one.
 
 **Replies for a job without a result.** The Core reply contract allows a
 reply without parts only in the ticket shape: partial at `admission` with
@@ -223,63 +332,80 @@ handle.
 `pending_reply` builds both and validates them against the request budget
 before returning.
 
-1. **Kernel: admission plan and scope.**
-   - `AnswerEnv` gains `admission: Option<&AdmissionPlan>`. The plan is a
-     kernel type: parts, sub-needs, rounds, whether the Context model is
-     used, and the degradations.
-   - `answer_with` bounds `Gathering` by the plan's shape, and when the
-     plan says so it runs the no-model loop. It appends the plan's
-     disclosures to the reply before validating it.
-   - A new `Kernel::answer_scope()` returns the binding that `answer_with`
-     checks before it runs. The handler builds its `AnswerScope` from that,
-     never from client input.
-   - **The rung.** Until the kernel can choose a Context rung per Answer,
-     which needs L5's lifetime switch, the service passes the configured
-     rung as `model`. Its cost table holds only that rung and the no-model
-     loop, so the ladder degrades only to no model.
-2. **Reply builders:** done (`reply.rs`, above).
-3. **Service: ownership and work.**
-   - The service state owns one `AnswerJobTable<ContextResponseV3>`, built
-     at start with `TokioClock` and `set_runtime_capacity` fed from L5b's
-     lane capacity.
-   - For each new job, the handler's `JobWork` captures an `AirkServer`
-     clone whose read context belongs to the job. That context is built
-     with `ReadAttemptContext::new(now + run_ms, fresh token)` and keeps the
-     original lifetime guard and delivery-guard factory. It is not a child
-     of the calling request's cancellation, so a client that disconnects
-     cancels only its own wait.
-   - The work runs `answer_with` on a blocking thread (`spawn_blocking`,
-     because its reads use `block_on`), clamped by the plan, and returns
-     `reply::finished(outcome.response)`.
-4. **MCP: the seam.**
-   - A new `airk-mcp` module defines an object-safe `AnswerJobs` trait, because
-     airk-mcp cannot depend on this crate. Its one method takes the binding,
-     the request, the call deadline and the work, and returns a delivery:
-     a reply (finished or ticket, and whether it attached), a failure, or
-     busy with a retry time.
-   - `AirkServer` gains an optional `Arc<dyn AnswerJobs>`. With one, the
-     handler goes through the table; without one (the standalone stdio and
-     local paths), it calls the kernel directly as today.
-   - The service implements the trait for its table and injects it where
-     it builds in-process owners.
-   - Busy becomes a typed tool error, `answer_queue_busy`, carrying its
-     retry time. A failure keeps today's failure mapping.
-   - The call deadline is the handler's own deadline: the request's,
-     bounded by the read attempt. At that deadline a running job's kernel
-     returns its own partial, so a ticket reply results only when the job
-     waited or was requeued.
-5. **Status: deferred until after LG** (primary's decision, 22 November
-   2026). Exposing `QueueStatus` on the status surface is within the plan's
-   authorized many-agent work (sections 12.8 and 12.9). The LG gate does not
-   need it, because its concurrency test reads tickets and replies. Owner:
-   the L2b implementer. The status response gains fields, so the wire-shape
-   change is recorded with the item when it is built.
+**One job.** The work belongs to the call that made the job.
+- It runs `Kernel::answer_admitted` on the owner's blocking pool, under the
+  plan the table fitted at dispatch. The owner's threads carry its execution
+  scope, and the job's reads block on the owner's runtime.
+- Its read context is the job's own (`ReadAttemptContext::job_owned`): the
+  maker's guards, custody and native attempt, a deadline no later than the
+  maker's, and a cancellation of its own.
+- It is live until its own deadline or until its owner's admission closes. An
+  owner that stops ends the job at its next fence.
+- While it runs, its owner counts it (`LocalTools::answer_jobs_in_flight`),
+  so the owner does not leave as idle although the maker's connection may be
+  gone. A queued job holds nothing and keeps no owner: if its owner has left
+  when its turn comes, it is dropped as not run and its place is kept.
+- A job whose maker has left runs outside the owner's query broker. The
+  table's gathering limit is what bounds such jobs.
+- Progress goes to the maker's progress token. A call that attached gets
+  only its own reporter's heartbeat.
 
-**After wiring:** tests through the real handler must show several
-concurrent Answers, attach after a client timeout, and a ticket or a
-disclosed degradation. `expect(dead_code)` then stays only on items that
-remain unused (the status path, until step 5). The separate security review
-of the wired path follows.
+**A job never runs outside its maker's window.** Every card and Focus call
+carries the maker's native attempt, which the service checks and which ends
+with the maker's original deadline; the kernel's original deadline can only
+shorten. So:
+- **Inside the window.** A job that did not wait, or that waited and still
+  fits, runs to its maker's deadline. Until then it survives its maker's
+  disconnect or client timeout, and a retry attaches to it.
+- **Beyond the window.** A job whose window the table opened past its
+  maker's (a ticketed job at its dispatch, or a requeued one) is not run. Its
+  work reports `not_run`. The table drops it, keeps its place in line as a
+  claim, and keeps no failure.
+- **A call still waiting on such a job** is submitted again once with its own
+  work, if it has at least a second left. Otherwise it is told
+  `answer_queue_busy` with a 1 ms retry.
+- **So a ticket holds a place in line, not a running job.** The retry, by
+  digest or by the ticket's id, is admitted in that place with a window of
+  its own.
+
+Letting a job run after its maker's deadline needs a native attempt of the
+job's own. That changes the kernel and service attempt contract (an original
+attempt would be replaced) and needs a security review. It is not built.
+Owner: the L2b implementer.
+
+**Failures.**
+- A failure is kept for the retention time on its publication, as above,
+  unless a retry could repeat nothing. Not kept: a job that never ran, a job
+  whose owner was stopping (`Draining`, a closing admission or a closed job
+  context), and a refusal typed safe to repeat (`read_retry_hint`). These go
+  to the calls waiting on the job and are then forgotten.
+- A failure carries the handler's own encoding: the message and, where the
+  direct path would have rendered a typed receipt (a stale refusal, a scope
+  refusal, an argument error), that receipt. Only `airk-mcp` writes and reads
+  it. It is held only in service memory and delivered only within the job's
+  scope.
+
+**Not wired yet**, each with its owner:
+- **Queue status on the status surface:** deferred until after LG (primary's
+  decision, 22 November 2026). It is within the plan's authorized many-agent
+  work (sections 12.8 and 12.9). The status response gains fields, so the
+  wire-shape change is recorded when it is built. Owner: L2b.
+- **`publication_changed`** from the service's publication observer. Until
+  then a result of an older publication is never served, because every
+  caller states its own publication, but it is dropped only by retention and
+  the caps. Owner: L2b.
+- **`set_runtime_capacity`** from L5b's lane capacity: the gathering limit is
+  the floor of 2. Owner: L5b with L2b.
+- **`set_costs`** with measured stage costs: the placeholders stay
+  unmeasured. Owner: L5b and L7.
+- **Custody** (change log entry 21): the job's reply is kept; its custody is
+  still dropped. Owner: L2b.
+- **Progress for attached callers**, and turn-taking per round across Answers
+  in the model lane. Owner: L4 and L5b.
+
+`expect(dead_code)` stays only on those unwired entry points and on fields
+that only the tests read. The separate security review of the wired path
+follows.
 
 ## Focused checks
 
@@ -302,3 +428,34 @@ counts waiting calls, and never sleep. They cover:
 - status without identities, and learning only from uncut runs;
 - runner panics, both before and inside the future;
 - a dispatch from a non-Tokio thread.
+
+The wired path is tested in `wiring/tests.rs`
+(`test(/answer_jobs::wiring::/)`), through the real `airk_answer` handler
+(`LocalTools::call_with_read_context`), the real kernel loop over a small
+real index and the real table. The native controller is a disabled one, so
+these tests claim nothing about models. A gate at the `AnswerJobs` seam holds
+each job's work until the test opens it; every wait is on an event under a
+deadline. They cover:
+- two and four concurrent Answers: all complete, two at a time, none starved
+  and none run twice;
+- a retry after the client's transport cancelled the call: it attaches to
+  the job that kept running, and a later call gets the kept result without
+  another run;
+- a request whose work cannot fit its deadline: it runs reduced, says so,
+  and the loop stays inside the plan;
+- a request that cannot start in time: a ticket at once, and a complete
+  answer on its retry;
+- a full scope: `answer_queue_busy` with a retry time, and nothing queued.
+
+At the seam, without a handler or a kernel:
+- a job that did not run is dropped, and the call waiting on it gets a job
+  of its own;
+- a job is fitted on its own rung and only drops to the no-model loop;
+- an owner finds only the table of its own service.
+
+On the pure schedule:
+- unmeasured costs never reduce a request that did not wait, still reduce
+  one that waited, and still learn;
+- a job dropped without running keeps its place in line for the retry, by
+  digest and by its ticket, once and only in its own scope;
+- a place in line expires with the retention time.

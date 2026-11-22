@@ -103,6 +103,14 @@ impl Default for CostTable {
     }
 }
 impl CostTable {
+    /// This table with `model`'s rung alone beside the no-model loop. The
+    /// ladder then never changes rung: it can only drop to no model.
+    pub(crate) fn only(self, model: Option<ContextRung>) -> Self {
+        Self {
+            no_model: self.no_model,
+            compact: self.compact.filter(|_| model == Some(ContextRung::Compact)),
+        }
+    }
     fn rung(&self, model: Option<ContextRung>) -> Option<&StageCosts> {
         match model {
             None => Some(&self.no_model),
@@ -185,6 +193,26 @@ pub(crate) fn smallest(
         requested,
         start_of(costs, requested),
         Shape::SMALLEST,
+        deadline_ms,
+    )
+}
+
+/// The requested shape as it stands, on the best rung available: for costs
+/// that were not measured and so may not reduce a job that has its whole
+/// window. An unavailable rung is still disclosed.
+pub(crate) fn unreduced(
+    costs: &CostTable,
+    correction_permille: u64,
+    requested: Shape,
+    deadline_ms: u64,
+) -> Fitted {
+    let start = start_of(costs, requested);
+    disclose(
+        costs,
+        correction_permille,
+        requested,
+        start,
+        start,
         deadline_ms,
     )
 }

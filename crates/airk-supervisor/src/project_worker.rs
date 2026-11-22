@@ -137,6 +137,18 @@ pub struct Hooks {
         &ProjectLease,
         airk_core::identity::Sha256Digest,
     ) -> Result<JobOutcome>,
+    /// The service's Answer job table, for an owner that runs in the service
+    /// (final plan section 12.4.1). `None` keeps Answer on its direct path.
+    pub(crate) answer_jobs: AnswerJobsLookup,
+}
+/// By control root, as every other service function here is found.
+pub type AnswerJobsLookup = fn(&Path) -> Option<Arc<dyn airk_mcp::answer_jobs::AnswerJobs>>;
+impl Hooks {
+    /// The service composition root supplies its Answer job table.
+    pub fn with_answer_jobs(mut self, lookup: AnswerJobsLookup) -> Self {
+        self.answer_jobs = lookup;
+        self
+    }
 }
 type ArbiterControllerFactory =
     fn(&Path) -> Result<Option<Arc<dyn airk_kernel::arbiter::NativeController>>>;
@@ -351,6 +363,9 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
         if let Some(authority) = grant.scope
             && let Some(owner) = (state.hooks.arbiter_controller)(&state.control)? {
             tools = tools.native_arbiter_session(state.identity,authority,owner).await?;
+        }
+        if let Some(jobs) = (state.hooks.answer_jobs)(&state.control) {
+            tools.set_answer_jobs(jobs);
         }
         if let Some(scope) = grant.scope {
             state.scopes.lock().map_err(|_| anyhow::anyhow!("scope policy unavailable"))?
@@ -2066,7 +2081,8 @@ pub(crate) async fn serve(
                     }
                 }
                 if jobs.is_finished(){break;}
-                if busy.load(Ordering::Acquire)||maintenance_waiting.load(Ordering::Acquire){idle=Instant::now();}
+                // A service-owned Answer job may run on after its caller's connection closed.
+                if busy.load(Ordering::Acquire)||maintenance_waiting.load(Ordering::Acquire)||state.tools.answer_jobs_in_flight()>0{idle=Instant::now();}
                 if connections.is_empty()&&idle.elapsed()>Duration::from_secs(15){break;}
                 // A generation has a bounded lifetime; replacement requires fresh brokerage.
                 if state.broker.lock().map_err(|_|anyhow::anyhow!("query policy unavailable"))?.status(Instant::now()).draining_projects>0 {break;}

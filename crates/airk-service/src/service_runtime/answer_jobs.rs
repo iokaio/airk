@@ -7,13 +7,17 @@
 //! first and returns a ticket only when even the smallest disclosed answer
 //! cannot fit. Contract: `answer_jobs/CONTRACT.md`.
 //!
-//! [`AnswerJobTable::call`] is the one narrow entry point for the service's
-//! Answer path; the runner closure it is built with performs one Answer.
+//! [`AnswerJobTable::call_with_work`] is the one narrow entry point for the
+//! service's Answer path: `wiring` puts the table behind the `airk-mcp` seam
+//! the Answer handler calls, and each call brings the work of the job it
+//! makes.
 mod estimate;
 mod reply;
 mod schedule;
 #[cfg(test)]
 mod tests;
+mod wiring;
+pub(crate) use wiring::{ServiceAnswerJobs, for_control, install};
 
 pub(crate) use estimate::{ContextRung, CostTable};
 pub(crate) use schedule::{AnswerScope, JobOutcome, JobTableConfig, QueueStatus, StartedJob};
@@ -76,20 +80,49 @@ pub(crate) type Runner<R> = Arc<dyn Fn(StartedJob) -> RunFuture<R> + Send + Sync
 /// `Busy`, drops its work unused.
 pub(crate) type JobWork<R> = Box<dyn FnOnce(StartedJob) -> RunFuture<R> + Send>;
 
+/// A runner's or a work's error for a job that did nothing a retry could
+/// repeat: the table delivers it to the job's waiters as
+/// [`JobOutcome::Dropped`] and keeps nothing, so a retry is admitted afresh
+/// instead of attaching to a failure.
+#[derive(Debug)]
+pub(crate) struct Unretained {
+    pub(crate) message: String,
+    /// The job never started.
+    pub(crate) not_run: bool,
+}
+impl std::fmt::Display for Unretained {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+impl std::error::Error for Unretained {}
+
 /// One call's result. Degradations are the ones fitted at dispatch, the same
 /// for the caller that made the job and for every caller that attached.
 #[derive(Debug)]
 pub(crate) enum CallReply<R> {
     /// The job finished within the call; `attached` when another call made it.
     Finished {
+        #[cfg_attr(
+            not(test),
+            expect(dead_code, reason = "a finished reply names no job; tests read it")
+        )]
         id: Sha256Digest,
         attached: bool,
+        #[cfg_attr(
+            not(test),
+            expect(dead_code, reason = "a finished reply carries its own; tests read it")
+        )]
         degradations: Vec<Degradation>,
         outcome: Arc<JobOutcome<R>>,
     },
     /// The call's deadline came first; the job keeps running. A queued job's
     /// reply is a ticket, a running job's a partial with this continuation.
     Pending {
+        #[cfg_attr(
+            not(test),
+            expect(dead_code, reason = "both replies are ticket-shaped; tests read it")
+        )]
         running: bool,
         ticket: AnswerTicket,
         degradations: Vec<Degradation>,
@@ -167,7 +200,9 @@ impl<R: Send + Sync + 'static> AnswerJobTable<R> {
 
     /// Submit or attach, then wait for the job until `call_deadline`.
     /// `scope` must come from the caller's own verified authority; a job is
-    /// never visible outside it.
+    /// never visible outside it. The live path always brings its work
+    /// ([`Self::call_with_work`]); the table's own tests use this.
+    #[cfg(test)]
     pub(crate) async fn call(
         &self,
         scope: AnswerScope,
@@ -357,7 +392,12 @@ impl<R: Send + Sync + 'static> AnswerJobTable<R> {
                         publication: finished.publication,
                         retained_bytes: finished.retained_bytes,
                     },
-                    Ok(Err(error)) => JobOutcome::Failed(format!("{error:#}")),
+                    Ok(Err(error)) => match error.downcast::<Unretained>() {
+                        Ok(Unretained { message, not_run }) => {
+                            JobOutcome::Dropped { message, not_run }
+                        }
+                        Err(error) => JobOutcome::Failed(format!("{error:#}")),
+                    },
                     Err(error) => JobOutcome::Failed(format!("Answer job task failed: {error}")),
                 };
                 table.complete(id, outcome);
@@ -382,6 +422,13 @@ impl<R: Send + Sync + 'static> AnswerJobTable<R> {
     }
 
     /// Aggregate queue status for the status surface.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "queue status on the status surface is deferred until after LG"
+        )
+    )]
     pub(crate) fn status(&self) -> Result<QueueStatus> {
         let now = self.shared.clock.now_ms();
         let mut schedule = self.schedule()?;
@@ -391,6 +438,13 @@ impl<R: Send + Sync + 'static> AnswerJobTable<R> {
 
     /// L5b's runtime capacity figure; a larger limit starts queued jobs now.
     /// Safe from any thread.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "L5b's runtime capacity is not fed to the table yet"
+        )
+    )]
     pub(crate) fn set_runtime_capacity(&self, capacity: Option<usize>) -> Result<()> {
         let mut schedule = self.schedule()?;
         schedule.set_runtime_capacity(capacity);
@@ -401,6 +455,13 @@ impl<R: Send + Sync + 'static> AnswerJobTable<R> {
     }
 
     /// Measured stage costs replacing the placeholders.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "measured stage costs (L5b, L7) are not fed to the table yet"
+        )
+    )]
     pub(crate) fn set_costs(&self, costs: CostTable) -> Result<()> {
         self.schedule()?.set_costs(costs);
         Ok(())
@@ -410,6 +471,13 @@ impl<R: Send + Sync + 'static> AnswerJobTable<R> {
     /// new publication of `index` drops other publications' results,
     /// failures included, and supersedes jobs running on them. An older
     /// generation of the same incarnation is ignored (`Ok(false)`).
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the service's publication observer is not wired to the table yet"
+        )
+    )]
     pub(crate) fn publication_changed(
         &self,
         index: IndexId,

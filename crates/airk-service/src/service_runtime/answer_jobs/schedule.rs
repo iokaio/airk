@@ -74,6 +74,16 @@ impl AnswerScope {
             index,
         }
     }
+    /// This scope for replies packed to `reserve` bytes of the caller's own
+    /// metadata: calls with different reserves never share a job, while the
+    /// principal and the index, and so every limit, stay the same.
+    pub(crate) fn with_reply_reserve(mut self, reserve: usize) -> Self {
+        self.authority = framed_digest(
+            b"airk.answer.job.scope.reserve/1",
+            &[self.authority.as_bytes(), &(reserve as u64).to_be_bytes()],
+        );
+        self
+    }
 }
 
 /// The digest a publication is matched on.
@@ -118,6 +128,14 @@ pub(crate) struct JobTableConfig {
     /// Ageing weight: the EDF key is `due + ageing x enqueued`.
     pub(crate) ageing: u64,
     pub(crate) costs: CostTable,
+    /// False while `costs` are placeholders. Unmeasured costs still order
+    /// and bound the queue, but they never reduce a job that has its whole
+    /// window: a request that did not wait runs as asked. `set_costs` makes
+    /// them measured.
+    pub(crate) costs_measured: bool,
+    /// The runner cannot change a job's Context rung: each job is fitted
+    /// with its own rung and the no-model loop alone.
+    pub(crate) configured_rung_only: bool,
 }
 impl Default for JobTableConfig {
     fn default() -> Self {
@@ -132,6 +150,8 @@ impl Default for JobTableConfig {
             max_jobs: MAX_QUEUE_POSITION as usize,
             ageing: 1,
             costs: CostTable::default(),
+            costs_measured: true,
+            configured_rung_only: false,
         }
     }
 }
@@ -155,6 +175,13 @@ pub(crate) enum JobOutcome<R> {
         retained_bytes: usize,
     },
     Failed(String),
+    /// The job did nothing a retry could repeat: it never started
+    /// (`not_run`), or its refusal is safe to repeat. Delivered to its
+    /// waiters, never kept and never learned from.
+    Dropped {
+        message: String,
+        not_run: bool,
+    },
 }
 
 /// What a dispatched job runs with.
@@ -168,8 +195,22 @@ pub(crate) struct StartedJob {
     /// Milliseconds from dispatch to the job's own deadline.
     pub(crate) run_ms: u64,
     /// The job waited past its caller's deadline and runs on a fresh window.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the live work judges its window by `run_ms` alone"
+        )
+    )]
     pub(crate) requeued: bool,
     /// The publication the table expects the job to run on, when known.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the live work runs on its caller's verified publication"
+        )
+    )]
     pub(crate) publication: Option<Sha256Digest>,
 }
 
@@ -244,6 +285,9 @@ enum State<R> {
         started_ms: u64,
         estimated_ms: u64,
         run_ms: u64,
+        /// Admitted at the smallest shape although it fits no window: its
+        /// elapsed time says nothing about the cost table.
+        forced: bool,
     },
     Finished {
         finished_ms: u64,
@@ -260,6 +304,9 @@ struct Job<R> {
     enqueued_ms: u64,
     /// Absolute deadline of the job's run.
     due_ms: u64,
+    /// The deadline the job is ordered by: its own, or the one of the job
+    /// whose place in line it took over (a claim).
+    order_due_ms: u64,
     /// Admitted without a fit; its window opens at dispatch.
     ticketed: bool,
     seq: u64,
@@ -274,7 +321,7 @@ struct Job<R> {
 impl<R> Job<R> {
     fn order(&self, ageing: u64) -> (u64, u64) {
         (
-            self.due_ms
+            self.order_due_ms
                 .saturating_add(ageing.saturating_mul(self.enqueued_ms)),
             self.seq,
         )
@@ -302,12 +349,24 @@ struct Observed {
     digest: Sha256Digest,
 }
 
+/// The place in line of a job that was dropped without running. A retry of
+/// the same request in the same scope, by digest or by the job's id as its
+/// continuation, is admitted afresh in that place.
+struct Claim {
+    id: Sha256Digest,
+    order_due_ms: u64,
+    enqueued_ms: u64,
+    expires_ms: u64,
+}
+
 pub(crate) struct Schedule<R> {
     config: JobTableConfig,
     salt: [u8; 32],
     seq: u64,
     jobs: BTreeMap<Sha256Digest, Job<R>>,
     by_request: HashMap<(AnswerScope, Sha256Digest), Sha256Digest>,
+    /// Kept for the retention time, at most one per scope and request.
+    claims: HashMap<(AnswerScope, Sha256Digest), Claim>,
     /// The newest publication observed per index.
     current: HashMap<[u8; 16], Observed>,
     correction_permille: u64,
@@ -322,6 +381,7 @@ impl<R> Schedule<R> {
             seq: 0,
             jobs: BTreeMap::new(),
             by_request: HashMap::new(),
+            claims: HashMap::new(),
             current: HashMap::new(),
             correction_permille: 1000,
             recent: VecDeque::new(),
@@ -335,8 +395,40 @@ impl<R> Schedule<R> {
     pub(crate) fn set_runtime_capacity(&mut self, capacity: Option<usize>) {
         self.config.runtime_capacity = capacity;
     }
+    /// Measured costs: from here on they may also reduce a job that has its
+    /// whole window.
     pub(crate) fn set_costs(&mut self, costs: CostTable) {
         self.config.costs = costs;
+        self.config.costs_measured = true;
+    }
+    /// The costs a job asking for `model` is fitted with.
+    fn costs_for(&self, model: Option<ContextRung>) -> CostTable {
+        if self.config.configured_rung_only {
+            self.config.costs.only(model)
+        } else {
+            self.config.costs
+        }
+    }
+    /// The first shape of `requested`'s ladder that fits `available_ms`.
+    /// Costs that were not measured only order and bound the queue: they
+    /// never reduce a job that still has its whole window.
+    fn fit(&self, requested: Shape, available_ms: u64, deadline_ms: u64) -> Option<Fitted> {
+        let costs = self.costs_for(requested.model);
+        if !self.config.costs_measured && available_ms >= deadline_ms {
+            return Some(estimate::unreduced(
+                &costs,
+                self.correction_permille,
+                requested,
+                deadline_ms,
+            ));
+        }
+        estimate::degrade_to_fit(
+            &costs,
+            self.correction_permille,
+            requested,
+            available_ms,
+            deadline_ms,
+        )
     }
 
     fn current_of(&self, index: &[u8; 16]) -> Option<Sha256Digest> {
@@ -367,7 +459,7 @@ impl<R> Schedule<R> {
     pub(crate) fn submit(
         &mut self,
         scope: AnswerScope,
-        request: ContextRequestV3,
+        mut request: ContextRequestV3,
         model: Option<ContextRung>,
         publication: Option<Sha256Digest>,
         now: u64,
@@ -376,24 +468,36 @@ impl<R> Schedule<R> {
         self.purge(now);
         let digest = request_digest(&request)?;
         if let Some(continuation) = request.continuation {
-            // Unknown, expired and foreign ids are one indistinguishable
-            // refusal: a digest never reveals another scope's job.
-            let Some(job) = self
+            match self
                 .jobs
                 .get(&continuation)
                 .filter(|job| job.scope == scope)
-            else {
-                bail!("unknown or expired Answer continuation");
-            };
-            ensure!(
-                job.request_digest == digest,
-                "Answer continuation belongs to a different request"
-            );
-            ensure!(
-                self.publication_ok(job, publication),
-                "Answer continuation superseded by a newer publication"
-            );
-            return Ok(Submitted::Attached(continuation));
+            {
+                Some(job) => {
+                    ensure!(
+                        job.request_digest == digest,
+                        "Answer continuation belongs to a different request"
+                    );
+                    ensure!(
+                        self.publication_ok(job, publication),
+                        "Answer continuation superseded by a newer publication"
+                    );
+                    return Ok(Submitted::Attached(continuation));
+                }
+                // The ticket of a job that was dropped without running still
+                // holds its place for this scope and request: the call is
+                // admitted afresh below, in that place.
+                None if self
+                    .claims
+                    .get(&(scope, digest))
+                    .is_some_and(|claim| claim.id == continuation) =>
+                {
+                    request.continuation = None;
+                }
+                // Unknown, expired and foreign ids are one indistinguishable
+                // refusal: a digest never reveals another scope's job.
+                None => bail!("unknown or expired Answer continuation"),
+            }
         }
 
         // What this call would get on its own, to decide whether attaching
@@ -403,14 +507,21 @@ impl<R> Schedule<R> {
         let due_ms = now.saturating_add(deadline_ms);
         self.seq += 1;
         let seq = self.seq;
+        // A retry of a job that was dropped without running is ordered as
+        // that job was: it takes its place in line, with its own window.
+        let place = self
+            .claims
+            .get(&(scope, digest))
+            .map(|claim| (claim.order_due_ms, claim.enqueued_ms.min(now)));
         let mut job = Job {
             scope,
             request_digest: digest,
             request,
             requested,
             deadline_ms,
-            enqueued_ms: now,
+            enqueued_ms: place.map_or(now, |(_, enqueued_ms)| enqueued_ms),
             due_ms,
+            order_due_ms: place.map_or(due_ms, |(order_due_ms, _)| order_due_ms),
             ticketed: false,
             seq,
             publication,
@@ -419,15 +530,9 @@ impl<R> Schedule<R> {
             state: State::Queued,
         };
         let start_ms = self.start_for(&job, now);
-        let costs = self.config.costs;
+        let costs = self.costs_for(requested.model);
         let correction = self.correction_permille;
-        let fitted = estimate::degrade_to_fit(
-            &costs,
-            correction,
-            requested,
-            due_ms.saturating_sub(start_ms),
-            deadline_ms,
-        );
+        let fitted = self.fit(requested, due_ms.saturating_sub(start_ms), deadline_ms);
         let smallest_fits_alone = costs
             .work_ms(&Shape::SMALLEST, correction)
             .is_some_and(|work| work <= deadline_ms);
@@ -475,7 +580,12 @@ impl<R> Schedule<R> {
             // estimated start, and it is ordered by that window.
             job.ticketed = true;
             job.due_ms = start_ms.saturating_add(deadline_ms);
+            if place.is_none() {
+                job.order_due_ms = job.due_ms;
+            }
         }
+        // The place is taken over once, by the job made here.
+        self.claims.remove(&(scope, digest));
         self.by_request.insert((scope, digest), id);
         self.jobs.insert(id, job);
         Ok(if ticketed {
@@ -533,44 +643,38 @@ impl<R> Schedule<R> {
             else {
                 break;
             };
-            let costs = self.config.costs;
+            let (requested, deadline_ms, ticketed, mut due_ms) = {
+                let job = &self.jobs[&id];
+                (job.requested, job.deadline_ms, job.ticketed, job.due_ms)
+            };
+            let costs = self.costs_for(requested.model);
             let correction = self.correction_permille;
             let current = self.current_of(&self.jobs[&id].scope.index);
-            let job = self.jobs.get_mut(&id).expect("selected job exists");
-            if job.ticketed {
-                job.due_ms = now.saturating_add(job.deadline_ms);
+            if ticketed {
+                due_ms = now.saturating_add(deadline_ms);
             }
-            let remaining = job.due_ms.saturating_sub(now);
+            let remaining = due_ms.saturating_sub(now);
             let mut requeued = false;
-            let mut fitted = estimate::degrade_to_fit(
-                &costs,
-                correction,
-                job.requested,
-                remaining,
-                job.deadline_ms,
-            );
-            if fitted.is_none() && remaining < job.deadline_ms {
+            let mut fitted = self.fit(requested, remaining, deadline_ms);
+            if fitted.is_none() && remaining < deadline_ms {
                 // The wait consumed the caller's window: the work outlives
                 // the call, so it runs on a fresh window and callers attach.
-                requeued = !job.ticketed;
-                job.due_ms = now.saturating_add(job.deadline_ms);
-                fitted = estimate::degrade_to_fit(
-                    &costs,
-                    correction,
-                    job.requested,
-                    job.deadline_ms,
-                    job.deadline_ms,
-                );
+                requeued = !ticketed;
+                due_ms = now.saturating_add(deadline_ms);
+                fitted = self.fit(requested, deadline_ms, deadline_ms);
             }
-            let fitted = fitted.unwrap_or_else(|| {
-                estimate::smallest(&costs, correction, job.requested, job.deadline_ms)
-            });
+            let forced = fitted.is_none();
+            let fitted = fitted
+                .unwrap_or_else(|| estimate::smallest(&costs, correction, requested, deadline_ms));
+            let job = self.jobs.get_mut(&id).expect("selected job exists");
+            job.due_ms = due_ms;
             let run_ms = job.due_ms.saturating_sub(now).max(1);
             job.publication = current.or(job.publication);
             job.state = State::Running {
                 started_ms: now,
                 estimated_ms: fitted.work_ms,
                 run_ms,
+                forced,
             };
             started.push(StartedJob {
                 id,
@@ -596,23 +700,48 @@ impl<R> Schedule<R> {
         now: u64,
     ) -> Arc<JobOutcome<R>> {
         let outcome = Arc::new(outcome);
+        let dropped = matches!(outcome.as_ref(), JobOutcome::Dropped { .. });
         let mut stale = false;
         let current = self
             .jobs
             .get(id)
             .and_then(|job| self.current_of(&job.scope.index));
+        if let Some(job) = self.jobs.get(id)
+            && matches!(outcome.as_ref(), JobOutcome::Dropped { not_run: true, .. })
+        {
+            // The job never ran: its place in line is kept for a retry.
+            let key = (job.scope, job.request_digest);
+            let claim = Claim {
+                id: *id,
+                order_due_ms: job.order_due_ms,
+                enqueued_ms: job.enqueued_ms,
+                expires_ms: now.saturating_add(self.config.retention_ms),
+            };
+            if self.claims.len() >= self.config.max_jobs && !self.claims.contains_key(&key) {
+                let oldest = self
+                    .claims
+                    .iter()
+                    .min_by_key(|(_, claim)| claim.expires_ms)
+                    .map(|(key, _)| *key);
+                if let Some(oldest) = oldest {
+                    self.claims.remove(&oldest);
+                }
+            }
+            self.claims.insert(key, claim);
+        }
         if let Some(job) = self.jobs.get_mut(id) {
             if let State::Running {
                 started_ms,
                 estimated_ms,
                 run_ms,
+                forced,
             } = job.state
+                && !dropped
             {
                 let elapsed_ms = now.saturating_sub(started_ms);
                 // A run that reached its deadline, or one admitted smallest
                 // beyond it, says only that the work was at least that long.
-                let cut = estimated_ms > run_ms
-                    || elapsed_ms.saturating_add(DEADLINE_TOLERANCE_MS) >= run_ms;
+                let cut = forced || elapsed_ms.saturating_add(DEADLINE_TOLERANCE_MS) >= run_ms;
                 if matches!(outcome.as_ref(), JobOutcome::Done { .. }) && estimated_ms > 0 && !cut {
                     let ratio = (elapsed_ms.saturating_mul(1000) / estimated_ms)
                         .clamp(CORRECTION_MIN, CORRECTION_MAX);
@@ -632,8 +761,9 @@ impl<R> Schedule<R> {
             if let JobOutcome::Done { publication, .. } = outcome.as_ref() {
                 job.publication = Some(*publication);
             }
-            stale =
-                job.superseded || current.is_some_and(|current| job.publication != Some(current));
+            stale = dropped
+                || job.superseded
+                || current.is_some_and(|current| job.publication != Some(current));
             job.state = State::Finished {
                 finished_ms: now,
                 outcome: outcome.clone(),
@@ -661,6 +791,7 @@ impl<R> Schedule<R> {
         for id in expired {
             self.remove(&id);
         }
+        self.claims.retain(|_, claim| claim.expires_ms > now);
     }
 
     /// The service's publication observer reports `publication` for `index`.
@@ -870,28 +1001,22 @@ impl<R> Schedule<R> {
 
     /// The estimated work of `job` if it started at `start_ms`.
     fn work_at(&self, job: &Job<R>, start_ms: u64) -> u64 {
-        let costs = &self.config.costs;
+        let costs = &self.costs_for(job.requested.model);
         let available = if job.ticketed {
             job.deadline_ms
         } else {
             job.due_ms.saturating_sub(start_ms)
         };
-        estimate::degrade_to_fit(
-            costs,
-            self.correction_permille,
-            job.requested,
-            available,
-            job.deadline_ms,
-        )
-        .unwrap_or_else(|| {
-            estimate::smallest(
-                costs,
-                self.correction_permille,
-                job.requested,
-                job.deadline_ms,
-            )
-        })
-        .work_ms
+        self.fit(job.requested, available, job.deadline_ms)
+            .unwrap_or_else(|| {
+                estimate::smallest(
+                    costs,
+                    self.correction_permille,
+                    job.requested,
+                    job.deadline_ms,
+                )
+            })
+            .work_ms
     }
 
     /// The simulated start of a job not yet in the table.
@@ -961,7 +1086,7 @@ fn retained_bytes<R>(job: &Job<R>) -> usize {
         State::Finished { outcome, .. } => {
             let result = match outcome.as_ref() {
                 JobOutcome::Done { retained_bytes, .. } => *retained_bytes,
-                JobOutcome::Failed(message) => message.len(),
+                JobOutcome::Failed(message) | JobOutcome::Dropped { message, .. } => message.len(),
             };
             result
                 .saturating_add(job.request.question.len())

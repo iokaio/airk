@@ -569,6 +569,20 @@ impl ReadAttemptContext {
         }
     }
 
+    /// The context of a service-owned Answer job this call made (final plan
+    /// section 12.4.1): this call's guards, custody and native attempt, a
+    /// deadline no later than this call's, and a cancellation of its own, so
+    /// a caller that leaves cancels only its own wait.
+    pub(crate) fn job_owned(&self, deadline: Instant) -> Self {
+        Self {
+            deadline: self.deadline.min(deadline),
+            canceled: CancellationToken::new(),
+            selection_refused: Arc::new(AtomicBool::new(false)),
+            handler_started: Arc::new(AtomicBool::new(false)),
+            ..self.clone()
+        }
+    }
+
     pub(crate) fn mark_handler_started(&self) {
         self.handler_started.store(true, Ordering::Release);
     }

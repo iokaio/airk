@@ -221,6 +221,7 @@ pub fn project_worker_hooks() -> crate::project_worker::Hooks {
         rebuild_observation: airk_installer::runtime_install::rebuild_observation_for_control,
         refresh_references: airk_catalog_control::reference_refresh_control::execute,
         arbiter_controller: arbiter::controller,
+        answer_jobs: |_| None,
     }
 }
 

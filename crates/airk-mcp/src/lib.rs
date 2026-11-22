@@ -12,6 +12,7 @@ use rmcp::{
 };
 use serde::{Deserialize, Serialize};
 
+pub mod answer_jobs;
 mod execution;
 mod lifecycle;
 pub mod read_attempt;
@@ -689,6 +690,8 @@ pub struct AirkServer {
     plan_read: bool,
     answer_read: bool,
     read_attempt: Option<read_attempt::ReadAttemptContext>,
+    // The service's Answer job table; empty outside an owner in the service.
+    answer_jobs: answer_jobs::Slot,
 }
 
 #[tool_router]
@@ -717,6 +720,7 @@ impl AirkServer {
             plan_read: false,
             answer_read: false,
             read_attempt: None,
+            answer_jobs: Default::default(),
         }
     }
 
@@ -791,6 +795,7 @@ impl AirkServer {
             .read_attempt
             .as_ref()
             .map_or(deadline, |context| deadline.min(context.deadline()));
+        let jobs = answer_jobs::for_call(self);
         let answered = self.execute_verified_response(
             UsageOperation::Answer,
             args.response,
@@ -816,6 +821,20 @@ impl AirkServer {
                     .with_context_reply_reserve(reserve)?
                     .with_fresh_answer_accounting()?;
                 reader.kernel = kernel.clone();
+                // In the service, an admitted Answer is a job of its job
+                // table (plan section 12.4.1); this call waits for it.
+                if let Some(jobs) = jobs {
+                    return answer_jobs::run(answer_jobs::Caller {
+                        jobs,
+                        reader,
+                        kernel,
+                        request: args.request,
+                        reply_reserve: reserve,
+                        deadline,
+                        handle,
+                        sink,
+                    });
+                }
                 // Custody is dropped after delivery until the service job
                 // table keeps it (change log entry 21); the reply keeps the
                 // decision log digest.
