@@ -327,4 +327,28 @@ class PortableControls(unittest.TestCase):
             self.assertTrue(kept)
             for n in kept:self.assertEqual(n.SerializeToString(deterministic=True),before[n.name])
 
+class Focus1024Controls(unittest.TestCase):
+    """Plan 12.5.2 static-1024 Focus sources; literal values, no selected graphs."""
+    def test_family_maps_only_focus_widths(self):
+        for key in ['focus','focus1024','focus1024fp32']:self.assertEqual(e.family(key),'focus')
+        for key in ['compact','large']:self.assertEqual(e.family(key),key)
+    def test_pins_and_geometry(self):
+        self.assertEqual(e.ORIGINAL['focus1024'],'a16fcaa1bf2d67b019b30cda56d76ba23d589c346ef2ae76d75c229ebe866810')
+        self.assertEqual(e.ORIGINAL['focus1024fp32'],'794fc0b2027969150c9368432c066fc7158d16600aafd94d0cbdeeb994f4da19')
+        for key in ['focus1024','focus1024fp32']:
+            self.assertEqual(e.GEOMETRY[key],e.GEOMETRY['focus']);self.assertEqual(e.FOCUS_WIDTH[key],1024)
+        self.assertEqual(e.FOCUS_WIDTH['focus'],512)
+    def test_width_1024_mask(self):
+        for key in ['focus1024','focus1024fp32']:
+            self.assertEqual(e.validate_inputs(key,[0]*1000+[1]*24,list(range(1024))),[24,1000,1024,1000,1024])
+            self.assertEqual(e.validate_inputs(key,[1]*1024,list(range(1024))),[1024,0,1024,0,1024])
+            for mask in [[1]*512,[0]*1024,[1]*1023+[0]]:
+                with self.subTest(key=key,n=len(mask)),self.assertRaises(ValueError):e.validate_inputs(key,mask,list(range(len(mask))))
+        with self.assertRaises(ValueError):e.validate_inputs('focus',[1]*1024,list(range(1024)))
+    def test_focus1024_keys_use_the_focus_rewrite(self):
+        for key in ['focus1024','focus1024fp32']:
+            m=fixture('focus');report=e.rewrite(m,key,onnx)
+            self.assertEqual(report['required_native_sdpa_kernel'],2)
+            self.assertEqual(sum(n.op_type=='MultiHeadAttention' for n in m.graph.node),e.GEOMETRY[key][0])
+
 if __name__=='__main__':unittest.main()

@@ -400,14 +400,20 @@ impl CudaRuntime {
             );
             (ordinary_arena()?, None::<Value>)
         };
-        let provider = CUDAExecutionProvider::default()
+        let mut provider = CUDAExecutionProvider::default()
             .with_device_id(adapter.ordinal)
             .with_tf32(false)
             .with_cuda_graph(false)
             .with_memory_limit(usize::try_from(arena)?)
-            .with_attention_backend(CUDAAttentionBackend::EFFICIENT_ATTENTION)
-            .build()
-            .error_on_failure();
+            .with_attention_backend(CUDAAttentionBackend::EFFICIENT_ATTENTION);
+        // L5 memory investigation (plan 12.5.2): optional arena growth knob for this
+        // raw scientific session only; it changes allocation, not arithmetic.
+        if std::env::var("AIRK_L5A_ARENA_EXTEND").as_deref() == Ok("same_as_requested") {
+            provider = provider.with_arena_extend_strategy(
+                ort::execution_providers::ArenaExtendStrategy::SameAsRequested,
+            );
+        }
+        let provider = provider.build().error_on_failure();
         let mut builder = Session::builder()?.with_execution_providers([provider])?;
         let root = campaign.join("large-cutlass-t32-operands-r1");
         let weights = campaign.join("large-fp16-conversion-owned-r5/candidate");

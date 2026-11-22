@@ -87,6 +87,19 @@ fn is_protected_efficient_mha(profile: &Profile) -> Result<bool> {
     )
 }
 
+/// True when the profile's graph and single weight asset are the pinned protected
+/// Context artifacts for its model (evaluation admission, plan 12.5.2).
+#[cfg(all(windows, target_arch = "x86_64", feature = "test-support"))]
+pub(super) fn is_protected_graph(profile: &Profile) -> Result<bool> {
+    let Ok(pin) = ProtectedContextMha::for_model(profile.model) else {
+        return Ok(false);
+    };
+    let Some(device) = &profile.device_execution else {
+        return Ok(false);
+    };
+    Ok(device.graph == pin.graph.parse()? && pin.require_weights(&profile.assets).is_ok())
+}
+
 #[cfg(all(windows, target_arch = "x86_64"))]
 struct ProtectedContextMha {
     prefix: &'static str,
@@ -197,6 +210,9 @@ pub(in crate::arbiter::runtime) struct AttentionPlan {
     math_policy: Sha256Digest,
     provider_options: Sha256Digest,
     nodes: Vec<crate::arbiter::external_data::g5::AttentionNode>,
+    /// The static Focus width this plan admits (512 or 1024); unused for Context.
+    #[serde(skip)]
+    focus_tokens: usize,
 }
 impl AttentionPlan {
     pub(in crate::arbiter::runtime) fn from_graph(
@@ -236,6 +252,7 @@ impl AttentionPlan {
                 math_policy: p.math_policy,
                 provider_options: p.provider_options,
                 nodes: candidate.attention_nodes(),
+                focus_tokens: 0,
             });
         }
         ensure!(
@@ -266,6 +283,7 @@ impl AttentionPlan {
             math_policy: p.math_policy,
             provider_options: p.provider_options,
             nodes,
+            focus_tokens: profile.max_tokens,
         })
     }
     pub(in crate::arbiter::runtime) fn require_math_environment(&self) -> Result<()> {
@@ -321,7 +339,7 @@ impl AttentionPlan {
         input: &super::super::CompiledInput,
     ) -> Result<()> {
         require_environment(false)?;
-        validate_geometry(self.model, input)
+        validate_geometry(self.model, self.focus_tokens, input)
     }
     pub(in crate::arbiter::runtime) fn observation(&self) -> Result<serde_json::Value> {
         require_environment(true)?;
@@ -334,7 +352,11 @@ impl AttentionPlan {
         Ok(result)
     }
 }
-fn validate_geometry(model: ModelChoice, input: &super::super::CompiledInput) -> Result<()> {
+fn validate_geometry(
+    model: ModelChoice,
+    focus_tokens: usize,
+    input: &super::super::CompiledInput,
+) -> Result<()> {
     let tokens = input.input_ids.len();
     ensure!(
         input.attention_mask.len() == tokens
@@ -349,11 +371,12 @@ fn validate_geometry(model: ModelChoice, input: &super::super::CompiledInput) ->
     );
     if model == ModelChoice::FocusQwenReranker06B {
         ensure!(
-            tokens == 512
+            matches!(focus_tokens, 512 | 1024)
+                && tokens == focus_tokens
                 && input.attention_mask.last() == Some(&1)
                 && input.attention_mask.iter().all(|m| matches!(m, 0 | 1))
                 && input.attention_mask.windows(2).all(|p| p[0] <= p[1]),
-            "G5 Focus requires static512 nonempty live suffix"
+            "G5 Focus requires its static width with a nonempty live suffix"
         );
     } else {
         ensure!(
@@ -433,6 +456,12 @@ pub fn prepare_fp16_probe_profile(
     cpu.validate()?;
     super::super::validate_selected_policies(cpu)?;
     let (id, original, threads) = match cpu.model {
+        ModelChoice::FocusQwenReranker06B if cpu.max_tokens == 1024 => (
+            // FP32 19b20ad4 widened to static 1024 (scripts/arbiter-fp16-export/focus_widen.py).
+            "private-cuda-fp16-focus1024-efficient-probe-v1",
+            "794fc0b2027969150c9368432c066fc7158d16600aafd94d0cbdeeb994f4da19",
+            4,
+        ),
         ModelChoice::FocusQwenReranker06B => (
             "private-cuda-fp16-focus-efficient-probe-v1",
             "19b20ad4e39e173f6da602094b9c1583726a65fa76742553f97ec6f0f58436a1",
@@ -454,7 +483,7 @@ pub fn prepare_fp16_probe_profile(
         original_graph == original.parse()?
             && cpu.device_execution.is_none()
             && if cpu.model == ModelChoice::FocusQwenReranker06B {
-                cpu.max_tokens == 512 && cpu.max_candidates == 4
+                matches!(cpu.max_tokens, 512 | 1024) && cpu.max_candidates == 4
             } else {
                 cpu.max_tokens == 8192 && cpu.max_candidates == 8
             },
@@ -604,4 +633,263 @@ pub fn prepare_fp16_probe_profile(
         original_graph,
         attention_plan: serde_json::to_value(attention)?,
     })
+}
+
+/// Measured capacity and host fit for one protected Context profile (design L5 1.4).
+#[cfg(all(feature = "test-support", windows, target_arch = "x86_64"))]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProtectedMeasurement {
+    pub cold_peak_bytes: u64,
+    pub warm_extra_bytes: u64,
+    pub headroom_bytes: u64,
+    pub memory_reservation_bytes: u64,
+    pub intra_threads: usize,
+    /// SHA-256 of the retained measurement receipt the values were read from.
+    pub receipt_sha256: Option<Sha256Digest>,
+}
+
+/// Fresh, unqualified evaluation profile for a protected efficient-MHA Context graph.
+#[cfg(all(feature = "test-support", windows, target_arch = "x86_64"))]
+#[derive(Serialize)]
+pub struct PreparedProtectedMhaProfile {
+    pub profile: Profile,
+    pub calibration_name: String,
+    pub calibration_bytes: Vec<u8>,
+    pub attention_plan: serde_json::Value,
+    pub measurement: ProtectedMeasurement,
+}
+
+/// Sentinel bounded policy of a pass-1 profile. It names no reviewed placement;
+/// only the graph-metadata diagnostic may open it, to observe the real policy.
+#[cfg(all(feature = "test-support", windows, target_arch = "x86_64"))]
+pub fn protected_mha_pass1_policy() -> Sha256Digest {
+    airk_core::identity::framed_digest(b"airk.private.cuda-protected-mha-pass1-sentinel/1", &[])
+}
+
+/// Two-pass emitter (design L5 1.3 A). Pass 1 (`policy = None`) writes the
+/// sentinel policy; the graph-metadata diagnostic then observes the live rows
+/// and placement and computes `bounded_context_execution_policy`. Pass 2 writes
+/// the same profile with that digest. The digest excludes the manifest, so the
+/// pass-2 manifest change does not invalidate it.
+#[cfg(all(feature = "test-support", windows, target_arch = "x86_64"))]
+#[allow(clippy::too_many_arguments)]
+pub fn prepare_protected_mha_profile(
+    cpu: &Profile,
+    source: &dyn super::super::AssetSource,
+    assets: Vec<airk_core::arbiter::Asset>,
+    runtime_manifest: &[u8],
+    runtime_manifest_sha256: Sha256Digest,
+    measurement: ProtectedMeasurement,
+    measurement_receipt: Option<&[u8]>,
+    policy: Option<Sha256Digest>,
+) -> Result<PreparedProtectedMhaProfile> {
+    use airk_core::arbiter::{AssetRole, Task};
+    ensure!(
+        policy.is_none() || measurement.receipt_sha256.is_some(),
+        "a pass-2 protected profile requires its measurement receipt"
+    );
+    if let Some(expected) = measurement.receipt_sha256 {
+        verify_measurement_receipt(
+            &measurement,
+            measurement_receipt.context("measurement receipt bytes missing")?,
+            expected,
+        )?;
+    }
+    let runtime_build = probe_runtime_identity(runtime_manifest, runtime_manifest_sha256)?;
+    cpu.validate()?;
+    super::super::validate_selected_policies(cpu)?;
+    let (id, original) = match cpu.model {
+        ModelChoice::ContextQwenCompact => (
+            "private-cuda-fp16-context-compact-protected-mha-v1",
+            "c79c672513b874ab773ee7df8d4518e110d1e6196ae45076ce718f5b5dc6f7b4",
+        ),
+        ModelChoice::ContextQwenLarge => (
+            "private-cuda-fp16-context-large-protected-mha-v1",
+            "f8ba5d3ea8a4269739ec5e517e61e4ec1f2f94560ea60014a4f5a9476c32fd94",
+        ),
+        _ => anyhow::bail!("protected efficient MHA requires a Context model"),
+    };
+    let cpu_graphs = cpu
+        .assets
+        .iter()
+        .filter(|a| a.role == AssetRole::Model)
+        .collect::<Vec<_>>();
+    ensure!(
+        cpu.device_execution.is_none()
+            && cpu.max_tokens == 8192
+            && cpu.max_candidates == 8
+            && cpu_graphs.len() == 1
+            && cpu_graphs[0].sha256 == original.parse()?
+            && cpu.tasks.contains(&Task::ContextAction),
+        "protected MHA requires the original FP32 Context8192/N8 CPU description"
+    );
+    let candidate = ProtectedContextMha::for_model(cpu.model)?;
+    let pinned_graph: Sha256Digest = candidate.graph.parse()?;
+    ensure!(
+        assets.len() == 2
+            && assets.iter().any(|a| a.role == AssetRole::Model
+                && a.name == "model.onnx"
+                && a.bytes == candidate.graph_bytes as u64
+                && a.sha256 == pinned_graph)
+            && candidate.require_weights(&assets).is_ok(),
+        "protected MHA assets must be exactly the pinned graph and weights"
+    );
+    ensure!(
+        measurement.cold_peak_bytes > 0
+            && measurement.headroom_bytes > 0
+            && measurement.warm_extra_bytes <= measurement.cold_peak_bytes
+            && (1..=64).contains(&measurement.intra_threads)
+            && measurement.memory_reservation_bytes > 0,
+        "protected MHA measured capacity invalid"
+    );
+    let mut preview = cpu.clone();
+    preview
+        .assets
+        .retain(|a| !matches!(a.role, AssetRole::Model | AssetRole::ExternalWeights));
+    preview.assets.extend(assets.iter().cloned());
+    let model = assets.iter().find(|a| a.role == AssetRole::Model).context("graph")?;
+    let graph = super::super::bytes(source, model, 64 << 20)?;
+    for weight in assets.iter().filter(|a| a.role == AssetRole::ExternalWeights) {
+        super::super::bytes(source, weight, 16u64 << 30)?;
+    }
+    let calibrations = cpu
+        .assets
+        .iter()
+        .filter(|a| a.role == AssetRole::Calibration)
+        .collect::<Vec<_>>();
+    ensure!(calibrations.len() == 1, "native calibration missing");
+    let raw = super::super::bytes(source, calibrations[0], 64 << 10)?;
+    let mut c = airk_core::arbiter::context_action::calibration::JointCalibration::parse_and_validate(
+        &raw,
+        cpu,
+        crate::arbiter::context_action::policy_digest()?,
+    )?;
+    c.schema = airk_core::arbiter::context_action::calibration::CALIBRATION_SCHEMA_V2.into();
+    c.rules.clear();
+    c.class_support = Some(unavailable_classes());
+    c.assets = context_probe_asset_bindings(&preview.assets);
+    let mut calibration_bytes = serde_json::to_vec_pretty(&c)?;
+    calibration_bytes.push(b'\n');
+    let mut profile = preview;
+    let mut host_fit = profile.cpu_fit.take().context("native host fit missing")?;
+    host_fit.intra_threads = measurement.intra_threads;
+    host_fit.minimum_physical_cores = measurement.intra_threads;
+    host_fit.inter_threads = 1;
+    host_fit.sequential = true;
+    host_fit.spinning = false;
+    profile.profile_id = id.into();
+    profile.runtime = GpuBackend::Cuda.runtime().into();
+    profile.downloads.clear();
+    profile.qualified_targets.clear();
+    profile.qualification = None;
+    profile.memory_reservation_bytes = measurement.memory_reservation_bytes;
+    let calibration_name = calibrations[0].name.clone();
+    let sha = Sha256Digest::from_bytes(Sha256::digest(&calibration_bytes).into());
+    profile.calibration = sha;
+    let a = profile
+        .assets
+        .iter_mut()
+        .find(|a| a.role == AssetRole::Calibration)
+        .context("CAL asset missing")?;
+    a.sha256 = sha;
+    a.bytes = calibration_bytes.len() as u64;
+    let recipe = BoundedContextOptimizer::ProtectedEfficientMha;
+    profile.device_execution = Some(DeviceExecution {
+        schema: DEVICE_EXECUTION_SCHEMA.into(),
+        backend: GpuBackend::Cuda,
+        runtime_build,
+        compatibility_policy: compatibility_policy_digest(),
+        provider_options: recipe.provider_options(cpu.model)?,
+        math_policy: recipe.math_policy(cpu.model)?,
+        precision: DevicePrecision::Float16,
+        tf32: false,
+        placement: PlacementPolicy::BoundedHybrid {
+            policy: policy.unwrap_or_else(protected_mha_pass1_policy),
+        },
+        graph: model.sha256,
+        host_fit,
+        memory: DeviceMemory::Dedicated {
+            required_peak_bytes: measurement.cold_peak_bytes,
+            headroom_bytes: measurement.headroom_bytes,
+        },
+    });
+    let files = profile
+        .assets
+        .iter()
+        .filter(|a| a.role == AssetRole::ExternalWeights)
+        .map(|a| (a.name.clone(), a.bytes))
+        .collect();
+    let attention = AttentionPlan::from_graph(&profile, &graph, &files)?;
+    profile.manifest = Sha256Digest::from_bytes([0; 32]);
+    let canonical = serde_json::to_vec(&(
+        cpu.manifest,
+        runtime_manifest_sha256,
+        &profile,
+        &measurement,
+    ))?;
+    profile.manifest = airk_core::identity::framed_digest(
+        b"airk.private.cuda-protected-mha-profile/1",
+        &[&canonical],
+    );
+    profile.validate()?;
+    super::super::validate_selected_policies(&profile)?;
+    airk_core::arbiter::context_action::calibration::JointCalibration::parse_and_validate(
+        &calibration_bytes,
+        &profile,
+        crate::arbiter::context_action::policy_digest()?,
+    )?;
+    ensure!(super::evaluation_bounded(&profile)?, "emitted profile is outside the evaluation admission");
+    Ok(PreparedProtectedMhaProfile {
+        profile,
+        calibration_name,
+        calibration_bytes,
+        attention_plan: serde_json::to_value(attention)?,
+        measurement,
+    })
+}
+
+/// The measured values must come from, and stay within, their retained receipt
+/// (an `airk.private.l5a-gpu/1` strict-run receipt of the same graph and weights).
+#[cfg(all(feature = "test-support", windows, target_arch = "x86_64"))]
+fn verify_measurement_receipt(
+    measurement: &ProtectedMeasurement,
+    raw: &[u8],
+    expected: Sha256Digest,
+) -> Result<()> {
+    ensure!(
+        Sha256Digest::from_bytes(Sha256::digest(raw).into()) == expected,
+        "measurement receipt bytes differ from receipt_sha256"
+    );
+    let receipt: serde_json::Value = serde_json::from_slice(raw)?;
+    let free = |value: &serde_json::Value| value["free_bytes"].as_u64();
+    let before = free(&receipt["adapter_before"]).context("receipt pre-load adapter free bytes")?;
+    let rows = receipt["rows"].as_array().context("receipt width rows")?;
+    ensure!(
+        receipt["schema"] == "airk.private.l5a-gpu/1"
+            && receipt["complete"] == true
+            && receipt["step"] == "strict"
+            && !rows.is_empty(),
+        "measurement receipt is not a complete strict scorer-path run"
+    );
+    let mut used = before.saturating_sub(
+        free(&receipt["adapter_after_open"]).context("receipt post-load adapter")?,
+    );
+    for row in rows {
+        used = used.max(before.saturating_sub(
+            free(&row["adapter_after"]).context("receipt width adapter")?,
+        ));
+    }
+    let committed = receipt["host_final"]["peak_pagefile_bytes"]
+        .as_u64()
+        .context("receipt host committed peak")?;
+    ensure!(
+        used <= measurement.cold_peak_bytes,
+        "measured device use exceeds the declared cold peak"
+    );
+    ensure!(
+        committed <= measurement.memory_reservation_bytes,
+        "measured host committed peak exceeds the declared host reservation"
+    );
+    Ok(())
 }

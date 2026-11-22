@@ -506,7 +506,15 @@ impl Scorer {
         profile.description.validate()?;
         profile.validate_native_source()?;
         #[cfg(feature = "gpu-cuda")]
-        let gpu = profile.gpu.clone();
+        #[allow(unused_mut)]
+        let mut gpu = profile.gpu.clone();
+        // F4: only proof-only diagnostic and gated scientific opens demand attention debug1.
+        #[cfg(all(feature = "gpu-cuda", feature = "test-support"))]
+        if !matches!(_mode, OpenMode::Execution)
+            && let Some(binding) = gpu.as_mut()
+        {
+            binding.proof = true;
+        }
         #[cfg(all(
             feature = "gpu-cuda",
             all(
@@ -524,10 +532,27 @@ impl Scorer {
                 let binding = gpu
                     .as_ref()
                     .context("qualified bounded CUDA binding missing")?;
+                let release = matches!(&_mode, OpenMode::Execution)
+                    && profile.release_qualified()
+                    && binding.evidence.is_some();
+                // Evaluation-only admission (plan 12.5.2, design L5 1.3 B/C): an unqualified
+                // protected-MHA profile under the probe binding, opened for execution (the
+                // release verifier then checks its policy) or for the pass-1 graph diagnostic.
+                #[cfg(all(feature = "test-support", windows, target_arch = "x86_64"))]
+                let evaluation = !profile.release
+                    && profile.evaluation()
+                    && matches!(
+                        &_mode,
+                        OpenMode::Execution | OpenMode::GraphMetadataDiagnostic
+                    )
+                    && binding.evaluation_admits(
+                        profile.description(),
+                        matches!(&_mode, OpenMode::Execution),
+                    )?;
+                #[cfg(not(all(feature = "test-support", windows, target_arch = "x86_64")))]
+                let evaluation = false;
                 ensure!(
-                    matches!(&_mode, OpenMode::Execution)
-                        && profile.release_qualified()
-                        && binding.evidence.is_some(),
+                    release || evaluation,
                     "bounded Context execution requires a qualified release profile and authenticated product binding"
                 );
                 Some(cuda::BoundedContextOptimizer::from_profile(
@@ -843,12 +868,34 @@ impl Scorer {
                     bounded_hybrid = Some(gate.verify_session(binding, &session)?);
                 }
                 OpenMode::Execution => {
-                    binding.device.verify_session_placement(
+                    let _verified = binding.device.verify_session_placement(
                         profile.description(),
                         &session,
                         binding.load_deadline,
                         fp16_attention.as_ref(),
                     )?;
+                    // Keep the verified live graph with the session (AnswerRecipe::ProtectedMha).
+                    #[cfg(all(feature = "test-support", windows, target_arch = "x86_64"))]
+                    if let (
+                        Some(observed),
+                        Some(airk_core::arbiter::device::PlacementPolicy::BoundedHybrid {
+                            policy,
+                        }),
+                    ) = (
+                        _verified,
+                        profile
+                            .description()
+                            .device_execution
+                            .as_ref()
+                            .map(|d| &d.placement),
+                    ) && !profile.release
+                        && binding.evaluation_admits(profile.description(), true)?
+                    {
+                        // Only an evaluation-admitted protected-MHA session carries this evidence.
+                        bounded_hybrid = Some(bounded_hybrid::GraphEvidence::protected_mha(
+                            observed, *policy,
+                        ));
+                    }
                 }
             }
         }
@@ -1694,7 +1741,8 @@ impl Scorer {
             target_arch = "x86_64",
             any(windows, all(target_os = "linux", target_env = "gnu"))
         ))]
-        if self.profile.release_qualified()
+        if (self.profile.release_qualified()
+            || cuda::evaluation_bounded(self.profile.description())?)
             && self
                 .profile
                 .description()

@@ -47,6 +47,9 @@ enum GraphPolicy {
     LargeFp16Projection(Layer0Cut),
     CompactFp16,
     CompactFp16Layer0(Layer0Cut),
+    /// Verified in-session by the release verifier under the evaluation admission;
+    /// never carried by a GraphGate (plan 12.5.2, design L5 1.3 C).
+    ProtectedMha,
 }
 
 impl GraphPolicy {
@@ -145,6 +148,19 @@ pub(super) struct GraphEvidence {
 impl GraphEvidence {
     pub(super) fn is_layer0(&self) -> bool {
         self.policy.layer0().is_some()
+    }
+
+    /// Evidence of a protected-MHA session whose live graph the release verifier
+    /// matched to the profile's bounded policy digest.
+    pub(super) fn protected_mha(
+        graph: GraphMetadataObservation,
+        policy_identity: Sha256Digest,
+    ) -> Self {
+        Self {
+            graph,
+            policy_identity,
+            policy: GraphPolicy::ProtectedMha,
+        }
     }
 }
 
@@ -283,6 +299,7 @@ impl GraphGate {
             GraphPolicy::CompactFp16 | GraphPolicy::CompactFp16Layer0(_) => {
                 &mut result["graph_observation"]["graph_metadata"]
             }
+            GraphPolicy::ProtectedMha => anyhow::bail!("protected MHA has no graph gate"),
         };
         ensure!(
             graph["schema"] == "airk.private.ort-final-graph-metadata/1"
@@ -326,6 +343,7 @@ impl GraphGate {
             GraphPolicy::CompactFp16 | GraphPolicy::CompactFp16Layer0(_) => {
                 ModelChoice::ContextQwenCompact
             }
+            GraphPolicy::ProtectedMha => anyhow::bail!("protected MHA has no graph gate"),
         };
         ensure!(
             profile.manifest == self.profile
@@ -385,6 +403,7 @@ impl GraphGate {
             GraphPolicy::ContextFp32(_) => {
                 anyhow::bail!("bounded hybrid model outside reviewed Context scopes")
             }
+            GraphPolicy::ProtectedMha => anyhow::bail!("protected MHA has no graph gate"),
         };
         let verified = (|| -> Result<()> {
             graph.validate_against(&placement)?;

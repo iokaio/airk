@@ -7,6 +7,8 @@ use super::*;
     any(windows, all(target_os = "linux", target_env = "gnu"))
 ))]
 mod cutlass;
+#[cfg(feature = "test-support")]
+mod focus;
 #[derive(Clone, Debug, Serialize)]
 pub struct LogRow {
     pub location: String,
@@ -294,9 +296,14 @@ pub(crate) fn authority(
 }
 #[cfg(feature = "test-support")]
 pub(crate) fn require_diagnostic_profile(profile: &super::super::ExecutionProfile) -> Result<()> {
+    use airk_core::arbiter::ModelChoice;
+    // Focus joins for the plan 12.5.2 strict-placement check of its CUDA route.
     require_profile(
         profile,
-        profile.description.model == airk_core::arbiter::ModelChoice::ContextQwenCompact,
+        matches!(
+            profile.description.model,
+            ModelChoice::ContextQwenCompact | ModelChoice::FocusQwenReranker06B
+        ),
     )
 }
 
@@ -305,6 +312,33 @@ pub(crate) fn require_graph_diagnostic_profile(
     profile: &super::super::ExecutionProfile,
 ) -> Result<()> {
     use airk_core::arbiter::ModelChoice;
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    if profile.description.device_execution.as_ref().is_some_and(|device| {
+        matches!(
+            device.placement,
+            airk_core::arbiter::device::PlacementPolicy::BoundedHybrid { .. }
+        )
+    }) {
+        // ProtectedMha pass 1 (design L5 1.3 B): observe rows and placement of an
+        // unqualified protected profile under the probe binding; no policy is verified.
+        crate::native_inference::require_service_compute()?;
+        profile.validate_native_source()?;
+        return authority(
+            profile.execution_authorized() && profile.evaluation(),
+            profile.release,
+            profile.description.qualification.is_none()
+                && profile.description.qualified_targets.is_empty(),
+            matches!(
+                profile.description.model,
+                ModelChoice::ContextQwenCompact | ModelChoice::ContextQwenLarge
+            ),
+            super::evaluation_bounded(&profile.description)?,
+            profile
+                .gpu
+                .as_ref()
+                .is_some_and(|binding| binding.evidence.is_none()),
+        );
+    }
     #[cfg(all(windows, target_arch = "x86_64"))]
     if profile
         .description
@@ -332,12 +366,16 @@ pub(crate) fn require_graph_diagnostic_profile(
             );
             return require_fp16_profile(profile, ModelChoice::ContextQwenLarge);
         }
+        if profile.description.model == ModelChoice::FocusQwenReranker06B {
+            return require_fp16_profile(profile, ModelChoice::FocusQwenReranker06B);
+        }
         return require_compact_fp16_profile(profile);
     }
     let model = profile.description.model;
     require_profile(
         profile,
         model == ModelChoice::ContextQwenCompact
+            || model == ModelChoice::FocusQwenReranker06B
             || (cfg!(all(windows, target_arch = "x86_64"))
                 && model == ModelChoice::ContextQwenLarge),
     )

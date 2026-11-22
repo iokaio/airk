@@ -228,4 +228,47 @@ limits on publication still apply in full.
 - **Why:** an agent gains from evidence, not from decision bookkeeping. This
   follows the user's guidance that constraints are guides.
 
+### 17. FP16 CUDA profiles for Compact and Large, measured on the A6000
+
+- **Step:** L5 phase B.
+- **What:** the evaluation-only admission is built, so the protected graphs
+  open through Answer's scorer path with an unchanged release verifier.
+  Profiles are emitted with memory measured in that path.
+
+| Profile | GPU memory declared | Measured peak | Warm call at 1,024 / 8,192 tokens |
+| --- | --- | --- | --- |
+| Compact FP16 | 8 + 2 GiB | 6.24 GiB | 201 / 1,742 ms |
+| Large FP16 | 18 + 2 GiB (17 before review) | 15.24 GiB | 443 / 4,388 ms |
+
+- **Review correction:** an independent review found that the memory summary
+  had read only the smallest width. Re-deriving from every width raised
+  Large's figures to those in the table, and Large was re-emitted and
+  confirmed. Compact stayed at 8 GiB. The review also found five digest-input
+  movements that had not been recorded; they are now recorded in the CUDA
+  `CONTRACT.md` section "L5 digest-input movements".
+
+- **Large fits 24 GB.** Large's earlier 21 GiB came from ORT's memory
+  pattern in the raw session. The scorer path disables the pattern and uses
+  14.2 GiB.
+- **Numeric replay on the 100-row CAL panel:** FP16 against FP32 stays
+  within 4e-4 raw on both models, and every winner agrees. Compact and Large
+  agree on only 54 of 100 winners, so model size matters far more than
+  precision, as 12.7.3 expected.
+- **Focus at 1,024 tokens on CUDA:**
+
+  | Focus arm | Warm call | GPU memory |
+  | --- | --- | --- |
+  | W8 | about 114 ms | 2.4 GiB |
+  | FP16 | 51–56 ms | 2.25 GiB |
+  | FP32 | about 107 ms | 3.24 GiB |
+
+- **Identity movement:**
+  - The G5 and protected-MHA math digests moved, so FP16 CUDA profiles
+    emitted before this change no longer open. All of them were private and
+    unqualified.
+  - The `cpu_source_transition` pins are still stale: the same 9 tests fail,
+    to be resolved in L4.
+- **Recorded in:** the CUDA `CONTRACT.md` section "L5 evaluation diagnostics
+  and protected admission".
+
 Further entries are added as implementation proceeds.

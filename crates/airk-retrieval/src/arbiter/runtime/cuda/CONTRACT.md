@@ -879,3 +879,169 @@ its own acceptance evidence and product runtime descriptor. The current
 CPU release catalog and retained historical scientific images keep their
 original evidence. New source epochs require fresh numerical, task and
 resource qualification before any release row can be admitted.
+## L5 evaluation diagnostics and protected admission
+
+Plan 12.5.2 (L5) adds the routes below. Everything in this section is
+evaluation-only and compiled only with `test-support` on Windows x86-64. A
+product image never admits it.
+
+**Evaluation-only bounded admission** (`cuda::evaluation_bounded`). A
+`BoundedHybrid` profile may open under the scientific `/1` runtime descriptor
+with an unqualified probe binding only when all of these hold:
+- the profile is private (`private-` id) and has no qualification, qualified
+  targets or downloads;
+- its optimizer is `ProtectedEfficientMha`;
+- its graph and single `weights.bin` are the pinned protected Compact
+  147be075/0c4bd89d or Large c1b57761/5b053f02 artifacts.
+
+Under that admission, `Scorer::open` (execution mode) applies the release
+verifier unchanged. `verify_execution` recomputes the
+`airk.native.cuda.bounded-context-execution/1` digest from the live final
+SessionState placement and graph rows, and requires it to equal the profile's
+policy. It also applies the 9,443-byte (Compact) or 12,067-byte (Large) CPU
+payload cap. The policy digest and the verifier are the same as for release;
+only the binding authority differs. The approval pins
+(`AIRK_APPROVED_CUDA_MANIFEST_SHA256` and `AIRK_STATIC_CUDA_BUILD_SHA256`) and
+the runtime descriptor do not move. The digest inputs and the profile
+identities listed under "L5 digest-input movements" do move. Only a session
+opened under this admission keeps its verified live graph as evidence
+(`GraphPolicy::ProtectedMha`). Execution additionally refuses the pass-1
+sentinel policy.
+
+**What the admission skips.** Without a product requirement row, these
+release checks are absent:
+- the row's supported compute capability and minimum driver
+  (`RequirementRow::supports` against the adapter identity);
+- the row's cold-peak limit;
+- the row's warm-extra and host-warm-extra limits;
+- the row's artifact evidence (numerical, resource and placement digests)
+  and its acceptance fixture.
+
+These replace them:
+- **Compute capability.** The binding must be an unqualified probe on the
+  scientific descriptor, and the live adapter must be SM86, the only measured
+  device class (`evaluation_device_class`). The driver is not checked at open.
+  The measurement receipt records it (13020, image f654977a…) and the GPU
+  probe re-observes it.
+- **Cold peak.** The plan is the profile's own measured `DeviceMemory`. The
+  emitter refuses a declared cold peak below the receipt's per-width
+  device-use maximum.
+- **Host.** The host warm extra is not reserved by the probe binding. The
+  emitter refuses a host reservation below the receipt's measured committed
+  peak.
+- **Receipt.** The emitter requires `receipt_sha256` for every pass-2 profile
+  and verifies the receipt bytes against it.
+
+**ProtectedMha pass-1 diagnostic.** `require_graph_diagnostic_profile` admits
+the same unqualified protected profile under the probe binding in
+graph-metadata mode, with the protected optimizer configured. It returns the
+observation only and verifies no policy. A pass-1 profile carries the sentinel
+policy `protected_mha_pass1_policy()`, which only this diagnostic can open.
+
+**Two-pass emitter** (`prepare_protected_mha_profile`, test-support):
+- Input: the original FP32 Context 8192/N8 CPU profile, the pinned protected
+  graph and weights, and a `ProtectedMeasurement` (cold peak, warm extra,
+  headroom, host reservation, host threads, receipt SHA).
+- Pass 1 writes the sentinel policy. Its graph diagnostic yields
+  `bounded_context_execution_policy`. Pass 2 writes the same profile with that
+  digest.
+- The digest excludes the manifest and the device memory, so re-emitting with
+  measured memory keeps it. It includes the host threads, so each host tier
+  needs its own pass 1.
+- Calibration is the CPU JointCalibration as CAL/2, with zero rules and every
+  class Unsupported.
+- The manifest is framed by `airk.private.cuda-protected-mha-profile/1`.
+
+**AnswerRecipe::ProtectedMha.**
+- Identified by a bounded-hybrid profile inside the evaluation admission.
+- Its capacity is the profile's own `DeviceMemory::Dedicated`; warm extra is
+  bounded by the cold peak. There are no literal tuples and no `GraphGate`.
+- The caller passes an empty graph result, and the profile's own policy digest
+  as the reviewed pin.
+- The Answer provenance policy is framed by
+  `airk.private.cuda-protected-mha-answer/1` with the resource policy digest.
+- Loop-card task admission (plan 12.5.2 item 2) is not part of this recipe
+  yet. Profiles still admit only `airk.context_action.v1`.
+
+**Probe and proof are separate (F4).** `Binding::proof` is set only for
+placement, graph-metadata and gated scientific opens. Those still require
+inherited `ORT_CUDA_GEMM_OPTIONS=2` and attention debug 1 before ORT
+initialization. Execution opens under a probe binding require GEMM2 and accept
+debug 0. `AttentionPlan::observation` remains proof-only. The provider-options
+identity string is unchanged ("attention-debug1=qualification-proof-only").
+
+**Focus widths.**
+- The G5 geometry gate admits the static width its attention plan was built
+  for: 512 or 1024 tokens, with a nonempty left-padded live suffix.
+- The FP16 preparer accepts the static-1024 FP32 lineage 794fc0b2 (19b20ad4
+  widened) under id `private-cuda-fp16-focus1024-efficient-probe-v1`.
+- The diagnostic-module FP32 preparer (`prepare_focus1024_fp32_probe_profile`)
+  emits one of two profiles:
+  - `private-cuda-fp32-focus1024-probe-v1`, for the weight8 graph
+    a16fcaa1/1c819b77;
+  - `private-cuda-fp32-focus1024-fullfp32-probe-v1`, for the full-FP32
+    794fc0b2/3a90bdb2.
+- The placement and graph diagnostics admit Focus.
+
+**Selectors** in `crates/airk-retrieval/tests/cuda_l5a_diagnostics.rs`. All
+are ignored and driven by environment variables. Each input is SHA-pinned,
+each output is a fresh file, and the test image must sit beside the runtime
+descriptor:
+- `l5a_prepare`: CPU-only metadata (FP32 Focus1024, FP16 G5, protected
+  passes 1 and 2).
+- `l5a_gpu`: `placement`, `graph` or `strict` with T32/T1024/T8192 Context or
+  Focus pair timing.
+- `l5a_cutlass`: raw scientific protected timing, for comparison only.
+- `l5a_replay`: CAL panel replay through an Answer route.
+  `loop_card_inputs` is the hook for the L3 loop-card inputs; it is null today.
+
+### L5 digest-input movements
+
+**Digest-input change.** The L5 admission edits five files that are digest
+inputs or source pins. SHA-256 of the LF-normalized source:
+
+| File | Before (HEAD) | Reviewed | Final (this tree) |
+| --- | --- | --- | --- |
+| `runtime.rs` | 258d43714a14169d8ca0dd5993890bdcaa26204c13a8e583f83bb6e63bb698e0 | 02692bbbec02c4ae6986e77c851cf265de786d1e5378e3c2e6d082e68180895a | 4d420821574d4d032175433a938f4d54bd74c7d9bb3834e599b16d68d486969f |
+| `runtime/cuda.rs` | 127cb9123f20bbe6ad84958ef71e43de23a4da7dc130e00ff06d3cad518caa36 | 8548bda9be6edd86e07141cb02d0b2517c7eb24a67ce9d7709360ff8100739d3 | 3526ef91760fb1a15cc9ee47dfdc06230e5013b051ac6717831f8c1562a0e5b2 |
+| `runtime/cuda/diagnostic.rs` | 6b6c934752a21eabd9a660d6ea03a237d28e52e7bddca4478065abc7e8342e3a | b784131c62c38719d10ae2878e859abd488c36213d54bd5ba3a2c9c695200219 | b784131c62c38719d10ae2878e859abd488c36213d54bd5ba3a2c9c695200219 |
+| `runtime/cuda/fp16.rs` | 042103f711049f8484c3220b584abf591db7fef6ef465bcf69bff91f56c78b39 | 4a70774467c4311201caf3dbf295f526a0eccfaeee3d314e4aadcfb28b9025bf | 3d281372e2ff2bd518a1a5aad43c768bc216d4955287d5ff22457ad66b87696b |
+| `runtime/bounded_hybrid.rs` | 4b6c33f9b24a62ae2188c0abc237d5fff2e78dd66715f1236008e3c601566d8e | 2788b7a13d86eb310a23c8081095263c29e90429bbc99adf6f1f268f02d2998a | 2788b7a13d86eb310a23c8081095263c29e90429bbc99adf6f1f268f02d2998a |
+
+This is a recorded digest-input change of the private evaluation build, not a
+re-pin. No pin or test expectation was updated.
+
+Consequences:
+- **Moved digests.**
+  - `fp16.rs`, `cuda.rs` and `runtime.rs` are inputs of
+    `fp16_math_policy_digest(model)` (G5), so the G5 identity of every model
+    moves.
+  - With it moves `BoundedContextOptimizer::ProtectedEfficientMha`'s math
+    policy, which hashes the G5 digest.
+  - Both are inputs of the `airk.native.cuda-bounded-context-execution/1`
+    policy of every protected profile.
+- **Earlier FP16 profiles no longer open.** Their recorded `math_policy`
+  differs from the live digest:
+  - Compact 971cf2d2, fe94664a and a9486966;
+  - Large c00371ad;
+  - the earlier Focus 512 probe;
+  - the phase-B protected profiles (1e4bd67a… and e1802741…).
+
+  FP32 profiles keep their identity, because their provider and math digests
+  are literal strings.
+- **The GraphGate validator identity moves.** `bounded_hybrid.rs` is hashed
+  into the Compact FP16 GraphGate validator identity (`bounded_hybrid.rs:417`).
+  Any retained result checked against that identity must be re-observed.
+- **Pass-2 profiles are fragile.** A pass-2 protected profile, and any FP16
+  probe profile, stays openable only while all five files above stay
+  byte-identical. Any later edit to them, even a comment, requires re-emitting
+  pass 1, the graph diagnostic, pass 2 and the confirmation run. The current
+  profiles were emitted from the "Final" column (image r5).
+- **Hidden test-pin mismatches.**
+  - The `cpu_source_transition` tests pin `runtime.rs` (7b465076…, already
+    stale at HEAD), `cuda.rs` (127cb912…) and `cuda/diagnostic.rs`
+    (6b6c9347…).
+  - The `cuda.rs` and `diagnostic.rs` mismatches sit behind the failing
+    `runtime.rs` assertion, which runs first, so they are not reported.
+  - They will surface when the `runtime.rs` pin is resolved (L4); those tests
+    then need a recorded decision for all three files.

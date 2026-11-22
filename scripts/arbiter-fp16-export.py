@@ -10,8 +10,17 @@ ORIGINAL = {
     'focus': '19b20ad4e39e173f6da602094b9c1583726a65fa76742553f97ec6f0f58436a1',
     'compact': 'c79c672513b874ab773ee7df8d4518e110d1e6196ae45076ce718f5b5dc6f7b4',
     'large': 'f8ba5d3ea8a4269739ec5e517e61e4ec1f2f94560ea60014a4f5a9476c32fd94',
+    # Independent static-1024 Focus export (same 1c819b77 weights as the 512 original).
+    'focus1024': 'a16fcaa1bf2d67b019b30cda56d76ba23d589c346ef2ae76d75c229ebe866810',
+    # FP32 19b20ad4 widened to static 1024 (focus_widen.py); the FP32 Focus1024 source.
+    'focus1024fp32': '794fc0b2027969150c9368432c066fc7158d16600aafd94d0cbdeeb994f4da19',
 }
-GEOMETRY = {'focus': (28, 16, 8, 1024), 'compact': (28, 16, 8, 2048), 'large': (36, 32, 8, 2560)}
+GEOMETRY = {'focus': (28, 16, 8, 1024), 'focus1024': (28, 16, 8, 1024), 'focus1024fp32': (28, 16, 8, 1024), 'compact': (28, 16, 8, 2048), 'large': (36, 32, 8, 2560)}
+# Static Focus token widths; each width is its own pinned original source.
+FOCUS_WIDTH = {'focus': 512, 'focus1024': 1024, 'focus1024fp32': 1024}
+def family(key):
+    """Graph-topology family: both static Focus widths share the Focus rewrite."""
+    return 'focus' if key in FOCUS_WIDTH else key
 NS = '/airk_g5/'
 PROJECTIONS = {'q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj'}
 RECIPES = ('g5', 'portable')
@@ -48,11 +57,12 @@ def validate_inputs(model, mask, positions):
     require(model in GEOMETRY, 'unknown model')
     require(all(type(x) is int and x in (0, 1) for x in mask), 'binary mask required')
     require(positions == list(range(len(mask))) and all(type(x) is int for x in positions), 'position rule differs')
-    if model == 'focus':
-        require(len(mask) == 512 and 1 in mask, 'Focus static nonempty512 required')
-        pad = mask.index(1); live = 512 - pad
+    if model in FOCUS_WIDTH:
+        width = FOCUS_WIDTH[model]
+        require(len(mask) == width and 1 in mask, f'Focus static nonempty{width} required')
+        pad = mask.index(1); live = width - pad
         require(mask == [0] * pad + [1] * live, 'holes/right padding forbidden')
-        return [live, pad, 512, pad, 512]
+        return [live, pad, width, pad, width]
     require(0 < len(mask) <= 8192 and all(mask), 'Context all-live1..8192 required')
     return [len(mask)-1], [len(mask)]
 
@@ -62,6 +72,7 @@ def attributes(node, onnx):
 def classify(model, key):
     """Complete role census from exact original graph; unknown weights refuse."""
     layers, heads, kv, hidden = GEOMETRY[key]
+    key = family(key)
     uses = {}
     for n in model.graph.node:
         for i, v in enumerate(n.input): uses.setdefault(v, []).append((n, i))
@@ -131,11 +142,11 @@ def rewrite(model, key, onnx, recipe='g5'):
     require(key in GEOMETRY and not model.functions and not model.graph.sparse_initializer, 'unsupported graph')
     original=copy.deepcopy(model); g=model.graph; h=onnx.helper; T=onnx.TensorProto
     expected=['input_ids','attention_mask','position_ids']
-    if key!='focus': expected+=['decision_positions','candidate_positions','option_mask']
-    require([x.name for x in g.input]==expected and [x.name for x in g.output]==(['logits'] if key=='focus' else ['scores']), 'ABI differs')
+    if family(key)!='focus': expected+=['decision_positions','candidate_positions','option_mask']
+    require([x.name for x in g.input]==expected and [x.name for x in g.output]==(['logits'] if family(key)=='focus' else ['scores']), 'ABI differs')
     require(all(x.type.tensor_type.elem_type==T.INT64 for x in g.input[:3]) and all(x.type.tensor_type.elem_type==T.FLOAT for x in g.output), 'ABI types differ')
     require(not any(n.name.startswith(NS) or n.domain or any(a.type in (5,10) for a in n.attribute) for n in g.node), 'foreign namespace/custom source operator/subgraph')
-    roles=classify(model,key); layers,heads,kv,hidden=GEOMETRY[key]
+    roles=classify(model,key); layers,heads,kv,hidden=GEOMETRY[key]; key=family(key)
     nodes={n.name:n for n in g.node}; producers={v:n for n in g.node for v in n.output}
     require(len(nodes)==len(g.node) and len(producers)==sum(len(n.output) for n in g.node), 'duplicate source nodes/outputs')
     added=[]; constants=[]; modified=set(); removed=set(); scales=[]

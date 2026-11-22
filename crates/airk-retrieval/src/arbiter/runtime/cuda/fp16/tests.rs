@@ -90,18 +90,18 @@ fn input(tokens: usize) -> super::super::super::CompiledInput {
 #[test]
 fn context_boundaries_and_exact_original_mask_positions_refuse_unsupported_input() -> Result<()> {
     for tokens in [1, 17, 128, 8192] {
-        validate_geometry(ModelChoice::ContextQwenCompact, &input(tokens))?;
-        validate_geometry(ModelChoice::ContextQwenLarge, &input(tokens))?;
+        validate_geometry(ModelChoice::ContextQwenCompact, 0, &input(tokens))?;
+        validate_geometry(ModelChoice::ContextQwenLarge, 0, &input(tokens))?;
     }
     for tokens in [0, 8193] {
-        assert!(validate_geometry(ModelChoice::ContextQwenCompact, &input(tokens)).is_err());
+        assert!(validate_geometry(ModelChoice::ContextQwenCompact, 0, &input(tokens)).is_err());
     }
     let mut bad = input(17);
     bad.attention_mask[0] = 0;
-    assert!(validate_geometry(ModelChoice::ContextQwenCompact, &bad).is_err());
+    assert!(validate_geometry(ModelChoice::ContextQwenCompact, 0, &bad).is_err());
     bad.attention_mask[0] = 1;
     bad.position_ids[0] = 1;
-    assert!(validate_geometry(ModelChoice::ContextQwenCompact, &bad).is_err());
+    assert!(validate_geometry(ModelChoice::ContextQwenCompact, 0, &bad).is_err());
     Ok(())
 }
 #[test]
@@ -109,15 +109,22 @@ fn focus_all_live_and_extreme_left_pad_pass_without_renumbering() -> Result<()> 
     for prefix in [0, 1, 511] {
         let mut row = input(512);
         row.attention_mask[..prefix].fill(0);
-        validate_geometry(ModelChoice::FocusQwenReranker06B, &row)?;
+        validate_geometry(ModelChoice::FocusQwenReranker06B, 512, &row)?;
         assert_eq!(row.position_ids[511], 511);
     }
     let mut bad = input(512);
     bad.attention_mask[111] = 0;
-    assert!(validate_geometry(ModelChoice::FocusQwenReranker06B, &bad).is_err());
+    assert!(validate_geometry(ModelChoice::FocusQwenReranker06B, 512, &bad).is_err());
     bad.attention_mask.fill(0);
-    assert!(validate_geometry(ModelChoice::FocusQwenReranker06B, &bad).is_err());
-    assert!(validate_geometry(ModelChoice::FocusQwenReranker06B, &input(128)).is_err());
+    assert!(validate_geometry(ModelChoice::FocusQwenReranker06B, 512, &bad).is_err());
+    assert!(validate_geometry(ModelChoice::FocusQwenReranker06B, 512, &input(128)).is_err());
+    // The static-1024 plan admits exactly 1024 tokens and refuses 512; other widths refuse.
+    let mut wide = input(1024);
+    wide.attention_mask[..1000].fill(0);
+    validate_geometry(ModelChoice::FocusQwenReranker06B, 1024, &wide)?;
+    assert!(validate_geometry(ModelChoice::FocusQwenReranker06B, 512, &wide).is_err());
+    assert!(validate_geometry(ModelChoice::FocusQwenReranker06B, 1024, &input(512)).is_err());
+    assert!(validate_geometry(ModelChoice::FocusQwenReranker06B, 768, &input(768)).is_err());
     Ok(())
 }
 #[test]
@@ -157,6 +164,7 @@ fn actual_final_placement_needs_exact_complete_attention_roster() -> Result<()> 
         math_policy: fp16_math_policy_digest(model)?,
         provider_options: fp16_provider_options_digest(model)?,
         nodes,
+        focus_tokens: 0,
     };
     let base = PlacementObservation {
         scope: "literal synthetic final SessionState",
@@ -353,6 +361,7 @@ fn protected_efficient_mha_requires_every_model_specific_cuda_attention_and_proj
             math_policy: Sha256Digest::from_bytes([1; 32]),
             provider_options: Sha256Digest::from_bytes([2; 32]),
             nodes: candidate.attention_nodes(),
+            focus_tokens: 0,
         };
         let mut nodes = Vec::new();
         for layer in 0..layers {
@@ -404,5 +413,160 @@ fn protected_efficient_mha_requires_every_model_specific_cuda_attention_and_proj
         bad.complete = false;
         assert!(plan.require_attention_placement(&bad).is_err());
     }
+    Ok(())
+}
+
+/// Pinned protected profile inside the evaluation admission (pure metadata).
+#[cfg(all(windows, target_arch = "x86_64", feature = "test-support"))]
+fn protected_evaluation_profile(model: ModelChoice) -> Result<(Profile, Profile)> {
+    use airk_core::arbiter::{Asset, AssetRole};
+    let original = super::super::super::catalog_profiles()?
+        .into_iter()
+        .find(|profile| profile.model == model && profile.cpu_fit.is_some())
+        .context("Context CPU fixture profile missing")?;
+    let pin = ProtectedContextMha::for_model(model)?;
+    let mut profile = original.clone();
+    profile
+        .assets
+        .retain(|asset| asset.role != AssetRole::ExternalWeights);
+    profile.assets.push(Asset {
+        name: "weights.bin".into(),
+        role: AssetRole::ExternalWeights,
+        bytes: pin.weight_bytes,
+        sha256: pin.weights.parse()?,
+    });
+    profile.profile_id = "private-cuda-fp16-context-protected-mha-test".into();
+    profile.downloads.clear();
+    profile.qualified_targets.clear();
+    profile.qualification = None;
+    let recipe = BoundedContextOptimizer::ProtectedEfficientMha;
+    profile.device_execution = Some(DeviceExecution {
+        schema: DEVICE_EXECUTION_SCHEMA.into(),
+        backend: GpuBackend::Cuda,
+        runtime_build: Sha256Digest::from_bytes([1; 32]),
+        compatibility_policy: Sha256Digest::from_bytes([2; 32]),
+        provider_options: recipe.provider_options(model)?,
+        math_policy: recipe.math_policy(model)?,
+        precision: DevicePrecision::Float16,
+        tf32: false,
+        placement: PlacementPolicy::BoundedHybrid {
+            policy: Sha256Digest::from_bytes([3; 32]),
+        },
+        graph: pin.graph.parse()?,
+        host_fit: profile.cpu_fit.take().context("Context CPU fit missing")?,
+        memory: DeviceMemory::Dedicated {
+            required_peak_bytes: 8 << 30,
+            headroom_bytes: 2 << 30,
+        },
+    });
+    Ok((profile, original))
+}
+
+#[cfg(all(windows, target_arch = "x86_64", feature = "test-support"))]
+#[test]
+fn evaluation_admission_refuses_everything_outside_the_private_protected_shape() -> Result<()> {
+    use super::super::evaluation_bounded;
+    for model in [ModelChoice::ContextQwenCompact, ModelChoice::ContextQwenLarge] {
+        let (base, original) = protected_evaluation_profile(model)?;
+        assert!(evaluation_bounded(&base)?);
+        let mut refused = Vec::new();
+        let mut p = base.clone();
+        p.profile_id = "cuda-fp16-context-protected-mha-test".into();
+        refused.push(("non-private id", p));
+        let mut p = base.clone();
+        p.downloads = original.downloads.clone();
+        if !p.downloads.is_empty() {
+            refused.push(("downloads", p));
+        }
+        let mut p = base.clone();
+        p.qualified_targets = original.qualified_targets.clone();
+        if !p.qualified_targets.is_empty() {
+            refused.push(("qualified target", p));
+        }
+        let mut p = base.clone();
+        p.qualification = original.qualification;
+        if p.qualification.is_some() {
+            refused.push(("qualification", p));
+        }
+        let mut p = base.clone();
+        p.device_execution.as_mut().unwrap().graph = Sha256Digest::from_bytes([9; 32]);
+        refused.push(("wrong graph", p));
+        let mut p = base.clone();
+        p.assets.last_mut().unwrap().sha256 = Sha256Digest::from_bytes([9; 32]);
+        refused.push(("wrong weights", p));
+        let mut p = base.clone();
+        p.device_execution.as_mut().unwrap().placement = PlacementPolicy::StrictGpu;
+        refused.push(("strict placement", p));
+        let mut p = base.clone();
+        p.device_execution.as_mut().unwrap().provider_options =
+            BoundedContextOptimizer::ProtectedProjections.provider_options(model)?;
+        refused.push(("other optimizer", p));
+        assert!(refused.len() >= 6, "the catalog fixture lost its release fields");
+        for (case, profile) in refused {
+            assert!(
+                !evaluation_bounded(&profile).unwrap_or(false),
+                "{model:?}: {case} was admitted"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[cfg(all(windows, target_arch = "x86_64", feature = "test-support"))]
+#[test]
+fn pass1_sentinel_opens_only_for_the_graph_diagnostic() -> Result<()> {
+    use super::super::evaluation_admits;
+    let (mut profile, _) = protected_evaluation_profile(ModelChoice::ContextQwenCompact)?;
+    assert!(evaluation_admits(&profile, true)? && evaluation_admits(&profile, false)?);
+    profile.device_execution.as_mut().unwrap().placement = PlacementPolicy::BoundedHybrid {
+        policy: protected_mha_pass1_policy(),
+    };
+    assert!(!evaluation_admits(&profile, true)?, "execution admitted the pass-1 sentinel");
+    assert!(evaluation_admits(&profile, false)?);
+    assert_ne!(protected_mha_pass1_policy(), Sha256Digest::from_bytes([0; 32]));
+    Ok(())
+}
+
+/// Binding::proof drives `require_environment`: a timed probe (proof false)
+/// accepts debug 0 or unset with GEMM2; a proof open (diagnostic) needs debug 1.
+#[test]
+fn probe_binding_accepts_debug0_and_proof_requires_debug1() {
+    for debug in [None, Some("0")] {
+        let probe = env(Some("2"), debug);
+        assert!(check_environment(&probe, &probe, false).is_ok());
+        assert!(check_environment(&probe, &probe, true).is_err());
+    }
+    let proof = env(Some("2"), Some("1"));
+    assert!(check_environment(&proof, &proof, true).is_ok());
+    let no_gemm = env(None, Some("0"));
+    assert!(check_environment(&no_gemm, &no_gemm, false).is_err());
+}
+
+#[cfg(all(windows, target_arch = "x86_64", feature = "test-support"))]
+#[test]
+fn measurement_receipt_must_match_and_bound_the_declared_values() -> Result<()> {
+    let measurement = ProtectedMeasurement {
+        cold_peak_bytes: 8 << 30,
+        warm_extra_bytes: 3 << 30,
+        headroom_bytes: 2 << 30,
+        memory_reservation_bytes: 11 << 30,
+        intra_threads: 1,
+        receipt_sha256: None,
+    };
+    let receipt = |used: u64, committed: u64| {
+        serde_json::to_vec(&serde_json::json!({"schema":"airk.private.l5a-gpu/1","complete":true,"step":"strict",
+            "adapter_before":{"free_bytes": 40u64 << 30},"adapter_after_open":{"free_bytes": (40u64 << 30) - (4u64 << 30)},
+            "rows":[{"adapter_after":{"free_bytes": (40u64 << 30) - used}}],
+            "host_final":{"peak_pagefile_bytes": committed}}))
+        .unwrap()
+    };
+    let sha = |raw: &[u8]| Sha256Digest::from_bytes(Sha256::digest(raw).into());
+    let good = receipt(6 << 30, 9 << 30);
+    verify_measurement_receipt(&measurement, &good, sha(&good))?;
+    assert!(verify_measurement_receipt(&measurement, &good, Sha256Digest::from_bytes([1; 32])).is_err());
+    let device = receipt(9 << 30, 9 << 30);
+    assert!(verify_measurement_receipt(&measurement, &device, sha(&device)).is_err());
+    let host = receipt(6 << 30, 12 << 30);
+    assert!(verify_measurement_receipt(&measurement, &host, sha(&host)).is_err());
     Ok(())
 }

@@ -9,6 +9,10 @@ enum AnswerRecipe {
     ProtectedQkv,
     /// The corrected Large FP32 batch-view graph with its reviewed placement.
     LargeBatchView,
+    /// A protected efficient-MHA FP16 graph (Compact 147be075 or Large c1b57761)
+    /// under the evaluation-only bounded admission; its own bounded policy digest is
+    /// the review pin and its capacity is the profile's measured device memory.
+    ProtectedMha,
 }
 
 impl AnswerRecipe {
@@ -58,6 +62,16 @@ impl AnswerRecipe {
             .device_execution
             .as_ref()
             .context("CUDA Answer profile missing")?;
+        if matches!(
+            device.placement,
+            airk_core::arbiter::device::PlacementPolicy::BoundedHybrid { .. }
+        ) {
+            ensure!(
+                cuda::evaluation_bounded(description)?,
+                "bounded CUDA Answer requires the protected evaluation admission"
+            );
+            return Ok(Self::ProtectedMha);
+        }
         match description.model {
             ModelChoice::ContextQwenCompact => {
                 Self::identify(device.precision, device.graph, receipt)
@@ -69,8 +83,33 @@ impl AnswerRecipe {
         }
     }
 
+    fn capacity_for(self, description: &Profile) -> Result<cuda::DeviceCapacityPlan> {
+        match self {
+            // The profile's own measured cold peak; warm extra is bounded by the cold peak.
+            Self::ProtectedMha => match description
+                .device_execution
+                .as_ref()
+                .map(|device| &device.memory)
+            {
+                Some(airk_core::arbiter::device::DeviceMemory::Dedicated {
+                    required_peak_bytes,
+                    headroom_bytes,
+                }) => cuda::DeviceCapacityPlan::probe(
+                    *required_peak_bytes,
+                    *required_peak_bytes,
+                    *headroom_bytes,
+                ),
+                _ => anyhow::bail!("protected MHA profile has no measured dedicated memory"),
+            },
+            _ => self.capacity(),
+        }
+    }
+
     fn capacity(self) -> Result<cuda::DeviceCapacityPlan> {
         match self {
+            Self::ProtectedMha => {
+                anyhow::bail!("protected MHA capacity comes from its measured profile")
+            }
             Self::OriginalFp32 => cuda::DeviceCapacityPlan::probe(22 << 30, 16 << 30, 2 << 30),
             Self::ProtectedQkv => cuda::DeviceCapacityPlan::probe(16 << 30, 8 << 30, 2 << 30),
             // The reservation the corrected Large graph ran its four widths under.
@@ -85,7 +124,7 @@ impl Scorer {
         profile: &ExecutionProfile,
         reviewed_graph_sha: Sha256Digest,
     ) -> Result<cuda::DeviceCapacityPlan> {
-        AnswerRecipe::for_profile(profile, reviewed_graph_sha)?.capacity()
+        AnswerRecipe::for_profile(profile, reviewed_graph_sha)?.capacity_for(profile.description())
     }
 
     /// Opens the exact private Answer graph and retains this session's observed placement
@@ -117,6 +156,18 @@ impl Scorer {
                     reviewed_graph_sha,
                     overall_deadline,
                     calibration_base,
+                );
+            }
+            AnswerRecipe::ProtectedMha => {
+                ensure!(
+                    calibration_base.is_none() && reviewed_graph_result.is_empty(),
+                    "the protected MHA Answer recipe admits no graph result or calibration variant"
+                );
+                return Self::open_private_protected_mha_answer(
+                    profile,
+                    source,
+                    reviewed_graph_sha,
+                    overall_deadline,
                 );
             }
             AnswerRecipe::ProtectedQkv => ensure!(
@@ -233,6 +284,66 @@ impl Scorer {
             },
         ))
     }
+
+    /// Opens a protected efficient-MHA Context profile through plain execution under the
+    /// evaluation admission. `policy` must equal the profile's bounded policy digest,
+    /// which the release verifier has matched to the live session before this returns.
+    fn open_private_protected_mha_answer(
+        profile: ExecutionProfile,
+        source: &dyn AssetSource,
+        policy: Sha256Digest,
+        overall_deadline: Instant,
+    ) -> Result<(Self, CompactBoundedHybridAnswerProvenance)> {
+        let resource = ResourcePolicy::focus_static1024();
+        let description = profile.description();
+        ensure!(
+            description.max_tokens == resource.context_input_tokens
+                && description.max_candidates == resource.maximum_context_candidates
+                && description.tasks.contains(&Task::ContextAction)
+                && matches!(
+                    description.device_execution.as_ref().map(|d| &d.placement),
+                    Some(airk_core::arbiter::device::PlacementPolicy::BoundedHybrid { policy: p }) if *p == policy
+                ),
+            "protected MHA Answer requires the original Context limits and its own policy pin"
+        );
+        let maximum_operation = Duration::from_millis(resource.deadline_ms);
+        let load_deadline = profile
+            .gpu
+            .as_ref()
+            .context("protected MHA CUDA binding missing")?
+            .load_deadline;
+        require_answer_deadline(
+            Instant::now(),
+            load_deadline,
+            overall_deadline,
+            maximum_operation,
+        )?;
+        let mut scorer = Self::open(profile, source)?;
+        let mut evidence = scorer
+            .bounded_hybrid
+            .take()
+            .context("verified protected MHA session evidence missing")?;
+        ensure!(
+            evidence.policy_identity == policy,
+            "verified protected MHA policy differs"
+        );
+        evidence.policy_identity = framed_digest(
+            b"airk.private.cuda-protected-mha-answer/1",
+            &[
+                evidence.policy_identity.as_bytes(),
+                resource.digest()?.as_bytes(),
+            ],
+        );
+        cuda::in_time(load_deadline)?;
+        Ok((
+            scorer,
+            CompactBoundedHybridAnswerProvenance {
+                evidence,
+                overall_deadline,
+                maximum_operation,
+            },
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -297,6 +408,48 @@ mod tests {
         let original_placement =
             "1892e5b040d8c51969f1d3361d0929950fa98f0ef4079060e48d00458635488a".parse()?;
         assert!(AnswerRecipe::identify_large(Float32, original, original_placement).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn protected_mha_answer_capacity_is_the_profile_measured_memory() -> Result<()> {
+        use airk_core::arbiter::device::{
+            DEVICE_EXECUTION_SCHEMA, DeviceExecution, DeviceMemory, DevicePrecision, GpuBackend,
+            PlacementPolicy,
+        };
+        let mut profile = crate::arbiter::runtime::catalog_profiles()?
+            .into_iter()
+            .find(|p| p.model == ModelChoice::ContextQwenCompact && p.cpu_fit.is_some())
+            .context("Compact fixture profile missing")?;
+        assert!(AnswerRecipe::ProtectedMha.capacity_for(&profile).is_err());
+        profile.device_execution = Some(DeviceExecution {
+            schema: DEVICE_EXECUTION_SCHEMA.into(),
+            backend: GpuBackend::Cuda,
+            runtime_build: Sha256Digest::from_bytes([1; 32]),
+            compatibility_policy: Sha256Digest::from_bytes([2; 32]),
+            provider_options: Sha256Digest::from_bytes([3; 32]),
+            math_policy: Sha256Digest::from_bytes([4; 32]),
+            precision: DevicePrecision::Float16,
+            tf32: false,
+            placement: PlacementPolicy::BoundedHybrid {
+                policy: Sha256Digest::from_bytes([5; 32]),
+            },
+            graph: Sha256Digest::from_bytes([6; 32]),
+            host_fit: profile.cpu_fit.clone().context("fit")?,
+            memory: DeviceMemory::Dedicated {
+                required_peak_bytes: 8 << 30,
+                headroom_bytes: 2 << 30,
+            },
+        });
+        let plan = AnswerRecipe::ProtectedMha.capacity_for(&profile)?;
+        assert_eq!(
+            (plan.cold_peak_bytes(), plan.warm_extra_bytes(), plan.headroom_bytes()),
+            (8 << 30, 8 << 30, 2 << 30)
+        );
+        assert!(AnswerRecipe::ProtectedMha.capacity().is_err());
+        // The literal recipes keep their reviewed tuples through capacity_for.
+        let qkv = AnswerRecipe::ProtectedQkv.capacity_for(&profile)?;
+        assert_eq!(qkv.cold_peak_bytes(), 16 << 30);
         Ok(())
     }
 }

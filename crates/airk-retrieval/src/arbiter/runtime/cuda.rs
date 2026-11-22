@@ -60,6 +60,11 @@ pub(super) use fp16::AttentionPlan;
 pub(crate) use fp16::capture_at_runtime_init;
 #[cfg(feature = "test-support")]
 pub use fp16::{PreparedFp16ProbeProfile, prepare_fp16_probe_profile};
+#[cfg(all(feature = "test-support", windows, target_arch = "x86_64"))]
+pub use fp16::{
+    PreparedProtectedMhaProfile, ProtectedMeasurement, prepare_protected_mha_profile,
+    protected_mha_pass1_policy,
+};
 pub use fp16::{fp16_math_policy_digest, fp16_provider_options_digest};
 mod manifest;
 mod numeric;
@@ -166,6 +171,80 @@ pub(super) fn in_time(deadline: Instant) -> Result<()> {
     );
     Ok(())
 }
+/// The live final graph a bounded verification observed (none for strict placement).
+#[cfg(any(
+    feature = "test-support",
+    all(
+        target_arch = "x86_64",
+        any(windows, all(target_os = "linux", target_env = "gnu"))
+    )
+))]
+pub(super) type VerifiedGraph = GraphMetadataObservation;
+#[cfg(not(any(
+    feature = "test-support",
+    all(
+        target_arch = "x86_64",
+        any(windows, all(target_os = "linux", target_env = "gnu"))
+    )
+)))]
+pub(super) type VerifiedGraph = ();
+
+/// Evaluation-only bounded-hybrid admission (plan 12.5.2; design L5 1.3 C).
+///
+/// True only for an unqualified private test-support profile whose bounded
+/// recipe is the protected efficient-MHA optimizer and whose graph and weights
+/// are the pinned protected Context artifacts. The caller still applies the
+/// release verifier (`verify_execution`) to the live session; only the binding
+/// authority differs. Product images (no `test-support`) never admit it.
+pub(super) fn evaluation_bounded(profile: &Profile) -> Result<bool> {
+    #[cfg(all(feature = "test-support", windows, target_arch = "x86_64"))]
+    {
+        let Some(device) = &profile.device_execution else {
+            return Ok(false);
+        };
+        Ok(
+            matches!(device.placement, PlacementPolicy::BoundedHybrid { .. })
+                && profile.qualification.is_none()
+                && profile.qualified_targets.is_empty()
+                && profile.downloads.is_empty()
+                && profile.profile_id.starts_with("private-")
+                && BoundedContextOptimizer::from_profile(profile)?
+                    == BoundedContextOptimizer::ProtectedEfficientMha
+                && fp16::is_protected_graph(profile)?,
+        )
+    }
+    #[cfg(not(all(feature = "test-support", windows, target_arch = "x86_64")))]
+    {
+        let _ = profile;
+        Ok(false)
+    }
+}
+
+/// The evaluation admission for one open. Execution additionally refuses the
+/// pass-1 sentinel policy, which only the graph-metadata diagnostic may open.
+#[cfg(all(feature = "test-support", windows, target_arch = "x86_64"))]
+pub(super) fn evaluation_admits(profile: &Profile, execution: bool) -> Result<bool> {
+    if execution
+        && profile.device_execution.as_ref().is_some_and(|device| {
+            device.placement
+                == PlacementPolicy::BoundedHybrid {
+                    policy: fp16::protected_mha_pass1_policy(),
+                }
+        })
+    {
+        return Ok(false);
+    }
+    evaluation_bounded(profile)
+}
+
+/// The only device class the protected profiles were measured on (RTX A6000,
+/// SM86). The evaluation admission has no requirement row, so this stands in
+/// for its compute-capability check.
+#[cfg(all(feature = "test-support", windows, target_arch = "x86_64"))]
+pub(super) fn evaluation_device_class(observed: &AdapterObservation) -> bool {
+    (observed.compute_major, observed.compute_minor) == (8, 6)
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct AdapterIdentity {
     pub uuid: [u8; 16],
@@ -699,11 +778,14 @@ impl CudaDevice {
                 any(windows, all(target_os = "linux", target_env = "gnu"))
             ))]
             PlacementPolicy::BoundedHybrid { .. } => {
-                ensure!(
-                    self.runtime.manifest.is_product(),
-                    "bounded CUDA execution requires the qualified product runtime"
-                );
-                self.runtime.manifest.requirement(profile)?;
+                if self.runtime.manifest.is_product() {
+                    self.runtime.manifest.requirement(profile)?;
+                } else {
+                    ensure!(
+                        evaluation_bounded(profile)?,
+                        "bounded CUDA execution requires the qualified product runtime"
+                    );
+                }
                 let recipe = BoundedContextOptimizer::from_profile(profile)?;
                 (
                     recipe.provider_options(profile.model)?,
@@ -744,13 +826,15 @@ impl CudaDevice {
         session: &ort::session::Session,
         deadline: Instant,
         attention: Option<&AttentionPlan>,
-    ) -> Result<()> {
+    ) -> Result<Option<VerifiedGraph>> {
         in_time(deadline)?;
         let placement = self.placement(session)?;
         let device = profile
             .device_execution
             .as_ref()
             .context("missing CUDA execution policy")?;
+        #[allow(unused_mut)]
+        let mut verified = None;
         match &device.placement {
             PlacementPolicy::StrictGpu => {
                 if let Some(plan) = attention {
@@ -765,17 +849,22 @@ impl CudaDevice {
                 any(windows, all(target_os = "linux", target_env = "gnu"))
             ))]
             PlacementPolicy::BoundedHybrid { policy } => {
-                ensure!(
-                    self.runtime.manifest.is_product(),
-                    "bounded CUDA requires the product runtime"
-                );
-                self.runtime.manifest.requirement(profile)?;
+                if self.runtime.manifest.is_product() {
+                    self.runtime.manifest.requirement(profile)?;
+                } else {
+                    // Evaluation-only admission: the same verifier below, only the binding differs.
+                    ensure!(
+                        evaluation_bounded(profile)?,
+                        "bounded CUDA requires the product runtime"
+                    );
+                }
                 let plan = attention.context("bounded CUDA requires FP16 Context attention")?;
                 plan.require_attention_placement(&placement)?;
                 plan.require_math_environment()?;
                 let observed = self.graph_metadata(session, deadline, &placement)?;
                 BoundedContextOptimizer::from_profile(profile)?
                     .verify_execution(profile, &placement, &observed, *policy)?;
+                verified = Some(observed);
             }
             #[cfg(not(all(
                 target_arch = "x86_64",
@@ -785,7 +874,8 @@ impl CudaDevice {
                 anyhow::bail!("bounded CUDA target unavailable")
             }
         }
-        in_time(deadline)
+        in_time(deadline)?;
+        Ok(verified)
     }
 
     pub(super) fn qualified_plan(&self, profile: &Profile) -> Result<DeviceCapacityPlan> {
@@ -927,11 +1017,22 @@ pub(super) struct Binding {
     pub load_deadline: Instant,
     pub evidence: Option<DeviceEvidence>,
     pub host_warm_extra_bytes: Option<u64>,
+    /// Proof-only diagnostic opens require attention debug1; timed probes do not (F4).
+    pub proof: bool,
     log: Arc<Mutex<diagnostic::Capture>>,
     admission: Arc<Mutex<eligibility::AdmissionState>>,
     session_alive: Arc<AtomicBool>,
 }
 impl Binding {
+    /// Evaluation admission for this binding: unqualified probe binding, scientific
+    /// runtime, measured device class, and the profile inside the admission.
+    #[cfg(all(feature = "test-support", windows, target_arch = "x86_64"))]
+    pub(super) fn evaluation_admits(&self, profile: &Profile, execution: bool) -> Result<bool> {
+        Ok(self.evidence.is_none()
+            && !self.device.runtime.manifest.is_product()
+            && evaluation_device_class(&self.device.observed)
+            && evaluation_admits(profile, execution)?)
+    }
     pub fn qualified(
         device: Arc<CudaDevice>,
         profile: &Profile,
@@ -970,6 +1071,7 @@ impl Binding {
             load_deadline: deadline,
             evidence: Some(evidence),
             host_warm_extra_bytes: Some(host),
+            proof: false,
             log: Arc::new(Mutex::new(diagnostic::Capture::default())),
             admission: Arc::new(Mutex::new(admission)),
             session_alive: Arc::new(AtomicBool::new(true)),
@@ -994,6 +1096,7 @@ impl Binding {
             load_deadline: deadline,
             evidence: None,
             host_warm_extra_bytes: None,
+            proof: false,
             log: Arc::new(Mutex::new(diagnostic::Capture::default())),
             admission: Arc::new(Mutex::new(eligibility::AdmissionState::Scientific)),
             session_alive: Arc::new(AtomicBool::new(true)),
@@ -1016,7 +1119,7 @@ impl Binding {
             .as_ref()
             .is_some_and(|p| p.precision == DevicePrecision::Float16)
         {
-            fp16::require_environment(self.evidence.is_none())?;
+            fp16::require_environment(self.proof)?;
             provider = provider.with_attention_backend(fp16::backend(profile)?);
         }
         let builder = builder
