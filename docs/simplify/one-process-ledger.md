@@ -15505,3 +15505,27 @@ finished L2 target (44.5 GB) is the first to reclaim if needed.
 
 **Resume action.** Land L3-10; integrate L4 and L5C after their review
 fixes; then the profile re-emission, the indexed trial and LG.
+
+### 22 November 2026 — Correction: commit 594e9fbf is mislabelled and holds most of L3-10 (a)
+
+The primary agent's commit `594e9fbf` ("Add the peak-memory measurement script
+used for the HTTP idle-test fix") was made with a plain `git commit` while the
+L3 agent had its L3-10 (a) files staged in the shared main tree. It therefore
+also holds 24 of L3-10 (a)'s files: Core arbiter, `answer_loop`,
+`combined_context` (with the new `answer.rs`), `native_loop`, kernel arbiter,
+answer and `combined_reads`, frontend combined Answer, the schema and the
+generated TypeScript, and change-log entry 28. It was pushed.
+
+- **State at `594e9fbf`:** Clippy `-D warnings` passed for Core, the kernel and
+  their dependents, but Core's tests did not compile: `combined_context/answer.rs`
+  declares `mod tests;` and that file was not staged.
+- **Closed by `f60fce96`** ("Complete L3-10 (a): the combined Answer /3 tests
+  left out of 594e9fbf"): the two missing test files, with their expectation
+  fixes, and the landing notes in change-log entry 28 and the Core arbiter
+  CONTRACT. Core and kernel nextest: 1,287 run, 1,285 passed before the two
+  test fixes; the arbiter, combined, answer-loop and native-loop selection
+  then passed 432/432. Pushed.
+- **History not rewritten.** Splitting the commit would need a force-push of
+  the shared branch, which requires the user's word.
+- **Prevention.** In a tree another agent uses, the primary agent inspects the
+  index and commits only with explicit pathspecs (`git commit -s -- <paths>`).
