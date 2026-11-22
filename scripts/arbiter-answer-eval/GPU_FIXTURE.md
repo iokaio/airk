@@ -143,18 +143,29 @@ one. `run_plan.py`'s `switch_context` hook issues exactly those two commands.
 
 ### Inputs (`cuda_pair.py`)
 
-1. **One asset directory per profile.** `cuda_pair.py assets` hard-links every
+1. **One asset directory per profile.** `cuda_pair.py assets` copies every
    declared asset from the profile's asset map into a fresh directory. It
-   authenticates each file first, against the profile's declared size and
-   SHA-256. It copies no model byte and writes `<dir>.receipt.json` beside the
-   directory. Every source must be on the same volume, under `artifacts`.
-   Pass `--artifacts D:\code\Github\airk\artifacts` when running from a
-   worktree inside the main tree.
-2. **One entry file per CUDA Context profile**, with these fields:
+   authenticates each file before and after the copy: under `artifacts`, a
+   single link, and the profile's declared size and SHA-256. It writes
+   `<dir>.receipt.json` beside the directory, with the bytes copied.
+   - Budget the copy first: Compact FP16 is 3.45 GB, Large FP16 8.05 GB and
+     Focus 1024 1.14 GB.
+   - **Never use hard links.** The fixture opens every input through a rooted
+     directory that refuses a file with more than one link ("rooted file has
+     aliases"). The warm also refuses a hard-linked CUDA payload ("redirected/
+     nonregular/hardlinked GPU payload"). A link also aliases the original, so
+     other lifetimes cannot open it while the link exists.
+   - Pass `--artifacts D:\code\Github\airk\artifacts` when running from a
+     worktree inside the main tree.
+2. **One entry file per CUDA profile.** A Context entry names:
    - `profile`, `profile_sha256`;
    - `assets` (the directory from step 1);
    - `review`, `review_sha256` (the pass-1 graph diagnostic receipt);
    - `pass1_profile_sha256` (the pass-1 profile that receipt reviewed).
+
+   A CUDA Focus entry (strict-GPU placement) names only `profile`,
+   `profile_sha256` and `assets`. The service verifies its placement against
+   the live session when it opens.
 3. **The pair.** `cuda_pair.py pair --entry NAME=ENTRY.json ... [--row NAME=STAGE:MANIFEST ...] --out DIR`
    writes `roster.json` and `pair.json`.
    - It re-authenticates every asset and the review: complete, CPU payload
@@ -180,27 +191,41 @@ resolves a profile name from the CPU rows, the single-model CUDA rows and these
 lifetime rows, so the names in a `run_plan.py` `switch_context` step work
 unchanged. A `--row` adds a CUDA Focus (or other) row by name and manifest.
 
-**Gap: CUDA Focus.** The service's private CUDA seam attaches Context entries
-only. A CUDA Focus manifest is not in the lifetime's Ready, so `stage` on a
-CUDA Focus row refuses ("profile is not part of this fixture installation"), and Focus runs on the
-CPU. Owner: the L5 phase C implementer. Closing it needs a Focus entry in the
-seam, warmed under the probe binding, and its GPU validation.
+**CUDA Focus (closed 22 November 2026).** The seam also attaches one CUDA
+Focus entry, on the same lease and adapter as the Context entries, in the Focus
+stage's own map. It is probed under the evaluation binding and warmed through
+the standard charged route, where the scorer verifies strict placement. GPU
+revocation, idle unload and the release-before-reserve order cover it, as for
+every stage. `stage --enable/--disable` on its row works in one lifetime.
+
+Measured on the A6000 (receipt `R\answer-loop\L5C\runs\f3-focus-seam-summary.json`):
+
+- **Run:** a fresh synthetic installation (`--seed-cpu focus`), pair
+  `context-compact-fp16-cuda` + `focus-1024-cuda`. The profile is `a3157dd1`,
+  the W8 1,024-token graph `a16fcaa1`, strict GPU.
+- **Warm:** 8.6 s. **Release:** 0.69 s.
+- **Per-call inference** at 1,024 tokens: 106-112 ms warm; the first call of
+  each Answer took 278-480 ms.
+- **Answers:** two, each with 8 Focus calls, in 2.13 s and 1.75 s, with the
+  same evidence digest.
+- **GPU memory used** (nvidia-smi, sampled every 200 ms): 557 MiB before, a
+  2,357 MiB peak, 791 MiB after disable while the service still ran, and
+  562 MiB after stop.
+
+**An image built in a worktree** checks every input against that worktree's
+`artifacts` root, which is fixed at compile time. The check therefore needs
+its inputs, the MiniLM model and the fixtures root copied under the
+worktree's `artifacts`. An image built in the main tree uses the main
+`artifacts`.
 
 ### Built so far (22 November 2026, pre-L4 identities)
 
-Under `R\answer-loop\L5C\lg-inputs\` there are hard links only (0 bytes
-copied, D: free unchanged at 1,111,712,440,320 bytes):
-
-| Item | Value |
-| --- | --- |
-| `compact-fp16-assets` | 7 assets; receipt SHA `c15ce4eb4bd3edd9c8ba260e74e331dce42fbc88fd23c7372af6aee6789e431f` |
-| `large-fp16-assets` | 7 assets; receipt SHA `456e401ec5de39447350691a1aa259a345363598babfe5eabc8dfa78d40f226d` |
-| `pair-r1/pair.json` | `d42a000cf353305445a3a9db7d7665b6913369b5bf523bb3ee69a949ea46391c` (roster `e98faf31e1f4a2dec3a5d3e9e382052aa20bc582375158334bb324604832aac6`) |
-
-These name the L5 FP16 profiles, which stop opening once L4's `runtime.rs`
-change integrates. They prove the tooling on the real files. After the
-re-emission below, they are rebuilt with the new profiles. The weight links
-are unchanged; only the profile and the calibration asset change.
+- **Withdrawn:** the first round of inputs was built by hard link
+  (`lg-inputs\pair-r1`, `pair-focus-r1`). They are invalid for the reasons in
+  step 1. The link directories were removed; the originals are single-link
+  again.
+- **Rebuild:** after the re-emission below, build the Compact and Large
+  directories again by copy.
 
 ### Re-emitting the FP16 profiles for the loop (run when L4 integrates)
 
@@ -273,6 +298,6 @@ and `-p test_cuda_pair.py` (synthetic data only; they start no service and use n
 ## Limits
 
 `gpu_fixture.py` starts one CUDA Context profile per lifetime with `--model compact|large`,
-or two with `--model pair` (see above). Large on CUDA needs about 40 GiB of host reservation and
+or up to two Context profiles and one CUDA Focus profile with `--model pair` (see above). Large on CUDA needs about 40 GiB of host reservation and
 a 44 GiB device envelope. Results describe this private
 image, driver and adapter, not the installed product.

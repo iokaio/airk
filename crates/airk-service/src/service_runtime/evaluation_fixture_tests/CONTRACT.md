@@ -99,15 +99,21 @@ claims release qualification.
   entries through ordinary Configure; the selector itself does not issue such
   a switch, and no GPU lifetime has run one yet (owner: the LG preparation
   run). The harness side exists: `scripts/arbiter-answer-eval/cuda_pair.py`
-  builds hard-linked, authenticated asset directories (no model byte copied)
-  and the pinned roster, review list and adapter. `gpu_fixture.py --model pair`
+  builds authenticated, copied asset directories (the rooted opener refuses
+  hard-linked files) and the pinned roster, review list and adapter. `gpu_fixture.py --model pair`
   starts the lifetime and records the pair's profile rows, so
   `stage --disable/--enable` and `run_plan.py` `switch_context` name both
   entries in one lifetime. The CUDA rows must be the post-L4 re-emitted FP16
   profiles with the four card tasks (procedure in `GPU_FIXTURE.md`).
-  This seam attaches Context entries only: a CUDA Focus row is refused, as a
-  manifest outside the lifetime's Ready, and Focus runs on the CPU (open gap;
-  owner: the L5 phase C implementer). Closed (L5C review M3): the first version accepted a receipt whose CPU
+  The roster may also hold one strict-GPU CUDA Focus profile with a CPU Focus
+  twin and no review pin. It joins the Focus stage's map on the same lease and
+  adapter, is probed under the evaluation binding, and warms through the
+  standard charged route, where the scorer verifies strict placement.
+  Revocation, idle unload and the release order cover it. Closed (22 November
+  2026; earlier the seam attached Context entries only, so a CUDA Focus row
+  was refused): measured on the A6000 with the W8 1,024-token Focus profile
+  `a3157dd1` (warm 8.6 s, 106-112 ms per warm call, peak 2,357 MiB used
+  against a 557 MiB baseline; receipt `L5C/runs/f3-focus-seam-summary.json`). Closed (L5C review M3): the first version accepted a receipt whose CPU
   payload check had failed, or a receipt of another profile of the same model.
   Both are now refused (`review_pin_tests`, 2 tests); the ignored `l5c_switch`
   selector applies the same rule and needs `L5C_<MODEL>_PASS1_PROFILE_SHA256`.

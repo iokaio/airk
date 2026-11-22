@@ -3,12 +3,15 @@
 
 Evaluation tooling, never product. Runs as the verified human with ``python -I -B``.
 
-``assets`` builds one profile's asset directory from its asset map by hard links
-to the existing verified files, so no model byte is copied. Every asset is
-authenticated first: the map's file must exist on the destination volume under
-``artifacts`` and match the profile's declared size and SHA-256. The output is a
-fresh directory holding exactly the profile's asset names, plus a receipt beside
-it (``<dir>.receipt.json``).
+``assets`` builds one profile's asset directory from its asset map by copying
+each declared asset. Hard links cannot be used: the private fixture opens every
+input through a rooted directory that refuses a file with more than one link
+("rooted file has aliases"), and a link would also alias the original, which
+other lifetimes then could not open. Every asset is authenticated first (under
+``artifacts``, the profile's declared size and SHA-256, a single link), copied,
+and authenticated again as copied. The output is a fresh directory holding
+exactly the profile's asset names, plus a receipt beside it
+(``<dir>.receipt.json``) that records the bytes copied. Budget the copy first.
 
 ``pair`` writes the pinned inputs of one lifetime with up to two CUDA Context
 entries (one Compact, one Large), an optional CUDA Focus entry and optional
@@ -33,6 +36,7 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -82,8 +86,12 @@ def write_new(path, value):
     return hashlib.sha256(data).hexdigest()
 
 
-def build_assets(profile_path, profile_sha256, map_path, map_sha256, out, artifacts=ARTIFACTS, link=os.link):
-    """Hard-links every declared asset into the fresh directory `out` after authenticating it."""
+def links(path):
+    return os.stat(path).st_nlink
+
+
+def build_assets(profile_path, profile_sha256, map_path, map_sha256, out, artifacts=ARTIFACTS):
+    """Copies every declared asset into the fresh directory `out`, authenticated before and after."""
     profile = read_pinned(profile_path, profile_sha256)
     mapping = read_pinned(map_path, map_sha256)
     out = Path(out)
@@ -94,24 +102,25 @@ def build_assets(profile_path, profile_sha256, map_path, map_sha256, out, artifa
     for asset in profile["assets"]:
         source = Path(mapping[asset["name"]].removeprefix("\\\\?\\"))
         require(source.is_file() and under(source, artifacts), f"asset {asset['name']} is not a file under artifacts")
-        require(os.path.splitdrive(source.resolve())[0].lower() == os.path.splitdrive(out.resolve())[0].lower(),
-                f"asset {asset['name']} is on another volume; a hard link is impossible")
+        require(links(source) == 1, f"asset {asset['name']} has another link; the fixture refuses aliased files")
         require(source.stat().st_size == asset["bytes"] and sha256(source) == asset["sha256"],
                 f"asset {asset['name']} differs from its declaration")
         sources[asset["name"]] = source
     out.mkdir()
-    rows = []
+    rows, copied = [], 0
     for asset in profile["assets"]:
         target = out / asset["name"]
-        link(sources[asset["name"]], target)
-        require(os.path.samefile(sources[asset["name"]], target) and target.stat().st_size == asset["bytes"],
-                f"link {asset['name']} does not name its source")
+        with open(sources[asset["name"]], "rb") as reader, open(target, "xb") as writer:
+            shutil.copyfileobj(reader, writer, 4 << 20)
+        require(target.stat().st_size == asset["bytes"] and sha256(target) == asset["sha256"] and links(target) == 1
+                and links(sources[asset["name"]]) == 1, f"copy of {asset['name']} differs from its declaration")
+        copied += asset["bytes"]
         rows.append({"name": asset["name"], "role": asset["role"], "bytes": asset["bytes"], "sha256": asset["sha256"],
-                     "source": str(sources[asset["name"]]), "link": str(target)})
+                     "source": str(sources[asset["name"]]), "copy": str(target)})
     receipt = {"schema": ASSETS_SCHEMA, "profile": {"path": str(profile_path), "sha256": profile_sha256,
                "manifest": profile["manifest"], "id": profile["profile_id"], "model": profile["model"]},
                "asset_map": {"path": str(map_path), "sha256": map_sha256}, "directory": str(out),
-               "method": "hard_link", "copied_bytes": 0, "assets": rows}
+               "method": "copy", "copied_bytes": copied, "assets": rows}
     receipt_sha = write_new(out.parent / (out.name + ".receipt.json"), receipt)
     return receipt, receipt_sha
 
@@ -219,7 +228,7 @@ def main():
         receipt, digest = build_assets(args.profile, args.profile_sha256, args.asset_map, args.asset_map_sha256,
                                        args.out, artifacts=ARTIFACTS)
         print(json.dumps({"directory": receipt["directory"], "assets": len(receipt["assets"]),
-                          "copied_bytes": 0, "receipt_sha256": digest}))
+                          "copied_bytes": receipt["copied_bytes"], "receipt_sha256": digest}))
     else:
         entries = parse_named(args.entry, lambda path: json.loads(Path(path).read_bytes()))
         rows = parse_named(args.row, lambda text: dict(zip(("stage", "manifest"), text.split(":", 1))))

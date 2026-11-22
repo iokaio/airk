@@ -7,6 +7,7 @@ written to a temporary directory.
 
 import hashlib
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -86,18 +87,27 @@ class PairTests(unittest.TestCase):
                                      out, artifacts=self.root)
         return out, receipt
 
-    def test_assets_are_hard_links_of_authenticated_sources(self):
+    def test_assets_are_authenticated_single_link_copies(self):
         out, receipt = self.assets(self.compact, "compact-assets")
         self.assertEqual(sorted(p.name for p in out.iterdir()), ["compiler.json", "numeric-fixture.json", "weights.bin"])
-        self.assertEqual(receipt["copied_bytes"], 0)
+        self.assertEqual(receipt["copied_bytes"], 4096 + 3 + 8)
         for row in receipt["assets"]:
-            self.assertTrue(Path(row["link"]).samefile(row["source"]))
+            # A copy, never an alias of its source: the fixture refuses linked files.
+            self.assertFalse(Path(row["copy"]).samefile(row["source"]))
+            self.assertEqual((cp.links(row["copy"]), cp.links(row["source"])), (1, 1))
         self.assertTrue((self.root / "compact-assets.receipt.json").is_file())
         # A second build into the same directory is refused.
         with self.assertRaises(ValueError):
             self.assets(self.compact, "compact-assets")
 
-    def test_a_changed_source_is_refused_before_any_link(self):
+    def test_an_aliased_source_is_refused(self):
+        source = self.root / "compact-sources" / "weights.bin"
+        os.link(source, self.root / "alias.bin")
+        with self.assertRaises(ValueError):
+            self.assets(self.compact, "aliased-assets")
+        self.assertFalse((self.root / "aliased-assets").exists())
+
+    def test_a_changed_source_is_refused_before_any_copy(self):
         (self.root / "compact-sources" / "weights.bin").write_bytes(b"x" * 4096)
         with self.assertRaises(ValueError):
             self.assets(self.compact, "bad-assets")

@@ -729,31 +729,57 @@ Further entries are added as implementation proceeds.
   unavailable reason and a matching degradation (entries 24 and 27). It was
   not folded into this change, which does not touch degradations.
 
-### 29. LG preparation: two-entry inputs by hard link, a pair launcher mode, and the re-emission procedure
+### 29. LG preparation: two-entry inputs, a pair launcher mode, CUDA Focus in the seam, and the re-emission procedure
 
 - **Step:** L5, LG preparation. It does not depend on L4's code.
-- **Asset directories by hard link, not copies:**
-  - `cuda_pair.py assets` links every declared asset of a profile into a
-    fresh directory, after checking each file's size and SHA-256 against the
-    profile.
-  - The Compact and Large FP16 directories (7 assets each) were built with 0
-    bytes copied. D: free space stayed at 1,111,712,440,320 bytes.
-  - The plan's disk estimate had assumed about 11.5 GB of copies.
+- **Asset directories (corrected):**
+  - The first version of `cuda_pair.py assets` hard-linked the assets (0
+    bytes copied). That was wrong. The fixture opens every input through a
+    rooted directory that refuses a file with more than one link ("rooted
+    file has aliases"). The warm also refuses a hard-linked CUDA payload.
+    A link also aliases its original, so other lifetimes could not open the
+    original while the link existed.
+  - The links (`lg-inputs`, and a payload link set beside the CUDA DLLs) were
+    removed, and every original was checked back to a single link.
+  - `assets` now copies, authenticated before and after (test
+    `test_an_aliased_source_is_refused`). Budget: Compact FP16 3.45 GB, Large
+    FP16 8.05 GB, Focus 1.14 GB.
 - **Pair launcher mode:**
   - `cuda_pair.py pair` writes the roster, the review pins and the profile
     rows. It applies the review rule of entry 27 again.
-  - `gpu_fixture.py --model pair` starts a lifetime with both entries.
+  - `gpu_fixture.py --model pair` starts a lifetime with the entries.
   - `stage` resolves the lifetime's own rows by name, so `run_plan.py`
-    `switch_context` switches Compact and Large in one lifetime.
-  - Tests: `test_cuda_pair.py` (7). The existing `test_gpu_fixture.py` (7)
-    and `test_harness.py` (75) still pass.
-- **Gap, CUDA Focus:** the service seam attaches Context entries only, so a
-  CUDA Focus row is refused and Focus runs on the CPU. Owner: the L5 phase C
-  implementer; closing it needs a GPU run.
+    `switch_context` switches the entries in one lifetime.
+- **CUDA Focus in the seam (closed):**
+  - The earlier gap: the seam attached Context entries only, so a CUDA Focus
+    row was refused and Focus ran on the CPU.
+  - Now the seam takes one strict-GPU Focus entry on the same lease and
+    adapter, in the Focus stage's own map. It is probed under the evaluation
+    binding and warmed through the standard charged route, where the scorer
+    verifies strict placement. Revocation, idle unload and the release order
+    cover it, and there is still one loaded copy per stage.
+  - Measured on the A6000 in a fresh synthetic lifetime with the W8
+    1,024-token profile `a3157dd1`:
+    - warm 8.6 s, release 0.69 s;
+    - 106-112 ms per warm call (the first call of an Answer took
+      278-480 ms);
+    - two Answers with 8 Focus calls each, 2.13 s and 1.75 s, same evidence
+      digest;
+    - GPU memory used: 557 MiB baseline, a 2,357 MiB sampled peak.
+  - Receipt: `L5C/runs/f3-focus-seam-summary.json`.
+- **Two earlier attempts:**
+  - The first failed on the hard links.
+  - The second failed because the worktree image checks its inputs against
+    the worktree's own `artifacts` root, so the MiniLM model had to be copied
+    there too.
+  - The worktree copies (31.0 GB) were reclaimed after the check.
+- **Tests:**
+  - `test_cuda_pair.py` (10), `test_gpu_fixture.py` (7), `test_harness.py`
+    (75) and `test_fixture.py` (34);
+  - service arbiter lib 151 of 154 (the 3 base failures);
+  - Core device 69.
 - **Re-emission:** the exact procedure for the FP16 profiles with the four
   card tasks (`admit_loop_tasks`) once L4 integrates is in `GPU_FIXTURE.md`,
   section "Re-emitting the FP16 profiles for the loop". It adds a test-only
   `L5A_LOOP_TASKS=1` switch to the emitter, so no digest-input file moves.
   It then needs a new pass-1 graph run and a confirmation on the GPU.
-- **Built so far:** `pair-r1` names the pre-L4 profiles. It proves the tooling
-  on the real files and is rebuilt after the re-emission.
