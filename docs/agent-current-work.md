@@ -35,8 +35,9 @@ The user resumed the Windows and Linux FP16 campaign after D: cleanup. Keep new 
   bookbuilder repositories.
 - **Redirected on 22 November 2026:** the user stopped the evaluation runs
   during change set 3 and directed that Answer become a local multi-round
-  inference loop (plan section 12: Plan, Retrieve per sub-need, Read and check
-  coverage, Follow up, Compose). The goal is unchanged. Large runs on the GPU
+  inference loop (plan section 12: Split a compound request into parts; per
+  part Plan, Retrieve per sub-need, Read and check coverage, Follow up,
+  Compose; then Union the parts). The goal is unchanged. Large runs on the GPU
   only, falling back to Compact on the GPU and then Compact on the CPU; Focus
   and Compact GPU routes become product priorities. Answer's time allowance
   rises above 120 s. Implementation (plan section 12.8, L1 onward) starts only

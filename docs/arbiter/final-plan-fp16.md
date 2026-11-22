@@ -181,6 +181,9 @@ agent turns with costly tokens." The user set these points.
   is built in Rust directly, not first as a script.
 - **Answer becomes a bounded loop of five stages:** Plan, Retrieve per
   sub-need, Read and check coverage, Follow up, and Compose (section 12).
+- **Compound requests split into parts.** The user then added step 0, Split,
+  which divides a compound request into parts with one loop each, and step 6,
+  Union, which combines the parts' results (section 12.1).
 - **Answer may take much longer.** Several local inference turns inside one
   call need a far larger time allowance than today's 120-second cap. The cap
   and everything that enforces it change (section 12.4).
@@ -1043,14 +1046,29 @@ has reviewed it. Section 1 remains the goal: one Answer call should do
 locally, with local models, the query, read, notice-a-gap and query-again
 work that an agent otherwise pays for in turns and tokens.
 
-### 12.1 The five stages
+### 12.1 The stages
 
-One Answer call runs a bounded loop. Every read is still a queued dispatch
-in the existing `Gathering` state machine
-(`crates/airk-kernel/src/arbiter.rs`, `arbiter/joint.rs`), so call, round,
-candidate, byte and deadline accounting, revision fences and receipts apply
-unchanged to every step.
+One Answer call first splits the request into parts (step 0). It then runs one
+bounded loop per part (steps 1 to 5), and finally unites the parts' results
+(step 6). Every read is still a queued dispatch in the existing `Gathering`
+state machine (`crates/airk-kernel/src/arbiter.rs`, `arbiter/joint.rs`), so
+call, round, candidate, byte and deadline accounting, revision fences and
+receipts apply unchanged to every step. Steps 0 and 6 were added by the user
+on 22 November.
 
+0. **Split.** An agent's request may be compound. For example: "explain how
+   the restart guard works, and update the README section on search." Split
+   divides it into independent parts, each with its own loop, budget share
+   and result.
+   - **How it chooses:**
+     - Code proposes the breaks: separate sentences or questions,
+       enumerations, several imperative verbs, and joins such as "and also".
+     - Compact scores whether to split.
+     - When the model abstains or is absent, code splits only on explicit
+       enumerations and separate questions.
+   - **A simple request stays one part,** so Split adds nothing to it.
+   - **Name:** the stage is called Split, not Parse, because `parse` is
+     already an AIRK tool (`airk_parse`) and one of the evaluation's paths.
 1. **Plan.** The question is split into two to four sub-needs, for example
    "where is X defined", "who calls it", "what tests cover it" and "which
    contract governs it". Each sub-need gets its own query wording, which also
@@ -1067,9 +1085,38 @@ unchanged to every step.
    from terms found in what was just read: identifiers, paths, error strings
    and names. Steps 3 and 4 repeat for a bounded number of rounds. They stop
    early when every sub-need is covered or a round adds nothing new.
-5. **Compose.** The reply groups evidence by sub-need, with locations and
-   per-round provenance. It marks any sub-need still missing, and lists the
-   follow-up reads it did not run, so the agent can run them itself.
+5. **Compose.** For its part, the loop groups evidence by sub-need, with
+   locations and per-round provenance. It marks any sub-need still missing,
+   and lists the follow-up reads it did not run, so the agent can run them
+   itself.
+6. **Union.** The parts' results are combined into one reply. This is more
+   than concatenation.
+   - **Dedup:** evidence found by more than one part is merged by location
+     and content digest, and each copy keeps its provenance.
+   - **Layout:** the reply is grouped by part, then by sub-need. Gaps and
+     unrun follow-ups are reported per part.
+   - **Conflicts:** evidence in one part that contradicts evidence in
+     another is noted, not silently resolved.
+   - **Bytes:** parts share the 64 KiB reply frame. A part shortened to fit
+     says so.
+   - **One part:** the reply is that part's Compose output, unchanged.
+
+**The parts' loops are interleaved, not truly parallel.**
+- Their reads (search, symbols, references and so on) may run
+  concurrently.
+- Their model calls cannot: each stage has one loaded model per device, and
+  the inference queue already limits jobs per index. So the parts take turns
+  round by round.
+- **Shared by all parts:** one read cache, so a file two parts need is read
+  once; one model queue; and one deadline.
+- **Budget:** each part gets a share of the budget, and a part that
+  finishes early hands its unused share to the others.
+
+**Follow-on, not in the first pass:** Split and Union fit Answer across
+several indexes, which is refused today when the indexes are mixed. Each
+index (or each part and index) would run its own loop, and Union would merge
+them while keeping each index's identity and revision. It is recorded here and
+decided after L7.
 
 ### 12.2 How the models take part
 
@@ -1112,9 +1159,11 @@ in the owning `CONTRACT.md` files.
 - **Request and response.**
   - `airk-core` `ContextRequestV2`, `ContextResponseV2` and `Budget`
     (`crates/airk-core/src/arbiter/`) gain a new version.
-  - The response adds sub-needs, per-sub-need coverage, per-round
-    provenance, unrun follow-ups and a partial-result marker.
-  - The budget gains per-round limits and the new time ceiling.
+  - The response adds parts, and within each part sub-needs, per-sub-need
+    coverage, per-round provenance and unrun follow-ups. It also adds
+    Union's dedup and conflict notes and a partial-result marker.
+  - The budget gains per-round limits, per-part shares and the new time
+    ceiling.
   - The TypeScript mirror comes from the approved schema-to-TypeScript
     generation, and the semantic cases are emitted by Rust.
   - **For the user's review:** whether v2 stays accepted beside the new
@@ -1125,7 +1174,7 @@ in the owning `CONTRACT.md` files.
   - The loop needs more slots and a per-round token allowance.
   - This changes `airk-core` `context_action.rs` and the service
     `joint_ledger.rs`, both digest inputs.
-- **Task policies.** The plan, coverage and follow-up rosters are new task
+- **Task policies.** The split, plan, coverage and follow-up rosters are new task
   policies beside `context_action.rs` and `context_wide.rs` in
   `airk-retrieval`, each with its own hashed policy identity.
 - **Promoted follow-ups.**
@@ -1154,8 +1203,10 @@ proposal, for the user's review:
     ledger's deadline window, and the read attempt's 125 s
     `MAX_READ_BUDGET` (`crates/airk-core/src/read_attempt.rs`).
   - Every one of these changes for Answer only.
-- **Per-stage budgets.** Each round gets a share of the deadline, with a
-  reserve kept for Compose, so a slow model cannot consume the whole call.
+- **Per-stage budgets.** Each part gets a share of the deadline, and each
+  round a share of its part's, with a reserve kept for Compose and Union, so
+  a slow model or a single part cannot consume the whole call. A part that
+  finishes early returns its unused share to the others.
   The existing gate estimates (12 s first Context, 30 s single call, 10 s
   read reserve) are re-measured per device.
 - **Partial results.** At the deadline, Answer returns what it has, grouped
@@ -1163,7 +1214,7 @@ proposal, for the user's review:
   lists the unrun follow-ups. A call past its deadline is never an empty
   failure.
 - **Progress.** Answer reports progress (round, stage, sub-needs covered)
-  through MCP progress notifications, so a client that supports them can
+  through MCP progress notifications, per part, so a client that supports them can
   see that a long call is advancing.
 - **Client timeouts.** A client's own tool-call timeout can cut a call off
   before AIRK's deadline. The setup documentation says how to raise it for
@@ -1237,8 +1288,8 @@ sections 4.1 to 4.3, measured on both repositories.
 | L0 | Land the evaluation series in order, one signed commit each: the baseline, change set 1, change set 2, and change set 3 as stopped | Commits exist, repository checks pass, `feat/arbiter-final` is pushed |
 | L1 | Contract decisions and Core types: the new request, response and budget version, the ledger slots and token allowance, and the deadline ceiling, in the owning `CONTRACT.md` files, with generated TypeScript and Rust-emitted semantic cases | Contracts recorded; Core builds and its tests pass |
 | L2 | Time: the new ceiling through MCP, Core, kernel, supervisor, ledger and read attempt; per-stage budgets; partial results; progress notifications | Tests show a disclosed partial result at the deadline on every layer |
-| L3 | Kernel loop: Plan, Retrieve per sub-need, Read and check coverage, Follow up, Compose inside `Gathering`, with the deterministic no-model path, and the software follow-ups promoted from the evaluation layers | Kernel tests cover each stage, early stop, budget and deadline stop, and the no-model path |
-| L4 | Service and retrieval: the plan, coverage and follow-up task policies, ledger slots, and calibration rules fitted from the evaluation receipts | Service tests pass; policy identities are recorded |
+| L3 | Kernel loop: Split, then per part Plan, Retrieve per sub-need, Read and check coverage, Follow up and Compose inside `Gathering`, interleaved across parts with a shared read cache, then Union; with the deterministic no-model path, and the software follow-ups promoted from the evaluation layers | Kernel tests cover each stage, single-part and compound requests, budget hand-back between parts, Union dedup and frame sharing, early stop, budget and deadline stop, and the no-model path |
+| L4 | Service and retrieval: the split, plan, coverage and follow-up task policies, ledger slots, and calibration rules fitted from the evaluation receipts | Service tests pass; policy identities are recorded |
 | L5 | Devices: the Focus CUDA route, Compact on CUDA as a product route, and the Context ladder with typed reasons | Each route and fallback runs on the A6000 and on CPU, with receipts |
 | L6 | Workspace gate | Clippy and tests across the workspace on the matrix of CONTRIBUTING; known failures listed with their owners |
 | L7 | Measure with the evaluation harness: replays, then judged passes on both repositories, CPU and GPU cells | Report `05-answer-loop.md` and its results; then stop for the user's inspection |
