@@ -1224,6 +1224,26 @@ on 22 November.
      says so.
    - **One part:** the reply is that part's Compose output, unchanged.
 
+**No repeated facts (user, 22 November 2026).** "The Answer plumbing should
+ignore duplicate or repeated facts. It just wastes space." This applies to
+every reply, with one part or several, and with or without a model.
+- **Exact repeats:** the same text is delivered once, across sub-needs,
+  rounds and parts.
+- **Overlapping spans** of one file are delivered as one span, so no line is
+  delivered twice.
+- **The same content at different locations:** the text is delivered once,
+  and the other places are listed as locations only. A location is never
+  dropped, because a task such as "change every place" needs the places.
+- **Near-identical text** is merged the same way only under a stated, tested
+  similarity rule. Without one it is left alone.
+- **What the Context model is shown:** a Coverage or Follow-up call never
+  shows the same text twice; the space it frees goes to other evidence.
+- **Disclosed:** the reply states how many repeats were merged and where the
+  kept copy came from. The same inputs give the same reply on every
+  transport.
+- The exact reply fields are recorded in the Core and kernel arbiter
+  contracts and in [answer-loop-changes.md](answer-loop-changes.md).
+
 **The parts' loops are interleaved, not truly parallel.**
 - Their reads (search, symbols, references and so on) may run
   concurrently.

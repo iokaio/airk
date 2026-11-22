@@ -15726,3 +15726,60 @@ Large `055dcfc9…`. Nothing under the index build path changed since
 **Next action.** Follow-up evidence and the allowance measurement; an
 independent review of the coverage change in parallel; then the re-emission,
 the gate image and the short trial.
+
+### 22 November 2026 at 23:22 UTC — user rule: Answer does not repeat facts; scenario review and code review results
+
+**User, at about 23:15 UTC.** After I reported that 11 of munarium's 57
+essential notes were one fact repeated per client language: "If it helps our
+testing and measurements, eliminate repeated facts." "Or ignore them." "The
+Answer plumbing should ignore duplicate or repeated facts. It just wastes
+space."
+
+- **In the product:** recorded in the plan (section 12.1, "No repeated
+  facts") and assigned to the integration agent as its next commit after the
+  round in progress: exact repeats and overlapping spans delivered once, the
+  same content at several locations delivered once with the other places
+  listed as locations, no text shown twice to the Context model, merges
+  disclosed, near-identical text merged only under a stated and tested rule.
+  It changes the Answer /3 reply and is logged as change-log entry 45.
+- **In the scenarios:** C1, C3 and W1 are restructured so that no essential
+  fact is repeated per client: one client-neutral essential with the other
+  clients' places as alternatives, and one note for breadth (four client
+  libraries). The author is applying it with the last review fixes.
+
+**munarium scenarios.** Written by one agent and reviewed by another, both
+reading the repository directly at `9948345d`.
+- First review: 64 findings (17 wrong, 4 missing, 32 weak, 11 notes). All 46
+  essential facts were true. Of 118 alternatives, 26 were invalid and 32
+  partial. One helpful fact was false.
+- After the author's fixes: 57 essentials, 56 alternatives. The re-check
+  found 2 wrong items introduced by the revision (T1 N6, T2 N1) and 8 weak;
+  eight slots were ready to freeze.
+- Not frozen yet: the third round (those fixes and the repeated-fact
+  restructuring) is in progress.
+
+**Independent review of `54b1e7a2`** (read-only, nothing run): 1 high, 5
+medium, 6 low; record `review-d\review-54b1e7a2.md` in the private
+`answer-loop` folder. The cut rule, the byte bound, Core's validation, the
+wire form, the no-model path and the identity moves read as sound. Rulings
+sent to the integration agent:
+
+| Finding | Ruling |
+| --- | --- |
+| H1: a refused, lost or abstained Coverage call is logged as having shown its excerpts | Fix: the log records excerpt ranges only when the model scored the segment and its choice stands |
+| M1: the excerpt can miss the text Focus scored | Fix: start the excerpt at the Focus window |
+| M2: a literal `<decision>` in indexed text makes the compiler refuse the whole call | Fix: neutralise it in the excerpt |
+| M3: a call with no room for evidence still runs and says nothing was read | Fix: below a minimum allowance, do not dispatch; say how many spans were not shown |
+| M4, M5: no tests with hostile content or for several risky paths | Add the tests |
+| Token pool and shedding of the slower model | Answer with numbers; raise the default pool as a logged budget decision if the model drops out before the last round of a two-part Answer |
+
+**Default-features build.** At `f13594ee`, `airk-service` does not compile
+without `local-inference` (L4's `card_scoring.rs` and `focus_batch.rs`). L4
+and the integration run had used all features only. Found by the job-table
+agent; the integration agent fixes it as its own commit, with Clippy under
+default, `local-inference`, `gpu-cuda` and all features.
+
+**Job table.** The wiring is built and committed on `loop/l2b-wire` and
+rebased onto `f13594ee`; not yet validated on that base, not reviewed.
+
+**Disk.** D: free was 278.7 GB above the floor at 22:55 UTC.
