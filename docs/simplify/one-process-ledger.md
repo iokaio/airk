@@ -16061,3 +16061,87 @@ gate image from `5f971a70` plus `loop/l5c`, the short trial and the gate.
   trimming measurements. Nothing is built.
 - **Workbench.** `loop/workbench-v3` (three commits, not merged) moves Workbench, Admin Search and
   the service-client checks to Answer /3. Tested against Rust-emitted cases only, not a real service.
+
+### 23 November 2026 at 05:10 UTC — the shakedown is blocked on a warm refusal; pool and duplicate-rule fixes landed; L2c committed
+
+**The gate has not started.** The first shakedown on a real service did not
+pass: the service refuses to warm an FP16 loop profile, for Compact and for
+Large ("protected MHA Answer requires the original Context limits and its
+own policy pin"). `open_private_protected_mha_answer` in
+`crates/airk-retrieval/src/arbiter/runtime/bounded_hybrid/layer0/answer.rs`
+still requires the one-turn Context task, which a loop profile does not
+declare. The scorer-level confirmation does not pass through that check.
+- **Owner:** the agent in the main tree, ahead of its other work, with the
+  identity impact established before the commit and a list of every other
+  check of the same kind along the service route.
+- **This is the third defect of one class,** each found one step further
+  into a real run: the fixture's Answer /2 templates, an enrollment that
+  named the card tasks, and this warm check. The first two are fixed on
+  `loop/l5c` (`11f6ee2c`, `bb5bf1ea`).
+- **What the shakedown reached:** the fixture starts on the new source; a
+  fresh munarium base builds; a CUDA pair lifetime restarts from it in 15 s;
+  CUDA Focus warms in 9.1 s at 2,184 MiB. No Answer /3 reply, session or
+  report was produced. That root's one CUDA lifetime is spent.
+- **Possible product regression, off the gate's path:** on the new image
+  the first vectors job of a fresh root failed with `helper_unavailable`
+  ("the pipe is being closed") after 0.5 s and succeeded on one retry.
+  Owner: a new agent, after LG.
+
+**LG preparation handed back at 05:08 UTC** (`loop/l5c` head `bb5bf1ea`, not
+merged; state in `L5C\RESUME.md`, procedure in the tracked
+`GPU_FIXTURE.md`).
+- Five base roots closed and restartable, zero CUDA lifetimes used; C32 and
+  L32 are spares. Each holds bookbuilder-v2 (8,116 files, 65,236 chunks,
+  156,255 vectors) and munarium (1,023 files, 5,380 chunks, 40,536 vectors),
+  pipeline `cb2166f2…`, no airk index.
+- Final FP16 profiles, byte-identical to the dry run: Compact reload 7.6 s,
+  warm call 48, 198 and 1,701 ms at 32, 1,024 and 8,192 tokens, peak 6,394
+  MiB; Large 15.4 s, 86, 442 and 4,381 ms, peak 15,746 MiB; CUDA Focus
+  reload 3.0 s, 118 ms per full pair, peak 1,786 MiB. Scorer level, on fixed
+  rows.
+- Harness: 218 tests pass. Defects found and fixed this round: every loop
+  span row was read as a pointer, which would have zeroed coverage; the
+  launchers read the /2 reply; the gate's default Focus profile was the CPU
+  twin; no command wrote the tools catalog; the budget was hand-copied.
+- A preflight (`lg_preflight.py`) and a resumable gate plan exist. Not done:
+  the prompts refreeze, the gate image, and the count of an agent's reads
+  against truncated rows.
+- **Its judgement, which the primary agent accepts:** the gate run is not
+  handed to a new operator until one shakedown has passed end to end with
+  model-sourced decisions in a real reply.
+
+**Main tree, pushed.**
+- `d1378ee5`: the Answer input-token pool is 380,000, default and maximum
+  (user decision). No identity moved.
+- `f682af51`: the duplicate rule never names bytes a cut carrier does not
+  deliver; a wrong containment claim is fixed; the missing tests are added.
+  No identity moved. Kernel tests 40 of 40, MCP 7 of 7, Clippy exit 0 with
+  all and default features.
+
+**The combined Answer parity test is a defect, not a flake.**
+`current_answer_many_and_open_keep_complete_cli_pipe_and_https_mcp_packets`
+failed in its Open case in three of four runs, each time with one member's
+read sizes about 490 bytes apart between two transports (retained pairs
+`11d7b9b8…`, `56eb410e…`, `b08f6266…` under `artifacts\testing\combined-reads`).
+The test runs without a model. Not on the gate's path. Owner: a new agent,
+once the gate image commit is fixed.
+
+**L2c committed on `loop/l2b-wire`** (`bb45df31`, not merged, not reviewed).
+A job has its own read kernel, registered on the grant's lease, and its own
+native attempt. The first wiring's disconnect defect was reproduced by a
+failing test and that test now passes; the decisive test through the real
+service and supervisor passes 2 of 2, and a mutation restoring the shared
+flag fails it. Residual: a job lives at most to the end of the lease in
+force at submission, 300 s or less. Two CLI parity tests fail there because
+a kept reply is now rendered per caller; their comparators need a decision
+on per-delivery fields. L2d is designed in the Core contract as proposed and
+not built.
+
+**Workbench branch** `loop/workbench-v3` is unchanged since its hand-back.
+
+**Running at this entry:** the warm fix in the main tree; a new agent (on
+the cheaper model at medium reasoning, as the user set) building a fresh
+shakedown root and then running the shakedown end to end. It does not run
+the gate.
+
+**Disk.** D: free 1,000,687,271,936 bytes; the floor is 214,748,364,800.
