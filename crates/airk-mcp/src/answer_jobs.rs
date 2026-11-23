@@ -460,6 +460,14 @@ fn work(
         caller.handle.clone(),
         caller.sink.clone(),
     );
+    // The owner counts the job from the moment it is made, not only while
+    // it runs: a queued job may have no caller and no connection left, and
+    // its owner must not leave as idle under it (plan 12.4.2, "What a
+    // ticket means"). The count ends when the job starts (the running
+    // guard below takes over) or when the table drops this work unrun.
+    let queued = Arc::new(std::sync::Mutex::new(Some(
+        caller.reader.admission.job_started(),
+    )));
     Arc::new(move |admission: AnswerAdmission| -> AnswerWorkFuture {
         let (mut reader, kernel, authority, handle, sink, grant) = (
             reader.clone(),
@@ -469,6 +477,7 @@ fn work(
             sink.clone(),
             grant.clone(),
         );
+        let queued = queued.lock().ok().and_then(|mut queued| queued.take());
         Box::pin(async move {
             let _grant = grant;
             if reader.admission.closed().is_cancelled() {
@@ -503,7 +512,7 @@ fn work(
             reader.kernel = kernel.clone();
             // Counted as the owner's while it runs, until its deadline and
             // grace: a stuck job never holds the owner's idle exit open.
-            let running = reader.admission.job_started();
+            let running = queued.unwrap_or_else(|| reader.admission.job_started());
             let reads = handle.clone();
             let mut job = handle.spawn_blocking(move || {
                 run_job(reader, kernel, admission, job_deadline, reads, sink)

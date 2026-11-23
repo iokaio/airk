@@ -102,8 +102,8 @@ not own the table, its queue or its results: the service does
 owner has no table in its process, so its Answers keep the direct path.
 
 A job of that table outlives the connection of the call that made it. While
-one runs under this owner (`LocalTools::answer_jobs_in_flight`), the owner is
-not idle, so the 15-second idle exit does not end it. Every other exit (a
+one is queued or runs under this owner (`LocalTools::answer_jobs_in_flight`),
+the owner is not idle, so the 15-second idle exit does not end it. Every other exit (a
 drain, a quarantine, the bounded generation lifetime) is unchanged: the job
 then stops at its next fence and the table keeps no failure for it.
 

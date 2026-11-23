@@ -340,7 +340,8 @@ async fn a_jobs_work_runs_on_its_own_kernel_and_attempt_after_its_maker_is_gone(
     };
     let work = {
         let job_kernel = job_kernel.clone();
-        let _ = work;
+        // The first work is replaced unrun; the owner stops counting it.
+        drop(work);
         super::work(&maker, job_kernel, Arc::new(()))
     };
     // The maker's session ends (H1): its kernel is revoked, its transport
@@ -420,6 +421,32 @@ async fn a_jobs_work_runs_on_its_own_kernel_and_attempt_after_its_maker_is_gone(
         .expect_err("a stopping owner starts no job");
     assert!(stopped.not_run && !stopped.retain);
     assert_eq!(authority.stuck.load(std::sync::atomic::Ordering::SeqCst), 0);
+    Ok(())
+}
+
+/// A job counts for its owner from the moment it is made: queued, with its
+/// maker gone and no connection left, it keeps the owner from leaving as
+/// idle (the owner's 15 s idle exit asks `jobs_in_flight`). The count ends
+/// when the job's work returns, or when the table drops the work unrun.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_queued_job_keeps_its_owner_from_leaving_as_idle_until_its_work_ends() -> Result<()> {
+    let scoped = scoped()?;
+    let (maker, _, _, work) = job(&scoped, Duration::from_secs(60))?;
+    let owner = maker.reader.admission.clone();
+    drop(maker);
+    assert_eq!(owner.jobs_in_flight(), 1, "a queued job whose maker left");
+    let reply = tokio::time::timeout(WAIT, work(admission(30_000, 3)))
+        .await?
+        .map_err(|failure| anyhow::anyhow!(failure.payload))?;
+    assert!(!reply.parts.is_empty());
+    assert_eq!(owner.jobs_in_flight(), 0, "a finished job");
+
+    let (maker, _, _, unrun) = job(&scoped, Duration::from_secs(60))?;
+    let owner = maker.reader.admission.clone();
+    drop(maker);
+    assert_eq!(owner.jobs_in_flight(), 1);
+    drop(unrun);
+    assert_eq!(owner.jobs_in_flight(), 0, "a job dropped without running");
     Ok(())
 }
 

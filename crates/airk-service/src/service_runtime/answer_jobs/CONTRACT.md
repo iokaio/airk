@@ -524,10 +524,14 @@ before returning.
   maker's, and a cancellation of its own.
 - It is live until its own deadline or until its owner's admission closes. An
   owner that stops ends the job at its next fence.
-- While it runs, its owner counts it (`LocalTools::answer_jobs_in_flight`),
-  so the owner does not leave as idle although the maker's connection may be
-  gone. A queued job holds nothing and keeps no owner: if its owner has left
-  when its turn comes, it is dropped as not run and its place is kept.
+- From the moment it is made, queued or running, its owner counts it
+  (`LocalTools::answer_jobs_in_flight`), so the owner does not leave as idle
+  although the maker's connection may be gone: a ticket means the job can
+  still run (plan 12.4.2, "What a ticket means"). The count ends when the
+  job's work returns, when the table drops the work unrun (an unattended job
+  expiring at its due time), or at a stuck job's deadline and grace. If its
+  owner has left anyway (a drain, a quarantine, the generation lifetime) when
+  its turn comes, it is dropped as not run and its place is kept.
 - A job whose maker has left runs outside the owner's query broker. The
   table's gathering limit is what bounds such jobs.
 - Progress goes to the maker's progress token. A call that attached gets

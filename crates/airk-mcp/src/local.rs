@@ -163,9 +163,9 @@ impl LocalTools {
         let _ = self.direct_server.answer_jobs.set((jobs, authority));
     }
 
-    /// Service-owned Answer jobs running under this owner's admission, over
-    /// all of its sessions. A job outlives the connection of the call that
-    /// made it, so an owner with one is not idle.
+    /// Service-owned Answer jobs queued or running under this owner's
+    /// admission, over all of its sessions. A job outlives the connection of
+    /// the call that made it, so an owner with one is not idle.
     pub fn answer_jobs_in_flight(&self) -> u64 {
         self.admission.jobs_in_flight()
     }

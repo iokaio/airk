@@ -87,13 +87,13 @@ struct State {
     closing: AtomicBool,
     /// Cancelled with `closing`, for work that waits on something else.
     closed: tokio_util::sync::CancellationToken,
-    /// Service-owned Answer jobs running under this owner (`answer_jobs`).
+    /// Service-owned Answer jobs of this owner, queued or running (`answer_jobs`).
     jobs: AtomicU64,
     queued: AtomicU64,
     rejected: AtomicU64,
 }
 
-/// One running Answer job of this owner, counted until it is dropped.
+/// One queued or running Answer job of this owner, counted until it is dropped.
 pub(crate) struct RunningJob(Arc<State>);
 impl Drop for RunningJob {
     fn drop(&mut self) {
@@ -222,9 +222,9 @@ impl Admission {
         self.0.closed.clone()
     }
 
-    /// Count one Answer job running under this owner until the guard drops.
-    /// Such a job may have no connection left, so its owner asks here before
-    /// it leaves as idle.
+    /// Count one Answer job of this owner, queued or running, until the
+    /// guard drops. Such a job may have no connection left, so its owner asks
+    /// here before it leaves as idle.
     pub(crate) fn job_started(&self) -> RunningJob {
         self.0.jobs.fetch_add(1, Ordering::AcqRel);
         RunningJob(self.0.clone())
