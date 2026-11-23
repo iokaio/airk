@@ -2794,3 +2794,43 @@ Numbered 30 until 22 November 2026; renumbered because L4's entries take
   Large closure (it needs a new input; owner: the primary).
 - **Not verified here.** Linux-only `cuda/linux/product.rs` and
   `gnu_cutlass.rs` (step LX).
+
+### 63. The Arbiter FP16 loop profile emitted once from `360178c5`
+
+- **After LH commit 5 (23 November 2026).** Commit 5 moved the loop task
+  policies, the CUDA math-policy inputs and the bounded-hybrid validator, so
+  the FP16 profile that scores loop cards no longer opened. It was emitted
+  again, once, from retained measurements with
+  `scripts/arbiter-answer-eval/fp16_loop_emit.py` (inputs
+  `lg-inputs/fp16-loop-emit-inputs.json`, unchanged) from the
+  `cuda_l5a_diagnostics` image of `360178c5` (staged as
+  `l5c-cuda-diagnostics-r7-360178c5-inference.exe`, SHA-256
+  `3659ec4a…76f0`). Large is not emitted.
+- **Result** (private, `L5C\reemit-360178c5`): profile
+  `fd4a1f31687535ff8360b7917140a1d2dc8fe6ddeb30ffb1122cc7ea8d21cfcb`, manifest
+  `e90b7f753315698f01a744edaf762de6afdbed7ba37897043de64e4d3755ff79`, bounded
+  policy `2ad7ad8c1abe875b773a0e24f245e69ce7fdd03d37643c9a60052a59ea7aaace`
+  (was `4ac58019…`), math policy `c08c51a0…`, the four task policies of entry
+  62. Confirm (strict, 10 warm calls): cold open 7.34 s; warm median 56 ms at
+  32 tokens, 203 ms at 1,024, 1,701 ms at 8,192; device settled. The CUDA
+  Focus 1024 entry (profile `ef232291…`, manifest `a3157dd1…`) is unchanged
+  and still opens and scores (cold open 2.93 s, warm 118 ms at 1,024).
+- **Pairs** (`L5C\lg-inputs`, commands in `rebuild-360178c5.log`):
+  `pair-C-r4` (Arbiter + Focus)
+  `6045d57f37425543fe84aed9e968b04c86a35d0e20efe1cdc231b2d726b7f6d8`;
+  `pair-A-r4` (Arbiter only)
+  `df1bb1c7e672d831ca6a3780225ad877500dcc7ddcea7bf863afcef0f00e1b9b`. The r3
+  pairs are withdrawn (`WITHDRAWN.txt`).
+- **Not done here:** the LH acceptance (four combinations on a real CUDA
+  service) and any Linux CUDA warm of this profile (step LX).
+
+### 64. The names Focus and Arbiter in what people read
+
+- **Step LH, commit 6 (23 November 2026).** Text only, no identity move:
+  the Admin stage titles are "Focus" and "Arbiter", the panel is "Optional
+  local models for Answer" and says the two are separate switches; MCP Help
+  (topic `arbiter`), its Rust-emitted content and the shared help manifest,
+  VS Code help, README, the user guide, admin pages, agent integration and
+  known issues say Focus and Arbiter and that Large was retired. The Admin
+  assets were rebuilt from source (`npm run build` in `packages/admin`).
+  Dated history and earlier change-log entries keep their words.

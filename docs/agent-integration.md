@@ -22,9 +22,9 @@ local CA. A saved configuration alone supplies neither.
 ## Retrieval, ranking and contextual questions
 
 MiniLM remains the bundled embedding encoder for native candidate retrieval.
-The approved source design adds independently enabled **Arbiter Focus**
-(Qwen3-Reranker-0.6B), followed when enabled by **Arbiter Context — Compact**
-(Qwen3-1.7B) or **Arbiter Context — Large** (Qwen3-4B). Focus can assist ordinary
+The approved source design adds independently enabled **Focus**
+(Qwen3-Reranker-0.6B) and **Arbiter** (Qwen3-1.7B); an Answer's
+`decisions[].model` names `arbiter`. The Large model (Qwen3-4B) was retired. Focus can assist ordinary
 retrieval while Context is off; Context guides bounded evidence gathering.
 Controls and new profiles remain under implementation/qualification.
 

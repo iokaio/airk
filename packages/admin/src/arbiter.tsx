@@ -10,12 +10,12 @@ import { Field, Outcome, Panel, Text, type CallState } from './render';
 import { PageVisible } from './pageVisibility';
 
 const stages: readonly Stage[] = ['focus', 'context'];
-const stageTitles: Record<Stage, string> = { focus: 'Arbiter Focus', context: 'Arbiter Context' };
+const stageTitles: Record<Stage, string> = { focus: 'Focus', context: 'Arbiter' };
 type CurrentRequest = Extract<ManagementRequest, { operation: 'status_device' | 'initialize_device' | 'configure_device' | 'migrate_device' | 'provision_device' | 'cancel_device' | 'remove_device' | 'recover_device' }>;
 const operations = { status_device: OPS.arbiterStatus, initialize_device: OPS.arbiterInitialize, configure_device: OPS.arbiterConfigure,
   migrate_device: OPS.arbiterMigrate, provision_device: OPS.arbiterProvision, cancel_device: OPS.arbiterCancel, remove_device: OPS.arbiterRemove, recover_device: OPS.arbiterRecover } as const;
 export function stageModelTitle(stage: Stage, model: SelectedModel): string | null {
-  if (stage === 'focus' && model === 'focus') return 'Arbiter Focus';
+  if (stage === 'focus' && model === 'focus') return 'Focus';
   if (stage === 'context' && model === 'arbiter') return 'Arbiter';
   return null;
 }
@@ -251,8 +251,8 @@ export function Arbiter(): JSX.Element {
   useEffect(() => { const stop = onSessionChange(() => workspace.sync()); return () => { stop(); workspace.dispose(); }; }, [workspace]);
   useEffect(() => { if (visible) void workspace.readStatus(); }, [workspace, visible, currentSession()]);
   const view = workspace.view();
-  return <Panel title="Optional local Arbiter stages">
-    <p>Arbiter Focus ranks retrieved evidence. Arbiter Context gathers and organizes additional context. Both stages are off by default and have separate model selection and index consent. Either stage can run while the other is off. Ordinary retrieval remains available when both are off.</p>
+  return <Panel title="Optional local models for Answer">
+    <p>Focus (Qwen3-Reranker-0.6B) ranks retrieved evidence. Arbiter (Qwen3-1.7B) gathers and assesses context for Answer. Both are off by default and have separate model selection and index consent. They are separate switches: Answer runs with neither, either or both. Ordinary retrieval remains available when both are off.</p>
     <button type="button" disabled={view.sending || !visible} onClick={() => void workspace.readStatus()}>{view.sending ? 'Reading Arbiter status...' : 'Refresh Arbiter status'}</button>
     {view.observation && view.statusStale ? <p role="status">Showing retained Arbiter status{view.lastObservedAt ? ` from ${new Date(view.lastObservedAt).toLocaleTimeString()}` : ''}. {view.sending ? 'Refreshing...' : 'The last refresh did not return current status. Use Refresh Arbiter status to try again.'}</p> : null}
     {!view.observation ? <p>{view.sending ? 'Loading Focus and Context status...' : 'Arbiter status is unavailable. Use Refresh Arbiter status to try again.'}</p> : !view.drafts ? <p>Native configuration requires initialization. The reported disabled configuration is a placeholder and cannot be edited or saved.</p> : stages.map(stage => {

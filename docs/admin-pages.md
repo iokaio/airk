@@ -37,9 +37,9 @@ local user (Windows: the connection's owning process; Linux:
 
 ## Optional Arbiter stages
 
-The approved source design separates **Arbiter Focus** (independent
-Qwen3-Reranker-0.6B ranking) from **Arbiter Context — Compact** (Qwen3-1.7B) and
-**Arbiter Context — Large** (Qwen3-4B) evidence gathering. The new stage controls
+The approved source design separates **Focus** (independent
+Qwen3-Reranker-0.6B ranking) from **Arbiter** (Qwen3-1.7B) evidence gathering;
+the Large model (Qwen3-4B) was retired in step LH. The new stage controls
 and profiles remain under implementation and qualification; inspect actual
 native support rather than inferring availability from a visible model name.
 

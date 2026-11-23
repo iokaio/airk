@@ -14,9 +14,11 @@ check passed.
 ## 1. Arbiter models are not qualified (blocks all Arbiter claims)
 
 - **What:** The release catalog (`crates/airk-retrieval/src/arbiter/release-catalog.json`)
-  still has no qualified profiles. Arbiter Focus (Qwen3-Reranker-0.6B) and
-  Arbiter Context Compact (Qwen3-1.7B) and Large (Qwen3-4B) cannot be enabled
-  from a qualified profile in this candidate.
+  still has no qualified profiles. Focus (Qwen3-Reranker-0.6B) and Arbiter
+  (Qwen3-1.7B, the Context model formerly called Compact) cannot be enabled
+  from a qualified profile in this candidate. The Large Context model
+  (Qwen3-4B) was retired on 23 November 2026 (step LH) and left the catalog;
+  a stored Large selection is turned off with a reason.
 - **Why:** Qualification needs a fixed CAL100 capture (thirteen phases of up to
   30 minutes), two raw Context captures, native fitting, the ten composed
   scenarios and the held-out A6 goal comparisons. These take far longer than the
@@ -57,8 +59,8 @@ check passed.
 ## 2a. Unqualified local-test profiles (pre-1.9.0 only)
 
 - **What:** A compiled profile whose id starts with `unqualified-local-test` is
-  admitted without a qualified target row or qualification digest, so Focus,
-  Compact and Large can be downloaded and tried in this candidate. Status text
+  admitted without a qualified target row or qualification digest, so Focus
+  and Arbiter can be downloaded and tried in this candidate. Status text
   reads "Unqualified local test profile (not release-qualified)."
 - **Safety:** The rule is fail closed. It applies only when the package version
   parses to below 1.9.0, so a 1.9.0 or later build refuses these profiles, and

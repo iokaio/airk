@@ -1,4 +1,4 @@
-# Arbiter Focus and Context
+# Focus and Arbiter
 
 This guide describes the approved two-stage design in the current source
 candidate. Native stage controls are implemented in source; model and platform
@@ -10,15 +10,16 @@ installed version actually supports; this document does not make a model ready.
 | Component | Model | Purpose |
 | --- | --- | --- |
 | Bundled retrieval | MiniLM | Creates document and question embeddings so AIRK can find candidates efficiently. |
-| Arbiter Focus | Qwen3-Reranker-0.6B | Scores the question and each retrieved passage together to improve the order of a bounded candidate set. |
-| Arbiter Context — Compact | Qwen3-1.7B | Assesses the gathered evidence and selects justified additional reads within the original budget. |
-| Arbiter Context — Large | Qwen3-4B | Performs the same contextual task with a larger model and separately measured hardware requirements. |
+| Focus | Qwen3-Reranker-0.6B | Scores the question and each retrieved passage together to improve the order of a bounded candidate set. |
+| Arbiter | Qwen3-1.7B | Assesses the gathered evidence and selects justified additional reads within the original budget. It is the Context stage's one model. |
 
 Focus can run independently while Context is off. When both stages are enabled
 for an index, the intended flow is MiniLM candidate retrieval, Focus reranking,
-then Context assessment and bounded evidence gathering. Only one Context model
-is selected at a time. Compact and Large describe model size; their names do not
-certify a quality difference.
+then Arbiter assessment and bounded evidence gathering. Focus and Arbiter are
+separate switches: Answer runs with neither, either or both. The Large Context
+model (Qwen3-4B) was retired on 23 November 2026 (step LH): an installation that
+had selected it finds the Context stage turned off, its index enrollments kept,
+and a reason that asks to select Arbiter. Arbiter is never selected for it.
 
 The current candidate retains the original MiniLM weights: the evaluated
 replacement did not improve the fixed development tasks. Arbiter configuration
@@ -147,8 +148,7 @@ final profile qualification remain pending.
 | Stage | Usable physical CPU cores | Model memory reservation | Maximum input |
 | --- | --- | --- | --- |
 | Focus | 4 | 4 GiB | 512 tokens, 4 candidates |
-| Context — Compact | 4 | 16 GiB | 8,192 tokens, 8 evidence cards |
-| Context — Large | 16 | 40 GiB | 8,192 tokens, 8 evidence cards |
+| Arbiter | 4 | 16 GiB | 8,192 tokens, 8 evidence cards |
 
 These are model reservations, not whole-machine RAM recommendations. Both
 resident stages need their separate reservations, plus capacity for MiniLM,
@@ -156,18 +156,18 @@ indexing, AIRK and other applications. Final installed catalog requirements take
 precedence; these measurements do not establish support on another platform.
 
 Current component measurements use 20 samples and the unchanged 120-second
-limit. Focus records p95 2.116398 seconds; Compact records p95 86.049136 seconds
+limit. Focus records p95 2.116398 seconds; Arbiter records p95 86.049136 seconds
 and passes its separate 17/128/8192-token numerical checks. These are component
-results, not end-to-end Answer latency or task qualification. Large remains
-unqualified: its faster attention path exceeds the numerical-error tolerance,
-and its separate dense path exceeds the 120-second scoring deadline. No
+results, not end-to-end Answer latency or task qualification. The retired Large
+model was never qualified (its faster attention path exceeded the numerical-error
+tolerance and its dense path the 120-second scoring deadline). No
 precision or deadline fallback is qualified. Historical 2,048-token/30-second
 results remain historical. See the [current outcomes](final-plan.md#10-current-execution-outcomes)
 and [exact execution evidence](../simplify/one-process-ledger.md).
 
 There is no universal RAM minimum, guaranteed CPU latency or assumed GPU support.
 The service must report measured requirements for the qualified model precision,
-backend, OS/architecture and input limits. Compact does not mean it fits every
+backend, OS/architecture and input limits. A small model does not mean it fits every
 machine, and installing a GPU does not establish a supported execution path.
 Unavailable capacity is an explicit not-applied reason rather than permission to
 switch models, precision or devices silently.
