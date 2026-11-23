@@ -33,3 +33,20 @@ The private evaluation search switch also reads through
 `lexical::ranked::lexical_search_ranked_any`. It reads FTS5 doclists and
 authenticated document rows only, writes nothing and adds no index state.
 Product search never calls it (see the Kernel `current/search/CONTRACT.md`).
+
+## Reader open and WAL-index recovery (23 November 2026)
+
+A read-only current-database open (`database::open_reader_budget`, used by
+every current reader) still rejects contention at once: its connection has
+`busy_timeout(0)`, and a BUSY or LOCKED result becomes the typed, retryable
+`CurrentReadContention` (`publication_busy`, `repeat_same_request`). The one
+exception is `SQLITE_BUSY_RECOVERY` (extended code 261): another connection
+is rebuilding the WAL index from the bounded WAL, which holds no
+publication. The open is then repeated every 5 ms for at most 500 ms, and
+after that the last error is returned as before. No snapshot exists before
+the open returns, so no caller work is repeated. Ordinary BUSY, LOCKED,
+`SQLITE_BUSY_SNAPSHOT`, corruption and I/O errors never wait. The wait
+ignores the caller's deadline; it is bounded by its own 500 ms.
+Service work under `admission::with_work_admission` keeps its own repeat
+around this open. Decision tests with an injected clock:
+`database/recovery_tests.rs`.

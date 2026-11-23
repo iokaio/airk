@@ -2834,3 +2834,94 @@ Numbered 30 until 22 November 2026; renumbered because L4's entries take
   known issues say Focus and Arbiter and that Large was retired. The Admin
   assets were rebuilt from source (`npm run build` in `packages/admin`).
   Dated history and earlier change-log entries keep their words.
+
+### 65. A reader open waits out WAL-index recovery instead of refusing the read
+
+Numbered 65 because the unmerged `loop/lh` already holds entries 57 to 64.
+
+- **Found by:** the independent review of `loop/l2b-wire` (ledger, 23
+  November 2026). `admin_sign_in_reads_and_cross_plane_refusals` failed 7
+  of 20 stress iterations on `705ab312` and 7 of 20 on the branch; the
+  branch's job test failed up to 4 of 20. Every captured refusal was
+  `CurrentReadContention` with SQLite extended code 261
+  (`SQLITE_BUSY_RECOVERY`).
+- **Cause:** a read-only current-database open has `busy_timeout(0)`, so a
+  reader that meets another connection rebuilding the WAL index this instant
+  is refused at once. Query threads have no open admission. The Answer
+  loop's canonical reads repeat such a refusal (`BUSY_REPEATS`), but
+  `Kernel::arbiter_publication` (called by `focus_pair_tokens` in
+  `Loop::rounds`) does not, so the whole Answer failed with
+  `publication_busy`. Status reads in a readiness poll failed the same way.
+  Two Answers at once on one service were enough.
+- **Fix (owner: store):** the open is repeated every 5 ms for at most
+  500 ms while the error is exactly `SQLITE_BUSY_RECOVERY`. Recovery holds
+  no publication, and no snapshot exists before the open returns, so nothing
+  of the caller's work is repeated. Every other contention still refuses at
+  once, and a longer recovery still becomes `publication_busy`.
+- **Tests:** store `database::recovery_tests` (injected clock and sleep):
+  recovery waited out then opened; BUSY, LOCKED, BUSY_SNAPSHOT, CORRUPT and
+  IOERR returned at once without waiting; recovery past 500 ms returned
+  after 100 waits. Stress reproduction, the same 17-test group
+  (`combined_reads` Answer tests and `admin_plane`), `--stress-count 20`:
+  `publication_busy` failures went from 3 of 20 on `705ab312` (and 6 of 20
+  on `loop/l2b-wire`) to 0 of 20 with this change.
+- **Not fixed here, a second failure class of the same test:** right after
+  its Index job, the test's `airk_diagnostics` readiness read is refused
+  with `scoped_read_unavailable` (not retryable): 4 of 20 on `705ab312`, 1
+  of 20 on the branch, 5 of 20 with this change. The reviewer counted both
+  classes together. Its cause is not yet diagnosed.
+- **Identities:** none moved; no identity-feeding file changed. No wire,
+  digest input or persisted format changed.
+- **Where:** store `current/CONTRACT.md` ("Reader open and WAL-index
+  recovery").
+
+### 66. Diagnostics observe again when a publication lands during the device read
+
+- **Found by:** the second failure class of
+  `admin_sign_in_reads_and_cross_plane_refusals` (entry 65): right after its
+  Index job succeeds, the test's `airk_diagnostics` readiness read was
+  refused with `scoped_read_unavailable`, not retryable. Stress counts: 4 of
+  20 on `705ab312`, 5 of 20 with entry 65, 8 of 25 on the test alone.
+- **Diagnosis:** a temporary capture at the MCP refusal render points (never
+  committed), built with line tables and run with `_NT_SYMBOL_PATH` pointing
+  at the build's PDBs so the installed fixture binary resolved symbols. All
+  8 captures were created at `Kernel::scoped_device_status` (kernel
+  `arbiter.rs`), called by `airk_diagnostics`. After the native device read,
+  it checked that authority **and** publication were unchanged and typed
+  either change as `ScopeReadRefused`. The Index's semantic publication
+  lands just after its text publication, so a perfectly authorized read
+  that overlapped it was refused as if it were outside its authority.
+- **Fix (owner: kernel arbiter):** the two outcomes are kept apart. A
+  changed authority is still `ScopeReadRefused`. A newer publication under
+  the same authority means the device status is observed again against
+  it, at most three observations within the original deadline. After that
+  it is the retryable `publication_busy`
+  (`CurrentGateContention::Applying`). This is the optimistic read already
+  used between readers and the writer (snapshot, read, verify, repeat), not
+  a lock: holding the writer back for a native observation would stall
+  indexing behind diagnostics.
+- **Tests:** `airk-mcp`
+  `diagnostics_observes_again_when_a_publication_lands_during_the_device_read`
+  (the owner republishes the index from inside its device read; the reply
+  succeeds after two observations and names the publication that landed)
+  and `diagnostics_with_a_publication_moving_on_every_read_is_retryable_busy`
+  (three observations, then `publication_busy` with `repeat_same_request`).
+  Both fail on the old code with `scoped_read_unavailable`.
+- **Test-side change (`airk-cli` `admin_plane.rs`):** with this fix the
+  test still failed 1 of 20, now on a `publication_busy` /
+  `repeat_same_request` readiness reply. That reply is the documented signal
+  to send the same read again, and the test's readiness loop already
+  re-sends the same request until the publication settles. It now treats
+  exactly that typed reply as "not yet settled", within its original 30 s
+  deadline and at most 50 repeats; any other failed read still fails and is
+  retained as before. Nothing else in the test is relaxed.
+- **Stress, the same 17-test group, `--stress-count 20`:** entry 65 alone,
+  15 of 20 passed (5 `scoped_read_unavailable`); with this kernel change, 19
+  of 20 (1 `publication_busy`); with the test change, 20 of 20.
+- **Not changed:** the Answer and joint delivery fences (kernel `arbiter.rs`,
+  `answer.rs`, `joint.rs`) also compare the publication before delivery and
+  fail with an untyped message when it moved. No test failure points at them
+  yet, so they are left as they are. Focus keeps its typed stale receipts.
+- **Identities:** none moved; no identity-feeding file changed. No wire,
+  digest input or persisted format changed.
+- **Where:** kernel arbiter `CONTRACT.md` ("G4 scoped device diagnostics").

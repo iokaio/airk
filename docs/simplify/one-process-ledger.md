@@ -16649,3 +16649,250 @@ medium) on branch `loop/lh` in the `L5C` worktree with target
 `target-cuda`; it stops for primary review after its sixth commit and the
 profile re-emission, before any evaluation image is built. The S1 base
 build is still running.
+
+### 23 November 2026 at 14:46 UTC — Answer jobs (L2c) reviewed: three defects fixed, one intermittent failure under diagnosis; it merges after LH
+
+**`loop/l2b-wire`, independent review** (a fresh Opus agent, not the
+implementer), rebased onto `705ab312`, head `a46ff188`, not merged. The
+branch touches no pinned-identity file.
+
+| Finding | Failure it caused | Outcome |
+| --- | --- | --- |
+| The ticket reply lacked entry 54's `read_status` | The branch did not compile on the new base | Fixed, `91a4a528` |
+| An owner counted a job only once it ran | An owner whose only work was a queued job, with its maker gone, left after 15 s idle and the job was dropped unrun | Fixed, `11f77b61`, with a test that counts 0 on the old code |
+| An invocation key attached without the publication check | A key recovered after a reindex returned the answer of the older publication | Fixed, `85c1ddc0`, with a test |
+| `admin_sign_in_reads_and_cross_plane_refusals` failed once in three branch runs on a typed `publication_busy`, and passed its one run on main | Unknown: one run on main decides nothing | **Open.** The reviewer diagnoses it by reading and a focused reproduction on both trees; no limit is relaxed and no retry added |
+| No test shows a reply packed to its limit, with status and the delivery record, inside 131,072 bytes | A full reply could exceed its limit | Open, same agent: add the test, fix the reserve if it fails |
+| `answer_job_stuck` and `answer_authority_ended` say `query_submitted:false` although reads ran | A client may replay work that ran | Open, same agent |
+| The combined frontend parses the job options and never validates them | An option that silently does nothing | Open, same agent |
+| A job is bounded by the lease in force at submission (at most 300 s); jobs run without an owner read permit once their maker leaves | Recorded limits, not defects | Left |
+
+- **Primary review:** read the three fixes and agree with them.
+- **Validation by the reviewer** (target `target-l2b`, logs
+  `answer-loop\L2b\scratch-review`): Clippy with warnings denied on eight
+  crates, all targets, with all features and with default features, exit 0;
+  Nextest broad set 1,301 of 1,302 (the one failure is the known base
+  failure of entry 40); focused set 286 of 286; MCP `answer_jobs` 6 of 6;
+  the CLI batch (both transport parity tests, the disconnect and injection
+  tests, the Admin plane) 18 of 19 then 19 of 19, and 17 of 17 on main.
+- **Sequencing decision (primary agent).** L2c merges after LH, not before:
+  LH's acceptance then runs on the Answer path the gate already proved, and
+  L2c gets its own live check afterwards, so a failing Answer points at one
+  change. The branch is rebased over LH then (its job estimate names Large
+  and `context_compact`).
+- **The live check proposed for L2c,** on one fixture lifetime: two and four
+  `fresh` calls at once; a repeat that reuses; two calls with a 3 s wait
+  whose clients exit, recovered by continuation after 20 s of silence;
+  recovery after the grant is revoked; a stop with a job in flight.
+- **L2d is not started.** Its eight decision points are in
+  `answer-loop\L2b\RESUME.md`. One is a question of scope for the user: LG
+  measured a median first reply of 8 to 12 s with four at once all served,
+  so the full job path (evidence at once, continuations) may buy an agent
+  little over a single call with a bounded wait. L2d stays in the plan; it
+  is built after the L7 baseline is running unless the user narrows it.
+
+**Roots.** Spare root S1's base closed at 13:39 UTC (verified:
+`closed.json` present, aliases copied, no fixture service left). Two unused
+CUDA lifetimes: L32 and S1. D: free 844,230,492,160 bytes at 13:43 UTC.
+
+**Running at this entry:** the LH agent (branch `loop/lh`); the L2c
+reviewer on the four open items. The review queue holds no unreviewed
+branch.
+
+### 23 November 2026 at 17:14 UTC — LH reviewed, ready for its acceptance run; the L2c items closed; the intermittent `publication_busy` is a fault of main
+
+**Restart.** The VS Code host of the coordinating session hung at about
+15:15 UTC with the extension host spinning and was closed. The LH agent and
+the L2c reviewer froze mid-call; nothing committed was lost. Both were
+restarted from a Claude desktop session (primary agent there) at 15:26 UTC
+as fresh Opus agents at medium effort, each given its original brief word
+for word plus the live git state. The L2b worktree was found detached at
+`705ab312` with the item 2–4 work in a stash; the new reviewer restored
+both. Two orphaned PowerShell processes from 21 November, each spinning a
+core for about 34 hours, were stopped on the user's word.
+
+**L2c follow-up, `loop/l2b-wire` head `1bf80aed`** (four commits above
+`a46ff188`, signed off, not pushed, not merged):
+
+| Item | Outcome |
+| --- | --- |
+| 1. Intermittent `publication_busy` | **A fault of main, not of the job path.** `admin_sign_in_reads_and_cross_plane_refusals` failed 7 of 20 on the branch and 7 of 20 on `705ab312`. Every capture is `CurrentReadContention` with SQLite extended code 261 (`SQLITE_BUSY_RECOVERY`): a read-only current-database open with `busy_timeout(0)` (`airk-store/src/current/database.rs:402`, verified by the primary) meeting a WAL-index rebuild, and query threads get no open admission. In the job test the whole-Answer refusal comes from `Kernel::arbiter_publication` via `focus_pair_tokens` in `Loop::rounds`, an open the loop does not repeat. No limit relaxed, no retry added. **Open, release-relevant:** two Answers at once on one service can fail this way. Owner: the store's reader-open admission or the kernel arbiter's publication read; to be fixed before the L7 runs rely on concurrent Answers. |
+| 2. Reply at its limit with status and the delivery record | Test added (`0d52546c`); fits 131,072 rendered and the 147,456-byte frame; reserve unchanged, only extracted |
+| 3. `query_submitted` on `answer_job_stuck` / `answer_authority_ended` | `true` once the loop ran, `false` only before it began (`db314433`); service `answer_jobs` CONTRACT |
+| 4. Combined frontend job options | Validated as on the single-index path; `fresh` answers; `invocation_key`, `wait_ms`, `interactive` refused with `invalid_native_arguments` before any member is queried (`02f46ebc`); combined Answer CONTRACT. The refusal does not name the option (left) |
+
+Reviewer validation: Clippy `-D warnings` on mcp, frontend, service,
+supervisor and cli, all targets, all and default features, exit 0; Nextest
+163 of 163 (MCP `answer_jobs`, supervisor `response_tests`, frontend); CLI
+`combined_reads` Answer tests 8 of 8; `check-repo.ps1` and `git diff --check`
+clean. Logs: `answer-loop\L2b\scratch-review`. Not run: rustfmt, a live
+service check. Primary review read items 3 and 4 and verified the cited
+open; accepted. The branch still merges after LH, rebased over it (LH
+reduced its `answer_jobs/estimate.rs` to one rung, so that rebase
+conflicts).
+
+**LH, `loop/lh` head `ee552125`** (seven commits above `9d63df97`, change-log
+entries 57–64, signed off, not pushed, not merged):
+
+| Commit | Content |
+| --- | --- |
+| `e4829569` | Dispatch census set per fixture lifetime |
+| `c01c5a13` | Harness arm A (Arbiter only); Large out of the L7 plan |
+| `47b236b5` | Kernel test: Focus and Arbiter are separate switches |
+| `b43b1de0` | Retained configuration/4 fixtures, catalog binding, status sample |
+| `b633b25b` | Large-only private qualification runners and CUTLASS diagnostics removed (narrower than the inventory; callers from identity files went with commit 5) |
+| `360178c5` | The one identity, state and wire move: `SelectedModel::{Focus, Arbiter}`, public value `arbiter`, `device-catalog/2`, configuration/4 → /5 with its migration, schema `arbiter_device_contract` 3, review items L-a/L-b/L-c |
+| `ee552125` | Names Focus and Arbiter in Admin (assets rebuilt), MCP help, VS Code help, README and documents; re-emission record |
+
+- **Identities moved** (old → new, each pinned with the old value asserted
+  absent and recorded in its CONTRACT): Core loop semantics `99b87f98…` →
+  `0a7130f7…`; split, plan, coverage, follow-up and batched Focus policies;
+  `runtime.rs` `c9008eef…` → `66b02a58…` (proved by reverse-applying the LH
+  patch in `runtime_row_replay`), `cuda.rs`, `cuda/diagnostic.rs`, the CPU
+  Focus row; the Arbiter FP16 bounded policy. Identity-feeding files changed
+  only in `360178c5` (primary checked per commit).
+- **Re-emitted once from `360178c5`:** Arbiter FP16 loop profile
+  `fd4a1f31…`, manifest `e90b7f75…`; CUDA Focus 1024 unchanged
+  (`ef232291…`). Pairs `pair-C-r4` (both) `6045d57f…` and `pair-A-r4`
+  (Arbiter only) `df1bb1c7…`; the r3 pairs are withdrawn and
+  `gate-inputs.json` must move to r4 before the spec is built.
+- **Migration:** a stored Large selection becomes Context disabled with
+  `context_retired: context_large` and a reason; Arbiter is never
+  auto-selected; the /4 bytes are retained; evidence reads never migrate.
+  Tests: Core `device::migration` 6, service `retained_tests` 4, a store
+  test on a real store.
+- **Validation** (target `target-cuda`, logs `answer-loop\L5C\logs`):
+  Clippy `-D warnings` on the ten touched crates, default and all features,
+  and inference `gpu-cuda,test-support`, exit 0; Nextest main selection
+  1,156 run, 1,144 passed, 12 failed (2 fixed and rerun with the pin and
+  migration set, 20 of 20); inference CUDA 8 of 8, retrieval CUDA 20 of 20;
+  MCP help 20 of 20; `combined_reads` Answer 5 of 5; harness unittest 237
+  OK; `contract_types.py arbiter --check` exit 0; Admin 77 of 77, VS Code
+  explorer 16 of 16, UI help 6 of 6; `check-repo.ps1` and
+  `git diff --check` before each of commits 4–6.
+- **Failures not caused by LH** (primary checked the logs):
+  `ambiguous_or_corrupt_configuration_status_never_invents_a_legacy_digest_or_writable_config`
+  already failed on 22 November (`L5C\logs\f8-nextest-service.log`, before
+  LH); 10 `airkctl agents::config` tests refuse in the nested worktree
+  ("cannot safely retain a recovery copy here"); Admin `serviceSetup.dom`
+  fails on a browser DOM deadline. Owners: the base failure goes with the
+  entry-40 base failures; the other two are environment refusals of this
+  worktree, to be shown passing on the main checkout before merge.
+- **Not verified:** the Linux-only files
+  (`retrieval .../cuda/linux/product.rs`, inference `gnu_cutlass.rs`; step
+  LX); the Linux warm of the new profile; the asset-custody test
+  `actual_large_finalization…` needs a new input once Large has left the
+  catalog (owner: primary).
+
+**Primary review: LH accepted for its acceptance run.** Next action: build
+the image from `ee552125`, move `gate-inputs.json` to the r4 pairs, and run
+the four combinations (neither, Focus only, Arbiter only, both) on a fresh
+CUDA fixture root. LH merges into `feat/arbiter-final` after that run; L2c
+follows, rebased over it.
+
+**Roots and disk.** The S1 base had closed at 13:39 UTC (previous entry);
+nothing of it was running at the restart. D: free 786,180,501,504 bytes at this
+entry. Nothing is running.
+
+### 23 November 2026 at 18:00 UTC — The `publication_busy` class fixed in the store (`c4e53359`); a second failure class of the same test found, not yet diagnosed
+
+**User's word:** fix the busy bug before LH's acceptance run.
+
+**Change, `c4e53359`** (branch `loop/read-recovery`, worktree
+`answer-loop\busy\wt`, fast-forwarded into `feat/arbiter-final`; change-log
+entry 65; store `current/CONTRACT.md`): a read-only current-database open
+(`database::open_reader_budget`) is repeated every 5 ms for at most 500 ms
+while its error is exactly `SQLITE_BUSY_RECOVERY` (extended code 261),
+another connection rebuilding the WAL index. Readers otherwise still refuse
+contention at once (`busy_timeout(0)`). No snapshot exists before the open
+returns, so no caller work is repeated. No identity, wire, digest input or
+persisted format moved. Primary agent's own work, self-review.
+
+**Validation** (target `target-l2b`, environment `L3\build-env.json`,
+incremental on, logs `answer-loop\busy\logs`):
+
+| Run | Result | Elapsed |
+| --- | --- | --- |
+| `cargo clippy -p airk-store --all-targets --all-features --locked --offline --timings -- -D warnings` | exit 0 | 76 s |
+| same, default features | exit 0 | 33 s |
+| `cargo nextest run --profile ci -p airk-store --lib --all-features -E 'test(/current::/)'` | 181 of 181, including the three `database::recovery_tests` | 242 s |
+| `cargo nextest run --profile ci -p airk-cli --all-features --stress-count 20 -E '(binary(combined_reads) & test(/answer/)) \| binary(admin_plane)'` (`stress-cli-fix-1.log`) | 15 of 20 iterations passed; all 5 failures are the second class below | 1,163 s (12.5 min build) |
+| `cargo fmt -p airk-store --check`, `check-repo.ps1`, `git diff --check` | clean | |
+
+**Failure classes in `admin_sign_in_reads_and_cross_plane_refusals`, 20
+iterations each** (the review counted them together):
+
+| Tree | `publication_busy` | `scoped_read_unavailable` at the readiness read |
+| --- | --- | --- |
+| `705ab312` (`stress-cli-main-1.log`) | 3 | 4 |
+| `loop/l2b-wire` `a46ff188` (`stress-cli-branch-1.log`) | 6 | 1 |
+| `c4e53359` (`stress-cli-fix-1.log`) | 0 | 5 |
+
+**Open, release-relevant:** right after its Index job succeeds, the test's
+`airk_diagnostics` readiness read (Admin selection) returns
+`scoped_read_unavailable`, not retryable, on about one run in five on main.
+No service log was retained. Hypothesis, not checked: a publication or scope
+observation moves after the text Index (the semantic publication follows
+it), and a mismatch check types the move as `ScopeReadRefused` instead of a
+retryable contention. Next action: find the refusal site with a focused
+reproduction.
+
+**State:** LH's acceptance run waits for that diagnosis. D: free 776,434,839,552
+bytes. Nothing is running.
+
+### 23 November 2026 at 19:07 UTC — Diagnostics no longer refuse a read that overlapped a new publication (`15b1b8cd`); the admin stress group passes 20 of 20
+
+**User's word:** diagnose and fix the `scoped_read_unavailable` class. They
+suggested a slim reader/writer lock; the fix keeps the existing optimistic
+read instead (reason below).
+
+**Diagnosis.** A temporary capture at the MCP refusal render points (never
+committed; patch `answer-loop\busy\diag-scope.patch`) was built in a
+throwaway target `target-diag` with `CARGO_PROFILE_{DEV,TEST}_DEBUG=line-tables-only`
+and run with `_NT_SYMBOL_PATH` at its PDBs. The first run had no symbols,
+because the installed fixture copy of `airk.exe` does not find its PDB.
+`admin_plane` alone, 25 iterations: 8 failures, and all 8 captures were
+created at `Kernel::scoped_device_status` (kernel `arbiter.rs`), called by
+`airk_diagnostics`. After the native device read, it typed a moved
+publication like a changed authority (`ScopeReadRefused`). An Index's
+semantic publication lands just after its text publication, so a readiness
+read overlapping it was refused permanently. `target-diag` (about 30 GB) was
+removed after the diagnosis.
+
+**Change, `15b1b8cd`** (change-log entry 66, kernel arbiter `CONTRACT.md`,
+G4): a changed authority is still `ScopeReadRefused`. A newer publication
+under the same authority means the device status is observed again against
+it, at most three observations within the original deadline, then
+`publication_busy` (`CurrentGateContention::Applying`, retryable). A lock was
+not used: the writer would wait behind a native observation, which can take
+up to the read's deadline, and readers and the writer already coordinate by
+snapshot-and-verify. **Test-side change, flagged:** the `admin_plane`
+readiness loop now treats exactly `publication_busy` / `repeat_same_request`
+as "not yet settled", within its 30 s deadline and at most 50 repeats. Other
+failures still fail and are retained. Not changed: the Answer and joint
+delivery fences, which also compare the publication and fail untyped (no
+failing test points at them). Primary agent's own work, self-review.
+
+**Validation** (target `target-l2b`, incremental on, logs `answer-loop\busy\logs`):
+
+| Run | Result | Elapsed |
+| --- | --- | --- |
+| `cargo nextest run --profile ci -p airk-mcp --lib --all-features -E 'test(/scoped_device_diagnostics_tests::/)'` | 5 of 5 | 221 s |
+| the two new tests on the old kernel code | 0 of 2: both `scoped_read_unavailable` | |
+| `cargo clippy -p airk-kernel -p airk-mcp -p airk-cli --all-targets --all-features -- -D warnings`, and default features | exit 0, exit 0 | 78 s, 65 s |
+| stress group (`combined_reads` Answer + `admin_plane`), 20, kernel change only (`stress-cli-fix-2.log`) | 19 of 20 (1 `publication_busy` at readiness) | 508 s |
+| same, with the test change (`stress-cli-fix-3.log`) | **20 of 20** | 504 s |
+| `rustfmt --check` on the changed files, `check-repo.ps1`, `git diff --check` | clean | |
+
+`cargo fmt --check` on the whole kernel and MCP crates reports differences
+in files this change does not touch (for example
+`combined_reads/tests/context.rs`, `arbiter_handler_tests.rs`); they are
+older than this change and were left as they are.
+
+**Admin stress history, 20 iterations:** main `705ab312` 13 of 20; with
+entry 65 (`c4e53359`) 15 of 20; with entry 66, 20 of 20.
+
+**Next action:** LH's acceptance run (image from `loop/lh` `ee552125`,
+`gate-inputs.json` to the r4 pairs, the four switch combinations on a fresh
+CUDA root). LH and L2c are rebased over `15b1b8cd` when they merge. D: free
+777,676,390,400 bytes. Nothing is running.

@@ -208,6 +208,126 @@ async fn diagnostics_sdk_preserves_scope_refusal_and_rejects_foreign_snapshot() 
     }
     Ok(())
 }
+/// An owner whose device read lets a new publication land under the same
+/// authority, as an Index's semantic step does just after its text step.
+struct RepublishingOwner {
+    snapshot: SnapshotOwner,
+    /// How many device reads republish before answering.
+    republish: usize,
+    root: std::sync::OnceLock<std::path::PathBuf>,
+}
+impl NativeController for RepublishingOwner {
+    fn application(
+        &self,
+        worker: WorkerIdentity,
+        authority: ScopedReadRef,
+        publication: &airk_core::evidence::RevisionEnvelope,
+    ) -> Result<IndexApplication> {
+        self.snapshot.application(worker, authority, publication)
+    }
+    fn device_read_status(
+        &self,
+        worker: WorkerIdentity,
+        authority: ScopedReadRef,
+        publication: &airk_core::evidence::RevisionEnvelope,
+        attempt: ReadAttemptBudget,
+        deadline: Instant,
+    ) -> Result<Option<ScopedDeviceStatus>> {
+        let call = self.snapshot.calls.load(Ordering::SeqCst);
+        if call < self.republish {
+            let root = self.root.get().context("fixture root not set")?;
+            std::fs::write(
+                root.join("source/public/read.txt"),
+                format!("republished scoped diagnostic source {call}\n"),
+            )?;
+            Kernel::open(root.join("source"), Some(root.join("data")))?.index()?;
+        }
+        self.snapshot
+            .device_read_status(worker, authority, publication, attempt, deadline)
+    }
+}
+fn republishing(republish: usize) -> Arc<RepublishingOwner> {
+    Arc::new(RepublishingOwner {
+        snapshot: SnapshotOwner {
+            calls: AtomicUsize::new(0),
+            refuse: false,
+            foreign: false,
+        },
+        republish,
+        root: Default::default(),
+    })
+}
+fn diagnostics_args() -> serde_json::Map<String, serde_json::Value> {
+    serde_json::json!({"response_mode":"full"})
+        .as_object()
+        .unwrap()
+        .clone()
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn diagnostics_observes_again_when_a_publication_lands_during_the_device_read() -> Result<()>
+{
+    let owner = republishing(1);
+    let (root, kernel) = fixture(owner.clone())?;
+    owner.root.set(root.path().to_path_buf()).unwrap();
+    let mut tools = local::LocalTools::new(kernel).await?;
+    let reply = tools
+        .call_with_read_context(
+            "airk_diagnostics".into(),
+            diagnostics_args(),
+            attempt(false)?,
+        )
+        .await?;
+    // Same authority, newer publication: never `scoped_read_unavailable`.
+    assert_ne!(reply.is_error, Some(true), "{reply:?}");
+    let body = crate::arbiter_handler_tests::body(&reply)?;
+    let observed = body["scoped_device_status"]["scope"]["publication"].clone();
+    assert!(observed.is_object(), "{body}");
+    assert_eq!(owner.snapshot.calls.load(Ordering::SeqCst), 2);
+    // The observation is of the publication that landed: an undisturbed
+    // read now observes the same one.
+    let settled = tools
+        .call_with_read_context(
+            "airk_diagnostics".into(),
+            diagnostics_args(),
+            attempt(false)?,
+        )
+        .await?;
+    let settled = crate::arbiter_handler_tests::body(&settled)?;
+    assert_eq!(
+        settled["scoped_device_status"]["scope"]["publication"],
+        observed
+    );
+    assert_eq!(owner.snapshot.calls.load(Ordering::SeqCst), 3);
+    tools.close().await?;
+    Ok(())
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn diagnostics_with_a_publication_moving_on_every_read_is_retryable_busy() -> Result<()> {
+    let owner = republishing(usize::MAX);
+    let (root, kernel) = fixture(owner.clone())?;
+    owner.root.set(root.path().to_path_buf()).unwrap();
+    let mut tools = local::LocalTools::new(kernel).await?;
+    let reply = tools
+        .call_with_read_context(
+            "airk_diagnostics".into(),
+            diagnostics_args(),
+            attempt(false)?,
+        )
+        .await?;
+    assert_eq!(reply.is_error, Some(true));
+    let refusal: serde_json::Value = serde_json::from_str(
+        &reply.content[0]
+            .as_text()
+            .context("missing typed retry")?
+            .text,
+    )?;
+    assert_eq!(refusal["code"], "publication_busy", "{refusal}");
+    assert_eq!(refusal["retryable"], true);
+    assert_eq!(refusal["action"], "repeat_same_request");
+    assert_eq!(owner.snapshot.calls.load(Ordering::SeqCst), 3);
+    tools.close().await?;
+    Ok(())
+}
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn diagnostics_expired_original_attempt_never_submits_native_snapshot() -> Result<()> {
     let owner = Arc::new(SnapshotOwner {
