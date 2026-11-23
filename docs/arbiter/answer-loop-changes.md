@@ -2219,6 +2219,27 @@ arbiter `CONTRACT.md` ("Answer job kernel"), supervisor
     (`l2c-cli-decisive-1`); the mutation restoring the shared flag fails it
     (`l2c-cli-mutation-shared-flag`, exit 100);
   - `scripts/check-repo.ps1` exit 0; `git diff --check` clean.
+- **Independent review after the rebase onto `705ab312` (23 November
+  2026).** The branch was rebased onto entries 49 to 55; only this entry and
+  the parity normalizer's comment conflicted. Three defects were closed, each
+  with a test or build that failed on the old code:
+  - the ticket reply lacked entry 54's optional `read_status` and did not
+    compile on the new base (a ticket ran no read, so it carries none);
+  - an invocation key recovered its job without the publication check the
+    digest and continuation paths make, so after a new publication a keyed
+    call got the old publication's result
+    (`an_invocation_key_never_recovers_a_result_of_an_older_publication`);
+  - an owner counted a job only while it ran, so an owner whose only work was
+    a queued job left as idle after 15 s and the job was dropped unrun,
+    against "What a ticket means" (plan 12.4.2)
+    (`a_queued_job_keeps_its_owner_from_leaving_as_idle_until_its_work_ends`).
+  - On this base the two airk-cli parity tests that failed above no longer
+    fail on a comparison difference (entry 54 compares record ids and digests
+    as sent): `combined_reads` Answer tests and `admin_plane`, 19 of 19 in one
+    batch. In another batch `admin_sign_in_reads_and_cross_plane_refusals`
+    failed once on a typed `publication_busy` Answer refusal (no replay
+    allowed); it passed alone and in the repeat, and the same batch on
+    `705ab312` passed once. Not attributed; open.
 
 ### 49. The job table stays out of the LG gate image; the gate measures concurrency on the unqueued path
 
