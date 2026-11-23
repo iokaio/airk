@@ -141,6 +141,27 @@ fn early_worker_errors_use_closed_native_envelopes() -> Result<()> {
     Ok(())
 }
 
+/// Review item 2 of the job wiring: the largest rendered Answer result the
+/// handler lets through (131,072 bytes, its delivery record included) is
+/// written within the Answer worker frame.
+#[test]
+fn the_largest_rendered_answer_result_fits_the_answer_frame() -> Result<()> {
+    let limit = airk_core::arbiter::answer_loop::MAX_ANSWER_RESPONSE_BYTES;
+    let mut reply = admission_rejection(airk_core::service::AdmissionError::Busy);
+    reply.result = json!({"content":[{"type":"text","text":""}],"isError":false});
+    let empty = serde_json::to_vec(&reply.result)?.len();
+    reply.result["content"][0]["text"] = json!("x".repeat(limit - empty));
+    assert_eq!(serde_json::to_vec(&reply.result)?.len(), limit);
+    let mut frame = Vec::new();
+    service_ipc::write_frame_limited(
+        &mut frame,
+        &reply,
+        airk_core::service::query_reply_frame("airk_answer"),
+    )?;
+    assert!(frame.len() <= airk_core::service::MAX_ANSWER_REPLY_FRAME_BYTES);
+    Ok(())
+}
+
 /// Change-log entry 53: an Answer reply above 64 KiB used to fail its frame
 /// at the worker, which dropped the stream, so the caller saw only
 /// `scoped_observation_unavailable`. An Answer query's reply now has the

@@ -286,6 +286,71 @@ async fn a_caller_that_leaves_or_whose_owner_stops_ends_only_its_own_wait() -> R
     Ok(())
 }
 
+/// Review item 2: a job reply carries its delivery record beside the reply
+/// Union packed. A reply packed to its limit (`reply_limit - reserve`,
+/// measured as Union measures it, escaped), with the largest valid delivery
+/// record and the caller's status, still renders within the 131,072-byte
+/// Answer limit through the scoped handler path, with and without saved-source
+/// verification. Above it the handler would refuse the whole reply.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_reply_packed_to_its_limit_with_status_and_a_delivery_record_fits_the_answer_limit()
+-> Result<()> {
+    use airk_core::arbiter::answer_loop::{
+        DEADLINE_TOLERANCE_MS, MAX_ANSWER_RESPONSE_BYTES, MAX_DEADLINE_MS, MAX_ESTIMATE_MS,
+    };
+    let scoped = scoped()?;
+    let delivery = AnswerDeliveryRecord {
+        job: airk_core::identity::Sha256Digest::from_bytes([0xff; 32]),
+        queue_ms: MAX_ESTIMATE_MS,
+        run_ms: MAX_DEADLINE_MS + DEADLINE_TOLERANCE_MS,
+        wait_ms: MAX_DEADLINE_MS + DEADLINE_TOLERANCE_MS,
+        reused: false,
+    };
+    delivery.validate()?;
+    for mode in [None, Some(airk_core::verification::VerificationMode::Off)] {
+        let verification = crate::response::VerificationArgs {
+            verification: mode,
+            ..Default::default()
+        };
+        let reserve = crate::answer_reply_reserve(verification.controls())?;
+        let limit = MAX_ANSWER_RESPONSE_BYTES - reserve;
+        // A stand-in with exactly the bytes Union may pack.
+        let mut packed = serde_json::json!({"schema":CONTEXT_SCHEMA_V3,"padding":""});
+        let room = limit - airk_core::verification::quoted_len(&packed)?;
+        packed["padding"] = "x".repeat(room).into();
+        assert_eq!(airk_core::verification::quoted_len(&packed)?, limit);
+        let mut answered = packed;
+        answered["delivery"] = serde_json::to_value(&delivery)?;
+        let server = AirkServer::new(scoped.kernel.clone());
+        let rendered = server
+            .execute_verified_response(
+                airk_core::usage::UsageOperation::Answer,
+                crate::response::ResponseArgs {
+                    include_status: true,
+                    ..Default::default()
+                },
+                verification.controls(),
+                move |_| Ok(answered),
+            )
+            .await;
+        let bytes = serde_json::to_vec(&rendered)?.len();
+        let text = rendered.content[0]
+            .as_text()
+            .map(|text| text.text.clone())
+            .unwrap_or_default();
+        assert_ne!(
+            rendered.is_error,
+            Some(true),
+            "{mode:?}: {}",
+            &text[..text.len().min(600)]
+        );
+        assert!(bytes <= MAX_ANSWER_RESPONSE_BYTES, "{mode:?}: {bytes}");
+        let body: serde_json::Value = serde_json::from_str(&text)?;
+        assert_eq!(body["delivery"], serde_json::to_value(&delivery)?, "{mode:?}");
+    }
+    Ok(())
+}
+
 fn admission(run_ms: u64, rounds: usize) -> AnswerAdmission {
     let request = request(run_ms);
     AnswerAdmission {

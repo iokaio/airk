@@ -358,6 +358,25 @@ pub struct ListArgs {
     pub max_bytes: usize,
 }
 
+/// The bytes an Answer reply keeps back from Union for what the handler adds
+/// after it. The receipt takes (frame - reply - 2048) / 2 of the escaped
+/// reply (`receipt_budget_within`): twice its floor plus 2048 leaves the
+/// floor, and another 2048 holds the annotations the handler adds after
+/// Union, as the 4,096 reserve does without verification (change-log entry
+/// 53). A job reply's delivery record is one of those annotations.
+pub(crate) fn answer_reply_reserve(
+    controls: airk_core::verification::VerificationControls,
+) -> anyhow::Result<usize> {
+    Ok(controls
+        .resolve()?
+        .map(|budget| {
+            airk_kernel::verification::verification_reply_metadata_floor(budget)
+                .map(|floor| floor.saturating_mul(2).saturating_add(4096))
+        })
+        .transpose()?
+        .unwrap_or(4096))
+}
+
 fn default_limit() -> usize {
     10
 }
@@ -807,22 +826,7 @@ impl AirkServer {
             move |kernel| {
                 // Job options are bounded caller input on every path.
                 args.job.validate(&args.request.budget)?;
-                let reserve = args
-                    .verification
-                    .controls()
-                    .resolve()?
-                    // The receipt takes (frame - reply - 2048) / 2 of the
-                    // escaped reply (`receipt_budget_within`): twice its
-                    // floor plus 2048 leaves the floor, and another 2048
-                    // holds the annotations the handler adds after Union, as
-                    // the 4,096 reserve does without verification
-                    // (change-log entry 53).
-                    .map(|budget| {
-                        airk_kernel::verification::verification_reply_metadata_floor(budget)
-                            .map(|floor| floor.saturating_mul(2).saturating_add(4096))
-                    })
-                    .transpose()?
-                    .unwrap_or(4096);
+                let reserve = answer_reply_reserve(args.verification.controls())?;
                 let kernel = kernel
                     .with_context_reply_reserve(reserve)?
                     .with_fresh_answer_accounting()?;
