@@ -1724,7 +1724,7 @@
     {
       "accepted": false,
       "base": "two_parts_valid",
-      "error": "Answer Focus work exceeds its budget",
+      "error": "Answer Focus work exceeds its budget: 193 Focus pairs of 192",
       "id": "focus_pairs_over_budget",
       "replace": [
         {
@@ -1734,6 +1734,62 @@
         {
           "pointer": "/model_work/focus_pairs",
           "value": 193
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer Focus work exceeds its budget: 25 Focus calls of 24",
+      "id": "focus_calls_over_budget",
+      "replace": [
+        {
+          "pointer": "/decision_log/focus_calls",
+          "value": 25
+        },
+        {
+          "pointer": "/decision_log/focus_pairs",
+          "value": 25
+        },
+        {
+          "pointer": "/model_work/focus_calls",
+          "value": 25
+        },
+        {
+          "pointer": "/model_work/focus_pairs",
+          "value": 25
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer Focus work exceeds its budget: 1 Focus calls dispatched only 0 pairs",
+      "id": "focus_call_without_dispatched_pairs",
+      "replace": [
+        {
+          "pointer": "/decision_log/focus_pairs",
+          "value": 0
+        },
+        {
+          "pointer": "/model_work/focus_pairs",
+          "value": 0
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "Answer Focus work exceeds its budget: 33 Focus pairs over 1 calls of at most 32",
+      "id": "focus_pairs_over_batch_ceiling",
+      "replace": [
+        {
+          "pointer": "/decision_log/focus_pairs",
+          "value": 33
+        },
+        {
+          "pointer": "/model_work/focus_pairs",
+          "value": 33
         }
       ]
     },
@@ -2393,7 +2449,7 @@
           ],
           "digest": "4646464646464646464646464646464646464646464646464646464646464646",
           "focus_calls": 1,
-          "focus_pairs": 2,
+          "focus_pairs": 4,
           "included": 4,
           "omitted": 0,
           "timings": {
@@ -2536,7 +2592,7 @@
         "model_work": {
           "context_calls": 1,
           "focus_calls": 1,
-          "focus_pairs": 2,
+          "focus_pairs": 4,
           "focus_profile": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
         },
         "omitted_count": 0,

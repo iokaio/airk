@@ -342,7 +342,9 @@ fn summary() -> DecisionLogSummary {
             },
         ],
         focus_calls: 1,
-        focus_pairs: 2,
+        // The logged Focus call dispatched four pairs and scored two: the
+        // summary counts what was dispatched.
+        focus_pairs: 4,
         attribution: vec![
             TokenAttribution {
                 part: 1,
@@ -503,7 +505,7 @@ fn response() -> ContextResponseV3 {
         model_work: LoopModelWork {
             context_calls: 1,
             focus_calls: 1,
-            focus_pairs: 2,
+            focus_pairs: 4,
             focus_profile: Some(digest(10)),
         },
         elapsed_ms: 2_000,
@@ -875,7 +877,32 @@ fn refusals() -> Vec<(&'static str, Mutation, &'static str)> {
                 r.decision_log.focus_pairs = 193;
                 r.model_work.focus_pairs = 193;
             },
-            "Answer Focus work exceeds its budget",
+            "Answer Focus work exceeds its budget: 193 Focus pairs of 192",
+        ),
+        // Each of the four Focus bounds names itself and its figures.
+        (
+            "focus_calls_over_budget",
+            |r| {
+                (r.decision_log.focus_calls, r.decision_log.focus_pairs) = (25, 25);
+                (r.model_work.focus_calls, r.model_work.focus_pairs) = (25, 25);
+            },
+            "Answer Focus work exceeds its budget: 25 Focus calls of 24",
+        ),
+        (
+            "focus_call_without_dispatched_pairs",
+            |r| {
+                (r.decision_log.focus_calls, r.decision_log.focus_pairs) = (1, 0);
+                (r.model_work.focus_calls, r.model_work.focus_pairs) = (1, 0);
+            },
+            "Answer Focus work exceeds its budget: 1 Focus calls dispatched only 0 pairs",
+        ),
+        (
+            "focus_pairs_over_batch_ceiling",
+            |r| {
+                (r.decision_log.focus_calls, r.decision_log.focus_pairs) = (1, 33);
+                (r.model_work.focus_calls, r.model_work.focus_pairs) = (1, 33);
+            },
+            "Answer Focus work exceeds its budget: 33 Focus pairs over 1 calls of at most 32",
         ),
         (
             "attribution_not_retained",
@@ -1049,7 +1076,7 @@ fn valid_two_part_response_and_ticket_are_accepted() -> Result<()> {
 #[test]
 fn each_rule_refuses_only_its_own_violation() -> Result<()> {
     let cases = refusals();
-    assert_eq!(cases.len(), 70);
+    assert_eq!(cases.len(), 73);
     for (id, mutate, expected) in cases {
         let mut packet = response();
         mutate(&mut packet);
@@ -1480,6 +1507,67 @@ fn decision_log_summary_is_what_the_reply_carries() -> Result<()> {
     let mut packet = response();
     packet.decision_log = summary;
     packet.validate(&budget())?;
+    Ok(())
+}
+
+/// A Focus call that scored none of its pairs (the live shape: the service
+/// stopped before the first pair) still dispatched them; the reply counts
+/// the call and its dispatched pairs and validates (change-log entry 53).
+#[test]
+fn a_focus_call_that_scored_nothing_counts_its_dispatched_pairs() -> Result<()> {
+    let mut log = log()?;
+    let focus = &mut log.focus_receipts[0];
+    focus.pairs.clear();
+    focus.applied = false;
+    focus.availability = Availability::Failed;
+    focus.ranked = (0..4).collect();
+    focus.work.candidates = 0;
+    log.validate(&budget())?;
+    let summary = log.summary(4)?;
+    assert_eq!((summary.focus_calls, summary.focus_pairs), (1, 4));
+    let mut packet = response();
+    packet.decision_log = summary;
+    packet.validate_with_log(&log, &budget())?;
+    // A dispatch outside 1..=32, or more scored than dispatched, is refused.
+    for (candidates, scored, expected) in [
+        (0, 0, "Focus batch dispatched 0 pairs and scored 0"),
+        (33, 0, "Focus batch dispatched 33 pairs and scored 0"),
+    ] {
+        let mut wrong = log.clone();
+        let focus = &mut wrong.focus_receipts[0];
+        focus.candidate_count = candidates;
+        focus.ranked = (0..u16::try_from(candidates)?).collect();
+        focus.pairs.truncate(scored);
+        let error = wrong.validate(&budget()).unwrap_err().to_string();
+        assert!(error.contains(expected), "{error}");
+    }
+    let mut over = self::log()?;
+    over.focus_receipts[0].candidate_count = 1;
+    over.focus_receipts[0].ranked = vec![0];
+    over.focus_receipts[0].pairs.truncate(1);
+    over.focus_receipts[0].pairs.push(FocusPairScore {
+        candidate: 0,
+        question: 1,
+        no_logit: 0.0,
+        yes_logit: 1.0,
+    });
+    over.focus_receipts[0].work.candidates = 2;
+    let error = over.validate(&budget()).unwrap_err().to_string();
+    assert!(
+        error.contains("Focus batch dispatched 1 pairs and scored 2"),
+        "{error}"
+    );
+    // The budget bound on the log names its figures.
+    let tight = BudgetV3 {
+        focus_calls: 1,
+        focus_pairs: 3,
+        ..budget()
+    };
+    let error = log.validate(&tight).unwrap_err().to_string();
+    assert!(
+        error.contains("1 calls of 1 and 4 dispatched pairs of 3"),
+        "{error}"
+    );
     Ok(())
 }
 

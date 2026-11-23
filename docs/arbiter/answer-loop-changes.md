@@ -2214,3 +2214,79 @@ Numbered 30 until 22 November 2026; renumbered because L4's entries take
   The pin control `recorded_loop_policy_identities` and the
   `cpu_source_transition` tests pass.
 - **Where:** kernel arbiter `CONTRACT.md` ("Answer /3 loop").
+
+### 53. Focus pairs are counted as dispatched, one way everywhere
+
+- **Found by:** a live evaluation service, once search reads worked (entry
+  52) and Focus ran there for the first time. Every Answer failed as a whole
+  after about 4 s with `read_failed` "Answer Focus work exceeds its budget",
+  with the Context model and with Focus only, and with budgets of
+  `focus_calls=1, focus_pairs=32` and `24, 24`.
+- **Which bound:** `focus_calls <= focus_pairs`, with one call whose receipt
+  scored no pair. Under the `1, 32` budget it is the only one of the four
+  that can trip.
+- **Cause:** two counts of one thing. The kernel's ledger (`model.rs`,
+  `focus.rs` `loop_pairs`) and the service's loop ledger (`reserve_focus`)
+  count the pairs a call dispatched, which is what the budget's
+  `focus_pairs` reserves tokens for. The decision log summary (`log.rs`)
+  counted each receipt's `pairs`, the pairs it scored. A real call can score
+  fewer, or none: the service stops at a refused lane, a deadline, unsettled
+  work or a score that is not two finite logits, and the kernel holds a
+  failed call as unknown work with no pair. The synthetic scorer of the
+  kernel tests always scored every pair, so the two counts never differed.
+  (Why the live calls scored nothing is the next item of this entry.)
+- **Fix:** the summary and the log's own budget check count each receipt's
+  `candidate_count` (pairs dispatched); the log refuses a receipt that
+  dispatched outside 1 to 32 pairs or scored more than it dispatched. The
+  kernel checks that a receipt's `candidate_count` equals the batch it sent,
+  and a call that was not applied (scored fewer than it dispatched) now
+  discloses `ModelShare { stage: read }` for every part it served; before,
+  only the parts after a blocking call were disclosed. Scored pairs stay in
+  custody (each receipt's `pairs`, its fixed `reason`). The reply validation
+  is unchanged in substance; each of its four Focus bounds, the card-call
+  bound, the round and pool token bounds and the original work budget now
+  name themselves and their figures.
+- **Neighbours checked** (could the kernel's accounting and the reply's
+  summary disagree in a real run?):
+  - Card calls and slots: one count (distinct `card_slot`s of the log); the
+    kernel allocates a slot per dispatched call, including a call the lane
+    refused (kept used, zero tokens). No disagreement.
+  - Round and pool input tokens: the reply's round tokens are the
+    attribution of every card and Focus receipt plus the kernel's
+    `unknown_tokens`; an unknown Focus call is attributed its reservation.
+    A known refusal attributes zero. No disagreement found.
+  - Calls, candidates, bytes, rounds, parts, sub-needs: counted from the
+    rounds and records the reply carries, not from receipts. No change.
+  - Model work receipts: `model_work` is copied from the summary
+    (`union.rs`), so it cannot differ.
+  - Combined Answer: a member's used Focus pairs come from its reply summary
+    (`LoopUse::of_reply`). Counted as scored, a member whose call scored
+    nothing handed back pairs the service ledger had already reserved for
+    good, so a later member could be refused by the service ledger. Counted
+    as dispatched, the hand-back matches the service ledger. Not tested
+    further.
+- **Tests (hand-written):** kernel
+  `a_focus_call_that_scored_nothing_is_counted_and_disclosed_not_fatal`
+  (four parts, 4,096-token rounds so a round needs two 8-pair batches,
+  three rounds, a native owner that fails every batch above four pairs as
+  the service did: one call of 8 dispatched pairs, no pair scored, unknown
+  work and every part's unscored spans disclosed);
+  `calls_that_queued_no_pair_count_their_dispatched_pairs` (two calls, 16
+  pairs, none scored); `focus_stops_at_its_call_and_pair_budget_and_discloses_the_rest`
+  (never reached: 8 + 8; reached exactly at 2 calls and 16 pairs; calls
+  exceeded by one batch: 8, parts 3 and 4 unscored; one pair short of the
+  shares: 7 + 6, parts 2 to 4 unscored) with the reply's figures equal to the
+  receipts and to the batches the owner was sent. The first two failed on
+  the old code with "Answer Focus work exceeds its budget". Core
+  `a_focus_call_that_scored_nothing_counts_its_dispatched_pairs` and three
+  new refusal rows, one per bound.
+- **Identity moved (recorded decision, coordinator approval of 23 November
+  2026):** `log.rs` feeds the Core loop semantics digest, which every loop
+  identity hashes; there is no correct fix without it, because the summary
+  that the reply is checked against is built there. See the retrieval
+  compiler `CONTRACT.md`, "Sixth move". The `cpu_source_transition` tests
+  did not move. The Rust-emitted cases
+  `fixtures/split/arbiter/answer_loop_cases.json` were regenerated by their
+  Core owner.
+- **Where:** Core arbiter `CONTRACT.md` (reply `model_work` and the decision
+  log), kernel arbiter `CONTRACT.md` (batched Focus).

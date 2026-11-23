@@ -262,6 +262,19 @@ What holds:
   past it stay in coverage unscored. A finished part hands back what it did
   not use. Every roster a present model could not score is disclosed as
   `ModelShare`.
+- **Batched Focus accounting** (change-log entry 53). A batch is whole
+  sub-needs of the barrier, at most `min(round_input_tokens / pair tokens,
+  32)` pairs and 16 questions. Before sending one the kernel checks the
+  call count, the pairs (`focus_pairs + batch <= budget`), the stop time and
+  the token pool; when one fails it sends nothing more and discloses every
+  part whose spans stay unscored. Pairs count as dispatched, one way in the
+  kernel ledger, the service loop ledger, the receipts (`candidate_count`),
+  the decision log summary and `model_work`; a receipt's `candidate_count`
+  must equal the batch sent. A call that scored fewer pairs than it
+  dispatched is not applied; each part it served discloses `ModelShare {
+  read }` and the loop continues. An error from the native owner is unknown
+  work: the call stays counted with no scored pair, Focus stops for the
+  Answer and `ModelOutcomeUnknown` is disclosed.
 - **Card estimate per call.** Model-time admission estimates one batched
   call (one forward pass), not one per segment; Focus is bounded by the
   model deadline, its shares and the original deadline instead of a time

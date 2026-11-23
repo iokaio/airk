@@ -1482,6 +1482,16 @@ round runs at most one read per sub-need. One Context card call is at most
 - **model_work:** card calls, Focus calls and Focus pairs, equal to the log's,
   and `focus_profile` (required, nullable), the one profile of the logged
   identified Focus receipts (see "Combined Answer /3 allowance").
+- **Focus pairs are pairs dispatched** (change-log entry 53): the summary's
+  `focus_pairs` is the sum of each Focus receipt's `candidate_count`, the
+  pairs the call reserved and the budget's `focus_pairs` bounds, as the
+  kernel and service ledgers count them. A receipt dispatches 1 to 32 pairs
+  and scores at most those (its `pairs`, in custody); a call that scored
+  fewer is not applied and its spans stay unscored, disclosed by the kernel.
+  So every call has a pair (`focus_calls <= focus_pairs`) and at most 32
+  (`focus_pairs <= 32 x focus_calls`). Each bound's refusal names itself and
+  its figures, as do the card-call, round-token, pool-token and original
+  work bounds.
 - **records:** a v3 record (`LoopEvidence`) carries no scope: it is always
   the reply's `scope`, so 48 records do not repeat 587 bytes each. A loop
   search defers in-search Focus (L3 design), so a search record carries no

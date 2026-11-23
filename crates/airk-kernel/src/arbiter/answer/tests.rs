@@ -184,6 +184,22 @@ pub(crate) struct Focused {
     pub(crate) batches: AtomicU64,
     /// The configuration moves while the first batch runs.
     pub(crate) stale: bool,
+    /// How the synthetic native owner answers a batch.
+    pub(crate) shape: FocusShape,
+    /// The pairs each batch dispatched, in order.
+    pub(crate) sizes: Mutex<Vec<usize>>,
+}
+/// The shapes a real service's batched Focus reply takes.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum FocusShape {
+    /// Every pair scored and the ranking applied.
+    Full,
+    /// A batch above this many pairs fails before any reservation, as the
+    /// service's one-turn `max_candidates` check did (change-log entry 53):
+    /// the kernel sees an error and holds the call as unknown work.
+    FailAbove(usize),
+    /// The lane queued no pair: a known zero-work call that scored nothing.
+    ScoredNone,
 }
 impl NativeController for Focused {
     fn application(
@@ -225,7 +241,32 @@ impl NativeController for Focused {
         if self.stale {
             self.owner.revision.store(2, Ordering::Release);
         }
-        focus_scores(request, identity)
+        let count = request.candidates.len();
+        self.sizes.lock().unwrap().push(count);
+        match self.shape {
+            FocusShape::Full => focus_scores(request, identity),
+            FocusShape::FailAbove(limit) => {
+                ensure!(
+                    count <= limit,
+                    "Focus batch exceeds the qualified profile or its reservation"
+                );
+                focus_scores(request, identity)
+            }
+            FocusShape::ScoredNone => {
+                let mut response = focus_scores(request, identity)?.context("synthetic reply")?;
+                let ranking = &mut response.ranking;
+                ranking.pairs.clear();
+                ranking.applied = false;
+                ranking.availability = Availability::Failed;
+                ranking.reason = "The native lane queued no pair of this batch".into();
+                ranking.observed_input_tokens = Some(0);
+                ranking.work = Work::default();
+                for charge in &mut ranking.attribution {
+                    charge.tokens = 0;
+                }
+                Ok(Some(response))
+            }
+        }
     }
 }
 
@@ -1013,11 +1054,17 @@ fn only_an_answer_attempt_may_hold_the_answer_read_budget() -> Result<()> {
 }
 
 fn focused(stale: bool) -> Result<(Fixture, Arc<Focused>)> {
+    focused_as(stale, FocusShape::Full)
+}
+
+fn focused_as(stale: bool, shape: FocusShape) -> Result<(Fixture, Arc<Focused>)> {
     let owner = Arc::new(Owner::new());
     let focused = Arc::new(Focused {
         owner: owner.clone(),
         batches: AtomicU64::new(0),
         stale,
+        shape,
+        sizes: Mutex::new(vec![]),
     });
     Ok((fixture_with(focused.clone(), owner)?, focused))
 }
@@ -1099,6 +1146,198 @@ fn a_focus_batch_gone_stale_is_the_answer_stale_refusal() -> Result<()> {
             .is_some_and(|cause| cause.is::<super::super::focus::FocusBatchStale>())
     );
     assert!(!stale._custody.log.entries.is_empty());
+    Ok(())
+}
+
+// Change-log entry 53: Focus work as a real request has it. Each search
+// returns many distinct spans, so a part-round fills its 32-pair ceiling, two
+// parts need two batches a round, and the native owner answers in the shapes
+// the live service did.
+
+/// One Answer whose every search returns `hits` distinct spans.
+fn answer_wide(
+    fixture: &Fixture,
+    request: v3::ContextRequestV3,
+    hits: usize,
+) -> Result<AnswerOutcome> {
+    let context = fixture.kernel.arbiter_context.as_ref().unwrap();
+    let kernel = fixture
+        .kernel
+        .with_native_arbiter(
+            context.worker,
+            context.authority,
+            fixture.controller.clone(),
+        )?
+        .with_context_attempt(ReadAttemptBudget {
+            schema: 1,
+            request_id: Incarnation::from_bytes([12; 16]),
+            clock: ReadClock::UnixMonotonic,
+            expires_monotonic_ns: 100_000_001_000,
+            remaining_ns: 100_000_000_000,
+            native_retry_expires_monotonic_ns: None,
+        })?;
+    let clock = Clock::new();
+    let publication = fixture.publication.clone();
+    kernel.answer_with(
+        request,
+        AnswerEnv {
+            deadline: clock.now() + Duration::from_secs(600),
+            require_live: &|| Ok(()),
+            reader: &|tool, arguments, _| {
+                let mut body = canned(&publication, tool, arguments)?;
+                if tool == "search" {
+                    let query = arguments.get("query").and_then(Value::as_str).unwrap_or("");
+                    body["hits"] = Value::Array(
+                        (0..hits)
+                            .map(|index| {
+                                hit(
+                                    &format!("crates/k/src/guard_{index}.rs"),
+                                    1,
+                                    9,
+                                    &format!("pub fn restart_guard_{index}() {{}} // {query}"),
+                                )
+                            })
+                            .collect(),
+                    );
+                }
+                Ok(body)
+            },
+            clock: &|| clock.now(),
+            progress: &|_| {},
+        },
+    )
+}
+
+/// Four parts, one sub-need each, one round, at a 4,096-token round
+/// allowance: Focus takes half, so each part sends its four spans
+/// (`FOCUS_SPANS_PER_NEED`) and one call holds 8 pairs. A round's 16 pairs
+/// need two batches, of parts 1 and 2 and of parts 3 and 4.
+fn four_part_request() -> v3::ContextRequestV3 {
+    let mut request = request(
+        "1. where is the restart guard defined?\n2. which tests cover the retry budget refusal?\n3. who calls the restart guard?\n4. which documentation describes the restart guard?",
+    );
+    request.budget.max_sub_needs = 1;
+    request.budget.rounds = 1;
+    request.budget.round_input_tokens = 8 * PAIR_TOKENS;
+    request
+}
+
+/// The reply's Focus figures are exactly the ledger's: one call per
+/// receipt, pairs as dispatched, and the batches the owner was sent.
+fn assert_focus_figures(outcome: &AnswerOutcome, focused: &Focused) -> (usize, usize) {
+    let receipts = &outcome.custody.log.focus_receipts;
+    let dispatched: usize = receipts.iter().map(|r| r.candidate_count).sum();
+    let summary = &outcome.response.decision_log;
+    let work = &outcome.response.model_work;
+    assert_eq!(summary.focus_calls, receipts.len());
+    assert_eq!(summary.focus_pairs, dispatched);
+    assert_eq!(
+        (work.focus_calls, work.focus_pairs),
+        (summary.focus_calls, summary.focus_pairs)
+    );
+    let sizes = focused.sizes.lock().unwrap().clone();
+    assert_eq!(sizes.len(), receipts.len(), "one receipt per dispatched batch");
+    assert_eq!(sizes.iter().sum::<usize>(), dispatched);
+    (summary.focus_calls, summary.focus_pairs)
+}
+
+fn read_share(outcome: &AnswerOutcome, part: u8) -> bool {
+    outcome.response.degradations.iter().any(|item| {
+        matches!(item, v3::Degradation::ModelShare { part: p, stage: v3::LoopStage::Read } if *p == part)
+    })
+}
+
+/// The live failure: the native owner fails every batch above four pairs
+/// before reserving anything. The kernel holds that call as unknown work
+/// with no scored pair; before entry 53 the reply then failed its own
+/// validation ("Answer Focus work exceeds its budget": one call, zero pairs).
+#[test]
+fn a_focus_call_that_scored_nothing_is_counted_and_disclosed_not_fatal() -> Result<()> {
+    let (fixture, focused) = focused_as(false, FocusShape::FailAbove(4))?;
+    let mut request = four_part_request();
+    request.budget.rounds = 3;
+    let outcome = answer_wide(&fixture, request, 40)?;
+    assert_eq!(outcome.response.parts.len(), 4);
+    // The first batch (8 pairs) failed; Focus stopped there for the Answer.
+    assert_eq!(assert_focus_figures(&outcome, &focused), (1, 8));
+    let receipt = &outcome.custody.log.focus_receipts[0];
+    assert!(receipt.pairs.is_empty() && !receipt.applied);
+    assert!(
+        outcome
+            .response
+            .degradations
+            .iter()
+            .any(|item| matches!(item, v3::Degradation::ModelOutcomeUnknown))
+    );
+    assert!((1..=4).all(|part| read_share(&outcome, part)));
+    Ok(())
+}
+
+/// A known zero-work call (the lane queued no pair) still dispatched its
+/// pairs; every such call is counted and its parts disclose unscored spans.
+#[test]
+fn calls_that_queued_no_pair_count_their_dispatched_pairs() -> Result<()> {
+    let (fixture, focused) = focused_as(false, FocusShape::ScoredNone)?;
+    let outcome = answer_wide(&fixture, four_part_request(), 40)?;
+    assert_eq!(assert_focus_figures(&outcome, &focused), (2, 16));
+    assert!(
+        outcome
+            .custody
+            .log
+            .focus_receipts
+            .iter()
+            .all(|receipt| receipt.pairs.is_empty())
+    );
+    assert!((1..=4).all(|part| read_share(&outcome, part)));
+    Ok(())
+}
+
+/// One round of four full parts needs two 8-pair batches; the budget is
+/// reached exactly, exceeded by one batch, or never reached.
+#[test]
+fn focus_stops_at_its_call_and_pair_budget_and_discloses_the_rest() -> Result<()> {
+    // Pairs are shared equally over the parts (remainder to part 1), so a
+    // part's share also caps how many of its spans it sends.
+    for (calls, pairs, sizes, unscored) in [
+        // Never reached: the default budget.
+        (24, 192, vec![8, 8], vec![]),
+        // Reached exactly by the second batch.
+        (2, 16, vec![8, 8], vec![]),
+        // Calls exceeded by one batch: parts 3 and 4 are not sent.
+        (1, 16, vec![8], vec![3, 4]),
+        // One pair short: shares 6, 3, 3, 3 (remainder to part 1), so parts
+        // 2 to 4 send 3 of their 4 spans; 4 + 3 is one call, 3 + 3 the next.
+        (15, 15, vec![7, 6], vec![2, 3, 4]),
+    ] {
+        let (fixture, focused) = focused_as(false, FocusShape::Full)?;
+        let mut request = four_part_request();
+        request.budget.focus_calls = calls;
+        request.budget.focus_pairs = pairs;
+        let outcome = answer_wide(&fixture, request, 40)?;
+        assert_eq!(outcome.response.parts.len(), 4);
+        assert_eq!(
+            assert_focus_figures(&outcome, &focused),
+            (sizes.len(), sizes.iter().sum::<usize>()),
+            "{calls} calls, {pairs} pairs"
+        );
+        assert_eq!(*focused.sizes.lock().unwrap(), sizes);
+        assert_eq!(
+            outcome
+                .response
+                .degradations
+                .iter()
+                .any(|item| matches!(item, v3::Degradation::BatchSplit)),
+            sizes.len() == 2,
+            "a round needing two batches discloses the split"
+        );
+        for part in 1..=4u8 {
+            assert_eq!(
+                read_share(&outcome, part),
+                unscored.contains(&part),
+                "{calls} calls, {pairs} pairs, part {part}"
+            );
+        }
+    }
     Ok(())
 }
 

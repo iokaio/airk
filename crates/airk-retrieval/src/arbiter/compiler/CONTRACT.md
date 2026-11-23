@@ -235,8 +235,8 @@ below.
 | Batched Focus over the release pair policy | `50ba5c856d5f3ed81d86eacd62094de14599f56fcb39939126643758a7fae04a` | `19e8564765aaa68cad46fb08c287c22f78399657ab3e9e1ae345790b2dda0df4` |
 
 **Fifth move: Follow-up evidence and the review of the fourth move
-(recorded decision, 22 November 2026; change log entry 44).** The values
-below are current.
+(recorded decision, 22 November 2026; change log entry 44).** These values
+were replaced by the sixth move below.
 
 - **Why they moved:** three digest inputs changed.
   - Core `native_loop.rs`: the evidence fields `skipped_bytes`, `truncated`
@@ -273,6 +273,42 @@ below are current.
 | `airk.context_coverage.v1` | `846f1db0ae1af64921166cc29e872e1094b842606cf6824353e32204e8f4bf58` | `c2eab6c9e147edaf437a407e5999f5674b3013f5d7b5d21f3c3ffa473643cfce` |
 | `airk.context_follow_up.v1` | `104b24bbda6baccb77609f1bbe1490f8c9beacc526c839ba920665c291f391b1` | `b1edccc6d81d102beaa6c3fec2e4052e6147401278dc3f32c7ff8b79fe6614a1` |
 | Batched Focus over the release pair policy | `19e8564765aaa68cad46fb08c287c22f78399657ab3e9e1ae345790b2dda0df4` | `f90f9c773879cc23d462e0c99d485ed219666dff6d57cc5cd2479e80c450798f` |
+
+**Sixth move: Focus pairs counted as dispatched (recorded decision, 23
+November 2026; change log entry 53).** The values below are current.
+
+- **Why they moved:** one digest input changed. Core `answer_loop/log.rs`
+  counts the decision log summary's `focus_pairs` and the log's own Focus
+  budget check by each receipt's `candidate_count` (pairs dispatched)
+  instead of its scored `pairs`, refuses a receipt outside 1 to 32
+  dispatched pairs or with more scored than dispatched, and names the
+  figures in its budget error. That moves the Core loop semantics digest
+  and every identity that hashes it. There is no correct fix without it:
+  the summary the reply is validated against is built in `log.rs`.
+- **What a model is shown did not change:** no card view, question, rule or
+  Focus ranking changed; the card and batched Focus identities moved only
+  because they hash the Core loop semantics.
+- **Proof that the old values no longer describe the source:** the control
+  `recorded_loop_policy_identities`, run on the changed source with the
+  values of `2994c65d` still pinned, fails at the Core digest (private
+  receipt `answer-loop/L4/focusbudget-nextest-retrieval-pins-oldpins.log`).
+  The pins were then moved to the values the source produces
+  (`focusbudget-nextest-retrieval-pins-new2.log`, 14 passed). No check was
+  removed.
+- **What did not move:** `compiler.rs`, `compiler/qwen.rs`, `runtime.rs`,
+  the closed CPU Focus row and the `cpu_source_transition` pins, the
+  release Focus pair policy and the one-turn Context policy. Profiles that
+  declare the card tasks, and loop Focus profiles, must be re-emitted with
+  the new task policies.
+
+| Identity | Before (`2994c65d`) | Now |
+| --- | --- | --- |
+| Core loop semantics | `2f89a3ae30da2ed9b8a01625babd0b276ea2c5f61e6fa199c969792742264065` | `99b87f98a14d427d5e1a16a3a0710dc838682298846cc464060947aa292209fd` |
+| `airk.context_split.v1` | `f1ecc7d9755edc7d6d165e752a1ae461d500b5269f998c35fd960644524f12da` | `32fcf95cfba16db0fcfb969d39ca55a08fa0ae0622ae00a731e3e41fa3568755` |
+| `airk.context_plan.v1` | `064ec90a339ea369e1c9161d7aed2a3d2a2dbf1d180a844c0b6ed1b052959ba1` | `e180b6be12945656bbb863dfe6ad59771182356c6ad2da68a1d77de7d3492593` |
+| `airk.context_coverage.v1` | `c2eab6c9e147edaf437a407e5999f5674b3013f5d7b5d21f3c3ffa473643cfce` | `f71c7c7eecd867d97b1a07e3ec0faf12869f6761c3c34c02c10138568d73462e` |
+| `airk.context_follow_up.v1` | `b1edccc6d81d102beaa6c3fec2e4052e6147401278dc3f32c7ff8b79fe6614a1` | `fe85b1e08cefbf6446a9156c3cd5e37aab112733a225ff3847e5ce8392be7ae7` |
+| Batched Focus over the release pair policy | `f90f9c773879cc23d462e0c99d485ed219666dff6d57cc5cd2479e80c450798f` | `839af2a52020bfc7d8bbb2e2a13fbea517c86ba9d866b6830ab378853c493c90` |
 
 **Rosters.** Kernel code proposes every card; this owner never adds, drops
 or rewrites one. Before compile it checks each segment's shape beyond Core's

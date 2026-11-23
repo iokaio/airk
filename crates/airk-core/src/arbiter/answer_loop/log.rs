@@ -137,6 +137,10 @@ pub struct DecisionLogSummary {
     /// Decisions per stage and source, over the whole log.
     pub counts: Vec<StageSourceCount>,
     pub focus_calls: usize,
+    // Focus pairs dispatched: each receipt's `candidate_count`, what the
+    // budget's `focus_pairs` bounds. The pairs a call scored are its
+    // receipt's `pairs`, in custody, and may be fewer. (A plain comment, so
+    // the generated wire schema is unchanged.)
     pub focus_pairs: usize,
     /// Model tokens charged per part and round by every card and Focus receipt.
     pub attribution: Vec<TokenAttribution>,
@@ -279,11 +283,21 @@ impl DecisionLog {
                 inputs.insert(focus.input_digest),
                 "repeated Focus batch receipt"
             );
-            pairs += focus.pairs.len();
+            ensure!(
+                (1..=MAX_FOCUS_BATCH_PAIRS).contains(&focus.candidate_count)
+                    && focus.pairs.len() <= focus.candidate_count,
+                "Focus batch dispatched {} pairs and scored {}; a call dispatches 1 to {MAX_FOCUS_BATCH_PAIRS} and scores at most those",
+                focus.candidate_count,
+                focus.pairs.len()
+            );
+            pairs += focus.candidate_count;
         }
         ensure!(
             self.focus_receipts.len() <= budget.focus_calls && pairs <= budget.focus_pairs,
-            "decision log Focus work exceeds its budget"
+            "decision log Focus work exceeds its budget: {} calls of {} and {pairs} dispatched pairs of {}",
+            self.focus_receipts.len(),
+            budget.focus_calls,
+            budget.focus_pairs
         );
         Ok(())
     }
@@ -494,7 +508,7 @@ impl DecisionLog {
             focus_pairs: self
                 .focus_receipts
                 .iter()
-                .map(|focus| focus.pairs.len())
+                .map(|focus| focus.candidate_count)
                 .sum(),
             attribution: charges
                 .into_iter()

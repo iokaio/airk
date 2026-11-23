@@ -1103,7 +1103,9 @@ impl ContextResponseV3 {
             );
             ensure!(
                 round.input_tokens <= budget.round_input_tokens,
-                "Answer round token allowance exceeded"
+                "Answer round token allowance exceeded: {} of {}",
+                round.input_tokens,
+                budget.round_input_tokens
             );
             ensure!(
                 if index == 0 {
@@ -1397,7 +1399,10 @@ impl ContextResponseV3 {
                 && summary.card_calls <= scored_total
                 && (scored_total == 0) == (summary.card_calls == 0)
                 && summary.card_calls <= budget.context_calls,
-            "decision log card calls disagree with scored decisions or slots"
+            "decision log card calls disagree with scored decisions or slots: {} card calls, {} reply slots, {scored_total} scored decisions, {} allowed",
+            summary.card_calls,
+            slots.len(),
+            budget.context_calls
         );
         ensure!(
             self.decisions.iter().filter(|d| d.work_unknown).count() <= summary.work_unknown,
@@ -1413,12 +1418,25 @@ impl ContextResponseV3 {
             self.model_work.focus_profile.is_none() || summary.focus_calls > 0,
             "a Focus profile without Focus calls"
         );
+        // Focus pairs are pairs dispatched (log.rs), so every call has one.
+        let (calls, pairs) = (summary.focus_calls, summary.focus_pairs);
         ensure!(
-            summary.focus_calls <= budget.focus_calls
-                && summary.focus_pairs <= budget.focus_pairs
-                && summary.focus_calls <= summary.focus_pairs
-                && summary.focus_pairs <= summary.focus_calls * MAX_FOCUS_BATCH_PAIRS,
-            "Answer Focus work exceeds its budget"
+            calls <= budget.focus_calls,
+            "Answer Focus work exceeds its budget: {calls} Focus calls of {}",
+            budget.focus_calls
+        );
+        ensure!(
+            pairs <= budget.focus_pairs,
+            "Answer Focus work exceeds its budget: {pairs} Focus pairs of {}",
+            budget.focus_pairs
+        );
+        ensure!(
+            calls <= pairs,
+            "Answer Focus work exceeds its budget: {calls} Focus calls dispatched only {pairs} pairs"
+        );
+        ensure!(
+            pairs <= calls * MAX_FOCUS_BATCH_PAIRS,
+            "Answer Focus work exceeds its budget: {pairs} Focus pairs over {calls} calls of at most {MAX_FOCUS_BATCH_PAIRS}"
         );
         validate_charges(&summary.attribution, MAX_ATTRIBUTIONS)?;
         for charge in &summary.attribution {
@@ -1582,7 +1600,8 @@ impl ContextResponseV3 {
         );
         ensure!(
             self.work.input_tokens >= required,
-            "Answer work does not retain its round, Split, Plan and Focus tokens"
+            "Answer work does not retain its round, Split, Plan and Focus tokens: {} retained, {required} charged",
+            self.work.input_tokens
         );
         // Summed model timings are disclosure: they overlap in batches and
         // across devices, so the deadline is judged on wall-clock elapsed.
@@ -1607,7 +1626,21 @@ impl ContextResponseV3 {
                 && self.candidate_count <= budget.candidates
                 && self.candidate_count <= self.work.calls
                 && self.work.bytes <= budget.max_bytes,
-            "Answer original work budget exceeded"
+            "Answer original work budget exceeded: calls {}/{}, rounds {}/{}, fanout {}/{}, input tokens {}/{}, work candidates {}/{}, candidate count {} (reads {}), bytes {}/{}",
+            self.work.calls,
+            budget.calls,
+            self.work.rounds,
+            budget.rounds,
+            self.work.fanout,
+            budget.fanout,
+            self.work.input_tokens,
+            budget.input_tokens,
+            self.work.candidates,
+            budget.candidates,
+            self.candidate_count,
+            self.work.calls,
+            self.work.bytes,
+            budget.max_bytes
         );
         Ok(())
     }

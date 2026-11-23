@@ -780,10 +780,23 @@ impl Loop<'_> {
             };
             calls_here += 1;
             self.batch_split |= calls_here > 1;
+            // Pairs are counted as dispatched, as the decision log summary
+            // counts them (each receipt's `candidate_count`); a call that
+            // scored fewer, and so was not applied, leaves its spans
+            // unscored, which each part it served discloses.
+            ensure!(
+                ranking.receipt.candidate_count == count,
+                "Focus receipt dispatched {} pairs, the batch {count}",
+                ranking.receipt.candidate_count
+            );
             self.focus_pairs += count;
+            let applied = ranking.receipt.applied;
             for (id, pairs) in batch_pairs {
                 if let Some(index) = self.part_index(id) {
                     self.used_pairs[index] += pairs;
+                }
+                if !applied {
+                    self.disclose_read(id);
                 }
             }
             for charge in &ranking.receipt.attribution {
