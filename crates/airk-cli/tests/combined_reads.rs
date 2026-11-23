@@ -6103,6 +6103,63 @@ async fn answer_jobs_outlive_their_makers_session_and_are_recovered_by_their_han
     gate.none_pending()?;
     f.assert_sources_unchanged()
 }
+
+/// A combined Answer is never a job of the service's table. Its job options
+/// are bounded as on the single-index path, and an option it cannot honour
+/// (`invocation_key`, `wait_ms`, `interactive`) is refused with the typed
+/// argument error before any member is queried, never silently ignored.
+/// `fresh`, which a combined Answer always is, still answers.
+#[tokio::test]
+async fn a_combined_answer_refuses_job_options_it_cannot_honour() -> Result<()> {
+    let f = Fixture::new(true)?;
+    let _service = f.start().await?;
+    let (_budget, base) = current_answer_request()?;
+    let combined = || airk_core::service::ToolSelection::Combined {
+        request: f.session.clone(),
+        project_ids: None,
+        index_ids: None,
+        member_availability: None,
+    };
+    for extra in [
+        json!({"invocation_key":"turn-1"}),
+        json!({"wait_ms":3_000}),
+        json!({"interactive":true}),
+        json!({"invocation_key":"bad key"}),
+        json!({"wait_ms":0}),
+    ] {
+        let mut arguments = base.clone();
+        for (key, value) in extra.as_object().into_iter().flatten() {
+            arguments[key] = value.clone();
+        }
+        let response = airk_cli::service_runtime::request(
+            &f.control,
+            ControlMethod::ToolsCall {
+                tool: "airk_answer".into(),
+                arguments: arguments.as_object().context("Answer arguments")?.clone(),
+                selection: combined(),
+                response_mode: airk_core::service::ToolResponseMode::Full,
+                usage_client: airk_core::usage::ClientFamily::Unknown,
+                read_attempt: None,
+            },
+        )
+        .await?;
+        let ControlResponse::ToolResult { result } = response else {
+            anyhow::bail!("{extra}: not a tool result: {}", serde_json::to_string(&response)?)
+        };
+        ensure!(result["isError"] == true, "{extra}: answered: {result}");
+        let body = &result["structuredContent"];
+        ensure!(
+            body["error"]["code"] == "invalid_native_arguments"
+                && body["error"]["query_submitted"] == false,
+            "{extra}: not the typed argument refusal: {result}"
+        );
+    }
+    let mut fresh = base.clone();
+    fresh["fresh"] = json!(true);
+    let answered = context_pipe_once(&f, combined(), &fresh).await?;
+    ensure!(answered["isError"] != true, "a fresh combined Answer answers: {answered}");
+    f.assert_sources_unchanged()
+}
 #[tokio::test]
 async fn current_answer_many_and_open_keep_complete_cli_pipe_and_https_mcp_packets() -> Result<()> {
     let f = Fixture::new(true)?;

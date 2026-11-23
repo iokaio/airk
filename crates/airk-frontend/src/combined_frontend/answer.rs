@@ -104,6 +104,16 @@ fn frame_shares(
     }
 }
 
+/// Whether a combined Answer's job options are valid and mean something on
+/// the combined path: valid as Core bounds them, and none but `fresh`.
+fn combined_job_options_hold(parsed: &airk_mcp::AnswerArgs) -> bool {
+    let job = &parsed.job;
+    job.validate(&parsed.request.budget).is_ok()
+        && job.invocation_key.is_none()
+        && job.wait_ms.is_none()
+        && !job.interactive
+}
+
 fn live(context: &airk_mcp::read_attempt::ReadAttemptContext) -> bool {
     !context.cancellation().is_cancelled() && Instant::now() < context.deadline()
 }
@@ -168,6 +178,18 @@ impl<S: Session> Backend<S> {
         }
         let parsed: airk_mcp::AnswerArgs = serde_json::from_value(Value::Object(args.clone()))?;
         parsed.request.validate()?;
+        // Job options beside the request are bounded caller input on every
+        // path, as the single-index handler checks them. A combined Answer
+        // is never a job of the service's table: it always runs afresh, so
+        // `fresh` holds, and an option it cannot honour (`invocation_key`,
+        // `wait_ms`, `interactive`) is refused, never silently ignored.
+        if !combined_job_options_hold(&parsed) {
+            return Ok(failure(
+                "invalid_native_arguments",
+                Some(false),
+                &self.selection.requested(),
+            ));
+        }
         let request = parsed.request;
         let mut verification = AnswerVerification::parse(&args)?;
         let delivery_reserve = airk_kernel::combined_reads::context_delivery_receipt_reserve()?;
