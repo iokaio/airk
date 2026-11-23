@@ -6,15 +6,21 @@
 //! takes one Focus ordinal and one reservation in the loop ledger, charged
 //! to each part and round for its own pairs.
 use super::*;
-use airk_core::{
-    arbiter::answer_loop::{FOCUS_BATCH_SCHEMA, FocusBatchReceipt, FocusPairScore},
-    native_loop::{NativeFocusRequestV3, NativeFocusResponseV3},
-};
+#[cfg(feature = "local-inference")]
+use airk_core::arbiter::answer_loop::{FOCUS_BATCH_SCHEMA, FocusBatchReceipt, FocusPairScore};
+use airk_core::native_loop::{NativeFocusRequestV3, NativeFocusResponseV3};
 
+// Only a build with native inference runs a batch, so its receipt reasons
+// exist only there.
+#[cfg(feature = "local-inference")]
 const UNKNOWN: &str = "Native batched Focus outcome is unknown; the reservation remains held and canonical order is kept.";
+#[cfg(feature = "local-inference")]
 const APPLIED: &str = "Complete native Focus batch ranked by relevance; each pair was scored against its own sub-need question.";
+#[cfg(feature = "local-inference")]
 const CHANGED: &str = "Focus deadline, source authority or configuration changed; measured work is retained without ranking.";
+#[cfg(feature = "local-inference")]
 const NOT_QUEUED: &str = "The native lane queued no pair of this batch; no model work ran and the reservation was released.";
+#[cfg(feature = "local-inference")]
 const FAILED: &str =
     "A native Focus pair failed or returned invalid logits; no partial ranking was applied.";
 

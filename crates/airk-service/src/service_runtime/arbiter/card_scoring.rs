@@ -5,24 +5,37 @@
 //! attempt in the loop ledger, per part and round; unknown native work keeps
 //! its reservation and a decision is never minted from it.
 use super::*;
+#[cfg(any(feature = "local-inference", test))]
+use airk_core::arbiter::answer_loop::{CARD_ADVICE_SCHEMA, SegmentOutcome};
 use airk_core::{
-    arbiter::answer_loop::{CARD_ADVICE_SCHEMA, CardAdvice, SegmentOutcome},
+    arbiter::answer_loop::CardAdvice,
     native_loop::{
         NativeCardModel, NativeCardRequest, NativeFocusRequestV3, NativeFocusResponseV3,
     },
 };
 
-/// Settled reasons are fixed text, so receipts stay small and comparable.
+// Settled reasons are fixed text, so receipts stay small and comparable.
+// Only a build with native inference settles a card call, so each reason
+// exists only there, and in the unit tests that name it.
+#[cfg(any(feature = "local-inference", test))]
 const UNKNOWN: &str = "The loop card call's native outcome is unknown; its reservation remains held and nothing is replayed.";
+#[cfg(any(feature = "local-inference", test))]
 const NOT_ADMITTED: &str = "The selected Context profile does not admit this loop card task under its policy; no compile or scoring was dispatched.";
+#[cfg(feature = "local-inference")]
 const ROSTER_REFUSED: &str = "The loop card roster breaks its task policy's roster rules; no compile or scoring was dispatched.";
+#[cfg(feature = "local-inference")]
 const INPUT_REFUSED: &str =
     "The native lane refused this card input before any model work; the reservation was released.";
+#[cfg(feature = "local-inference")]
 const QUEUE_REFUSED: &str = "The native lane refused to queue this card call; no model work ran and the reservation was released.";
+#[cfg(feature = "local-inference")]
 const RESIDENT_UNAVAILABLE: &str = "The resident Context session was unavailable before dispatch; no model work ran and the reservation was released.";
+#[cfg(any(feature = "local-inference", test))]
 const SCORE_FAILED: &str =
     "Native card scoring returned a known failure; measured work is retained without a decision.";
+#[cfg(feature = "local-inference")]
 const SCORES_INVALID: &str = "Native card scoring completed, but its score shape or finiteness was invalid; measured work is retained without a decision.";
+#[cfg(feature = "local-inference")]
 const LATE_CHANGE: &str = "Source authority or the Context configuration changed after native work; measured work is retained and the decision was discarded.";
 
 impl Owner {
@@ -306,7 +319,18 @@ impl StageOwner {
         let Some(manifest) = configuration.selected_profile(Stage::Context) else {
             return Ok(None);
         };
-        NativeCardModel::from_profile(&self.profile_description(manifest)?)
+        // A service built without native inference holds no profile
+        // description and scores nothing, so it reports no card model, as
+        // `score_cards` and `focus_batch` dispatch nothing there.
+        #[cfg(not(feature = "local-inference"))]
+        {
+            let _ = manifest;
+            Ok(None)
+        }
+        #[cfg(feature = "local-inference")]
+        {
+            NativeCardModel::from_profile(&self.profile_description(manifest)?)
+        }
     }
 
     pub(super) async fn score_cards(

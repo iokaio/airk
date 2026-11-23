@@ -886,6 +886,18 @@ enrolled for Context and the profile declares all four card tasks; otherwise
 `None`, and the kernel's deterministic order decides. Large is never
 reported on the CPU.
 
+**A service built without `local-inference`** has no native model path.
+After the same scope and configuration checks, `card_model` reports `None`
+and `score_cards` and `focus_batch` return `None` without a reservation, so
+the kernel's deterministic order decides every card and Focus keeps the
+canonical order. The settlement code, its reasons and the loop ledger exist
+only with `local-inference` (and in unit tests). The service must pass
+Clippy `-D warnings` over all targets with default features, with
+`local-inference`, with `gpu-cuda` and with all features; L4's commits were
+checked with all features only, and with default features the service did
+not compile (`card_model` named a method that exists only with
+`local-inference`) until this was gated.
+
 **Enrollment.** Loop card tasks run under the Context stage's existing
 per-index enrollment (`airk.context_action.v1`); the persisted configuration,
 `Stage::permits` and enrollment validation are unchanged. The lane maps card

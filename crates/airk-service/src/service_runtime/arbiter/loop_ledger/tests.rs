@@ -364,6 +364,45 @@ fn attempt_identity_and_parent_budget_are_fixed_once_charged() -> Result<()> {
     Ok(())
 }
 
+/// A ticket bounds its call's deadline. The window opens at the attempt's
+/// first reservation, lasts the parent deadline (300 s by default) within
+/// the attempt's own expiry, and a later call can narrow it but never renew
+/// it.
+#[test]
+fn a_ticket_s_window_is_the_parent_deadline_and_never_renews() -> Result<()> {
+    let mut ledger = Ledger::default();
+    let parent = budget();
+    assert_eq!(parent.deadline_ms, 300_000);
+    // The attempt has 600 s left at 100 ns; the parent deadline is shorter.
+    let first = ledger.reserve_card(attempt(), &parent, 1, &[charge(1, 1, 100)], None, 100)?;
+    assert_eq!(first.remaining_ns(100), 300_000_000_000);
+    // Thirty seconds later the same window has 270 s left.
+    let second = ledger.reserve_card(
+        attempt(),
+        &parent,
+        2,
+        &[charge(1, 1, 100)],
+        None,
+        30_000_000_100,
+    )?;
+    assert_eq!(second.remaining_ns(30_000_000_100), 270_000_000_000);
+    // A call that states 5 s left narrows the window to those 5 s.
+    let mut hurried = attempt();
+    hurried.remaining_ns = 5_000_000_000;
+    let third = ledger.reserve_card(
+        hurried,
+        &parent,
+        3,
+        &[charge(1, 1, 100)],
+        None,
+        40_000_000_100,
+    )?;
+    assert_eq!(third.remaining_ns(40_000_000_100), 5_000_000_000);
+    assert_eq!(third.remaining_ns(45_000_000_100), 0);
+    assert_eq!(third.remaining_ns(900_000_000_000), 0, "never negative");
+    Ok(())
+}
+
 #[test]
 fn focus_pairs_are_bounded_by_the_partition_and_the_parent() -> Result<()> {
     // The partition allows 16 pairs and two Focus calls.
