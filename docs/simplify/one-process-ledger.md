@@ -15783,3 +15783,65 @@ default, `local-inference`, `gpu-cuda` and all features.
 rebased onto `f13594ee`; not yet validated on that base, not reviewed.
 
 **Disk.** D: free was 278.7 GB above the floor at 22:55 UTC.
+
+### 23 November 2026 at 00:23 UTC — the session continues to LG; D: floor lowered; base roots and job table status
+
+**User directions since the last entry.**
+- At about 23:55 UTC on 22 November: "When you finish this round, stop so I
+  can switch to Opus because we're burning tokens too fast." Two agents I had
+  just started (the munarium sealed set and a review of the job-table
+  wiring) were stopped at once; they had written nothing.
+- About fifteen minutes later: "Instead of stopping, let's keep going on this
+  session until we get to LG complete so we can review results." The stop
+  was reversed. Token use is held down: no optional agents, reviews on a
+  cheaper model, no repeated checks. The sealed set is not restarted; LG does
+  not need it.
+- At about 00:30 UTC on 23 November: "You can take the D drive down to 200GB
+  free if needed." The D: floor is now 214,748,364,800 bytes free
+  (`docs/agent-current-work.md`).
+
+**Scenarios frozen at 23:42 UTC on 22 November.** The loop freeze lists 30
+files: munarium's ten development scenarios (52 essential, 48 helpful, 82
+alternatives, after three review rounds and the removal of essentials that
+repeated one fact per client language), and bookbuilder's ten development
+and ten sealed scenarios, byte-identical to the one-turn freeze. Freeze file
+SHA-256 `26338d09a2d7a7a76d59444e2baf279bd43d5b361fdc81ba6cea04a50639190e`;
+the one-turn freeze is kept beside it as history.
+
+**Base roots (`06-gate-lg`), reported by the LG agent at 00:20 UTC.** Five
+roots (C, L, F, C32, L32) are running without error; none is closed yet.
+- munarium: 1,023 files, 5,380 chunks, 40,536 vectors, ready in all five
+  (index pass 360 to 372 s).
+- bookbuilder-v2: 8,116 files, 65,236 chunks (index pass 1,675 to 1,720 s);
+  embedding on the CPU at about 60%. Lifetime deadlines 03:17 and 03:20 UTC.
+- Index pipeline digest `cb2166f2…` in all five, as in the campaign chain.
+- Leak check passed in all five (30 frozen phrases, full listings, no airk
+  index). Credential probes completed.
+- **Cause of the `05-gate-lg` failures:** a source-policy deny was applied
+  while an index or vectors job ran, and the launcher mistook an unknown
+  outcome for a refusal. The launcher now puts every deny in force before
+  any index pass and waits for a quiet installation before each change
+  (`loop/l5c` `0f954b95`, `b1fc8da6`).
+- Each root is 26.9 GB, of which 24.1 GB is seeded CPU weights. C32 and L32
+  were kept running (53.8 GB).
+
+**Harness on `loop/l5c`** (six commits, not merged): munarium and
+bookbuilder as the loop's repositories, the per-repository leak probe with a
+no-airk check, coverage rule 3 (a symbol matches as a whole identifier), and
+decision counts by source per arm and stage. 202 tests pass.
+
+**Job table (`loop/l2b-wire`, head `24184339`, not merged).** The table is
+on the live `airk_answer` path. With all features on `f13594ee`: Clippy
+exit 0; nextest 1,740 run, 1,739 passed (the one failure is the known
+device-configuration base failure); the wired-path tests cover two and four
+concurrent Answers, a ticket or disclosed reduction, and attach after a
+client timeout. Not validated with default features (the base does not
+compile there until the integration agent's fix lands). No model call has
+gone through a table job. An independent security and correctness review is
+running.
+
+**Disk.** D: free 1,121.3 GB at 00:18 UTC.
+
+**Running.** The integration round (Follow-up evidence, review rulings,
+allowance, default-features fix; then the deduplication), the base roots,
+and the job-table review.
