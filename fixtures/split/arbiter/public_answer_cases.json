@@ -173,10 +173,25 @@
         ],
         "description": "A ticket or continuation id, to attach to an existing job."
       },
+      "fresh": {
+        "description": "Start an independent run; never reuse a job by digest.",
+        "type": "boolean"
+      },
       "include_status": {
         "default": false,
         "description": "Include current freshness/readiness even when unchanged on this connection.",
         "type": "boolean"
+      },
+      "interactive": {
+        "description": "The job may run to completion with no caller waiting. It never ranks\na job ahead of an attended one.",
+        "type": "boolean"
+      },
+      "invocation_key": {
+        "description": "Exact retry recovery within the caller's own scope.",
+        "type": [
+          "string",
+          "null"
+        ]
       },
       "project": {
         "description": "Configured source scope from projects. Required when this connection has no single default; never follows the Explorer dropdown.",
@@ -242,6 +257,15 @@
         "maximum": 256,
         "minimum": 1,
         "type": "integer"
+      },
+      "wait_ms": {
+        "description": "How long this call waits; never shortens the job.",
+        "format": "uint64",
+        "minimum": 0,
+        "type": [
+          "integer",
+          "null"
+        ]
       }
     },
     "required": [

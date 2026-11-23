@@ -1,21 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The seam between the Answer handler and the service's Answer job table
-//! (final plan section 12.4.1, step L2b). This crate cannot depend on the
-//! service, so the service implements [`AnswerJobs`] for its table and
-//! supplies it to the project owners that run in it. A server without one
+//! (final plan sections 12.4.1 and 12.4.2, steps L2b and L2c). This crate
+//! cannot depend on the service, so the service implements [`AnswerJobs`]
+//! for its table, and the owner that runs a session implements
+//! [`AnswerJobAuthority`] for that session's grant. A server without both
 //! (stdio, a child owner, a local session) calls the kernel directly.
 //!
-//! With a table, an admitted Answer is a job of the service: the handler
-//! hands over the work, waits for the job until its own deadline, and renders
-//! whatever the table delivers. The job's work runs under the kernel and the
-//! native attempt of the call that made it, on that owner's blocking pool,
-//! with a read context of its own, so a caller that leaves cancels only its
-//! own wait. A job never runs outside its maker's window: the native attempt
-//! ends there.
+//! With a table, an admitted Answer is a job of the service. At submission
+//! the handler derives the job's own kernel (`Kernel::answer_job_kernel`: the
+//! caller's frozen authority with a revocation flag of its own) and has the
+//! owner bind it to the grant. At dispatch the job mints its own native
+//! attempt and read context and runs on its owner's blocking pool under a
+//! supervised deadline. A caller that leaves ends only its own wait; the
+//! maker's session teardown does not reach the job (review H1).
 use crate::{AirkServer, read_attempt::ReadAttemptContext};
 use airk_core::arbiter::{
     ScopeBinding,
-    answer_loop::{ContextRequestV3, ContextResponseV3, DEADLINE_TOLERANCE_MS, Degradation},
+    answer_loop::{
+        AnswerDeliveryRecord, AnswerJobOptions, ContextRequestV3, ContextResponseV3, Degradation,
+    },
     device::SelectedModel,
 };
 use serde::{Deserialize, Serialize};
@@ -25,12 +28,16 @@ use std::{
     sync::{Arc, OnceLock},
     time::{Duration, Instant},
 };
+use tokio_util::sync::CancellationToken;
 
 #[cfg(test)]
 mod tests;
 
-/// The most a call's wait ends before its deadline, to deliver a ticket.
+/// The most a call's wait ends before its own end, to deliver a ticket.
 const TICKET_MARGIN_MS: u64 = 2_000;
+/// How long past its deadline a job's blocking work may take before its
+/// owner is quarantined (CONTRACT "Supervised deadline").
+pub const JOB_GRACE: Duration = Duration::from_secs(5);
 
 /// What the table admitted for one job, at its dispatch.
 pub struct AnswerAdmission {
@@ -47,17 +54,24 @@ pub struct AnswerAdmission {
     pub run_ms: u64,
 }
 
+/// Work still settling after its job was finished for its callers: the
+/// table keeps the job's capacity held until it resolves.
+pub type Settling = Pin<Box<dyn Future<Output = ()> + Send>>;
+
 /// A job that produced no reply.
 pub struct AnswerFailure {
     /// The handler's own encoding of the failure, opaque to the table and
-    /// delivered unchanged to every caller of the job.
+    /// delivered unchanged to the calls the failure belongs to.
     pub payload: String,
     /// False when a retry could repeat nothing: the job never started, its
     /// owner was stopping, or its refusal is typed safe to repeat. The table
-    /// then keeps nothing, so a retry is admitted afresh.
+    /// then keeps nothing.
     pub retain: bool,
     /// The job never started.
     pub not_run: bool,
+    /// The job's blocking work passed its supervised deadline and is still
+    /// running: its capacity is not free until this resolves.
+    pub settling: Option<Settling>,
 }
 
 pub type AnswerWorkFuture =
@@ -71,30 +85,41 @@ pub struct AnswerCall {
     /// The caller's verified binding (`Kernel::answer_scope`), never client
     /// input: a job is visible only within it.
     pub scope: ScopeBinding,
+    /// The request as asked: its `deadline_ms` is the job's work budget.
     pub request: ContextRequestV3,
+    /// The caller's validated job options.
+    pub options: AnswerJobOptions,
     /// The Context model the caller's card calls would run on; `None` is the
     /// no-model loop.
     pub context_model: Option<SelectedModel>,
     /// The bytes this call's reply keeps back for its own metadata. A reply
     /// is packed to it, so calls with different reserves never share a job.
     pub reply_reserve: usize,
-    /// When this call must return.
+    /// The reply is packed with the call's status headroom (review M3), so
+    /// calls that differ in it never share a job.
+    pub include_status: bool,
+    /// When this call's wait must end; never the job's deadline.
     pub deadline: Instant,
+    /// Cancelled when the maker's session ends: a diagnostic seam for tests
+    /// and records, never authority.
+    pub maker_session: CancellationToken,
     pub work: AnswerWork,
 }
 
 /// What the table delivers for one call.
 pub enum AnswerDelivery {
-    /// The finished answer, or a ticket-shaped reply for a job to come back
-    /// for; `attached` when another call made the job.
+    /// The answer, or a ticket-shaped reply for a job to come back for,
+    /// rendered for this call, with this delivery's record.
     Reply {
         response: Box<ContextResponseV3>,
-        attached: bool,
+        record: AnswerDeliveryRecord,
     },
     /// The job failed; the payload is the one its work returned.
     Failed(String),
     /// Nothing was queued; retry after this long.
     Busy { retry_after_ms: u64 },
+    /// The invocation key names another request in this authority.
+    KeyConflict,
 }
 
 /// The service's Answer job table, as the handler sees it.
@@ -105,8 +130,34 @@ pub trait AnswerJobs: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<AnswerDelivery>> + Send + '_>>;
 }
 
-/// A server's table, set once by its owner and shared by its clones.
-pub(crate) type Slot = Arc<OnceLock<Arc<dyn AnswerJobs>>>;
+/// What the owner returns when it binds a job's kernel to its grant.
+pub struct AnswerJobGrant {
+    /// Keeps the job's kernel registered with the grant; dropping it removes
+    /// and revokes that kernel.
+    pub guard: Box<dyn std::any::Any + Send + Sync>,
+    /// Cancelled when the maker's session ends.
+    pub maker_session: CancellationToken,
+}
+
+/// The owner's authority for the jobs of one session (supervisor CONTRACT,
+/// "Answer job authority").
+pub trait AnswerJobAuthority: Send + Sync {
+    /// Register `kernel` (a job kernel) with the live grant the session
+    /// redeemed, so that the grant's revocation, lease and owner close end it
+    /// and the session's own teardown does not.
+    fn bind(&self, kernel: &airk_kernel::Kernel) -> anyhow::Result<AnswerJobGrant>;
+    /// Mint the job's own native attempt, ending at `deadline`.
+    fn attempt(
+        &self,
+        deadline: Instant,
+    ) -> anyhow::Result<airk_core::read_attempt::ReadAttemptBudget>;
+    /// A job passed its deadline and grace: quarantine the owner.
+    fn stuck(&self);
+}
+
+/// A server's table and its session's job authority, set once by its owner
+/// and shared by its clones. One is never set without the other.
+pub(crate) type Slot = Arc<OnceLock<(Arc<dyn AnswerJobs>, Arc<dyn AnswerJobAuthority>)>>;
 
 /// The typed refusal of a call the table could not queue.
 #[derive(Debug)]
@@ -130,6 +181,60 @@ impl AnswerQueueBusy {
     }
 }
 
+/// A typed refusal that belongs to one Answer job invocation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AnswerJobRefusal {
+    pub code: String,
+    pub message: String,
+    pub retryable: bool,
+}
+impl std::fmt::Display for AnswerJobRefusal {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+impl std::error::Error for AnswerJobRefusal {}
+impl AnswerJobRefusal {
+    fn new(code: &str, message: &str, retryable: bool) -> Self {
+        Self {
+            code: code.into(),
+            message: message.into(),
+            retryable,
+        }
+    }
+    /// The same key in this authority already names another request.
+    pub fn key_conflict() -> Self {
+        Self::new(
+            "answer_invocation_conflict",
+            "this invocation key already names a different Answer request; use a new key",
+            false,
+        )
+    }
+    /// The job's grant, lease or owner ended before or while it ran.
+    pub fn authority_ended() -> Self {
+        Self::new(
+            "answer_authority_ended",
+            "the Answer job's read authority ended before it finished; send the request again on a live connection",
+            true,
+        )
+    }
+    /// The job passed its deadline and grace; its owner is quarantined.
+    pub fn stuck() -> Self {
+        Self::new(
+            "answer_job_stuck",
+            "the Answer job did not finish within its deadline; its owner stopped admitting work",
+            true,
+        )
+    }
+    pub(crate) fn receipt(&self) -> serde_json::Value {
+        serde_json::json!({"error":{
+            "code":self.code,"message":self.message,"retryable":self.retryable,
+            "query_submitted":false
+        }})
+    }
+}
+
 /// The owner of the job's server is stopping.
 #[derive(Debug)]
 struct OwnerStopping;
@@ -149,6 +254,20 @@ struct Payload {
     message: String,
     /// The typed receipt today's direct path would have rendered.
     receipt: Option<serde_json::Value>,
+    /// A refusal of the job path itself.
+    #[serde(default)]
+    refusal: Option<AnswerJobRefusal>,
+}
+
+fn encode(error: &anyhow::Error, refusal: Option<AnswerJobRefusal>) -> String {
+    let payload = Payload {
+        airk_answer_failure: 1,
+        message: error.to_string(),
+        receipt: crate::response::PreservedReadFailure::from_error(error)
+            .and_then(|preserved| preserved.receipt()),
+        refusal,
+    };
+    serde_json::to_string(&payload).unwrap_or_else(|_| error.to_string())
 }
 
 fn failure(error: &anyhow::Error) -> AnswerFailure {
@@ -158,16 +277,23 @@ fn failure(error: &anyhow::Error) -> AnswerFailure {
             .chain()
             .any(|cause| cause.is::<airk_kernel::service_execution::Draining>());
     let repeatable = airk_kernel::retrieval_retry::read_retry_hint(error).is_some();
-    let payload = Payload {
-        airk_answer_failure: 1,
-        message: error.to_string(),
-        receipt: crate::response::PreservedReadFailure::from_error(error)
-            .and_then(|preserved| preserved.receipt()),
-    };
+    let refused = error
+        .chain()
+        .any(|cause| cause.is::<airk_core::scoped_reads::ScopeReadRefused>());
     AnswerFailure {
-        payload: serde_json::to_string(&payload).unwrap_or_else(|_| error.to_string()),
-        retain: !(unsettled || repeatable),
+        payload: encode(error, None),
+        retain: !(unsettled || repeatable || refused),
         not_run: false,
+        settling: None,
+    }
+}
+
+fn refused(refusal: AnswerJobRefusal, not_run: bool, settling: Option<Settling>) -> AnswerFailure {
+    AnswerFailure {
+        payload: encode(&anyhow::Error::new(refusal.clone()), Some(refusal)),
+        retain: false,
+        not_run,
+        settling,
     }
 }
 
@@ -176,13 +302,18 @@ fn not_run(message: &str) -> AnswerFailure {
         payload: message.into(),
         retain: false,
         not_run: true,
+        settling: None,
     }
 }
 
-/// The error a delivered failure renders as: its typed receipt when the job
-/// kept one, its message otherwise.
+/// The error a delivered failure renders as: its typed refusal or receipt
+/// when the job kept one, its message otherwise.
 fn delivered_failure(payload: String) -> anyhow::Error {
     match serde_json::from_str::<Payload>(&payload) {
+        Ok(Payload {
+            refusal: Some(refusal),
+            ..
+        }) => anyhow::Error::new(refusal),
         Ok(Payload {
             receipt: Some(receipt),
             message,
@@ -196,9 +327,11 @@ fn delivered_failure(payload: String) -> anyhow::Error {
     }
 }
 
-/// The table for this call, if its server has one. A combined member runs
-/// under its parent's allowance and is never a job of its own.
-pub(crate) fn for_call(server: &AirkServer) -> Option<Arc<dyn AnswerJobs>> {
+/// The table and job authority for this call, if its server has them. A
+/// combined member runs under its parent's allowance and is never a job.
+pub(crate) fn for_call(
+    server: &AirkServer,
+) -> Option<(Arc<dyn AnswerJobs>, Arc<dyn AnswerJobAuthority>)> {
     if server
         .read_attempt
         .as_ref()
@@ -209,15 +342,28 @@ pub(crate) fn for_call(server: &AirkServer) -> Option<Arc<dyn AnswerJobs>> {
     server.answer_jobs.get().cloned()
 }
 
+/// The reply a handler renders: the typed reply and, for a job's delivery,
+/// its record beside it.
+#[derive(Debug, Serialize)]
+pub(crate) struct Answered {
+    #[serde(flatten)]
+    pub(crate) response: ContextResponseV3,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) delivery: Option<AnswerDeliveryRecord>,
+}
+
 /// One admitted Answer call, on its blocking worker.
 pub(crate) struct Caller {
     pub(crate) jobs: Arc<dyn AnswerJobs>,
+    pub(crate) authority: Arc<dyn AnswerJobAuthority>,
     /// The handler's reader: this call's server with plan and Answer reads on.
     pub(crate) reader: AirkServer,
     pub(crate) kernel: airk_kernel::Kernel,
     pub(crate) request: ContextRequestV3,
+    pub(crate) options: AnswerJobOptions,
     pub(crate) reply_reserve: usize,
-    /// The call's original deadline: the request's, bounded by its read
+    pub(crate) include_status: bool,
+    /// The call's own end: the request's deadline, bounded by its read
     /// attempt.
     pub(crate) deadline: Instant,
     pub(crate) handle: tokio::runtime::Handle,
@@ -226,8 +372,9 @@ pub(crate) struct Caller {
 
 /// Hand one call to the table and wait for its delivery. Returns what the
 /// direct path returns: the reply to render, or the error to render.
-pub(crate) fn run(caller: Caller) -> anyhow::Result<ContextResponseV3> {
+pub(crate) fn run(caller: Caller) -> anyhow::Result<Answered> {
     caller.request.validate()?;
+    caller.options.validate(&caller.request.budget)?;
     if let Some(context) = &caller.reader.read_attempt {
         context.require_live()?;
     }
@@ -238,27 +385,33 @@ pub(crate) fn run(caller: Caller) -> anyhow::Result<ContextResponseV3> {
         caller.deadline > now,
         "Answer original deadline exhausted before dispatch"
     );
-    // The table sees the window this call really has, so a job that never
-    // waited ends exactly with its maker's native attempt.
-    let mut request = caller.request.clone();
-    let remaining = u64::try_from(caller.deadline.saturating_duration_since(now).as_millis())
+    // The wait: the call's own end, shortened by `wait_ms`. It never
+    // shortens the job, whose work budget is the request's deadline.
+    let end = caller.options.wait_ms.map_or(caller.deadline, |wait| {
+        caller
+            .deadline
+            .min(now.checked_add(Duration::from_millis(wait)).unwrap_or(caller.deadline))
+    });
+    let remaining = u64::try_from(end.saturating_duration_since(now).as_millis())
         .unwrap_or(u64::MAX)
         .max(1);
-    request.budget.deadline_ms = request.budget.deadline_ms.min(remaining);
-    // The wait ends a little before the deadline, so that a ticket-shaped
-    // reply for a job still queued or running is delivered inside it. A job
-    // that runs to its own deadline has returned its partial before then.
+    // The wait ends a little before the end, so that a ticket-shaped reply
+    // for a job still queued or running is delivered inside it.
     let margin = Duration::from_millis((remaining / 10).min(TICKET_MARGIN_MS));
+    // The job's own authority, bound to the grant now: the maker's session
+    // may end while the job is queued.
+    let job_kernel = caller.kernel.answer_job_kernel()?;
+    let grant = caller.authority.bind(&job_kernel)?;
     let call = AnswerCall {
         scope,
-        request,
+        request: caller.request.clone(),
+        options: caller.options.clone(),
         context_model,
         reply_reserve: caller.reply_reserve,
-        deadline: caller
-            .deadline
-            .checked_sub(margin)
-            .unwrap_or(caller.deadline),
-        work: work(&caller),
+        include_status: caller.include_status,
+        deadline: end.checked_sub(margin).unwrap_or(end),
+        maker_session: grant.maker_session,
+        work: work(&caller, job_kernel, Arc::from(grant.guard)),
     };
     let closed = caller.reader.admission.closed();
     let canceled = caller
@@ -283,72 +436,103 @@ pub(crate) fn run(caller: Caller) -> anyhow::Result<ContextResponseV3> {
         }
     })?;
     match delivery {
-        AnswerDelivery::Reply { response, .. } => Ok(*response),
+        AnswerDelivery::Reply { response, record } => Ok(Answered {
+            response: *response,
+            delivery: Some(record),
+        }),
         AnswerDelivery::Failed(payload) => Err(delivered_failure(payload)),
         AnswerDelivery::Busy { retry_after_ms } => Err(AnswerQueueBusy { retry_after_ms }.into()),
+        AnswerDelivery::KeyConflict => Err(AnswerJobRefusal::key_conflict().into()),
     }
 }
 
-/// This caller's work for a job it makes.
-fn work(caller: &Caller) -> AnswerWork {
-    let (reader, kernel, handle, sink, deadline) = (
-        caller.reader.clone(),
-        caller.kernel.clone(),
+/// This caller's work for a job it makes: the job's own kernel and grant,
+/// and none of the maker's transport guards or custody.
+fn work(
+    caller: &Caller,
+    job_kernel: airk_kernel::Kernel,
+    grant: Arc<dyn std::any::Any + Send + Sync>,
+) -> AnswerWork {
+    let mut reader = caller.reader.clone();
+    reader.read_attempt = None;
+    let (authority, handle, sink) = (
+        caller.authority.clone(),
         caller.handle.clone(),
         caller.sink.clone(),
-        caller.deadline,
     );
     Arc::new(move |admission: AnswerAdmission| -> AnswerWorkFuture {
-        let (mut reader, kernel, handle, sink) =
-            (reader.clone(), kernel.clone(), handle.clone(), sink.clone());
+        let (mut reader, kernel, authority, handle, sink, grant) = (
+            reader.clone(),
+            job_kernel.clone(),
+            authority.clone(),
+            handle.clone(),
+            sink.clone(),
+            grant.clone(),
+        );
         Box::pin(async move {
-            let now = Instant::now();
-            let window = now
-                .checked_add(Duration::from_millis(admission.run_ms))
-                .unwrap_or(deadline);
-            // A window the table opened beyond its maker's (a ticketed or
-            // requeued job) cannot be served: the maker's native attempt
-            // ends with its own deadline.
-            if now >= deadline || window > deadline + Duration::from_millis(DEADLINE_TOLERANCE_MS) {
-                return Err(not_run(
-                    "the Answer job's window lies beyond the call that made it",
-                ));
-            }
+            let _grant = grant;
             if reader.admission.closed().is_cancelled() {
                 return Err(not_run("the Answer job's owner is stopping"));
             }
-            let job_deadline = window.min(deadline);
-            reader.read_attempt = Some(match &reader.read_attempt {
-                Some(context) => context.job_owned(job_deadline),
-                None => ReadAttemptContext::new(
-                    job_deadline,
-                    tokio_util::sync::CancellationToken::new(),
-                ),
-            });
-            // The owner's blocking pool: its threads carry the owner's
-            // execution scope, and its reads block on the owner's runtime.
-            // The job is counted as the owner's while it runs, because its
-            // maker's connection may be gone.
+            // Its grant, lease or owner may have ended while it was queued:
+            // that refusal is this invocation's alone.
+            if kernel.scoped_read_fingerprint().is_err() {
+                return Err(refused(AnswerJobRefusal::authority_ended(), false, None));
+            }
+            let job_deadline = Instant::now()
+                .checked_add(Duration::from_millis(admission.run_ms.max(1)))
+                .ok_or_else(|| failure(&anyhow::anyhow!("Answer job deadline overflow")))?;
+            let prepared = (|| -> anyhow::Result<airk_kernel::Kernel> {
+                let attempt = authority.attempt(job_deadline)?;
+                kernel
+                    .with_optional_read_attempt_for("airk_answer", attempt, job_deadline)?
+                    .with_fresh_answer_accounting()
+            })();
+            let kernel = match prepared {
+                Ok(kernel) => kernel,
+                Err(error) if kernel.scoped_read_fingerprint().is_err() => {
+                    let _ = error;
+                    return Err(refused(AnswerJobRefusal::authority_ended(), false, None));
+                }
+                Err(error) => return Err(failure(&error)),
+            };
+            let context = ReadAttemptContext::new(job_deadline, CancellationToken::new())
+                .with_read_ceiling(airk_core::read_attempt::MAX_ANSWER_READ_BUDGET);
+            context.mark_answer_call();
+            reader.read_attempt = Some(context);
+            reader.kernel = kernel.clone();
+            // Counted as the owner's while it runs, until its deadline and
+            // grace: a stuck job never holds the owner's idle exit open.
             let running = reader.admission.job_started();
             let reads = handle.clone();
-            let job = handle.spawn_blocking(move || {
-                let _running = running;
+            let mut job = handle.spawn_blocking(move || {
                 run_job(reader, kernel, admission, job_deadline, reads, sink)
             });
-            match job.await {
-                Ok(result) => result,
-                Err(error) if error.is_cancelled() => {
+            let supervised = tokio::time::Instant::from_std(job_deadline + JOB_GRACE);
+            let result = match tokio::time::timeout_at(supervised, &mut job).await {
+                Ok(Ok(result)) => result,
+                Ok(Err(error)) if error.is_cancelled() => {
                     Err(not_run("the Answer job's owner stopped before it ran"))
                 }
-                Err(_) => Err(failure(&anyhow::anyhow!("retrieval worker failed"))),
-            }
+                Ok(Err(_)) => Err(failure(&anyhow::anyhow!("retrieval worker failed"))),
+                Err(_) => {
+                    authority.stuck();
+                    drop(running);
+                    let settling: Settling = Box::pin(async move {
+                        let _ = job.await;
+                    });
+                    return Err(refused(AnswerJobRefusal::stuck(), false, Some(settling)));
+                }
+            };
+            drop(running);
+            result
         })
     })
 }
 
 /// One job, on its owner's blocking pool, to its own deadline.
 fn run_job(
-    mut reader: AirkServer,
+    reader: AirkServer,
     kernel: airk_kernel::Kernel,
     admission: AnswerAdmission,
     deadline: Instant,
@@ -356,10 +540,8 @@ fn run_job(
     sink: crate::progress::AnswerProgressSink,
 ) -> Result<ContextResponseV3, AnswerFailure> {
     let run = || -> anyhow::Result<ContextResponseV3> {
-        // Loop accounting binds once per Answer, and a caller's work may be
-        // asked for more than one job.
-        let kernel = kernel.with_fresh_answer_accounting()?;
-        reader.kernel = kernel.clone();
+        #[cfg(any(test, feature = "test-support"))]
+        test_hooks::observe_job_start();
         let plan = airk_kernel::arbiter::AdmissionPlan {
             parts: admission.parts,
             sub_needs: admission.sub_needs,
@@ -391,5 +573,35 @@ fn run_job(
         )?;
         Ok(outcome.response)
     };
-    run().map_err(|error| failure(&error))
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(run))
+        .unwrap_or_else(|_| Err(anyhow::anyhow!("retrieval worker failed")))
+        .map_err(|error| {
+            if kernel.scoped_read_fingerprint().is_err() {
+                refused(AnswerJobRefusal::authority_ended(), false, None)
+            } else {
+                failure(&error)
+            }
+        })
+}
+
+/// Test hooks for the job's blocking work (tests and `test-support` only).
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_hooks {
+    use std::sync::{Arc, Mutex};
+    pub type Hook = Arc<dyn Fn() + Send + Sync>;
+    static START: Mutex<Option<Hook>> = Mutex::new(None);
+    /// Run `hook` on the job's blocking thread just before its loop starts
+    /// (a stuck-job test holds it there). Process-wide; tests that use it
+    /// serialise themselves.
+    pub fn on_job_start(hook: Option<Hook>) {
+        if let Ok(mut slot) = START.lock() {
+            *slot = hook;
+        }
+    }
+    pub(super) fn observe_job_start() {
+        let hook = START.lock().ok().and_then(|slot| slot.clone());
+        if let Some(hook) = hook {
+            hook();
+        }
+    }
 }

@@ -26,6 +26,8 @@ const MAX_SELECTION_SCOPES: usize = 160;
 const MAX_AGENT_SCOPES: usize = 2 * airk_catalog_control::catalog_admission::MAX_AGENT_SELECTIONS;
 const MAX_PENDING: usize = 128;
 const MAX_SESSIONS: usize = 128;
+/// Service-owned Answer jobs registered on one installed lease.
+const MAX_JOBS: usize = 64;
 const MAX_LIFETIME_MS: u64 = 300_000;
 
 /// The frozen authority a redeemed bearer opens a session with.
@@ -76,6 +78,9 @@ struct Installed {
     expires: Instant,
     revoked: bool,
     sessions: BTreeMap<Incarnation, Kernel>,
+    /// Service-owned Answer jobs' own kernels (CONTRACT "Answer job
+    /// authority"): fenced with the grant and its lease, never by a session.
+    jobs: BTreeMap<u64, Kernel>,
 }
 /// Where a ref is installed: the catalog ledger by grant, or the selection
 /// ledger by the selection's nonce.
@@ -121,7 +126,7 @@ impl Installed {
         self.revoke_readers();
     }
     fn revoke_readers(&self) {
-        for kernel in self.sessions.values() {
+        for kernel in self.sessions.values().chain(self.jobs.values()) {
             kernel.revoke_scoped_reads();
         }
     }
@@ -140,6 +145,7 @@ pub(super) struct Scopes {
     selections: BTreeMap<(Incarnation, IndexId, Sha256Digest), Installed>,
     last_lease_generation: u64,
     pending: BTreeMap<Sha256Digest, (ConnectionGrant, Instant)>,
+    next_job: u64,
 }
 impl Scopes {
     pub fn new(identity: WorkerIdentity, required: bool) -> Self {
@@ -151,6 +157,7 @@ impl Scopes {
             selections: BTreeMap::new(),
             last_lease_generation: 0,
             pending: BTreeMap::new(),
+            next_job: 0,
         }
     }
     fn slot(&self, slot: Slot) -> Option<&Installed> {
@@ -288,6 +295,7 @@ impl Scopes {
             let old = entry.reference;
             entry.revoke_readers();
             entry.sessions.clear();
+            entry.jobs.clear();
             entry.previous_lease = Some(old);
             entry.reference = reference;
             entry.expires = expires;
@@ -310,6 +318,7 @@ impl Scopes {
                 expires,
                 revoked: false,
                 sessions: BTreeMap::new(),
+                jobs: BTreeMap::new(),
             },
         );
         Ok(reference)
@@ -458,6 +467,7 @@ impl Scopes {
             let old = entry.reference;
             entry.revoke_readers();
             entry.sessions.clear();
+            entry.jobs.clear();
             entry.previous_lease = Some(old);
             entry.reference = reference;
             entry.expires = expires;
@@ -496,6 +506,7 @@ impl Scopes {
                 expires,
                 revoked: false,
                 sessions: BTreeMap::new(),
+                jobs: BTreeMap::new(),
             },
         );
         Ok(reference)
@@ -614,6 +625,34 @@ impl Scopes {
             kernel.revoke_scoped_reads();
         }
     }
+    /// Register an Answer job's own kernel on the live installed lease of
+    /// `scope`. Revoking the grant, a newer grant revision, the lease's expiry
+    /// or renewal and `close` revoke it; `detach` of a session does not.
+    pub fn attach_job(&mut self, scope: ScopedReadRef, kernel: Kernel) -> Result<u64> {
+        if self.entry(scope).is_err() {
+            kernel.revoke_scoped_reads();
+            return Err(ScopeReadRefused.into());
+        }
+        let id = self.next_job;
+        self.next_job = self.next_job.checked_add(1).ok_or(ScopeReadRefused)?;
+        let entry = self.slot_mut(Slot::of(&scope)?).ok_or(ScopeReadRefused)?;
+        if entry.jobs.len() >= MAX_JOBS {
+            kernel.revoke_scoped_reads();
+            return Err(ScopeReadRefused.into());
+        }
+        entry.jobs.insert(id, kernel);
+        Ok(id)
+    }
+    /// The job ended: remove and revoke its kernel, whatever lease the entry
+    /// has been renewed to since.
+    pub fn detach_job(&mut self, scope: ScopedReadRef, id: u64) {
+        if let Ok(slot) = Slot::of(&scope)
+            && let Some(entry) = self.slot_mut(slot)
+            && let Some(kernel) = entry.jobs.remove(&id)
+        {
+            kernel.revoke_scoped_reads();
+        }
+    }
     pub fn revoke(&mut self, identity: WorkerIdentity, scope: ScopedReadRef) -> Result<()> {
         ensure!(identity == self.identity, ScopeReadRefused);
         scope.validate()?;
@@ -693,15 +732,81 @@ pub(super) struct SessionFence {
     pub scopes: std::sync::Arc<std::sync::Mutex<Scopes>>,
     pub reference: Option<ScopedReadRef>,
     pub session: Incarnation,
+    /// Cancelled when the session ends: what an Answer job of this session
+    /// observes of its maker (a diagnostic seam, never authority).
+    pub closed: tokio_util::sync::CancellationToken,
 }
 impl Drop for SessionFence {
     fn drop(&mut self) {
         if let Ok(mut scopes) = self.scopes.lock() {
             scopes.detach(self.reference, self.session);
         }
+        self.closed.cancel();
     }
 }
 
+/// A session's authority for the Answer jobs it makes (CONTRACT "Answer job
+/// authority"): binds each job's own kernel to the grant the session
+/// redeemed, mints the job's own native attempt at dispatch, and quarantines
+/// the owner when a job passes its supervised deadline.
+pub(super) struct SessionJobAuthority {
+    pub scopes: std::sync::Arc<std::sync::Mutex<Scopes>>,
+    pub reference: Option<ScopedReadRef>,
+    pub closed: tokio_util::sync::CancellationToken,
+    pub execution: Option<airk_kernel::service_execution::ExecutionScope>,
+}
+struct JobRegistration {
+    scopes: std::sync::Arc<std::sync::Mutex<Scopes>>,
+    reference: ScopedReadRef,
+    id: u64,
+}
+impl Drop for JobRegistration {
+    fn drop(&mut self) {
+        if let Ok(mut scopes) = self.scopes.lock() {
+            scopes.detach_job(self.reference, self.id);
+        }
+    }
+}
+impl airk_mcp::answer_jobs::AnswerJobAuthority for SessionJobAuthority {
+    fn bind(&self, kernel: &Kernel) -> Result<airk_mcp::answer_jobs::AnswerJobGrant> {
+        let guard: Box<dyn std::any::Any + Send + Sync> = match self.reference {
+            Some(reference) => {
+                let id = self
+                    .scopes
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("scope policy unavailable"))?
+                    .attach_job(reference, kernel.clone())?;
+                Box::new(JobRegistration {
+                    scopes: self.scopes.clone(),
+                    reference,
+                    id,
+                })
+            }
+            // An unscoped session has no scoped reads to fence.
+            None => Box::new(()),
+        };
+        Ok(airk_mcp::answer_jobs::AnswerJobGrant {
+            guard,
+            maker_session: self.closed.clone(),
+        })
+    }
+    fn attempt(&self, deadline: Instant) -> Result<airk_core::read_attempt::ReadAttemptBudget> {
+        let context = airk_mcp::read_attempt::ReadAttemptContext::new(deadline, Default::default())
+            .with_read_ceiling(airk_core::read_attempt::MAX_ANSWER_READ_BUDGET);
+        airk_host::read_attempt::encode(
+            &context,
+            airk_kernel::service_broker::new_instance_id()?,
+        )
+    }
+    fn stuck(&self) {
+        if let Some(scope) = &self.execution {
+            scope.quarantine(airk_kernel::service_execution::StuckReason::QueryDeadline);
+        }
+    }
+}
+
+#[cfg(test)]
+mod answer_job_tests;
 #[cfg(test)]
 mod tests {
     use super::*;

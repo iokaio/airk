@@ -325,6 +325,35 @@ Evidence: `arbiter::answer::admission::tests` (the plan), and the wired path
 in `airk-mcp` `answer_jobs::tests` and `airk-service`
 `answer_jobs::wiring::tests`.
 
+## Answer job kernel (`answer/admission.rs`, L2c, decided 23 November 2026)
+
+Recorded contract decision (final plan section 12.4.2; the service half is
+`airk-service` `answer_jobs/CONTRACT.md`, "Service-owned jobs"). A
+service-owned Answer job needs read authority and a native attempt of its own,
+so that its maker's session teardown does not end it (review H1).
+
+- **`Kernel::answer_job_kernel()`** derives the job's kernel from a live
+  caller kernel:
+  - the same frozen scoped-read authority, fingerprint, observation, selected
+    read snapshot and native owner, and a **revocation flag of its own**.
+    `revoke_scoped_reads` on the maker's kernel no longer reaches it; on the
+    job kernel it ends the job's reads. The owner revokes it with the grant.
+  - **no native attempt.** The job mints its own at dispatch and binds it
+    with the existing `with_optional_read_attempt_for("airk_answer", ..)`,
+    which refuses a second attempt. The attempt carries the job's own request
+    id and expiry; the maker's attempt is not replaced, it is simply not used.
+  - fresh Focus and loop accounting.
+- **Refused:** a caller kernel whose scope is already revoked, and a
+  combined member (a partition allowance: it runs under its parent and is
+  never a job). A kernel without an Arbiter owner is allowed and keeps the
+  no-model loop.
+- It widens nothing: the job kernel reads exactly what the maker could, in
+  the same root, collection and index, on the same publication.
+
+Evidence: `arbiter::answer::admission::tests` (the derivation) and
+`airk-supervisor` `project_worker::scopes::answer_job_tests` (a job kernel
+outlives its maker's session and ends with the grant).
+
 ## Answer /3 loop (`answer/`), what holds and what does not
 
 `Kernel::answer_with` runs the section 12 loop: Split, per-part Plan,

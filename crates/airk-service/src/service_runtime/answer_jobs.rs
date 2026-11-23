@@ -86,11 +86,28 @@ pub(crate) type JobWork<R> = Box<dyn FnOnce(StartedJob) -> RunFuture<R> + Send>;
 /// repeat: the table delivers it to the job's waiters as
 /// [`JobOutcome::Dropped`] and keeps nothing, so a retry is admitted afresh
 /// instead of attaching to a failure.
-#[derive(Debug)]
 pub(crate) struct Unretained {
     pub(crate) message: String,
     /// The job never started.
     pub(crate) not_run: bool,
+    /// The job's work passed its supervised deadline and still runs: its
+    /// capacity stays held until this resolves (CONTRACT "Supervised
+    /// deadline").
+    /// In a mutex only so the error is `Sync`.
+    pub(crate) settling: std::sync::Mutex<Option<airk_mcp::answer_jobs::Settling>>,
+}
+impl std::fmt::Debug for Unretained {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Unretained")
+            .field("message", &self.message)
+            .field("not_run", &self.not_run)
+            .field(
+                "settling",
+                &self.settling.lock().map(|held| held.is_some()).unwrap_or(false),
+            )
+            .finish()
+    }
 }
 impl std::fmt::Display for Unretained {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -105,10 +122,6 @@ impl std::error::Error for Unretained {}
 pub(crate) enum CallReply<R> {
     /// The job finished within the call; `attached` when another call made it.
     Finished {
-        #[cfg_attr(
-            not(test),
-            expect(dead_code, reason = "a finished reply names no job; tests read it")
-        )]
         id: Sha256Digest,
         attached: bool,
         #[cfg_attr(
@@ -117,6 +130,7 @@ pub(crate) enum CallReply<R> {
         )]
         degradations: Vec<Degradation>,
         outcome: Arc<JobOutcome<R>>,
+        timing: schedule::Timing,
     },
     /// The call's deadline came first; the job keeps running. A queued job's
     /// reply is a ticket, a running job's a partial with this continuation.
@@ -128,9 +142,28 @@ pub(crate) enum CallReply<R> {
         running: bool,
         ticket: AnswerTicket,
         degradations: Vec<Degradation>,
+        timing: schedule::Timing,
+        /// Another call made the job.
+        attached: bool,
     },
     /// Nothing could be queued; nothing was made.
     Busy { retry_after_ms: u64 },
+    /// The invocation key names another request; nothing was made.
+    KeyConflict,
+}
+
+/// A call waiting on a job: the job is attended until this drops, also when
+/// the call's future is dropped mid-wait.
+struct Attending<R: Send + Sync + 'static> {
+    table: AnswerJobTable<R>,
+    id: Sha256Digest,
+}
+impl<R: Send + Sync + 'static> Drop for Attending<R> {
+    fn drop(&mut self) {
+        if let Ok(mut schedule) = self.table.schedule() {
+            schedule.attend(&self.id, false);
+        }
+    }
 }
 
 struct Shared<R> {
@@ -219,6 +252,7 @@ impl<R: Send + Sync + 'static> AnswerJobTable<R> {
 
     /// [`Self::call`] with this caller's own `work` for a job it makes; a job
     /// made without work runs the table's runner.
+    #[cfg(test)]
     pub(crate) async fn call_with_work(
         &self,
         scope: AnswerScope,
@@ -228,16 +262,47 @@ impl<R: Send + Sync + 'static> AnswerJobTable<R> {
         call_deadline: tokio::time::Instant,
         work: Option<JobWork<R>>,
     ) -> Result<CallReply<R>> {
-        let (submitted, receiver) = {
+        self.call_job(
+            scope,
+            request,
+            model,
+            publication,
+            call_deadline,
+            &schedule::JobOptions::default(),
+            work,
+        )
+        .await
+    }
+
+    /// One call with its job options (CONTRACT "Service-owned jobs"): submit
+    /// or attach, then wait for the job until `call_deadline`, which is the
+    /// caller's wait and never the job's.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one call's inputs; each is checked where the table uses it"
+    )]
+    pub(crate) async fn call_job(
+        &self,
+        scope: AnswerScope,
+        request: ContextRequestV3,
+        model: Option<ContextRung>,
+        publication: Option<Sha256Digest>,
+        call_deadline: tokio::time::Instant,
+        options: &schedule::JobOptions,
+        work: Option<JobWork<R>>,
+    ) -> Result<CallReply<R>> {
+        let (submitted, receiver, attending, expired) = {
             let mut schedule = self.schedule()?;
             let now = self.shared.clock.now_ms();
-            let submitted = schedule.submit(scope, request, model, publication, now)?;
+            let submitted =
+                schedule.submit_with(scope, request, model, publication, now, options)?;
             let id = match &submitted {
                 Submitted::Busy { retry_after_ms } => {
                     return Ok(CallReply::Busy {
                         retry_after_ms: *retry_after_ms,
                     });
                 }
+                Submitted::KeyConflict => return Ok(CallReply::KeyConflict),
                 Submitted::Attached(id) | Submitted::Admitted(id) => *id,
                 Submitted::Ticketed(ticket) => ticket.id,
             };
@@ -255,6 +320,7 @@ impl<R: Send + Sync + 'static> AnswerJobTable<R> {
             if let Some(JobView::Finished {
                 outcome,
                 degradations,
+                timing,
             }) = schedule.view(&scope, &id, now)
             {
                 return Ok(CallReply::Finished {
@@ -262,28 +328,45 @@ impl<R: Send + Sync + 'static> AnswerJobTable<R> {
                     attached: true,
                     degradations,
                     outcome,
+                    timing,
                 });
             }
             let receiver = self.receiver(&id)?;
+            // The call waits on its job: it is attended from now on, so
+            // dispatch below and every later one sees it.
+            schedule.attend(&id, true);
+            let attending = Attending {
+                table: self.clone(),
+                id,
+            };
+            let expired = schedule.expire_unattended(now);
             let started = schedule.dispatch(now);
             drop(schedule);
             self.spawn(started);
-            (submitted, receiver)
+            (submitted, receiver, attending, expired)
         };
+        self.signal(expired);
         let (id, attached) = match submitted {
             Submitted::Ticketed(ticket) => {
+                drop(attending);
+                let timing = schedule::Timing::default();
                 return Ok(CallReply::Pending {
                     running: false,
                     ticket,
                     degradations: vec![],
+                    timing,
+                    attached: false,
                 });
             }
             Submitted::Attached(id) => (id, true),
             Submitted::Admitted(id) => (id, false),
-            Submitted::Busy { .. } => unreachable!("returned above"),
+            Submitted::Busy { .. } | Submitted::KeyConflict => unreachable!("returned above"),
         };
-        self.wait(scope, id, attached, receiver, call_deadline)
-            .await
+        let reply = self
+            .wait(scope, id, attached, receiver, call_deadline)
+            .await;
+        drop(attending);
+        reply
     }
 
     async fn wait(
@@ -314,12 +397,14 @@ impl<R: Send + Sync + 'static> AnswerJobTable<R> {
                 Some(JobView::Finished {
                     outcome,
                     degradations,
+                    timing,
                 }),
             ) => Ok(CallReply::Finished {
                 id,
                 attached,
                 degradations,
                 outcome,
+                timing,
             }),
             // Finished and no longer retained (a stale publication, the
             // caps): the outcome is delivered; its disclosures went with it.
@@ -328,22 +413,28 @@ impl<R: Send + Sync + 'static> AnswerJobTable<R> {
                 attached,
                 degradations: vec![],
                 outcome,
+                timing: schedule::Timing::default(),
             }),
             (
                 None,
                 Some(JobView::Running {
                     ticket,
                     degradations,
+                    timing,
                 }),
             ) => Ok(CallReply::Pending {
                 running: true,
                 ticket,
                 degradations,
+                timing,
+                attached,
             }),
-            (None, Some(JobView::Queued(ticket))) => Ok(CallReply::Pending {
+            (None, Some(JobView::Queued(ticket, timing))) => Ok(CallReply::Pending {
                 running: false,
                 ticket,
                 degradations: vec![],
+                timing,
+                attached,
             }),
             (None, None) => Err(anyhow!("Answer job ended without a retained result")),
         }
@@ -364,6 +455,24 @@ impl<R: Send + Sync + 'static> AnswerJobTable<R> {
             .entry(*id)
             .or_insert_with(|| watch::channel(None).0)
             .subscribe())
+    }
+
+    /// Deliver outcomes the schedule made itself (jobs that expired
+    /// unattended) to whoever still holds their signal.
+    fn signal(&self, outcomes: Vec<(Sha256Digest, Arc<JobOutcome<R>>)>) {
+        if outcomes.is_empty() {
+            return;
+        }
+        if let Ok(mut done) = self.shared.done.lock() {
+            for (id, outcome) in outcomes {
+                if let Some(sender) = done.remove(&id) {
+                    sender.send_replace(Some(outcome));
+                }
+                if let Ok(mut work) = self.shared.work.lock() {
+                    work.remove(&id);
+                }
+            }
+        }
     }
 
     /// Run each started job on its own task, so a caller dropping its call
@@ -388,6 +497,7 @@ impl<R: Send + Sync + 'static> AnswerJobTable<R> {
             });
             let table = self.clone();
             self.shared.runtime.spawn(async move {
+                let mut settling = None;
                 let outcome = match run.await {
                     Ok(Ok(finished)) => JobOutcome::Done {
                         value: finished.value,
@@ -396,24 +506,38 @@ impl<R: Send + Sync + 'static> AnswerJobTable<R> {
                         cut: finished.cut,
                     },
                     Ok(Err(error)) => match error.downcast::<Unretained>() {
-                        Ok(Unretained { message, not_run }) => {
+                        Ok(Unretained {
+                            message,
+                            not_run,
+                            settling: still,
+                        }) => {
+                            settling = still.into_inner().ok().flatten();
                             JobOutcome::Dropped { message, not_run }
                         }
                         Err(error) => JobOutcome::Failed(format!("{error:#}")),
                     },
                     Err(error) => JobOutcome::Failed(format!("Answer job task failed: {error}")),
                 };
-                table.complete(id, outcome);
+                table.complete(id, outcome, settling.is_some());
+                if let Some(settling) = settling {
+                    // The stuck work's capacity is free only once it returned.
+                    settling.await;
+                    table.settled();
+                }
             });
         }
     }
 
-    fn complete(&self, id: Sha256Digest, outcome: JobOutcome<R>) {
+    fn complete(&self, id: Sha256Digest, outcome: JobOutcome<R>, settling: bool) {
         let Ok(mut schedule) = self.schedule() else {
             return;
         };
         let now = self.shared.clock.now_ms();
         let outcome = schedule.finish(&id, outcome, now);
+        if settling {
+            schedule.hold_settling();
+        }
+        let expired = schedule.expire_unattended(now);
         let started = schedule.dispatch(now);
         drop(schedule);
         if let Ok(mut done) = self.shared.done.lock()
@@ -421,9 +545,23 @@ impl<R: Send + Sync + 'static> AnswerJobTable<R> {
         {
             sender.send_replace(Some(outcome));
         }
+        self.signal(expired);
         self.spawn(started);
     }
 
+    /// A stuck job's work returned: its capacity may be used again.
+    fn settled(&self) {
+        let Ok(mut schedule) = self.schedule() else {
+            return;
+        };
+        schedule.release_settling();
+        let now = self.shared.clock.now_ms();
+        let expired = schedule.expire_unattended(now);
+        let started = schedule.dispatch(now);
+        drop(schedule);
+        self.signal(expired);
+        self.spawn(started);
+    }
     /// Aggregate queue status for the status surface.
     #[cfg_attr(
         not(test),

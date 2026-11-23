@@ -8,15 +8,19 @@
 //! marker, the ticket's id as the handle). So both use [`pending_reply`]; a
 //! running job's ticket has position 1 and start 0. `PartialMarker::
 //! continuation` stays for a reply that carries gathered work.
-use super::{CallReply, Finished, JobOutcome, schedule::publication_digest};
+use super::{
+    CallReply, Finished, JobOutcome,
+    schedule::{Timing, publication_digest},
+};
 use airk_core::arbiter::{
     ScopeBinding, Work,
     answer_loop::{
-        AnswerTicket, CONTEXT_SCHEMA_V3, ContextRequestV3, ContextResponseV3, DecisionLogSummary,
+        AnswerDeliveryRecord, AnswerTicket, CONTEXT_SCHEMA_V3, ContextRequestV3, ContextResponseV3, DecisionLogSummary,
         Degradation, LoopModelWork, LoopStage, LoopTimings, PACKET_SCHEMA_V2, PartStop,
         PartialMarker, PartialReason, UnionSummary, empty_log_digest,
     },
 };
+use airk_core::identity::Sha256Digest;
 use anyhow::{Result, ensure};
 
 /// The reply for a job the caller must come back for: no parts, records or
@@ -100,33 +104,49 @@ pub(crate) fn finished(response: ContextResponseV3) -> Result<Finished<ContextRe
 /// What the service's Answer path delivers for one call.
 #[derive(Debug)]
 pub(crate) enum Delivered {
-    /// A reply to render: the finished answer, or a ticket-shaped reply.
+    /// A reply rendered for this call: the answer or a ticket-shaped reply,
+    /// with this delivery's record.
     Reply {
         response: Box<ContextResponseV3>,
-        /// The call joined a job another call made.
-        attached: bool,
+        record: AnswerDeliveryRecord,
     },
-    /// The job failed; the same failure answers every attached call.
+    /// The job failed; the failure belongs to the calls it is delivered to.
     Failed(String),
     /// The job did nothing a retry could repeat and is no longer in the
     /// table; `not_run` when it never started.
     Dropped { message: String, not_run: bool },
     /// Nothing was queued; retry after this long.
     Busy { retry_after_ms: u64 },
+    /// The invocation key names another request.
+    KeyConflict,
 }
 
-/// Turn a table reply into what is delivered. `scope` is the caller's own
+/// Turn a table reply into what is delivered to one call (CONTRACT "Each
+/// delivery is rendered for its caller"). `scope` is the caller's own
 /// verified binding: a ticket reply names it, and a finished reply must have
-/// run on the same installation, catalog, index and authority.
+/// run on the same installation, catalog, index and authority. The reply's
+/// `elapsed_ms` becomes this call's own wait, and it is validated against
+/// this call's own budget before it leaves.
 pub(crate) fn deliver(
     reply: CallReply<ContextResponseV3>,
     request: &ContextRequestV3,
     scope: &ScopeBinding,
-    elapsed_ms: u64,
+    waited_ms: u64,
 ) -> Result<Delivered> {
+    let record = |id: Sha256Digest, timing: Timing, reused: bool| AnswerDeliveryRecord {
+        job: id,
+        queue_ms: timing.queue_ms,
+        run_ms: timing.run_ms,
+        wait_ms: waited_ms,
+        reused,
+    };
     Ok(match reply {
         CallReply::Finished {
-            attached, outcome, ..
+            id,
+            attached,
+            outcome,
+            timing,
+            ..
         } => match outcome.as_ref() {
             JobOutcome::Done { value, .. } => {
                 ensure!(
@@ -136,9 +156,14 @@ pub(crate) fn deliver(
                         && value.scope.authorization == scope.authorization,
                     "Answer job reply names another scope"
                 );
+                let mut response = value.clone();
+                response.elapsed_ms = waited_ms;
+                response.validate(&request.budget)?;
+                let record = record(id, timing, attached);
+                record.validate()?;
                 Delivered::Reply {
-                    response: Box::new(value.clone()),
-                    attached,
+                    response: Box::new(response),
+                    record,
                 }
             }
             JobOutcome::Failed(message) => Delivered::Failed(message.clone()),
@@ -150,17 +175,25 @@ pub(crate) fn deliver(
         CallReply::Pending {
             ticket,
             degradations,
+            timing,
+            attached,
             ..
-        } => Delivered::Reply {
-            response: Box::new(pending_reply(
-                request,
-                scope.clone(),
-                ticket,
-                degradations,
-                elapsed_ms,
-            )?),
-            attached: false,
-        },
+        } => {
+            let id = ticket.id;
+            let record = record(id, timing, attached);
+            record.validate()?;
+            Delivered::Reply {
+                response: Box::new(pending_reply(
+                    request,
+                    scope.clone(),
+                    ticket,
+                    degradations,
+                    waited_ms,
+                )?),
+                record,
+            }
+        }
         CallReply::Busy { retry_after_ms } => Delivered::Busy { retry_after_ms },
+        CallReply::KeyConflict => Delivered::KeyConflict,
     })
 }

@@ -2142,6 +2142,84 @@ Numbered 30 until 22 November 2026; renumbered because L4's entries take
   profile"), service arbiter `CONTRACT.md` ("A loop profile serves an index
   enrolled for Context").
 
+### 47. Answer jobs owned by the service (L2c)
+
+Plan section 12.4.2, step L2c, built on `loop/l2b-wire` after the review of
+`24184339` (H1, H2, M1 to M7). Not in the LG gate image. Recorded contract
+decisions: service `answer_jobs/CONTRACT.md` ("Service-owned jobs"), kernel
+arbiter `CONTRACT.md` ("Answer job kernel"), supervisor
+`project_worker/CONTRACT.md` ("Answer job authority"), Core arbiter
+`CONTRACT.md` ("Answer job options and delivery record").
+
+- **What changed:**
+  - a job has its own read kernel (`Kernel::answer_job_kernel`: the maker's
+    frozen authority with its own revocation flag), registered by the owner
+    on the grant's installed lease (`Scopes::attach_job`), and its own
+    native attempt and read context minted at dispatch
+    (`AnswerJobAuthority::attempt`);
+  - the caller's wait (`wait_ms`, the transport attempt) is apart from the
+    work budget (`deadline_ms`); reuse by digest needs the same deadline;
+  - `fresh`, `invocation_key` and `interactive` beside the request
+    (`AnswerJobOptions`), and a delivery record beside every job reply
+    (`AnswerDeliveryRecord`); `elapsed_ms` is the caller's own wait;
+  - failures belong to their invocation; attended jobs dispatch first and
+    unattended ones expire at their due time; a supervised deadline with a
+    5 s grace quarantines the owner and holds the slot until the work
+    settles.
+- **Review findings:**
+  - **H1** (session teardown revoked the job): fixed by the job kernel.
+    Reproduced first on the old code (`answer_job_tests`, 1 failed), passing
+    after the fix; decisive test through the real service below.
+  - **H2** (kept replies stand in for fresh runs): `fresh` always runs; the
+    delivery record says `reused`; the harness sends `fresh`.
+  - **M1, M4** (a run cut for another caller's limits, an invalid reused
+    reply): reuse only of work asked with the same deadline; each delivery
+    is validated against the caller's own budget.
+  - **M2** (no reap boundary): supervised deadline and settling capacity.
+  - **M3** (`include_status` headroom): folded into the scope.
+  - **M5** (transient failures pinned): failures never reach a call by
+    digest.
+  - **M6** (missing tests): added, below.
+  - **M7** (transport parity): the parity tests still compare one kept
+    reply through each transport; the delivery record and `elapsed_ms` are
+    per delivery. Not changed here; for the parity owner.
+- **Residual (recorded):** the lease in force at submission bounds a job
+  (at most 300 s); nothing renews it for a job whose maker has gone, and a
+  renewal fences it. See the service contract.
+- **Test support:** a `test-support`-only job gate
+  (`AIRK_TEST_ANSWER_JOB_GATE`), never in product builds.
+- **Validation** (target `answer-loop/target-l2b`, `--locked --offline`,
+  commands and logs in the L2b notes, `commands.tsv`):
+  - Clippy `-D warnings`, all targets, airk-core, -kernel, -mcp,
+    -supervisor, -service, -https, -frontend and -cli: exit 0 with default
+    features (`l2c-clippy-8`, then -service `l2c-clippy-9` and -cli
+    `l2c-clippy-cli-default` after later edits) and with all features
+    (`l2c-clippy-all-1`, -cli `l2c-clippy-cli-all`);
+  - focused nextest, default features: 280 run, 278 passed
+    (`l2c-nextest-2`); the two service failures were tests asserting the old
+    attach rules, updated, then the job-table set 48 of 48
+    (`l2c-nextest-4`);
+  - broad nextest, all features (airk-mcp, -supervisor, -frontend, -https
+    whole; kernel, core and service Answer and arbiter sets): 1,267 run,
+    1,264 passed (`l2c-nextest-all-1`). Two failures were the advertised
+    Answer schema and Help captures, regenerated through their owners
+    (`l2c-regen-*`) and passing (`l2c-rerun-1`); the third is the known base
+    failure of entry 40;
+  - airk-cli `combined_reads` and `admin_plane`, all features: 78 run, 75
+    passed (`l2c-cli-all-1`); after the parity normalizer learned the
+    delivery record, one of the three passes (`l2c-rerun-1`). **Two remain
+    failing:** `current_answer_single_index_preserves_complete_pipe_cli_and_https_mcp_results`
+    and `admin_sign_in_reads_and_cross_plane_refusals`. They compare one kept
+    reply through two transports; it is now rendered per delivery, so
+    `elapsed_ms`, the delivery record and the verification receipt's
+    `receipt_bytes_budget` (frame minus reply bytes) differ by a few bytes.
+    The normalizers belong to the parity owner (review M7); not changed
+    here;
+  - the decisive test and the injection test: 2 of 2
+    (`l2c-cli-decisive-1`); the mutation restoring the shared flag fails it
+    (`l2c-cli-mutation-shared-flag`, exit 100);
+  - `scripts/check-repo.ps1` exit 0; `git diff --check` clean.
+
 ### 49. The job table stays out of the LG gate image; the gate measures concurrency on the unqueued path
 
 - **Step:** LG preparation. Numbered after 47 and 48, which the job agent

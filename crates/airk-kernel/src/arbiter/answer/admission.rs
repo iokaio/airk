@@ -138,6 +138,28 @@ impl crate::Kernel {
         Ok(scope)
     }
 
+    /// A service-owned Answer job's own kernel (arbiter CONTRACT, "Answer job
+    /// kernel"): this live caller's frozen read authority, selected snapshot
+    /// and native owner, with a revocation flag of its own, no native attempt
+    /// (the job binds its own with `with_optional_read_attempt_for`) and
+    /// fresh Focus and loop accounting. A combined member is never a job.
+    pub fn answer_job_kernel(&self) -> Result<Self> {
+        let mut kernel = self.with_own_read_revocation()?;
+        if let Some(context) = &self.arbiter_context {
+            ensure!(
+                context.partition.is_none() && context.answer_partition.is_none(),
+                "a combined Answer member is not a service job"
+            );
+            let mut context = context.as_ref().clone();
+            context.attempt = None;
+            context.focus = Arc::new(std::sync::Mutex::new(
+                crate::arbiter::focus::Attempt::default(),
+            ));
+            kernel.arbiter_context = Some(Arc::new(context));
+        }
+        Ok(kernel)
+    }
+
     /// The Context model an Answer's card calls would run on now; `None` is
     /// the no-model loop. For the service's admission estimate only.
     pub fn answer_context_model(&self) -> Result<Option<device::SelectedModel>> {

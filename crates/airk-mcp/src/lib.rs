@@ -28,6 +28,9 @@ pub struct AnswerArgs {
     pub verification: response::VerificationArgs,
     #[serde(flatten)]
     pub request: airk_core::arbiter::answer_loop::ContextRequestV3,
+    /// Beside the request, never inside it: the request digest is unchanged.
+    #[serde(flatten)]
+    pub job: airk_core::arbiter::answer_loop::AnswerJobOptions,
     #[serde(flatten, skip_serializing)]
     pub response: ResponseArgs,
 }
@@ -796,11 +799,14 @@ impl AirkServer {
             .as_ref()
             .map_or(deadline, |context| deadline.min(context.deadline()));
         let jobs = answer_jobs::for_call(self);
+        let include_status = args.response.include_status;
         let answered = self.execute_verified_response(
             UsageOperation::Answer,
             args.response,
             args.verification.controls(),
             move |kernel| {
+                // Job options are bounded caller input on every path.
+                args.job.validate(&args.request.budget)?;
                 let reserve = args
                     .verification
                     .controls()
@@ -822,14 +828,18 @@ impl AirkServer {
                     .with_fresh_answer_accounting()?;
                 reader.kernel = kernel.clone();
                 // In the service, an admitted Answer is a job of its job
-                // table (plan section 12.4.1); this call waits for it.
-                if let Some(jobs) = jobs {
+                // table (plan sections 12.4.1 and 12.4.2); this call waits
+                // for it.
+                if let Some((jobs, authority)) = jobs {
                     return answer_jobs::run(answer_jobs::Caller {
                         jobs,
+                        authority,
                         reader,
                         kernel,
                         request: args.request,
+                        options: args.job,
                         reply_reserve: reserve,
+                        include_status,
                         deadline,
                         handle,
                         sink,
@@ -856,7 +866,10 @@ impl AirkServer {
                             progress: &|item| sink(answer_progress(item)),
                         },
                     )
-                    .map(|outcome| outcome.response)
+                    .map(|outcome| answer_jobs::Answered {
+                        response: outcome.response,
+                        delivery: None,
+                    })
             },
         );
         match &reporter {

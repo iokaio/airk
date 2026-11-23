@@ -6,11 +6,12 @@ use super::{
     AnswerJobTable, AnswerScope, ContextRung, JobTableConfig, JobWork, RunFuture, Runner,
     StartedJob, TokioClock, Unretained,
     reply::{self, Delivered},
-    schedule::publication_digest,
+    schedule::{JobOptions, publication_digest},
 };
 use airk_core::arbiter::{answer_loop::ContextResponseV3, device::SelectedModel};
 use airk_mcp::answer_jobs::{AnswerAdmission, AnswerCall, AnswerDelivery, AnswerJobs, AnswerWork};
 use anyhow::{Result, anyhow};
+use tokio_util::sync::CancellationToken;
 use std::{
     future::Future,
     path::{Path, PathBuf},
@@ -59,9 +60,13 @@ impl ServiceAnswerJobs {
 }
 
 /// One caller's work as the table runs it.
-fn job_work(work: AnswerWork) -> JobWork<ContextResponseV3> {
+fn job_work(work: AnswerWork, maker_session: CancellationToken) -> JobWork<ContextResponseV3> {
     Box::new(move |job: StartedJob| -> RunFuture<ContextResponseV3> {
         Box::pin(async move {
+            #[cfg(feature = "test-support")]
+            test_gate::hold(job.id, maker_session).await;
+            #[cfg(not(feature = "test-support"))]
+            drop(maker_session);
             let admission = AnswerAdmission {
                 request: job.request,
                 parts: job.shape.parts,
@@ -78,6 +83,7 @@ fn job_work(work: AnswerWork) -> JobWork<ContextResponseV3> {
                 Err(failure) => Err(Unretained {
                     message: failure.payload,
                     not_run: failure.not_run,
+                    settling: std::sync::Mutex::new(failure.settling),
                 }
                 .into()),
             }
@@ -93,13 +99,19 @@ impl AnswerJobs for ServiceAnswerJobs {
         Box::pin(async move {
             let arrived = Instant::now();
             // The scope is the caller's verified binding, with the reserve
-            // its reply is packed to; the publication is that binding's.
-            let scope =
-                AnswerScope::from_binding(&call.scope).with_reply_reserve(call.reply_reserve);
+            // and status headroom its reply is packed to; the publication is
+            // that binding's.
+            let scope = AnswerScope::from_binding(&call.scope)
+                .with_reply_variant(call.reply_reserve, call.include_status);
             let publication = publication_digest(&call.scope.publication)?;
             let model = match call.context_model {
                 Some(SelectedModel::Arbiter) => Some(ContextRung::Compact),
                 Some(SelectedModel::Focus) | None => None,
+            };
+            let options = JobOptions {
+                fresh: call.options.fresh,
+                key: call.options.invocation_key.clone(),
+                interactive: call.options.interactive,
             };
             let deadline = tokio::time::Instant::from_std(call.deadline);
             let mut request = call.request.clone();
@@ -107,56 +119,99 @@ impl AnswerJobs for ServiceAnswerJobs {
             loop {
                 let reply = self
                     .table
-                    .call_with_work(
+                    .call_job(
                         scope,
                         request.clone(),
                         model,
                         Some(publication),
                         deadline,
-                        Some(job_work(call.work.clone())),
+                        &options,
+                        Some(job_work(call.work.clone(), call.maker_session.clone())),
                     )
                     .await?;
-                let elapsed_ms = u64::try_from(arrived.elapsed().as_millis()).unwrap_or(u64::MAX);
-                return Ok(
-                    match reply::deliver(reply, &call.request, &call.scope, elapsed_ms)? {
-                        Delivered::Reply { response, attached } => {
-                            AnswerDelivery::Reply { response, attached }
+                let waited_ms = u64::try_from(arrived.elapsed().as_millis()).unwrap_or(u64::MAX);
+                return Ok(match reply::deliver(reply, &call.request, &call.scope, waited_ms)? {
+                    Delivered::Reply { response, record } => {
+                        AnswerDelivery::Reply { response, record }
+                    }
+                    Delivered::Failed(message) => AnswerDelivery::Failed(message),
+                    Delivered::Busy { retry_after_ms } => AnswerDelivery::Busy { retry_after_ms },
+                    Delivered::KeyConflict => AnswerDelivery::KeyConflict,
+                    // The job this call waited for never ran (its owner
+                    // stopped, or it expired unattended). With time left,
+                    // this call makes its own job once; without, it is told
+                    // to come back.
+                    Delivered::Dropped { not_run: true, .. } => {
+                        let left = deadline
+                            .saturating_duration_since(tokio::time::Instant::now())
+                            .as_millis();
+                        if !resubmitted
+                            && call.request.continuation.is_none()
+                            && left >= u128::from(RESUBMIT_MIN_MS)
+                        {
+                            resubmitted = true;
+                            request.continuation = None;
+                            continue;
                         }
-                        Delivered::Failed(message) => AnswerDelivery::Failed(message),
-                        Delivered::Busy { retry_after_ms } => {
-                            AnswerDelivery::Busy { retry_after_ms }
-                        }
-                        // The job this call waited for never ran (its window
-                        // lay beyond the call that made it, or its owner
-                        // stopped). With time left, this call makes its own
-                        // job once; without, it is told to come back.
-                        Delivered::Dropped { not_run: true, .. } => {
-                            let left = deadline
-                                .saturating_duration_since(tokio::time::Instant::now())
-                                .as_millis();
-                            if !resubmitted
-                                && call.request.continuation.is_none()
-                                && left >= u128::from(RESUBMIT_MIN_MS)
-                            {
-                                resubmitted = true;
-                                // The new job gets the window this call
-                                // still has, not the one it first asked for.
-                                request.budget.deadline_ms = request
-                                    .budget
-                                    .deadline_ms
-                                    .min(u64::try_from(left).unwrap_or(u64::MAX));
-                                continue;
-                            }
-                            AnswerDelivery::Busy { retry_after_ms: 1 }
-                        }
-                        Delivered::Dropped { message, .. } => AnswerDelivery::Failed(message),
-                    },
-                );
+                        AnswerDelivery::Busy { retry_after_ms: 1 }
+                    }
+                    Delivered::Dropped { message, .. } => AnswerDelivery::Failed(message),
+                });
             }
         })
     }
 }
 
+/// Test support only (`test-support`; never compiled into a product or
+/// release build, which do not enable that feature): with
+/// `AIRK_TEST_ANSWER_JOB_GATE` naming a loopback `ip:port` the test listens
+/// on, each job connects out to it before its work starts, sends
+/// `started <job>`, and then obeys one-byte commands: `m` waits (at most 120
+/// s) for its maker's session to end and answers `maker-closed`, `r`
+/// releases the job. It gates; it never changes what the job does. Without
+/// the variable it does nothing. Every wait has a deadline, so a stuck test
+/// cannot hold a job for ever.
+#[cfg(feature = "test-support")]
+pub(crate) mod test_gate {
+    use airk_core::identity::Sha256Digest;
+    use std::time::Duration;
+    use tokio_util::sync::CancellationToken;
+
+    pub(crate) const VARIABLE: &str = "AIRK_TEST_ANSWER_JOB_GATE";
+    const DEADLINE: Duration = Duration::from_secs(120);
+
+    pub(crate) async fn hold(job: Sha256Digest, maker_session: CancellationToken) {
+        let Some(address) = std::env::var_os(VARIABLE) else {
+            return;
+        };
+        let Some(address) = address
+            .to_str()
+            .and_then(|text| text.parse::<std::net::SocketAddr>().ok())
+            .filter(|address| address.ip().is_loopback())
+        else {
+            return;
+        };
+        let _ = tokio::time::timeout(DEADLINE, async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let mut stream = tokio::net::TcpStream::connect(address).await?;
+            stream
+                .write_all(format!("started {job}\n").as_bytes())
+                .await?;
+            loop {
+                let mut command = [0u8; 1];
+                stream.read_exact(&mut command).await?;
+                match command[0] {
+                    b'm' => {
+                        maker_session.cancelled().await;
+                        stream.write_all(b"maker-closed\n").await?;
+                    }
+                    _ => return Ok::<(), std::io::Error>(()),
+                }
+            }
+        })
+        .await;
+    }
+}
 /// The tables of the services in this process, by control root. A project
 /// owner reaches its service only through plain functions (the supervisor's
 /// `Hooks`), so the table is found the way its other service functions are.

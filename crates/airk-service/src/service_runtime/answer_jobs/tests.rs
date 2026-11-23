@@ -251,9 +251,10 @@ fn an_unavailable_rung_is_disclosed_as_model_unavailable() {
 fn the_same_request_in_the_same_scope_attaches_and_never_across_scopes() {
     let mut table = schedule(JobTableConfig::default());
     let id = submit(&mut table, request("where is admission", 300_000), 0);
-    // A retry with a shorter deadline is the same request and loses nothing.
+    // A retry with the same deadline is the same request and loses nothing
+    // (a call with another deadline runs on its own: CONTRACT "Reuse").
     assert!(matches!(
-        table.submit(scope(4), request("where is admission", 120_000), None, None, 10),
+        table.submit(scope(4), request("where is admission", 300_000), None, None, 10),
         Ok(Submitted::Attached(attached)) if attached == id
     ));
     // Another caller's authority never attaches, even to the same question.
@@ -381,7 +382,7 @@ fn dispatch_takes_the_earliest_deadline_within_the_gathering_limit() {
     let started: Vec<_> = table.dispatch(0).into_iter().map(|job| job.id).collect();
     assert_eq!(started, vec![early, middle]);
     assert!(
-        matches!(table.view(&scope(4), &late, 0), Some(JobView::Queued(ticket)) if ticket.queue_position == 1)
+        matches!(table.view(&scope(4), &late, 0), Some(JobView::Queued(ticket, _)) if ticket.queue_position == 1)
     );
     table.finish(&early, done("early", 10), 10 * SECOND);
     let started: Vec<_> = table
@@ -665,9 +666,16 @@ fn retention_charges_every_entry_and_caps_the_count() {
     assert!(table.view(&scope(4), &ids[0], 3).is_none());
     assert!(is_finished(table.view(&scope(4), &ids[1], 3)));
     assert_eq!(table.status(3).retained_bytes, 2 * entry);
-    // A failed job is not replayed: the retry attaches to the failure.
+    // A failure belongs to its own invocation (review M5): a call by digest
+    // runs a new job, and the failed job's own continuation still reaches it.
     assert!(matches!(
         table.submit(scope(4), small("two", 300_000), None, None, 5),
+        Ok(Submitted::Admitted(id)) if id != ids[1]
+    ));
+    let mut own = small("two", 300_000);
+    own.continuation = Some(ids[1]);
+    assert!(matches!(
+        table.submit(scope(4), own, None, None, 5),
         Ok(Submitted::Attached(attached)) if attached == ids[1]
     ));
 
@@ -874,6 +882,7 @@ async fn a_retry_after_a_client_timeout_attaches_to_the_job() {
         running,
         ticket,
         degradations,
+        ..
     } = first.await.unwrap().unwrap()
     else {
         panic!("the client timed out first");
@@ -888,8 +897,9 @@ async fn a_retry_after_a_client_timeout_attaches_to_the_job() {
     harness.waiting(2).await;
     dropped.abort();
     assert!(dropped.await.unwrap_err().is_cancelled());
-    // The retry attaches to the running job and is notified when it ends.
-    let retry = call(120_000, STEP * 10);
+    // The retry (the same arguments, so the same deadline) attaches to the
+    // running job and is notified when it ends.
+    let retry = call(300_000, STEP * 10);
     harness.waiting(3).await;
     assert_eq!(harness.table.status().unwrap().running, 1);
     release.send(Ok("answer")).unwrap();
@@ -1391,12 +1401,13 @@ async fn delivery_maps_every_table_reply_and_checks_the_scope() {
         .call(scope(4), request.clone(), None, None, deadline_in(STEP))
         .await
         .unwrap();
-    let reply::Delivered::Reply { response, attached } =
+    let reply::Delivered::Reply { response, record } =
         reply::deliver(pending, &request, &binding(4, 1), 5_000).unwrap()
     else {
         panic!("a timed-out call is delivered a reply");
     };
-    assert!(!attached);
+    assert!(!record.reused);
+    assert_eq!((record.job, record.wait_ms), (response.ticket.as_ref().unwrap().id, 5_000));
     let ticket = response.ticket.clone().expect("a ticket-shaped reply");
     response.validate(&request.budget).unwrap();
     release.send(()).unwrap();
@@ -1428,15 +1439,18 @@ async fn delivery_maps_every_table_reply_and_checks_the_scope() {
         1,
     );
     assert!(other.is_err());
-    let reply::Delivered::Reply { response, attached } =
+    let reply::Delivered::Reply { response, record } =
         reply::deliver(finished, &request, &binding(4, 1), 1).unwrap()
     else {
         panic!("the finished reply is delivered");
     };
-    assert!(attached);
+    assert!(record.reused);
+    // Rendered for this call: its own wait is the reply's elapsed time.
+    let mut expected = answer.clone();
+    expected.elapsed_ms = 1;
     assert_eq!(
         serde_json::to_value(&*response).unwrap(),
-        serde_json::to_value(&answer).unwrap()
+        serde_json::to_value(&expected).unwrap()
     );
     assert!(matches!(
         reply::deliver(
@@ -1455,6 +1469,7 @@ async fn delivery_maps_every_table_reply_and_checks_the_scope() {
                 attached: true,
                 degradations: vec![],
                 outcome: Arc::new(JobOutcome::Failed("worker gone".into())),
+                timing: Default::default(),
             },
             &request,
             &binding(4, 1),

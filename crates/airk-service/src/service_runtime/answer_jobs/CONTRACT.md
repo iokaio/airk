@@ -1,10 +1,179 @@
 # Answer job table
 
-Owner: Service runtime. Plan section 12.4.1, step L2b. An admitted Answer is a
-job owned by the service, not by the client's connection. The table admits,
-attaches, tickets, schedules and retains Answer jobs. It runs nothing itself:
-the runner it is built with performs one Answer, and the kernel's v3 driver
-still owns everything inside the Answer.
+Owner: Service runtime. Plan section 12.4.1, step L2b, revised by section
+12.4.2, step L2c. An admitted Answer is a job owned by the service, not by the
+client's connection. The table admits, attaches, tickets, schedules and
+retains Answer jobs. It runs nothing itself: the runner it is built with
+performs one Answer, and the kernel's v3 driver still owns everything inside
+the Answer.
+
+**Where this file and "Service-owned jobs" below differ, that section
+governs.** It is the recorded L2c contract decision (23 November 2026) and
+replaces the L2b rules that a job runs only inside its maker's window, that a
+failure is attached by digest, and that a running job is joined whatever its
+window.
+
+## Service-owned jobs (L2c, decided 23 November 2026)
+
+Recorded contract decision for the kernel, the supervisor and the service,
+from final plan section 12.4.2 as the user approved it on 23 November 2026
+and the review of `24184339` (H1, H2, M1 to M7). The kernel half is in the
+kernel arbiter contract ("Answer job kernel"), the owner half in the
+supervisor's `project_worker/CONTRACT.md` ("Answer job authority"), the public
+shapes in the Core arbiter contract ("Answer job options and delivery
+record").
+
+**What a ticket means.** An accepted job holds enough authority and
+information to finish its Answer if every client closes now, until the job's
+own deadline and on the publication it was accepted for.
+
+**Bound at submission**, when the handler hands the call to the table:
+- **the request as asked.** Its `deadline_ms` is the job's work budget. The
+  caller's wait never shortens it.
+- **the authorized scope:** a job read kernel (`Kernel::answer_job_kernel`).
+  It is a copy of the caller's verified, frozen grant authority with the same
+  fingerprint, grant memberships and revisions, index and source roots, and
+  a revocation flag of its own. The owner registers it with the installed
+  lease the caller's session redeemed (`AnswerJobAuthority::bind`), so
+  revoking that grant revokes the job. A table is never given to a session
+  without such an authority (`LocalTools::set_answer_jobs` takes both).
+- **the publication:** the read snapshot the caller's call selected.
+- **the configuration:** its revision is part of the scope digest.
+- **the budget.** The plan is fitted to it at dispatch, as before.
+
+**At dispatch** the job's work checks that its kernel is still live, then
+mints a native attempt of its own: a fresh request id and an expiry at the
+end of the job's window (at most 600 s and the Answer read ceiling). It opens
+a read context of its own, with its own cancellation and none of the maker's
+transport guards or custody, and runs the loop on its owner's blocking pool.
+The card and Focus calls carry the job's attempt, so the lane and the loop
+ledger key them by the job.
+
+**What bounds a job's authority.**
+- **In scope:** exactly its maker's frozen authority, never more. The job
+  kernel is derived from the maker's verified session and changes nothing in
+  it. Root, collection and index isolation, the original document locations
+  and source read-only behaviour are the session's own.
+- **In time,** the earliest of:
+  - its deadline (dispatch plus `deadline_ms`) plus a 5 s supervised grace;
+  - the installed lease of its grant: lease expiry and lease renewal fence
+    the job's readers exactly as they fence a session's (at most 300 s a
+    lease, the bound the direct path already has);
+  - revocation of that grant, or its replacement by a newer grant revision;
+  - its owner's close, quarantine or drain, and service shutdown;
+  - an authorized cancel.
+- **Not** its maker's connection, the maker's session teardown
+  (`SessionFence`), the connection's 60 s authorization window, its 30 s read
+  timeout or the maker's transport read attempt.
+- A finished result is kept for at most 10 minutes after it finishes, under
+  the byte and count caps, and is dropped by a new publication.
+
+**Residual: the lease bounds a job (recorded, not closed).** The catalog
+control renews an installed lease only when a new connection on that grant
+needs it after expiry, and a renewal fences the superseded lease's readers,
+the job's included. Nothing renews a lease for a job whose maker has gone.
+So a job, running or queued, lives at most until the lease that was in
+force when it was submitted ends: at most 300 s from that lease's
+installation, whatever its own `deadline_ms`. A queued job whose lease ends
+before dispatch is refused at dispatch with the typed, retryable
+`answer_authority_ended`, for its own invocation only; nothing is kept for
+other callers. Carrying jobs across a renewal of the same grant revision
+(the supervisor moving their kernels to the renewed entry, and the card and
+Focus calls naming the renewed lease) is the follow-up that would lift this
+bound. Owner: L2c follow-up, before Answers longer than the lease are relied
+on.
+
+**Every call is authorized again.** Status, result and cancel reach a job
+only through a call that has redeemed a live grant in its own session and
+whose own scope digest equals the job's. A handle alone grants nothing. A
+revoked grant cannot redeem a session, so it cannot be delivered anything.
+
+**The caller's wait is not the work.** A call waits at most the least of its
+request's deadline, its `wait_ms` when given, and its transport read attempt,
+less the ticket margin. The job's window is its own `deadline_ms` from
+dispatch. A queued job expires at its own due time (submission plus
+`deadline_ms`) unless it is interactive.
+
+**Reuse.** Reuse by request digest stays on by default, within one scope
+(authority, configuration, reply reserve and `include_status` rendering) and
+on the caller's publication, and only for a job asked with **the same
+`deadline_ms`** as the caller's. The digest already covers every other
+budget field, so reused work was made under exactly the caller's own limits:
+it is valid under the caller's own budget (M4) and never cut for someone
+else's shorter deadline (M1). Within that:
+- a queued job (it has not run; a retry waits for it rather than queueing
+  a duplicate);
+- a running job whose shape covers the caller's;
+- a finished result whose shape covers the caller's and that is complete, or
+  cut no earlier than the caller's deadline (a requeued run's shorter
+  window).
+
+A retry of the same arguments has the same deadline, so it reuses; a call
+that asks for another deadline runs on its own.
+
+`fresh: true` never reuses: it always starts an independent run. An
+invocation key gives exact retry recovery. The same key in the same scope
+with the same request recovers its job, finished, failed or running. The same
+key with a changed request, or another `include_status` or reserve, is the
+typed refusal `answer_invocation_conflict`. A key lives as long as its job.
+
+**Failures belong to their invocation** (M5, H1). A failed job's failure goes
+to the calls waiting on it when it fails, to a continuation that names the
+job, and to its invocation key. A call by digest never receives it and runs a
+new job. A job that did nothing a retry could repeat is dropped as before.
+
+**Attended and unattended.** A job is attended while at least one call waits
+on it. The table dispatches attended queued jobs first. An unattended queued
+job starts only when no attended job is queued, and is dropped unrun, keeping
+its place in line, once its due time has passed. A running job is never
+pre-empted. `interactive` (Workbench) does one thing only: an unattended
+interactive job is not dropped at its due time, so it may run to completion.
+It never ranks a job ahead of an attended one, and its effect is bounded by
+the job's own deadline and its lease. It is caller input and grants nothing
+else.
+
+**Caller input is bounded.** `wait_ms` is 1 to the request's
+`deadline_ms` (at most 600 s), and the wait is further bounded by the
+transport's own read attempt. The invocation key is 1 to 128 bytes of
+`A-Z a-z 0-9 . _ : -`. The key is looked up under the caller's principal
+(installation and authority fingerprint) and index, as the digest is under
+the scope, so a key can neither widen authority nor collide across
+authorities.
+
+**Supervised deadline** (M2). The job's blocking task is supervised. At its
+deadline plus the 5 s grace:
+- its owner is quarantined (`AnswerJobAuthority::stuck`; an in-process
+  owner's `StuckReason::QueryDeadline`), so it admits nothing more;
+- the calls waiting on the job get the typed unretained failure
+  `answer_job_stuck`;
+- the owner stops counting the job as running, so it cannot hold the idle
+  exit open for ever;
+- the job's gathering slot stays held, as settling, until the blocking task
+  has really returned. Only then can another job use the capacity.
+
+**Each delivery is rendered for its caller.** The calling handler renders
+under the caller's own response mode, verification controls, usage span and
+delivery guard, as before. The reply's `elapsed_ms` is the caller's own wait,
+and the reply is validated against the caller's own budget before delivery.
+Beside the reply, the delivery record (`delivery`) gives the job's handle,
+queue time, run time, the caller's wait, and whether the work was reused.
+
+**Test support: the job gate.** `wiring::test_gate` is compiled only with
+the `test-support` feature, which only dev-dependencies enable (`airk-cli`'s);
+the product and release builds do not, so there the environment variable is
+never read. With `AIRK_TEST_ANSWER_JOB_GATE` naming a loopback address the
+test listens on, each job connects out to it before its work starts, sends
+`started <job>`, and obeys `m` (wait for the maker's session to end, answer
+`maker-closed`) and `r` (release). The service opens no listener for it,
+every wait has a 120 s deadline, and it gates only; it never changes what the
+job does. No existing event could stand in for it: a job with a disabled
+model finishes in milliseconds, before a test can close its maker's session.
+
+**Superseded L2b rules:** "A job never runs outside its maker's window"
+(ticketed and requeued jobs now run in their own window), "Failed: a failed
+job on the same publication is always attached", and "A running job is still
+joined whatever its window". The claims and the resubmission of a call whose
+job never ran stay, for owners that stop before dispatch.
 
 ## Interface
 
@@ -378,10 +547,8 @@ shorten. So:
   digest or by the ticket's id, is admitted in that place with a window of
   its own.
 
-Letting a job run after its maker's deadline needs a native attempt of the
-job's own. That changes the kernel and service attempt contract (an original
-attempt would be replaced) and needs a security review. It is not built.
-Owner: the L2b implementer.
+Superseded by L2c: a job now mints a native attempt of its own at dispatch
+("Service-owned jobs"); the maker's attempt is not replaced, only not used.
 
 **Failures.**
 - A failure is kept for the retention time on its publication, as above,
@@ -412,7 +579,8 @@ Owner: the L2b implementer.
   still dropped. Owner: L2b.
 - **Progress for attached callers:** a call that attached hears only its own
   reporter's heartbeat, not the job's stages. Owner: L2b.
-- **A job past its maker's deadline** (above): not built. Owner: L2b.
+- **A job past its maker's deadline:** built in L2c ("Service-owned jobs"),
+  bounded by its lease (the residual recorded there).
 
 `expect(dead_code)` stays only on those unwired entry points and on fields
 that only the tests read. The separate security review of the wired path
@@ -483,3 +651,36 @@ On the pure schedule:
 - a job dropped without running keeps its place in line for the retry, by
   digest and by its ticket, once and only in its own scope;
 - a place in line expires with the retention time.
+
+## L2c evidence
+
+- **Supervisor** (`project_worker::scopes::answer_job_tests`): a job kernel
+  outlives its maker's session teardown (H1; failed on the old code), and
+  ends with a revocation, a newer grant revision, lease expiry (also for a
+  queued job), lease renewal and the owner's close; at most 64 a lease.
+- **MCP** (`answer_jobs::tests`): the job runs on its own kernel and its own
+  attempt past its maker's window after the maker's kernel is revoked; a
+  revoked job kernel is refused with `answer_authority_ended`, never kept; a
+  job past its deadline and grace quarantines its owner, stops counting as
+  running and holds its capacity until its work settles.
+- **Service** (`answer_jobs::wiring::tests`, through the real handler where
+  a handler is involved): two and four `fresh` concurrent calls are two and
+  four executions; isolation across grants and `include_status`; key
+  recovery, key conflict and keys that do not cross authorities; bounded
+  caller input; a panicking job fails its own callers and a retry runs
+  again; eviction under the byte cap while callers wait; a new publication
+  is never answered from the old one; a stuck job's capacity is not reused
+  before it settles; `interactive` never delays an attended job; reuse only
+  of work asked with the same deadline.
+- **End to end** (`airk-cli` `tests/combined_reads.rs`,
+  `answer_jobs_outlive_their_makers_session_and_are_recovered_by_their_handle`):
+  through the real service, supervisor `query()`, owner and handler, with
+  the test gate. The maker's session is torn down before its job may run;
+  the job's scoped reads succeed, and the result is recovered by handle with
+  one execution. Repeated for a queued job with no polling client. A
+  mutation that restores the shared revocation flag makes it fail.
+- **Not covered end to end:** revoking the grant while the maker is gone.
+  The live service offers no test-side grant revocation short of the catalog
+  control plane, so this stays at the supervisor level (above): there, the
+  revoked job kernel refuses its next read, and the revoked entry refuses a
+  new session, so nothing can be delivered under it.

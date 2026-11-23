@@ -1366,6 +1366,125 @@ blank, at most 16,384 UTF-8 bytes), `budget` (`BudgetV3`) and an optional
 `max_bytes` smaller than the question plus `MIN_REPLY_SKELETON_BYTES` (4,096,
 the smallest reply around a question; a test measures it).
 
+### Answer job options and delivery record (L2c, decided 23 November 2026)
+
+Recorded contract decision (final plan section 12.4.2; the job rules are
+`airk-service` `answer_jobs/CONTRACT.md`, "Service-owned jobs"). Both shapes
+are owned here (`answer_loop::AnswerJobOptions`,
+`answer_loop::AnswerDeliveryRecord`) and are schema roots. They sit **beside**
+`ContextRequestV3` and `ContextResponseV3`, not inside them, so the request
+digest, the reply's identity and its validation are unchanged.
+
+**Options**, flattened into the `airk_answer` arguments beside the request
+(every transport carries the arguments unchanged); all optional:
+- `fresh` (boolean, default false): start an independent run; never reuse a
+  job by digest. The evaluation harness always sends it.
+- `invocation_key` (1 to 128 bytes of `A-Z a-z 0-9 . _ : -`): exact retry
+  recovery. The same key and request recover the same job; the same key with
+  another request is the typed refusal `answer_invocation_conflict`.
+  Workbench uses its turn identifier.
+- `wait_ms` (1..=`deadline_ms`): how long this call waits for the job. It
+  never shortens the job, whose work budget is `deadline_ms`.
+- `interactive` (boolean, default false): the job may run to completion with
+  no caller waiting (Workbench, where a person reopens the panel).
+
+A combined Answer member ignores them: it is never a job of its own.
+
+Worked example (request):
+
+```json
+{"schema":"airk.arbiter.context.request/3","question":"Where is the reply frame limit enforced?",
+ "budget":{"deadline_ms":300000,"max_bytes":262144,"max_parts":4,"max_sub_needs":4,"rounds":3,
+   "calls":132,"fanout":8,"candidates":132,"input_tokens":196608,"round_input_tokens":32768,
+   "context_calls":48,"focus_calls":24,"focus_pairs":192},
+ "fresh":true,"wait_ms":60000,"invocation_key":"turn-7f3a"}
+```
+
+**Delivery record**, `delivery` beside the reply in the Answer envelope, for
+every reply a service-owned job delivers (absent on the direct path):
+`job` (the job's handle; it grants nothing), `queue_ms` (submission to
+dispatch, 0 for a reused finished result's own call), `run_ms` (the job's
+dispatch to its finish, or to now while it runs), `wait_ms` (this call's own
+wait) and `reused` (this call did not make the work it received). The reply's
+`elapsed_ms` is this call's own wait, so the reply validates against this
+call's own budget; the job's run time is `run_ms`.
+
+```json
+"delivery":{"job":"9c1e...64 hex","queue_ms":0,"run_ms":48210,"wait_ms":1520,"reused":true}
+```
+
+### One call returns evidence; handle-only continuation (L2d, proposed 23 November 2026)
+
+**Status: design for the primary agent's decision; not built.** Plan section
+12.4.2 ("Never a bare ticket", "A continuation returns only what is new",
+"Continue with the handle alone"), step L2d. It answers the Workbench
+client's questions (branch `loop/workbench-v3`).
+
+**Handle.** The job's handle is `delivery.job` (equal to `ticket.id` on a
+ticket). Workbench sends its turn id as `invocation_key` beside the request.
+The same key with changed inputs is `answer_invocation_conflict` (L2c).
+
+**Request shapes** (the `airk_answer` arguments; `AnswerArgs` becomes an
+untagged choice, so its owners in the frontend, CLI and Admin plane change
+with it):
+- **Ask:** as today, the `ContextRequestV3` fields and the options.
+- **Continue:** `{"continuation": "<job>"}`, optionally with `wait_ms`. The
+  question and budget are the job's own; the call is authorized again like
+  any call, and an unknown, expired or foreign handle gets the one
+  indistinguishable refusal.
+- **Cancel:** `{"continuation": "<job>", "cancel": true}`, with the same
+  authorization. Typed outcomes: `cancelled`, `already_finished` (the
+  result stays available by Continue while kept), `unknown` (also for a
+  foreign or expired handle). "Stop waiting" is client-side only and needs
+  nothing from the service.
+
+**Reply.**
+- **Never a bare ticket.** A call whose job will not finish within its wait
+  runs the deterministic (no-model) loop at once, under the caller's own
+  kernel and within the wait, and returns that cited evidence. The job keeps
+  the model part. The reply discloses `model` (to none, reason `queue_wait`)
+  as today.
+- **The delivery record gains:**
+  - `state`: `queued` (with the ticket: position, estimated start and
+    finish, `retry_after_ms`), `running` (with `stage`, `part` and `round`
+    from the job's last progress), `finished`, `failed` (the typed failure)
+    or `expired` (evicted, past retention or the service restarted; typed);
+  - `more`: while the job still has something to deliver, what a follow-up
+    would add (`context_ranking`, `focus_ranking`, `rounds`) and the exact
+    follow-up call (`{"continuation": "<job>"}`);
+  - `delivered`: the record ids this handle has delivered before, kept per
+    job in the table.
+- **A continuation returns only what is new.** A record already delivered
+  under the handle is not repeated: a sub-need may cite it, and the reply
+  carries it as a reference row `{record, pointer}`, the naming the reply
+  already uses for `same_as` and `overlaps` (`canonical_result.spans`,
+  change-log entry 45), with `pointer` naming the earlier delivery
+  (`delivery:<job>/<n>`). A client merges one turn by record id. The
+  remaining gaps are the parts' gaps, as today.
+- **Timing** is the L2c record: `queue_ms`, `run_ms`, `wait_ms`, `reused`.
+
+**Status by handle and the airkctl session.** A Continue with a short
+`wait_ms` is the status call: its `state`, `stage`, `part` and `round` come
+from the table, so a client that receives no progress notifications (the
+airkctl session carries only the heartbeat) can show stages by polling. The
+airkctl `admin_call_request` limit of 125,000 ms (Admin Search inside
+Explorer) is not changed by this.
+
+Worked examples:
+
+```json
+{"continuation":"9c1e...","wait_ms":2000}
+{"continuation":"9c1e...","cancel":true}
+"delivery":{"job":"9c1e...","queue_ms":1200,"run_ms":30500,"wait_ms":2000,"reused":true,
+  "state":"running","stage":"coverage","part":2,"round":2,
+  "more":{"adds":["context_ranking"],"follow_up":{"continuation":"9c1e..."}},
+  "delivered":["5b0f...","a3d2..."]}
+```
+
+Open for decision: whether the immediate deterministic reply is also run
+when the owner has no model (it is then the job's own result), and whether
+`delivered` is kept per handle (above) or per invocation key.
+
 ### Budget
 
 Every field is required and validated, never silently replaced.

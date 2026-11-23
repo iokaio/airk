@@ -13,6 +13,9 @@
 //!   (bounded here by the budget deadline), the observation times of
 //!   `freshness` (reply level and in `read_status`) and of the saved-source
 //!   verification;
+//! - delivery: a job reply's `delivery` record (L2c) is per delivery: its
+//!   `queue_ms`, `run_ms` and `wait_ms` are timing, `reused` and the `job`
+//!   handle are per call. Its `wait_ms` must equal the reply's `elapsed_ms`;
 //! - a decision's Focus `receipt` digest, which binds measured model work:
 //!   renamed by first appearance, so equal digests stay equal and different
 //!   ones stay different.
@@ -181,6 +184,23 @@ fn reply(raw: &Value, budget: &BudgetV3) -> Result<Value> {
             "part deadline share exceeds the Answer deadline"
         );
         timing(&mut result, &format!("/parts/{position}/deadline_share_ms"))?;
+    }
+    // The delivery record beside a job's reply (L2c) is per delivery: its
+    // timings, whether this call reused the work, and the job's handle (an
+    // identity). Its own wait is the reply's elapsed time.
+    if let Some(delivery) = raw.get("delivery") {
+        let typed: airk_core::arbiter::answer_loop::AnswerDeliveryRecord =
+            serde_json::from_value(delivery.clone())?;
+        typed.validate()?;
+        ensure!(
+            raw["elapsed_ms"] == json!(typed.wait_ms),
+            "a delivery's wait is its reply's elapsed time"
+        );
+        for field in ["queue_ms", "run_ms", "wait_ms"] {
+            timing(&mut result, &format!("/delivery/{field}"))?;
+        }
+        result["delivery"]["reused"] = json!("<per-delivery>");
+        result["delivery"]["job"] = json!("<job-handle>");
     }
     if raw.get("source_verification").is_some() {
         result["source_verification"]["selection_digest"] =

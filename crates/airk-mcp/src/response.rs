@@ -239,6 +239,11 @@ fn typed_bare_error_result(error: &anyhow::Error) -> Option<rmcp::model::CallToo
             rmcp::model::ContentBlock::text(busy.receipt().to_string()),
         ]));
     }
+    if let Some(refusal) = error.downcast_ref::<crate::answer_jobs::AnswerJobRefusal>() {
+        return Some(rmcp::model::CallToolResult::error(vec![
+            rmcp::model::ContentBlock::text(refusal.receipt().to_string()),
+        ]));
+    }
     if let Some(invalid) = error.downcast_ref::<airk_core::read_arguments::ReadArgumentError>() {
         return Some(rmcp::model::CallToolResult::error(vec![
             rmcp::model::ContentBlock::text(invalid.receipt().to_string()),

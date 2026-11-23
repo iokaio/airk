@@ -412,8 +412,17 @@ impl Fixture {
     }
 
     async fn start(&self) -> Result<OwnedProcess> {
+        self.start_with_env(&[]).await
+    }
+
+    /// `start` with extra environment for the service process only (the
+    /// test-support Answer job gate).
+    async fn start_with_env(&self, env: &[(&str, String)]) -> Result<OwnedProcess> {
         let log = self.owner.path().join("service.log");
         let mut command = Command::new(&self.candidate);
+        for (key, value) in env {
+            command.env(key, value);
+        }
         // The private foreground service role (split Phase 4; was `airk serve`).
         command
             .args(["__airk_role", "service-foreground", "--runtime-dir"])
@@ -5848,22 +5857,36 @@ async fn a_repeated_answer_in_one_service_is_the_reply_its_job_table_kept() -> R
         .await?;
         replies.push(body(&result)?);
     }
-    // The typed reply, without what each call's own rendering adds.
+    // The typed reply, without what each call's own rendering adds: its own
+    // wait (`elapsed_ms`) and its delivery record.
     let typed = |reply: &Value| -> Result<Value> {
-        Ok(serde_json::to_value(
+        let mut value = serde_json::to_value(
             airk_core::arbiter::answer_loop::ContextResponseV3::from_canonical(reply, &budget)?,
-        )?)
+        )?;
+        value["elapsed_ms"] = Value::Null;
+        Ok(value)
     };
     let first = typed(&replies[0])?;
     ensure!(
         first["ticket"].is_null() && first["parts"].as_array().is_some_and(|parts| !parts.is_empty()),
         "the first call is a complete answer: {first}"
     );
+    ensure!(
+        replies[0]["delivery"]["reused"] == false,
+        "the first call made its job: {}",
+        replies[0]
+    );
     for later in &replies[1..] {
         ensure!(
             typed(later)? == first,
             "a repeated Answer ran again instead of attaching to its kept job: {} then {later}",
             replies[0]
+        );
+        ensure!(
+            later["delivery"]["reused"] == true
+                && later["delivery"]["job"] == replies[0]["delivery"]["job"]
+                && later["delivery"]["wait_ms"] == later["elapsed_ms"],
+            "a reused reply says so, for its own call: {later}"
         );
         ensure!(
             later["request_id"].is_null() || later["request_id"] != replies[0]["request_id"],
@@ -5873,6 +5896,213 @@ async fn a_repeated_answer_in_one_service_is_the_reply_its_job_table_kept() -> R
     f.assert_sources_unchanged()
 }
 
+/// The test side of the service's test-support Answer job gate
+/// (`answer_jobs::wiring::test_gate`): each job connects here before its work
+/// starts and waits for commands.
+struct JobGate {
+    listener: tokio::net::TcpListener,
+}
+struct HeldJob {
+    stream: tokio::io::BufReader<tokio::net::TcpStream>,
+    job: String,
+}
+const GATE_WAIT: Duration = Duration::from_secs(120);
+impl JobGate {
+    async fn bind() -> Result<(Self, String)> {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?.to_string();
+        Ok((Self { listener }, address))
+    }
+    /// The next job that starts.
+    async fn next(&self) -> Result<HeldJob> {
+        use tokio::io::AsyncBufReadExt;
+        let (stream, _) = tokio::time::timeout(GATE_WAIT, self.listener.accept())
+            .await
+            .context("no Answer job started under the deadline")??;
+        let mut stream = tokio::io::BufReader::new(stream);
+        let mut line = String::new();
+        tokio::time::timeout(GATE_WAIT, stream.read_line(&mut line)).await??;
+        let job = line
+            .trim()
+            .strip_prefix("started ")
+            .context("the gate's first line names the job")?
+            .to_owned();
+        Ok(HeldJob { stream, job })
+    }
+    /// No other job has started (checked without waiting).
+    fn none_pending(&self) -> Result<()> {
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        ensure!(
+            self.listener.poll_accept(&mut context).is_pending(),
+            "a further Answer execution started"
+        );
+        Ok(())
+    }
+}
+impl HeldJob {
+    /// Wait until the maker's session has ended in the service.
+    async fn maker_closed(&mut self) -> Result<()> {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+        self.stream.get_mut().write_all(b"m").await?;
+        let mut line = String::new();
+        tokio::time::timeout(GATE_WAIT, self.stream.read_line(&mut line))
+            .await
+            .context("the maker's session did not end under the deadline")??;
+        ensure!(line.trim() == "maker-closed", "unexpected gate line {line:?}");
+        Ok(())
+    }
+    async fn release(mut self) -> Result<()> {
+        use tokio::io::AsyncWriteExt;
+        self.stream.get_mut().write_all(b"r").await?;
+        Ok(())
+    }
+}
+
+/// The decisive L2c test (final plan section 12.4.2; review H1), through the
+/// real service, supervisor `query()` path, owner and handler. The submitting
+/// client's call returns after a short wait and its connection closes; the
+/// supervisor tears its session down; only then is the job let run. Its
+/// scoped reads still succeed and it finishes; a reconnecting client
+/// recovers the result by the job's handle, and the receipt shows one
+/// execution. Repeated for a queued job whose maker is gone before it ever
+/// starts, with no client polling it.
+#[tokio::test]
+async fn answer_jobs_outlive_their_makers_session_and_are_recovered_by_their_handle() -> Result<()>
+{
+    let (gate, address) = JobGate::bind().await?;
+    let f = Fixture::new(true)?;
+    let _service = f
+        .start_with_env(&[("AIRK_TEST_ANSWER_JOB_GATE", address)])
+        .await?;
+    let selection = || airk_core::service::ToolSelection::Catalog {
+        request: ScopedConnectRequest {
+            schema: 1,
+            context_key: f.session.context_key,
+            namespace: f.session.namespace,
+            expected_catalog_revision: f.session.expected_catalog_revision,
+            grant_id: f.session.grant_id,
+            expected_grant_revision: f.session.expected_grant_revision,
+            index_id: f.indexes[0],
+            project_ids: vec![f.projects[0]],
+        },
+    };
+    let (budget, base) = current_answer_request()?;
+    let with = |question: &str, extra: Value| -> Value {
+        let mut arguments = base.clone();
+        arguments["question"] = json!(question);
+        for (key, value) in extra.as_object().into_iter().flatten() {
+            arguments[key] = value.clone();
+        }
+        arguments
+    };
+    let body = |result: &Value| -> Result<Value> {
+        match result
+            .get("structuredContent")
+            .filter(|body| body.is_object())
+        {
+            Some(body) => Ok(body.clone()),
+            None => Ok(serde_json::from_str(
+                result
+                    .pointer("/content/0/text")
+                    .and_then(Value::as_str)
+                    .context("Answer reply text")?,
+            )?),
+        }
+    };
+    let complete = |reply: &Value| -> Result<()> {
+        let typed =
+            airk_core::arbiter::answer_loop::ContextResponseV3::from_canonical(reply, &budget)?;
+        ensure!(
+            typed.ticket.is_none() && !typed.parts.is_empty() && !typed.records.is_empty(),
+            "a complete answer with evidence: {reply}"
+        );
+        Ok(())
+    };
+
+    // 1. A running job whose maker leaves.
+    let question = "boundaryneedle";
+    let maker = {
+        let arguments = with(question, json!({"fresh":true,"wait_ms":3_000}));
+        let f = &f;
+        let selection = selection();
+        async move { context_pipe_once(f, selection, &arguments).await }
+    };
+    let (held, ticket) = tokio::join!(gate.next(), maker);
+    let mut held = held?;
+    let ticket = body(&ticket?)?;
+    ensure!(
+        ticket["ticket"]["id"].as_str() == Some(held.job.as_str())
+            && ticket["delivery"]["job"].as_str() == Some(held.job.as_str())
+            && ticket["delivery"]["reused"] == false,
+        "the maker's short wait ends with its job's ticket: {ticket}"
+    );
+    // The maker's connection is gone; the supervisor ends its session.
+    held.maker_closed().await?;
+    let job = held.job.clone();
+    held.release().await?;
+    // A new connection recovers the result by the handle alone.
+    let recovered = body(
+        &context_pipe_once(&f, selection(), &with(question, json!({"continuation":job}))).await?,
+    )?;
+    complete(&recovered)?;
+    ensure!(
+        recovered["delivery"]["job"].as_str() == Some(job.as_str())
+            && recovered["delivery"]["reused"] == true,
+        "the recovered result is the job's own, delivered again: {recovered}"
+    );
+    gate.none_pending()?;
+
+    // 2. A queued job: two held jobs fill the gathering limit of two, a third
+    // is queued, its maker leaves, and nothing polls it.
+    let mut fillers = Vec::new();
+    for filler in ["boundaryneedle filler one", "boundaryneedle filler two"] {
+        let arguments = with(filler, json!({"fresh":true,"wait_ms":3_000}));
+        let call = context_pipe_once(&f, selection(), &arguments);
+        let (held, reply) = tokio::join!(gate.next(), call);
+        reply?;
+        fillers.push(held?);
+    }
+    let queued = body(
+        &context_pipe_once(
+            &f,
+            selection(),
+            &with("boundaryneedle queued", json!({"fresh":true,"wait_ms":3_000})),
+        )
+        .await?,
+    )?;
+    let queued_job = queued["delivery"]["job"]
+        .as_str()
+        .context("a queued job's handle")?
+        .to_owned();
+    ensure!(
+        queued["ticket"]["id"].as_str() == Some(queued_job.as_str()),
+        "the queued maker gets its ticket: {queued}"
+    );
+    gate.none_pending()?;
+    for filler in fillers {
+        filler.release().await?;
+    }
+    let mut started = gate.next().await?;
+    ensure!(started.job == queued_job, "the queued job starts next");
+    started.maker_closed().await?;
+    started.release().await?;
+    let recovered = body(
+        &context_pipe_once(
+            &f,
+            selection(),
+            &with("boundaryneedle queued", json!({"continuation":queued_job})),
+        )
+        .await?,
+    )?;
+    complete(&recovered)?;
+    ensure!(
+        recovered["delivery"]["job"].as_str() == Some(queued_job.as_str())
+            && recovered["delivery"]["reused"] == true,
+        "the queued job's result is recovered by its handle: {recovered}"
+    );
+    gate.none_pending()?;
+    f.assert_sources_unchanged()
+}
 #[tokio::test]
 async fn current_answer_many_and_open_keep_complete_cli_pipe_and_https_mcp_packets() -> Result<()> {
     let f = Fixture::new(true)?;

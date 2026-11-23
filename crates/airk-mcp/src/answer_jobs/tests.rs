@@ -20,18 +20,75 @@ const WAIT: Duration = Duration::from_secs(120);
 fn rendered(error: &anyhow::Error) -> serde_json::Value {
     serde_json::to_value(crate::response::error_result(error)).expect("a tool result is JSON")
 }
+fn refused_failure(refusal: AnswerJobRefusal) -> AnswerFailure {
+    refused(refusal, false, None)
+}
+
+/// An owner's job authority without a supervisor: it counts its binds,
+/// attempts and quarantines, and mints attempts with a fixed clock reading.
+#[derive(Default)]
+struct Authority {
+    binds: std::sync::atomic::AtomicUsize,
+    attempts: std::sync::Mutex<Vec<Duration>>,
+    stuck: std::sync::atomic::AtomicUsize,
+}
+impl AnswerJobAuthority for Authority {
+    fn bind(&self, _: &airk_kernel::Kernel) -> anyhow::Result<AnswerJobGrant> {
+        self.binds.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(AnswerJobGrant {
+            guard: Box::new(()),
+            maker_session: CancellationToken::new(),
+        })
+    }
+    fn attempt(
+        &self,
+        deadline: Instant,
+    ) -> anyhow::Result<airk_core::read_attempt::ReadAttemptBudget> {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if let Ok(mut attempts) = self.attempts.lock() {
+            attempts.push(remaining);
+        }
+        let count = self.attempts.lock().map(|attempts| attempts.len()).unwrap_or(0);
+        Ok(airk_core::read_attempt::ReadAttemptBudget {
+            schema: 1,
+            request_id: Incarnation::from_bytes([u8::try_from(count).unwrap_or(u8::MAX); 16]),
+            clock: if cfg!(windows) {
+                airk_core::read_attempt::ReadClock::WindowsPerformanceCounter
+            } else {
+                airk_core::read_attempt::ReadClock::UnixMonotonic
+            },
+            expires_monotonic_ns: u64::MAX / 2,
+            remaining_ns: u64::try_from(remaining.as_nanos()).unwrap_or(u64::MAX).max(1),
+            native_retry_expires_monotonic_ns: None,
+        })
+    }
+    fn stuck(&self) {
+        self.stuck.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
 
 #[test]
 fn a_failure_keeps_the_receipt_the_direct_path_renders_and_says_what_a_retry_may_repeat() {
-    // A typed refusal is kept, and every caller of the job renders exactly
-    // the receipt the direct path renders.
+    // A scope refusal belongs to its own invocation (review H1): it is never
+    // kept, and its caller renders exactly the receipt the direct path renders.
     let refused = anyhow::Error::new(airk_core::scoped_reads::ScopeReadRefused);
-    let kept = failure(&refused);
-    assert!(kept.retain && !kept.not_run);
-    assert_eq!(
-        rendered(&delivered_failure(kept.payload)),
-        rendered(&refused)
-    );
+    let own = failure(&refused);
+    assert!(!own.retain && !own.not_run);
+    assert_eq!(rendered(&delivered_failure(own.payload)), rendered(&refused));
+    // A refusal of the job path itself renders as its typed receipt.
+    for refusal in [
+        AnswerJobRefusal::authority_ended(),
+        AnswerJobRefusal::stuck(),
+        AnswerJobRefusal::key_conflict(),
+    ] {
+        let carried = refused_failure(refusal.clone());
+        assert!(!carried.retain);
+        let body = rendered(&delivered_failure(carried.payload));
+        let text = body["content"][0]["text"].as_str().expect("a text block");
+        let receipt: serde_json::Value = serde_json::from_str(text).expect("a JSON receipt");
+        assert_eq!(receipt["error"]["code"], refusal.code.as_str(), "{body}");
+        assert_eq!(receipt["error"]["retryable"], refusal.retryable, "{body}");
+    }
 
     // An untyped failure is kept with its message, and renders as before.
     let plain = anyhow::anyhow!("index mid-publication");
@@ -157,10 +214,13 @@ fn caller(
     reader.read_attempt = Some(ReadAttemptContext::new(deadline, canceled));
     Ok(Caller {
         jobs,
+        authority: Arc::new(Authority::default()),
         reader,
         kernel,
         request: request(u64::try_from(window.as_millis()).unwrap_or(u64::MAX)),
+        options: Default::default(),
         reply_reserve: 4096,
+        include_status: false,
         deadline,
         handle: tokio::runtime::Handle::current(),
         sink: crate::progress::no_progress(),
@@ -227,7 +287,7 @@ async fn a_caller_that_leaves_or_whose_owner_stops_ends_only_its_own_wait() -> R
 }
 
 fn admission(run_ms: u64, rounds: usize) -> AnswerAdmission {
-    let request = request(60_000);
+    let request = request(run_ms);
     AnswerAdmission {
         parts: request.budget.max_parts,
         sub_needs: request.budget.max_sub_needs,
@@ -247,44 +307,54 @@ fn admission(run_ms: u64, rounds: usize) -> AnswerAdmission {
     }
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_jobs_work_runs_the_admitted_plan_and_only_inside_its_makers_window() -> Result<()> {
-    let scoped = scoped()?;
+/// A maker with a counting authority, its job kernel and the job's work.
+fn job(
+    scoped: &Scoped,
+    window: Duration,
+) -> Result<(Caller, Arc<Authority>, airk_kernel::Kernel, AnswerWork)> {
     let silent = Arc::new(Silent {
         calls: watch::channel(0).0,
     });
-    let mut maker = caller(
-        &scoped,
-        silent,
-        Duration::from_secs(60),
-        CancellationToken::new(),
-    )?;
-    let admission_gate = maker.reader.admission.clone();
+    let mut maker = caller(scoped, silent, window, CancellationToken::new())?;
+    let authority = Arc::new(Authority::default());
+    maker.authority = authority.clone();
+    let job_kernel = maker.kernel.answer_job_kernel()?;
+    let work = work(&maker, job_kernel.clone(), Arc::new(()));
+    Ok((maker, authority, job_kernel, work))
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_jobs_work_runs_on_its_own_kernel_and_attempt_after_its_maker_is_gone() -> Result<()> {
+    let scoped = scoped()?;
+    let (mut maker, authority, job_kernel, work) = job(&scoped, Duration::from_secs(60))?;
+    let owner = maker.reader.admission.clone();
     // Each progress report notes how many jobs its owner counts as running.
     let counted = Arc::new(std::sync::Mutex::new(Vec::new()));
     maker.sink = {
-        let (counted, owner) = (counted.clone(), admission_gate.clone());
+        let (counted, owner) = (counted.clone(), owner.clone());
         Arc::new(move |_| {
             if let Ok(mut counted) = counted.lock() {
                 counted.push(owner.jobs_in_flight());
             }
         })
     };
-    let work = work(&maker);
-    // The maker leaves; its work is the job's now.
+    let work = {
+        let job_kernel = job_kernel.clone();
+        let _ = work;
+        super::work(&maker, job_kernel, Arc::new(()))
+    };
+    // The maker's session ends (H1): its kernel is revoked, its transport
+    // context cancelled, and it leaves.
+    maker.kernel.revoke_scoped_reads();
+    if let Some(context) = &maker.reader.read_attempt {
+        context.cancellation().cancel();
+    }
     drop(maker);
+    assert!(job_kernel.scoped_read_fingerprint().is_ok());
 
-    // A window the table opened beyond the maker's is not run.
-    let beyond = tokio::time::timeout(WAIT, work(admission(120_000, 3)))
-        .await?
-        .map(|reply| reply.elapsed_ms)
-        .expect_err("a window beyond the maker's is not served");
-    assert!(beyond.not_run && !beyond.retain);
-    assert_eq!(admission_gate.jobs_in_flight(), 0);
-
-    // Inside the window the work runs the real loop under the plan, and the
-    // reply says what the plan took away.
-    let reply = tokio::time::timeout(WAIT, work(admission(30_000, 1)))
+    // A window longer than the maker's 60 s runs on the job's own attempt,
+    // under the plan, and the reply says what the plan took away.
+    let reply = tokio::time::timeout(WAIT, work(admission(120_000, 1)))
         .await?
         .map_err(|failure| anyhow::anyhow!(failure.payload))?;
     assert_eq!(reply.schema, CONTEXT_SCHEMA_V3);
@@ -301,7 +371,14 @@ async fn a_jobs_work_runs_the_admitted_plan_and_only_inside_its_makers_window() 
         rounds,
         [serde_json::json!({"kind":"rounds","requested":3,"applied":1,"reason":"queue_wait"})]
     );
-    // The same work answers a second job: its accounting is fresh each time.
+    let attempts = authority.attempts.lock().map(|a| a.clone()).unwrap_or_default();
+    assert_eq!(attempts.len(), 1, "one attempt of the job's own");
+    assert!(
+        attempts[0] > Duration::from_secs(60) && attempts[0] <= Duration::from_secs(120),
+        "{attempts:?}"
+    );
+
+    // The same work answers a second job: fresh accounting, a fresh attempt.
     let again = tokio::time::timeout(WAIT, work(admission(30_000, 3)))
         .await?
         .map_err(|failure| anyhow::anyhow!(failure.payload))?;
@@ -312,25 +389,80 @@ async fn a_jobs_work_runs_the_admitted_plan_and_only_inside_its_makers_window() 
             .flatten()
             .all(|item| item["kind"] != "rounds")
     );
+    assert_eq!(authority.attempts.lock().map(|a| a.len()).unwrap_or(0), 2);
 
-    // While a job ran, its owner counted it, although no call was waiting:
-    // an owner with a running job is not idle. Afterwards it counts none.
-    let counted = counted
-        .lock()
-        .map(|counted| counted.clone())
-        .unwrap_or_default();
+    // While a job ran, its owner counted it; afterwards it counts none.
+    let counted = counted.lock().map(|c| c.clone()).unwrap_or_default();
     assert!(
         !counted.is_empty() && counted.iter().all(|running| *running == 1),
         "{counted:?}"
     );
-    assert_eq!(admission_gate.jobs_in_flight(), 0);
+    assert_eq!(owner.jobs_in_flight(), 0);
 
-    // Once the owner stops, a job does not start.
-    admission_gate.close();
+    // The grant ends (its job kernel is revoked): the job does not run, and
+    // the refusal is its own, never kept for others.
+    job_kernel.revoke_scoped_reads();
+    let ended = tokio::time::timeout(WAIT, work(admission(30_000, 3)))
+        .await?
+        .map(|reply| reply.elapsed_ms)
+        .expect_err("a revoked job kernel reads nothing");
+    assert!(!ended.not_run && !ended.retain);
+    assert!(delivered_failure(ended.payload).is::<AnswerJobRefusal>());
+
+    // Once the owner stops, a job does not start. (A fresh session: the
+    // maker above shared, and revoked, the fixture's session scope.)
+    let other = self::scoped()?;
+    let (_maker, _, _, work) = job(&other, Duration::from_secs(60))?;
+    _maker.reader.admission.close();
     let stopped = tokio::time::timeout(WAIT, work(admission(30_000, 3)))
         .await?
         .map(|reply| reply.elapsed_ms)
         .expect_err("a stopping owner starts no job");
     assert!(stopped.not_run && !stopped.retain);
+    assert_eq!(authority.stuck.load(std::sync::atomic::Ordering::SeqCst), 0);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_job_past_its_deadline_quarantines_its_owner_and_holds_capacity_until_it_settles()
+-> Result<()> {
+    let scoped = scoped()?;
+    let (maker, authority, _, work) = job(&scoped, Duration::from_secs(60))?;
+    let owner = maker.reader.admission.clone();
+    // The job's blocking work is held before its loop starts, past its
+    // deadline and grace, until the test releases it.
+    let (entered, started) = std::sync::mpsc::channel::<()>();
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    let held = Arc::new(std::sync::Mutex::new(held));
+    test_hooks::on_job_start(Some(Arc::new(move || {
+        let _ = entered.send(());
+        if let Ok(held) = held.lock() {
+            let _ = held.recv_timeout(WAIT);
+        }
+    })));
+    let running = tokio::spawn(work(admission(50, 1)));
+    tokio::task::spawn_blocking(move || started.recv_timeout(WAIT)).await??;
+    assert_eq!(owner.jobs_in_flight(), 1);
+    let outcome = tokio::time::timeout(WAIT, running).await??;
+    test_hooks::on_job_start(None);
+    let failure = outcome
+        .map(|reply| reply.elapsed_ms)
+        .expect_err("a stuck job delivers no reply");
+    assert!(!failure.retain && !failure.not_run);
+    assert_eq!(authority.stuck.load(std::sync::atomic::Ordering::SeqCst), 1);
+    // The owner no longer counts it: a stuck job cannot hold the idle exit.
+    assert_eq!(owner.jobs_in_flight(), 0);
+    let receipt = rendered(&delivered_failure(failure.payload));
+    assert!(receipt.to_string().contains("answer_job_stuck"), "{receipt}");
+    // Its capacity is not free until the blocking work has returned.
+    let mut settling = failure.settling.expect("a stuck job is still settling");
+    let early = tokio::select! {
+        biased;
+        _ = &mut settling => true,
+        _ = std::future::ready(()) => false,
+    };
+    assert!(!early, "a stuck job settled while its work still ran");
+    release.send(())?;
+    tokio::time::timeout(WAIT, settling).await?;
     Ok(())
 }

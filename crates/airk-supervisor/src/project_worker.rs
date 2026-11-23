@@ -353,10 +353,12 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
             return Err(error);
         }
     };
+    let session_closed = tokio_util::sync::CancellationToken::new();
     let _session_fence = scopes::SessionFence {
         scopes: state.scopes.clone(),
         reference: grant.scope,
         session,
+        closed: session_closed.clone(),
     };
     let response_kernel = tools.scoped_read_revocation_handle();
     let result = async {
@@ -364,8 +366,15 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
             && let Some(owner) = (state.hooks.arbiter_controller)(&state.control)? {
             tools = tools.native_arbiter_session(state.identity,authority,owner).await?;
         }
+        // The table comes only with this session's job authority: each job's
+        // own kernel is fenced with the grant, not with this session.
         if let Some(jobs) = (state.hooks.answer_jobs)(&state.control) {
-            tools.set_answer_jobs(jobs);
+            tools.set_answer_jobs(jobs, Arc::new(scopes::SessionJobAuthority {
+                scopes: state.scopes.clone(),
+                reference: grant.scope,
+                closed: session_closed.clone(),
+                execution: state.execution.clone(),
+            }));
         }
         if let Some(scope) = grant.scope {
             state.scopes.lock().map_err(|_| anyhow::anyhow!("scope policy unavailable"))?

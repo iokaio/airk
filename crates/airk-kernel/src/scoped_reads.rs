@@ -698,7 +698,9 @@ enum Coverage {
 }
 
 pub(crate) struct SessionScope {
-    authority: Authority,
+    /// Shared with an Answer job's copy (`with_own_read_revocation`), which
+    /// differs only in its revocation flag.
+    authority: Arc<Authority>,
     fingerprint: Sha256Digest,
     observation: airk_core::scoped_reads::ScopeObservation,
     observation_value: serde_json::Value,
@@ -1077,7 +1079,7 @@ impl Kernel {
         let observation_value = serde_json::to_value(&observation)?;
         let mut session = self.clone();
         session.read_scope = Some(Arc::new(SessionScope {
-            authority,
+            authority: Arc::new(authority),
             fingerprint,
             observation,
             observation_value,
@@ -1091,6 +1093,32 @@ impl Kernel {
             metadata_observed: Mutex::new(None),
         }));
         Ok(session)
+    }
+    /// The same frozen scoped-read authority, observation and selected
+    /// snapshot with a revocation flag of its own: an Answer job's reads
+    /// (arbiter CONTRACT, "Answer job kernel"). The source session's
+    /// revocation no longer reaches the copy; the copy's own does. Refused
+    /// when the source session is already revoked. A kernel without scoped
+    /// reads is returned unchanged.
+    pub(crate) fn with_own_read_revocation(&self) -> Result<Self> {
+        let Some(scope) = &self.read_scope else {
+            return Ok(self.clone());
+        };
+        scope.live()?;
+        let mut kernel = self.clone();
+        kernel.read_scope = Some(Arc::new(SessionScope {
+            authority: scope.authority.clone(),
+            fingerprint: scope.fingerprint,
+            observation: scope.observation.clone(),
+            observation_value: scope.observation_value.clone(),
+            revoked: Arc::new(AtomicBool::new(false)),
+            compiled: Mutex::new(None),
+            #[cfg(test)]
+            reader_attachments: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            service_source_checks: std::sync::atomic::AtomicUsize::new(0),
+        }));
+        Ok(kernel)
     }
     pub fn revoke_scoped_reads(&self) {
         if let Some(scope) = &self.read_scope {
@@ -1165,7 +1193,7 @@ impl Kernel {
         // Every source of an open read is one whole Subtree "" atom, so a
         // resolved source of it is in scope with no project attribution.
         ensure!(
-            !projects.is_empty() || matches!(scope.authority, Authority::Open(_)),
+            !projects.is_empty() || matches!(*scope.authority, Authority::Open(_)),
             ScopeReadRefused
         );
         scope.live()?;

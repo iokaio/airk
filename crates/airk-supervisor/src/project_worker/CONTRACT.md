@@ -106,3 +106,42 @@ one runs under this owner (`LocalTools::answer_jobs_in_flight`), the owner is
 not idle, so the 15-second idle exit does not end it. Every other exit (a
 drain, a quarantine, the bounded generation lifetime) is unchanged: the job
 then stops at its next fence and the table keeps no failure for it.
+
+## Answer job authority (L2c, decided 23 November 2026)
+
+Recorded contract decision (final plan section 12.4.2; review of `24184339`,
+H1). The owner gives a session the table only together with an
+`AnswerJobAuthority` for that session's redeemed grant
+(`LocalTools::set_answer_jobs(jobs, authority)`).
+
+- **`bind(job kernel)`**, at the job's submission: the installed entry of the
+  session's grant must be live. The job kernel
+  (`Kernel::answer_job_kernel`, its own revocation flag) is registered on
+  that entry beside the sessions, at most 64 a lease. The returned guard
+  removes and revokes it when the job's work is dropped.
+- **What reaches a job's kernel:** what fences the grant. That is a
+  `RevokeScope`, a newer grant revision installed for the same grant and
+  index, lease expiry (`expire`), lease renewal (the superseded lease's
+  readers are fenced) and the owner's close. These revoke registered jobs
+  exactly as they revoke sessions.
+- **What does not:** `SessionFence::drop` (`detach`) removes and revokes the
+  session's own kernel only. The session's 60 s authorization window, its
+  30 s read timeout and its stream ending end its own admission and wait,
+  not its jobs.
+- **`stuck()`**, when a job passes its deadline and grace: an in-process
+  owner quarantines itself (`StuckReason::QueryDeadline`), as a stuck direct
+  query does. A child-process owner has no table.
+- **The maker's session end is observable:** the guard carries a
+  cancellation that `SessionFence::drop` cancels. It is a diagnostic seam
+  for the delivery record and the tests, never authority.
+- An unscoped (legacy) session's authority binds nothing: its kernel has no
+  scoped reads to revoke, and its job is bounded by its own deadline and its
+  owner.
+- A job counts as running for the idle exit only until its deadline and
+  grace (`answer_jobs_in_flight`), so a stuck job cannot keep its owner
+  alive for ever; the quarantine then lets it leave.
+
+Evidence: `project_worker::scopes::answer_job_tests` (a job kernel outlives
+its maker's session teardown and ends with the grant, its lease and the
+owner's close), and through the real `query()` path in `airk-cli`
+`tests/combined_reads.rs` (`answer_jobs_*`).

@@ -75,15 +75,33 @@ impl AnswerScope {
         }
     }
     /// This scope for replies packed to `reserve` bytes of the caller's own
-    /// metadata: calls with different reserves never share a job, while the
-    /// principal and the index, and so every limit, stay the same.
-    pub(crate) fn with_reply_reserve(mut self, reserve: usize) -> Self {
-        self.authority = framed_digest(
-            b"airk.answer.job.scope.reserve/1",
-            &[self.authority.as_bytes(), &(reserve as u64).to_be_bytes()],
-        );
+    /// metadata, with the status headroom the reply is packed
+    /// for (review M3): calls that differ in either never share a job.
+    pub(crate) fn with_reply_variant(mut self, reserve: usize, include_status: bool) -> Self {
+        self.authority = if include_status {
+            framed_digest(
+                b"airk.answer.job.scope.reserve/2",
+                &[self.authority.as_bytes(), &(reserve as u64).to_be_bytes(), &[1]],
+            )
+        } else {
+            framed_digest(
+                b"airk.answer.job.scope.reserve/1",
+                &[self.authority.as_bytes(), &(reserve as u64).to_be_bytes()],
+            )
+        };
         self
     }
+}
+
+/// A call's job options as the table applies them (Core `AnswerJobOptions`).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct JobOptions {
+    /// Never reuse a job by digest.
+    pub(crate) fresh: bool,
+    /// Exact retry recovery: the same key and request in the same scope.
+    pub(crate) key: Option<String>,
+    /// The job may run to completion unattended; it never ranks it ahead.
+    pub(crate) interactive: bool,
 }
 
 /// The digest a publication is matched on.
@@ -226,20 +244,31 @@ pub(crate) enum Submitted {
     Ticketed(AnswerTicket),
     /// The scope, the principal or the table is full; no job was made.
     Busy { retry_after_ms: u64 },
+    /// The invocation key names another request or scope of this principal.
+    KeyConflict,
+}
+
+/// A job's queue and run times, for a delivery record.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Timing {
+    pub(crate) queue_ms: u64,
+    pub(crate) run_ms: u64,
 }
 
 /// A job as its caller sees it. Degradations are the dispatched ones, the
 /// same for the caller that made the job and every caller that attached.
 #[derive(Debug)]
 pub(crate) enum JobView<R> {
-    Queued(AnswerTicket),
+    Queued(AnswerTicket, Timing),
     Running {
         ticket: AnswerTicket,
         degradations: Vec<Degradation>,
+        timing: Timing,
     },
     Finished {
         outcome: Arc<JobOutcome<R>>,
         degradations: Vec<Degradation>,
+        timing: Timing,
     },
 }
 
@@ -322,9 +351,30 @@ struct Job<R> {
     superseded: bool,
     /// The shape and disclosures fitted at dispatch.
     applied: Option<Fitted>,
+    /// Calls waiting on the job now: it is attended while there is one.
+    waiters: usize,
+    /// May run to completion unattended; never ranks it ahead.
+    interactive: bool,
+    dispatched_ms: Option<u64>,
     state: State<R>,
 }
 impl<R> Job<R> {
+    fn timing(&self, now: u64) -> Timing {
+        let finished = match self.state {
+            State::Finished { finished_ms, .. } => finished_ms,
+            _ => now,
+        };
+        match self.dispatched_ms {
+            Some(dispatched) => Timing {
+                queue_ms: dispatched.saturating_sub(self.enqueued_ms),
+                run_ms: finished.saturating_sub(dispatched),
+            },
+            None => Timing {
+                queue_ms: now.saturating_sub(self.enqueued_ms),
+                run_ms: 0,
+            },
+        }
+    }
     fn order(&self, ageing: u64) -> (u64, u64) {
         (
             self.order_due_ms
@@ -370,13 +420,20 @@ pub(crate) struct Schedule<R> {
     salt: [u8; 32],
     seq: u64,
     jobs: BTreeMap<Sha256Digest, Job<R>>,
-    by_request: HashMap<(AnswerScope, Sha256Digest), Sha256Digest>,
+    /// The newest job per scope, request digest and requested deadline:
+    /// reuse needs the same deadline (CONTRACT "Reuse").
+    by_request: HashMap<(AnswerScope, Sha256Digest, u64), Sha256Digest>,
     /// Kept for the retention time, at most one per scope and request.
     claims: HashMap<(AnswerScope, Sha256Digest), Claim>,
     /// The newest publication observed per index.
     current: HashMap<[u8; 16], Observed>,
     correction_permille: u64,
     recent: VecDeque<CostSample>,
+    /// Invocation keys by principal, index and key, to their job.
+    keys: HashMap<(Sha256Digest, [u8; 16], String), Sha256Digest>,
+    /// Jobs finished for their callers whose work has not yet returned
+    /// (a stuck job): their capacity stays held.
+    settling: usize,
 }
 
 impl<R> Schedule<R> {
@@ -391,7 +448,57 @@ impl<R> Schedule<R> {
             current: HashMap::new(),
             correction_permille: 1000,
             recent: VecDeque::new(),
+            keys: HashMap::new(),
+            settling: 0,
         }
+    }
+
+    /// A call starts or stops waiting on `id`.
+    pub(crate) fn attend(&mut self, id: &Sha256Digest, waiting: bool) {
+        if let Some(job) = self.jobs.get_mut(id) {
+            job.waiters = if waiting {
+                job.waiters.saturating_add(1)
+            } else {
+                job.waiters.saturating_sub(1)
+            };
+        }
+    }
+    /// A stuck job's capacity is held until its work returns.
+    pub(crate) fn hold_settling(&mut self) {
+        self.settling = self.settling.saturating_add(1);
+    }
+    pub(crate) fn release_settling(&mut self) {
+        self.settling = self.settling.saturating_sub(1);
+    }
+    /// Queued jobs no call waits on, not interactive, whose due time has
+    /// passed: they are dropped unrun and keep their place in line. Returns
+    /// their outcomes for their signals.
+    pub(crate) fn expire_unattended(&mut self, now: u64) -> Vec<(Sha256Digest, Arc<JobOutcome<R>>)> {
+        let expired: Vec<_> = self
+            .jobs
+            .iter()
+            .filter(|(_, job)| {
+                matches!(job.state, State::Queued)
+                    && job.waiters == 0
+                    && !job.interactive
+                    && job.due_ms <= now
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        expired
+            .into_iter()
+            .map(|id| {
+                let outcome = self.finish(
+                    &id,
+                    JobOutcome::Dropped {
+                        message: "the Answer job expired unattended before it started".into(),
+                        not_run: true,
+                    },
+                    now,
+                );
+                (id, outcome)
+            })
+            .collect()
     }
 
     pub(crate) fn gathering_limit(&self) -> usize {
@@ -462,17 +569,52 @@ impl<R> Schedule<R> {
 
     /// Admit, attach or ticket one request (plan section 12.4.1, ideas 1 to 3).
     /// `publication` is the caller's current publication when it is known.
+    #[cfg(test)]
     pub(crate) fn submit(
+        &mut self,
+        scope: AnswerScope,
+        request: ContextRequestV3,
+        model: Option<ContextRung>,
+        publication: Option<Sha256Digest>,
+        now: u64,
+    ) -> Result<Submitted> {
+        self.submit_with(scope, request, model, publication, now, &JobOptions::default())
+    }
+
+    /// `submit` with the call's job options: `fresh` never reuses by digest,
+    /// an invocation key recovers its own job exactly, `interactive` lets
+    /// the job run unattended.
+    pub(crate) fn submit_with(
         &mut self,
         scope: AnswerScope,
         mut request: ContextRequestV3,
         model: Option<ContextRung>,
         publication: Option<Sha256Digest>,
         now: u64,
+        options: &JobOptions,
     ) -> Result<Submitted> {
         request.validate()?;
         self.purge(now);
         let digest = request_digest(&request)?;
+        // The key is scoped by the principal (installation and authority
+        // fingerprint) and the index, as the digest is by the scope.
+        let key = options
+            .key
+            .clone()
+            .map(|key| (scope.principal, scope.index, key));
+        if let Some(key) = &key
+            && let Some(id) = self.keys.get(key).copied()
+        {
+            match self.jobs.get(&id) {
+                Some(job) if job.scope == scope && job.request_digest == digest => {
+                    return Ok(Submitted::Attached(id));
+                }
+                Some(_) => return Ok(Submitted::KeyConflict),
+                None => {
+                    self.keys.remove(key);
+                }
+            }
+        }
         if let Some(continuation) = request.continuation {
             match self
                 .jobs
@@ -533,6 +675,9 @@ impl<R> Schedule<R> {
             publication,
             superseded: false,
             applied: None,
+            waiters: 0,
+            interactive: options.interactive,
+            dispatched_ms: None,
             state: State::Queued,
         };
         let start_ms = self.start_for(&job, now);
@@ -548,10 +693,14 @@ impl<R> Schedule<R> {
             None => None,
         };
 
-        if let Some(id) = self.by_request.get(&(scope, digest)).copied()
+        if !options.fresh
+            && let Some(id) = self.by_request.get(&(scope, digest, deadline_ms)).copied()
             && let Some(existing) = self.jobs.get(&id)
-            && self.attachable(existing, publication, own, due_ms, deadline_ms)
+            && self.attachable(existing, publication, own, deadline_ms)
         {
+            if let Some(key) = key {
+                self.keys.insert(key, id);
+            }
             return Ok(Submitted::Attached(id));
         }
 
@@ -592,7 +741,10 @@ impl<R> Schedule<R> {
         }
         // The place is taken over once, by the job made here.
         self.claims.remove(&(scope, digest));
-        self.by_request.insert((scope, digest), id);
+        self.by_request.insert((scope, digest, deadline_ms), id);
+        if let Some(key) = key {
+            self.keys.insert(key, id);
+        }
         self.jobs.insert(id, job);
         Ok(if ticketed {
             Submitted::Ticketed(self.ticket(&id, now).expect("the job was just queued"))
@@ -609,21 +761,30 @@ impl<R> Schedule<R> {
         existing: &Job<R>,
         publication: Option<Sha256Digest>,
         own: Option<Shape>,
-        due_ms: u64,
         deadline_ms: u64,
     ) -> bool {
         if !self.publication_ok(existing, publication) {
             return false;
         }
+        // Reuse only work made under the caller's own limits (review M1,
+        // M4): the budget is in the digest, and the deadline must be equal
+        // too, so a reused reply is valid under the caller's own budget and
+        // never cut for someone else's shorter deadline.
+        if existing.deadline_ms != deadline_ms {
+            return false;
+        }
         match &existing.state {
+            // A failure belongs to its own invocation (review M5, H1): its
+            // callers, its continuation and its key receive it, a call by
+            // digest never does.
             State::Finished { outcome, .. }
                 if matches!(outcome.as_ref(), JobOutcome::Failed(_)) =>
             {
-                // Uncertain work is never replayed on the same publication.
-                true
+                false
             }
-            State::Queued if existing.ticketed => existing.deadline_ms >= deadline_ms,
-            State::Queued => existing.due_ms >= due_ms,
+            // A queued job with the same deadline has not run yet: a retry
+            // waits for it rather than queueing a duplicate.
+            State::Queued => true,
             // A result its deadline cut is what the job had by then. A call
             // with more time than that job had would get more on its own.
             State::Finished {
@@ -646,11 +807,14 @@ impl<R> Schedule<R> {
         let mut started = vec![];
         while self.running() < limit {
             let ageing = self.config.ageing;
+            // Attended jobs first (plan 12.4.2, idea 4): an unattended job,
+            // interactive or not, takes capacity only when no attended job
+            // wants it. `interactive` never ranks a job ahead.
             let Some(id) = self
                 .jobs
                 .iter()
                 .filter(|(_, job)| matches!(job.state, State::Queued))
-                .min_by_key(|(_, job)| job.order(ageing))
+                .min_by_key(|(_, job)| (job.waiters == 0, job.order(ageing)))
                 .map(|(id, _)| *id)
             else {
                 break;
@@ -680,6 +844,7 @@ impl<R> Schedule<R> {
                 .unwrap_or_else(|| estimate::smallest(&costs, correction, requested, deadline_ms));
             let job = self.jobs.get_mut(&id).expect("selected job exists");
             job.due_ms = due_ms;
+            job.dispatched_ms = Some(now);
             let run_ms = job.due_ms.saturating_sub(now).max(1);
             job.publication = current.or(job.publication);
             job.state = State::Running {
@@ -866,16 +1031,19 @@ impl<R> Schedule<R> {
         now: u64,
     ) -> Option<JobView<R>> {
         let job = self.jobs.get(id).filter(|job| job.scope == *scope)?;
+        let timing = job.timing(now);
         Some(match &job.state {
             State::Finished { outcome, .. } => JobView::Finished {
                 outcome: outcome.clone(),
                 degradations: job.degradations(),
+                timing,
             },
             State::Running { .. } => JobView::Running {
                 ticket: self.ticket(id, now)?,
                 degradations: job.degradations(),
+                timing,
             },
-            State::Queued => JobView::Queued(self.ticket(id, now)?),
+            State::Queued => JobView::Queued(self.ticket(id, now)?, timing),
         })
     }
 
@@ -955,11 +1123,13 @@ impl<R> Schedule<R> {
         }
     }
 
+    /// Running jobs and jobs whose stuck work is still settling.
     fn running(&self) -> usize {
         self.jobs
             .values()
             .filter(|job| matches!(job.state, State::Running { .. }))
             .count()
+            .saturating_add(self.settling)
     }
 
     fn running_end(&self, job: &Job<R>, now: u64) -> u64 {
@@ -982,6 +1152,8 @@ impl<R> Schedule<R> {
             .values()
             .filter(|job| matches!(job.state, State::Running { .. }))
             .map(|job| Reverse(self.running_end(job, now)))
+            // A settling slot's end is unknown: plan it as taken.
+            .chain((0..self.settling).map(|_| Reverse(now.saturating_add(MAX_ESTIMATE_MS))))
             .collect()
     }
 
@@ -1071,10 +1243,11 @@ impl<R> Schedule<R> {
 
     fn remove(&mut self, id: &Sha256Digest) {
         if let Some(job) = self.jobs.remove(id) {
-            let key = (job.scope, job.request_digest);
+            let key = (job.scope, job.request_digest, job.deadline_ms);
             if self.by_request.get(&key) == Some(id) {
                 self.by_request.remove(&key);
             }
+            self.keys.retain(|_, named| named != id);
         }
     }
 
