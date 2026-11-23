@@ -2609,3 +2609,54 @@ Numbered 65 because the unmerged `loop/lh` already holds entries 57 to 64.
   digest input or persisted format changed.
 - **Where:** store `current/CONTRACT.md` ("Reader open and WAL-index
   recovery").
+
+### 66. Diagnostics observe again when a publication lands during the device read
+
+- **Found by:** the second failure class of
+  `admin_sign_in_reads_and_cross_plane_refusals` (entry 65): right after its
+  Index job succeeds, the test's `airk_diagnostics` readiness read was
+  refused with `scoped_read_unavailable`, not retryable. Stress counts: 4 of
+  20 on `705ab312`, 5 of 20 with entry 65, 8 of 25 on the test alone.
+- **Diagnosis:** a temporary capture at the MCP refusal render points (never
+  committed), built with line tables and run with `_NT_SYMBOL_PATH` pointing
+  at the build's PDBs so the installed fixture binary resolved symbols. All
+  8 captures were created at `Kernel::scoped_device_status` (kernel
+  `arbiter.rs`), called by `airk_diagnostics`. After the native device read,
+  it checked that authority **and** publication were unchanged and typed
+  either change as `ScopeReadRefused`. The Index's semantic publication
+  lands just after its text publication, so a perfectly authorized read
+  that overlapped it was refused as if it were outside its authority.
+- **Fix (owner: kernel arbiter):** the two outcomes are kept apart. A
+  changed authority is still `ScopeReadRefused`. A newer publication under
+  the same authority means the device status is observed again against
+  it, at most three observations within the original deadline. After that
+  it is the retryable `publication_busy`
+  (`CurrentGateContention::Applying`). This is the optimistic read already
+  used between readers and the writer (snapshot, read, verify, repeat), not
+  a lock: holding the writer back for a native observation would stall
+  indexing behind diagnostics.
+- **Tests:** `airk-mcp`
+  `diagnostics_observes_again_when_a_publication_lands_during_the_device_read`
+  (the owner republishes the index from inside its device read; the reply
+  succeeds after two observations and names the publication that landed)
+  and `diagnostics_with_a_publication_moving_on_every_read_is_retryable_busy`
+  (three observations, then `publication_busy` with `repeat_same_request`).
+  Both fail on the old code with `scoped_read_unavailable`.
+- **Test-side change (`airk-cli` `admin_plane.rs`):** with this fix the
+  test still failed 1 of 20, now on a `publication_busy` /
+  `repeat_same_request` readiness reply. That reply is the documented signal
+  to send the same read again, and the test's readiness loop already
+  re-sends the same request until the publication settles. It now treats
+  exactly that typed reply as "not yet settled", within its original 30 s
+  deadline and at most 50 repeats; any other failed read still fails and is
+  retained as before. Nothing else in the test is relaxed.
+- **Stress, the same 17-test group, `--stress-count 20`:** entry 65 alone,
+  15 of 20 passed (5 `scoped_read_unavailable`); with this kernel change, 19
+  of 20 (1 `publication_busy`); with the test change, 20 of 20.
+- **Not changed:** the Answer and joint delivery fences (kernel `arbiter.rs`,
+  `answer.rs`, `joint.rs`) also compare the publication before delivery and
+  fail with an untyped message when it moved. No test failure points at them
+  yet, so they are left as they are. Focus keeps its typed stale receipts.
+- **Identities:** none moved; no identity-feeding file changed. No wire,
+  digest input or persisted format changed.
+- **Where:** kernel arbiter `CONTRACT.md` ("G4 scoped device diagnostics").

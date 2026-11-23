@@ -177,6 +177,10 @@ fn observed_application(
         }
     }
 }
+/// Device observations taken for one diagnostics read while the publication
+/// keeps moving under the same authority.
+const DEVICE_OBSERVATION_ATTEMPTS: usize = 3;
+
 impl crate::Kernel {
     /// Read-only scoped diagnostics. No native owner/original attempt means no observation.
     pub fn scoped_device_status(
@@ -195,34 +199,53 @@ impl crate::Kernel {
         );
         self.require_source_policy_scope()?;
         let authority = self.scoped_read_fingerprint()?;
-        let publication = self.arbiter_publication()?;
-        let observed = context.owner.device_read_status(
-            context.worker,
-            context.authority,
-            &publication,
-            attempt,
-            deadline,
-        )?;
-        self.require_source_policy_scope()?;
-        ensure!(
-            self.scoped_read_fingerprint()? == authority
-                && self.arbiter_publication()? == publication,
-            airk_core::scoped_reads::ScopeReadRefused
-        );
-        ensure!(
-            Instant::now() < deadline,
-            "original device observation deadline exhausted"
-        );
-        if let Some(value) = &observed {
+        let mut attempts = 0;
+        loop {
+            attempts += 1;
+            let publication = self.arbiter_publication()?;
+            let observed = context.owner.device_read_status(
+                context.worker,
+                context.authority,
+                &publication,
+                attempt,
+                deadline,
+            )?;
+            self.require_source_policy_scope()?;
+            // A changed authority is a refusal: the read is no longer the
+            // caller's to make.
             ensure!(
-                value.scope.index_id == context.authority.index_id
-                    && value.scope.authorization == context.authority.fingerprint
-                    && value.scope.publication == publication,
+                self.scoped_read_fingerprint()? == authority,
                 airk_core::scoped_reads::ScopeReadRefused
             );
-            value.validate()?;
+            ensure!(
+                Instant::now() < deadline,
+                "original device observation deadline exhausted"
+            );
+            // A newer publication under the same authority (an Index's
+            // semantic step lands just after its text step) is not a
+            // refusal: the observation is taken again against it, and a
+            // publication still moving after that is the retryable
+            // `publication_busy`, never `scoped_read_unavailable`.
+            if self.arbiter_publication()? != publication {
+                if attempts < DEVICE_OBSERVATION_ATTEMPTS {
+                    continue;
+                }
+                return Err(anyhow::anyhow!(
+                    "the publication changed during each device observation"
+                )
+                .context(airk_store::current::CurrentGateContention::Applying));
+            }
+            if let Some(value) = &observed {
+                ensure!(
+                    value.scope.index_id == context.authority.index_id
+                        && value.scope.authorization == context.authority.fingerprint
+                        && value.scope.publication == publication,
+                    airk_core::scoped_reads::ScopeReadRefused
+                );
+                value.validate()?;
+            }
+            return Ok(observed);
         }
-        Ok(observed)
     }
     fn arbiter_publication(&self) -> Result<airk_core::evidence::RevisionEnvelope> {
         // Published identity only; a partial scope must never request whole

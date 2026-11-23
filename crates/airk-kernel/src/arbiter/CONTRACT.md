@@ -140,6 +140,19 @@ probe, downloads or native continuation. Default absent controller/original
 attempt omits the optional observation. Native absent/retained/corrupt4 yields
 truthful unavailable, never fake disabled/current configuration.
 
+**A publication that lands during the device read (23 November 2026).** The
+Kernel's fence after the native read keeps two outcomes apart. A changed
+scoped-read authority is `ScopeReadRefused` (`scoped_read_unavailable`, not
+retryable). A newer publication under the same authority, such as an
+Index's semantic step landing just after its text step, is not a refusal:
+the observation is taken again against the new publication, at most three
+observations in all within the original deadline. A publication still
+moving after the third is `CurrentGateContention::Applying`, rendered as the
+retryable `publication_busy` with `repeat_same_request`. Each observation is
+a read-only native snapshot, so repeating it repeats no work. Tests:
+`airk-mcp` `scoped_device_diagnostics_tests` (a publication landing once,
+and on every read).
+
 Combined diagnostics keeps the complete observation under each corresponding
 member.result; it never fuses authorities or global enrollment state. Complete
 copy/export retains precision, native fallback reasons and all variant metadata.

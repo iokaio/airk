@@ -659,6 +659,7 @@ fn admin_sign_in_reads_and_cross_plane_refusals() -> Result<()> {
                 usage_client: ClientFamily::Unknown,
                 read_attempt: None,
             })?;
+            let mut busy_repeats = 0usize;
             loop {
                 ensure!(
                     std::time::Instant::now() < deadline,
@@ -673,6 +674,30 @@ fn admin_sign_in_reads_and_cross_plane_refusals() -> Result<()> {
                         String::from_utf8_lossy(&wire_response.body)
                     );
                     let returned = &response["result"]["result"];
+                    // The typed `publication_busy` / `repeat_same_request`
+                    // tells a client to send the same read again; a
+                    // publication settling after Index is exactly that, so
+                    // it counts as not yet settled, within the original
+                    // deadline and a bounded number of repeats. Every other
+                    // failed read still fails here.
+                    let retry: Option<Value> = returned
+                        .pointer("/content/0/text")
+                        .and_then(Value::as_str)
+                        .and_then(|text| serde_json::from_str(text).ok());
+                    if returned["isError"] == true
+                        && retry.as_ref().is_some_and(|retry| {
+                            retry["code"] == "publication_busy"
+                                && retry["retryable"] == true
+                                && retry["action"] == "repeat_same_request"
+                        })
+                    {
+                        busy_repeats += 1;
+                        ensure!(
+                            busy_repeats <= 50,
+                            "readiness stayed publication_busy for 50 repeats: {response}"
+                        );
+                        return Ok(false);
+                    }
                     ensure!(
                         returned["isError"] != true,
                         "native readiness read failed: {response}"
