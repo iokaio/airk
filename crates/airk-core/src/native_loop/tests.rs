@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
-use crate::arbiter::answer_loop::QuestionSpan;
+use crate::arbiter::answer_loop::{Coverage, QuestionSpan};
 use crate::arbiter::stage_tests::{digest, index, scope};
 use crate::identity::Incarnation;
 
@@ -170,6 +170,8 @@ fn segment(ordinal: u8, part: u8) -> CardSegment {
         ],
         multiple: false,
         evidence: vec![],
+        unshown: 0,
+        verdict: None,
     }
 }
 fn card_request() -> NativeCardRequest {
@@ -267,13 +269,15 @@ fn card_request_batches_segments_of_one_task_with_attributed_tokens() -> Result<
     Ok(())
 }
 
-#[test]
-fn split_segments_propose_whole_partitions() -> Result<()> {
-    let question = "Where is it? Who calls it?";
-    let span = |utf8_start, utf8_end| QuestionSpan {
+fn span(utf8_start: usize, utf8_end: usize) -> QuestionSpan {
+    QuestionSpan {
         utf8_start,
         utf8_end,
-    };
+    }
+}
+/// A Split call: one segment over the whole question.
+fn split_request() -> NativeCardRequest {
+    let question = "Where is it? Who calls it?";
     let mut request = card_request();
     request.task = Task::ContextSplit;
     request.segments = vec![CardSegment {
@@ -300,12 +304,20 @@ fn split_segments_propose_whole_partitions() -> Result<()> {
         ],
         multiple: false,
         evidence: vec![],
+        unshown: 0,
+        verdict: None,
     }];
     request.attribution = vec![TokenAttribution {
         part: 0,
         round: 0,
         tokens: 1000,
     }];
+    request
+}
+
+#[test]
+fn split_segments_propose_whole_partitions() -> Result<()> {
+    let request = split_request();
     validate_cards(&request)?;
     let mut gap = request.clone();
     gap.segments[0].cards[0].partition[1].utf8_start = 13;
@@ -475,8 +487,22 @@ fn evidence(path: &str, focus: Option<f32>, excerpt: &str, cut_bytes: usize) -> 
         end_line: 40,
         focus,
         excerpt: excerpt.into(),
+        skipped_bytes: 0,
         cut_bytes,
+        truncated: false,
+        same_as: None,
     }
+}
+/// A row that repeats the text `shown` shows.
+fn repeat(path: &str, focus: Option<f32>, shown: &CardEvidence) -> CardEvidence {
+    CardEvidence {
+        same_as: Some(shown.place()),
+        ..evidence(path, focus, "", 0)
+    }
+}
+/// 275 bytes: more than the least a cut excerpt may show.
+fn long_text() -> String {
+    "pub fn restart_guard() {\n".repeat(11)
 }
 
 /// A two-segment Coverage call with 8,192 reserved tokens, all charged to
@@ -494,17 +520,55 @@ fn evidence_request() -> NativeCardRequest {
     request
 }
 
+const PARTIAL: CardVerdict = CardVerdict {
+    coverage: Coverage::Partial,
+    by_model: false,
+};
+
+/// The same call as Follow-up: each segment states a partial verdict.
+fn follow_up_request() -> NativeCardRequest {
+    let mut request = evidence_request();
+    request.task = Task::ContextFollowUp;
+    for segment in &mut request.segments {
+        segment.stage = LoopStage::FollowUp;
+        segment.verdict = Some(PARTIAL);
+        for card in &mut segment.cards {
+            card.class = CardClass::FollowUpHop;
+        }
+    }
+    request
+}
+
+/// A one-segment Plan call.
+fn plan_request() -> NativeCardRequest {
+    let mut plan = evidence_request();
+    plan.task = Task::ContextPlan;
+    plan.segments.truncate(1);
+    plan.segments[0].stage = LoopStage::Plan;
+    plan.segments[0].need = 0;
+    plan.segments[0].round = 0;
+    plan.segments[0].multiple = true;
+    plan.attribution[0].round = 0;
+    for card in &mut plan.segments[0].cards {
+        card.class = CardClass::PlanNeed;
+    }
+    plan
+}
+
 #[test]
-fn the_excerpt_allowance_is_the_reservation_above_the_frame() {
-    assert_eq!(CARD_FRAME_TOKENS, 2048);
+fn the_excerpt_allowance_is_five_bytes_for_four_tokens_above_the_frame() {
+    assert_eq!((CARD_FRAME_TOKENS, MIN_EXCERPT_BYTES), (2048, 256));
     for (reserved, bytes) in [
         (0, 0),
         (1, 0),
         (2047, 0),
         (2048, 0),
         (2049, 1),
-        (4096, 2048),
-        (8192, 6144),
+        (2052, 5),
+        (2252, 255),
+        (2253, 256),
+        (4096, 2560),
+        (8192, 7680),
     ] {
         assert_eq!(evidence_allowance(reserved), bytes, "{reserved} tokens");
     }
@@ -514,12 +578,15 @@ fn the_excerpt_allowance_is_the_reservation_above_the_frame() {
 fn coverage_segments_carry_ranked_evidence_within_the_reservation() -> Result<()> {
     let mut request = evidence_request();
     request.segments[0].evidence = vec![
-        evidence("src/guard.rs", Some(0.93), "pub fn restart_guard() {", 120),
+        evidence("src/guard.rs", Some(0.93), &long_text(), 120),
         evidence("src/caller.rs", Some(0.93), "restart_guard();", 0),
         evidence("docs/guard.md", Some(0.25), "# Restart guard", 0),
         evidence("tests/guard.rs", None, "fn restart_guard_test() {}", 0),
         evidence("tests/other.rs", None, "fn other() {}", 0),
     ];
+    // An excerpt may start inside its span, and its read may be a snippet.
+    request.segments[0].evidence[0].skipped_bytes = 77;
+    request.segments[0].evidence[1].truncated = true;
     // A sub-need with no span shows no evidence.
     assert!(request.segments[1].evidence.is_empty());
     validate_cards(&request)?;
@@ -527,7 +594,7 @@ fn coverage_segments_carry_ranked_evidence_within_the_reservation() -> Result<()
     let refused = |mutate: fn(&mut NativeCardRequest)| {
         let mut wrong = evidence_request();
         wrong.segments[0].evidence = vec![
-            evidence("src/guard.rs", Some(0.5), "pub fn restart_guard() {", 0),
+            evidence("src/guard.rs", Some(0.5), &long_text(), 0),
             evidence("docs/guard.md", None, "# Restart guard", 0),
         ];
         validate_cards(&wrong).expect("the unchanged request is valid");
@@ -554,64 +621,185 @@ fn coverage_segments_carry_ranked_evidence_within_the_reservation() -> Result<()
     );
     assert!(
         refused(|r| {
+            r.segments[0].evidence[0].skipped_bytes = 524_288;
+            r.segments[0].evidence[0].cut_bytes = 1;
+        }),
+        "the bytes before and after an excerpt count together"
+    );
+    assert!(
+        refused(|r| {
+            r.segments[0].evidence[0].skipped_bytes = usize::MAX;
+            r.segments[0].evidence[0].cut_bytes = 1;
+        }),
+        "the count never wraps"
+    );
+    assert!(
+        refused(|r| r.segments[0].evidence[1].cut_bytes = 1),
+        "a cut excerpt shows at least 256 bytes"
+    );
+    assert!(
+        refused(|r| {
             let unscored = r.segments[0].evidence[1].clone();
             r.segments[0].evidence.extend(vec![unscored; 7]);
         }),
         "at most eight spans a segment"
     );
+    assert!(
+        refused(|r| r.segments[0].unshown = 9),
+        "at most eight spans not shown"
+    );
+    // 256 bytes is enough for a cut excerpt; 255 is not.
+    let mut least = evidence_request();
+    least.segments[0].evidence = vec![evidence("src/guard.rs", None, &"a".repeat(256), 1)];
+    validate_cards(&least)?;
+    least.segments[0].evidence[0].excerpt.pop();
+    assert!(validate_cards(&least).is_err());
     Ok(())
 }
 
 #[test]
-fn only_coverage_segments_carry_evidence() -> Result<()> {
+fn a_repeated_text_is_a_row_that_names_the_row_showing_it() -> Result<()> {
+    let shown = evidence("src/guard.rs", Some(0.9), "pub fn restart_guard() {", 0);
+    let valid = || {
+        let mut request = evidence_request();
+        request.segments[0].evidence = vec![
+            shown.clone(),
+            // The same text at another place of the same sub-need.
+            repeat("vendor/guard.rs", None, &shown),
+        ];
+        // The same span gathered for the second sub-need.
+        request.segments[1].evidence = vec![repeat("src/guard.rs", Some(0.4), &shown)];
+        request
+    };
+    validate_cards(&valid())?;
+    let refused = |mutate: fn(&mut NativeCardRequest)| {
+        let mut wrong = valid();
+        mutate(&mut wrong);
+        validate_cards(&wrong).is_err()
+    };
+    assert!(
+        refused(|r| r.segments[1].evidence[0].excerpt = "pub fn".into()),
+        "a repeat shows no text"
+    );
+    assert!(refused(|r| r.segments[1].evidence[0].cut_bytes = 3));
+    assert!(refused(|r| r.segments[1].evidence[0].skipped_bytes = 3));
+    assert!(
+        refused(|r| {
+            let shown = r.segments[0].evidence.remove(0);
+            r.segments[1].evidence.insert(0, shown);
+        }),
+        "the row that shows the text comes first"
+    );
+    assert!(
+        refused(|r| {
+            r.segments[0].evidence.remove(0);
+        }),
+        "a repeat names a row of this call"
+    );
+    assert!(
+        refused(|r| {
+            let other = r.segments[0].evidence[1].place();
+            r.segments[1].evidence[0].same_as = Some(other);
+        }),
+        "a repeat never names another repeat"
+    );
+    assert!(
+        refused(|r| r.segments[1].evidence[0]
+            .same_as
+            .as_mut()
+            .unwrap()
+            .start_line = 0),
+        "a repeat names a whole place"
+    );
+    // A repeat takes none of the allowance: 2,068 reserved tokens allow 25
+    // bytes, enough for the 24 shown and for no second copy.
+    let mut tight = valid();
+    tight.attribution[0].tokens = 2068;
+    tight.remaining_input_tokens = 2068;
+    assert_eq!(evidence_allowance(2068), 25);
+    validate_cards(&tight)?;
+    Ok(())
+}
+
+#[test]
+fn follow_up_segments_state_their_verdict_and_may_show_evidence() -> Result<()> {
+    let mut request = follow_up_request();
+    validate_cards(&request)?;
+    request.segments[0].evidence = vec![evidence(
+        "src/guard.rs",
+        None,
+        "pub fn restart_guard() {",
+        0,
+    )];
+    request.segments[0].unshown = 2;
+    request.segments[1].verdict = Some(CardVerdict {
+        coverage: Coverage::Missing,
+        by_model: true,
+    });
+    validate_cards(&request)?;
+    let mut covered = request.clone();
+    covered.segments[0].verdict = Some(CardVerdict {
+        coverage: Coverage::Covered,
+        by_model: true,
+    });
+    assert!(
+        validate_cards(&covered).is_err(),
+        "a covered sub-need has no follow-up"
+    );
+    let mut unstated = request;
+    unstated.segments[1].verdict = None;
+    assert!(
+        validate_cards(&unstated).is_err(),
+        "a Follow-up segment states its verdict"
+    );
+    let mut coverage = evidence_request();
+    coverage.segments[0].verdict = Some(PARTIAL);
+    assert!(
+        validate_cards(&coverage).is_err(),
+        "Coverage decides the verdict and states none"
+    );
+    Ok(())
+}
+
+#[test]
+fn split_and_plan_segments_carry_no_evidence_or_verdict() -> Result<()> {
     let shown = vec![evidence(
         "src/guard.rs",
         None,
         "pub fn restart_guard() {",
         0,
     )];
-    let mut follow_up = evidence_request();
-    follow_up.task = Task::ContextFollowUp;
-    for segment in &mut follow_up.segments {
-        segment.stage = LoopStage::FollowUp;
-        for card in &mut segment.cards {
-            card.class = CardClass::FollowUpHop;
-        }
+    for (stage, mut request) in [("Plan", plan_request()), ("Split", split_request())] {
+        // A full reservation, so only the stage refuses.
+        request.attribution[0].tokens = 8192;
+        request.remaining_input_tokens = 8192;
+        validate_cards(&request)?;
+        let mut evident = request.clone();
+        evident.segments[0].evidence = shown.clone();
+        assert!(validate_cards(&evident).is_err(), "{stage} shows none");
+        let mut unshown = request.clone();
+        unshown.segments[0].unshown = 1;
+        assert!(validate_cards(&unshown).is_err(), "{stage} counts none");
+        let mut judged = request;
+        judged.segments[0].verdict = Some(PARTIAL);
+        assert!(validate_cards(&judged).is_err(), "{stage} states none");
     }
-    validate_cards(&follow_up)?;
-    follow_up.segments[0].evidence = shown.clone();
-    assert!(validate_cards(&follow_up).is_err(), "Follow-up shows none");
-
-    let mut plan = evidence_request();
-    plan.task = Task::ContextPlan;
-    plan.segments.truncate(1);
-    plan.segments[0].stage = LoopStage::Plan;
-    plan.segments[0].need = 0;
-    plan.segments[0].round = 0;
-    plan.segments[0].multiple = true;
-    plan.attribution[0].round = 0;
-    for card in &mut plan.segments[0].cards {
-        card.class = CardClass::PlanNeed;
-    }
-    validate_cards(&plan)?;
-    plan.segments[0].evidence = shown;
-    assert!(validate_cards(&plan).is_err(), "Plan shows none");
     Ok(())
 }
 
 #[test]
 fn a_call_s_excerpts_stay_within_its_reservation_s_allowance() -> Result<()> {
-    // 2,124 reserved tokens leave 76 excerpt bytes for the whole call.
+    // 2,253 reserved tokens leave 256 excerpt bytes for the whole call.
     let mut request = evidence_request();
-    request.attribution[0].tokens = 2124;
-    request.remaining_input_tokens = 2124;
-    request.segments[0].evidence = vec![evidence("src/a.rs", None, &"a".repeat(40), 0)];
-    request.segments[1].evidence = vec![evidence("src/b.rs", None, &"b".repeat(36), 0)];
+    request.attribution[0].tokens = 2253;
+    request.remaining_input_tokens = 2253;
+    request.segments[0].evidence = vec![evidence("src/a.rs", None, &"a".repeat(200), 0)];
+    request.segments[1].evidence = vec![evidence("src/b.rs", None, &"b".repeat(56), 0)];
     validate_cards(&request)?;
     request.segments[1].evidence[0].excerpt.push('b');
     assert!(
         validate_cards(&request).is_err(),
-        "77 bytes pass the 76-byte allowance"
+        "257 bytes pass the 256-byte allowance"
     );
     // At the frame or below, a call shows no excerpt at all.
     let mut bare = evidence_request();
@@ -620,12 +808,14 @@ fn a_call_s_excerpts_stay_within_its_reservation_s_allowance() -> Result<()> {
     validate_cards(&bare)?;
     bare.segments[0].evidence = vec![evidence("src/a.rs", None, "a", 0)];
     assert!(validate_cards(&bare).is_err());
-    // The full reservation: 8,192 tokens allow 6,144 bytes.
-    let mut full = evidence_request();
-    full.segments[0].evidence = vec![evidence("src/a.rs", None, &"a".repeat(6144), 0)];
-    validate_cards(&full)?;
-    full.segments[0].evidence[0].excerpt.push('a');
-    assert!(validate_cards(&full).is_err());
+    // The full reservation: 8,192 tokens allow 7,680 bytes. Follow-up has
+    // the same allowance.
+    for mut full in [evidence_request(), follow_up_request()] {
+        full.segments[0].evidence = vec![evidence("src/a.rs", None, &"a".repeat(7680), 0)];
+        validate_cards(&full)?;
+        full.segments[0].evidence[0].excerpt.push('a');
+        assert!(validate_cards(&full).is_err());
+    }
     Ok(())
 }
 
@@ -652,23 +842,41 @@ fn a_segment_without_evidence_keeps_its_wire_form() -> Result<()> {
             "stage",
             "subject"
         ],
-        "no evidence key, so an evidence-free request hashes as before"
+        "no evidence, unshown or verdict key, so such a request hashes as before"
     );
     let read: CardSegment = serde_json::from_value(bare)?;
-    assert!(read.evidence.is_empty());
+    assert!(read.evidence.is_empty() && read.unshown == 0 && read.verdict.is_none());
     let mut shown = segment(2, 1);
+    let mut first = evidence("src/guard.rs", Some(0.5), "pub fn restart_guard() {", 0);
+    first.skipped_bytes = 3;
+    first.truncated = true;
+    let second = evidence("docs/guard.md", None, &"#".repeat(256), 7);
     shown.evidence = vec![
-        evidence("src/guard.rs", Some(0.5), "pub fn restart_guard() {", 7),
-        evidence("docs/guard.md", None, "# Restart guard", 0),
+        first,
+        second.clone(),
+        repeat("vendor/guard.md", None, &second),
     ];
+    shown.unshown = 1;
+    shown.stage = LoopStage::FollowUp;
+    shown.verdict = Some(PARTIAL);
+    let wire = serde_json::to_value(&shown)?;
     assert_eq!(
-        serde_json::to_value(&shown)?["evidence"],
+        wire["evidence"],
         serde_json::json!([
             {"path":"src/guard.rs","start_line":10,"end_line":40,"focus":0.5,
-             "excerpt":"pub fn restart_guard() {","cut_bytes":7},
+             "excerpt":"pub fn restart_guard() {","skipped_bytes":3,"cut_bytes":0,
+             "truncated":true},
             {"path":"docs/guard.md","start_line":10,"end_line":40,
-             "excerpt":"# Restart guard","cut_bytes":0}
+             "excerpt":"#".repeat(256),"skipped_bytes":0,"cut_bytes":7,"truncated":false},
+            {"path":"vendor/guard.md","start_line":10,"end_line":40,
+             "excerpt":"","skipped_bytes":0,"cut_bytes":0,"truncated":false,
+             "same_as":{"path":"docs/guard.md","start_line":10,"end_line":40}}
         ])
+    );
+    assert_eq!(wire["unshown"], 1);
+    assert_eq!(
+        wire["verdict"],
+        serde_json::json!({"coverage":"partial","by_model":false})
     );
     Ok(())
 }

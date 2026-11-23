@@ -17,11 +17,14 @@ pub(super) struct Seg {
     pub(super) cards: Vec<LoopCard>,
     /// The text the roster is about: the question, a part or a sub-need.
     pub(super) subject: String,
-    /// The whole spans a decision taken without a card call rests on.
+    /// The whole spans the deterministic order reads: the basis of every
+    /// decision that a model's choice does not settle.
     pub(super) basis: Vec<EvidenceRef>,
-    /// A Coverage roster's ranked spans, which a card call shows as bounded
-    /// excerpts; empty for every other stage.
+    /// A Coverage or Follow-up roster's ranked spans, which a card call
+    /// shows as bounded excerpts; empty for Split and Plan.
     pub(super) spans: Vec<coverage::Span>,
+    /// The sub-need's coverage verdict, which a Follow-up roster states.
+    pub(super) verdict: Option<airk_core::native_loop::CardVerdict>,
     /// The deterministic choice.
     pub(super) fallback: Vec<usize>,
     pub(super) rule: v3::DeterministicRule,
@@ -36,6 +39,16 @@ pub(super) struct Choice {
 type Scored = (v3::DecisionSource, Vec<usize>, ModelFacts);
 /// What a dispatched card call presented to a decision, and what it left out.
 type Basis = (Vec<EvidenceRef>, Vec<EvidenceRef>);
+
+/// One batched card call's result.
+enum Called {
+    /// Dispatched: each roster's decision, and what the call showed it.
+    Done(Vec<Scored>, Vec<Basis>),
+    /// Not dispatched, although a model is present: the budget
+    /// (`TokenBudget`: slots, tokens or excerpt room), the time (`Deadline`)
+    /// or the model's state (`Unavailable`) did not allow it.
+    Not(AssessmentUnavailable),
+}
 
 /// The ModelShare disclosure is defined for these stages only.
 fn shared_stage(stage: v3::LoopStage) -> bool {
@@ -86,15 +99,17 @@ impl Loop<'_> {
         let mut out = Vec::with_capacity(segs.len());
         let mut index = 0;
         while index < segs.len() {
-            let scored = segs[index].cards.len() >= 2;
-            let model = if scored { self.model_ready() } else { None };
-            let Some(model) = model else {
-                // A roster the model would have scored but could not (it
-                // was blocked, declined or the configuration changed).
-                if scored && self.model.is_some() {
-                    self.disclose_share(&segs[index..=index]);
-                }
-                let seg = &segs[index];
+            let seg = &segs[index];
+            // The no-model path: no Context model takes part, or the roster
+            // holds one card, which is never scored.
+            let present = self.model.filter(|model| {
+                seg.cards.len() >= 2
+                    && matches!(
+                        model.model,
+                        device::SelectedModel::ContextCompact | device::SelectedModel::ContextLarge
+                    )
+            });
+            let Some(present) = present else {
                 self.ledger.deterministic(
                     seg.at,
                     &seg.cards,
@@ -106,6 +121,19 @@ impl Loop<'_> {
                     chosen: seg.fallback.clone(),
                     model: false,
                 });
+                index += 1;
+                continue;
+            };
+            let Some(model) = self.model_ready() else {
+                // A model is present but cannot be used now: it is blocked
+                // after a lost or declined call, the configuration changed
+                // or the stage is not ready. The log says so.
+                self.disclose_share(&segs[index..=index]);
+                out.push(self.not_dispatched(
+                    seg,
+                    AssessmentUnavailable::Unavailable,
+                    present.model,
+                )?);
                 index += 1;
                 continue;
             };
@@ -124,11 +152,20 @@ impl Loop<'_> {
             }
             let group = &segs[index..end];
             match self.call(group, model)? {
-                Some((results, shown)) => {
-                    for ((seg, (source, chosen, facts)), basis) in
+                Called::Done(results, shown) => {
+                    for ((seg, (source, chosen, facts)), shown) in
                         group.iter().zip(results).zip(shown)
                     {
+                        // The log names what the decision that stands rests
+                        // on. Only a model's choice rests on the excerpts;
+                        // an abstained, refused or lost call leaves the
+                        // deterministic order, which read the whole spans.
                         let model = source.kind() == v3::SourceKind::Model;
+                        let basis = if model {
+                            shown
+                        } else {
+                            (seg.basis.clone(), vec![])
+                        };
                         self.ledger.record(
                             seg.at,
                             &seg.cards,
@@ -140,20 +177,10 @@ impl Loop<'_> {
                         out.push(Choice { chosen, model });
                     }
                 }
-                None => {
+                Called::Not(reason) => {
                     self.disclose_share(group);
                     for seg in group {
-                        self.ledger.deterministic(
-                            seg.at,
-                            &seg.cards,
-                            &seg.fallback,
-                            seg.rule,
-                            seg.basis.clone(),
-                        )?;
-                        out.push(Choice {
-                            chosen: seg.fallback.clone(),
-                            model: false,
-                        });
+                        out.push(self.not_dispatched(seg, reason, model.model)?);
                     }
                 }
             }
@@ -162,26 +189,56 @@ impl Loop<'_> {
         Ok(out)
     }
 
-    /// One batched card call. `None`: not dispatched, decide deterministically.
-    /// A dispatched call returns each roster's decision with what the call
-    /// presented to it.
-    fn call(
+    /// A Context model is present but its card call for this roster is not
+    /// dispatched: the deterministic order decides on the whole spans, and
+    /// the record names the model and the reason.
+    fn not_dispatched(
         &mut self,
-        group: &[Seg],
-        model: LoopModel,
-    ) -> Result<Option<(Vec<Scored>, Vec<Basis>)>> {
+        seg: &Seg,
+        reason: AssessmentUnavailable,
+        model: device::SelectedModel,
+    ) -> Result<Choice> {
+        self.ledger.record(
+            seg.at,
+            &seg.cards,
+            &seg.fallback,
+            v3::DecisionSource::NotDispatched {
+                fallback: seg.rule,
+                reason,
+            },
+            (seg.basis.clone(), vec![]),
+            Some(ModelFacts {
+                model: Some(model),
+                ..ModelFacts::default()
+            }),
+        )?;
+        Ok(Choice {
+            chosen: seg.fallback.clone(),
+            model: false,
+        })
+    }
+
+    /// One batched card call. A dispatched call returns each roster's
+    /// decision with what the call presented to it; a call that is not
+    /// dispatched says why, and the deterministic order decides.
+    fn call(&mut self, group: &[Seg], model: LoopModel) -> Result<Called> {
+        use AssessmentUnavailable::{Deadline, TokenBudget, Unavailable};
         let budget = &self.request.budget;
         let stage = group[0].at.stage;
         let Some(attempt) = self.context.attempt else {
-            return Ok(None);
+            return Ok(Called::Not(Unavailable));
         };
         let Ok(Some((clock, now_ns))) = self.context.owner.focus_clock() else {
             self.model_blocked = true;
-            return Ok(None);
+            return Ok(Called::Not(Unavailable));
         };
-        if self.stop_due() || self.card_slots >= budget.context_calls {
+        if self.stop_due() {
             self.disclose_share(group);
-            return Ok(None);
+            return Ok(Called::Not(Deadline));
+        }
+        if self.card_slots >= budget.context_calls {
+            self.disclose_share(group);
+            return Ok(Called::Not(TokenBudget));
         }
         // The slot is the first segment's part's (Split is charged before
         // the shares exist).
@@ -190,7 +247,7 @@ impl Loop<'_> {
             && self.used_slots[index] >= self.shares.parts[index].card_slots
         {
             self.disclose_share(group);
-            return Ok(None);
+            return Ok(Called::Not(TokenBudget));
         }
         // Model time: the part's share of what is left, per round left.
         let left = self
@@ -203,7 +260,7 @@ impl Loop<'_> {
             .saturating_sub(usize::from(group[0].at.round.unwrap_or(1)).saturating_sub(1));
         if self.cost.estimate(stage) > self.shares.round_model_ms(left, rounds_left) {
             self.disclose_share(group);
-            return Ok(None);
+            return Ok(Called::Not(Deadline));
         }
         // Tokens: one call's reservation, attributed by card count with the
         // remainder to the lowest part and round.
@@ -225,13 +282,27 @@ impl Loop<'_> {
                 _ => usize::MAX,
             })
             .fold(0usize, usize::saturating_add);
+        // It also stays within what each charged part-round has left, so a
+        // round near its allowance gets a smaller call (with shorter
+        // excerpts) where a whole 8,192-token reservation no longer fits.
+        let round_left = weights
+            .keys()
+            .filter(|(_, round)| *round > 0)
+            .map(|key| {
+                budget
+                    .round_input_tokens
+                    .saturating_sub(self.used_tokens.get(key).copied().unwrap_or(0))
+            })
+            .min()
+            .unwrap_or(usize::MAX);
         let reserve = v3::CONTEXT_CALL_TOKENS
             .min(budget.input_tokens.saturating_sub(used))
-            .min(shares_left);
+            .min(shares_left)
+            .min(round_left);
         let total: usize = weights.values().sum();
         if reserve < weights.len() || total == 0 {
             self.disclose_share(group);
-            return Ok(None);
+            return Ok(Called::Not(TokenBudget));
         }
         // Every charged part and round gets at least one token, the rest
         // by card count, the remainder to the lowest.
@@ -264,25 +335,29 @@ impl Loop<'_> {
                         > budget.round_input_tokens
         }) {
             self.disclose_share(group);
-            return Ok(None);
+            return Ok(Called::Not(TokenBudget));
         }
+        // Coverage and Follow-up show each sub-need's ranked spans as
+        // excerpts, cut to the excerpt allowance of this call's token
+        // reservation. A call that cannot show every span a useful excerpt
+        // is not made: a model has nothing to judge by.
+        let shown: Vec<coverage::Shown> =
+            if matches!(stage, v3::LoopStage::Coverage | v3::LoopStage::FollowUp) {
+                let needs: Vec<&[coverage::Span]> =
+                    group.iter().map(|seg| seg.spans.as_slice()).collect();
+                let allowance = airk_core::native_loop::evidence_allowance(reserve);
+                match coverage::present(&self.gather, &needs, allowance) {
+                    Some(shown) => shown,
+                    None => {
+                        self.disclose_share(group);
+                        return Ok(Called::Not(TokenBudget));
+                    }
+                }
+            } else {
+                vec![coverage::Shown::default(); group.len()]
+            };
         let slot = u8::try_from(self.card_slots + 1)?;
         let first = self.ledger.next_ordinal()?;
-        // Coverage shows each sub-need's ranked spans as excerpts, cut to
-        // the excerpt allowance of this call's token reservation. The log
-        // then records exactly the byte ranges shown and the ones left out.
-        let mut shown = if stage == v3::LoopStage::Coverage {
-            let needs: Vec<&[coverage::Span]> =
-                group.iter().map(|seg| seg.spans.as_slice()).collect();
-            coverage::present(
-                &self.gather,
-                &needs,
-                airk_core::native_loop::evidence_allowance(reserve),
-            )
-        } else {
-            vec![]
-        };
-        shown.resize_with(group.len(), coverage::Shown::default);
         let segments: Vec<CardSegment> = group
             .iter()
             .zip(&shown)
@@ -298,18 +373,15 @@ impl Loop<'_> {
                 cards: seg.cards.clone(),
                 multiple: stage == v3::LoopStage::Plan,
                 evidence: shown.evidence.clone(),
+                unshown: shown.unshown,
+                verdict: seg.verdict,
             })
             .collect();
-        let basis: Vec<Basis> = group
-            .iter()
-            .zip(shown)
-            .map(|(seg, shown)| {
-                if stage == v3::LoopStage::Coverage {
-                    (shown.presented, shown.omitted)
-                } else {
-                    (seg.basis.clone(), vec![])
-                }
-            })
+        // What the call shows each roster; the log uses it only for a
+        // decision the model takes.
+        let basis: Vec<Basis> = shown
+            .into_iter()
+            .map(|shown| (shown.presented, shown.omitted))
             .collect();
         // A model call never runs into the Compose and Union reserve.
         let model_deadline = self.model_deadline();
@@ -318,7 +390,7 @@ impl Loop<'_> {
             .as_millis() as u64;
         if model_left == 0 {
             self.disclose_share(group);
-            return Ok(None);
+            return Ok(Called::Not(Deadline));
         }
         let remaining_ms = model_left.min(budget.deadline_ms);
         let request = NativeCardRequest {
@@ -341,7 +413,7 @@ impl Loop<'_> {
             .is_err()
         {
             self.model_blocked = true;
-            return Ok(None);
+            return Ok(Called::Not(Unavailable));
         }
         self.card_slots += 1;
         if let Some(index) = charged {
@@ -384,7 +456,7 @@ impl Loop<'_> {
                     self.used_slots[index] -= 1;
                 }
                 self.model_blocked = true;
-                Ok(None)
+                Ok(Called::Not(Unavailable))
             }
             Err(error) if error.is::<airk_core::scoped_reads::ScopeReadRefused>() => Err(error),
             Ok(Some(advice)) if self.acceptable(&request, &advice, group) => {
@@ -450,7 +522,7 @@ impl Loop<'_> {
                         .or_default() += charge.tokens;
                 }
                 self.ledger.receipts.push(advice);
-                Ok(Some((results, basis)))
+                Ok(Called::Done(results, basis))
             }
             _ => {
                 // Lost or unusable after dispatch: the reservation stays
@@ -466,7 +538,7 @@ impl Loop<'_> {
                         .entry((charge.part, charge.round))
                         .or_default() += charge.tokens;
                 }
-                Ok(Some((
+                Ok(Called::Done(
                     group
                         .iter()
                         .enumerate()
@@ -482,7 +554,7 @@ impl Loop<'_> {
                         })
                         .collect(),
                     basis,
-                )))
+                ))
             }
         }
     }
@@ -723,8 +795,18 @@ impl Loop<'_> {
             if ranking.unknown {
                 self.focus_blocked = true;
             }
-            for ((slot, index), relevance) in owners.into_iter().zip(&ranking.relevance) {
-                entries[start + slot].2[index].focus = *relevance;
+            for (((slot, index), relevance), from) in owners
+                .into_iter()
+                .zip(&ranking.relevance)
+                .zip(&ranking.starts)
+            {
+                let span = &mut entries[start + slot].2[index];
+                span.focus = *relevance;
+                // An excerpt of a scored span starts where its scored text
+                // starts, so the relevance beside it describes what is shown.
+                if relevance.is_some() {
+                    span.from = *from;
+                }
             }
             ensure!(
                 usize::from(ranking.ordinal) > self.ledger.focus.len(),

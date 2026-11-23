@@ -263,32 +263,78 @@ What holds:
   per projection (`hits_total`, `rows_total`, `truncated`); a part is
   `shortened` only when records are omitted, as Core validates against
   `omitted_count`.
-- **Coverage rosters show bounded evidence excerpts** (change log entry 43).
-  - A Coverage card call shows each sub-need the spans gathered for it this
-    round, in Focus rank order, as `CardEvidence` rows of its `CardSegment`.
+- **Card rosters show bounded evidence excerpts** (change log entries 43
+  and 44).
+  - A Coverage or Follow-up card call shows each sub-need the spans gathered
+    for it this round, in Focus rank order, as `CardEvidence` rows of its
+    `CardSegment`.
   - The call's excerpts total at most its excerpt allowance (Core
-    `native_loop::evidence_allowance` of the tokens the call reserves: 6,144
-    bytes at 8,192 tokens). The existing reservation bounds it; no budget,
-    share or pool rule changed.
-  - `coverage::excerpt_cuts` decides the cut. Every span of the call first
-    gets an equal share of the allowance. What the shorter texts leave goes
-    to the cut ones in call order (segment order, then rank). Each excerpt
-    then ends on a character boundary. The result depends only on the texts,
-    their order and the allowance.
-  - Excerpts are prefixes of hits of records already read and retained under
+    `native_loop::evidence_allowance` of the tokens the call reserves: 7,680
+    bytes at 8,192 tokens). The existing reservation bounds it.
+  - **Where an excerpt starts:** at the start of the text Focus scored (the
+    span's Focus window, `software::focus_window`, carried back from the
+    Focus ranking), or at the start of the span when Focus did not score it.
+    The relevance beside an excerpt therefore describes the text shown.
+    `skipped_bytes` and `cut_bytes` say what lies before and after it, and
+    `truncated` repeats `Hit.truncated`.
+  - **A text is shown once in a call.** A later span of the call with the
+    same text (the same span gathered for a second sub-need, or a copy at
+    another place) is a row that names the row showing it (`same_as`) and
+    takes none of the allowance. The comparison is of whole span texts
+    within one call. Overlapping spans, and repeats across calls, rounds and
+    parts, are not merged here.
+  - **The cut** (`coverage::excerpt_cuts`): every shown text gets the same
+    number of bytes, or all of itself where it is shorter; that number is
+    the largest that keeps the sum within the allowance. Each excerpt then
+    ends on a character boundary. The result depends only on the texts and
+    the allowance, not on their order.
+  - **No call without room.** A cut excerpt shows at least
+    `MIN_EXCERPT_BYTES` (256). When the allowance cannot give every shown
+    span that much, or all the span has, the call is not made
+    (`coverage::present` returns `None`): the deterministic order decides,
+    the decision is logged `not_dispatched` with reason `token_budget`, and
+    the part's `ModelShare` is disclosed. A call for sub-needs with no spans
+    is made without evidence.
+  - Excerpts are parts of hits of records already read and retained under
     the Answer's revision fence. Building them reads nothing.
-  - The roster's subject names the sub-need's kind in the words of its Plan
-    card (`plan::wording`, for example `need callers: restart_guard`). A
-    definition and a callers sub-need of one identifier have the same query,
-    so the bare query did not say what evidence to look for.
-- **The log says what a Coverage call showed.**
-  - For a decision taken in a dispatched Coverage call (model, abstained or
-    unavailable), the entry's `basis` is the byte range of each excerpt, and
-    `basis_omitted` is every cut tail and every span not shown at all. The
-    reply's compact basis counts both, so a cut is visible in the reply.
-  - A decision taken without a card call is unchanged. No excerpt is built,
-    and its basis names the whole spans the deterministic rule read.
-
+  - **Subjects:** a Coverage and a Follow-up roster name the sub-need in the
+    words of its Plan card (`plan::wording`, for example
+    `need callers: restart_guard`). A definition and a callers sub-need of
+    one identifier have the same query, so the bare query did not say what
+    evidence to look for.
+  - **Follow-up verdict:** a Follow-up roster states its sub-need's coverage
+    (`partial` or `missing`) and whether a model's Coverage choice or the
+    deterministic order set it (`NeedState::coverage_by_model`).
+- **A card call's reservation** is the least of 8,192 tokens, the pool left,
+  the charged parts' token shares left, and what each charged part and round
+  has left of its round allowance. The last cap is new in entry 44: a round
+  near its allowance gets a smaller call with shorter excerpts, where a
+  whole reservation would have been refused.
+- **The log says what each decision rests on** (Core contract, "What the
+  log's basis means").
+  - Only a decision a model took rests on excerpts: its `basis` is the byte
+    range of each excerpt, and `basis_omitted` is the text before and after
+    each excerpt and every span not shown. The reply's compact basis counts
+    both, so a cut is visible in the reply.
+  - A decision the deterministic order took names the whole spans and omits
+    nothing. That covers the no-model path, a call not dispatched, a call
+    the lane refused before model work, a lost call and an abstention. The
+    basis is chosen after the call's outcome is known (`model::decide`).
+- **A reader can tell how each decision was taken.** A roster a present
+  model did not score is logged `not_dispatched` with the model and a reason
+  (`token_budget`, `deadline` or `unavailable`); `deterministic` is the
+  no-model path or a one-card roster. `context_absent` is disclosed when no
+  card call was dispatched at all.
+- **Model-time shedding.** `shares::CostModel` keeps one estimate per Answer
+  and stage: 12,000 ms before the stage's first call
+  (`software::FIRST_CONTEXT_ESTIMATE_MS`), then three quarters of the old
+  value plus one quarter of each call's measured wall time. It has no
+  per-profile constant; one Answer runs on one Context profile, so after a
+  stage's first call it follows that profile and device. A card call is not
+  sent when the estimate exceeds the part's model time for the barrier
+  (`Shares::round_model_ms`: the time left before the Compose and Union
+  reserve, divided by the active parts and the rounds left). The decision is
+  then logged `not_dispatched` with reason `deadline`.
 What does not hold yet, with the follow-up owner:
 
 - **Canonical reads are not cancelled at the reserve** (L4/L2b). A read
@@ -330,18 +376,38 @@ What does not hold yet, with the follow-up owner:
   `pack_native_response`, `native_response_bytes`, `software::Layers` and
   `focus::bind_focus_shape` remain, with their tests; the MCP handler no
   longer reaches them. Change log entry 40.
-- **Follow-up rosters show no evidence** (owner: the primary agent assigns;
-  found while closing the Coverage gap, change log entry 43). A Follow-up
-  roster's subject is the sub-need's bare query, without its kind, and its
-  cards are the candidate reads. The model sees neither the coverage verdict
-  nor any text that was read. Core refuses evidence on a segment that is not
-  Coverage, so showing it there needs a recorded wire decision, and that
-  moves the loop identities again. Naming the kind in the subject is a
-  kernel-only change that moves no identity.
-- **A span is cut from its start only** (limit). An excerpt is the first
-  bytes of its span's text. A span whose relevant lines come after the cut
-  shows the model its beginning; the cut is disclosed (`cut` in the view,
-  `basis_omitted` in the log), not corrected.
+- **An unscored span is shown from its start** (limit). Without a Focus
+  score an excerpt is the first bytes of its span's text. A span whose
+  relevant lines come after the cut shows the model its beginning; the cut
+  is disclosed (`after` in the view, `basis_omitted` in the log), not
+  corrected. A snippet is marked (`snippet`), not completed.
+- **The allowance ignores a profile's compiler ceiling** (review L1 of
+  `54b1e7a2`; owner: whoever admits the card tasks on a CPU Context
+  profile). A call reserves up to 8,192 tokens whatever the profile, and the
+  compiler refuses an input above the profile's `max_tokens`. The CUDA
+  Context profiles of the gate are 8,192. On a 2,048-token profile every
+  call with evidence would be refused before model work and decided by the
+  deterministic order. Fix: size the allowance from the smaller of the
+  reservation and the profile's ceiling.
+- **`basis.omitted` counts two things** (review L3; owner: the primary
+  agent, with the next Core wire decision). A range cut from a shown span
+  and a span not shown at all are each one unit, so the reply's compact
+  count cannot tell them apart. The log's `basis_omitted` ranges can.
+- **The measured frame is a model of the view, not the view** (review L5;
+  owner: whoever next changes the view's texts). The measurement script
+  copies the prompt, question and rules texts by hand, and nothing checks
+  them against `loop_cards.rs`. A Rust test that prints the compiled token
+  count of a real view under the real tokenizer would replace it.
+- **The 2,048-token frame is assumed, not checked** (review L6; owner: the
+  primary agent). Core accepts a 16,384-byte subject, eight 1,024-byte cards
+  and 4,096-byte paths, so a call can pass the frame. The lane then refuses
+  it before model work and the deterministic order decides. Nothing bounds
+  the frame's parts to make that impossible.
+- **Repeats are merged within one call only** (owner: the duplicate rule,
+  change log entry 45). The same text at two places, or the same span for
+  two sub-needs, is shown once in a card call. Overlapping spans of one
+  file, and repeats across calls, rounds, parts and the reply, are not
+  merged yet.
 
 ### Review findings and resolutions (Answer /3 loop)
 

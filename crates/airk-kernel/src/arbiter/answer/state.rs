@@ -20,6 +20,9 @@ pub(crate) struct RoundState {
 pub(crate) struct NeedState {
     pub(crate) need: Need,
     pub(crate) coverage: v3::Coverage,
+    /// A model's Coverage choice set the verdict at the latest barrier;
+    /// otherwise the deterministic order did.
+    pub(crate) coverage_by_model: bool,
     /// Record indexes this sub-need cites.
     pub(crate) evidence: Vec<usize>,
     /// The latest round's ranked spans.
@@ -38,6 +41,7 @@ impl NeedState {
         Self {
             need,
             coverage: v3::Coverage::Missing,
+            coverage_by_model: false,
             evidence: vec![],
             spans: vec![],
             history: vec![],

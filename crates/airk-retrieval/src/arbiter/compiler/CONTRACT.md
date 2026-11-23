@@ -203,7 +203,8 @@ choice-to-decision mapping moved into `loop_cards.rs`, Plan selection took
 `native_loop/card_model.rs`.
 
 **Fourth move: Coverage evidence excerpts (recorded decision, 22 November
-2026; change log entry 43).** The values below are current.
+2026; change log entry 43).** These values were replaced by the fifth move
+below.
 
 - **Why they moved:** two digest inputs changed. Core `native_loop.rs`
   gained `CardEvidence`, the `evidence` field of `CardSegment`, their
@@ -233,6 +234,46 @@ choice-to-decision mapping moved into `loop_cards.rs`, Plan selection took
 | `airk.context_follow_up.v1` | `89809e2d8377aaa29a14c86d87d2243336e079a0b1cbf9e378498f45fa62de15` | `104b24bbda6baccb77609f1bbe1490f8c9beacc526c839ba920665c291f391b1` |
 | Batched Focus over the release pair policy | `50ba5c856d5f3ed81d86eacd62094de14599f56fcb39939126643758a7fae04a` | `19e8564765aaa68cad46fb08c287c22f78399657ab3e9e1ae345790b2dda0df4` |
 
+**Fifth move: Follow-up evidence and the review of the fourth move
+(recorded decision, 22 November 2026; change log entry 44).** The values
+below are current.
+
+- **Why they moved:** three digest inputs changed.
+  - Core `native_loop.rs`: the evidence fields `skipped_bytes`, `truncated`
+    and `same_as`, the segment fields `unshown` and `verdict`, evidence on
+    Follow-up segments, the least excerpt and the allowance of five bytes
+    for four tokens.
+  - Core `answer_loop/cards.rs`: the decision source `not_dispatched`; and a
+    doc comment of `answer_loop/log.rs` on what a basis means.
+  - `loop_cards.rs`, hashed by the four card policies: the view's fixed key
+    order, the Follow-up verdict and evidence, the new row fields, the
+    rewritten decision marker and the corrected rules texts.
+- **What a Context model is shown changed for all four stages.** Coverage
+  and Follow-up views gained content. Split and Plan views hold the same
+  values in a different key order (`task`, `rules`, `segments`). Batched
+  Focus ranking did not change; its identity moved because it hashes the
+  Core loop semantics.
+- **Proof that the old values no longer describe the source:** the control
+  `recorded_loop_policy_identities`, run on the changed source with the
+  values of `54b1e7a2` still pinned, fails at the first identity (private
+  receipts `answer-loop/L4/int2-nextest-ids-old-pins.log` and
+  `int2-nextest-ids-live.log`). The pins were then moved to the values the
+  source produces. No check was removed.
+- **What did not move:** `compiler.rs` and `compiler/qwen.rs` (the Qwen
+  compiler policy), `runtime.rs` (the FP16 math policies), the closed CPU
+  Focus row, the release Focus pair policy and the one-turn Context policy.
+  A profile that declares the card tasks must be emitted with the new task
+  policies; one emitted with the old ones is refused at admission.
+
+| Identity | Before (`54b1e7a2`) | Now |
+| --- | --- | --- |
+| Core loop semantics | `307cb4a31434224446ee3712207c0aacbb6ab71d1fa556058e0eba789f35bb50` | `2f89a3ae30da2ed9b8a01625babd0b276ea2c5f61e6fa199c969792742264065` |
+| `airk.context_split.v1` | `fecca3cb9efebbe23abf2c9e029608fe377b07eed20acbe859c37e5c2c9f8377` | `f1ecc7d9755edc7d6d165e752a1ae461d500b5269f998c35fd960644524f12da` |
+| `airk.context_plan.v1` | `487f22fdf94b0eabeb396184e7abc3cafc48ae6a826eeade9a91a19de84f1db5` | `064ec90a339ea369e1c9161d7aed2a3d2a2dbf1d180a844c0b6ed1b052959ba1` |
+| `airk.context_coverage.v1` | `846f1db0ae1af64921166cc29e872e1094b842606cf6824353e32204e8f4bf58` | `c2eab6c9e147edaf437a407e5999f5674b3013f5d7b5d21f3c3ffa473643cfce` |
+| `airk.context_follow_up.v1` | `104b24bbda6baccb77609f1bbe1490f8c9beacc526c839ba920665c291f391b1` | `b1edccc6d81d102beaa6c3fec2e4052e6147401278dc3f32c7ff8b79fe6614a1` |
+| Batched Focus over the release pair policy | `19e8564765aaa68cad46fb08c287c22f78399657ab3e9e1ae345790b2dda0df4` | `f90f9c773879cc23d462e0c99d485ed219666dff6d57cc5cd2479e80c450798f` |
+
 **Rosters.** Kernel code proposes every card; this owner never adds, drops
 or rewrites one. Before compile it checks each segment's shape beyond Core's
 validation: symbols are the prefix A, B, C, ...; a call is one stage with at
@@ -244,29 +285,63 @@ that breaks these refuses. This replaces the design's rebuild-from-proposals
 proof, because the proposers live in the kernel (L3) and the decision log
 already binds each roster by `roster_digest`.
 
-**Model view.** One prompt per card call: state
-`{task, segments: [{s, part, need, round, subject, cards}], rules}` of at most
+**Model view.** One prompt per card call: a state document of at most
 65,536 bytes, the stage question, and candidates `c1..c8` in call order with
 text `[s<k>] <card text>`. Machine identities never enter it.
 
-**Coverage evidence in the view (change log entry 43).** Before this change
-the Coverage view held no evidence text, although its question asks for the
-verdict "given only its shown evidence". Now every Coverage segment has an
-`evidence` list, in the request's order (Focus rank order, checked by Core):
+- **Key order is part of the view.** The state is built from typed rows, so
+  its keys are in a fixed order whatever map type `serde_json` uses: `task`,
+  `rules`, `segments`; and in a segment `s`, `part`, `need`, `round`,
+  `subject`, `verdict`, `verdict_by`, `evidence`, `not_shown`, `cards`. The
+  model reads the rules before the evidence and the evidence before the
+  cards. Four tests pin the bytes of a Coverage, a Follow-up, a Plan and a
+  Split view.
+- **Split and Plan** segments hold `s`, `part`, `need`, `round`, `subject`
+  and `cards`, and the base rules alone.
 
-- each row is `{at, focus, text, cut}`: `at` is `path:start-end`, the form a
-  Covered card cites; `focus` is the span's relevance to three decimals, and
-  is absent when Focus did not score it; `text` is the excerpt; `cut` is the
-  bytes of the span's text left out, and is absent when nothing was cut;
-- a sub-need with no excerpt has `evidence: []`, so the view says there is no
-  text to judge by;
-- the Coverage `rules` text gains two sentences that explain the rows; the
-  other stages' views and rules are unchanged, and carry no `evidence` key;
+**Evidence and verdict in the view (change log entries 43 and 44).** Every
+Coverage and Follow-up segment has an `evidence` list, in the request's
+order (Focus rank order, checked by Core):
+
+- a row is `{at, focus, text, before, after, snippet, same_as}`:
+  - `at` is `path:start-end`, the form a Covered card cites;
+  - `focus` is the span's relevance to three decimals, absent when Focus did
+    not score it;
+  - `text` is the excerpt;
+  - `before` and `after` are the bytes of the span's text left out before
+    and after the excerpt, each absent when zero;
+  - `snippet` is present (true) when the read itself returned only part of
+    the text there;
+  - a repeat row has `same_as`, the `path:start-end` of the row that shows
+    its text, and no `text`;
+- `not_shown` counts gathered spans the call shows nothing of, and is absent
+  when zero;
+- a sub-need with nothing to show has `evidence: []`;
+- a Follow-up segment has `verdict` (`partial` or `missing`) and
+  `verdict_by` (`model` or `fixed rules`);
+- **rules:** Coverage and Follow-up add sentences that explain the rows.
+  They say what the list holds (this round's spans; not earlier rounds, and
+  not reads that return only locations) and how it is ordered (scored spans
+  first, highest first, then the gathered order). Follow-up also explains
+  the verdict and what each kind of proposed read does;
+- **the decision marker:** the compiler refuses an input that holds
+  `<decision>`. The view writes it `<¦decision¦>`, as the compiler writes
+  every other control token, in the state and in the card texts. Indexed
+  text that quotes the marker therefore costs nothing. The request, its
+  input digest and the decision log keep the original text and byte ranges;
+  `compiler.rs` is unchanged;
+- **indexed text is data:** the state is one JSON document, quoted again by
+  the Qwen recipe. A test puts quotes, backslashes, chat-template tokens,
+  the decision marker and text imitating rules, options and evidence rows
+  through the view, the compiler's escape and the prompt, and checks that
+  the prompt keeps its three turns and two options and that the text arrives
+  as one string. What an indexed file can still do is fill its own excerpt
+  with misleading words; the model only scores the kernel's cards, and
+  calibration gates acceptance;
 - the view shows what the request carries and never cuts or reorders it. The
   kernel bounds the excerpts by the call's token reservation and Core
-  refuses a request above the allowance (Core arbiter contract, "Coverage
-  evidence excerpts").
-
+  refuses a request above the allowance (Core arbiter contract, "Evidence,
+  verdict and calls not dispatched").
 Card texts, rosters, selection and the decision mapping are unchanged.
 
 **Selection** (`loop_cards::select`), per segment from that segment's slice

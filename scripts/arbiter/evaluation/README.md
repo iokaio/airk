@@ -10,8 +10,10 @@ proof of the L4 `runtime.rs` movement from Git history; it is read-only.
 ## Card excerpt token cost
 
 [card_excerpt_tokens](card_excerpt_tokens/README.md) measures, with a profile's
-tokenizer, how many tokens the Answer loop's Coverage evidence excerpts need a
-byte and how large a whole Coverage card call is; it is read-only.
+tokenizer, how many tokens a byte the Answer loop's Coverage and Follow-up
+evidence excerpts need on the text of given repositories, and how large the
+view around them is. It is the evidence for the excerpt allowance, and it is
+read-only.
 
 ## Private Windows Compact FP32 Answer comparison
 

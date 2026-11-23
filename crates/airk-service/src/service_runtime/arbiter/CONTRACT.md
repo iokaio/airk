@@ -886,6 +886,16 @@ enrolled for Context and the profile declares all four card tasks; otherwise
 `None`, and the kernel's deterministic order decides. Large is never
 reported on the CPU.
 
+**A card input the lane refuses** (change log entry 44). A card call with
+evidence can compile to more tokens than it reserved, when its excerpts are
+number tables or runs of escaped characters, and the compiler can refuse an
+input outright. The lane reports both as `KnownInputRefusal` before any
+model work. The settlement then releases the reservation, keeps the slot
+used, and returns advice with zero observed tokens and every segment
+unavailable (`INPUT_REFUSED`). The kernel takes the deterministic order for
+those rosters on the whole spans, and the model goes on to its next call.
+Test: `an_input_the_lane_refuses_releases_the_reservation_and_decides_nothing`,
+for an input one token above its reservation and for a compiler refusal.
 **A service built without `local-inference`** has no native model path.
 After the same scope and configuration checks, `card_model` reports `None`
 and `score_cards` and `focus_batch` return `None` without a reservation, so

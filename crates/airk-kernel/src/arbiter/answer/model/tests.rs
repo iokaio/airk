@@ -30,6 +30,10 @@ enum Mode {
     NotTop,
     /// Plan takes every proposal, whatever the request's sub-need limit.
     AllPlan,
+    /// The native lane refuses the input before any model work, as it does
+    /// when the compiled input passes its token reservation: advice with no
+    /// observed tokens and every segment unavailable.
+    Refused,
 }
 
 struct Scorer {
@@ -41,6 +45,10 @@ struct Scorer {
     /// Synthetic Focus is ready beside the card scorer.
     focus: bool,
     deadlines: Mutex<Vec<Instant>>,
+    /// The mode applies to calls of this task only; others are accepted.
+    only: Option<airk_core::arbiter::Task>,
+    /// Synthetic Focus scores spans at this path above every other span.
+    prefer: Option<&'static str>,
 }
 
 impl NativeController for Scorer {
@@ -87,7 +95,20 @@ impl NativeController for Scorer {
             )?
             .and_then(|ready| ready.identity)
             .context("Focus is not ready")?;
-        focus_scores(request, identity)
+        let paths: Vec<String> = request
+            .candidates
+            .iter()
+            .map(|candidate| candidate.hit.citation.path.clone())
+            .collect();
+        let mut response = focus_scores(request, identity)?;
+        if let (Some(prefer), Some(response)) = (self.prefer, response.as_mut()) {
+            for pair in &mut response.ranking.pairs {
+                if paths[usize::from(pair.candidate)] != prefer {
+                    pair.yes_logit -= 3.0;
+                }
+            }
+        }
+        Ok(response)
     }
     fn card_model(
         &self,
@@ -115,20 +136,41 @@ impl NativeController for Scorer {
         )?;
         self.calls.fetch_add(1, Ordering::AcqRel);
         self.requests.lock().unwrap().push(request.clone());
-        match self.mode {
+        let mode = if self.only.is_none_or(|task| task == request.task) {
+            self.mode
+        } else {
+            Mode::Accept
+        };
+        match mode {
             Mode::Decline => return Ok(None),
             Mode::Lost => anyhow::bail!("synthetic lost native outcome"),
             _ => {}
         }
-        let tokens = 100 * request.attribution.len();
+        let refused = mode == Mode::Refused;
+        let tokens = if refused {
+            0
+        } else {
+            100 * request.attribution.len()
+        };
         let segments = request
             .segments
             .iter()
             .map(|segment| {
                 let count = segment.cards.len();
+                if refused {
+                    return v3::SegmentOutcome {
+                        ordinal: segment.ordinal,
+                        raw_scores: vec![],
+                        outcome: Outcome::Unavailable {
+                            reason: "refused before any model work".into(),
+                        },
+                        rule: None,
+                        margin: None,
+                    };
+                }
                 let scores: Vec<f32> = (0..count).map(|index| index as f32).collect();
                 let top = count - 1;
-                if self.mode == Mode::Abstain {
+                if mode == Mode::Abstain {
                     return v3::SegmentOutcome {
                         ordinal: segment.ordinal,
                         raw_scores: scores,
@@ -141,13 +183,13 @@ impl NativeController for Scorer {
                 }
                 // Plan's reference card (the last) is never choosable.
                 let best = if segment.multiple { top - 1 } else { top };
-                let chosen = if self.mode == Mode::NotTop { 0 } else { best };
+                let chosen = if mode == Mode::NotTop { 0 } else { best };
                 let digest = segment.cards[chosen].text_digest().unwrap();
                 v3::SegmentOutcome {
                     ordinal: segment.ordinal,
                     raw_scores: scores,
                     outcome: Outcome::Accepted {
-                        decision: if segment.multiple && self.mode == Mode::AllPlan {
+                        decision: if segment.multiple && mode == Mode::AllPlan {
                             // Every card, so the choice is still the top scores.
                             Decision::LoopCards(
                                 segment.cards[..top]
@@ -155,7 +197,7 @@ impl NativeController for Scorer {
                                     .map(|card| card.text_digest().unwrap())
                                     .collect(),
                             )
-                        } else if segment.multiple && self.mode != Mode::NotTop {
+                        } else if segment.multiple && mode != Mode::NotTop {
                             // The highest-scoring proposals below the
                             // reference, up to the request's sub-need limit.
                             let take = request.parent_budget.max_sub_needs.min(top);
@@ -187,7 +229,7 @@ impl NativeController for Scorer {
             compiler: Sha256Digest::from_bytes([41; 32]),
             calibration: Sha256Digest::from_bytes([42; 32]),
             policy: Sha256Digest::from_bytes([43; 32]),
-            task_policy: if self.mode == Mode::Foreign {
+            task_policy: if mode == Mode::Foreign {
                 Sha256Digest::from_bytes([44; 32])
             } else {
                 request.task_policy
@@ -201,15 +243,19 @@ impl NativeController for Scorer {
                 .attribution
                 .iter()
                 .map(|charge| v3::TokenAttribution {
-                    tokens: 100,
+                    tokens: if refused { 0 } else { 100 },
                     ..*charge
                 })
                 .collect(),
-            work: Work {
-                input_tokens: tokens,
-                compile_us: Some(5),
-                inference_us: Some(7),
-                ..Work::default()
+            work: if refused {
+                Work::default()
+            } else {
+                Work {
+                    input_tokens: tokens,
+                    compile_us: Some(5),
+                    inference_us: Some(7),
+                    ..Work::default()
+                }
             },
             segments,
         }))
@@ -221,6 +267,20 @@ fn scored(mode: Mode) -> Result<(Fixture, Arc<Scorer>)> {
 }
 
 fn scored_with(mode: Mode, focus: bool) -> Result<(Fixture, Arc<Scorer>)> {
+    scorer(mode, focus, None, None)
+}
+
+/// A scorer whose `mode` applies to calls of `task` only.
+fn scored_on(mode: Mode, task: airk_core::arbiter::Task) -> Result<(Fixture, Arc<Scorer>)> {
+    scorer(mode, false, Some(task), None)
+}
+
+fn scorer(
+    mode: Mode,
+    focus: bool,
+    only: Option<airk_core::arbiter::Task>,
+    prefer: Option<&'static str>,
+) -> Result<(Fixture, Arc<Scorer>)> {
     let owner = Arc::new(Owner::new());
     let scorer = Arc::new(Scorer {
         owner: owner.clone(),
@@ -230,6 +290,8 @@ fn scored_with(mode: Mode, focus: bool) -> Result<(Fixture, Arc<Scorer>)> {
         calls: AtomicU64::new(0),
         focus,
         deadlines: Mutex::new(vec![]),
+        only,
+        prefer,
     });
     Ok((fixture_with(scorer.clone(), owner)?, scorer))
 }
@@ -362,8 +424,37 @@ fn abstained_or_none_falls_back_with_recorded_rule() -> Result<()> {
             .all(|entry| !entry.decision.scored_by_model())
     );
     assert_eq!(outcome.response.decision_log.card_calls, 0);
-    // Every decision fell back, so Context is reported absent, and each
-    // part's rosters the model would have scored say they lost their share.
+    // The model was present, so each roster it would have scored is logged
+    // as a call not dispatched, with the model and the reason; a one-card
+    // roster stays the no-model path's.
+    let summary = &outcome.response.decision_log;
+    let shed = summary.count(None, v3::SourceKind::NotDispatched);
+    assert!(shed > 0);
+    assert_eq!(
+        shed + summary.count(None, v3::SourceKind::Deterministic),
+        summary.total
+    );
+    for entry in &outcome.custody.log.entries {
+        let decision = &entry.decision;
+        if entry.cards.len() >= 2 {
+            assert!(
+                matches!(
+                    decision.source,
+                    v3::DecisionSource::NotDispatched {
+                        reason: AssessmentUnavailable::Unavailable,
+                        ..
+                    }
+                ),
+                "{decision:?}"
+            );
+            assert_eq!(decision.model, Some(device::SelectedModel::ContextCompact));
+        } else {
+            assert_eq!(decision.source.kind(), v3::SourceKind::Deterministic);
+            assert_eq!(decision.model, None);
+        }
+    }
+    // No card call ran, so Context is reported absent, and each part's
+    // rosters the model would have scored say they lost their share.
     let degradations = &outcome.response.degradations;
     assert!(
         degradations
@@ -693,6 +784,18 @@ fn long_guard() -> String {
     text
 }
 
+/// 9,000 bytes of ASCII source in which the guard starts at byte 1,500,
+/// after 100 filler lines.
+fn late_guard() -> String {
+    let mut text = "// filler line\n".repeat(100);
+    text.push_str(GUARD);
+    while text.len() < 9000 {
+        text.push_str("// filler line\n");
+    }
+    text.truncate(9000);
+    text
+}
+
 /// One Answer to `EVIDENCE_QUESTION` over reads in which every search finds
 /// the same two hits (`guard` at the guard path, then the guide) and every
 /// other read finds nothing. Its part plans a definition and a callers
@@ -702,20 +805,39 @@ fn answer_over_two_hits(
     publication: &airk_core::evidence::RevisionEnvelope,
     guard: &str,
 ) -> Result<AnswerOutcome> {
+    answer_two_hits_to(kernel, publication, request(EVIDENCE_QUESTION), guard)
+}
+
+fn answer_two_hits_to(
+    kernel: &crate::Kernel,
+    publication: &airk_core::evidence::RevisionEnvelope,
+    request: v3::ContextRequestV3,
+    guard: &str,
+) -> Result<AnswerOutcome> {
+    let hits = json!([
+        super::super::tests::hit(GUARD_PATH, 10, 40, guard),
+        super::super::tests::hit(GUIDE_PATH, 1, 12, GUIDE)
+    ]);
+    answer_over_hits(kernel, publication, request, &hits)
+}
+
+/// One Answer over reads in which every search finds `hits`, in that order,
+/// and every other read finds nothing.
+fn answer_over_hits(
+    kernel: &crate::Kernel,
+    publication: &airk_core::evidence::RevisionEnvelope,
+    request: v3::ContextRequestV3,
+    hits: &Value,
+) -> Result<AnswerOutcome> {
     kernel.answer(
-        request(EVIDENCE_QUESTION),
+        request,
         Instant::now() + Duration::from_secs(600),
         &|| Ok(()),
         &|tool, _, _| {
             let mut body = json!({"publication":publication,"generation":1,
                 "collection":"fixture","truncated":false});
             match tool {
-                "search" => {
-                    body["hits"] = json!([
-                        super::super::tests::hit(GUARD_PATH, 10, 40, guard),
-                        super::super::tests::hit(GUIDE_PATH, 1, 12, GUIDE)
-                    ]);
-                }
+                "search" => body["hits"] = hits.clone(),
                 "symbols" | "references" | "outline" | "imports" => body["facts"] = json!([]),
                 _ => body["hits"] = json!([]),
             }
@@ -724,36 +846,80 @@ fn answer_over_two_hits(
     )
 }
 
+const GUARD_PLACE: (&str, usize, usize) = (GUARD_PATH, 10, 40);
+const GUIDE_PLACE: (&str, usize, usize) = (GUIDE_PATH, 1, 12);
+
+/// A row at `place` that shows `excerpt`, with `hidden` bytes of its span
+/// before and after it.
 fn shown(
-    path: &str,
-    lines: (usize, usize),
+    place: (&str, usize, usize),
     excerpt: &str,
-    cut_bytes: usize,
+    hidden: (usize, usize),
 ) -> airk_core::native_loop::CardEvidence {
     airk_core::native_loop::CardEvidence {
-        path: path.into(),
-        start_line: lines.0,
-        end_line: lines.1,
+        path: place.0.into(),
+        start_line: place.1,
+        end_line: place.2,
         focus: None,
         excerpt: excerpt.into(),
-        cut_bytes,
+        skipped_bytes: hidden.0,
+        cut_bytes: hidden.1,
+        truncated: false,
+        same_as: None,
     }
 }
 
-/// The first Coverage card call: the part's two sub-needs in one call.
-fn coverage_call(requests: &[NativeCardRequest]) -> Result<&NativeCardRequest> {
+/// A row at `place` whose text an earlier row of the call shows.
+fn repeat(place: (&str, usize, usize)) -> airk_core::native_loop::CardEvidence {
+    airk_core::native_loop::CardEvidence {
+        same_as: Some(airk_core::native_loop::EvidencePlace {
+            path: place.0.into(),
+            start_line: place.1,
+            end_line: place.2,
+        }),
+        ..shown(place, "", (0, 0))
+    }
+}
+
+/// The first card call of `task`, which holds the round-one rosters of
+/// `needs` of part 1.
+fn first_call<'a>(
+    requests: &'a [NativeCardRequest],
+    task: airk_core::arbiter::Task,
+    needs: &[u8],
+) -> Result<&'a NativeCardRequest> {
     let call = requests
         .iter()
-        .find(|request| request.task == airk_core::arbiter::Task::ContextCoverage)
-        .context("a Coverage card call")?;
+        .find(|request| request.task == task)
+        .with_context(|| {
+            format!(
+                "a {task:?} card call among {:?}",
+                requests
+                    .iter()
+                    .map(|request| request.task)
+                    .collect::<Vec<_>>()
+            )
+        })?;
     assert_eq!(
         call.segments
             .iter()
             .map(|segment| (segment.part, segment.need, segment.round))
             .collect::<Vec<_>>(),
-        [(1, 1, 1), (1, 2, 1)]
+        needs.iter().map(|need| (1, *need, 1)).collect::<Vec<_>>()
     );
     Ok(call)
+}
+
+/// The first Coverage call: the part's two sub-needs in one call.
+fn coverage_call(requests: &[NativeCardRequest]) -> Result<&NativeCardRequest> {
+    first_call(requests, airk_core::arbiter::Task::ContextCoverage, &[1, 2])
+}
+
+/// The first Follow-up call. The two sub-needs name the same identifier and
+/// read the same spans, so they propose the same reads; a read is offered
+/// to one gap only, and the second sub-need has none left to choose from.
+fn follow_up_call(requests: &[NativeCardRequest]) -> Result<&NativeCardRequest> {
+    first_call(requests, airk_core::arbiter::Task::ContextFollowUp, &[1])
 }
 
 /// A byte range of one hit of the sub-needs' own search, as the log names it.
@@ -781,31 +947,71 @@ fn search_unit(
     })
 }
 
+/// The round-one decisions of `stage`, one a sub-need.
+fn round_one(outcome: &AnswerOutcome, stage: v3::LoopStage) -> Vec<&v3::DecisionLogEntry> {
+    outcome
+        .custody
+        .log
+        .entries
+        .iter()
+        .filter(|entry| entry.decision.stage == stage && entry.decision.round == Some(1))
+        .collect()
+}
+
+/// What a decision rests on: the presented and the omitted ranges, with the
+/// counts the reply carries.
+fn rests_on(
+    entry: &v3::DecisionLogEntry,
+    presented: &[airk_core::arbiter::context_action::EvidenceRef],
+    omitted: &[airk_core::arbiter::context_action::EvidenceRef],
+) {
+    assert_eq!(entry.basis, presented, "{:?}", entry.decision);
+    assert_eq!(entry.basis_omitted, omitted, "{:?}", entry.decision);
+    assert_eq!(
+        (
+            usize::from(entry.decision.basis.presented),
+            usize::from(entry.decision.basis.omitted)
+        ),
+        (presented.len(), omitted.len())
+    );
+}
+
 #[test]
-fn coverage_calls_show_each_sub_need_its_spans_and_log_what_was_shown() -> Result<()> {
+fn coverage_and_follow_up_calls_show_each_sub_need_what_was_read() -> Result<()> {
+    use airk_core::arbiter::Task;
     let (fixture, scorer) = scored(Mode::Accept)?;
     let outcome = answer_over_two_hits(&fixture.kernel, &fixture.publication, GUARD)?;
     let requests = scorer.requests.lock().unwrap();
     let call = coverage_call(&requests)?;
     assert_eq!(call.remaining_input_tokens, 8192);
     // The model is told what kind of sub-need each roster judges.
+    let subjects = [
+        "need definition: restart_guard",
+        "need callers: restart_guard",
+    ];
     assert_eq!(
         call.segments
             .iter()
             .map(|segment| segment.subject.as_str())
             .collect::<Vec<_>>(),
-        [
-            "need definition: restart_guard",
-            "need callers: restart_guard"
-        ]
+        subjects
     );
     // Both spans fit the allowance whole, in gathered order (no Focus ran).
+    // The second sub-need gathered the same two spans: the call shows each
+    // text once, and its rows name the rows that show them.
     let whole = [
-        shown(GUARD_PATH, (10, 40), GUARD, 0),
-        shown(GUIDE_PATH, (1, 12), GUIDE, 0),
+        shown(GUARD_PLACE, GUARD, (0, 0)),
+        shown(GUIDE_PLACE, GUIDE, (0, 0)),
     ];
+    let repeats = [repeat(GUARD_PLACE), repeat(GUIDE_PLACE)];
+    let read = [
+        search_unit(&outcome, 0, (0, 49))?,
+        search_unit(&outcome, 1, (0, 42))?,
+    ];
+    assert_eq!(call.segments[0].evidence, whole);
+    assert_eq!(call.segments[1].evidence, repeats);
     for segment in &call.segments {
-        assert_eq!(segment.evidence, whole, "sub-need {}", segment.need);
+        assert_eq!((segment.unshown, segment.verdict), (0, None));
         assert_eq!(
             segment.cards[0].text,
             format!(
@@ -817,113 +1023,372 @@ fn coverage_calls_show_each_sub_need_its_spans_and_log_what_was_shown() -> Resul
         let entry = &outcome.custody.log.entries[usize::from(segment.ordinal) - 1];
         assert_eq!(entry.decision.stage, v3::LoopStage::Coverage);
         assert_eq!(entry.decision.need, Some(segment.need));
-        assert_eq!(
-            entry.basis,
-            [
-                search_unit(&outcome, 0, (0, 49))?,
-                search_unit(&outcome, 1, (0, 42))?
-            ]
-        );
-        assert!(entry.basis_omitted.is_empty());
-        assert_eq!(
-            (entry.decision.basis.presented, entry.decision.basis.omitted),
-            (2, 0)
-        );
+        assert_eq!(entry.decision.source.kind(), v3::SourceKind::Model);
+        rests_on(entry, &read, &[]);
     }
-    // No other stage's roster carries evidence.
+    // Follow-up: the scorer chose a read-more card for the sub-need, so it
+    // is partly covered by the model's judgement. The roster says so, names
+    // the sub-need with its kind and shows the same spans.
+    let follow = follow_up_call(&requests)?;
+    assert_eq!(follow.segments[0].subject, subjects[0]);
+    assert_eq!(follow.segments[0].evidence, whole);
+    for segment in &follow.segments {
+        assert_eq!(
+            (segment.unshown, segment.verdict),
+            (
+                0,
+                Some(airk_core::native_loop::CardVerdict {
+                    coverage: v3::Coverage::Partial,
+                    by_model: true,
+                })
+            )
+        );
+        let entry = &outcome.custody.log.entries[usize::from(segment.ordinal) - 1];
+        assert_eq!(entry.decision.stage, v3::LoopStage::FollowUp);
+        assert_eq!(entry.decision.source.kind(), v3::SourceKind::Model);
+        rests_on(entry, &read, &[]);
+    }
+    // Split and Plan rosters carry neither evidence nor a verdict.
     assert!(
         requests
             .iter()
-            .filter(|request| request.task != airk_core::arbiter::Task::ContextCoverage)
-            .all(|request| request
-                .segments
-                .iter()
-                .all(|segment| segment.evidence.is_empty()))
+            .filter(|request| matches!(request.task, Task::ContextSplit | Task::ContextPlan))
+            .flat_map(|request| &request.segments)
+            .all(|segment| segment.evidence.is_empty()
+                && segment.unshown == 0
+                && segment.verdict.is_none())
     );
     assert!(
         requests
             .iter()
-            .any(|request| request.task == airk_core::arbiter::Task::ContextFollowUp),
-        "a Follow-up call ran"
+            .any(|request| request.task == Task::ContextPlan)
     );
     Ok(())
 }
 
 #[test]
-fn a_long_span_is_cut_to_the_excerpt_allowance_and_the_log_names_the_cut() -> Result<()> {
+fn a_model_s_choice_rests_on_the_excerpts_it_was_shown() -> Result<()> {
     let long = long_guard();
     let (fixture, scorer) = scored(Mode::Accept)?;
     let outcome = answer_over_two_hits(&fixture.kernel, &fixture.publication, &long)?;
     let requests = scorer.requests.lock().unwrap();
-    let call = coverage_call(&requests)?;
-    // 8,192 reserved tokens leave 6,144 excerpt bytes for the call's four
-    // spans, 1,536 each. The two 42-byte guide spans leave 2,988 over, which
-    // go to the first cut span: 1,536 + 2,988 = 4,524 of its 9,000 bytes.
-    assert_eq!(call.remaining_input_tokens, 8192);
-    assert_eq!(
-        call.segments[0].evidence,
-        [
-            shown(GUARD_PATH, (10, 40), &long[..4524], 4476),
-            shown(GUIDE_PATH, (1, 12), GUIDE, 0),
-        ]
-    );
-    assert_eq!(
-        call.segments[1].evidence,
-        [
-            shown(GUARD_PATH, (10, 40), &long[..1536], 7464),
-            shown(GUIDE_PATH, (1, 12), GUIDE, 0),
-        ]
-    );
-    let total: usize = call
-        .segments
-        .iter()
-        .flat_map(|segment| &segment.evidence)
-        .map(|evidence| evidence.excerpt.len())
-        .sum();
-    assert_eq!(total, 6144, "exactly the allowance");
-    // The log names the ranges shown, and the cut tails as omitted.
-    for (segment, cut) in call.segments.iter().zip([4524, 1536]) {
-        let entry = &outcome.custody.log.entries[usize::from(segment.ordinal) - 1];
+    // 8,192 reserved tokens leave 7,680 excerpt bytes. The call shows each
+    // text once: the 42-byte guide whole, and 7,638 of the guard's 9,000
+    // bytes. The second sub-need's rows repeat the first's.
+    for call in [coverage_call(&requests)?, follow_up_call(&requests)?] {
+        assert_eq!(call.remaining_input_tokens, 8192);
         assert_eq!(
-            entry.basis,
+            call.segments[0].evidence,
             [
-                search_unit(&outcome, 0, (0, cut))?,
-                search_unit(&outcome, 1, (0, 42))?
+                shown(GUARD_PLACE, &long[..7638], (0, 1362)),
+                shown(GUIDE_PLACE, GUIDE, (0, 0)),
             ]
         );
+        if let Some(second) = call.segments.get(1) {
+            assert_eq!(second.evidence, [repeat(GUARD_PLACE), repeat(GUIDE_PLACE)]);
+        }
+        let total: usize = call
+            .segments
+            .iter()
+            .flat_map(|segment| &segment.evidence)
+            .map(|evidence| evidence.excerpt.len())
+            .sum();
+        assert_eq!(total, 7680, "exactly the allowance");
+        // The log names the ranges shown, and the cut tail as omitted.
+        for segment in &call.segments {
+            let entry = &outcome.custody.log.entries[usize::from(segment.ordinal) - 1];
+            assert_eq!(entry.decision.source.kind(), v3::SourceKind::Model);
+            rests_on(
+                entry,
+                &[
+                    search_unit(&outcome, 0, (0, 7638))?,
+                    search_unit(&outcome, 1, (0, 42))?,
+                ],
+                &[search_unit(&outcome, 0, (7638, 9000))?],
+            );
+        }
+    }
+    Ok(())
+}
+
+/// The basis of a decision is what the decision that stands rests on. When
+/// the model abstains, the lane refuses its input or its outcome is lost,
+/// the deterministic order decides, and that order read the whole spans:
+/// the excerpts the call was built with are not what the decision saw.
+#[test]
+fn a_decision_the_model_does_not_take_rests_on_the_whole_spans() -> Result<()> {
+    use airk_core::arbiter::Task;
+    let long = long_guard();
+    for (mode, kind) in [
+        (Mode::Abstain, v3::SourceKind::Abstained),
+        (Mode::Refused, v3::SourceKind::Unavailable),
+        (Mode::Lost, v3::SourceKind::Unavailable),
+    ] {
+        let (fixture, scorer) = scored_on(mode, Task::ContextCoverage)?;
+        let outcome = answer_over_two_hits(&fixture.kernel, &fixture.publication, &long)?;
+        let requests = scorer.requests.lock().unwrap();
+        // The call was built and sent with a cut excerpt.
+        let call = coverage_call(&requests)?;
+        assert_eq!(call.segments[0].evidence[0].cut_bytes, 1362);
+        let whole = [
+            search_unit(&outcome, 0, (0, 9000))?,
+            search_unit(&outcome, 1, (0, 42))?,
+        ];
+        let coverage = round_one(&outcome, v3::LoopStage::Coverage);
+        assert_eq!(coverage.len(), 2, "one decision a sub-need");
+        for entry in &coverage {
+            let decision = &entry.decision;
+            assert_eq!(decision.source.kind(), kind, "{decision:?}");
+            assert_eq!(decision.card_slot, Some(call.segments[0].card_slot));
+            rests_on(entry, &whole, &[]);
+        }
+        let log = &outcome.custody.log;
+        let follow = round_one(&outcome, v3::LoopStage::FollowUp);
+        assert_eq!(follow.len(), 1, "one sub-need has reads left to choose");
+        match mode {
+            // A refusal before model work is a known outcome: its receipt
+            // observed no tokens, nothing is charged for it, and the model
+            // goes on to score the Follow-up rosters from their excerpts.
+            Mode::Refused => {
+                let receipt = log
+                    .receipts
+                    .iter()
+                    .find(|receipt| receipt.task == Task::ContextCoverage)
+                    .context("the refused call's receipt")?;
+                assert_eq!(receipt.observed_input_tokens, Some(0));
+                assert!(coverage.iter().all(|entry| {
+                    entry.decision.receipt == Some(receipt.input_digest)
+                        && !entry.decision.work_unknown
+                }));
+                for entry in &follow {
+                    assert_eq!(entry.decision.source.kind(), v3::SourceKind::Model);
+                    rests_on(
+                        entry,
+                        &[
+                            search_unit(&outcome, 0, (0, 7638))?,
+                            search_unit(&outcome, 1, (0, 42))?,
+                        ],
+                        &[search_unit(&outcome, 0, (7638, 9000))?],
+                    );
+                }
+            }
+            // A lost outcome blocks the model: the Follow-up calls are not
+            // dispatched, and the log names the model and says why.
+            Mode::Lost => {
+                assert!(coverage.iter().all(|entry| entry.decision.work_unknown));
+                for entry in &follow {
+                    assert!(
+                        matches!(
+                            entry.decision.source,
+                            v3::DecisionSource::NotDispatched {
+                                fallback: v3::DeterministicRule::FirstExtractedTerm,
+                                reason: AssessmentUnavailable::Unavailable,
+                            }
+                        ),
+                        "{:?}",
+                        entry.decision
+                    );
+                    assert_eq!(
+                        entry.decision.model,
+                        Some(device::SelectedModel::ContextCompact)
+                    );
+                    rests_on(entry, &whole, &[]);
+                }
+                assert!(
+                    !requests
+                        .iter()
+                        .any(|request| request.task == Task::ContextFollowUp),
+                    "no Follow-up call was sent"
+                );
+            }
+            // The Follow-up roster of an abstained Coverage decision states
+            // the deterministic verdict.
+            _ => {
+                let call = follow_up_call(&requests)?;
+                assert!(call.segments.iter().all(|segment| {
+                    segment.verdict
+                        == Some(airk_core::native_loop::CardVerdict {
+                            coverage: v3::Coverage::Partial,
+                            by_model: false,
+                        })
+                }));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The tokens the calls before the first Coverage call settle: 100 for each
+/// part and round a call is charged to (the synthetic scorer's count).
+fn tokens_before_coverage(requests: &[NativeCardRequest]) -> usize {
+    requests
+        .iter()
+        .take_while(|request| request.task != airk_core::arbiter::Task::ContextCoverage)
+        .map(|request| 100 * request.attribution.len())
+        .sum()
+}
+
+/// A call whose reservation leaves its spans less than the least excerpt is
+/// not made: the deterministic order decides and the log says the model's
+/// share ran out. One token more of reservation and the call is made.
+#[test]
+fn a_reservation_too_small_to_show_the_spans_makes_no_call() -> Result<()> {
+    use airk_core::arbiter::Task;
+    let long = long_guard();
+    let (fixture, scorer) = scored(Mode::Accept)?;
+    answer_over_two_hits(&fixture.kernel, &fixture.publication, &long)?;
+    let before = tokens_before_coverage(&scorer.requests.lock().unwrap());
+    assert!(before > 0, "Plan ran before Coverage");
+    // The reservation left for the Coverage call, and the bytes of the long
+    // span it then shows. The guide's 42 bytes are always shown whole.
+    // - 2,048 tokens are the frame: no excerpt bytes at all.
+    // - 2,286 tokens allow 297 bytes, 255 for the long span: below the least.
+    // - 2,287 tokens allow 298 bytes, 256 for the long span: the least.
+    for (reserve, long_bytes) in [
+        (2048, None),
+        (2286, None),
+        (2287, Some(256)),
+        (2300, Some(273)),
+    ] {
+        let (fixture, scorer) = scored(Mode::Accept)?;
+        let mut small = request(EVIDENCE_QUESTION);
+        small.budget.input_tokens = before + reserve;
+        small.budget.round_input_tokens = before + reserve;
+        let outcome = answer_two_hits_to(&fixture.kernel, &fixture.publication, small, &long)?;
+        let requests = scorer.requests.lock().unwrap();
+        let coverage = round_one(&outcome, v3::LoopStage::Coverage);
+        assert_eq!(coverage.len(), 2, "{reserve} tokens");
+        let sent = requests
+            .iter()
+            .find(|request| request.task == Task::ContextCoverage);
+        let Some(bytes) = long_bytes else {
+            assert!(sent.is_none(), "{reserve} tokens: no Coverage call");
+            for entry in coverage {
+                let decision = &entry.decision;
+                assert!(
+                    matches!(
+                        decision.source,
+                        v3::DecisionSource::NotDispatched {
+                            fallback: v3::DeterministicRule::TopFocusSpan,
+                            reason: AssessmentUnavailable::TokenBudget,
+                        }
+                    ),
+                    "{reserve} tokens: {decision:?}"
+                );
+                assert_eq!(decision.model, Some(device::SelectedModel::ContextCompact));
+                assert_eq!(decision.card_slot, None, "no slot is used");
+                rests_on(
+                    entry,
+                    &[
+                        search_unit(&outcome, 0, (0, 9000))?,
+                        search_unit(&outcome, 1, (0, 42))?,
+                    ],
+                    &[],
+                );
+            }
+            // The reply counts them apart from the no-model path and says
+            // the part's Coverage lost its model share.
+            let summary = &outcome.response.decision_log;
+            assert_eq!(
+                summary.count(Some(v3::LoopStage::Coverage), v3::SourceKind::NotDispatched),
+                2
+            );
+            assert!(outcome.response.degradations.iter().any(|item| matches!(
+                item,
+                v3::Degradation::ModelShare {
+                    part: 1,
+                    stage: v3::LoopStage::Coverage
+                }
+            )));
+            continue;
+        };
+        let call = sent.with_context(|| format!("{reserve} tokens: a Coverage call"))?;
+        assert_eq!(call.remaining_input_tokens, reserve);
         assert_eq!(
-            entry.basis_omitted,
-            [search_unit(&outcome, 0, (cut, 9000))?]
+            call.segments[0].evidence,
+            [
+                shown(GUARD_PLACE, &long[..bytes], (0, 9000 - bytes)),
+                shown(GUIDE_PLACE, GUIDE, (0, 0)),
+            ],
+            "{reserve} tokens"
         );
-        assert_eq!(
-            (entry.decision.basis.presented, entry.decision.basis.omitted),
-            (2, 1)
+        assert!(
+            coverage
+                .iter()
+                .all(|entry| entry.decision.source.kind() == v3::SourceKind::Model)
         );
     }
     Ok(())
 }
 
+/// The search returned the guide before the guard. Focus scored the guard
+/// above the guide, and scored the guard from the line that names it. The
+/// evidence follows the Focus rank and each excerpt starts where the scored
+/// text starts. The test fails if ranking does nothing.
 #[test]
-fn evidence_carries_each_span_s_focus_score_in_rank_order() -> Result<()> {
-    let (fixture, scorer) = scored_with(Mode::Accept, true)?;
-    answer_over_two_hits(&fixture.kernel, &fixture.publication, GUARD)?;
+fn evidence_follows_the_focus_rank_and_starts_at_the_scored_text() -> Result<()> {
+    let late = late_guard();
+    assert_eq!(late.find(GUARD), Some(1500));
+    let (fixture, scorer) = scorer(Mode::Accept, true, None, Some(GUARD_PATH))?;
+    let hits = json!([
+        super::super::tests::hit(GUIDE_PATH, 1, 12, GUIDE),
+        super::super::tests::hit(GUARD_PATH, 10, 40, &late)
+    ]);
+    let outcome = answer_over_hits(
+        &fixture.kernel,
+        &fixture.publication,
+        request(EVIDENCE_QUESTION),
+        &hits,
+    )?;
     let requests = scorer.requests.lock().unwrap();
     let call = coverage_call(&requests)?;
-    for segment in &call.segments {
-        let focus: Vec<f32> = segment
-            .evidence
-            .iter()
-            .map(|evidence| evidence.focus.context("Focus scored every span"))
-            .collect::<Result<_>>()?;
-        assert_eq!(focus.len(), 2);
-        assert!(focus[0] >= focus[1], "{focus:?}");
-        assert!(focus.iter().all(|score| (0.0..=1.0).contains(score)));
-    }
+    let rows = &call.segments[0].evidence;
+    assert_eq!(
+        rows.iter().map(|row| row.path.as_str()).collect::<Vec<_>>(),
+        [GUARD_PATH, GUIDE_PATH],
+        "the higher-scored span first, not the gathered order"
+    );
+    let focus: Vec<f32> = rows
+        .iter()
+        .map(|row| row.focus.context("Focus scored every span"))
+        .collect::<Result<_>>()?;
+    assert!(focus[0] > focus[1], "{focus:?}");
+    assert!(focus.iter().all(|score| (0.0..=1.0).contains(score)));
+    // The Covered card cites the spans in the same order.
+    assert_eq!(
+        call.segments[0].cards[0].text,
+        "s1 covered: crates/k/src/guard.rs:10-40, docs/guard.md:1-12"
+    );
+    // The guard's scored text starts at byte 1,500; the 7,500 bytes from
+    // there fit the allowance. The guide is short and shown whole.
+    assert_eq!(
+        (
+            rows[0].excerpt.as_str(),
+            rows[0].skipped_bytes,
+            rows[0].cut_bytes
+        ),
+        (&late[1500..], 1500, 0)
+    );
+    assert_eq!(
+        (rows[1].excerpt.as_str(), rows[1].skipped_bytes),
+        (GUIDE, 0)
+    );
+    // The log names the shown ranges in the same order, and the skipped
+    // head as omitted. The guard is the search's second hit.
+    let entry = &outcome.custody.log.entries[usize::from(call.segments[0].ordinal) - 1];
+    rests_on(
+        entry,
+        &[
+            search_unit(&outcome, 1, (1500, 9000))?,
+            search_unit(&outcome, 0, (0, 42))?,
+        ],
+        &[search_unit(&outcome, 1, (0, 1500))?],
+    );
     Ok(())
 }
 
-/// The deterministic path builds no excerpt: its decisions rest on the whole
-/// spans, as before, however long they are.
+/// The no-model path builds no excerpt and makes no card call: its
+/// decisions rest on the whole spans, as before, however long they are.
 #[test]
 fn without_a_model_the_log_names_whole_spans_and_nothing_is_cut() -> Result<()> {
     let long = long_guard();
@@ -931,34 +1396,41 @@ fn without_a_model_the_log_names_whole_spans_and_nothing_is_cut() -> Result<()> 
     let outcome = answer_over_two_hits(&fixture.kernel, &fixture.publication, &long)?;
     let log = &outcome.custody.log;
     assert!(log.receipts.is_empty(), "no card call was made");
-    let coverage: Vec<_> = log
-        .entries
-        .iter()
-        .filter(|entry| {
-            entry.decision.stage == v3::LoopStage::Coverage && entry.decision.round == Some(1)
-        })
-        .collect();
-    assert_eq!(coverage.len(), 2, "one decision a sub-need");
-    for entry in coverage {
-        assert!(matches!(
-            entry.decision.source,
-            v3::DecisionSource::Deterministic {
-                rule: v3::DeterministicRule::TopFocusSpan
-            }
-        ));
-        assert_eq!(
-            entry.basis,
-            [
-                search_unit(&outcome, 0, (0, 9000))?,
-                search_unit(&outcome, 1, (0, 42))?
-            ]
-        );
-        assert!(entry.basis_omitted.is_empty());
-        assert_eq!(
-            (entry.decision.basis.presented, entry.decision.basis.omitted),
-            (2, 0)
-        );
+    let whole = [
+        search_unit(&outcome, 0, (0, 9000))?,
+        search_unit(&outcome, 1, (0, 42))?,
+    ];
+    // One Coverage decision a sub-need; one Follow-up decision, for the one
+    // sub-need with reads left to choose from.
+    for (stage, rule, count) in [
+        (
+            v3::LoopStage::Coverage,
+            v3::DeterministicRule::TopFocusSpan,
+            2,
+        ),
+        (
+            v3::LoopStage::FollowUp,
+            v3::DeterministicRule::FirstExtractedTerm,
+            1,
+        ),
+    ] {
+        let decisions = round_one(&outcome, stage);
+        assert_eq!(decisions.len(), count, "{stage:?}");
+        for entry in decisions {
+            assert_eq!(
+                entry.decision.source,
+                v3::DecisionSource::Deterministic { rule },
+                "the no-model path, not a call that was not dispatched"
+            );
+            assert_eq!(entry.decision.model, None);
+            rests_on(entry, &whole, &[]);
+        }
     }
+    let summary = &outcome.response.decision_log;
+    assert_eq!(
+        summary.count(None, v3::SourceKind::Deterministic),
+        summary.total
+    );
     Ok(())
 }
 

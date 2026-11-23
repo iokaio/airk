@@ -44,7 +44,10 @@ pub const MAX_FANOUT: usize = 12;
 pub const DEFAULT_FANOUT: usize = 8;
 /// Model input tokens over the whole attempt.
 pub const MAX_INPUT_TOKENS: usize = 262_144;
-pub const DEFAULT_INPUT_TOKENS: usize = 131_072;
+/// Two parts, three rounds each, at the whole round allowance: a two-part
+/// Answer can keep its Context model through its last round. Raised from
+/// 131,072 when card calls began to carry evidence (change log entry 44).
+pub const DEFAULT_INPUT_TOKENS: usize = 2 * MAX_ROUNDS * MAX_ROUND_INPUT_TOKENS;
 /// Model input tokens of one round of one part: two batched coverage calls
 /// and one follow-up call at 8,192, plus 16 Focus pairs at 512.
 pub const MAX_ROUND_INPUT_TOKENS: usize = 32_768;
@@ -522,7 +525,8 @@ pub enum DegradationReason {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Degradation {
-    /// No Context model: every card decision took the deterministic order.
+    /// No Context model decided: no card call was dispatched, and every card
+    /// decision took the deterministic order.
     ContextAbsent,
     /// Context decisions that abstained and fell back.
     ContextAbstained { count: usize },
@@ -775,9 +779,13 @@ impl ContextResponseV3 {
         let mut focus_absent = false;
         for degradation in &self.degradations {
             let kind: (u8, u8, u8) = match degradation {
+                // No card call was dispatched: every decision is the
+                // no-model path's or one whose call was not dispatched.
                 Degradation::ContextAbsent => {
                     ensure!(
-                        summary.count(None, SourceKind::Deterministic) == summary.total,
+                        summary.count(None, SourceKind::Deterministic)
+                            + summary.count(None, SourceKind::NotDispatched)
+                            == summary.total,
                         "absent Context model cannot have scored a card"
                     );
                     (0, 0, 0)
@@ -1338,7 +1346,11 @@ impl ContextResponseV3 {
                     && row.model == decision.model)),
             "reply decision of an uncounted stage and source"
         );
-        let scored_total = summary.total - summary.count(None, SourceKind::Deterministic);
+        // Decisions whose card call was dispatched: neither the no-model path
+        // nor a call that was not dispatched holds a card slot.
+        let scored_total = summary.total
+            - summary.count(None, SourceKind::Deterministic)
+            - summary.count(None, SourceKind::NotDispatched);
         let scored_included = self
             .decisions
             .iter()

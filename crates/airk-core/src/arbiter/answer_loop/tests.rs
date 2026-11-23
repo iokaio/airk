@@ -24,7 +24,7 @@ fn default_budget_is_the_literal_recorded_decision() -> Result<()> {
         serde_json::to_value(&budget)?,
         json!({
             "deadline_ms":300000,"max_bytes":262144,"max_parts":4,"max_sub_needs":4,
-            "rounds":3,"calls":132,"fanout":8,"candidates":132,"input_tokens":131072,
+            "rounds":3,"calls":132,"fanout":8,"candidates":132,"input_tokens":196608,
             "round_input_tokens":32768,"context_calls":48,"focus_calls":24,"focus_pairs":192
         })
     );
@@ -38,6 +38,12 @@ fn default_budget_is_the_literal_recorded_decision() -> Result<()> {
     small.max_bytes = 50_000;
     assert_eq!(reply_limit(&small), 50_000);
     assert_eq!(MAX_DECISIONS, 101);
+    // The pool funds two parts through every round at the round allowance
+    // (recorded budget decision, change-log entry 44).
+    assert_eq!(
+        DEFAULT_INPUT_TOKENS,
+        2 * budget.rounds * budget.round_input_tokens
+    );
     Ok(())
 }
 
@@ -1002,7 +1008,7 @@ fn refusals() -> Vec<(&'static str, Mutation, &'static str)> {
         ),
         (
             "work_tokens_over_pool",
-            |r| r.work.input_tokens = 131_073,
+            |r| r.work.input_tokens = 196_609,
             "Answer original work budget exceeded",
         ),
         (
@@ -1196,6 +1202,118 @@ fn unavailable_decisions_carry_typed_reason_and_unknown_work() -> Result<()> {
         reason: AssessmentUnavailable::Abstained,
     };
     assert!(lost.validate(48).is_err());
+    Ok(())
+}
+
+#[test]
+fn a_call_not_dispatched_names_its_model_and_reason_and_holds_no_slot() -> Result<()> {
+    let shed = |reason| DecisionRecord {
+        source: DecisionSource::NotDispatched {
+            fallback: DeterministicRule::FirstExtractedTerm,
+            reason,
+        },
+        model: Some(SelectedModel::ContextCompact),
+        ..decisions()[3].clone()
+    };
+    for reason in [
+        AssessmentUnavailable::TokenBudget,
+        AssessmentUnavailable::Deadline,
+        AssessmentUnavailable::Unavailable,
+    ] {
+        let decision = shed(reason);
+        decision.validate(48)?;
+        assert!(!decision.scored_by_model(), "no card call ran for it");
+        assert_eq!(decision.source.kind(), SourceKind::NotDispatched);
+    }
+    assert_eq!(
+        serde_json::to_value(shed(AssessmentUnavailable::TokenBudget))?["source"],
+        json!({"kind":"not_dispatched","fallback":"first_extracted_term","reason":"token_budget"})
+    );
+    assert!(
+        shed(AssessmentUnavailable::Abstained).validate(48).is_err(),
+        "an abstention is a call that ran"
+    );
+    assert!(
+        shed(AssessmentUnavailable::NoEvidence)
+            .validate(48)
+            .is_err()
+    );
+    let refused = |mutate: fn(&mut DecisionRecord)| {
+        let mut decision = shed(AssessmentUnavailable::Deadline);
+        mutate(&mut decision);
+        decision.validate(48).is_err()
+    };
+    assert!(
+        refused(|d| d.model = None),
+        "the model that was present is named"
+    );
+    assert!(
+        refused(|d| d.model = Some(SelectedModel::Focus)),
+        "only a Context model scores cards"
+    );
+    assert!(refused(|d| d.card_slot = Some(1)), "no card slot is held");
+    assert!(refused(|d| d.receipt = Some(digest(60))));
+    assert!(refused(|d| d.device = Some(ExecutionDevice::Cuda)));
+    assert!(refused(|d| d.work_unknown = true));
+    // The no-model path still names no model.
+    let mut plain = decisions()[3].clone();
+    plain.validate(48)?;
+    plain.model = Some(SelectedModel::ContextCompact);
+    assert!(plain.validate(48).is_err());
+    Ok(())
+}
+
+#[test]
+fn a_reply_counts_calls_not_dispatched_apart_from_the_no_model_path() -> Result<()> {
+    // The fixture's Follow-up decision, with its card call shed for tokens.
+    let mut packet = response();
+    packet.decisions[3].source = DecisionSource::NotDispatched {
+        fallback: DeterministicRule::FirstExtractedTerm,
+        reason: AssessmentUnavailable::TokenBudget,
+    };
+    packet.decisions[3].model = Some(SelectedModel::ContextCompact);
+    let row = packet
+        .decision_log
+        .counts
+        .iter_mut()
+        .find(|row| row.stage == LoopStage::FollowUp)
+        .expect("the Follow-up row");
+    row.source = SourceKind::NotDispatched;
+    row.model = Some(SelectedModel::ContextCompact);
+    packet.validate(&budget())?;
+    let log = &packet.decision_log;
+    // One reader's count per way a decision was taken.
+    assert_eq!(
+        [
+            SourceKind::Model,
+            SourceKind::Abstained,
+            SourceKind::Unavailable,
+            SourceKind::NotDispatched,
+            SourceKind::Deterministic,
+        ]
+        .map(|source| log.count(None, source)),
+        [1, 1, 0, 1, 1]
+    );
+    assert_eq!(
+        log.count(Some(LoopStage::FollowUp), SourceKind::NotDispatched),
+        1
+    );
+    // Its row names the model that was present; the no-model row names none.
+    let mut unnamed = packet.clone();
+    unnamed
+        .decision_log
+        .counts
+        .iter_mut()
+        .find(|row| row.stage == LoopStage::FollowUp)
+        .expect("the Follow-up row")
+        .model = None;
+    let error = unnamed.validate(&budget()).unwrap_err().to_string();
+    assert!(
+        error.contains("invalid decision log stage and source counts"),
+        "{error}"
+    );
+    // A shed call holds no card slot, so the reply's one card call stands.
+    assert_eq!(log.card_calls, 1);
     Ok(())
 }
 

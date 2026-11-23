@@ -47,9 +47,9 @@ fn initial_v3_allocations_share_every_counter_with_ordinal_prefixes() -> Result<
     assert_eq!(
         rows,
         vec![
-            (44, 44, 87_382, 43_691, 64, slots.clone(), focus.clone()),
-            (44, 44, 87_381, 43_691, 64, slots.clone(), focus.clone()),
-            (44, 44, 87_381, 43_690, 64, slots, focus),
+            (44, 44, 87_382, 65_536, 64, slots.clone(), focus.clone()),
+            (44, 44, 87_381, 65_536, 64, slots.clone(), focus.clone()),
+            (44, 44, 87_381, 65_536, 64, slots, focus),
         ]
     );
     // One slot and one Focus call: only the first member carries model work,
@@ -74,7 +74,7 @@ fn initial_v3_allocations_share_every_counter_with_ordinal_prefixes() -> Result<
             first.focus_ordinals.clone(),
             first.resources.input_tokens
         ),
-        (vec![1], vec![1], 131_072)
+        (vec![1], vec![1], 196_608)
     );
     // Too little room for every member: the rest are not admitted.
     let tight = BudgetV3 {
@@ -142,7 +142,7 @@ fn unused_v3_work_is_handed_back_by_count() -> Result<()> {
         unused,
         LoopUse {
             calls: 56,
-            input_tokens: 56_536,
+            input_tokens: 89_304,
             candidates: 56,
             bytes: 111_072,
             card_slots: 19,

@@ -113,6 +113,20 @@ pub struct KnownInputRefusal {
     pub compile_us: u64,
     cause: anyhow::Error,
 }
+impl KnownInputRefusal {
+    /// A refusal for callers' tests, as the lane would report it:
+    /// `input_tokens` is the compiled count of an input above the request's
+    /// ceiling, or `None` when the compiler itself refused.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn synthetic(input_tokens: Option<usize>, cause: anyhow::Error) -> Self {
+        Self {
+            input_tokens,
+            queue_us: 0,
+            compile_us: 0,
+            cause,
+        }
+    }
+}
 impl std::fmt::Display for KnownInputRefusal {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("Optional native input was refused before any model work")

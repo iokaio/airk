@@ -8,7 +8,7 @@ use super::gather::{Gathering, Record};
 use super::retrieve::{Need, NeedKind};
 use super::*;
 use airk_core::arbiter::context_action::{EvidenceRef, SourceUnitKind};
-use airk_core::native_loop::{CardEvidence, LoopCard};
+use airk_core::native_loop::{CardEvidence, LoopCard, MIN_EXCERPT_BYTES};
 use software::{FollowUp, Shape};
 
 /// Spans per sub-need and round scored by Focus.
@@ -22,6 +22,10 @@ pub(crate) struct Span {
     pub(crate) hit: Hit,
     pub(crate) round: u8,
     pub(crate) focus: Option<f32>,
+    /// Where the text Focus scored starts in the hit's text (its Focus
+    /// window); 0 when Focus did not score the span. An excerpt starts here,
+    /// so the relevance beside it describes the text that is shown.
+    pub(crate) from: usize,
 }
 impl Span {
     pub(crate) fn location(&self) -> String {
@@ -84,6 +88,7 @@ pub(crate) fn spans(gather: &Gathering, part: u8, need: u8, round: u8) -> Vec<Sp
                 hit,
                 round,
                 focus: None,
+                from: 0,
             });
         }
     }
@@ -350,85 +355,161 @@ pub(crate) fn cards(need: u8, spans: &[Span], alternatives: &[Alternative]) -> V
     out
 }
 
-/// How many bytes of each span's text one card call shows. `texts` are the
-/// spans of every sub-need in the call, in call order (segment order, then
-/// Focus rank), and `allowance` is the call's excerpt bytes
-/// (`native_loop::evidence_allowance` of its token reservation). Every span
-/// first gets an equal share; what the shorter texts leave goes to the cut
-/// ones in call order. Each length then moves back to a character boundary.
-/// The result depends only on the texts, their order and the allowance.
+/// How many bytes of each text one card call shows. `texts` are what the
+/// call's spans have to show, and `allowance` is the call's excerpt bytes
+/// (`native_loop::evidence_allowance` of its token reservation). Every text
+/// gets the same number of bytes, the level, or all of itself where it is
+/// shorter; the level is the largest that keeps the sum within the
+/// allowance. Each length then moves back to a character boundary. Equal
+/// texts get equal cuts, and the result depends only on the texts and the
+/// allowance, not on their order.
 pub(crate) fn excerpt_cuts(texts: &[&str], allowance: usize) -> Vec<usize> {
-    if texts.is_empty() {
-        return vec![];
-    }
-    let share = allowance / texts.len();
-    let mut cuts: Vec<usize> = texts.iter().map(|text| text.len().min(share)).collect();
-    let mut left = allowance - cuts.iter().sum::<usize>();
-    for (cut, text) in cuts.iter_mut().zip(texts) {
-        let more = (text.len() - *cut).min(left);
-        *cut += more;
-        left -= more;
-    }
-    for (cut, text) in cuts.iter_mut().zip(texts) {
-        while !text.is_char_boundary(*cut) {
-            *cut -= 1;
+    let mut order: Vec<usize> = (0..texts.len()).collect();
+    order.sort_by_key(|index| texts[*index].len());
+    let mut left = allowance;
+    let mut level = usize::MAX;
+    for (position, index) in order.iter().enumerate() {
+        let rest = texts.len() - position;
+        let length = texts[*index].len();
+        if length.saturating_mul(rest) <= left {
+            left -= length;
+        } else {
+            level = left / rest;
+            break;
         }
     }
-    cuts
+    texts
+        .iter()
+        .map(|text| {
+            let mut cut = text.len().min(level);
+            while !text.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            cut
+        })
+        .collect()
 }
 
-/// What one card call shows of one sub-need's spans: the excerpts its roster
-/// carries, and the decision log's account of them. A shown span is logged
-/// as the byte range of its excerpt; the tail a cut removed, and a span not
-/// shown at all, are logged as omitted.
+/// What one card call shows of one sub-need's spans: the rows its roster
+/// carries, and the log's account of them for a decision the model takes.
+/// A shown span is logged as the byte range of its excerpt; the text before
+/// and after it, and a span not shown at all, are logged as omitted.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Shown {
     pub(crate) evidence: Vec<CardEvidence>,
+    /// Gathered spans the call shows nothing of.
+    pub(crate) unshown: usize,
     pub(crate) presented: Vec<EvidenceRef>,
     pub(crate) omitted: Vec<EvidenceRef>,
 }
 
-/// The excerpts of one card call: each sub-need's ranked spans, cut to the
-/// call's excerpt allowance. The texts are those of records already read and
-/// retained under the Answer's revision fence; nothing is read here.
-pub(crate) fn present(gather: &Gathering, needs: &[&[Span]], allowance: usize) -> Vec<Shown> {
-    let texts: Vec<&str> = needs
+/// The evidence rows of one card call: each sub-need's ranked spans, cut to
+/// the call's excerpt allowance.
+/// - An excerpt starts at its span's Focus window, so it shows the text
+///   Focus scored.
+/// - A text is shown once in a call. A later span with the same text (the
+///   same span gathered for a second sub-need, or a copy at another place)
+///   is a row that names the row showing it, and takes no allowance.
+/// - `None`: the allowance cannot give every shown span
+///   `MIN_EXCERPT_BYTES`, or all it has to show. The call is then not made.
+///
+/// The texts are those of records already read and retained under the
+/// Answer's revision fence; nothing is read here.
+pub(crate) fn present(
+    gather: &Gathering,
+    needs: &[&[Span]],
+    allowance: usize,
+) -> Option<Vec<Shown>> {
+    let spans: Vec<&Span> = needs.iter().flat_map(|spans| spans.iter()).collect();
+    // The first span of the call with each text shows it.
+    let first: Vec<usize> = spans
         .iter()
-        .flat_map(|spans| spans.iter().map(|span| span.hit.text.as_str()))
-        .collect();
-    let mut cuts = excerpt_cuts(&texts, allowance).into_iter();
-    needs
-        .iter()
-        .map(|spans| {
-            let mut shown = Shown::default();
-            for span in *spans {
-                let cut = cuts.next().unwrap_or(0);
-                let text = &span.hit.text;
-                let unit = |utf8_start, utf8_end| EvidenceRef {
-                    record: gather.records[span.record].id,
-                    kind: SourceUnitKind::Hit,
-                    result_pointer: span.pointer.clone(),
-                    utf8_start,
-                    utf8_end,
-                };
-                if cut > 0 {
-                    shown.evidence.push(CardEvidence {
-                        path: span.hit.citation.path.clone(),
-                        start_line: span.hit.citation.start_line,
-                        end_line: span.hit.citation.end_line,
-                        focus: span.focus,
-                        excerpt: text[..cut].to_owned(),
-                        cut_bytes: text.len() - cut,
-                    });
-                    shown.presented.push(unit(0, cut));
-                }
-                if cut < text.len() {
-                    shown.omitted.push(unit(cut, text.len()));
-                }
-            }
-            shown
+        .enumerate()
+        .map(|(index, span)| {
+            spans[..index]
+                .iter()
+                .position(|earlier| earlier.hit.text == span.hit.text)
+                .unwrap_or(index)
         })
-        .collect()
+        .collect();
+    let shows: Vec<usize> = (0..spans.len())
+        .filter(|index| first[*index] == *index)
+        .collect();
+    let texts: Vec<&str> = shows
+        .iter()
+        .map(|index| {
+            let span = spans[*index];
+            &span.hit.text[span.from.min(span.hit.text.len())..]
+        })
+        .collect();
+    let cuts = excerpt_cuts(&texts, allowance);
+    if cuts
+        .iter()
+        .zip(&texts)
+        .any(|(cut, text)| *cut < MIN_EXCERPT_BYTES && *cut < text.len())
+    {
+        return None;
+    }
+    // The shown byte range of every span, a repeat taking its first's.
+    let range = |index: usize| {
+        let shown = first[index];
+        let position = shows.iter().position(|item| *item == shown)?;
+        let from = spans[shown].from.min(spans[shown].hit.text.len());
+        Some((from, from + cuts[position]))
+    };
+    let mut index = 0;
+    let mut out = Vec::with_capacity(needs.len());
+    for need in needs {
+        let mut shown = Shown::default();
+        for span in *need {
+            let (from, to) = range(index).unwrap_or((0, 0));
+            let text = &span.hit.text;
+            let unit = |utf8_start, utf8_end| EvidenceRef {
+                record: gather.records[span.record].id,
+                kind: SourceUnitKind::Hit,
+                result_pointer: span.pointer.clone(),
+                utf8_start,
+                utf8_end,
+            };
+            let citation = &span.hit.citation;
+            if to > from {
+                let repeat = first[index] != index;
+                let source = spans[first[index]];
+                shown.evidence.push(CardEvidence {
+                    path: citation.path.clone(),
+                    start_line: citation.start_line,
+                    end_line: citation.end_line,
+                    focus: span.focus,
+                    excerpt: if repeat {
+                        String::new()
+                    } else {
+                        text[from..to].to_owned()
+                    },
+                    skipped_bytes: if repeat { 0 } else { from },
+                    cut_bytes: if repeat { 0 } else { text.len() - to },
+                    truncated: span.hit.truncated,
+                    same_as: repeat.then(|| airk_core::native_loop::EvidencePlace {
+                        path: source.hit.citation.path.clone(),
+                        start_line: source.hit.citation.start_line,
+                        end_line: source.hit.citation.end_line,
+                    }),
+                });
+                shown.presented.push(unit(from, to));
+                if from > 0 {
+                    shown.omitted.push(unit(0, from));
+                }
+                if to < text.len() {
+                    shown.omitted.push(unit(to, text.len()));
+                }
+            } else {
+                shown.unshown += 1;
+                shown.omitted.push(unit(0, text.len()));
+            }
+            index += 1;
+        }
+        out.push(shown);
+    }
+    Some(out)
 }
 
 /// The questions and spans of one batched Focus call. Each sub-need's query

@@ -100,6 +100,7 @@ pub enum SourceKind {
     Model,
     Abstained,
     Unavailable,
+    NotDispatched,
     Deterministic,
 }
 
@@ -119,9 +120,17 @@ pub enum DecisionSource {
         fallback: DeterministicRule,
         reason: AssessmentUnavailable,
     },
-    Deterministic {
-        rule: DeterministicRule,
+    /// A Context model was present, but no card call was dispatched for this
+    /// roster: the call had no slot, token share, excerpt room or time left,
+    /// or the model was not usable. The deterministic order decided. The
+    /// reason is `token_budget`, `deadline` or `unavailable`.
+    NotDispatched {
+        fallback: DeterministicRule,
+        reason: AssessmentUnavailable,
     },
+    /// No Context model takes part, or the roster holds one card; the
+    /// deterministic order decided.
+    Deterministic { rule: DeterministicRule },
 }
 impl DecisionSource {
     pub fn kind(&self) -> SourceKind {
@@ -129,6 +138,7 @@ impl DecisionSource {
             Self::Model { .. } => SourceKind::Model,
             Self::Abstained { .. } => SourceKind::Abstained,
             Self::Unavailable { .. } => SourceKind::Unavailable,
+            Self::NotDispatched { .. } => SourceKind::NotDispatched,
             Self::Deterministic { .. } => SourceKind::Deterministic,
         }
     }
@@ -141,7 +151,12 @@ pub struct ChosenCard {
     pub class: CardClass,
 }
 
-/// The source units a decision saw; the full EvidenceRef list is in the log.
+/// The source units the decision that stands rests on; the full EvidenceRef
+/// list is in the log. When a model's choice stands, `presented` counts the
+/// byte ranges the model was shown and `omitted` the ranges of the same
+/// spans it was not shown. When the deterministic order decided (no model,
+/// a call not dispatched, refused or lost, or an abstention), `presented`
+/// counts the whole spans that order read and `omitted` is 0.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BasisSummary {
@@ -194,8 +209,12 @@ pub struct DecisionRecord {
     pub work_unknown: bool,
 }
 impl DecisionRecord {
+    /// A card call was dispatched for this decision: it holds a card slot.
     pub fn scored_by_model(&self) -> bool {
-        self.source.kind() != SourceKind::Deterministic
+        !matches!(
+            self.source.kind(),
+            SourceKind::Deterministic | SourceKind::NotDispatched
+        )
     }
     /// Structural rules that need no other part of the reply.
     pub fn validate(&self, context_calls: usize) -> Result<()> {
@@ -261,10 +280,9 @@ impl DecisionRecord {
             margin_ok,
             "Answer decision margin differs from its top and runner-up"
         );
-        if self.source.kind() == SourceKind::Deterministic {
+        if !self.scored_by_model() {
             ensure!(
                 self.card_slot.is_none()
-                    && self.model.is_none()
                     && self.device.is_none()
                     && self.top.is_none()
                     && self.runner_up.is_none()
@@ -274,6 +292,26 @@ impl DecisionRecord {
                     && !self.work_unknown,
                 "deterministic Answer decision carries model facts"
             );
+            // A call that was not dispatched names the model that was
+            // present and why it did not run; the no-model path names none.
+            match self.source {
+                DecisionSource::NotDispatched { reason, .. } => ensure!(
+                    matches!(
+                        self.model,
+                        Some(SelectedModel::ContextCompact | SelectedModel::ContextLarge)
+                    ) && matches!(
+                        reason,
+                        AssessmentUnavailable::TokenBudget
+                            | AssessmentUnavailable::Deadline
+                            | AssessmentUnavailable::Unavailable
+                    ),
+                    "an Answer decision not dispatched lacks its model or reason"
+                ),
+                _ => ensure!(
+                    self.model.is_none(),
+                    "deterministic Answer decision carries model facts"
+                ),
+            }
             return Ok(());
         }
         ensure!(
@@ -324,7 +362,9 @@ impl DecisionRecord {
                     && (self.receipt.is_some() || self.work_unknown),
                 "unavailable Answer decision names an abstention or loses its receipt"
             ),
-            DecisionSource::Deterministic { .. } => unreachable!(),
+            DecisionSource::Deterministic { .. } | DecisionSource::NotDispatched { .. } => {
+                unreachable!()
+            }
         }
         Ok(())
     }

@@ -51,7 +51,11 @@ pub struct DecisionLogEntry {
     pub scores: Vec<f32>,
     /// Indexes of the chosen cards.
     pub chosen: Vec<u8>,
-    /// Source units presented, then those omitted from the roster.
+    /// What the decision that stands rests on. When a model's choice
+    /// stands: the byte ranges of the spans it was shown, then, as omitted,
+    /// the ranges of those spans it was not shown (the text before and after
+    /// an excerpt, and whole spans not shown). When the deterministic order
+    /// decided: the whole spans it read, and nothing omitted.
     pub basis: Vec<EvidenceRef>,
     pub basis_omitted: Vec<EvidenceRef>,
 }

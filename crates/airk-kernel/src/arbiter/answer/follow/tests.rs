@@ -13,6 +13,7 @@ fn span(record: usize, text: &str, end: usize) -> Span {
         hit: serde_json::from_value(value).unwrap(),
         round: 1,
         focus: None,
+        from: 0,
     }
 }
 

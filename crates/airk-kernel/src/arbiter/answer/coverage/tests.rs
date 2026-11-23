@@ -230,24 +230,30 @@ fn spans_prefer_the_sub_needs_own_reads_then_distinct_files() -> Result<()> {
 }
 
 #[test]
-fn excerpt_cuts_share_the_allowance_equally_then_in_call_order() {
-    let (long, short) = ("x".repeat(100), "y".repeat(10));
-    let (long, short) = (long.as_str(), short.as_str());
+fn excerpt_cuts_give_every_span_the_same_level_or_all_it_has() {
+    let (long, mid, short) = ("x".repeat(100), "z".repeat(60), "y".repeat(10));
+    let (long, mid, short) = (long.as_str(), mid.as_str(), short.as_str());
     // Everything fits: nothing is cut, however large the allowance.
     assert_eq!(excerpt_cuts(&[short, long], 110), [10, 100]);
-    assert_eq!(excerpt_cuts(&[short, long], 6144), [10, 100]);
-    // 90 bytes over three spans is 30 each. The short span needs only 10,
-    // so 20 are left, and they go to the first span that was cut.
-    assert_eq!(excerpt_cuts(&[long, short, long], 90), [50, 10, 30]);
-    assert_eq!(excerpt_cuts(&[short, long, long], 90), [10, 50, 30]);
-    // 40 left over two short spans: the one long span takes them all.
+    assert_eq!(excerpt_cuts(&[short, long], 7680), [10, 100]);
+    // 90 bytes for two long spans and a short one: the short one takes its
+    // 10 and the long ones share the other 80, wherever they stand.
+    assert_eq!(excerpt_cuts(&[long, short, long], 90), [40, 10, 40]);
+    assert_eq!(excerpt_cuts(&[short, long, long], 90), [10, 40, 40]);
+    // Two short spans leave 70 to the one long span.
     assert_eq!(excerpt_cuts(&[short, short, long], 90), [10, 10, 70]);
-    // 250 over three long spans is 83 each and 1 over, to the first.
-    assert_eq!(excerpt_cuts(&[long, long, long], 250), [84, 83, 83]);
-    // Fewer bytes than spans: no share, the bytes go to the first span.
-    assert_eq!(excerpt_cuts(&[long, long, long], 2), [2, 0, 0]);
+    // 150 bytes: the short span takes 10 and the other three get 46 each;
+    // the 60-byte span is cut like the 100-byte ones.
+    assert_eq!(
+        excerpt_cuts(&[long, mid, short, long], 150),
+        [46, 46, 10, 46]
+    );
+    // 250 over three long spans is 83 each; the odd byte is not used.
+    assert_eq!(excerpt_cuts(&[long, long, long], 250), [83, 83, 83]);
+    // Fewer bytes than spans, or none: nothing is shown.
+    assert_eq!(excerpt_cuts(&[long, long, long], 2), [0, 0, 0]);
     assert_eq!(excerpt_cuts(&[long, short], 0), [0, 0]);
-    assert!(excerpt_cuts(&[], 6144).is_empty());
+    assert!(excerpt_cuts(&[], 7680).is_empty());
 }
 
 #[test]
@@ -272,12 +278,14 @@ fn unit(gather: &Gathering, record: usize, hit: usize, range: (usize, usize)) ->
     }
 }
 
+/// A row that shows `text`, with `hidden` bytes of its span before and
+/// after it.
 fn excerpt(
     path: &str,
     lines: (usize, usize),
     focus: Option<f32>,
     text: &str,
-    cut_bytes: usize,
+    hidden: (usize, usize),
 ) -> CardEvidence {
     CardEvidence {
         path: path.into(),
@@ -285,12 +293,32 @@ fn excerpt(
         end_line: lines.1,
         focus,
         excerpt: text.into(),
-        cut_bytes,
+        skipped_bytes: hidden.0,
+        cut_bytes: hidden.1,
+        truncated: false,
+        same_as: None,
+    }
+}
+
+/// A row that repeats the text the row at `shown` shows.
+fn repeated(
+    path: &str,
+    lines: (usize, usize),
+    focus: Option<f32>,
+    shown: (&str, usize, usize),
+) -> CardEvidence {
+    CardEvidence {
+        same_as: Some(airk_core::native_loop::EvidencePlace {
+            path: shown.0.into(),
+            start_line: shown.1,
+            end_line: shown.2,
+        }),
+        ..excerpt(path, lines, focus, "", (0, 0))
     }
 }
 
 /// A covered, a partly covered and a missing sub-need of one part, and what
-/// one Coverage card call shows of each.
+/// one card call shows of each.
 #[test]
 fn a_covered_a_partial_and_a_missing_sub_need_show_their_own_spans() -> Result<()> {
     let scope = scope();
@@ -364,7 +392,7 @@ fn a_covered_a_partial_and_a_missing_sub_need_show_their_own_spans() -> Result<(
         ]
     );
     let needs: Vec<&[Span]> = found.iter().map(Vec::as_slice).collect();
-    let shown = present(&gather, &needs, 6144);
+    let shown = present(&gather, &needs, 7680).context("short spans are shown whole")?;
     assert_eq!(
         shown,
         [
@@ -374,8 +402,9 @@ fn a_covered_a_partial_and_a_missing_sub_need_show_their_own_spans() -> Result<(
                     (1, 9),
                     None,
                     "fn restart_guard() {}",
-                    0
+                    (0, 0)
                 )],
+                unshown: 0,
                 presented: vec![unit(&gather, body, 0, (0, 21))],
                 omitted: vec![],
             },
@@ -385,22 +414,33 @@ fn a_covered_a_partial_and_a_missing_sub_need_show_their_own_spans() -> Result<(
                     (3, 7),
                     None,
                     "The guard has rules.",
-                    0
+                    (0, 0)
                 )],
+                unshown: 0,
                 presented: vec![unit(&gather, notes, 0, (0, 20))],
                 omitted: vec![],
             },
             Shown::default(),
         ]
     );
+    // Spans shorter than the minimum are shown whole or the call is not
+    // made: 41 bytes show both, 40 would cut one.
+    assert_eq!(present(&gather, &needs, 41), Some(shown));
+    assert_eq!(present(&gather, &needs, 40), None);
+    // A call with nothing gathered is made without evidence.
+    assert_eq!(
+        present(&gather, &needs[2..], 0),
+        Some(vec![Shown::default()])
+    );
     Ok(())
 }
 
-#[test]
-fn excerpts_follow_the_focus_rank_and_disclose_every_cut() -> Result<()> {
+/// Three spans of one sub-need: `a` (1,000 bytes), `b` (300) and `c`
+/// (1,000), in the order the search returned them.
+fn three_spans() -> Result<(Gathering, usize, Vec<Span>)> {
     let scope = scope();
     let mut gather = Gathering::new(v3::BudgetV3::default(), scope.clone())?;
-    let (a, b, c) = ("a".repeat(40), "b".repeat(10), "c".repeat(40));
+    let (a, b, c) = ("a".repeat(1000), "b".repeat(300), "c".repeat(1000));
     let record = retain(
         &mut gather,
         ("search", v3::LoopRead::Search),
@@ -416,56 +456,221 @@ fn excerpts_follow_the_focus_rank_and_disclose_every_cut() -> Result<()> {
             ],
         ),
     )?;
-    let mut ranked = spans(&gather, 1, 1, 1);
+    let found = spans(&gather, 1, 1, 1);
+    Ok((gather, record, found))
+}
+
+#[test]
+fn excerpts_follow_the_focus_rank_and_disclose_every_cut() -> Result<()> {
+    let (gather, record, mut ranked) = three_spans()?;
+    // Before Focus, the gathered order.
+    assert_eq!(
+        ranked
+            .iter()
+            .map(|span| span.hit.citation.path.as_str())
+            .collect::<Vec<_>>(),
+        ["src/a.rs", "src/b.rs", "src/c.rs"]
+    );
     // Focus scored the first and the third hit and left the second unscored.
     ranked[0].focus = Some(0.2);
     ranked[2].focus = Some(0.9);
     rank(&mut ranked);
     let unit = |hit: usize, range: (usize, usize)| unit(&gather, record, hit, range);
-    // 60 bytes over three spans is 20 each. The 10-byte span leaves 10,
-    // which go to the first span in rank order.
-    let shown = present(&gather, &[&ranked[..]], 60);
+    // 1,500 bytes: the 300-byte span is shown whole and the two long ones
+    // get 600 each.
+    let shown = present(&gather, &[&ranked[..]], 1500).context("room for every span")?;
     assert_eq!(
         shown,
         [Shown {
             evidence: vec![
-                excerpt("src/c.rs", (5, 6), Some(0.9), &"c".repeat(30), 10),
-                excerpt("src/a.rs", (1, 2), Some(0.2), &"a".repeat(20), 20),
-                excerpt("src/b.rs", (3, 4), None, &"b".repeat(10), 0),
+                excerpt("src/c.rs", (5, 6), Some(0.9), &"c".repeat(600), (0, 400)),
+                excerpt("src/a.rs", (1, 2), Some(0.2), &"a".repeat(600), (0, 400)),
+                excerpt("src/b.rs", (3, 4), None, &"b".repeat(300), (0, 0)),
             ],
-            presented: vec![unit(2, (0, 30)), unit(0, (0, 20)), unit(1, (0, 10))],
-            omitted: vec![unit(2, (30, 40)), unit(0, (20, 40))],
+            unshown: 0,
+            presented: vec![unit(2, (0, 600)), unit(0, (0, 600)), unit(1, (0, 300))],
+            omitted: vec![unit(2, (600, 1000)), unit(0, (600, 1000))],
         }]
     );
     // The allowance is the call's: the same spans over two sub-needs of one
     // call are cut the same way.
-    let split = present(&gather, &[&ranked[..1], &ranked[1..]], 60);
+    let split =
+        present(&gather, &[&ranked[..1], &ranked[1..]], 1500).context("room for every span")?;
     assert_eq!(split[0].evidence, shown[0].evidence[..1]);
     assert_eq!(split[1].evidence, shown[0].evidence[1..]);
-    assert_eq!(split[0].omitted, [unit(2, (30, 40))]);
-    assert_eq!(split[1].omitted, [unit(0, (20, 40))]);
-    // Two bytes for three spans: only the top span shows anything, and the
-    // spans not shown at all are logged whole as omitted.
+    assert_eq!(split[0].omitted, [unit(2, (600, 1000))]);
+    assert_eq!(split[1].omitted, [unit(0, (600, 1000))]);
+    Ok(())
+}
+
+#[test]
+fn a_call_that_cannot_show_every_span_the_minimum_is_not_made() -> Result<()> {
+    let (gather, _, ranked) = three_spans()?;
+    // 768 bytes are 256 for each of the three spans: just enough.
+    let least = present(&gather, &[&ranked[..]], 768).context("256 bytes a span")?;
     assert_eq!(
-        present(&gather, &[&ranked[..]], 2),
-        [Shown {
-            evidence: vec![excerpt("src/c.rs", (5, 6), Some(0.9), "cc", 38)],
-            presented: vec![unit(2, (0, 2))],
-            omitted: vec![unit(2, (2, 40)), unit(0, (0, 40)), unit(1, (0, 10))],
-        }]
+        least[0]
+            .evidence
+            .iter()
+            .map(|row| (row.excerpt.len(), row.cut_bytes))
+            .collect::<Vec<_>>(),
+        [(256, 744), (256, 44), (256, 744)]
     );
-    // No allowance: no excerpt, and every span is logged as omitted.
+    // One byte less leaves 255 a span: no call, whatever the split.
+    assert_eq!(present(&gather, &[&ranked[..]], 767), None);
+    assert_eq!(present(&gather, &[&ranked[..2], &ranked[2..]], 767), None);
+    // Nothing above the frame: no call.
+    assert_eq!(present(&gather, &[&ranked[..]], 0), None);
+    // One span alone: 256 bytes are enough, 255 are not.
+    assert!(present(&gather, &[&ranked[1..2]], 256).is_some());
+    assert_eq!(present(&gather, &[&ranked[1..2]], 255), None);
+    Ok(())
+}
+
+#[test]
+fn an_excerpt_starts_where_focus_scored_and_marks_a_snippet() -> Result<()> {
+    let scope = scope();
+    let mut gather = Gathering::new(v3::BudgetV3::default(), scope.clone())?;
+    let text = format!("{}{}{}", "h".repeat(400), "m".repeat(300), "t".repeat(300));
+    let record = retain(
+        &mut gather,
+        ("search", v3::LoopRead::Search),
+        json!({"query":"need"}),
+        Some(1),
+        FollowUp::Keyword,
+        reply(&scope, vec![hit("src/long.rs", 1, 90, &text)]),
+    )?;
+    let mut found = spans(&gather, 1, 1, 1);
+    assert_eq!((found[0].from, found[0].hit.truncated), (0, false));
+    // Focus scored the text from byte 400 on, and the read was a snippet.
+    found[0].focus = Some(0.7);
+    found[0].from = 400;
+    found[0].hit.truncated = true;
+    let shown = present(&gather, &[&found[..]], 300).context("one span fits")?;
+    let mut row = excerpt(
+        "src/long.rs",
+        (1, 90),
+        Some(0.7),
+        &"m".repeat(300),
+        (400, 300),
+    );
+    row.truncated = true;
     assert_eq!(
-        present(&gather, &[&ranked[..]], 0),
+        shown,
         [Shown {
-            evidence: vec![],
-            presented: vec![],
-            omitted: vec![unit(2, (0, 40)), unit(0, (0, 40)), unit(1, (0, 10))],
+            evidence: vec![row],
+            unshown: 0,
+            presented: vec![unit(&gather, record, 0, (400, 700))],
+            // The head Focus skipped and the tail the allowance cut.
+            omitted: vec![
+                unit(&gather, record, 0, (0, 400)),
+                unit(&gather, record, 0, (700, 1000))
+            ],
         }]
     );
     Ok(())
 }
 
+#[test]
+fn a_multi_byte_span_is_cut_on_a_character_and_logged_in_bytes() -> Result<()> {
+    let scope = scope();
+    let mut gather = Gathering::new(v3::BudgetV3::default(), scope.clone())?;
+    // 300 two-byte characters: 600 bytes.
+    let text = "é".repeat(300);
+    let record = retain(
+        &mut gather,
+        ("search", v3::LoopRead::Search),
+        json!({"query":"need"}),
+        Some(1),
+        FollowUp::Keyword,
+        reply(&scope, vec![hit("docs/accents.md", 1, 9, &text)]),
+    )?;
+    let mut found = spans(&gather, 1, 1, 1);
+    // 301 bytes end inside a character: the excerpt stops one byte earlier.
+    let shown = present(&gather, &[&found[..]], 301).context("one span fits")?;
+    let half = "é".repeat(150);
+    assert_eq!(
+        shown[0].evidence,
+        [excerpt("docs/accents.md", (1, 9), None, &half, (0, 300))]
+    );
+    assert_eq!(shown[0].presented, [unit(&gather, record, 0, (0, 300))]);
+    assert_eq!(shown[0].omitted, [unit(&gather, record, 0, (300, 600))]);
+    // From byte 100 on, the same allowance shows bytes 100 to 400.
+    found[0].from = 100;
+    let shown = present(&gather, &[&found[..]], 301).context("one span fits")?;
+    assert_eq!(
+        shown[0].evidence,
+        [excerpt("docs/accents.md", (1, 9), None, &half, (100, 200))]
+    );
+    assert_eq!(shown[0].presented, [unit(&gather, record, 0, (100, 400))]);
+    Ok(())
+}
+
+#[test]
+fn a_text_is_shown_once_in_a_call_and_its_repeats_name_that_row() -> Result<()> {
+    let scope = scope();
+    let mut gather = Gathering::new(v3::BudgetV3::default(), scope.clone())?;
+    let text = "g".repeat(1000);
+    // Sub-need 1 found the text at two places; sub-need 2 found one of them
+    // again through its own search.
+    let first = retain(
+        &mut gather,
+        ("search", v3::LoopRead::Search),
+        json!({"query":"guard"}),
+        Some(1),
+        FollowUp::Keyword,
+        reply(
+            &scope,
+            vec![
+                hit("src/guard.rs", 1, 40, &text),
+                hit("vendor/guard.rs", 1, 40, &text),
+            ],
+        ),
+    )?;
+    let second = retain(
+        &mut gather,
+        ("search", v3::LoopRead::Search),
+        json!({"query":"guard callers"}),
+        Some(2),
+        FollowUp::Keyword,
+        reply(&scope, vec![hit("src/guard.rs", 1, 40, &text)]),
+    )?;
+    let found = [spans(&gather, 1, 1, 1), spans(&gather, 1, 2, 1)];
+    assert_eq!((found[0].len(), found[1].len()), (2, 1));
+    let needs: Vec<&[Span]> = found.iter().map(Vec::as_slice).collect();
+    // 300 bytes: were each copy to take a share, each would get 100, which
+    // is below the minimum. The one shown copy takes all 300.
+    let shown = present(&gather, &needs, 300).context("one text to show")?;
+    let place = ("src/guard.rs", 1, 40);
+    assert_eq!(
+        shown,
+        [
+            Shown {
+                evidence: vec![
+                    excerpt("src/guard.rs", (1, 40), None, &"g".repeat(300), (0, 700)),
+                    repeated("vendor/guard.rs", (1, 40), None, place),
+                ],
+                unshown: 0,
+                // Each span's own record is logged with the range shown.
+                presented: vec![
+                    unit(&gather, first, 0, (0, 300)),
+                    unit(&gather, first, 1, (0, 300))
+                ],
+                omitted: vec![
+                    unit(&gather, first, 0, (300, 1000)),
+                    unit(&gather, first, 1, (300, 1000))
+                ],
+            },
+            Shown {
+                evidence: vec![repeated("src/guard.rs", (1, 40), None, place)],
+                unshown: 0,
+                presented: vec![unit(&gather, second, 0, (0, 300))],
+                omitted: vec![unit(&gather, second, 0, (300, 1000))],
+            },
+        ]
+    );
+    Ok(())
+}
 #[test]
 fn coverage_roster_cites_top_spans_and_offers_alternatives() -> Result<()> {
     let scope = scope();

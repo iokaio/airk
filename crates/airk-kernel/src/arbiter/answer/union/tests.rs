@@ -157,6 +157,7 @@ fn full_loop() -> Result<Built> {
                         hit,
                         round,
                         focus: None,
+                        from: 0,
                     });
                 }
                 if round > 1 {

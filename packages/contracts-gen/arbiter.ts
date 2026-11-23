@@ -113,7 +113,12 @@ export type AssetRole = "model" | "external_weights" | "tokenizer" | "compiler" 
 export type Availability = "disabled" | "index_disabled" | "unqualified" | "unsupported_system" | "unsupported_task" | "missing_assets" | "requested" | "downloading" | "verifying" | "warming" | "ready" | "constrained" | "draining" | "failed";
 
 /**
- * The source units a decision saw; the full EvidenceRef list is in the log.
+ * The source units the decision that stands rests on; the full EvidenceRef
+ * list is in the log. When a model's choice stands, `presented` counts the
+ * byte ranges the model was shown and `omitted` the ranges of the same
+ * spans it was not shown. When the deterministic order decided (no model,
+ * a call not dispatched, refused or lost, or an abstention), `presented`
+ * counts the whole spans that order read and `omitted` is 0.
  */
 export type BasisSummary = {
     digest: Sha256Digest;
@@ -473,7 +478,11 @@ export type DecisionLog = {
 
 export type DecisionLogEntry = {
     /**
-     * Source units presented, then those omitted from the roster.
+     * What the decision that stands rests on. When a model's choice
+     * stands: the byte ranges of the spans it was shown, then, as omitted,
+     * the ranges of those spans it was not shown (the text before and after
+     * an excerpt, and whole spans not shown). When the deterministic order
+     * decided: the whole spans it read, and nothing omitted.
      */
     basis: Array<EvidenceRef>;
     basis_omitted: Array<EvidenceRef>;
@@ -586,6 +595,10 @@ export type DecisionSource = {
 } | {
     fallback: DeterministicRule;
     kind: "unavailable";
+    reason: AssessmentUnavailable;
+} | {
+    fallback: DeterministicRule;
+    kind: "not_dispatched";
     reason: AssessmentUnavailable;
 } | {
     kind: "deterministic";
@@ -1400,7 +1413,7 @@ export type SelectionReason = "forced_cpu" | "no_gpu" | "unqualified" | "target_
 
 export type Sha256Digest = string;
 
-export type SourceKind = "model" | "abstained" | "unavailable" | "deterministic";
+export type SourceKind = "model" | "abstained" | "unavailable" | "not_dispatched" | "deterministic";
 
 export type SourceUnitKind = "hit";
 

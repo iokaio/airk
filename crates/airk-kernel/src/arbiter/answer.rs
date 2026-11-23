@@ -367,6 +367,7 @@ impl Loop<'_> {
                 subject: question.to_owned(),
                 basis: vec![],
                 spans: vec![],
+                verdict: None,
                 fallback: vec![plan.deterministic],
                 rule: v3::DeterministicRule::ExplicitBreaks,
             }],
@@ -422,6 +423,7 @@ impl Loop<'_> {
                     subject: self.parts[index].text.clone(),
                     basis: vec![],
                     spans: vec![],
+                    verdict: None,
                     fallback: fallback.clone(),
                     rule: v3::DeterministicRule::EveryProposedNeed,
                 }],
@@ -863,6 +865,7 @@ impl Loop<'_> {
             let state = &mut self.parts[part].needs[index];
             state.history.extend(assessed.spans.iter().cloned());
             state.coverage = assessed.coverage;
+            state.coverage_by_model = false;
             state.evidence = assessed.evidence;
             state.spans = assessed.spans;
         }
@@ -1042,6 +1045,7 @@ impl Loop<'_> {
                     ),
                     basis: self.spans_basis(&assessed.spans),
                     spans: assessed.spans.clone(),
+                    verdict: None,
                     fallback: vec![usize::from(!covered)],
                     rule: v3::DeterministicRule::TopFocusSpan,
                 });
@@ -1051,6 +1055,7 @@ impl Loop<'_> {
         let mut choices = self.decide(segs, 2)?.into_iter();
         for (part, index, assessed, candidates, logged) in pending {
             let mut coverage = assessed.coverage;
+            let mut by_model = false;
             if logged
                 && let Some(choice) = choices.next()
                 && choice.model
@@ -1060,10 +1065,12 @@ impl Loop<'_> {
                     &assessed.spans,
                     assessed.evidence.len(),
                 );
+                by_model = true;
             }
             let state = &mut self.parts[part].needs[index];
             state.history.extend(assessed.spans.iter().cloned());
             state.coverage = coverage;
+            state.coverage_by_model = by_model;
             state.evidence = assessed.evidence;
             state.spans = assessed.spans;
             state.candidates = candidates;
@@ -1123,9 +1130,20 @@ impl Loop<'_> {
                     segs.push(model::Seg {
                         at: decide::At::need(v3::LoopStage::FollowUp, id, need, round),
                         cards: follow::cards(need, &candidates, size),
-                        subject: state.need.query.clone(),
+                        // The roster says what the read is for: the
+                        // sub-need with its kind, how far this round's spans
+                        // cover it and who judged that, and those spans.
+                        subject: plan::wording(
+                            state.need.kind,
+                            state.need.subject.as_deref(),
+                            &state.need.query,
+                        ),
                         basis: self.spans_basis(&state.spans),
-                        spans: vec![],
+                        spans: state.spans.clone(),
+                        verdict: Some(airk_core::native_loop::CardVerdict {
+                            coverage: state.coverage,
+                            by_model: state.coverage_by_model,
+                        }),
                         fallback: vec![0],
                         rule: v3::DeterministicRule::FirstExtractedTerm,
                     });
@@ -1195,11 +1213,12 @@ impl Loop<'_> {
     fn degradations(&self) -> Vec<v3::Degradation> {
         let mut out = Vec::new();
         let entries = &self.ledger.entries;
-        // Every logged decision took the deterministic order, for whatever
-        // reason (no model, blocked, declined or out of slots).
+        // No card call was dispatched: every logged decision took the
+        // deterministic order, for whatever reason (no model, or a model
+        // that was blocked, declined or out of slots, tokens or time).
         if entries
             .iter()
-            .all(|entry| entry.decision.source.kind() == v3::SourceKind::Deterministic)
+            .all(|entry| !entry.decision.scored_by_model())
         {
             out.push(v3::Degradation::ContextAbsent);
         }

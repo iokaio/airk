@@ -446,7 +446,7 @@
     },
     "BasisSummary": {
       "additionalProperties": false,
-      "description": "The source units a decision saw; the full EvidenceRef list is in the log.",
+      "description": "The source units the decision that stands rests on; the full EvidenceRef\nlist is in the log. When a model's choice stands, `presented` counts the\nbyte ranges the model was shown and `omitted` the ranges of the same\nspans it was not shown. When the deterministic order decided (no model,\na call not dispatched, refused or lost, or an abstention), `presented`\ncounts the whole spans that order read and `omitted` is 0.",
       "properties": {
         "digest": {
           "$ref": "#/$defs/Sha256Digest"
@@ -1870,7 +1870,7 @@
       "additionalProperties": false,
       "properties": {
         "basis": {
-          "description": "Source units presented, then those omitted from the roster.",
+          "description": "What the decision that stands rests on. When a model's choice\nstands: the byte ranges of the spans it was shown, then, as omitted,\nthe ranges of those spans it was not shown (the text before and after\nan excerpt, and whole spans not shown). When the deterministic order\ndecided: the whole spans it read, and nothing omitted.",
           "items": {
             "$ref": "#/$defs/EvidenceRef"
           },
@@ -2237,6 +2237,29 @@
         },
         {
           "additionalProperties": false,
+          "description": "A Context model was present, but no card call was dispatched for this\nroster: the call had no slot, token share, excerpt room or time left,\nor the model was not usable. The deterministic order decided. The\nreason is `token_budget`, `deadline` or `unavailable`.",
+          "properties": {
+            "fallback": {
+              "$ref": "#/$defs/DeterministicRule"
+            },
+            "kind": {
+              "const": "not_dispatched",
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/$defs/AssessmentUnavailable"
+            }
+          },
+          "required": [
+            "kind",
+            "fallback",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "No Context model takes part, or the roster holds one card; the\ndeterministic order decided.",
           "properties": {
             "kind": {
               "const": "deterministic",
@@ -2259,7 +2282,7 @@
       "oneOf": [
         {
           "additionalProperties": false,
-          "description": "No Context model: every card decision took the deterministic order.",
+          "description": "No Context model decided: no card call was dispatched, and every card\ndecision took the deterministic order.",
           "properties": {
             "kind": {
               "const": "context_absent",
@@ -5649,6 +5672,7 @@
         "model",
         "abstained",
         "unavailable",
+        "not_dispatched",
         "deterministic"
       ],
       "type": "string"

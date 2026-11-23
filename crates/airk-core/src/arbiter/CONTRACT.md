@@ -1376,7 +1376,7 @@ Every field is required and validated, never silently replaced.
 | `calls` | 1..=160 | 132 | Round one 4 x (1 + 4 x 6) = 100, later rounds 4 x 2 x 4 = 32; 28 spare |
 | `fanout` | 1..=12 | 8 | Peak concurrent reads in one round of one part; default as /2 |
 | `candidates` | 1..=160 | 132 | One candidate record per read before dedup, so equal to `calls` |
-| `input_tokens` | 1..=262,144 | 131,072 | Attempt pool |
+| `input_tokens` | 1..=262,144 | 196,608 | Attempt pool: two parts through three rounds at the round allowance (2 x 3 x 32,768); recorded budget decision, change log entry 44 |
 | `round_input_tokens` | 1..=32,768 | 32,768 | Two batched coverage calls and one follow-up call at 8,192, plus 16 Focus pairs at 512 |
 | `context_calls` | 1..=64 | 48 | Card calls (slots): 1 Split + 4 Plan + 12 x 2 coverage + 8 x 2 follow-up = 45 with two-sub-need batching |
 | `focus_calls` | 1..=48 | 24 | 4 x 3 x 4 unbatched; default two calls a part-round |
@@ -1442,7 +1442,8 @@ round runs at most one read per sub-need. One Context card call is at most
 - **ticket** (required, nullable): id, queue position, estimated start and
   finish and `retry_after_ms`. A ticket reply carries no parts, records,
   decisions or work and is marked partial at admission with reason queued.
-- **degradations:** context_absent (every logged decision deterministic),
+- **degradations:** context_absent (no card call was dispatched: every
+  logged decision is deterministic or not_dispatched),
   context_abstained {count, equal to the logged abstentions}, focus_absent
   (present exactly when no Focus ran: no batched call, and no search Focus,
   which the loop defers), model_share {part, stage},
@@ -1459,18 +1460,21 @@ round runs at most one read per sub-need. One Context card call is at most
   shared by the segments of one batched call), chosen cards (symbol and class;
   several only for Plan, at most four), source (model {mode rule or
   top_score, rule}, abstained {fallback, reason}, unavailable {fallback,
-  reason}, deterministic {rule}), top and runner-up raw scores and their
+  reason}, not_dispatched {fallback, reason}, deterministic {rule}), top and
+  runner-up raw scores and their
   margin (exactly top minus runner-up), model, device, precision (GPU only),
   `batched_with` (symmetric, same slot and receipt), applicability, receipt
   id, basis and `work_unknown`. Only Compact or Large score cards; Large never
-  runs on the CPU. A deterministic decision carries no model facts.
+  runs on the CPU. A deterministic decision carries no model facts; a
+  not_dispatched one carries only the model that was present.
 - **decision_log** (`DecisionLogSummary`): the custody log's digest, total,
   included and omitted counts, card calls (distinct slots), counts per stage
   and source, Focus calls and pairs, model tokens per part and round
   (`attribution`), measured timings and unknown-work count. The reply's
   decisions are a subset with increasing ordinals. Union omits decisions
-  oldest deterministic first: a model-scored decision may be omitted only
-  when no deterministic decision remains included. ContextAbstained,
+  oldest deterministic first (the no-model ones and the ones not
+  dispatched): a decision of a dispatched call may be omitted only when none
+  of those remains included. ContextAbstained,
   `model_work`, slot counts, Focus work and round tokens reconcile against
   these counts, not against the included list.
 - **model_work:** card calls, Focus calls and Focus pairs, equal to the log's,
@@ -1556,45 +1560,104 @@ questions and up to 32 scored candidates that name their question by index;
 the candidate identity (`airk.arbiter.focus.candidate/2`) hashes the
 candidate's own question text.
 
-**Coverage evidence excerpts (recorded wire decision, 22 November 2026;
-change log entry 43).** A `CardSegment` gains `evidence`: the spans gathered
-for its sub-need, as `CardEvidence` rows (`path`, `start_line`, `end_line`,
-an optional `focus` relevance in 0..=1, `excerpt` and `cut_bytes`).
+**Evidence, verdict and calls not dispatched (recorded wire decisions, 22
+November 2026; change log entries 43 and 44).** A Coverage or Follow-up
+`CardSegment` carries `evidence`: the spans gathered for its sub-need in this
+round, as `CardEvidence` rows.
 
 - **Why:** the Coverage question asks which verdict fits a sub-need "given
-  only its shown evidence", and no evidence was shown. The model saw the
-  sub-need's query and card texts that cite locations.
-- **Which segments:** only Coverage segments carry evidence, at most eight
-  rows each. A segment without spans carries none; the field is then absent
-  on the wire, so a request without evidence serializes and hashes as before.
+  only its shown evidence", and no evidence was shown (entry 43). A Follow-up
+  roster asked for the read that best closes a gap without saying what kind
+  of sub-need it was, how far it was covered or what had been read (entry
+  44).
+- **A row:** `path`, `start_line`, `end_line`, an optional `focus` relevance
+  in 0..=1, `excerpt`, `skipped_bytes`, `cut_bytes`, `truncated` and an
+  optional `same_as`.
+  - `excerpt` is the shown part of the span's text, on character boundaries.
+    `skipped_bytes` and `cut_bytes` are the bytes of that text before and
+    after it, which are not shown; together at most the retention ceiling.
+  - `truncated` repeats `Hit.truncated`: the read itself returned only part
+    of the text there.
+  - `same_as` is the place (`path`, `start_line`, `end_line`) of an earlier
+    row of the same call that shows the same text. Such a row carries no
+    excerpt and no hidden bytes. The row it names must come earlier in the
+    call and must itself show text.
+- **Which segments:** Coverage and Follow-up only, at most eight rows each.
+  Split and Plan segments are refused with evidence, a verdict or an unshown
+  count. A segment without spans carries none; the fields are then absent on
+  the wire, so a request without them serializes and hashes as before.
 - **Order:** Focus rank order. Scored spans come first by falling relevance,
   then the spans Focus did not score.
-- **Excerpt:** a non-empty prefix of the span's text, cut on a character
-  boundary. `cut_bytes` is the rest of that text, which is not shown.
+- **`unshown`:** the gathered spans a call shows nothing of, at most eight.
+- **`verdict` (Follow-up only, where it is required):** `coverage` (`partial`
+  or `missing`; a covered sub-need has no follow-up) and `by_model` (a
+  model's Coverage choice set it; otherwise the deterministic order did).
 - **Allowance:** the excerpts of one call total at most
-  `evidence_allowance(remaining_input_tokens)` bytes: the call's reserved
-  tokens less `CARD_FRAME_TOKENS` (2,048), at one byte a token. The
-  8,192-token reservation allows 6,144 bytes. `NativeCardRequest::validate`
-  refuses a request above its allowance.
+  `evidence_allowance(remaining_input_tokens)` bytes: five bytes for every
+  four reserved tokens above `CARD_FRAME_TOKENS` (2,048). The 8,192-token
+  reservation allows 7,680 bytes, 960 for each of eight spans. A repeat row
+  takes none of it. `NativeCardRequest::validate` refuses a request above its
+  allowance.
+- **Least excerpt:** a cut excerpt holds at least `MIN_EXCERPT_BYTES` (256);
+  a shorter one runs to the end of its span's text. 256 bytes is about six
+  lines of code or one short paragraph, the least a model can judge by. The
+  kernel does not make a call that cannot give every span that much.
 - **No new budget shape:** the bound comes from the reservation the call
-  already holds. `BudgetV3`, the loop ledger, the token pool and the
-  per-part, per-round allowance are unchanged.
-- **Assumptions and their evidence:** an excerpt needs at most one token a
-  byte, and the rest of the model view at most 2,048 tokens. With the gate
-  profiles' tokenizer, no measured chunk of repository text needed more than
-  0.7 tokens a byte, and a two-sub-need call with eight cards and eight
-  located spans needed about 1,060 tokens around its excerpts
-  (`scripts/arbiter/evaluation/card_excerpt_tokens`). Text made only of
-  digits, quotes, line breaks or control characters can need more. Such a
-  call is refused by the lane's token ceiling before any model work, like any
-  oversized input, and the decision takes the deterministic order.
-- **Binding:** the request's `input_digest` covers the evidence, so a receipt
-  binds exactly what was shown. The decision log keeps its shape: an entry's
-  `basis` holds the byte range shown of each span, and `basis_omitted` the
-  cut tails and the spans not shown (kernel arbiter contract).
-- **Generated views:** unchanged. `CardSegment` and `CardEvidence` are
-  private native inputs outside the generated schema.
+  already holds. The loop ledger and the per-part, per-round allowance are
+  unchanged.
+- **The measurements behind the ratio and the frame** (entry 44;
+  `scripts/arbiter/evaluation/card_excerpt_tokens`), with the gate profiles'
+  tokenizer on the gate's two repositories, in 960-byte windows quoted as
+  the view quotes them:
+  - munarium: median 0.374 tokens a byte, p99 0.669, p99.9 0.753, maximum
+    0.863;
+  - bookbuilder-v2: median 0.308, p99 0.585, p99.9 0.746, maximum 2.000 (43
+    of 94,879 windows, number tables and runs of escaped characters, need
+    more than 0.895);
+  - the view around the excerpts of a two-sub-need call with eight cards and
+    eight located spans is modelled at 1,269 tokens (Coverage) and 1,321
+    tokens (Follow-up);
+  - so a full call fits its reservation while its excerpts average at most
+    0.895 tokens a byte. A call of only munarium's densest window uses 7,948
+    of 8,192 tokens. A call above its reservation is refused by the lane's
+    token ceiling before any model work, like any oversized input, and the
+    decision takes the deterministic order.
+- **Binding:** the request's `input_digest` covers the evidence, the unshown
+  count and the verdict, so a receipt binds exactly what was shown.
+- **What the log's basis means:** an entry's `basis` and `basis_omitted`
+  (and the reply's compact `basis` counts) describe what the decision that
+  stands rests on.
+  - When a model's choice stands: `basis` is the byte range of each span the
+    model was shown, and `basis_omitted` the ranges of those spans it was
+    not shown (before and after an excerpt) and every span not shown at all.
+  - When the deterministic order decided (no model, a call not dispatched,
+    refused or lost, or an abstention): `basis` is the whole spans that
+    order read, and nothing is omitted. The excerpts a refused, lost or
+    abstained call was built with are not the basis of the decision.
+- **A call not dispatched (`not_dispatched`):** `DecisionSource` and
+  `SourceKind` gain this kind. It records a roster for which a Context model
+  was present but no card call was sent, with the deterministic `fallback`
+  rule and a `reason`:
+  - `token_budget`: no card slot, token share or round allowance was left,
+    or the reservation left the spans less than the least excerpt;
+  - `deadline`: the part's model time for this barrier was below the
+    estimated call time, or the loop had reached its Compose and Union
+    reserve;
+  - `unavailable`: the model was not usable (blocked after a lost or
+    declined call, a changed configuration, or a stage that is not ready).
 
+  Such a decision names the model that was present and carries no slot,
+  device, scores or receipt. `deterministic` now means only the no-model
+  path: no Context model takes part, or the roster holds one card. A reader
+  can count, per stage and model in `decision_log.counts`, the decisions a
+  model took (`model`), the ones it declined (`abstained`), the ones whose
+  call was sent and refused or lost (`unavailable`), the ones whose call was
+  not sent (`not_dispatched`) and the no-model ones (`deterministic`).
+- **Generated views:** `CardSegment`, `CardEvidence` and `CardVerdict` are
+  private native inputs outside the generated schema. The decision source
+  is public: the arbiter schema, the generated TypeScript views and the
+  Rust-emitted semantic cases carry `not_dispatched` and the reworded basis
+  descriptions.
 `PartitionAllowanceV3` (`airk.context-partition-allowance/3`) is a recorded
 wire-shape decision: attempt, selection, index, a BudgetV3 parent, resources
 within that parent, and strictly increasing `card_ordinals` (card slots,
@@ -1758,11 +1821,13 @@ moves every loop task identity and needs a recorded decision (values in
 `crates/airk-retrieval/src/arbiter/compiler/CONTRACT.md`). It is a new
 closure; the Context and Focus closures and their digests are unchanged.
 
-The Coverage evidence decision above (change log entry 43) edits
-`native_loop.rs`, so the loop semantics digest and every loop task identity
-moved with it. The old and new values are recorded in the retrieval compiler
-contract. `answer_loop/cards.rs`, `calibration.rs`, `focus_batch.rs`,
-`log.rs` and `semantics.rs` did not change.
+The evidence decisions above edit digest inputs, so the loop semantics
+digest and every loop task identity moved with each. Entry 43 edited
+`native_loop.rs`. Entry 44 edited `native_loop.rs`, `answer_loop/cards.rs`
+(the `not_dispatched` source) and a doc comment of `answer_loop/log.rs`;
+`calibration.rs`, `focus_batch.rs` and `semantics.rs` did not change. The old
+and new values are recorded in the retrieval compiler contract ("Fourth
+move" and "Fifth move").
 
 L4 also adds `native_loop::NativeCardModel` (the selected Context model,
 device and GPU precision a card call would use; observation only, in

@@ -17,7 +17,7 @@ use airk_core::{
     read_attempt::{ReadAttemptBudget, ReadClock},
 };
 use airk_inference::inference_engine::pool::arbiter::{
-    AdmissionRefused, CompiledReceipt, PendingScore, Scored,
+    AdmissionRefused, CompiledReceipt, KnownInputRefusal, PendingScore, Scored,
 };
 use airk_retrieval::arbiter::loop_cards::DecisionMode;
 
@@ -58,6 +58,8 @@ fn coverage(ordinal: u8, need: u8) -> CardSegment {
         ],
         multiple: false,
         evidence: vec![],
+        unshown: 0,
+        verdict: None,
     }
 }
 fn plan() -> CardSegment {
@@ -77,6 +79,8 @@ fn plan() -> CardSegment {
         ],
         multiple: true,
         evidence: vec![],
+        unshown: 0,
+        verdict: None,
     }
 }
 fn calibration(task: Task, rules: Vec<LoopRule>) -> Result<LoopCalibration> {
@@ -292,6 +296,68 @@ fn a_refusal_before_queueing_releases_the_reservation() -> Result<()> {
             &advice.segments[0].outcome,
             Outcome::Unavailable { reason: actual } if actual == reason
         ));
+        assert!(room(&ledger, 2, 8_192), "the whole allowance is free again");
+        assert!(!room(&ledger, 1, 1), "the refused slot stays used");
+    }
+    Ok(())
+}
+
+/// The lane refuses an input before any model work in two ways: the compiled
+/// input is above the call's token reservation (as a call with token-heavy
+/// evidence can be), or the compiler itself refused it. Either way nothing
+/// ran: the reservation is released, the advice observes no tokens and every
+/// segment is unavailable, so the kernel's deterministic order decides.
+#[test]
+fn an_input_the_lane_refuses_releases_the_reservation_and_decides_nothing() -> Result<()> {
+    let segments = [coverage(1, 1), coverage(2, 2)];
+    let calibration = calibration(Task::ContextCoverage, rule(CardClass::Covered, 0.5))?;
+    for compiled_tokens in [Some(8_001), None] {
+        let (ledger, ticket) = reserved(1)?;
+        let mut advice = advice(Task::ContextCoverage, 1, &segments);
+        let (compiled_tx, compiled) = tokio::sync::oneshot::channel();
+        let (completed_tx, completed) = tokio::sync::oneshot::channel();
+        match compiled_tokens {
+            // One token above the 8,000 reserved.
+            Some(tokens) => {
+                let _ = compiled_tx.send(CompiledReceipt {
+                    input_digest: Sha256Digest::from_bytes([20; 32]),
+                    input_tokens: tokens,
+                    queue_us: 1,
+                    compile_us: 2,
+                });
+            }
+            // The compiler refused: no compiled input exists.
+            None => drop(compiled_tx),
+        }
+        let refusal: anyhow::Error = KnownInputRefusal::synthetic(
+            compiled_tokens,
+            anyhow::anyhow!("input refused before native execution"),
+        )
+        .into();
+        let _ = completed_tx.send(Err::<Scored, _>(refusal));
+        settle(
+            &ledger,
+            ticket,
+            &segments,
+            &calibration,
+            4,
+            &mut advice,
+            Some(Ok(PendingScore {
+                compiled,
+                completed,
+            })),
+        )?;
+        advice.validate()?;
+        assert_eq!(advice.observed_input_tokens, Some(0));
+        assert_eq!(advice.attribution, vec![charge(1, 0)]);
+        assert_eq!(advice.work.input_tokens, 0);
+        for segment in &advice.segments {
+            assert!(segment.raw_scores.is_empty());
+            assert!(matches!(
+                &segment.outcome,
+                Outcome::Unavailable { reason } if reason == INPUT_REFUSED
+            ));
+        }
         assert!(room(&ledger, 2, 8_192), "the whole allowance is free again");
         assert!(!room(&ledger, 1, 1), "the refused slot stays used");
     }

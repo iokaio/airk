@@ -1391,3 +1391,309 @@ Numbered 30 until 22 November 2026; renumbered because L4's entries take
   "Coverage evidence excerpts"; kernel: "Coverage rosters show bounded
   evidence excerpts"; retrieval: "Coverage evidence in the view" and
   "Fourth move").
+
+### 44. Follow-up rosters show what was read; the review of entry 43 is closed
+
+- **Step:** L3, item (d), second round, in the main tree. It closes the limit
+  entry 43 recorded ("Follow-up rosters still show no evidence"), applies
+  the independent review of `54b1e7a2` (one high, five medium and six low
+  findings; private review `answer-loop/review-d/review-54b1e7a2.md`), sets
+  the excerpt allowance from text measured in the gate's two repositories,
+  and answers the primary's two questions on the token pool and on shedding.
+- **What was wrong:**
+  - **Follow-up:** a Follow-up roster held the sub-need's bare query and the
+    candidate reads. The model chose a read without knowing what kind of
+    sub-need it was for, how far it was covered, or what had been read.
+  - **H1, the log said more than happened:** the basis of a decision was
+    fixed before its card call was sent. A Coverage decision whose call the
+    lane refused, lost or the model abstained on was logged as resting on
+    the excerpts, although the deterministic order took it from the whole
+    spans.
+  - **M1:** an excerpt was always the start of its span, while Focus may
+    have scored a window further in. The relevance beside an excerpt could
+    describe text that was not shown. A read that returned only part of its
+    text (`Hit.truncated`) was not marked.
+  - **M2:** the compiler refuses any input holding its decision marker
+    `<decision>`. One span quoting it cost its whole call, in every round
+    that gathered it.
+  - **M3:** a call whose reservation left no room for excerpts was still
+    made, with `evidence: []` and a rule saying there was no text to judge
+    by, and its choice replaced the deterministic verdict.
+  - **L2:** two sub-needs of one call that gathered the same span showed it
+    twice, cut differently.
+  - **L4:** two rule sentences overstated ("most relevant first",
+    "everything shown of what was read").
+  - **The reply could not tell a shed call from the no-model path:** a
+    roster a present model did not score for lack of slots, tokens or time
+    was logged `deterministic`, like a roster with no model at all.
+  - **The view's key order was an accident:** it was built as a JSON map,
+    which this build serialises in alphabetical order, so the rules came
+    after the evidence.
+- **What changed:**
+  - **Follow-up rosters (Core, kernel, retrieval):** a Follow-up segment now
+    carries the sub-need in the words of its Plan card (for example
+    `need callers: restart_guard`), its coverage `verdict` (`partial` or
+    `missing`, and whether a model's Coverage choice or the deterministic
+    order set it), and the same bounded evidence rows as Coverage: this
+    round's ranked spans. Core requires the verdict on a Follow-up segment
+    and refuses it anywhere else; Split and Plan still refuse evidence. The
+    candidate cards are unchanged.
+  - **Evidence rows:** a `CardEvidence` row gains `skipped_bytes` (text
+    before the excerpt), `truncated` (the read returned a snippet) and
+    `same_as` (the place of an earlier row of the call that shows the same
+    text). A segment gains `unshown`, the gathered spans the call shows
+    nothing of.
+  - **M1:** an excerpt starts where the text Focus scored starts
+    (`focus_window`, carried from the Focus ranking), so the relevance
+    describes what is shown. The log names the shown range, and the head
+    and the tail as omitted.
+  - **L2:** a call shows a text once. A later span with the same text (the
+    same span gathered for a second sub-need, or a copy at another place)
+    is a row that names the row showing it and takes none of the allowance.
+  - **The cut rule:** every shown text of a call gets the same number of
+    bytes, or all of itself where it is shorter; that number is the largest
+    that keeps the sum within the allowance. The result no longer depends
+    on call order.
+  - **M3:** a cut excerpt shows at least 256 bytes (`MIN_EXCERPT_BYTES`:
+    about six lines of code or a short paragraph). A call that cannot give
+    every span that much, or all the span has, is not made. The
+    deterministic order decides and the part's `ModelShare` is disclosed.
+  - **Reservation:** a card call's reservation is also capped by what its
+    part and round have left, so a round near its allowance gets a smaller
+    call with shorter excerpts where a whole 8,192-token reservation no
+    longer fits.
+  - **M2:** the view writes the decision marker as the compiler writes
+    every other control token (`<¦decision¦>`), in subjects, card texts,
+    locations and evidence text. Only the model's view changes: the
+    request, its identity and the log keep the original text and byte
+    ranges. `compiler.rs` is unchanged.
+  - **H1:** the log's `basis` and `basis_omitted` describe what the
+    decision that stands rests on. Excerpt ranges are logged only when a
+    model's choice stands. A decision the deterministic order took (no
+    model, a call not dispatched, refused, lost, or an abstention) names the
+    whole spans and omits nothing. The Core type docs and the kernel
+    contract say the same.
+  - **A new decision source, `not_dispatched`:** a present model's card
+    call that was not sent is logged with the model, the fallback rule and
+    the reason (`token_budget`, `deadline` or `unavailable`). `deterministic`
+    now means only the no-model path or a one-card roster. `context_absent`
+    still means no card call was dispatched at all.
+  - **The view (retrieval):** built from typed rows, so its key order is
+    fixed: `task`, `rules`, then per segment `s`, `part`, `need`, `round`,
+    `subject`, `verdict`, `verdict_by`, `evidence`, `not_shown`, `cards`. An
+    evidence row is `{at, focus, text, before, after, snippet, same_as}`.
+    The rules text is corrected (L4) and explains the new rows; Follow-up
+    also explains the verdict and what each kind of read does.
+- **The allowance, from measurement:**
+  - **Rule:** five excerpt bytes for every four reserved tokens above a
+    2,048-token frame (`EXCERPT_BYTES_NUMERATOR` 5,
+    `EXCERPT_BYTES_DENOMINATOR` 4): 7,680 bytes at the 8,192-token
+    reservation, 960 for each of eight spans. It was 6,144 bytes.
+  - **Measured** with the gate profiles' tokenizer (`aeb13307…`), every
+    text file cut into 960-byte windows and quoted as the view quotes it
+    (`scripts/arbiter/evaluation/card_excerpt_tokens`, private receipt
+    `answer-loop/L4/int2-excerpt-tokens-final.log`, SHA-256 `aa167989…`):
+
+    | Source | Windows | Median | p95 | p99 | p99.9 | Maximum |
+    | --- | --- | --- | --- | --- | --- | --- |
+    | munarium at `9948345d` (1,020 files, 30.2 MB) | 31,884 | 0.374 | 0.604 | 0.669 | 0.753 | 0.863 |
+    | bookbuilder-v2 export (8,091 files, 88.3 MB) | 94,879 | 0.308 | 0.522 | 0.585 | 0.746 | 2.000 |
+
+    The figures are tokens per byte.
+  - **The tail:** in munarium, JSON (up to 0.863) and generated Python (up
+    to 0.807). In bookbuilder-v2, 12 windows of two CSV number tables
+    (0.875 to 1.192) and 33 windows of four JSON files (0.866 to 2.000),
+    most of them runs of escaped characters.
+  - **The frame:** a two-sub-need call with eight cards and eight located
+    spans, without excerpt text, is modelled at 1,269 tokens (Coverage) and
+    1,321 tokens (Follow-up) of the 2,048 kept for it.
+  - **Why 5/4:** a full call fits while its excerpts average at most 0.895
+    tokens a byte. A call made only of munarium's densest window uses 7,948
+    of 8,192 tokens (3.0% to spare); its densest eight consecutive windows
+    of one file (0.739) use 6,997 (14.6% to spare). At three bytes for two
+    tokens that call no longer fits (minus 13.2%) and 41 munarium windows
+    pass the limit. At one byte a token the bookbuilder tail is still
+    refused (34 windows), so a smaller allowance buys almost nothing.
+  - **Expected refusals:** 43 of 94,879 bookbuilder windows (0.045%) and no
+    munarium window need more than a full call can hold; 27 of 58,118 runs
+    of eight consecutive bookbuilder windows of one file do (0.046%). A real
+    call mixes spans of several files, so the rate in use is at most this.
+  - **On a refusal:** the lane refuses the call before any model work, the
+    reservation is released, the receipt records zero observed tokens, the
+    decision takes the deterministic order on the whole spans, the slot
+    stays used, and the model goes on to the next call (tests below).
+- **The token pool (the primary's first question).** At the gate's settings
+  (1,024-token Focus pairs, four sub-needs a part that stay gaps, a typical
+  0.355 tokens a byte):
+  - a full evidence call observes about 3,800 tokens (frame about 1,100,
+    excerpts about 2,700);
+  - one part's round costs about 30,200 tokens: Focus 16,384 (sixteen
+    pairs, half the round allowance), two Coverage calls and two Follow-up
+    calls. The fourth call fits only because its reservation is now capped
+    by what the round has left (about 4,900 tokens). The last round has no
+    Follow-up: about 24,000. A part over three rounds: about 84,900;
+  - **with the old default pool of 131,072 tokens:** a one-part Answer is
+    funded through round 3. A two-part Answer (65,536 a part) loses the
+    model in round 3: Focus scores four pairs a part and no card call has
+    room. A four-part Answer (32,768 a part) loses it in round 2;
+  - **decision (budget, recorded here and in the Core contract):** the
+    default `input_tokens` is now 196,608, which is two parts times three
+    rounds times the 32,768-token round allowance. A two-part Answer is
+    funded through every round. `round_input_tokens` was already at its
+    maximum. The accepted maximum of `input_tokens` (262,144) is unchanged;
+  - **what the default still does not fund:** a four-part Answer gets
+    49,152 tokens a part: round 1, Focus in round 2, and then no card call.
+    Four parts through three rounds would need about 340,000 tokens, above
+    the accepted maximum. A caller that expects four parts can raise
+    `input_tokens` to 262,144 and still loses the model in round 3;
+  - **time cost:** the measured card-call times (265 ms on Compact and 589
+    ms on Large, medians of 20 warm calls in `answer-loop/L5C/runs/
+    s2-switch.json`) are of calls without evidence: 7 cards and 1,302 to
+    1,480 input tokens. An 8,192-token call was measured earlier at about
+    1.8 s (Compact) and 4.8 s (Large). Read as a straight line between
+    those points, a 3,800-token evidence call takes about 0.85 s on Compact
+    and 2.2 s on Large. That is an estimate, not a measurement of an
+    evidence call. For a two-part Answer the larger pool adds round 3's
+    four Coverage calls (about 3.4 s on Compact, 8.8 s on Large) and twelve
+    more Focus pairs a part, whose time is not measured here. If every
+    added token were spent on card calls, the bound is about 16 s on
+    Compact and 41 s on Large, inside the 300 s default deadline. The
+    model-time shedding below still applies.
+- **Shedding (the primary's second question):**
+  - **The estimate** is kept per Answer and per stage (`shares::CostModel`).
+    Before a stage's first call it is a fixed 12,000 ms. After each call it
+    is three quarters of the old value plus one quarter of the measured
+    wall time of that call. It has no per-profile constant. One Answer runs
+    on one Context profile, so from the second call of a stage on it
+    follows that profile on that device.
+  - **The rule:** a card call is not sent when the estimate exceeds the
+    part's model time for this barrier: the time left before the Compose
+    and Union reserve, divided by the active parts and by the rounds left.
+  - **What a reader can count:** the reply's `decision_log.counts` has one
+    row per stage, source and model. `model` and `abstained` are decisions
+    of a call that ran. `unavailable` is a call that was sent and refused or
+    lost. `not_dispatched` is a call a present model was not sent, and each
+    such decision carries its reason. `deterministic` is the no-model path.
+- **Low findings not fixed, with owners** (kernel arbiter `CONTRACT.md`,
+  "What does not hold yet"): L1 (the allowance ignores a profile's compiler
+  ceiling below the reservation; matters when a 2,048-token CPU profile
+  declares the card tasks), L3 (`basis.omitted` counts cut ranges and
+  unshown spans as one number), L5 (the script's frame model copies the view
+  texts by hand), L6 (the 2,048-token frame is assumed, not checked: long
+  subjects and paths can pass it, and the lane then refuses the call).
+- **Wire changes:**
+  - **Private native request `airk.arbiter.advice.request/3`:** the segment
+    fields `unshown` and `verdict` and the evidence fields `skipped_bytes`,
+    `truncated` and `same_as`. `unshown`, `verdict` and `same_as` are absent
+    when empty. A request with evidence serialises differently from entry
+    43's; kernel and service ship together and only the same-version
+    supervisor sends it.
+  - **Public reply and decision log:** the decision `source` gains the kind
+    `not_dispatched` (`{kind, fallback, reason}`), and `decision_log.counts`
+    may carry rows of that source, each naming the model that was present.
+    The arbiter schema, the generated TypeScript views and the Rust-emitted
+    semantic cases are regenerated through their owners. A reader that
+    lists source kinds must know the new one.
+  - **Default budget:** `input_tokens` 196,608. A combined Answer shares the
+    larger pool among its members.
+- **Identities moved** (recorded decision in the retrieval compiler
+  contract, "Fifth move"):
+
+  | Identity | Before (`54b1e7a2`) | After |
+  | --- | --- | --- |
+  | Core loop semantics | `307cb4a3…` | `2f89a3ae…` |
+  | Split | `fecca3cb…` | `f1ecc7d9…` |
+  | Plan | `487f22fd…` | `064ec90a…` |
+  | Coverage | `846f1db0…` | `c2eab6c9…` |
+  | Follow-up | `104b24bb…` | `b1edccc6…` |
+  | Batched Focus (release pair policy) | `19e85647…` | `f90f9c77…` |
+
+  `runtime.rs`, `compiler.rs` and `compiler/qwen.rs` did not change, so the
+  Qwen compiler policy, the release Focus pair policy, the one-turn Context
+  policy and the three FP16 math-policy digests did not move. The proof
+  that the old values no longer describe the source is
+  `recorded_loop_policy_identities` failing with the old pins (private
+  receipts `answer-loop/L4/int2-nextest-ids-old-pins.log` and
+  `int2-nextest-ids-live.log`). The FP16 profiles for the gate are emitted
+  with the new card task policies.
+- **What did not change:** the no-model path (no excerpt is built, no card
+  call is made, the log names the whole spans and the source is
+  `deterministic`); card texts, rosters, roster digests and selection;
+  Split and Plan views apart from their key order; the Focus ranking; the
+  ledger rules and every other budget field.
+- **A service defect found on the way** (its own commit): `airk-service`
+  did not compile with default features after L4 was integrated. Service
+  arbiter `CONTRACT.md`, "A service built without `local-inference`".
+- **Evidence (tests with hand-written expectations):**
+  - Core `native_loop::tests`:
+    `the_excerpt_allowance_is_five_bytes_for_four_tokens_above_the_frame`,
+    `coverage_segments_carry_ranked_evidence_within_the_reservation`,
+    `a_repeated_text_is_a_row_that_names_the_row_showing_it`,
+    `follow_up_segments_state_their_verdict_and_may_show_evidence`,
+    `split_and_plan_segments_carry_no_evidence_or_verdict`,
+    `a_call_s_excerpts_stay_within_its_reservation_s_allowance`,
+    `a_segment_without_evidence_keeps_its_wire_form`.
+  - Core `answer_loop::tests`:
+    `a_call_not_dispatched_names_its_model_and_reason_and_holds_no_slot`,
+    `a_reply_counts_calls_not_dispatched_apart_from_the_no_model_path`,
+    `default_budget_is_the_literal_recorded_decision`.
+  - Kernel `answer::coverage::tests`:
+    `excerpt_cuts_give_every_span_the_same_level_or_all_it_has`,
+    `excerpts_follow_the_focus_rank_and_disclose_every_cut`,
+    `a_call_that_cannot_show_every_span_the_minimum_is_not_made`,
+    `an_excerpt_starts_where_focus_scored_and_marks_a_snippet`,
+    `a_multi_byte_span_is_cut_on_a_character_and_logged_in_bytes`,
+    `a_text_is_shown_once_in_a_call_and_its_repeats_name_that_row`.
+  - Kernel `answer::model::tests`, through the whole loop with the
+    synthetic scorer:
+    `coverage_and_follow_up_calls_show_each_sub_need_what_was_read`,
+    `a_model_s_choice_rests_on_the_excerpts_it_was_shown`,
+    `a_decision_the_model_does_not_take_rests_on_the_whole_spans` (an
+    abstained, a refused and a lost Coverage call, each with a cut span),
+    `a_reservation_too_small_to_show_the_spans_makes_no_call` (at the
+    frame, one token below the least excerpt, and at it),
+    `evidence_follows_the_focus_rank_and_starts_at_the_scored_text` (it
+    fails if ranking does nothing),
+    `without_a_model_the_log_names_whole_spans_and_nothing_is_cut`.
+  - Retrieval `loop_cards::tests`: `coverage_view_is_pinned_byte_for_byte`,
+    `follow_up_view_is_pinned_byte_for_byte`,
+    `split_and_plan_views_are_pinned_byte_for_byte`,
+    `hostile_text_stays_inside_its_own_string_and_loses_the_decision_marker`,
+    and the moved pins in `recorded_loop_policy_identities`.
+  - Retrieval `compiler::qwen::tests`:
+    `hostile_evidence_stays_data_through_the_card_view_and_the_prompt`
+    (quotes, backslashes, chat-template tokens, the decision marker and
+    text imitating rules, options and evidence rows, through the view, the
+    compiler's escape and the prompt).
+  - Service `card_scoring::settlement_tests`:
+    `an_input_the_lane_refuses_releases_the_reservation_and_decides_nothing`;
+    `loop_ledger::tests`:
+    `a_ticket_s_window_is_the_parent_deadline_and_never_renews`.
+- **Limits:**
+  - No model has scored these rosters yet. Whether the excerpts, the verdict
+    and the subject improve the decisions is what the gate measures.
+  - The view marks a snippet; it does not fetch the rest of it.
+  - The repeat rule compares whole span texts within one call. Overlapping
+    spans of one file and repeats across calls, rounds and parts are the
+    subject of the duplicate rule (entry 45).
+  - The time figures for evidence calls are interpolated, as said above.
+- **Validation (main tree):**
+  - Clippy with `-D warnings` over all targets: the workspace with all
+    features, exit 0; Core, kernel, retrieval, inference and service with
+    default features, exit 0; `airk-cli` without default features, exit 0;
+  - nextest, all features, over Core and IPC in full and the arbiter tests
+    of kernel, retrieval, supervisor and MCP with the service's card, loop
+    ledger and Focus batch tests: 1,074 run, 1,074 passed (Core 501, IPC
+    34, kernel 185, retrieval 313, service 25, supervisor 9, MCP 7);
+  - the generated views are in sync with the schema
+    (`scripts/dev/contract_types.py arbiter --check`, exit 0);
+  - not run in this round: the CLI transport parity binary
+    (`combined_reads`) and a TypeScript typecheck. The parity binary runs
+    once after the duplicate rule (entry 45), which changes the reply. No
+    hand-written TypeScript lists the decision source kinds.
+- **Where:** Core arbiter `CONTRACT.md` ("Evidence, verdict and calls not
+  dispatched"), kernel arbiter `CONTRACT.md` ("Card rosters show bounded
+  evidence excerpts" and "What does not hold yet"), retrieval compiler
+  `CONTRACT.md` ("Fifth move" and "Evidence and verdict in the view"),
+  service arbiter `CONTRACT.md`, and
+  `scripts/arbiter/evaluation/card_excerpt_tokens/README.md`.

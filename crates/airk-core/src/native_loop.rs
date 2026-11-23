@@ -196,24 +196,53 @@ impl LoopCard {
 }
 
 /// Tokens of a card call's reservation kept for the model view around its
-/// evidence: the prompt frame, the question, subjects, locations and cards.
-/// A two-sub-need Coverage call with eight cards and eight located spans was
-/// measured at about half of this.
+/// evidence: the prompt frame, the rules, the question, subjects, locations
+/// and cards. A two-sub-need call with eight cards and eight located spans
+/// was modelled at about 1,320 tokens with the gate profiles' tokenizer.
 pub const CARD_FRAME_TOKENS: usize = 2048;
+/// Excerpt bytes each reserved token above the frame buys: five for four.
+pub const EXCERPT_BYTES_NUMERATOR: usize = 5;
+pub const EXCERPT_BYTES_DENOMINATOR: usize = 4;
+/// The least a cut excerpt shows. Below it a model has too little to judge
+/// by: 256 bytes is about six lines of code or one short paragraph. A call
+/// that cannot give every span this much, or all the span has, is not made.
+pub const MIN_EXCERPT_BYTES: usize = 256;
 
 /// The excerpt bytes one card call may present under its token reservation:
-/// one byte for each reserved token above the frame. At the 8,192-token
-/// reservation that is 6,144 bytes, 768 for each of eight spans. The Context
-/// tokenizers are byte-level, so text needs at most one token a byte before
-/// the model view quotes it; a call whose compiled input still passes its
-/// reservation is refused by the native lane before any model work.
+/// five bytes for every four reserved tokens above the frame, 7,680 bytes at
+/// the 8,192-token reservation (960 for each of eight spans). The ratio is
+/// set from text measured in the gate's two repositories (change-log entry
+/// 44). A full call of the densest 960-byte window of one of them (0.86
+/// tokens a byte) still fits its reservation. In the other, fewer than one
+/// window in a thousand (number tables and runs of escaped characters)
+/// needs more than a full call can hold. A call whose compiled input passes
+/// its reservation is refused by the native lane before any model work, and
+/// the deterministic order decides.
 pub fn evidence_allowance(reserved_input_tokens: usize) -> usize {
-    reserved_input_tokens.saturating_sub(CARD_FRAME_TOKENS)
+    reserved_input_tokens.saturating_sub(CARD_FRAME_TOKENS) * EXCERPT_BYTES_NUMERATOR
+        / EXCERPT_BYTES_DENOMINATOR
 }
 
-/// One span gathered for a sub-need, as a Coverage roster shows it: its
-/// location, its Focus relevance when Focus scored it, and the start of its
-/// text.
+/// Where a span is: its file and line range.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvidencePlace {
+    pub path: String,
+    pub start_line: usize,
+    pub end_line: usize,
+}
+impl EvidencePlace {
+    fn valid(&self) -> bool {
+        !self.path.is_empty()
+            && self.path.len() <= 4096
+            && self.start_line > 0
+            && self.end_line >= self.start_line
+    }
+}
+
+/// One span gathered for a sub-need, as a Coverage or Follow-up roster shows
+/// it: where it is, its Focus relevance when Focus scored it, and the part
+/// of its text that is shown.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CardEvidence {
@@ -223,27 +252,67 @@ pub struct CardEvidence {
     /// Absent when Focus did not score the span.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub focus: Option<f32>,
-    /// The first bytes of the span's text, cut on a character boundary.
+    /// The shown part of the span's text, on character boundaries. It starts
+    /// where the text Focus scored starts. Empty only for a repeat.
     pub excerpt: String,
+    /// Bytes of the span's text before the excerpt, which are not shown.
+    pub skipped_bytes: usize,
     /// Bytes of the span's text after the excerpt, which are not shown.
     pub cut_bytes: usize,
+    /// The read returned only part of its text (`Hit.truncated`).
+    pub truncated: bool,
+    /// An earlier row of the same call that shows this very text. The call
+    /// shows a text once; a repeat names that row and carries no excerpt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub same_as: Option<EvidencePlace>,
 }
 impl CardEvidence {
+    pub fn place(&self) -> EvidencePlace {
+        EvidencePlace {
+            path: self.path.clone(),
+            start_line: self.start_line,
+            end_line: self.end_line,
+        }
+    }
     fn validate(&self) -> Result<()> {
         ensure!(
-            !self.path.is_empty()
-                && self.path.len() <= 4096
-                && self.start_line > 0
-                && self.end_line >= self.start_line
-                && !self.excerpt.is_empty()
-                && self.cut_bytes <= crate::arbiter::answer_loop::MAX_RETENTION_BYTES
+            self.place().valid()
+                && self.skipped_bytes.checked_add(self.cut_bytes).is_some_and(
+                    |hidden| hidden <= crate::arbiter::answer_loop::MAX_RETENTION_BYTES
+                )
                 && self.focus.is_none_or(|focus| (0.0..=1.0).contains(&focus)),
             "invalid card segment evidence"
         );
+        match &self.same_as {
+            Some(shown) => ensure!(
+                shown.valid()
+                    && self.excerpt.is_empty()
+                    && self.skipped_bytes == 0
+                    && self.cut_bytes == 0,
+                "a repeated evidence row names where its text is shown and shows none"
+            ),
+            // A cut excerpt holds at least the minimum; a shorter one runs
+            // to the end of its span's text.
+            None => ensure!(
+                !self.excerpt.is_empty()
+                    && (self.excerpt.len() >= MIN_EXCERPT_BYTES || self.cut_bytes == 0),
+                "an evidence excerpt is shorter than the minimum and not the end of its text"
+            ),
+        }
         Ok(())
     }
 }
 
+/// How far what was read covers a sub-need, and who judged that. A Follow-up
+/// roster states it, so the model knows which gap its read is to close.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CardVerdict {
+    /// Partial or missing: a covered sub-need has no follow-up.
+    pub coverage: crate::arbiter::answer_loop::Coverage,
+    /// A model's choice set the verdict; otherwise the deterministic order.
+    pub by_model: bool,
+}
 /// One roster of a batched card call, answering one decision.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -264,11 +333,19 @@ pub struct CardSegment {
     pub cards: Vec<LoopCard>,
     /// Several cards may be chosen (Plan only).
     pub multiple: bool,
-    /// Excerpts of the spans gathered for the sub-need, in Focus rank order
-    /// (Coverage only). Empty when the sub-need has no span, or when the
-    /// call's token reservation leaves no room for one.
+    /// The spans gathered for the sub-need in this round, in Focus rank
+    /// order (Coverage and Follow-up only). Empty when none was gathered.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub evidence: Vec<CardEvidence>,
+    /// Gathered spans this call does not show at all.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub unshown: usize,
+    /// The sub-need's coverage verdict (Follow-up only, where it is required).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<CardVerdict>,
+}
+fn is_zero(value: &usize) -> bool {
+    *value == 0
 }
 impl CardSegment {
     /// The same roster digest the decision log recomputes from its records.
@@ -328,9 +405,11 @@ impl CardSegment {
         }
         // Evidence is in Focus rank order: scored spans by falling relevance,
         // then the spans Focus did not score.
+        let shows = matches!(self.stage, LoopStage::Coverage | LoopStage::FollowUp);
         ensure!(
-            (self.stage == LoopStage::Coverage || self.evidence.is_empty())
+            (shows || (self.evidence.is_empty() && self.unshown == 0))
                 && self.evidence.len() <= MAX_ACTION_CARDS
+                && self.unshown <= MAX_ACTION_CARDS
                 && self.evidence.windows(2).all(|pair| {
                     match (pair[0].focus, pair[1].focus) {
                         (Some(higher), Some(lower)) => higher >= lower,
@@ -338,11 +417,20 @@ impl CardSegment {
                         _ => true,
                     }
                 }),
-            "only Coverage segments carry evidence, at most eight spans in Focus rank order"
+            "only Coverage and Follow-up segments carry evidence, at most eight spans in Focus rank order"
         );
         for evidence in &self.evidence {
             evidence.validate()?;
         }
+        ensure!(
+            match (self.stage, self.verdict) {
+                (LoopStage::FollowUp, Some(verdict)) =>
+                    verdict.coverage != crate::arbiter::answer_loop::Coverage::Covered,
+                (LoopStage::FollowUp, None) => false,
+                (_, verdict) => verdict.is_none(),
+            },
+            "a Follow-up segment states its sub-need's partial or missing verdict, and no other segment states one"
+        );
         Ok(())
     }
 }
@@ -430,15 +518,26 @@ impl NativeCardRequest {
                     .any(|charge| segment.part == charge.part && segment.round == charge.round)),
             "native card token attribution differs from its segments or reservation"
         );
-        let excerpt_bytes: usize = self
+        let rows: Vec<&CardEvidence> = self
             .segments
             .iter()
             .flat_map(|segment| &segment.evidence)
-            .map(|evidence| evidence.excerpt.len())
-            .sum();
+            .collect();
+        let excerpt_bytes: usize = rows.iter().map(|row| row.excerpt.len()).sum();
         ensure!(
             excerpt_bytes <= evidence_allowance(self.remaining_input_tokens),
             "native card evidence exceeds the excerpt allowance of its token reservation"
+        );
+        // A repeat names an earlier row of this call that shows its text.
+        ensure!(
+            rows.iter().enumerate().all(|(position, row)| {
+                row.same_as.as_ref().is_none_or(|shown| {
+                    rows[..position]
+                        .iter()
+                        .any(|earlier| earlier.same_as.is_none() && earlier.place() == *shown)
+                })
+            }),
+            "a repeated evidence row names no earlier row that shows its text"
         );
         ensure!(
             (1..=MAX_DEADLINE_MS).contains(&self.remaining_ms)

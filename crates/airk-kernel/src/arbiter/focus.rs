@@ -816,6 +816,9 @@ pub(super) struct SpanRanking {
     pub(super) receipt: airk_core::arbiter::answer_loop::FocusBatchReceipt,
     /// Relevance per span, `None` when unscored or not applied.
     pub(super) relevance: Vec<Option<f32>>,
+    /// Where the text Focus was given starts in each span's hit text (its
+    /// Focus window). An excerpt of a scored span starts there.
+    pub(super) starts: Vec<usize>,
     /// Submitted, but its outcome and work are unknown; nothing is replayed.
     pub(super) unknown: bool,
     /// The call's ordinal over the whole Answer, allocated under the lock.
@@ -1105,6 +1108,11 @@ impl crate::Kernel {
         Ok(Some(SpanRanking {
             receipt,
             relevance,
+            starts: request
+                .candidates
+                .iter()
+                .map(|candidate| candidate.window.utf8_start)
+                .collect(),
             unknown,
             ordinal: u8::try_from(ordinal)?,
         }))
