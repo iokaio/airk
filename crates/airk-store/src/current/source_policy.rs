@@ -107,10 +107,13 @@ impl CurrentRead {
     }
 
     pub(super) fn require_source_policy_live(&self) -> Result<()> {
-        ensure!(
-            self.frozen_sources.get().is_some_and(ReadSources::public),
-            airk_core::scoped_reads::ScopeReadRefused
-        );
+        // Sources not frozen yet is the typed policy-unavailable state; a
+        // reserved source root is a refusal (change-log entry 67).
+        let sources = self
+            .frozen_sources
+            .get()
+            .ok_or(SourcePolicyReadUnavailable)?;
+        ensure!(sources.public(), airk_core::scoped_reads::ScopeReadRefused);
         ensure!(
             self.source_policy_fence
                 .get()

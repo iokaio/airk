@@ -21,6 +21,24 @@ impl std::fmt::Display for BootstrapPublicationPending {
 }
 impl std::error::Error for BootstrapPublicationPending {}
 
+/// The index's source configuration names a root that its current
+/// publication does not have yet, and the installed authority resolves
+/// against that configuration (change-log entry 67). The next publication
+/// reconciles it; no evidence query has been admitted. A scope that does not
+/// resolve against the configuration either is still `ScopeReadRefused`.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ScopeReconcilePending;
+impl ScopeReconcilePending {
+    pub(crate) const CODE: &'static str = "scope_reconcile_pending";
+    pub(crate) const RETRY_AFTER_MS: u32 = 250;
+}
+impl std::fmt::Display for ScopeReconcilePending {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the index's source configuration is ahead of its publication")
+    }
+}
+impl std::error::Error for ScopeReconcilePending {}
+
 #[derive(Clone, Copy, Debug, Serialize)]
 pub struct ReadRetryHint {
     pub status: &'static str,
@@ -47,6 +65,11 @@ pub fn read_retry_hint(error: &anyhow::Error) -> Option<ReadRetryHint> {
         )
     {
         ("publication_busy", 25)
+    } else if error.is::<ScopeReconcilePending>() {
+        (
+            ScopeReconcilePending::CODE,
+            ScopeReconcilePending::RETRY_AFTER_MS,
+        )
     } else {
         return None;
     };

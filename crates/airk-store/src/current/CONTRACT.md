@@ -50,3 +50,13 @@ ignores the caller's deadline; it is bounded by its own 500 ms.
 Service work under `admission::with_work_admission` keeps its own repeat
 around this open. Decision tests with an injected clock:
 `database/recovery_tests.rs`.
+
+## Source policy fence: not frozen versus reserved (23 November 2026)
+
+`CurrentRead::require_source_policy_live` (change-log entry 67) keeps two
+cases apart. A reader whose source roots are not frozen yet is the existing
+typed `SourcePolicyReadUnavailable` (`source_policy_unavailable`), as
+`attach_source_policy` already reported it. A frozen projection with a
+reserved primary or alias root is still `ScopeReadRefused`
+(`scoped_read_unavailable`). Before, both were the refusal. Test:
+`read::scope_tests::unfrozen_sources_are_policy_unavailable_and_reserved_roots_refuse`.

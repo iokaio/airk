@@ -522,11 +522,7 @@ impl crate::Kernel {
             }
         }
         require_live()?;
-        ensure!(
-            self.scoped_read_fingerprint()? == Some(context.authority.fingerprint)
-                && self.arbiter_publication()? == publication,
-            "joint source authority/publication changed before delivery"
-        );
+        self.require_delivery_fence(context.authority.fingerprint, &publication)?;
         let final_application =
             observed_application(context, &publication, gather.output.applications.first())?;
         if !policy_matches(&final_application, &scope, &joint.history) {
@@ -614,11 +610,7 @@ impl crate::Kernel {
             response.gaps = vec![Gap::Unsupported];
         }
         require_live()?;
-        ensure!(
-            self.scoped_read_fingerprint()? == Some(context.authority.fingerprint)
-                && self.arbiter_publication()? == publication,
-            "joint source authority/publication changed during packing"
-        );
+        self.require_delivery_fence(context.authority.fingerprint, &publication)?;
         let mut latest =
             observed_application(context, &publication, response.applications.first())?;
         let policy_current = policy_matches(

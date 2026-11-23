@@ -313,6 +313,129 @@ async fn focus_actual_search_handler_preserves_full_scoped_results_with_context_
     Ok(())
 }
 
+/// `FocusOwner`, whose configuration revision moves once its native ranking
+/// has returned: the Focus result is stale after model work.
+struct StaleFocus {
+    owner: FocusOwner,
+    revision: std::sync::atomic::AtomicU64,
+}
+impl NativeController for StaleFocus {
+    fn application(
+        &self,
+        worker: WorkerIdentity,
+        authority: ScopedReadRef,
+        publication: &airk_core::evidence::RevisionEnvelope,
+    ) -> Result<IndexApplication> {
+        let mut application = self.owner.application(worker, authority, publication)?;
+        application.scope.configuration_revision =
+            self.revision.load(std::sync::atomic::Ordering::SeqCst);
+        Ok(application)
+    }
+    fn focus_application(
+        &self,
+        worker: WorkerIdentity,
+        authority: ScopedReadRef,
+        publication: &airk_core::evidence::RevisionEnvelope,
+    ) -> Result<Option<FocusApplication>> {
+        let mut focus = self
+            .owner
+            .focus_application(worker, authority, publication)?;
+        if let Some(focus) = &mut focus {
+            focus.application.scope.configuration_revision =
+                self.revision.load(std::sync::atomic::Ordering::SeqCst);
+        }
+        Ok(focus)
+    }
+    fn focus_clock(&self) -> Result<Option<(ReadClock, u64)>> {
+        self.owner.focus_clock()
+    }
+    fn focus_rank(
+        &self,
+        request: NativeFocusRequest,
+        deadline: Instant,
+    ) -> Result<Option<NativeFocusResponse>> {
+        let response = self.owner.focus_rank(request, deadline)?;
+        self.revision.store(2, std::sync::atomic::Ordering::SeqCst);
+        Ok(response)
+    }
+}
+/// Change-log entry 67: `FocusPostExecutionStale` renders as the typed,
+/// nonreplayable `arbiter_context_action_stale` (it rendered `read_failed`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn focus_policy_change_after_native_work_renders_typed_stale_refusal() -> Result<()> {
+    let temporary = tempfile::Builder::new().tempdir_in(std::env::temp_dir().canonicalize()?)?;
+    let source = temporary.path().join("source");
+    let data = temporary.path().join("data");
+    std::fs::create_dir_all(source.join("public"))?;
+    std::fs::write(source.join("public/a.txt"), "amber alpha\n")?;
+    std::fs::write(source.join("public/b.txt"), "amber beta\n")?;
+    let model = data.join("models/local");
+    std::fs::create_dir_all(&model)?;
+    std::fs::write(
+        model.join("vocabulary.json"),
+        br#"{"amber":[1.0,0.0],"alpha":[0.8,0.2],"beta":[0.7,0.3]}"#,
+    )?;
+    std::fs::write(
+        model.join("model.json"),
+        serde_json::to_vec(
+            &json!({"schema":1,"name":"focus-handler-word-vector-fixture","license":"Apache-2.0","dimensions":2,
+        "sha256":"2b9dd16aedae16d0b95ac4ef700d04465c401b3bb9f867ceb5fc35617cd2fb87"}),
+        )?,
+    )?;
+    let base = Kernel::open(&source, Some(data))?;
+    base.index()?;
+    let authority = crate::scoped_observation_tests::authority(&base)?;
+    let scoped = base.with_scoped_reads(authority.clone())?;
+    let reference = ScopedReadRef {
+        schema: 1,
+        lease_generation: 1,
+        index_id: authority.index_id,
+        grant_id: Some(authority.grant.id),
+        grant_revision: Some(authority.grant.revision),
+        selection: None,
+        fingerprint: scoped.scoped_read_fingerprint()?.unwrap(),
+    };
+    let worker = WorkerIdentity {
+        service: Incarnation::from_bytes([8; 16]),
+        worker: Incarnation::from_bytes([9; 16]),
+        project: authority.backing,
+        fencing_generation: 1,
+    };
+    let owner = Arc::new(StaleFocus {
+        owner: FocusOwner {
+            enabled: true,
+            requests: Mutex::new(vec![]),
+        },
+        revision: 1.into(),
+    });
+    let mut tools =
+        local::LocalTools::new(scoped.with_native_arbiter(worker, reference, owner.clone())?)
+            .await?;
+    let args = json!({"query":"amber","mode":"vector","limit":2,"max_bytes":4096,"response_mode":"full","verification":"off"});
+    let reply = tools
+        .call_with_read_context(
+            "airk_search".into(),
+            args.as_object().unwrap().clone(),
+            attempt(),
+        )
+        .await?;
+    assert_eq!(reply.is_error, Some(true), "{reply:?}");
+    let refusal: Value = serde_json::from_str(&reply.content[0].as_text().unwrap().text)?;
+    assert_eq!(
+        refusal["error"]["code"], "arbiter_context_action_stale",
+        "{refusal}"
+    );
+    assert_eq!(refusal["error"]["retryable"], false);
+    assert_eq!(refusal["error"]["query_replay_safe"], false);
+    assert_eq!(
+        owner.owner.requests.lock().unwrap().len(),
+        1,
+        "never replayed"
+    );
+    tools.close().await?;
+    Ok(())
+}
+
 #[test]
 fn focus_sdk_headroom_preserves_scope_envelope_and_does_not_widen_status_budget() -> Result<()> {
     let response = airk_core::SearchResponse {

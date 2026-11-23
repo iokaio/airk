@@ -29,11 +29,15 @@ enum Mode {
     Tied,
     Unknown,
     Stale,
+    /// A newer publication lands while the native ranking runs (entry 67).
+    Republish,
     Refused,
     Foreign,
 }
 struct Controller {
     mode: Mode,
+    /// The fixture's directory, for `Mode::Republish`.
+    root: std::path::PathBuf,
     revision: AtomicU64,
     requests: Mutex<Vec<NativeFocusRequest>>,
     batches: Mutex<Vec<airk_core::native_loop::NativeFocusRequestV3>>,
@@ -261,6 +265,11 @@ impl NativeController for Controller {
         if matches!(self.mode, Mode::Stale) {
             self.revision.store(2, Ordering::Release);
         }
+        if matches!(self.mode, Mode::Republish) {
+            let source = self.root.join("source");
+            std::fs::write(source.join("public/later.md"), "# later\nA newer file.\n")?;
+            crate::Kernel::open(&source, Some(self.root.join("data")))?.index()?;
+        }
         if matches!(self.mode, Mode::Foreign) {
             receipt.ranked_order[0] = digest(99);
         }
@@ -346,6 +355,7 @@ fn fixture(
     };
     let controller = Arc::new(Controller {
         mode,
+        root: temporary.path().to_path_buf(),
         revision: AtomicU64::new(1),
         requests: Mutex::new(vec![]),
         batches: Mutex::new(vec![]),
@@ -622,6 +632,86 @@ fn focus_configuration_change_after_native_work_refuses_stale_delivery() -> Resu
     assert!(error.is::<FocusPostExecutionStale>());
     assert!(!error.to_string().contains("original source"));
     assert_eq!(owner.requests.lock().unwrap().len(), 1);
+    Ok(())
+}
+/// Change-log entry 67: the joint (v2) and v1 delivery fences. The reader
+/// republishes the index on its first read, as an Index landing during the
+/// gathering would; delivery is then the typed `publication_advanced`.
+fn republishing_reader<'a>(
+    root: &'a std::path::Path,
+    original: &'a SearchResponse,
+    reads: &'a std::sync::atomic::AtomicUsize,
+) -> impl Fn(&str, &Map<String, Value>, Option<&str>) -> Result<Value> + 'a {
+    move |_, _, _| {
+        if reads.fetch_add(1, Ordering::SeqCst) == 0 {
+            let source = root.join("source");
+            std::fs::write(source.join("public/later.md"), "# later\nA newer file.\n")?;
+            crate::Kernel::open(&source, Some(root.join("data")))?.index()?;
+        }
+        Ok(serde_json::to_value(original)?)
+    }
+}
+#[test]
+fn joint_delivery_after_a_publication_landed_is_publication_advanced() -> Result<()> {
+    let (temp, kernel, _owner, original) = fixture(Mode::Off)?;
+    let reads = std::sync::atomic::AtomicUsize::new(0);
+    let error = kernel
+        .answer_with_reader_v2(
+            airk_core::arbiter::context_action::ContextRequestV2 {
+                schema: airk_core::arbiter::context_action::REQUEST_SCHEMA_V2.into(),
+                question: "Where is the rule?".into(),
+                budget: Budget::default(),
+            },
+            Instant::now() + Duration::from_secs(30),
+            &|| Ok(()),
+            &republishing_reader(temp.path(), &original, &reads),
+        )
+        .unwrap_err();
+    assert!(reads.load(Ordering::SeqCst) >= 1);
+    assert!(
+        error.is::<airk_core::scoped_reads::PublicationAdvanced>(),
+        "{error:#}"
+    );
+    Ok(())
+}
+#[test]
+fn v1_delivery_after_a_publication_landed_is_publication_advanced() -> Result<()> {
+    let (temp, kernel, _owner, original) = fixture(Mode::Off)?;
+    let reads = std::sync::atomic::AtomicUsize::new(0);
+    let error = kernel
+        .answer_with_reader(
+            ContextRequest {
+                schema: REQUEST_SCHEMA.into(),
+                question: "Where is the rule?".into(),
+                budget: Budget::default(),
+            },
+            Instant::now() + Duration::from_secs(30),
+            &|| Ok(()),
+            &republishing_reader(temp.path(), &original, &reads),
+        )
+        .unwrap_err();
+    assert!(reads.load(Ordering::SeqCst) >= 1);
+    assert!(
+        error.is::<airk_core::scoped_reads::PublicationAdvanced>(),
+        "{error:#}"
+    );
+    Ok(())
+}
+/// Change-log entry 67: a publication that lands during the native ranking
+/// is the typed, non-replayable `publication_advanced`, not the policy-stale
+/// refusal and not a scope refusal.
+#[test]
+fn focus_publication_moved_after_native_work_is_publication_advanced() -> Result<()> {
+    let (_temp, kernel, owner, original) = fixture(Mode::Republish)?;
+    let error = kernel.focus_search(&query(), original).unwrap_err();
+    let advanced = error
+        .downcast_ref::<airk_core::scoped_reads::PublicationAdvanced>()
+        .context("typed publication_advanced")?;
+    assert_eq!(advanced.receipt()["error"]["code"], "publication_advanced");
+    assert_eq!(advanced.receipt()["error"]["retryable"], false);
+    assert_eq!(advanced.receipt()["error"]["query_replay_safe"], false);
+    assert!(!error.is::<FocusPostExecutionStale>());
+    assert_eq!(owner.requests.lock().unwrap().len(), 1, "never replayed");
     Ok(())
 }
 #[test]

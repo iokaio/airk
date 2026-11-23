@@ -159,6 +159,60 @@ copy/export retains precision, native fallback reasons and all variant metadata.
 The additional observation is bounded256KiB inside unchanged original reply/frame
 ceilings. No retries or replacement clock are introduced.
 
+## Fences as consistency checks (23 November 2026, change-log entry 67)
+
+Phase A of the [local trust plan](../../../../docs/simplify/local-trust-plan.md).
+A changed authority is still a refusal; a publication that moved under the
+same authority is not.
+
+- **Post-work delivery fence** (`Kernel::require_delivery_fence`, used by the
+  v1 gathering in `arbiter.rs`, the Answer /3 loop's `finish`, both joint
+  fences and the Focus fence). A changed scoped-read fingerprint is
+  `ScopeReadRefused` (`scoped_read_unavailable`). A newer publication is
+  Core's `PublicationAdvanced`: code `publication_advanced`,
+  `retryable: false`, `query_replay_safe: false`, no `action`. The model
+  work already spent is never replayed and never `repeat_same_request`.
+  Before this entry both cases were an untyped `read_failed`.
+- **Focus stale render.** `FocusPostExecutionStale` (the Focus policy or
+  identity changed after native work) renders as
+  `arbiter_context_action_stale`, `retryable: false`,
+  `query_replay_safe: false`, the Answer and joint stale family. It rendered
+  `read_failed`.
+- **Read-only scoped reads** (kernel `scoped_reads.rs`, no other contract
+  file owns them):
+  - `scoped_index_metadata` reads again when a publication lands during
+    the read, at most three observations; a publication still moving is
+    `CurrentGateContention::Applying` (`publication_busy`,
+    `repeat_same_request`).
+  - `scoped_source_projection` of an expected publication that a newer one
+    replaced is `publication_busy`; the combined frontend decides whether
+    the member's evidence is read again.
+  - A source configuration ahead of the publication, when the authority
+    resolves against it, is `ScopeReconcilePending`: code
+    `scope_reconcile_pending`, retryable, `retry_after_ms: 250`,
+    `repeat_same_request`. A scope that resolves against neither is still
+    `ScopeReadRefused`, and a published root outside the authority still
+    makes it a refused partial scope.
+  - Genesis (sequence 0, no collection state): the authority is checked
+    against the source configuration, so a multi-root scope whose roots are
+    configured is `BootstrapPublicationPending` like a single-root one; an
+    unconfigured root is still refused.
+- **Not changed here:** the batched Focus fence (`FocusBatchStale`) still
+  covers a publication move with the Answer's typed stale refusal, and a
+  member source projection read for a combined continuation still expires
+  its cursor (`combined_cursor_expired`).
+
+Tests: kernel `arbiter::focus::tests` (`focus_publication_moved_after_native_work_is_publication_advanced`,
+`joint_delivery_after_a_publication_landed_is_publication_advanced`,
+`v1_delivery_after_a_publication_landed_is_publication_advanced`),
+kernel `scoped_reads::tests` (`configuration_ahead_of_the_publication_is_pending_reconcile_not_refusal`,
+`scoped_metadata_with_configuration_ahead_is_pending_reconcile`,
+`scoped_metadata_reads_again_when_a_publication_lands`,
+`source_projection_of_a_replaced_publication_is_publication_busy`,
+`genesis_multi_root_scope_with_configured_roots_is_pending`), `airk-mcp`
+`arbiter_handler_tests::publication_landing_after_model_work_is_typed_publication_advanced_without_replay`
+and `focus_handler_tests::focus_policy_change_after_native_work_renders_typed_stale_refusal`.
+
 ## Private evaluation change set 1 (`software.rs`)
 
 Every layer is off unless the private evaluation fixture binds layers for its

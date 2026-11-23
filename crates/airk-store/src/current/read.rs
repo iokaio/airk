@@ -740,6 +740,14 @@ mod scope_tests {
         primary: &str,
         aliases: Option<std::collections::BTreeMap<String, String>>,
     ) -> Result<(tempfile::TempDir, CurrentRead)> {
+        fixture_roots_frozen(primary, aliases, true)
+    }
+
+    fn fixture_roots_frozen(
+        primary: &str,
+        aliases: Option<std::collections::BTreeMap<String, String>>,
+        freeze: bool,
+    ) -> Result<(tempfile::TempDir, CurrentRead)> {
         let directory = tempfile::tempdir()?;
         let store = FileStore::new(directory.path().join("collections-1.2/scoped"));
         drop(store.lock()?);
@@ -844,6 +852,9 @@ mod scope_tests {
         };
         // This fixture targets actual candidate SQL, not physical manifest audit.
         read.lexical_verified.set(()).expect("new fixture");
+        if !freeze {
+            return Ok((directory, read));
+        }
         read.freeze_source_roots()?;
         if !has_configuration {
             assert!(
@@ -854,6 +865,30 @@ mod scope_tests {
             assert!(read.frozen_sources.get().unwrap().has_configuration);
         }
         Ok((directory, read))
+    }
+
+    /// Change-log entry 67: sources not frozen yet are the typed
+    /// policy-unavailable state; a reserved root is still a scope refusal.
+    #[test]
+    fn unfrozen_sources_are_policy_unavailable_and_reserved_roots_refuse() -> Result<()> {
+        let (_directory, read) =
+            fixture_roots_frozen("fixture-root", Some(Default::default()), false)?;
+        let error = read.require_source_policy_live().unwrap_err();
+        assert!(
+            error.is::<super::super::source_policy::SourcePolicyReadUnavailable>(),
+            "{error:#}"
+        );
+        assert!(!error.is::<airk_core::scoped_reads::ScopeReadRefused>());
+        let (_directory, reserved) =
+            fixture_roots("/source/.AiRk/agent-edits/v1/old", Some(Default::default()))?;
+        let error = reserved.require_source_policy_live().unwrap_err();
+        assert!(
+            error.is::<airk_core::scoped_reads::ScopeReadRefused>(),
+            "{error:#}"
+        );
+        let (_directory, public) = fixture_roots("fixture-root", Some(Default::default()))?;
+        public.require_source_policy_live()?;
+        Ok(())
     }
 
     #[test]

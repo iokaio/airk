@@ -378,6 +378,26 @@ impl std::fmt::Display for ScopeReadRefused {
 }
 impl std::error::Error for ScopeReadRefused {}
 
+/// A newer publication landed under the same authority after this read's
+/// native model work (change-log entry 67). Not a refusal: the authority is
+/// unchanged. The work that already spent model tokens is never replayed, so
+/// the result is not delivered and the caller decides whether to ask again.
+#[derive(Clone, Copy, Debug)]
+pub struct PublicationAdvanced;
+impl PublicationAdvanced {
+    pub const CODE: &'static str = "publication_advanced";
+    pub fn receipt(self) -> serde_json::Value {
+        serde_json::json!({"error":{"code":Self::CODE,"retryable":false,
+            "query_replay_safe":false,"message":self.to_string()}})
+    }
+}
+impl std::fmt::Display for PublicationAdvanced {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("The index published a newer revision after this read's model work; the result is not delivered and the read is not replayed automatically.")
+    }
+}
+impl std::error::Error for PublicationAdvanced {}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -763,10 +763,9 @@ impl crate::Kernel {
             }
             _ => false,
         };
-        if !valid
-            || self.scoped_read_fingerprint()? != Some(context.authority.fingerprint)
-            || self.arbiter_publication()? != *publication
-        {
+        // Authority, then publication (entry 67), then the optional policy.
+        self.require_delivery_fence(context.authority.fingerprint, publication)?;
+        if !valid {
             return Err(FocusPostExecutionStale {
                 _custody: Box::new((response, ranking)),
             }
@@ -1181,6 +1180,14 @@ impl std::fmt::Display for FocusPostExecutionStale {
     }
 }
 impl std::error::Error for FocusPostExecutionStale {}
+impl FocusPostExecutionStale {
+    /// The same nonreplayable family as the Answer and joint stale refusals
+    /// (change-log entry 67): before it, this error rendered as `read_failed`.
+    pub fn receipt(&self) -> serde_json::Value {
+        serde_json::json!({"error":{"code":"arbiter_context_action_stale","retryable":false,
+            "query_replay_safe":false,"message":self.to_string()}})
+    }
+}
 
 #[cfg(test)]
 mod tests;

@@ -771,6 +771,117 @@ async fn policy_withdrawal_during_joint_wait_refuses_stale_answer_without_replay
     Ok(())
 }
 
+/// Change-log entry 67: the scorer of `RevokingScorer` (never withdrawing),
+/// and a newer publication of the same index lands once its first card call
+/// has returned, as an Index's next step would.
+struct RepublishingScorer {
+    scorer: RevokingScorer,
+    root: std::sync::OnceLock<std::path::PathBuf>,
+}
+impl airk_kernel::arbiter::NativeController for RepublishingScorer {
+    fn application(
+        &self,
+        worker: WorkerIdentity,
+        authority: ScopedReadRef,
+        publication: &airk_core::evidence::RevisionEnvelope,
+    ) -> Result<IndexApplication> {
+        self.scorer.application(worker, authority, publication)
+    }
+    fn focus_clock(&self) -> Result<Option<(airk_core::read_attempt::ReadClock, u64)>> {
+        self.scorer.focus_clock()
+    }
+    fn card_model(
+        &self,
+        worker: WorkerIdentity,
+        authority: ScopedReadRef,
+        publication: &airk_core::evidence::RevisionEnvelope,
+    ) -> Result<Option<airk_kernel::arbiter::LoopModel>> {
+        self.scorer.card_model(worker, authority, publication)
+    }
+    fn score_cards(
+        &self,
+        request: NativeCardRequest,
+        deadline: Instant,
+    ) -> Result<Option<v3::CardAdvice>> {
+        let first = !self
+            .scorer
+            .returned
+            .load(std::sync::atomic::Ordering::SeqCst);
+        let advice = self.scorer.score_cards(request, deadline)?;
+        if first {
+            let root = self.root.get().context("fixture root not set")?;
+            std::fs::write(
+                root.join("source/public/later.txt"),
+                "amber_moved landed in a newer publication.\n",
+            )?;
+            Kernel::open(root.join("source"), Some(root.join("data")))?.index()?;
+        }
+        Ok(advice)
+    }
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn publication_landing_after_model_work_is_typed_publication_advanced_without_replay()
+-> Result<()> {
+    let controller = Arc::new(RepublishingScorer {
+        scorer: RevokingScorer {
+            returned: false.into(),
+            calls: 0.into(),
+            after_return: 0.into(),
+            revoke_after: 0,
+        },
+        root: Default::default(),
+    });
+    let fixture = scoped_kernel(
+        &[(
+            "public/policy.txt",
+            "amber_moved AMBER_PRIVATE_MODEL_HISTORY owns this source rule.\n".into(),
+        )],
+        controller.clone(),
+    )?;
+    controller
+        .root
+        .set(fixture._fixture.path().to_path_buf())
+        .unwrap();
+    let mut tools = local::LocalTools::new(fixture.kernel.clone()).await?;
+    let context = crate::read_attempt::ReadAttemptContext::new(
+        Instant::now() + Duration::from_secs(60),
+        Default::default(),
+    )
+    .with_wire_attempt(wire_attempt(33, 60_000_000_000))?
+    .capture_transport_attempt(wire_attempt(33, 60_000_000_000))?;
+    let reply = tools
+        .call_with_read_context(
+            "airk_answer".into(),
+            request(
+                "1. which rule does amber_moved own\n2. where is amber_moved defined?",
+                BudgetV3::default(),
+            )?,
+            context,
+        )
+        .await?;
+    assert_eq!(reply.is_error, Some(true), "{reply:?}");
+    let refusal: Value = serde_json::from_str(&reply.content[0].as_text().unwrap().text)?;
+    // Distinct from a failure and from a refusal, and never a retry hint.
+    assert_eq!(
+        refusal["error"]["code"], "publication_advanced",
+        "{refusal}"
+    );
+    assert_eq!(refusal["error"]["retryable"], false);
+    assert_eq!(refusal["error"]["query_replay_safe"], false);
+    assert!(refusal.get("action").is_none() && refusal["error"].get("action").is_none());
+    assert!(!serde_json::to_string(&reply)?.contains("AMBER_PRIVATE_MODEL_HISTORY"));
+    assert_eq!(
+        controller
+            .scorer
+            .calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "model work is never replayed"
+    );
+    tools.close().await?;
+    Ok(())
+}
+
 /// Fields of `left` and `right` whose values differ, by JSON pointer, at
 /// every depth (an object key on one side only counts as a difference).
 fn differing(left: &Value, right: &Value, at: String, out: &mut Vec<String>) {

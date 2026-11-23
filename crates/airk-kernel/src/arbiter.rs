@@ -247,6 +247,25 @@ impl crate::Kernel {
             return Ok(observed);
         }
     }
+    /// The delivery fence of work that already spent model tokens
+    /// (change-log entry 67). A changed authority is a refusal. A newer
+    /// publication under the same authority is the typed, non-replayable
+    /// `publication_advanced`: never `repeat_same_request`, because repeating
+    /// would spend the model work again.
+    pub(super) fn require_delivery_fence(
+        &self,
+        authority: airk_core::identity::Sha256Digest,
+        publication: &airk_core::evidence::RevisionEnvelope,
+    ) -> Result<()> {
+        ensure!(
+            self.scoped_read_fingerprint()? == Some(authority),
+            airk_core::scoped_reads::ScopeReadRefused
+        );
+        if self.arbiter_publication()? != *publication {
+            return Err(airk_core::scoped_reads::PublicationAdvanced.into());
+        }
+        Ok(())
+    }
     fn arbiter_publication(&self) -> Result<airk_core::evidence::RevisionEnvelope> {
         // Published identity only; a partial scope must never request whole
         // index status/counts merely to bind its own evidence reads.
@@ -528,22 +547,14 @@ impl crate::Kernel {
             gathering.observe(result, Instant::now())?;
         }
         require_live()?;
-        ensure!(
-            self.scoped_read_fingerprint()? == Some(context.authority.fingerprint)
-                && self.arbiter_publication()? == publication,
-            "Arbiter publication or source authority changed before delivery"
-        );
+        self.require_delivery_fence(context.authority.fingerprint, &publication)?;
         gathering.refresh_application(observed_application(
             context,
             &publication,
             gathering.output.applications.first(),
         )?)?;
         require_live()?;
-        ensure!(
-            self.scoped_read_fingerprint()? == Some(context.authority.fingerprint)
-                && self.arbiter_publication()? == publication,
-            "Arbiter source authority or publication changed after final optional observation"
-        );
+        self.require_delivery_fence(context.authority.fingerprint, &publication)?;
         let mut response = gathering.finish(Instant::now())?;
         let scope_observation = self
             .scope_observation()
@@ -1251,6 +1262,7 @@ pub use answer::{
     AnswerCustody, AnswerEnv, AnswerOutcome, AnswerPostExecutionStale, AnswerProgress,
     CanonicalReadFn, CustodyRecord,
 };
+pub use focus::FocusPostExecutionStale;
 pub use joint::JointPostExecutionStale;
 #[cfg(test)]
 mod tests;

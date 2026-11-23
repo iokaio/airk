@@ -1191,14 +1191,19 @@ impl Kernel {
         read: Arc<airk_store::current::CurrentRead>,
     ) -> Result<Arc<airk_store::current::CurrentRead>> {
         self.attach_source_policy_read(&read)?;
+        // The index's source configuration, which can be ahead of its
+        // publication (change-log entry 67).
+        let configured = || -> Result<std::collections::BTreeMap<String, String>> {
+            Ok(airk_store::roots::RootConfig::load(self.store.directory(), &self.root_id())?.roots)
+        };
         if read.head().sequence == 0 && read.collection_state()?.is_none() {
             if let Some(scope) = &self.read_scope {
-                scope.require_bootstrap_authority(&read)?;
+                scope.require_bootstrap_authority(&read, &configured()?)?;
             }
             return Err(crate::retrieval_retry::BootstrapPublicationPending.into());
         }
         if let Some(scope) = &self.read_scope {
-            scope.attach(&read)?;
+            scope.attach(&read, configured)?;
         }
         let slot = self
             .native_owner

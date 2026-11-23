@@ -1299,11 +1299,8 @@ impl Loop<'_> {
             self.progress(part, v3::LoopStage::Compose);
         }
         (self.env.require_live)()?;
-        ensure!(
-            self.kernel.scoped_read_fingerprint()? == Some(self.context.authority.fingerprint)
-                && self.kernel.arbiter_publication()? == self.publication,
-            "Answer publication or source authority changed before delivery"
-        );
+        self.kernel
+            .require_delivery_fence(self.context.authority.fingerprint, &self.publication)?;
         self.fence()?;
         let reserve = self.context.context_reply_reserve;
         let limit = v3::reply_limit(&self.request.budget).saturating_sub(reserve);

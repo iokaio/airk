@@ -665,6 +665,28 @@ impl Authority {
     }
 }
 
+/// Observations of one scoped metadata read while the publication keeps
+/// moving under the same authority (change-log entry 67).
+const METADATA_OBSERVATION_ATTEMPTS: usize = 3;
+/// Private: a newer publication landed during a read-only scoped read under
+/// the same authority. Never rendered; the read is observed again or becomes
+/// the retryable `publication_busy`.
+#[derive(Clone, Copy, Debug)]
+struct PublicationMoved;
+impl std::fmt::Display for PublicationMoved {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the publication moved during a scoped read")
+    }
+}
+impl std::error::Error for PublicationMoved {}
+
+/// The retryable `publication_busy` of a source projection whose expected
+/// publication was replaced under the same authority.
+fn source_projection_moved() -> anyhow::Error {
+    anyhow::anyhow!("a newer publication replaced the expected one")
+        .context(airk_store::current::CurrentGateContention::Applying)
+}
+
 pub(crate) struct SessionScope {
     authority: Authority,
     fingerprint: Sha256Digest,
@@ -676,21 +698,59 @@ pub(crate) struct SessionScope {
     reader_attachments: std::sync::atomic::AtomicUsize,
     #[cfg(test)]
     service_source_checks: std::sync::atomic::AtomicUsize,
+    /// Test seam: runs after each metadata view is computed, before the
+    /// publication is checked again (change-log entry 67).
+    #[cfg(test)]
+    metadata_observed: Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
 }
 impl SessionScope {
     fn live(&self) -> Result<()> {
         ensure!(!self.revoked.load(Ordering::Acquire), ScopeReadRefused);
         Ok(())
     }
-    pub(crate) fn require_bootstrap_authority(&self, read: &CurrentRead) -> Result<()> {
+    /// Genesis has no published aliases. The authority is checked against
+    /// the index's source configuration instead (change-log entry 67), so a
+    /// multi-root scope whose roots are configured waits for the first
+    /// publication like a single-root one. A root the configuration does not
+    /// have either is still a definite foreign-root refusal.
+    pub(crate) fn require_bootstrap_authority(
+        &self,
+        read: &CurrentRead,
+        configured: &BTreeMap<String, String>,
+    ) -> Result<()> {
         self.live()?;
-        // Genesis has no configured aliases. Preserve definite foreign-root
-        // refusals rather than assigning temporary availability to bad scope.
         self.authority
-            .compile(&read.head().scope.root, &BTreeMap::new())?;
+            .compile(&read.head().scope.root, configured)?;
         self.live()
     }
-    pub(crate) fn attach(&self, read: &CurrentRead) -> Result<()> {
+    /// The published roots refused this authority. When the source
+    /// configuration differs from them and the authority resolves against
+    /// it, the configuration is ahead of the publication: the typed
+    /// retryable pending reconcile (change-log entry 67), never a refusal.
+    /// A revoked or otherwise unresolvable scope keeps the refusal.
+    fn refusal_or_pending(
+        &self,
+        read: &CurrentRead,
+        published: &BTreeMap<String, String>,
+        configured: &BTreeMap<String, String>,
+    ) -> anyhow::Error {
+        if self.live().is_ok()
+            && configured != published
+            && self
+                .authority
+                .compile(&read.head().scope.root, configured)
+                .is_ok()
+        {
+            crate::retrieval_retry::ScopeReconcilePending.into()
+        } else {
+            ScopeReadRefused.into()
+        }
+    }
+    pub(crate) fn attach(
+        &self,
+        read: &CurrentRead,
+        configured: impl FnOnce() -> Result<BTreeMap<String, String>>,
+    ) -> Result<()> {
         self.live()?;
         #[cfg(test)]
         self.reader_attachments.fetch_add(1, Ordering::Relaxed);
@@ -704,10 +764,20 @@ impl SessionScope {
             scope.clone()
         } else {
             let state = read.collection_state()?.ok_or(ScopeReadRefused)?;
-            let scope = Arc::new(
-                self.authority
-                    .compile(&read.head().scope.root, &state.configuration.roots)?,
-            );
+            let compiled = self
+                .authority
+                .compile(&read.head().scope.root, &state.configuration.roots);
+            let scope = Arc::new(match compiled {
+                Ok(scope) => scope,
+                Err(error) if error.is::<ScopeReadRefused>() => {
+                    return Err(self.refusal_or_pending(
+                        read,
+                        &state.configuration.roots,
+                        &configured()?,
+                    ));
+                }
+                Err(error) => return Err(error),
+            });
             let full_index =
                 scope.covers_sources(&read.head().scope.root, &state.configuration.roots);
             *cache = Some((token, scope.clone(), full_index));
@@ -730,7 +800,12 @@ impl SessionScope {
         );
         if let Some(configured) = configured {
             let state = read.collection_state()?.ok_or(ScopeReadRefused)?;
-            ensure!(*configured == state.configuration.roots, ScopeReadRefused);
+            // A configuration that differs from the published roots and
+            // still resolves this authority is ahead of the publication
+            // (change-log entry 67), not outside the authority.
+            if *configured != state.configuration.roots {
+                return Err(self.refusal_or_pending(read, &state.configuration.roots, configured));
+            }
         }
         self.live()
     }
@@ -795,7 +870,12 @@ impl Kernel {
         ensure!(scope.authority.backing() == project, ScopeReadRefused);
         let read = self.current_reader()?;
         let publication = crate::current::runtime::envelope(&read)?;
-        ensure!(publication.token == expected, ScopeReadRefused);
+        // A newer publication under the same authority is not a refusal
+        // (change-log entry 67). The projection of `expected` can no longer
+        // be read, so the caller decides whether its evidence is read again.
+        if publication.token != expected {
+            return Err(source_projection_moved());
+        }
         let state = read.collection_state()?.ok_or(ScopeReadRefused)?;
         let primary = &read.head().scope.root;
         let mut sources = Vec::with_capacity(scope.authority.sources().len());
@@ -827,17 +907,43 @@ impl Kernel {
             sources,
         };
         projection.validate()?;
-        ensure!(
-            crate::current::runtime::revision(read.token()?) == expected,
-            ScopeReadRefused
-        );
+        if crate::current::runtime::revision(read.token()?) != expected {
+            return Err(source_projection_moved());
+        }
         scope.live()?;
         Ok(projection)
     }
     /// Inspect only the selected index after full frozen-source coverage and
     /// current/published configuration agreement. Never clears installed scope,
     /// enumerates sources, reads an arbitrary input file, or grants administration.
+    ///
+    /// The read is read-only, so a publication that lands under the same
+    /// authority while it runs is read again, at most
+    /// `METADATA_OBSERVATION_ATTEMPTS` times; a publication still moving
+    /// after that is the retryable `publication_busy` (change-log entry 67).
     pub fn scoped_index_metadata(
+        &self,
+        project: airk_core::service::ProjectBinding,
+        view: ScopedIndexMetadataView,
+    ) -> Result<ScopedIndexMetadata> {
+        let mut attempts = 0;
+        loop {
+            attempts += 1;
+            match self.scoped_index_metadata_once(project, view) {
+                Err(error) if error.is::<PublicationMoved>() => {
+                    if attempts < METADATA_OBSERVATION_ATTEMPTS {
+                        continue;
+                    }
+                    return Err(anyhow::anyhow!(
+                        "the publication changed during each metadata observation"
+                    )
+                    .context(airk_store::current::CurrentGateContention::Applying));
+                }
+                result => return result,
+            }
+        }
+    }
+    fn scoped_index_metadata_once(
         &self,
         project: airk_core::service::ProjectBinding,
         view: ScopedIndexMetadataView,
@@ -851,7 +957,16 @@ impl Kernel {
         if !matches!(view, ScopedIndexMetadataView::Roots) {
             let config =
                 airk_store::roots::RootConfig::load(self.store.directory(), &self.root_id())?;
-            self.require_configured_index_metadata(&read, &config.roots)?;
+            if let Err(error) = self.require_configured_index_metadata(&read, &config.roots) {
+                // A configuration ahead of a publication that has already
+                // moved on is observed again against the newer one.
+                if error.is::<crate::retrieval_retry::ScopeReconcilePending>()
+                    && self.current_reader()?.token()? != token
+                {
+                    return Err(PublicationMoved.into());
+                }
+                return Err(error);
+            }
         }
         let value = match view {
             ScopedIndexMetadataView::Roots => serde_json::to_value(self.roots()?)?,
@@ -870,19 +985,26 @@ impl Kernel {
                 serde_json::to_value(self.index_scan_limits_description()?)?
             }
         };
+        // The view holds its own readers; this one is not needed again.
+        drop(read);
+        #[cfg(test)]
+        if let Some(observed) = scope.metadata_observed.lock().unwrap().as_ref() {
+            observed();
+        }
         scope.live()?;
         let current = self.current_reader()?;
-        ensure!(current.token()? == token, ScopeReadRefused);
+        ensure!(current.token()? == token, PublicationMoved);
         self.require_index_metadata(&current)?;
         let publication = airk_core::evidence::RevisionEnvelope::new(
             self.collection.clone(),
             crate::current::runtime::revision(token),
         );
         if let Some(existing) = value.get("publication").filter(|value| !value.is_null()) {
+            // The view's own reader observed a newer publication.
             ensure!(
                 serde_json::from_value::<airk_core::identity::RevisionToken>(existing.clone())?
                     == publication.token,
-                ScopeReadRefused
+                PublicationMoved
             );
         }
         let mut value = value;
@@ -939,6 +1061,8 @@ impl Kernel {
             reader_attachments: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
             service_source_checks: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            metadata_observed: Mutex::new(None),
         }));
         Ok(session)
     }
@@ -1396,12 +1520,18 @@ mod tests {
         );
         assert!(subset.roots().unwrap_err().is::<ScopeReadRefused>());
         admin.add_root("docs", &external)?;
+        // Change-log entry 67: a configuration ahead of the publication is
+        // the retryable pending reconcile, not a refusal.
         assert!(
             full.configured_roots()
                 .unwrap_err()
-                .is::<ScopeReadRefused>()
+                .is::<crate::retrieval_retry::ScopeReconcilePending>()
         );
-        assert!(full.roots().unwrap_err().is::<ScopeReadRefused>());
+        assert!(
+            full.roots()
+                .unwrap_err()
+                .is::<crate::retrieval_retry::ScopeReconcilePending>()
+        );
         admin.index()?;
         assert!(full.current_reader()?.restricts_paths());
         assert!(full.status_summary().unwrap_err().is::<ScopeReadRefused>());
@@ -2413,6 +2543,282 @@ mod tests {
         assert!(error.is::<ScopeReadRefused>());
         assert!(crate::retrieval_retry::read_retry_hint(&error).is_none());
         assert!(std::fs::read_dir(source)?.next().is_none());
+        Ok(())
+    }
+
+    /// Change-log entry 67 fixtures: a primary root and an external root,
+    /// indexed with no external root configured.
+    struct TwoRoots {
+        _directory: tempfile::TempDir,
+        admin: Kernel,
+        external: std::path::PathBuf,
+    }
+    fn two_roots() -> Result<TwoRoots> {
+        let directory = tempfile::tempdir()?;
+        let primary = directory.path().join("primary");
+        let external = directory.path().join("external");
+        for root in [&primary, &external] {
+            std::fs::create_dir(root)?;
+        }
+        std::fs::write(primary.join("main.rs"), "pub struct Primary;\n")?;
+        std::fs::write(external.join("allowed.rs"), "pub struct External;\n")?;
+        let admin = Kernel::open(&primary, Some(directory.path().join("data")))?;
+        admin.configure_vectors(false)?;
+        Ok(TwoRoots {
+            _directory: directory,
+            admin,
+            external,
+        })
+    }
+    /// The whole primary plus `allowed.rs` of the root at `original_root`.
+    fn with_external(admin: &Kernel, original_root: String) -> Result<ScopedReadAuthority> {
+        let mut authority = fixture(&admin.root_id());
+        authority.backing = airk_core::service::ProjectRegistration::new(
+            admin.root_id(),
+            admin.data_root.to_string_lossy().into_owned(),
+            admin.collection.clone(),
+        )?
+        .binding;
+        let source = SourceRootId::from_identity(Incarnation::from_bytes([9; 16]));
+        authority.sources.push(SourceDescriptor {
+            source_root_id: source,
+            original_root,
+        });
+        authority.grant.memberships[0]
+            .membership
+            .scope
+            .push(ScopeAtom {
+                source_root_id: source,
+                kind: PathScope::Exact,
+                path: "allowed.rs".into(),
+            });
+        Ok(authority)
+    }
+    fn hint_code(error: &anyhow::Error) -> Option<&'static str> {
+        crate::retrieval_retry::read_retry_hint(error).map(|hint| hint.code)
+    }
+
+    /// A root configured after the last publication: the authority that names
+    /// it waits for the reconciling publication instead of being refused,
+    /// and a root configured nowhere is still refused.
+    #[test]
+    fn configuration_ahead_of_the_publication_is_pending_reconcile_not_refusal() -> Result<()> {
+        let roots = two_roots()?;
+        let admin = &roots.admin;
+        admin.index()?;
+        admin.add_root("docs", &roots.external)?;
+        let configured = admin.configured_roots()?["docs"].clone();
+        let scoped = admin.with_scoped_reads(with_external(admin, configured)?)?;
+        let error = scoped.status_summary().unwrap_err();
+        assert!(!error.is::<ScopeReadRefused>(), "{error:#}");
+        assert_eq!(hint_code(&error), Some("scope_reconcile_pending"));
+        let hint = crate::retrieval_retry::read_retry_hint(&error).unwrap();
+        assert!(hint.retryable && hint.action == "repeat_same_request");
+        let foreign = admin.with_scoped_reads(with_external(
+            admin,
+            roots
+                ._directory
+                .path()
+                .join("foreign")
+                .to_string_lossy()
+                .into_owned(),
+        )?)?;
+        let error = foreign.status_summary().unwrap_err();
+        assert!(error.is::<ScopeReadRefused>(), "{error:#}");
+        assert!(hint_code(&error).is_none());
+        // The reconciling publication admits the same authority's reader.
+        admin.index()?;
+        scoped.current_reader()?;
+        Ok(())
+    }
+
+    /// Metadata that needs the configuration to agree with the publication
+    /// waits for the reconcile instead of refusing a whole-index authority.
+    #[test]
+    fn scoped_metadata_with_configuration_ahead_is_pending_reconcile() -> Result<()> {
+        let roots = two_roots()?;
+        let admin = &roots.admin;
+        admin.index()?;
+        let mut authority = fixture(&admin.root_id());
+        authority.backing = airk_core::service::ProjectRegistration::new(
+            admin.root_id(),
+            admin.data_root.to_string_lossy().into_owned(),
+            admin.collection.clone(),
+        )?
+        .binding;
+        let backing = authority.backing;
+        let scoped = admin.with_scoped_reads(authority)?;
+        scoped.scoped_index_metadata(backing, ScopedIndexMetadataView::VectorStatus)?;
+        admin.add_root("docs", &roots.external)?;
+        let error = scoped
+            .scoped_index_metadata(backing, ScopedIndexMetadataView::VectorStatus)
+            .err()
+            .unwrap();
+        assert!(!error.is::<ScopeReadRefused>(), "{error:#}");
+        assert_eq!(hint_code(&error), Some("scope_reconcile_pending"));
+        let error = scoped
+            .scoped_index_metadata(backing, ScopedIndexMetadataView::Roots)
+            .err()
+            .unwrap();
+        assert_eq!(hint_code(&error), Some("scope_reconcile_pending"));
+        // Once published, the root is outside this primary-only authority:
+        // a real partial scope is still refused, never masked as pending.
+        admin.index()?;
+        let error = scoped
+            .scoped_index_metadata(backing, ScopedIndexMetadataView::VectorStatus)
+            .err()
+            .unwrap();
+        assert!(error.is::<ScopeReadRefused>(), "{error:#}");
+        assert!(hint_code(&error).is_none());
+        Ok(())
+    }
+
+    /// A publication that lands while scoped metadata is read is read again;
+    /// one that keeps landing is the retryable `publication_busy`.
+    #[test]
+    fn scoped_metadata_reads_again_when_a_publication_lands() -> Result<()> {
+        for (landings, settles) in [(1usize, true), (usize::MAX, false)] {
+            let roots = two_roots()?;
+            let admin = roots.admin.clone();
+            admin.index()?;
+            let mut authority = fixture(&admin.root_id());
+            authority.backing = airk_core::service::ProjectRegistration::new(
+                admin.root_id(),
+                admin.data_root.to_string_lossy().into_owned(),
+                admin.collection.clone(),
+            )?
+            .binding;
+            let backing = authority.backing;
+            let scoped = admin.with_scoped_reads(authority)?;
+            let observed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let counter = observed.clone();
+            let primary = roots._directory.path().join("primary");
+            let data = roots._directory.path().join("data");
+            *scoped
+                .read_scope
+                .as_ref()
+                .unwrap()
+                .metadata_observed
+                .lock()
+                .unwrap() = Some(Box::new(move || {
+                let seen = counter.fetch_add(1, Ordering::SeqCst);
+                if seen < landings {
+                    std::fs::write(primary.join("main.rs"), format!("pub struct P{seen};\n"))
+                        .unwrap();
+                    // Another owner publishes, as an Index job would.
+                    Kernel::open(&primary, Some(data.clone()))
+                        .unwrap()
+                        .index()
+                        .unwrap();
+                }
+            }));
+            let result = scoped.scoped_index_metadata(backing, ScopedIndexMetadataView::Roots);
+            if settles {
+                let metadata = result?;
+                assert_eq!(observed.load(Ordering::SeqCst), 2);
+                assert_eq!(
+                    metadata.publication.token,
+                    crate::current::runtime::revision(roots.admin.current_reader()?.token()?)
+                );
+            } else {
+                let error = result.err().unwrap();
+                assert!(!error.is::<ScopeReadRefused>(), "{error:#}");
+                assert_eq!(hint_code(&error), Some("publication_busy"));
+                assert_eq!(observed.load(Ordering::SeqCst), 3);
+            }
+        }
+        Ok(())
+    }
+
+    /// The source projection of a publication that was replaced under the
+    /// same authority is the retryable `publication_busy`, not a refusal.
+    #[test]
+    fn source_projection_of_a_replaced_publication_is_publication_busy() -> Result<()> {
+        let roots = two_roots()?;
+        let admin = &roots.admin;
+        admin.index()?;
+        let mut authority = fixture(&admin.root_id());
+        authority.backing = airk_core::service::ProjectRegistration::new(
+            admin.root_id(),
+            admin.data_root.to_string_lossy().into_owned(),
+            admin.collection.clone(),
+        )?
+        .binding;
+        let backing = authority.backing;
+        let scoped = admin.with_scoped_reads(authority)?;
+        let token = crate::current::runtime::revision(admin.current_reader()?.token()?);
+        scoped.scoped_source_projection(backing, token)?;
+        std::fs::write(
+            std::path::Path::new(&admin.root_id()).join("main.rs"),
+            "pub struct Moved;\n",
+        )?;
+        admin.index()?;
+        let error = scoped
+            .scoped_source_projection(backing, token)
+            .err()
+            .unwrap();
+        assert!(!error.is::<ScopeReadRefused>(), "{error:#}");
+        assert_eq!(hint_code(&error), Some("publication_busy"));
+        Ok(())
+    }
+
+    /// Genesis: a multi-root authority whose roots are configured waits for
+    /// the first publication like a single-root one; an unconfigured root is
+    /// still a definite refusal.
+    #[test]
+    fn genesis_multi_root_scope_with_configured_roots_is_pending() -> Result<()> {
+        use airk_core::graph_storage::{GraphHead, GraphScope};
+        use airk_store::current::{CurrentHead, CurrentScope};
+        let roots = two_roots()?;
+        let admin = &roots.admin;
+        admin.add_root("docs", &roots.external)?;
+        let scope = CurrentScope {
+            root: admin.root_id(),
+            collection: admin.collection.clone(),
+            incarnation: Incarnation::from_bytes([11; 16]),
+        };
+        let lexical = airk_store::current::lexical::LexicalManifest::empty()?;
+        let head = CurrentHead {
+            version: 2,
+            scope: scope.clone(),
+            sequence: 0,
+            artifact_root: airk_store::current::map::empty_root(&scope)?,
+            lexical_sequence: 0,
+            lexical_commit: lexical.digest()?,
+            graph_head: GraphHead::empty(GraphScope {
+                root: scope.root.clone(),
+                collection: scope.collection.clone(),
+                incarnation: scope.incarnation,
+                graph_instance: Incarnation::from_bytes([12; 16]),
+                specification: Sha256Digest::from_bytes([13; 32]),
+                record_bytes: 16,
+            })?,
+        };
+        let quota = admin.collection_quota()?;
+        {
+            let lock = admin.store.lock()?;
+            let mut current = admin.store.current_write(&lock, &quota, &scope, 16 << 20)?;
+            current.initialize(head.clone())?;
+            current
+                .install_initial_lexical_manifest(&head.token()?, &lexical.canonical_bytes()?)?;
+        }
+        let configured = admin.configured_roots()?["docs"].clone();
+        let multi = admin.with_scoped_reads(with_external(admin, configured)?)?;
+        let error = multi.status_summary().unwrap_err();
+        assert!(!error.is::<ScopeReadRefused>(), "{error:#}");
+        assert_eq!(hint_code(&error), Some("publication_busy"));
+        let foreign = admin.with_scoped_reads(with_external(
+            admin,
+            roots
+                ._directory
+                .path()
+                .join("foreign")
+                .to_string_lossy()
+                .into_owned(),
+        )?)?;
+        let error = foreign.status_summary().unwrap_err();
+        assert!(error.is::<ScopeReadRefused>(), "{error:#}");
+        assert!(hint_code(&error).is_none());
         Ok(())
     }
 }
