@@ -91,11 +91,9 @@ test('with a service, only retired stdio entries whose folder has no index are r
 });
 
 test('credential input and the endpoint URL are strict', async () => {
-    const airkctl = { oneShot: async (argv: string[]) => {
-        assert.deepEqual(argv, ['agents', 'credential', '--connection-id', '01'.repeat(16), '--format', 'header-json']);
-        return { exitCode: 0, class: 'success', stdout: '{"Authorization":"Bearer abcdefghijklmnopqrstuvwxyz012345"}', stderr: '' };
-    } } as never;
-    assert.equal(await inputCredential(airkctl, { connection_id: '01'.repeat(16) }), 'abcdefghijklmnopqrstuvwxyz012345');
+    // Local trust plan B: an old entry's input gets the fixed placeholder; airkctl is never run.
+    const airkctl = { oneShot: async () => { throw new Error('the retired credential helper must not run'); } } as never;
+    assert.equal(await inputCredential(airkctl, { connection_id: '01'.repeat(16) }), 'airk-local-session');
     await assert.rejects(inputCredential(airkctl, { connection_id: '01'.repeat(16), extra: 1 }), /invalid_http_credential_arguments/);
     await assert.rejects(inputCredential(airkctl, { connection_id: 'NOT-AN-ID' }), /invalid_http_credential_arguments/);
     assert.equal(connectionUrl({ endpoint: { url: 'https://127.0.0.1:57421/mcp' } }), 'https://127.0.0.1:57421/mcp');

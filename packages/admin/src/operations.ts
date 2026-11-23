@@ -246,13 +246,6 @@ export const body = {
   logsRecent: (limit: number) => ({ logs: { limit } }),
   /** M15a: the checked local HTTPS endpoint (AgentEndpoint {}). */
   agentsEndpoint: () => ({ agent_endpoint: {} }),
-  agentsConnection: (connectionId: string) => ({ agent_connection_info: { connection_id: connectionId } }),
-  agentsOwnership: (connectionId: string) => ({
-    agent_connection_ownership: { connection_id: connectionId },
-  }),
-  /** V1: probe /mcp with the stored credential; the token never leaves the service. */
-  agentsVerify: (connectionId: string) => ({ agent_connection_verify: { connection_id: connectionId } }),
-  agentsRevoke: (connectionId: string) => ({ http_revoke: { connection_id: connectionId } }),
   trustStatus: () => ({ http_trust: { action: 'inspect' } }),
   rotationStatus: () => ({ http_issuer_rotation: { action: 'status' } }),
   serviceStop: () => ({ lifecycle: { action: 'stop' } }),
