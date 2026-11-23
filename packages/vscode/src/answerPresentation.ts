@@ -90,17 +90,45 @@ export function answerPresentation(answer: ContextResponseV3, identity: string):
     const target = (id: string) => `answer-${identity}-${id}`;
     const usesOf = (id: string): RecordUse[] => answer.record_uses.filter(use => use.record === id);
     const useLabel = (use: RecordUse) => `part ${use.part}${use.need == null ? '' : ` sub-need ${use.need}`}, round ${use.round}, ${words(use.cause)}`;
-    const spanLine = (record: LoopEvidence, span: ProjectionSpan): AnswerNode => {
-        const where = span.path ? `${span.path}${span.start ? `:${span.start}${span.end && span.end !== span.start ? `–${span.end}` : ''}` : ''}` : `span ${span.position} without a location`;
-        const raw = span.raw, notes: string[] = [];
-        if (typeof raw.focus === 'number') notes.push(`Focus ${raw.focus.toFixed(3)}`);
-        if (raw.truncated === true) notes.push('excerpt cut');
-        if (raw.within === true) notes.push('lies within another span');
-        if (Object.keys(rec(raw.same_as)).length) notes.push(`same text as ${json(raw.same_as).replaceAll('\n', ' ')}`);
-        if (Array.isArray(raw.also_at) && raw.also_at.length) notes.push(`also at ${raw.also_at.map(value => typeof value === 'string' ? value : JSON.stringify(value)).join(', ')}`);
-        if (Array.isArray(raw.overlaps) && raw.overlaps.length) notes.push(`overlaps ${raw.overlaps.map(value => JSON.stringify(value)).join(', ')}`);
-        const locator = span.path && span.hash ? { ...node('button', `Open ${where}`), sourceLocator: { record: record.id, span: span.position } } : node('span', where);
-        return node('li', locator, ...(notes.length ? [node('span', ` · ${notes.join(' · ')}`)] : []), ...(span.text !== undefined ? [node('pre', span.text)] : []));
+    // Each text is carried once (Core "Where the text is"): a row names the row
+    // holding its text by {record, pointer}; the carrier lists other places.
+    const rows = answer.records.flatMap(record => projectionSpans(record).map(span => ({ record, span })));
+    const byPointer = new Map(rows.filter(row => typeof row.span.raw.pointer === 'string').map(row => [`${row.record.id}|${String(row.span.raw.pointer)}`, row]));
+    const place = (span: ProjectionSpan) => span.path ? `${span.path}${span.start ? `:${span.start}${span.end && span.end !== span.start ? `–${span.end}` : ''}` : ''}` : `span ${span.position} without a location`;
+    const byPlace = new Map<string, { record: LoopEvidence; span: ProjectionSpan }>();
+    for (const row of rows) if (row.span.path && row.span.start !== undefined) byPlace.set(`${row.span.path}:${row.span.start}-${row.span.end ?? row.span.start}`, row);
+    const rowTarget = (record: string, position: number) => `answer-${identity}-${record}-span-${position}`;
+    const named = (reference: unknown): { record: LoopEvidence; span: ProjectionSpan } | undefined => {
+        const value = rec(reference);
+        return typeof value.record === 'string' && typeof value.pointer === 'string' ? byPointer.get(`${value.record}|${value.pointer}`) : undefined;
+    };
+    const jump = (row: { record: LoopEvidence; span: ProjectionSpan }, label: string): AnswerNode => ({ ...node('button', label), citationTarget: rowTarget(row.record.id, row.span.position) });
+    const open = (record: LoopEvidence, span: ProjectionSpan, label: string): AnswerNode => span.path && span.hash
+        ? { ...node('button', label), sourceLocator: { record: record.id, span: span.position } } : node('span', label);
+    /** One returned row; `anchor` marks the copy in the record list that citations jump to. */
+    const spanLine = (record: LoopEvidence, span: ProjectionSpan, anchor = false): AnswerNode => {
+        const raw = span.raw, notes: Child[] = [], text = (value: string) => notes.push(node('span', ` · ${value}`));
+        if (typeof raw.focus === 'number') text(`Focus ${raw.focus.toFixed(3)}`);
+        if (raw.truncated === true) text('excerpt cut');
+        if (Object.keys(rec(raw.same_as)).length) {
+            const carrier = named(raw.same_as);
+            notes.push(node('span', ` · ${raw.within === true ? 'its text lies within' : 'same text as'} `),
+                carrier ? jump(carrier, `${place(carrier.span)} (record ${short(carrier.record.id)})`) : node('span', `${JSON.stringify(raw.same_as)}, which this reply does not carry`));
+        } else if (raw.within === true) text('lies within another span');
+        if (Array.isArray(raw.also_at) && raw.also_at.length) {
+            notes.push(node('span', ' · also at '));
+            raw.also_at.forEach((value, index) => {
+                const label = typeof value === 'string' ? value : JSON.stringify(value), other = typeof value === 'string' ? byPlace.get(value) : undefined;
+                notes.push(...(index ? [node('span', ', ')] : []), other ? open(other.record, other.span, `Open ${label}`) : node('span', label));
+            });
+        }
+        if (Array.isArray(raw.overlaps)) for (const overlap of raw.overlaps) {
+            const value = rec(overlap), other = named(overlap);
+            notes.push(node('span', ` · ${String(value.bytes ?? '?')} bytes at its ${String(value.side ?? '?')} are shown in `),
+                other ? jump(other, `${place(other.span)} (record ${short(other.record.id)})`) : node('span', JSON.stringify(overlap)));
+        }
+        const item = node('li', open(record, span, `Open ${place(span)}`), ...notes, ...(span.text !== undefined ? [node('pre', span.text)] : []));
+        return anchor ? { ...item, id: rowTarget(record.id, span.position) } : item;
     };
     const citation = (id: string): AnswerNode => {
         const record = retained.get(id);
@@ -169,7 +197,7 @@ export function answerPresentation(answer: ContextResponseV3, identity: string):
                 { ...node('article', node('h5', record.id), node('p', `Arguments: ${JSON.stringify(record.arguments)}. ${counts.join('; ')}.`),
                     node('p', `Found by: ${usesOf(record.id).map(useLabel).join('; ') || 'no recorded use'}.`),
                     ...(typeof projection.failure === 'string' ? [node('p', `The read failed: ${projection.failure}`)] : []),
-                    ...(spans.length ? [node('ul', ...spans.map(span => spanLine(record, span)))] : []),
+                    ...(spans.length ? [node('ul', ...spans.map(span => spanLine(record, span, true)))] : []),
                     ...(rows.length ? [node('ul', ...rows.map(row => node('li', `${String(row.path ?? '')}:${String(row.start_line ?? '')}${row.end_line != null && row.end_line !== row.start_line ? `–${String(row.end_line)}` : ''} ${String(row.text ?? '')}`)))] : []),
                     node('details', node('summary', 'Complete returned record'), node('pre', json(record)))), id: target(record.id) });
         }),

@@ -55,15 +55,28 @@ test('partial and queued replies say so, and the reply\'s extra union counts are
     assert.match(text(answerPresentation(ticket,'t')),/Queued: position/);
 });
 
-test('a span\'s also_at, same_as, overlaps and within notes are shown when the reply carries them',()=>{
-    const answer=emitted('two_parts_valid');
-    answer.records[1].canonical_result={projection:'airk.arbiter.loop-evidence/1',spans:[
-        {path:'src/a.rs',start_line:1,end_line:3,content_hash:'ab'.repeat(32),text:'shared text',also_at:['src/b.rs:4-6'],overlaps:[{record:'1f'.repeat(32),pointer:'/hits/1',bytes:4,side:'head'}]},
-        {path:'src/a.rs',start_line:2,end_line:2,content_hash:'ab'.repeat(32),same_as:{record:answer.records[1].id,pointer:'/hits/0'},within:true}]};
-    const view=answerPresentation(answer,'s'),rendered=text(view);
-    assert.match(rendered,/also at src\/b\.rs:4-6/);assert.match(rendered,/same text as/);assert.match(rendered,/lies within another span/);assert.match(rendered,/overlaps/);
-    const locators=nodes(view).filter(node=>node.sourceLocator).map(node=>JSON.stringify(node.sourceLocator));
-    assert.deepEqual([...new Set(locators)].sort(),[0,1].map(span=>JSON.stringify({record:answer.records[1].id,span})),'each located span is offered by record and position only');
+test('each text once: same_as and overlaps link to the carrying row, also_at places open, and no location is lost',()=>{
+    // The row shape of Core "Where the text is" (change log entry 45).
+    const answer=emitted('two_parts_valid'),[search,symbols]=answer.records,hash='ab'.repeat(32);
+    symbols.canonical_result={projection:'airk.arbiter.loop-evidence/1',spans:[
+        {pointer:'/hits/0',path:'src/a.rs',start_line:1,end_line:3,content_hash:hash,truncated:false,text:'shared text',also_at:['src/b.rs:4-6'],
+            overlaps:[{record:search.id,pointer:'/hits/1',bytes:40,side:'head'}]},
+        {pointer:'/hits/1',path:'src/a.rs',start_line:2,end_line:2,content_hash:hash,truncated:false,same_as:{record:symbols.id,pointer:'/hits/0'},within:true}]};
+    search.canonical_result={projection:'airk.arbiter.loop-evidence/1',spans:[
+        {pointer:'/hits/0',path:'src/b.rs',start_line:4,end_line:6,content_hash:'cd'.repeat(32),truncated:false,same_as:{record:symbols.id,pointer:'/hits/0'}},
+        {pointer:'/hits/1',path:'src/a.rs',start_line:5,end_line:6,content_hash:hash,truncated:false,text:'head'},
+        {pointer:'/hits/2',path:'src/c.rs',start_line:9,end_line:9,content_hash:'ef'.repeat(32),truncated:false,same_as:{record:'99'.repeat(32),pointer:'/hits/0'}}]};
+    const view=answerPresentation(answer,'s'),rendered=text(view),all=nodes(view);
+    const carrier=`answer-s-${symbols.id}-span-0`,trimmed=`answer-s-${search.id}-span-1`;
+    assert.ok(all.some(node=>node.id===carrier)&&all.some(node=>node.id===trimmed),'record-list rows are anchors');
+    assert.ok(all.some(node=>node.citationTarget===carrier&&text(node)===`src/a.rs:1–3 (record ${symbols.id.slice(0,12)})`),'a same_as row links to the row holding its text');
+    assert.match(rendered,/its text lies within/);assert.match(rendered,/same text as/);
+    assert.ok(all.some(node=>node.citationTarget===trimmed),'an overlap links to the row that shows the trimmed bytes');assert.match(rendered,/40 bytes at its head are shown in/);
+    assert.ok(all.some(node=>node.tag==='button'&&text(node)==='Open src/b.rs:4-6'&&JSON.stringify(node.sourceLocator)===JSON.stringify({record:search.id,span:0})),'an also_at place opens its own row');
+    assert.match(rendered,/which this reply does not carry/,'an unresolved carrier is disclosed, not dropped');
+    for(const place of ['src/a.rs:1–3','src/a.rs:2','src/b.rs:4–6','src/a.rs:5–6','src/c.rs:9'])assert.ok(rendered.includes(`Open ${place}`),place);
+    const markdown=answerNodeMarkdown(view);
+    for(const place of ['src/a.rs:1–3','src/a.rs:2','src/b.rs:4–6','src/b.rs:4-6','src/c.rs:9'])assert.ok(markdown.includes(place),`Markdown keeps ${place}`);
 });
 
 test('Markdown of the tree keeps its headings, lists and excerpts and escapes evidence text',()=>{
