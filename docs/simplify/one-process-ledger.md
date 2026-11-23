@@ -16589,3 +16589,63 @@ to the reviewed branch).
 (rebase, independent review, its recorded checks again on the rebased
 tree); the S1 base build. **Next:** an independent review of
 `loop/l2b-wire` (L2c) on the new main, then LH.
+
+### 23 November 2026 at 12:23 UTC — Workbench and Admin Search on Answer /3 merged (L2e phase 1); the LH decisions recorded; LH starts
+
+**`loop/workbench-v3`, merged** as `e12cb1d4`, `c68c0672`, `e93c8c6d` and
+`6a507b90` (cherry-picked onto `d5ed189e`; `packages`, `crates` and
+`scripts` are byte-equal to the reviewed branch at `2b260cd7`).
+- **What it does:** Workbench, Admin Search and the service-client checks
+  send Answer /3 through one request builder with the default budget read
+  from the Rust-emitted cases, and render, copy and export a /3 reply from
+  one presentation tree; each Answer text links to the span row that
+  carries it.
+- **Independent review** (a fresh Opus agent, not the implementer), on the
+  branch rebased onto `705ab312`:
+
+| Finding | Outcome |
+| --- | --- |
+| The readable views dropped the new `read_status` (entry 54), and `schema` and `packet_schema` | Fixed in `6a507b90` with a test; Admin assets rebuilt |
+| A row with `overlaps` shows its trimmed text and links to the rows that hold the rest | Left: disclosed in the view; the whole record JSON is kept |
+| The shared verification summary line does not name `source_rows_omitted` | Left: older than this branch and shared by every tool; the receipt is shown whole |
+| Explorer has no Answer tree and shows the generic JSON | Left: outside phase 1 |
+
+- **Primary review:** read the request builder, the contract guard, the
+  Admin screen and the service-client check. Types come from the generated
+  views; no handwritten mirror.
+- **Validation, by the reviewer on the rebased tree** (logs
+  `answer-loop\workbench\logs\r-*`): extension `npm test` 1,147 selected,
+  1,139 passed, 6 failed, 2 skipped (the 6 are the known `installerDownload`
+  failures of a worktree without an `artifacts` folder); UI tests 13 of 13;
+  Admin type check, build and check exit 0, tests 303 of 305 with 2 skipped
+  (they need a scope capture); `test_service_clients.py` 69 of 69;
+  `test_workbench_window_scope.py` 5 of 5; `contract_types.py` arbiter, i2
+  and i3 `--check` exit 0. Not repeated on unchanged inputs. Run here on
+  the merged tree: `contract_types.py arbiter --check` exit 0;
+  `scripts/check-repo.ps1` passed for 10,678 public files; whitespace check clean.
+- **Not verified:** nothing ran against a real /3 service. A live check
+  needs a matched debug `airk` and `airkctl` pair, the prebuilt
+  `combined_reads` test binary as `--answer-validator` for
+  `scripts/check-service-clients.py`, and
+  `scripts/check-workbench-window-scope.py` with its client fixture root.
+  Owner: primary agent, with the LH acceptance image.
+- **Phase 2** (following a ticket and a continuation, "Stop waiting" and
+  "Cancel job") waits for the job contract of L2c and L2d.
+
+**LH decisions** are change-log entry 56 (commit `d5ed189e`): the public
+model value is `arbiter`, a stored Large selection becomes a disabled
+Context stage, state moves to `configuration/5`. Taken under plan section
+12.9 for the user's review after L7.
+
+**Open with the user, asked on 23 November, not yet blocking:** the Linux
+guest and VHD growth caps (24 GiB each, 7.33 GB of VHD room left at 06:49
+UTC). Step LX needs more from its GNU build step on; the recommendation is
+64 GiB each inside the 120 GB C: allowance. LX proceeds only up to that
+step until the user answers.
+
+**Review queue:** one branch left, `loop/l2b-wire` (L2c), under independent
+review by an Opus agent. **Started at this entry:** the LH agent (Opus,
+medium) on branch `loop/lh` in the `L5C` worktree with target
+`target-cuda`; it stops for primary review after its sixth commit and the
+profile re-emission, before any evaluation image is built. The S1 base
+build is still running.
