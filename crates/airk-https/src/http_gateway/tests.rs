@@ -2,9 +2,8 @@
 use super::*;
 use airk_core::{
     identity::Sha256Digest,
-    index_catalog::{CatalogRevision, GrantId, IndexId, QueryProjectId},
-    service::ScopedConnectRequest,
-    service_http::{EndpointState, HttpSelection, LoopbackMcpUrl},
+    index_catalog::{CatalogRevision, GrantId},
+    service_http::{EndpointState, LoopbackMcpUrl},
 };
 use airk_endpoint::http_endpoint::{InstallationBinding, TlsIdentity};
 use airk_mcp::remote::{RemoteFuture, RemoteTools};
@@ -99,7 +98,7 @@ async fn abandoned_native_validation_retains_its_bounded_blocking_capacity() -> 
     let release = Release(block.clone());
     let started = Arc::new(AtomicUsize::new(0));
     let observed = started.clone();
-    Arc::get_mut(&mut f.gateway.0).unwrap().validate = Arc::new(move |_, context| {
+    Arc::get_mut(&mut f.gateway.0).unwrap().validate = Arc::new(move |context| {
         let block = block.clone();
         let started = observed.clone();
         Box::pin(async move {
@@ -194,8 +193,6 @@ struct Fixture {
     _root: tempfile::TempDir,
     gateway: Gateway,
     token: String,
-    id: Incarnation,
-    credential: AuthenticatedCredential,
     checks: Arc<AtomicUsize>,
     fenced: Arc<AtomicBool>,
     ca: Vec<u8>,
@@ -227,35 +224,11 @@ fn fixture(port: u16) -> anyhow::Result<Fixture> {
         state: EndpointState::Ready,
         predecessor_digest: None,
     };
-    // U110: the gateway serves the built-in local agent session; fence unit
-    // tests still exercise a grant-bound credential of the same id directly.
-    let id = airk_core::service_http::LOCAL_AGENT_CONNECTION;
-    let selection = HttpSelection::Scoped {
-        selection: ScopedConnectRequest {
-            schema: 1,
-            context_key: Sha256Digest::from_bytes([6; 32]),
-            namespace: binding.namespace,
-            expected_catalog_revision: CatalogRevision::INITIAL,
-            grant_id: GrantId::from_identity(id),
-            expected_grant_revision: CatalogRevision::INITIAL,
-            index_id: IndexId::from_identity(id),
-            project_ids: vec![QueryProjectId::from_identity(id)],
-        },
-    };
-    let credential = AuthenticatedCredential {
-        client: airk_core::usage::ClientFamily::Unknown,
-        connection_id: id,
-        generation: 1,
-        selection,
-        expires_unix_ms: now_ms() + 60_000,
-        explorer_descriptor: None,
-        open: None,
-    };
     // Any bearer token is stripped unread; requests still send one to prove it.
     let token = format!("airk1.{}.{}", "0".repeat(32), "f".repeat(64));
     let checks = Arc::new(AtomicUsize::new(0));
     let checked = checks.clone();
-    let validate: ValidateRequest = Arc::new(move |_, _| {
+    let validate: ValidateRequest = Arc::new(move |_| {
         checked.fetch_add(1, Ordering::SeqCst);
         Box::pin(async {
             Ok(Arc::new(|| Ok(Arc::new(Echo) as Arc<dyn RemoteTools>))
@@ -287,8 +260,6 @@ fn fixture(port: u16) -> anyhow::Result<Fixture> {
         _root: root,
         gateway,
         token,
-        id,
-        credential,
         checks,
         fenced,
         ca,
@@ -323,19 +294,9 @@ async fn every_request_revalidates_native_admission_before_reusing_its_session_c
     }
     assert_eq!(f.checks.load(Ordering::SeqCst), 2);
     // U110: one cached service, the built-in local agent session.
-    assert_eq!(
-        f.gateway
-            .0
-            .clients
-            .lock()
-            .unwrap()
-            .keys()
-            .copied()
-            .collect::<Vec<_>>(),
-        vec![airk_core::service_http::LOCAL_AGENT_CONNECTION]
-    );
-    f.gateway.revoke(f.id).await;
-    assert!(f.gateway.0.clients.lock().unwrap().is_empty());
+    assert!(f.gateway.0.client.lock().unwrap().is_some());
+    f.gateway.retire_context().await;
+    assert!(f.gateway.0.client.lock().unwrap().is_none());
     f.gateway.close().await;
     Ok(())
 }
@@ -701,7 +662,7 @@ async fn real_tls_scope_refusal_preserves_fresh_403_and_fences_old_buffered_evid
         let refuse = Arc::new(AtomicBool::new(false));
         let validation = refuse.clone();
         Arc::get_mut(&mut f.gateway.0).unwrap().validate =
-            Arc::new(move |_credential, _context| {
+            Arc::new(move |_context| {
                 let validation = validation.clone();
                 Box::pin(async move {
                     anyhow::ensure!(
@@ -769,10 +730,10 @@ async fn real_tls_scope_refusal_preserves_fresh_403_and_fences_old_buffered_evid
         let read_cell = Arc::downgrade(
             &f.gateway
                 .0
-                .clients
+                .client
                 .lock()
                 .unwrap()
-                .get(&f.id)
+                .as_ref()
                 .unwrap()
                 .read_delivery,
         );
@@ -783,8 +744,8 @@ async fn real_tls_scope_refusal_preserves_fresh_403_and_fences_old_buffered_evid
             "old buffered output must be deliverable before native scope retirement"
         );
 
-        // Native validation fails without rotating the credential or advancing
-        // the catalog: the distinct read-context fence must do the retirement.
+        // Native validation fails without advancing the catalog: the
+        // distinct read-context fence must do the retirement.
         refuse.store(true, Ordering::SeqCst);
         let stop = CancellationToken::new();
         let gateway = f.gateway.clone();
@@ -836,8 +797,7 @@ async fn real_tls_scope_refusal_preserves_fresh_403_and_fences_old_buffered_evid
         tokio::time::timeout(Duration::from_secs(5), client)
             .await
             .context("scope-refusal fixture: fresh Hyper client shutdown deadline")???;
-        assert!(f.gateway.0.clients.lock().unwrap().is_empty());
-        assert_eq!(f.gateway.0.delivery_cells.lock().unwrap().cells.len(), 1);
+        assert!(f.gateway.0.client.lock().unwrap().is_none());
         assert!(delivery.check().is_err());
         if read_driven {
             old_client
@@ -1023,9 +983,9 @@ async fn catalog_close_stops_actual_partial_socket_writes_and_buffered_flush() -
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     for flush in [false, true] {
         let f = fixture(57421)?;
-        let credential = f.credential.clone();
+        let namespace = f.gateway.0.namespace;
         let delivery = ConnectionFence::new(f.gateway.0.native_gate.clone());
-        delivery.capture(&credential.selection)?;
+        delivery.capture(namespace)?;
         let (socket, mut peer) = tokio::io::duplex(4);
         let pending = Arc::new(tokio::sync::Notify::new());
         let writer = PendingSocket {
@@ -1051,7 +1011,7 @@ async fn catalog_close_stops_actual_partial_socket_writes_and_buffered_flush() -
             }
         });
         tokio::time::timeout(Duration::from_secs(2), pending.notified()).await?;
-        close_native(&f.gateway.0.native_gate, credential.selection.namespace())?;
+        close_native(&f.gateway.0.native_gate, namespace)?;
         let mut bytes = Vec::new();
         tokio::time::timeout(Duration::from_secs(2), peer.read_to_end(&mut bytes)).await??;
         assert_eq!(
@@ -1060,8 +1020,8 @@ async fn catalog_close_stops_actual_partial_socket_writes_and_buffered_flush() -
         );
         assert!(task.await?.is_err());
         assert!(
-            delivery.capture(&credential.selection).is_err(),
-            "keepalive cannot replace its old invalid issue ticket"
+            delivery.capture(namespace).is_err(),
+            "keepalive cannot capture a ticket while the native fence is pending"
         );
         f.gateway.close().await;
     }
@@ -1104,9 +1064,7 @@ impl AsyncWrite for CountWrites {
 #[tokio::test]
 async fn tls_read_driven_alert_cannot_flush_ciphertext_after_native_fence() -> anyhow::Result<()> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    for (below_tls, revoke_credential) in
-        [(false, false), (true, false), (false, true), (true, true)]
-    {
+    for below_tls in [false, true] {
         let f = fixture(57421)?;
         let delivery = ConnectionFence::new(f.gateway.0.native_gate.clone());
         let (server_socket, client_socket) = tokio::io::duplex(65536);
@@ -1144,34 +1102,12 @@ async fn tls_read_driven_alert_cannot_flush_ciphertext_after_native_fence() -> a
         .await?;
         let mut server = server?;
         let mut client = client?;
-        let credential = f.credential.clone();
-        delivery.capture(&credential.selection)?;
-        if revoke_credential {
-            let cell = f.gateway.0.delivery_cells.lock().unwrap().capture(
-                0,
-                &credential,
-                delivery.authenticated_ticket()?,
-            )?;
-            delivery.bind_credential(cell)?;
-        }
+        let namespace = f.gateway.0.namespace;
+        delivery.capture(namespace)?;
         // Queue a real rustls application record, without flushing the socket.
         std::io::Write::write_all(&mut server.get_mut().1.writer(), b"retained evidence")?;
         let before = bytes.load(Ordering::SeqCst);
-        if revoke_credential {
-            f.gateway.revoke(f.id).await;
-            assert!(
-                f.gateway
-                    .0
-                    .delivery_cells
-                    .lock()
-                    .unwrap()
-                    .capture(0, &credential, delivery.authenticated_ticket()?)
-                    .is_err(),
-                "stale authentication cannot recreate a delivery cell after revoke acknowledgement"
-            );
-        } else {
-            close_native(&f.gateway.0.native_gate, credential.selection.namespace())?;
-        }
+        close_native(&f.gateway.0.native_gate, namespace)?;
         // Invalid encrypted record triggers rustls read_io's last-gasp write.
         client.get_mut().0.write_all(&[23, 3, 3, 0, 1, 0]).await?;
         let mut reader: Box<dyn AsyncRead + Unpin> = if below_tls {
@@ -1206,86 +1142,15 @@ async fn tls_read_driven_alert_cannot_flush_ciphertext_after_native_fence() -> a
 }
 
 #[tokio::test]
-async fn credential_cells_reject_connection_switch_expiry_and_retired_generation()
--> anyhow::Result<()> {
-    let f = fixture(57421)?;
-    let credential = f.credential.clone();
-    let delivery = ConnectionFence::new(f.gateway.0.native_gate.clone());
-    delivery.capture(&credential.selection)?;
-    let ticket = delivery.authenticated_ticket()?;
-    let mut registry = CredentialDeliveryRegistry::default();
-    let first = registry.capture(0, &credential, ticket)?;
-    delivery.bind_credential(first.clone())?;
-    let mut other = credential.clone();
-    other.connection_id = Incarnation::from_bytes([99; 16]);
-    assert!(
-        delivery
-            .bind_credential(registry.capture(0, &other, ticket)?)
-            .is_err()
-    );
-    let mut changed_expiry = credential.clone();
-    changed_expiry.expires_unix_ms += 1;
-    assert!(registry.capture(0, &changed_expiry, ticket).is_err());
-    registry.retire(credential.connection_id);
-    assert!(delivery.check().is_err());
-    let fresh = registry.capture(0, &credential, ticket)?;
-    assert!(!Arc::ptr_eq(&fresh, &first));
-    assert!(delivery.bind_credential(fresh).is_err());
-    // Expiry is checked at delivery, even without the periodic sweeper.
-    let expired = CredentialDelivery {
-        id: credential.connection_id,
-        generation: credential.generation,
-        expires: now_ms(),
-        ticket,
-        revoked: false,
-    };
-    assert!(expired.check().is_err());
-    registry.revoke(credential.connection_id);
-    assert!(registry.capture(0, &credential, ticket).is_err());
-    f.gateway.close().await;
-    Ok(())
-}
-
-#[tokio::test]
-async fn credential_retirement_reclaims_registry_slots_but_fences_old_authentication()
--> anyhow::Result<()> {
-    let f = fixture(57421)?;
-    let mut credential = f.credential.clone();
-    let delivery = ConnectionFence::new(f.gateway.0.native_gate.clone());
-    delivery.capture(&credential.selection)?;
-    let ticket = delivery.authenticated_ticket()?;
-    let mut registry = CredentialDeliveryRegistry::default();
-    for number in 1..=160u128 {
-        credential.connection_id = Incarnation::from_bytes(number.to_be_bytes());
-        let epoch = registry.epoch;
-        let old = registry.capture(epoch, &credential, ticket)?;
-        registry.revoke(credential.connection_id);
-        assert!(old.lock().unwrap().check().is_err());
-        assert!(registry.cells.is_empty());
-        assert!(registry.capture(epoch, &credential, ticket).is_err());
-    }
-    // A fresh authentication from the durable ledger uses the current epoch;
-    // historical revocations consume no active map slots.
-    credential.connection_id = f.id;
-    let retained = registry.capture(registry.epoch, &credential, ticket)?;
-    registry.epoch = u64::MAX;
-    // Exhaustion fences every retained cell, including an unrelated ID.
-    registry.revoke(Incarnation::from_bytes([211; 16]));
-    assert!(retained.lock().unwrap().check().is_err());
-    assert!(registry.capture(u64::MAX, &credential, ticket).is_err());
-    f.gateway.close().await;
-    Ok(())
-}
-
-#[tokio::test]
 async fn async_scope_validation_cannot_cross_the_captured_delivery_fence() -> anyhow::Result<()> {
     let mut f = fixture(57421)?;
     let gate = f.gateway.0.native_gate.clone();
     let observed = gate.clone();
-    Arc::get_mut(&mut f.gateway.0).unwrap().validate = Arc::new(move |credential, _| {
+    let namespace = f.gateway.0.namespace;
+    Arc::get_mut(&mut f.gateway.0).unwrap().validate = Arc::new(move |_| {
         let gate = observed.clone();
         Box::pin(async move {
-            close_native(&gate, credential.selection.namespace())?;
+            close_native(&gate, namespace)?;
             Ok(Arc::new(|| Ok(Arc::new(Echo) as Arc<dyn RemoteTools>))
                 as AuthenticatedBackendFactory)
         })
@@ -1301,13 +1166,13 @@ async fn async_scope_validation_cannot_cross_the_captured_delivery_fence() -> an
     let body: serde_json::Value =
         serde_json::from_slice(&response.into_body().collect().await?.to_bytes())?;
     assert_eq!(body["error"]["code"], "native_delivery_fenced");
-    assert!(f.gateway.0.clients.lock().unwrap().is_empty());
+    assert!(f.gateway.0.client.lock().unwrap().is_none());
     f.gateway.close().await;
     Ok(())
 }
 
 #[tokio::test]
-async fn completed_revocation_cannot_be_undone_by_delayed_validated_cache_insertion()
+async fn a_native_fence_after_validation_cannot_be_undone_by_delayed_cache_insertion()
 -> anyhow::Result<()> {
     for already_cached in [false, true] {
         let f = fixture(57421)?;
@@ -1321,117 +1186,39 @@ async fn completed_revocation_cannot_be_undone_by_delayed_validated_cache_insert
                 .await;
             assert_eq!(initial.status(), StatusCode::OK);
             initial.into_body().collect().await?;
-            assert_eq!(f.gateway.0.clients.lock().unwrap().len(), 1);
+            assert!(f.gateway.0.client.lock().unwrap().is_some());
         }
-        // U110: the credential every request authenticates as.
-        let credential = local_agent_session(f.gateway.0.namespace);
+        let namespace = f.gateway.0.namespace;
         let delivery = ConnectionFence::new(f.gateway.0.native_gate.clone());
-        delivery.capture(&credential.selection)?;
+        delivery.capture(namespace)?;
         let ticket = delivery.authenticated_ticket()?;
-        let cell = {
-            let mut registry = f.gateway.0.delivery_cells.lock().unwrap();
-            let epoch = registry.epoch;
-            registry.capture(epoch, &credential, ticket)?
-        };
-        delivery.bind_credential(cell.clone())?;
-        let backend = (f.gateway.0.validate)(
-            credential.clone(),
-            ReadAttemptContext::new(
-                Instant::now() + Duration::from_secs(5),
-                CancellationToken::new(),
-            ),
-        )
+        let backend = (f.gateway.0.validate)(ReadAttemptContext::new(
+            Instant::now() + Duration::from_secs(5),
+            CancellationToken::new(),
+        ))
         .await?;
         // This is the same pre-cache check passed by dispatch. Delay only cache
-        // publication until actual durable revocation and removal complete.
+        // publication until a native fence has landed.
         delivery.check()?;
-        f.gateway.revoke(f.id).await;
-        assert!(f.gateway.0.clients.lock().unwrap().is_empty());
+        close_native(&f.gateway.0.native_gate, namespace)?;
         let refused = match f
             .gateway
-            .cache_validated_service(credential, backend, &delivery, cell, ticket)
+            .cache_validated_service(backend, &delivery, ticket)
         {
-            Ok(_) => anyhow::bail!("revoked validated request recreated a cached context"),
+            Ok(_) => anyhow::bail!("a fenced validated request reached the cached context"),
             Err(refused) => refused,
         };
         assert_eq!(refused.status(), StatusCode::SERVICE_UNAVAILABLE);
         let body: serde_json::Value =
             serde_json::from_slice(&refused.into_body().collect().await?.to_bytes())?;
         assert_eq!(body["error"]["code"], "native_delivery_fenced");
-        assert!(f.gateway.0.clients.lock().unwrap().is_empty());
+        assert_eq!(
+            f.gateway.0.client.lock().unwrap().is_some(),
+            already_cached,
+            "a refused insertion neither adds nor replaces the cached context"
+        );
         f.gateway.close().await;
     }
-    Ok(())
-}
-
-#[tokio::test]
-async fn fresh_tcp_can_capture_unrelated_catalog_advance_but_existing_tcp_cannot_replace_its_old_ticket()
--> anyhow::Result<()> {
-    let f = fixture(57421)?;
-    let credential = f.credential.clone();
-    let old = ConnectionFence::new(f.gateway.0.native_gate.clone());
-    old.capture(&credential.selection)?;
-    let first = f
-        .gateway
-        .handle(
-            request(&f, "/api/v1/tools/airk_search"),
-            CancellationToken::new(),
-        )
-        .await;
-    assert_eq!(first.status(), StatusCode::OK);
-    first.into_body().collect().await?;
-    let old_cached = f
-        .gateway
-        .0
-        .clients
-        .lock()
-        .unwrap()
-        .get(&credential.connection_id)
-        .unwrap()
-        .ticket;
-    let next = CatalogRevision::INITIAL.next()?;
-    f.gateway
-        .0
-        .native_gate
-        .observe_catalog_commit(CatalogRevision::INITIAL, next)?;
-    assert!(old.check().is_err());
-    assert!(old.capture(&credential.selection).is_err());
-    let fresh = ConnectionFence::new(f.gateway.0.native_gate.clone());
-    fresh.capture(&credential.selection)?;
-    fresh.check()?;
-    let second = f
-        .gateway
-        .handle(
-            request(&f, "/api/v1/tools/airk_search"),
-            CancellationToken::new(),
-        )
-        .await;
-    assert_eq!(second.status(), StatusCode::OK);
-    second.into_body().collect().await?;
-    let new_cached = f
-        .gateway
-        .0
-        .clients
-        .lock()
-        .unwrap()
-        .get(&credential.connection_id)
-        .unwrap()
-        .ticket;
-    assert_ne!(
-        old_cached, new_cached,
-        "new catalog generation cannot reuse an old native session factory"
-    );
-    let mut ahead = credential.selection.clone();
-    if let HttpSelection::Scoped { selection } = &mut ahead {
-        selection.expected_catalog_revision = next.next()?;
-    }
-    assert!(
-        ConnectionFence::new(f.gateway.0.native_gate.clone())
-            .capture(&ahead)
-            .is_err(),
-        "future saved minimum cannot grant current delivery"
-    );
-    f.gateway.close().await;
     Ok(())
 }
 
@@ -1448,7 +1235,7 @@ pub(crate) async fn live_https_status(
     let endpoint = BoundEndpoint::bind(None)?;
     let port = endpoint.port()?;
     let mut f = fixture(port)?;
-    Arc::get_mut(&mut f.gateway.0).unwrap().validate = Arc::new(move |_, _| {
+    Arc::get_mut(&mut f.gateway.0).unwrap().validate = Arc::new(move |_| {
         let backend = backend.clone();
         Box::pin(
             async move { Ok(Arc::new(move || Ok(backend.clone())) as AuthenticatedBackendFactory) },
@@ -1552,40 +1339,27 @@ async fn clock_test_exchange(
 }
 
 #[tokio::test]
-async fn an_open_connection_survives_a_revision_move_and_a_scoped_one_does_not()
--> anyhow::Result<()> {
+async fn the_local_session_survives_a_revision_move_on_the_same_connection() -> anyhow::Result<()> {
     let f = fixture(57421)?;
-    let credential = f.credential.clone();
-    let open = airk_core::service_http::HttpSelection::Open {
-        selection: airk_core::service_http::OpenHttpSelection {
-            namespace: credential.selection.namespace(),
-        },
-    };
-    let scoped = ConnectionFence::new(f.gateway.0.native_gate.clone());
-    scoped.capture(&credential.selection)?;
+    let namespace = f.gateway.0.namespace;
     let opened = ConnectionFence::new(f.gateway.0.native_gate.clone());
-    opened.capture(&open)?;
+    opened.capture(namespace)?;
     let before = opened.authenticated_ticket()?;
     let next = airk_core::index_catalog::CatalogRevision::INITIAL.next()?;
     f.gateway
         .0
         .native_gate
         .observe_catalog_commit(airk_core::index_catalog::CatalogRevision::INITIAL, next)?;
-    // Grant-bound: fenced, and cannot recapture on the same connection.
-    assert!(scoped.check().is_err());
-    assert!(scoped.capture(&credential.selection).is_err());
-    assert!(matches!(
-        scoped.poll(|| Poll::Ready(Ok(7usize))),
-        Poll::Ready(Err(_))
-    ));
-    // Open: the same connection keeps checking, capturing and delivering,
-    // now under the current issue.
+    // The same connection keeps checking, capturing and delivering, now
+    // under the current issue.
     opened.check()?;
-    opened.capture(&open)?;
+    opened.capture(namespace)?;
     let after = opened.authenticated_ticket()?;
     assert_ne!(before, after);
     let delivered = opened.poll(|| Poll::Ready(Ok(7usize)));
     assert!(matches!(delivered, Poll::Ready(Ok(7))));
+    // A connection captured for one namespace cannot switch to another.
+    assert!(opened.capture(Incarnation::from_bytes([77; 16])).is_err());
     Ok(())
 }
 

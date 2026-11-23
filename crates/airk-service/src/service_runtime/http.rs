@@ -138,8 +138,16 @@ impl Owner {
         let control = state.control_root.clone();
         let weak: Weak<State> = Arc::downgrade(state);
         let open_hooks = open_hooks(weak.clone(), credentials.clone());
+        // U110: every request is the built-in local agent session, an open
+        // session of this endpoint's namespace.
+        let local_session = HttpSelection::Open {
+            selection: airk_core::service_http::OpenHttpSelection {
+                namespace: descriptor.namespace,
+            },
+        };
         let validate: airk_https::http_gateway::ValidateRequest =
-            Arc::new(move |credential, context| {
+            Arc::new(move |context| {
+                let local_session = local_session.clone();
                 let control = control.clone();
                 let weak = weak.clone();
                 let open_hooks = open_hooks.clone();
@@ -153,25 +161,13 @@ impl Owner {
                     if let Some(owner) = state.http.get() {
                         owner.update_state()?;
                     }
-                    // U105: an open connection needs only a ready catalog in
-                    // its namespace; each call reads through the open path.
-                    let factory = if matches!(credential.selection, HttpSelection::Open { .. }) {
-                        airk_https::http_backend::validate(
-                            &control,
-                            &credential.selection,
-                            &context,
-                        )
-                        .await?;
-                        airk_https::http_backend::open_factory(credential.connection_id, open_hooks)
-                    } else {
-                        airk_https::http_backend::factory_attached(
-                            control,
-                            credential.selection,
-                            credential.explorer_descriptor,
-                            context,
-                        )
-                        .await?
-                    };
+                    // U105: an open session needs only a ready catalog in its
+                    // namespace; each call reads through the open path.
+                    airk_https::http_backend::validate(&control, &local_session, &context).await?;
+                    let factory = airk_https::http_backend::open_factory(
+                        airk_core::service_http::LOCAL_AGENT_CONNECTION,
+                        open_hooks,
+                    );
                     Ok(airk_https::http_backend::with_query_capacity(
                         factory,
                         state.supervisor.query_capacity_reader(),
@@ -295,9 +291,9 @@ impl Owner {
         // Fence even an uncertain durable mutation before permitting another
         // enrollment. Captured authentication and TLS buffers keep their old
         // delivery cells and cannot recover authority through compaction.
-        for retired_id in retired {
-            self.gateway.revoke(retired_id).await;
-        }
+        // The gateway serves only the local agent session (U110), so a retired
+        // enrolled connection holds no gateway delivery to fence.
+        let _ = retired;
         retirement_result?;
         let issued = tokio::task::spawn_blocking(move || {
             let _guard = guard;
@@ -394,7 +390,6 @@ impl Owner {
                 .revoke(id)
         })
         .await??;
-        self.gateway.revoke(id).await;
         Ok(())
     }
 

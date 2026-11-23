@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Bounded HTTPS ingress. Credentials and native grants are checked for every request.
+//! Bounded HTTPS ingress. Every `/mcp` and JSON API request is the built-in
+//! local agent session (U110); native admission is checked for every request.
 use airk_catalog_control::catalog_admission::{IssueTicket, NativeCatalogAdmission};
 use airk_core::{identity::Incarnation, service_http::EndpointDescriptor};
-use airk_endpoint::http_endpoint::{AuthenticatedCredential, BoundEndpoint};
+use airk_endpoint::http_endpoint::BoundEndpoint;
 use airk_mcp::{
     read_attempt::ReadAttemptContext,
     remote::{
@@ -21,14 +22,13 @@ use http_body_util::{BodyExt, Full};
 use hyper::{body::Incoming, server::conn::http1, service::service_fn};
 use hyper_util::rt::{TokioIo, TokioTimer};
 use std::{
-    collections::HashMap,
     convert::Infallible,
     fmt,
     future::Future,
     pin::Pin,
     sync::{Arc, Mutex},
     task::{Context, Poll},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::{
@@ -42,11 +42,10 @@ mod inference_owner_tests;
 #[cfg(test)]
 pub(crate) mod tests;
 
-/// Revalidates the exact live native selection on every request. Returned
+/// Revalidates the local agent session's catalog on every request. Returned
 /// factories must continue native admission checks immediately before each read.
 pub type ValidateRequest = Arc<
     dyn Fn(
-            AuthenticatedCredential,
             ReadAttemptContext,
         )
             -> Pin<Box<dyn Future<Output = anyhow::Result<AuthenticatedBackendFactory>> + Send>>
@@ -71,7 +70,7 @@ const OUTPUT_BYTES: usize = 32 * 1024 * 1024;
 const MAX_FRAME: usize = 1024 * 1024;
 const STREAM_SECONDS: u64 = 120;
 
-/// Waits before the request body names its tool (native credential validation,
+/// Waits before the request body names its tool (native validation,
 /// a previous response still draining) keep the ordinary 125 s even though the
 /// transport context is minted at Answer's ceiling: they are admission, not
 /// the Answer's work.
@@ -90,13 +89,10 @@ fn admission_deadline(context: &ReadAttemptContext) -> Instant {
 /// Concurrent MCP sessions across every agent (U110: all share one client).
 const SESSIONS: usize = 128;
 
+/// The local agent session's cached read service (U110: the only one).
 struct CachedService {
-    delivery: Arc<Mutex<CredentialDelivery>>,
     read_delivery: ReadDeliveryCell,
     ticket: IssueTicket,
-    generation: u64,
-    expires: u64,
-    selection: airk_core::service_http::HttpSelection,
     service: HttpReadService,
 }
 struct State {
@@ -105,8 +101,7 @@ struct State {
     checkpoint_closed: AdmissionClosed,
     factory: ReadSessionFactory,
     sessions: HttpSessionBudget,
-    clients: Mutex<HashMap<Incarnation, CachedService>>,
-    delivery_cells: Mutex<CredentialDeliveryRegistry>,
+    client: Mutex<Option<CachedService>>,
     connections: Arc<Semaphore>,
     handshakes: Arc<Semaphore>,
     validation: Arc<Semaphore>,
@@ -144,8 +139,7 @@ impl Gateway {
             checkpoint_closed: native.closed,
             factory: ReadSessionFactory::default(),
             sessions: HttpSessionBudget::new(SESSIONS)?,
-            clients: Mutex::new(HashMap::new()),
-            delivery_cells: Mutex::new(CredentialDeliveryRegistry::default()),
+            client: Mutex::new(None),
             connections: Arc::new(Semaphore::new(CONNECTIONS)),
             handshakes: Arc::new(Semaphore::new(HANDSHAKES)),
             validation: Arc::new(Semaphore::new(AUTH_TASKS)),
@@ -168,67 +162,22 @@ impl Gateway {
     pub fn set_admin(&self, plane: Arc<crate::admin_plane::AdminPlane>) {
         let _ = self.0.admin.set(plane);
     }
-    /// Called after native credential revocation/rotation commits. Authentication
-    /// still rereads the ledger, so a missed notification cannot grant a read.
-    pub async fn revoke(&self, id: Incarnation) {
-        self.0
-            .delivery_cells
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .revoke(id);
+    async fn retire_context(&self) {
         let removed = self
             .0
-            .clients
+            .client
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .remove(&id);
+            .take();
         if let Some(client) = removed {
-            client
-                .delivery
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .revoked = true;
-            client.service.close().await;
-        }
-    }
-    async fn retire_context(&self, id: Incarnation) {
-        let removed = self
-            .0
-            .clients
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&id);
-        if let Some(client) = removed {
-            // Scope refusal retires evidence delivery, not the authenticated
-            // credential. A fresh TCP has not bound this cached read context;
-            // its sanitized refusal still obeys its credential and native ticket.
+            // Scope refusal retires evidence delivery. A fresh TCP has not
+            // bound this cached read context; its sanitized refusal still
+            // obeys its native ticket.
             client
                 .read_delivery
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .closed = true;
-            client.service.close().await;
-        }
-    }
-    async fn expire_credentials(&self) {
-        let now = now_ms();
-        let expired = {
-            let mut clients = self.0.clients.lock().unwrap_or_else(|e| e.into_inner());
-            let ids: Vec<_> = clients
-                .iter()
-                .filter(|(_, entry)| entry.expires <= now)
-                .map(|(id, _)| *id)
-                .collect();
-            ids.into_iter()
-                .filter_map(|id| clients.remove(&id))
-                .collect::<Vec<_>>()
-        };
-        for client in expired {
-            client
-                .delivery
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .revoked = true;
             client.service.close().await;
         }
     }
@@ -243,13 +192,11 @@ impl Gateway {
         );
         let listener = held.into_tokio()?;
         let mut tasks = JoinSet::new();
-        let mut expiry = tokio::time::interval(Duration::from_secs(1));
         let mut failure = None;
         loop {
             tokio::select! {
                 _=shutdown.cancelled()=>break,
                 _=self.0.closed.cancelled()=>break,
-                _=expiry.tick()=>self.expire_credentials().await,
                 Some(_)=tasks.join_next(),if !tasks.is_empty()=>{},
                 accepted=listener.accept()=>{
                     let (socket,peer)=match accepted {Ok(value)=>value,Err(error)=>{failure=Some(error);break;}};
@@ -343,22 +290,19 @@ impl Gateway {
     }
     pub async fn close(&self) {
         self.0.closed.cancel();
-        self.0
-            .delivery_cells
+        self.0.factory.close();
+        let client = self
+            .0
+            .client
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .close();
-        self.0.factory.close();
-        let clients = {
-            let mut entries = self.0.clients.lock().unwrap_or_else(|e| e.into_inner());
-            entries.drain().map(|(_, entry)| entry).collect::<Vec<_>>()
-        };
-        for client in clients {
+            .take();
+        if let Some(client) = client {
             client
-                .delivery
+                .read_delivery
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
-                .revoked = true;
+                .closed = true;
             client.service.close().await;
         }
     }
@@ -478,7 +422,7 @@ impl Gateway {
         if self.0.closed.is_cancelled() {
             return Err(error(StatusCode::SERVICE_UNAVAILABLE, "service_draining"));
         }
-        // DNS rebinding and browser-origin checks precede credential processing.
+        // DNS rebinding and browser-origin checks precede everything else.
         if request.headers().get_all(http::header::HOST).iter().count() != 1
             || request
                 .headers()
@@ -510,51 +454,9 @@ impl Gateway {
         // stripped unread; every request is the built-in local agent session,
         // an open session with no stored default (scope is named per call).
         request.headers_mut().remove(http::header::AUTHORIZATION);
-        let authentication_epoch = self
-            .0
-            .delivery_cells
-            .lock()
-            .map_err(|_| {
-                error(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "credential_delivery_unavailable",
-                )
-            })?
-            .epoch;
-        let authenticated = local_agent_session(self.0.namespace);
         delivery
-            .capture(&authenticated.selection)
+            .capture(self.0.namespace)
             .map_err(|_| error(StatusCode::SERVICE_UNAVAILABLE, "native_delivery_fenced"))?;
-        let credential_delivery = self
-            .0
-            .delivery_cells
-            .lock()
-            .map_err(|_| {
-                error(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "credential_delivery_unavailable",
-                )
-            })?
-            .capture(
-                authentication_epoch,
-                &authenticated,
-                delivery.authenticated_ticket().map_err(|_| {
-                    error(StatusCode::SERVICE_UNAVAILABLE, "native_delivery_fenced")
-                })?,
-            )
-            .map_err(|cause| {
-                if cause.is::<CredentialAuthenticationEpochRetired>() {
-                    error(
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        "credential_authentication_epoch_retired",
-                    )
-                } else {
-                    error(StatusCode::UNAUTHORIZED, "credential_delivery_refused")
-                }
-            })?;
-        delivery
-            .bind_credential(credential_delivery.clone())
-            .map_err(|_| error(StatusCode::UNAUTHORIZED, "credential_connection_changed"))?;
         if request.method() == http::Method::POST {
             if (self.0.checkpoint_closed)() {
                 return Err(error(
@@ -583,16 +485,13 @@ impl Gateway {
             .clone()
             .with_lifetime_guard(Arc::new((context.lifetime_guard(), validation_permit)));
         let backend = tokio::select! {_=context.cancellation().cancelled()=>return Err(error(StatusCode::SERVICE_UNAVAILABLE,"request_canceled")),
-        result=tokio::time::timeout_at(tokio::time::Instant::from_std(admission_deadline(context)),(self.0.validate)(authenticated.clone(),validation_context))=>match result {
-            Ok(Ok(backend))=>backend,Ok(Err(_))=>{self.retire_context(authenticated.connection_id).await;return Err(error(StatusCode::FORBIDDEN,"native_grant_refused"));},
+        result=tokio::time::timeout_at(tokio::time::Instant::from_std(admission_deadline(context)),(self.0.validate)(validation_context))=>match result {
+            Ok(Ok(backend))=>backend,Ok(Err(_))=>{self.retire_context().await;return Err(error(StatusCode::FORBIDDEN,"native_grant_refused"));},
             Err(_)=>{context.cancellation().cancel();return Err(error(StatusCode::GATEWAY_TIMEOUT,"request_deadline_exhausted"));}
         }};
         delivery
             .check()
             .map_err(|_| error(StatusCode::SERVICE_UNAVAILABLE, "native_delivery_fenced"))?;
-        if now_ms() >= authenticated.expires_unix_ms {
-            return Err(error(StatusCode::UNAUTHORIZED, "credential_expired"));
-        }
         if (self.0.checkpoint_closed)() && request.method() == http::Method::POST {
             return Err(error(
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -602,13 +501,7 @@ impl Gateway {
         let ticket = delivery
             .authenticated_ticket()
             .map_err(|_| error(StatusCode::SERVICE_UNAVAILABLE, "native_delivery_fenced"))?;
-        let (service, retired) = self.cache_validated_service(
-            authenticated,
-            backend,
-            delivery,
-            credential_delivery,
-            ticket,
-        )?;
+        let (service, retired) = self.cache_validated_service(backend, delivery, ticket)?;
         if let Some(old) = retired {
             old.close().await;
         }
@@ -617,44 +510,26 @@ impl Gateway {
 
     fn cache_validated_service(
         &self,
-        authenticated: AuthenticatedCredential,
         backend: AuthenticatedBackendFactory,
         delivery: &ConnectionFence,
-        credential_delivery: Arc<Mutex<CredentialDelivery>>,
         ticket: IssueTicket,
     ) -> Result<(HttpReadService, Option<HttpReadService>), Box<HttpResponse>> {
         let mut retired = None;
         let service = {
-            let mut clients = self
+            let mut client = self
                 .0
-                .clients
+                .client
                 .lock()
                 .map_err(|_| error(StatusCode::SERVICE_UNAVAILABLE, "service_unavailable"))?;
-            // Serialize cache publication with revocation's removal. A request
+            // Serialize cache publication with retirement's removal. A request
             // may have passed its earlier check before waiting for this lock.
-            // If revocation fences afterward, it waits for this lock and removes
-            // the entry; completed revocation can never be undone by insertion.
             delivery
                 .check()
                 .map_err(|_| error(StatusCode::SERVICE_UNAVAILABLE, "native_delivery_fenced"))?;
-            if let Some(entry) = clients.get_mut(&authenticated.connection_id)
-                && entry.generation == authenticated.generation
-                && (entry.ticket == ticket || delivery.follows_current())
-            {
-                // Re-enrollment can refresh only the saved minimum clock after
-                // this service already validated the current native clock. It
-                // must not replace the initialized SDK sessions or their bound
-                // factory. Native generation turnover still takes the replacement
-                // path below and fences all old buffered delivery.
-                if !airk_endpoint::http_endpoint::same_authority(
-                    &entry.selection,
-                    &authenticated.selection,
-                ) {
-                    return Err(error(
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        "native_read_context_changed",
-                    ));
-                }
+            // The local session's ticket follows the current issue (U106(f)),
+            // so its initialized SDK sessions are reused across a revision
+            // move; native generation turnover still fences old delivery.
+            if let Some(entry) = client.as_mut() {
                 delivery
                     .bind_read_context(entry.read_delivery.clone())
                     .map_err(|_| {
@@ -663,15 +538,8 @@ impl Gateway {
                             "native_read_context_fenced",
                         )
                     })?;
-                entry.selection = authenticated.selection;
                 entry.ticket = ticket;
                 return Ok((entry.service.clone(), None));
-            }
-            if clients.len() >= 128 && !clients.contains_key(&authenticated.connection_id) {
-                return Err(error(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "credential_context_limit",
-                ));
             }
             #[cfg(test)]
             let build = if self.0.sse_keep_alive_off {
@@ -687,7 +555,7 @@ impl Gateway {
                 backend,
                 ReadSessionPreferences {
                     response_mode: ResponseMode::Terse,
-                    client: authenticated.client,
+                    client: airk_core::usage::ClientFamily::Unknown,
                 },
                 self.0.authority.clone(),
                 vec![],
@@ -708,28 +576,15 @@ impl Gateway {
                         "native_read_context_fenced",
                     )
                 })?;
-            if let Some(old) = clients.insert(
-                authenticated.connection_id,
-                CachedService {
-                    delivery: credential_delivery.clone(),
-                    read_delivery,
-                    ticket,
-                    generation: authenticated.generation,
-                    expires: authenticated.expires_unix_ms,
-                    selection: authenticated.selection,
-                    service: service.clone(),
-                },
-            ) {
+            if let Some(old) = client.replace(CachedService {
+                read_delivery,
+                ticket,
+                service: service.clone(),
+            }) {
                 old.read_delivery
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .closed = true;
-                if !Arc::ptr_eq(&old.delivery, &credential_delivery) {
-                    old.delivery
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .revoked = true;
-                }
                 retired = Some(old.service);
             }
             service
@@ -753,143 +608,19 @@ impl ReadContextDelivery {
         Ok(())
     }
 }
-struct CredentialDelivery {
-    id: Incarnation,
-    generation: u64,
-    expires: u64,
-    ticket: IssueTicket,
-    revoked: bool,
-}
-impl CredentialDelivery {
-    fn check(&self) -> std::io::Result<()> {
-        if self.revoked || now_ms() >= self.expires {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::PermissionDenied,
-                "HTTP credential delivery revoked or expired",
-            ));
-        }
-        Ok(())
-    }
-}
-#[derive(Default)]
-struct CredentialDeliveryRegistry {
-    cells: HashMap<Incarnation, Arc<Mutex<CredentialDelivery>>>,
-    epoch: u64,
-    closed: bool,
-}
-
-#[derive(Debug)]
-struct CredentialAuthenticationEpochRetired;
-impl fmt::Display for CredentialAuthenticationEpochRetired {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("credential authentication epoch retired")
-    }
-}
-impl std::error::Error for CredentialAuthenticationEpochRetired {}
-
-impl CredentialDeliveryRegistry {
-    fn capture(
-        &mut self,
-        authentication_epoch: u64,
-        credential: &AuthenticatedCredential,
-        ticket: IssueTicket,
-    ) -> anyhow::Result<Arc<Mutex<CredentialDelivery>>> {
-        anyhow::ensure!(!self.closed, "credential delivery registry closed");
-        if authentication_epoch != self.epoch {
-            return Err(CredentialAuthenticationEpochRetired.into());
-        }
-        self.cells.retain(|_, cell| {
-            let mut state = cell.lock().unwrap_or_else(|e| e.into_inner());
-            if state.check().is_err() {
-                state.revoked = true;
-                false
-            } else {
-                true
-            }
-        });
-        if let Some(old) = self.cells.get(&credential.connection_id) {
-            let mut state = old
-                .lock()
-                .map_err(|_| std::io::Error::other("credential fence unavailable"))?;
-            state.check()?;
-            anyhow::ensure!(
-                credential.generation >= state.generation,
-                "credential generation regressed"
-            );
-            anyhow::ensure!(
-                credential.generation > state.generation
-                    || credential.expires_unix_ms == state.expires,
-                "credential expiry changed without generation rotation"
-            );
-            // U106(f): an open credential's ticket follows the current issue.
-            let follows = matches!(
-                credential.selection,
-                airk_core::service_http::HttpSelection::Open { .. }
-            );
-            if state.id == credential.connection_id
-                && state.generation == credential.generation
-                && state.expires == credential.expires_unix_ms
-                && (state.ticket == ticket || follows)
-            {
-                state.ticket = ticket;
-                return Ok(old.clone());
-            }
-            state.revoked = true;
-        } else {
-            anyhow::ensure!(
-                self.cells.len() < 128,
-                "credential delivery registry limit reached"
-            );
-        }
-        let cell = Arc::new(Mutex::new(CredentialDelivery {
-            id: credential.connection_id,
-            generation: credential.generation,
-            expires: credential.expires_unix_ms,
-            ticket,
-            revoked: false,
-        }));
-        cell.lock()
-            .map_err(|_| std::io::Error::other("credential fence unavailable"))?
-            .check()?;
-        self.cells.insert(credential.connection_id, cell.clone());
-        Ok(cell)
-    }
-    fn revoke(&mut self, id: Incarnation) {
-        match self.epoch.checked_add(1) {
-            Some(epoch) => self.epoch = epoch,
-            None => self.close(),
-        }
-        if let Some(cell) = self.cells.remove(&id) {
-            cell.lock().unwrap_or_else(|e| e.into_inner()).revoked = true;
-        }
-    }
-    #[cfg(test)]
-    fn retire(&mut self, id: Incarnation) {
-        if let Some(cell) = self.cells.remove(&id) {
-            cell.lock().unwrap_or_else(|e| e.into_inner()).revoked = true;
-        }
-    }
-    fn close(&mut self) {
-        self.closed = true;
-        for cell in self.cells.values() {
-            cell.lock().unwrap_or_else(|e| e.into_inner()).revoked = true;
-        }
-    }
-}
-
 /// One ticket for the entire TCP connection. An invalid old ticket is never
 /// replaced while Hyper or rustls can still retain an earlier response.
 #[derive(Clone)]
 struct ConnectionFence {
     gate: NativeCatalogAdmission,
     ticket: Arc<Mutex<Option<IssueTicket>>>,
-    /// U106(f): the namespace of an open connection, whose ticket follows
-    /// the gate's current issue instead of pinning the captured revision:
-    /// each open call re-resolves and leases at the current revision, so a
-    /// revision move does not fence it. A pending catalog fence, revocation
-    /// and service end still deny it. `None` for grant-bound connections.
+    /// U106(f): the namespace of the local agent session, whose ticket
+    /// follows the gate's current issue instead of pinning a captured
+    /// revision: each call re-resolves and leases at the current revision,
+    /// so a revision move does not fence it. A pending catalog fence and
+    /// service end still deny it. `None` until a bearer-plane request
+    /// captures it (admin-plane connections never do).
     follows: Arc<Mutex<Option<Incarnation>>>,
-    credential: Arc<Mutex<Option<Arc<Mutex<CredentialDelivery>>>>>,
     read_context: Arc<Mutex<Option<ReadDeliveryCell>>>,
     requests: Arc<Mutex<RequestDeliveryState>>,
     flushed: Arc<tokio::sync::Notify>,
@@ -910,7 +641,6 @@ impl ConnectionFence {
             gate,
             ticket: Arc::new(Mutex::new(None)),
             follows: Arc::new(Mutex::new(None)),
-            credential: Arc::new(Mutex::new(None)),
             read_context: Arc::new(Mutex::new(None)),
             requests: Default::default(),
             flushed: Default::default(),
@@ -1006,24 +736,6 @@ impl ConnectionFence {
         }
         self.flushed.notify_waiters();
     }
-    fn bind_credential(&self, cell: Arc<Mutex<CredentialDelivery>>) -> anyhow::Result<()> {
-        let mut held = self
-            .credential
-            .lock()
-            .map_err(|_| std::io::Error::other("credential fence unavailable"))?;
-        if let Some(previous) = held.as_ref() {
-            anyhow::ensure!(
-                Arc::ptr_eq(previous, &cell),
-                "HTTP connection cannot change credential identity or generation"
-            );
-        } else {
-            *held = Some(cell.clone());
-        }
-        cell.lock()
-            .map_err(|_| std::io::Error::other("credential fence unavailable"))?
-            .check()?;
-        Ok(())
-    }
     /// Only validated evidence contexts bind this cell. Once captured it cannot
     /// be replaced while an old response may remain buffered in Hyper or TLS.
     fn bind_read_context(&self, cell: ReadDeliveryCell) -> anyhow::Result<()> {
@@ -1044,53 +756,27 @@ impl ConnectionFence {
             .check()?;
         Ok(())
     }
-    fn capture(&self, selection: &airk_core::service_http::HttpSelection) -> anyhow::Result<()> {
-        use airk_core::service_http::HttpSelection;
-        let revision = match selection {
-            HttpSelection::Scoped { selection } => selection.expected_catalog_revision,
-            HttpSelection::Combined { selection } => selection.expected_catalog_revision,
-            HttpSelection::ImportedLegacy { selection } => selection.expected_catalog_revision,
-            HttpSelection::ImportedLegacyUnion { selection } => selection
-                .selections
-                .iter()
-                .map(|member| member.expected_catalog_revision)
-                .max()
-                .ok_or_else(|| std::io::Error::other("empty imported HTTP authority"))?,
-            // U106(f): an open connection has no saved catalog clock; its
-            // ticket follows the current issue of its namespace.
-            HttpSelection::Open { selection } => {
-                *self
-                    .follows
-                    .lock()
-                    .map_err(|_| std::io::Error::other("HTTP delivery fence unavailable"))? =
-                    Some(selection.namespace);
-                self.held_ticket()?;
-                return Ok(());
-            }
-        };
-        let mut held = self
-            .ticket
-            .lock()
-            .map_err(|_| std::io::Error::other("HTTP delivery fence unavailable"))?;
-        if let Some(old) = *held {
-            self.gate.check_issue(old)?;
-        }
-        let current = self
-            .gate
-            .capture_current_issue(selection.namespace(), revision)?;
-        if let Some(old) = *held {
+    /// Capture the local session's namespace: its ticket follows the
+    /// current issue of that namespace (U106(f)). `Err` when the gate admits
+    /// no delivery, or the connection was captured for another namespace.
+    fn capture(&self, namespace: Incarnation) -> anyhow::Result<()> {
+        {
+            let mut follows = self
+                .follows
+                .lock()
+                .map_err(|_| std::io::Error::other("HTTP delivery fence unavailable"))?;
             anyhow::ensure!(
-                old == current,
-                "HTTP connection delivery generation changed"
+                follows.is_none_or(|held| held == namespace),
+                "HTTP connection delivery namespace changed"
             );
-        } else {
-            *held = Some(current);
+            *follows = Some(namespace);
         }
+        self.held_ticket()?;
         Ok(())
     }
-    /// The ticket this connection delivers under: the captured one, or for
-    /// an open connection the gate's current issue of its namespace (stored
-    /// as the held ticket). `Err` when the gate admits no delivery.
+    /// The ticket this connection delivers under: the gate's current issue
+    /// of its captured namespace (stored as the held ticket). `None` before
+    /// a capture. `Err` when the gate admits no delivery.
     fn held_ticket(&self) -> anyhow::Result<Option<IssueTicket>> {
         let follows = *self
             .follows
@@ -1107,13 +793,6 @@ impl ConnectionFence {
             )?);
         }
         Ok(*held)
-    }
-    /// Whether this connection's ticket follows the current issue (U106(f)).
-    fn follows_current(&self) -> bool {
-        self.follows
-            .lock()
-            .map(|follows| follows.is_some())
-            .unwrap_or(false)
     }
     fn authenticated_ticket(&self) -> anyhow::Result<IssueTicket> {
         let ticket = self.held_ticket()?.ok_or_else(|| {
@@ -1133,16 +812,6 @@ impl ConnectionFence {
                 .map_err(|_| std::io::Error::other("read-context fence unavailable"))?
                 .check()?;
         }
-        if let Some(cell) = self
-            .credential
-            .lock()
-            .map_err(|_| std::io::Error::other("credential fence unavailable"))?
-            .as_ref()
-        {
-            cell.lock()
-                .map_err(|_| std::io::Error::other("credential fence unavailable"))?
-                .check()?;
-        }
         if let Some(ticket) = self.held_ticket()? {
             self.gate.check_issue(ticket)?;
         }
@@ -1153,7 +822,7 @@ impl ConnectionFence {
         effect: impl FnOnce() -> Poll<std::io::Result<T>>,
     ) -> Poll<std::io::Result<T>> {
         // Copy opaque custody before Store policy ownership: never invert the
-        // Store -> request/credential/read-cell -> NativeGate lock order.
+        // Store -> request/read-cell -> NativeGate lock order.
         let context = match self.requests.lock() {
             Ok(state) => state.active.as_ref().map(|active| active.context.clone()),
             Err(_) => {
@@ -1186,25 +855,6 @@ impl ConnectionFence {
                 std::io::ErrorKind::TimedOut,
                 "request delivery expired or canceled",
             )));
-        }
-        let held = match self.credential.lock() {
-            Ok(held) => held,
-            Err(_) => {
-                return Poll::Ready(Err(std::io::Error::other("credential fence unavailable")));
-            }
-        };
-        // Hold this cell through the actual raw socket write. Revoke cannot
-        // acknowledge until any earlier permitted write has completed its poll.
-        let credential = match held.as_ref().map(|cell| cell.lock()).transpose() {
-            Ok(credential) => credential,
-            Err(_) => {
-                return Poll::Ready(Err(std::io::Error::other("credential fence unavailable")));
-            }
-        };
-        if let Some(credential) = credential.as_ref()
-            && let Err(error) = credential.check()
-        {
-            return Poll::Ready(Err(error));
         }
         let held_read = match self.read_context.lock() {
             Ok(held) => held,
@@ -1450,31 +1100,10 @@ fn is_admin_target<B>(request: &Request<B>) -> bool {
             airk_endpoint::admin_contract::PathMatch::NotAdmin
         )
 }
-/// U110: the built-in local agent session: the reserved connection id, an
-/// open selection of the endpoint's namespace, agent choice on and no stored
-/// default. It never expires and is never revoked.
-fn local_agent_session(namespace: Incarnation) -> AuthenticatedCredential {
-    AuthenticatedCredential {
-        client: airk_core::usage::ClientFamily::Unknown,
-        connection_id: airk_core::service_http::LOCAL_AGENT_CONNECTION,
-        generation: 1,
-        selection: airk_core::service_http::HttpSelection::Open {
-            selection: airk_core::service_http::OpenHttpSelection { namespace },
-        },
-        expires_unix_ms: u64::MAX,
-        explorer_descriptor: None,
-        open: Some(airk_core::agent_connection::OpenConnectionState {
-            defaults_revision: 1,
-            default_index_ids: Vec::new(),
-            default_index_set_ids: Vec::new(),
-            agent_choice: airk_core::agent_connection::AgentChoice::On,
-        }),
-    }
-}
-
+#[cfg(test)]
 fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
         .map(|value| value.as_millis().min(u64::MAX as u128) as u64)
         .unwrap_or(u64::MAX)
 }
