@@ -2110,3 +2110,50 @@ Numbered 30 until 22 November 2026; renumbered because L4's entries take
   closes its sub-needs in round 1 and cannot hold a four-part Answer open for
   three rounds, so no end-to-end loop run at gate costs is claimed.
 - **Where:** Core arbiter `CONTRACT.md` ("Budget").
+### 51. The private Answer routes admit a loop Context profile
+
+- **Found by:** a real service run. The service refused to warm an FP16
+  loop profile, Compact and Large: "protected MHA Answer requires the
+  original Context limits and its own policy pin". No gate lifetime could
+  run a Context model. The scorer-level GPU confirmation opens through
+  `Scorer::open`, which does not make this check, so it passed.
+- **Cause:** `open_private_protected_mha_answer` in
+  `crates/airk-retrieval/src/arbiter/runtime/bounded_hybrid/layer0/answer.rs`
+  asked for `Task::ContextAction`. A loop profile declares the four card
+  tasks (`admit_loop_tasks`) and not the one-turn task. The protected QKV
+  route and the Large FP32 batch-view route beside it had the same test.
+  This is the third defect of one class (one-turn code meeting a loop
+  profile); the first two were fixed in `ffa08c04`.
+- **Fix:** the three routes take one predicate, `declares_context_task`:
+  the one-turn task or the loop card tasks, the rule of Core
+  `Stage::declares` and `loop_tasks::declares_card_tasks`. Which tasks go
+  together is still checked exactly when the scorer opens. The limits (8,192
+  tokens, 8 candidates) and the protected MHA policy pin are unchanged; the
+  MHA admission is the pure `protected_mha_admits`, so it is tested without
+  a device.
+- **Test (hand-written):**
+  `protected_mha_answer_admits_a_loop_profile_under_the_same_limits_and_pin`.
+  It admits a one-turn and a loop profile with the right limits and pin, and
+  still refuses a wrong pin, 2,048 tokens, 16 candidates, a strict-GPU
+  placement and a profile with no Context task (none, or Focus only). The
+  QKV and Large routes cannot be opened without a device; their change is
+  the same predicate.
+- **Identities:** none moved. `layer0/answer.rs` is in no `include_bytes!`
+  or `include_str!` source list: the bounded-hybrid validator hashes
+  `bounded_hybrid.rs` and `cuda/graph_metadata/cpu_values.rs`; the bounded
+  execution policy hashes `bounded_execution.rs`, `cpu_values.rs`,
+  `graph_metadata.rs`, `placement.rs` and the platform loader sources; the
+  FP16 math policy hashes `fp16.rs`, `g5.rs`, `cuda.rs`, `runtime.rs`,
+  `external_data.rs` and `onnx.rs`; the CPU source transition pins
+  `runtime.rs`, `compiler.rs`, `compiler/focus.rs` and CUDA sources; the
+  loop policies hash `loop_cards.rs` and the card task files. The pin
+  control `recorded_loop_policy_identities` and the `cpu_source_transition`
+  tests pass.
+- **Validation:** Clippy `-D warnings` over all targets of `airk-retrieval`,
+  `airk-inference`, `airk-kernel`, `airk-service`, `airk-supervisor` and
+  `airk-mcp`, all features and default features, exit 0; nextest retrieval
+  arbiter selection with the pins, 315 run, 315 passed; service arbiter
+  selection, 177 run, 176 passed, the one failure the known older
+  `ambiguous_or_corrupt_configuration_status_never_invents_a_legacy_digest_or_writable_config`.
+  Not run: a warm of a loop profile on a device.
+- **Where:** retrieval CUDA `CONTRACT.md` (the protected MHA recipe).

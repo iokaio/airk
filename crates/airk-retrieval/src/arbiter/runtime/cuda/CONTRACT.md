@@ -863,6 +863,18 @@ and Large each admit only scalar or fixed-length control tensors at CPU nodes,
 at most four elements and 32 bytes per tensor. Their measured aggregate bounds
 are 9,443 and 12,067 bytes, respectively.
 
+The private Answer routes (`bounded_hybrid/layer0/answer.rs`: protected
+MHA, protected QKV and Large FP32 batch view) admit a Context profile that
+declares the one-turn task or the Answer loop card tasks, the rule of Core
+`Stage::declares`; which tasks go together is checked again, exactly, when
+the scorer opens. The original Context limits (8,192 tokens, 8 candidates)
+and, for protected MHA, the profile's own `BoundedHybrid` policy pin are
+unchanged. Until change-log entry 51 these routes asked for the one-turn
+task alone, so the service refused to warm an FP16 loop profile ("protected
+MHA Answer requires the original Context limits and its own policy pin").
+The file feeds no identity: it is in no validator, bounded-execution,
+math-policy, placement, loop-policy or CPU source transition source list.
+
 `airk.native.cuda.bounded-context-execution/1` binds the OS/architecture,
 logical model, consumed graph and external weight asset descriptions, static
 runtime build, compatibility policy, host CPU fit, effective optimizer and

@@ -118,6 +118,31 @@ impl AnswerRecipe {
     }
 }
 
+/// Whether a Context profile declares a task the Answer routes serve: the
+/// one-turn task, or the loop card tasks (the rule of Core `Stage::declares`
+/// and `loop_tasks::declares_card_tasks`; which tasks go together is checked
+/// again, exactly, when the scorer opens). Change log entry 51.
+fn declares_context_task(description: &Profile) -> bool {
+    description.tasks.contains(&Task::ContextAction)
+        || crate::arbiter::runtime::loop_tasks::declares_card_tasks(description)
+}
+
+/// The protected MHA Answer admission: the original Context limits, a
+/// Context task, and this profile's own bounded policy pin.
+fn protected_mha_admits(
+    description: &Profile,
+    resource: &ResourcePolicy,
+    policy: Sha256Digest,
+) -> bool {
+    description.max_tokens == resource.context_input_tokens
+        && description.max_candidates == resource.maximum_context_candidates
+        && declares_context_task(description)
+        && matches!(
+            description.device_execution.as_ref().map(|d| &d.placement),
+            Some(airk_core::arbiter::device::PlacementPolicy::BoundedHybrid { policy: p }) if *p == policy
+        )
+}
+
 impl Scorer {
     /// Selects the reviewed phase reservation before the private service probes a device.
     pub fn private_compact_answer_capacity(
@@ -180,7 +205,7 @@ impl Scorer {
         ensure!(
             description.max_tokens == policy.context_input_tokens
                 && description.max_candidates == policy.maximum_context_candidates
-                && description.tasks.contains(&Task::ContextAction),
+                && declares_context_task(description),
             "protected QKV Answer requires the original Context action limits"
         );
         let maximum_operation = Duration::from_millis(policy.deadline_ms);
@@ -239,7 +264,7 @@ impl Scorer {
         ensure!(
             description.max_tokens == policy.context_input_tokens
                 && description.max_candidates == policy.maximum_context_candidates
-                && description.tasks.contains(&Task::ContextAction),
+                && declares_context_task(description),
             "Large Answer requires the original Context action limits"
         );
         let maximum_operation = Duration::from_millis(policy.deadline_ms);
@@ -297,13 +322,7 @@ impl Scorer {
         let resource = ResourcePolicy::focus_static1024();
         let description = profile.description();
         ensure!(
-            description.max_tokens == resource.context_input_tokens
-                && description.max_candidates == resource.maximum_context_candidates
-                && description.tasks.contains(&Task::ContextAction)
-                && matches!(
-                    description.device_execution.as_ref().map(|d| &d.placement),
-                    Some(airk_core::arbiter::device::PlacementPolicy::BoundedHybrid { policy: p }) if *p == policy
-                ),
+            protected_mha_admits(description, &resource, policy),
             "protected MHA Answer requires the original Context limits and its own policy pin"
         );
         let maximum_operation = Duration::from_millis(resource.deadline_ms);
@@ -450,6 +469,73 @@ mod tests {
         // The literal recipes keep their reviewed tuples through capacity_for.
         let qkv = AnswerRecipe::ProtectedQkv.capacity_for(&profile)?;
         assert_eq!(qkv.cold_peak_bytes(), 16 << 30);
+        Ok(())
+    }
+
+    /// Change log entry 51: the service refused to warm an FP16 loop profile
+    /// ("protected MHA Answer requires the original Context limits and its
+    /// own policy pin") because the check asked for the one-turn task. A
+    /// loop profile is admitted; the limits (8,192 tokens, 8 candidates) and
+    /// the policy pin stay as strict, and a profile with neither task set is
+    /// still refused.
+    #[test]
+    fn protected_mha_answer_admits_a_loop_profile_under_the_same_limits_and_pin() -> Result<()> {
+        use airk_core::arbiter::device::{
+            DEVICE_EXECUTION_SCHEMA, DeviceExecution, DeviceMemory, DevicePrecision, GpuBackend,
+            PlacementPolicy,
+        };
+        let pin = Sha256Digest::from_bytes([5; 32]);
+        let mut one_turn = crate::arbiter::runtime::catalog_profiles()?
+            .into_iter()
+            .find(|p| p.model == ModelChoice::ContextQwenCompact && p.cpu_fit.is_some())
+            .context("Compact fixture profile missing")?;
+        one_turn.max_tokens = 8192;
+        one_turn.max_candidates = 8;
+        one_turn.device_execution = Some(DeviceExecution {
+            schema: DEVICE_EXECUTION_SCHEMA.into(),
+            backend: GpuBackend::Cuda,
+            runtime_build: Sha256Digest::from_bytes([1; 32]),
+            compatibility_policy: Sha256Digest::from_bytes([2; 32]),
+            provider_options: Sha256Digest::from_bytes([3; 32]),
+            math_policy: Sha256Digest::from_bytes([4; 32]),
+            precision: DevicePrecision::Float16,
+            tf32: false,
+            placement: PlacementPolicy::BoundedHybrid { policy: pin },
+            graph: Sha256Digest::from_bytes([6; 32]),
+            host_fit: one_turn.cpu_fit.clone().context("fit")?,
+            memory: DeviceMemory::Dedicated {
+                required_peak_bytes: 8 << 30,
+                headroom_bytes: 2 << 30,
+            },
+        });
+        assert_eq!(one_turn.tasks, BTreeSet::from([Task::ContextAction]));
+        let mut looped = one_turn.clone();
+        crate::arbiter::runtime::admit_loop_tasks(&mut looped)?;
+        assert_eq!(looped.tasks.len(), 4);
+        assert!(!looped.tasks.contains(&Task::ContextAction));
+        let resource = ResourcePolicy::focus_static1024();
+        assert!(protected_mha_admits(&one_turn, &resource, pin), "one-turn");
+        assert!(protected_mha_admits(&looped, &resource, pin), "loop");
+        // Still refused: another pin, other limits, no Context task.
+        let other = Sha256Digest::from_bytes([7; 32]);
+        assert!(!protected_mha_admits(&looped, &resource, other), "wrong pin");
+        let mut short = looped.clone();
+        short.max_tokens = 2048;
+        assert!(!protected_mha_admits(&short, &resource, pin), "2,048 tokens");
+        let mut wide = looped.clone();
+        wide.max_candidates = 16;
+        assert!(!protected_mha_admits(&wide, &resource, pin), "16 candidates");
+        let mut unpinned = looped.clone();
+        unpinned.device_execution.as_mut().context("device")?.placement =
+            PlacementPolicy::StrictGpu;
+        assert!(!protected_mha_admits(&unpinned, &resource, pin), "no bounded pin");
+        for tasks in [vec![], vec![Task::FocusRank]] {
+            let mut neither = looped.clone();
+            neither.tasks = tasks.iter().copied().collect();
+            assert!(!protected_mha_admits(&neither, &resource, pin), "{tasks:?}");
+            assert!(!declares_context_task(&neither));
+        }
+        assert!(declares_context_task(&one_turn) && declares_context_task(&looped));
         Ok(())
     }
 }
