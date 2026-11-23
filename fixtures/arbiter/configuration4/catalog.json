@@ -1,0 +1,21 @@
+{
+  "schema": "airk.arbiter.device-catalog/1",
+  "focus": [
+    {
+      "manifest": "04821edaed45ac10aa5b0b7b2c0b7b28bf5d04a06c8b623cfe6d762f77d5e23b",
+      "execution_identity": "onnxruntime-cpu/1.30.0/physical4/intra4/inter1/sequential/spinning0"
+    }
+  ],
+  "context_compact": [
+    {
+      "manifest": "04b142e12147bb87e57a8bef98f1094aaafe38422b84cd0571be2fd842dd298d",
+      "execution_identity": "onnxruntime-cpu/1.30.0/physical4/intra4/inter1/sequential/spinning0"
+    }
+  ],
+  "context_large": [
+    {
+      "manifest": "79b94fad980e3c0c794cd5970a199283aa31ba6344cc598dfb3715aef968a8b7",
+      "execution_identity": "onnxruntime-cpu/1.30.0/physical16/intra16/inter1/sequential/spinning0"
+    }
+  ]
+}

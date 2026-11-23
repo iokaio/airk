@@ -2653,3 +2653,27 @@ Numbered 30 until 22 November 2026; renumbered because L4's entries take
 - **Where.** `crates/airk-kernel/src/arbiter/answer/model/tests.rs` (the
   synthetic scorer gained a `card` switch; the file was also run through
   rustfmt).
+
+### 60. Retained `configuration/4` fixtures for the state move
+
+- **Step LH, commit 3 (23 November 2026).** Before Large leaves the
+  catalog, the build as it stood wrote the documents a `/4` installation
+  can hold, so the `/4` -> `/5` migration is tested against real bytes:
+  disabled, Context enabled with `context_compact`, Context enabled with
+  `context_large`, plus the compiled `DeviceCatalogBinding`, the compiled
+  `DeviceCatalog` and a `DeviceStatus` of a real owner.
+- **How.** The ignored emitter
+  `device_management::retained_tests::emit_retained_configuration4`
+  (`airk-service`, all features) wrote them into a fresh private folder
+  (`L5C\scratch-lh\configuration4`), and they were copied unchanged to
+  `fixtures/arbiter/configuration4/` with a provenance README. Their SHA-256
+  digests are pinned in the test, apart from the emitter.
+- **Evidence.** `retained_configuration4_documents_are_pinned_and_decode`
+  (the current build decodes each under the retained binding, with the
+  expected selection) and `retained_configuration4_binding_is_the_compiled_binding`
+  (the retained binding is the compiled one, recomputed from the retained
+  catalog, and the status carries it): 2 tests passed. Clippy `-D warnings`
+  on `airk-service` default and all features passed.
+- **Binding at this point:** catalog
+  `514233c3512271e9dd0bca1075bd20947f70c44612b847b6aef6fc1907031366`,
+  source `c7cf9d32afe55ee2f21531ab1dbc0171bb12a1fb10a4cecb78ef223736cc301c`.

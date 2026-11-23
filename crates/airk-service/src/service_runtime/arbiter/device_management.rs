@@ -2776,6 +2776,8 @@ fn cpu_model_allowed(model: ModelChoice, local_candidate: bool) -> bool {
 }
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod retained_tests;
 
 #[cfg(feature = "local-inference")]
 impl StageOwner {

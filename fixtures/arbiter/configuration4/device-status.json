@@ -1,0 +1,149 @@
+{
+  "schema": "airk.arbiter.status/3",
+  "configuration": {
+    "schema": "airk.arbiter.configuration/4",
+    "installation": "f3309483200fd053e42eb44a66c17bebe93d6c1b040e03b19edd8b56afebbde2",
+    "catalog": "52525252525252525252525252525252",
+    "revision": 1,
+    "device_catalog": {
+      "catalog": "514233c3512271e9dd0bca1075bd20947f70c44612b847b6aef6fc1907031366",
+      "source": "c7cf9d32afe55ee2f21531ab1dbc0171bb12a1fb10a4cecb78ef223736cc301c"
+    },
+    "focus": {
+      "enabled": false,
+      "selected_model": null,
+      "device_policy": "auto",
+      "gpu_precision": "auto",
+      "indexes": []
+    },
+    "context": {
+      "enabled": false,
+      "selected_model": null,
+      "device_policy": "auto",
+      "gpu_precision": "auto",
+      "indexes": []
+    }
+  },
+  "focus": {
+    "selected_model": null,
+    "device_policy": "auto",
+    "gpu_precision": "auto",
+    "active_profile": null,
+    "availability": "disabled",
+    "reason": "No actual native variant is active; ordinary evidence remains available.",
+    "queued": 0,
+    "running": 0,
+    "selection": null,
+    "models": [
+      {
+        "availability": "requested",
+        "reason": "This model is admitted; no variant is active for the current request.",
+        "tasks": [
+          "airk.focus_rank.v1"
+        ],
+        "model": "focus",
+        "variants": [
+          {
+            "cpu_fit": {
+              "minimum_physical_cores": 4,
+              "intra_threads": 4,
+              "inter_threads": 1,
+              "sequential": true,
+              "spinning": false
+            },
+            "tasks": [
+              "airk.focus_rank.v1"
+            ],
+            "download_bytes": 1131649669,
+            "memory_reservation_bytes": 4294967296,
+            "manifest": "04821edaed45ac10aa5b0b7b2c0b7b28bf5d04a06c8b623cfe6d762f77d5e23b",
+            "execution_identity": "onnxruntime-cpu/1.30.0/physical4/intra4/inter1/sequential/spinning0",
+            "backend": null,
+            "precision": null,
+            "availability": "requested",
+            "reason": "Focus on CPU with 4 threads at the 512-token budget is admitted and not active.",
+            "model_admission": "local_candidate",
+            "device_evidence": null
+          }
+        ]
+      }
+    ]
+  },
+  "context": {
+    "selected_model": null,
+    "device_policy": "auto",
+    "gpu_precision": "auto",
+    "active_profile": null,
+    "availability": "disabled",
+    "reason": "No actual native variant is active; ordinary evidence remains available.",
+    "queued": 0,
+    "running": 0,
+    "selection": null,
+    "models": [
+      {
+        "availability": "unqualified",
+        "reason": "No variant of this model has current native admission.",
+        "tasks": [
+          "airk.context_action.v1"
+        ],
+        "model": "context_compact",
+        "variants": [
+          {
+            "cpu_fit": {
+              "minimum_physical_cores": 4,
+              "intra_threads": 4,
+              "inter_threads": 1,
+              "sequential": true,
+              "spinning": false
+            },
+            "tasks": [
+              "airk.context_action.v1"
+            ],
+            "download_bytes": 6895200632,
+            "memory_reservation_bytes": 17179869184,
+            "manifest": "04b142e12147bb87e57a8bef98f1094aaafe38422b84cd0571be2fd842dd298d",
+            "execution_identity": "onnxruntime-cpu/1.30.0/physical4/intra4/inter1/sequential/spinning0",
+            "backend": null,
+            "precision": null,
+            "availability": "unqualified",
+            "reason": "Context Compact on CPU with 4 threads at the 2,048-token budget has no current native admission.",
+            "model_admission": "unavailable",
+            "device_evidence": null
+          }
+        ]
+      },
+      {
+        "availability": "unqualified",
+        "reason": "No variant of this model has current native admission.",
+        "tasks": [
+          "airk.context_action.v1"
+        ],
+        "model": "context_large",
+        "variants": [
+          {
+            "cpu_fit": {
+              "minimum_physical_cores": 16,
+              "intra_threads": 16,
+              "inter_threads": 1,
+              "sequential": true,
+              "spinning": false
+            },
+            "tasks": [
+              "airk.context_action.v1"
+            ],
+            "download_bytes": 16103160012,
+            "memory_reservation_bytes": 42949672960,
+            "manifest": "79b94fad980e3c0c794cd5970a199283aa31ba6344cc598dfb3715aef968a8b7",
+            "execution_identity": "onnxruntime-cpu/1.30.0/physical16/intra16/inter1/sequential/spinning0",
+            "backend": null,
+            "precision": null,
+            "availability": "unqualified",
+            "reason": "Context Large on CPU with 16 threads at the 2,048-token budget has no current native admission.",
+            "model_admission": "unavailable",
+            "device_evidence": null
+          }
+        ]
+      }
+    ]
+  }
+}
