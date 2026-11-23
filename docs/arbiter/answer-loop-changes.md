@@ -2533,3 +2533,39 @@ Numbered 30 until 22 November 2026; renumbered because L4's entries take
 - **Identities:** none moved; no identity-feeding file changed.
 - **Where:** kernel arbiter `CONTRACT.md` ("Answer /3 loop"),
   `docs/read-interface-parity.md` (typed refusal).
+
+### 56. Decisions for step LH: one Context model named Arbiter, and what the removal of Large does to names, state and the wire
+
+- **Set by the user (23 November 2026):** after LG, drop Large, keep only
+  the smaller Context model and call it Arbiter, and make Focus and Arbiter
+  separate switches for Answer. LG is documented (report 04): Large did not
+  meet its bar.
+- **Decided by the primary agent under plan section 12.9,** from the LH
+  inventory (private campaign folder, `answer-loop\LH\inventory.md`), for
+  the user's review after L7. Each is implemented in LH and recorded in the
+  owning `CONTRACT.md` where it changes a contract.
+
+| # | Question | Decision | Why |
+| --- | --- | --- | --- |
+| 1 | The public value that replaces `context_compact` (configuration, device status, `airkctl` JSON, an Answer's `decisions[].model`) | `arbiter`. The stage keeps its key `context`; the models a caller can select are `focus` and `arbiter`. Labels a person sees: "Focus" and "Arbiter" | The user asked for the model to be called Arbiter, and agents read this value in every Answer. The inventory recommended `context`, to avoid the word naming both the feature and a model; the user's wording decides it. It is cheap to change before the first build with it is released and a state migration afterwards |
+| 2 | The Large CPU FP32 descriptor and the `context_large` slot of the release catalog | Both are removed, in the one commit that moves the catalog binding, with a compiled transition from the old binding to the new one. `ModelChoice::ContextQwenLarge` stays decodable, because retained private profiles carry it | The user dropped Large; a slot nothing can select is a second thing to keep right |
+| 3 | An installation that has Large selected | Its Context stage becomes disabled with no model selected. Enrollments, policy and precision are kept, the revision is bumped and the stage reports a reason that Large was retired. Arbiter is never selected for it automatically | Selecting a model needs the person's consent and its assets |
+| 4 | Saying that Focus is off by choice | No wire change in LH. `focus_calls: 0`, a null `focus_profile`, the `focus_absent` degradation and the help text carry it. A reason on `focus_absent` is tracked with the open gap that an idle reload is not named | One wire change fewer in a step that already moves state |
+| 5 | The scripts that reproduce Large's retained receipts | Kept as retired history | Deleting them would orphan the receipts |
+| 6 | Where a long span's excerpt starts when Arbiter runs without Focus | Unchanged in LH (from the span's start, disclosed). A lexical anchor is a candidate for an L7 change set, where it can be measured | It changes what the model sees and needs evidence |
+| 7 | The status reason `smaller_model_selected` | Kept reserved | Removing a wire word buys nothing |
+
+- **State.** The rename and the removal need a new state contract,
+  `airk.arbiter.configuration/5`, with an explicit migration from `/4`,
+  retained `/4` fixtures (disabled; the smaller model selected; Large
+  selected) and a test that the current build decodes each.
+- **Identities.** LH moves pinned identities once (Core loop semantics, the
+  loop task policies, the CUDA math policy, the bounded-hybrid validator, a
+  new `cpu_source_transition` row), and the FP16 CUDA profiles are emitted
+  again once from retained measurements.
+- **Internal names.** Rust identifiers that say Compact change only inside
+  that one identity move. Domain-separation strings and profile ids stay
+  verbatim: they are inside digests of retained evidence.
+- **Not changed by these decisions:** the stage name `context`, the task
+  names `airk.context_*`, the degradation `context_absent`, the name
+  "Arbiter" for the whole subsystem in crate, module and schema names.

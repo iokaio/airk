@@ -1204,6 +1204,8 @@ Receipts are in the private GPU-track folder and in the CUDA image records;
 | Large is dropped after LG is documented; the remaining Context model is called Arbiter | Set by the user on 23 November. LG runs with all three arms and is documented first; there is no stop at LG |
 | Focus and Arbiter are separate switches for Answer | Set by the user on 23 November. Answer runs with neither, Focus only, Arbiter only or both. Focus for other tools is a later question |
 | L6 and L7 on Windows CUDA and Linux CUDA; stop after L7 | Set by the user on 23 November. Extends section 12.0, which was Windows CUDA only |
+| LG result: neither bar met | Report 04, 23 November. Large won 0 and lost 1 against Compact and is dropped. Compact won 1 and lost 1 against Focus only; it stays, as Arbiter, by the user's direction, and the default combination of the two switches is the user's to set at the stop after L7 |
+| LH details: the public model value is `arbiter`; a stored Large selection becomes a disabled stage; state moves to `configuration/5` | Decided by the primary agent under section 12.9 for the user's review after L7 (change log entry 56) |
 
 ## 12. Answer as a local multi-round loop
 
