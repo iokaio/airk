@@ -687,6 +687,16 @@ fn source_projection_moved() -> anyhow::Error {
         .context(airk_store::current::CurrentGateContention::Applying)
 }
 
+/// What a read must keep once a configuration ahead of the publication is
+/// published, for `SessionScope::refusal_or_pending`.
+#[derive(Clone, Copy)]
+enum Coverage {
+    /// An evidence read: the authority resolves.
+    Authority,
+    /// Index metadata: the authority also covers every source in full.
+    FullIndex,
+}
+
 pub(crate) struct SessionScope {
     authority: Authority,
     fingerprint: Sha256Digest,
@@ -723,24 +733,33 @@ impl SessionScope {
             .compile(&read.head().scope.root, configured)?;
         self.live()
     }
-    /// The published roots refused this authority. When the source
-    /// configuration differs from them and the authority resolves against
-    /// it, the configuration is ahead of the publication: the typed
-    /// retryable pending reconcile (change-log entry 67), never a refusal.
-    /// A revoked or otherwise unresolvable scope keeps the refusal.
+    /// The published roots refused this authority. The typed retryable
+    /// pending reconcile (change-log entry 67) answers only when the same
+    /// request would pass once the configuration is published: the
+    /// configuration differs from the published roots, the authority
+    /// resolves against it and, for a read that requires the full index
+    /// (`Coverage::FullIndex`), it covers every configured source the way
+    /// the published-roots check would. Anything else, including a partial
+    /// scope that reconciling can never lift, a revoked scope or an
+    /// unresolvable one, keeps the refusal (entry 67 addendum).
     fn refusal_or_pending(
         &self,
         read: &CurrentRead,
         published: &BTreeMap<String, String>,
         configured: &BTreeMap<String, String>,
+        coverage: Coverage,
     ) -> anyhow::Error {
-        if self.live().is_ok()
+        let primary = &read.head().scope.root;
+        let passes_once_published = self.live().is_ok()
             && configured != published
             && self
                 .authority
-                .compile(&read.head().scope.root, configured)
-                .is_ok()
-        {
+                .compile(primary, configured)
+                .is_ok_and(|scope| match coverage {
+                    Coverage::Authority => true,
+                    Coverage::FullIndex => scope.covers_sources(primary, configured),
+                });
+        if passes_once_published {
             crate::retrieval_retry::ScopeReconcilePending.into()
         } else {
             ScopeReadRefused.into()
@@ -774,6 +793,7 @@ impl SessionScope {
                         read,
                         &state.configuration.roots,
                         &configured()?,
+                        Coverage::Authority,
                     ));
                 }
                 Err(error) => return Err(error),
@@ -800,11 +820,17 @@ impl SessionScope {
         );
         if let Some(configured) = configured {
             let state = read.collection_state()?.ok_or(ScopeReadRefused)?;
-            // A configuration that differs from the published roots and
-            // still resolves this authority is ahead of the publication
-            // (change-log entry 67), not outside the authority.
+            // A configuration that differs from the published roots, still
+            // resolves this authority and keeps it covering the full index is
+            // ahead of the publication (change-log entry 67 and addendum),
+            // not outside the authority.
             if *configured != state.configuration.roots {
-                return Err(self.refusal_or_pending(read, &state.configuration.roots, configured));
+                return Err(self.refusal_or_pending(
+                    read,
+                    &state.configuration.roots,
+                    configured,
+                    Coverage::FullIndex,
+                ));
             }
         }
         self.live()
@@ -1520,18 +1546,15 @@ mod tests {
         );
         assert!(subset.roots().unwrap_err().is::<ScopeReadRefused>());
         admin.add_root("docs", &external)?;
-        // Change-log entry 67: a configuration ahead of the publication is
-        // the retryable pending reconcile, not a refusal.
+        // Entry 67 addendum: the configured root is outside this primary-only
+        // authority, so publishing it would leave the scope partial. That is
+        // a refusal now, never a pending reconcile that could not lift.
         assert!(
             full.configured_roots()
                 .unwrap_err()
-                .is::<crate::retrieval_retry::ScopeReconcilePending>()
+                .is::<ScopeReadRefused>()
         );
-        assert!(
-            full.roots()
-                .unwrap_err()
-                .is::<crate::retrieval_retry::ScopeReconcilePending>()
-        );
+        assert!(full.roots().unwrap_err().is::<ScopeReadRefused>());
         admin.index()?;
         assert!(full.current_reader()?.restricts_paths());
         assert!(full.status_summary().unwrap_err().is::<ScopeReadRefused>());
@@ -2594,6 +2617,18 @@ mod tests {
             });
         Ok(authority)
     }
+    /// The whole primary and the whole root at `original_root`.
+    fn with_whole_external(admin: &Kernel, original_root: String) -> Result<ScopedReadAuthority> {
+        let mut authority = with_external(admin, original_root)?;
+        let atom = authority.grant.memberships[0]
+            .membership
+            .scope
+            .last_mut()
+            .expect("the external atom");
+        atom.kind = PathScope::Subtree;
+        atom.path = String::new();
+        Ok(authority)
+    }
     fn hint_code(error: &anyhow::Error) -> Option<&'static str> {
         crate::retrieval_retry::read_retry_hint(error).map(|hint| hint.code)
     }
@@ -2633,9 +2668,36 @@ mod tests {
     }
 
     /// Metadata that needs the configuration to agree with the publication
-    /// waits for the reconcile instead of refusing a whole-index authority.
+    /// waits for the reconcile only when the authority covers the configured
+    /// roots in full, so the same request passes once it is published
+    /// (entry 67 addendum).
     #[test]
     fn scoped_metadata_with_configuration_ahead_is_pending_reconcile() -> Result<()> {
+        let roots = two_roots()?;
+        let admin = &roots.admin;
+        admin.index()?;
+        admin.add_root("docs", &roots.external)?;
+        let configured = admin.configured_roots()?["docs"].clone();
+        let whole = admin.with_scoped_reads(with_whole_external(admin, configured)?)?;
+        let backing = whole.read_scope.as_ref().unwrap().authority.backing();
+        for view in [
+            ScopedIndexMetadataView::VectorStatus,
+            ScopedIndexMetadataView::Roots,
+        ] {
+            let error = whole.scoped_index_metadata(backing, view).err().unwrap();
+            assert!(!error.is::<ScopeReadRefused>(), "{error:#}");
+            assert_eq!(hint_code(&error), Some("scope_reconcile_pending"));
+        }
+        // The reconciling publication answers the same request.
+        admin.index()?;
+        whole.scoped_index_metadata(backing, ScopedIndexMetadataView::VectorStatus)?;
+        Ok(())
+    }
+
+    /// A configured root outside a primary-only authority would leave it a
+    /// partial scope once published: refused before and after, never pending.
+    #[test]
+    fn scoped_metadata_with_a_configured_root_outside_the_authority_refuses() -> Result<()> {
         let roots = two_roots()?;
         let admin = &roots.admin;
         admin.index()?;
@@ -2650,26 +2712,17 @@ mod tests {
         let scoped = admin.with_scoped_reads(authority)?;
         scoped.scoped_index_metadata(backing, ScopedIndexMetadataView::VectorStatus)?;
         admin.add_root("docs", &roots.external)?;
-        let error = scoped
-            .scoped_index_metadata(backing, ScopedIndexMetadataView::VectorStatus)
-            .err()
-            .unwrap();
-        assert!(!error.is::<ScopeReadRefused>(), "{error:#}");
-        assert_eq!(hint_code(&error), Some("scope_reconcile_pending"));
-        let error = scoped
-            .scoped_index_metadata(backing, ScopedIndexMetadataView::Roots)
-            .err()
-            .unwrap();
-        assert_eq!(hint_code(&error), Some("scope_reconcile_pending"));
-        // Once published, the root is outside this primary-only authority:
-        // a real partial scope is still refused, never masked as pending.
-        admin.index()?;
-        let error = scoped
-            .scoped_index_metadata(backing, ScopedIndexMetadataView::VectorStatus)
-            .err()
-            .unwrap();
-        assert!(error.is::<ScopeReadRefused>(), "{error:#}");
-        assert!(hint_code(&error).is_none());
+        for published in [false, true] {
+            if published {
+                admin.index()?;
+            }
+            let error = scoped
+                .scoped_index_metadata(backing, ScopedIndexMetadataView::VectorStatus)
+                .err()
+                .unwrap();
+            assert!(error.is::<ScopeReadRefused>(), "{error:#}");
+            assert!(hint_code(&error).is_none());
+        }
         Ok(())
     }
 

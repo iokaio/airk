@@ -2989,3 +2989,46 @@ Numbered 65 because the unmerged `loop/lh` already holds entries 57 to 64.
   Focus fence (already a typed non-replayable refusal).
 - **Identities:** none moved; no identity-feeding file changed. No wire
   shape changed beyond the new error codes; no persisted format changed.
+- **Addendum (found during phase B, 23 November 2026):** `refusal_or_pending`
+  answered `scope_reconcile_pending` whenever the configuration differed from
+  the published roots and the authority compiled against it. Compiling
+  ignores configured roots outside the authority, so a request that the
+  reconciled configuration would still refuse became retryable, and a client
+  would retry until the configuration settled and still be refused. Two
+  `airk-mcp` tests showed it (they failed on entry 67's code and on phase B's
+  first commit, which does not touch them):
+  - `native_settings_refuse_prefix_pending_sources_revocation_and_arbitrary_inputs`
+    adds an ungranted root (`pending`) to the configuration of a full-index
+    grant; the published roots stay empty. The settings read must refuse:
+    once published, that root is outside the grant, so the scope is partial.
+  - `recovery_details_outside_frozen_project_scope_are_explicitly_unavailable_without_changing_status`
+    passes a rebuild observation's saved sources (`secret`) as the
+    "configured" roots of the recovery-roster check; they are not a pending
+    configuration at all, and the grant does not cover them, so the status
+    must report `rebuild_unavailable` with `partial_project_scope`.
+  - **Fix:** pending only when the same request would pass once the
+    configuration is published. Evidence reads (`attach`) keep the compile
+    check; index metadata (`require_index_metadata` with a configuration:
+    settings, roots, the rebuild roster) also requires
+    `covers_sources(primary, configured)`, the same full-coverage proof as
+    the published path. Otherwise `ScopeReadRefused`. The two `airk-mcp`
+    tests keep their expectations: both assert the refusal, which is correct.
+  - **Kernel expectations corrected.** Two of entry 67's own kernel tests
+    asserted the wrong outcome:
+    - `current_metadata_handlers_accept_full_source_and_refuse_subset_or_new_alias`
+      expected `configured_roots()` and `roots()` to be pending after a root
+      was configured outside its primary-only authority. The same test
+      then shows the published state refusing, so pending could never lift.
+      They now assert the refusal.
+    - `scoped_metadata_with_configuration_ahead_is_pending_reconcile`
+      likewise expected pending for a primary-only authority. It now uses an
+      authority that covers the configured root in full (pending, then the
+      same request passes once published). The refusal case moved to the
+      new `scoped_metadata_with_a_configured_root_outside_the_authority_refuses`.
+    - The attach case (`configuration_ahead_of_the_publication_is_pending_reconcile_not_refusal`)
+      is unchanged: an evidence read only needs the authority to resolve.
+  - Evidence: both failed before (`trust-b/logs/base-mcp-settings.log`,
+    `debug-rp.log`, which printed the two configurations) and pass after
+    (`f1-mcp-after.log`, `native_scoped_settings_tests` 7 of 7; kernel and MCP
+    `scoped`/`selection` tests 66 of 66 in `f1-after-2.log`; `airk-kernel`, `airk-mcp`, `airk-store` lib 1,679 of 1,679 in
+    `f1-kernel-mcp-store-after.log`).
