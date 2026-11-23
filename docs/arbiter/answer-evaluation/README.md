@@ -23,9 +23,17 @@ the five results per scenario, the two rubrics and how weights are adjusted.
 | 01 | [Baseline](01-baseline.md) | Answer, Parse and Search as they stood at commit `1fe7b600`, on airk's ten scenarios with Haiku agents, two Sonnet judges and a Sonnet reference arm; bookbuilder history from the original index; the bookbuilder-v2 baseline on the fresh index; the 100-hit depth measurement; the search roster fix. Results in [results/01-baseline.csv](results/01-baseline.csv) | Headroom 10 of 10 on airk and 10 of 10 on bookbuilder-v2. On airk no Answer configuration finished correctly; Search finished 2 (C1, T1, grade 1). On bookbuilder-v2 no path finished any scenario. Answer covered 12 of 53 essential notes against Search's 22 on airk, and 15 of 61 against 26 on bookbuilder-v2. Depth: 35 of 53 notes have no file in the pool, so `search_v2` enters change set 2; bookbuilder-v2's depth equals the original index's, which confirms the roster fix |
 | 02 | [Change set 1](02-change-set-1.md) | The eight changes of plan section 5.3 in a private evaluation build (image `cs1e-1a24414d`, layers `all,pool_full=8`): software-task follow-ups, spread, a 16-snippet first search, a 16-wide Focus with the software instruction, a provisional Context Read rule, grouped presentation and a device budget; replay tuning and leave-one-outs; the airk pass with Search and Parse reused; three bugs fixed during the series and two recorded digest-input changes. Results in [results/02-change-set-1.csv](results/02-change-set-1.csv) | No new correct finish on airk; calls slower (Compact up to 146.6 s). First call 4 of 53 notes against 2; only the larger first search changed it. Focus 13 and Compact 14 of 53 over the session, Search 22. GPU replays and the Context leverage result are pending. Next: `search_v2`, pending its depth data |
 | 03 | [Change set 2](03-change-set-2.md) | `search_v2` (a shared search for prose instructions, so Search and Parse ran again), Context option B (a wider roster that takes the best Read even over a terminal card) and Focus candidate 2, on top of change set 1's layers (image `cs2-9d1b9aea`); airk and bookbuilder-v2, 52 results each, against each repository's baseline; first-call replays; a replay of the recorded Search queries under the old and the new search; the run-plan naming error and the L38 unclean close with its one-time restart exception. Results in [results/03-change-set-2.csv](results/03-change-set-2.csv) | No correct finish on either repository, so 0 substantial wins in 20, and Search lost its two airk finishes. The first call covers 4 of 53 (airk) and 8 of 61 (bookbuilder) notes, against 2 and 4 to 5. The airk Search drop (22 to 15 notes) was session variance: the same queries find 15 against 13 (baseline queries) and 7 against 6 (this pass's) under `search_v2`, with A1 and C2 each losing a note. Calls slower (Compact 120.7 s, Large 165.2 s). Next: change set 3, keeping `search_v2` |
+| 04 | [Gate LG](04-gate-lg.md), with its generated [detail report](04-gate-lg-detail.md) | The first series on the Answer loop (plan section 12), series `06-gate-lg`: Focus with Compact, Focus with Large and Focus only on one CUDA GPU (product commit `de0dde02`, image `lg-gate-076cc17d`), ten munarium and ten bookbuilder scenarios, Haiku agents and two Sonnet judges; the two model gates of plan sections 12.7.1 and 12.7.2. Parse and Search did not run | Neither bar met. Large won 0 and lost 1 against Compact and is dropped. Compact won 1 and lost 1 against Focus only. 0 correct finishes in 60 sessions; the first reply held 17 to 21 of 113 essential notes in every arm. The loop ran with no failed read. The precision check did not run |
 
 The newest report is the current standing. The final report, when it exists,
 answers the question above for each Answer configuration.
+
+**Reports 01 to 03 are history, not a baseline.** They tested the one-turn
+Answer on airk and bookbuilder. On 22 November 2026 the user stopped that
+series during its third change set and made Answer a local multi-round loop
+(plan section 12), and replaced airk by munarium as the second repository.
+Report 04 is the loop's model gate. After it the evaluation starts over on
+the loop with a new baseline against Parse and Search (plan step L7).
 
 ## How the reports are named
 
@@ -33,9 +41,10 @@ answers the question above for each Answer configuration.
 | --- | --- |
 | `00-setup.md` | The service is built, the two indexes exist with the benchmark's own files excluded and the leak probe passing, the scenarios and rubrics are frozen and the pilot has run |
 | `01-baseline.md` | The baseline pass on the code as it stood before any change. It also reports the headroom: on how many scenarios a substantial win is possible at all |
-| `02-change-set-1.md`, `03-change-set-2.md`, `04-change-set-3.md` | Each change set and the pass that tested it |
-| `05-sealed-set.md` | The sealed scenarios, run once on the configuration named beforehand |
-| `06-final-report.md` | The answer to the question, and what is recommended for delivery |
+| `02-change-set-1.md`, `03-change-set-2.md` | Each change set of the one-turn series and the pass that tested it. The third was stopped and has no report |
+| `04-gate-lg.md`, `04-gate-lg-detail.md` | The loop's model gates. The first is written by hand in the form below; the second is generated by the harness (`gate_report.py`) and lists every scenario side by side |
+| The next numbers, in order | The loop's new baseline, then each change set and the pass that tested it |
+| After them | The sealed scenarios, run once on the configuration named beforehand, on the user's word; then the final report: the answer to the question, and what is recommended for delivery |
 
 **One commit per series.** When a series is judged, everything it produced
 lands in one commit: the change set's code (for the baseline, the harness,
@@ -102,6 +111,8 @@ The same sections in the same order, so two reports can be compared quickly.
 
 Raw tool output and the agents' session logs stay in the private campaign
 folder, which is not committed. The reports quote none of the bookbuilder
-repository's source. They name its scenarios and may cite its file paths.
+or munarium repositories' source. They name their scenarios and may cite
+their file paths; judges' reasons on those scenarios are withheld, because
+they paraphrase the source.
 For this repository, short excerpts are quoted where they make a point
 clearer.

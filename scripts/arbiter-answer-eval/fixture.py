@@ -2,17 +2,21 @@
 """Own one private Answer-evaluation fixture lifetime on Windows (CPU).
 
 ``start`` launches the private evaluation service (the airk-service test image
-run on its software-v2 selector) inside an owned Windows Job, makes sure both
-repository indexes exist with MiniLM vectors, writes ``handle.json`` for
-clients and stays up until the lifetime's stop file appears or its deadline
-passes. It then stops the service through ``service shutdown`` and checks the
-settlement receipts. A later ``start --restart-from`` reopens the same control
-root, catalog, model installation and indexes, so the indexes are built once.
+run on its software-v2 selector) inside an owned Windows Job, makes sure the
+named repository indexes exist with MiniLM vectors (by default munarium and
+bookbuilder-v2, the loop series' pair), writes ``handle.json`` for clients and
+stays up until the lifetime's stop file appears or its deadline passes. It
+then stops the service through ``service shutdown`` and checks the settlement
+receipts. A later ``start --restart-from`` reopens the same control root,
+catalog, model installation and indexes, so the indexes are built once.
+
+Every repository is set up and its denies are in force before any index pass
+is queued, so a denied file is never indexed first.
 
 ``stage`` enables or disables Focus or Context with a named profile. ``stop``
-writes the stop file. ``leak-probe`` checks that the airk index serves nothing
-from the benchmark paths. ``smoke`` times one call of each read tool.
-See FIXTURE.md beside this file.
+writes the stop file. ``leak-probe`` checks that no index serves a path its
+repository's exclusion list names, and that the lifetime holds no airk index.
+``smoke`` times one call of each read tool. See FIXTURE.md beside this file.
 """
 
 import argparse
@@ -49,12 +53,20 @@ MINILM = ROOT / "artifacts/advanced-split/bundled-model-v3/minilm-l6-v2-u8-v3"
 REPOSITORIES = {"airk": Path(r"D:\code\Github\airk"), "bookbuilder": Path(r"D:\code\Github\bookbuilder"),
                 # A fresh bookbuilder index (22 Nov 2026): its denies are source policy before the first index
                 # pass, because trimming the live bookbuilder index degraded its vector publication (token 267).
-                "bookbuilder-v2": Path(r"D:\code\Github\bookbuilder")}
+                "bookbuilder-v2": Path(r"D:\code\Github\bookbuilder"),
+                # The loop series' second repository (user direction, 22 Nov 2026): the index under test must
+                # hold nothing about the experiment, so munarium replaces airk. Never written to.
+                "munarium": Path(r"D:\code\Github\munarium")}
 # Repositories indexed from a git-archive export of one commit instead of in place (see ensure_snapshot).
 SNAPSHOTS = {"airk": "1fe7b6003574e4e385896120c62b99acbca00a3a",
              # Exported like airk (git archive of the commit the bookbuilder scenarios were written at), so the
              # new index has its own read-only root beside the in-place bookbuilder index.
-             "bookbuilder-v2": "238b22a722ceb78447d72e39585fd6a7d4d3dd0c"}
+             "bookbuilder-v2": "238b22a722ceb78447d72e39585fd6a7d4d3dd0c",
+             # feat/clearview, 1,038 tracked files (the commit the munarium scenarios are written at).
+             "munarium": "9948345d1d148525f644bc4b8bc5e6da9cf73ca0"}
+# The loop series (plan section 12) indexes this pair; no airk index exists in its lifetimes. bookbuilder-v2 is
+# first because it has denies (repository_order_problem).
+DEFAULT_REPOSITORIES = ("bookbuilder-v2", "munarium")
 # Benchmark paths denied through the airk index's own source policy (formats.md).
 EXCLUSIONS = {
     "airk": [
@@ -70,6 +82,14 @@ EXCLUSIONS = {
         ("exact", "ironspire/scripts/set-rss-key.ps1"),
         ("exact", "ironspire/scripts/set-sendgrid-key.ps1"),
     ],
+    # munarium holds none of the benchmark's own files, so it has no benchmark deny. Its two credential-like
+    # names at the snapshot commit are examples without a secret (read at the commit, 22 Nov 2026):
+    # docs/lab/example/.env.example (every credential value empty) and
+    # server/deploy/terraform/example-aks/example.tfvars ("Every value below is invented"). A scan of the
+    # commit for private-key blocks and cloud-key shapes found nothing, so nothing is denied. The built index
+    # (root 06-gate-lg-C) lists 1,023 of the 1,038 tracked files: it leaves out 13 images, one JAR and the
+    # .env.example file by itself, and holds the example.tfvars file.
+    "munarium": [],
 }
 # The fresh bookbuilder index carries every bookbuilder deny from its setup, before its first index pass.
 EXCLUSIONS["bookbuilder-v2"] = list(EXCLUSIONS["bookbuilder"])
@@ -415,21 +435,101 @@ def resume_semantic(commands, states, repositories, samples=3):
     return queued
 
 
-def wait_semantic(commands, index_id, seconds, binding=None, requeued=None):
+# Consecutive status observations a wait may be refused before it gives up (about one minute at 5 s a poll).
+STATUS_REFUSAL_POLLS = 12
+
+
+def refused_observation(stdout):
+    """The code of a typed refusal that submitted no query, in a CLI stdout file, else None.
+
+    ``airk_status`` can answer ``scoped_connection_unavailable`` (``query_submitted: false``) for an instant
+    while the service replaces an index's scoped connection, for example between two ``vectors`` jobs. That
+    is no observation, not a state: the next poll observes again. It is not a typed retry (``retryable`` is
+    false), so the same request is never replayed."""
+    try:
+        envelope = read_json(stdout)
+        body = (envelope["structuredContent"] if "structuredContent" in envelope
+                else json.loads(envelope["content"][0]["text"]))
+        error = body["error"]
+    except (OSError, ValueError, KeyError, IndexError, TypeError):
+        return None
+    if isinstance(error, dict) and error.get("query_submitted") is False and isinstance(error.get("code"), str):
+        return error["code"]
+    return None
+
+
+# Job failure codes the service itself calls temporary. A vectors job that fails with one is retried once by
+# an explicit index pass (the service asks for an explicit retry, never a replay); any other failure, and a
+# second failure, end the wait.
+TEMPORARY_JOB_FAILURES = ("helper_unavailable",)
+SEMANTIC_RETRIES = 1
+
+
+def failed_job(progress):
+    """The observed job when it failed, as ``(id, kind, code)``, else None."""
+    job = (progress.get("observation") or {}).get("job")
+    if isinstance(job, dict) and job.get("state") == "failed":
+        return job.get("id"), job.get("kind"), (job.get("outcome") or {}).get("code")
+    return None
+
+
+def wait_semantic(commands, index_id, seconds, binding=None, requeued=None, refusals=None, retries=None):
     """Wait for the MiniLM publication. Embedding runs as a series of short ``vectors`` jobs; when
     an earlier lifetime canceled that series, nothing is queued, so one index pass is queued to
-    resume it (recorded in ``requeued``)."""
+    resume it (recorded in ``requeued``).
+
+    A status poll the service refuses without submitting a query is recorded in ``refusals`` and the wait
+    goes on to the next poll; more than ``STATUS_REFUSAL_POLLS`` in a row fail the wait, as does any other
+    failure. On 23 November 2026 one such refusal, after 3.6 hours of embedding, ended base lifetime
+    06-gate-lg-L-base: the wait treated it as fatal.
+
+    A ``failed`` semantic state is fatal, with one recorded exception: when the failed job's code is one the
+    service calls temporary (``TEMPORARY_JOB_FAILURES``) and ``retries`` is given, one index pass is queued as
+    the explicit retry and recorded there with the failure. The same day the first vectors job of a
+    munarium-only base failed with ``helper_unavailable`` (shared embedding helper temporarily unavailable:
+    the pipe is being closed) 0.5 s after it started, and the service registered the helper again 5 s later."""
     end = min(commands.deadline, time.monotonic() + seconds)
-    idle = 0
+    idle = refused = failed_idle = 0
     while True:
-        status = tool_body(commands.tool("semantic-status", "airk_status", index_id, {"response_mode": "full"})[0])
+        try:
+            status = tool_body(commands.tool("semantic-status", "airk_status", index_id,
+                                             {"response_mode": "full"})[0])
+        except ValueError:
+            name = f"{commands.prefix}-{commands.count:04}-semantic-status"
+            code = refused_observation(commands.folder / f"{name}.stdout")
+            refused += 1
+            if code is None or refused > STATUS_REFUSAL_POLLS or time.monotonic() >= end:
+                raise
+            if refusals is not None:
+                refusals.append({"at": utc(), "code": code, "command": name})
+            time.sleep(5.0)
+            continue
+        refused = 0
         state = status["semantic_readiness"]["state"]
         if state == "ready":
             require(status["publication"]["token"], "semantic index lacks an actual publication")
             return status
-        require(state in ("pending", "partial"), f"semantic status became {state}")
         require(time.monotonic() < end, "semantic publication did not become ready")
         require(commands.stop_file is None or not commands.stop_file.is_file(), "stop file written while waiting")
+        if state == "failed" and binding is not None and retries is not None:
+            # The state stays ``failed`` until a later vectors job reports, and the progress observation lags
+            # a job that has just been queued (a restart's resume pass, or the retry below). So nothing is
+            # decided on one sample: only three consecutive observations with no job at work count as idle.
+            progress = commands.json("semantic-progress", "--service-project", binding, "progress")
+            failed_idle = 0 if unfinished_jobs(progress) else failed_idle + 1
+            if failed_idle >= 3:
+                failed = failed_job(progress)
+                require(failed is not None and failed[2] in TEMPORARY_JOB_FAILURES
+                        and len(retries) < SEMANTIC_RETRIES,
+                        f"semantic status became failed ({failed}, after {len(retries)} retries)")
+                job = commands.json("semantic-retry-index", "--service-project", binding, "index")["job"]
+                retries.append({"at": utc(), "failed_job": failed[0], "kind": failed[1], "code": failed[2],
+                                "retry_job": job["id"]})
+                failed_idle = 0
+            time.sleep(5.0)
+            continue
+        failed_idle = 0
+        require(state in ("pending", "partial"), f"semantic status became {state}")
         if binding is not None and requeued is not None and not requeued:
             jobs = unfinished_jobs(commands.json("semantic-progress", "--service-project", binding, "progress"))
             idle = 0 if jobs else idle + 1
@@ -553,39 +653,218 @@ def unwrap(response, variant):
     raise ValueError(f"service refused {variant}: " + json.dumps(response)[:3000])
 
 
+def busy_refusal(response, review):
+    """The service's typed "not while work is unfinished" answers to a source-policy change, else None.
+
+    ``source_change_busy`` (code ``source_change_jobs_pending``) names the index's pending and running jobs;
+    the review and the apply both refuse with it before any effect. ``failure``/``registry_busy`` is the
+    read-contention answer of the read-only review only (a registry writer held the lock); the service never
+    gives it to a mutation, so it is not accepted from an apply."""
+    if not isinstance(response, dict):
+        return None
+    if response.get("status") == "source_change_busy":
+        return {"code": response.get("code"), "busy": response.get("busy")}
+    if review and response.get("status") == "failure" and response.get("code") == "registry_busy":
+        return {"code": "registry_busy", "busy": None}
+    return None
+
+
+def fence_summary(response):
+    """What a ``catalog_outcome_unknown`` answer observed of the change's authority fence."""
+    observation = response.get("observation") or {}
+    fence = observation.get("fence") or {}
+    value = fence.get("value") or {}
+    return {"observation": observation.get("kind"), "state": fence.get("state"), "stage": value.get("stage"),
+            "operation_id": value.get("operation_id"), "confirmations": len(value.get("confirmations") or []),
+            "worker_confirmations": len(value.get("worker_confirmations") or [])}
+
+
 def trim_path(commands, index_id, source_root_id, kind, path, nonce):
+    """One reviewed source-policy change: the draft (a read-only review), then the apply.
+
+    Returns a record whose ``state`` is ``applied``; ``busy`` (a typed refusal without effect, see
+    busy_refusal); or ``unknown``: the service accepted the apply but could not confirm the change's
+    authority fence (``catalog_outcome_unknown``). An unknown change may still complete, so the caller
+    observes it and never takes it for a refusal. Any other answer raises."""
     epoch = unwrap(commands.json("request-epoch", "service", "rpc", "--request-file",
                                  write_request(commands, "request-epoch", "request_epoch")), "request_epoch")
     selection = {"key": {"namespace": epoch["namespace"], "epoch": epoch["epoch"], "nonce": nonce},
                  "expected_catalog_revision": catalog_revision(commands), "index_id": index_id,
                  "change": {"operation": "trim_path", "source_root_id": source_root_id, "kind": kind, "path": path}}
-    draft = unwrap(commands.json("trim-draft", "service", "rpc", "--request-file",
-                                 write_request(commands, "trim-draft",
-                                               {"catalog_source_mutation_draft": {"selection": selection}})),
-                   "catalog_source_mutation_draft")["draft"]
+    drafted = commands.json("trim-draft", "service", "rpc", "--request-file",
+                            write_request(commands, "trim-draft",
+                                          {"catalog_source_mutation_draft": {"selection": selection}}))
+    refusal = busy_refusal(drafted, review=True)
+    if refusal is not None:
+        return {"state": "busy", "at": "draft", "selection": selection, **refusal}
+    draft = unwrap(drafted, "catalog_source_mutation_draft")["draft"]
     applied = commands.json("trim-apply", "service", "rpc", "--request-file",
                             write_request(commands, "trim-apply", {"catalog_apply": {
                                 "request": draft["request"], "preview_digest": draft["preview_digest"]}}))
-    require(isinstance(applied, dict) and applied.get("status") in ("catalog_applied", "catalog_receipt"),
-            "trim apply was not accepted: " + json.dumps(applied)[:3000])
-    return {"selection": selection, "draft_preview_digest": draft["preview_digest"], "applied": applied}
+    record = {"selection": selection, "draft_preview_digest": draft["preview_digest"]}
+    status = applied.get("status") if isinstance(applied, dict) else None
+    if status in ("catalog_applied", "catalog_receipt"):
+        return record | {"state": "applied", "applied": applied}
+    if status == "catalog_outcome_unknown":
+        return record | {"state": "unknown", "code": applied.get("code"), "fence": fence_summary(applied)}
+    refusal = busy_refusal(applied, review=False)
+    if refusal is not None:
+        return record | {"state": "busy", "at": "apply", **refusal}
+    raise ValueError("trim apply was not accepted: " + json.dumps(applied)[:3000])
 
 
-def trim_with_busy_retry(commands, index_id, source_root_id, kind, path, attempts=12, sleep=time.sleep):
-    """trim_path, repeated while the service refuses with registry_busy (L16-cs1, 22 Nov 2026: a restart's
-    first trim met the resumed indexer). Each attempt is a new draft with a new nonce; before each retry the
-    policy is read again, so a trim that did land is never applied twice."""
-    for attempt in range(1, attempts + 1):
+# A source-policy change waits this long for the installation to be idle and for the change to be in force.
+SOURCE_CHANGE_SECONDS = 900
+
+
+def installation_bindings(states):
+    """repository -> project binding for every index the installation's state files name."""
+    bindings = {}
+    for state_path in sorted(Path(states).glob("*.state.json")) if Path(states).is_dir() else []:
+        state = read_json(state_path)
+        if isinstance(state, dict) and state.get("binding"):
+            bindings[state.get("repository") or state_path.name.split(".")[0]] = state["binding"]
+    return bindings
+
+
+def busy_projects(commands, bindings):
+    """{repository: [unfinished job, ...]} for the projects that hold pending or running work."""
+    busy = {}
+    for repo, binding in bindings.items():
+        jobs = unfinished_jobs(commands.json("idle-progress", "--service-project", binding, "progress"))
+        if jobs:
+            busy[repo] = [{"job": job_id, "kind": job.get("kind"), "state": job.get("state")}
+                          for job_id, job in jobs.items()]
+    return busy
+
+
+def registry_pending(control):
+    """The service registry's own record of unfinished and promised work, read in one snapshot, never written.
+
+    - ``jobs``: every pending or running job, except a pending automatic audit (a parked ``verify``), which
+      the service's own busy predicate also leaves out;
+    - ``follow_ups``: ``service_background`` rows whose index pass or vectors job is promised but not yet
+      queued. The service sets the flag in the transaction that completes the earlier job, so a project is
+      never between two jobs without either a job or a flag. On 22 November 2026 a single ``progress`` sample
+      fell into the 48 ms between an index pass's success and its vectors job (root ``06-gate-lg-C``);
+    - ``setup_pending``: projects whose setup has not finished.
+
+    All three empty means the installation is quiet."""
+    import sqlite3
+    database = Path(control) / "service-1.4.sqlite3"
+    connection = sqlite3.connect(f"file:{database.as_posix()}?mode=ro", uri=True, timeout=5)
+    try:
+        connection.execute("BEGIN")
+        jobs = connection.execute(
+            "SELECT j.id, j.project, j.kind, j.state FROM service_jobs j WHERE j.state IN ('pending','running') "
+            "AND NOT (j.state='pending' AND EXISTS(SELECT 1 FROM service_background_audit a "
+            "WHERE a.job=j.id AND a.manual=0)) ORDER BY j.seq").fetchall()
+        follow_ups = connection.execute(
+            "SELECT project, source_pending, semantic_pending FROM service_background "
+            "WHERE source_pending<>0 OR semantic_pending<>0 ORDER BY project").fetchall()
+        setup = connection.execute("SELECT project FROM service_setup_pending ORDER BY project").fetchall()
+    finally:
+        connection.close()
+    return {"jobs": [{"job": str(row[0]), "project": str(row[1]), "kind": row[2], "state": row[3]} for row in jobs],
+            "follow_ups": [{"project": str(row[0]), "index_pass": bool(row[1]), "vectors": bool(row[2])}
+                           for row in follow_ups],
+            "setup_pending": [str(row[0]) for row in setup]}
+
+
+def installation_busy(commands, bindings):
+    """What keeps the installation from being quiet: the projects' unfinished jobs as ``progress`` reports
+    them and, once ``progress`` shows none, the registry's own snapshot (registry_pending), which also holds
+    the follow-up work the service has promised. Empty when quiet.
+
+    The registry file is read only to confirm a quiet ``progress`` view, so it is opened a few times per
+    source-policy change and not at the sampling rate (its journal is a rollback journal, where a reader
+    briefly holds off the service's writer). A registry that cannot be read this instant counts as busy, and
+    the caller samples again."""
+    import sqlite3
+    busy = busy_projects(commands, bindings)
+    if busy:
+        return busy
+    control = getattr(commands, "control", None)
+    if control and (Path(control) / "service-1.4.sqlite3").is_file():
         try:
-            return trim_path(commands, index_id, source_root_id, kind, path, secrets.token_hex(16))
-        except ValueError as error:
-            if "registry_busy" not in str(error) or attempt == attempts:
-                raise
-        sleep(min(5.0 * attempt, 30.0))
+            pending = registry_pending(control)
+        except sqlite3.Error as error:
+            pending = {"unreadable": f"{type(error).__name__}: {error}"}
+        if any(pending.values()):
+            busy["registry"] = pending
+    return busy
+
+
+def wait_projects_idle(commands, bindings, seconds, sleep=time.sleep, clock=time.monotonic):
+    """Wait, on the service's own records, until the installation is quiet: no project holds a pending or
+    running job and the registry promises no follow-up (installation_busy).
+
+    A source-policy change needs this (22 November 2026, the ``05-gate-lg`` and ``06-gate-lg`` bases):
+
+    - the service refuses the change's review while its index has jobs (``source_change_jobs_pending``). A
+      ``verify`` job follows a policy application when the setup's index job had already begun, so the next
+      change must wait for it;
+    - the change's authority fence drains the provider the projects share. Applied while another project's
+      ``vectors`` job ran, it ended with an unknown outcome in two roots (the fence completed about a second
+      later) and, in a third, it returned applied but the other project's vectors job was pushed back to
+      pending and then failed (``project_operation_failed``).
+
+    Returns the seconds waited; raises when the deadline passes, naming the unfinished work."""
+    started = clock()
+    end = min(getattr(commands, "deadline", started + seconds), started + seconds)
+    while True:
+        busy = installation_busy(commands, bindings)
+        if not busy:
+            return clock() - started
+        require(clock() < end, "the installation did not become quiet for a source-policy change: "
+                + json.dumps(busy)[:1500])
+        stop = getattr(commands, "stop_file", None)
+        require(stop is None or not stop.is_file(), "stop file written while waiting")
+        # Bounded sampling of the actual job records, under the deadline above.
+        sleep(0.5)
+
+
+def trim_when_idle(commands, bindings, index_id, source_root_id, kind, path, seconds=SOURCE_CHANGE_SECONDS,
+                   sleep=time.sleep, clock=time.monotonic):
+    """Bring one deny into force and return only when the service's own policy status names it.
+
+    Each round waits until no project of the installation holds unfinished work, reads the policy again (so a
+    deny that did land is never applied twice) and submits a new reviewed change with a new nonce.
+
+    - A typed busy refusal has no effect: the round starts over at the wait. The loop is bounded by the
+      deadline and every refusal is kept in the record.
+    - An unknown apply outcome is never taken for a refusal. The change is observed until it is in force; the
+      index pass is never queued behind a pending authority fence (the service refuses it,
+      ``invalid_registry_request``). A change that is not in force by the deadline raises.
+    """
+    started = clock()
+    end = started + seconds
+    refusals = []
+    while True:
+        waited = wait_projects_idle(commands, bindings, max(1.0, end - clock()), sleep, clock)
         have, _ = denied_atoms(index_policy(commands, index_id))
         if (kind, path) in have:
-            return {"selection": None, "draft_preview_digest": None, "applied": "already denied after a busy retry"}
-    raise ValueError("unreachable")
+            return {"state": "already_denied", "draft_preview_digest": None, "busy_refusals": refusals,
+                    "idle_wait_seconds": waited}
+        outcome = trim_path(commands, index_id, source_root_id, kind, path, secrets.token_hex(16))
+        if outcome["state"] in ("applied", "unknown"):
+            try:
+                status = wait_policy(commands, index_id, kind, path, seconds=max(1.0, end - clock()))
+            except ValueError as error:
+                if outcome["state"] == "unknown":
+                    raise ValueError("source-policy change outcome unknown and not in force: "
+                                     + json.dumps(outcome.get("fence")) + "; " + str(error)) from error
+                raise
+            application = (status.get("snapshot") or {}).get("application") or {}
+            return {"state": outcome["state"], "draft_preview_digest": outcome["draft_preview_digest"],
+                    "fence": outcome.get("fence"), "busy_refusals": refusals, "idle_wait_seconds": waited,
+                    "removed_artifacts": application.get("removed_artifacts"),
+                    "seconds": clock() - started}
+        refusals.append({"at": outcome.get("at"), "code": outcome.get("code"), "busy": outcome.get("busy"),
+                         "utc": utc()})
+        require(clock() < end, "the service kept refusing the source-policy change as busy: "
+                + json.dumps(refusals[-3:])[:1500])
+        sleep(0.5)
 
 
 def denied_atoms(policy_status):
@@ -610,8 +889,14 @@ def ensure_index(commands, repo, root, data_root, state_path, first_vectors, rec
                  installed=None):
     """Set up, trim, install MiniLM once, index and wait for semantic publication; reuse what exists.
 
-    ``phase`` "lexical" stops after the index pass and the deny check, so the caller can start the next
-    repository while this one's vectors build; "semantic" does only the semantic wait and the probe."""
+    ``phase`` "policy" stops once the index is set up, every deny of its repository is in force and (through
+    the first index) MiniLM is installed, so the caller can bring every repository's source policy into force
+    before it queues any index pass. "lexical" continues through the index pass and the deny check, so the
+    caller can start the next repository while this one's vectors build; "semantic" does only the semantic
+    wait and the probe.
+
+    No deny is ever deferred behind an index pass: a deny that cannot be brought into force raises before the
+    pass is queued, so a denied file is never indexed first."""
     state = read_json(state_path) if state_path.is_file() else None
     if state is None:
         data = data_root / repo
@@ -636,34 +921,117 @@ def ensure_index(commands, repo, root, data_root, state_path, first_vectors, rec
     record["index_id"] = index_id
     if phase == "semantic":
         return finish_semantic(commands, repo, state, state_path, record)
-    deferred = apply_trims(commands, repo, state, state_path, before_index=state["indexed"] is None)
+    apply_trims(commands, repo, state, state_path)
+    record.update(binding=state["binding"], root=state["root"], data_dir=state["data_dir"])
+    record["denies"] = required_denies(commands, repo, index_id)
     if first_vectors is not None:
+        # The denies above are in force: the install starts this project's index pass by itself.
         job = commands.json(f"install-minilm-{repo}", "--service-project", state["binding"], "configure",
                             "--file", str(first_vectors / "minilm-install.json"))["job"]
         wait_job(commands, job["id"], "configure", 4 * 3600)
         state["vectors_installed"] = True
+        state["install_index"] = install_index_job(commands, state["binding"])
         write_json(state_path, state, replace=True)
         if installed is not None:
             write_json(installed, {"installed_by": repo, "at": utc(), "minilm": str(MINILM), "job": job["id"]},
                        replace=True)
+    if phase == "policy":
+        return record
     if state["indexed"] is None:
-        started = time.monotonic()
-        job = commands.json(f"index-{repo}", "--service-project", state["binding"], "index")["job"]
-        wait_job(commands, job["id"], "index", 4 * 3600)
-        state["indexed"] = {"job": job["id"], "seconds": time.monotonic() - started, "at": utc(),
-                            "source_commit": commit}
+        started, job_id = time.time(), None
+        adopted = state.get("install_index") or {}
+        if adopted.get("job"):
+            # The pass the MiniLM install started is this repository's first index pass; a second request
+            # would only queue a pass over unchanged sources behind it. A pass that an earlier lifetime's
+            # stop cancelled is not adopted: the launcher queues a new one.
+            current = commands.json("index-job", "jobs", "get", adopted["job"])["job"]
+            if current.get("state") in ("pending", "running", "succeeded"):
+                job_id, started, queued_by = adopted["job"], adopted["unix"], "the MiniLM install"
+        if job_id is None:
+            job_id = commands.json(f"index-{repo}", "--service-project", state["binding"], "index")["job"]["id"]
+            queued_by = "the launcher"
+        wait_job(commands, job_id, "index", 4 * 3600)
+        state["indexed"] = {"job": job_id, "seconds": time.time() - started, "at": utc(), "source_commit": commit,
+                            "queued_by": queued_by,
+                            "job_seconds": job_seconds(getattr(commands, "control", None), job_id)}
         write_json(state_path, state, replace=True)
-    if deferred:
-        apply_trims(commands, repo, state, state_path, before_index=False)
-    if EXCLUSIONS[repo]:
-        have, _ = denied_atoms(index_policy(commands, index_id))
-        require(all(atom in have for atom in EXCLUSIONS[repo]), "source policy lacks a required deny")
-        record["denies"] = sorted([list(atom) for atom in have])
-    record.update(binding=state["binding"], root=state["root"], data_dir=state["data_dir"],
-                  source_commit=state["indexed"]["source_commit"], indexing_seconds=state["indexed"]["seconds"])
+        record["denies"] = required_denies(commands, repo, index_id)
+    record.update(source_commit=state["indexed"]["source_commit"], indexing_seconds=state["indexed"]["seconds"])
     if phase == "lexical":
         return record
     return finish_semantic(commands, repo, state, state_path, record)
+
+
+def install_index_job(commands, binding, seconds=60):
+    """The index pass the MiniLM install starts for the installing project (22 November 2026, root
+    ``06-gate-lg-C``: queued 181 ms after the install's configure job succeeded, with no request from the
+    launcher). Returns ``{"job": id, "at", "unix"}`` once the job is seen, or a record without a job when
+    none appears by the deadline; the launcher then queues the pass itself."""
+    started = time.time()
+    end = min(getattr(commands, "deadline", time.monotonic() + seconds), time.monotonic() + seconds)
+    while True:
+        jobs = unfinished_jobs(commands.json("install-progress", "--service-project", binding, "progress"))
+        found = sorted(job_id for job_id, job in jobs.items() if job.get("kind") == "index")
+        if found:
+            return {"job": found[0], "at": utc(), "unix": started}
+        if time.monotonic() >= end:
+            return {"job": None, "at": utc(), "unix": started, "waited_seconds": seconds}
+        time.sleep(0.25)
+
+
+def job_seconds(control, job_id):
+    """Seconds between a job's ``job_running`` and ``job_succeeded`` events in the service registry (read
+    without writing), or None when the registry or either event is not at hand."""
+    import sqlite3
+    if not control or not (Path(control) / "service-1.4.sqlite3").is_file():
+        return None
+    try:
+        connection = sqlite3.connect(f"file:{(Path(control) / 'service-1.4.sqlite3').as_posix()}?mode=ro", uri=True,
+                                     timeout=5)
+        try:
+            rows = dict(connection.execute("SELECT kind, max(observed_ms) FROM service_events WHERE job=?1 "
+                                           "AND kind IN ('job_running','job_succeeded') GROUP BY kind",
+                                           (job_id,)).fetchall())
+        finally:
+            connection.close()
+    except sqlite3.Error:
+        return None
+    if "job_running" not in rows or "job_succeeded" not in rows:
+        return None
+    return (rows["job_succeeded"] - rows["job_running"]) / 1000
+
+
+def repository_order_problem(repositories, states):
+    """Why this list of repositories cannot be built safely on this installation, or None.
+
+    On an installation without MiniLM the launcher installs it through the first repository, once that
+    repository's denies are in force, and the install starts that repository's index pass. A later
+    repository that still needs a deny would get it while the first project works, which is exactly what a
+    source-policy change must not meet (wait_projects_idle). So only the first repository may need a deny:
+    list the repository with denies first. An installation that already has MiniLM takes a new repository
+    with denies whenever it is quiet."""
+    states = Path(states)
+    if (states / "minilm.state.json").is_file():
+        return None
+    late = [repo for repo in list(repositories)[1:]
+            if EXCLUSIONS.get(repo) and not (states / f"{repo}.state.json").is_file()]
+    if not late:
+        return None
+    return (f"{', '.join(late)} needs denies and is not listed first: on a fresh installation MiniLM is "
+            "installed through the first repository once its denies are in force, and the install starts that "
+            "repository's index pass, so a later repository's deny would be applied while another project "
+            "works. List the repository with denies first.")
+
+
+def required_denies(commands, repo, index_id):
+    """The denies in force for an index; raises unless every deny of its repository is among them. Read before
+    the index pass is queued and again after it."""
+    if not EXCLUSIONS[repo]:
+        return []
+    have, _ = denied_atoms(index_policy(commands, index_id))
+    missing = [atom for atom in EXCLUSIONS[repo] if atom not in have]
+    require(not missing, "source policy lacks a required deny: " + json.dumps(missing))
+    return sorted([list(atom) for atom in have])
 
 
 REPLAYABLE_PROBE_REFUSALS = ("Focus policy or source changed after native work",)
@@ -689,11 +1057,16 @@ def probe_search(commands, repo, index_id, attempts=4, sleep=time.sleep):
 
 def finish_semantic(commands, repo, state, state_path, record):
     index_id = state["index_id"]
-    requeued = []
-    status = wait_semantic(commands, index_id, MAX_SECONDS, state["binding"], requeued)
-    if requeued:
-        state.setdefault("semantic_requeued", []).extend(requeued)
-        write_json(state_path, state, replace=True)
+    requeued, refusals, retries = [], [], []
+    try:
+        status = wait_semantic(commands, index_id, MAX_SECONDS, state["binding"], requeued, refusals, retries)
+    finally:
+        if requeued or refusals or retries:
+            for key, rows in (("semantic_requeued", requeued), ("semantic_status_refusals", refusals),
+                              ("semantic_retries", retries)):
+                if rows:
+                    state.setdefault(key, []).extend(rows)
+            write_json(state_path, state, replace=True)
     search = probe_search(commands, repo, index_id)
     require(search["publication"]["token"] == status["publication"]["token"]
             and search["semantic_readiness"]["state"] == "ready"
@@ -707,34 +1080,35 @@ def finish_semantic(commands, repo, state, state_path, record):
     return record
 
 
-def apply_trims(commands, repo, state, state_path, before_index):
-    """Deny each benchmark path through the index's source policy. Returns True when the service
-    refused a trim before the first index pass, so the caller applies it after that pass."""
+def apply_trims(commands, repo, state, state_path):
+    """Bring every deny of the repository into force through the index's own source policy.
+
+    Each missing deny is one reviewed change, made when the installation is idle and confirmed from the
+    service's policy status (trim_when_idle). A change that cannot be brought into force raises here; the
+    earlier fallback, which deferred a refused deny until after the first index pass, is gone, because it let
+    the pass index the file the deny names and took an unknown outcome for a refusal."""
     if not EXCLUSIONS[repo]:
-        return False
+        return
     index_id = state["index_id"]
+    have, _ = denied_atoms(index_policy(commands, index_id))
+    missing = [atom for atom in EXCLUSIONS[repo] if atom not in have]
+    if not missing:
+        return
     _, roots = index_sources(commands, index_id)
     source_ids = sorted({entry["id"] for entry in roots if isinstance(entry, dict)
                          and str(entry.get("id", "")).startswith("src_")})
     require(len(source_ids) == 1, "expected exactly one source root for " + repo)
-    for kind, path in EXCLUSIONS[repo]:
-        have, _ = denied_atoms(index_policy(commands, index_id))
-        if (kind, path) in have:
+    bindings = installation_bindings(Path(state_path).parent) | {repo: state["binding"]}
+    for kind, path in missing:
+        outcome = trim_when_idle(commands, bindings, index_id, source_ids[0], kind, path)
+        if outcome["state"] == "already_denied":
             continue
-        try:
-            outcome = trim_with_busy_retry(commands, index_id, source_ids[0], kind, path)
-        except ValueError as error:
-            if before_index:
-                state.setdefault("trim_refusals_before_index", []).append({"kind": kind, "path": path,
-                                                                            "error": str(error)[:2000]})
-                write_json(state_path, state, replace=True)
-                return True
-            raise
-        state["trims"].append({"kind": kind, "path": path, "at": utc(), "before_index": before_index,
-                               "preview_digest": outcome["draft_preview_digest"]})
+        state["trims"].append({"kind": kind, "path": path, "at": utc(), "before_index": state["indexed"] is None,
+                               "preview_digest": outcome["draft_preview_digest"], "outcome": outcome["state"],
+                               "fence": outcome["fence"], "busy_refusals": outcome["busy_refusals"],
+                               "idle_wait_seconds": outcome["idle_wait_seconds"],
+                               "removed_artifacts": outcome["removed_artifacts"], "seconds": outcome["seconds"]})
         write_json(state_path, state, replace=True)
-        wait_policy(commands, index_id, kind, path)
-    return False
 
 
 def wait_policy(commands, index_id, kind, path, seconds=3600):
@@ -1023,9 +1397,16 @@ def worker(args):
                     nat["ignored"](images["service"]["path"], "emit_private_selected_vector_configuration"),
                     logs, "emit-minilm", env | {"AIRK_SELECTED_MINILM_DIRECTORY": str(MINILM),
                                                 "AIRK_SELECTED_VECTOR_DRAFT_OUTPUT": str(vectors)}, deadline)
-            # Phase 1 runs every repository's setup, trims and lexical pass in turn; the service keeps
-            # building the earlier repositories' vectors meanwhile. Phase 2 waits for each to be ready.
+            # Phase 0 sets up every repository and brings its denies into force before the launcher queues
+            # any index pass. MiniLM is installed through the first project once its denies are in force;
+            # the install starts that project's index pass, so only the first repository may need a deny
+            # (repository_order_problem). No project then runs index or vectors work while a source policy
+            # changes. On 22 November 2026 a deny applied to the second repository while the first one's
+            # vectors job ran ended with an unknown outcome in two roots, and the index pass queued behind
+            # it was refused.
             roots = {}
+            problem = repository_order_problem(args.repositories, states)
+            require(problem is None, str(problem))
             for repo in args.repositories:
                 record = {"repository": repo}
                 handle["indexes"][repo] = record
@@ -1038,8 +1419,17 @@ def worker(args):
                     record["indexed_in_place"] = True
                 roots[repo] = (root, commit)
                 ensure_index(commands, repo, root, states, states / f"{repo}.state.json", vectors, record, commit,
-                             phase="lexical", installed=installed)
+                             phase="policy", installed=installed)
                 vectors = None
+                write_json(handle_path, handle, replace=True)
+            handle["source_policy_utc"] = utc()
+            write_json(handle_path, handle, replace=True)
+            # Phase 1 runs every repository's lexical pass in turn; the service keeps building the earlier
+            # repositories' vectors meanwhile. Phase 2 waits for each to be ready.
+            for repo in args.repositories:
+                root, commit = roots[repo]
+                ensure_index(commands, repo, root, states, states / f"{repo}.state.json", None,
+                             handle["indexes"][repo], commit, phase="lexical")
                 write_json(handle_path, handle, replace=True)
             # After a restart the service may resume only some projects' embedding series; resume
             # every idle, not-ready index now so all build concurrently while phase 2 waits in turn.
@@ -1133,6 +1523,8 @@ def start(args):
     require(0 < args.seconds <= MAX_SECONDS, f"the lifetime is at most {MAX_SECONDS} s")
     for repo in args.repositories:
         require(repo in REPOSITORIES, "unknown repository " + repo)
+    problem = repository_order_problem(args.repositories, fixtures / "indexes")
+    require(problem is None, str(problem))
     life.mkdir()
     argv = [sys.executable, "-I", "-B", "-S", str(Path(__file__).resolve()), "--fixtures", str(fixtures),
             "worker", "--lifetime-path", str(life), "--image", str(Path(args.image).resolve()), "--inputs", str(args.inputs),
@@ -1198,6 +1590,12 @@ def profile_tasks(work, ready, manifest):
 
 
 EMITTER = "emit_private_arbiter_configuration"
+# A stage command's ``--enrol-as TASK[,TASK]``: the enrollment tasks to send instead of the emitted ones.
+# Only for a lifetime whose image emits a wrong enrollment and which cannot be restarted (the 23 November
+# 2026 shakedown lifetime: its image enrolled a loop profile's card tasks, which Configure refuses). The
+# emitter of another image cannot be used: it refuses a service that is not its own binary. Recorded with
+# the stage; never for a gate lifetime, whose image emits the stage's enrollment task itself.
+ENROLLMENT_OVERRIDE = None
 
 
 def external_declaration(roots):
@@ -1259,9 +1657,21 @@ def set_stage(life, handle, profile_name, enabled, repositories, seconds=900):
     path = work / f"{prefix}.configure.json"
     request = read_json(path)
     require(request["stage"] == stage and request["enabled"] is enabled and request["selected_profile"] == manifest
-            and sorted(entry["index_id"] for entry in request["indexes"]) == index_ids
-            and all(entry["tasks"] == tasks for entry in request["indexes"]),
+            and sorted(entry["index_id"] for entry in request["indexes"]) == index_ids,
             "emitted enrollment differs from the requested repositories")
+    # The enrollment names the stage's enrollment task, which the emitter owns: a loop Context profile
+    # declares the four card tasks and is enrolled under the one-turn Context task (changes entry 31), so the
+    # enrollment equals the profile's tasks only for a one-turn profile. Every index gets the same one.
+    enrolled = [entry["tasks"] for entry in request["indexes"]]
+    require(bool(tasks) and all(row and row == enrolled[0] for row in enrolled),
+            "emitted enrollment names no task, or differs between the indexes")
+    emitted = enrolled[0]
+    if ENROLLMENT_OVERRIDE:
+        for entry in request["indexes"]:
+            entry["tasks"] = list(ENROLLMENT_OVERRIDE)
+        path = work / f"{prefix}.configure.enrol-as.json"
+        write_json(path, request)
+        enrolled = [list(ENROLLMENT_OVERRIDE)]
     applied = commands.json("configure-" + label, "arbiter", "configure", "--legacy", "--file", str(path))
     revision = applied["configuration"]["revision"]
     warm = wait_warm(work, ready, stage, manifest, revision, seconds) if enabled else None
@@ -1280,7 +1690,9 @@ def set_stage(life, handle, profile_name, enabled, repositories, seconds=900):
             "stage state differs from the accepted configuration")
     record = {"profile": profile_name, "manifest": manifest, "enabled": enabled, "revision": revision,
               "repositories": list(repositories), "seconds": time.monotonic() - started, "at": utc(),
-              "warm_sequence": None if warm is None else warm.get("sequence")}
+              "warm_sequence": None if warm is None else warm.get("sequence"), "enrollment": enrolled[0]}
+    if ENROLLMENT_OVERRIDE:
+        record["enrollment_override"] = {"emitted": emitted, "sent": enrolled[0]}
     return record
 
 
@@ -1550,24 +1962,75 @@ def hit_paths(value):
     return found
 
 
-def scenario_probes(evaluation=EVALUATION):
-    """airk leak_probe phrases: from the scenario freeze when it exists (each file re-pinned), else a scan."""
+def scenario_probes(evaluation=EVALUATION, repo="airk"):
+    """One repository's leak_probe phrases: from the scenario freeze when it holds scenarios of that
+    repository (every frozen file is re-pinned), else from ``scenarios/<repo>/*.json`` and
+    ``sealed/<repo>/*.json`` (rows without a pin). Only scenario objects of that repository count: on
+    22 November 2026 a review's ``findings.json``, a list, lay in ``scenarios/munarium-review`` and the earlier
+    scan of every folder stopped on it."""
     freeze = evaluation / "scenario-freeze.json"
-    rows = []
+    rows, frozen_repositories = [], set()
     if freeze.is_file():
         for relative, digest in sorted(read_json(freeze)["files"].items()):
             path = evaluation / PurePosixPath(relative)
             require(sha256(path) == digest, "frozen scenario changed: " + relative)
             scenario = read_json(path)
-            if scenario.get("repository") == "airk" and scenario.get("leak_probe"):
+            frozen_repositories.add(scenario.get("repository"))
+            if scenario.get("repository") == repo and scenario.get("leak_probe"):
                 rows.append({"source": relative, "phrase": scenario["leak_probe"], "sha256": digest})
-        return rows
+        if repo in frozen_repositories:
+            return rows
     for folder in ("scenarios", "sealed"):
-        for path in sorted((evaluation / folder).glob("*/*.json")):
+        for path in sorted((evaluation / folder / repo).glob("*.json")):
             scenario = read_json(path)
-            if scenario.get("repository") == "airk" and scenario.get("leak_probe"):
-                rows.append({"source": str(path.relative_to(evaluation)), "phrase": scenario["leak_probe"]})
+            if isinstance(scenario, dict) and scenario.get("repository") == repo and scenario.get("leak_probe"):
+                rows.append({"source": path.relative_to(evaluation).as_posix(), "phrase": scenario["leak_probe"]})
     return rows
+
+
+def index_aliases(fixtures):
+    """``{scenario repository: index name}`` from ``<fixtures>/index-aliases.json`` (common.py's file)."""
+    path = Path(fixtures) / "index-aliases.json"
+    if not path.is_file():
+        return {}
+    raw = read_json(path)
+    aliases = raw.get("aliases", raw) if isinstance(raw, dict) else {}
+    require(isinstance(aliases, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in aliases.items()),
+            "index-aliases.json must map repository names to index names")
+    return dict(aliases)
+
+
+def scenario_repositories(index_name, aliases):
+    """The scenario repository names an index serves: its own name and every alias that points at it."""
+    return sorted({index_name, *(logical for logical, physical in aliases.items() if physical == index_name)})
+
+
+FORBIDDEN_INDEX = "airk"
+
+
+def forbidden_index_findings(handle_indexes, state_names, catalog_items, name=FORBIDDEN_INDEX):
+    """Why a lifetime holds an index of the named repository (the loop series must hold no airk index):
+    the handle names one, a state file exists for one, or the service's own catalog lists an index with
+    that collection name or a source root exported from or equal to that checkout. Empty when it holds none."""
+    findings = []
+    if name in handle_indexes:
+        findings.append({"where": "handle", "index": name})
+    if name in state_names:
+        findings.append({"where": "state file", "index": name})
+    checkout = str(REPOSITORIES[name]).lower().rstrip("\\/") if name in REPOSITORIES else None
+    for item in catalog_items:
+        value = item.get("value") if isinstance(item, dict) and isinstance(item.get("value"), dict) else item
+        if not isinstance(value, dict):
+            continue
+        backing = value.get("backing") or {}
+        root = str(backing.get("root") or "").replace("/", "\\")
+        plain = root[4:] if root.startswith("\\\\?\\") else root
+        leaf = plain.rstrip("\\").rsplit("\\", 1)[-1].lower()
+        names = {str(value.get("name") or "").lower(), str(backing.get("collection") or "").lower()}
+        if (f"answer-eval-{name}" in names or leaf.startswith(name + "-") or leaf == name
+                or (checkout is not None and plain.lower().rstrip("\\") == checkout)):
+            findings.append({"where": "catalog", "index": value.get("id"), "name": value.get("name"), "root": root})
+    return findings
 
 
 class CursorExpired(Exception):
@@ -1628,42 +2091,78 @@ def top_level_entries(root):
             if entry.name not in (".git",)]
 
 
-def leak_probe(args):
-    # --while-indexing probes the lexical publication before semantic readiness; the result says so.
-    life, handle = load_handle(args, ("ready", "indexing") if args.while_indexing else ("ready",))
-    record = handle["indexes"].get("airk") or read_json(Path(args.fixtures) / "indexes" / "airk.state.json")
+def probe_repository(commands, repo, record, probes, fallback):
+    """Leak-probe one index against its own repository's exclusion list.
+
+    Every scenario phrase is searched and every returned path checked; then every indexed path is listed and
+    checked. A repository without exclusions (munarium) is probed the same way and records an empty list, so
+    the result shows that the probe ran and what it compared against."""
     index_id = record["index_id"]
-    probes = scenario_probes(Path(args.evaluation))
     source = "scenario leak_probe phrases"
-    if not probes:
-        probes = [{"source": "fallback phrase from an excluded file", "phrase": phrase} for phrase in args.phrase]
+    if not probes and fallback:
+        probes = [{"source": "fallback phrase from an excluded file", "phrase": phrase} for phrase in fallback]
         source = "fallback phrases from excluded files"
-    require(probes, "no scenario probes and no fallback phrases")
-    commands = client_commands(life, handle, "leak-probe-commands", 1800)
+    if not probes:
+        require(not EXCLUSIONS[repo], f"no scenario probes and no fallback phrases for {repo}")
+        source = "none: no scenario names this repository yet"
     rows, failures = [], []
     for probe in probes:
-        envelope, path, elapsed = commands.tool("search", "airk_search", index_id,
+        envelope, path, elapsed = commands.tool(f"search-{repo}", "airk_search", index_id,
                                                 {"query": probe["phrase"], "limit": 16, "response_mode": "full"})
         body = tool_body(envelope)
         named = sorted(set(hit_paths(body.get("hits", body))))
-        bad = [p for p in named if excluded(p)]
+        bad = [p for p in named if excluded(p, repo)]
         rows.append({**probe, "hits": len(body.get("hits", [])), "paths": named, "excluded_hits": bad,
                      "result": {"path": str(path), "sha256": sha256(path)}, "elapsed_ms": elapsed // 1_000_000})
-        failures += [{"probe": probe["phrase"], "path": p} for p in bad]
-    listed, pages = list_all_files(commands, index_id, top_entries=top_level_entries(snapshot_root("airk", Path(args.fixtures))))
-    indexed_excluded = sorted(p for p in listed if excluded(p))
-    result = {"schema": "airk.private.answer-eval-leak-probe/1", "lifetime": life.name, "at": utc(),
-              "index_id": index_id, "publication_token": record.get("publication_token"),
-              "handle_state": handle["state"],
-              "probe_source": source, "probes": rows, "listed_files": len(listed), "list_pages": pages,
-              "indexed_excluded_paths": indexed_excluded, "exclusions": EXCLUSIONS["airk"],
-              "passed": not failures and not indexed_excluded, "failures": failures}
+        failures += [{"repository": repo, "probe": probe["phrase"], "path": p} for p in bad]
+    listed, pages = list_all_files(commands, index_id, top_entries=top_level_entries(record["root"]))
+    indexed_excluded = sorted(p for p in listed if excluded(p, repo))
+    return {"repository": repo, "index_id": index_id, "publication_token": record.get("publication_token"),
+            "root": record["root"], "probe_source": source, "probes": rows, "listed_files": len(listed),
+            "list_pages": pages, "indexed_excluded_paths": indexed_excluded,
+            "exclusions": [list(atom) for atom in EXCLUSIONS[repo]],
+            "passed": not failures and not indexed_excluded, "failures": failures}
+
+
+def leak_probe(args):
+    """Probe every index of the lifetime (or ``--repositories``) and check that it holds no airk index."""
+    # --while-indexing probes the lexical publication before semantic readiness; the result says so.
+    life, handle = load_handle(args, ("ready", "indexing") if args.while_indexing else ("ready",))
+    fixtures = Path(args.fixtures)
+    aliases = index_aliases(fixtures)
+    commands = client_commands(life, handle, "leak-probe-commands", 1800)
+    selected = args.repositories or list(handle["indexes"])
+    require(selected and all(repo in handle["indexes"] and repo in EXCLUSIONS for repo in selected),
+            "every probed repository must be an index of this lifetime")
+    page = commands.json("catalog-indexes", "library", "list", "--kind", "indexes")
+    inner = page.get("page") if isinstance(page.get("page"), dict) else page
+    require(inner.get("continuation") is None, "the index catalog did not fit one page")
+    states = sorted(path.name.split(".")[0] for path in (fixtures / "indexes").glob("*.state.json")
+                    if path.name != "minilm.state.json")
+    forbidden = forbidden_index_findings(handle["indexes"], states, inner.get("items") or [])
+    repositories = {}
+    for repo in selected:
+        probes = [row for name in scenario_repositories(repo, aliases)
+                  for row in scenario_probes(Path(args.evaluation), name)]
+        repositories[repo] = probe_repository(commands, repo, handle["indexes"][repo], probes, args.phrase)
+        repositories[repo]["scenario_repositories"] = scenario_repositories(repo, aliases)
+    passed = (all(row["passed"] for row in repositories.values()) and (args.allow_airk_index or not forbidden))
+    result = {"schema": "airk.private.answer-eval-leak-probe/2", "lifetime": life.name, "at": utc(),
+              "handle_state": handle["state"], "aliases": aliases, "catalog_indexes": len(inner.get("items") or []),
+              "state_files": states, "forbidden_index": FORBIDDEN_INDEX, "forbidden_index_findings": forbidden,
+              "forbidden_index_allowed": bool(args.allow_airk_index), "repositories": repositories,
+              "passed": passed, "failures": [f for row in repositories.values() for f in row["failures"]]}
     number = 1
-    while (FIXTURES / f"leak-probe-{number}.json").exists():
+    while (fixtures / f"leak-probe-{number}.json").exists():
         number += 1
-    pinned = write_json(Path(args.fixtures) / f"leak-probe-{number}.json", result)
-    print(json.dumps({"passed": result["passed"], "probes": len(rows), "listed_files": len(listed), **pinned}))
-    require(result["passed"], "leak probe failed: an excluded path is served")
+    pinned = write_json(fixtures / f"leak-probe-{number}.json", result)
+    print(json.dumps({"passed": passed, "forbidden_index_findings": len(forbidden),
+                      "repositories": {repo: {"probes": len(row["probes"]), "listed_files": row["listed_files"],
+                                              "indexed_excluded_paths": len(row["indexed_excluded_paths"]),
+                                              "passed": row["passed"]} for repo, row in repositories.items()},
+                      **pinned}))
+    require(not forbidden or args.allow_airk_index, "leak probe failed: the lifetime holds an airk index")
+    require(passed, "leak probe failed: an excluded path is served")
 
 
 # --- tool smoke -------------------------------------------------------------------------------------
@@ -1684,9 +2183,33 @@ def smoke_calls(index, question):
     ]
 
 
+ANSWER_REQUEST_SCHEMA = "airk.arbiter.context.request/3"
+ANSWER_REPLY_SCHEMA = "airk.arbiter.context/3"
+
+
 def answer_arguments(work, question):
+    """The smoke Answer: the request the fixture service wrote as ``context-request.json`` (the loop's /3
+    request with Core's whole default budget and the full response options), with the question set. No
+    schema or budget is written here; a template of another request version is refused, not patched."""
     template = read_json(work / "context-request.json")
+    require(template.get("schema") == ANSWER_REQUEST_SCHEMA and isinstance(template.get("budget"), dict)
+            and bool(template["budget"]), "the fixture's context-request.json is not a whole Answer /3 request")
     return template | {"question": question}
+
+
+def answer_smoke_row(body):
+    """What a smoke Answer reply shows, read as Answer /3: parts and their stops, sub-needs, records and the
+    decision log's size. Any other reply schema is a failed smoke, never read as an empty Answer."""
+    require(isinstance(body, dict) and body.get("schema") == ANSWER_REPLY_SCHEMA,
+            "the smoke Answer is not an Answer /3 reply: " + str((body or {}).get("schema")))
+    parts = [part for part in body.get("parts") or [] if isinstance(part, dict)]
+    log = body.get("decision_log") if isinstance(body.get("decision_log"), dict) else {}
+    partial = body.get("partial") if isinstance(body.get("partial"), dict) else None
+    return {"schema": body["schema"], "parts": len(parts), "stops": [part.get("stop") for part in parts],
+            "sub_needs": sum(len(part.get("sub_needs") or []) for part in parts),
+            "records": len(body.get("records") or []), "decisions": log.get("total"),
+            "partial": None if partial is None else partial.get("reason"),
+            "degradations": sorted({str(d.get("kind")) for d in body.get("degradations") or [] if isinstance(d, dict)})}
 
 
 def smoke(args):
@@ -1698,9 +2221,11 @@ def smoke(args):
     work = Path(handle["work"])
     commands = client_commands(life, handle, "smoke-commands", 4 * 3600)
     questions = {"airk": "How does a source file become searchable: scanning, chunking, embedding and publication?",
-                 "bookbuilder": "How is a manuscript project exported to a document file?"}
-    samples = {"airk": ("crates/airk-core/src/source_policy.rs", "validate_root_path"),
-               "bookbuilder": (None, None)}
+                 "bookbuilder": "How is a manuscript project exported to a document file?",
+                 "munarium": "How does the server check a capability token before it serves a request?"}
+    questions["bookbuilder-v2"] = questions["bookbuilder"]
+    # A repository without a named sample takes its first listed code file and that file's first symbol.
+    samples = {"airk": ("crates/airk-core/src/source_policy.rs", "validate_root_path")}
     rows = []
 
     def call(repo, phase, tool, arguments):
@@ -1723,21 +2248,21 @@ def smoke(args):
                "bytes": out.stat().st_size, "is_error": envelope.get("isError") is True,
                "result": {"path": str(out), "sha256": sha256(out)}}
         if tool == "airk_answer" and not row["is_error"]:
-            body = tool_body(envelope)
-            row.update(stop=body.get("stop"), records=len(body.get("records", [])),
-                       assessments=len(body.get("assessment_history", [])))
+            row.update(answer_smoke_row(tool_body(envelope)))
         rows.append(row)
         return envelope
 
     for repo in selected:
         index = dict(handle["indexes"][repo])
-        sample, symbol = samples[repo]
+        require(repo in questions, "no smoke question for repository " + repo)
+        sample, symbol = samples.get(repo, (None, None))
         if sample is None:
             listing = tool_body(commands.tool("sample-files", "airk_list_files", index["index_id"],
                                               {"limit": 100, "response_mode": "full"})[0])
             entries = listing.get("paths") or listing.get("files") or listing.get("entries") or []
             names = [e["path"] if isinstance(e, dict) else e for e in entries]
-            sample = next((n for n in names if n.endswith(".cs")), names[0] if names else None)
+            sample = next((n for n in names if n.endswith((".cs", ".rs", ".py", ".java", ".ts"))),
+                          names[0] if names else None)
         index["sample_file"], index["sample_symbol"] = sample, symbol
         if symbol is None and sample:
             outline = commands.tool("sample-outline", "airk_outline", index["index_id"],
@@ -1800,7 +2325,8 @@ def main():
     begin.add_argument("--seconds", type=int, default=MAX_SECONDS)
     begin.add_argument("--inputs", type=Path, default=DEFAULT_INPUTS)
     begin.add_argument("--inputs-sha256", default=DEFAULT_INPUTS_SHA256)
-    begin.add_argument("--repositories", type=lambda v: [x for x in v.split(",") if x], default=["airk", "bookbuilder"])
+    begin.add_argument("--repositories", type=lambda v: [x for x in v.split(",") if x],
+                       default=list(DEFAULT_REPOSITORIES))
     begin.add_argument("--no-dispatch-observer", dest="dispatch_observer", action="store_false")
     begin.add_argument("--accept-unidle-close", metavar="LIFETIME=SHA256",
                        help="a recorded one-time exception from UNIDLE_CLOSE_EXCEPTIONS for --restart-from")
@@ -1822,11 +2348,15 @@ def main():
     mode.add_argument("--enable", action="store_true")
     mode.add_argument("--disable", dest="enable", action="store_false")
     staged.add_argument("--repositories", type=lambda v: [x for x in v.split(",") if x])
-    probe = sub.add_parser("leak-probe", help="fail if the airk index serves an excluded path")
+    probe = sub.add_parser("leak-probe", help="fail if an index serves an excluded path or an airk index exists")
     probe.add_argument("--lifetime", required=True)
     probe.add_argument("--evaluation", type=Path, default=EVALUATION)
+    probe.add_argument("--repositories", type=lambda v: [x for x in v.split(",") if x],
+                       help="indexes to probe (default: every index of the lifetime)")
     probe.add_argument("--phrase", action="append", default=[], help="fallback phrase when no scenario exists")
     probe.add_argument("--while-indexing", action="store_true", help="allow a lifetime still building vectors")
+    probe.add_argument("--allow-airk-index", action="store_true",
+                       help="history only: the one-turn campaign root holds an airk index")
     check = sub.add_parser("smoke", help="time one call of each read tool per index")
     check.add_argument("--lifetime", required=True)
     check.add_argument("--output", type=Path, required=True)

@@ -194,37 +194,125 @@ fn write(work: &Path, name: &str, value: &impl Serialize) -> Result<()> {
     crate::ipc::private_record::write_private(work, name, &bytes, 8 * LIMIT, false)
 }
 
-fn context_template() -> Result<airk_core::arbiter::context_action::ContextRequestV2> {
-    use airk_core::arbiter::{
-        Budget,
-        context_action::{ContextRequestV2 as ContextRequest, REQUEST_SCHEMA_V2 as REQUEST_SCHEMA},
-    };
-    // This named historical control must not inherit a later shipping default.
-    let budget = Budget {
-        calls: 8,
-        rounds: 3,
-        fanout: 8,
-        input_tokens: 2048,
-        candidates: 32,
-        max_bytes: 262144,
-        deadline_ms: 30000,
-    };
+/// The tasks an index is enrolled for when a profile of `stage` is selected:
+/// the stage's enrollment task. A loop Context profile declares the four card
+/// tasks, which run under the Context enrollment and are never named in one
+/// (Core `Stage::permits` and `Stage::declares`; change-log entry 31). Until
+/// 23 November 2026 the emitter enrolled the profile's own tasks, so Configure
+/// refused every loop profile.
+fn stage_enrollment(
+    stage: airk_core::arbiter::Stage,
+    declared: &BTreeSet<airk_core::arbiter::Task>,
+) -> Result<BTreeSet<airk_core::arbiter::Task>> {
+    use airk_core::arbiter::Task;
     ensure!(
-        (
-            budget.calls,
-            budget.rounds,
-            budget.fanout,
-            budget.input_tokens,
-            budget.candidates,
-            budget.max_bytes,
-            budget.deadline_ms
-        ) == (8, 3, 8, 2048, 32, 262144, 30000),
-        "explicit historical goal budget differs from its frozen control"
+        !declared.is_empty() && declared.iter().all(|task| stage.declares(*task)),
+        "profile declares a task its stage cannot serve"
     );
-    let request = ContextRequest {
-        schema: REQUEST_SCHEMA.into(),
+    let enrollment: BTreeSet<Task> = [Task::FocusRank, Task::ContextAction]
+        .into_iter()
+        .filter(|task| stage.permits(*task))
+        .collect();
+    ensure!(enrollment.len() == 1, "stage has no single enrollment task");
+    Ok(enrollment)
+}
+
+#[test]
+fn enrollment_names_the_stage_task_for_one_turn_and_loop_profiles() -> Result<()> {
+    use airk_core::arbiter::{Stage, Task};
+    let cards: BTreeSet<Task> = airk_retrieval::arbiter::loop_cards::task_policies()?
+        .into_iter()
+        .map(|(task, _)| task)
+        .collect();
+    assert_eq!(cards.len(), 4);
+    let context = BTreeSet::from([Task::ContextAction]);
+    assert_eq!(stage_enrollment(Stage::Context, &cards)?, context);
+    assert_eq!(stage_enrollment(Stage::Context, &context)?, context);
+    let focus = BTreeSet::from([Task::FocusRank]);
+    assert_eq!(stage_enrollment(Stage::Focus, &focus)?, focus);
+    assert!(stage_enrollment(Stage::Focus, &cards).is_err());
+    assert!(stage_enrollment(Stage::Context, &focus).is_err());
+    assert!(stage_enrollment(Stage::Context, &BTreeSet::new()).is_err());
+    Ok(())
+}
+
+/// The loop card decision mode a fixture service runs, from
+/// `AIRK_ARBITER_EVALUATION_DECISION_MODE`: absent keeps the service default
+/// (calibrated); `top_score` sets the evaluation's top-score mode through
+/// `EvaluationOwner::with_decision_mode`; anything else is refused. Until
+/// 23 November 2026 the fixture never set it, so every card decision of a
+/// loop profile (whose calibration set has no rule) abstained (s6 shakedown).
+fn decision_mode_from(
+    value: std::result::Result<String, std::env::VarError>,
+) -> Result<Option<airk_retrieval::arbiter::loop_cards::DecisionMode>> {
+    use airk_retrieval::arbiter::loop_cards::DecisionMode;
+    match value {
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Ok(value) if value == "top_score" => Ok(Some(DecisionMode::TopScore)),
+        _ => bail!("private fixture decision mode must be absent or top_score"),
+    }
+}
+
+/// The stages' idle unload time a fixture service runs, from
+/// `AIRK_ARBITER_EVALUATION_IDLE_UNLOAD_SECONDS`: absent keeps the service
+/// default (30 minutes); `0` never unloads; a positive number of seconds sets
+/// it. On 23 November 2026 the CUDA Focus stage of shakedown s8 unloaded in the
+/// middle of a run and later Answers ran without Focus; a gate lifetime sets 0.
+fn idle_unload_from(
+    value: std::result::Result<String, std::env::VarError>,
+) -> Result<Option<Option<Duration>>> {
+    match value {
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Ok(value) => {
+            let seconds: u64 = value
+                .parse()
+                .context("private fixture idle unload must be whole seconds")?;
+            Ok(Some((seconds > 0).then(|| Duration::from_secs(seconds))))
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+#[test]
+fn idle_unload_is_absent_never_or_seconds() -> Result<()> {
+    assert_eq!(idle_unload_from(Err(std::env::VarError::NotPresent))?, None);
+    assert_eq!(idle_unload_from(Ok("0".into()))?, Some(None));
+    assert_eq!(
+        idle_unload_from(Ok("7200".into()))?,
+        Some(Some(Duration::from_secs(7200)))
+    );
+    assert!(idle_unload_from(Ok("never".into())).is_err());
+    Ok(())
+}
+
+#[test]
+fn decision_mode_is_absent_or_top_score() -> Result<()> {
+    use airk_retrieval::arbiter::loop_cards::DecisionMode;
+    assert!(decision_mode_from(Err(std::env::VarError::NotPresent))?.is_none());
+    assert!(matches!(
+        decision_mode_from(Ok("top_score".into()))?,
+        Some(DecisionMode::TopScore)
+    ));
+    assert!(decision_mode_from(Ok("calibrated".into())).is_err());
+    assert!(decision_mode_from(Ok(String::new())).is_err());
+    Ok(())
+}
+
+/// The Answer request the private fixture writes as `context-request.json`:
+/// the loop's `/3` request with Core's whole default budget.
+///
+/// The budget is never written here. Until 23 November 2026 this file built
+/// `/2` requests with literal budgets; `airk_mcp::AnswerArgs` had become the
+/// `/3` request, so the fixture refused to start ("missing field
+/// `max_parts`"). A literal would again outlive the next movement of the
+/// product default, so the one owner is `BudgetV3::default()`.
+fn context_template() -> Result<airk_core::arbiter::answer_loop::ContextRequestV3> {
+    use airk_core::arbiter::answer_loop::{BudgetV3, ContextRequestV3, REQUEST_SCHEMA_V3};
+    let request = ContextRequestV3 {
+        schema: REQUEST_SCHEMA_V3.into(),
         question: "__PRIVATE_FROZEN_QUESTION__".into(),
-        budget,
+        budget: BudgetV3::default(),
+        continuation: None,
     };
     request.validate()?;
     Ok(request)
@@ -233,45 +321,19 @@ fn context_template() -> Result<airk_core::arbiter::context_action::ContextReque
 fn answer_template() -> Result<serde_json::Value> {
     answer_template_for(context_template()?)
 }
-fn software_v2_context_template() -> Result<airk_core::arbiter::context_action::ContextRequestV2> {
-    use airk_core::arbiter::{
-        Budget,
-        context_action::{ContextRequestV2, REQUEST_SCHEMA_V2},
-        resource_policy::ResourcePolicy,
-    };
-    let policy = ResourcePolicy::software_v2();
-    policy.validate()?;
-    let budget = Budget::default();
-    ensure!(
-        (
-            budget.calls,
-            budget.rounds,
-            budget.fanout,
-            budget.input_tokens,
-            budget.candidates,
-            budget.max_bytes,
-            budget.deadline_ms
-        ) == (8, 3, 8, 8192, 32, 262144, 120000),
-        "software-v2 defaults differ from the separately frozen current profile"
-    );
-    ensure!(
-        budget.input_tokens == policy.shared_input_tokens
-            && budget.deadline_ms == policy.deadline_ms,
-        "current fixture budget differs from native software-v2 resource policy"
-    );
-    let request = ContextRequestV2 {
-        schema: REQUEST_SCHEMA_V2.into(),
-        question: "__PRIVATE_FROZEN_QUESTION__".into(),
-        budget,
-    };
-    request.validate()?;
-    Ok(request)
+/// The software-v2 selector differs from the goal selector in its resource
+/// configuration, not in its Answer request: both issue the loop request.
+/// The one-turn resource policy's shared token and deadline figures do not
+/// bound a loop Answer, so they are not compared with its budget.
+fn software_v2_context_template() -> Result<airk_core::arbiter::answer_loop::ContextRequestV3> {
+    airk_core::arbiter::resource_policy::ResourcePolicy::software_v2().validate()?;
+    context_template()
 }
 fn software_v2_answer_template() -> Result<serde_json::Value> {
     answer_template_for(software_v2_context_template()?)
 }
 fn answer_template_for(
-    request: airk_core::arbiter::context_action::ContextRequestV2,
+    request: airk_core::arbiter::answer_loop::ContextRequestV3,
 ) -> Result<serde_json::Value> {
     let mut request = serde_json::to_value(request)?;
     let response = airk_mcp::response::ResponseArgs {
@@ -298,12 +360,34 @@ fn answer_template_for(
     Ok(request)
 }
 
+/// The loop request as the contract's Rust-emitted semantic cases state it:
+/// the request schema and the whole default budget of
+/// `fixtures/split/arbiter/answer_loop_cases.json`, which Core emits and
+/// checks. The expectation is read from that file, not from the code under
+/// test and not from numbers copied here.
+fn contract_loop_request() -> Result<serde_json::Value> {
+    let cases: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../fixtures/split/arbiter/answer_loop_cases.json"
+    ))?;
+    let budget = cases["default_budget"]
+        .as_object()
+        .context("loop cases carry no default budget")?;
+    ensure!(
+        !budget.is_empty() && budget.values().all(|value| value.as_u64().is_some_and(|v| v > 0)),
+        "loop cases carry no whole default budget"
+    );
+    Ok(serde_json::json!({
+        "schema": cases["request_schema"],
+        "question": "__PRIVATE_FROZEN_QUESTION__",
+        "budget": budget,
+    }))
+}
+
 #[test]
 fn native_goal_context_template_has_the_independent_frozen_instance() -> Result<()> {
-    assert_eq!(
-        serde_json::to_value(context_template()?)?,
-        serde_json::json!({"schema":"airk.arbiter.context.request/2","question":"__PRIVATE_FROZEN_QUESTION__","budget":{"calls":8,"rounds":3,"fanout":8,"input_tokens":2048,"candidates":32,"max_bytes":262144,"deadline_ms":30000}})
-    );
+    let contract = contract_loop_request()?;
+    assert_eq!(contract["schema"], "airk.arbiter.context.request/3");
+    assert_eq!(serde_json::to_value(context_template()?)?, contract);
     let answer = answer_template()?;
     assert_eq!(answer["response_mode"], "full");
     assert_eq!(answer["include_status"], true);
@@ -342,15 +426,18 @@ fn native_goal_context_template_has_the_independent_frozen_instance() -> Result<
 fn native_software_v2_context_template_has_literal_budget_and_complete_response_options()
 -> Result<()> {
     let request = software_v2_answer_template()?;
-    assert_eq!(
-        request,
-        serde_json::json!({"schema":"airk.arbiter.context.request/2",
-        "question":"__PRIVATE_FROZEN_QUESTION__","budget":{"calls":8,"rounds":3,"fanout":8,
-            "input_tokens":8192,"candidates":32,"max_bytes":262144,"deadline_ms":120000},
-        "response_mode":"full","include_status":true})
-    );
+    let mut expected = contract_loop_request()?;
+    expected["response_mode"] = "full".into();
+    expected["include_status"] = true.into();
+    assert_eq!(request, expected);
     let decoded: airk_mcp::AnswerArgs = serde_json::from_value(request.clone())?;
     decoded.request.validate()?;
+    // Both selectors issue the same loop request, with every budget field the request requires.
+    assert_eq!(request, answer_template()?);
+    assert_eq!(
+        serde_json::to_value(&decoded.request.budget)?,
+        contract_loop_request()?["budget"]
+    );
     assert_eq!(
         serde_json::to_value(decoded.response)?,
         serde_json::to_value(airk_mcp::response::ResponseArgs {
@@ -359,8 +446,6 @@ fn native_software_v2_context_template_has_literal_budget_and_complete_response_
             ..Default::default()
         })?
     );
-    assert_eq!(context_template()?.budget.input_tokens, 2048);
-    assert_eq!(context_template()?.budget.deadline_ms, 30000);
     if let Some(path) = std::env::var_os("AIRK_ARBITER_SOFTWARE_V2_CONTEXT_REQUEST_OUTPUT") {
         use std::io::Write;
         let path = PathBuf::from(path);
@@ -634,6 +719,8 @@ async fn run_actual_private_arbiter_fixture(
         Err(std::env::VarError::NotPresent) => None,
         _ => bail!("private CAL observer mode must be explicit true/false"),
     };
+    let decision_mode = decision_mode_from(std::env::var("AIRK_ARBITER_EVALUATION_DECISION_MODE"))?;
+    let idle_unload = idle_unload_from(std::env::var("AIRK_ARBITER_EVALUATION_IDLE_UNLOAD_SECONDS"))?;
     let mut execution_recorder = execution_observer::Recorder::from_env(&work)?;
     let execution_observer = execution_recorder
         .as_ref()
@@ -751,6 +838,12 @@ async fn run_actual_private_arbiter_fixture(
             },
             "private fixture must start disabled"
         );
+        if let Some(mode) = decision_mode {
+            owner = owner.with_decision_mode(mode)?;
+        }
+        if let Some(timeout) = idle_unload {
+            owner = owner.with_idle_unload(timeout, timeout)?;
+        }
         if let Some(observer) = context_observer {
             owner = owner.observe_context(observer);
         }
@@ -1848,6 +1941,7 @@ async fn emit_private_arbiter_configuration() -> Result<()> {
         status.configuration.catalog == catalog.namespace,
         "actual private configuration namespace changed"
     );
+    let enrollment = stage_enrollment(stage, &profile.tasks)?;
     let request = ManagementRequest::Configure {
         expected_revision: status.configuration.revision,
         stage,
@@ -1857,7 +1951,7 @@ async fn emit_private_arbiter_configuration() -> Result<()> {
             .values()
             .map(|binding| Enrollment {
                 index_id: binding.index_id,
-                tasks: profile.tasks.clone(),
+                tasks: enrollment.clone(),
             })
             .collect(),
     };
@@ -1926,8 +2020,14 @@ async fn emit_private_arbiter_configuration() -> Result<()> {
         &work,
         &format!("{prefix}.receipt.json"),
         &serde_json::json!({"schema":"airk.private-arbiter-configure-instance/1","evaluation":true,"release_qualified":false,"ready_sha256":sha(&ready_bytes),"profile":selected,"profile_sha256":binding.profile_sha256,"expected_revision":status.configuration.revision,"stage":stage,"task_policy_current":match stage {
-            airk_core::arbiter::Stage::Context => profile.tasks.contains(&Task::ContextAction)
-                && profile.task_policies.get(&Task::ContextAction)==Some(&airk_retrieval::arbiter::context_action::policy_digest()?),
+            // A Context profile declares the one-turn task or exactly the loop's four card tasks.
+            airk_core::arbiter::Stage::Context => (profile.tasks.contains(&Task::ContextAction)
+                && profile.task_policies.get(&Task::ContextAction)==Some(&airk_retrieval::arbiter::context_action::policy_digest()?))
+                || {
+                    let cards = airk_retrieval::arbiter::loop_cards::task_policies()?;
+                    profile.tasks.len() == cards.len()
+                        && cards.iter().all(|(task, policy)| profile.tasks.contains(task) && profile.task_policies.get(task) == Some(policy))
+                },
             airk_core::arbiter::Stage::Focus => profile.tasks.contains(&Task::FocusRank)
                 && profile.task_policies.get(&Task::FocusRank)==Some(&airk_retrieval::arbiter::compiler::focus::policy_digest()?),
         },"request":request,"actual_status":status,"actual_health":observation}),

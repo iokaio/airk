@@ -11,7 +11,8 @@ of the freeze. Tests, the mock and this README are not runtime files.
 ``refreeze`` (from the CS3 re-freeze on) writes the new freeze, keeps the full previous and new
 manifests beside the history as ``prompts-freeze-manifests/<sha256>.json``, and appends the history
 line itself. Its ``prompts_changed`` is computed, never written by hand: the agent prompts, the judge
-prompt, the judge verdict schema (the rubric) and the scenario freeze are compared with the previous
+prompt, the judge verdict schema (the rubric), the scenario freeze and the default Answer budget (what
+every ``airk_answer`` call is sent, read from the Rust-emitted cases file) are compared with the previous
 manifest. The line also names every changed harness file.
 
 ``python -I -B prompts_freeze.py --write <R>/design/prompts-freeze.json``
@@ -58,11 +59,14 @@ def current() -> dict:
             "judge_model": common.JUDGE_MODEL, "judge_effort": common.JUDGE_EFFORT, "turn_cap": common.TURN_CAP,
             "scenario_freeze": {"path": str(SCENARIO_FREEZE),
                                 "sha256": common.sha256_file(SCENARIO_FREEZE) if SCENARIO_FREEZE.is_file() else None},
+            # The budget every airk_answer call is sent comes from the Rust-emitted cases file, which is not a
+            # harness file: the freeze pins its bytes and the budget read from them.
+            "answer_budget": common.answer_budget_source(),
             "files": {name: common.sha256_file(HERE / name) for name in HARNESS_FILES}}
 
 
 def prompt_changes(previous: dict, now: dict) -> list[str]:
-    """The prompt, rubric and scenario entries that differ between two manifests."""
+    """The prompt, rubric, scenario and default-budget entries that differ between two manifests."""
     out = []
     for path in sorted(set(previous.get("agent_prompts") or {}) | set(now.get("agent_prompts") or {})):
         if ((previous.get("agent_prompts") or {}).get(path) or {}).get("sha256") != \
@@ -72,6 +76,9 @@ def prompt_changes(previous: dict, now: dict) -> list[str]:
                        ("scenario_freeze", "scenario freeze")):
         if (previous.get(key) or {}).get("sha256") != (now.get(key) or {}).get("sha256"):
             out.append(label)
+    if (previous.get("answer_budget") or {}).get("default_budget") != (now.get("answer_budget") or {}).get(
+            "default_budget"):
+        out.append("answer default budget")
     return out
 
 
@@ -122,6 +129,15 @@ def differences(frozen: dict, now: dict) -> list[str]:
     for name, digest in now["files"].items():
         if (frozen.get("files") or {}).get(name) != digest:
             out.append(f"file {name}")
+    # The prompts freeze is made against one scenario freeze (its SHA-256; the recorded path is where it was
+    # read from and is not compared). On 22 November 2026 the loop freeze replaced the one-turn freeze: a
+    # prompts freeze made against the earlier scenarios must be redone, not reused.
+    if (frozen.get("scenario_freeze") or {}).get("sha256") != (now.get("scenario_freeze") or {}).get("sha256"):
+        out.append("scenario freeze")
+    # A judged pass sends the budget the freeze recorded: a moved default (or a freeze from before the budget
+    # was pinned) is refused, not sent silently.
+    if frozen.get("answer_budget") != now.get("answer_budget"):
+        out.append("answer default budget")
     return out
 
 

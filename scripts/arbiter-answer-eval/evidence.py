@@ -113,12 +113,62 @@ def extract(body: Any) -> list[Span]:
     return spans
 
 
+# An Answer /3 record's ``canonical_result`` is the kernel's span projection (Core CONTRACT.md, "One text, one
+# copy in the reply"; kernel ``answer/union.rs`` ``project``).
+LOOP_PROJECTION_PREFIX = "airk.arbiter.loop-evidence/"
+
+
+def is_loop_projection(node: Any) -> bool:
+    return (isinstance(node, dict) and isinstance(node.get("projection"), str)
+            and node["projection"].startswith(LOOP_PROJECTION_PREFIX) and isinstance(node.get("spans"), list))
+
+
+def _projection_spans(node: dict, spans: list[Span]) -> None:
+    """Every location a loop record's projection delivered.
+
+    - A ``spans`` row is one hit: ``pointer``, ``path``, ``start_line``, ``end_line``, ``content_hash``, and
+      either its ``text`` or ``same_as`` (the row that carries its text; the reply carries each text once).
+      Both are delivered text at the row's own location.
+    - Each row's own ``path``, ``start_line`` and ``end_line`` always describe the hit's whole original span,
+      also for a row trimmed because another row carries part of its text (``overlaps``). Lines are never
+      derived from ``text``.
+    - ``also_at`` is not read: every place it lists is also a row of its own, and its ``path:start-end``
+      strings carry no hash and cannot be parsed safely (a path may hold a colon).
+    - Only rows count. From trimming level 1 on, uncited hits are not rows (``hits_total`` is then larger
+      than the row count) and an omitted record appears only in ``omitted_evidence``: neither is delivered.
+    - ``rows`` (a record without hits, such as a symbols read) are names with locations: fact rows.
+
+    Until 23 November 2026 these rows were read by the general walk, which knows ``excerpt`` and not
+    ``text`` on a row without a ``citation``, so every loop span counted as a pointer and covered nothing."""
+    for row in node["spans"]:
+        if not isinstance(row, dict) or not isinstance(row.get("path"), str):
+            continue
+        path, start, end = norm_path(row["path"]), _int(row.get("start_line")), _int(row.get("end_line"))
+        end = end if end is not None else start
+        text = row.get("text") if isinstance(row.get("text"), str) else ""
+        if text:
+            spans.append(Span(path, start, end, text, "text" if start is not None else "path"))
+        elif isinstance(row.get("same_as"), dict) and start is not None:
+            spans.append(Span(path, start, end, "", "text"))
+        else:
+            spans.append(Span(path, start, end, "", "pointer"))
+    for row in node.get("rows") or []:
+        if isinstance(row, dict) and isinstance(row.get("path"), str):
+            start, end = _int(row.get("start_line")), _int(row.get("end_line"))
+            text = row.get("text") if isinstance(row.get("text"), str) else ""
+            spans.append(Span(norm_path(row["path"]), start, end if end is not None else start, text,
+                              "fact" if start is not None else "path"))
+
+
 def _walk(node: Any, spans: list[Span]) -> None:
     if isinstance(node, list):
         for item in node:
             _walk(item, spans)
         return
     if not isinstance(node, dict):
+        return
+    if is_loop_projection(node):
+        _projection_spans(node, spans)
         return
     # Compact outline/symbols: items[].lines with files[] path table.
     items, files = node.get("items"), node.get("files")
@@ -181,9 +231,38 @@ def _locations(note: dict) -> Iterable[dict]:
                "symbol": alternative.get("symbol") if alternative.get("symbol") is not None else note.get("symbol")}
 
 
-COVERAGE_RULE = 2
+COVERAGE_RULE = 3
 """Rule 1 (formats.md): one line of overlap. Rule 2 (primary agent, 21 Nov 2026, before the first judged
-run): a span covers a location only if it overlaps at least min(5, the location's line count) of its lines."""
+run): a span covers a location only if it overlaps at least min(5, the location's line count) of its lines.
+Rule 3 (coordinator, 22 Nov 2026, before the first loop pass): rule 2's line overlap, and a path without a
+line span covers by symbol only when the symbol is named as a whole identifier (names_symbol). Rules 1 and 2
+matched the symbol as a substring, so a short symbol such as ``run`` or ``Spec`` matched almost any text of
+its file; they keep that behaviour, because the one-turn passes are history and are not rescored."""
+
+_QUALIFIED = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:(?:::|\.)[A-Za-z_][A-Za-z0-9_]*)+")
+_IDENTIFIER_CHARACTER = "[A-Za-z0-9_]"
+
+
+def symbol_forms(symbol: str) -> list[str]:
+    """The spellings that name a note's symbol: the symbol itself and, for a symbol qualified with ``.`` or
+    ``::`` whose segments are all identifiers, its last segment (a tool row names ``add``, the note
+    ``Schedule::add``). A heading or other free text has one form: itself."""
+    forms = [symbol]
+    if _QUALIFIED.fullmatch(symbol):
+        forms.append(re.split(r"::|\.", symbol)[-1])
+    return forms
+
+
+def names_symbol(text: str, symbol: str) -> bool:
+    """Whether ``text`` names ``symbol`` as a whole identifier: one of its forms with no identifier character
+    (letter, digit or underscore) directly before or after it. ``run`` is named by ``"name": "run"`` and by
+    ``fn run(``, and not by ``runner``, ``prune`` or ``run_pass``."""
+    for form in symbol_forms(symbol):
+        before = f"(?<!{_IDENTIFIER_CHARACTER})" if re.match(_IDENTIFIER_CHARACTER, form[0]) else ""
+        after = f"(?!{_IDENTIFIER_CHARACTER})" if re.match(_IDENTIFIER_CHARACTER, form[-1]) else ""
+        if re.search(before + re.escape(form) + after, text):
+            return True
+    return False
 
 
 def overlap_lines(span: Span, lines: list | None) -> int:
@@ -198,7 +277,9 @@ def required_overlap(lines: list, rule: int = COVERAGE_RULE) -> int:
 
 
 def covers(spans: list[Span], note: dict, count_fact_rows: bool = False, rule: int = COVERAGE_RULE) -> bool:
-    """The coverage rule for one note over one result's spans (rule 2 unless ``rule=1``)."""
+    """The coverage rule for one note over one result's spans (rule 3 unless ``rule`` names an earlier one).
+
+    A note without a symbol is never covered by a path alone, under any rule."""
     line_kinds = {"text", "fact"} if count_fact_rows else {"text"}
     for location in _locations(note):
         same = [s for s in spans if path_matches(s.path, location["path"])]
@@ -210,10 +291,13 @@ def covers(spans: list[Span], note: dict, count_fact_rows: bool = False, rule: i
                 return True
         if location["lines"] is None and any(s.kind in line_kinds for s in same):
             return True
-        # A path without a line span covers only by symbol.
+        # A path without a line span covers only by symbol: as a whole identifier from rule 3 on, as a
+        # substring under the earlier rules (kept for the history they scored).
         symbol = location["symbol"]
-        if symbol and any(s.start is None and symbol in s.text for s in same):
-            return True
+        if symbol and isinstance(symbol, str):
+            named = (lambda text: names_symbol(text, symbol)) if rule >= 3 else (lambda text: symbol in text)
+            if any(s.start is None and named(s.text) for s in same):
+                return True
     return False
 
 

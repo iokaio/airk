@@ -217,7 +217,8 @@ def reply_row(scenario: dict, call: dict) -> dict:
            "elapsed_ms": call.get("elapsed_ms"), "final_attempt_ms": call.get("final_attempt_ms"),
            "bytes": call.get("bytes"), "digest": call.get("digest"), "result_path": call.get("result_path"),
            "result_sha256": call.get("result_sha256"), "tickets": call.get("tickets") or [],
-           "typed_retries": call.get("typed_retries"), "v3": loop_reply.is_v3(body)}
+           "typed_retries": call.get("typed_retries"), "v3": loop_reply.is_v3(body),
+           "budget_sent": call.get("budget_sent")}
     row["first_reply"] = coverage.first_reply(scenario, body, call.get("bytes"))
     if loop_reply.is_v3(body):
         row["loop"] = loop_reply.summary(body)
@@ -246,18 +247,80 @@ def arm_replays(spec: dict, arm: str, r_root: Path, out: Path, *, handle=None, b
             body = common.raw_body(Path(row["result_path"]).read_bytes()) if row["ok"] else None
             row["arm_problems"] = loop_reply.check_arm(body, entry.get("arm_check") or {}) if row["ok"] else [
                 "call failed"]
+            row["arm_flags"] = loop_reply.arm_flags(body, entry.get("arm_check") or {}) if row["ok"] else []
             rows.append(row)
             print(f"{arm} {scenario['id']}: essential {len(row['first_reply']['essential_covered'])}/"
-                  f"{row['first_reply']['essential_total']}, {row['elapsed_ms']} ms, problems {len(row['arm_problems'])}",
-                  flush=True)
+                  f"{row['first_reply']['essential_total']}, {row['elapsed_ms']} ms, problems {len(row['arm_problems'])}"
+                  f", flags {len(row['arm_flags'])}", flush=True)
     document = {"schema": GATE_SCHEMA, "kind": "arm-replays", "generated": common.now_iso(), "arm": arm,
                 "configuration": entry["configuration"], "path": entry["path"], "device": entry.get("device"),
                 "stages": entry.get("stages"), "arm_check": entry.get("arm_check"),
                 "precision_stage": entry.get("precision_stage"), "answer_defaults": entry.get("answer_defaults"),
                 "handle_sha256": getattr(handle, "sha256", None), "coverage_rule": evidence.COVERAGE_RULE,
                 "elapsed_s": round(time.monotonic() - began, 1), "memory": sampler.record(), "rows": rows,
-                "arm_ok": all(not r["arm_problems"] for r in rows)}
+                "answer_budget_source": common.answer_budget_source(),
+                "budgets_sent": common.distinct_budgets(rows),
+                "arm_ok": all(not r["arm_problems"] for r in rows),
+                "arm_flagged": sorted(r["scenario_id"] for r in rows if r["arm_flags"])}
     common.write_json(out / "arm-replays.json", document)
+    return document
+
+
+def smoke_problems(body, arm_check: dict) -> list[str]:
+    """Why one Answer shows that the arm's pipeline did not run end to end: no search record without a failure,
+    no Focus call while Focus is staged, no model-sourced decision while a Context model is staged, and any
+    arm-check problem. Three defects of 22 and 23 November 2026 (a Context warm refused, the service's CUDA
+    math missing, every search read failing on the Answer's read threads) each show here in one call."""
+    if not loop_reply.is_v3(body):
+        return ["not an Answer /3 reply"]
+    if loop_reply.is_ticket(body):
+        return ["a ticket, not a reply: the smoke call must run on the unqueued path"]
+    problems = []
+    searches = [r for r in loop_reply.records(body) if r.get("operation") == "search"]
+    if not any(isinstance(r.get("canonical_result"), dict) and r["canonical_result"].get("failure") is None
+               for r in searches):
+        problems.append(f"no search record without a failure ({len(searches)} search records; "
+                        f"failures {loop_reply.read_failures(body)})")
+    want = loop_reply.arm_requirement(arm_check)
+    log = body.get("decision_log") if isinstance(body.get("decision_log"), dict) else {}
+    if want["focus"] and not (log.get("focus_calls") or 0):
+        problems.append("no Focus call while Focus is staged")
+    if want["context"] is not None:
+        model = sum(int(row.get("count") or 0) for row in loop_reply.log_counts(body) if row.get("source") == "model")
+        if model == 0:
+            problems.append(f"no model-sourced decision while {want['context']} is staged "
+                            f"({(loop_reply.context_presence(body) or {}).get('state')})")
+    problems += [p for p in loop_reply.check_arm(body, arm_check) if p not in problems]
+    return problems
+
+
+def smoke(spec: dict, arm: str, r_root: Path, out: Path, *, handle=None, backend=None, sleep=time.sleep) -> dict:
+    """The live smoke test before any replay or session of an arm: one canonical first Answer per repository
+    of the spec, on the first scenario of each, required to pass ``smoke_problems``. Writes ``smoke.json``."""
+    entry = spec_arm(spec, arm)
+    scenarios = spec_scenarios(spec, r_root)
+    if handle is None:
+        handle = common.load_handle(common.resolve_handle(entry["handle"], r_root / "fixture"),
+                                    accept_queryable=bool(spec.get("accept_queryable")))
+    rows, seen = [], set()
+    for scenario in scenarios:
+        if scenario["repository"] in seen:
+            continue
+        seen.add(scenario["repository"])
+        result = replay.replay_canonical(scenario, entry["path"], handle, out / "smoke" / scenario["id"],
+                                         answer_defaults=entry.get("answer_defaults"),
+                                         timeout_s=float(entry.get("call_timeout", 600)), backend=backend, sleep=sleep)
+        call = result["call"]
+        body = common.raw_body(Path(call["result_path"]).read_bytes()) if call.get("ok") else None
+        problems = smoke_problems(body, entry.get("arm_check") or {}) if body is not None else [
+            f"call failed: {call.get('error')}"]
+        rows.append({"scenario_id": scenario["id"], "repo": scenario["repository"], "elapsed_ms": call.get("elapsed_ms"),
+                     "result_path": call.get("result_path"), "problems": problems,
+                     "loop": loop_reply.summary(body) if body is not None else None})
+        print(f"smoke {arm} {scenario['id']}: {call.get('elapsed_ms')} ms, problems {problems}", flush=True)
+    document = {"schema": GATE_SCHEMA, "kind": "smoke", "generated": common.now_iso(), "arm": arm,
+                "arm_check": entry.get("arm_check"), "rows": rows, "passed": bool(rows) and all(not r["problems"] for r in rows)}
+    common.write_json(out / "smoke.json", document)
     return document
 
 
@@ -519,6 +582,102 @@ def _quantile(values: list[float], q: float):
     return values[min(len(values) - 1, max(0, int(round(q * (len(values) - 1)))))]
 
 
+def decision_sources(doc: dict) -> dict:
+    """Per stage, how one arm's decisions were taken, summed over its replies.
+
+    - ``model``: the model took the decision.
+    - ``fell_back``: the model was asked and the deterministic order stood in (it abstained or was
+      unavailable).
+    - ``not_dispatched``: a model decision was due and the call was never sent (no token budget, no time or
+      no model for that call); counted apart from ``model`` and from ``no_model``.
+    - ``no_model``: a decision the loop takes without a model.
+
+    The counts are each reply's ``decision_log.counts`` (stage, source, count), which cover every logged
+    decision, including those the reply omits. ``fallback_reasons`` are the typed reasons
+    (``<source>/<reason>``) of the fallen-back and not-dispatched decisions the replies include, so they can
+    cover fewer decisions than those two counts (``fell_back_with_reason`` says how many)."""
+    stages: dict[str, dict[str, int]] = {}
+    reasons: dict[str, dict[str, int]] = {}
+    presence: dict[str, list] = {state: [] for state in loop_reply.PRESENCE_STATES}
+    starved: dict[str, list] = {}
+    replies = without = 0
+    logged = included = omitted = 0
+    for row in doc["rows"]:
+        loop = row.get("loop")
+        if not row.get("ok") or not loop or loop.get("ticket"):
+            continue
+        replies += 1
+        took_part = loop.get("context_presence") or {}
+        if took_part.get("state") in presence:
+            presence[took_part["state"]].append(row.get("scenario_id"))
+        for stage in took_part.get("stages_without_model") or []:
+            starved.setdefault(stage, []).append(row.get("scenario_id"))
+        counts = loop.get("decision_counts") or {}
+        if not counts and (loop.get("decisions_total") or 0):
+            without += 1
+        for stage, by_source in counts.items():
+            target = stages.setdefault(stage, {name: 0 for name in loop_reply.SOURCE_CLASS_ORDER})
+            for source, count in by_source.items():
+                target[loop_reply.source_class(source)] += int(count or 0)
+        for stage, by_reason in (loop.get("fallback_reasons") or {}).items():
+            target = reasons.setdefault(stage, {})
+            for reason, count in by_reason.items():
+                target[reason] = target.get(reason, 0) + int(count or 0)
+        logged += int(loop.get("decisions_total") or 0)
+        included += int(loop.get("decisions_included") or 0)
+        omitted += int(loop.get("decisions_omitted") or 0)
+    total = {name: sum(stage[name] for stage in stages.values()) for name in loop_reply.SOURCE_CLASS_ORDER}
+    return {"arm": doc["arm"], "replies": replies, "replies_without_log_counts": without,
+            "stages": {stage: stages[stage] for stage in sorted(stages)}, "total": total,
+            "fallback_reasons": {stage: dict(sorted(reasons[stage].items())) for stage in sorted(reasons)},
+            "fell_back_with_reason": sum(sum(r.values()) for r in reasons.values()),
+            "decisions_logged": logged, "decisions_included": included, "decisions_omitted": omitted,
+            # Replies by whether the Context model took part (``loop_reply.context_presence``), and per stage
+            # the replies where decisions were due to the model and it took none.
+            "presence": {state: len(ids) for state, ids in presence.items()},
+            "presence_scenarios": {state: ids for state, ids in presence.items()
+                                   if ids and state.startswith("model_present")},
+            "stages_without_model": {stage: starved[stage] for stage in sorted(starved)}}
+
+
+def _spread(values: list) -> dict | None:
+    """Minimum, quartiles and maximum of a list: the report shows distributions, not only means."""
+    values = sorted(v for v in values if v is not None)
+    if not values:
+        return None
+    return {"n": len(values), "min": values[0], "p25": _quantile(values, 0.25), "median": _quantile(values, 0.5),
+            "p75": _quantile(values, 0.75), "max": values[-1]}
+
+
+def reply_packing(doc: dict) -> dict:
+    """Per arm and per repository: the first replies' bytes, what Union cut, merged or left out
+    (``loop_reply.packing``), and the essential and helpful notes covered per KiB of reply. Evidence for the
+    question whether Answer needs a compression step; one row per reply is kept beside the distributions."""
+    rows = []
+    for row in doc["rows"]:
+        loop, first = row.get("loop") or {}, row.get("first_reply") or {}
+        if not row.get("ok") or not loop.get("packing") or not row.get("bytes"):
+            continue
+        kib = row["bytes"] / 1024
+        rows.append({"scenario_id": row["scenario_id"], "repo": row["repo"], "bytes": row["bytes"],
+                     "max_bytes": (row.get("budget_sent") or {}).get("max_bytes"), **loop["packing"],
+                     "essential_per_kib": round(len(first.get("essential_covered") or []) / kib, 4),
+                     "helpful_per_kib": round(len(first.get("supporting_covered") or []) / kib, 4)})
+
+    def group(members: list[dict]) -> dict:
+        return {"replies": len(members),
+                "replies_with_hits_not_rows": sum(1 for r in members if r["hits_not_rows"]),
+                "replies_with_truncated_rows": sum(1 for r in members if r["rows_truncated"]),
+                "replies_with_omitted_evidence": sum(1 for r in members if r["omitted_evidence"]),
+                **{key: _spread([r[key] for r in members]) for key in (
+                    "bytes", "span_rows", "rows_truncated", "hits_not_rows", "repeats_merged", "overlaps_trimmed",
+                    "omitted_evidence", "essential_per_kib", "helpful_per_kib")}}
+
+    return {"arm": doc["arm"], "all": group(rows),
+            "by_repo": {repo: group([r for r in rows if r["repo"] == repo]) for repo in sorted({r["repo"] for r in rows})},
+            "replies": rows}
+
+
 def arm_performance(doc: dict) -> dict:
     rows = [r for r in doc["rows"] if r["ok"]]
     elapsed = [r["elapsed_ms"] for r in rows if r.get("elapsed_ms") is not None]
@@ -535,9 +694,15 @@ def arm_performance(doc: dict) -> dict:
             "card_calls_total": sum(l.get("card_calls") or 0 for l in loops),
             "focus_calls_total": sum(l.get("focus_calls") or 0 for l in loops),
             "rounds": {str(k): rounds.count(k) for k in sorted(set(rounds))},
+            # Parts each scenario's Answer split into: the default pool funds two parts over three rounds.
+            "parts_by_scenario": {r["scenario_id"]: r["loop"].get("parts") for r in rows if r.get("loop")},
+            "parts": {str(k): sum(1 for r in rows if r.get("loop") and r["loop"].get("parts") == k)
+                      for k in sorted({r["loop"].get("parts") for r in rows if r.get("loop")
+                                       and r["loop"].get("parts") is not None})},
             "partials": _partials(rows), "partial_at_deadline": _partials(rows).get("deadline", 0),
             "tickets": sum(len(r.get("tickets") or []) for r in rows),
             "peak_used_mib": (doc.get("memory") or {}).get("peak_used_mib"),
+            "decision_sources": decision_sources(doc), "reply_packing": reply_packing(doc),
             "per_stage_model_time": "not in the reply (decision log, service custody)"}
 
 
@@ -665,7 +830,14 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_argument("--stage", required=True, choices=PRECISION_STAGES)
     sub.add_argument("--spec", type=Path)
     sub.add_argument("--out", type=Path, required=True)
+    sub = commands.add_parser("smoke")
+    sub.add_argument("--spec", type=Path, required=True)
+    sub.add_argument("--arm", required=True)
+    sub.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
+    if args.command == "smoke":
+        document = smoke(common.read_json(args.spec), args.arm, args.r_root, args.out)
+        return 0 if document["passed"] else 2
     if args.command == "replays":
         document = arm_replays(common.read_json(args.spec), args.arm, args.r_root, args.out)
         return 0 if document["arm_ok"] else 2

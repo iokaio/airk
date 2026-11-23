@@ -73,12 +73,18 @@ class Requests(unittest.TestCase):
     def test_emitter_environment_declares_the_same_read_only_roots(self):
         handle = {"service_environment": {"AIRK_ARBITER_EVALUATION_WORK": "W", "TEMP": "T"}}
         scopes = {"path": "S", "sha256": "cd" * 32}
-        env = fixture.emitter_environment(handle, scopes, "focus", False, "ab" * 32, "p-1", ["R1", "R2"])
+        # Absolute roots, so the check does not depend on the working directory: a worktree that lies under
+        # ``artifacts`` would otherwise resolve relative roots into it. A snapshot root under ``artifacts``
+        # (munarium, bookbuilder-v2) is not declared; a checkout outside it is.
+        with tempfile.TemporaryDirectory() as outside:
+            roots = [str(Path(outside) / "R1"), str(Path(outside) / "R2")]
+            inside = str(fixture.ROOT / "artifacts" / "x" / "sources" / "munarium-9948345d1d14")
+            env = fixture.emitter_environment(handle, scopes, "focus", False, "ab" * 32, "p-1", roots + [inside])
         self.assertEqual(env["AIRK_ARBITER_EVALUATION_WORK"], "W")
         self.assertEqual(env["AIRK_ARBITER_EVALUATION_ENABLED"], "false")
         self.assertEqual(env["AIRK_ARBITER_EVALUATION_SCOPES_SHA256"], "cd" * 32)
         self.assertEqual(json.loads(env["AIRK_ARBITER_EVALUATION_EXTERNAL_SOURCES"]),
-                         {"mode": "read-only", "source_roots": ["R1", "R2"]})
+                         {"mode": "read-only", "source_roots": roots})
         self.assertFalse(hasattr(fixture, "configure_request"))
 
     def test_gpu_profiles_are_hooks_that_refuse(self):
@@ -122,35 +128,492 @@ class ChangeSetProfiles(unittest.TestCase):
         self.assertEqual(len(manifests), len(set(manifests)))
 
 
-class TrimBusyRetry(unittest.TestCase):
-    def test_registry_busy_is_retried_and_other_errors_are_not(self):
-        """Regression (L16-cs1, 22 Nov 2026): a trim refused with registry_busy is retried with a new draft."""
-        calls = []
-        original_trim, original_policy, original_atoms = fixture.trim_path, fixture.index_policy, fixture.denied_atoms
+class FakeService:
+    """A scripted service for the source-policy tests: it keeps the denies in force, the jobs each project
+    holds per ``progress`` sample, and the answers the next reviews and applies give. Every call is logged."""
+
+    def __init__(self, folder, drafts=(), applies=(), progress=(), in_force_after=0):
+        self.folder, self.prefix, self.count, self.stop_file = Path(folder), "t", 0, None
+        self.deadline = fixture.time.monotonic() + 3600
+        self.drafts, self.applies, self.progress = list(drafts), list(applies), list(progress)
+        self.denies, self.pending, self.log = [], [], []
+        self.in_force_after = in_force_after  # policy-status reads before a pending change comes into force
+        self.indexed, self.waited, self.auto_index = [], [], False
+        self.job_states = {}  # a job id -> the state `jobs get` reports (default succeeded)
+
+    def lines(self, label, *arguments):
+        self.log.append(label)
+        return [{"draft": {}}, {"receipt": {"index_id": "idx_" + label, "request": {
+            "registration": {"binding": "binding-" + label}}}}]
+
+    def policy(self):
+        if self.pending:
+            if self.in_force_after <= 0:
+                self.denies += self.pending
+                self.pending = []
+            else:
+                self.in_force_after -= 1
+        denies = [{"rule_id": f"r{n}", "kind": kind, "path": path, "reason": "trim"}
+                  for n, (kind, path) in enumerate(self.denies)]
+        return {"status": "catalog_policy_status",
+                "snapshot": {"policy": {"denies": denies}, "application": {"removed_artifacts": 0} if denies else None,
+                             "last_error": None},
+                "job": {"state": "succeeded"} if denies else None}
+
+    def json(self, label, *arguments):
+        self.log.append(label)
+        if label in ("setup-progress",):
+            return {"queued_jobs": [{"id": "setup-index", "kind": "index", "state": "pending"}]}
+        if label.startswith("install-minilm-"):
+            self.auto_index = True  # the install starts the installing project's index pass by itself
+            return {"job": {"id": "install"}}
+        if label == "configure-job":
+            return {"job": {"id": arguments[-1], "kind": "configure", "state": "succeeded",
+                            "outcome": {"state": "succeeded"}}}
+        if label == "install-progress":
+            jobs = [{"id": "auto-index", "kind": "index", "state": "running"}] if self.auto_index else []
+            return {"queued_jobs": jobs}
+        if label in ("progress", "idle-progress"):
+            jobs = self.progress.pop(0) if self.progress else []
+            return {"queued_jobs": [{"id": i, "kind": k, "state": "pending"} for i, k in jobs]}
+        if label == "cancel-job":
+            return {}
+        if label == "policy-status":
+            return self.policy()
+        if label == "sources":
+            return {"items": [{"value": {"id": "src_1"}}]}
+        if label == "request-epoch":
+            return {"status": "request_epoch", "namespace": "n", "epoch": 0}
+        if label == "catalog-revision":
+            return {"page": {"revision": 3}}
+        request = json.loads(Path(arguments[-1]).read_bytes()) if label in ("trim-draft", "trim-apply") else None
+        if label == "trim-draft":
+            answer = self.drafts.pop(0) if self.drafts else "ok"
+            if answer != "ok":
+                return answer
+            change = request["catalog_source_mutation_draft"]["selection"]["change"]
+            return {"status": "catalog_source_mutation_draft",
+                    "draft": {"request": {"change": [change["kind"], change["path"]]}, "preview_digest": "pd"}}
+        if label == "trim-apply":
+            answer = self.applies.pop(0) if self.applies else "applied"
+            atom = tuple(request["catalog_apply"]["request"]["change"])
+            if answer == "applied":
+                self.denies.append(atom)
+                return {"status": "catalog_applied"}
+            if answer == "unknown":
+                self.pending.append(atom)
+                return {"status": "catalog_outcome_unknown", "code": "catalog_apply_outcome_unknown",
+                        "observation": {"kind": "authority_fence", "fence": {"state": "pending", "value": {
+                            "stage": "fence_unknown", "operation_id": "op", "confirmations": []}}}}
+            return answer
+        if label.startswith("index-") and label != "index-job":
+            self.indexed.append((label, sorted(self.denies), list(self.pending)))
+            return {"job": {"id": "index-pass"}}
+        if label == "index-job":
+            self.waited.append(arguments[-1])
+            state = self.job_states.get(arguments[-1], "succeeded")
+            return {"job": {"id": arguments[-1], "kind": "index", "state": state, "outcome": {"state": state}}}
+        raise AssertionError("unexpected call " + label)
+
+
+BUSY_JOBS = {"status": "source_change_busy", "code": "source_change_jobs_pending",
+             "busy": {"index_id": "idx", "pending_jobs": 1, "running_jobs": 0}}
+REGISTRY_BUSY = {"status": "failure", "code": "registry_busy"}
+
+
+class SourceChange(unittest.TestCase):
+    """Regressions for the three failed 05-gate-lg bases (22 November 2026)."""
+
+    def setUp(self):
+        self.folder = tempfile.TemporaryDirectory()
+        self.addCleanup(self.folder.cleanup)
+        self.saved_sleep = fixture.time.sleep
+        fixture.time.sleep = lambda seconds: None
+        self.addCleanup(setattr, fixture.time, "sleep", self.saved_sleep)
+
+    def trim(self, service, bindings=None, **options):
+        return fixture.trim_when_idle(service, bindings or {"repo": "b"}, "idx", "src_1", "exact", "a/b",
+                                      sleep=lambda seconds: None, **options)
+
+    def test_busy_refusals_are_typed_and_registry_busy_only_answers_a_review(self):
+        self.assertEqual(fixture.busy_refusal(BUSY_JOBS, review=True)["code"], "source_change_jobs_pending")
+        self.assertEqual(fixture.busy_refusal(BUSY_JOBS, review=False)["busy"]["pending_jobs"], 1)
+        self.assertEqual(fixture.busy_refusal(REGISTRY_BUSY, review=True)["code"], "registry_busy")
+        self.assertIsNone(fixture.busy_refusal(REGISTRY_BUSY, review=False))
+        self.assertIsNone(fixture.busy_refusal({"status": "failure", "code": "invalid_registry_request"}, review=True))
+        self.assertIsNone(fixture.busy_refusal({"status": "catalog_outcome_unknown"}, review=False))
+
+    def test_a_change_waits_until_every_project_is_idle(self):
+        """Root F: the fourth deny met the verify job that followed the third; the review must wait for it."""
+        service = FakeService(self.folder.name,
+                              progress=[[("v1", "verify")], [], [], [("x1", "vectors")], [], []])
+        outcome = self.trim(service, {"first": "b1", "second": "b2"})
+        self.assertEqual(outcome["state"], "applied")
+        # Three rounds of progress samples over both projects (a verify job on the first, then a vectors job
+        # on the second, then both idle) precede the one review; nothing is drafted while a job is unfinished.
+        self.assertEqual(service.log[:6], ["idle-progress"] * 6)
+        self.assertNotIn("trim-draft", service.log[:6])
+        self.assertEqual(service.log.count("trim-draft"), 1)
+        self.assertEqual(service.denies, [("exact", "a/b")])
+
+    def test_a_typed_busy_refusal_returns_to_the_wait_and_is_recorded(self):
+        service = FakeService(self.folder.name, drafts=[BUSY_JOBS, REGISTRY_BUSY, "ok"], applies=[BUSY_JOBS, "applied"])
+        outcome = self.trim(service)
+        self.assertEqual(outcome["state"], "applied")
+        self.assertEqual([row["code"] for row in outcome["busy_refusals"]],
+                         ["source_change_jobs_pending", "registry_busy", "source_change_jobs_pending"])
+        self.assertEqual([row["at"] for row in outcome["busy_refusals"]], ["draft", "draft", "apply"])
+        self.assertEqual(service.denies, [("exact", "a/b")])
+
+    def test_busy_refusals_end_at_the_deadline_not_at_a_count(self):
+        ticks = iter(range(0, 10_000, 100))
+        service = FakeService(self.folder.name, drafts=[BUSY_JOBS] * 50)
+        with self.assertRaisesRegex(ValueError, "kept refusing"):
+            self.trim(service, seconds=450, clock=lambda: next(ticks))
+        self.assertEqual(service.denies, [])
+
+    def test_other_refusals_are_not_retried(self):
+        service = FakeService(self.folder.name, drafts=[{"status": "failure", "code": "invalid_registry_request"}])
+        with self.assertRaises(ValueError):
+            self.trim(service)
+        self.assertEqual(service.log.count("trim-draft"), 1)
+        service = FakeService(self.folder.name, applies=[{"status": "failure", "code": "registry_busy"}])
+        with self.assertRaisesRegex(ValueError, "trim apply was not accepted"):
+            self.trim(service)
+
+    def test_an_unknown_outcome_is_observed_until_in_force(self):
+        """Roots C and L: catalog_outcome_unknown is not a refusal; the change completed about a second later."""
+        service = FakeService(self.folder.name, applies=["unknown"], in_force_after=3)
+        outcome = self.trim(service)
+        self.assertEqual(outcome["state"], "unknown")
+        self.assertEqual(outcome["fence"], {"observation": "authority_fence", "state": "pending",
+                                            "stage": "fence_unknown", "operation_id": "op", "confirmations": 0,
+                                            "worker_confirmations": 0})
+        self.assertEqual(service.denies, [("exact", "a/b")])
+        self.assertEqual(service.log.count("trim-apply"), 1)  # observed, never submitted again
+
+    def test_an_unknown_outcome_that_never_comes_into_force_raises(self):
+        ticks = iter(range(0, 100_000, 50))
+        saved = fixture.time.monotonic
+        fixture.time.monotonic = lambda: next(ticks)
+        self.addCleanup(setattr, fixture.time, "monotonic", saved)
+        service = FakeService(self.folder.name, applies=["unknown"], in_force_after=10_000)
+        service.deadline = 10 ** 9
+        with self.assertRaisesRegex(ValueError, "outcome unknown and not in force"):
+            self.trim(service, seconds=300, clock=fixture.time.monotonic)
+        self.assertEqual(service.denies, [])
+
+    def test_a_deny_already_in_force_is_not_applied_again(self):
+        service = FakeService(self.folder.name)
+        service.denies = [("exact", "a/b")]
+        self.assertEqual(self.trim(service)["state"], "already_denied")
+        self.assertNotIn("trim-draft", service.log)
+
+    def index(self, service, repo, phase, states, first_vectors=None):
+        record = {"repository": repo}
+        fixture.ensure_index(service, repo, Path("R"), states, states / f"{repo}.state.json", first_vectors, record,
+                             "c" * 40, phase=phase)
+        return record
+
+    def test_every_deny_is_in_force_before_any_index_pass_is_queued(self):
+        """The worker's order: phase "policy" for every repository, then the lexical passes."""
+        states = Path(self.folder.name) / "indexes"
+        states.mkdir()
+        service = FakeService(self.folder.name, applies=["applied", "unknown"], in_force_after=2)
+        for repo in fixture.DEFAULT_REPOSITORIES:
+            record = self.index(service, repo, "policy", states)
+            self.assertNotIn("indexing_seconds", record)
+        self.assertEqual(service.indexed, [])
+        self.assertEqual(sorted(service.denies), sorted(fixture.EXCLUSIONS["bookbuilder-v2"]))
+        self.assertEqual(self.index(service, "munarium", "policy", states)["denies"], [])
+        for repo in fixture.DEFAULT_REPOSITORIES:
+            self.index(service, repo, "lexical", states)
+        self.assertEqual([row[0] for row in service.indexed], ["index-bookbuilder-v2", "index-munarium"])
+        for _, denies, pending in service.indexed:
+            self.assertEqual(denies, sorted(fixture.EXCLUSIONS["bookbuilder-v2"]))
+            self.assertEqual(pending, [])
+        state = json.loads((states / "bookbuilder-v2.state.json").read_bytes())
+        self.assertEqual([row["outcome"] for row in state["trims"]], ["applied", "unknown"])
+        self.assertTrue(all(row["before_index"] for row in state["trims"]))
+        self.assertNotIn("trim_refusals_before_index", state)
+
+    def test_a_deny_that_cannot_be_applied_is_never_deferred_behind_the_index_pass(self):
+        """Roots C and L indexed nothing, but the old fallback queued the pass with the deny missing."""
+        states = Path(self.folder.name) / "indexes"
+        states.mkdir()
+        service = FakeService(self.folder.name, applies=[{"status": "failure", "code": "invalid_registry_request"}])
+        with self.assertRaises(ValueError):
+            self.index(service, "bookbuilder-v2", "lexical", states)
+        self.assertEqual(service.indexed, [])
+        self.assertFalse(hasattr(fixture, "trim_with_busy_retry"))
+
+    def test_the_install_follows_the_denies_and_its_index_pass_is_adopted(self):
+        """Root 06-gate-lg-C: the MiniLM install queued the installing project's index pass by itself."""
+        states = Path(self.folder.name) / "indexes"
+        states.mkdir()
+        service = FakeService(self.folder.name)
+        drafts = Path(self.folder.name) / "semantic-drafts"
+        self.index(service, "bookbuilder-v2", "policy", states, first_vectors=drafts)
+        install = service.log.index("install-minilm-bookbuilder-v2")
+        applies = [n for n, label in enumerate(service.log) if label == "trim-apply"]
+        self.assertEqual(len(applies), 2)
+        self.assertLess(max(applies), install)
+        state = json.loads((states / "bookbuilder-v2.state.json").read_bytes())
+        self.assertEqual(state["install_index"]["job"], "auto-index")
+        self.assertIsNone(state["indexed"])
+        record = self.index(service, "bookbuilder-v2", "lexical", states)
+        self.assertEqual(service.indexed, [])                 # no second pass is requested
+        self.assertEqual(set(service.waited), {"auto-index"})  # the install's own pass is the first index pass
+        state = json.loads((states / "bookbuilder-v2.state.json").read_bytes())
+        self.assertEqual((state["indexed"]["job"], state["indexed"]["queued_by"]), ("auto-index", "the MiniLM install"))
+        self.assertIsNone(state["indexed"]["job_seconds"])  # no registry in this test
+        self.assertGreaterEqual(record["indexing_seconds"], 0)
+        # A later repository is set up after the install and its pass is queued by the launcher.
+        self.index(service, "munarium", "policy", states)
+        self.index(service, "munarium", "lexical", states)
+        self.assertEqual([row[0] for row in service.indexed], ["index-munarium"])
+        state = json.loads((states / "munarium.state.json").read_bytes())
+        self.assertEqual(state["indexed"]["queued_by"], "the launcher")
+
+    def test_an_install_without_an_index_pass_leaves_the_pass_to_the_launcher(self):
+        service = FakeService(self.folder.name)
+        found = fixture.install_index_job(service, "b", seconds=0)
+        self.assertIsNone(found["job"])
+        service.auto_index = True
+        self.assertEqual(fixture.install_index_job(service, "b", seconds=0)["job"], "auto-index")
+
+    def test_a_cancelled_install_pass_is_not_adopted_by_the_next_lifetime(self):
+        """A lifetime stopped during the install's pass cancels it; the restart must queue a new pass."""
+        states = Path(self.folder.name) / "indexes"
+        states.mkdir()
+        service = FakeService(self.folder.name)
+        self.index(service, "bookbuilder-v2", "policy", states, first_vectors=Path(self.folder.name) / "drafts")
+        service.job_states["auto-index"] = "canceled"
+        self.index(service, "bookbuilder-v2", "lexical", states)
+        self.assertEqual([row[0] for row in service.indexed], ["index-bookbuilder-v2"])
+        state = json.loads((states / "bookbuilder-v2.state.json").read_bytes())
+        self.assertEqual((state["indexed"]["job"], state["indexed"]["queued_by"]), ("index-pass", "the launcher"))
+
+    def test_only_the_first_repository_of_a_fresh_installation_may_need_a_deny(self):
+        """Root 06-gate-lg-C listed munarium first: the bookbuilder-v2 deny then met munarium's vectors job."""
+        states = Path(self.folder.name) / "indexes"
+        states.mkdir()
+        self.assertIsNone(fixture.repository_order_problem(fixture.DEFAULT_REPOSITORIES, states))
+        self.assertEqual(fixture.DEFAULT_REPOSITORIES[0], "bookbuilder-v2")
+        problem = fixture.repository_order_problem(("munarium", "bookbuilder-v2"), states)
+        self.assertIn("bookbuilder-v2 needs denies and is not listed first", problem)
+        self.assertIn("airk", fixture.repository_order_problem(("bookbuilder-v2", "airk"), states))
+        self.assertIsNone(fixture.repository_order_problem(("munarium",), states))
+        # A repository already set up has its denies; an installation with MiniLM takes a new one when quiet.
+        (states / "bookbuilder-v2.state.json").write_text("{}", encoding="utf-8")
+        self.assertIsNone(fixture.repository_order_problem(("munarium", "bookbuilder-v2"), states))
+        (states / "bookbuilder-v2.state.json").unlink()
+        (states / "minilm.state.json").write_text("{}", encoding="utf-8")
+        self.assertIsNone(fixture.repository_order_problem(("munarium", "bookbuilder-v2"), states))
+
+    def registry(self, jobs=(), follow_ups=(), setup=(), audits=()):
+        import sqlite3
+        control = Path(tempfile.mkdtemp(dir=self.folder.name))
+        connection = sqlite3.connect(control / "service-1.4.sqlite3")
+        connection.executescript(
+            "CREATE TABLE service_jobs(seq INTEGER PRIMARY KEY, id TEXT, project TEXT, kind TEXT, state TEXT);"
+            "CREATE TABLE service_background_audit(project TEXT, job TEXT, manual INTEGER);"
+            "CREATE TABLE service_background(project TEXT, revision INTEGER, source_pending INTEGER, "
+            "semantic_pending INTEGER);"
+            "CREATE TABLE service_setup_pending(project TEXT);")
+        connection.executemany("INSERT INTO service_jobs(id, project, kind, state) VALUES(?,?,?,?)", jobs)
+        connection.executemany("INSERT INTO service_background VALUES(?,0,?,?)", follow_ups)
+        connection.executemany("INSERT INTO service_setup_pending VALUES(?)", [(p,) for p in setup])
+        connection.executemany("INSERT INTO service_background_audit VALUES('p',?,?)", audits)
+        connection.commit()
+        connection.close()
+        return control
+
+    def test_the_registry_snapshot_names_unfinished_and_promised_work(self):
+        quiet = self.registry(jobs=[("j1", "p1", "index", "succeeded"), ("j2", "p1", "verify", "pending")],
+                              follow_ups=[("p1", 0, 0)], audits=[("j2", 0)])
+        self.assertEqual(fixture.registry_pending(quiet), {"jobs": [], "follow_ups": [], "setup_pending": []})
+        busy = self.registry(jobs=[("j1", "p1", "vectors", "running"), ("j2", "p1", "verify", "pending"),
+                                   ("j3", "p2", "verify", "pending"), ("j4", "p2", "verify", "running")],
+                             follow_ups=[("p1", 0, 1), ("p2", 0, 0), ("p3", 1, 0)], setup=["p4"],
+                             audits=[("j2", 1), ("j3", 0), ("j4", 0)])
+        pending = fixture.registry_pending(busy)
+        # A parked automatic audit (j3) is left out; a manual one (j2) and a running one (j4) are not.
+        self.assertEqual([row["job"] for row in pending["jobs"]], ["j1", "j2", "j4"])
+        self.assertEqual(pending["follow_ups"], [{"project": "p1", "index_pass": False, "vectors": True},
+                                                 {"project": "p3", "index_pass": True, "vectors": False}])
+        self.assertEqual(pending["setup_pending"], ["p4"])
+
+    def test_promised_follow_up_work_keeps_a_change_waiting(self):
+        """Root 06-gate-lg-C: one progress sample fell into the 48 ms between an index pass and its vectors job."""
+        service = FakeService(self.folder.name)
+        service.control = self.registry(follow_ups=[("p1", 0, 1)])
+        ticks = iter(range(0, 10_000, 100))
+        with self.assertRaisesRegex(ValueError, "did not become quiet"):
+            self.trim(service, seconds=450, clock=lambda: next(ticks))
+        self.assertNotIn("trim-draft", service.log)
+        answers = [{"jobs": [], "follow_ups": [{"project": "p1", "index_pass": False, "vectors": True}],
+                    "setup_pending": []}, {"unreadable": "locked"},
+                   {"jobs": [], "follow_ups": [], "setup_pending": []}]
+        saved = fixture.registry_pending
+        fixture.registry_pending = lambda control: answers.pop(0) if len(answers) > 1 else answers[0]
+        self.addCleanup(setattr, fixture, "registry_pending", saved)
+        service = FakeService(self.folder.name, progress=[[("x", "index")], []])
+        service.control = self.registry()
+        self.assertEqual(self.trim(service)["state"], "applied")
+        # One busy progress sample (the registry is not opened), then two registry answers that are not
+        # quiet, then the quiet one: four rounds before the single review.
+        self.assertEqual(service.log[:4], ["idle-progress"] * 4)
+        self.assertEqual(len(answers), 1)
+
+    def test_bindings_come_from_every_state_file(self):
+        states = Path(self.folder.name) / "indexes"
+        states.mkdir()
+        (states / "munarium.state.json").write_text(json.dumps({"repository": "munarium", "binding": "b1"}))
+        (states / "bookbuilder-v2.state.json").write_text(json.dumps({"binding": "b2"}))
+        (states / "minilm.state.json").write_text(json.dumps({"installed_by": "munarium"}))
+        self.assertEqual(fixture.installation_bindings(states), {"munarium": "b1", "bookbuilder-v2": "b2"})
+        self.assertEqual(fixture.installation_bindings(states / "missing"), {})
+
+
+class StatusRefusal(unittest.TestCase):
+    """Regression for base lifetime 06-gate-lg-L-base (23 November 2026): after 3.6 hours of embedding, one
+    ``airk_status`` poll was refused with ``scoped_connection_unavailable`` and the wait ended the lifetime."""
+
+    REFUSED = {"isError": True, "structuredContent": {"error": {
+        "code": "scoped_connection_unavailable", "query_submitted": False, "retryable": False}}}
+
+    def commands(self, folder, script, progress=()):
+        """A scripted ``Commands``: each status poll takes the next entry, a body or ``REFUSED`` (written to
+        the call's stdout file before the call fails, as the real one does); each ``progress`` read takes the
+        next entry of ``progress``, and an index pass returns a job."""
+        test = self
+        progress = list(progress)
+
+        class Scripted:
+            deadline, prefix, count, stop_file = float("inf"), "p", 0, None
+
+            def __init__(self):
+                self.folder = Path(folder)
+                self.calls = []
+
+            def json(self, label, *arguments):
+                self.count += 1
+                self.calls.append(label)
+                return progress.pop(0) if label == "semantic-progress" else {"job": {"id": "retry-job"}}
+
+            def tool(self, label, tool, index_id, arguments=None):
+                self.count += 1
+                answer = script.pop(0)
+                if answer is test.REFUSED or isinstance(answer, str):
+                    text = answer if isinstance(answer, str) else json.dumps(answer)
+                    (self.folder / f"{self.prefix}-{self.count:04}-{label}.stdout").write_text(text, encoding="utf-8")
+                    raise ValueError(f"{label} failed (exit 1)")
+                return {"structuredContent": answer}, None, 0.0
+
+        return Scripted()
+
+    def test_a_refused_status_poll_is_no_observation_and_the_wait_goes_on(self):
+        ready = {"semantic_readiness": {"state": "ready"}, "publication": {"token": "t"}}
+        partial = {"semantic_readiness": {"state": "partial"}}
+        original = fixture.time.sleep
+        fixture.time.sleep = lambda seconds: None
         try:
-            def busy_then_ok(commands, index_id, source_root_id, kind, path, nonce):
-                calls.append(nonce)
-                if len(calls) < 3:
-                    raise ValueError('service refused catalog_source_mutation_draft: {"code": "registry_busy"}')
-                return {"draft_preview_digest": "d"}
-            fixture.trim_path = busy_then_ok
-            fixture.index_policy = lambda commands, index_id: {}
-            fixture.denied_atoms = lambda status: (set(), None)
-            outcome = fixture.trim_with_busy_retry(None, "i", "s", "exact", "a/b", sleep=lambda s: None)
-            self.assertEqual(outcome["draft_preview_digest"], "d")
-            self.assertEqual(len(set(calls)), 3)
-            fixture.trim_path = lambda *a: (_ for _ in ()).throw(ValueError("schema refused"))
-            with self.assertRaises(ValueError):
-                fixture.trim_with_busy_retry(None, "i", "s", "exact", "a/b", sleep=lambda s: None)
-            calls.clear()
-            fixture.trim_path = lambda *a: (calls.append(1), (_ for _ in ()).throw(
-                ValueError("registry_busy")))[1]
-            fixture.denied_atoms = lambda status: ({("exact", "a/b")}, None)
-            landed = fixture.trim_with_busy_retry(None, "i", "s", "exact", "a/b", sleep=lambda s: None)
-            self.assertEqual(landed["applied"], "already denied after a busy retry")
-            self.assertEqual(len(calls), 1)
+            with tempfile.TemporaryDirectory() as folder:
+                refusals = []
+                commands = self.commands(folder, [partial, self.REFUSED, self.REFUSED, partial, ready])
+                status = fixture.wait_semantic(commands, "idx", 60, refusals=refusals)
+                self.assertEqual(status, ready)
+                self.assertEqual([(r["code"], r["command"]) for r in refusals],
+                                 [("scoped_connection_unavailable", "p-0002-semantic-status"),
+                                  ("scoped_connection_unavailable", "p-0003-semantic-status")])
+                # More in a row than the bound, a failure that is not such a refusal, a refusal after a
+                # submitted query and a state other than pending or partial still end the wait.
+                many = self.commands(folder, [self.REFUSED] * (fixture.STATUS_REFUSAL_POLLS + 1))
+                with self.assertRaises(ValueError):
+                    fixture.wait_semantic(many, "idx", 60, refusals=[])
+                self.assertEqual(many.count, fixture.STATUS_REFUSAL_POLLS + 1)
+                submitted = json.dumps({"structuredContent": {"error": {"code": "x", "query_submitted": True}}})
+                for text in ("not json", submitted, json.dumps({"structuredContent": {"status": "failed"}})):
+                    with self.assertRaises(ValueError):
+                        fixture.wait_semantic(self.commands(folder, [text, ready]), "idx", 60, refusals=[])
+                failed = self.commands(folder, [{"semantic_readiness": {"state": "failed"}}])
+                with self.assertRaisesRegex(ValueError, "semantic status became failed"):
+                    fixture.wait_semantic(failed, "idx", 60)
+                # A vectors job that failed with the service's temporary code is retried once, explicitly,
+                # and recorded; while a job is at work the failed state is only observed again.
+                failed = {"semantic_readiness": {"state": "failed"}}
+                helper = {"observation": {"job": {"id": "v1", "kind": "vectors", "state": "failed",
+                                                  "outcome": {"state": "failed", "code": "helper_unavailable"}}}}
+                at_work = {"observation": {"job": {"id": "retry-job", "kind": "index", "state": "running"}}}
+                retries = []
+                # One sample decides nothing (the observation lags a job just queued): the retry is queued
+                # after three idle observations in a row, and a job seen at work resets the count.
+                stale = {"observation": {"job": {"id": "m1", "kind": "maintain", "state": "succeeded"}}}
+                retried = self.commands(folder, [failed] * 6 + [partial, ready],
+                                        [helper, at_work, helper, helper, helper, at_work])
+                self.assertEqual(fixture.wait_semantic(retried, "idx", 60, "binding", None, None, retries), ready)
+                self.assertEqual([(r["code"], r["failed_job"], r["retry_job"]) for r in retries],
+                                 [("helper_unavailable", "v1", "retry-job")])
+                self.assertEqual(retried.calls.count("semantic-retry-index"), 1)
+                # A second failure, another code, and a wait without a retry record stay fatal.
+                again = self.commands(folder, [failed] * 6, [helper] * 6)
+                with self.assertRaisesRegex(ValueError, "after 1 retries"):
+                    fixture.wait_semantic(again, "idx", 60, "binding", None, None, [])
+                # A restart: the resume pass was just queued and the observation still shows an older job.
+                resumed = self.commands(folder, [failed, failed, partial, ready], [stale, at_work])
+                self.assertEqual(fixture.wait_semantic(resumed, "idx", 60, "binding", None, None, []), ready)
+                self.assertNotIn("semantic-retry-index", resumed.calls)
+                with self.assertRaisesRegex(ValueError, r"became failed \(None, after 0 retries\)"):
+                    fixture.wait_semantic(self.commands(folder, [failed] * 3, [stale] * 3), "idx", 60, "binding",
+                                          None, None, [])
+                other = {"observation": {"job": {"id": "v1", "kind": "vectors", "state": "failed",
+                                                 "outcome": {"state": "failed", "code": "project_operation_failed"}}}}
+                with self.assertRaisesRegex(ValueError, "project_operation_failed"):
+                    fixture.wait_semantic(self.commands(folder, [failed] * 3, [other] * 3), "idx", 60, "binding",
+                                          None, None, [])
+                with self.assertRaisesRegex(ValueError, "semantic status became failed"):
+                    fixture.wait_semantic(self.commands(folder, [failed]), "idx", 60, "binding")
+                # The bound counts consecutive refusals: an observation in between starts it again.
+                spaced = [self.REFUSED] * fixture.STATUS_REFUSAL_POLLS + [partial] + \
+                         [self.REFUSED] * fixture.STATUS_REFUSAL_POLLS + [ready]
+                self.assertEqual(fixture.wait_semantic(self.commands(folder, spaced), "idx", 60), ready)
         finally:
-            fixture.trim_path, fixture.index_policy, fixture.denied_atoms = original_trim, original_policy, original_atoms
+            fixture.time.sleep = original
+
+
+class SmokeAnswer(unittest.TestCase):
+    """The smoke Answer is the fixture's own /3 template; no schema or budget is written in the launcher."""
+
+    CASES = json.loads((HERE.parents[1] / "fixtures" / "split" / "arbiter" / "answer_loop_cases.json").read_text(
+        encoding="utf-8"))
+
+    def test_the_request_is_the_written_template_with_the_question_set(self):
+        template = {"schema": self.CASES["request_schema"], "question": "__PRIVATE_FROZEN_QUESTION__",
+                    "budget": self.CASES["default_budget"], "response_mode": "full", "include_status": True}
+        with tempfile.TemporaryDirectory() as folder:
+            work = Path(folder)
+            (work / "context-request.json").write_text(json.dumps(template), encoding="utf-8")
+            self.assertEqual(fixture.answer_arguments(work, "Where is it?"), dict(template, question="Where is it?"))
+            self.assertEqual(fixture.ANSWER_REQUEST_SCHEMA, self.CASES["request_schema"])
+            # A template of the one-turn request, or one without a budget, is refused and never patched.
+            for bad in (dict(template, schema="airk.arbiter.context.request/2"), dict(template, budget={}),
+                        {k: v for k, v in template.items() if k != "budget"}):
+                (work / "context-request.json").write_text(json.dumps(bad), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "not a whole Answer /3 request"):
+                    fixture.answer_arguments(work, "q")
+
+    def test_the_reply_is_read_as_answer_3_or_the_smoke_fails(self):
+        body = next(c["response"] for c in self.CASES["response_cases"] if c["id"] == "two_parts_valid")
+        self.assertEqual(fixture.ANSWER_REPLY_SCHEMA, self.CASES["response_schema"])
+        row = fixture.answer_smoke_row(body)
+        self.assertEqual((row["schema"], row["parts"], len(row["stops"]), row["records"], row["decisions"]),
+                         (self.CASES["response_schema"], len(body["parts"]), len(body["parts"]),
+                          len(body["records"]), body["decision_log"]["total"]))
+        self.assertEqual(row["degradations"], ["context_abstained"])
+        for bad in ({"schema": "airk.arbiter.context/2", "stop": "sufficient", "records": []}, {}, None):
+            with self.assertRaisesRegex(ValueError, "not an Answer /3 reply"):
+                fixture.answer_smoke_row(bad)
 
 
 class SearchSwitch(unittest.TestCase):
@@ -415,6 +878,24 @@ class Scenarios(unittest.TestCase):
                 path.write_text(json.dumps({"repository": repo, "leak_probe": phrase}), encoding="utf-8")
             probes = fixture.scenario_probes(root)
             self.assertEqual([row["phrase"] for row in probes], ["alpha beta gamma", "delta epsilon zeta"])
+
+    def test_the_scan_reads_only_scenario_objects_in_the_repository_folder(self):
+        """Regression (22 Nov 2026): a review's findings.json (a list) lay in scenarios/munarium-review."""
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            for relative, value in (("scenarios/munarium/C1.json", {"repository": "munarium", "leak_probe": "one"}),
+                                    ("sealed/munarium/A1.json", {"repository": "munarium", "leak_probe": "two"}),
+                                    ("scenarios/munarium/list.json", ["not a scenario"]),
+                                    ("scenarios/munarium/other.json", {"repository": "airk", "leak_probe": "x"}),
+                                    ("scenarios/munarium-review/findings.json", [{"id": 1}]),
+                                    ("scenarios/airk/C1.json", {"repository": "airk", "leak_probe": "three"})):
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps(value), encoding="utf-8")
+            self.assertEqual([(row["source"], row["phrase"]) for row in fixture.scenario_probes(root, "munarium")],
+                             [("scenarios/munarium/C1.json", "one"), ("sealed/munarium/A1.json", "two")])
+            self.assertEqual([row["phrase"] for row in fixture.scenario_probes(root)], ["three"])
+            self.assertEqual(fixture.scenario_probes(root, "bookbuilder"), [])
 
     def test_probes_follow_the_freeze_and_refuse_a_changed_file(self):
         import hashlib

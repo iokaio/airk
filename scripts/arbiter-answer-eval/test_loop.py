@@ -64,6 +64,19 @@ def v3_reply(search_hits=(), symbol_hits=()) -> dict:
     return body
 
 
+def recount(body: dict) -> dict:
+    """Keep the decision log's counts by source in step with the decisions (these fixtures include every
+    logged decision), as the service writes them: one row per stage, source and model."""
+    counts: dict[tuple, int] = {}
+    for decision in body["decisions"]:
+        key = (decision["stage"], decision["source"]["kind"], decision.get("model"))
+        counts[key] = counts.get(key, 0) + 1
+    body["decision_log"]["counts"] = [
+        {"count": n, "source": source, "stage": stage, **({"model": model} if model else {})}
+        for (stage, source, model), n in counts.items()]
+    return body
+
+
 def top_score(body: dict, model: str = "context_compact", precision: str = "float16") -> dict:
     """The reply as a gate arm would produce it: no abstention, every model decision by top score."""
     body = copy.deepcopy(body)
@@ -73,7 +86,7 @@ def top_score(body: dict, model: str = "context_compact", precision: str = "floa
         if decision.get("model"):
             decision.update(model=model, precision=precision)
     body["degradations"] = [d for d in body["degradations"] if d["kind"] != "context_abstained"]
-    return body
+    return recount(body)
 
 
 def focus_only(body: dict) -> dict:
@@ -84,7 +97,32 @@ def focus_only(body: dict) -> dict:
         decision["batched_with"] = []
         decision["source"] = {"kind": "deterministic", "rule": "top_focus_span"}
     body["degradations"] = [{"kind": "context_absent"}]
-    return body
+    return recount(body)
+
+
+def starved(body: dict, reason: str = "token_budget") -> dict:
+    """The reply of an arm whose model was present and never reached: every decision due to it was not
+    dispatched. The service reports ``context_absent`` for it, as it does for a Focus-only reply."""
+    body = top_score(body)
+    for decision in body["decisions"]:
+        if decision["source"]["kind"] == "model":
+            decision["source"] = {"kind": "not_dispatched", "fallback": "top_focus_span", "reason": reason}
+    body["degradations"] = [{"kind": "context_absent"}]
+    return recount(body)
+
+
+def _budgets(value) -> list[dict]:
+    """Every object that carries a ``budget`` object, anywhere in a JSON document."""
+    found = []
+    if isinstance(value, dict):
+        if isinstance(value.get("budget"), dict):
+            found.append(value)
+        for child in value.values():
+            found += _budgets(child)
+    elif isinstance(value, list):
+        for child in value:
+            found += _budgets(child)
+    return found
 
 
 def envelope(body) -> bytes:
@@ -124,6 +162,102 @@ class ContractConstants(unittest.TestCase):
         self.assertEqual(loop_reply.REPLY_FRAME_BYTES, CASES["reply_frame_bytes"])
         self.assertFalse(CASES["qualification"])
 
+    def test_the_default_budget_is_read_from_the_rust_cases_and_nowhere_copied(self):
+        """On 22 November 2026 the product default moved to 196,608 input tokens while the harness still held
+        a copied 131,072, which every gate Answer would have been sent."""
+        source = common.answer_budget_source()
+        self.assertEqual(source, {"path": "fixtures/split/arbiter/answer_loop_cases.json",
+                                  "sha256": common.sha256_file(CASES_PATH), "default_budget": CASES["default_budget"]})
+        # No harness source file spells the input-token default: a moved default cannot leave a stale copy.
+        tokens = CASES["default_budget"]["input_tokens"]
+        for name in prompts_freeze.HARNESS_FILES + ("make_loop_spec.py", "lg_lifetimes.py", "gate_report.py"):
+            text = (HERE / name).read_text(encoding="utf-8")
+            self.assertNotIn(str(tokens), text.replace("_", ""), name)
+        # The documents that state the default follow the cases file.
+        readme = (HERE / "README.md").read_text(encoding="utf-8")
+        for key, unit in (("input_tokens", "input tokens"), ("calls", "calls"), ("candidates", "candidates")):
+            self.assertIn(f"{CASES['default_budget'][key]:,} {unit}", readme, key)
+        template = common.read_json(HERE / "l7_plan_template.json")
+        budgets = [row["budget"] for row in _budgets(template)]
+        self.assertTrue(budgets)
+        for budget in budgets:
+            self.assertEqual({k: budget[k] for k in CASES["default_budget"] if k != "deadline_ms"},
+                             {k: v for k, v in CASES["default_budget"].items() if k != "deadline_ms"})
+        # A file that is not this contract's cases, or that carries no whole budget, is refused at import.
+        with tempfile.TemporaryDirectory() as folder:
+            for number, cases in enumerate((dict(CASES, request_schema="airk.arbiter.context.request/2"),
+                                            {k: v for k, v in CASES.items() if k != "default_budget"},
+                                            dict(CASES, default_budget=dict(CASES["default_budget"], calls=0)),
+                                            dict(CASES, default_budget=dict(CASES["default_budget"], calls="132")),
+                                            dict(CASES, default_budget={}))):
+                path = Path(folder) / f"cases-{number}.json"
+                path.write_text(json.dumps(cases), encoding="utf-8")
+                with self.assertRaises(common.HarnessError):
+                    common.answer_default_budget(path)
+            moved = Path(folder) / "moved.json"
+            moved.write_text(json.dumps(dict(CASES, default_budget=dict(CASES["default_budget"], input_tokens=7))),
+                             encoding="utf-8")
+            self.assertEqual(common.answer_default_budget(moved)["input_tokens"], 7)
+
+    def test_receipts_carry_the_exact_budget_sent(self):
+        rows = [{"budget_sent": {"calls": 1}}, {"budget_sent": {"calls": 1}}, {"budget_sent": {"calls": 2}},
+                {"tool": "airk_answer", "sent_arguments": {"budget": {"calls": 2}}},
+                {"tool": "airk_search", "sent_arguments": {"query": "q"}}, {"budget_sent": None}]
+        self.assertEqual(common.distinct_budgets(rows), [{"budget": {"calls": 1}, "calls": 2},
+                                                         {"budget": {"calls": 2}, "calls": 2}])
+        with tempfile.TemporaryDirectory() as folder:
+            sent = []
+            body = v3_reply()
+
+            def backend(tool, args):
+                sent.append(args)
+                return Outcome(body, ms=5)
+
+            entry = replay.replay_canonical(scen(), "compact", object(), Path(folder), timeout_s=5, backend=backend,
+                                            answer_defaults={"budget": {"deadline_ms": 600000}})
+        self.assertEqual(entry["call"]["budget_sent"], dict(CASES["default_budget"], deadline_ms=600000))
+        self.assertEqual(entry["call"]["budget_sent"], sent[0]["budget"])
+
+    def test_a_roots_tools_catalog_is_the_live_lifetimes_listing(self):
+        """The wrapper serves agents from <root>/tools-catalog.json; nothing wrote it for a new root."""
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            names = sorted({tool for tools in common.PATH_TOOLS.values() for tool in tools})
+
+            def cli(tools):
+                script = root / f"cli-{len(tools)}.py"
+                script.write_text("import json, sys\nassert sys.argv[-3:] == ['tools', 'list', '--json'], sys.argv\n"
+                                  f"print(json.dumps({{'tools': {[{'name': t, 'inputSchema': {}} for t in tools]!r}}}))\n",
+                                  encoding="utf-8")
+                return common.Handle(root / "handle.json", "0" * 64, (sys.executable, "-I", str(script)),
+                                     str(root / "control"), {}, {})
+
+            first = common.write_tools_catalog(cli(names), root)
+            self.assertEqual((first["tools"], Path(first["path"]).name), (len(names), "tools-catalog.json"))
+            self.assertEqual(common.write_tools_catalog(cli(names), root), first)  # the same listing is kept
+            with self.assertRaisesRegex(common.HarnessError, "written by another image"):
+                common.write_tools_catalog(cli(names + ["airk_new_tool"]), root)
+            other = root / "other"
+            other.mkdir()
+            with self.assertRaisesRegex(common.HarnessError, "lacks"):
+                common.write_tools_catalog(cli(names[:-1]), other)
+
+    def test_prompts_freeze_pins_the_budget_and_its_source(self):
+        now = prompts_freeze.current()
+        self.assertEqual(now["answer_budget"], common.answer_budget_source())
+        self.assertEqual(prompts_freeze.differences(copy.deepcopy(now), now), [])
+        stale = copy.deepcopy(now)
+        stale["answer_budget"]["default_budget"]["input_tokens"] = 131072
+        self.assertEqual(prompts_freeze.differences(stale, now), ["answer default budget"])
+        self.assertEqual(prompts_freeze.prompt_changes(stale, now), ["answer default budget"])
+        before = copy.deepcopy(now)
+        before.pop("answer_budget")  # a freeze from before the budget was pinned must be redone
+        self.assertEqual(prompts_freeze.differences(before, now), ["answer default budget"])
+        moved = copy.deepcopy(now)
+        moved["answer_budget"]["sha256"] = "0" * 64  # the cases file changed, the budget did not
+        self.assertEqual(prompts_freeze.differences(moved, now), ["answer default budget"])
+        self.assertEqual(prompts_freeze.prompt_changes(moved, now), [])
+
     def test_canonical_first_call_sends_a_whole_v3_budget(self):
         tool, args = replay.canonical_first_call("compact", "Where is it?", {"budget": {"deadline_ms": 600000}})
         self.assertEqual(tool, "airk_answer")
@@ -160,6 +294,52 @@ class LoopReply(unittest.TestCase):
         self.assertEqual(summary["work"]["rounds"], 2)
         self.assertIsNone(summary["partial"])
 
+    def test_decision_sources_count_model_fallback_and_no_model_per_stage(self):
+        """The gate report must show how often a model decision fell back: a slower model may be shed more."""
+        body = case("two_parts_valid")
+        self.assertEqual([loop_reply.source_class(k) for k in ("model", "abstained", "unavailable", "not_dispatched",
+                                                               "deterministic", "something_new")],
+                         ["model", "fell_back", "fell_back", "not_dispatched", "no_model", "other"])
+        self.assertEqual(loop_reply.fallback_reasons(body), {"coverage": {"abstained/abstained": 1}})
+        self.assertEqual(loop_reply.summary(body)["fallback_reasons"], {"coverage": {"abstained/abstained": 1}})
+        shed = copy.deepcopy(body)
+        shed["decisions"][1]["source"] = {"kind": "unavailable", "fallback": "top_focus_span", "reason": "deadline"}
+        shed["decision_log"]["counts"] = [
+            {"count": 1, "source": "deterministic", "stage": "split"},
+            {"count": 3, "model": "context_large", "source": "unavailable", "stage": "coverage"},
+            {"count": 1, "model": "context_large", "source": "abstained", "stage": "coverage"},
+            {"count": 2, "model": "context_large", "source": "model", "stage": "follow_up"},
+            {"count": 4, "model": "context_large", "source": "not_dispatched", "stage": "follow_up"},
+            {"count": 1, "source": "future_kind", "stage": "follow_up"}]
+        shed["decision_log"].update(total=12, included=4, omitted=8)
+        shed["decisions"][3]["source"] = {"kind": "not_dispatched", "fallback": "top_focus_span",
+                                          "reason": "token_budget"}
+        self.assertEqual(loop_reply.fallback_reasons(shed), {"coverage": {"abstained/abstained": 1,
+                                                                          "unavailable/deadline": 1},
+                                                             "follow_up": {"not_dispatched/token_budget": 1}})
+        rows = [{"ok": True, "loop": loop_reply.summary(shed)}, {"ok": True, "loop": loop_reply.summary(body)},
+                {"ok": False, "loop": loop_reply.summary(shed)}, {"ok": True, "loop": None},
+                {"ok": True, "loop": loop_reply.summary(case("ticket_valid"))}]
+        found = gate.decision_sources({"arm": "L", "rows": rows})
+        self.assertEqual(found["replies"], 2)  # the failed call, the non-loop reply and the ticket do not count
+        self.assertEqual(found["stages"]["coverage"],
+                         {"model": 1, "fell_back": 5, "not_dispatched": 0, "no_model": 0, "other": 0})
+        # Not dispatched is counted apart from the model's decisions and from the no-model path.
+        self.assertEqual(found["stages"]["follow_up"],
+                         {"model": 2, "fell_back": 0, "not_dispatched": 4, "no_model": 1, "other": 1})
+        self.assertEqual(found["stages"]["split"],
+                         {"model": 0, "fell_back": 0, "not_dispatched": 0, "no_model": 2, "other": 0})
+        self.assertEqual(found["total"], {"model": 3, "fell_back": 5, "not_dispatched": 4, "no_model": 3, "other": 1})
+        # Reasons come from the included decisions only: 4 of the 9 such decisions carry one here.
+        self.assertEqual(found["fallback_reasons"], {"coverage": {"abstained/abstained": 2, "unavailable/deadline": 1},
+                                                     "follow_up": {"not_dispatched/token_budget": 1}})
+        self.assertEqual((found["fell_back_with_reason"], found["decisions_logged"], found["decisions_omitted"]),
+                         (4, 16, 8))
+        self.assertEqual(found["replies_without_log_counts"], 0)
+        bare = loop_reply.summary(body) | {"decision_counts": {}}
+        self.assertEqual(gate.decision_sources({"arm": "L", "rows": [{"ok": True, "loop": bare}]})[
+            "replies_without_log_counts"], 1)
+
     def test_ticket_reply(self):
         body = case("ticket_valid")
         self.assertTrue(loop_reply.is_ticket(body))
@@ -189,6 +369,66 @@ class LoopReply(unittest.TestCase):
             checked += 1
         self.assertGreater(checked, 50)
 
+    def test_an_arm_whose_focus_took_no_part_or_whose_reads_failed_is_refused(self):
+        # s5 shakedown, 23 November 2026: every search read failed read_failed in the service, Focus ran no
+        # call, and the Focus-only reply passed the old check.
+        body = focus_only(case("two_parts_valid"))
+        body["decision_log"]["focus_calls"] = 3
+        arm = {"context": None, "focus": True}
+        self.assertEqual(loop_reply.check_arm(body, arm), [])
+        starved_focus = copy.deepcopy(body)
+        starved_focus["decision_log"]["focus_calls"] = 0
+        starved_focus["degradations"].append({"kind": "focus_absent"})
+        self.assertTrue(any("Focus is staged and took no part" in p for p in loop_reply.check_arm(starved_focus, arm)))
+        self.assertEqual(loop_reply.check_arm(starved_focus, {"context": None}), [])  # Focus not required
+        failed = copy.deepcopy(body)
+        error = {"error": {"code": "read_failed", "message": "embedding worker is unavailable", "retryable": False}}
+        failed["records"][0]["canonical_result"] = {
+            "failure": json.dumps({"content": [{"type": "text", "text": json.dumps(error)}], "isError": True})}
+        op = failed["records"][0].get("operation") or "unknown"
+        self.assertEqual(loop_reply.read_failures(failed), {f"{op}:read_failed": 1})
+        self.assertEqual(loop_reply.summary(failed)["read_failures"], {f"{op}:read_failed": 1})
+        self.assertTrue(any("reads failed in the service" in p for p in loop_reply.check_arm(failed, arm)))
+        cut = failed["records"][0]["canonical_result"]["failure"][:100]  # the service keeps 512 characters
+        failed["records"][0]["canonical_result"]["failure"] = cut
+        self.assertEqual(loop_reply.read_failures(failed), {f"{op}:read_failed": 1})
+        failed["records"][0]["canonical_result"]["failure"] = "not json"
+        self.assertEqual(loop_reply.read_failures(failed), {f"{op}:unknown": 1})
+        self.assertFalse(any("reads failed in the service" in p for p in loop_reply.check_arm(failed, arm)))
+        # Any failed record still refuses the reply, named apart from service failures (invalid_arguments too).
+        self.assertTrue(any("refused or failed otherwise" in p for p in loop_reply.check_arm(failed, arm)))
+
+    def test_later_reads_are_classed_against_the_answer_rows(self):
+        answer = {"schema": loop_reply.RESPONSE_SCHEMA, "records": [{"canonical_result": {
+            "projection": evidence.LOOP_PROJECTION_PREFIX + "1", "spans": [
+                {"path": "src/a.rs", "start_line": 10, "end_line": 20, "text": "x", "truncated": True},
+                {"path": "src/b.rs", "start_line": 1, "end_line": 5, "text": "y", "truncated": False}]}}]}
+        bodies = {1: {"hits": [hit("src/z.rs", 1, 2)]}, 2: answer, 3: {"hits": [hit("src/a.rs", 15, 30)]},
+                  4: {"hits": [hit("src/b.rs", 4, 4)]}, 5: {"hits": [hit("src/c.rs", 1, 9)]}, 6: {"files": 3}}
+        turns = [{"turn": n, "ok": True} for n in bodies]
+        found = coverage.later_reads(turns, body_loader=lambda row: bodies[row["turn"]])
+        self.assertEqual({k: found[k] for k in ("answer_replies", "rows", "rows_truncated", "reads_after",
+                                                "to_truncated_row", "to_whole_row", "elsewhere", "no_location")},
+                         {"answer_replies": 1, "rows": 2, "rows_truncated": 1, "reads_after": 4,
+                          "to_truncated_row": 1, "to_whole_row": 1, "elsewhere": 1, "no_location": 1})
+        self.assertEqual(found["turns_to_truncated_rows"], [3])
+
+    def test_the_live_smoke_needs_a_search_record_focus_and_model_decisions(self):
+        compact = {"context": "context_compact", "device": "cuda", "precision": "float16", "focus": True}
+        good = top_score(case("two_parts_valid"))
+        good["decision_log"]["focus_calls"] = 2
+        self.assertTrue(any(r.get("operation") == "search" for r in loop_reply.records(good)))
+        self.assertEqual(gate.smoke_problems(good, compact), [])
+        no_focus = copy.deepcopy(good)
+        no_focus["decision_log"]["focus_calls"] = 0
+        self.assertIn("no Focus call while Focus is staged", gate.smoke_problems(no_focus, compact))
+        self.assertTrue(any("no model-sourced decision" in p for p in gate.smoke_problems(focus_only(good), compact)))
+        failed = copy.deepcopy(good)
+        for record in failed["records"]:
+            if record.get("operation") == "search":
+                record["canonical_result"] = {"failure": '{"content":[{"text":"{\\"error\\":{\\"code\\":\\"read_failed\\"'}
+        self.assertTrue(any("no search record without a failure" in p for p in gate.smoke_problems(failed, compact)))
+
     def test_arm_checks(self):
         raw = case("two_parts_valid")
         compact = {"context": "context_compact", "device": "cuda", "precision": "float16"}
@@ -204,6 +444,75 @@ class LoopReply(unittest.TestCase):
         self.assertTrue(any("context_absent" in p for p in loop_reply.check_arm(focus_only(raw), compact)))
         with self.assertRaises(ValueError):
             loop_reply.arm_requirement({"context": "context_huge"})
+
+    def test_a_model_that_was_present_and_never_reached_is_not_focus_only(self):
+        """The reply sets context_absent both for a Focus-only run and for a model whose every call was not
+        dispatched; the gate must tell them apart from the decision counts by source."""
+        raw = case("two_parts_valid")
+        compact = {"context": "context_compact", "device": "cuda", "precision": "float16"}
+        took = loop_reply.context_presence(top_score(raw))
+        self.assertEqual((took["state"], took["due"], took["models"], took["stages_without_model"], took["from"]),
+                         ("model_took_decisions", 2, ["context_compact"], [], "decision_log.counts"))
+        absent = loop_reply.context_presence(focus_only(raw))
+        self.assertEqual((absent["state"], absent["due"], absent["models"]), ("no_model", 0, []))
+        shed = starved(raw)
+        presence = loop_reply.context_presence(shed)
+        self.assertEqual((presence["state"], presence["due"], presence["models"]),
+                         ("model_present_no_call_dispatched", 2, ["context_compact"]))
+        self.assertEqual(presence["by_source"], {"model": 0, "abstained": 0, "unavailable": 0, "not_dispatched": 2})
+        self.assertEqual(presence["stages_without_model"], ["coverage"])
+        self.assertEqual(loop_reply.summary(shed)["context_presence"]["state"], "model_present_no_call_dispatched")
+        # In the arm that has the model, such a reply fails the check and says which case it is.
+        problems = loop_reply.check_arm(shed, compact)
+        self.assertTrue(any("was present and no call was dispatched (2 decisions due)" in p for p in problems))
+        self.assertTrue(any("took none of the 2 decisions due to it (not dispatched 2, unavailable 0" in p
+                            for p in problems))
+        self.assertFalse(any("no Context model took part" in p for p in problems))
+        # In the Focus-only arm it is refused too: it carries the degradation and is not Focus only.
+        focus = loop_reply.check_arm(shed, {"context": None})
+        self.assertTrue(any("in a Focus-only arm: model_present_no_call_dispatched" in p for p in focus))
+        # A real Focus-only reply in the model's arm keeps the plain statement.
+        self.assertIn("context_absent: no Context model took part", loop_reply.check_arm(focus_only(raw), compact))
+        # Unavailable at compile time (or later) is the other way to be present and take nothing.
+        refused = copy.deepcopy(shed)
+        refused["decisions"][1]["source"] = {"kind": "unavailable", "fallback": "top_focus_span", "reason": "compile"}
+        recount(refused)
+        self.assertEqual(loop_reply.context_presence(refused)["state"], "model_present_none_taken")
+        self.assertTrue(any("was present and took no decision (not dispatched 1, unavailable 1, abstained 0)" in p
+                            for p in loop_reply.check_arm(refused, compact)))
+        # Counts cover every logged decision: a reply that omits its model decisions is still the arm's.
+        omitted = top_score(raw)
+        omitted["decisions"] = [d for d in omitted["decisions"] if d["source"]["kind"] != "model"]
+        self.assertEqual(loop_reply.check_arm(omitted, compact), [])
+        # Without counts in the log the included decisions are counted, and the reading says so.
+        bare = starved(raw)
+        bare["decision_log"]["counts"] = []
+        self.assertEqual((loop_reply.context_presence(bare)["state"], loop_reply.context_presence(bare)["from"]),
+                         ("model_present_no_call_dispatched", "included_decisions"))
+        # A count row naming another model is not the arm's.
+        other = top_score(raw)
+        other["decision_log"]["counts"].append({"count": 1, "model": "context_large", "source": "not_dispatched",
+                                                "stage": "follow_up"})
+        self.assertTrue(any("counts decisions of context_large, not context_compact" in p
+                            for p in loop_reply.check_arm(other, compact)))
+        self.assertIsNone(loop_reply.context_presence(case("ticket_valid")))
+
+    def test_a_stage_whose_model_decisions_were_all_shed_is_flagged_not_refused(self):
+        raw = top_score(case("two_parts_valid"))
+        compact = {"context": "context_compact", "device": "cuda", "precision": "float16"}
+        self.assertEqual(loop_reply.arm_flags(raw, compact), [])
+        raw["decision_log"]["counts"] += [
+            {"count": 3, "model": "context_compact", "source": "not_dispatched", "stage": "follow_up"},
+            {"count": 1, "model": "context_compact", "source": "unavailable", "stage": "follow_up"}]
+        self.assertEqual(loop_reply.check_arm(raw, compact), [])  # the model took the coverage decisions
+        self.assertEqual(loop_reply.arm_flags(raw, compact),
+                         ["stage follow_up: the model took none of the 4 decisions due (not dispatched 3, "
+                          "unavailable 1, abstained 0)"])
+        self.assertEqual(loop_reply.context_presence(raw)["stages_without_model"], ["follow_up"])
+        # No flag where there is nothing to flag: a Focus-only arm, a ticket, a reply the check refuses outright.
+        self.assertEqual(loop_reply.arm_flags(focus_only(raw), {"context": None}), [])
+        self.assertEqual(loop_reply.arm_flags(case("ticket_valid"), compact), [])
+        self.assertEqual(loop_reply.arm_flags(starved(case("two_parts_valid")), compact), [])
 
 
 # ---------------------------------------------------------------- evidence, coverage, depth
@@ -226,6 +535,74 @@ class V3Evidence(unittest.TestCase):
         self.assertEqual(spans, [evidence.Span("src/guard.rs", 3, 9, "fn restart_guard() {}", "text")])
         pointer = evidence.extract({"path": "src/guard.rs", "lines": [3, 9]})
         self.assertEqual(pointer[0].kind, "pointer")
+
+    def projection(self, spans, rows=None):
+        """A record's ``canonical_result`` as the kernel's Union builds it (``answer/union.rs`` ``project``)."""
+        value = {"projection": "airk.arbiter.loop-evidence/1", "revision": "r1", "full_bytes": 4096,
+                 "full_digest": "d" * 64, "hits_total": len(spans), "spans": spans}
+        if rows is not None:
+            value.update(rows_total=len(rows), rows=rows)
+        return value
+
+    def row(self, pointer, path, start, end, **carried):
+        return {"pointer": pointer, "path": path, "start_line": start, "end_line": end, "content_hash": "c" * 64,
+                "truncated": False, **carried}
+
+    def test_loop_projection_counts_every_location_the_reply_delivered(self):
+        """The reply carries each text once (change log entry 45): a row has ``text``, or ``same_as`` the row
+        that carries it; ``also_at`` lists other places with the same text; ``overlaps`` marks a trimmed row.
+        Coverage counts every such location, and trimming does not shrink a row's line range."""
+        scenario = synthetic.scenario()
+        plain = v3_reply(search_hits=[hit("docs/scheduler/CONTRACT.md", 1, 5)],
+                         symbol_hits=[hit("src/scheduler.rs", 1, 16), hit("tests/scheduler_limits.rs", 1, 6)])
+        expected = coverage.first_reply(scenario, plain, 2048)
+        self.assertEqual(expected["essential_covered"], ["N1", "N2", "N3"])
+        carrier = {"record": SYMBOLS_ID, "pointer": "/hits/0"}
+        merged = v3_reply()
+        for record in merged["records"]:
+            record["canonical_result"] = self.projection(
+                # The contract text is found only as a repeat: its own row names the carrier.
+                [self.row("/hits/0", "docs/scheduler/CONTRACT.md", 1, 5, same_as=carrier)]
+                if record["id"] == SEARCH_ID else
+                [self.row("/hits/0", "src/scheduler.rs", 1, 16, text="fn schedule() { limit }", focus=0.91),
+                 # Trimmed at its head: the note lies in lines 1-6, and the reply still delivered them.
+                 self.row("/hits/1", "tests/scheduler_limits.rs", 1, 6, text="assert!(limited)",
+                          overlaps=[dict(carrier, bytes=48, side="head")])])
+        found = coverage.first_reply(scenario, merged, 2048)
+        for key in ("essential_covered", "essential_missing", "supporting_covered"):
+            self.assertEqual(found[key], expected[key], key)
+        spans = evidence.extract(merged)
+        self.assertEqual(sorted((s.path, s.start, s.end, s.kind) for s in spans),
+                         [("docs/scheduler/CONTRACT.md", 1, 5, "text"), ("src/scheduler.rs", 1, 16, "text"),
+                          ("tests/scheduler_limits.rs", 1, 6, "text")])
+        # Only rows count. A place named in `also_at` alone is not read (every such place is a row of its own
+        # in a real reply, and the string cannot be parsed safely); hits that are not rows (`hits_total` larger
+        # than the row count) and records named only in `omitted_evidence` deliver nothing.
+        listed = v3_reply()
+        for record in listed["records"]:
+            record["canonical_result"] = dict(self.projection(
+                [] if record["id"] == SEARCH_ID else
+                [self.row("/hits/0", "src/scheduler.rs", 1, 16, text="fn schedule() { limit }",
+                          also_at=["docs/scheduler/CONTRACT.md:1-5"]),
+                 self.row("/hits/1", "tests/scheduler_limits.rs", 1, 6, same_as=carrier, within=True)]),
+                hits_total=9)
+        listed["omitted_evidence"] = [{"id": "aa" * 32, "path": "docs/scheduler/CONTRACT.md", "start_line": 1,
+                                       "end_line": 5}]
+        also = coverage.first_reply(scenario, listed, 2048)
+        self.assertNotIn("N3", also["essential_covered"])  # the contract note: named in also_at only
+        self.assertEqual(sorted({s.path for s in evidence.extract(listed)}),
+                         ["src/scheduler.rs", "tests/scheduler_limits.rs"])
+        self.assertEqual(also["supporting_covered"], expected["supporting_covered"])  # the `within` row counts
+        # A row with neither text nor a carrier delivers nothing, and name rows of a read without hits are
+        # facts, not text.
+        bare = v3_reply()
+        for record in bare["records"]:
+            record["canonical_result"] = self.projection(
+                [self.row("/hits/0", "src/scheduler.rs", 1, 16)],
+                rows=[{"path": "src/scheduler.rs", "start_line": 1, "end_line": 16, "text": "schedule"}])
+        self.assertEqual(sorted({s.kind for s in evidence.extract(bare)}), ["fact", "pointer"])
+        self.assertEqual(coverage.first_reply(scenario, bare, 2048)["essential_covered"], [])
+        self.assertNotEqual(evidence.evidence_digest(merged), evidence.evidence_digest(listed))
 
     def test_digest_ignores_decisions_and_follows_records(self):
         body = v3_reply(symbol_hits=[hit("src/guard.rs", 3, 9)])
@@ -319,18 +696,22 @@ class Tickets(TempDir):
 
 
 def arm_doc(tmp: Path, arm: str, bodies: dict[str, dict], scenarios: dict[str, dict], *, elapsed=1000,
-            configuration=None, check=None, memory=None) -> dict:
+            configuration=None, check=None, memory=None, budget=None) -> dict:
     rows = []
     for sid, body in bodies.items():
         raw = tmp / arm / sid / "canonical.stdout.json"
         common.write_bytes(raw, envelope(body))
         call = {"ok": True, "elapsed_ms": elapsed, "final_attempt_ms": elapsed, "bytes": len(json.dumps(body)),
-                "digest": evidence.evidence_digest(body), "result_path": str(raw), "result_sha256": "x"}
+                "digest": evidence.evidence_digest(body), "result_path": str(raw), "result_sha256": "x",
+                "budget_sent": dict(CASES["default_budget"], **(budget or {}))}
         row = gate.reply_row(scenarios[sid], call)
         row["arm_problems"] = loop_reply.check_arm(body, check) if check is not None else []
+        row["arm_flags"] = loop_reply.arm_flags(body, check) if check is not None else []
         rows.append(row)
     return {"schema": gate.GATE_SCHEMA, "kind": "arm-replays", "arm": arm, "configuration": configuration or arm,
-            "rows": rows, "memory": {"peak_used_mib": memory or {}}, "arm_ok": all(not r["arm_problems"] for r in rows)}
+            "coverage_rule": evidence.COVERAGE_RULE, "budgets_sent": common.distinct_budgets(rows),
+            "rows": rows, "memory": {"peak_used_mib": memory or {}}, "arm_ok": all(not r["arm_problems"] for r in rows),
+            "arm_flagged": sorted(r["scenario_id"] for r in rows if r["arm_flags"])}
 
 
 def scen(sid="airk-C1", repo="airk"):
@@ -501,6 +882,15 @@ class ArmRunsAndConcurrency(TempDir):
 
 
 class Report(TempDir):
+    def test_failed_reads_are_counted_per_arm_and_kind(self):
+        rows = [{"ok": True, "loop": {"read_failures": {"search:read_failed": 3}}},
+                {"ok": True, "loop": {"read_failures": {}}}, {"ok": True, "loop": {"parts": 1}},
+                {"ok": False, "loop": None}]
+        lines, figures = gate_report.read_failure_section({"F": {"rows": rows}})
+        self.assertEqual(figures["F"], {"replies": 3, "replies_with_failures": 1, "not_counted": 1,
+                                        "by_kind": {"search:read_failed": 3}})
+        self.assertTrue(any("search:read_failed x3" in line for line in lines))
+
     def build(self, large_rows, large_elapsed=1500):
         scenarios = {"airk-C1": scen(), "bookbuilder-C1": scen("bookbuilder-C1", "bookbuilder")}
         secret = "SECRET_BOOK_SOURCE_LINE"
@@ -545,7 +935,7 @@ class Report(TempDir):
         self.assertFalse(figures["bars"]["C-L"]["met"])
         for section in text.split("#### bookbuilder-C1")[1:]:
             self.assertNotIn(secret, section.split("\n## ")[0].split("\n#### ")[0])
-        self.assertIn("[quoted text omitted]", text)
+        self.assertIn(gate_report.WITHHELD, text)  # private repositories: reasons withheld entirely
         evidence_lines = [line for line in text.splitlines() if " evidence: " in line]
         self.assertTrue(evidence_lines)
         self.assertFalse(any(secret in line for line in evidence_lines))  # evidence is located, never quoted
@@ -558,6 +948,99 @@ class Report(TempDir):
         self.assertIn("close calls", limits)
         self.assertIn("concurrency test (12.7.1 test 4) did not run", limits)
         self.assertIn("not run, so not passed", text)
+
+    def test_report_states_the_coverage_rule_and_the_decision_sources(self):
+        (text, figures), _ = self.build([("airk-C1", "tie"), ("bookbuilder-C1", "tie")])
+        self.assertIn("Reference notes are counted under coverage rule 3 in every arm", text)
+        self.assertIn("whole identifier", text.split("## What the bars indicate")[0])
+        self.assertEqual(figures["coverage_rule"], {"arms": {"C": 3, "F": 3, "L": 3}, "uniform": True})
+        section = text.split("## Decisions by source, per arm and stage")[1].split("\n## ")[0]
+        # Each of the two fixture replies, as a gate arm produces it, logs split 1 deterministic, coverage 2
+        # model (top score, so no abstention) and follow_up 1 deterministic. The report counts the decision log.
+        self.assertIn("| C | coverage | 4 | 0 | 0 | 0 | 0 |", section)
+        self.assertIn("| C | all stages | 4 | 0 | 0 | 4 | 0 |", section)
+        self.assertIn("| F | all stages | 0 | 0 | 0 | 8 | 0 |", section)
+        self.assertIn("| Not dispatched |", section)
+        self.assertIn("never sent: no token budget, no time or no model", section)
+        self.assertNotIn("with a reason in the reply", section)  # nothing fell back in these arms
+        self.assertEqual(figures["decision_sources"]["C"]["total"],
+                         {"model": 4, "fell_back": 0, "not_dispatched": 0, "no_model": 4, "other": 0})
+        self.assertEqual(figures["decision_sources"]["C"]["replies"], 2)
+        self.assertIn("| C | 2 | 2 | 0 | 0 | 0 |", section)  # replies by whether the model took part
+        self.assertIn("| F | 2 | 0 | 0 | 0 | 2 |", section)
+        self.assertIn("was sent this budget:", text.split("## What the bars indicate")[0])
+        self.assertTrue(figures["budgets_sent"]["uniform"])
+
+    def test_report_counts_a_starved_model_apart_from_focus_only_and_states_the_budget(self):
+        scenarios = {"airk-C1": scen(), "airk-C2": scen("airk-C2")}
+        compact = {"context": "context_compact", "device": "cuda", "precision": "float16"}
+        body = top_score(v3_reply())
+        partly = copy.deepcopy(body)
+        partly["decision_log"]["counts"].append({"count": 2, "model": "context_compact", "source": "not_dispatched",
+                                                 "stage": "follow_up"})
+        docs = {"C": arm_doc(self.tmp, "C", {"airk-C1": starved(v3_reply()), "airk-C2": partly}, scenarios,
+                             check=compact),
+                "F": arm_doc(self.tmp, "F", {k: focus_only(body) for k in scenarios}, scenarios,
+                             check={"context": None})}
+        self.assertFalse(docs["C"]["arm_ok"])  # the starved reply is not the arm's
+        self.assertTrue(docs["F"]["arm_ok"])
+        self.assertEqual(docs["C"]["arm_flagged"], ["airk-C2"])
+        found = gate.decision_sources(docs["C"])
+        self.assertEqual(found["presence"], {"model_took_decisions": 1, "model_present_no_call_dispatched": 1,
+                                             "model_present_none_taken": 0, "no_model": 0})
+        self.assertEqual(found["presence_scenarios"], {"model_present_no_call_dispatched": ["airk-C1"]})
+        self.assertEqual(found["stages_without_model"], {"coverage": ["airk-C1"], "follow_up": ["airk-C2"]})
+        self.assertEqual(gate.decision_sources(docs["F"])["presence"]["no_model"], 2)
+        lines, figures = gate_report.decision_source_section(docs)
+        text = "\n".join(lines)
+        self.assertIn("| Model present, no call dispatched |", text)
+        self.assertIn("| C | 2 | 1 | 1 | 0 | 0 |", text)
+        self.assertIn("| F | 2 | 0 | 0 | 0 | 2 |", text)
+        self.assertIn("C, model present no call dispatched: airk-C1.", text)
+        self.assertIn("C, stage follow_up: decisions were due to the model and it took none in 1 replies (airk-C2).",
+                      text)
+        self.assertIn("is not one: the arm had the model and did not reach it", text)
+        # The starved reply includes its two not-dispatched decisions with their reason; the other reply's two
+        # shed follow-up decisions are in the counts only.
+        self.assertIn("with a reason in the reply: C: 2 of 4", text)
+        self.assertIn("not_dispatched/token_budget 2", text)
+        identity = "\n".join(gate_report.identity_section(docs))
+        self.assertIn("| airk-C2 |", identity)
+        self.assertIn("was present and no call was dispatched", identity)
+        limits = "\n".join(gate_report.evidence_limits(docs, {}, [], None))
+        self.assertIn("Context model was present and took no decision: C 1", limits)
+        self.assertIn("one stage's model decisions were all shed: C 1", limits)
+        # The budget every Answer was sent is stated; arms sent different budgets are named.
+        same, figures = gate_report.budget_statement(docs)
+        self.assertIn("Every Answer of C, F was sent this budget:", same[0])
+        self.assertIn(f"input_tokens {CASES['default_budget']['input_tokens']}", same[0])
+        self.assertTrue(figures["uniform"])
+        docs["F"] = arm_doc(self.tmp, "F2", {k: focus_only(body) for k in scenarios}, scenarios,
+                            budget={"input_tokens": 131072})
+        different, figures = gate_report.budget_statement(docs)
+        self.assertIn("different budgets, so their figures do not compare", different[0])
+        self.assertIn("input_tokens 131072", different[0])
+        self.assertFalse(figures["uniform"])
+        self.assertIn("different budgets", "\n".join(gate_report.evidence_limits(docs, {}, [], None)))
+        old = dict(docs["C"])
+        old.pop("budgets_sent")
+        unknown, figures = gate_report.budget_statement({"C": old})
+        self.assertIn("not recorded for C", "\n".join(unknown))
+        self.assertEqual(figures["not_recorded"], ["C"])
+
+    def test_arms_scored_under_different_coverage_rules_are_named(self):
+        scenarios = {"airk-C1": scen()}
+        body = top_score(v3_reply())
+        docs = {"C": arm_doc(self.tmp, "C", {"airk-C1": body}, scenarios),
+                "L": dict(arm_doc(self.tmp, "L", {"airk-C1": body}, scenarios), coverage_rule=2)}
+        lines, figures = gate_report.coverage_rule_statement(docs)
+        self.assertIn("different coverage rules (C rule 3, L rule 2)", lines[0])
+        self.assertFalse(figures["uniform"])
+        self.assertIn("different coverage rules", "\n".join(gate_report.evidence_limits(docs, {}, [], None)))
+        old, _ = gate_report.coverage_rule_statement({"C": dict(docs["C"], coverage_rule=2)})
+        self.assertIn("coverage rule 2 in every arm", old[0])
+        self.assertIn("substring match", old[0])
+        self.assertIn("no arm replays", gate_report.coverage_rule_statement({})[0][0])
 
     def test_bar_conditions(self):
         outcome = {"finishes_added": 3, "b_wins": 0, "b_losses": 0, "pending": 0}
@@ -588,11 +1071,20 @@ class Report(TempDir):
 
 class Specs(TempDir):
     def test_gate_spec_arms(self):
-        spec = make_loop_spec.gate_spec("lg", self.tmp, make_loop_spec.PROFILES, list(common.REPOS), {})
+        # The LG run is the judged arms only: the precision check is deferred, with its reason in the spec.
+        judged = make_loop_spec.gate_spec("lg", self.tmp, make_loop_spec.PROFILES, list(common.REPOS), {})
+        self.assertEqual(sorted(e["arm"] for e in judged["results"]), sorted(make_loop_spec.JUDGED_ARMS))
+        self.assertEqual(judged["gate"]["precision"], {"run": False, "reason": make_loop_spec.PRECISION_DEFERRED})
+        self.assertEqual(judged["gate"]["precision_pairs"], [])
+        self.assertIn("distinct scenario question per concurrent call", judged["gate"]["concurrency_path"])
+        self.assertEqual(make_loop_spec.PROFILES["focus"], "focus-1024-cuda")  # the gate is CUDA only
+        spec = make_loop_spec.gate_spec("lg", self.tmp, make_loop_spec.PROFILES, list(common.REPOS), {},
+                                        precision=True)
         arms = {e["arm"]: e for e in spec["results"]}
         self.assertEqual(sorted(arms), sorted([*make_loop_spec.JUDGED_ARMS, *make_loop_spec.PRECISION_ARMS]))
         self.assertEqual(len(spec["scenario_ids"]), 20)
-        self.assertEqual(arms["F"]["arm_check"], {"context": None})
+        self.assertEqual(arms["F"]["arm_check"], {"context": None, "focus": True})
+        self.assertTrue(all(e["arm_check"]["focus"] for e in arms.values()))  # every gate arm stages Focus
         self.assertEqual(arms["L"]["arm_check"]["context"], "context_large")
         self.assertEqual(arms["L32"]["arm_check"]["precision"], "float32")
         self.assertTrue(all(e["replay_only"] for k, e in arms.items() if k in make_loop_spec.PRECISION_ARMS))
@@ -603,13 +1095,68 @@ class Specs(TempDir):
             self.assertIn(fp32, arms)
             self.assertIn(fp16, arms)
 
+    def test_cuda_arms_carry_a_stage_guard_for_each_session(self):
+        # Every session of a CUDA arm first checks its stages are active (gpu_fixture.py ensure).
+        overrides = {a: {"launcher": "gpu_fixture.py"} for a in make_loop_spec.JUDGED_ARMS}
+        lifetimes = make_loop_spec.gate_lifetimes("lg", self.tmp, overrides)
+        spec = make_loop_spec.gate_spec("lg", self.tmp, make_loop_spec.PROFILES, ["airk"], {}, lifetimes=lifetimes)
+        arms = {e["arm"]: e for e in spec["results"]}
+        guard = arms["C"]["stage_guard"]
+        self.assertEqual(guard[guard.index("ensure") + 1:], ["--lifetime", "lg-C", "--profiles",
+                                                             "focus-1024-cuda,context-compact-fp16-cuda"])
+        self.assertEqual(arms["F"]["stage_guard"][-1], "focus-1024-cuda")
+        shake = make_loop_spec.shakedown_spec("s", self.tmp, self.tmp / "o", str(self.tmp / "fx" / "life" / "handle.json"),
+                                              ["munarium-A1"], make_loop_spec.PROFILES, {})
+        self.assertEqual(shake["results"][0]["stage_guard"][-4:-2], ["--lifetime", "life"])
+
+    def test_shakedown_spec_keeps_outputs_out_of_r(self):
+        # Arm C alone on a named handle; scenarios and their freeze from R, the prompts freeze under the
+        # shakedown's own root; the budget is the contract default.
+        out = self.tmp / "shake"
+        spec = make_loop_spec.shakedown_spec("s", self.tmp / "R", out, "H/handle.json", ["munarium-A1", "munarium-C2"],
+                                             make_loop_spec.PROFILES, {})
+        self.assertEqual([e["arm"] for e in spec["results"]], ["C"])
+        self.assertEqual(spec["results"][0]["handle"], "H/handle.json")
+        self.assertEqual(spec["repos"], ["munarium"])
+        self.assertEqual(spec["scenario_ids"], ["munarium-A1", "munarium-C2"])
+        self.assertEqual(spec["freeze"], str(self.tmp / "R" / "scenario-freeze.json"))
+        self.assertEqual(spec["prompts_freeze"], str(out / "design" / "prompts-freeze.json"))
+        self.assertEqual(spec["answer_defaults"]["budget"], common.ANSWER_BUDGET_DEFAULT)
+        self.assertEqual(make_loop_spec.gate_report_inputs(spec, out)["arms"], {"C": str(out / "passes" / "s" / "gate" / "C")})
+        with self.assertRaises(common.HarnessError):
+            make_loop_spec.shakedown_spec("s", self.tmp, out, "h", ["nowhere-A1"], make_loop_spec.PROFILES, {})
+
     def test_gate_plan_switches_before_each_arm(self):
-        spec = make_loop_spec.gate_spec("lg", self.tmp, make_loop_spec.PROFILES, ["airk"], {})
+        # The LG plan: one launch of the judged arms, no precision phase, and the concurrency test after
+        # every judged and second session, before the lifetimes stop.
+        lg_spec = make_loop_spec.gate_spec("lg", self.tmp, make_loop_spec.PROFILES, ["airk"], {})
+        lg_plan = make_loop_spec.gate_plan(self.tmp / "spec.json", lg_spec, self.tmp)
+        lg_kinds = [next(iter(step)) for step in lg_plan]
+        self.assertEqual([[r["arm"] for r in s["lifetimes"]["start"]] for s in lg_plan if "lifetimes" in s],
+                         [["C", "L", "F"]])
+        lg_commands = [s["gate"]["command"] if "gate" in s else k for s, k in zip(lg_plan, lg_kinds)]
+        self.assertNotIn("precision", lg_commands)
+        first = lg_commands.index("concurrency")
+        self.assertGreater(first, lg_commands.index("second"))
+        self.assertGreater(first, lg_commands.index("sessions"))
+        self.assertLess(first, lg_commands.index("stop_lifetimes"))
+        self.assertEqual(lg_commands.count("concurrency"), 3)
+        lg_inputs = make_loop_spec.gate_report_inputs(lg_spec, self.tmp)
+        self.assertEqual((lg_inputs["precision"], lg_inputs["precision_note"]),
+                         ([], make_loop_spec.PRECISION_DEFERRED))
+        spec = make_loop_spec.gate_spec("lg", self.tmp, make_loop_spec.PROFILES, ["airk"], {}, precision=True)
         plan = make_loop_spec.gate_plan(self.tmp / "spec.json", spec, self.tmp)
         kinds = [next(iter(step)) for step in plan]
         for index, step in enumerate(plan):
-            if "parallel" in step:
-                self.assertEqual(kinds[index - 1], "lifetimes")  # replays run on freshly launched lifetimes
+            if "parallel" in step and step["parallel"][0]["gate"]["command"] == "smoke":
+                # Every launch is followed by the live smoke test, then the replays, on its own arms.
+                self.assertEqual(kinds[index - 1], "lifetimes")
+                replays_step = plan[index + 1]["parallel"]
+                self.assertEqual([g["gate"]["command"] for g in replays_step], ["replays"] * len(replays_step))
+                self.assertEqual([g["gate"]["arm"] for g in step["parallel"]],
+                                 [r["arm"] for r in plan[index - 1]["lifetimes"]["start"]])
+        smokes = [s for s in plan if "parallel" in s and s["parallel"][0]["gate"]["command"] == "smoke"]
+        self.assertEqual(len(smokes), len([s for s in plan if "lifetimes" in s]))
         self.assertNotIn("switch_context", kinds)
         sessions = [s["sessions"] for s in plan if "sessions" in s]
         self.assertEqual([s["groups"] for s in sessions], [[["@any", "@any", "compact-gpu,large-gpu,focus-gpu"]]])
@@ -627,7 +1174,7 @@ class Specs(TempDir):
         self.assertLess(kinds.index("stop_lifetimes"), kinds.index("lifetimes", 1))
         conc = [s["gate"]["arm"] for s in plan if "gate" in s and s["gate"]["command"] == "concurrency"]
         self.assertEqual(conc, ["C", "L", "F"])
-        self.assertLess(kinds.index("gate", 2), kinds.index("sessions"))
+        self.assertLess(kinds.index("sessions"), kinds.index("stop_lifetimes"))
         commands = [s["gate"]["command"] for s in plan if "gate" in s]
         self.assertEqual(commands.count("precision"), len(make_loop_spec.PRECISION_PAIRS))
         self.assertLess(kinds.index("grade"), kinds.index("second"))
@@ -754,6 +1301,7 @@ class SideBySide(TempDir):
         spec.update(scenarios_dir=str(paths["scenario"].parent.parent), freeze=None, prompts_freeze=None, pilot=True)
         for entry in spec["results"]:
             entry["handle"] = str(paths["handle"])
+            entry.pop("stage_guard", None)  # no live service here; the guard is tested on its own
         import threading
         lock, running, peak, order = threading.Lock(), {}, {}, []
 
@@ -773,7 +1321,9 @@ class SideBySide(TempDir):
                              digest_fn=lambda s, e: {"ok": True, "digest": e["arm"], "arm_problems": []},
                              settle_fn=lambda h, r: {"settled": True, "publication_token": "t", "repo": r})
         flow.sessions()
-        self.assertEqual(order[:3], ["focus", "compact", "large"])
+        # Interleaved: the first three sessions to start are one of each arm. Their start order among
+        # themselves is the pool threads' and not fixed (this assertion raced on 23 November 2026).
+        self.assertEqual(sorted(order[:3]), ["compact", "focus", "large"])
         self.assertTrue(all(v <= make_loop_spec.ARM_SESSIONS for v in peak.values()))
         self.assertEqual(flow.settle_key(str(paths["handle"]), "airk"), f"{paths['handle'].parent.parent.resolve()}::airk")
         self.assertEqual(flow.settle_key(str(self.tmp / "R" / "fixture" / "L1" / "handle.json"), "airk"), "airk")
@@ -787,6 +1337,7 @@ class PassGate(TempDir):
                     prompts_freeze=None, pilot=False, start_retry_seconds=0)
         for entry in spec["results"]:
             entry["handle"] = str(paths["handle"])
+            entry.pop("stage_guard", None)  # no live service here; the guard is tested on its own
         spec["pilot"] = True  # a judged spec pins prompts_freeze; the pilot flag lets the test build it
         ran = []
 

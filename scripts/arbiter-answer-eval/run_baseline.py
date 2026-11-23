@@ -181,7 +181,7 @@ class Runner:
         self.run("pass-report", [*PY, str(HERE / "pass_report.py"), "--pass-dir", str(self.pass_dir)])
         if depth_out is not None and not (depth_out / "depth.json").is_file():
             self.set_stages(STAGE_ORDER[0])
-            repos = ",".join(self.spec.get("repos") or ["airk"])
+            repos = ",".join(self.spec.get("repos") or common.REPOS)
             self.run("depth", [*PY, str(HERE / "depth.py"), "--handle", str(self.spec["handle"]), "--out",
                                str(depth_out), "--repos", repos, "--limit", "100", "--max-bytes", "65536"])
         self.log(event="done")

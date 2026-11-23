@@ -18,7 +18,10 @@ listing taken across a publication change is marked. The result goes to
 ``--out`` (default ``R/fixture/credential-probe-<repo>.json``). A match is a
 finding to report. The probe changes nothing: no exclusion is added here.
 
-``python -I -B credential_probe.py --handle @newest --repo bookbuilder``
+``python -I -B credential_probe.py --handle <root>/<lifetime>/handle.json --repo munarium --out <file>``
+
+``--repo`` is a scenario repository (``bookbuilder`` resolves to the ``bookbuilder-v2`` index through the
+root's ``index-aliases.json``) or an index name of the lifetime.
 """
 
 from __future__ import annotations

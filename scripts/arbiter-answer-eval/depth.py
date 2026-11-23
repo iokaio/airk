@@ -5,13 +5,14 @@ For each scenario, one ``airk_search`` on the instruction verbatim with the
 largest pool the tool allows (``limit`` 100, the catalog's maximum, and
 ``max_bytes`` at its maximum, 65,536), with saved-source verification off. The
 byte budget can return fewer than 100 hits; ``hits_returned`` records how many. For each essential note it records the
-1-based rank of the first hit that covers it under the current coverage rule
-(rule 2), the first rank under rule 1 (any line of overlap), and the first rank
-of any hit on the note's path. Tool calls use the agents' environment (the
+1-based rank of the first hit that covers it by line overlap (the ``rule2``
+column: rules 2 and 3 agree on a hit, because they differ only for a path
+without a line span, which a search hit never is), the first rank under rule 1
+(any line of overlap), and the first rank of any hit on the note's path. Tool calls use the agents' environment (the
 product's default response mode). The settled-index guard runs before and
 after, and the publication token must not change.
 
-``python -I -B depth.py --handle H --out <R>/depth/<name> [--repos airk] [--limit 100]``
+``python -I -B depth.py --handle H --out <R>/depth/<name> [--repos munarium,bookbuilder] [--limit 100]``
 writes ``depth.json`` and the raw results. If the requested limit is above the
 catalog's maximum, the maximum is used and both are recorded. The search
 cannot page (it has no cursor), so the pool is capped there.
@@ -71,7 +72,8 @@ def measure(scenario: dict, body: dict) -> dict:
 
 
 def answer_attribution(scenario: dict, body) -> dict:
-    """Where an Answer /3 reply holds each essential note (rule 2): record rank, operation, uses, citing needs."""
+    """Where an Answer /3 reply holds each essential note (the current coverage rule, ``evidence.COVERAGE_RULE``):
+    record rank, operation, uses, citing needs."""
     recs = loop_reply.records(body)
     spans = loop_reply.record_spans(body)
     uses: dict[str, list[dict]] = {}
@@ -134,7 +136,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--scenarios-dir", type=Path, default=common.DEFAULT_R / "scenarios")
     parser.add_argument("--freeze", type=Path, default=common.DEFAULT_R / "scenario-freeze.json")
-    parser.add_argument("--repos", default="airk")
+    parser.add_argument("--repos", default=",".join(common.REPOS))
     parser.add_argument("--slots", default=",".join(common.SLOTS))
     parser.add_argument("--limit", type=int, default=100)
     parser.add_argument("--max-bytes", type=int, default=65536)

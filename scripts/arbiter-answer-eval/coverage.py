@@ -71,6 +71,65 @@ def compute(scenario: dict, turns: list[dict], count_fact_rows: bool = False,
             "total_bytes": total_bytes, "total_elapsed_ms": total_ms}
 
 
+def _overlaps(location: tuple, row: tuple) -> bool:
+    """Same path, and line ranges that meet (a range without lines is the whole file)."""
+    if location[0] != row[0]:
+        return False
+    if None in (location[1], location[2], row[1], row[2]):
+        return True
+    return location[1] <= row[2] and row[1] <= location[2]
+
+
+def answer_rows(body) -> list[tuple]:
+    """The span rows an Answer /3 reply delivered, as ``(path, start, end, truncated)``."""
+    rows = []
+    for record in loop_reply.records(body):
+        result = record.get("canonical_result")
+        if evidence.is_loop_projection(result):
+            for span in result["spans"]:
+                if isinstance(span, dict) and isinstance(span.get("path"), str):
+                    rows.append((evidence.norm_path(span["path"]), span.get("start_line"), span.get("end_line"),
+                                 span.get("truncated") is True))
+    return rows
+
+
+def later_reads(turns: list[dict], body_loader=None) -> dict:
+    """The user's compression question (RESUME, "Not done in the harness"): of the agent's reads after an Answer
+    reply, how many went to a location the reply had delivered as a truncated row, how many to a row it
+    delivered whole, and how many elsewhere. A read is classed by the first match in that order; a read that
+    returned no location counts as ``no_location``."""
+    loader = body_loader or (lambda row: common.raw_body(Path(row["result_path"]).read_bytes())
+                             if row.get("result_path") and Path(row["result_path"]).is_file() else None)
+    counted = sorted((t for t in turns if t.get("turn") and not t.get("rejected")), key=lambda t: t["turn"])
+    held: list[tuple] = []
+    out = {"answer_replies": 0, "rows": 0, "rows_truncated": 0, "reads_after": 0, "to_truncated_row": 0,
+           "to_whole_row": 0, "elsewhere": 0, "no_location": 0, "turns_to_truncated_rows": []}
+    for row in counted:
+        body = loader(row) if row.get("ok") else None
+        if loop_reply.is_v3(body):
+            rows = answer_rows(body)
+            out["answer_replies"] += 1
+            out["rows"] += len(rows)
+            out["rows_truncated"] += sum(1 for r in rows if r[3])
+            held += rows
+            continue
+        if not held:
+            continue
+        out["reads_after"] += 1
+        locations = [(evidence.norm_path(s.path), s.start, s.end) for s in (evidence.extract(body) if body else [])
+                     if s.path]
+        if not locations:
+            out["no_location"] += 1
+        elif any(_overlaps(loc, r) for loc in locations for r in held if r[3]):
+            out["to_truncated_row"] += 1
+            out["turns_to_truncated_rows"].append(row["turn"])
+        elif any(_overlaps(loc, r) for loc in locations for r in held):
+            out["to_whole_row"] += 1
+        else:
+            out["elsewhere"] += 1
+    return out
+
+
 def first_reply(scenario: dict, body, reply_bytes: int | None = None, count_fact_rows: bool = False,
                 rule: int = evidence.COVERAGE_RULE) -> dict:
     """Gate test 2 (plan 12.7.1): the essential and supporting notes one reply covers, its bytes, and, for an
@@ -94,8 +153,9 @@ def first_reply(scenario: dict, body, reply_bytes: int | None = None, count_fact
 def for_session(scenario: dict, directory: Path, count_fact_rows: bool = False, write: bool = True,
                 rule: int = evidence.COVERAGE_RULE, name: str = "coverage.json") -> dict:
     directory = Path(directory)
-    result = compute(scenario, common.read_jsonl(directory / "wrapper" / "turns.jsonl"), count_fact_rows,
-                     rule=rule)
+    turns = common.read_jsonl(directory / "wrapper" / "turns.jsonl")
+    result = compute(scenario, turns, count_fact_rows, rule=rule)
+    result["later_reads"] = later_reads(turns)
     result["session_dir"] = str(directory)
     if write:
         common.write_json(directory / name, result)
@@ -106,7 +166,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--scenario", type=Path, required=True)
     parser.add_argument("--session-dir", type=Path, required=True)
-    parser.add_argument("--rule", type=int, choices=[1, 2], default=evidence.COVERAGE_RULE)
+    parser.add_argument("--rule", type=int, choices=[1, 2, 3], default=evidence.COVERAGE_RULE)
     parser.add_argument("--name", default="coverage.json", help="output file name in the session folder")
     parser.add_argument("--count-fact-rows", action="store_true",
                         help="let outline/symbol rows (a name at a line range) cover notes by overlap")

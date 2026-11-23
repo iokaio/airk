@@ -178,7 +178,8 @@ def run(*, scenario: dict, path: str, handle: Path, series: str, sessions_root: 
               "handle": {"path": str(handle), "sha256": common.sha256_file(handle),
                          "index_id": loaded.index_id(repo), "accept_queryable": accept_queryable},
               "handle_readiness_start": loaded.readiness(),
-              "answer_defaults": answer_defaults, "claude_version": version, "model_requested": model,
+              "answer_defaults": answer_defaults, "answer_budget_source": common.answer_budget_source(),
+              "claude_version": version, "model_requested": model,
               "effort_requested": effort, "claude_path": claude,
               "command": command, "stdin": "instruction.txt", "cwd": str(work),
               "mcp_config_sha256": common.sha256_file(mcp_config), "status": "running", "started": common.now_iso()}
@@ -218,6 +219,8 @@ def run(*, scenario: dict, path: str, handle: Path, series: str, sessions_root: 
         "result_subtype": result.get("subtype"), "is_error": result.get("is_error"),
         "stream_sha256": common.sha256_file(stream_path), "brief_sha256": common.sha256_file(directory / "brief.md"),
         "wrapper_turns": len(counted), "audit": checks,
+        # The exact budget each airk_answer call of the session was sent (the wrapper's turn log).
+        "answer_budgets_sent": common.distinct_budgets(counted),
         "handle_readiness_end": loaded.readiness(),
     })
     if timed_out:

@@ -52,6 +52,32 @@ class CudaEnvironmentTests(unittest.TestCase):
             gf.cuda_environment("compact")
 
 
+class MathEnvironmentTests(unittest.TestCase):
+    # The FP16 routes check G5 against the environment captured before ORT starts: GEMM option 2, the
+    # product's default (s5 shakedown, 23 November 2026: the warm failed without it).
+    def test_the_service_gets_gemm2_and_keeps_debug_unset(self):
+        self.assertEqual(gf.math_environment({}), {"ORT_CUDA_GEMM_OPTIONS": "2"})
+        self.assertEqual(gf.math_environment({"ORT_CUDA_GEMM_OPTIONS": "2", "PATH": "x"}),
+                         {"ORT_CUDA_GEMM_OPTIONS": "2"})
+        self.assertEqual(gf.math_environment({"ORT_ENABLE_ATTENTION_KERNEL_DEBUG_INFO": "0"}),
+                         {"ORT_CUDA_GEMM_OPTIONS": "2"})
+
+    def test_conflicting_or_unknown_ort_values_refuse(self):
+        for inherited in ({"ORT_CUDA_GEMM_OPTIONS": "0"}, {"ORT_CUDA_GEMM_OPTIONS": ""},
+                          {"ORT_ENABLE_ATTENTION_KERNEL_DEBUG_INFO": "1"},
+                          {"ORT_GQA_DISABLE_FLASH_ATTENTION": "1"}):
+            with self.assertRaises(ValueError, msg=inherited):
+                gf.math_environment(inherited)
+
+    def test_problems_name_a_handle_without_gemm2_or_top_score(self):
+        good = {"ORT_CUDA_GEMM_OPTIONS": "2", "AIRK_ARBITER_EVALUATION_DECISION_MODE": "top_score",
+                "AIRK_ARBITER_EVALUATION_IDLE_UNLOAD_SECONDS": "0"}
+        self.assertEqual(gf.math_problems(good), [])
+        self.assertEqual(len(gf.math_problems({"TEMP": "t"})), 3)
+        self.assertEqual(len(gf.math_problems(dict(good, AIRK_ARBITER_EVALUATION_IDLE_UNLOAD_SECONDS="1800"))), 1)
+        self.assertEqual(len(gf.math_problems(dict(good, AIRK_ARBITER_EVALUATION_DECISION_MODE="calibrated"))), 1)
+
+
 class ChangeSetEnvironmentTests(unittest.TestCase):
     def test_change_set_cuda_variables_are_pinned_and_seeding_is_fresh_only(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -103,18 +129,54 @@ class EmitterEnvironmentTests(unittest.TestCase):
 
 
 class DeviceEvidenceTests(unittest.TestCase):
-    def test_advice_runtimes_and_dispatch_census(self):
-        body = {"assessment_history": [
-            {"result": {"status": "abstained", "advice": {"profile": "a", "runtime": gf.CUDA_RUNTIME + "x",
-                                                          "observed_input_tokens": 900}}},
-            {"result": {"status": "abstained", "advice": {"profile": "b", "runtime": "onnxruntime-cpu/1.30.0"}}}]}
+    def test_loop_decisions_and_dispatch_census(self):
+        """The reply is Answer /3: who took each decision is in ``decisions`` and the log's counts, not in the
+        one-turn ``assessment_history``. The body is the Rust-emitted two-part case."""
+        cases = json.loads((Path(gf.__file__).resolve().parents[2] / "fixtures" / "split" / "arbiter"
+                            / "answer_loop_cases.json").read_text(encoding="utf-8"))
+        body = next(c["response"] for c in cases["response_cases"] if c["id"] == "two_parts_valid")
         rows = [{"dispatch_identity": "d1", "profile_manifest": "a", "task": "t", "kind": "dispatch_admitted"},
                 {"dispatch_identity": "d1", "profile_manifest": "a", "task": "t", "kind": "score_returned",
                  "outcome": "success", "finite_raw_scores": True, "raw_scores": [1.0], "work": {"inference_us": 5}}]
         evidence = gf.device_evidence(body, rows)
-        self.assertEqual((evidence["cuda_advice"], evidence["cpu_advice"]), (1, 1))
+        self.assertEqual([(d["stage"], d["source"], d["model"]) for d in evidence["decisions"]],
+                         [("split", "deterministic", None), ("coverage", "model", "context_compact"),
+                          ("coverage", "abstained", "context_compact"), ("follow_up", "deterministic", None)])
+        taken = [d for d in body["decisions"] if d["source"]["kind"] == "model"]
+        self.assertEqual(evidence["cuda_decisions"] + evidence["cpu_decisions"], len(taken))
+        self.assertEqual(evidence["cuda_decisions"], sum(1 for d in taken if d.get("device") == "cuda"))
+        self.assertEqual(evidence["decision_counts"], body["decision_log"]["counts"])
         self.assertEqual(evidence["dispatch"][0]["kinds"], ["dispatch_admitted", "score_returned"])
         self.assertEqual(evidence["dispatch"][0]["work"], {"inference_us": 5})
+        # A one-turn body shows no loop decision; nothing is read from its assessment history.
+        old = gf.device_evidence({"assessment_history": [{"result": {"advice": {"runtime": gf.CUDA_RUNTIME}}}]}, [])
+        self.assertEqual((old["decisions"], old["cuda_decisions"], old["cpu_decisions"]), ([], 0, 0))
+
+
+class GateRootTests(unittest.TestCase):
+    def test_only_the_gates_lifetime_may_spend_a_gate_roots_cuda_lifetime(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder) / "fixture-06-gate-lg-C"
+            root.mkdir()
+            base = "06-gate-lg-C-base"
+            self.assertIsNone(gf.gate_root_problem(root, "06-gate-lg-C", base))
+            # A spare root serves another arm under that arm's name.
+            self.assertIsNone(gf.gate_root_problem(root, "06-gate-lg-L", base))
+            for name in ("s1-shakedown", "trial-pair", "06-gate-lg-C-2", "06-gate-lg-C-base"):
+                self.assertIn("is a gate root", gf.gate_root_problem(root, name, base))
+            self.assertIn("restarts from the root's closed base", gf.gate_root_problem(root, "06-gate-lg-C", None))
+            # Once a CUDA lifetime folder exists, the root cannot restart again, whatever the name.
+            (root / "06-gate-lg-C").mkdir()
+            (root / "06-gate-lg-C" / "gpu.json").write_text("{}", encoding="utf-8")
+            self.assertIn("already had a CUDA lifetime (06-gate-lg-C)", gf.gate_root_problem(root, "06-gate-lg-L", base))
+            # Any other root is free: a shakedown or trial root, and a fresh (seeded) lifetime in it.
+            other = Path(folder) / "fixture-s1-shakedown"
+            other.mkdir()
+            self.assertIsNone(gf.gate_root_problem(other, "s3-shakedown", "s3-shakedown-base"))
+            self.assertIsNone(gf.gate_root_problem(other, "anything", None))
+            (other / "s3-shakedown").mkdir()
+            (other / "s3-shakedown" / "gpu.json").write_text("{}", encoding="utf-8")
+            self.assertIn("already had a CUDA lifetime", gf.gate_root_problem(other, "again", "s3-shakedown-base"))
 
 
 class CompareTests(unittest.TestCase):

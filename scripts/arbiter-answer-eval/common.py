@@ -52,9 +52,10 @@ PRIMARY_ARG = {"airk_answer": "question", "airk_search": "query", "airk_parse": 
 # request refuses a budget that lacks any field, so the default is the contract's whole default budget.
 ANSWER_SCHEMA = "airk.arbiter.context.request/3"
 PARSE_SCHEMA = "airk.parse.request/1"
-ANSWER_BUDGET_DEFAULT = {"deadline_ms": 300000, "max_bytes": 262144, "max_parts": 4, "max_sub_needs": 4,
-                         "rounds": 3, "calls": 132, "fanout": 8, "candidates": 132, "input_tokens": 131072,
-                         "round_input_tokens": 32768, "context_calls": 48, "focus_calls": 24, "focus_pairs": 192}
+# The default budget is not written here. ``ANSWER_BUDGET_DEFAULT`` (below, after the helpers it needs) is read
+# at import from the Rust-emitted semantic cases, the one owner of the contract's default.
+ANSWER_CASES = REPO_ROOT / "fixtures" / "split" / "arbiter" / "answer_loop_cases.json"
+ANSWER_CASES_NAME = "fixtures/split/arbiter/answer_loop_cases.json"
 # History only (the one-turn evaluation, 21-22 Nov 2026): the /2 request and plan 3.7's defaults.
 ANSWER_SCHEMA_V2 = "airk.arbiter.context.request/2"
 ANSWER_BUDGET_DEFAULT_V2 = {"calls": 8, "rounds": 3, "fanout": 8, "input_tokens": 8192,
@@ -65,7 +66,16 @@ FORCED_HIDDEN = {"airk_answer": {"schema", "budget"}, "airk_parse": {"schema"}}
 
 SLOTS = ("C1", "C2", "C3", "W1", "W2", "T1", "T2", "A1", "A2", "A3")
 KINDS = {"C": "coding", "W": "writing", "T": "test", "A": "architecture"}
-REPOS = ("airk", "bookbuilder")
+# The loop series' pair (user direction, 22 Nov 2026): the index under test must hold nothing about the
+# experiment, so munarium replaces airk. Every default that names repositories uses this pair.
+REPOS = ("munarium", "bookbuilder")
+# The index names a loop lifetime holds for REPOS, in the launcher's order (fixture.py DEFAULT_REPOSITORIES: the
+# repository with denies first). "bookbuilder" is served by "bookbuilder-v2" (ALIASES_FILE).
+LOOP_INDEXES = ("bookbuilder-v2", "munarium")
+# Every repository name a scenario, pass or record may carry. airk stays known so that the one-turn history
+# (21-22 Nov 2026) and the tools that read it still load; no loop lifetime holds an airk index.
+KNOWN_REPOS = ("airk", "bookbuilder", "munarium")
+FORBIDDEN_LOOP_INDEX = "airk"
 
 
 class HarnessError(RuntimeError):
@@ -95,6 +105,46 @@ def sha256_file(path: Path) -> str:
 
 def canonical_json(value: Any) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def answer_default_budget(path: Path = ANSWER_CASES) -> dict:
+    """The contract's whole default budget, read from the Rust-emitted cases file (``default_budget``).
+
+    Never copied by hand. On 22 November 2026 the product default moved from 131,072 to 196,608 input tokens
+    (commit 936c9b94); a copied 131,072 would have been forced on every gate Answer and, by the change log's
+    figures, taken the model away from a two-part Answer in round 3 and from a four-part one in round 2."""
+    cases = json.loads(Path(path).read_bytes())
+    budget = cases.get("default_budget") if isinstance(cases, dict) else None
+    require(isinstance(cases, dict) and cases.get("request_schema") == ANSWER_SCHEMA,
+            f"{path} is not the cases file of {ANSWER_SCHEMA}")
+    require(isinstance(budget, dict) and bool(budget)
+            and all(isinstance(k, str) and type(v) is int and v > 0 for k, v in budget.items()),
+            f"{path} carries no whole default budget")
+    return dict(budget)
+
+
+ANSWER_BUDGET_DEFAULT = answer_default_budget()
+
+
+def answer_budget_source() -> dict:
+    """Where the default budget came from, for receipts and the prompts freeze: the cases file's bytes and the
+    budget read from them."""
+    return {"path": ANSWER_CASES_NAME, "sha256": sha256_file(ANSWER_CASES),
+            "default_budget": dict(ANSWER_BUDGET_DEFAULT)}
+
+
+def distinct_budgets(rows: list[dict]) -> list[dict]:
+    """The exact budgets a set of ``airk_answer`` calls sent, each with the number of calls that sent it: a
+    replay row's ``budget_sent`` or a wrapper turn's ``sent_arguments``. Receipts carry this so that a pass
+    shows what the service was asked for, not what the harness meant to send."""
+    found: dict[bytes, dict] = {}
+    for row in rows:
+        budget = row.get("budget_sent")
+        if budget is None and row.get("tool") == "airk_answer":
+            budget = (row.get("sent_arguments") or {}).get("budget")
+        if isinstance(budget, dict):
+            found.setdefault(canonical_json(budget), {"budget": budget, "calls": 0})["calls"] += 1
+    return [found[key] for key in sorted(found)]
 
 
 def read_json(path: Path) -> Any:
@@ -431,6 +481,31 @@ def call_tool(handle: Handle, tool: str, repo: str, args: dict, timeout_s: float
     return CallOutcome(ok, proc.returncode, proc.stdout, proc.stderr, elapsed, envelope, error)
 
 
+CATALOG_FILE = "tools-catalog.json"
+
+
+def write_tools_catalog(handle: Handle, fixtures: Path, timeout_s: float = 120.0) -> dict:
+    """Write ``<fixtures>/tools-catalog.json``: the live lifetime's own tool listing with complete schemas
+    (``tools list --json`` of the lifetime's CLI, against its control root). The wrapper serves agents from
+    this file, so a session cannot start in a root without it. The listing depends on the image, not on the
+    root: an existing catalog of the same bytes is kept, and a different one is refused, never replaced."""
+    command = [*handle.cli, "--output", "json", "--service-runtime-dir", handle.control, "tools", "list", "--json"]
+    proc = subprocess.run(command, capture_output=True, stdin=subprocess.DEVNULL, env=tool_env(handle),
+                          timeout=timeout_s, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    require(proc.returncode == 0, f"tools list failed (exit {proc.returncode}): "
+                                  f"{proc.stderr.decode('utf-8', 'replace')[:300]}")
+    path = Path(fixtures) / CATALOG_FILE
+    if path.is_file():
+        require(path.read_bytes() == proc.stdout,
+                f"{path} differs from this lifetime's tool listing; it was written by another image")
+    else:
+        write_bytes(path, proc.stdout)
+    tools = load_catalog(path)
+    missing = sorted({tool for names in PATH_TOOLS.values() for tool in names} - set(tools))
+    require(not missing, f"{path} lacks {missing}")
+    return {"path": str(path), "sha256": sha256_file(path), "tools": len(tools)}
+
+
 TYPED_RETRY_CODES = ("selection_busy", "publication_busy", "scoped_observation_unavailable",
                      "scoped_status_unavailable")
 
@@ -514,7 +589,7 @@ def raw_body(raw: bytes) -> Any:
 def load_scenario(path: Path) -> dict:
     scenario = read_json(path)
     require(scenario.get("schema") == "airk.private.answer-eval-scenario/1", f"{path}: unknown scenario schema")
-    require(scenario.get("repository") in REPOS, f"{path}: unknown repository")
+    require(scenario.get("repository") in KNOWN_REPOS, f"{path}: unknown repository")
     require(scenario.get("slot") in SLOTS, f"{path}: unknown slot")
     notes = scenario.get("notes") or []
     require(4 <= len(notes) <= 10, f"{path}: needs 4 to 10 notes")

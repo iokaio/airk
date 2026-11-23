@@ -120,6 +120,11 @@ The user resumed the Windows and Linux FP16 campaign after D: cleanup. Keep new 
   shakedown has passed end to end on a real service, with search records,
   Focus calls and model-sourced decisions in a real reply. Each gate root
   allows one CUDA lifetime.
+- **LG finished, 23 November 2026.** Series `06-gate-lg`, report 04
+  ([04-gate-lg.md](arbiter/answer-evaluation/04-gate-lg.md)). Neither bar
+  was met: Large won 0 and lost 1 against Compact; Compact won 1 and lost 1
+  against Focus only; no session finished correctly in any arm. Large is
+  dropped. Work continues with plan step LH; the next stop is after L7.
 - **New agents run on Opus at medium reasoning** (user, 23 November 2026,
   about 01:25 UTC: "We're nearing our Fable limit").
 - **D: floor lowered to 200 GiB free, 23 November 2026 at about 00:20 UTC.**

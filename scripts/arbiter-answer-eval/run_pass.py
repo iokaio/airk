@@ -5,14 +5,14 @@ The pass spec (JSON) names the series, the scenario set and one entry per
 result::
 
     {"series": "01-baseline",
-     "scenarios_dir": "<R>/scenarios", "repos": ["airk", "bookbuilder"], "slots": [...],
-     "scenario_ids": ["airk-C1", ...],         # optional subset (e.g. a pilot)
+     "scenarios_dir": "<R>/scenarios", "repos": ["munarium", "bookbuilder"], "slots": [...],
+     "scenario_ids": ["munarium-C1", ...],     # optional subset (e.g. a pilot)
      "freeze": "<R>/scenario-freeze.json",     # optional: refuse scenarios that differ from the freeze
      "pilot": false,                           # true only for plumbing pilots (never judged evidence)
      "accept_queryable": false,                # pilot specs only: accept a queryable, not yet ready, handle
      "prompts_freeze": "<R>/design/prompts-freeze.json",   # required unless pilot; refuses a mismatch
      "handle": "<handle.json>",                # default handle for entries that name none
-     "settle_repos": ["airk"],                 # indexes the settled guard checks (default: the scenarios')
+     "settle_repos": ["munarium"],             # indexes the settled guard checks (default: the scenarios')
      "concurrency": 4, "judge_concurrency": 4, "claude": null,
      "agent_model": "claude-haiku-5-5", "agent_effort": "medium",    # defaults; an entry may set model/effort
      "judge_model": "claude-sonnet-5-5", "judge_effort": "medium", "judges": ["j1", "j2"],
@@ -66,6 +66,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import json
+import subprocess
 import sys
 import threading
 import time
@@ -108,6 +109,7 @@ class Pass:
         self.settle_fn = settle_fn or self._settle
         self.r_root = Path(r_root)
         self.pass_dir = self.r_root / "passes" / self.series
+        self._stage_guard_lock = threading.Lock()
         self.sessions_root = self.r_root / "sessions"
         self.pass_dir.mkdir(parents=True, exist_ok=True)
         scenarios_dir = Path(spec.get("scenarios_dir") or self.r_root / "scenarios")
@@ -291,12 +293,15 @@ class Pass:
         value = {"digest": result["first_digest"], "elapsed_ms": result["call"]["elapsed_ms"],
                  "bytes": result["call"]["bytes"], "readiness": handle.readiness(),
                  "ok": result["call"]["ok"], "handle_sha256": handle.sha256,
-                 "first_call_yield": result["coverage"]["first_call_yield"], "at": common.now_iso()}
+                 "first_call_yield": result["coverage"]["first_call_yield"], "at": common.now_iso(),
+                 "budget_sent": result["call"].get("budget_sent")}
         if result["call"].get("loop") is not None:
             value["loop"] = result["call"]["loop"]
         if entry.get("arm_check") is not None and result["call"]["ok"]:
             body = common.raw_body(Path(result["call"]["result_path"]).read_bytes())
             value["arm_problems"] = loop_reply.check_arm(body, entry["arm_check"])
+            # Not a refusal: a stage whose model decisions were all shed, in a reply the model did take part in.
+            value["arm_flags"] = loop_reply.arm_flags(body, entry["arm_check"])
         return value
 
     def digest(self, scenario: dict, entry: dict) -> dict:
@@ -423,6 +428,14 @@ class Pass:
                       call_timeout_s=float(entry.get("call_timeout", 300)),
                       max_budget_usd=entry.get("max_budget_usd"),
                       accept_queryable=bool(self.spec.get("accept_queryable")))
+        if entry.get("stage_guard"):
+            # Before every session, not only every plan step: an agent can pause long between calls, and a
+            # stage that unloaded meanwhile would serve the next session without it (s8 shakedown, 23 Nov 2026).
+            with self._stage_guard_lock:
+                done = subprocess.run(entry["stage_guard"], capture_output=True, text=True,
+                                      stdin=subprocess.DEVNULL, cwd=str(common.REPO_ROOT))
+            self.log(event="stage-guard", key=key, exit=done.returncode, out=(done.stdout or done.stderr)[-400:])
+            common.require(done.returncode == 0, f"{key}: the arm's stages are not active: {done.stderr[-400:]}")
         record = self.session_runner(**kwargs)
         directory = self.session_dir(scenario, entry, sample)
         if record.get("status") == "discarded" and not directory.with_name(directory.name + ".attempt-1").exists():

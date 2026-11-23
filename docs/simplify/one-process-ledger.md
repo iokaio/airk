@@ -16438,3 +16438,109 @@ change (`loop/reproducible-records`), the revised job design
 idle-unloaded stage on demand; the first vectors job of a fresh root;
 untyped lane refusals; admission accounting at 64 KiB; the Linux start-up
 math option; verification receipts of 15 to 29 KB per reply.
+
+### 23 November 2026 at 12:04 UTC — the LG gate is finished and documented: neither bar met, Large goes, no stop
+
+**Series `06-gate-lg`, report 04**
+([04-gate-lg.md](../arbiter/answer-evaluation/04-gate-lg.md), generated
+[detail](../arbiter/answer-evaluation/04-gate-lg-detail.md), results file
+`results/04-gate-lg.csv`). Three arms on one RTX A6000, Windows CUDA, image
+`lg-gate-076cc17d` (product `de0dde02`, harness `c3b077f6`): C Focus with
+Compact, L Focus with Large, F Focus only. Per arm 20 replays and 20 judged
+sessions (Haiku agents, two Sonnet judges); 120 valid verdicts, no close
+call, no second session. Lifetimes ready 11:04 UTC, figures built 11:49 UTC.
+
+| | C | L | F |
+| --- | --- | --- | --- |
+| Correct finishes of 20 | 0 | 0 | 0 |
+| Essential notes over the session, of 113 | 39 | 37 | 39 |
+| Essential notes in the first reply, of 113 | 21 | 20 | 17 |
+| First reply, median | 8.3 s | 11.7 s | 9.5 s |
+| Decisions by the model / without | 95 / 5 | 114 / 10 | 0 / 152 |
+| Answers a minute, two at once | 11.3 | 9.5 | 12.3 |
+
+- **12.7.1, Large against Compact: bar not met.** Large won 0 and lost 1;
+  first-reply essentials 6 against 7 on bookbuilder and 14 against 14 on
+  munarium; 1.4 times Compact's time.
+- **12.7.2, Compact against Focus only: bar not met.** Compact won 1 and
+  lost 1; first-reply essentials 7 against 5 and 14 against 12; 1.2 s faster
+  at the median. The bar indicates Focus only.
+- **The loop ran cleanly:** 60 replays and 103 session Answers with no failed
+  read, no partial, no ticket, no decision left undispatched. Device peak
+  27.4 GiB with the three services side by side.
+- **What limits the result is retrieval.** The first replies of the three
+  arms have equal essential counts on 15 of 20 scenarios; six scenarios have
+  none in any arm. Every reply delivered cut rows (median 18 to 22), and a
+  fifth to a quarter of the agents' later reads went back to such a row.
+  Compact ended 18 of 20 Answers after one round: top-score decisions with
+  no calibration call a sub-need covered nearly every time.
+- **Seventeen session calls were refused** as invalid requests written by
+  the agents (8 reads past a file's end, 5 reference lookups, 4 Answers).
+
+**Decisions.**
+- **Large is dropped** (plan step LH): the bar is not met and the user gave
+  the decision in advance on 23 November. The guard of plan section 2 (report
+  before deleting if Large met its bar by a wide margin) does not apply.
+- **Compact stays, as "Arbiter",** by the same direction, although the
+  12.7.2 bar indicates Focus only. Nothing is removed on that result; Focus
+  and Arbiter become separate switches, and the default combination is the
+  user's to set at the stop after L7.
+- **Report form:** the series report is written by hand in the README's
+  nine sections; the harness's generated report is kept beside it as the
+  detail report.
+
+**Primary review of the handback (self-review of the combined change; the
+gate agent implemented and ran).**
+- Recounted from the results file, independently of the report builder: 60
+  rows; finishes, session essentials per arm and repository, and wins,
+  losses and ties for both pairs equal the report's.
+- Regenerated the detail report on main from `gate-report-inputs.json`: it
+  differs from the agent's in one sentence, corrected here (the report said
+  LG stops for the user's choices); the figures file is equal apart from
+  its timestamp. The results file equals the pass's `results.csv`.
+- Scanned the detail report: 160 judge lines and 64 "misleading evidence"
+  lines carry note ids, verdicts and withheld reasons only; evidence lines
+  carry tool names and locations only.
+- Read the 17 failed session calls from the wrappers' records: all are
+  refusals of invalid requests; none is a service failure.
+
+**Validation of this commit.**
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Harness suite, merged tree | `python -I -B -m unittest discover -s scripts/arbiter-answer-eval` | 231 of 231 passed, 6.9 s |
+| Clippy, service (fixture test changes) | `cargo clippy -p airk-service --all-targets --all-features --locked --offline --timings -- -D warnings`, worktree `loop/l5c` at `c3b077f6`, target `answer-loop\target-cuda`, incremental default | exit 0, 49.4 s |
+| Clippy, retrieval (diagnostic test changes) | `cargo clippy -p airk-retrieval --all-targets --features gpu-cuda,test-support --locked --offline --timings -- -D warnings`, same worktree and target | exit 0, 70.1 s |
+| Repository checks | `scripts/check-repo.ps1`, `git diff --cached --check` | passed for 10,673 public files; no whitespace error |
+
+The Rust files in this commit are test and fixture code only, byte-equal to
+the worktree the gate image was built from. No product crate source changes
+here; the product fixes are the earlier commits named in the report.
+
+**Evidence limits.** One judged session per scenario and arm; one replay per
+first reply; one GPU on Windows; agents on Haiku with at most 12 tool calls;
+top-score decisions, not calibrated ones; no comparison with Parse and
+Search; the precision check (12.7.3) did not run, because FP32 profiles do
+not carry the loop's tasks. Cost: 0.93 US dollars for agents, 24.42 for
+judges.
+
+**Open, with owner.**
+
+| Item | State | Owner |
+| --- | --- | --- |
+| The fixture's native dispatch census allows 1,024 dispatches per lifetime | The three gate services ended on it and left no settled close; every reply was rechecked afterwards and no result is affected | primary agent: raise or scale the bound before the next gate-length lifetime (before L7's baseline) |
+| Earlier open items | Reload of an idle-unloaded stage on demand; the first vectors job of a fresh root; untyped lane refusals; admission accounting at 64 KiB; the Linux start-up math option; verification receipts of 20 to 29 KB | as recorded on 23 November; the Linux option belongs to step LX |
+| Branches not merged | `loop/reproducible-records`, `loop/l2b-wire` (L2c built, L2d designed), `loop/workbench-v3` | primary agent, review and a live check each, after LH |
+| A munarium sealed set | Not authored | before the first L7 change set is fitted |
+
+**Roots and processes.** Spent: C, L, F, C32, s8, s10, s11. Spare: L32
+(CUDA lifetime unused). Still running at this entry: the base build of
+spare root S1 (`build_base.py`, started 09:52 UTC by the gate agent, now
+owned by the primary agent); it needs `index-aliases.json` copied in when
+it closes. The GPU is idle. D: free 863,248,986,112 bytes, 604 GiB above
+the 200 GiB floor. Branch `loop/l5c` is contained in this commit and
+retired.
+
+**Next action:** plan step LH from `R\answer-loop\LH\inventory.md`: remove
+Large with evidence, the name Arbiter, and Focus and Arbiter as separate
+switches.

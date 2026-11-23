@@ -59,7 +59,7 @@ def spec(repo: str, baseline: str, large: list[str], series: str, focus: str, co
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--repo", required=True, choices=common.REPOS)
+    parser.add_argument("--repo", required=True, choices=common.KNOWN_REPOS)
     parser.add_argument("--baseline", required=True)
     parser.add_argument("--large", required=True, help="slots for the timing-only Large run, e.g. A1,C2")
     parser.add_argument("--series", required=True)

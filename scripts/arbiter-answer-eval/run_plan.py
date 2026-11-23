@@ -16,11 +16,12 @@ The plan (JSON) is a list of steps:
 * ``{"second": {"spec": ..., "groups": [[focus, context, "name,name"], ...]}}``. Runs the second
   sessions of the close calls for the named results, under each group's stages, then grades again.
 * ``{"compare": {"a": <pass dir>, "b": <pass dir>, "out": <file>}}``. Runs ``compare_passes.py``.
-* ``{"switch_context": {"focus": <profile>|null, "context": <profile>|null, "repositories": "airk,bookbuilder",
-  "receipt": <file>}}``. The named hook for switching the Context model within one lifetime (plan 12.5.2
-  item 4; ``Plan.switch_context``): disable the live CUDA Context (the release), then enable the wanted
-  Focus and Context profiles (the warm), through ``gpu_fixture.py stage`` (ordinary Configure). The
-  receipt keeps release and warm time and the device memory before and after.
+* ``{"switch_context": {"focus": <profile>|null, "context": <profile>|null,
+  "repositories": "munarium,bookbuilder-v2", "receipt": <file>}}``. The named hook for switching the Context
+  model within one lifetime (plan 12.5.2 item 4; ``Plan.switch_context``): disable the live CUDA Context (the
+  release), then enable the wanted Focus and Context profiles (the warm), through ``gpu_fixture.py stage``
+  (ordinary Configure). ``repositories`` names indexes of the lifetime; without it every index of the lifetime
+  is staged. The receipt keeps release and warm time and the device memory before and after.
 * ``{"gate": {"command": "replays"|"agreement"|"outcomes"|"concurrency"|"performance"|"precision", ...}}``.
   Runs ``gate.py <command>`` with the step's other keys as ``--key value`` options (a list repeats it).
 * ``{"lifetimes": {"start": [<lifetime>, ...], "reserve_device_gib": 4, "reserve_host_gib": 16, "receipt": <file>}}``.
@@ -30,6 +31,9 @@ The plan (JSON) is a list of steps:
   enables each lifetime's stages. A lifetime (``make_loop_spec.py gate``) names its ``arm``, ``fixtures``,
   ``lifetime``, ``launcher`` (``fixture.py`` or ``gpu_fixture.py``), ``start_args``, ``device_gib``,
   ``host_gib``, ``repositories`` and ``stages``; placeholder ``<...>`` start options are refused.
+  ``repositories`` are the scenario repositories the settled guard checks (default the loop pair, munarium
+  and bookbuilder, resolved through the root's index aliases). The stages enrol every index of the lifetime
+  unless the row names ``stage_repositories`` (index names such as ``munarium,bookbuilder-v2``).
 * ``{"stop_lifetimes": {"stop": [<lifetime>, ...]}}``. Disables each CUDA Context stage, stops each lifetime and
   waits until each has closed.
 * ``{"parallel": [<step>, ...]}``. Runs the steps at once (e.g. the arms' replays).
@@ -81,6 +85,19 @@ def closed_verdict(raw: dict, pid_alive) -> str:
     if raw.get("restartable") is not True:
         return "blocked"
     return "open" if pid_alive(raw.get("service_pid")) else "closed"
+
+
+def settle_repositories(row: dict) -> list[str]:
+    """The scenario repositories whose indexes the settled guard checks for a lifetime row: its own
+    ``repositories``, else the loop pair. A name is resolved through the fixture root's index aliases."""
+    return [r for r in (row.get("repositories") or ",".join(common.REPOS)).split(",") if r]
+
+
+def stage_repositories(row: dict) -> list[str]:
+    """The ``--repositories`` option of a stage command: only when the row names ``stage_repositories`` (index
+    names of the lifetime, not scenario repositories: ``bookbuilder`` is served by the index ``bookbuilder-v2``).
+    Without it the launcher enrols every index of the lifetime."""
+    return ["--repositories", row["stage_repositories"]] if row.get("stage_repositories") else []
 
 
 class Plan:
@@ -146,7 +163,7 @@ class Plan:
         name = next_lifetime(previous, spec.get("tag", "plan"))
         command = [*PY, "-S", str(HERE / "fixture.py"), "start", "--image", str(spec["image"]), "--lifetime", name,
                    "--restart-from", previous, "--seconds", str(spec.get("seconds", 21000)),
-                   "--repositories", spec.get("repositories", "airk,bookbuilder,bookbuilder-v2")]
+                   "--repositories", spec.get("repositories", ",".join(common.LOOP_INDEXES))]
         if spec.get("selector"):
             command += ["--selector", spec["selector"], "--change-set-inputs", str(spec["inputs"]),
                         "--change-set-inputs-sha256", spec["inputs_sha256"], "--answer-layers", spec["layers"]]
@@ -169,7 +186,7 @@ class Plan:
             if proc.poll() is not None:
                 raise common.HarnessError(f"{name} start exited ({proc.returncode}) before readiness")
             time.sleep(10)
-        repos = spec.get("settle", ["airk", "bookbuilder"])
+        repos = spec.get("settle", list(common.REPOS))
         while time.monotonic() < end:
             ok, snaps = settled.check(str(handle), self.fixture_dir, repos, False)
             if ok:
@@ -197,7 +214,7 @@ class Plan:
         records a receipt with ``unchanged`` and runs nothing."""
         wanted = {"focus": body.get("focus"), "context": body.get("context")}
         lifetime = self.lifetime_name()
-        repos = body.get("repositories") or "airk,bookbuilder"
+        repos = body.get("repositories")  # index names; None stages every index of the lifetime
         receipt = {"schema": "airk.private.answer-eval-switch/1", "at": common.now_iso(), "lifetime": lifetime,
                    "from": dict(self.live_cuda) if self.live_cuda else None, "to": wanted}
         receipt["memory_before"] = self.gpu_memory()
@@ -225,10 +242,10 @@ class Plan:
         self.log(event="switch_context", **{k: receipt[k] for k in ("from", "to", "release_s", "warm_s")})
         return receipt
 
-    def stage_command(self, lifetime: str, profile: str, enable: bool, repos: str, stage: str):
+    def stage_command(self, lifetime: str, profile: str, enable: bool, repos: str | None, stage: str):
         self.run(f"stage-{'on' if enable else 'off'}-{profile}",
                  [*PY, "-S", str(HERE / "gpu_fixture.py"), "stage", "--lifetime", lifetime, "--profile", profile,
-                  "--enable" if enable else "--disable", "--repositories", repos], 3600)
+                  "--enable" if enable else "--disable", *stage_repositories({"stage_repositories": repos})], 3600)
 
     @staticmethod
     def gpu_memory():
@@ -328,10 +345,18 @@ class Plan:
                 if raw.get("queryable") is not True:
                     continue
                 ok, snaps = settled.check(str(handle), Path(row["fixtures"]),
-                                          [r for r in row.get("repositories", "airk,bookbuilder").split(",") if r], False)
+                                          settle_repositories(row), False)
                 if ok:
+                    if row["launcher"] == "gpu_fixture.py":
+                        # A CUDA lifetime's service must hold the product's CUDA math (GEMM2) before any FP16
+                        # warm; the handle records what the launcher gave it (s5 shakedown, 23 Nov 2026).
+                        import gpu_fixture
+                        problems = gpu_fixture.math_problems(raw.get("service_environment") or {})
+                        common.require(not problems, f"{name}: service math environment: {problems}")
                     del pending[name]
-                    self.log(event="ready", lifetime=name,
+                    # The wrapper serves agents from the root's tools catalog; write it from this lifetime.
+                    catalog = common.write_tools_catalog(common.load_handle(handle), Path(row["fixtures"]))
+                    self.log(event="ready", lifetime=name, catalog=catalog,
                              tokens={s.get("repo"): s.get("publication_token") for s in snaps})
             if pending:
                 time.sleep(float(body.get("poll_seconds", 30)))
@@ -340,7 +365,10 @@ class Plan:
             for stage in row.get("stages") or []:
                 self.run(f"stage-on-{row['arm']}-{stage['profile']}", self.launcher_command(
                     row, "stage", "--lifetime", row["lifetime"], "--profile", stage["profile"], "--enable",
-                    "--repositories", row.get("repositories", "airk,bookbuilder")), 3600)
+                    *stage_repositories(row)), 3600)
+            if not hasattr(self, "live"):
+                self.live = {}
+            self.live[row["lifetime"]] = row
             receipt["lifetimes"].append({k: row.get(k) for k in ("arm", "lifetime", "fixtures", "launcher",
                                                                  "start_args", "device_gib", "host_gib", "stages")})
         receipt["memory_after"] = self.device_memory()
@@ -348,15 +376,31 @@ class Plan:
             common.write_json(Path(body["receipt"]), receipt)
         return receipt
 
+    ANSWER_GATE_COMMANDS = ("smoke", "replays", "concurrency")
+
+    def ensure_stages(self, reason: str) -> None:
+        """Before a step that issues Answers: every live CUDA lifetime's required stages are verified active in the
+        service's status and re-enabled if not (``gpu_fixture.py ensure``; recorded in the lifetime's
+        ``ensure.jsonl`` and this log). On 23 November 2026 shakedown s8's Focus unloaded between steps and
+        later Answers ran without it. A fixture.py lifetime (CPU) is not checked here; the arm check still is."""
+        for row in getattr(self, "live", {}).values():
+            profiles = [s["profile"] for s in row.get("stages") or []]
+            if row["launcher"] != "gpu_fixture.py" or not profiles:
+                continue
+            self.run(f"ensure-{row['arm']}-{reason}", self.launcher_command(
+                row, "ensure", "--lifetime", row["lifetime"], "--profiles", ",".join(profiles)), 3600)
+
     def stop_lifetimes(self, body: dict) -> None:
         """Disable each lifetime's CUDA Context stage (GPU_FIXTURE.md: before stop), stop it, wait for the close."""
         rows = body["stop"]
+        for row in rows:
+            getattr(self, "live", {}).pop(row["lifetime"], None)
         for row in rows:
             for stage in reversed(row.get("stages") or []):
                 if row["launcher"] == "gpu_fixture.py" and stage["stage"] == "context":
                     self.run(f"stage-off-{row['arm']}-{stage['profile']}", self.launcher_command(
                         row, "stage", "--lifetime", row["lifetime"], "--profile", stage["profile"], "--disable",
-                        "--repositories", row.get("repositories", "airk,bookbuilder")), 3600)
+                        *stage_repositories(row)), 3600)
             self.run(f"stop-{row['lifetime']}", self.launcher_command(row, "stop", "--lifetime", row["lifetime"]), 300)
         end = time.monotonic() + float(body.get("close_seconds", 1800))
         open_ = {row["lifetime"]: Path(row["fixtures"]) / row["lifetime"] / "handle.json" for row in rows}
@@ -375,13 +419,16 @@ class Plan:
     def parallel(self, steps: list[dict]) -> None:
         """Run independent steps at once; the first failure is raised after all have finished."""
         import concurrent.futures
+        if any(next(iter(i)) in ("sessions", "second") or (next(iter(i)) == "gate" and i["gate"].get("command")
+                                                                in self.ANSWER_GATE_COMMANDS) for i in steps):
+            self.ensure_stages("parallel")  # once, before the branches start; never concurrently
         with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(steps))) as pool:
-            futures = [pool.submit(self.step, item) for item in steps]
+            futures = [pool.submit(self.step, item, False) for item in steps]
             errors = [f.exception() for f in futures if f.exception() is not None]
         if errors:
             raise errors[0]
 
-    def step(self, item: dict):
+    def step(self, item: dict, ensure: bool = True):
         kind, body = next(iter(item.items()))
         if kind == "restart":
             self.restart(body)
@@ -392,6 +439,8 @@ class Plan:
                 command += ["--answer-defaults", json.dumps(body["answer_defaults"])]
             self.run(f"replays-{body['repos']}-{Path(body['out']).name}", command, 4 * 3600)
         elif kind in ("sessions", "second"):
+            if ensure:
+                self.ensure_stages(kind)
             spec = Path(body["spec"])
             pass_dir = self.r / "passes" / common.read_json(spec)["series"]
             jobs = body.get("jobs") or [None]
@@ -406,6 +455,8 @@ class Plan:
         elif kind == "switch_context":
             self.switch_context(body)
         elif kind == "gate":
+            if ensure and body.get("command") in self.ANSWER_GATE_COMMANDS:
+                self.ensure_stages(f"{body['command']}-{body.get('arm')}")
             self.gate_step(body)
         elif kind == "lifetimes":
             self.start_lifetimes(body)

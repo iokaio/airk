@@ -170,10 +170,16 @@ def combine_samples(cases: list[dict]) -> dict:
 
 
 def configuration_rule(per_scenario: list[dict]) -> dict:
-    """Plan 4.3: >= 12 of 20 substantial wins, <= 2 worse, >= 5 wins per repository, no kind worse on average."""
+    """Plan 4.3: >= 12 of 20 substantial wins, <= 2 worse, >= 5 wins per repository, no kind worse on average.
+
+    The repositories are the ones the pass ran: munarium and bookbuilder in the loop series, airk and
+    bookbuilder in the one-turn history. A pass without rows counts the default pair."""
     wins = [s for s in per_scenario if s["case"]["substantial"]]
     worse = [s for s in per_scenario if s["case"]["worse"]]
-    by_repo = {repo: sum(1 for s in wins if s["repo"] == repo) for repo in common.REPOS}
+    present = {s["repo"] for s in per_scenario}
+    repos = ([repo for repo in common.KNOWN_REPOS if repo in present] + sorted(present - set(common.KNOWN_REPOS))
+             or list(common.REPOS))
+    by_repo = {repo: sum(1 for s in wins if s["repo"] == repo) for repo in repos}
     kinds = {}
     for kind in sorted({s["kind"] for s in per_scenario}):
         rows = [s for s in per_scenario if s["kind"] == kind and s["answer_grade"] is not None

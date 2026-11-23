@@ -126,7 +126,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--handle", required=True, help="a handle.json, or @newest (the newest fixture lifetime)")
     parser.add_argument("--fixture-dir", type=Path, default=common.DEFAULT_R / "fixture")
-    parser.add_argument("--repos", default="airk")
+    parser.add_argument("--repos", default=",".join(common.REPOS))
     parser.add_argument("--accept-queryable", action="store_true")
     parser.add_argument("--wait", action="store_true", help="poll until settled (exit 0) or --timeout (exit 2)")
     parser.add_argument("--interval", type=float, default=60.0)

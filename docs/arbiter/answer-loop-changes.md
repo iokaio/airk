@@ -1210,6 +1210,12 @@ Numbered 30 until 22 November 2026; renumbered because L4's entries take
     every arm.
 - **Changed:** the arms no longer share a process. Device contention between
   them is a measured condition of the gate, recorded with each arm's timing.
+- **Roots:**
+  - Each arm restarts from a closed CPU base lifetime in its own root.
+  - A GPU lifetime cannot be a restart origin, because its Ready lists the
+    CUDA profiles too. So the precision arms need roots of their own.
+  - The bases were indexed ahead, on the current image. The restart
+    evidence and disk budget (about 30 GB per root) are in `GPU_FIXTURE.md`.
 
 ### 42. munarium replaces airk as the second evaluation repository; LG restarts as series 06
 

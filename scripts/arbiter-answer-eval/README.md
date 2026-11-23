@@ -5,7 +5,28 @@ judging and grading of the Answer evaluation, as set out in
 [`docs/arbiter/final-plan-fp16.md`](../../docs/arbiter/final-plan-fp16.md)
 (sections 3.3 to 3.6, 4 and 5.2). Reports go in
 [`docs/arbiter/answer-evaluation/`](../../docs/arbiter/answer-evaluation/README.md).
-This folder is excluded from the airk index under test.
+
+**The repository pair.** Since 22 November 2026 (user direction) the
+evaluation runs on **munarium** and **bookbuilder**, so the indexes under test
+hold nothing about the experiment:
+
+- No lifetime of the loop series holds an airk index. `leak_check.py` and
+  `fixture.py leak-probe` fail when one exists.
+- `common.REPOS` is the default pair, `("munarium", "bookbuilder")`, and every
+  default that names repositories uses it (`run_pass.py`, `run_plan.py`,
+  `make_loop_spec.py`, `gate.py`, `replay.py`, `settled.py`, `depth.py`,
+  `probe_tools.py`, `search_replay.py`).
+- `common.KNOWN_REPOS` also holds `airk`, so the one-turn history of 21 and 22
+  November 2026 and the tools that read it still load (`mcp_wrapper.py --repo`,
+  `make_cs_spec.py --repo`, `common.load_scenario`).
+- The bookbuilder scenarios are served by the `bookbuilder-v2` index through
+  the fixture root's `index-aliases.json`; `common.LOOP_INDEXES` names the two
+  indexes a loop lifetime holds, in the launcher's order (`bookbuilder-v2`
+  first, because it has denies; see [FIXTURE.md](FIXTURE.md)).
+- Both repositories are private in reports: locations and note ids only, with
+  judges' reasons withheld entirely, verdicts per note id kept
+  (`gate_report.PRIVATE_REPOS`; a reason with its quotes removed still
+  paraphrased the project, 23 November 2026).
 
 The private evaluation service, its indexes and `handle.json` belong to
 `fixture.py` ([FIXTURE.md](FIXTURE.md)). The harness only reads a handle. It
@@ -29,9 +50,12 @@ Python 3.13, standard library only. Run every script as
 | `common.py` | Handles (readiness, enabled stages), the tools catalog, one CLI process per tool call, scenarios and Claude Code process helpers |
 | `pass_digests.py` | Computes a pass's canonical first-call digests for named results while their stage configuration is live, and prints which results agree |
 | `cuda_pair.py` | Inputs of a CUDA pair lifetime (up to Compact, Large and Focus) (`gpu_fixture.py --model pair`): copied, authenticated asset directories (the fixture refuses hard links) and the pinned roster, review pins and profile rows. See [GPU_FIXTURE.md](GPU_FIXTURE.md) |
-| `lg_lifetimes.py` | The LG `--lifetimes` file: one fixture root, pinned pair and measured memory per arm C, L and F (side by side). See [GPU_FIXTURE.md](GPU_FIXTURE.md) |
+| `lg_lifetimes.py` | The LG `--lifetimes` file: one fixture root, pinned pair and measured memory per arm C, L and F (side by side). With `--base` it checks that the base lifetime closed cleanly, is restartable and holds exactly the pair's indexes. See [GPU_FIXTURE.md](GPU_FIXTURE.md) |
+| `lg_bases.py` | Watches, probes and summarizes the CPU base lifetimes of the LG arms (one fixture root per arm): `wait` on the lifetimes' own handles, `probe` (settled guard, index counts, leak check, credential probes, the launcher's leak probe) and `summary`. It starts and stops nothing |
 | `pass_report.py` | Per-session and per-path figures of a graded pass (turns, bytes, tool and wall time, grades, agent and judge cost) for reports and cost projections |
 | `settled.py` | The settled-index guard: semantic readiness `ready`, served mode `hybrid`, no index or vectors job queued or running, and the publication token at start and end (read-only) |
+| `leak_check.py` | The leak check of a lifetime, the same for every repository: each scenario's `leak_probe` phrase searched on its own repository's index, every indexed path listed, both checked against that index's exclusion list (empty for munarium, and recorded as such), the credential-like names, and no airk index in the handle, the state files or the service's catalog |
+| `credential_probe.py` | Lists every indexed path of one index and names the credential-like ones (`.env*`, `*secret*`, `appsettings*.json`, `*.pfx`, `set-*-key.ps1`, `aikeys.json`), opening no file |
 | `prompts_freeze.py` | Writes and verifies `R/design/prompts-freeze.json`: the SHA-256 and text of every agent prompt, the judge prompt and its schema, the default models and efforts, and the hashes of the runtime harness files |
 | `depth.py` | The no-agent depth measurement (plan E4). For each essential note it gives the rank at which an `airk_search` of the instruction (limit 100, the tool's maximum; no paging) first covers it |
 | `rescore.py` | Re-scores a graded pass under another coverage rule. It writes `coverage-rule<N>.json`, `results-rule<N>.csv` and `summary-rule<N>.json`, and leaves the original results alone |
@@ -60,13 +84,27 @@ tools.
   `schema` from `airk_parse`.
 - **`airk_answer`.** The wrapper always sets `schema` and `budget`. Since the
   loop (plan section 12) the schema is `airk.arbiter.context.request/3` and
-  the budget is the contract's whole default /3 budget
-  (`common.ANSWER_BUDGET_DEFAULT`: 300 s, 262,144 bytes, 4 parts, 4 sub-needs,
-  3 rounds, 132 calls, fanout 8, 132 candidates, 131,072 input tokens, 32,768
-  a round, 48 card calls, 24 Focus calls, 192 Focus pairs). The one-turn
+  the budget is the contract's whole default /3 budget. The harness does not
+  hold that budget: `common.ANSWER_BUDGET_DEFAULT` is read at import from the
+  Rust-emitted cases file, `fixtures/split/arbiter/answer_loop_cases.json`
+  (`default_budget`), in the tree the harness runs from. At `69033135` it is
+  300 s, 262,144 bytes, 4 parts, 4 sub-needs, 3 rounds, 132 calls, fanout 8,
+  132 candidates, 380,000 input tokens, 32,768 a round, 48 card calls, 24
+  Focus calls, 192 Focus pairs; a test fails when this sentence, the plan
+  template or any harness file drifts from the cases file. The one-turn
   evaluation's /2 request and budget stay as `ANSWER_SCHEMA_V2` and
   `ANSWER_BUDGET_DEFAULT_V2`, for history only. `--answer-defaults` can change
   budget fields, or add other fields, for a configuration.
+- **The budget sent is recorded and frozen.** A copied 131,072-token default
+  outlived the product's move to 196,608 on 22 November 2026 and would have
+  taken the model away from every gate Answer after round 2 or 3. Since then:
+  the prompts freeze pins the cases file's SHA-256 and the budget read from it
+  (`answer_budget`), and `--verify` refuses a tree whose default differs;
+  each replay row carries `budget_sent`; `replay.json`, a session's
+  `session.json` (`answer_budgets_sent`, from the wrapper's turn log) and an
+  arm's `arm-replays.json` (`budgets_sent`) list the distinct budgets sent
+  with their call counts; and the gate report states the budget, or names the
+  arms that were sent different ones.
 - **Answer tickets.** A /3 reply queued at admission carries a `ticket`. The
   wrapper, `replay.py` and `gate.py` wait its `retry_after_ms` (at most 30 s a
   wait, at most 16 times) and attach with `continuation` set to the ticket id,
@@ -78,12 +116,28 @@ tools.
 - **The first-call rule.** If a call breaks it, uses a tool outside the path,
   or comes after turn 12, the agent gets a tool error. The call is logged with
   `"turn": null, "rejected": true` and is not counted as a turn.
+- **The first call is the harness's (plan 3.5; from 23 November 2026).** The
+  first counted call of a session is sent with exactly the arguments of
+  `replay.canonical_first_call`: the instruction as written, the default
+  budget read from the cases file, and the product's defaults for everything
+  else (the default response mode, with `AIRK_MCP_RESPONSE_MODE` stripped as
+  for every agent call, and default verification). Any other argument the
+  agent put on that call is recorded (`arguments`, and
+  `first_call.ignored_arguments` in `turns.jsonl`) and not sent. From the
+  second call on, the agent's own arguments are sent. The replays send the
+  same first call, so a session's first reply and the gate's replay of it are
+  the same request. On 23 November an agent's first call chose
+  `"verification": "off"`, while the replays used the default, so the two
+  measured different renderings.
 
 ## Inputs
 
-- A fixture handle: `R/fixture/<lifetime>/handle.json`, which must be in the
-  `ready` state. The harness reads `cli`, `control`, `environment` (the client
-  environment) and `indexes.<repo>.index_id`.
+- A fixture handle, which must be in the `ready` state:
+  `R/fixture-<series>-<arm>/<lifetime>/handle.json` for a loop lifetime, or
+  `R/fixture/<lifetime>/handle.json` for the one-turn history root. The harness
+  reads `cli`, `control`, `environment` (the client environment) and
+  `indexes.<repo>.index_id`, and resolves a scenario repository through the
+  root's `index-aliases.json` (`bookbuilder` is served by `bookbuilder-v2`).
 - `R/fixture/tools-catalog.json`. This is the default `--catalog`, resolved as
   the handle's grandparent folder. The CLI lists tools without the `airk_`
   prefix (`answer`, `search`, ...). The harness aliases them to the prefixed
@@ -97,7 +151,8 @@ tools.
   `"stages": {"focus": <profile>, "context": <profile>}`. `run_pass.py` and
   `pass_digests.py` then refuse to run that entry when the live stages differ,
   so a noModel run with Focus enabled is impossible.
-- Scenarios in `R/scenarios/<repo>/<slot>.json` (formats.md).
+- Scenarios in `R/scenarios/<repo>/<slot>.json` (formats.md), where `<repo>`
+  is `munarium` or `bookbuilder`. The `airk` scenarios are history.
 - For `run_pass.py`, a pass spec (JSON) naming the series, the scenarios and
   one entry per result: configuration, path, device, handle and, optionally,
   stages. The spec may also name a scenario subset (`scenario_ids`) and a
@@ -148,17 +203,20 @@ session. `cost_usd` is the agent session's cost. Judge costs are totalled in
 
 ```text
 # one session
-python -I -B scripts/arbiter-answer-eval/run_session.py --scenario R/scenarios/airk/C1.json \
-    --path focus --configuration focus --device cpu --handle R/fixture/<lifetime>/handle.json --series 01-baseline
+python -I -B scripts/arbiter-answer-eval/run_session.py --scenario R/scenarios/munarium/C1.json \
+    --path focus --configuration focus --device gpu --handle R/fixture-<series>-F/<lifetime>/handle.json --series <series>
 # coverage and judging of that session
 python -I -B scripts/arbiter-answer-eval/coverage.py --scenario ... --session-dir ...
-python -I -B scripts/arbiter-answer-eval/judge.py --scenario ... --session-dir ... --key airk-C1/focus-cpu \
-    --out-dir R/passes/01-baseline/judging/airk-C1/focus-cpu
+python -I -B scripts/arbiter-answer-eval/judge.py --scenario ... --session-dir ... --key munarium-C1/focus-gpu \
+    --out-dir R/passes/<series>/judging/munarium-C1/focus-gpu
 # a whole pass (resumable); --only follows fixture lifetimes
 python -I -B scripts/arbiter-answer-eval/run_pass.py --spec <spec.json> [--stage sessions --only focus-cpu]
 python -I -B scripts/arbiter-answer-eval/run_pass.py --spec <spec.json> --stage second   # close calls
 # replay recorded Answer calls with a change set's defaults
 python -I -B scripts/arbiter-answer-eval/replay.py --handle ... --sessions R/sessions/01-baseline --out R/replays/cs1-a
+# leak check of a lifetime (every repository of the pair; fails on an airk index)
+python -I -B scripts/arbiter-answer-eval/leak_check.py --handle R/fixture-<series>-<arm>/<lifetime>/handle.json \
+    --out R/fixture-<series>-<arm>/leak-check.json
 ```
 
 ## The loop: gates (LG) and the new baseline (L7)
@@ -174,7 +232,8 @@ per-sub-need spans (`{path, lines, excerpt}`). It skips the v3 bookkeeping
 model work, omitted ids, rounds, follow-ups and unrun reads), so the evidence
 digest ignores decisions and timings.
 
-**Arms** (`make_loop_spec.py gate`, one series on both repositories):
+**Arms** (`make_loop_spec.py gate`, one series on both repositories of the
+pair, munarium and bookbuilder):
 
 | Arm | Result name | Focus | Context | Judged |
 | --- | --- | --- | --- | --- |
@@ -191,6 +250,19 @@ digest ignores decisions and timings.
   decision is the arm's model on CUDA at its precision by `top_score`, with no
   abstention. Focus's own precision is not visible in a reply; the lifetime
   receipts record which profile was enabled.
+- **A model that was present and not reached is not Focus only.** The reply
+  sets `context_absent` when no Context model was present, and also when one
+  was present and every call was not dispatched. The harness tells the two
+  apart from the decision log's counts by source, where a decision that was
+  due to a model names it (`loop_reply.context_presence`): the model took
+  decisions; it was present and no call was dispatched; it was present and
+  took none for other reasons (unavailable, at compile time or later, or
+  abstained); or no decision was due to a model. In arm C or L the check
+  fails when the model took no decision in the whole reply, and says which
+  case it is. In arm F it fails when any decision was due to a model. A reply
+  in which the model took decisions in one stage and none of those due in
+  another passes and is flagged (`arm_flags`; `arm_flagged` in
+  `arm-replays.json`): the gate report lists the flagged scenarios.
 - **Arms side by side.** Each arm runs in its own fixture lifetime, with its
   own fixture root (`R/fixture-<series>-<arm>`), service and control root (the
   service's runtime directory, so the lifetimes share no port or socket). Each
@@ -208,7 +280,11 @@ digest ignores decisions and timings.
   <file>` (`{arm: {start_args, device_gib, host_gib, fixtures, lifetime,
   launcher}}`). A launch with placeholder `<...>` options is refused. The
   settled-index guard keys each lifetime's tokens by its fixture root
-  (`settle_per_root`).
+  (`settle_per_root`). It checks the scenario repositories (munarium and
+  bookbuilder, through the root's aliases). The stage commands name no
+  repository, so the launcher enrols every index of the lifetime
+  (`bookbuilder-v2` and `munarium`); a row may name index names in
+  `stage_repositories` instead.
 - **Parallel sessions.** The judged arms' sessions run at once in one
   `run_pass.py` process (`parallel_entries`): 4 sessions an arm (12 in all),
   interleaved so every arm starts together, and 12 judges. The harness knows
@@ -247,12 +323,38 @@ digest ignores decisions and timings.
 - **The report.** `gate_report.py` builds the Markdown report for
   `docs/arbiter/answer-evaluation/` from `gate-report-inputs.json`. It shows
   evidence by location only, and removes quoted and code text from judges'
-  reasons on bookbuilder scenarios, so no bookbuilder source is quoted. It
+  reasons on bookbuilder and munarium scenarios, so no source of either
+  repository is quoted. It
   applies the 12.7.1 and 12.7.2 bars and states what they indicate as
-  recommendations. LG stops for the user's choices (plan 12.9). The report
+  recommendations; the user decides (plan 12.9). Since the user's direction
+  of 23 November 2026 work does not stop at the gate (plan section 2, "after
+  LG"). The generated file is the series' detail report
+  (`<NN>-gate-lg-detail.md`); the series report beside it (`<NN>-gate-lg.md`)
+  is written by hand in the form the reports README asks for. The report
   lists its evidence limits: sample size, close calls and second sessions,
   undecided and pending scenarios, arms whose identity was not met, and tests
   that did not run.
+  - **Coverage rule.** The report's opening states which coverage rule
+    counted the reference notes, from each arm's `arm-replays.json`. Arms
+    scored under different rules are named, and their coverage figures are
+    said not to compare.
+  - **Decisions by source.** For each arm and stage the report counts, each
+    in its own column: the decisions the model took (`model`); those that fell
+    back to the deterministic order after the model was asked (`abstained`,
+    `unavailable`); those never sent to the model (`not_dispatched`: no token
+    budget, no time or no model for that call); and those taken without a
+    model (`deterministic`) (`gate.decision_sources`, also in
+    `performance.json`). A slower model can be shed more often. The counts are each reply's `decision_log.counts`,
+    which cover every logged decision. The typed fallback reasons come from
+    the decisions a reply includes, so they can cover fewer decisions; the
+    report says how many. A second table counts each arm's replies by whether
+    the Context model took part: took decisions; present, no call dispatched;
+    present, took none; no model. It names the scenarios of the two middle
+    columns and, per stage, the replies where the model took none of the
+    decisions due to it.
+  - **Budget sent.** The report states the exact budget every Answer was
+    sent, from the arms' `budgets_sent`, or names the arms that were sent
+    different budgets and says their figures do not compare.
 - **L7.** `make_loop_spec.py l7 --keep compact[,large]` writes the new
   baseline's spec and plan: Search, Parse, the Focus-only loop and the kept
   CUDA routes, with no CPU cells. `l7_plan_template.json` is the same plan with
@@ -262,14 +364,23 @@ digest ignores decisions and timings.
   in `prompts_freeze.HARNESS_FILES`. The freeze written for the one-turn
   evaluation no longer verifies, because the Answer request and budget
   changed. It is re-frozen with `prompts_freeze.py --refreeze` before the first
-  judged loop pass. That re-freeze is the operator's first step at LG.
+  judged loop pass. That re-freeze is the operator's first step at LG, once
+  the harness is final.
+- **Scenario freeze.** `R/scenario-freeze.json` is the loop freeze of
+  22 November 2026: 30 files (munarium development, bookbuilder development
+  and sealed), with no airk file. The one-turn freeze is kept as
+  `R/scenario-freeze.oneturn-20261121.json`, for history only. Every reader
+  uses the freeze's `files` map alone (`run_pass.py`, `gate.py`, `depth.py`,
+  `leak_check.py`, `fixture.py leak-probe`). The prompts freeze records the
+  scenario freeze's SHA-256, and `prompts_freeze.verify` refuses a prompts
+  freeze made against another scenario freeze.
 
 ```text
 # LG, after L5 and its short trial (R is the private root)
 python -I -B scripts/arbiter-answer-eval/prompts_freeze.py --refreeze R/design/prompts-freeze.json --reason "loop harness (Answer /3) for LG"
 python -I -B scripts/arbiter-answer-eval/make_loop_spec.py gate --series <NN>-gate-lg --lifetimes <L5C lifetimes.json>
 python -I -B scripts/arbiter-answer-eval/run_plan.py --plan R/passes/<NN>-gate-lg/plan.json --log R/passes/<NN>-gate-lg/plan-log.jsonl
-python -I -B scripts/arbiter-answer-eval/gate_report.py --inputs R/passes/<NN>-gate-lg/gate-report-inputs.json --out docs/arbiter/answer-evaluation/<NN>-gate.md
+python -I -B scripts/arbiter-answer-eval/gate_report.py --inputs R/passes/<NN>-gate-lg/gate-report-inputs.json --out docs/arbiter/answer-evaluation/<NN>-gate-lg-detail.md
 ```
 
 ### How Claude Code is started
@@ -329,6 +440,23 @@ differences:
      measured on its own path and range.
    - A path without a line span still covers only by symbol.
    - Rule 1 (any overlap) stays available as `rule=1` for comparison.
+
+   **Coverage rule 3** (coordinator, 22 November 2026, before the first loop
+   pass) is the current rule, `evidence.COVERAGE_RULE`:
+   - Line overlap is rule 2's.
+   - A path without a line span covers a note only when its text names the
+     note's symbol as a whole identifier: no letter, digit or underscore
+     directly before or after it. Rules 1 and 2 matched the symbol as a
+     substring, so a short symbol (`run`, `main`, `turn`, `Spec`, `budgets`)
+     matched almost any text of its file.
+   - For a symbol qualified with `.` or `::` whose segments are all
+     identifiers, the qualified form or its last segment counts
+     (`Schedule::add` is named by `add`, not by `address`). A heading or other
+     free text counts only as written.
+   - A note without a symbol is never covered by a path alone, as before.
+   - Rules 1 and 2 keep their substring match (`rule=1`, `rule=2`), because
+     the one-turn passes are history and are not rescored. Every coverage
+     record, arm replay and gate report states the rule it used.
 4. **Parse is unchanged.** Every report states that its first call has a
    structural zero yield: the prose instruction prepares a plan that needs an
    identifier, and the call returns no evidence.
@@ -366,8 +494,8 @@ differences:
 These are recorded in the code, so a report can state them or the primary
 agent can overrule them.
 
-- **Evidence text.** A note is covered by line overlap (rule 2: at least
-  min(5, its line count) lines) only through evidence text (`hits[].text`,
+- **Evidence text.** A note is covered by line overlap (rules 2 and 3: at
+  least min(5, its line count) lines) only through evidence text (`hits[].text`,
   parse evidence that carries a hit). An outline or
   symbol row is a name at a place, not evidence text, so it does not count.
   `coverage.py --count-fact-rows` makes it count. Definition hints without
@@ -421,5 +549,11 @@ switch hook and the template's currency. `test_harness.py` covers the wrapper ov
 argument injection, the log format, the coverage edge cases, the grade and
 case tables, the configuration rule, headroom, the CSV columns, the audit,
 judge packets and verdict validation, and a resumable pass with reuse. It
-uses synthetic data only and starts no model or service. `test_fixture.py`
-belongs to `fixture.py`.
+uses synthetic data only and starts no model or service. Its synthetic
+repository is named `airk`, as in the one-turn history, and its specs name it
+with `"repos": ["airk"]`. `test_pair.py` covers the loop pair: the defaults,
+the munarium scenarios in the loaders, the per-repository win count, the
+gate report's privacy for munarium, the generic leak check (a repository with
+an empty exclusion list is still probed and records it) and the no-airk check.
+`test_fixture.py` belongs to `fixture.py`, `test_lg_lifetimes.py` to
+`lg_lifetimes.py` and `test_lg_bases.py` to `lg_bases.py`.

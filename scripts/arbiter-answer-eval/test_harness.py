@@ -27,6 +27,7 @@ import grade  # noqa: E402
 import judge  # noqa: E402
 import depth  # noqa: E402
 import mcp_wrapper  # noqa: E402
+import replay  # noqa: E402
 import prompts_freeze  # noqa: E402
 import rescore  # noqa: E402
 import settled  # noqa: E402
@@ -85,6 +86,23 @@ class WrapperRules(TempDir):
 
     def log(self):
         return common.read_jsonl(self.tmp / "log" / "turns.jsonl")
+
+    def test_the_first_call_is_the_canonical_one_and_later_calls_are_the_agents(self):
+        # Plan 3.5: the first call is issued with the instruction and the product defaults, exactly as the
+        # replays send it; arguments the agent adds are recorded and not sent (s10 shakedown: an agent chose
+        # verification off). From the second call on the agent's arguments are sent.
+        backend = FakeBackend()
+        w = self.make(backend=backend)
+        w.call("airk_answer", {"question": synthetic.INSTRUCTION, "verification": "off", "response_mode": "terse"})
+        w.call("airk_answer", {"question": "later", "verification": "off"})
+        _tool, canonical = replay.canonical_first_call("answer", synthetic.INSTRUCTION, None)
+        self.assertEqual(backend.calls[0][1], canonical)
+        self.assertNotIn("verification", backend.calls[0][1])
+        self.assertEqual(backend.calls[1][1]["verification"], "off")
+        rows = self.log()
+        self.assertEqual(rows[0]["first_call"], {"rule": "canonical", "ignored_arguments": ["response_mode", "verification"]})
+        self.assertEqual(rows[0]["arguments"]["verification"], "off")
+        self.assertIsNone(rows[1]["first_call"])
 
     def test_tool_list_per_path_and_hidden_arguments(self):
         for path, first in (("answer", "airk_answer"), ("focus", "airk_answer"), ("noModel", "airk_answer"),
@@ -322,6 +340,63 @@ class Coverage(unittest.TestCase):
         self.assertFalse(evidence.covers(evidence.extract(without), NOTE))
         self.assertFalse(evidence.covers(evidence.extract(with_symbol), dict(NOTE, symbol=None, alternatives=[])))
 
+    def path_only(self, **row):
+        return evidence.extract({"page": {"files": [dict({"path": "src/a.rs"}, **row)]}})
+
+    def test_rule_three_matches_a_symbol_as_a_whole_identifier(self):
+        """Rule 3 (22 Nov 2026): `run`, `main`, `turn`, `Spec` and `budgets` matched almost any text of their file."""
+        self.assertEqual(evidence.COVERAGE_RULE, 3)
+        for symbol, inside, whole in (("run", "runner", "run"), ("run", "prune", "fn run("), ("run", "run_pass", "run"),
+                                      ("main", "remainder", "main"), ("turn", "return_value", "turn"),
+                                      ("Spec", "SpecBuilder", "Spec"), ("budgets", "rebudgets2", "budgets")):
+            note = dict(NOTE, symbol=symbol, alternatives=[])
+            substring = self.path_only(name=inside)
+            self.assertFalse(evidence.covers(substring, note), (symbol, inside))
+            self.assertFalse(evidence.covers(substring, note, rule=3), (symbol, inside))
+            self.assertTrue(evidence.covers(self.path_only(name=whole), note), (symbol, whole))
+            # Rules 1 and 2 keep the substring match they scored the one-turn history with.
+            self.assertTrue(evidence.covers(substring, note, rule=2), (symbol, inside))
+            self.assertTrue(evidence.covers(substring, note, rule=1), (symbol, inside))
+        # Case counts, as before; a digit or an underscore is part of an identifier.
+        self.assertFalse(evidence.covers(self.path_only(name="spec"), dict(NOTE, symbol="Spec", alternatives=[])))
+        self.assertFalse(evidence.covers(self.path_only(name="run2"), dict(NOTE, symbol="run", alternatives=[])))
+        self.assertTrue(evidence.covers(self.path_only(signature="pub fn run(self) -> Outcome"),
+                                        dict(NOTE, symbol="run", alternatives=[])))
+
+    def test_rule_three_takes_a_qualified_symbol_or_its_last_segment(self):
+        for symbol in ("Schedule::add", "schedule.add"):
+            note = dict(NOTE, symbol=symbol, alternatives=[])
+            self.assertTrue(evidence.covers(self.path_only(name=symbol), note), symbol)
+            self.assertTrue(evidence.covers(self.path_only(name="add"), note), symbol)
+            self.assertTrue(evidence.covers(self.path_only(signature="fn add(&mut self)"), note), symbol)
+            self.assertFalse(evidence.covers(self.path_only(name="address"), note), symbol)
+            self.assertFalse(evidence.covers(self.path_only(name="add_lamp"), note), symbol)
+            # The first segment alone does not name the symbol.
+            self.assertFalse(evidence.covers(self.path_only(name=symbol.replace("add", "remove")), note), symbol)
+        self.assertEqual(evidence.symbol_forms("a::b::c"), ["a::b::c", "c"])
+        # A heading or other free text has one form; its dots are not qualifiers.
+        self.assertEqual(evidence.symbol_forms("Version 1.2"), ["Version 1.2"])
+        heading = dict(NOTE, symbol="Version 1.2", alternatives=[])
+        self.assertFalse(evidence.covers(self.path_only(name="2"), heading))
+        self.assertTrue(evidence.covers(self.path_only(name="## Version 1.2 notes"), heading))
+        self.assertFalse(evidence.covers(self.path_only(name="Version 1.25"), heading))
+        # A symbol that ends in a non-identifier character is bounded by that character itself.
+        call = dict(NOTE, symbol="alpha()", alternatives=[])
+        self.assertTrue(evidence.covers(self.path_only(name="alpha()x"), call))
+        self.assertFalse(evidence.covers(self.path_only(name="xalpha()"), call))
+
+    def test_a_null_symbol_never_covers_by_path_alone_under_any_rule(self):
+        note = dict(NOTE, symbol=None, alternatives=[{"path": "docs/a.md", "lines": [1, 3]}])
+        spans = self.path_only(name="alpha") + evidence.extract({"page": {"files": [{"path": "docs/a.md", "name": "x"}]}})
+        for rule in (1, 2, 3):
+            self.assertFalse(evidence.covers(spans, note, rule=rule), rule)
+        # An alternative without its own symbol takes the note's symbol, as before.
+        inherits = dict(NOTE, symbol="alpha", alternatives=[{"path": "docs/a.md", "lines": [1, 3]}])
+        other_path = evidence.extract({"page": {"files": [{"path": "docs/a.md", "name": "alpha"}]}})
+        self.assertTrue(evidence.covers(other_path, inherits))
+        self.assertFalse(evidence.covers(evidence.extract({"page": {"files": [{"path": "docs/a.md", "name": "alphabet"}]}}),
+                                         inherits))
+
     def test_fact_rows_count_only_when_enabled(self):
         compact = {"representation": "minimal", "files": [{"path": "src/z.rs"}, {"path": "src/a.rs"}],
                    "items": [{"name": "alpha", "lines": [10, 16], "file": 1}]}
@@ -390,7 +465,7 @@ class Coverage(unittest.TestCase):
         turns = [{"turn": n, "tool": "t", "ok": True, "bytes": 10, "elapsed_ms": 5} for n in (1, 2, 3)]
         turns.append({"turn": None, "rejected": True, "tool": "x"})
         result = coverage.compute(scenario, turns, body_loader=lambda row: bodies[row["turn"]])
-        self.assertEqual(result["coverage_rule"], 2)
+        self.assertEqual(result["coverage_rule"], 3)
         self.assertEqual(result["first_call_yield"], 0.5)
         self.assertEqual(result["all_essential_turn"], 3)
         self.assertEqual(result["turns"][1]["new"], ["N3"])
@@ -731,7 +806,7 @@ class PilotRegressions(TempDir):
         common.append_jsonl(log, {"profile": "context-compact-cpu", "enabled": True})
         common.append_jsonl(log, {"profile": "context-compact-cpu", "enabled": False})
         self.assertEqual(handle.stages(), {"focus": "focus-static1024-cpu", "context": None})
-        spec = {"series": "st", "pilot": True, "scenarios_dir": str(self.tmp / "fx" / "scenarios"), "results": [
+        spec = {"series": "st", "pilot": True, "scenarios_dir": str(self.tmp / "fx" / "scenarios"), "repos": ["airk"], "results": [
             {"configuration": "noModel", "path": "noModel", "handle": str(paths["handle"]), "stages": {}},
             {"configuration": "focus", "path": "focus", "device": "cpu", "handle": str(paths["handle"]),
              "stages": {"focus": "focus-static1024-cpu"}}]}
@@ -745,7 +820,7 @@ class PilotRegressions(TempDir):
         freeze = self.tmp / "fx" / "freeze.json"
         rel = "scenarios/airk/C1.json"
         common.write_json(freeze, {"files": {rel: common.sha256_file(paths["scenario"])}})
-        spec = {"series": "f", "pilot": True, "scenarios_dir": str(self.tmp / "fx" / "scenarios"), "freeze": str(freeze),
+        spec = {"series": "f", "pilot": True, "scenarios_dir": str(self.tmp / "fx" / "scenarios"), "repos": ["airk"], "freeze": str(freeze),
                 "scenario_ids": ["airk-C1"], "results": []}
         flow = run_pass.Pass(spec, self.tmp / "R")
         self.assertEqual([s["id"] for s in flow.scenarios], ["airk-C1"])
@@ -878,7 +953,7 @@ class Decisions(TempDir):
         frozen = self.tmp / "prompts-freeze.json"
         if not frozen.is_file():
             prompts_freeze.write(frozen)
-        base = {"series": "d", "scenarios_dir": str(self.tmp / "fx" / "scenarios"), "prompts_freeze": str(frozen),
+        base = {"series": "d", "scenarios_dir": str(self.tmp / "fx" / "scenarios"), "repos": ["airk"], "prompts_freeze": str(frozen),
                 "handle": str(paths["handle"]), "start_retry_seconds": 0,
                 "results": [{"configuration": "search", "path": "search", "device": "none"}]}
         base.update(extra)
@@ -907,6 +982,19 @@ class Decisions(TempDir):
             prompts_freeze.verify(frozen)
         self.assertIn("agent prompt for search", str(caught.exception))
         self.assertIn("file evidence.py", str(caught.exception))
+        self.assertNotIn("scenario freeze", str(caught.exception))
+        # A prompts freeze made against another scenario freeze is refused too (22 Nov 2026: the loop freeze
+        # replaced the one-turn freeze). Only the SHA-256 counts, not the path it was read from.
+        fresh = prompts_freeze.write(frozen)
+        moved = dict(fresh, scenario_freeze=dict(fresh["scenario_freeze"], path="another/spelling"))
+        common.write_json(frozen, moved)
+        prompts_freeze.verify(frozen)
+        common.write_json(frozen, dict(fresh, scenario_freeze=dict(fresh["scenario_freeze"], sha256="0" * 64)))
+        with self.assertRaises(common.HarnessError) as caught:
+            prompts_freeze.verify(frozen)
+        self.assertEqual(prompts_freeze.differences(common.read_json(frozen), prompts_freeze.current()),
+                         ["scenario freeze"])
+        common.write_json(frozen, record)
         with self.assertRaises(common.HarnessError):
             run_pass.Pass(self.spec(prompts_freeze=str(frozen)), self.tmp / "R")
 
@@ -1329,7 +1417,7 @@ class Decisions(TempDir):
         paths = synthetic.write_fixture(self.tmp / "fx")
         runs = FakeRuns({"search": [{"hits": [hit("src/scheduler.rs", 2, 2), hit("src/scheduler.rs", 12, 12),
                                               hit("docs/scheduler/CONTRACT.md", 4, 4), hit("src/format.rs", 2, 2)]}]})
-        spec = {"series": "rs", "pilot": True, "start_retry_seconds": 0, "scenarios_dir": str(self.tmp / "fx" / "scenarios"),
+        spec = {"series": "rs", "pilot": True, "start_retry_seconds": 0, "scenarios_dir": str(self.tmp / "fx" / "scenarios"), "repos": ["airk"],
                 "handle": str(paths["handle"]), "results": [{"configuration": "search", "path": "search"}]}
         flow = run_pass.Pass(spec, self.tmp / "R", session_runner=runs.session, judge_runner=runs.judge,
                              digest_fn=lambda s, e: {"digest": "d", "ok": True}, settle_fn=settled_fake())
@@ -1410,7 +1498,7 @@ class Decisions(TempDir):
 
     def test_only_names_must_match_a_result(self):
         paths = synthetic.write_fixture(self.tmp / "fx")
-        spec = {"series": "names", "pilot": True, "scenarios_dir": str(self.tmp / "fx" / "scenarios"),
+        spec = {"series": "names", "pilot": True, "scenarios_dir": str(self.tmp / "fx" / "scenarios"), "repos": ["airk"],
                 "handle": str(paths["handle"]), "results": [{"configuration": "focus", "path": "focus", "device": "cpu"}]}
         flow = run_pass.Pass(spec, self.tmp / "R", session_runner=None, judge_runner=None,
                              digest_fn=lambda s, e: {"digest": "d", "ok": True}, settle_fn=settled_fake())

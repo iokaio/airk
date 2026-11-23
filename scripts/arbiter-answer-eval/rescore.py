@@ -51,7 +51,7 @@ def rescore(pass_dir: Path, rule: int, scenarios: dict[str, dict]) -> dict:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--pass-dir", type=Path, required=True)
-    parser.add_argument("--rule", type=int, choices=[1, 2], required=True)
+    parser.add_argument("--rule", type=int, choices=[1, 2, 3], required=True)
     parser.add_argument("--scenarios-dir", type=Path, default=common.DEFAULT_R / "scenarios")
     args = parser.parse_args(argv)
     scenarios = {s["id"]: s for s in map(common.load_scenario, common.scenario_files(args.scenarios_dir))}

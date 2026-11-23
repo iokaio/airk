@@ -591,6 +591,15 @@ async fn run(
     let mut warm_recorder = warm_journal::Recorder::from_env(&work)?;
     let warm_observer = warm_recorder.as_ref().map(|recorder| recorder.observer());
     let warm_observer_id = warm_recorder.as_ref().map(|recorder| recorder.id());
+    // The CUDA pair route has its own factory: the decision mode must be set
+    // here too (s7 shakedown, 23 November 2026: set only in the CPU factory,
+    // every card decision of the pair lifetime still abstained).
+    let decision_mode =
+        super::super::decision_mode_from(std::env::var("AIRK_ARBITER_EVALUATION_DECISION_MODE"))?;
+    // The gate sets 0 (never unload): s8's CUDA Focus unloaded mid-run, 23 November 2026.
+    let idle_unload = super::super::idle_unload_from(std::env::var(
+        "AIRK_ARBITER_EVALUATION_IDLE_UNLOAD_SECONDS",
+    ))?;
     let restart_guard: Option<EvaluationStartupGuard> = restart.as_ref().map(|saved| {
         let expected = saved.configuration.clone();
         Box::new(move |lease: &Arc<airk_store::service::ServiceLease>| {
@@ -694,6 +703,12 @@ async fn run(
             },
             "private fixture must start disabled or with its exact saved configuration"
         );
+        if let Some(mode) = decision_mode {
+            owner = owner.with_decision_mode(mode)?;
+        }
+        if let Some(timeout) = idle_unload {
+            owner = owner.with_idle_unload(timeout, timeout)?;
+        }
         if let Some(observer) = execution_observer {
             owner = owner.observe_execution(observer);
         }

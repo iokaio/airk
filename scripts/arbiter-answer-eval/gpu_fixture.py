@@ -22,6 +22,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import runpy
 import subprocess
 import sys
@@ -153,6 +154,55 @@ def pair_environment(path, digest, seed=None):
     return env
 
 
+# The CUDA math setting every FP16 open requires from the process environment, captured before ORT starts
+# (crates/airk-retrieval/src/arbiter/runtime/cuda/fp16.rs, check_environment). The product's airkctl supplies
+# it in main when absent (crates/airk-cli/src/startup_math.rs); the fixture service is the airk-service test
+# binary and never runs that main, so this launcher supplies it. Found by the s5 shakedown, 23 November 2026:
+# without it the Compact and Large warms fail ("G5 requires unchanged inherited GEMM2 ...").
+# The Compact and Large FP16 Answer route (ProtectedMha) opens through Scorer::open (OpenMode::Execution),
+# which checks G5 with proof=false: attention debug may be absent or 0 and is left unset, as the product does;
+# fp16_loop_emit.py's confirming run used 0. Any other inherited ORT_* variable (ORT_GQA_DISABLE_FLASH_ATTENTION,
+# for one) would change what ONNX Runtime runs, so it is refused rather than passed to the service.
+MATH_ENVIRONMENT = {"ORT_CUDA_GEMM_OPTIONS": "2"}
+MATH_TOLERATED = {"ORT_ENABLE_ATTENTION_KERNEL_DEBUG_INFO": ("0",)}
+
+
+# The gate takes every card decision by top score (make_loop_spec arm checks, mode top_score). The service
+# defaults to calibrated decisions, and a loop profile's calibration set has no rule, so every card decision
+# abstained until the fixture set the mode (s6 shakedown, 23 November 2026; evaluation_fixture_tests.rs
+# decision_mode_from).
+DECISION_ENVIRONMENT = {"AIRK_ARBITER_EVALUATION_DECISION_MODE": "top_score",
+                        # Never unload a stage for idleness in an evaluation lifetime: on 23 November 2026 the
+                        # CUDA Focus of shakedown s8 unloaded mid-run and later Answers ran without Focus
+                        # (evaluation_fixture_tests.rs idle_unload_from; 0 is never).
+                        "AIRK_ARBITER_EVALUATION_IDLE_UNLOAD_SECONDS": "0"}
+
+
+def math_problems(environment) -> list[str]:
+    """Why a CUDA lifetime's service environment does not hold the CUDA math settings the FP16 routes require,
+    or the top-score card decision mode the gate arms require."""
+    problems = [f"{key} is {environment.get(key)!r}, not {value!r}"
+                for key, value in (MATH_ENVIRONMENT | DECISION_ENVIRONMENT).items() if environment.get(key) != value]
+    for key, value in environment.items():
+        if key.upper().startswith("ORT_") and key not in MATH_ENVIRONMENT \
+                and value not in MATH_TOLERATED.get(key, ()):
+            problems.append(f"{key}={value!r} would change ONNX Runtime's execution")
+    return problems
+
+
+def math_environment(inherited=None):
+    """The math variables a CUDA lifetime's service gets. An inherited conflicting or unknown ORT_* value is
+    refused, never overridden (the product preserves an explicit user value; the evaluation needs the
+    product default)."""
+    inherited = dict(os.environ if inherited is None else inherited)
+    for key, value in MATH_ENVIRONMENT.items():
+        require(inherited.get(key) in (None, value),
+                f"the inherited {key}={inherited.get(key)!r} conflicts with the product default {value!r}")
+    problems = math_problems(inherited | MATH_ENVIRONMENT | DECISION_ENVIRONMENT)
+    require(not problems, "the service environment would not match the product's CUDA math: " + "; ".join(problems))
+    return dict(MATH_ENVIRONMENT)
+
+
 def lifetime_rows(life):
     """The CUDA profile rows a lifetime was started with (gpu.json), so `stage` names them."""
     path = Path(life) / "gpu.json"
@@ -220,10 +270,42 @@ def worker(args):
             FX.ENVIRONMENT.update(pair_environment(args.pair, args.pair_sha256, seed))
         else:
             FX.ENVIRONMENT.update(cuda_environment(args.model, seed))
+    FX.ENVIRONMENT.update(math_environment())
+    FX.ENVIRONMENT.update(DECISION_ENVIRONMENT)
     if args.synthetic_root:
         FX.REPOSITORIES[SYNTHETIC] = Path(args.synthetic_root)
         FX.EXCLUSIONS[SYNTHETIC] = []
     FX.worker(args)
+
+
+GATE_ROOT = re.compile(r"^fixture-(?P<series>\d+-gate-[a-z0-9]+)-(?P<arm>[A-Z][A-Z0-9]*)$")
+GATE_ARMS = ("C", "L", "F", "C32", "L32")
+
+
+def gate_root_problem(fixtures, lifetime, restart_from):
+    """Why a CUDA lifetime may not start in this root, or None.
+
+    A root restarts only while its saved configuration is unchanged, and a CUDA lifetime changes it, so a
+    root gives one CUDA lifetime. In a gate root (``fixture-<NN>-gate-<name>-<ARM>``) that one lifetime is
+    the gate's: only ``<NN>-gate-<name>-<arm>`` for a gate arm may start there, restarted from the root's
+    base. A shakedown, a trial or any other lifetime uses its own root. In any root, a restart is refused
+    once a CUDA lifetime folder exists: it would fail at the service's restart check with a less plain
+    message."""
+    fixtures = Path(fixtures)
+    spent = sorted(path.parent.name for path in fixtures.glob("*/gpu.json"))
+    if restart_from and spent:
+        return (f"{fixtures.name} has already had a CUDA lifetime ({', '.join(spent)}); a root restarts only "
+                "with its saved configuration unchanged, so use another root")
+    gate = GATE_ROOT.match(fixtures.name)
+    if gate is None:
+        return None
+    allowed = [f"{gate['series']}-{arm}" for arm in GATE_ARMS]
+    if lifetime not in allowed:
+        return (f"{fixtures.name} is a gate root: its one CUDA lifetime is the gate's ({', '.join(allowed)}), "
+                f"not {lifetime!r}; run anything else in its own root")
+    if not restart_from:
+        return f"{fixtures.name} is a gate root: its CUDA lifetime restarts from the root's closed base"
+    return None
 
 
 def start(args):
@@ -231,11 +313,16 @@ def start(args):
     fixtures = Path(args.fixtures)
     life = FX.lifetime_dir(args.lifetime, fixtures)
     require(fixtures.is_dir() and not life.exists(), "a fresh lifetime folder under an existing fixtures root is required")
+    problem = gate_root_problem(fixtures, args.lifetime, args.restart_from)
+    require(problem is None, str(problem))
     require(0 < args.seconds <= FX.MAX_SECONDS, f"the lifetime is at most {FX.MAX_SECONDS} s")
     require(bool(args.restart_from) != bool(args.seed_cpu), "a fresh lifetime names --seed-cpu; a restart never seeds")
     for repo in args.repositories:
         require(repo in FX.REPOSITORIES or (repo == SYNTHETIC and args.synthetic_root), "unknown repository " + repo)
+    problem = FX.repository_order_problem(args.repositories, fixtures / "indexes")
+    require(problem is None, str(problem))
     images = FX.image_pins(Path(args.image))
+    math_environment()
     # Pins checked before launch.
     pair = None
     if args.model == PAIR:
@@ -330,10 +417,49 @@ def stage(args):
     row = None
     if args.manifest:
         row = {"stage": args.stage_name, "device": args.device, "manifest": args.manifest}
+    if args.enrol_as:
+        require(GATE_ROOT.match(Path(args.fixtures).name) is None, "an enrollment override is never used in a gate root")
+        FX.ENROLLMENT_OVERRIDE = [task for task in args.enrol_as.split(",") if task]
     record = set_stage(life, handle, args.profile, args.enable, repositories, row=row)
     with (life / "stages.jsonl").open("a", encoding="utf-8", newline="\n") as stream:
         stream.write(json.dumps(record, sort_keys=True) + "\n")
     print(json.dumps(record))
+
+
+def ensure(args):
+    """Before a step that issues Answers: every named stage profile must be ready and active in the service's
+    own status; one that is not is enabled again, and the re-enable is recorded with its reload time. Exits
+    non-zero when a stage cannot be made active, so no step starts on a lifetime missing a required stage."""
+    life, handle = FX.load_handle(args)
+    table = profiles()
+    table.update(lifetime_rows(life))
+    commands = FX.client_commands(life, handle, "ensure-commands", 300)
+    status = commands.json("ensure-status", "arbiter", "status-legacy")
+    rows = []
+    for name in [p for p in args.profiles.split(",") if p]:
+        require(name in table, "unknown profile " + name)
+        stage, manifest = table[name]["stage"], table[name]["manifest"]
+        current = status[stage]
+        active = current.get("availability") == "ready" and current.get("active_profile") == manifest
+        row = {"profile": name, "stage": stage, "was": {k: current.get(k) for k in ("availability", "active_profile")},
+               "active": active}
+        if not active:
+            record = set_stage(life, handle, name, True, list(handle["indexes"]))
+            row["re_enabled"] = {"seconds": record.get("seconds"), "warm_sequence": record.get("warm_sequence")}
+            with (life / "stages.jsonl").open("a", encoding="utf-8", newline="\n") as stream:
+                stream.write(json.dumps(dict(record, cause="ensure"), sort_keys=True) + "\n")
+        rows.append(row)
+    after = commands.json("ensure-status-after", "arbiter", "status-legacy")
+    for row in rows:
+        current = after[row["stage"]]
+        manifest = table[row["profile"]]["manifest"]
+        row["now"] = {k: current.get(k) for k in ("availability", "active_profile")}
+        require(current.get("availability") == "ready" and current.get("active_profile") == manifest,
+                f"stage {row['stage']} is not active with {row['profile']} after ensure: {row['now']}")
+    result = {"schema": "airk.private.answer-eval-stage-ensure/1", "at": utc(), "lifetime": life.name, "rows": rows}
+    with (life / "ensure.jsonl").open("a", encoding="utf-8", newline="\n") as stream:
+        stream.write(json.dumps(result, sort_keys=True) + "\n")
+    print(json.dumps(result))
 
 
 def gpu_memory():
@@ -356,13 +482,19 @@ def observer_rows(work, after_sequence):
 
 
 def device_evidence(body, rows):
-    """What ran where: Context advice runtimes and profiles, and the native dispatch census."""
-    advice = []
-    for event in body.get("assessment_history") or []:
-        result = event.get("result") or {}
-        item = result.get("advice") or {}
-        advice.append({"status": result.get("status"), "profile": item.get("profile"),
-                       "runtime": item.get("runtime"), "observed_input_tokens": item.get("observed_input_tokens")})
+    """What ran where, read from an Answer /3 reply: each included decision's source, model, device and
+    precision, the decision log's counts by source (every logged decision), and the native dispatch census.
+    ``cuda_decisions`` counts the included decisions a model took on CUDA. (Until 23 November 2026 this read
+    the one-turn reply's ``assessment_history``, which a loop reply does not carry.)"""
+    decisions = []
+    for decision in body.get("decisions") or []:
+        if not isinstance(decision, dict):
+            continue
+        source = decision.get("source") if isinstance(decision.get("source"), dict) else {}
+        decisions.append({"stage": decision.get("stage"), "source": source.get("kind"),
+                          "reason": source.get("reason"), "model": decision.get("model"),
+                          "device": decision.get("device"), "precision": decision.get("precision")})
+    log = body.get("decision_log") if isinstance(body.get("decision_log"), dict) else {}
     dispatch = {}
     for row in rows:
         group = dispatch.setdefault(row["dispatch_identity"], {"profile": row["profile_manifest"],
@@ -371,9 +503,11 @@ def device_evidence(body, rows):
         if row["kind"] == "score_returned":
             group.update(outcome=row.get("outcome"), finite=row.get("finite_raw_scores"),
                          raw_scores=row.get("raw_scores"), work=row.get("work"))
-    return {"advice": advice, "dispatch": list(dispatch.values()),
-            "cuda_advice": sum(1 for a in advice if str(a.get("runtime") or "").startswith(CUDA_RUNTIME)),
-            "cpu_advice": sum(1 for a in advice if str(a.get("runtime") or "").startswith("onnxruntime-cpu/"))}
+    return {"decisions": decisions, "decision_counts": log.get("counts") or [],
+            "card_calls": log.get("card_calls"), "focus_calls": log.get("focus_calls"),
+            "dispatch": list(dispatch.values()),
+            "cuda_decisions": sum(1 for d in decisions if d["source"] == "model" and d["device"] == "cuda"),
+            "cpu_decisions": sum(1 for d in decisions if d["source"] == "model" and d["device"] == "cpu")}
 
 
 def answer(args):
@@ -386,9 +520,17 @@ def answer(args):
     arguments = FX.answer_arguments(work, args.question)
     if args.answer_defaults:
         # Merged like the harness's answer_defaults (change set 1 sends its own budget per call).
+        # The /3 request refuses a budget that lacks a field, so the named fields replace those of the
+        # fixture's whole default budget; the budget is never replaced by a partial one.
+        # A diagnostic may also set the MCP verification arguments (``airk_mcp::response::VerificationArgs``),
+        # recorded in the request file like every other argument (s8 shakedown probes, 23 November 2026).
         defaults = json.loads(args.answer_defaults)
-        require(isinstance(defaults, dict) and set(defaults) <= {"budget"}, "answer defaults name only budget")
-        arguments = arguments | defaults
+        require(isinstance(defaults, dict) and set(defaults) <= {"budget", "verification", "verification_max_sources"}
+                and isinstance(defaults.get("budget", {}), dict)
+                and set(defaults.get("budget", {})) <= set(arguments["budget"]),
+                "answer defaults name only fields of the budget, or the verification arguments")
+        arguments = arguments | {k: v for k, v in defaults.items() if k != "budget"} | {
+            "budget": arguments["budget"] | defaults.get("budget", {})}
     write_json(request, arguments)
     status_before = commands.json(f"{args.label}-status-before", "arbiter", "status-legacy")
     rows_before = observer_rows(work, 0)
@@ -417,14 +559,23 @@ def answer(args):
                                                              "selected_profile")} for s in ("focus", "context")},
         "gpu_memory": {"before": memory_before, "after": memory_after},
     }
+    record["budget_sent"] = arguments["budget"]
+    # ``result.bytes`` is the saved CLI output: a pretty-printed MCP envelope that carries the reply twice
+    # (content text and structuredContent). The reply's own size is ``reply_bytes`` (s6 shakedown: 132,242
+    # against 54,222).
+    record["reply_bytes"] = None if body is None else len(
+        json.dumps(body, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
     if body is not None:
-        record.update(stop=body.get("stop"), records=len(body.get("records") or []),
-                      evidence_digest=EVIDENCE.evidence_digest(body), device=device_evidence(body, rows))
+        record.update(answer=FX.answer_smoke_row(body), evidence_digest=EVIDENCE.evidence_digest(body),
+                      device=device_evidence(body, rows))
     else:
         record["error"] = json.dumps(envelope)[:4000]
     pinned = write_json(Path(args.output), record)
     print(json.dumps({"label": args.label, "elapsed_ms": record["elapsed_ms"], "is_error": is_error,
-                      "stop": record.get("stop"), "evidence_digest": record.get("evidence_digest"), **pinned}))
+                      "reply_bytes": record["reply_bytes"],
+                      "stops": (record.get("answer") or {}).get("stops"),
+                      "cuda_decisions": (record.get("device") or {}).get("cuda_decisions"),
+                      "evidence_digest": record.get("evidence_digest"), **pinned}))
 
 
 def compare(args):
@@ -456,7 +607,9 @@ def main():
         sub.add_argument("--inputs", default=str(FX.DEFAULT_INPUTS))
         sub.add_argument("--inputs-sha256", default=FX.DEFAULT_INPUTS_SHA256)
         sub.add_argument("--seconds", type=int, default=FX.MAX_SECONDS)
-        sub.add_argument("--repositories", type=lambda v: [r for r in v.split(",") if r], default=["airk", "bookbuilder"])
+        # The loop pair (fixture.py DEFAULT_REPOSITORIES): bookbuilder-v2 and munarium, no airk index.
+        sub.add_argument("--repositories", type=lambda v: [r for r in v.split(",") if r],
+                         default=list(FX.DEFAULT_REPOSITORIES))
         sub.add_argument("--restart-from")
         sub.add_argument("--seed-cpu", choices=SEEDS)
         sub.add_argument("--synthetic-root")
@@ -483,8 +636,13 @@ def main():
     group.add_argument("--disable", dest="enable", action="store_false")
     sub.add_argument("--repositories", type=lambda v: [r for r in v.split(",") if r])
     sub.add_argument("--manifest", help="stage a profile of this lifetime's Ready by manifest")
+    sub.add_argument("--enrol-as", help="send these enrollment tasks instead of the emitted ones (recorded; "
+                                        "never in a gate root; see fixture.ENROLLMENT_OVERRIDE)")
     sub.add_argument("--stage-name", choices=("focus", "context"))
     sub.add_argument("--device", choices=("cpu", "cuda"), default="cpu")
+    sub = commands.add_parser("ensure")
+    sub.add_argument("--lifetime", required=True)
+    sub.add_argument("--profiles", required=True, help="comma-separated stage profiles that must be active")
     sub = commands.add_parser("answer")
     sub.add_argument("--lifetime", required=True)
     sub.add_argument("--repository", required=True)
@@ -498,7 +656,7 @@ def main():
     sub = commands.add_parser("stop")
     sub.add_argument("--lifetime", required=True)
     args = parser.parse_args()
-    {"start": start, "worker": worker, "stage": stage, "answer": answer, "compare": compare,
+    {"start": start, "worker": worker, "stage": stage, "ensure": ensure, "answer": answer, "compare": compare,
      "stop": FX.stop}[args.command](args)
 
 

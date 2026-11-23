@@ -116,7 +116,7 @@ def combine(dirs: list[Path]) -> dict:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--series", default="baseline,cs2-airk")
-    parser.add_argument("--repos", default="airk")
+    parser.add_argument("--repos", default=",".join(common.REPOS))
     parser.add_argument("--handle", default=common.NEWEST)
     parser.add_argument("--r-root", type=Path, default=common.DEFAULT_R)
     parser.add_argument("--scenarios-dir", type=Path, default=common.DEFAULT_R / "scenarios")

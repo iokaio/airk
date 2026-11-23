@@ -113,7 +113,8 @@ def issue(handle: common.Handle, repo: str, tool: str, args: dict, out: Path, st
     common.write_bytes(raw, outcome.stdout)
     body = common.raw_body(outcome.stdout) if outcome.ok else None
     queued_ms = sum(t["waited_ms"] + t["attempt_ms"] for t in tickets)
-    row = {"tool": tool, "arguments": args, "ok": outcome.ok, "error": outcome.error,
+    row = {"tool": tool, "arguments": args, "budget_sent": args.get("budget") if tool == "airk_answer" else None,
+           "ok": outcome.ok, "error": outcome.error,
            "elapsed_ms": outcome.elapsed_ms + queued_ms, "final_attempt_ms": outcome.elapsed_ms,
            "bytes": len(common.envelope_text(outcome.envelope).encode("utf-8")) if outcome.envelope else 0,
            "result_path": str(raw), "result_sha256": common.sha256_bytes(outcome.stdout),
@@ -194,7 +195,11 @@ def main(argv: list[str] | None = None) -> int:
                                           timeout_s=args.call_timeout))
     report = {"schema": REPLAY_SCHEMA, "generated": common.now_iso(), "handle": str(args.handle),
               "handle_readiness": handle.readiness(),
-              "handle_sha256": handle.sha256, "answer_defaults": defaults, "mode": "canonical" if args.canonical else "sessions",
+              "handle_sha256": handle.sha256, "answer_defaults": defaults,
+              "answer_budget_source": common.answer_budget_source(),
+              "budgets_sent": common.distinct_budgets(
+                  [c for e in entries for c in (e.get("calls") or [e.get("call")]) if c]),
+              "mode": "canonical" if args.canonical else "sessions",
               "entries": entries}
     common.write_json(args.out / "replay.json", report)
     for entry in entries:

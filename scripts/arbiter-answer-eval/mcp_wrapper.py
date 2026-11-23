@@ -28,6 +28,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import common  # noqa: E402
+import replay  # noqa: E402
 
 PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 SERVER_INFO = {"name": "airk-answer-eval-wrapper", "version": "1"}
@@ -51,6 +52,7 @@ class Wrapper:
         self.results_dir.mkdir(parents=True, exist_ok=True)
         self.turn_log = self.log_dir / "turns.jsonl"
         budget = dict(common.ANSWER_BUDGET_DEFAULT)
+        self.answer_defaults = dict(answer_defaults or {})
         answer_defaults = dict(answer_defaults or {})
         budget.update(answer_defaults.pop("budget", {}) or {})
         self.answer_forced = {"schema": common.ANSWER_SCHEMA, "budget": budget, **answer_defaults}
@@ -120,7 +122,19 @@ class Wrapper:
                         f"as its {field!r} argument"))
             self.counted += 1
             turn = self.counted
-            sent = self._send_arguments(tool, arguments)
+            first_call = None
+            if turn == 1:
+                # Plan 3.5: the first call is the path's primary tool with the instruction as written, issued by
+                # the harness with the product's defaults for everything else (response mode, verification) and
+                # the cases file's default budget: exactly the arguments the replays send
+                # (replay.canonical_first_call). Arguments the agent added are recorded and not sent. On
+                # 23 November 2026 an agent's own first call chose verification off, so sessions and replays
+                # measured different renderings. The agent chooses its own arguments from its second call on.
+                _tool, sent = replay.canonical_first_call(self.path, self.instruction, self.answer_defaults)
+                first_call = {"rule": "canonical", "ignored_arguments": sorted(
+                    k for k in arguments if k != common.PRIMARY_ARG[self.primary] and k not in common.HIDDEN_ARGS)}
+            else:
+                sent = self._send_arguments(tool, arguments)
             started = common.now_iso()
             stem = f"turn-{turn:02d}"
             outcome, retries = self._with_typed_retries(tool, sent, stem)
@@ -135,6 +149,7 @@ class Wrapper:
             elapsed = outcome.elapsed_ms + sum(r["elapsed_ms"] + r["waited_ms"] for r in retries)
             common.append_jsonl(self.turn_log, {
                 "turn": turn, "call": self.calls, "tool": tool, "arguments": arguments, "sent_arguments": sent,
+                "first_call": first_call,
                 "started": started, "elapsed_ms": elapsed, "bytes": text_bytes, "ok": outcome.ok,
                 "typed_retries": retries, "final_attempt_ms": outcome.elapsed_ms,
                 "result_path": str(result_path), "result_sha256": common.sha256_bytes(outcome.stdout),
@@ -306,7 +321,7 @@ def serve(wrapper: Wrapper, stdin: BinaryIO, stdout: BinaryIO) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--handle", type=Path, required=True)
-    parser.add_argument("--repo", choices=common.REPOS, required=True)
+    parser.add_argument("--repo", choices=common.KNOWN_REPOS, required=True)
     parser.add_argument("--path", choices=sorted(common.PATH_TOOLS), required=True)
     parser.add_argument("--instruction-file", type=Path, required=True)
     parser.add_argument("--log-dir", type=Path, required=True)

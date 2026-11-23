@@ -19,7 +19,9 @@
 //! l5a_gpu            GPU. Opens one probe profile in the scorer path.
 //!   L5A_STEP             placement (FP32) | graph (FP16 G5) | strict
 //!   L5A_PROFILE(_SHA256), L5A_ASSET_MAP(_SHA256), L5A_PLAN, L5A_OUTPUT (fresh file)
-//!   protected prepare: L5A_MEASUREMENT (JSON), L5A_MEASUREMENT_RECEIPT, L5A_POLICY (pass 2)
+//!   protected prepare: L5A_MEASUREMENT (JSON), L5A_MEASUREMENT_RECEIPT, L5A_POLICY (pass 2),
+//!     L5A_LOOP_TASKS=1 (both passes) declares the four Answer-loop card tasks with a
+//!     zero-rule calibration set instead of the one-turn task
 //! l5a_replay: L5A_GRAPH_RESULT(_SHA256) for an FP32 base, or L5A_REVIEW_RECEIPT(_SHA256)
 //!   (the pass-1 graph diagnostic receipt) for a protected route; L5A_PANEL(_SHA256)
 //!   L5A_CONTROL_PARENT   existing directory for the private lease root
@@ -41,7 +43,7 @@ use airk_core::{
 use airk_retrieval::arbiter::{
     compiler::{Candidate, CompiledInput, Compiler},
     runtime::{
-        AssetSource, EvaluationCatalog, Scorer,
+        AssetSource, EvaluationCatalog, Scorer, admit_loop_tasks,
         cuda::{self, CudaRuntime, DeviceCapacityPlan},
     },
 };
@@ -323,12 +325,30 @@ fn l5a_prepare() -> Result<()> {
                     receipt.as_deref(),
                     policy,
                 )?;
-                Ok((
-                    p.profile,
-                    p.calibration_name,
-                    p.calibration_bytes,
-                    Some(json!({"attention_plan": p.attention_plan, "measurement": p.measurement, "pass": if policy.is_some() { 2 } else { 1 }})),
-                ))
+                let (mut profile, mut calibration_bytes) = (p.profile, p.calibration_bytes);
+                let mut plan = json!({"attention_plan": p.attention_plan, "measurement": p.measurement, "pass": if policy.is_some() { 2 } else { 1 }});
+                // Answer loop (plan 12.5.2 L4): declare the four card tasks in place of the
+                // one-turn task. The zero-rule calibration set replaces the emitter's
+                // JointCalibration under the same asset name, and the manifest is recomputed
+                // over the emitter's manifest, which already binds the measurement.
+                match std::env::var("L5A_LOOP_TASKS").ok().as_deref() {
+                    None | Some("0") => {}
+                    Some("1") => {
+                        let base = profile.manifest;
+                        calibration_bytes = admit_loop_tasks(&mut profile)?;
+                        profile.manifest = Sha256Digest::from_bytes([0; 32]);
+                        let canonical = serde_json::to_vec(&(base, manifest_sha, &profile))?;
+                        profile.manifest = airk_core::identity::framed_digest(
+                            b"airk.private.cuda-protected-mha-loop-profile/1",
+                            &[&canonical],
+                        );
+                        profile.validate()?;
+                        plan["loop_tasks"] = json!({"base_manifest": base, "tasks": profile.tasks, "task_policies": profile.task_policies,
+                            "calibration": profile.calibration});
+                    }
+                    Some(other) => anyhow::bail!("L5A_LOOP_TASKS is 0 or 1, not {other}"),
+                }
+                Ok((profile, p.calibration_name, calibration_bytes, Some(plan)))
             }
             _ => anyhow::bail!("L5A_PRECISION is fp32, fp16 or protected"),
         }

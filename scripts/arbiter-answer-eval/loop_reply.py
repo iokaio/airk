@@ -27,6 +27,8 @@ abstention.
 
 from __future__ import annotations
 
+import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -100,6 +102,102 @@ def decisions(body: Any) -> list[dict]:
     return sorted(out, key=lambda d: d["ordinal"] or 0)
 
 
+# How a decision's source counts in the gate report (a slower model may be refused or shed more often):
+# "model" took the decision; "fell_back" means the model was asked and the deterministic order stood in
+# (sources ``abstained`` and ``unavailable``); "not_dispatched" means a model decision was due and the call
+# was never sent (source ``not_dispatched``: token budget, deadline or no model for that call), counted apart
+# from both; "no_model" is a decision the loop takes without a model (source ``deterministic``). The three
+# fallback sources carry their fallback rule and a typed reason.
+SOURCE_CLASSES = {"model": "model", "abstained": "fell_back", "unavailable": "fell_back",
+                  "not_dispatched": "not_dispatched", "deterministic": "no_model"}
+SOURCE_CLASS_ORDER = ("model", "fell_back", "not_dispatched", "no_model", "other")
+REASONED_CLASSES = ("fell_back", "not_dispatched")
+
+
+def source_class(kind: Any) -> str:
+    return SOURCE_CLASSES.get(str(kind), "other")
+
+
+def fallback_reasons(body: Any) -> dict[str, dict[str, int]]:
+    """``{stage: {"<source>/<reason>": count}}`` for the reply's included decisions that fell back or were
+    not dispatched.
+
+    The typed reason (``unavailable``, ``deadline``, ``token_budget``, ``abstained``, ...) is per decision, so
+    it is known only for the decisions the reply includes; the decision log's counts (``summary``'s
+    ``decision_counts``) cover every logged decision, by source only."""
+    out: dict[str, dict[str, int]] = {}
+    for decision in decisions(body):
+        if source_class(decision["source"]) in REASONED_CLASSES:
+            stage = out.setdefault(str(decision["stage"]), {})
+            reason = f"{decision['source']}/{decision['reason']}"
+            stage[reason] = stage.get(reason, 0) + 1
+    return out
+
+
+# Sources of a decision that was due to a Context model, whoever took it in the end.
+MODEL_DUE_SOURCES = ("model", "abstained", "unavailable", "not_dispatched")
+# Whether a Context model took part in a reply. The reply sets the ``context_absent`` degradation both when no
+# Context model was present and when one was present but every call was not dispatched, so the degradation
+# alone cannot tell a Focus-only reply from a model that was never reached. The decision counts by source
+# can: a decision that was due to a model names it, also when it was not dispatched.
+PRESENCE_STATES = ("model_took_decisions", "model_present_no_call_dispatched", "model_present_none_taken",
+                   "no_model")
+
+
+def log_counts(body: Any) -> list[dict]:
+    """The decision log's count rows ``{stage, source, count[, model]}``: every logged decision."""
+    log = body.get("decision_log") if isinstance(body, dict) and isinstance(body.get("decision_log"), dict) else {}
+    return [{"stage": str(row.get("stage")), "source": str(row.get("source")), "count": int(row.get("count") or 0),
+             "model": row.get("model")} for row in log.get("counts") or [] if isinstance(row, dict)]
+
+
+def context_presence(body: Any) -> dict | None:
+    """Whether the Context model took part, per stage and overall. None for a ticket or a non-/3 reply.
+
+    Counted from the decision log's counts (every logged decision); a reply whose log carries no counts is
+    counted from the decisions it includes, and says so in ``from``. ``state`` is one of ``PRESENCE_STATES``:
+    the model took at least one decision; a model was due and no call was dispatched; a model was due and took
+    none for other reasons (it was unavailable, at compile time or later, or abstained every time); or no
+    decision was due to a model (Focus only). ``stages_without_model`` lists the stages where decisions were
+    due to a model and it took none."""
+    if not is_v3(body) or is_ticket(body):
+        return None
+    rows, origin = log_counts(body), "decision_log.counts"
+    if not rows:
+        rows = [{"stage": str(d["stage"]), "source": str(d["source"]), "count": 1, "model": d["model"]}
+                for d in decisions(body)]
+        origin = "included_decisions"
+    stages: dict[str, dict[str, int]] = {}
+    models = set()
+    for row in rows:
+        if row["source"] not in MODEL_DUE_SOURCES and not row["model"]:
+            continue
+        if row["model"]:
+            models.add(str(row["model"]))
+        if row["source"] in MODEL_DUE_SOURCES:
+            stage = stages.setdefault(row["stage"], {source: 0 for source in MODEL_DUE_SOURCES})
+            stage[row["source"]] += row["count"]
+    total = {source: sum(stage[source] for stage in stages.values()) for source in MODEL_DUE_SOURCES}
+    due = sum(total.values())
+    if total["model"]:
+        state = "model_took_decisions"
+    elif not due:
+        state = "no_model"
+    elif total["not_dispatched"] == due:
+        state = "model_present_no_call_dispatched"
+    else:
+        state = "model_present_none_taken"
+    return {"state": state, "due": due, "by_source": total, "models": sorted(models),
+            "stages": {stage: stages[stage] for stage in sorted(stages)},
+            "stages_without_model": sorted(s for s, c in stages.items() if sum(c.values()) and not c["model"]),
+            "from": origin}
+
+
+def _due_text(counts: dict) -> str:
+    return (f"not dispatched {counts['not_dispatched']}, unavailable {counts['unavailable']}, "
+            f"abstained {counts['abstained']}")
+
+
 def current_decisions(body: Any) -> dict[tuple, dict]:
     """The current decision per (stage, part, need, round): applicability current, else the latest ordinal."""
     found: dict[tuple, dict] = {}
@@ -158,6 +256,38 @@ def sub_need_spans(body: Any) -> dict[tuple, list[evidence.Span]]:
     return out
 
 
+FAILURE_CODE = re.compile(r'\\*"error\\*"\s*:\s*\{\\*"code\\*"\s*:\s*\\*"([A-Za-z0-9_]+)')
+
+
+def _failure_code(failure: Any) -> str:
+    """The error code of a failed read's recorded envelope (``canonical_result.failure``: the tool result's
+    JSON text), or ``unknown``. The service keeps only the first 512 characters of that text (s5 shakedown),
+    so a cut envelope is read by its leading ``{"error":{"code":...`` member."""
+    try:
+        envelope = json.loads(failure) if isinstance(failure, str) else failure
+        text = envelope["content"][0]["text"] if isinstance(envelope, dict) and "content" in envelope else None
+        body = json.loads(text) if isinstance(text, str) else envelope
+        code = body.get("error", {}).get("code") if isinstance(body, dict) else None
+        if code:
+            return str(code)
+    except (ValueError, KeyError, IndexError, TypeError, AttributeError):
+        pass
+    found = FAILURE_CODE.search(failure) if isinstance(failure, str) else None
+    return found.group(1) if found else "unknown"
+
+
+def read_failures(body: Any) -> dict[str, int]:
+    """Records whose read failed, counted by ``operation:code`` (s5 shakedown, 23 November 2026: every search
+    read of a reply failed ``read_failed`` in the service and the reply still looked like an answer)."""
+    out: dict[str, int] = {}
+    for record in records(body):
+        result = record.get("canonical_result")
+        if isinstance(result, dict) and result.get("failure") is not None:
+            key = f"{record.get('operation') or 'unknown'}:{_failure_code(result['failure'])}"
+            out[key] = out.get(key, 0) + 1
+    return dict(sorted(out.items()))
+
+
 def record_uses(body: Any) -> list[dict]:
     if not is_v3(body):
         return []
@@ -168,6 +298,30 @@ def degradation_kinds(body: Any) -> list[str]:
     if not is_v3(body):
         return []
     return sorted({str(d.get("kind")) for d in body.get("degradations") or [] if isinstance(d, dict)})
+
+
+def packing(body: Any) -> dict | None:
+    """How the reply was packed, for the question whether Answer needs a compression step: what Union cut,
+    merged or left out, as far as a reply shows it. The reply does not state its trimming level, so the
+    observable facts are counted: span rows and how many are ``truncated``; hits that are not rows
+    (``hits_total`` larger than the row count: uncited hits dropped from trimming level 1 on); rows whose text
+    another row carries (``union.repeats_merged``) and rows trimmed of an overlap (``union.overlaps_trimmed``);
+    and the records left out (``omitted_evidence``)."""
+    if not is_v3(body) or is_ticket(body):
+        return None
+    rows = truncated = hits = 0
+    for record in records(body):
+        result = record.get("canonical_result")
+        if evidence.is_loop_projection(result):
+            spans = [row for row in result["spans"] if isinstance(row, dict)]
+            rows += len(spans)
+            truncated += sum(1 for row in spans if row.get("truncated") is True)
+            hits += _int(result.get("hits_total")) or 0
+    union = body.get("union") if isinstance(body.get("union"), dict) else {}
+    return {"records": len(records(body)), "span_rows": rows, "rows_truncated": truncated, "hits_total": hits,
+            "hits_not_rows": max(0, hits - rows), "repeats_merged": _int(union.get("repeats_merged")) or 0,
+            "overlaps_trimmed": _int(union.get("overlaps_trimmed")) or 0,
+            "omitted_evidence": len(body.get("omitted_evidence") or [])}
 
 
 def summary(body: Any) -> dict | None:
@@ -197,10 +351,12 @@ def summary(body: Any) -> dict | None:
         "records": len(records(body)), "omitted_evidence": len(body.get("omitted_evidence") or []),
         "decisions_total": log.get("total"), "decisions_included": log.get("included"),
         "decisions_omitted": log.get("omitted"), "decision_counts": counts,
+        "fallback_reasons": fallback_reasons(body), "context_presence": context_presence(body),
+        "packing": packing(body),
         "card_calls": log.get("card_calls"), "focus_calls": log.get("focus_calls"),
         "focus_pairs": log.get("focus_pairs"), "model_timings": log.get("timings") or {},
         "work_unknown": log.get("work_unknown"), "log_digest": log.get("digest"),
-        "degradations": degradation_kinds(body),
+        "degradations": degradation_kinds(body), "read_failures": read_failures(body),
         "work": {k: work.get(k) for k in ("calls", "fanout", "rounds", "input_tokens", "candidates", "bytes",
                                           "compile_us", "inference_us", "policy_us", "queue_us")},
         "elapsed_ms": body.get("elapsed_ms"), "union_dedup": (body.get("union") or {}).get("dedup_count"),
@@ -222,7 +378,36 @@ def arm_requirement(arm: dict) -> dict:
     if precision is not None and precision not in PRECISIONS:
         raise ValueError(f"unknown precision {precision!r}")
     return {"context": context, "device": arm.get("device", "cuda"), "precision": precision,
-            "mode": arm.get("mode", "top_score")}
+            "mode": arm.get("mode", "top_score"), "focus": bool(arm.get("focus", False))}
+
+
+# A read the service failed to run (not a scope refusal or an empty result): its evidence is missing for a
+# reason that has nothing to do with the arm, so the reply cannot stand for the arm.
+SERVICE_READ_FAILURES = ("read_failed",)
+
+
+def stage_problems(body: Any, want: dict) -> list[str]:
+    """Problems common to every arm: Focus staged and taking no part, and reads the service failed to run."""
+    problems = []
+    log = body.get("decision_log") if isinstance(body.get("decision_log"), dict) else {}
+    if want["focus"]:
+        calls = _int(log.get("focus_calls")) or 0
+        if "focus_absent" in degradation_kinds(body) or calls == 0:
+            problems.append(f"Focus is staged and took no part ({calls} Focus calls"
+                            + (", focus_absent" if "focus_absent" in degradation_kinds(body) else "") + ")")
+    # Any failed record refuses the reply (coordinator, 23 November 2026): a service failure (``read_failed``) and
+    # a read the service refused as invalid (``invalid_arguments``, such as a range across document locations,
+    # which the loop should never send) both leave the arm's evidence short. They are named apart.
+    failures = read_failures(body)
+    service = {k: n for k, n in failures.items() if k.split(":", 1)[1] in SERVICE_READ_FAILURES}
+    other = {k: n for k, n in failures.items() if k not in service}
+    if service:
+        problems.append(f"{sum(service.values())} reads failed in the service ("
+                        + ", ".join(f"{k} x{n}" for k, n in service.items()) + ")")
+    if other:
+        problems.append(f"{sum(other.values())} reads were refused or failed otherwise ("
+                        + ", ".join(f"{k} x{n}" for k, n in other.items()) + ")")
+    return problems
 
 
 def check_arm(body: Any, arm: dict) -> list[str]:
@@ -232,13 +417,19 @@ def check_arm(body: Any, arm: dict) -> list[str]:
     if is_ticket(body):
         return []
     want = arm_requirement(arm)
-    problems = []
+    problems = stage_problems(body, want)
     kinds = degradation_kinds(body)
     ds = decisions(body)
+    presence = context_presence(body)
     if want["context"] is None:
-        scored = [d for d in ds if d["source"] in ("model", "abstained", "unavailable") or d["model"]]
+        scored = [d for d in ds if d["source"] in MODEL_DUE_SOURCES or d["model"]]
         if scored:
             problems.append(f"{len(scored)} decisions name a Context model in a Focus-only arm")
+        # A model that was present and never reached also reports context_absent: it is not Focus only.
+        if presence["state"] != "no_model" or presence["models"]:
+            problems.append(f"the decision log counts {presence['due']} decisions due to a Context model "
+                            f"({', '.join(presence['models']) or 'unnamed'}) in a Focus-only arm: "
+                            f"{presence['state']}")
         if ds and "context_absent" not in kinds:
             problems.append("no context_absent degradation in a Focus-only arm")
         return problems
@@ -246,7 +437,17 @@ def check_arm(body: Any, arm: dict) -> list[str]:
     if abstained or "context_abstained" in kinds:
         problems.append(f"{len(abstained)} abstained decisions (the gate mode takes every decision by top score)")
     if "context_absent" in kinds:
-        problems.append("context_absent: no Context model took part")
+        if presence["state"] == "model_present_no_call_dispatched":
+            problems.append(f"context_absent: the Context model was present and no call was dispatched "
+                            f"({presence['due']} decisions due)")
+        elif presence["state"] == "model_present_none_taken":
+            problems.append(f"context_absent: the Context model was present and took no decision "
+                            f"({_due_text(presence['by_source'])})")
+        else:
+            problems.append("context_absent: no Context model took part")
+    others = [m for m in presence["models"] if m != want["context"]]
+    if others:
+        problems.append(f"the decision log counts decisions of {', '.join(others)}, not {want['context']}")
     for kind in ("model", "device"):
         if kind in kinds:
             problems.append(f"{kind} degradation: the arm's model or device was not kept")
@@ -261,6 +462,24 @@ def check_arm(body: Any, arm: dict) -> list[str]:
             problems.append(f"decision {d['ordinal']} on {d['device']}, not {want['device']}")
         if want["precision"] is not None and d["precision"] != want["precision"]:
             problems.append(f"decision {d['ordinal']} at {d['precision']}, not {want['precision']}")
-    if ds and not any(d["source"] == "model" for d in ds):
-        problems.append("no model-scored decision among the included decisions")
+    # The arm's model must have taken decisions. Every logged decision counts (the log's counts by source), so
+    # a reply that merely omits its model decisions is not refused, and one whose model took none is.
+    if presence["state"] in ("model_present_no_call_dispatched", "model_present_none_taken"):
+        problems.append(f"the arm's model took none of the {presence['due']} decisions due to it "
+                        f"({_due_text(presence['by_source'])})")
+    elif presence["state"] == "no_model" and (ds or log_counts(body)):
+        problems.append("no model-scored decision: no decision was due to a Context model")
     return problems
+
+
+def arm_flags(body: Any, arm: dict) -> list[str]:
+    """Stages of a Context arm's reply where decisions were due to the model and it took none, while it took
+    decisions in another stage. The reply is still the arm's (``check_arm`` passes on this account), but the
+    stage ran on the deterministic order: the scenario is flagged so the gate reads it with that in mind."""
+    if not is_v3(body) or is_ticket(body) or arm_requirement(arm)["context"] is None:
+        return []
+    presence = context_presence(body)
+    if presence["state"] != "model_took_decisions":
+        return []
+    return [f"stage {stage}: the model took none of the {sum(presence['stages'][stage].values())} decisions due "
+            f"({_due_text(presence['stages'][stage])})" for stage in presence["stages_without_model"]]
