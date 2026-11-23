@@ -265,7 +265,12 @@ fn the_realistic_full_loop_keeps_evidence_before_decisions() -> Result<()> {
     let limit = v3::reply_limit(&budget) - 4096;
     let (response, log) = assemble(&assembly(&built, &scope, limit))?;
     response.validate_with_log(&log, &budget)?;
+    // Change-log entry 53: the fit is the escaped JSON text a tool result
+    // carries, which is larger than the plain encoding.
+    let quoted = airk_core::verification::quoted_len(&response)?;
+    assert!(quoted <= limit, "{quoted} escaped bytes of {limit}");
     let bytes = serde_json::to_vec(&response)?.len();
+    assert!(bytes < quoted);
     let spans: usize = response
         .records
         .iter()

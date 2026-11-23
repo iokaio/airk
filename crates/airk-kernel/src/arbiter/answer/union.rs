@@ -440,7 +440,10 @@ pub(crate) fn assemble(
             level,
             &removed,
         )?;
-        if serde_json::to_vec(&response)?.len() <= assembly.limit {
+        // Measured as the tool result carries it (escaped JSON text), the
+        // representation the handler's reply ceiling and the verification
+        // receipt's allocation are computed on (change-log entry 53).
+        if airk_core::verification::quoted_len(&response)? <= assembly.limit {
             return Ok((response, log));
         }
         if decisions > 0 {

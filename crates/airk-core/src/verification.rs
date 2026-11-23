@@ -27,10 +27,23 @@ pub fn reply_budget_refusal() -> serde_json::Value {
 /// Account for a JSON evidence payload encoded as text inside the native frame.
 /// No source reads or hashing occur while establishing this allocation.
 pub fn receipt_budget_for_reply(value: &serde_json::Value) -> Result<usize> {
-    let quoted = serde_json::to_vec(&serde_json::to_string(value)?)?.len();
-    let available = crate::MAX_RESPONSE_BYTES.saturating_sub(quoted + 2048) / 2;
+    receipt_budget_within(value, crate::MAX_RESPONSE_BYTES)
+}
+
+/// The receipt allocation of a reply rendered into a `frame` of that many
+/// bytes: the tool's own reply ceiling (Answer /3: 131,072; every other tool:
+/// 65,536). Before change-log entry 53 an Answer reply was measured against
+/// the 65,536 frame, so a reply above about 61 KiB failed as a whole.
+pub fn receipt_budget_within(value: &serde_json::Value, frame: usize) -> Result<usize> {
+    let available = frame.saturating_sub(quoted_len(value)? + 2048) / 2;
     ensure!(available >= 1024, VerificationReplyBudget);
     Ok(available.min(MAX_RECEIPT_BYTES))
+}
+
+/// The bytes of `value` as the JSON text of a tool result: serialized, then
+/// embedded as a JSON string, so every quote and backslash is escaped.
+pub fn quoted_len<T: Serialize>(value: &T) -> Result<usize> {
+    Ok(serde_json::to_vec(&serde_json::to_string(value)?)?.len())
 }
 
 #[derive(Debug)]
@@ -920,6 +933,30 @@ mod tests {
             validate_projection(&projection).is_err(),
             "late clipping cannot retain an old member claim"
         );
+        Ok(())
+    }
+
+    /// Change-log entry 53: an Answer reply is measured against its own
+    /// 131,072-byte frame. A JSON string of n letters quotes to n + 6 bytes,
+    /// and (131,072 - quoted - 2,048) / 2 must be at least 1,024.
+    #[test]
+    fn an_answer_reply_receipt_shares_the_answer_frame() -> Result<()> {
+        let frame = crate::arbiter::answer_loop::MAX_ANSWER_RESPONSE_BYTES;
+        let at = serde_json::Value::String("a".repeat(126_970));
+        assert_eq!(quoted_len(&at)?, 126_976);
+        assert_eq!(receipt_budget_within(&at, frame)?, 1024);
+        let over = serde_json::Value::String("a".repeat(126_971));
+        assert!(
+            receipt_budget_within(&over, frame)
+                .unwrap_err()
+                .is::<VerificationReplyBudget>()
+        );
+        // A 60 KiB Answer reply: the other tools' frame cannot hold its
+        // receipt, the Answer frame can, up to the receipt cap.
+        let answer = serde_json::Value::String("a".repeat(61_440));
+        assert!(receipt_budget_for_reply(&answer).is_err());
+        // (131,072 - 61,446 - 2,048) / 2 = 33,789, above the 32,768 cap.
+        assert_eq!(receipt_budget_within(&answer, frame)?, 32_768);
         Ok(())
     }
 

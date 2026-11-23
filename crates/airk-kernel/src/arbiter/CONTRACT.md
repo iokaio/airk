@@ -285,6 +285,11 @@ What holds:
   configuration changed after native work, and also when a Focus batch went
   stale mid-loop; it holds the custody so far, the optional reply and the
   cause privately, and its receipt is nonreplayable.
+- **Union packs the escaped reply** (change-log entry 53): the reply's JSON
+  text embedded as a JSON string (`verification::quoted_len`) fits the reply
+  frame less the handler's reserve (4,096, or twice the verification
+  receipt floor plus 4,096 when verification is on), the representation the
+  handler's reply ceiling and the receipt allocation are measured on.
 - **Presentation trimming is not omission.** Union levels 1 to 4 shorten
   records (uncited hits, excerpt cuts, compact paragraphs) and disclose it
   per projection (`hits_total`, `rows_total`, `truncated`); a part is

@@ -337,11 +337,28 @@ impl Kernel {
         budget: VerificationBudget,
         outer_deadline: Option<Instant>,
     ) -> Result<VerificationReceipt> {
+        self.verify_returned_sources_within(
+            value,
+            budget,
+            outer_deadline,
+            airk_core::MAX_RESPONSE_BYTES,
+        )
+    }
+
+    /// As `verify_returned_sources_with_deadline`, for a reply rendered into
+    /// a `frame` of that many bytes, the calling tool's own reply ceiling.
+    pub fn verify_returned_sources_within(
+        &self,
+        value: &Value,
+        budget: VerificationBudget,
+        outer_deadline: Option<Instant>,
+        frame: usize,
+    ) -> Result<VerificationReceipt> {
         self.verify_returned_sources_before(
             value,
             budget,
             outer_deadline,
-            receipt_budget_for_reply(value)?,
+            airk_core::verification::receipt_budget_within(value, frame)?,
         )
     }
 

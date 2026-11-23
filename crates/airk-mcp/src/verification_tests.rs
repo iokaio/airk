@@ -473,6 +473,52 @@ async fn verification_refusal_does_not_acknowledge_undelivered_observations() ->
     Ok(())
 }
 
+/// Change-log entry 53: an Answer reply's receipt shares the Answer's own
+/// 131,072-byte frame. A reply of about 70 KiB, which fits that frame, used
+/// to fail as a whole with `verification_reply_budget` because its receipt
+/// was measured against the 65,536-byte frame of the other tools; those
+/// tools keep that rule.
+#[tokio::test]
+async fn an_answer_reply_above_the_tool_frame_keeps_its_verification() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let root = temp.path().join("source");
+    std::fs::create_dir(&root)?;
+    std::fs::write(root.join("policy.md"), "# Queue\nSaved source.\n")?;
+    let kernel = Kernel::open(&root, Some(temp.path().join("data")))?;
+    kernel.index()?;
+    let server = AirkServer::new(kernel);
+    for (operation, failed) in [
+        (UsageOperation::Answer, false),
+        (UsageOperation::FileInfo, true),
+    ] {
+        let reply = server
+            .execute_verified_response(
+                operation,
+                Default::default(),
+                Default::default(),
+                |kernel| {
+                    let mut value = serde_json::to_value(
+                        kernel.file_info_conditional("policy.md", &Default::default())?,
+                    )?;
+                    value["padding"] = "x".repeat(70_000).into();
+                    Ok(value)
+                },
+            )
+            .await;
+        let body = body(&reply)?;
+        if failed {
+            assert_eq!(reply.is_error, Some(true), "{operation:?}");
+            assert_eq!(body["error"]["code"], "verification_reply_budget");
+        } else {
+            assert_ne!(reply.is_error, Some(true), "{body}");
+            assert_eq!(body["source_verification"]["status"], "verified", "{body}");
+            assert_eq!(body["source_verification"]["source_rows_omitted"], 0);
+            airk_core::verification::validate_projection(&body)?;
+        }
+    }
+    Ok(())
+}
+
 #[tokio::test]
 async fn real_mcp_checks_saved_sources_preserves_failures_and_keeps_off_unchanged() -> Result<()> {
     let temp = tempfile::tempdir()?;

@@ -2331,3 +2331,30 @@ Numbered 30 until 22 November 2026; renumbered because L4's entries take
   lane contract and is left for a decision.
 - **Identities:** the second and third commits change no identity-feeding
   file.
+- **An Answer failed as a whole on its verification metadata (fourth
+  commit):** a munarium scenario with the default `max_sub_needs` failed with
+  `verification_reply_budget` (13.8 s alone and concurrently); with
+  `max_sub_needs=1` it passed with a 42,898-byte reply. Cause: the handler
+  sized the receipt with `receipt_budget_for_reply`, which assumes the
+  65,536-byte frame of the other tools, so an Answer reply whose escaped
+  text passed about 61 KiB left less than 1,024 bytes and the whole call was
+  refused, although the Answer frame is 131,072. Second, Union packed the
+  plain encoding while the receipt allocation and the handler's reply
+  ceiling measure the escaped text, and the verification reserve (twice the
+  floor plus 2,048) left no room for the annotations added after Union.
+  Fix: the handler sizes the receipt in the tool's own frame
+  (`verify_returned_sources_within`, `receipt_budget_within`), Union packs
+  the escaped text, and the Answer's verification reserve is twice the floor
+  plus 4,096, so the receipt always gets at least its floor and trims its
+  source rows with the existing disclosure. Other tools keep their 65,536
+  rule; a payload above it is still refused, as before. Every transport
+  reaches Answer through the same handler, so the result is the same on
+  each. Tests: Core `an_answer_reply_receipt_shares_the_answer_frame` (the
+  boundary: 126,976 escaped bytes leave exactly 1,024; one more is refused;
+  a 60 KiB reply refused in the 65,536 frame and given the 32,768 cap in the
+  Answer frame), MCP `an_answer_reply_above_the_tool_frame_keeps_its_verification`
+  (a 70 KB Answer reply verified with no rows omitted; the same payload as
+  `file_info` still refused), and the realistic Union test now asserts the
+  escaped fit. The trimming disclosure at a 1,024-byte allocation is the
+  existing kernel verification test. Gap: no test runs the live scenario's
+  reply through the handler. No identity-feeding file changed.

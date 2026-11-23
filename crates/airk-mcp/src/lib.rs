@@ -799,9 +799,15 @@ impl AirkServer {
                     .verification
                     .controls()
                     .resolve()?
+                    // The receipt takes (frame - reply - 2048) / 2 of the
+                    // escaped reply (`receipt_budget_within`): twice its
+                    // floor plus 2048 leaves the floor, and another 2048
+                    // holds the annotations the handler adds after Union, as
+                    // the 4,096 reserve does without verification
+                    // (change-log entry 53).
                     .map(|budget| {
                         airk_kernel::verification::verification_reply_metadata_floor(budget)
-                            .map(|floor| floor.saturating_mul(2).saturating_add(2048))
+                            .map(|floor| floor.saturating_mul(2).saturating_add(4096))
                     })
                     .transpose()?
                     .unwrap_or(4096);
@@ -1630,7 +1636,14 @@ fn render<T: Serialize>(
         response::fact_items(display, operation);
         airk_core::guidance::annotate(display);
         if let Some(budget) = verification {
-            match kernel.verify_returned_sources_with_deadline(display, budget, read_deadline) {
+            // The receipt shares the tool's own reply ceiling (Answer /3:
+            // 131,072), the frame its Union packed the reply into.
+            match kernel.verify_returned_sources_within(
+                display,
+                budget,
+                read_deadline,
+                response::reply_limit(operation),
+            ) {
                 Ok(receipt) => match airk_core::verification::attach_response(display, receipt) {
                     Ok(failed) => verification_failed = failed,
                     Err(error) => verification_error = Some(error),
