@@ -1845,23 +1845,7 @@ fn cuda_load_only_graph_metadata_diagnostic() -> Result<()> {
     observe_cuda_graph_metadata(ModelChoice::ContextQwenCompact, DevicePrecision::Float32)
 }
 
-#[cfg(all(windows, target_arch = "x86_64"))]
-#[test]
-#[ignore = "disposable Large FP32 final graph; exact Windows 48 GiB process/Job, 120s, admitted CUDA; no scorer or forward"]
-fn cuda_large_fp32_load_only_graph_metadata_diagnostic() -> Result<()> {
-    observe_cuda_graph_metadata(ModelChoice::ContextQwenLarge, DevicePrecision::Float32)
-}
-
 fn observe_cuda_graph_metadata(model: ModelChoice, precision: DevicePrecision) -> Result<()> {
-    observe_cuda_graph_with_options(model, precision, None)
-}
-
-fn observe_cuda_graph_with_options(
-    model: ModelChoice,
-    precision: DevicePrecision,
-    selected_graph: Option<&str>,
-) -> Result<()> {
-    let protected_qkv = selected_graph.is_some();
     let started_ns = airk_process::monotonic::now_ns()?;
     let started = Instant::now();
     let execution_user = airk_ipc::endpoint::current_user()?;
@@ -1888,13 +1872,6 @@ fn observe_cuda_graph_with_options(
     bounds.validate()?;
     let allowed_bounds = match model {
         ModelChoice::ContextQwenCompact => bounds.device_limit_bytes == 24 << 30,
-        ModelChoice::ContextQwenLarge => {
-            cfg!(all(windows, target_arch = "x86_64"))
-                && bounds.host_limit_bytes == 48 << 30
-                && job_limit_bytes == 48 << 30
-                && bounds.device_limit_bytes == 44 << 30
-                && (cold_bytes, warm_bytes, headroom_bytes) == (40 << 30, 8 << 30, 4 << 30)
-        }
         _ => false,
     };
     ensure!(
@@ -1916,20 +1893,6 @@ fn observe_cuda_graph_with_options(
             && profile.cpu_fit.is_none(),
         "graph metadata diagnostic requires the selected model and precision"
     );
-    #[cfg(all(windows, target_arch = "x86_64"))]
-    {
-        let actual = profile
-            .device_execution
-            .as_ref()
-            .map(|device| device.graph.to_string());
-        let selected = actual
-            .as_deref()
-            .filter(|v| *v == fp16_large::QKV_GRAPH || *v == fp16_large::BODY_GRAPH);
-        ensure!(
-            selected == selected_graph,
-            "Large protected graph and optimizer selection differ"
-        );
-    }
     let capacity_plan = profile_probe_bounds(
         &bounds,
         cold_bytes,
@@ -1944,11 +1907,7 @@ fn observe_cuda_graph_with_options(
         manifest.as_path() == Path::new(&runtime_manifest.path),
         "diagnostic manifest differs from installed runtime locator"
     );
-    let actual_job = if protected_qkv {
-        job_limits(22 << 30, 22 << 30)?
-    } else {
-        job_limits(bounds.host_limit_bytes, job_limit_bytes)?
-    };
+    let actual_job = job_limits(bounds.host_limit_bytes, job_limit_bytes)?;
     let mut resources = airk_kernel::service_resources::Resources::detect(ResourceConfiguration {
         preset: ResourcePreset::Throughput,
         ..ResourceConfiguration::default()
@@ -2032,17 +1991,7 @@ fn observe_cuda_graph_with_options(
         dispatched = true;
         receipt["session_load_dispatched"] = json!(true);
         let source = custody.files.as_ref().unwrap();
-        let result = if protected_qkv {
-            #[cfg(all(windows, target_arch = "x86_64"))]
-            {
-                receipt["optimizer_profile"] = json!("protected_qkv_fp32");
-                Scorer::diagnose_large_fp32_qkv_graph(execution, source)
-            }
-            #[cfg(not(all(windows, target_arch = "x86_64")))]
-            anyhow::bail!("Large protected Q/K/V diagnostic requires Windows x86_64")
-        } else {
-            Scorer::diagnose_cuda_graph_metadata(execution, source)
-        };
+        let result = Scorer::diagnose_cuda_graph_metadata(execution, source);
         let post_files = verify_files(custody.files.as_ref().unwrap(), &profile);
         result.and(post_files)
     });
@@ -2340,11 +2289,6 @@ mod bounded_hybrid;
 mod hybrid_profile_trace;
 
 #[cfg(all(windows, target_arch = "x86_64"))]
-mod batch_view;
-
-#[cfg(all(windows, target_arch = "x86_64"))]
 mod fp16_compact;
-#[cfg(all(windows, target_arch = "x86_64"))]
-mod fp16_large;
 #[cfg(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64"))]
 mod gnu_cutlass;

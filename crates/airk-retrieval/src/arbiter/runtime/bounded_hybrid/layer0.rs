@@ -280,24 +280,6 @@ fn require_qkv_projection_profile(
 }
 
 impl Scorer {
-    /// Opens the exact Windows Large protected-Q/K/V graph for a disposable placement observation.
-    pub fn diagnose_large_fp32_qkv_graph(
-        profile: ExecutionProfile,
-        source: &dyn AssetSource,
-    ) -> Result<()> {
-        super::super::cuda::diagnostic::require_graph_diagnostic_profile(&profile)?;
-        let qkv = "1448e83dcd209b120bd22e1dec084092f56adc7e8eec5dcd323e179b800467aa".parse()?;
-        let body = "636cea20b5fa4f58251589d01a7ef2e3df87f7f4b57498d2765b0d56f6b87d2d".parse()?;
-        ensure!(
-            profile.description.model == ModelChoice::ContextQwenLarge
-                && profile.description.device_execution.as_ref().is_some_and(|d| d.graph == qkv || d.graph == body),
-            "Large protected Q/K/V graph differs"
-        );
-        let session = Self::open_internal(profile, source, qkv_projection_options, OpenMode::GraphMetadataDiagnostic)?;
-        ensure!(session.is_none(), "Large Q/K/V graph observation returned a scorer");
-        Ok(())
-    }
-
     /// Frozen normalized FP16 K-projection inputs sampled across Compact.
     pub const COMPACT_QKV_DECISION_TAPS: &'static [(&'static str, usize)] =
         decision_taps!(0, 9, 18, 27);

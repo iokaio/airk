@@ -21,9 +21,6 @@ struct Experiment {
     retained: &'static str,
     supplemental: &'static str,
     receipt_schema: &'static str,
-    equivalent_predecessor: bool,
-    fp16_t32: bool,
-    projection_capture: bool,
 }
 
 const COMPACT: Experiment = Experiment {
@@ -31,32 +28,9 @@ const COMPACT: Experiment = Experiment {
     host_gib: 32,
     device_gib: 24,
     graph: GRAPH_SHA,
-    projection_capture: false,
     retained: RETAINED_SHA,
     supplemental: SUPPLEMENTAL_SHA,
     receipt_schema: "airk.private.cuda-compact-bounded-hybrid-profile/1",
-    fp16_t32: false,
-    equivalent_predecessor: false,
-};
-
-const LARGE: Experiment = Experiment {
-    model: ModelChoice::ContextQwenLarge,
-    host_gib: 48,
-    device_gib: 44,
-    graph: "1892e5b040d8c51969f1d3361d0929950fa98f0ef4079060e48d00458635488a",
-    projection_capture: false,
-    retained: "c87c4edcdec2ab5e98b41bfc186c3bb7d60791e7b9efd0aea186b731eecc3dd2",
-    supplemental: "020669f0c44a959a0d95798eb3cc52925513e7e549496368017e0827a398aaef",
-    receipt_schema: "airk.private.cuda-large-bounded-hybrid-profile/1",
-    fp16_t32: false,
-    equivalent_predecessor: false,
-};
-
-const BATCH_VIEW: Experiment = Experiment {
-    graph: "d4ccefff117a11c68b92c3f9c08b145a4fbb5a470114af5a23107c73a26bc431",
-    receipt_schema: "airk.private.cuda-large-batch-view-bounded-hybrid-profile/1",
-    equivalent_predecessor: true,
-    ..LARGE
 };
 
 #[derive(Deserialize)]
@@ -150,84 +124,6 @@ fn validate_reference_producer(
     Ok(pin)
 }
 
-struct ReferenceLineage {
-    request: ResourceFilePin,
-    equivalence: ResourceFilePin,
-    native_input: ResourceFilePin,
-    profile_pin: ResourceFilePin,
-    profile: Profile,
-}
-
-fn equivalent_predecessor(current: &Profile, input: &ResourceRunInput) -> Result<ReferenceLineage> {
-    const ORIGINAL_GRAPH: &str = "f8ba5d3ea8a4269739ec5e517e61e4ec1f2f94560ea60014a4f5a9476c32fd94";
-    const CORRECTED_GRAPH: &str =
-        "5c9a26693eec8522bbfb4d5c4445fa0b60684449a5ea2e1098ec71cca96405b1";
-    let request = exact_pin(
-        "AIRK_CUDA_HYBRID_REFERENCE_REQUEST",
-        "9a7daee2c118030c979852efc6780f011356af320e0c3fe0a6d1d9a2a0ab33b0",
-    )?;
-    let equivalence = exact_pin(
-        "AIRK_CUDA_HYBRID_REFERENCE_EQUIVALENCE",
-        "404a486500b1c3955cc5616554ccf2f7c55cd4855981d4477265688db41278d1",
-    )?;
-    let proof: Value = serde_json::from_slice(&pinned(&equivalence, 4096)?)?;
-    let predecessor: Request = serde_json::from_slice(&pinned(&request, 1 << 20)?)?;
-    let Request::Probe { gpu_input, .. } = predecessor else {
-        anyhow::bail!("the retained original Large reference Probe is required");
-    };
-    let (old_input, original, _, _) = inputs_from(&gpu_input)?;
-    ensure!(
-        proof["schema"] == "airk.private.large-fp32-batch-view-reference-lineage/1"
-            && proof["predecessor_graph"] == ORIGINAL_GRAPH
-            && proof["candidate_graph"] == CORRECTED_GRAPH
-            && proof["comparison_basis"] == "equivalent_predecessor"
-            && proof["exact_inverse"] == true
-            && proof["operand_order_unchanged"] == true
-            && proof["verified_mask_adds"] == 36
-            && proof["native_scoring_dispatched"] == false
-            && original.manifest.to_string()
-                == "eb467966e528b3b34f0c95d26bdcb0e3f404267b5dcaa673cc6c56755b85905b"
-            && current.manifest.to_string()
-                == "7e4481caaf7034a70779702edad73a0eb08321418d1b785a4b7f4f891522bdac"
-            && original.model == current.model
-            && original.compiler == current.compiler
-            && original.abi == current.abi
-            && old_input.policy_digest == input.policy_digest,
-        "batch-view input, original reference identity or exact inverse differs"
-    );
-    let preserved = |profile: &Profile| {
-        profile
-            .assets
-            .iter()
-            .filter(|asset| !matches!(asset.role, AssetRole::Model | AssetRole::Calibration))
-            .cloned()
-            .collect::<Vec<_>>()
-    };
-    ensure!(
-        preserved(&original) == preserved(current)
-            && original
-                .device_execution
-                .as_ref()
-                .map(|d| d.graph.to_string())
-                .as_deref()
-                == Some(ORIGINAL_GRAPH)
-            && current
-                .device_execution
-                .as_ref()
-                .map(|d| d.graph.to_string())
-                .as_deref()
-                == Some(CORRECTED_GRAPH),
-        "batch-view comparison requires unchanged external weights, tokenizer and other assets"
-    );
-    Ok(ReferenceLineage {
-        request,
-        equivalence,
-        native_input: gpu_input,
-        profile_pin: old_input.profile,
-        profile: original,
-    })
-}
-
 pub(super) struct ProfileReferences {
     pub(super) rows: Vec<NumericCase>,
     pub(super) provenance: Value,
@@ -253,42 +149,22 @@ fn fp32_references(
         "supplemental Context references use a different native scoring identity"
     );
     numeric_rows(&supplementary.rows, &[(32, 8), (1024, 8)], false)?;
-    let lineage = if experiment.equivalent_predecessor {
-        Some(equivalent_predecessor(profile, input)?)
-    } else {
-        None
-    };
-    let reference_profile = lineage.as_ref().map_or(profile, |proof| &proof.profile);
-    let retained_producer = validate_reference_producer(&retained, reference_profile)?;
-    let supplementary_producer = validate_reference_producer(&supplementary, reference_profile)?;
+    let retained_producer = validate_reference_producer(&retained, profile)?;
+    let supplementary_producer = validate_reference_producer(&supplementary, profile)?;
     let rows = vec![
         supplementary.rows[0].clone(),
         retained.rows[1].clone(),
         supplementary.rows[1].clone(),
         retained.rows[2].clone(),
     ];
-    let mut provenance = json!({"retained_fixture": retained_pin, "supplemental_fixture": supplementary_pin,
+    let provenance = json!({"retained_fixture": retained_pin, "supplemental_fixture": supplementary_pin,
         "retained_producer": retained_producer, "supplemental_producer": supplementary_producer});
-    let mut pins = vec![
+    let pins = vec![
         (retained_pin, PROOF_BYTES),
         (supplementary_pin, PROOF_BYTES),
         (retained_producer, PROOF_BYTES),
         (supplementary_producer, PROOF_BYTES),
     ];
-    if let Some(lineage) = lineage {
-        provenance["reference_basis"] = json!("equivalent_predecessor");
-        provenance["reference_request"] = json!(lineage.request);
-        provenance["reference_equivalence"] = json!(lineage.equivalence);
-        pins.extend(
-            [
-                lineage.request,
-                lineage.equivalence,
-                lineage.native_input,
-                lineage.profile_pin,
-            ]
-            .map(|pin| (pin, 1 << 20)),
-        );
-    }
     Ok(ProfileReferences {
         rows,
         provenance,
@@ -303,7 +179,6 @@ fn score_rows(
     receipt: &mut Value,
     file: &mut File,
     deadline: Instant,
-    experiment: &Experiment,
 ) -> Result<()> {
     for (index, row) in rows.iter().enumerate() {
         let [same, original] = reference_arrays(row)?;
@@ -311,25 +186,9 @@ fn score_rows(
             operation::Kind::Numeric,
             index + 1,
             Some(row.input.input_digest),
-            || {
-                if experiment.projection_capture {
-                    scorer.score_large_projection_taps(&row.input, deadline).map(|(s,t)| (s,Some(t)))
-                } else {
-                    scorer.score_with_deadline(&row.input, deadline).map(|s| (s,None))
-                }
-            },
+            || scorer.score_with_deadline(&row.input, deadline),
         )?;
-        let (actual, taps) = timed.value?;
-        if let Some(taps) = taps {
-            if matches!(experiment.receipt_schema, ATTENTION17_SCHEMA | DENSE17_SCHEMA) {
-                receipt["layer17_taps"] = large_block17_words(experiment.receipt_schema,taps)?;
-            } else if experiment.graph == "0d00e2fabdb5fe54474041fb1f2787502349b78ce40436b955cd4433633a4462" {
-                receipt["hidden_taps"] = large_hidden_words(taps)?;
-            } else {
-                receipt["layer0_taps"] = large_projection_words(taps)?;
-            }
-            receipt["layer0_final_graph"] = json!(scorer.graph_metadata());
-        }
+        let actual = timed.value?;
         let (same_raw, same_mass, same_argmax) = comparison(&actual, same)?;
         let (original_raw, original_mass, original_argmax) = comparison(&actual, original)?;
         let mut observed = json!({
@@ -338,35 +197,18 @@ fn score_rows(
             "original_fp32_raw_error": original_raw, "original_fp32_mass_error": original_mass,
             "argmax_matches": same_argmax && original_argmax,
         });
-        let (raw, mass) = if experiment.fp16_t32 {
-            observed["development_screen_pass"] = json!(
-                same_raw <= 0.07 && same_mass <= 0.05 && original_mass <= 0.05 && same_argmax
-            );
-            observed["matching_fp16_argmax_matches"] = json!(same_argmax);
-            observed["original_fp32_argmax_matches"] = json!(original_argmax);
-            observed["matching_reference_0_001"] = json!(same_raw <= 0.001);
-            ("matching_fp16_raw_error", "matching_fp16_mass_error")
-        } else if experiment.equivalent_predecessor {
-            (
-                "equivalent_predecessor_raw_error",
-                "equivalent_predecessor_mass_error",
-            )
-        } else {
-            ("same_artifact_raw_error", "same_artifact_mass_error")
-        };
-        observed[raw] = json!(same_raw);
-        observed[mass] = json!(same_mass);
+        observed["same_artifact_raw_error"] = json!(same_raw);
+        observed["same_artifact_mass_error"] = json!(same_mass);
         receipt["rows"].as_array_mut().unwrap().push(observed);
         flush_graph_diagnostic(file, receipt)?;
         ensure!(
             timed.within_deadline
-                && (experiment.fp16_t32
-                    || (same_raw <= 0.001
-                        && original_raw <= 0.001
-                        && same_mass <= 0.05
-                        && original_mass <= 0.05
-                        && same_argmax
-                        && original_argmax)),
+                && same_raw <= 0.001
+                && original_raw <= 0.001
+                && same_mass <= 0.05
+                && original_mass <= 0.05
+                && same_argmax
+                && original_argmax,
             "Context scientific forward or original deadline refused at T{}",
             row.input.input_ids.len()
         );
@@ -378,163 +220,6 @@ fn score_rows(
 #[ignore = "owned Windows CUDA job, reviewed complete graph, and exact independent Compact references"]
 fn cuda_compact_fp32_bounded_hybrid_profile() -> Result<()> {
     profile_context(COMPACT)
-}
-
-#[test]
-#[ignore = "owned Windows 48 GiB job, reviewed Large graph, and exact independent references"]
-fn cuda_large_fp32_bounded_hybrid_profile() -> Result<()> {
-    profile_context(LARGE)
-}
-
-#[test]
-#[ignore = "owned Windows 48 GiB job, reviewed corrected graph and independent predecessor references"]
-fn cuda_large_fp32_batch_view_bounded_hybrid_profile() -> Result<()> {
-    profile_context(BATCH_VIEW)
-}
-
-#[test]
-#[ignore = "owned Windows Large FP16 T32 engineering comparison against independent CPU"]
-fn cuda_large_fp16_scientific_t32() -> Result<()> {
-    profile_context(Experiment {
-        fp16_t32: true,
-        graph: "fff6dbe2f0c2fac4b9ba215da7d5029421d2706ee48c01c2485b9f157ee15ca6",
-        receipt_schema: "airk.private.large-fp16-scientific-t32/1",
-        ..LARGE
-    })
-}
-
-const BODY_GRAPH_OBSERVATION: &str = "96641f4cf15ddd6cf1209402eae4ed366b9f77f00bfc28f1c894e67143ca4a16";
-
-#[test]
-#[ignore = "owned Windows Large all-body FP32 accumulation against original Flash T32 references"]
-fn cuda_large_body_fp32_scientific_t32() -> Result<()> {
-    profile_context(Experiment {
-        fp16_t32: true,
-        graph: BODY_GRAPH_OBSERVATION,
-        receipt_schema: "airk.private.large-body252-fp32-scientific-t32/1",
-        ..LARGE
-    })
-}
-
-#[test]
-#[ignore = "owned original Windows Large protected Q/K/V FP32 T32 comparison"]
-fn cuda_large_qkv_fp32_scientific_t32() -> Result<()> {
-    profile_context(Experiment {
-        fp16_t32: true,
-        graph: "0d00e2fabdb5fe54474041fb1f2787502349b78ce40436b955cd4433633a4462",
-        receipt_schema: "airk.private.large-qkv-fp32-scientific-t32/1",
-        ..LARGE
-    })
-}
-
-#[test]
-#[ignore = "owned Windows Large protected hidden/readout operand capture"]
-fn cuda_large_qkv_hidden_t32() -> Result<()> {
-    profile_context(Experiment {
-        fp16_t32: true, projection_capture: true, graph: "0d00e2fabdb5fe54474041fb1f2787502349b78ce40436b955cd4433633a4462",
-        receipt_schema: "airk.private.large-qkv-hidden-t32/1",
-        ..LARGE
-    })
-}
-
-const ATTENTION17_SCHEMA: &str = "airk.private.large-qkv-attention17-t32/1";
-const DENSE17_SCHEMA: &str = "airk.private.large-qkv-dense17-t32/1";
-
-fn large_block17_words(schema: &str, words: Vec<Vec<u16>>) -> Result<Value> {
-    let attention = [("q",4096,32),("k",1024,32),("v",1024,32),("attention",4096,32)];
-    let dense = [("o_input",4096,1),("o_output",2560,1),("down_input",9728,1),("down_output",2560,1)];
-    let roster = match schema {
-        ATTENTION17_SCHEMA => attention,
-        DENSE17_SCHEMA => dense,
-        _ => anyhow::bail!("unknown Large layer17 operand set"),
-    };
-    ensure!(words.len() == roster.len(), "four Large layer17 operands required");
-    let mut result = Vec::new();
-    for ((name,width,tokens), bits) in roster.into_iter().zip(words) {
-        ensure!(bits.len() == width*tokens && bits.iter().all(|v| v & 0x7c00 != 0x7c00),
-                "Large layer17 operand size or binary16 finiteness differs");
-        result.push(json!({"name":name,"width":width,"tokens":tokens,"bits":bits}));
-    }
-    Ok(json!(result))
-}
-
-#[test]
-fn large_layer17_roster_refuses_truncated_key_history() {
-    assert!(large_block17_words(ATTENTION17_SCHEMA,
-        vec![vec![0;32*4096],vec![0;1024],vec![0;32*1024],vec![0;32*4096]]).is_err());
-}
-
-#[test]
-#[ignore = "owned Windows Large protected Q/K/V layer17 Flash operands"]
-fn cuda_large_qkv_attention17_t32() -> Result<()> {
-    profile_context(Experiment { fp16_t32: true, projection_capture: true,
-        graph: "0d00e2fabdb5fe54474041fb1f2787502349b78ce40436b955cd4433633a4462",receipt_schema:ATTENTION17_SCHEMA,..LARGE })
-}
-
-#[test]
-#[ignore = "owned Windows Large protected Q/K/V layer17 dense operands"]
-fn cuda_large_qkv_dense17_t32() -> Result<()> {
-    profile_context(Experiment { fp16_t32: true, projection_capture: true,
-        graph: "0d00e2fabdb5fe54474041fb1f2787502349b78ce40436b955cd4433633a4462",receipt_schema:DENSE17_SCHEMA,..LARGE })
-}
-
-fn large_hidden_words(words: Vec<Vec<u16>>) -> Result<Value> {
-    let names = ["/scorer/layers.0/input_layernorm/Mul_1_output_0",
-        "/scorer/layers.17/input_layernorm/Mul_1_output_0", "/scorer/layers.35/Add_1_output_0",
-        "/scorer/norm/Mul_1_output_0"];
-    ensure!(words.len() == names.len(), "four original FP32 decision rows required");
-    let mut result = Vec::new();
-    for (name, bits) in names.into_iter().zip(words) {
-        ensure!(bits.len() == 5120 && bits.as_chunks::<2>().0.iter().all(|w|
-            f32::from_bits(u32::from(w[0]) | (u32::from(w[1]) << 16)).is_finite()),
-            "original Large hidden row requires 2560 finite FP32 words");
-        result.push(json!({"name":name, "token":31, "width":2560, "bits":bits}));
-    }
-    Ok(json!(result))
-}
-
-#[test]
-fn large_hidden_rows_require_finite_fp32_pairs() {
-    let mut words = vec![vec![0; 5120]; 4];
-    assert!(large_hidden_words(words.clone()).is_ok());
-    words[2][1] = 0x7fc0;
-    assert!(large_hidden_words(words).is_err());
-}
-
-fn large_projection_words(words: Vec<Vec<u16>>) -> Result<Value> {
-    const ROSTER: [(&str, usize); 4] = [
-        ("/airk_g5/weight//scorer/layers.0/self_attn/k_proj/MatMul/input16", 2560),
-        ("/airk_g5/weight//scorer/layers.0/self_attn/k_proj/MatMul/output16", 1024),
-        ("/airk_g5/weight//scorer/layers.0/self_attn/v_proj/MatMul/output16", 1024),
-        ("/airk_g5/weight//scorer/layers.0/self_attn/q_proj/MatMul/output16", 4096),
-    ];
-    ensure!(words.len() == ROSTER.len(), "four original Large projection tensors required");
-    let mut taps = Vec::with_capacity(ROSTER.len());
-    for ((name, width), bits) in ROSTER.into_iter().zip(words) {
-        ensure!(bits.len() == 32 * width && bits.iter().all(|word| *word & 0x7c00 != 0x7c00),
-            "original finite Large T32 tap dimensions differ: {name}");
-        taps.push(json!({"name":name,"width":width,"bits":bits}));
-    }
-    Ok(json!(taps))
-}
-
-#[test]
-fn large_projection_taps_reject_malformed_native_words() {
-    assert!(large_projection_words(vec![]).is_err());
-    let mut rows: Vec<_> = [2560,1024,1024,4096].map(|width| vec![0; 32*width]).into();
-    rows[3][31*4096] = 0x7e00;
-    assert!(large_projection_words(rows).is_err());
-}
-
-#[test]
-#[ignore = "owned Windows original Large T32 projection operands and live CUDA edges"]
-fn cuda_large_fp16_projection_taps_t32() -> Result<()> {
-    profile_context(Experiment {
-        projection_capture: true, fp16_t32: true,
-        graph: "fff6dbe2f0c2fac4b9ba215da7d5029421d2706ee48c01c2485b9f157ee15ca6",
-        receipt_schema: "airk.private.large-fp16-layer0-projection-t32/1",
-        ..LARGE
-    })
 }
 
 fn profile_context(experiment: Experiment) -> Result<()> {
@@ -579,7 +264,7 @@ fn profile_context(experiment: Experiment) -> Result<()> {
             && profile.device_execution.is_some(),
         "frozen Context GPU profile required"
     );
-    let request_capacity = profile_probe_bounds(
+    profile_probe_bounds(
         &bounds,
         cold_bytes,
         warm_bytes,
@@ -587,17 +272,8 @@ fn profile_context(experiment: Experiment) -> Result<()> {
         job_limit_bytes,
         &profile,
     )?;
-    let (capacity_pin, capacity_plan) = if experiment.model == ModelChoice::ContextQwenCompact {
-        let pin = exact_pin("AIRK_CUDA_HYBRID_CAPACITY", CAPACITY_SHA)?;
-        let (_, plan) = capacity(&pinned(&pin, 4096)?, bounds.device_limit_bytes)?;
-        (Some(pin), plan)
-    } else {
-        ensure!(
-            (cold_bytes, warm_bytes, headroom_bytes) == (40 << 30, 8 << 30, 4 << 30),
-            "Large profiling requires the reviewed load-only device reservation"
-        );
-        (None, request_capacity)
-    };
+    let capacity_pin = exact_pin("AIRK_CUDA_HYBRID_CAPACITY", CAPACITY_SHA)?;
+    let (_, capacity_plan) = capacity(&pinned(&capacity_pin, 4096)?, bounds.device_limit_bytes)?;
     let graph_pin = exact_pin("AIRK_CUDA_HYBRID_GRAPH", experiment.graph)?;
     let graph_bytes = pinned(&graph_pin, PROOF_BYTES)?;
     let graph: Value = serde_json::from_slice(&graph_bytes)?;
@@ -607,11 +283,7 @@ fn profile_context(experiment: Experiment) -> Result<()> {
             && graph["runtime_manifest"] == json!(runtime_manifest),
         "reviewed graph did not consume the exact current request, input and runtime"
     );
-    let references = if experiment.fp16_t32 {
-        super::fp16_large::t32_references(&profile, &input)?
-    } else {
-        fp32_references(&experiment, &profile, &input)?
-    };
+    let references = fp32_references(&experiment, &profile, &input)?;
     for row in &references.rows {
         reference_arrays(row)?;
     }
@@ -628,23 +300,11 @@ fn profile_context(experiment: Experiment) -> Result<()> {
     );
     pinned(&runtime_manifest, 128 << 10)?;
     let (root, manifest) = airk_host::gpu_runtime::installed_paths()?;
-    let installed_runtime = if experiment.projection_capture {
-        let expected = out.parent().and_then(Path::parent).context("private campaign directory missing")?
-            .join("windows-cu15-scientific-provider-stage-r1/airk-cuda-runtime.json");
-        ensure!(manifest == expected, "original Large capture requires its guarded D provider stage");
-        let installed = ResourceFilePin { path: manifest.to_string_lossy().into_owned(), sha256: runtime_manifest.sha256 };
-        ensure!(pinned(&installed, 128 << 10)? == pinned(&runtime_manifest, 128 << 10)?,
-            "installed runtime differs from the original Large CUDA provider");
-        Some(installed)
-    } else {
-        ensure!(manifest.as_path() == Path::new(&runtime_manifest.path), "runtime locator pin differs");
-        None
-    };
-    let actual_job = if matches!(experiment.graph, "0d00e2fabdb5fe54474041fb1f2787502349b78ce40436b955cd4433633a4462" | BODY_GRAPH_OBSERVATION) {
-        job_limits(22 << 30, 22 << 30)?
-    } else {
-        job_limits(bounds.host_limit_bytes, job_limit_bytes)?
-    };
+    ensure!(
+        manifest.as_path() == Path::new(&runtime_manifest.path),
+        "runtime locator pin differs"
+    );
+    let actual_job = job_limits(bounds.host_limit_bytes, job_limit_bytes)?;
     let mut resources = airk_kernel::service_resources::Resources::detect(ResourceConfiguration {
         preset: ResourcePreset::Throughput,
         ..ResourceConfiguration::default()
@@ -685,9 +345,6 @@ fn profile_context(experiment: Experiment) -> Result<()> {
         "rows": [], "session_teardown_observed": false, "measured_peak_device_bytes": null,
         "measured_transfer_bytes": null,
     });
-    if let Some(pin) = &installed_runtime {
-        receipt["installed_runtime_manifest"] = json!(pin);
-    }
     receipt.as_object_mut().unwrap().extend(
         references
             .provenance
@@ -741,18 +398,13 @@ fn profile_context(experiment: Experiment) -> Result<()> {
                 .execution_profile(profile.manifest)?
                 .bind_cuda_probe(device.clone(), capacity_plan, deadline)?;
             let loaded = operations.observe(operation::Kind::Load, 0, None, || {
-                let open = if experiment.model == ModelChoice::ContextQwenCompact {
-                    Scorer::open_compact_bounded_hybrid_profiled
-                } else if experiment.receipt_schema == ATTENTION17_SCHEMA {
-                    Scorer::open_large_attention17_taps
-                } else if experiment.receipt_schema == DENSE17_SCHEMA {
-                    Scorer::open_large_dense17_taps
-                } else if experiment.projection_capture {
-                    Scorer::open_large_fp16_projection_taps
-                } else {
-                    Scorer::open_large_bounded_hybrid_profiled
-                };
-                open(execution, files, &prefix, &graph_bytes, graph_pin.sha256)
+                Scorer::open_compact_bounded_hybrid_profiled(
+                    execution,
+                    files,
+                    &prefix,
+                    &graph_bytes,
+                    graph_pin.sha256,
+                )
             })?;
             receipt["load_us"] = json!(loaded.elapsed_us);
             let mut scorer = loaded.value?;
@@ -760,19 +412,13 @@ fn profile_context(experiment: Experiment) -> Result<()> {
                 loaded.within_deadline,
                 "original Context session load expiry exceeded"
             );
-            let policy_identity = match &capacity_pin {
-                Some(pin) => airk_core::identity::framed_digest(
-                    b"airk.private.compact-cuda-bounded-hybrid-capacity/2",
-                    &[scorer.policy_identity().as_bytes(), pin.sha256.as_bytes()],
-                ),
-                None => airk_core::identity::framed_digest(
-                    b"airk.private.large-cuda-bounded-hybrid-capacity/1",
-                    &[
-                        scorer.policy_identity().as_bytes(),
-                        request_pin.sha256.as_bytes(),
-                    ],
-                ),
-            };
+            let policy_identity = airk_core::identity::framed_digest(
+                b"airk.private.compact-cuda-bounded-hybrid-capacity/2",
+                &[
+                    scorer.policy_identity().as_bytes(),
+                    capacity_pin.sha256.as_bytes(),
+                ],
+            );
             receipt["policy_identity"] = json!(policy_identity);
             receipt["adapter_loaded"] = json!(device.observation(deadline)?);
             flush_graph_diagnostic(&mut file, &receipt)?;
@@ -783,7 +429,6 @@ fn profile_context(experiment: Experiment) -> Result<()> {
                 &mut receipt,
                 &mut file,
                 deadline,
-                &experiment,
             )?;
             scorer.synchronize(deadline)?;
             ensure!(
@@ -807,19 +452,11 @@ fn profile_context(experiment: Experiment) -> Result<()> {
             receipt["runtime_profile"] = json!({
                 "path": path, "sha256": sha(&bytes), "bytes": bytes.len(),
             });
-            receipt["profiled_runs"] = if experiment.fp16_t32 {
-                json!([super::hybrid_profile_trace::large_fp16_t32_profiled_run(
-                    &bytes,
-                    &scorer.graph_metadata().rows,
-                    experiment.graph
-                )?])
-            } else {
-                json!(super::hybrid_profile_trace::profiled_runs(
-                    &bytes,
-                    &scorer.graph_metadata().rows,
-                    &WIDTHS
-                )?)
-            };
+            receipt["profiled_runs"] = json!(super::hybrid_profile_trace::profiled_runs(
+                &bytes,
+                &scorer.graph_metadata().rows,
+                &WIDTHS
+            )?);
             receipt["adapter_after"] = json!(device.observation(deadline)?);
             drop(scorer);
             device.synchronize(deadline)?;
@@ -839,12 +476,7 @@ fn profile_context(experiment: Experiment) -> Result<()> {
             ] {
                 pinned(pin, max)?;
             }
-            if let Some(pin) = &capacity_pin {
-                pinned(pin, 4096)?;
-            }
-            if let Some(pin) = &installed_runtime {
-                pinned(pin, 128 << 10)?;
-            }
+            pinned(&capacity_pin, 4096)?;
             for (pin, max) in &references.pins {
                 pinned(pin, *max)?;
             }
@@ -938,10 +570,4 @@ mod resource20;
 #[ignore = "owned exclusive Windows CUDA Job and original monotonic resource envelope required"]
 fn cuda_compact_fp32_bounded_hybrid_resource20() -> Result<()> {
     resource20::run(COMPACT)
-}
-
-#[test]
-#[ignore = "requires the owned Windows CUDA Large Resource20 launcher"]
-fn cuda_large_fp32_batch_view_bounded_hybrid_resource20() -> Result<()> {
-    resource20::run(BATCH_VIEW)
 }

@@ -88,12 +88,6 @@ fn software_v2_compact_attention_profiled_8192_diagnostic() -> Result<()> {
     attention_profiled_diagnostic(ModelChoice::ContextQwenCompact)
 }
 
-#[test]
-#[ignore = "explicit new Large graph/current input/source pins and exclusive native window; ONE diagnostic forward"]
-fn software_v2_large_attention_profiled_8192_diagnostic() -> Result<()> {
-    attention_profiled_diagnostic(ModelChoice::ContextQwenLarge)
-}
-
 fn selected_diagnostic_profile(
     model: ModelChoice,
     max_tokens: usize,
@@ -122,19 +116,7 @@ use airk_retrieval::arbiter::runtime::LARGE_DENSE_DIAGNOSTIC_PROFILE_ID as DENSE
 fn diagnostic_attention_identity(
     model: ModelChoice,
     profile_id: &str,
-    dense: bool,
 ) -> Result<(&'static str, &'static str, &'static str)> {
-    if dense {
-        ensure!(
-            model == ModelChoice::ContextQwenLarge && profile_id == DENSE_PROFILE_ID,
-            "source-bound Large explicit-mask dense profile required; flash authority cannot transfer"
-        );
-        return Ok((
-            "large-dense",
-            "large_dense_attention_diagnostic",
-            "large-fp32-explicit-mask-dense-profiled/1",
-        ));
-    }
     ensure!(
         profile_id != DENSE_PROFILE_ID,
         "dense profile cannot be relabeled as a flash diagnostic"
@@ -145,24 +127,11 @@ fn diagnostic_attention_identity(
             "compact_attention_diagnostic",
             "compact-fp32-gqa-profiled/2",
         )),
-        ModelChoice::ContextQwenLarge => Ok((
-            "large",
-            "large_attention_diagnostic",
-            "large-fp32-gqa-profiled/2",
-        )),
         _ => anyhow::bail!("selected Context diagnostic required"),
     }
 }
-#[test]
-#[ignore = "explicit new Large DENSE graph/current source/proof pins and exclusive40GiB/120s native window; ONE full8192/N8 diagnostic"]
-fn software_v2_large_dense_attention_profiled_8192_diagnostic() -> Result<()> {
-    attention_profiled_diagnostic_with_mode(ModelChoice::ContextQwenLarge, true)
-}
 
 fn attention_profiled_diagnostic(expected_model: ModelChoice) -> Result<()> {
-    attention_profiled_diagnostic_with_mode(expected_model, false)
-}
-fn attention_profiled_diagnostic_with_mode(expected_model: ModelChoice, dense: bool) -> Result<()> {
     let (input, profile, files, input_hash) = inputs()?;
     let selected = selected_diagnostic_profile(
         profile.model,
@@ -172,7 +141,7 @@ fn attention_profiled_diagnostic_with_mode(expected_model: ModelChoice, dense: b
         expected_model,
     )?;
     let (label, kind, measurement) =
-        diagnostic_attention_identity(expected_model, &profile.profile_id, dense)?;
+        diagnostic_attention_identity(expected_model, &profile.profile_id)?;
     ensure!(
         std::env::var("ORT_GQA_DISABLE_FLASH_ATTENTION").as_deref() == Ok("0"),
         "explicit frozen native GQA flash policy required"
@@ -218,9 +187,6 @@ fn attention_profiled_diagnostic_with_mode(expected_model: ModelChoice, dense: b
         "optimized_save":{"enabled":false,"scope":"ordinary production initializer retention; profiling events only; no full-model optimized snapshot"},
         "operation_journal":output.with_extension("operations.jsonl"),"rows":[],
         "reference_scope":"original-publisher numeric diagnostic only; old same-artifact custody is NOT new-graph proof"});
-    if dense {
-        receipt["attention_mode"] = json!("explicit_mask_dense");
-    }
     flush(&mut file, &receipt)?;
     let mut operations = operation::Journal::create(
         &output,
@@ -298,7 +264,6 @@ fn tiny_profile_for_model(model: ModelChoice, tokens: usize) -> Result<()> {
     let parent = output.parent().context("synthetic output parent")?;
     let label = match model {
         ModelChoice::ContextQwenCompact => "synthetic-gqa",
-        ModelChoice::ContextQwenLarge => "synthetic-large-gqa",
         _ => anyhow::bail!("selected Context synthetic diagnostic required"),
     };
     let prefix = parent.join(format!("{label}-{tokens}"));
@@ -343,152 +308,13 @@ fn software_v2_synthetic_gqa_allocation_t8192() -> Result<()> {
 }
 
 #[test]
-#[ignore = "explicit Large synthetic graph/pins/output and actual owned120s CPU16 process required; no model weights"]
-fn software_v2_synthetic_large_gqa_allocation_t17() -> Result<()> {
-    tiny_profile_for_model(ModelChoice::ContextQwenLarge, 17)
-}
-#[test]
-#[ignore = "explicit Large synthetic graph/pins/output and actual owned120s CPU16 process required; no model weights"]
-fn software_v2_synthetic_large_gqa_allocation_t8192() -> Result<()> {
-    tiny_profile_for_model(ModelChoice::ContextQwenLarge, 8192)
-}
-
-#[test]
-fn selected_large_diagnostic_refuses_compact_shape_and_resource_substitution() -> Result<()> {
-    let large = json!({"dur":1,"args":{"op_name":"GroupQueryAttention","provider":"CPUExecutionProvider",
-        "node_index":"35","output_size":"417792",
-        "output_type_shape":[{"float":[1,17,4096]},{"float":[1,8,17,128]},{"float":[1,8,17,128]}]}});
-    let compact = json!({"dur":1,"args":{"op_name":"GroupQueryAttention","provider":"CPUExecutionProvider",
-        "node_index":"27","output_size":"278528",
-        "output_type_shape":[{"float":[1,17,2048]},{"float":[1,8,17,128]},{"float":[1,8,17,128]}]}});
-    allocated_gqa_profile_for_model(
-        &serde_json::to_vec(&vec![large.clone()])?,
-        17,
-        1,
-        ModelChoice::ContextQwenLarge,
-    )?;
-    assert!(
-        allocated_gqa_profile_for_model(
-            &serde_json::to_vec(&vec![compact])?,
-            17,
-            1,
-            ModelChoice::ContextQwenLarge
-        )
-        .is_err()
-    );
-    assert!(allocated_gqa_profile(&serde_json::to_vec(&vec![large.clone()])?, 17, 1).is_err());
-    let mut layers = Vec::new();
-    for index in 0..36 {
-        let mut event = large.clone();
-        event["args"]["node_index"] = json!(index.to_string());
-        layers.push(event);
-    }
-    allocated_gqa_profile_for_model(
-        &serde_json::to_vec(&layers)?,
-        17,
-        36,
-        ModelChoice::ContextQwenLarge,
-    )?;
-    layers.truncate(28);
-    assert!(
-        allocated_gqa_profile_for_model(
-            &serde_json::to_vec(&layers)?,
-            17,
-            36,
-            ModelChoice::ContextQwenLarge
-        )
-        .is_err()
-    );
-    let fit = airk_core::arbiter::CpuFit {
-        minimum_physical_cores: 16,
-        intra_threads: 16,
-        inter_threads: 1,
-        sequential: true,
-        spinning: false,
-    };
-    let selected = selected_diagnostic_profile(
-        ModelChoice::ContextQwenLarge,
-        8192,
-        40u64 << 30,
-        Some(&fit),
-        ModelChoice::ContextQwenLarge,
-    )?;
-    assert_eq!(
-        (
-            selected.query_width,
-            selected.query_heads,
-            selected.kv_heads,
-            selected.head_size,
-            selected.layers
-        ),
-        (4096, 32, 8, 128, 36)
-    );
-    assert!(
-        selected_diagnostic_profile(
-            ModelChoice::ContextQwenCompact,
-            8192,
-            40u64 << 30,
-            Some(&fit),
-            ModelChoice::ContextQwenLarge
-        )
-        .is_err()
-    );
-    for (tokens, memory) in [(2048, 40u64 << 30), (8192, 16u64 << 30)] {
-        assert!(
-            selected_diagnostic_profile(
-                ModelChoice::ContextQwenLarge,
-                tokens,
-                memory,
-                Some(&fit),
-                ModelChoice::ContextQwenLarge
-            )
-            .is_err()
-        );
-    }
-    for changed in [
-        airk_core::arbiter::CpuFit {
-            minimum_physical_cores: 4,
-            intra_threads: 4,
-            ..fit.clone()
-        },
-        airk_core::arbiter::CpuFit {
-            inter_threads: 2,
-            ..fit.clone()
-        },
-        airk_core::arbiter::CpuFit {
-            sequential: false,
-            ..fit.clone()
-        },
-        airk_core::arbiter::CpuFit {
-            spinning: true,
-            ..fit.clone()
-        },
-    ] {
-        assert!(
-            selected_diagnostic_profile(
-                ModelChoice::ContextQwenLarge,
-                8192,
-                40u64 << 30,
-                Some(&changed),
-                ModelChoice::ContextQwenLarge
-            )
-            .is_err()
-        );
-    }
-    assert!(
-        selected_diagnostic_profile(
-            ModelChoice::ContextQwenLarge,
-            8192,
-            40u64 << 30,
-            None,
-            ModelChoice::ContextQwenLarge
-        )
-        .is_err()
-    );
+fn selected_compact_diagnostic_is_exact_and_refuses_focus() -> Result<()> {
     let compact_fit = airk_core::arbiter::CpuFit {
         minimum_physical_cores: 4,
         intra_threads: 4,
-        ..fit
+        inter_threads: 1,
+        sequential: true,
+        spinning: false,
     };
     let compact = selected_diagnostic_profile(
         ModelChoice::ContextQwenCompact,
@@ -513,133 +339,14 @@ fn selected_large_diagnostic_refuses_compact_shape_and_resource_substitution() -
     Ok(())
 }
 
-fn tiny_dense_profile(tokens: usize) -> Result<()> {
-    use airk_retrieval::arbiter::runtime::{SyntheticDenseMask, synthetic_large_dense_gqa_profile};
-    ensure!(
-        matches!(tokens, 17 | 128),
-        "dense tiny control is bounded17/128, never full8192 qualification"
-    );
-    ensure!(
-        std::env::var("ORT_GQA_DISABLE_FLASH_ATTENTION").as_deref() == Ok("0"),
-        "global frozen flash0 policy remains unchanged; graph causal0 selects dense attention"
-    );
-    let graph_pin = ResourceFilePin {
-        path: std::env::var("AIRK_GQA_TINY_GRAPH")?,
-        sha256: serde_json::from_value(json!(std::env::var("AIRK_GQA_TINY_GRAPH_SHA256")?))?,
-    };
-    let graph = pinned(&graph_pin, 65536)?;
-    let output = PathBuf::from(std::env::var("AIRK_GQA_TINY_OUTPUT")?);
-    let parent = output.parent().context("dense tiny output parent")?;
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&output)?;
-    let mut receipt = json!({"kind":"large_dense_synthetic_attention_diagnostic","complete":false,
-        "attention_mode":"explicit_mask_dense","tokens":tokens,"model_weights_loaded":false,
-        "qualification_granted":false,"controls":[],"graph":graph_pin,
-        "scope":"three actual bounded CPU dense-kernel controls only; no full8192, model or task qualification"});
-    flush(&mut file, &receipt)?;
-    let (_parent, control) = private_control()?;
-    let owner = airk_kernel::inference_owner::NativeInferenceOwner::admit(Arc::new(
-        airk_store::service::ServiceLease::acquire(&control)?,
-    ))?;
-    let result = owner
-        .run(|| -> Result<()> {
-            for (label, mask) in [
-                ("causal-prefix", SyntheticDenseMask::CausalPrefix),
-                ("unmasked-full-mean", SyntheticDenseMask::Unmasked),
-                (
-                    "causal-padding-hole",
-                    SyntheticDenseMask::CausalWithMaskedKeyOne,
-                ),
-            ] {
-                let prefix = parent.join(format!("synthetic-large-dense-gqa-{tokens}-{label}"));
-                let optimized = parent.join(format!(
-                    "synthetic-large-dense-gqa-{tokens}-{label}-optimized.onnx"
-                ));
-                ensure!(
-                    !optimized.exists(),
-                    "fresh synthetic dense optimized graph required"
-                );
-                let actual =
-                    synthetic_large_dense_gqa_profile(&graph, tokens, &prefix, &optimized, mask)?;
-                // Each distinct profiling session contains exactly ONE actual CPU kernel.
-                // A zero-bias control fails a causal1 graph even when the causal-prefix control passes.
-                receipt["controls"]
-                    .as_array_mut()
-                    .context("dense control rows absent")?
-                    .push(actual.clone());
-                flush(&mut file, &receipt)?;
-                let profiling = actual["profiling_path"]
-                    .as_str()
-                    .context("actual dense profile output absent")?;
-                allocated_gqa_profile_for_model(
-                    &std::fs::read(profiling)?,
-                    tokens,
-                    1,
-                    ModelChoice::ContextQwenLarge,
-                )?;
-            }
-            ensure!(
-                pinned(&graph_pin, 65536)? == graph,
-                "dense tiny input graph changed"
-            );
-            Ok(())
-        })
-        .and_then(std::convert::identity);
-    receipt["complete"] = json!(result.is_ok());
-    if let Err(error) = &result {
-        receipt["error"] = json!(format!("{error:#}"));
-    }
-    flush(&mut file, &receipt)?;
-    result
-}
 #[test]
-#[ignore = "explicit dense causal0 tiny graph/pins/output and owned8GiB/120s CPU16 window; no model weights"]
-fn software_v2_synthetic_large_dense_gqa_allocation_t17() -> Result<()> {
-    tiny_dense_profile(17)
-}
-#[test]
-#[ignore = "explicit dense causal0 tiny graph/pins/output and owned8GiB/120s CPU16 window; no model weights"]
-fn software_v2_synthetic_large_dense_gqa_allocation_t128() -> Result<()> {
-    tiny_dense_profile(128)
-}
-
-#[test]
-fn dense_diagnostic_refuses_flash_profile_and_compact_or_historical_identity() -> Result<()> {
-    assert_eq!(
-        DENSE_PROFILE_ID,
-        "private-large-fp32-explicit-mask-dense-diagnostic-v1"
-    );
-    let actual =
-        diagnostic_attention_identity(ModelChoice::ContextQwenLarge, DENSE_PROFILE_ID, true)?;
-    assert_eq!(
-        actual,
-        (
-            "large-dense",
-            "large_dense_attention_diagnostic",
-            "large-fp32-explicit-mask-dense-profiled/1"
-        )
-    );
+fn compact_diagnostic_identity_refuses_the_dense_profile() -> Result<()> {
     assert!(
-        diagnostic_attention_identity(ModelChoice::ContextQwenCompact, DENSE_PROFILE_ID, true)
-            .is_err()
-    );
-    assert!(
-        diagnostic_attention_identity(ModelChoice::ContextQwenLarge, "old-flash-profile", true)
-            .is_err()
-    );
-    assert!(
-        diagnostic_attention_identity(ModelChoice::ContextQwenLarge, DENSE_PROFILE_ID, false)
-            .is_err()
+        diagnostic_attention_identity(ModelChoice::ContextQwenCompact, DENSE_PROFILE_ID).is_err()
     );
     assert_eq!(
-        diagnostic_attention_identity(ModelChoice::ContextQwenCompact, "old-compact", false)?.2,
+        diagnostic_attention_identity(ModelChoice::ContextQwenCompact, "old-compact")?.2,
         "compact-fp32-gqa-profiled/2"
-    );
-    assert_eq!(
-        diagnostic_attention_identity(ModelChoice::ContextQwenLarge, "old-large", false)?.2,
-        "large-fp32-gqa-profiled/2"
     );
     Ok(())
 }

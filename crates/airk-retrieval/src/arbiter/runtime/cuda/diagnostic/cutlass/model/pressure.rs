@@ -74,14 +74,12 @@ fn pre_resume(available: &Availability, tier: u64) -> Result<u64> {
 
 pub(in super::super) enum Model {
     Compact,
-    Large,
 }
 
 impl Model {
     fn namespace(&self) -> &'static str {
         match self {
             Self::Compact => "AIRK_COMPACT",
-            Self::Large => "AIRK_LARGE",
         }
     }
 }

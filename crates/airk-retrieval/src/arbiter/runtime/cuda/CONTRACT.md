@@ -1072,3 +1072,14 @@ measurements; to score loop cards they are re-emitted with the four card
 tasks through `runtime::admit_loop_tasks`, which replaces the CPU
 JointCalibration with a zero-rule loop calibration set. `cuda.rs`,
 `fp16.rs` and `diagnostic.rs` are unchanged by L4.
+
+## Large CUTLASS diagnostics removed (step LH, 23 November 2026)
+
+The Large direct, compensated and GNU CUTLASS diagnostics
+(`diagnostic/cutlass/large.rs`, `large/cal.rs`, `large_routes.rs`), the Large
+pressure namespace and the Large protected Q/K/V graph observation in
+`bounded_hybrid/layer0.rs` are removed with their only callers, the Large
+qualification runners. None of these files is an input of a pinned identity.
+The Large policies inside identity-feeding files (`bounded_hybrid.rs`,
+`runtime.rs`, `cuda.rs`, `fp16.rs`, `diagnostic.rs`, `g5.rs`) leave in the
+one LH identity move, not here (change-log entries 61 and 62).

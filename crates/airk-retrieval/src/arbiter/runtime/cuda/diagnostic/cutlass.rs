@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Test-support-only original-operand Windows CUTLASS attention measurement.
-mod large;
-mod large_routes;
 mod model;
 use super::super::CudaRuntime;
 #[cfg(windows)]

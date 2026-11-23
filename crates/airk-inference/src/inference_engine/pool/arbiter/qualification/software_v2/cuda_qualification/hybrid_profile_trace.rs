@@ -101,33 +101,6 @@ pub(super) fn profiled_runs(
     profiled_runs_for_scope(bytes, graph, widths, CpuControlScope::Fp32)
 }
 
-pub(super) fn large_fp16_t32_profiled_run(
-    bytes: &[u8],
-    graph: &[GraphMetadataRow],
-    placement: &str,
-) -> Result<ProfiledRun> {
-    let expected_nodes = match placement {
-        "fff6dbe2f0c2fac4b9ba215da7d5029421d2706ee48c01c2485b9f157ee15ca6" => 2234,
-        "0d00e2fabdb5fe54474041fb1f2787502349b78ce40436b955cd4433633a4462" => 2486,
-        "96641f4cf15ddd6cf1209402eae4ed366b9f77f00bfc28f1c894e67143ca4a16" => 2882,
-        _ => anyhow::bail!("unreviewed Large T32 execution graph"),
-    };
-    let run = profiled_runs_for_scope(bytes, graph, &[32], CpuControlScope::Fp16)?
-        .pop()
-        .context("Large T32 serial profile missing")?;
-    ensure!(
-        run.node_count == expected_nodes && run.cpu_nodes == 478 && run.cpu_max_tensor_bytes <= 32,
-        "Large FP16 T32 profile exceeds its reviewed final graph or CPU control bounds"
-    );
-    Ok(run)
-}
-
-#[test]
-fn large_body_trace_refuses_unreviewed_placement() {
-    assert!(matches!(large_fp16_t32_profiled_run(&[], &[], "unreviewed"),
-        Err(error) if error.to_string().contains("unreviewed Large T32")));
-}
-
 pub(super) fn compact_fp16_t32_profiled_run(
     bytes: &[u8],
     graph: &[GraphMetadataRow],

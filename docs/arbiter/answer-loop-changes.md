@@ -2677,3 +2677,52 @@ Numbered 30 until 22 November 2026; renumbered because L4's entries take
 - **Binding at this point:** catalog
   `514233c3512271e9dd0bca1075bd20947f70c44612b847b6aef6fc1907031366`,
   source `c7cf9d32afe55ee2f21531ab1dbc0171bb12a1fb10a4cecb78ef223736cc301c`.
+
+### 61. Large-only private consumers removed outside the identity files
+
+- **Step LH, commit 4 (23 November 2026).** Mechanical: the private
+  qualification runners and diagnostics that exist only for Large are
+  removed. No product path, wire value, state or pinned identity changes;
+  none of the edited files is an input of a pinned digest.
+- **Removed.** Inference: `cuda_qualification/fp16_large.rs` (+ `cal.rs`,
+  `compensated.rs`), `batch_view.rs`, the Large final-graph metadata
+  diagnostic, the Large bounded-hybrid profiling, T32, tap and Resource20
+  selectors with their Large-only helpers (`equivalent_predecessor`, the
+  layer17, hidden and projection tap encoders), the Large T32 profile
+  trace, `TimingModel::Large`, the Large attention, dense and synthetic CPU
+  diagnostics in `software_v2/attention_diagnostic.rs`, and the Large arm
+  of the Linux GNU CUTLASS observer. Retrieval:
+  `cuda/diagnostic/cutlass/{large.rs, large/cal.rs, large_routes.rs}`, the
+  Large pressure namespace, `Scorer::diagnose_large_fp32_qkv_graph`, and the
+  `large` arm of `tests/cuda_l5a_diagnostics.rs` `l5a_timing`.
+- **Evidence.** Each entry point removed is an ignored test or selector
+  whose only subject is Large (the user dropped Large, entry 56). Every
+  helper removed then had no caller: the shared runners
+  (`profile_context`, `resource20::run`, `observe_cuda_graph_metadata`,
+  `protected_timing`, `diagnostic_attention_identity`) were folded to the
+  only experiment left (Compact), keeping their Compact bounds, receipts,
+  schemas and checks byte for byte. Clippy `-D warnings` on `airk-inference`
+  and `airk-retrieval`, all targets: default features, all features, and
+  `gpu-cuda,test-support` for `airk-inference`, all passed. The Compact
+  unit assertions of two mixed Large/Compact tests were kept as two
+  Compact-only tests. Nextest: inference 8 of 8 selected passed, retrieval
+  20 of 20 selected passed.
+- **Kept on purpose.** `ModelChoice::ContextQwenLarge` match arms (retained
+  profiles still decode it); the L5C switch test (profile-driven, reproduces
+  its receipt); the `fp16_compact::cal` chronological two-compiler batch
+  (one retained two-model receipt); the service's
+  `actual_large_finalization_and_cached_verification_keep_native_control_and_lease_custody`
+  (it proves asset-store custody with the Large closure as input; it needs
+  a new input once Large leaves the catalog: open item for entry 62); the
+  Large policies and tap cuts inside identity files and the public items
+  that now have no caller (`open_large_*`, `score_large_projection_taps`,
+  `synthetic_large_dense_gqa_profile`, `SyntheticDenseMask`,
+  `LARGE_DENSE_DIAGNOSTIC_PROFILE_ID` and its regeneration users) leave in
+  the identity move.
+- **Not verified here.** `gnu_cutlass.rs` is Linux-only
+  (`target_os = "linux"`, GNU); it is compiled in step LX.
+- **Where.** The two `CONTRACT.md` files of
+  `airk-inference/.../cuda_qualification` and `airk-retrieval/.../cuda`;
+  retirement notes in `scripts/arbiter-fp16-execution/CONTRACT.md`,
+  `scripts/arbiter/evaluation/linux_cuda/FP16_QUALIFICATION.md` and
+  `scripts/cuda-component-execution/README.md`.

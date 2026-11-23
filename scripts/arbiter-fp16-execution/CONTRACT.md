@@ -756,3 +756,12 @@ single four-byte external `weights.bin` in a new checked campaign directory.
 It opens each by filename with the pinned ONNX Runtime CPU provider and verifies
 both expected outputs. The scientific candidate's selected model path and
 sidecar SHA remain bound by its native stage.
+
+## Large selectors retired (step LH, 23 November 2026)
+
+The Rust Large selectors this folder drives (the `fp16_large` runners, the
+Large bounded-hybrid and batch-view selectors, the Large CUTLASS and GNU
+graph observers) were removed when the user dropped the Large Context model.
+The Large scripts here stay as retired history: they reproduce their
+retained receipts only against a build of the source before that removal
+(`docs/arbiter/answer-loop-changes.md`, entry 61).

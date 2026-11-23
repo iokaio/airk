@@ -27,7 +27,7 @@
 //!   L5A_CONTROL_PARENT   existing directory for the private lease root
 //!   L5A_WARM             warm samples per width (default 10), L5A_DEADLINE_S (default 600)
 //! l5a_cutlass        GPU. Raw scientific session timing for the protected graphs.
-//!   L5A_MODEL compact | large, L5A_GATE typed-graph digest, L5A_CAMPAIGN, L5A_OUTPUT,
+//!   L5A_MODEL compact, L5A_GATE typed-graph digest, L5A_CAMPAIGN, L5A_OUTPUT,
 //!   L5A_CONTROL_PARENT, L5A_WARM (default 5), L5A_DEADLINE_S (default 600)
 //! ```
 #![cfg(all(
@@ -738,8 +738,7 @@ fn l5a_cutlass() -> Result<()> {
         };
         match model.as_str() {
             "compact" => n.runtime.time_protected_cutlass_model(&campaign, &gate, deadline, None, measure),
-            "large" => n.runtime.time_large_direct(&campaign, &gate, deadline, None, measure),
-            _ => anyhow::bail!("L5A_MODEL is compact or large"),
+            _ => anyhow::bail!("L5A_MODEL is compact"),
         }
     })();
     receipt["host_final"] = serde_json::to_value(host_memory())?;

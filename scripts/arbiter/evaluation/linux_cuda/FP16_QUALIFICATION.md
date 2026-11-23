@@ -157,3 +157,12 @@ with the original scientific assembly, static-core producer and a fresh
 `--attempt`. The linker rechecks the original image, descriptor and sibling
 CUDA payloads and retains the new executable under its own SHA-256 name.
 The two native graph selectors require independent GNU graph observations.
+
+## Large selectors retired (step LH, 23 November 2026)
+
+The Rust Large selectors this folder drives (the `fp16_large` runners, the
+Large bounded-hybrid and batch-view selectors, the Large CUTLASS and GNU
+graph observers) were removed when the user dropped the Large Context model.
+The Large scripts here stay as retired history: they reproduce their
+retained receipts only against a build of the source before that removal
+(`docs/arbiter/answer-loop-changes.md`, entry 61).

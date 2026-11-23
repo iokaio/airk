@@ -17,7 +17,6 @@ fn verify_numeric(row: &NumericCase, scores: &[f32]) -> Result<()> {
 }
 
 pub(super) fn run(experiment: Experiment) -> Result<()> {
-    let large = experiment.equivalent_predecessor;
     let started = Instant::now();
     let now_ns = airk_process::monotonic::now_ns()?;
     let expires_ns = number("AIRK_CUDA_HYBRID_WHOLE_EXPIRES_NS")?;
@@ -65,7 +64,7 @@ pub(super) fn run(experiment: Experiment) -> Result<()> {
             && input.policy.required_warm_samples == 20,
         "frozen Context GPU and resource profiles required"
     );
-    let request_capacity = profile_probe_bounds(
+    profile_probe_bounds(
         &bounds,
         cold_bytes,
         warm_bytes,
@@ -73,17 +72,8 @@ pub(super) fn run(experiment: Experiment) -> Result<()> {
         job_limit_bytes,
         &profile,
     )?;
-    let (capacity_pin, capacity_plan) = if large {
-        ensure!(
-            (cold_bytes, warm_bytes, headroom_bytes) == (40 << 30, 8 << 30, 4 << 30),
-            "Large resource measurement requires the reviewed device reservation"
-        );
-        (None, request_capacity)
-    } else {
-        let pin = exact_pin("AIRK_CUDA_HYBRID_CAPACITY", CAPACITY_SHA)?;
-        let (_, plan) = capacity(&pinned(&pin, 4096)?, bounds.device_limit_bytes)?;
-        (Some(pin), plan)
-    };
+    let capacity_pin = exact_pin("AIRK_CUDA_HYBRID_CAPACITY", CAPACITY_SHA)?;
+    let (_, capacity_plan) = capacity(&pinned(&capacity_pin, 4096)?, bounds.device_limit_bytes)?;
     let graph_pin = exact_pin("AIRK_CUDA_HYBRID_GRAPH", experiment.graph)?;
     let graph_bytes = pinned(&graph_pin, PROOF_BYTES)?;
     let graph: Value = serde_json::from_slice(&graph_bytes)?;
@@ -96,13 +86,7 @@ pub(super) fn run(experiment: Experiment) -> Result<()> {
     let fixture_pin = exact_pin("AIRK_CUDA_HYBRID_RETAINED", experiment.retained)?;
     let fixture: NumericFixture = serde_json::from_slice(&pinned(&fixture_pin, PROOF_BYTES)?)?;
     numeric_shape(&fixture, &profile, &input.policy)?;
-    let lineage = if large {
-        Some(equivalent_predecessor(&profile, &input)?)
-    } else {
-        None
-    };
-    let reference_profile = lineage.as_ref().map_or(&profile, |proof| &proof.profile);
-    let producer = validate_reference_producer(&fixture, reference_profile)?;
+    let producer = validate_reference_producer(&fixture, &profile)?;
     let row = &fixture.rows[2];
     ensure!(
         row.input.input_ids.len() == TOKEN_LIMIT,
@@ -146,8 +130,7 @@ pub(super) fn run(experiment: Experiment) -> Result<()> {
     let binary = file_hash(&std::env::current_exe()?)?;
     let mut file = OpenOptions::new().write(true).create_new(true).open(&out)?;
     let mut receipt = json!({
-        "schema":if large { "airk.private.cuda-large-batch-view-bounded-hybrid-resource/1" }
-            else { "airk.private.cuda-compact-bounded-hybrid-resource/1" },
+        "schema":"airk.private.cuda-compact-bounded-hybrid-resource/1",
         "complete":false, "qualified":false, "product_admission":false,
         "pid":std::process::id(), "execution_user":execution_user, "default_owner":default_owner,
         "native_binary_sha256":binary, "request":request_pin, "native_input":gpu_input,
@@ -165,11 +148,6 @@ pub(super) fn run(experiment: Experiment) -> Result<()> {
         "original_whole_expires_monotonic_ns":expires_ns, "operation_deadline_ms":120000,
         "session_teardown_observed":false, "measured_peak_device_bytes":null, "measured_transfer_bytes":null,
     });
-    if let Some(proof) = &lineage {
-        receipt["reference_basis"] = json!("equivalent_predecessor");
-        receipt["reference_request"] = json!(proof.request);
-        receipt["reference_equivalence"] = json!(proof.equivalence);
-    }
     flush_graph_diagnostic(&mut file, &receipt)?;
     let mut journal = operation::Journal::create(
         &out,
@@ -200,27 +178,22 @@ pub(super) fn run(experiment: Experiment) -> Result<()> {
         let loaded = journal.observe_resource(operation::Kind::Load, 0, None, expires_ns, |deadline| {
             let execution = catalog.execution_profile(profile.manifest)?
                 .bind_cuda_probe(device.clone(), capacity_plan, deadline)?;
-            let open = if large {
-                Scorer::open_large_bounded_hybrid_resource
-            } else {
-                Scorer::open_compact_bounded_hybrid_resource
-            };
-            open(execution, files, &graph_bytes, graph_pin.sha256, whole_deadline)
+            Scorer::open_compact_bounded_hybrid_resource(
+                execution,
+                files,
+                &graph_bytes,
+                graph_pin.sha256,
+                whole_deadline,
+            )
         })?;
         receipt["load_us"] = json!(loaded.elapsed_us);
         receipt["load_native_call_us"] = json!(loaded.native_call_elapsed_us);
         let mut scorer = loaded.value?;
         ensure!(loaded.within_deadline, "original unprofiled CUDA load expiry exceeded");
-        let policy_identity = match &capacity_pin {
-            Some(pin) => airk_core::identity::framed_digest(
-                b"airk.private.compact-cuda-bounded-hybrid-resource-capacity/1",
-                &[scorer.policy_identity().as_bytes(), pin.sha256.as_bytes()],
-            ),
-            None => airk_core::identity::framed_digest(
-                b"airk.private.large-cuda-batch-view-bounded-hybrid-resource-capacity/1",
-                &[scorer.policy_identity().as_bytes(), request_pin.sha256.as_bytes()],
-            ),
-        };
+        let policy_identity = airk_core::identity::framed_digest(
+            b"airk.private.compact-cuda-bounded-hybrid-resource-capacity/1",
+            &[scorer.policy_identity().as_bytes(), capacity_pin.sha256.as_bytes()],
+        );
         receipt["policy_identity"] = json!(policy_identity);
         let warmed = journal.observe_resource(
             operation::Kind::Warmup, 0, Some(row.input.input_digest), expires_ns,
@@ -278,14 +251,7 @@ pub(super) fn run(experiment: Experiment) -> Result<()> {
         ] {
             pinned(pin,max)?;
         }
-        if let Some(pin) = &capacity_pin {
-            pinned(pin, 4096)?;
-        }
-        if let Some(proof) = &lineage {
-            for pin in [&proof.request, &proof.equivalence, &proof.native_input, &proof.profile_pin] {
-                pinned(pin, 1 << 20)?;
-            }
-        }
+        pinned(&capacity_pin, 4096)?;
         ensure!(Instant::now() < whole_deadline, "original Context resource expiry exceeded during postpins");
         Ok(())
     }).and_then(std::convert::identity);

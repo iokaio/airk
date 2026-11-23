@@ -7,7 +7,6 @@ const SCIENTIFIC: &str = "3c123dc7db0f0bd80ad2d35b68ca8d7bdbbf3380db7dfaad3513fa
 #[derive(Clone, Copy)]
 enum GraphModel {
     Compact,
-    Large,
 }
 
 fn custody(host: u64, backing: u64) -> Result<u64> {
@@ -51,16 +50,9 @@ fn compact_gnu_cutlass_graph() -> Result<()> {
     owned_graph(GraphModel::Compact)
 }
 
-#[test]
-#[ignore = "owned GNU Large direct FP32 protected CUTLASS graph observation; no scoring"]
-fn large_gnu_cutlass_graph() -> Result<()> {
-    owned_graph(GraphModel::Large)
-}
-
 fn owned_graph(model: GraphModel) -> Result<()> {
     let (host, clock) = match model {
         GraphModel::Compact => (32 << 30, "AIRK_COMPACT_CUTLASS_EXPIRES_NS"),
-        GraphModel::Large => (48 << 30, "AIRK_LARGE_CUTLASS_EXPIRES_NS"),
     };
     let expiry: u64 = std::env::var(clock)?.parse()?;
     let remaining = expiry
@@ -99,7 +91,6 @@ fn owned_graph(model: GraphModel) -> Result<()> {
             GraphModel::Compact => {
                 runtime.observe_protected_cutlass_model(campaign, None, deadline)
             }
-            GraphModel::Large => runtime.observe_large_direct_gnu_graph(campaign, deadline),
         }
     })??;
     drop(owner);
@@ -116,7 +107,6 @@ fn owned_graph(model: GraphModel) -> Result<()> {
             );
             &graph
         }
-        GraphModel::Large => &graph["result"],
     };
     ensure!(
         result["score"].is_null() && result["graph"].is_object() && Instant::now() < deadline,

@@ -564,3 +564,17 @@ and compares the actual synchronized CUDA scores with the original FP32 and
 matching-precision publisher scores. Each run retains its original remaining
 budget and one reviewed TRAIN or fixed engineering input. Both currently
 reviewed captures used the historical static512 Focus upstream.
+
+## Large runners removed (step LH, 23 November 2026)
+
+The user dropped the Large Context model after the LG gate. The Large-only
+selectors and their helpers are removed from this module: `fp16_large`
+(with `cal` and `compensated`), `batch_view`, the Large FP32 final-graph
+diagnostic, the Large bounded-hybrid profiling and Resource20 selectors, the
+Large T32 profile trace, the Large timing model in `fp16_compact::full`, and
+the Large arm of the GNU CUTLASS graph observer. The sections above that
+describe Large selectors record how retained private receipts were produced;
+those receipts reproduce only with the source before the removal (change-log
+entry 61). The Compact selectors, their bounds and receipts are unchanged.
+`fp16_compact::cal`'s chronological batch still names both original
+compilers because it reproduces one retained two-model receipt.

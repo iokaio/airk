@@ -157,3 +157,12 @@ Retain a separate post-release adapter snapshot under the original owner.
 The live CPU child control runs with
 `python -B -S scripts/cuda-component-execution/test_wddm_process_samples.py`.
 The [A6000 capacity sweep](CAPACITY-SWEEP.md) describes the separate pressure observer, its model-free controls and the native fit and timing probes. The measured 2 GiB control and the failed 8 and 12 GiB fit attempts have separate receipts. The minimum supported GPU memory remains open.
+
+## Large selectors retired (step LH, 23 November 2026)
+
+The Rust Large selectors this folder drives (the `fp16_large` runners, the
+Large bounded-hybrid and batch-view selectors, the Large CUTLASS and GNU
+graph observers) were removed when the user dropped the Large Context model.
+The Large scripts here stay as retired history: they reproduce their
+retained receipts only against a build of the source before that removal
+(`docs/arbiter/answer-loop-changes.md`, entry 61).
