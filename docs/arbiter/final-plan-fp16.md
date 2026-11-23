@@ -2256,3 +2256,44 @@ and is listed in every validation record until resolved:
 
 A failed check, a blocked dependency or a review finding is not a stop. It
 is fixed, or recorded with its owner, while independent work continues.
+
+### 12.10 Possible experiments after LG
+
+Recorded so they are not forgotten. None is started or approved as work;
+each is decided with the LG results.
+
+**Extractive selection inside a span (context compression).** Recorded at
+the user's request on 23 November 2026.
+
+- **The problem it addresses.** A reply has a hard frame of 128 KiB. When
+  the gathered evidence is larger, Union cuts every span to 768 and then to
+  384 bytes. Even a reply that fits is about 30,000 to 40,000 tokens in the
+  agent's context, which the agent pays for on every later turn.
+- **The idea.** Split a long span into blocks: a signature, the matched
+  lines with a little context, a paragraph. Score each block against the
+  sub-need with Focus, keep the best up to the allowance, and mark what was
+  left out with its line numbers. Every byte kept is still real source at a
+  real location.
+- **Ruled out.** Summarising with a generating model: the accepted decision
+  of section 2 is selection by scoring models with no text generation, a
+  summary can state what the source does not, and it loses the exact text
+  and lines an agent needs to edit. Dropping tokens: it garbles code.
+- **Already in place, as first steps.** The duplicate rule of section 12.1
+  ("No repeated facts"), and a cut that keeps the text Focus scored, for the
+  model's cards (commit `54155bb3`) and for reply rows.
+- **What decides whether to run it.** The gate report records, per reply:
+  its size against its frame; how far Union trimmed it and how many rows
+  were cut; reference notes covered per KiB; and how many of the agent's
+  later reads go back to a place the reply had already delivered cut. Run
+  the experiment if replies are often trimmed, or if agents often re-read
+  cut rows.
+- **Its cost.** Focus calls, which the ledger bounds. It has to pay for
+  itself in saved agent turns and tokens.
+- **How it would be tested.** As a change set of L7, on both repositories,
+  against the baseline: turns to a correct finish, coverage per KiB, reply
+  bytes, and the Focus time added.
+
+**Spending the frame by rank.** When a reply must be trimmed, keep the
+highest-ranked spans whole and cut or drop the lowest-ranked first, instead
+of cutting every span to the same length. It uses the ranks Union already
+has. It is tested in the same way.

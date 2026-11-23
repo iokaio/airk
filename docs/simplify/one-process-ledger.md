@@ -16041,3 +16041,23 @@ target grew to 256.8 GB.
 **Next action.** The review of the last three commits; the fixture fix and
 the shakedown; Large confirmed on the A6000 and the three pairs; then the
 gate image from `5f971a70` plus `loop/l5c`, the short trial and the gate.
+
+### 23 November 2026 at 03:22 UTC — user decisions: token pool 380,000; a possible compression experiment recorded
+
+- **Token pool.** The user wrote at about 02:30 UTC: "we're going to have to expand the full Answer
+  budget to 380,000 tokens." An agent is raising the default and the maximum input-token pool to
+  380,000 as its own commit, with the identity controls checked first. Not landed at this entry.
+- **Review of `5f971a70`, `ffa08c04` and `54155bb3`** (read-only): 1 high, 2 medium, 11 low; record
+  `review-deview-5f971a70.md` in the private `answer-loop` folder. No location is lost by the
+  duplicate rule. The high finding: from trimming level 2 on a carrying row is cut to 768 or 384
+  bytes, so a row pointing into it can refer to text that is in no row of the reply. The same agent
+  fixes it after the pool commit, with a wrong containment claim and the missing tests, and then cuts
+  reply rows around the text Focus scored.
+- **Precision check deferred.** The FP32 profiles declare only the one-turn task, so plan section
+  12.7.3 cannot run without new FP32 loop profiles. The gate report will say it was not run. The two
+  precision roots become spares, because each root allows one CUDA lifetime.
+- **Possible experiment recorded.** At the user's request the plan gains section 12.10: extractive
+  selection inside a span as a possible change set after LG, decided from the gate's reply-size and
+  trimming measurements. Nothing is built.
+- **Workbench.** `loop/workbench-v3` (three commits, not merged) moves Workbench, Admin Search and
+  the service-client checks to Answer /3. Tested against Rust-emitted cases only, not a real service.
