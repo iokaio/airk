@@ -4,7 +4,7 @@
 //! opens nor creates the retained credential ledger (local trust plan B).
 use super::*;
 use airk_core::service_http::{
-    EndpointDescriptor, EndpointState, HTTP_CONTRACT_VERSION, HttpSelection, LoopbackMcpUrl,
+    EndpointDescriptor, EndpointState, HTTP_CONTRACT_VERSION, LoopbackMcpUrl,
 };
 use airk_endpoint::http_endpoint::{self, BoundEndpoint, InstallationBinding, TlsIdentity};
 use std::{
@@ -112,13 +112,8 @@ impl Owner {
         let open_hooks = open_hooks(weak.clone());
         // U110: every request is the built-in local agent session, an open
         // session of this endpoint's namespace.
-        let local_session = HttpSelection::Open {
-            selection: airk_core::service_http::OpenHttpSelection {
-                namespace: descriptor.namespace,
-            },
-        };
+        let namespace = descriptor.namespace;
         let validate: airk_https::http_gateway::ValidateRequest = Arc::new(move |context| {
-            let local_session = local_session.clone();
             let control = control.clone();
             let weak = weak.clone();
             let open_hooks = open_hooks.clone();
@@ -134,7 +129,7 @@ impl Owner {
                 }
                 // U105: an open session needs only a ready catalog in its
                 // namespace; each call reads through the open path.
-                airk_https::http_backend::validate(&control, &local_session, &context).await?;
+                airk_https::http_backend::validate_open(&control, namespace, &context).await?;
                 let factory = airk_https::http_backend::open_factory(open_hooks);
                 Ok(airk_https::http_backend::with_query_capacity(
                     factory,

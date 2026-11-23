@@ -110,11 +110,6 @@ impl StandaloneAdoptionProvenance {
         encoded_size(self, MAX_RECEIPT_BYTES)?;
         Ok(())
     }
-    pub fn admits_configuration(&self, digest: Sha256Digest) -> bool {
-        self.configuration_claims
-            .iter()
-            .any(|claim| claim.config_sha256 == digest)
-    }
     pub fn identity(&self) -> Result<Sha256Digest> {
         self.validate()?;
         Ok(framed_digest(

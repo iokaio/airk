@@ -2808,7 +2808,6 @@ async fn activate_with_expected(
 
 // The `airk runtime` dispatcher and its HTTP setup handlers moved to
 // `runtime_commands` and `runtime_http_commands` (split step 2b).
-pub mod http_legacy;
 
 /// Full known predecessor roots, independent of which layout discovery prefers.
 /// Launcher pointers are verified by their existing owner before adding custom roots.

@@ -29,3 +29,25 @@ and airk-cli `native_http_endpoint_remains_and_connection_commands_are_removed`.
 (`--runtime-source`, `--approved-sha256`) and names `airkctl agents connect`
 as the next step. Its client, connection, scope, session and launch inputs
 no longer parse (`setup_no_longer_accepts_enrollment_scope_session_or_launch_inputs`).
+
+### Retained-ledger reader (B4)
+
+Predecessor cleanup now reads the retained ledger through
+`airk_endpoint::http_endpoint::RetainedLedger`, a lenient, read-only reader.
+It parses `credentials.json` as untyped JSON and reads only `schema`,
+`binding` and each record's `id`, `revoked`, `expires_unix_ms` and
+`verifier`. It ignores every other field, so any record shape a pre-B
+installation wrote is still recognised. Retirement markers are checked for
+binding, id, `revoked: true` and schema 1 or 2. It never creates, repairs or
+writes the ledger or a token file, and it refuses when the bytes change
+during capture. A current installation with no ledger and no credential file
+(every installation since B) owns no connection (`holds_no_credentials`).
+Anything else is read as a retained ledger, and an unreadable one stays
+`unavailable`.
+
+The strict ledger types, `CredentialStore`, `AuthenticatedCredential`, the
+token helpers, `OpenConnectionState` and `AgentChoice` are removed. Tests:
+`retained_ledger::tests` (a hand-written old-install ledger with scoped and
+open records, expiry, revocation, compaction and an orphan, left
+byte-identical; the captured v1 ledger fixture) and the installer
+`clean_break_*` lookups over hand-written retained ledgers.

@@ -35,9 +35,10 @@ pub(super) fn capture(root: &Path, predecessor: &str, control: &Path) -> Predece
             endpoint.executable_sha256.to_string() == runtime_pair::digest_file(&main)?,
             "predecessor HTTP endpoint executable differs from approved predecessor"
         );
-        let store =
-            airk_endpoint::http_endpoint::CredentialStore::read_existing(&private, binding)?;
-        let owners = store.cleanup_owners(unix_ms()?)?;
+        // The retained ledger, read-only (local trust plan B).
+        let ledger =
+            airk_endpoint::http_endpoint::RetainedLedger::read_existing(&private, binding)?;
+        let owners = ledger.cleanup_owners(unix_ms()?)?;
         let ca_hash = if let Some(bytes) =
             airk_endpoint::http_endpoint::read_private(&private, "ca.pem", 16 * 1024)?
         {
@@ -110,11 +111,16 @@ fn current_namespace_ownership(
             "new HTTP control reused predecessor namespace"
         );
         let binding = airk_endpoint::http_endpoint::installation_binding(&control, current)?;
-        let store = airk_endpoint::http_endpoint::CredentialStore::read_existing(
-            &control.join("http-1"),
-            binding,
-        )?;
-        let owners = store.cleanup_owners(unix_ms()?)?;
+        let private = control.join("http-1");
+        // Since local trust plan B a current installation issues no
+        // connection and keeps no ledger: with no ledger and no credential
+        // file it owns nothing. Anything else is read as a retained ledger.
+        if airk_endpoint::http_endpoint::holds_no_credentials(&private)? {
+            return Ok("not_owned");
+        }
+        let ledger =
+            airk_endpoint::http_endpoint::RetainedLedger::read_existing(&private, binding)?;
+        let owners = ledger.cleanup_owners(unix_ms()?)?;
         Ok(if owners.iter().any(|owner| owner.connection_id == id) {
             "owned"
         } else {
