@@ -16793,3 +16793,49 @@ follows, rebased over it.
 **Roots and disk.** The S1 base had closed at 13:39 UTC (previous entry);
 nothing of it was running at the restart. D: free 786,180,501,504 bytes at this
 entry. Nothing is running.
+
+### 23 November 2026 at 18:00 UTC — The `publication_busy` class fixed in the store (`c4e53359`); a second failure class of the same test found, not yet diagnosed
+
+**User's word:** fix the busy bug before LH's acceptance run.
+
+**Change, `c4e53359`** (branch `loop/read-recovery`, worktree
+`answer-loop\busy\wt`, fast-forwarded into `feat/arbiter-final`; change-log
+entry 65; store `current/CONTRACT.md`): a read-only current-database open
+(`database::open_reader_budget`) is repeated every 5 ms for at most 500 ms
+while its error is exactly `SQLITE_BUSY_RECOVERY` (extended code 261),
+another connection rebuilding the WAL index. Readers otherwise still refuse
+contention at once (`busy_timeout(0)`). No snapshot exists before the open
+returns, so no caller work is repeated. No identity, wire, digest input or
+persisted format moved. Primary agent's own work, self-review.
+
+**Validation** (target `target-l2b`, environment `L3\build-env.json`,
+incremental on, logs `answer-loop\busy\logs`):
+
+| Run | Result | Elapsed |
+| --- | --- | --- |
+| `cargo clippy -p airk-store --all-targets --all-features --locked --offline --timings -- -D warnings` | exit 0 | 76 s |
+| same, default features | exit 0 | 33 s |
+| `cargo nextest run --profile ci -p airk-store --lib --all-features -E 'test(/current::/)'` | 181 of 181, including the three `database::recovery_tests` | 242 s |
+| `cargo nextest run --profile ci -p airk-cli --all-features --stress-count 20 -E '(binary(combined_reads) & test(/answer/)) \| binary(admin_plane)'` (`stress-cli-fix-1.log`) | 15 of 20 iterations passed; all 5 failures are the second class below | 1,163 s (12.5 min build) |
+| `cargo fmt -p airk-store --check`, `check-repo.ps1`, `git diff --check` | clean | |
+
+**Failure classes in `admin_sign_in_reads_and_cross_plane_refusals`, 20
+iterations each** (the review counted them together):
+
+| Tree | `publication_busy` | `scoped_read_unavailable` at the readiness read |
+| --- | --- | --- |
+| `705ab312` (`stress-cli-main-1.log`) | 3 | 4 |
+| `loop/l2b-wire` `a46ff188` (`stress-cli-branch-1.log`) | 6 | 1 |
+| `c4e53359` (`stress-cli-fix-1.log`) | 0 | 5 |
+
+**Open, release-relevant:** right after its Index job succeeds, the test's
+`airk_diagnostics` readiness read (Admin selection) returns
+`scoped_read_unavailable`, not retryable, on about one run in five on main.
+No service log was retained. Hypothesis, not checked: a publication or scope
+observation moves after the text Index (the semantic publication follows
+it), and a mismatch check types the move as `ScopeReadRefused` instead of a
+retryable contention. Next action: find the refusal site with a focused
+reproduction.
+
+**State:** LH's acceptance run waits for that diagnosis. D: free 776,434,839,552
+bytes. Nothing is running.
