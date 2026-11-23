@@ -167,6 +167,22 @@ impl std::fmt::Display for NativeCatalogRetentionFull {
 }
 impl std::error::Error for NativeCatalogRetentionFull {}
 
+/// A catalog fence or mutation is in flight when a read or connection is
+/// about to be issued (change-log entry 67). Retryable before any work; the
+/// delivery side still refuses while one is in flight.
+#[derive(Debug, Clone, Copy)]
+pub struct CatalogAdmissionPending;
+impl CatalogAdmissionPending {
+    /// The existing retryable setup code a client already repeats.
+    pub const CODE: &'static str = "catalog_connection_busy";
+}
+impl std::fmt::Display for CatalogAdmissionPending {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("a catalog fence or mutation is in flight")
+    }
+}
+impl std::error::Error for CatalogAdmissionPending {}
+
 /// Caller must supply the actual monotonic native delivery history, never an
 /// inferred missing worker/helper entry. Gate capture refuses unknown history.
 pub fn native_provider_obligation(
@@ -480,6 +496,16 @@ impl State {
         );
         Ok(())
     }
+    /// `check_issue` before any work is admitted: a fence or mutation in
+    /// flight is the retryable `CatalogAdmissionPending`, not a refusal.
+    fn check_begin(&self, ticket: IssueTicket) -> Result<()> {
+        ensure!(
+            self.authority_contract == 1 && ticket == self.ticket(),
+            ScopeReadRefused
+        );
+        ensure!(self.pending.is_none(), CatalogAdmissionPending);
+        Ok(())
+    }
     fn worker(&self, identity: WorkerIdentity) -> Result<()> {
         ensure!(
             self.workers.get(&identity.worker) == Some(&identity),
@@ -661,33 +687,43 @@ impl NativeCatalogAdmission {
     /// Capture the current native clock while retaining a saved selection's
     /// namespace and minimum revision. Exact authority is validated separately
     /// and the returned ticket must be rechecked after that validation.
+    ///
+    /// Begin side (change-log entry 67): a clock still behind the selection
+    /// is `CatalogClockPending` and a fence or mutation in flight is
+    /// `CatalogAdmissionPending`, both retryable; another namespace refuses.
     pub fn capture_current_issue(
         &self,
         namespace: Incarnation,
         minimum_revision: CatalogRevision,
     ) -> Result<IssueTicket> {
         let state = self.0.lock().map_err(|_| ScopeReadRefused)?;
+        ensure!(state.namespace == namespace, ScopeReadRefused);
         ensure!(
-            state.namespace == namespace && state.revision >= minimum_revision,
-            ScopeReadRefused
+            state.revision >= minimum_revision,
+            crate::catalog_coordinator::CatalogClockPending
         );
         let ticket = state.ticket();
-        state.check_issue(ticket)?;
+        state.check_begin(ticket)?;
         Ok(ticket)
     }
 
+    /// Begin side (change-log entry 67): another revision is the retryable
+    /// `CatalogRevisionChanged` and a fence or mutation in flight is the
+    /// retryable `CatalogAdmissionPending`; another namespace refuses. The
+    /// issue is checked again, unchanged, at delivery.
     pub fn begin_issue(
         &self,
         namespace: Incarnation,
         revision: CatalogRevision,
     ) -> Result<IssueTicket> {
         let state = self.0.lock().map_err(|_| ScopeReadRefused)?;
+        ensure!(state.namespace == namespace, ScopeReadRefused);
         ensure!(
-            state.namespace == namespace && state.revision == revision,
-            ScopeReadRefused
+            state.revision == revision,
+            crate::catalog_coordinator::CatalogRevisionChanged
         );
         let ticket = state.ticket();
-        state.check_issue(ticket)?;
+        state.check_begin(ticket)?;
         Ok(ticket)
     }
     pub fn check_issue(&self, ticket: IssueTicket) -> Result<()> {
@@ -1364,12 +1400,14 @@ impl NativeCatalogAdmission {
         state.pending.as_mut().ok_or(ScopeReadRefused)?.durable = durable;
         Ok(())
     }
+    /// Begin side (change-log entry 67): a worker start held back by a fence
+    /// in flight is the retryable `CatalogAdmissionPending`.
     pub fn require_worker_start(&self, backing: ProjectBinding) -> Result<()> {
         let state = self.0.lock().map_err(|_| ScopeReadRefused)?;
         if let Some(pending) = &state.pending {
             ensure!(
                 pending.target != ScopeTarget::LegacyPromotion,
-                ScopeReadRefused
+                CatalogAdmissionPending
             );
             if pending.requires_worker_census {
                 ensure!(
@@ -1378,7 +1416,7 @@ impl NativeCatalogAdmission {
                         .worker_obligation
                         .as_ref()
                         .is_some_and(|obligation| obligation.backing != backing),
-                    ScopeReadRefused
+                    CatalogAdmissionPending
                 );
             }
         }

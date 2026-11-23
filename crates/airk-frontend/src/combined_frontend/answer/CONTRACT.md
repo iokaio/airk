@@ -38,3 +38,20 @@ those metadata bytes for another member. No frame or native Work/Resources
 budget meaning changes. Unknown Focus work holds the entire partition and its
 assessment ordinals, just as unknown Context work does; it is never known zero
 work or spare optional capacity.
+
+## A member publication that moved (23 November 2026, change-log entry 67)
+
+When a member's source projection is refused because a newer publication
+replaced the member's evidence publication under the same authority (the
+native read's typed `publication_busy`):
+- a combined Answer member, whose loop may have spent model tokens, becomes
+  `publication_advanced` (`retryable: false`, `query_replay_safe: false`),
+  not `source_projection_expired`;
+- an ordinary combined member read (`read_member`) is read again when its
+  result carries no Focus or Context delivery binding, at most three reads;
+  with such a binding it is `publication_advanced`; still moving after the
+  third read it is the retryable `publication_busy`.
+Every other projection failure is still `source_projection_expired`.
+Test: `combined_frontend::tests::moved_member_publication_is_classified_by_its_typed_native_receipt`
+(the classification; the member loop itself is not exercised by a test
+that races a publication).

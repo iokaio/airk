@@ -142,6 +142,67 @@ fn combined_delivery_poll_refuses_the_pre_persistence_pending_fence() -> Result<
     Ok(())
 }
 
+/// Change-log entry 67: on the begin side, a fence in flight, a moved
+/// revision and a clock still behind are typed and retryable; another
+/// namespace refuses, and delivery of an issued ticket still refuses.
+#[test]
+fn begin_side_transients_are_typed_and_delivery_still_refuses() -> Result<()> {
+    use crate::catalog_coordinator::{CatalogClockPending, CatalogRevisionChanged};
+    let directory = tempfile::tempdir()?;
+    let (gate, _, authority, namespace) = fixture(directory.path().to_str().unwrap());
+    let foreign = Incarnation::from_bytes([12; 16]);
+    let next = CatalogRevision::INITIAL.next()?;
+    let error = gate.begin_issue(namespace, next).unwrap_err();
+    assert!(error.is::<CatalogRevisionChanged>(), "{error:#}");
+    let error = gate.capture_current_issue(namespace, next).unwrap_err();
+    assert!(error.is::<CatalogClockPending>(), "{error:#}");
+    for error in [
+        gate.begin_issue(foreign, CatalogRevision::INITIAL)
+            .unwrap_err(),
+        gate.capture_current_issue(foreign, CatalogRevision::INITIAL)
+            .unwrap_err(),
+    ] {
+        assert!(error.is::<ScopeReadRefused>(), "{error:#}");
+    }
+    let issue = gate.begin_issue(namespace, CatalogRevision::INITIAL)?;
+    let _pending = gate.close_request_admission(&request(namespace, &authority))?;
+    for error in [
+        gate.begin_issue(namespace, CatalogRevision::INITIAL)
+            .unwrap_err(),
+        gate.capture_current_issue(namespace, CatalogRevision::INITIAL)
+            .unwrap_err(),
+    ] {
+        assert!(error.is::<CatalogAdmissionPending>(), "{error:#}");
+        assert!(!error.is::<ScopeReadRefused>());
+    }
+    let mut delivered = 0;
+    let error = gate.with_issue(issue, || delivered += 1).unwrap_err();
+    assert!(error.is::<ScopeReadRefused>(), "{error:#}");
+    assert!(
+        gate.check_issue(issue)
+            .unwrap_err()
+            .is::<ScopeReadRefused>()
+    );
+    assert_eq!(delivered, 0);
+    Ok(())
+}
+
+/// Change-log entry 67: a worker start held back by a retirement census in
+/// flight is the retryable `CatalogAdmissionPending`, not a refusal.
+#[test]
+fn worker_start_during_a_census_fence_is_admission_pending() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let (gate, worker, authority, namespace) = fixture(directory.path().to_str().unwrap());
+    gate.register_worker(worker)?;
+    gate.require_worker_start(worker.project)?;
+    let request = trim_request(namespace, &authority)?;
+    let _plan = gate.close_retirement_admission(&request, worker.project)?;
+    let error = gate.require_worker_start(worker.project).unwrap_err();
+    assert!(error.is::<CatalogAdmissionPending>(), "{error:#}");
+    assert!(!error.is::<ScopeReadRefused>());
+    Ok(())
+}
+
 #[tokio::test]
 async fn combined_delivery_stops_an_actual_partial_native_write_after_admission_close() -> Result<()>
 {

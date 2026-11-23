@@ -416,6 +416,12 @@ impl<S: Session> Backend<S> {
                                             })
                                             .collect();
                                     }
+                                    // A newer publication replaced the member's
+                                    // after its loop ran: never replayed
+                                    // (change-log entry 67).
+                                    _ if projection_publication_moved(&projection) => {
+                                        value = publication_advanced_failure(&value)
+                                    }
                                     _ => {
                                         value = source_projection_failure(&value, Some(projection))
                                     }

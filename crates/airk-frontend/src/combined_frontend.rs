@@ -1895,112 +1895,136 @@ impl<S: Session> Backend<S> {
             child_args.retain(|key, _| !key.starts_with("verification"));
             child_args.insert("verification".into(), json!("off"));
         }
-        let remaining = Duration::from_millis(budgets.deadline_ms)
-            .saturating_sub(started.elapsed())
-            .min(Duration::from_millis(allocation.deadline_ms));
-        let mut result = match tokio::time::timeout(
-            remaining,
-            child.call_with_read_context(
-                plan.tool.into(),
-                child_args,
-                plan.capacity,
-                context.narrowed(Instant::now() + remaining),
-            ),
-        )
-        .await
-        {
-            Ok(Ok(result)) => result,
-            Ok(Err(_)) => failure(
-                "member_observation_unavailable",
-                None,
-                &self.selection.requested(),
-            ),
-            Err(_) => failure(
-                "member_deadline_exhausted",
-                None,
-                &self.selection.requested(),
-            ),
-        };
-        if let Some(expected) = plan.origin {
-            let body = canonical_body(&result);
-            let actual = publication_token(&body).map(str::to_owned);
-            if actual.as_deref() != Some(expected) {
-                result = failure(
-                    "origin_publication_expired",
-                    Some(true),
+        // Change-log entry 67: a publication that replaces the member's
+        // evidence publication under the same authority is read again when
+        // the member's work was read-only, at most
+        // `MEMBER_PUBLICATION_ATTEMPTS` times.
+        let mut attempts = 0;
+        let (mut result, published_sources) = loop {
+            attempts += 1;
+            let remaining = Duration::from_millis(budgets.deadline_ms)
+                .saturating_sub(started.elapsed())
+                .min(Duration::from_millis(allocation.deadline_ms));
+            let mut result = match tokio::time::timeout(
+                remaining,
+                child.call_with_read_context(
+                    plan.tool.into(),
+                    child_args.clone(),
+                    plan.capacity,
+                    context.narrowed(Instant::now() + remaining),
+                ),
+            )
+            .await
+            {
+                Ok(Ok(result)) => result,
+                Ok(Err(_)) => failure(
+                    "member_observation_unavailable",
+                    None,
                     &self.selection.requested(),
-                );
-            }
-        }
-        if let Some(continuation) = plan.continuation {
-            let body = canonical_body(&result);
-            if publication_token(&body).is_none_or(|token| {
-                continuation
-                    .validate_publication(member.index.id, token)
-                    .is_err()
-            }) {
-                return Ok(MemberRead::Stop(failure(
-                    "combined_cursor_expired",
-                    Some(true),
+                ),
+                Err(_) => failure(
+                    "member_deadline_exhausted",
+                    None,
                     &self.selection.requested(),
-                )));
+                ),
+            };
+            if let Some(expected) = plan.origin {
+                let body = canonical_body(&result);
+                let actual = publication_token(&body).map(str::to_owned);
+                if actual.as_deref() != Some(expected) {
+                    result = failure(
+                        "origin_publication_expired",
+                        Some(true),
+                        &self.selection.requested(),
+                    );
+                }
             }
-        }
-        let mut published_sources = Vec::new();
-        if !result_failed(&result)
-            && (plan.origin.is_some()
-                || !airk_core::verification::ReferenceInventory::collect(&canonical_body(&result))
+            if let Some(continuation) = plan.continuation {
+                let body = canonical_body(&result);
+                if publication_token(&body).is_none_or(|token| {
+                    continuation
+                        .validate_publication(member.index.id, token)
+                        .is_err()
+                }) {
+                    return Ok(MemberRead::Stop(failure(
+                        "combined_cursor_expired",
+                        Some(true),
+                        &self.selection.requested(),
+                    )));
+                }
+            }
+            let mut published_sources = Vec::new();
+            let mut moved = false;
+            if !result_failed(&result)
+                && (plan.origin.is_some()
+                    || !airk_core::verification::ReferenceInventory::collect(&canonical_body(
+                        &result,
+                    ))
                     .references
                     .is_empty())
-        {
-            let body = canonical_body(&result);
-            let expected = publication_token(&body)
-                .context("member evidence publication required")?
-                .parse()?;
-            let remaining =
-                Duration::from_millis(budgets.deadline_ms).saturating_sub(started.elapsed());
-            let projection = if let Some(projection) = plan.resume_status.get(&member.index.id) {
-                Ok(Ok(projection.clone()))
-            } else {
-                tokio::time::timeout(
-                    remaining,
-                    child.call_native_with_context(
-                        airk_core::native_reads::NativeRead::SourceProjection {
-                            publication: expected,
-                        },
-                        context.narrowed(Instant::now() + remaining),
-                    ),
-                )
-                .await
-            };
-            match projection {
-                Ok(Ok(projection)) => {
-                    match serde_json::from_value::<airk_core::scoped_reads::ScopedSourceProjection>(
-                        canonical_body(&projection),
-                    ) {
-                        Ok(projection)
-                            if projection.validate().is_ok()
-                                && projection.publication.token == expected
-                                && projection.scope_fingerprint
-                                    == member.authority.member_fingerprint()? =>
+            {
+                let body = canonical_body(&result);
+                let expected = publication_token(&body)
+                    .context("member evidence publication required")?
+                    .parse()?;
+                let remaining =
+                    Duration::from_millis(budgets.deadline_ms).saturating_sub(started.elapsed());
+                let projection = if let Some(projection) = plan.resume_status.get(&member.index.id)
+                {
+                    Ok(Ok(projection.clone()))
+                } else {
+                    tokio::time::timeout(
+                        remaining,
+                        child.call_native_with_context(
+                            airk_core::native_reads::NativeRead::SourceProjection {
+                                publication: expected,
+                            },
+                            context.narrowed(Instant::now() + remaining),
+                        ),
+                    )
+                    .await
+                };
+                match projection {
+                    Ok(Ok(projection)) => {
+                        match serde_json::from_value::<
+                            airk_core::scoped_reads::ScopedSourceProjection,
+                        >(canonical_body(&projection))
                         {
-                            published_sources = projection
-                                .sources
-                                .into_iter()
-                                .map(|source| airk_kernel::combined_reads::MemberSource {
-                                    source_root_id: source.source_root_id,
-                                    original_root: source.original_root,
-                                    primary: source.primary,
-                                    aliases: source.aliases,
-                                })
-                                .collect();
+                            Ok(projection)
+                                if projection.validate().is_ok()
+                                    && projection.publication.token == expected
+                                    && projection.scope_fingerprint
+                                        == member.authority.member_fingerprint()? =>
+                            {
+                                published_sources = projection
+                                    .sources
+                                    .into_iter()
+                                    .map(|source| airk_kernel::combined_reads::MemberSource {
+                                        source_root_id: source.source_root_id,
+                                        original_root: source.original_root,
+                                        primary: source.primary,
+                                        aliases: source.aliases,
+                                    })
+                                    .collect();
+                            }
+                            _ if projection_publication_moved(&projection) => moved = true,
+                            _ => result = source_projection_failure(&result, Some(projection)),
                         }
-                        _ => result = source_projection_failure(&result, Some(projection)),
                     }
+                    _ => result = source_projection_failure(&result, None),
                 }
-                _ => result = source_projection_failure(&result, None),
             }
-        }
+            if !moved {
+                break (result, published_sources);
+            }
+            // Model work is never replayed; read-only work is read again.
+            if member_spent_model_work(&result) {
+                break (publication_advanced_failure(&result), Vec::new());
+            }
+            if attempts >= MEMBER_PUBLICATION_ATTEMPTS {
+                break (publication_busy_failure(&result), Vec::new());
+            }
+        };
         if plan.enabled && plan.verification_budget.is_some() && !result_failed(&result) {
             let projection = canonical_body(&result);
             let controls = airk_core::verification::VerificationControls {
@@ -2689,6 +2713,46 @@ fn verification_not_submitted(
     if mode == airk_core::verification::VerificationMode::Require {
         body["error"] = json!({"code":"verification_deadline_exhausted","retryable":false,"query_submitted":false,"verification_performed":false,"query_replay_safe":false});
     }
+    native_envelope(body)
+}
+
+/// Member reads of one combined read while the member's publication keeps
+/// moving under the same authority (change-log entry 67).
+const MEMBER_PUBLICATION_ATTEMPTS: usize = 3;
+
+/// The member's source projection was refused because a newer publication
+/// replaced the member's evidence publication under the same authority: the
+/// native read's typed `publication_busy` (change-log entry 67).
+fn projection_publication_moved(projection: &Value) -> bool {
+    let body = canonical_body(projection);
+    body.get("code").and_then(Value::as_str) == Some("publication_busy")
+        || body.pointer("/error/code").and_then(Value::as_str) == Some("publication_busy")
+}
+
+/// Whether a member result carries optional model work (a delivery binding
+/// of Focus or Context). An unreadable result counts as model work, so it is
+/// never read again.
+fn member_spent_model_work(result: &Value) -> bool {
+    airk_core::combined_context::context_delivery_bindings(&canonical_body(result))
+        .map_or(true, |bindings| !bindings.is_empty())
+}
+
+/// A member whose publication moved after its model work: the typed,
+/// nonreplayable `publication_advanced`, never `repeat_same_request`.
+fn publication_advanced_failure(result: &Value) -> Value {
+    let mut body = canonical_body(result);
+    let mut error = airk_core::scoped_reads::PublicationAdvanced.receipt()["error"].take();
+    error["query_submitted"] = true.into();
+    body["error"] = error;
+    native_envelope(body)
+}
+
+/// A read-only member whose publication kept moving through every read:
+/// the retryable `publication_busy` of the whole read.
+fn publication_busy_failure(result: &Value) -> Value {
+    let mut body = canonical_body(result);
+    body["error"] = json!({"code":"publication_busy","retryable":true,"retry_after_ms":25,
+        "action":"repeat_same_request","query_submitted":true,"query_replay_safe":true});
     native_envelope(body)
 }
 

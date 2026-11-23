@@ -49,3 +49,21 @@ Injected-clock regressions distinguish accepted completion at70s under the same
 120s parent from refused new submission after55s; parent expiry/cancellation
 still refuse. An actual local IPC case preserves the captured120s absolute wire
 expiry/request/arguments exactly rather than narrowing it to55s. No model runs.
+
+## Typed setup transients (23 November 2026, change-log entry 67)
+
+`setup_retryable` also recognizes the typed pre-query transients that the
+in-process selection and open admissions return: Supervisor
+`ConnectionSetupPending`, catalog-control `CatalogRevisionChanged`,
+`CatalogClockPending` and `CatalogAdmissionPending`. They are retried within
+the existing setup budget and, when it runs out, reported with
+`retryable: true`. A `ScopeReadRefused` and any untyped text stay final.
+Test: `typed_in_process_setup_transients_are_retryable`.
+
+The usage, settings and validation document collector (`usage_client.rs`)
+collects a read-only document again from its first page when a newer
+publication lands under the same scope during pagination, at most three
+collections; a publication still moving is `publication_busy`. A changed
+scope is still a failure. Test:
+`usage_client::pagination_tests::a_newer_publication_during_pagination_is_the_typed_restart`
+(the header comparison; the restart loop itself is not exercised).

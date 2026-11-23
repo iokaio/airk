@@ -881,3 +881,39 @@ fn open_snapshot_merges_whole_indexes_with_its_own_cursor_domain() -> Result<()>
     );
     Ok(())
 }
+
+/// Change-log entry 67: a member projection refused because a newer
+/// publication replaced the member's is told apart from other failures, as
+/// the native read renders it; read-only work is read again, model work is
+/// the nonreplayable `publication_advanced`, and a publication still moving
+/// is the retryable `publication_busy`.
+#[test]
+fn moved_member_publication_is_classified_by_its_typed_native_receipt() -> Result<()> {
+    let moved = anyhow::anyhow!("a newer publication replaced the expected one")
+        .context(airk_store::current::CurrentGateContention::Applying);
+    let rendered = serde_json::to_value(airk_mcp::response::error_result(&moved))?;
+    assert!(projection_publication_moved(&rendered), "{rendered}");
+    let refused = serde_json::to_value(airk_mcp::response::error_result(&anyhow::Error::new(
+        ScopeReadRefused,
+    )))?;
+    assert!(!projection_publication_moved(&refused), "{refused}");
+    let untyped = serde_json::to_value(airk_mcp::response::error_result(&anyhow::anyhow!(
+        "publication_busy"
+    )))?;
+    assert!(!projection_publication_moved(&untyped), "{untyped}");
+
+    let search = native_envelope(json!({"hits":[],"publication":{"token":"t"}}));
+    assert!(!member_spent_model_work(&search));
+
+    let advanced = canonical_body(&publication_advanced_failure(&search));
+    assert_eq!(advanced["error"]["code"], "publication_advanced");
+    assert_eq!(advanced["error"]["retryable"], false);
+    assert_eq!(advanced["error"]["query_replay_safe"], false);
+    assert!(advanced["error"].get("action").is_none());
+    let busy = canonical_body(&publication_busy_failure(&search));
+    assert_eq!(busy["error"]["code"], "publication_busy");
+    assert_eq!(busy["error"]["retryable"], true);
+    assert_eq!(busy["error"]["action"], "repeat_same_request");
+    assert!(result_failed(&publication_busy_failure(&search)));
+    Ok(())
+}

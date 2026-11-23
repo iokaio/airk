@@ -269,3 +269,45 @@ fn answer_parents_run_to_their_own_ceiling_and_other_tools_keep_125_seconds() {
     assert!(left(minted.clone()) <= std::time::Duration::from_secs(125));
     assert_eq!(minted.read_ceiling(), std::time::Duration::from_secs(125));
 }
+
+/// Change-log entry 67: a selection or open backend whose setup failed keeps
+/// a typed pre-query transient's own retryable code; everything else is the
+/// scope refusal, and untyped text never becomes a code.
+#[test]
+fn selection_setup_keeps_typed_transients_and_refuses_the_rest() {
+    use airk_catalog_control::{
+        catalog_admission::CatalogAdmissionPending,
+        catalog_coordinator::{CatalogClockPending, CatalogRevisionChanged},
+    };
+    use airk_supervisor::project_supervisor::ConnectionSetupPending;
+    let code = |error: anyhow::Error| match setup_refusal(error.context("selection setup")) {
+        SelectionRead::Refused(code) => code,
+        SelectionRead::Failed(_) => "failed",
+    };
+    assert_eq!(
+        code(anyhow::Error::new(ConnectionSetupPending::Queue)),
+        "catalog_connection_busy"
+    );
+    assert_eq!(
+        code(anyhow::Error::new(CatalogRevisionChanged)),
+        "catalog_revision_changed"
+    );
+    assert_eq!(
+        code(anyhow::Error::new(CatalogClockPending)),
+        "catalog_clock_pending"
+    );
+    assert_eq!(
+        code(anyhow::Error::new(CatalogAdmissionPending)),
+        "catalog_connection_busy"
+    );
+    assert_eq!(
+        code(anyhow::Error::new(
+            airk_core::scoped_reads::ScopeReadRefused
+        )),
+        "scoped_read_unavailable"
+    );
+    assert_eq!(
+        code(anyhow::anyhow!("catalog_clock_pending")),
+        "scoped_read_unavailable"
+    );
+}

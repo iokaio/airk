@@ -169,3 +169,26 @@ operations and ArbiterImportDevice to the native typed status3 owner. Historical
 operations retain status2 and refuse configuration4 with a typed failure. No
 wildcard treats a device operation as a legacy CPU operation. Ordinary service
 and CPU embedding remain available when the optional CUDA runtime is absent.
+
+## Setup fences are typed (23 November 2026, change-log entry 67)
+
+- `connection_failure_code` maps catalog-control `CatalogAdmissionPending`
+  (a catalog fence or mutation in flight at the begin side) to the existing
+  retryable `catalog_connection_busy`.
+- `tools_call.rs` `setup_refusal`: a selection or open backend that could
+  not be set up (`selection_backing`, `resolve_selection`, `resolve_open`)
+  keeps a typed pre-query transient's own code through
+  `connection_failure_code`; everything else is `scoped_read_unavailable`,
+  with no error text.
+- Catalog admission, begin side only (`begin_issue`,
+  `capture_current_issue`, `require_worker_start`): another namespace still
+  refuses; another revision is `CatalogRevisionChanged`, a clock behind the
+  selection is `CatalogClockPending`, and a fence in flight is
+  `CatalogAdmissionPending`. `check_issue`, `with_issue`,
+  `with_scope_issue` and delivery keep refusing while a fence is in flight
+  or after revocation.
+
+Tests: `connection_setup_contract_tests::begin_side_catalog_admission_pending_is_the_busy_code`,
+`tools_call::tests::selection_setup_keeps_typed_transients_and_refuses_the_rest`,
+catalog-control `catalog_admission::tests::begin_side_transients_are_typed_and_delivery_still_refuses`
+and `worker_start_during_a_census_fence_is_admission_pending`.

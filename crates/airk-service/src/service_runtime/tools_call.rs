@@ -233,6 +233,16 @@ pub(super) struct SelectionGrant {
     pub(super) selection_ref: airk_core::scoped_reads::SelectionScopeRef,
 }
 
+/// A selection or open backend that could not be set up before any query
+/// was submitted (change-log entry 67). A typed pre-query transient keeps
+/// its own retryable code; every other failure is the scope refusal, and no
+/// error text is returned.
+fn setup_refusal(error: anyhow::Error) -> SelectionRead {
+    SelectionRead::Refused(super::connection_failure_code(
+        &error,
+        super::scope_grant::SCOPE_UNAVAILABLE,
+    ))
+}
 pub(super) enum SelectionRead {
     Refused(&'static str),
     Failed(anyhow::Error),
@@ -404,7 +414,7 @@ async fn single_selection_backend(
         index_id,
     )
     .await
-    .map_err(|_| SelectionRead::Refused(super::scope_grant::SCOPE_UNAVAILABLE))?;
+    .map_err(setup_refusal)?;
     let request = airk_catalog_control::catalog_authority::SelectionConnectRequest {
         selection_ref: grant.selection_ref,
         window_selection: grant.selection.clone(),
@@ -453,7 +463,7 @@ pub(super) async fn open_single_backend(
         index_id,
     )
     .await
-    .map_err(|_| SelectionRead::Refused(super::scope_grant::SCOPE_UNAVAILABLE))?;
+    .map_err(setup_refusal)?;
     let request = airk_catalog_control::catalog_authority::OpenConnectRequest {
         selection_ref,
         namespace,
@@ -521,7 +531,7 @@ async fn combined_selection_backend(
     let inner =
         airk_frontend::combined_frontend::resolve_selection(state.control_root.clone(), scope)
             .await
-            .map_err(|_| SelectionRead::Refused(super::scope_grant::SCOPE_UNAVAILABLE))?;
+            .map_err(setup_refusal)?;
     inner.client(client);
     match airk_mcp::unified::Unified::combined(Arc::clone(&inner), None) {
         Ok(backend) => Ok(Arc::new(backend)),
@@ -570,7 +580,7 @@ pub(super) async fn open_combined_backend(
     };
     let inner = airk_frontend::combined_frontend::resolve_open(state.control_root.clone(), scope)
         .await
-        .map_err(|_| SelectionRead::Refused(super::scope_grant::SCOPE_UNAVAILABLE))?;
+        .map_err(setup_refusal)?;
     inner.client(client);
     match airk_mcp::unified::Unified::combined(Arc::clone(&inner), None) {
         Ok(backend) => Ok(Arc::new(backend)),

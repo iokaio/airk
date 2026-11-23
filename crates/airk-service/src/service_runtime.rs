@@ -65,6 +65,8 @@ fn connection_failure_code<'a>(error: &anyhow::Error, fallback: &'a str) -> &'a 
         error.downcast_ref::<airk_supervisor::project_supervisor::ConnectionSetupPending>()
     {
         pending.code()
+    } else if error.is::<airk_catalog_control::catalog_admission::CatalogAdmissionPending>() {
+        airk_catalog_control::catalog_admission::CatalogAdmissionPending::CODE
     } else if error.is::<airk_core::scoped_reads::ScopeReadRefused>() {
         "scoped_read_unavailable"
     } else {
@@ -2377,6 +2379,18 @@ mod window_selection_revocation_tests {
 #[cfg(test)]
 mod connection_setup_contract_tests {
     use super::*;
+    /// Change-log entry 67: a catalog fence in flight at the begin side is
+    /// the retryable `catalog_connection_busy`, never a scope refusal.
+    #[test]
+    fn begin_side_catalog_admission_pending_is_the_busy_code() {
+        let error =
+            anyhow::Error::new(airk_catalog_control::catalog_admission::CatalogAdmissionPending)
+                .context("connection admission");
+        assert_eq!(
+            connection_failure_code(&error, "scoped_connection_unavailable"),
+            "catalog_connection_busy"
+        );
+    }
     #[test]
     fn only_known_typed_pre_query_pending_errors_become_busy_codes() {
         use airk_supervisor::project_supervisor::ConnectionSetupPending as Pending;

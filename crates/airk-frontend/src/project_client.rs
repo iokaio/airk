@@ -93,6 +93,12 @@ fn setup_retryable(error: &anyhow::Error) -> bool {
         || error
             .downcast_ref::<ScopedConnectionRefused>()
             .is_some_and(|error| error.retryable)
+        // The in-process selection and open admissions return these typed
+        // pre-query transients (change-log entry 67); a refusal stays final.
+        || error.is::<airk_supervisor::project_supervisor::ConnectionSetupPending>()
+        || error.is::<airk_catalog_control::catalog_coordinator::CatalogRevisionChanged>()
+        || error.is::<airk_catalog_control::catalog_coordinator::CatalogClockPending>()
+        || error.is::<airk_catalog_control::catalog_admission::CatalogAdmissionPending>()
         || error.chain().any(|cause| {
             cause.downcast_ref::<std::io::Error>().is_some_and(|error| {
                 matches!(
@@ -1653,6 +1659,36 @@ mod tests {
         assert!(setup_retryable(
             &std::io::Error::from(std::io::ErrorKind::ConnectionReset).into()
         ));
+    }
+
+    /// Change-log entry 67: the typed transients of an in-process selection
+    /// or open admission are retried before query submission and reported
+    /// as retryable; a scope refusal and untyped text are not.
+    #[test]
+    fn typed_in_process_setup_transients_are_retryable() {
+        use airk_catalog_control::catalog_coordinator::{
+            CatalogClockPending, CatalogRevisionChanged,
+        };
+        use airk_supervisor::project_supervisor::ConnectionSetupPending;
+        for error in [
+            anyhow::Error::new(ConnectionSetupPending::Queue).context("selection admission"),
+            anyhow::Error::new(ConnectionSetupPending::Draining),
+            anyhow::Error::new(CatalogRevisionChanged).context("selection admission"),
+            anyhow::Error::new(CatalogClockPending),
+        ] {
+            assert!(setup_retryable(&error), "{error:#}");
+            let envelope = setup_rejection(&error).unwrap();
+            let detail: serde_json::Value =
+                serde_json::from_str(envelope["content"][0]["text"].as_str().unwrap()).unwrap();
+            assert_eq!(detail["error"]["retryable"], true);
+        }
+        for error in [
+            anyhow::Error::new(airk_core::scoped_reads::ScopeReadRefused),
+            anyhow::anyhow!("catalog_clock_pending"),
+            anyhow::anyhow!("previous_workers_draining"),
+        ] {
+            assert!(!setup_retryable(&error), "{error:#}");
+        }
     }
 
     #[test]

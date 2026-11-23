@@ -76,15 +76,39 @@ fn observe_scope_headers(
         publication: page.scope_publication.clone(),
     };
     if let Some(expected) = expected {
-        ensure!(
-            *expected == current,
-            "native scope/publication changed during pagination"
-        );
+        compare_scope_headers(expected, &current)?;
     } else {
         *expected = Some(current);
     }
     Ok(())
 }
+/// A changed scope is a failure. A newer publication under the same scope
+/// is `PaginationPublicationMoved`: the read-only document is collected
+/// again from its first page (change-log entry 67).
+fn compare_scope_headers(
+    expected: &NativeScopeHeaders,
+    current: &NativeScopeHeaders,
+) -> Result<()> {
+    ensure!(
+        expected.observation == current.observation,
+        "native scope/publication changed during pagination"
+    );
+    ensure!(
+        expected.publication == current.publication,
+        PaginationPublicationMoved
+    );
+    Ok(())
+}
+/// Collections of one native document while its publication keeps moving.
+const PAGINATION_ATTEMPTS: usize = 3;
+#[derive(Debug)]
+struct PaginationPublicationMoved;
+impl std::fmt::Display for PaginationPublicationMoved {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("a newer publication landed during pagination")
+    }
+}
+impl std::error::Error for PaginationPublicationMoved {}
 fn finish_native_document(
     mut document: Value,
     project: ProjectBinding,
@@ -248,6 +272,27 @@ pub async fn render_file_selected(
 }
 
 async fn collect_selected(
+    control: &Path,
+    project: ProjectBinding,
+    selection: Option<&airk_core::service::ScopedConnectRequest>,
+    mut request: impl FnMut(Option<String>) -> airk_mcp::local::NativeRead,
+) -> Result<Value> {
+    let mut attempts = 0;
+    loop {
+        attempts += 1;
+        match collect_selected_once(control, project, selection, &mut request).await {
+            Err(error) if error.is::<PaginationPublicationMoved>() => {
+                if attempts < PAGINATION_ATTEMPTS {
+                    continue;
+                }
+                // Still moving: the retryable `publication_busy`.
+                return Err(error.context(airk_store::current::CurrentGateContention::Applying));
+            }
+            result => return result,
+        }
+    }
+}
+async fn collect_selected_once(
     control: &Path,
     project: ProjectBinding,
     selection: Option<&airk_core::service::ScopedConnectRequest>,
@@ -452,5 +497,37 @@ mod tests {
             serde_json::json!({"complete":"data"})
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod pagination_tests {
+    use super::*;
+    use airk_core::identity::{Incarnation, RevisionToken, Sha256Digest};
+    fn headers(generation: u64) -> NativeScopeHeaders {
+        NativeScopeHeaders {
+            observation: None,
+            publication: Some(airk_core::evidence::RevisionEnvelope::new(
+                "fixture".into(),
+                RevisionToken {
+                    incarnation: Incarnation::from_bytes([1; 16]),
+                    generation,
+                    revision: Sha256Digest::from_bytes([2; 32]),
+                },
+            )),
+        }
+    }
+    /// Change-log entry 67: a newer publication under the same scope is the
+    /// typed restart of a read-only collection, not a failure.
+    #[test]
+    fn a_newer_publication_during_pagination_is_the_typed_restart() {
+        compare_scope_headers(&headers(1), &headers(1)).unwrap();
+        let moved = compare_scope_headers(&headers(1), &headers(2)).unwrap_err();
+        assert!(moved.is::<PaginationPublicationMoved>(), "{moved:#}");
+        let busy = moved.context(airk_store::current::CurrentGateContention::Applying);
+        assert_eq!(
+            airk_kernel::retrieval_retry::read_retry_hint(&busy).map(|hint| hint.code),
+            Some("publication_busy")
+        );
     }
 }
