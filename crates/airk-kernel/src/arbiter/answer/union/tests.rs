@@ -578,3 +578,167 @@ fn a_conflict_keeps_only_parts_whose_evidence_survives() -> Result<()> {
     assert_eq!(kept[0].evidence, [id(0), id(1)]);
     Ok(())
 }
+
+/// A hit of `path` at `lines` in a file whose content hash is `file`.
+fn row_hit(path: &str, file: u8, lines: (usize, usize), text: &str) -> Hit {
+    serde_json::from_value(json!({
+        "citation":{"path":path,"content_hash":Sha256Digest::from_bytes([file; 32]).to_string(),
+            "start_line":lines.0,"end_line":lines.1,
+            "location":airk_core::DocumentLocation::Lines {start:lines.0,end:lines.1}},
+        "text":text,"truncated":false}))
+    .expect("a hit")
+}
+
+/// The 29-byte lines `first..=last` of one file.
+fn numbered(first: usize, last: usize) -> String {
+    (first..=last)
+        .map(|number| format!("line {number:03} of the guard module\n"))
+        .collect()
+}
+
+/// The rows Union sends for `hits` at `level`, planned and projected as
+/// `build` and `project` do. A `same_as` or `overlaps` reference is the
+/// named row's position.
+fn rows_at(hits: &[Hit], level: usize) -> Vec<Value> {
+    let candidates: Vec<repeats::Candidate<'_>> = hits
+        .iter()
+        .map(|hit| repeats::Candidate {
+            hit,
+            focus: Some(0.5),
+        })
+        .collect();
+    let plan = repeats::plan(&candidates, EXCERPT_BYTES[level] == usize::MAX);
+    let reference = |of: usize| json!({"row": of});
+    let cut = |of: usize| carrier_cut(&plan, &candidates, of, level);
+    let sharing = Sharing {
+        carried: BTreeMap::new(),
+        reference: &reference,
+        cut: &cut,
+    };
+    hits.iter()
+        .zip(&plan)
+        .enumerate()
+        .map(|(index, (hit, carried))| {
+            span_row(&format!("/hits/{index}"), hit, carried, level, &sharing)
+        })
+        .collect()
+}
+
+/// The text a reply delivers for row `index`: its own text with the named
+/// parts put back, or the text of the row it names.
+fn delivered(rows: &[Value], index: usize) -> String {
+    let row = &rows[index];
+    if let Some(of) = row["same_as"]["row"].as_u64() {
+        return delivered(rows, of as usize);
+    }
+    let mut text = row["text"].as_str().expect("a text row").to_owned();
+    for part in row["overlaps"].as_array().into_iter().flatten() {
+        let other = delivered(rows, part["row"].as_u64().unwrap() as usize);
+        let bytes = part["bytes"].as_u64().unwrap() as usize;
+        if part["side"] == "head" {
+            text.insert_str(0, &other[other.len() - bytes..]);
+        } else {
+            text.push_str(&other[..bytes]);
+        }
+    }
+    text
+}
+
+/// Every row keeps its hit's whole original location.
+fn locations_kept(rows: &[Value], hits: &[Hit]) {
+    for (row, hit) in rows.iter().zip(hits) {
+        assert_eq!(row["path"], json!(hit.citation.path));
+        assert_eq!(row["start_line"], json!(hit.citation.start_line));
+        assert_eq!(row["end_line"], json!(hit.citation.end_line));
+        assert_eq!(row["content_hash"], json!(hit.citation.content_hash));
+    }
+}
+
+#[test]
+fn level_one_still_trims_overlaps_and_delivers_every_text_whole() {
+    // Present: both rows with their own lines 10-40 and 30-60. Equal length
+    // and relevance: the first keeps the overlap. Recoverable: both whole
+    // texts, the second from the first row's last 319 bytes (lines 30-40)
+    // and its kept lines 41-60.
+    let (first, second) = (numbered(10, 40), numbered(30, 60));
+    let hits = [
+        row_hit("src/guard.rs", 1, (10, 40), &first),
+        row_hit("src/guard.rs", 1, (30, 60), &second),
+    ];
+    let rows = rows_at(&hits, 1);
+    locations_kept(&rows, &hits);
+    assert_eq!(rows[1]["overlaps"], json!([{"row":0,"bytes":319,"side":"head"}]));
+    assert_eq!(rows[1]["text"], json!(numbered(41, 60)));
+    for (index, hit) in hits.iter().enumerate() {
+        assert_eq!(delivered(&rows, index), hit.text);
+        assert_eq!(rows[index]["truncated"], json!(false));
+    }
+}
+
+#[test]
+fn from_level_two_a_snippet_inside_a_cut_chunk_keeps_its_own_text() {
+    // Review H1. A 3,016-byte chunk (lines 1-104) and a snippet of lines
+    // 52-58, at bytes 1,479 to 1,682 of it, beyond the 768 (level 2) and 384
+    // (level 3) bytes the chunk keeps. Present: both rows with their own
+    // lines, and the chunk's repeat. Recoverable: the snippet's whole 203
+    // bytes from its own row; the chunk's first 768 or 384 bytes, marked
+    // truncated in its row and in its repeat's.
+    let (chunk, snippet) = (numbered(1, 104), numbered(52, 58));
+    assert_eq!((chunk.len(), snippet.len()), (3_016, 203));
+    assert_eq!(chunk.find(&snippet), Some(1_479));
+    let hits = [
+        row_hit("src/guard.rs", 1, (1, 104), &chunk),
+        row_hit("src/guard.rs", 1, (52, 58), &snippet),
+        row_hit("src/guard.rs", 1, (1, 104), &chunk),
+    ];
+    for (level, kept) in [(2, 768), (3, 384)] {
+        let rows = rows_at(&hits, level);
+        locations_kept(&rows, &hits);
+        assert_eq!(rows[0]["text"], json!(&chunk[..kept]), "level {level}");
+        assert_eq!(rows[0]["truncated"], json!(true));
+        assert_eq!(rows[1]["text"], json!(snippet), "level {level}");
+        assert_eq!(rows[1]["truncated"], json!(false));
+        assert!(rows[1].get("same_as").is_none() && rows[1].get("within").is_none());
+        // The chunk's repeat names the chunk and says its text is cut.
+        assert_eq!(rows[2]["same_as"], json!({"row":0}));
+        assert_eq!(rows[2]["truncated"], json!(true));
+        assert_eq!(delivered(&rows, 2), &chunk[..kept]);
+    }
+    // At level 1 nothing is cut: the snippet is within the chunk, and the
+    // chunk delivers it.
+    let rows = rows_at(&hits, 1);
+    assert_eq!(rows[1]["same_as"], json!({"row":0}));
+    assert_eq!(rows[1]["within"], json!(true));
+    assert_eq!(rows[1]["truncated"], json!(false));
+    assert!(delivered(&rows, 1).contains(&snippet));
+}
+
+#[test]
+fn from_level_two_overlapping_spans_are_cut_each_on_their_own() {
+    // Review H1, the head and tail case. Present: both rows with their own
+    // lines. Recoverable: each row's first 384 bytes (level 3); neither names
+    // the other, so no row claims bytes another row does not deliver.
+    let (first, second) = (numbered(10, 40), numbered(30, 60));
+    let hits = [
+        row_hit("src/guard.rs", 1, (10, 40), &first),
+        row_hit("src/guard.rs", 1, (30, 60), &second),
+    ];
+    let rows = rows_at(&hits, 3);
+    locations_kept(&rows, &hits);
+    for (row, text) in rows.iter().zip([&first, &second]) {
+        assert_eq!(row["text"], json!(&text[..384]));
+        assert_eq!(row["truncated"], json!(true));
+        assert!(row.get("overlaps").is_none());
+    }
+    // A short exact repeat of a whole row is still sent once, uncut.
+    let short = numbered(1, 3);
+    let hits = [
+        row_hit("src/guard.rs", 1, (1, 3), &short),
+        row_hit("vendor/guard.rs", 2, (1, 3), &short),
+    ];
+    let rows = rows_at(&hits, 3);
+    assert_eq!(rows[0]["also_at"], json!(["vendor/guard.rs:1-3"]));
+    assert_eq!(rows[1]["same_as"], json!({"row":0}));
+    assert_eq!(rows[1]["truncated"], json!(false));
+    assert_eq!(delivered(&rows, 1), short);
+}

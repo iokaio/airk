@@ -1875,6 +1875,73 @@ Numbered 30 until 22 November 2026; renumbered because L4's entries take
 - **Where:** Core arbiter `CONTRACT.md` ("One text, one copy in the
   reply"), kernel arbiter `CONTRACT.md` ("The reply carries each text once"
   and "What does not hold yet").
+- **After the review** (independent review of `5f971a70`, private
+  `answer-loop\review-d\review-5f971a70.md`: 1 high, 2 medium, 11 low):
+  - **H1, fixed (text could be delivered nowhere).** The plan ran on each
+    hit's whole text, and from trimming level 2 Union then cut the carrying
+    row to 768 or 384 bytes. A snippet `within` a cut chunk, or the bytes a
+    head or tail trim left to a cut carrier, were in no row, and a repeat of
+    a cut row said `truncated: false`. Of the reviewer's two fixes the
+    simpler one is taken, because it is correct by construction: overlaps
+    and `within` are planned only while every carrier is sent whole (levels
+    0 and 1, `repeats::plan(.., overlaps)`); from level 2 only exact repeats
+    merge, and a repeat's `truncated` includes its carrier's cut
+    (`union::carrier_cut`). Cost: from level 2, overlapping spans of one
+    file are each sent cut on their own, so shared lines can appear twice
+    (recorded under "What does not hold yet").
+  - **M1, fixed.** A span trimmed by one carrier and then found inside
+    another became `within` the second and lost the first trim. A span is
+    now `within` another only when nothing was trimmed from it; otherwise it
+    stays a trimmed row with its `overlaps`.
+  - **L2, fixed (a location list could shrink).** A carrier whose `also_at`
+    listed places, later found inside a longer span, became `within` it and
+    its `also_at` was lost. Such a carrier now keeps its text and its list.
+  - **M2, tests added** (hand-written expectations; each states which
+    locations must be present and which bytes must be recoverable):
+    `repeats::tests` `a_span_trimmed_at_both_ends_by_two_carriers_rebuilds_whole`,
+    `a_trimmed_span_is_never_called_part_of_another` (the M1 case),
+    `a_carrier_with_other_places_keeps_them_when_it_lies_within_another`
+    (L2), `a_repeat_of_a_trimmed_carrier_rebuilds_the_carriers_whole_text`,
+    `a_multi_byte_tail_overlap_is_cut_on_a_character_boundary`,
+    `two_indexes_with_the_same_path_and_hash_each_keep_their_text`,
+    `without_overlaps_only_exact_repeats_merge`; `union::tests` through the
+    row code Union sends (`span_row`, extracted from `project` without a
+    change of behaviour): `level_one_still_trims_overlaps_and_delivers_every_text_whole`,
+    `from_level_two_a_snippet_inside_a_cut_chunk_keeps_its_own_text` (the
+    H1 case at levels 2 and 3, with a repeat of the cut chunk),
+    `from_level_two_overlapping_spans_are_cut_each_on_their_own`.
+  - **Contracts:** both state that a row's `path`, `start_line`, `end_line`
+    and `content_hash` always describe the hit's whole original span, also
+    for a trimmed or `same_as` row, and that lines are never derived from
+    `text` (L3). The Core contract also states that a `same_as` row without
+    `within` has the named row's whole rebuilt text (L1) and that parts are
+    put back in `overlaps` order (L7).
+  - **Lows left as recorded:** L4 (Core does not validate projection rows;
+    recorded decision, the projection is opaque to Core), L5 (the parity
+    comparator also accepts an omitted record's id; in the CLI test tree,
+    not these files), L6 (an exact merge ignores `truncated`; each row keeps
+    its own), L8 (cost of the overlap scan; bounded by the frame), L9, L10
+    (`ffa08c04`, service files) and L11 (`window` edges, correct
+    arithmetic).
+  - **Identities:** none moved. `repeats.rs`, `union.rs` and the test files
+    feed no identity; the retrieval pin control
+    `recorded_loop_policy_identities` and the `cpu_source_transition` tests
+    pass (14 run, 14 passed).
+  - **Validation (main tree, commands in `answer-loop\L4\commands.tsv`,
+    names `pool-dup-`):** Clippy `-D warnings` over all targets of
+    `airk-kernel`, `airk-service`, `airk-mcp` and `airk-cli`, all features
+    and default features, exit 0; nextest of the kernel Union, repeats and
+    model tests, 40 run, 40 passed; MCP arbiter handler tests, 7 run, 7
+    passed. The six Answer tests of the CLI parity binary: 5 passed, and
+    `current_answer_many_and_open_keep_complete_cli_pipe_and_https_mcp_packets`
+    failed in its Open case, where one member's reads had different sizes
+    on the two transports (2,878 and 3,537 bytes against 2,387 and 3,046;
+    retained pair `artifacts/testing/combined-reads/56eb410e498264950ebdeb03bf6a4c18.json`).
+    One repeat on unchanged inputs failed the same way (a 2,403-byte read
+    on one side; `b08f6266195c85201cfc31e25704bb25.json`). This is the
+    read-size instability recorded above; the duplicate rule does not touch
+    a read's body or size. It is not a pass, and its cause is still not
+    established.
 
 ### 46. A Context profile may declare the loop card tasks
 

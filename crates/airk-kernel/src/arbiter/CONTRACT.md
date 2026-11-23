@@ -276,8 +276,19 @@ What holds:
     (`within`), and a span that shares its head or tail is trimmed
     (`overlaps`). Comparisons are of bytes; nothing near-identical is
     merged.
+  - Overlaps and `within` are planned only at the levels where every
+    carrying row is sent whole (`EXCERPT_BYTES` unbounded, levels 0 and 1).
+    From level 2 the plan merges exact repeats only, so no row names bytes
+    its carrier's 768- or 384-byte excerpt does not deliver, and a repeat's
+    `truncated` includes its carrier's cut (`union::carrier_cut`). A row
+    already trimmed, or one whose `also_at` lists places, is never made
+    `within`; it stays a trimmed or whole text (review of `5f971a70`, H1,
+    M1, L2).
   - Every row keeps its pointer and location, so no provenance is lost, and
-    `hits_total` still counts every hit.
+    `hits_total` still counts every hit. A row's `path`, `start_line`,
+    `end_line` and `content_hash` are always the hit's whole original span,
+    also for a trimmed or `same_as` row; lines must never be derived from
+    `text`.
   - The freed bytes stay in the reply frame: Union measures the reply as it
     will be sent.
 - **Card rosters show bounded evidence excerpts** (change log entries 43
@@ -468,7 +479,12 @@ What does not hold yet, with the follow-up owner:
 - **A span that holds a trimmed shorter span is not merged with it**
   (limit of `repeats::plan`). The longer text is planned first, so this
   needs a span trimmed at one end that then lies whole inside a third
-  span. Both texts are then carried.
+  span. Both texts are then carried; since the review of `5f971a70` (M1)
+  this is the rule, so a trimmed row never claims to be part of another.
+- **From trimming level 2 overlapping spans are sent twice** (limit, the
+  H1 fix). Each is cut to its own excerpt; shared lines can then appear in
+  two rows. Trimming against a cut carrier would need the plan to follow
+  each row's excerpt.
 
 ### Review findings and resolutions (Answer /3 loop)
 

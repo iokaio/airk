@@ -77,7 +77,7 @@ fn an_exact_repeat_is_carried_by_its_highest_ranked_instance() {
         hit("vendor/guard.rs", 2, (1, 9), &text),
     ];
     // The second read's instance has the highest Focus relevance.
-    let carried = plan(&candidates(&hits, &[Some(0.4), Some(0.9), None]));
+    let carried = plan(&candidates(&hits, &[Some(0.4), Some(0.9), None]), true);
     assert_eq!(
         carried,
         [
@@ -99,7 +99,7 @@ fn an_exact_repeat_is_carried_by_its_highest_ranked_instance() {
         ]
     );
     // Without scores the earliest instance carries the text.
-    let carried = plan(&candidates(&hits, &[None, None, None]));
+    let carried = plan(&candidates(&hits, &[None, None, None]), true);
     assert_eq!(
         carried[0],
         Carried::Text {
@@ -123,7 +123,7 @@ fn an_exact_repeat_is_carried_by_its_highest_ranked_instance() {
         ]
     );
     // A scored instance ranks above an unscored one.
-    let carried = plan(&candidates(&hits, &[None, None, Some(0.1)]));
+    let carried = plan(&candidates(&hits, &[None, None, Some(0.1)]), true);
     assert!(
         matches!(&carried[2], Carried::Text { also_at, .. } if also_at == &["src/guard.rs:1-9"])
     );
@@ -147,7 +147,7 @@ fn two_different_texts_are_never_merged() {
             hit("src/guard.rs", 1, (1, 9), &other),
         ];
         assert_eq!(
-            plan(&candidates(&hits, &[None, None])),
+            plan(&candidates(&hits, &[None, None]), true),
             [whole(&text), whole(&other)],
             "{other:?}"
         );
@@ -163,7 +163,7 @@ fn overlapping_spans_of_one_file_share_their_text_once() {
     ];
     // Lines 30 to 40 are eleven lines of 29 bytes. The spans are equally
     // long, so the higher-ranked one keeps the overlap.
-    let carried = plan(&candidates(&hits, &[Some(0.2), Some(0.8)]));
+    let carried = plan(&candidates(&hits, &[Some(0.2), Some(0.8)]), true);
     assert_eq!(
         carried,
         [
@@ -187,7 +187,7 @@ fn overlapping_spans_of_one_file_share_their_text_once() {
         hit("src/guard.rs", 1, (10, 40), &first),
         hit("src/guard.rs", 1, (30, 70), &longer),
     ];
-    let carried = plan(&candidates(&hits, &[Some(0.9), Some(0.1)]));
+    let carried = plan(&candidates(&hits, &[Some(0.9), Some(0.1)]), true);
     assert_eq!(carried[1], whole(&longer));
     assert!(matches!(
         &carried[0],
@@ -202,7 +202,7 @@ fn overlapping_spans_of_one_file_share_their_text_once() {
     ] {
         let hits = [hit("src/guard.rs", 1, (10, 40), &first), other];
         assert_eq!(
-            plan(&candidates(&hits, &[None, None])),
+            plan(&candidates(&hits, &[None, None]), true),
             [whole(&first), whole(&second)]
         );
     }
@@ -217,7 +217,7 @@ fn a_span_inside_a_longer_one_names_it_and_so_do_its_repeats() {
         hit("src/guard.rs", 1, (10, 40), &chunk),
         hit("src/guard.rs", 1, (12, 14), &snippet),
     ];
-    let carried = plan(&candidates(&hits, &[Some(0.9), Some(0.3), Some(0.5)]));
+    let carried = plan(&candidates(&hits, &[Some(0.9), Some(0.3), Some(0.5)]), true);
     assert_eq!(
         carried,
         [
@@ -230,6 +230,241 @@ fn a_span_inside_a_longer_one_names_it_and_so_do_its_repeats() {
                 of: 1,
                 within: true
             },
+        ]
+    );
+}
+
+/// The text a planned span delivers, rebuilt from the plan alone: a carrier
+/// is its kept bytes with each trimmed part put back from the span it names
+/// (head parts before, tail parts after); a repeat is its carrier's text.
+fn rebuilt(hits: &[Hit], carried: &[Carried], index: usize) -> String {
+    match &carried[index] {
+        Carried::Text {
+            start,
+            end,
+            overlaps,
+            ..
+        } => {
+            let mut text = hits[index].text[*start..*end].to_owned();
+            for (of, bytes, head) in overlaps {
+                let other = rebuilt(hits, carried, *of);
+                if *head {
+                    text.insert_str(0, &other[other.len() - bytes..]);
+                } else {
+                    text.push_str(&other[..*bytes]);
+                }
+            }
+            text
+        }
+        Carried::Same { of, .. } => rebuilt(hits, carried, *of),
+    }
+}
+
+#[test]
+fn a_span_trimmed_at_both_ends_by_two_carriers_rebuilds_whole() {
+    // Present: every row's own location. Recoverable: b's lines 18-33 from
+    // X's last three lines, b's kept lines 21-30 and Z's first three.
+    let (x, z, b) = (lines(1, 20), lines(31, 50), lines(18, 33));
+    let hits = [
+        hit("src/guard.rs", 1, (1, 20), &x),
+        hit("src/guard.rs", 1, (31, 50), &z),
+        hit("src/guard.rs", 1, (18, 33), &b),
+    ];
+    let carried = plan(&candidates(&hits, &[None, None, None]), true);
+    assert_eq!(carried[0], whole(&x));
+    assert_eq!(carried[1], whole(&z));
+    // Three 29-byte lines at each end: 87 bytes from X's tail, 87 from Z's head.
+    assert_eq!(
+        carried[2],
+        Carried::Text {
+            start: 87,
+            end: 464 - 87,
+            overlaps: vec![(0, 87, true), (1, 87, false)],
+            also_at: vec![],
+        }
+    );
+    assert_eq!(&b[87..377], lines(21, 30));
+    for index in 0..3 {
+        assert_eq!(rebuilt(&hits, &carried, index), hits[index].text);
+    }
+}
+
+#[test]
+fn a_trimmed_span_is_never_called_part_of_another() {
+    // Review M1. X is lines 1-50, Y lines 48-70, b lines 45-60. b's head
+    // (45-50) is X's; the rest (51-60) lies in what Y shows. b stays a
+    // trimmed row naming X, never `within` Y: present are all three
+    // locations; recoverable is b's whole text from X's tail and b's row.
+    let (x, y, b) = (lines(1, 50), lines(48, 70), lines(45, 60));
+    let hits = [
+        hit("src/guard.rs", 1, (1, 50), &x),
+        hit("src/guard.rs", 1, (48, 70), &y),
+        hit("src/guard.rs", 1, (45, 60), &b),
+    ];
+    let carried = plan(&candidates(&hits, &[None, None, None]), true);
+    assert_eq!(carried[0], whole(&x));
+    assert_eq!(
+        carried[1],
+        Carried::Text {
+            start: 87,
+            end: y.len(),
+            overlaps: vec![(0, 87, true)],
+            also_at: vec![],
+        }
+    );
+    assert_eq!(
+        carried[2],
+        Carried::Text {
+            start: 174,
+            end: b.len(),
+            overlaps: vec![(0, 174, true)],
+            also_at: vec![],
+        }
+    );
+    for index in 0..3 {
+        assert_eq!(rebuilt(&hits, &carried, index), hits[index].text);
+    }
+}
+
+#[test]
+fn a_carrier_with_other_places_keeps_them_when_it_lies_within_another() {
+    // Review L2. The snippet ranks highest and carries its text for its
+    // copy in vendor/; it also lies within the chunk. It stays a carrier, so
+    // its `also_at` still lists vendor/guard.rs:12-14. Present: three rows,
+    // and the vendor place in `also_at`. Recoverable: every text.
+    let (chunk, snippet) = (lines(10, 40), lines(12, 14));
+    let hits = [
+        hit("src/guard.rs", 1, (12, 14), &snippet),
+        hit("src/guard.rs", 1, (10, 40), &chunk),
+        hit("vendor/guard.rs", 2, (12, 14), &snippet),
+    ];
+    let carried = plan(&candidates(&hits, &[Some(0.9), Some(0.3), Some(0.5)]), true);
+    assert_eq!(
+        carried,
+        [
+            Carried::Text {
+                start: 0,
+                end: snippet.len(),
+                overlaps: vec![],
+                also_at: vec!["vendor/guard.rs:12-14".into()],
+            },
+            whole(&chunk),
+            Carried::Same {
+                of: 0,
+                within: false
+            },
+        ]
+    );
+}
+
+#[test]
+fn a_repeat_of_a_trimmed_carrier_rebuilds_the_carriers_whole_text() {
+    // Present: three rows. Recoverable: the repeat's lines 10-40 are the
+    // carrier's lines 10-29 plus the 319 bytes (lines 30-40) the carrier
+    // names in the second span.
+    let (first, second) = (lines(10, 40), lines(30, 60));
+    let hits = [
+        hit("src/guard.rs", 1, (10, 40), &first),
+        hit("src/guard.rs", 1, (30, 60), &second),
+        hit("src/guard.rs", 1, (10, 40), &first),
+    ];
+    let carried = plan(&candidates(&hits, &[Some(0.2), Some(0.8), None]), true);
+    assert_eq!(
+        carried[0],
+        Carried::Text {
+            start: 0,
+            end: first.len() - 319,
+            overlaps: vec![(1, 319, false)],
+            also_at: vec![],
+        }
+    );
+    assert_eq!(
+        carried[2],
+        Carried::Same {
+            of: 0,
+            within: false
+        }
+    );
+    assert_eq!(rebuilt(&hits, &carried, 2), lines(10, 40));
+}
+
+#[test]
+fn a_multi_byte_tail_overlap_is_cut_on_a_character_boundary() {
+    // a is twenty two-byte characters then twenty bytes; b is ten bytes then
+    // the same twenty characters: b's last 40 bytes are a's first. Present:
+    // both rows. Recoverable: b from its first ten bytes and a's first 40.
+    let accents = "é".repeat(20);
+    let a = format!("{accents}{}", "Z".repeat(20));
+    let b = format!("{}{accents}", "Q".repeat(10));
+    let hits = [
+        hit("src/text.rs", 1, (1, 2), &a),
+        hit("src/text.rs", 1, (2, 3), &b),
+    ];
+    let carried = plan(&candidates(&hits, &[None, None]), true);
+    assert_eq!(carried[0], whole(&a));
+    assert_eq!(
+        carried[1],
+        Carried::Text {
+            start: 0,
+            end: 10,
+            overlaps: vec![(0, 40, false)],
+            also_at: vec![],
+        }
+    );
+    assert_eq!(rebuilt(&hits, &carried, 1), b);
+}
+
+#[test]
+fn two_indexes_with_the_same_path_and_hash_each_keep_their_text() {
+    // An Answer reply holds one index, and Union plans each reply alone, so
+    // two indexes holding the same file each carry the text in their own
+    // reply. Present: one row in each reply. Recoverable: the text in both.
+    let text = lines(1, 9);
+    for index in [hit("src/guard.rs", 1, (1, 9), &text), hit("src/guard.rs", 1, (1, 9), &text)] {
+        let hits = [index];
+        assert_eq!(plan(&candidates(&hits, &[None]), true), [whole(&text)]);
+    }
+    // Were the two ever planned together, the second is a repeat of the
+    // first at the very same place: its own row keeps that location.
+    let hits = [
+        hit("src/guard.rs", 1, (1, 9), &text),
+        hit("src/guard.rs", 1, (1, 9), &text),
+    ];
+    assert_eq!(
+        plan(&candidates(&hits, &[None, None]), true),
+        [
+            whole(&text),
+            Carried::Same {
+                of: 0,
+                within: false
+            }
+        ]
+    );
+}
+
+#[test]
+fn without_overlaps_only_exact_repeats_merge() {
+    // Where the reply cuts texts (trimming level 2 on), a span is never
+    // trimmed against or named inside another: each keeps its own text.
+    // Present: four rows. Recoverable: each text from its own row, and the
+    // exact repeat from its carrier.
+    let (chunk, snippet, tail) = (lines(10, 40), lines(12, 14), lines(30, 60));
+    let hits = [
+        hit("src/guard.rs", 1, (10, 40), &chunk),
+        hit("src/guard.rs", 1, (12, 14), &snippet),
+        hit("src/guard.rs", 1, (30, 60), &tail),
+        hit("src/guard.rs", 1, (10, 40), &chunk),
+    ];
+    assert_eq!(
+        plan(&candidates(&hits, &[None, None, None, None]), false),
+        [
+            whole(&chunk),
+            whole(&snippet),
+            whole(&tail),
+            Carried::Same {
+                of: 0,
+                within: false
+            }
         ]
     );
 }

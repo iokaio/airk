@@ -1532,6 +1532,24 @@ adds two counts; no location and no record is ever dropped by it.
     part trimmed, with `side` `head` or `tail`. The row's whole text is its
     `text` with those parts of the named rows put back.
   - An overlap shorter than 32 bytes is left alone.
+  - A row already trimmed is never `within` another, and neither is a row
+    whose `also_at` lists places: such a row keeps its own text (after the
+    review of `5f971a70`, M1 and L2).
+  - Parts are put back in `overlaps` order: head parts before the text,
+    tail parts after it. A `same_as` row without `within` has the named
+    row's whole text, rebuilt this way.
+- **Only bytes that are delivered:** overlaps are trimmed, and `within` is
+  used, only while the reply sends every carrying row whole (Union's
+  trimming levels 0 and 1). From the level where Union cuts the excerpts
+  it sends, only exact repeats are merged: a repeat's text is its carrier's
+  as sent. A row may name another only for bytes that row really delivers
+  (after the review of `5f971a70`, H1).
+- **Location and `truncated`:** a row's `path`, `start_line`, `end_line`
+  and `content_hash` always describe the hit's whole original span, also for
+  a trimmed row and a `same_as` row. Lines must never be derived from
+  `text`, which may be a part of the span. `truncated` is true whenever the
+  text delivered for the row, in its own `text` or through the row it
+  names, is less than the hit's text.
 - **Exact only:** every comparison is of bytes. Texts that differ in one
   byte, in indentation or in line endings are different texts and are both
   carried. Near-identical texts are not merged.

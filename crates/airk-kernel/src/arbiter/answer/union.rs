@@ -81,6 +81,80 @@ struct Sharing<'a> {
     carried: BTreeMap<(usize, usize), &'a repeats::Carried>,
     /// The record id and pointer of the plan's span `of`.
     reference: &'a dyn Fn(usize) -> Value,
+    /// Whether the plan's span `of` sends less than its whole text: read
+    /// truncated, or cut at this level.
+    cut: &'a dyn Fn(usize) -> bool,
+}
+
+/// The text a carrying span sends at `level`, and whether it was cut there.
+fn excerpt(hit: &Hit, start: usize, end: usize, level: usize) -> (&str, bool) {
+    truncate(&hit.text[start..end], EXCERPT_BYTES[level])
+}
+
+/// Whether the plan's carrier `of` sends less than its whole text at
+/// `level`. The parts its `overlaps` name are delivered by other rows, so
+/// they do not count as cut.
+fn carrier_cut(
+    plan: &[repeats::Carried],
+    spans: &[repeats::Candidate<'_>],
+    of: usize,
+    level: usize,
+) -> bool {
+    match &plan[of] {
+        repeats::Carried::Text { start, end, .. } => {
+            spans[of].hit.truncated || excerpt(spans[of].hit, *start, *end, level).1
+        }
+        repeats::Carried::Same { .. } => true,
+    }
+}
+
+/// One span's row. Its `path`, `start_line`, `end_line` and `content_hash`
+/// are always the hit's whole original span, whatever part of the text the
+/// row carries. `truncated` is true whenever the text delivered for this
+/// span, in this row or in the row it names, is less than the span's text.
+fn span_row(
+    pointer: &str,
+    hit: &Hit,
+    carried: &repeats::Carried,
+    level: usize,
+    sharing: &Sharing<'_>,
+) -> Value {
+    let mut span = json!({"pointer":pointer,"path":hit.citation.path,"start_line":hit.citation.start_line,
+        "end_line":hit.citation.end_line,"content_hash":hit.citation.content_hash});
+    match carried {
+        repeats::Carried::Text {
+            start,
+            end,
+            overlaps,
+            also_at,
+        } => {
+            let (text, cut) = excerpt(hit, *start, *end, level);
+            span["text"] = json!(text);
+            span["truncated"] = json!(hit.truncated || cut);
+            if !overlaps.is_empty() {
+                span["overlaps"] = overlaps
+                    .iter()
+                    .map(|(of, bytes, head)| {
+                        let mut other = (sharing.reference)(*of);
+                        other["bytes"] = json!(bytes);
+                        other["side"] = json!(if *head { "head" } else { "tail" });
+                        other
+                    })
+                    .collect();
+            }
+            if !also_at.is_empty() {
+                span["also_at"] = json!(also_at);
+            }
+        }
+        repeats::Carried::Same { of, within } => {
+            span["same_as"] = (sharing.reference)(*of);
+            span["truncated"] = json!(hit.truncated || (sharing.cut)(*of));
+            if *within {
+                span["within"] = json!(true);
+            }
+        }
+    }
+    span
 }
 
 /// A record's compact span projection at a trimming level.
@@ -105,41 +179,7 @@ fn project(
         let Some(carried) = sharing.carried.get(&(index, position)) else {
             continue;
         };
-        let mut span = json!({"pointer":pointer,"path":hit.citation.path,"start_line":hit.citation.start_line,
-            "end_line":hit.citation.end_line,"content_hash":hit.citation.content_hash});
-        match carried {
-            repeats::Carried::Text {
-                start,
-                end,
-                overlaps,
-                also_at,
-            } => {
-                let (text, cut) = truncate(&hit.text[*start..*end], EXCERPT_BYTES[level]);
-                span["text"] = json!(text);
-                span["truncated"] = json!(hit.truncated || cut);
-                if !overlaps.is_empty() {
-                    span["overlaps"] = overlaps
-                        .iter()
-                        .map(|(of, bytes, head)| {
-                            let mut other = (sharing.reference)(*of);
-                            other["bytes"] = json!(bytes);
-                            other["side"] = json!(if *head { "head" } else { "tail" });
-                            other
-                        })
-                        .collect();
-                }
-                if !also_at.is_empty() {
-                    span["also_at"] = json!(also_at);
-                }
-            }
-            repeats::Carried::Same { of, within } => {
-                span["same_as"] = (sharing.reference)(*of);
-                span["truncated"] = json!(hit.truncated);
-                if *within {
-                    span["within"] = json!(true);
-                }
-            }
-        }
+        let mut span = span_row(pointer, hit, carried, level, sharing);
         if let Some(Some(score)) = focus {
             span["focus"] = json!(score);
         }
@@ -451,14 +491,18 @@ fn build(
             });
         }
     }
-    let plan = repeats::plan(&candidates);
+    // Overlaps are trimmed only while every carrier sends its whole text: a
+    // span may name a carrier only for bytes that carrier really delivers.
+    let plan = repeats::plan(&candidates, EXCERPT_BYTES[level] == usize::MAX);
     let reference = |of: usize| {
         let (record, position) = keys[of];
         json!({"record":gather.records[record].id,"pointer":hits[record][position].0})
     };
+    let cut = |of: usize| carrier_cut(&plan, &candidates, of, level);
     let sharing = Sharing {
         carried: keys.iter().copied().zip(&plan).collect(),
         reference: &reference,
+        cut: &cut,
     };
     let repeats_merged = plan
         .iter()

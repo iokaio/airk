@@ -102,11 +102,17 @@ pub(crate) enum Carried {
 ///   unscored one), then the earliest in `spans` (read order, then hit
 ///   order). The others name it, and where they are at another place, the
 ///   carrier lists that place in `also_at`.
-/// - **Overlaps.** Among the carriers of one file region, the longer text
+/// - **Overlaps** (only with `overlaps`, when every carrier delivers its
+///   whole text). Among the carriers of one file region, the longer text
 ///   keeps what two of them share (ties as above). A text found whole in a
 ///   longer one names it (`within`); a text that shares its head or tail
-///   with one is trimmed by those bytes.
-pub(crate) fn plan(spans: &[Candidate<'_>]) -> Vec<Carried> {
+///   with one is trimmed by those bytes. A text already trimmed, or one
+///   whose `also_at` lists places, is never made `within`: it stays a
+///   trimmed text, so its rebuilt text and its places stay true.
+///
+/// Where the reply cuts the texts it carries (`overlaps` false), only exact
+/// repeats are merged: a repeat's text is its carrier's, cut the same way.
+pub(crate) fn plan(spans: &[Candidate<'_>], overlaps: bool) -> Vec<Carried> {
     let mut rank: Vec<usize> = (0..spans.len()).collect();
     rank.sort_by(
         |left, right| match (spans[*left].focus, spans[*right].focus) {
@@ -148,6 +154,9 @@ pub(crate) fn plan(spans: &[Candidate<'_>]) -> Vec<Carried> {
             None => carriers.push(index),
         }
     }
+    if !overlaps {
+        return out;
+    }
     // Overlaps among the carriers: longer texts first, so a later text
     // never holds an earlier one. The sort is stable, so ties keep rank.
     carriers.sort_by_key(|index| std::cmp::Reverse(spans[*index].hit.text.len()));
@@ -157,6 +166,7 @@ pub(crate) fn plan(spans: &[Candidate<'_>]) -> Vec<Carried> {
         let (mut start, mut end) = (0, text.len());
         let mut trimmed = Vec::new();
         let mut holder = None;
+        let listed = matches!(&out[index], Carried::Text { also_at, .. } if !also_at.is_empty());
         for earlier in &carriers[..position] {
             let Carried::Text {
                 start: from,
@@ -170,10 +180,13 @@ pub(crate) fn plan(spans: &[Candidate<'_>]) -> Vec<Carried> {
                 continue;
             }
             match overlap(&spans[*earlier].hit.text[*from..*to], &text[start..end]) {
-                Overlap::Within => {
+                // Only a text nothing was trimmed from is part of another
+                // text; and its places in `also_at` would be lost with it.
+                Overlap::Within if trimmed.is_empty() && !listed => {
                     holder = Some(*earlier);
                     break;
                 }
+                Overlap::Within => {}
                 Overlap::Head(size) => {
                     start += size;
                     trimmed.push((*earlier, size, true));
