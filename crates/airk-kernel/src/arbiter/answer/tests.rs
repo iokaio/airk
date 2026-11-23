@@ -924,6 +924,17 @@ fn answer_by(
     request: v3::ContextRequestV3,
     reversing: Option<&Reversing>,
 ) -> Result<AnswerOutcome> {
+    answer_by_with(fixture, request, reversing, false)
+}
+
+/// `answer_by`; with `repeat`, every `read_file` excerpt has one text, so
+/// the reply carries it once and the other rows name their carrier.
+fn answer_by_with(
+    fixture: &Fixture,
+    request: v3::ContextRequestV3,
+    reversing: Option<&Reversing>,
+    repeat: bool,
+) -> Result<AnswerOutcome> {
     let context = fixture.kernel.arbiter_context.as_ref().unwrap();
     let kernel = fixture
         .kernel
@@ -942,6 +953,7 @@ fn answer_by(
         })?;
     let clock = Clock::new();
     let publication = fixture.publication.clone();
+    let arrivals = std::sync::atomic::AtomicU64::new(0);
     kernel.answer_with(
         request,
         AnswerEnv {
@@ -951,7 +963,19 @@ fn answer_by(
                 if let Some(reversing) = reversing {
                     reversing.hold();
                 }
-                canned(&publication, tool, arguments)
+                let mut body = canned(&publication, tool, arguments)?;
+                if repeat && tool == "read_file" {
+                    for hit in body["hits"].as_array_mut().into_iter().flatten() {
+                        hit["text"] = json!("fn restart_guard() {}\n");
+                    }
+                }
+                if reversing.is_some() {
+                    // A transport's per-read identity, numbered by arrival,
+                    // as a live reader stamps each read (entry 54).
+                    let arrival = arrivals.fetch_add(1, Ordering::AcqRel);
+                    body["request_id"] = json!(format!("{arrival:032x}"));
+                }
+                Ok(body)
             },
             clock: &|| clock.now(),
             progress: &|_| {},
@@ -963,7 +987,7 @@ fn answer_by(
 fn decisions_are_independent_of_read_completion_order() -> Result<()> {
     let question = "Please answer both:\n1. where is `restart_guard` defined and who calls it?\n2. which tests and documentation cover the restart guard replay policy?";
     let fixture = fixture()?;
-    let in_order = answer_by(&fixture, request(question), None)?;
+    let in_order = answer_by_with(&fixture, request(question), None, true)?;
     let reversing = Reversing {
         driver: std::thread::current().id(),
         board: Mutex::new(Board::default()),
@@ -973,7 +997,7 @@ fn decisions_are_independent_of_read_completion_order() -> Result<()> {
     let reversed = {
         let gate = reversing.clone();
         wave::ON_WAVE.with(|hook| *hook.borrow_mut() = Some(Box::new(move |size| gate.wave(size))));
-        let reversed = answer_by(&fixture, request(question), Some(&reversing));
+        let reversed = answer_by_with(&fixture, request(question), Some(&reversing), true);
         wave::ON_WAVE.with(|hook| *hook.borrow_mut() = None);
         reversed?
     };
@@ -995,21 +1019,36 @@ fn decisions_are_independent_of_read_completion_order() -> Result<()> {
         serde_json::to_value(&in_order.custody.log)?,
         serde_json::to_value(&reversed.custody.log)?
     );
+    // A repeated text names its carrier; which record carries it does not
+    // follow completion order (the shakedown pair c2-compact a/b).
+    assert!(
+        serde_json::to_string(&reversed.response.records)?.contains("\"same_as\""),
+        "the compound question repeats a text across records"
+    );
+    // Custody keeps each result as received, the reversed run's per-read
+    // request ids included; without them the results are the same.
     let records = |outcome: &AnswerOutcome| -> Vec<(Sha256Digest, String, Value)> {
         outcome
             .custody
             .records
             .iter()
             .map(|record| {
-                (
-                    record.id,
-                    record.tool.clone(),
-                    record.canonical_result.clone(),
-                )
+                let mut result = record.canonical_result.clone();
+                if let Some(object) = result.as_object_mut() {
+                    object.remove("request_id");
+                }
+                (record.id, record.tool.clone(), result)
             })
             .collect()
     };
     assert_eq!(records(&in_order), records(&reversed));
+    assert!(
+        reversed
+            .custody
+            .records
+            .iter()
+            .all(|record| record.canonical_result.get("request_id").is_some())
+    );
     Ok(())
 }
 
@@ -1367,4 +1406,80 @@ fn only_a_repeat_same_request_failure_is_repeated() {
     assert_eq!(busy_retry(&failed(long)), None);
     assert_eq!(busy_retry(&Ok(busy)), None);
     assert_eq!(busy_retry(&Err(anyhow::anyhow!("plain"))), None);
+}
+/// Change-log entry 54: two runs of one request at one publication retain
+/// the same records, read sizes, basis and decisions although every read's
+/// per-read status differs, and one structural read of the second run lost
+/// its readiness observation (the 491-byte flip of the parity pairs).
+#[test]
+fn runs_differing_only_in_read_status_give_byte_equal_replies() -> Result<()> {
+    let mut fixture = fixture()?;
+    let question = "Where is `restart_guard` defined and which tests cover it?";
+    let status = |run: u64| {
+        move |tool: &str, _: &Map<String, Value>, mut body: Value| -> Result<Value> {
+            let object = body.as_object_mut().context("canned read is an object")?;
+            object.insert("request_id".into(), json!(format!("{run:032x}")));
+            object.insert(
+                "freshness".into(),
+                json!({"state":"idle","observed_unix_ms":1_000 + run}),
+            );
+            if run == 2 && matches!(tool, "context" | "outline") {
+                object.insert("discovery_observation".into(), json!("unavailable_after_read"));
+            } else {
+                object.insert(
+                    "discovery_readiness".into(),
+                    json!({"state":"ready","processed_artifacts":3,"committed_artifacts":3}),
+                );
+                object.insert(
+                    "semantic_readiness".into(),
+                    json!({"state":"ready","first_ready_unix_ms":run,"pipeline_digest":"x".repeat(64)}),
+                );
+            }
+            Ok(body)
+        }
+    };
+    let (first, _, first_reads) = run(&fixture, request(question), 10, &status(1))?;
+    // A second Answer on the same session, as a transport binds each one.
+    fixture.kernel = fixture.kernel.with_fresh_answer_accounting()?;
+    let (second, _, mut second_reads) = run(&fixture, request(question), 10, &status(2))?;
+    // The reader logs completion order, which concurrency may change; the
+    // set of reads is the same.
+    let mut first_reads = first_reads;
+    first_reads.sort();
+    second_reads.sort();
+    assert_eq!(first_reads, second_reads);
+    assert!(
+        first_reads
+            .iter()
+            .any(|read| read.starts_with("context") || read.starts_with("outline")),
+        "the request reads a structural record whose status flips: {first_reads:?}"
+    );
+    let reply = |outcome: &AnswerOutcome| -> Result<(Value, Value)> {
+        let mut value = serde_json::to_value(&outcome.response)?;
+        let status = value
+            .as_object_mut()
+            .context("reply object")?
+            .remove("read_status")
+            .context("reply carries one read status")?;
+        Ok((value, status))
+    };
+    let (first_reply, first_status) = reply(&first)?;
+    let (second_reply, second_status) = reply(&second)?;
+    assert_eq!(first_reply, second_reply);
+    // The one reply-level status is the first search's own, as received.
+    assert_eq!(first_status["freshness"]["observed_unix_ms"], 1_001);
+    assert_eq!(second_status["freshness"]["observed_unix_ms"], 1_002);
+    assert_eq!(first_status["discovery_readiness"]["state"], "ready");
+    assert!(first_status.get("request_id").is_none());
+    // No record repeats the status; custody keeps each result as received.
+    let records = serde_json::to_string(&first.response.records)?;
+    for field in airk_core::arbiter::answer_loop::VOLATILE_READ_FIELDS {
+        assert!(!records.contains(&format!("\"{field}\"")), "{field}");
+    }
+    for (one, two) in first.custody.records.iter().zip(&second.custody.records) {
+        assert_eq!(one.id, two.id);
+        assert!(one.canonical_result.get("request_id").is_some());
+        assert_ne!(one.canonical_result["request_id"], two.canonical_result["request_id"]);
+    }
+    Ok(())
 }

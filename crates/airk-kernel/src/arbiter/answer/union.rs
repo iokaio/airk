@@ -755,7 +755,18 @@ fn build(
         candidate_count: gather.candidates,
         omitted_count,
         applications: vec![assembly.application.clone()],
+        read_status: read_status(gather),
     })
+}
+
+/// The per-read status of the mandatory first search, carried once for the
+/// whole reply and outside every record identity (change-log entry 54).
+fn read_status(gather: &Gathering) -> Option<Map<String, Value>> {
+    gather
+        .records
+        .iter()
+        .find(|record| record.operation == v3::LoopRead::Search && !record.failure)
+        .and_then(|record| super::volatile::status(&record.received))
 }
 
 #[cfg(test)]

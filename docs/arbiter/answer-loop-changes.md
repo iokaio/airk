@@ -2386,6 +2386,88 @@ Numbered 30 until 22 November 2026; renumbered because L4's entries take
   a 100 KB reply fails the old frame, fits the Answer frame, and the refusal
   is typed. Gap: no end-to-end test through a real worker stream.
 
+### 54. A record's identity binds its read without per-read status
+
+- **Found by:** the `combined_reads` parity tests
+  `current_answer_single_index_preserves_complete_pipe_cli_and_https_mcp_results`
+  and `current_answer_many_and_open_keep_complete_cli_pipe_and_https_mcp_packets`
+  failed intermittently (the second in 3 of 4 runs around `f682af51`, both
+  at `cad8f5b9` and `2994c65d`), and two shakedown runs of one request
+  (`s10-shakedown`, `c2-compact` a and b) gave different record ids, read
+  sizes, `record_uses` order, basis digests and decision-log digests.
+- **What differed:** in all six retained parity pairs and in the shakedown
+  pair, exactly one structural read (`context`, `outline` or `read_file`,
+  on either transport or run) had a body 491 bytes smaller in the fixture
+  (588 on the shakedown index) than the same read in the other reply; read
+  by position, every record, carried text and `same_as` target was
+  otherwise the same. Every other difference followed from record ids:
+  `full_digest`, the coverage basis digests, the decision-log digest,
+  paragraph evidence ids, the order of `record_uses` (kept in id order) and
+  the verification selection digest.
+- **Cause:** a transport-independent, run-to-run race. The MCP render adds
+  `discovery_readiness` and `semantic_readiness` to every read result after
+  its handler. When that observation fails it silently puts
+  `"discovery_observation":"unavailable_after_read"` in their place. With
+  four reads of a wave in flight, the observation's second current reader
+  met `CurrentReadContention` ("current publication read is temporarily
+  busy: database is locked", SQLite code 261). A temporary diagnostic in one
+  parity run logged exactly one such error, in the run whose one test
+  failed; the run's other 28 logged outcomes were a deterministic `Ok(None)`
+  (no readiness for that result). Nothing repeated the failed observation. Second, independent of the
+  race: every read result carries its own `request_id` and the freshness
+  observation time, and the record id and `full_digest` hashed the whole
+  result, so no record id was ever the same in two runs; the parity
+  comparator hid this by renaming ids by position.
+- **Decision:** a contract amendment made by the primary agent under plan
+  section 12.9, with the user's rule that Answer carries no repeated facts:
+  Core contract "Record identity without per-read status".
+- **Fix (kernel, Core):** Core lists the per-read status once
+  (`VOLATILE_READ_FIELDS`: `request_id`, `freshness`, `discovery_readiness`,
+  `semantic_readiness`, `discovery_observation`, `indexing`).
+  `gather::retain` keeps the result without them (`answer::volatile::stable`)
+  as the record body that the id, `full_bytes`, `full_digest`, retention
+  accounting and every rule use, and the result as received for custody.
+  The reply carries the first search's status once, as the optional
+  `read_status` (`READ_STATUS_FIELDS`); Core validates it with or without
+  it, and the schema and generated TypeScript views carry it. The
+  verification selection digest leaves `read_status` out, as it leaves the
+  other status fields out.
+- **Fix (MCP):** the readiness observation of every read is repeated within
+  two seconds while it fails with a typed `repeat_same_request` contention
+  (`readiness::observe_with_retry`); if contention lasts, the read fails
+  with that typed hint, which the Answer's existing `busy_retry` repeats. A
+  read never again carries a shorter body because a concurrent observer
+  held the publication. A terse Answer reply drops `read_status` unless
+  `include_status` is true. Standalone reads and Parse are unchanged.
+- **Comparator:** `tests/common/parity/context.rs` no longer renames record
+  ids, `full_digest`, the basis and decision-log digests or sorts the
+  id-ordered lists; it checks that each `same_as` and `overlaps` row names a
+  record of the reply. It still normalizes the reply's `request_id`,
+  timing (`elapsed_ms`, measured work and log timings, part deadline
+  shares, freshness and verification observation times, including
+  `read_status.freshness.observed_unix_ms`) and a decision's Focus `receipt`
+  digest, which binds measured model work.
+- **Tests:** kernel
+  `runs_differing_only_in_read_status_give_byte_equal_replies` (two runs
+  with different request ids and freshness on every read and one structural
+  read without readiness give byte-equal replies but for `read_status`) and
+  `decisions_are_independent_of_read_completion_order`, extended so the
+  reversed run stamps an arrival-numbered request id on every read and the
+  reply has `same_as` rows; Core
+  `reply_validates_with_and_without_its_one_read_status`; MCP
+  `answer_reads_vary_only_in_classified_status_fields` (search, context and
+  outline read twice through the real handlers differ only in classified
+  fields: a new volatile field fails until it is classified),
+  `one_answer_twice_on_one_session_gives_byte_equal_records_and_decisions`
+  (only request id, timing and the timing-bound selection digest
+  normalized; `read_status` kept in full mode, dropped in terse, kept with
+  `include_status`) and three `readiness` tests (repeated until it succeeds,
+  the typed hint kept past the budget, other errors not repeated). The
+  kernel and MCP two-run tests failed with the record identity taken over
+  the received result (a temporary switch, removed) and pass now.
+- **Where:** Core arbiter `CONTRACT.md` ("Record identity without per-read
+  status", and the amended record rule), kernel arbiter `CONTRACT.md`.
+
 ### 55. A document hit gets no line window; the refused range is typed
 
 - **Found by:** a live evaluation service on a private repository that holds

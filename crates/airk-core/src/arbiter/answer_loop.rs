@@ -645,6 +645,13 @@ pub struct ContextResponseV3 {
     pub candidate_count: usize,
     pub omitted_count: usize,
     pub applications: Vec<IndexApplication>,
+    /// The per-read status (freshness and readiness observations) of the
+    /// mandatory first search, carried once for the reply. Records never
+    /// repeat it and no record id or digest binds it (change-log entry 54).
+    /// Absent when the read carried none, or when the transport renders the
+    /// reply without status (terse, `include_status` false).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_status: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 fn nullable_partial(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
@@ -653,6 +660,31 @@ fn nullable_partial(generator: &mut schemars::SchemaGenerator) -> schemars::Sche
 fn nullable_ticket(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
     generator.subschema_for::<Option<AnswerTicket>>()
 }
+
+/// Top-level fields of a canonical read result that are per-read status,
+/// not evidence: they vary between two runs of one read at one publication
+/// (the request identity, and the freshness and readiness observations the
+/// transport attaches after the read). A loop record's id, `full_bytes`,
+/// `full_digest` and retention accounting bind the result without them;
+/// custody keeps the result as received (change-log entry 54).
+pub const VOLATILE_READ_FIELDS: [&str; 6] = [
+    "request_id",
+    "freshness",
+    "discovery_readiness",
+    "semantic_readiness",
+    "discovery_observation",
+    "indexing",
+];
+
+/// The volatile fields a reply's one `read_status` may carry: every
+/// volatile field except the inner read's own request identity.
+pub const READ_STATUS_FIELDS: [&str; 5] = [
+    "freshness",
+    "discovery_readiness",
+    "semantic_readiness",
+    "discovery_observation",
+    "indexing",
+];
 
 /// The bytes one Answer /3 reply may take, as transported.
 pub fn reply_limit(budget: &BudgetV3) -> usize {
@@ -764,6 +796,15 @@ impl ContextResponseV3 {
         self.validate_partial()?;
         self.validate_applications()?;
         self.validate_work(budget)?;
+        ensure!(
+            self.read_status.as_ref().is_none_or(|status| {
+                !status.is_empty()
+                    && status
+                        .keys()
+                        .all(|field| READ_STATUS_FIELDS.contains(&field.as_str()))
+            }),
+            "Answer read status carries a field that is not per-read status"
+        );
         let bytes = serde_json::to_vec(self)?.len();
         ensure!(
             bytes <= reply_limit(budget),

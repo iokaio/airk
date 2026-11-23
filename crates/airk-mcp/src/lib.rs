@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 mod execution;
 mod lifecycle;
 pub mod read_attempt;
+mod readiness;
 pub mod response;
 mod tool_catalog;
 mod workbench;
@@ -1575,6 +1576,18 @@ fn render<T: Serialize>(
         .as_ref()
         .ok()
         .and_then(|value| serde_json::to_value(value).ok());
+    // An Answer carries its reads' status once, at reply level; a terse reply
+    // keeps it only when the caller asked for status (change-log entry 54).
+    if matches!(operation, UsageOperation::Answer)
+        && mode != response::ResponseMode::Full
+        && !include_status
+        && let Some(object) = logical.as_mut().and_then(serde_json::Value::as_object_mut)
+    {
+        object.remove("read_status");
+    }
+    // A readiness observation still contended after its bounded repeats
+    // fails the read with its typed retry hint (change-log entry 54).
+    let mut readiness_error = None;
     if let Some(object) = logical.as_mut().and_then(serde_json::Value::as_object_mut) {
         let publication = [
             object.get("publication"),
@@ -1595,7 +1608,12 @@ fn render<T: Serialize>(
             if !object.contains_key("discovery_readiness")
                 || !object.contains_key("semantic_readiness")
             {
-                match kernel.readiness_observation(publication.token) {
+                match readiness::observe_with_retry(
+                    || kernel.readiness_observation(publication.token),
+                    readiness::READINESS_RETRY_BUDGET,
+                    &std::time::Instant::now,
+                    &std::thread::sleep,
+                ) {
                     Ok(Some((discovery, semantic))) => {
                         object.entry("discovery_readiness").or_insert_with(|| {
                             serde_json::to_value(discovery).unwrap_or(serde_json::Value::Null)
@@ -1603,6 +1621,9 @@ fn render<T: Serialize>(
                         object.entry("semantic_readiness").or_insert_with(|| {
                             serde_json::to_value(semantic).unwrap_or(serde_json::Value::Null)
                         });
+                    }
+                    Err(error) if airk_kernel::retrieval_retry::read_retry_hint(&error).is_some() => {
+                        readiness_error = Some(error);
                     }
                     _ => {
                         object.insert(
@@ -1619,10 +1640,12 @@ fn render<T: Serialize>(
     {
         object.insert("request_id".into(), id.into());
     }
-    let scope_error = logical.as_mut().and_then(|logical| {
-        kernel
-            .annotate_scoped_read_within(logical, response::reply_limit(operation))
-            .err()
+    let scope_error = readiness_error.or_else(|| {
+        logical.as_mut().and_then(|logical| {
+            kernel
+                .annotate_scoped_read_within(logical, response::reply_limit(operation))
+                .err()
+        })
     });
     let mut display = if scope_error.is_none() {
         logical.clone()

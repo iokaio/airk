@@ -517,6 +517,7 @@ fn response() -> ContextResponseV3 {
             availability: Availability::Ready,
             reason: "Compact on CUDA".into(),
         }],
+        read_status: None,
     }
 }
 fn ticket() -> ContextResponseV3 {
@@ -1060,6 +1061,34 @@ fn refusals() -> Vec<(&'static str, Mutation, &'static str)> {
             "Answer response exceeds the reply frame",
         ),
     ]
+}
+
+/// Change-log entry 54: one optional reply-level status, never a record field.
+#[test]
+fn reply_validates_with_and_without_its_one_read_status() -> Result<()> {
+    let without = response();
+    assert!(serde_json::to_value(&without)?.get("read_status").is_none());
+    without.validate(&budget())?;
+    let mut with = response();
+    let status = json!({"freshness":{"state":"idle","observed_unix_ms":7},
+        "discovery_readiness":{"state":"ready"},"semantic_readiness":{"state":"ready"}});
+    with.read_status = status.as_object().cloned();
+    with.validate(&budget())?;
+    let value = serde_json::to_value(&with)?;
+    assert_eq!(value["read_status"], status);
+    let parsed = ContextResponseV3::from_canonical(&value, &budget())?;
+    assert_eq!(parsed.read_status, with.read_status);
+    for bad in [json!({}), json!({"request_id":"r"}), json!({"hits":[]})] {
+        let mut wrong = response();
+        wrong.read_status = bad.as_object().cloned();
+        assert!(wrong.validate(&budget()).is_err(), "{bad}");
+    }
+    assert!(
+        READ_STATUS_FIELDS
+            .iter()
+            .all(|field| VOLATILE_READ_FIELDS.contains(field))
+    );
+    Ok(())
 }
 
 #[test]

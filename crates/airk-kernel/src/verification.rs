@@ -108,6 +108,8 @@ pub fn selection_digest(value: &Value) -> Result<Sha256Digest> {
             "discovery_readiness",
             "semantic_readiness",
             "discovery_observation",
+            // An Answer's one per-read status (change-log entry 54).
+            "read_status",
             "source_verification",
             // U110: a delivery annotation added after the read; never an
             // input (no earlier body carries this key).

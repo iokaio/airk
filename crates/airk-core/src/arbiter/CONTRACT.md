@@ -325,6 +325,10 @@ an oversized composed packet omits whole records and their dependent paragraphs,
 with exact omission counts and `budget` stop. It never removes fields from a
 retained native result. The initial original-question canonical search is mandatory: it preserves the
 actual retrieval population, including its full execution/readiness metadata.
+For Answer /3 loop records this is amended by "Record identity without
+per-read status" below (change-log entry 54): the identity binds the result
+without its per-read status, custody keeps the result as received, and the
+reply carries the first search's status once as `read_status`.
 If the first receipt cannot fit the original gathering retention allocation
 (one half of `max_bytes`, unchanged), observation explicitly refuses before a
 success packet can be finished. The initial receipt is never counted as an
@@ -1579,6 +1583,57 @@ adds two counts; no location and no record is ever dropped by it.
 - **Generated views:** the arbiter schema and the generated TypeScript views
   carry the two counts. The projection rows are JSON inside
   `canonical_result` and are not typed there.
+
+### Record identity without per-read status
+
+Recorded decision of 23 November 2026, a contract amendment made by the
+primary agent under the standing authorization of plan section 12.9
+(changes to Answer's reply and its digests when section 12 needs them), on
+the user's rule that Answer carries no repeated facts (change-log entry 54).
+It amends the Answer /3 reading of the record rule above ("intact canonical
+result; its identity binds both", "never removes fields", the first
+search's "full execution/readiness metadata").
+
+- **Why:** two runs of one Answer at one publication must give the same
+  records, read sizes, basis and decisions. Every canonical read result
+  carried its own `request_id` and the freshness and readiness observations
+  its transport attaches after the read. Those differ on every run, and one
+  of them (`discovery_readiness` and `semantic_readiness`, or
+  `discovery_observation` when the observation failed) changed a record's
+  size by 491 bytes when a concurrent observer met contention. Record ids,
+  `full_digest`, the basis digests, the decision log digest, paragraph
+  evidence ids and the verification selection digest all followed.
+- **Volatile fields:** `VOLATILE_READ_FIELDS` in `answer_loop.rs` lists
+  them in one place: `request_id`, `freshness`, `discovery_readiness`,
+  `semantic_readiness`, `discovery_observation` and `indexing`, at the top
+  level of a result (and of a failure receipt's `structuredContent`). A
+  field found to differ between two runs of one read must be classified
+  there; the MCP test `answer_reads_vary_only_in_classified_status_fields`
+  fails until it is.
+- **What the identity covers:** a record's id binds the dispatch key and
+  the result without the volatile fields (the stable form). `full_bytes` is
+  the serialized length of the stable form and `full_digest` its digest;
+  retention accounting while gathering (`max_bytes`, omission) counts the
+  stable form too, so two runs keep or omit the same records.
+- **What custody holds:** the complete result as received, status
+  included. Nothing is removed from what custody keeps; only the identity
+  and the reply leave the status out.
+- **One status per reply:** `read_status` carries `READ_STATUS_FIELDS`
+  (the volatile fields except `request_id`) of the mandatory first search
+  once, as received; no record repeats them and no id or digest binds
+  them. It is optional: absent when the first search carried none. The MCP
+  render keeps it in full mode or with `include_status=true` and drops it
+  from a terse reply otherwise. The first search's execution metadata
+  (everything that is not per-read status) stays in its record's identity.
+- **Validation:** Core accepts a reply with or without `read_status`; a
+  present one is non-empty and carries only `READ_STATUS_FIELDS`. The
+  arbiter schema and generated TypeScript views carry the optional field.
+- **Standalone reads and Parse:** unchanged. A tool called directly keeps
+  its status fields, and Workbench steps keep the full MCP result.
+- **Readiness observation:** an MCP read's readiness annotation that meets
+  typed contention is repeated within two seconds; if contention lasts, the
+  read fails with its typed `repeat_same_request` hint instead of carrying
+  `discovery_observation` in place of the readiness observation.
 
 ### Decision log (service custody, retained by L2b)
 

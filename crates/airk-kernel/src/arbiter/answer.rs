@@ -31,6 +31,7 @@ mod shares;
 mod split;
 mod state;
 mod union;
+mod volatile;
 mod wave;
 
 /// A canonical read the loop may call from several threads.
@@ -61,9 +62,12 @@ pub struct AnswerEnv<'a> {
 /// A retained canonical read, intact. The reply carries its compact spans.
 #[derive(Clone, Debug)]
 pub struct CustodyRecord {
+    /// Binds the dispatch key and `canonical_result` without its volatile
+    /// per-read status (Core `VOLATILE_READ_FIELDS`, change-log entry 54).
     pub id: Sha256Digest,
     pub tool: String,
     pub arguments: Map<String, Value>,
+    /// The complete result as received, status included.
     pub canonical_result: Value,
 }
 
@@ -1265,7 +1269,8 @@ impl Loop<'_> {
         out
     }
 
-    /// The decision log and every intact canonical result.
+    /// The decision log and every intact canonical result as received,
+    /// status included; the id binds its stable form (entry 54).
     fn custody(&self, log: v3::DecisionLog) -> AnswerCustody {
         let records = self
             .gather
@@ -1275,7 +1280,7 @@ impl Loop<'_> {
                 id: record.id,
                 tool: record.tool.to_owned(),
                 arguments: record.arguments.clone(),
-                canonical_result: record.body.clone(),
+                canonical_result: record.received.clone(),
             })
             .collect();
         AnswerCustody { log, records }

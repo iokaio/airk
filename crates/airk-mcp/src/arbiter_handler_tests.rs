@@ -770,3 +770,174 @@ async fn policy_withdrawal_during_joint_wait_refuses_stale_answer_without_replay
     }
     Ok(())
 }
+
+/// Fields of `left` and `right` whose values differ, by JSON pointer, at
+/// every depth (an object key on one side only counts as a difference).
+fn differing(left: &Value, right: &Value, at: String, out: &mut Vec<String>) {
+    match (left, right) {
+        (Value::Object(a), Value::Object(b)) => {
+            let keys: std::collections::BTreeSet<&String> = a.keys().chain(b.keys()).collect();
+            for key in keys {
+                match (a.get(key), b.get(key)) {
+                    (Some(x), Some(y)) => differing(x, y, format!("{at}/{key}"), out),
+                    _ => out.push(format!("{at}/{key}")),
+                }
+            }
+        }
+        (Value::Array(a), Value::Array(b)) if a.len() == b.len() => {
+            for (index, (x, y)) in a.iter().zip(b).enumerate() {
+                differing(x, y, format!("{at}/{index}"), out);
+            }
+        }
+        _ if left != right => out.push(at),
+        _ => {}
+    }
+}
+
+/// Change-log entry 54: two runs of each read the Answer loop dispatches, at
+/// one publication, differ only in Core's classified per-read status. A new
+/// volatile field fails here until it is classified.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn answer_reads_vary_only_in_classified_status_fields() -> Result<()> {
+    let fixture = scoped_kernel(
+        &[(
+            "public/policy.md",
+            "# amber_marker policy\nThe amber_marker keeps its original deadline.\n".into(),
+        )],
+        Arc::new(Disabled),
+    )?;
+    let mut tools = local::LocalTools::new(fixture.kernel.clone()).await?;
+    let mut observed = 0;
+    for (tool, arguments) in [
+        ("airk_search", json!({"query":"amber_marker","limit":8,"max_bytes":6144,"full_chunks":false})),
+        ("airk_context", json!({"path":"public/policy.md","line":1,"before":0,"after":40,"max_bytes":3072})),
+        ("airk_outline", json!({"path":"public/policy.md","limit":40,"max_bytes":4096,"compact":false})),
+    ] {
+        // The arguments `workbench_read` adds for an Answer's inner read.
+        let mut arguments = arguments;
+        arguments["response_mode"] = json!("full");
+        arguments["include_status"] = json!(true);
+        arguments["verification"] = json!("off");
+        let arguments = arguments.as_object().context("arguments")?.clone();
+        let first = body(&tools.call(tool.into(), arguments.clone()).await?)?;
+        let second = body(&tools.call(tool.into(), arguments).await?)?;
+        let mut changed = Vec::new();
+        differing(&first, &second, String::new(), &mut changed);
+        assert!(changed.iter().any(|field| field == "/request_id"), "{tool}: {changed:?}");
+        for field in &changed {
+            let top = field.trim_start_matches('/').split('/').next().unwrap_or_default();
+            assert!(
+                v3::VOLATILE_READ_FIELDS.contains(&top),
+                "{tool}: unclassified per-read field {field}: classify it in Core VOLATILE_READ_FIELDS"
+            );
+        }
+        observed += 1;
+    }
+    assert_eq!(observed, 3);
+    tools.close().await?;
+    Ok(())
+}
+
+/// The reply fields that are timing or transport identity, the only
+/// normalisation between two runs of one Answer on one session.
+fn without_timing(mut packet: Value) -> Value {
+    let object = packet.as_object_mut().unwrap();
+    object.remove("request_id");
+    object.remove("elapsed_ms");
+    for key in ["queue_us", "compile_us", "inference_us", "policy_us"] {
+        object["work"].as_object_mut().unwrap().remove(key);
+    }
+    object["decision_log"]
+        .as_object_mut()
+        .unwrap()
+        .remove("timings");
+    if let Some(status) = object.get_mut("read_status").and_then(Value::as_object_mut) {
+        for field in status.values_mut() {
+            if let Some(field) = field.as_object_mut() {
+                field.remove("observed_unix_ms");
+            }
+        }
+    }
+    if let Some(verification) = object
+        .get_mut("source_verification")
+        .and_then(Value::as_object_mut)
+    {
+        verification.remove("observed_from_unix_ms");
+        verification.remove("observed_to_unix_ms");
+        for source in verification
+            .get_mut("sources")
+            .and_then(Value::as_array_mut)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(source) = source.as_object_mut() {
+                source.remove("observed_from_unix_ms");
+                source.remove("observed_to_unix_ms");
+            }
+        }
+    }
+    for part in object["parts"].as_array_mut().unwrap() {
+        // A part's share of the time left before the deadline.
+        part.as_object_mut().unwrap().remove("deadline_share_ms");
+    }
+    // The receipt's selection digest covers the reply, timing included;
+    // recompute it over the normalized reply.
+    if packet.get("source_verification").is_some() {
+        packet["source_verification"]["selection_digest"] = serde_json::to_value(
+            airk_kernel::verification::selection_digest(&packet).unwrap(),
+        )
+        .unwrap();
+    }
+    packet
+}
+
+/// Change-log entry 54: one Answer request twice on one session gives the
+/// same records (ids, read sizes, digests), basis, decisions and log digest.
+/// The reply carries its reads' status once, at reply level, and a terse
+/// reply keeps it only with `include_status`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn one_answer_twice_on_one_session_gives_byte_equal_records_and_decisions() -> Result<()> {
+    let text: String = (1..=120)
+        .map(|line| {
+            if line % 30 == 0 {
+                format!("amber_marker {line} keeps the original deadline.\n")
+            } else {
+                format!("Line {line}: the delivery stays bound to its publication.\n")
+            }
+        })
+        .collect();
+    let fixture = scoped_kernel(
+        &[
+            ("public/policy.md", text.clone()),
+            ("public/other.md", text.replace("Line", "Other line")),
+        ],
+        Arc::new(Disabled),
+    )?;
+    let mut tools = local::LocalTools::new(fixture.kernel.clone()).await?;
+    let ask = request("amber_marker", BudgetV3::default())?;
+    let first = body(&tools.call("airk_answer".into(), ask.clone()).await?)?;
+    let second = body(&tools.call("airk_answer".into(), ask.clone()).await?)?;
+    assert!(
+        first["records"].as_array().unwrap().iter().any(|r| r["operation"] != "search"),
+        "the Answer reads structurally: {first}"
+    );
+    let status = first["read_status"].as_object().context("full reply carries read_status")?;
+    assert!(status.contains_key("freshness"), "{first}");
+    let records = first["records"].to_string();
+    for field in v3::VOLATILE_READ_FIELDS {
+        assert!(!records.contains(&format!("\"{field}\"")), "{field} in records");
+    }
+    let (left, right) = (without_timing(first), without_timing(second));
+    let mut changed = Vec::new();
+    differing(&left, &right, String::new(), &mut changed);
+    assert!(changed.is_empty(), "two runs differ at {changed:?}");
+    let mut terse = ask.clone();
+    terse.insert("response_mode".into(), json!("terse"));
+    let reply = body(&tools.call("airk_answer".into(), terse.clone()).await?)?;
+    assert!(reply.get("read_status").is_none(), "{reply}");
+    terse.insert("include_status".into(), json!(true));
+    let reply = body(&tools.call("airk_answer".into(), terse).await?)?;
+    assert!(reply["read_status"].is_object(), "{reply}");
+    tools.close().await?;
+    Ok(())
+}

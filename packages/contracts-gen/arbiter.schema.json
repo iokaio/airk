@@ -1557,6 +1557,14 @@
         "question": {
           "type": "string"
         },
+        "read_status": {
+          "additionalProperties": true,
+          "description": "The per-read status (freshness and readiness observations) of the\nmandatory first search, carried once for the reply. Records never\nrepeat it and no record id or digest binds it (change-log entry 54).\nAbsent when the read carried none, or when the transport renders the\nreply without status (terse, `include_status` false).",
+          "type": [
+            "object",
+            "null"
+          ]
+        },
         "record_uses": {
           "items": {
             "$ref": "#/$defs/RecordUse"

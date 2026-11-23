@@ -152,14 +152,20 @@ impl Dispatch {
     }
 }
 
-/// A retained canonical read: the intact body, its uses and its kind.
+/// A retained canonical read: its body, its uses and its kind.
 #[derive(Clone, Debug)]
 pub(crate) struct Record {
     pub(crate) id: Sha256Digest,
     pub(crate) tool: &'static str,
     pub(crate) operation: v3::LoopRead,
     pub(crate) arguments: Map<String, Value>,
+    /// The result without its volatile per-read status
+    /// (Core `VOLATILE_READ_FIELDS`): what the id, `bytes`, the reply's
+    /// `full_digest` and retention accounting bind (change-log entry 54).
     pub(crate) body: Value,
+    /// The complete result as received, status included, for custody.
+    pub(crate) received: Value,
+    /// Serialized bytes of `body`.
     pub(crate) bytes: usize,
     pub(crate) kind: software::FollowUp,
     pub(crate) subject: String,
@@ -504,7 +510,7 @@ impl Gathering {
     }
 
     fn fits(&self, body: &Value) -> Result<bool> {
-        let bytes = serde_json::to_vec(body)?.len();
+        let bytes = serde_json::to_vec(&super::volatile::stable(body))?.len();
         Ok(self
             .bytes
             .checked_add(bytes)
@@ -519,6 +525,10 @@ impl Gathering {
         uses: Vec<Use>,
         failure: bool,
     ) -> Result<Option<usize>> {
+        // Identity and accounting bind the stable form, so two runs of one
+        // read at one publication retain the same record (entry 54).
+        let received = body;
+        let body = super::volatile::stable(&received);
         let bytes = serde_json::to_vec(&body)?;
         self.candidates += 1;
         if self
@@ -547,6 +557,7 @@ impl Gathering {
             operation: dispatch.operation,
             arguments: dispatch.arguments.clone(),
             body,
+            received,
             bytes: bytes.len(),
             kind: dispatch.kind,
             subject: dispatch.subject.clone(),

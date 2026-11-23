@@ -426,6 +426,16 @@ What holds:
   `invalid_arguments`, field `range`, not `retryable`, rendered by the MCP
   handler as that typed receipt instead of `read_failed`. The Answer loop
   does not read message text.
+- **Record identity without per-read status** (change log entry 54, Core
+  contract section of the same name). `gather::retain` keeps two forms of
+  each read: `body`, the result without Core's `VOLATILE_READ_FIELDS`
+  (`answer::volatile::stable`), and `received`, the result as received. The
+  record id, `bytes` (the reply's `full_bytes`), `full_digest`, retention
+  accounting and every rule that reads a record use `body`; custody's
+  `canonical_result` is `received`. Union sets the reply's one `read_status`
+  from the first retained search's `received` status. Two runs of one
+  request at one publication therefore give byte-equal records, decisions,
+  basis and log digest (`runs_differing_only_in_read_status_give_byte_equal_replies`).
 What does not hold yet, with the follow-up owner:
 
 - **Canonical reads are not cancelled at the reserve** (L4/L2b). A read

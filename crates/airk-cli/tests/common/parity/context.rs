@@ -5,23 +5,24 @@
 //! (`ContextResponseV3::from_canonical` under the request budget, or a
 //! member's clamped allowance). The comparison then keeps every field and
 //! normalizes only:
-//! - transport identities: each canonical read's top-level `request_id`
-//!   (through `strict`), and the record ids derived from those bodies, which
-//!   are renamed by position and rebound everywhere the reply cites them.
-//!   A span row of a projection that names another row (`same_as`, or an
-//!   entry of `overlaps`) cites that row's record id, and it must be a
-//!   record of the same reply;
-//! - digests the reply cannot recompute because they bind record ids, read
-//!   bodies or measured work (`decision_log.digest`, each decision's
-//!   `basis.digest` and `receipt`, each span projection's `full_digest`):
-//!   renamed by first appearance, so equal digests stay equal and different
-//!   ones stay different;
+//! - transport identity: the reply's top-level `request_id` (through
+//!   `strict`);
 //! - timing: `elapsed_ms`, the measured `work` and `decision_log.timings`
-//!   microseconds (present or absent stays compared), and each part's
+//!   microseconds (present or absent stays compared), each part's
 //!   `deadline_share_ms`, which a finished part trims to its elapsed time
-//!   (bounded here by the budget deadline).
-//! - order: lists the kernel keeps in record-id order (`record_uses` and
-//!   the evidence lists) are compared in logical-id order after rebinding.
+//!   (bounded here by the budget deadline), the observation times of
+//!   `freshness` (reply level and in `read_status`) and of the saved-source
+//!   verification;
+//! - a decision's Focus `receipt` digest, which binds measured model work:
+//!   renamed by first appearance, so equal digests stay equal and different
+//!   ones stay different.
+//!
+//! Record ids, each projection's `full_bytes` and `full_digest`, the basis
+//! and decision log digests and the record order are compared as sent:
+//! since change-log entry 54 they bind each read's result without its
+//! per-read status, so two runs of one request at one publication give the
+//! same ones on every transport. A span row that names another row
+//! (`same_as`, or an entry of `overlaps`) must name a record of the reply.
 //!
 //! A /3 reply carries span projections of its canonical reads, not the read
 //! bodies, so the /2 replay of records through the owning `Gathering` has no
@@ -29,11 +30,11 @@
 use airk_core::{
     arbiter::answer_loop::{BudgetV3, ContextResponseV3},
     combined_context::CombinedContextSummaryV2,
-    identity::{Incarnation, framed_digest},
+    identity::Incarnation,
 };
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 fn primitive(raw: &Value) -> Result<Value> {
     let mut rules = super::strict::Normalization::default();
@@ -86,51 +87,16 @@ fn primitive(raw: &Value) -> Result<Value> {
     Ok(result)
 }
 
-fn logical(domain: &[u8], position: usize) -> Result<Value> {
-    let ordinal = u64::try_from(position)?;
-    Ok(serde_json::to_value(framed_digest(
-        domain,
-        &[&ordinal.to_le_bytes()],
-    ))?)
-}
-
-/// Rebind the record id a span row cites when it names another row. The id
-/// must be a record of the same reply.
-fn cite(name: &mut Value, ids: &BTreeMap<String, Value>) -> Result<()> {
+/// A span row that names another row must name a record of the same reply.
+fn cite(name: &Value, ids: &BTreeSet<String>) -> Result<()> {
     let id = name["record"]
         .as_str()
-        .context("a span row names a row without a record id")?
-        .to_owned();
-    name["record"] = ids
-        .get(&id)
-        .context("a span row names a record that is not in the reply")?
-        .clone();
+        .context("a span row names a row without a record id")?;
+    ensure!(
+        ids.contains(id),
+        "a span row names a record that is not in the reply"
+    );
     Ok(())
-}
-
-/// Rebind every cited record id outside the canonical results.
-fn rebind(value: &mut Value, ids: &BTreeMap<String, Value>, in_records: bool) {
-    match value {
-        Value::String(text) => {
-            if let Some(logical) = ids.get(text.as_str()) {
-                *value = logical.clone();
-            }
-        }
-        Value::Array(items) => {
-            for item in items {
-                rebind(item, ids, in_records);
-            }
-        }
-        Value::Object(fields) => {
-            for (key, field) in fields.iter_mut() {
-                if in_records && key == "canonical_result" {
-                    continue;
-                }
-                rebind(field, ids, false);
-            }
-        }
-        _ => {}
-    }
 }
 
 fn custody(value: &mut Value, seen: &mut BTreeMap<String, Value>) -> Result<()> {
@@ -165,53 +131,31 @@ fn timing(value: &mut Value, pointer: &str) -> Result<()> {
 fn reply(raw: &Value, budget: &BudgetV3) -> Result<Value> {
     let typed = ContextResponseV3::from_canonical(raw, budget)?;
     let mut result = primitive(raw)?;
-    let mut ids = BTreeMap::new();
-    let mut seen = BTreeMap::new();
-    for (position, record) in typed.records.iter().enumerate() {
+    let mut ids = BTreeSet::new();
+    for record in &typed.records {
         ensure!(
-            ids.insert(
-                record.id.to_string(),
-                logical(b"airk.test.answer-record-position/1", position)?
-            )
-            .is_none(),
+            ids.insert(record.id.to_string()),
             "duplicate raw record identity"
         );
-        let mut projection = primitive(&record.canonical_result)?;
-        // A span projection names its full read body by digest; that body
-        // carries the read's transport request id.
-        if let Some(digest) = projection.get_mut("full_digest") {
-            custody(digest, &mut seen)?;
-        }
-        result["records"][position]["canonical_result"] = projection;
     }
-    for (position, id) in typed.omitted_evidence.iter().enumerate() {
+    for id in &typed.omitted_evidence {
         ensure!(
-            ids.insert(
-                id.to_string(),
-                logical(b"airk.test.answer-omitted-position/1", position)?
-            )
-            .is_none(),
+            ids.insert(id.to_string()),
             "omitted evidence repeats a record identity"
         );
     }
-    if let Some(fields) = result.as_object_mut() {
-        for (key, field) in fields.iter_mut() {
-            rebind(field, &ids, key == "records");
-        }
-    }
-    // Inside a projection only the rows that name another row cite a record.
-    for position in 0..typed.records.len() {
-        let spans = result["records"][position]["canonical_result"]["spans"]
-            .as_array_mut()
+    for record in &typed.records {
+        let spans = record.canonical_result["spans"]
+            .as_array()
             .into_iter()
             .flatten();
         for span in spans {
-            if let Some(name) = span.get_mut("same_as") {
+            if let Some(name) = span.get("same_as") {
                 cite(name, &ids)?;
             }
             for overlap in span
-                .get_mut("overlaps")
-                .and_then(Value::as_array_mut)
+                .get("overlaps")
+                .and_then(Value::as_array)
                 .into_iter()
                 .flatten()
             {
@@ -219,40 +163,13 @@ fn reply(raw: &Value, budget: &BudgetV3) -> Result<Value> {
             }
         }
     }
-    // Lists the kernel keeps in record-id order are in a transport-derived
-    // order; after rebinding they are compared in logical-id order.
-    let sort = |list: &mut Value| {
-        if let Some(items) = list.as_array_mut() {
-            items.sort_by_key(Value::to_string);
-        }
-    };
-    sort(&mut result["record_uses"]);
-    sort(&mut result["omitted_evidence"]);
-    for part in result["parts"].as_array_mut().into_iter().flatten() {
-        for need in part["sub_needs"].as_array_mut().into_iter().flatten() {
-            sort(&mut need["evidence"]);
-        }
-    }
-    for paragraph in result["paragraphs"].as_array_mut().into_iter().flatten() {
-        sort(&mut paragraph["evidence"]);
-    }
-    for conflict in result["union"]["conflicts"]
-        .as_array_mut()
-        .into_iter()
-        .flatten()
-    {
-        sort(&mut conflict["evidence"]);
-    }
-    custody(&mut result["decision_log"]["digest"], &mut seen)?;
+    let mut seen = BTreeMap::new();
     for position in 0..typed.decisions.len() {
-        custody(
-            &mut result["decisions"][position]["basis"]["digest"],
-            &mut seen,
-        )?;
         if let Some(receipt) = result["decisions"][position].get_mut("receipt") {
             custody(receipt, &mut seen)?;
         }
     }
+    timing(&mut result, "/read_status/freshness/observed_unix_ms")?;
     timing(&mut result, "/elapsed_ms")?;
     for field in ["queue_us", "compile_us", "inference_us", "policy_us"] {
         timing(&mut result, &format!("/work/{field}"))?;

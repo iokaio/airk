@@ -416,6 +416,14 @@ export type ContextResponseV3 = {
     partial: PartialMarker | null;
     parts: Array<AnswerPart>;
     question: string;
+    /**
+     * The per-read status (freshness and readiness observations) of the
+     * mandatory first search, carried once for the reply. Records never
+     * repeat it and no record id or digest binds it (change-log entry 54).
+     * Absent when the read carried none, or when the transport renders the
+     * reply without status (terse, `include_status` false).
+     */
+    read_status?: Record<string, unknown> | null;
     record_uses: Array<RecordUse>;
     records: Array<LoopEvidence>;
     schema: string;
