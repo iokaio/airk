@@ -98,7 +98,7 @@ The user resumed the Windows and Linux FP16 campaign after D: cleanup. Keep new 
   free-space floor falls from 1037825253376 to 842404241408 bytes. The 100 GiB
   physical floor, per-job reservations, cleanup owners and monitoring of
   actual free space still apply.
-- **D: floor lowered to 200 GiB free, 23 November 2026 at about 00:30 UTC.**
+- **D: floor lowered to 200 GiB free, 23 November 2026 at about 00:20 UTC.**
   The user wrote: "You can take the D drive down to 200GB free if needed."
   The D: free-space floor for the Answer-loop campaign is now
   214,748,364,800 bytes (read as 200 GiB, the stricter reading), in place of

@@ -15796,7 +15796,7 @@ rebased onto `f13594ee`; not yet validated on that base, not reviewed.
   was reversed. Token use is held down: no optional agents, reviews on a
   cheaper model, no repeated checks. The sealed set is not restarted; LG does
   not need it.
-- At about 00:30 UTC on 23 November: "You can take the D drive down to 200GB
+- At about 00:20 UTC on 23 November: "You can take the D drive down to 200GB
   free if needed." The D: floor is now 214,748,364,800 bytes free
   (`docs/agent-current-work.md`).
 
