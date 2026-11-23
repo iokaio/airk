@@ -16249,3 +16249,67 @@ Windows and Linux for CUDA. Once that is done, I want to examine the results bef
   Windows-only, so a Linux CUDA service would refuse every FP16 open as the code stands.
 - **State of LG at this entry:** the gate has not started. The shakedown agent is rebuilding its
   image from `1b5882ee` and waits for a fresh root to finish embedding.
+
+### 23 November 2026 at 08:39 UTC — Compact scores cards in a real service; four more product fixes; the full shakedown pass starts
+
+**First model work through the loop on a real service** (shakedown roots s6
+and s7; pipeline tests, not results). Compact FP16 warmed in 9.1 s, CUDA
+Focus in 10.0 s. With the fixes below, a default-budget Answer (380,000
+tokens, 300 s, four sub-needs) runs: on one question 7.2 s, five card calls
+of 331 to 1,870 input tokens at 95 to 327 ms each, one Focus batch of 12
+pairs at about 106 ms a pair, reply body 52,822 bytes. Decisions were still
+abstained, because the fixture had not selected the gate's top-score mode.
+
+**Product fixes, all pushed** (fix agent, handed back):
+
+| Commit | Defect found by the live service | Fix | Identity |
+| --- | --- | --- | --- |
+| `dd6b6b88` | Every Answer failed with "Answer Focus work exceeds its budget": the kernel counted Focus pairs dispatched, the reply check counted pairs scored, and a call that scored nothing broke `focus_calls <= focus_pairs` | Pairs are counted as dispatched everywhere; a call that scored nothing is disclosed; every budget refusal names its bound and figures | moved: Core loop semantics `2f89a3ae…` to `99b87f98…`, the four card task policies, batched Focus `f90f9c77…` to `839af2a5…` ("Sixth move") |
+| `cad8f5b9` | Focus scored nothing: the service refused every batch above the profile's one-turn cap of 4 candidates, while the loop sends 5 to 32 | A batch of 1 to 32 single-candidate pairs is admitted; a refusal before reservation is a declined batch; a batch that scores fewer pairs names why | none |
+| `cad8f5b9` | No card call reached the model: the private Answer route refuses a job whose deadline is more than 120 s away, and card jobs carried the whole Answer's 300 s | A card call and each Focus pair job get the earlier of the Answer's deadline and 120 s from now | none |
+| `07d0a51c` | Five of ten munarium scenarios failed with `verification_reply_budget`: the verification receipt was sized in the other tools' 65,536-byte frame | The receipt is sized in the calling tool's frame; Union packs the escaped text; source rows are trimmed with disclosure when they do not fit | none |
+
+Each has a test that fails on the old code, except the service admission
+tests, which are function-level. Clippy `-D warnings` exit 0 with all and
+default features at each commit. Change-log entries 53 and following.
+
+**Harness fixes on `loop/l5c`:** the top-score decision mode is now selected
+in both fixture factories (`f8fe933f`, `da175c28`); the first was applied to
+the CPU factory only, and the smoke test caught that the GPU route still
+abstained.
+
+**FP16 profiles re-emitted at `dd6b6b88`** and confirmed on the A6000:
+Compact cold open 7.58 s, 52, 201 and 1,699 ms at 32, 1,024 and 8,192
+tokens, peak 6.70 GB; Large 15.73 s, 83, 440 and 4,336 ms, peak 15.29 GB.
+Their task policies equal the new identities. Pairs: `pair-C-r3`
+`8d04e245…`, `pair-L-r3` `18182967…`. The CUDA Focus entry is unchanged.
+
+**Model-switch trial on s7** (plan 12.5.2 item 4, same question, decisions
+abstained): Compact 7.2 s end to end with 2.9 s of inference; release 0.8 s;
+Large reload 23.3 s, 9.1 s end to end with 4.5 to 4.7 s of inference, GPU
+peak 17,602 MiB; Large release returns its memory in full; Compact reload
+9.6 s, and its second run has the same evidence digest as the first. Two
+Answers at once both complete, each in about 13 s against about 7 s alone.
+
+**Reply composition, one scenario:** body 54,222 bytes, of which evidence
+text 16,452; 31 of 49 rows marked truncated although nothing was dropped
+for the frame; 22 rows point to text already delivered.
+
+**Open, with owner.**
+
+| Item | State | Owner |
+| --- | --- | --- |
+| Transport parity of a single-index Answer | `current_answer_single_index_…` and `current_answer_many_and_open_…` fail: decision log and basis digests differ between the two transports' replies, also on the source before the last four commits. Bears on whether the gate's replies are reproducible | a new agent in the main tree, started at this entry; the shakedown also compares repeated runs |
+| A fresh root's first vectors job fails | Now on five of six fresh roots with the new image; a restart resumes the embedding. Each occurrence is logged by the base builder | a new agent, after LG; before the Linux bases are built |
+| Lane refusals after compile and before dispatch are untyped | A card call holds them as unknown work; typing them changes the reviewed lane contract | decision after LG |
+| Combined Answer members size their verification receipts by the 65,536 rule | Not changed | with the combined Answer work |
+| About 1.0 GiB of GPU memory above the Focus-only level after a Compact release | Not separated from Focus's own growth | the full pass |
+
+**Disk.** D: free 833,022,251,008 bytes, 575.8 GiB above the 200 GiB floor.
+It fell about 170 GB in four hours: six shakedown roots at about 24 GB each
+and the Cargo targets. The spent roots are to be reclaimed with a receipt.
+
+**Running at this entry:** the shakedown agent, building an image from
+`07d0a51c` for a complete pass on root s8 (smoke test, all ten munarium
+scenarios, replays, one session with two judges, one Answer with Large, two
+Answers at once); the parity investigation.
