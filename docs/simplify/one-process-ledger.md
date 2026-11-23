@@ -16544,3 +16544,48 @@ retired.
 **Next action:** plan step LH from `R\answer-loop\LH\inventory.md`: remove
 Large with evidence, the name Arbiter, and Focus and Arbiter as separate
 switches.
+
+### 23 November 2026 at 12:09 UTC — reproducible record identities merged (change-log entry 54); the review queue is being drained before LH
+
+**Why before LH.** Three finished branches were waiting for primary review
+(`loop/reproducible-records`, `loop/workbench-v3`, `loop/l2b-wire`), one more
+than the standing limit of two, so no new implementation is assigned until
+the queue is drained. It also keeps LH from colliding with them: LH edits
+the Admin assets and the Answer job estimate that two of them touch.
+
+**`loop/reproducible-records`, merged** as `1bdaf023`, `e6ddd6d9` and
+`fb38ecc2` (cherry-picked onto `c347dd7a`; the picked files are byte-equal
+to the reviewed branch).
+- **What it does:** a loop record's id, `full_bytes`, `full_digest` and
+  retention accounting bind the read without its per-read status (Core
+  `VOLATILE_READ_FIELDS`); custody keeps the result as received; the reply
+  carries one `read_status`, in full mode or when status is asked for; a
+  readiness observation that meets typed contention is repeated for up to
+  two seconds.
+- **Primary review (the parity agent implemented):** read the Core, kernel
+  and MCP changes and the contract text. No pinned identity moves: the Core
+  file edited is not in the loop-semantics digest list. The new reply field
+  is optional and absent from a default or terse reply, so reply size does
+  not grow.
+- **Accepted with one recorded reservation:** when contention outlasts the
+  two seconds, the read now fails with its typed `repeat_same_request` hint
+  instead of returning its data with `discovery_observation`. Inside an
+  Answer the loop repeats the read; a client that does not honour the hint
+  spends a turn. Owner: primary agent; revisit if a gate's failed-read table
+  ever shows it.
+- **Validation:** the agent's recorded runs on the same sources (rebased on
+  `de0dde02`, whose product crates equal main's): the two transport parity
+  tests 5 of 5 runs each (2 of 67 selected per run), every `combined_reads`
+  Answer test 5 of 5, unit selections and Clippy as logged in
+  `answer-loop\repro\commands.tsv`. Not repeated on unchanged inputs. Run
+  here on the merged tree: `python -I -B scripts/dev/contract_types.py
+  arbiter --check` exit 0; `scripts/check-repo.ps1` passed for 10,675 public files; whitespace
+  check clean.
+- **Not verified:** a live service. This change touches the reply's record
+  path, so it gets its live check on the next evaluation image (the LH
+  smoke) before any result is taken from it.
+
+**Running at this entry:** one Opus agent validating `loop/workbench-v3`
+(rebase, independent review, its recorded checks again on the rebased
+tree); the S1 base build. **Next:** an independent review of
+`loop/l2b-wire` (L2c) on the new main, then LH.
