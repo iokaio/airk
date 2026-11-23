@@ -328,10 +328,7 @@ pub(crate) fn require_graph_diagnostic_profile(
             profile.release,
             profile.description.qualification.is_none()
                 && profile.description.qualified_targets.is_empty(),
-            matches!(
-                profile.description.model,
-                ModelChoice::ContextQwenCompact | ModelChoice::ContextQwenLarge
-            ),
+            profile.description.model == ModelChoice::ContextQwenCompact,
             super::evaluation_bounded(&profile.description)?,
             profile
                 .gpu
@@ -346,26 +343,6 @@ pub(crate) fn require_graph_diagnostic_profile(
         .as_ref()
         .is_some_and(|device| device.precision == DevicePrecision::Float16)
     {
-        if profile.description.model == ModelChoice::ContextQwenLarge {
-            let device = profile
-                .description
-                .device_execution
-                .as_ref()
-                .context("Large device descriptor missing")?;
-            let baseline =
-                "c00371ad9407c25bd52999d87327115025b7c6f55a4e585645ca112d858de5bd".parse()?;
-            let protected =
-                "1448e83dcd209b120bd22e1dec084092f56adc7e8eec5dcd323e179b800467aa".parse()?;
-            let body =
-                "636cea20b5fa4f58251589d01a7ef2e3df87f7f4b57498d2765b0d56f6b87d2d".parse()?;
-            ensure!(
-                (device.graph == baseline || device.graph == protected || device.graph == body)
-                    && profile.description.profile_id
-                        == "private-cuda-fp16-large-efficient-probe-v1",
-                "Large FP16 graph diagnostic requires a reviewed baseline or protected Q/K/V graph"
-            );
-            return require_fp16_profile(profile, ModelChoice::ContextQwenLarge);
-        }
         if profile.description.model == ModelChoice::FocusQwenReranker06B {
             return require_fp16_profile(profile, ModelChoice::FocusQwenReranker06B);
         }
@@ -374,10 +351,7 @@ pub(crate) fn require_graph_diagnostic_profile(
     let model = profile.description.model;
     require_profile(
         profile,
-        model == ModelChoice::ContextQwenCompact
-            || model == ModelChoice::FocusQwenReranker06B
-            || (cfg!(all(windows, target_arch = "x86_64"))
-                && model == ModelChoice::ContextQwenLarge),
+        model == ModelChoice::ContextQwenCompact || model == ModelChoice::FocusQwenReranker06B,
     )
 }
 

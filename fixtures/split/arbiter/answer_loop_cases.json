@@ -1414,26 +1414,6 @@
     {
       "accepted": false,
       "base": "two_parts_valid",
-      "error": "Large never runs on the CPU",
-      "id": "large_on_cpu",
-      "replace": [
-        {
-          "pointer": "/decisions/1/device",
-          "value": "cpu"
-        },
-        {
-          "pointer": "/decisions/1/model",
-          "value": "context_large"
-        },
-        {
-          "pointer": "/decisions/1/precision",
-          "remove": true
-        }
-      ]
-    },
-    {
-      "accepted": false,
-      "base": "two_parts_valid",
       "error": "Answer GPU decision precision must be stated",
       "id": "gpu_without_precision",
       "replace": [
@@ -1458,7 +1438,7 @@
     {
       "accepted": false,
       "base": "two_parts_valid",
-      "error": "only a Context model scores loop cards",
+      "error": "only the Arbiter scores loop cards",
       "id": "focus_model_scores_cards",
       "replace": [
         {
@@ -1660,13 +1640,13 @@
             },
             {
               "count": 1,
-              "model": "context_compact",
+              "model": "arbiter",
               "source": "model",
               "stage": "coverage"
             },
             {
               "count": 1,
-              "model": "context_compact",
+              "model": "arbiter",
               "source": "abstained",
               "stage": "coverage"
             },
@@ -1677,7 +1657,7 @@
             },
             {
               "count": 1,
-              "model": "context_compact",
+              "model": "arbiter",
               "source": "model",
               "stage": "follow_up"
             }
@@ -1909,13 +1889,9 @@
     {
       "accepted": false,
       "base": "two_parts_valid",
-      "error": "degraded Answer model still decided",
-      "id": "large_degraded_yet_decides",
+      "error": "invalid Answer model degradation",
+      "id": "model_degraded_to_another_model",
       "replace": [
-        {
-          "pointer": "/decisions/1/model",
-          "value": "context_large"
-        },
         {
           "pointer": "/degradations",
           "value": [
@@ -1924,10 +1900,33 @@
               "kind": "context_abstained"
             },
             {
-              "applied": "context_compact",
+              "applied": "focus",
               "kind": "model",
               "reason": "memory_unavailable",
-              "requested": "context_large",
+              "requested": "arbiter",
+              "stage": "context"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "accepted": false,
+      "base": "two_parts_valid",
+      "error": "degraded Answer model still decided",
+      "id": "model_degraded_yet_decides",
+      "replace": [
+        {
+          "pointer": "/degradations",
+          "value": [
+            {
+              "count": 1,
+              "kind": "context_abstained"
+            },
+            {
+              "kind": "model",
+              "reason": "memory_unavailable",
+              "requested": "arbiter",
               "stage": "context"
             }
           ]
@@ -2431,13 +2430,13 @@
             },
             {
               "count": 1,
-              "model": "context_compact",
+              "model": "arbiter",
               "source": "model",
               "stage": "coverage"
             },
             {
               "count": 1,
-              "model": "context_compact",
+              "model": "arbiter",
               "source": "abstained",
               "stage": "coverage"
             },
@@ -2502,7 +2501,7 @@
             ],
             "device": "cuda",
             "margin": 1.5,
-            "model": "context_compact",
+            "model": "arbiter",
             "need": 1,
             "ordinal": 2,
             "part": 1,
@@ -2537,7 +2536,7 @@
               }
             ],
             "device": "cuda",
-            "model": "context_compact",
+            "model": "arbiter",
             "need": 1,
             "ordinal": 3,
             "part": 2,

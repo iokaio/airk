@@ -1741,10 +1741,12 @@ round, as `CardEvidence` rows.
     after it, which are not shown; together at most the retention ceiling.
   - `truncated` repeats `Hit.truncated`: the read itself returned only part
     of the text there.
-  - `same_as` is the place (`path`, `start_line`, `end_line`) of an earlier
-    row of the same call that shows the same text. Such a row carries no
-    excerpt and no hidden bytes. The row it names must come earlier in the
-    call and must itself show text.
+  - `same_as` is the position of an earlier row of the same call that shows
+    the same text, counted over all the call's rows from 0, segment after
+    segment in request order. Such a row carries no excerpt and no hidden
+    bytes. The row it names must come earlier in the call and must itself
+    show text. (Until step LH it was the row's place, which two rows can
+    share: review L-b, change-log entry 62.)
 - **Which segments:** Coverage and Follow-up only, at most eight rows each.
   Split and Plan segments are refused with evidence, a verdict or an unshown
   count. A segment without spans carries none; the fields are then absent on
@@ -2020,9 +2022,14 @@ expected error. All are qualification false. `download_origin_cases.json`
 embeds a schema snapshot written only on request; it is not compared and was
 not rewritten.
 
-## Context ladder (plan 12.5)
+## Context ladder (plan 12.5), retired in step LH
 
-`device::context_ladder` reads the finished Large and Compact selections and
+Step LH removed the ladder with the Large model (change-log entry 62): the
+Context stage has one model, so there is no step from one model to another.
+`smaller_model_selected` stays in the reason vocabulary, reserved and never
+emitted. The text below records what the ladder was.
+
+`device::context_ladder` read the finished Large and Compact selections and
 names the rung: Large on the GPU, then Compact on the GPU, then Compact on the
 CPU. Large never runs on the CPU: a Large CPU selection is refused with a
 `no_qualified_gpu_route` row. A step down from Large adds the
@@ -2064,3 +2071,38 @@ back one at a time after a 120 s quiet period.
   model. Follow-up owner: L5b, after L4's `runtime.rs` change integrates.
 - **Closed (L5C review L3):** a lowered user cap was ignored while a trial was
   pending. It now applies first (test `a_lowered_user_cap_ends_a_pending_trial`).
+
+## One Context model: Arbiter (step LH, decided 23 November 2026)
+
+The user dropped the Large Context model after the LG gate and named the
+remaining one Arbiter (change-log entries 56 and 62).
+
+- **Selectable models.** `SelectedModel` is `focus` or `arbiter` (wire
+  values). `arbiter` selects `ModelChoice::ContextQwenCompact`
+  (`arbiter-context-qwen3-17b`, Qwen3-1.7B). The stage keeps its key
+  `context`; tasks `airk.context_*` and the degradation `context_absent`
+  keep their names. `ModelChoice::ContextQwenLarge` stays decodable, because
+  retained private profiles carry it, but `SelectedModel::from_model` refuses
+  it: it has no device slot.
+- **Device catalog.** `airk.arbiter.device-catalog/2` has two slots, `focus`
+  and `arbiter`; the binding digest is framed with the /2 name.
+- **Configuration.** `airk.arbiter.configuration/5` is configuration/4 with
+  the new model values and an optional `context_retired` (`context_large`).
+  `DeviceConfiguration::migrate_v4` reads exact canonical /4 bytes of this
+  installation bound to the compiled transition's old binding and returns /5
+  under its new binding with the revision bumped: Focus as it was; a
+  `context_compact` selection becomes `arbiter`; a `context_large` selection
+  becomes a disabled Context stage with no model, its enrollments, device
+  policy and precision kept and `context_retired` set. Arbiter is never
+  selected for it. A /3 document that selected the Large CPU profile
+  migrates the same way. `context_retired` requires a disabled Context stage
+  with no model; the next Context configuration clears it.
+- **Device status.** The Context stage lists one model, `arbiter`. Status
+  text names the models "Focus" and "Arbiter".
+- **Answer /3.** `Degradation::Model` keeps its shape; the only valid step
+  is to no model (`applied` absent). A decision's model is `arbiter`.
+- **Card rows.** `CardEvidence.same_as` names the earlier row by its
+  position in the call (above).
+- **Holds:** `device::migration::tests` (6 tests) on hand-written /4 bytes;
+  the service's retained-fixture tests on the bytes the build before LH
+  wrote; the store's migration test on a real configuration store.

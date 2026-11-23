@@ -3,7 +3,7 @@
 //! written by hand from the contract tables, never computed by the planner.
 use super::*;
 
-const MODEL: SelectedModel = SelectedModel::ContextCompact;
+const MODEL: SelectedModel = SelectedModel::Arbiter;
 /// A Fast tier (2,048 tokens) and a Full tier (8,192 tokens) of one model.
 const FAST: usize = 2048;
 const FULL: usize = 8192;
@@ -509,21 +509,6 @@ fn no_cpu_tier_closes_a_gpu_only_order_and_a_candidate_of_another_model_is_refus
     assert_eq!(value.order, [0]);
     assert_eq!(value.reasons, [] as [CandidateRejection; 0]);
     assert_eq!(value.no_fit, Some(global(SelectionReason::NoQualifiedCpu)));
-    // The smaller-model fallback is not in effect: Compact is never a
-    // candidate for a Large request, under either policy.
-    for policy in [DevicePolicy::Auto, DevicePolicy::Cpu] {
-        assert!(
-            attempt_order(
-                SelectedModel::ContextLarge,
-                policy,
-                GpuPrecisionPreference::Auto,
-                GpuUse::OptedIn,
-                1,
-                &[cpu(2, FULL, 8)],
-            )
-            .is_err()
-        );
-    }
     Ok(())
 }
 

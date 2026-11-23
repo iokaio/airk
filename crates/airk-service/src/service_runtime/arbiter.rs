@@ -866,10 +866,7 @@ fn bounded_reason(value: impl AsRef<str>) -> String {
 fn stage_models(stage: Stage) -> Vec<ModelChoice> {
     match stage {
         Stage::Focus => vec![ModelChoice::FocusQwenReranker06B],
-        Stage::Context => vec![
-            ModelChoice::ContextQwenCompact,
-            ModelChoice::ContextQwenLarge,
-        ],
+        Stage::Context => vec![ModelChoice::ContextQwenCompact],
     }
 }
 #[cfg(any(feature = "local-inference", test))]

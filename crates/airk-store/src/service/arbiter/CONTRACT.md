@@ -71,3 +71,19 @@ ConfigurationBindingObservation is diagnostic metadata only for locating an auth
 Retained archive AND staged configuration files execute one common file.sync_all fence after either fresh creation/write OR reopening matching existing bytes. Recovery opens ReadWrite for the Windows FlushFileBuffers capability, preserves exact byte/object custody, then fsyncs the file before directory.sync or configuration replacement. Matching bytes or a directory fsync never proves file-data durability. A failed sync propagates before publication; the original active configuration and retained objects remain. Only a later explicit authorized recovery can retry the file fsync. The injectable retention-sync seam is private; public native methods always use real File::sync_all, never a metadata success bit.
 
 initialization_status(original_live_check) shares the original writer fence and returns Some ONLY after positively observing absence of the current configuration FILE and presence of retained v1/v2 state, using the original bounded legacy digest. Any current file exists => None, with later typed parsing/error handled normally; corrupt/current3 is never replaced by a disabled placeholder. Ambiguous legacy configurations refuse. Ordinary absence has no initialization marker and remains read-only disabled/configurable. Native service must additionally prove no actual active/warming/pending work before emitting a disabled initialization placeholder.
+
+## configuration/5 and the configuration/4 migration (step LH, 23 November 2026)
+
+The device store now writes `airk.arbiter.configuration/5`. Ordinary reads
+refuse configuration/4 with its bytes preserved; `inspect_device_binding`
+reports its binding and revision with `configuration4: true`.
+`migrate_v4_checked(transition, check)` runs only when `transition.new` is
+this store's binding, under the writer lock and the configuration lock:
+it decodes the exact /4 bytes through Core `DeviceConfiguration::migrate_v4`
+(which refuses any binding other than `transition.old`), retains them as
+`configuration-v4-<sha256>.retained`, and publishes the /5 document in place.
+A document that is already /5 is returned unchanged. assets/4 receipts keep
+naming `airk.arbiter.configuration/4`: that literal belongs to the assets/4
+format, so receipts of assets already downloaded still decode.
+Holds: `device::tests::configuration4_is_migrated_only_under_the_compiled_transition_and_its_bytes_retained`
+on the retained Large-selected /4 document.

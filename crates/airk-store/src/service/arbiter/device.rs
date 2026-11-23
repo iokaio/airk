@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Config4 uses the SAME authenticated CAS path/lock, with retained exact config3 bytes.
+//! Config5 uses the SAME authenticated CAS path/lock, with retained exact config3 and
+//! config4 bytes.
 use super::*;
 use airk_core::arbiter::{
     Profile,
-    device::{DeviceCatalog, DeviceCatalogBinding, DeviceConfiguration},
+    device::{Configuration4Transition, DeviceCatalog, DeviceCatalogBinding, DeviceConfiguration},
 };
 use sha2::{Digest, Sha256};
 #[derive(Clone, Debug)]
@@ -16,6 +17,8 @@ pub struct ConfigurationBindingObservation {
     pub binding: DeviceCatalogBinding,
     pub revision: u64,
     pub configuration_sha256: Sha256Digest,
+    /// The document is configuration/4, written before Large was retired.
+    pub configuration4: bool,
 }
 /// Native-only transition data, not a serialized permission. The owner supplies
 /// authenticated compiled snapshots and the live authorization predicate.
@@ -104,6 +107,9 @@ impl DeviceConfigurationStore<'_> {
                     &self.binding,
                 )?)
             }
+            airk_core::arbiter::device::DEVICE_CONFIGURATION_V4_SCHEMA => anyhow::bail!(
+                "configuration/4 requires the compiled catalog transition to configuration/5; original bytes preserved"
+            ),
             _ => anyhow::bail!("unknown Arbiter configuration schema; original bytes preserved"),
         };
         Ok((value, Some(file), bytes))
@@ -131,6 +137,19 @@ impl DeviceConfigurationStore<'_> {
         if header.schema == airk_core::arbiter::CONFIGURATION_SCHEMA {
             return Ok(None);
         }
+        if header.schema == airk_core::arbiter::device::DEVICE_CONFIGURATION_V4_SCHEMA {
+            let (binding, revision) = airk_core::arbiter::device::configuration4_binding(
+                &raw,
+                self.owner.installation,
+                self.owner.catalog,
+            )?;
+            return Ok(Some(ConfigurationBindingObservation {
+                binding,
+                revision,
+                configuration_sha256: digest(&raw),
+                configuration4: true,
+            }));
+        }
         let value: DeviceConfiguration = serde_json::from_slice(&raw)?;
         value.validate()?;
         ensure!(
@@ -143,6 +162,7 @@ impl DeviceConfigurationStore<'_> {
             binding: value.device_catalog,
             revision: value.revision,
             configuration_sha256: digest(&raw),
+            configuration4: false,
         }))
     }
     /// Positive absence plus retained v1/v2 only. This is a non-writable
@@ -386,6 +406,61 @@ impl DeviceConfigurationStore<'_> {
         directory.sync()?;
         check()?;
         self.publish_synced(&directory, &value, prior.as_ref(), &check, retention_sync)
+    }
+    /// Native automatic upgrade of a configuration/4 document, written before
+    /// Large was retired, to configuration/5 under the compiled transition
+    /// (`DeviceConfiguration::migrate_v4`). The exact /4 bytes are retained
+    /// beside it before the atomic replacement. A document that is already
+    /// configuration/5 is returned as it is.
+    pub fn migrate_v4_checked(
+        &self,
+        transition: &Configuration4Transition,
+        check: impl Fn() -> Result<()>,
+    ) -> Result<DeviceConfiguration> {
+        ensure!(
+            transition.new == self.binding,
+            "configuration/4 transition targets another catalog binding"
+        );
+        let _writer = self
+            .owner
+            .writer
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Arbiter writer poisoned"))?;
+        check()?;
+        let directory = self.owner.root.open_dir(OsStr::new(DIRECTORY))?;
+        let _lock = Self::lock(&directory)?;
+        check()?;
+        let file = directory.open_file(OsStr::new(CONFIGURATION), SetupFileMode::Read)?;
+        let raw = bounded(&file)?;
+        #[derive(serde::Deserialize)]
+        struct Header {
+            schema: String,
+        }
+        let header: Header = serde_json::from_slice(&raw)?;
+        if header.schema != airk_core::arbiter::device::DEVICE_CONFIGURATION_V4_SCHEMA {
+            let (StoredConfiguration::Device(current), _, _) = self.read(&directory)? else {
+                anyhow::bail!("configuration3 requires native migration");
+            };
+            check()?;
+            return Ok(current);
+        }
+        let value = DeviceConfiguration::migrate_v4(
+            &raw,
+            self.owner.installation,
+            self.owner.catalog,
+            transition,
+        )?;
+        check()?;
+        let archive_name = format!("configuration-v4-{}.retained", digest(&raw));
+        let _archive = Self::retain(
+            &directory,
+            OsStr::new(&archive_name),
+            &raw,
+            &Self::sync_retained,
+        )?;
+        directory.sync()?;
+        check()?;
+        self.publish(&directory, &value, Some(&file), &check)
     }
     /// Native automatic-upgrade only. Old/new catalog objects and descriptor
     /// resolvers must come from the authenticated compiled compatibility owner;

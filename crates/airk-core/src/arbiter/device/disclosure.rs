@@ -24,8 +24,7 @@ pub enum VariantState {
 fn model_name(model: SelectedModel) -> &'static str {
     match model {
         SelectedModel::Focus => "Focus",
-        SelectedModel::ContextCompact => "Context Compact",
-        SelectedModel::ContextLarge => "Context Large",
+        SelectedModel::Arbiter => "Arbiter",
     }
 }
 fn route_name(backend: GpuBackend) -> &'static str {

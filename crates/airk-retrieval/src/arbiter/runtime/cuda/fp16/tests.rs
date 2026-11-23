@@ -65,7 +65,6 @@ fn fp32_policy_remains_distinct_from_each_model_fp16_policy() -> Result<()> {
     for model in [
         ModelChoice::FocusQwenReranker06B,
         ModelChoice::ContextQwenCompact,
-        ModelChoice::ContextQwenLarge,
     ] {
         let half = fp16_math_policy_digest(model)?;
         assert_ne!(f32, half);
@@ -91,7 +90,6 @@ fn input(tokens: usize) -> super::super::super::CompiledInput {
 fn context_boundaries_and_exact_original_mask_positions_refuse_unsupported_input() -> Result<()> {
     for tokens in [1, 17, 128, 8192] {
         validate_geometry(ModelChoice::ContextQwenCompact, 0, &input(tokens))?;
-        validate_geometry(ModelChoice::ContextQwenLarge, 0, &input(tokens))?;
     }
     for tokens in [0, 8193] {
         assert!(validate_geometry(ModelChoice::ContextQwenCompact, 0, &input(tokens)).is_err());
@@ -260,20 +258,12 @@ fn original_compact_bounded_options_refused_by_strict_input_plan() -> Result<()>
 #[test]
 fn protected_efficient_mha_binds_the_model_graph_and_half_weight_identity() -> Result<()> {
     use airk_core::arbiter::{Asset, AssetRole};
-    for (model, graph, weights, weight_bytes) in [
-        (
-            ModelChoice::ContextQwenCompact,
-            "147be075a73ff81ca17b6c2fb965ec8f887e10908fbd33cf47a919d1694aa3d9",
-            "0c4bd89d032e7dd821071c3559776cd3da50d54d84b6e575373fd8cf7003a7c3",
-            3_441_397_760,
-        ),
-        (
-            ModelChoice::ContextQwenLarge,
-            "c1b5776144c6d9af07d08552cae40e491d8f866e89c53bab567adeeb32ca75e4",
-            "5b053f02795e72ff88123b28f89d3f2c89da055e9ed2228bc60809dd0a2b4270",
-            8_045_328_384,
-        ),
-    ] {
+    for (model, graph, weights, weight_bytes) in std::iter::once((
+        ModelChoice::ContextQwenCompact,
+        "147be075a73ff81ca17b6c2fb965ec8f887e10908fbd33cf47a919d1694aa3d9",
+        "0c4bd89d032e7dd821071c3559776cd3da50d54d84b6e575373fd8cf7003a7c3",
+        3_441_397_760,
+    )) {
         let mut profile = super::super::super::catalog_profiles()?
             .into_iter()
             .find(|profile| profile.model == model && profile.cpu_fit.is_some())
@@ -345,10 +335,7 @@ fn protected_efficient_mha_binds_the_model_graph_and_half_weight_identity() -> R
 #[test]
 fn protected_efficient_mha_requires_every_model_specific_cuda_attention_and_projection()
 -> Result<()> {
-    for (model, prefix, layers) in [
-        (ModelChoice::ContextQwenCompact, "airk_compact_cutlass", 28),
-        (ModelChoice::ContextQwenLarge, "airk_large_cutlass", 36),
-    ] {
+    for (model, prefix, layers) in std::iter::once((ModelChoice::ContextQwenCompact, "airk_compact_cutlass", 28)) {
         let candidate = ProtectedContextMha::for_model(model)?;
         let plan = AttentionPlan {
             schema: "airk.native.cuda-fp16-attention-plan/1",
@@ -466,7 +453,7 @@ fn protected_evaluation_profile(model: ModelChoice) -> Result<(Profile, Profile)
 #[test]
 fn evaluation_admission_refuses_everything_outside_the_private_protected_shape() -> Result<()> {
     use super::super::evaluation_bounded;
-    for model in [ModelChoice::ContextQwenCompact, ModelChoice::ContextQwenLarge] {
+    for model in std::iter::once(ModelChoice::ContextQwenCompact) {
         let (base, original) = protected_evaluation_profile(model)?;
         assert!(evaluation_bounded(&base)?);
         let mut refused = Vec::new();

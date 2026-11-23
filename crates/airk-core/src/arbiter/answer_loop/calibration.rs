@@ -48,10 +48,7 @@ impl LoopCalibration {
         ensure!(
             self.schema == LOOP_CALIBRATION_SCHEMA
                 && is_card_task(self.task)
-                && matches!(
-                    self.model,
-                    ModelChoice::ContextQwenCompact | ModelChoice::ContextQwenLarge
-                )
+                && self.model == ModelChoice::ContextQwenCompact
                 && self.model == profile.model
                 && self.compiler == profile.compiler
                 && profile.tasks.contains(&self.task)

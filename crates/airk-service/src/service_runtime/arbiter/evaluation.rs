@@ -493,7 +493,7 @@ impl EvaluationOwner {
     }
 
     /// Attaches every private CUDA entry of this lifetime at once, keyed by
-    /// manifest: at most one Compact and one Large Context entry, and at most
+    /// manifest: at most one Arbiter (Context) entry, and at most
     /// one Focus entry, all on the same lease, gate and adapter. Each joins its
     /// own stage. Only one entry per stage is ever resident: selecting another
     /// releases the resident one first (plan 12.5.2 item 4). A second attach is
@@ -522,10 +522,7 @@ impl EvaluationOwner {
             let profile = owner.execution_profile(entry.manifest)?;
             let model = profile.description().model;
             let model_fits = match &entry.route {
-                PrivateGpuRoute::Answer(_) => matches!(
-                    model,
-                    ModelChoice::ContextQwenCompact | ModelChoice::ContextQwenLarge
-                ),
+                PrivateGpuRoute::Answer(_) => model == ModelChoice::ContextQwenCompact,
                 PrivateGpuRoute::Focus { .. } => focus_capacity_plan(profile.description()).is_ok(),
             };
             ensure!(
@@ -536,7 +533,7 @@ impl EvaluationOwner {
                     && entry.adapter != [0; 16]
                     && entry.adapter == adapter
                     && Instant::now() < entry.route.expires(),
-                "private CUDA requires an exact Compact or Large Answer graph, or a strict-GPU Focus profile, on one adapter"
+                "private CUDA requires an exact Arbiter Answer graph, or a strict-GPU Focus profile, on one adapter"
             );
             ensure!(
                 models.insert(model)

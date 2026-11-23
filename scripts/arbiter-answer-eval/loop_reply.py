@@ -46,7 +46,9 @@ PACKET_SCHEMA = "airk.arbiter.packet/2"
 REPLY_FRAME_BYTES = 131072
 CARD_STAGES = ("split", "plan", "coverage", "follow_up")
 COVERAGE_KINDS = ("covered", "partial", "missing")
-CONTEXT_MODELS = ("context_compact", "context_large")
+# ``arbiter`` is the Context model value since step LH (change-log entry 62). The LG series replies name the
+# values before it (``context_compact``, ``context_large``) and stay checkable.
+CONTEXT_MODELS = ("arbiter", "context_compact", "context_large")
 PRECISIONS = ("float16", "float32")
 
 
@@ -369,7 +371,7 @@ def summary(body: Any) -> dict | None:
 
 def arm_requirement(arm: dict) -> dict:
     """Normalize a spec's ``arm_check``: ``{"context": null}`` (arm F) or
-    ``{"context": "context_compact"|"context_large", "device": "cuda", "precision": "float16"|"float32",
+    ``{"context": "arbiter"|"context_compact"|"context_large", "device": "cuda", "precision": "float16"|"float32",
     "mode": "top_score"}`` (arms C and L, and the precision arms)."""
     context = arm.get("context")
     if context is not None and context not in CONTEXT_MODELS:

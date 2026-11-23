@@ -74,11 +74,8 @@ impl Loop<'_> {
         }
         let model = self.model?;
         let gpu = model.device != v3::ExecutionDevice::Cpu;
-        let valid = matches!(
-            model.model,
-            device::SelectedModel::ContextCompact | device::SelectedModel::ContextLarge
-        ) && !(model.model == device::SelectedModel::ContextLarge && !gpu)
-            && gpu == model.precision.is_some();
+        let valid =
+            model.model == device::SelectedModel::Arbiter && gpu == model.precision.is_some();
         valid.then_some(model)
     }
 
@@ -103,11 +100,7 @@ impl Loop<'_> {
             // The no-model path: no Context model takes part, or the roster
             // holds one card, which is never scored.
             let present = self.model.filter(|model| {
-                seg.cards.len() >= 2
-                    && matches!(
-                        model.model,
-                        device::SelectedModel::ContextCompact | device::SelectedModel::ContextLarge
-                    )
+                seg.cards.len() >= 2 && model.model == device::SelectedModel::Arbiter
             });
             let Some(present) = present else {
                 self.ledger.deterministic(

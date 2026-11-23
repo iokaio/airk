@@ -269,7 +269,7 @@ fn decisions() -> Vec<DecisionRecord> {
         top: Some(2.0),
         runner_up: Some(0.5),
         margin: Some(1.5),
-        model: Some(SelectedModel::ContextCompact),
+        model: Some(SelectedModel::Arbiter),
         device: Some(ExecutionDevice::Cuda),
         precision: Some(DevicePrecision::Float16),
         batched_with: vec![3],
@@ -325,13 +325,13 @@ fn summary() -> DecisionLogSummary {
             StageSourceCount {
                 stage: LoopStage::Coverage,
                 source: SourceKind::Model,
-                model: Some(SelectedModel::ContextCompact),
+                model: Some(SelectedModel::Arbiter),
                 count: 1,
             },
             StageSourceCount {
                 stage: LoopStage::Coverage,
                 source: SourceKind::Abstained,
-                model: Some(SelectedModel::ContextCompact),
+                model: Some(SelectedModel::Arbiter),
                 count: 1,
             },
             StageSourceCount {
@@ -736,15 +736,6 @@ fn refusals() -> Vec<(&'static str, Mutation, &'static str)> {
             "Answer conflict part found none of its evidence",
         ),
         (
-            "large_on_cpu",
-            |r| {
-                r.decisions[1].model = Some(SelectedModel::ContextLarge);
-                r.decisions[1].device = Some(ExecutionDevice::Cpu);
-                r.decisions[1].precision = None;
-            },
-            "Large never runs on the CPU",
-        ),
-        (
             "gpu_without_precision",
             |r| r.decisions[1].precision = None,
             "Answer GPU decision precision must be stated",
@@ -757,7 +748,7 @@ fn refusals() -> Vec<(&'static str, Mutation, &'static str)> {
         (
             "focus_model_scores_cards",
             |r| r.decisions[1].model = Some(SelectedModel::Focus),
-            "only a Context model scores loop cards",
+            "only the Arbiter scores loop cards",
         ),
         (
             "split_with_location",
@@ -853,7 +844,7 @@ fn refusals() -> Vec<(&'static str, Mutation, &'static str)> {
                 r.decision_log.counts.push(StageSourceCount {
                     stage: LoopStage::FollowUp,
                     source: SourceKind::Model,
-                    model: Some(SelectedModel::ContextCompact),
+                    model: Some(SelectedModel::Arbiter),
                     count: 1,
                 });
             },
@@ -945,13 +936,24 @@ fn refusals() -> Vec<(&'static str, Mutation, &'static str)> {
             "duplicate Answer degradation",
         ),
         (
-            "large_degraded_yet_decides",
+            "model_degraded_to_another_model",
             |r| {
-                r.decisions[1].model = Some(SelectedModel::ContextLarge);
                 r.degradations.push(Degradation::Model {
                     stage: Stage::Context,
-                    requested: SelectedModel::ContextLarge,
-                    applied: Some(SelectedModel::ContextCompact),
+                    requested: SelectedModel::Arbiter,
+                    applied: Some(SelectedModel::Focus),
+                    reason: DegradationReason::MemoryUnavailable,
+                });
+            },
+            "invalid Answer model degradation",
+        ),
+        (
+            "model_degraded_yet_decides",
+            |r| {
+                r.degradations.push(Degradation::Model {
+                    stage: Stage::Context,
+                    requested: SelectedModel::Arbiter,
+                    applied: None,
                     reason: DegradationReason::MemoryUnavailable,
                 });
             },
@@ -1275,7 +1277,7 @@ fn a_call_not_dispatched_names_its_model_and_reason_and_holds_no_slot() -> Resul
             fallback: DeterministicRule::FirstExtractedTerm,
             reason,
         },
-        model: Some(SelectedModel::ContextCompact),
+        model: Some(SelectedModel::Arbiter),
         ..decisions()[3].clone()
     };
     for reason in [
@@ -1321,7 +1323,7 @@ fn a_call_not_dispatched_names_its_model_and_reason_and_holds_no_slot() -> Resul
     // The no-model path still names no model.
     let mut plain = decisions()[3].clone();
     plain.validate(48)?;
-    plain.model = Some(SelectedModel::ContextCompact);
+    plain.model = Some(SelectedModel::Arbiter);
     assert!(plain.validate(48).is_err());
     Ok(())
 }
@@ -1334,7 +1336,7 @@ fn a_reply_counts_calls_not_dispatched_apart_from_the_no_model_path() -> Result<
         fallback: DeterministicRule::FirstExtractedTerm,
         reason: AssessmentUnavailable::TokenBudget,
     };
-    packet.decisions[3].model = Some(SelectedModel::ContextCompact);
+    packet.decisions[3].model = Some(SelectedModel::Arbiter);
     let row = packet
         .decision_log
         .counts
@@ -1342,7 +1344,7 @@ fn a_reply_counts_calls_not_dispatched_apart_from_the_no_model_path() -> Result<
         .find(|row| row.stage == LoopStage::FollowUp)
         .expect("the Follow-up row");
     row.source = SourceKind::NotDispatched;
-    row.model = Some(SelectedModel::ContextCompact);
+    row.model = Some(SelectedModel::Arbiter);
     packet.validate(&budget())?;
     let log = &packet.decision_log;
     // One reader's count per way a decision was taken.
@@ -2109,7 +2111,7 @@ fn full_loop() -> ContextResponseV3 {
                 StageSourceCount {
                     stage: LoopStage::Coverage,
                     source: SourceKind::Model,
-                    model: Some(SelectedModel::ContextCompact),
+                    model: Some(SelectedModel::Arbiter),
                     count: 48,
                 },
                 StageSourceCount {

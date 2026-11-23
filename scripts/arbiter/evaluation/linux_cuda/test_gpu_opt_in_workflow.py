@@ -35,7 +35,7 @@ class Service:
         if fault == "fresh-notice":
             self.opt_in = "default_reset"
         self.revision = 3
-        self.context = {"enabled": False, "selected_model": "context_compact", "device_policy": "cpu",
+        self.context = {"enabled": False, "selected_model": "arbiter", "device_policy": "cpu",
                         "gpu_precision": "fp16", "indexes": []}
 
     def status(self):

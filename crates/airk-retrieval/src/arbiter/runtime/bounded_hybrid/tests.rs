@@ -195,44 +195,6 @@ fn compact_resource_operations_keep_independent_deadlines_and_exact_width() -> R
 }
 
 #[test]
-fn large_payload_budget_is_separate_from_compact() -> Result<()> {
-    let mut rows = sample();
-    rows.pop();
-    for value in 2..=1000 {
-        rows.extend([
-            GraphMetadataRow::Value {
-                graph: 0,
-                value,
-                name: format!("control-{value}"),
-                element_type: Some(7),
-                rank: Some(1),
-                type_state: "tensor".into(),
-                provenance: "node_output".into(),
-                producer: Some(0),
-            },
-            GraphMetadataRow::Dimension {
-                graph: 0,
-                value,
-                index: 0,
-                number: Some(5),
-                symbol: None,
-            },
-            GraphMetadataRow::Edge {
-                graph: 0,
-                node: Some(0),
-                value: Some(value),
-                role: 2,
-                slot: value - 1,
-            },
-        ]);
-    }
-    rows.push(GraphMetadataRow::End { graph: 0 });
-    assert!(validate_cpu_values(&rows, CpuValueBounds::fp32(COMPACT_CPU_PAYLOAD_BYTES)).is_err());
-    validate_cpu_values(&rows, CpuValueBounds::fp32(LARGE_CPU_PAYLOAD_BYTES))?;
-    Ok(())
-}
-
-#[test]
 fn compact_fp16_bounded_cpu_values_admit_only_measured_control_geometry() -> Result<()> {
     use GraphMetadataRow::*;
     let mut rows = sample();
@@ -328,11 +290,11 @@ fn reviewed_cuda_base() -> Result<Profile> {
     let mut profile: Profile = serde_json::from_slice(include_bytes!(
         "../../../../../../fixtures/arbiter/profile-downloads.json"
     ))?;
-    profile.model = ModelChoice::ContextQwenLarge;
+    profile.model = ModelChoice::ContextQwenCompact;
     profile.qualification = None;
     profile.qualified_targets.clear();
     profile.downloads.clear();
-    profile.profile_id = "private-cuda-fp32-context-large-batch-view-v1".into();
+    profile.profile_id = "private-cuda-fp32-context-compact-calibration-base-v1".into();
     profile.manifest = Sha256Digest::from_bytes([1; 32]);
     let digest = Sha256Digest::from_bytes([9; 32]);
     profile.device_execution = Some(DeviceExecution {
@@ -345,7 +307,7 @@ fn reviewed_cuda_base() -> Result<Profile> {
         precision: DevicePrecision::Float32,
         tf32: false,
         placement: PlacementPolicy::StrictGpu,
-        graph: BATCH_VIEW_GRAPH.parse()?,
+        graph: Sha256Digest::from_bytes([7; 32]),
         host_fit: Default::default(),
         memory: DeviceMemory::Dedicated {
             required_peak_bytes: 40 << 30,
@@ -438,7 +400,7 @@ fn calibration_only_cuda_variant_refuses_every_other_difference() -> Result<()> 
     qualified.qualification = base_qualification()?;
     assert!(refused(qualified));
     let mut public = variant.clone();
-    public.profile_id = "arbiter-context-large".into();
+    public.profile_id = "arbiter-context".into();
     assert!(refused(public));
     let mut cpu = variant.clone();
     cpu.device_execution = None;
@@ -455,7 +417,7 @@ fn calibration_only_cuda_variant_refuses_every_other_difference() -> Result<()> 
     assert!(reviewed_profile(Sha256Digest::from_bytes([8; 32]), Some(&base), &variant).is_err());
     // A base that is itself not a reviewed private CUDA profile.
     let mut public_base = base.clone();
-    public_base.profile_id = "arbiter-context-large".into();
+    public_base.profile_id = "arbiter-context".into();
     assert!(require_calibration_only_variant(&public_base, &variant).is_err());
     Ok(())
 }

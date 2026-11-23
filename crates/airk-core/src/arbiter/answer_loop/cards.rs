@@ -296,15 +296,13 @@ impl DecisionRecord {
             // present and why it did not run; the no-model path names none.
             match self.source {
                 DecisionSource::NotDispatched { reason, .. } => ensure!(
-                    matches!(
-                        self.model,
-                        Some(SelectedModel::ContextCompact | SelectedModel::ContextLarge)
-                    ) && matches!(
-                        reason,
-                        AssessmentUnavailable::TokenBudget
-                            | AssessmentUnavailable::Deadline
-                            | AssessmentUnavailable::Unavailable
-                    ),
+                    self.model == Some(SelectedModel::Arbiter)
+                        && matches!(
+                            reason,
+                            AssessmentUnavailable::TokenBudget
+                                | AssessmentUnavailable::Deadline
+                                | AssessmentUnavailable::Unavailable
+                        ),
                     "an Answer decision not dispatched lacks its model or reason"
                 ),
                 _ => ensure!(
@@ -323,15 +321,8 @@ impl DecisionRecord {
             .model
             .ok_or_else(|| anyhow::anyhow!("model-scored Answer decision lacks its model"))?;
         ensure!(
-            matches!(
-                model,
-                SelectedModel::ContextCompact | SelectedModel::ContextLarge
-            ),
-            "only a Context model scores loop cards"
-        );
-        ensure!(
-            !(model == SelectedModel::ContextLarge && self.device == Some(ExecutionDevice::Cpu)),
-            "Large never runs on the CPU"
+            model == SelectedModel::Arbiter,
+            "only the Arbiter scores loop cards"
         );
         ensure!(
             self.device

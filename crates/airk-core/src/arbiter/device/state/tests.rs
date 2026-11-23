@@ -32,22 +32,13 @@ fn stage(stage: Stage, configuration: &DeviceStageConfiguration) -> DeviceStageS
                 tasks: BTreeSet::new(),
                 variants: vec![],
             }],
-            Stage::Context => vec![
-                DeviceModelStatus {
-                    model: SelectedModel::ContextCompact,
-                    availability: Availability::Unqualified,
-                    reason: "Synthetic no compiled variant; no qualification".into(),
-                    tasks: BTreeSet::new(),
-                    variants: vec![],
-                },
-                DeviceModelStatus {
-                    model: SelectedModel::ContextLarge,
-                    availability: Availability::Unqualified,
-                    reason: "Synthetic no compiled variant; no qualification".into(),
-                    tasks: BTreeSet::new(),
-                    variants: vec![],
-                },
-            ],
+            Stage::Context => vec![DeviceModelStatus {
+                model: SelectedModel::Arbiter,
+                availability: Availability::Unqualified,
+                reason: "Synthetic no compiled variant; no qualification".into(),
+                tasks: BTreeSet::new(),
+                variants: vec![],
+            }],
         },
     };
     for model in &mut value.models {
@@ -125,7 +116,7 @@ fn status3_preserves_model_slots_and_never_projects_gpu_as_legacy_cpu() -> Resul
 }
 #[test]
 fn management_current_and_legacy_fields_do_not_cross_decode() -> Result<()> {
-    let current = r#"{"operation":"configure_device","stage":"context","expected_revision":1,"configuration":{"enabled":false,"selected_model":"context_large","device_policy":"auto","gpu_precision":"fp16","indexes":[]}}"#;
+    let current = r#"{"operation":"configure_device","stage":"context","expected_revision":1,"configuration":{"enabled":false,"selected_model":"arbiter","device_policy":"auto","gpu_precision":"fp16","indexes":[]}}"#;
     let request: ManagementRequest = serde_json::from_str(current)?;
     assert!(matches!(request, ManagementRequest::ConfigureDevice { .. }));
     let wrong = current.replace("configure_device", "configure");
@@ -190,9 +181,9 @@ fn catalog_rebind_validates_both_snapshots_and_preserves_all_user_settings() -> 
     use crate::arbiter::device::tests::literal_profile;
     let profiles = [
         literal_profile(SelectedModel::Focus, 1, false)?,
-        literal_profile(SelectedModel::ContextCompact, 2, false)?,
-        literal_profile(SelectedModel::ContextLarge, 3, false)?,
-        literal_profile(SelectedModel::ContextCompact, 4, true)?,
+        literal_profile(SelectedModel::Arbiter, 2, false)?,
+        literal_profile(SelectedModel::Focus, 3, true)?,
+        literal_profile(SelectedModel::Arbiter, 4, true)?,
     ];
     let row = |i: usize| -> Result<VariantReference> {
         Ok(VariantReference {
@@ -202,12 +193,11 @@ fn catalog_rebind_validates_both_snapshots_and_preserves_all_user_settings() -> 
     };
     let old = DeviceCatalog {
         schema: DEVICE_CATALOG_SCHEMA.into(),
-        focus: vec![row(0)?],
-        context_compact: vec![row(1)?],
-        context_large: vec![row(2)?],
+        focus: vec![row(0)?, row(2)?],
+        arbiter: vec![row(1)?],
     };
     let mut new = old.clone();
-    new.context_compact.push(row(3)?);
+    new.arbiter.push(row(3)?);
     let resolve = |pin| profiles.iter().find(|profile| profile.manifest == pin);
     let old_binding = old.binding(Sha256Digest::from_bytes([40; 32]), resolve)?;
     let new_binding = new.binding(Sha256Digest::from_bytes([41; 32]), resolve)?;
@@ -217,7 +207,7 @@ fn catalog_rebind_validates_both_snapshots_and_preserves_all_user_settings() -> 
         old_binding.clone(),
     );
     current.context.enabled = true;
-    current.context.selected_model = Some(SelectedModel::ContextCompact);
+    current.context.selected_model = Some(SelectedModel::Arbiter);
     current.context.device_policy = DevicePolicy::Cpu;
     current.context.gpu_precision = GpuPrecisionPreference::Fp16;
     current.context.indexes = crate::arbiter::stage_tests::configuration(false, true)
@@ -304,8 +294,7 @@ fn semantic_status(
     let which = model.stage();
     let base = match model {
         SelectedModel::Focus => 21,
-        SelectedModel::ContextCompact => 31,
-        SelectedModel::ContextLarge => 41,
+        SelectedModel::Arbiter => 31,
     };
     let indexes = crate::arbiter::stage_tests::configuration(true, true)
         .stage(which)
@@ -485,7 +474,7 @@ fn native_variant_metadata_preserves_all_legacy_status_fields_without_promoting_
 #[test]
 fn requested_and_actual_device_precision_views_are_independent_and_truthful() -> Result<()> {
     let cpu = semantic_status(
-        SelectedModel::ContextCompact,
+        SelectedModel::Arbiter,
         DevicePolicy::Auto,
         GpuPrecisionPreference::Fp16,
         Some((None, None)),
@@ -509,7 +498,7 @@ fn requested_and_actual_device_precision_views_are_independent_and_truthful() ->
         GpuPrecisionPreference::Fp16
     );
     let fp16 = semantic_status(
-        SelectedModel::ContextLarge,
+        SelectedModel::Arbiter,
         DevicePolicy::Auto,
         GpuPrecisionPreference::Auto,
         Some((Some(GpuBackend::Cuda), Some(DevicePrecision::Float16))),
@@ -523,7 +512,7 @@ fn requested_and_actual_device_precision_views_are_independent_and_truthful() ->
         .context
         .models
         .iter_mut()
-        .find(|row| row.model == SelectedModel::ContextLarge)
+        .find(|row| row.model == SelectedModel::Arbiter)
         .unwrap()
         .variants
         .iter_mut()
@@ -536,7 +525,7 @@ fn requested_and_actual_device_precision_views_are_independent_and_truthful() ->
         .context
         .models
         .iter_mut()
-        .find(|row| row.model == SelectedModel::ContextLarge)
+        .find(|row| row.model == SelectedModel::Arbiter)
         .unwrap()
         .reason
         .clear();
@@ -559,8 +548,8 @@ fn current_device_semantic_case_emitter() -> Result<()> {
             None,
         ),
         (
-            "context_compact_auto_fp32_gpu",
-            SelectedModel::ContextCompact,
+            "arbiter_auto_fp32_gpu",
+            SelectedModel::Arbiter,
             DevicePolicy::Auto,
             GpuPrecisionPreference::Auto,
             Some((Some(GpuBackend::Cuda), Some(DevicePrecision::Float32))),
@@ -569,8 +558,8 @@ fn current_device_semantic_case_emitter() -> Result<()> {
             None,
         ),
         (
-            "context_compact_auto_fp16_when_fp32_unavailable",
-            SelectedModel::ContextCompact,
+            "arbiter_auto_fp16_when_fp32_unavailable",
+            SelectedModel::Arbiter,
             DevicePolicy::Auto,
             GpuPrecisionPreference::Auto,
             Some((Some(GpuBackend::Cuda), Some(DevicePrecision::Float16))),
@@ -579,8 +568,8 @@ fn current_device_semantic_case_emitter() -> Result<()> {
             Some(SelectionReason::DeviceMemoryInsufficient),
         ),
         (
-            "context_compact_requested_fp16_actual_cpu_fallback",
-            SelectedModel::ContextCompact,
+            "arbiter_requested_fp16_actual_cpu_fallback",
+            SelectedModel::Arbiter,
             DevicePolicy::Auto,
             GpuPrecisionPreference::Fp16,
             Some((None, None)),
@@ -589,8 +578,8 @@ fn current_device_semantic_case_emitter() -> Result<()> {
             Some(SelectionReason::RuntimeUnavailable),
         ),
         (
-            "context_large_requested_fp32_runtime_unavailable",
-            SelectedModel::ContextLarge,
+            "arbiter_requested_fp32_runtime_unavailable",
+            SelectedModel::Arbiter,
             DevicePolicy::Auto,
             GpuPrecisionPreference::Fp32,
             None,
@@ -599,8 +588,8 @@ fn current_device_semantic_case_emitter() -> Result<()> {
             Some(SelectionReason::RuntimeUnavailable),
         ),
         (
-            "context_large_fp16_qualified_gpu",
-            SelectedModel::ContextLarge,
+            "arbiter_fp16_qualified_gpu",
+            SelectedModel::Arbiter,
             DevicePolicy::Auto,
             GpuPrecisionPreference::Fp16,
             Some((Some(GpuBackend::Cuda), Some(DevicePrecision::Float16))),
@@ -610,7 +599,7 @@ fn current_device_semantic_case_emitter() -> Result<()> {
         ),
         (
             "no_admitted_variant",
-            SelectedModel::ContextLarge,
+            SelectedModel::Arbiter,
             DevicePolicy::Auto,
             GpuPrecisionPreference::Auto,
             None,
@@ -624,7 +613,7 @@ fn current_device_semantic_case_emitter() -> Result<()> {
         cases.push(serde_json::json!({"id":id,"status":semantic_status(model,policy,precision,actual,admission,availability,rejection)?}));
     }
     let mut both = semantic_status(
-        SelectedModel::ContextCompact,
+        SelectedModel::Arbiter,
         DevicePolicy::Auto,
         GpuPrecisionPreference::Fp16,
         Some((Some(GpuBackend::Cuda), Some(DevicePrecision::Float16))),
@@ -661,7 +650,7 @@ fn current_device_semantic_case_emitter() -> Result<()> {
         ("draining", Availability::Draining),
         ("failed", Availability::Failed),
     ] {
-        cases.push(serde_json::json!({"id":format!("lifecycle_{name}"),"status":semantic_status(SelectedModel::ContextCompact,DevicePolicy::Auto,GpuPrecisionPreference::Auto,if availability==Availability::Ready {Some((None,None))}else{None},ModelAdmissionStatus::LocalCandidate,availability,None)?}));
+        cases.push(serde_json::json!({"id":format!("lifecycle_{name}"),"status":semantic_status(SelectedModel::Arbiter,DevicePolicy::Auto,GpuPrecisionPreference::Auto,if availability==Availability::Ready {Some((None,None))}else{None},ModelAdmissionStatus::LocalCandidate,availability,None)?}));
     }
     let legacy = crate::arbiter::stage_tests::configuration(true, true);
     let raw = legacy.canonical_bytes()?;
@@ -688,7 +677,7 @@ fn current_device_semantic_case_emitter() -> Result<()> {
                 stage: Stage::Context,
                 configuration: DeviceStageConfiguration {
                     enabled: false,
-                    selected_model: Some(SelectedModel::ContextCompact),
+                    selected_model: Some(SelectedModel::Arbiter),
                     device_policy: DevicePolicy::Auto,
                     gpu_precision: GpuPrecisionPreference::Auto,
                     indexes: vec![],
@@ -729,7 +718,7 @@ fn current_device_semantic_case_emitter() -> Result<()> {
     }
     for (stage_name, which, model) in [
         ("focus", Stage::Focus, SelectedModel::Focus),
-        ("context", Stage::Context, SelectedModel::ContextCompact),
+        ("context", Stage::Context, SelectedModel::Arbiter),
     ] {
         for (policy_name, policy) in [("auto", DevicePolicy::Auto), ("cpu", DevicePolicy::Cpu)] {
             for (precision_name, precision) in [
@@ -741,7 +730,7 @@ fn current_device_semantic_case_emitter() -> Result<()> {
             }
         }
     }
-    cases.push(serde_json::json!({"id":"unknown_precision_refuses","invalid":{"operation":"configure_device","stage":"context","expected_revision":1,"configuration":{"enabled":false,"selected_model":"context_compact","device_policy":"auto","gpu_precision":"bf16","indexes":[]}}}));
+    cases.push(serde_json::json!({"id":"unknown_precision_refuses","invalid":{"operation":"configure_device","stage":"context","expected_revision":1,"configuration":{"enabled":false,"selected_model":"arbiter","device_policy":"auto","gpu_precision":"bf16","indexes":[]}}}));
 
     // Absence is ordinary writable disabled state; legacy initialization is a
     // separate native observation. Unknown/corrupt current state is an ERROR.
@@ -762,18 +751,18 @@ fn current_device_semantic_case_emitter() -> Result<()> {
     // positions that other suites read stay fixed.
     for (id, reason) in [
         (
-            "context_compact_gpu_not_opted_in_cpu",
+            "arbiter_gpu_not_opted_in_cpu",
             SelectionReason::GpuNotOptedIn,
         ),
         (
-            "context_compact_no_qualified_gpu_route_cpu",
+            "arbiter_no_qualified_gpu_route_cpu",
             SelectionReason::NoQualifiedGpuRoute,
         ),
     ] {
-        cases.push(serde_json::json!({"id":id,"status":semantic_status(SelectedModel::ContextCompact,DevicePolicy::Auto,GpuPrecisionPreference::Auto,Some((None,None)),ModelAdmissionStatus::LocalCandidate,Availability::Ready,Some(reason))?}));
+        cases.push(serde_json::json!({"id":id,"status":semantic_status(SelectedModel::Arbiter,DevicePolicy::Auto,GpuPrecisionPreference::Auto,Some((None,None)),ModelAdmissionStatus::LocalCandidate,Availability::Ready,Some(reason))?}));
     }
     let mut no_fit = semantic_status(
-        SelectedModel::ContextCompact,
+        SelectedModel::Arbiter,
         DevicePolicy::Auto,
         GpuPrecisionPreference::Auto,
         None,
@@ -801,11 +790,9 @@ fn current_device_semantic_case_emitter() -> Result<()> {
     });
     assert!(selection.selected.is_none() && selection.operation_failure.is_none());
     no_fit.validate()?;
-    cases.push(
-        serde_json::json!({"id":"context_compact_no_fit_unsupported_system","status":no_fit}),
-    );
+    cases.push(serde_json::json!({"id":"arbiter_no_fit_unsupported_system","status":no_fit}));
     let mut stopped = semantic_status(
-        SelectedModel::ContextCompact,
+        SelectedModel::Arbiter,
         DevicePolicy::Auto,
         GpuPrecisionPreference::Auto,
         None,
@@ -820,9 +807,7 @@ fn current_device_semantic_case_emitter() -> Result<()> {
         .context("synthetic selection missing")?
         .operation_failure = Some(SelectionReason::DeadlineExpired);
     stopped.validate()?;
-    cases.push(
-        serde_json::json!({"id":"context_compact_deadline_operation_failure","status":stopped}),
-    );
+    cases.push(serde_json::json!({"id":"arbiter_deadline_operation_failure","status":stopped}));
     let document = serde_json::json!({"schema":"airk.arbiter.device-semantic-cases/1","qualification":false,"scope":"Synthetic Rust-native transport/UI conformance only; NO actual GPU/model qualification", "cases":cases,"legacy_migration":{"configuration":legacy,"canonical_sha256":old_sha}});
     if let Some(path) = std::env::var_os("AIRK_WRITE_ARBITER_DEVICE_CASES") {
         use std::io::Write;
@@ -851,7 +836,7 @@ fn current_device_semantic_case_emitter() -> Result<()> {
 fn selection_holds_twenty_rows_and_a_no_fit_selection_is_a_valid_unsupported_system() -> Result<()>
 {
     let mut value = semantic_status(
-        SelectedModel::ContextCompact,
+        SelectedModel::Arbiter,
         DevicePolicy::Auto,
         GpuPrecisionPreference::Auto,
         None,
@@ -889,7 +874,7 @@ fn selection_holds_twenty_rows_and_a_no_fit_selection_is_a_valid_unsupported_sys
         .operation_failure = Some(SelectionReason::DeadlineExpired);
     stopped.validate()?;
     let ready = semantic_status(
-        SelectedModel::ContextCompact,
+        SelectedModel::Arbiter,
         DevicePolicy::Auto,
         GpuPrecisionPreference::Auto,
         Some((None, None)),
@@ -928,12 +913,12 @@ fn reviewed_device_cases_carry_the_route_reasons_and_never_the_reserved_one() ->
             .map(|row| row.reason)
             .collect()
     };
-    let opted_out = status("context_compact_gpu_not_opted_in_cpu")?;
+    let opted_out = status("arbiter_gpu_not_opted_in_cpu")?;
     assert_eq!(reasons(&opted_out), [SelectionReason::GpuNotOptedIn]);
     assert_eq!(opted_out.context.availability, Availability::Ready);
-    let no_route = status("context_compact_no_qualified_gpu_route_cpu")?;
+    let no_route = status("arbiter_no_qualified_gpu_route_cpu")?;
     assert_eq!(reasons(&no_route), [SelectionReason::NoQualifiedGpuRoute]);
-    let no_fit = status("context_compact_no_fit_unsupported_system")?;
+    let no_fit = status("arbiter_no_fit_unsupported_system")?;
     assert_eq!(
         reasons(&no_fit),
         [
@@ -944,7 +929,7 @@ fn reviewed_device_cases_carry_the_route_reasons_and_never_the_reserved_one() ->
     assert_eq!(no_fit.context.availability, Availability::UnsupportedSystem);
     let selection = no_fit.context.selection.as_ref().context("selection")?;
     assert!(selection.selected.is_none() && selection.operation_failure.is_none());
-    let stopped = status("context_compact_deadline_operation_failure")?;
+    let stopped = status("arbiter_deadline_operation_failure")?;
     assert_eq!(stopped.context.availability, Availability::Failed);
     assert_eq!(
         stopped
@@ -956,11 +941,8 @@ fn reviewed_device_cases_carry_the_route_reasons_and_never_the_reserved_one() ->
     );
     // The earlier positions that other suites read are unchanged.
     assert_eq!(rows[0]["id"], "both_disabled_auto");
-    assert_eq!(
-        rows[4]["id"],
-        "context_compact_requested_fp16_actual_cpu_fallback"
-    );
-    assert_eq!(rows[6]["id"], "context_large_fp16_qualified_gpu");
+    assert_eq!(rows[4]["id"], "arbiter_requested_fp16_actual_cpu_fallback");
+    assert_eq!(rows[6]["id"], "arbiter_fp16_qualified_gpu");
     // The reserved value is in the schema vocabulary and in no emitted case.
     assert!(!raw.contains("smaller_model_selected"));
     Ok(())

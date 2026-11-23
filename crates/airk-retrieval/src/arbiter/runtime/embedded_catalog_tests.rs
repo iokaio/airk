@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The embedded 1.8.x catalog carries exactly the three selected unqualified
-//! local-test descriptors. Source-policy admission is independent of the series gate.
+//! The embedded 1.8.x catalog carries exactly the two selected unqualified
+//! local-test descriptors (the Large one left in step LH). Source-policy
+//! admission is independent of the series gate.
 use super::*;
 
-const SELECTED: [(ModelChoice, &str); 3] = [
+const SELECTED: [(ModelChoice, &str); 2] = [
     (
         ModelChoice::FocusQwenReranker06B,
         "unqualified-local-test-focus-qwen3-reranker-06b-w8-r1",
@@ -12,16 +13,18 @@ const SELECTED: [(ModelChoice, &str); 3] = [
         ModelChoice::ContextQwenCompact,
         "unqualified-local-test-context-qwen3-17b-fp32-r1",
     ),
-    (
-        ModelChoice::ContextQwenLarge,
-        "unqualified-local-test-context-qwen3-4b-fp32-r1",
-    ),
 ];
 
 #[test]
-fn embedded_catalog_has_the_three_selected_local_test_profiles() -> Result<()> {
+fn embedded_catalog_has_the_two_selected_local_test_profiles() -> Result<()> {
     let profiles = catalog_profiles()?;
-    assert_eq!(profiles.len(), 3);
+    assert_eq!(profiles.len(), 2);
+    assert!(
+        profiles
+            .iter()
+            .all(|profile| profile.model != ModelChoice::ContextQwenLarge),
+        "the retired Large descriptor left the catalog"
+    );
     for (model, id) in SELECTED {
         let profile = profiles
             .iter()
@@ -85,10 +88,7 @@ fn selected_local_test_profiles_are_admitted_at_1_8_201_and_refused_from_1_9_0()
 fn current_context_source_admission_requires_new_metadata_without_relabeling_public_assets()
 -> Result<()> {
     let profiles = catalog_profiles()?;
-    for model in [
-        ModelChoice::ContextQwenCompact,
-        ModelChoice::ContextQwenLarge,
-    ] {
+    for model in std::iter::once(ModelChoice::ContextQwenCompact) {
         let original = profiles
             .iter()
             .find(|profile| profile.model == model)

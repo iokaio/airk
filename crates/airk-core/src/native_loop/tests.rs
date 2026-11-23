@@ -493,10 +493,10 @@ fn evidence(path: &str, focus: Option<f32>, excerpt: &str, cut_bytes: usize) -> 
         same_as: None,
     }
 }
-/// A row that repeats the text `shown` shows.
-fn repeat(path: &str, focus: Option<f32>, shown: &CardEvidence) -> CardEvidence {
+/// A row that repeats the text the call's row at position `shown` shows.
+fn repeat(path: &str, focus: Option<f32>, shown: usize) -> CardEvidence {
     CardEvidence {
-        same_as: Some(shown.place()),
+        same_as: Some(shown),
         ..evidence(path, focus, "", 0)
     }
 }
@@ -665,10 +665,10 @@ fn a_repeated_text_is_a_row_that_names_the_row_showing_it() -> Result<()> {
         request.segments[0].evidence = vec![
             shown.clone(),
             // The same text at another place of the same sub-need.
-            repeat("vendor/guard.rs", None, &shown),
+            repeat("vendor/guard.rs", None, 0),
         ];
         // The same span gathered for the second sub-need.
-        request.segments[1].evidence = vec![repeat("src/guard.rs", Some(0.4), &shown)];
+        request.segments[1].evidence = vec![repeat("src/guard.rs", Some(0.4), 0)];
         request
     };
     validate_cards(&valid())?;
@@ -698,18 +698,13 @@ fn a_repeated_text_is_a_row_that_names_the_row_showing_it() -> Result<()> {
     );
     assert!(
         refused(|r| {
-            let other = r.segments[0].evidence[1].place();
-            r.segments[1].evidence[0].same_as = Some(other);
+            r.segments[1].evidence[0].same_as = Some(1);
         }),
         "a repeat never names another repeat"
     );
     assert!(
-        refused(|r| r.segments[1].evidence[0]
-            .same_as
-            .as_mut()
-            .unwrap()
-            .start_line = 0),
-        "a repeat names a whole place"
+        refused(|r| r.segments[1].evidence[0].same_as = Some(2)),
+        "a repeat names an earlier row, never itself or a later one"
     );
     // A repeat takes none of the allowance: 2,068 reserved tokens allow 25
     // bytes, enough for the 24 shown and for no second copy.
@@ -851,11 +846,7 @@ fn a_segment_without_evidence_keeps_its_wire_form() -> Result<()> {
     first.skipped_bytes = 3;
     first.truncated = true;
     let second = evidence("docs/guard.md", None, &"#".repeat(256), 7);
-    shown.evidence = vec![
-        first,
-        second.clone(),
-        repeat("vendor/guard.md", None, &second),
-    ];
+    shown.evidence = vec![first, second.clone(), repeat("vendor/guard.md", None, 1)];
     shown.unshown = 1;
     shown.stage = LoopStage::FollowUp;
     shown.verdict = Some(PARTIAL);
@@ -870,7 +861,7 @@ fn a_segment_without_evidence_keeps_its_wire_form() -> Result<()> {
              "excerpt":"#".repeat(256),"skipped_bytes":0,"cut_bytes":7,"truncated":false},
             {"path":"vendor/guard.md","start_line":10,"end_line":40,
              "excerpt":"","skipped_bytes":0,"cut_bytes":0,"truncated":false,
-             "same_as":{"path":"docs/guard.md","start_line":10,"end_line":40}}
+             "same_as":1}
         ])
     );
     assert_eq!(wire["unshown"], 1);

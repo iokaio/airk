@@ -76,7 +76,7 @@ fn scoped_snapshot_refuses_foreign_authority_publication_stage_and_unknown_field
     assert!(bad.validate().is_err());
     let mut bad = value.clone();
     if let ScopedDeviceObservation::Observed { focus, .. } = &mut bad.observation {
-        focus.status.models[0].model = SelectedModel::ContextLarge;
+        focus.status.models[0].model = SelectedModel::Arbiter;
     }
     assert!(bad.validate().is_err());
     let mut json = serde_json::to_value(value)?;

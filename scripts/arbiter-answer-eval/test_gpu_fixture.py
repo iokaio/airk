@@ -140,8 +140,8 @@ class DeviceEvidenceTests(unittest.TestCase):
                  "outcome": "success", "finite_raw_scores": True, "raw_scores": [1.0], "work": {"inference_us": 5}}]
         evidence = gf.device_evidence(body, rows)
         self.assertEqual([(d["stage"], d["source"], d["model"]) for d in evidence["decisions"]],
-                         [("split", "deterministic", None), ("coverage", "model", "context_compact"),
-                          ("coverage", "abstained", "context_compact"), ("follow_up", "deterministic", None)])
+                         [("split", "deterministic", None), ("coverage", "model", "arbiter"),
+                          ("coverage", "abstained", "arbiter"), ("follow_up", "deterministic", None)])
         taken = [d for d in body["decisions"] if d["source"]["kind"] == "model"]
         self.assertEqual(evidence["cuda_decisions"] + evidence["cpu_decisions"], len(taken))
         self.assertEqual(evidence["cuda_decisions"], sum(1 for d in taken if d.get("device") == "cuda"))

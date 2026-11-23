@@ -2507,7 +2507,7 @@
         },
         {
           "additionalProperties": false,
-          "description": "Down the model ladder; no applied model is the no-model loop.",
+          "description": "A stage's model did not run: `applied` is absent, the no-model loop.\n(A step down to a smaller model left with the Large model; the field\nstays so the wire shape is unchanged.)",
           "properties": {
             "applied": {
               "anyOf": [
@@ -2604,13 +2604,7 @@
     "DeviceCatalog": {
       "additionalProperties": false,
       "properties": {
-        "context_compact": {
-          "items": {
-            "$ref": "#/$defs/VariantReference"
-          },
-          "type": "array"
-        },
-        "context_large": {
+        "arbiter": {
           "items": {
             "$ref": "#/$defs/VariantReference"
           },
@@ -2629,8 +2623,7 @@
       "required": [
         "schema",
         "focus",
-        "context_compact",
-        "context_large"
+        "arbiter"
       ],
       "type": "object"
     },
@@ -2658,6 +2651,17 @@
         },
         "context": {
           "$ref": "#/$defs/DeviceStageConfiguration"
+        },
+        "context_retired": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RetiredModel"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The Context selection a migration retired (a Large selection of\nconfiguration/4 or /3). The Context stage is then disabled with no\nmodel; the next Context configuration clears it."
         },
         "device_catalog": {
           "$ref": "#/$defs/DeviceCatalogBinding"
@@ -5316,6 +5320,16 @@
       ],
       "type": "string"
     },
+    "RetiredModel": {
+      "description": "A selection the service retired and cleared on migration. Status reports it\nuntil the stage is configured again; it is never a selection.",
+      "oneOf": [
+        {
+          "const": "context_large",
+          "description": "The Large Context model (`context_large` in configuration/4).",
+          "type": "string"
+        }
+      ]
+    },
     "RevisionEnvelope": {
       "additionalProperties": false,
       "properties": {
@@ -5588,12 +5602,18 @@
       "type": "object"
     },
     "SelectedModel": {
-      "enum": [
-        "focus",
-        "context_compact",
-        "context_large"
-      ],
-      "type": "string"
+      "oneOf": [
+        {
+          "const": "focus",
+          "description": "The Focus reranker (Qwen3-Reranker-0.6B), the one model of the Focus stage.",
+          "type": "string"
+        },
+        {
+          "const": "arbiter",
+          "description": "The Arbiter (Qwen3-1.7B, `ModelChoice::ContextQwenCompact`), the one\nmodel of the Context stage. Wire value `arbiter`.",
+          "type": "string"
+        }
+      ]
     },
     "SelectedVariant": {
       "additionalProperties": false,
@@ -6432,7 +6452,7 @@
     },
     "VariantReference": {
       "additionalProperties": false,
-      "description": "Exactly three logical model slots; variants do not add selected models.\nEach reference resolves only through the authenticated native catalog owner.",
+      "description": "Exactly two logical model slots; variants do not add selected models.\nEach reference resolves only through the authenticated native catalog owner.",
       "properties": {
         "execution_identity": {
           "type": "string"
@@ -6526,7 +6546,7 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "arbiter_contract": 3,
-  "arbiter_device_contract": 2,
+  "arbiter_device_contract": 3,
   "roots": [
     "DeviceConfiguration",
     "DeviceStageConfiguration",

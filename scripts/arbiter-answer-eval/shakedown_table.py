@@ -79,7 +79,7 @@ def row_for(record_path: Path, scenarios: Path, arm_check: dict) -> dict:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--scenarios", type=Path, required=True, help="one repository's scenario folder")
-    parser.add_argument("--arm-check", default='{"context": "context_compact", "device": "cuda", '
+    parser.add_argument("--arm-check", default='{"context": "arbiter", "device": "cuda", '
                                               '"precision": "float16", "mode": "top_score", "focus": true}')
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("records", type=Path, nargs="+")

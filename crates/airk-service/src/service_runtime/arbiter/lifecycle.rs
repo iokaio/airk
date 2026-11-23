@@ -36,7 +36,7 @@ pub(super) struct State {
         feature = "gpu-cuda"
     ))]
     /// This stage's private CUDA evaluation entries keyed by profile manifest:
-    /// at most one per model (Compact and Large for Context, one Focus for
+    /// at most one per model (the Arbiter for Context, one Focus for
     /// Focus), all bound to the same lease and gate. Only the selected entry is
     /// ever resident; a switch releases the old one first.
     pub(super) private_gpu:
@@ -575,14 +575,12 @@ async fn warm(
         .map(|answer| -> Result<_> { let grant = super::evaluation::private_gpu_grant(&answer.devices)?; Ok((answer, grant)) })
         .transpose()?;
     let host_bytes = profile.description().memory_reservation_bytes;
-    // Private CUDA Answer host and device envelopes: Compact keeps its original
-    // 32 GiB host and 24 GiB device bounds; Large uses its profile's 40 GiB host
-    // reservation and the 44 GiB device envelope its reviewed graph ran under.
+    // Private CUDA Answer host and device envelopes: the Arbiter keeps its
+    // original 32 GiB host and 24 GiB device bounds.
     #[cfg(all(windows, target_arch = "x86_64", feature = "test-support", feature = "gpu-cuda"))]
     let (host_bytes, device_limit_bytes) = if let Some((answer, _)) = &cuda_answer {
         ensure!(Instant::now() < answer.route.expires(), "private CUDA fixture expired");
         match profile.description().model {
-            airk_core::arbiter::ModelChoice::ContextQwenLarge => (host_bytes.max(40 << 30), 44 << 30),
             // A strict-GPU Focus entry keeps its profile's host reservation.
             airk_core::arbiter::ModelChoice::FocusQwenReranker06B => (host_bytes, 24 << 30),
             _ => (32 << 30, 24 << 30),

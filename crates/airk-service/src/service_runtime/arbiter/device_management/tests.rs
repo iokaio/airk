@@ -20,7 +20,7 @@ fn gpu_precision_only_restricts_gpu_and_auto_orders_fp32_then_fp16_then_cpu() {
     // keeps the same order: FP32 GPU, then FP16 GPU, then CPU.
     let candidate = |id: u8, precision: Option<DevicePrecision>| AdvisoryCandidate {
         manifest: airk_core::identity::Sha256Digest::from_bytes([id; 32]),
-        model: SelectedModel::ContextCompact,
+        model: SelectedModel::Arbiter,
         execution_identity: "literal-execution".into(),
         backend: precision.map(|_| GpuBackend::Cuda),
         precision,
@@ -39,7 +39,7 @@ fn gpu_precision_only_restricts_gpu_and_auto_orders_fp32_then_fp16_then_cpu() {
         rejection: None,
     };
     let plan = attempt_order(
-        SelectedModel::ContextCompact,
+        SelectedModel::Arbiter,
         DevicePolicy::Auto,
         GpuPrecisionPreference::Auto,
         GpuUse::OptedIn,
@@ -59,13 +59,6 @@ fn gpu_precision_only_restricts_gpu_and_auto_orders_fp32_then_fp16_then_cpu() {
         ],
         [(0, 0), (1, 0)]
     );
-}
-#[test]
-fn known_failed_large_cpu_candidate_is_never_auto_fit_but_model_switch_is_not_invented() {
-    assert!(!cpu_model_allowed(ModelChoice::ContextQwenLarge, true));
-    assert!(cpu_model_allowed(ModelChoice::ContextQwenLarge, false));
-    assert!(cpu_model_allowed(ModelChoice::ContextQwenCompact, true));
-    assert!(cpu_model_allowed(ModelChoice::FocusQwenReranker06B, true));
 }
 #[test]
 fn current_and_legacy_management_routes_are_distinct_and_import_never_changes_consent() {
@@ -161,7 +154,7 @@ fn retained_same_resident_reactivation_restores_ready_only_after_exact_validatio
         .context("compiled Compact description absent")?;
     let mut doc = document();
     doc.context.enabled = true;
-    doc.context.selected_model = Some(SelectedModel::ContextCompact);
+    doc.context.selected_model = Some(SelectedModel::Arbiter);
     doc.context.indexes = vec![airk_core::arbiter::Enrollment {
         index_id: airk_core::index_catalog::IndexId::from_identity(
             airk_core::identity::Incarnation::from_bytes([31; 16]),
@@ -466,7 +459,7 @@ fn read_only_device_stamp_fences_intent_selection_ready_and_generation_without_r
         Stage::Context,
         DeviceSelection {
             schema: DEVICE_STATUS_SCHEMA.into(),
-            model: SelectedModel::ContextCompact,
+            model: SelectedModel::Arbiter,
             policy: DevicePolicy::Auto,
             gpu_precision: GpuPrecisionPreference::Auto,
             selected: None,
@@ -705,7 +698,7 @@ fn device_layer_starts_with_gpu_use_off_until_the_service_applies_its_configurat
 #[cfg(feature = "local-inference")]
 #[test]
 fn gpu_off_is_reported_as_not_opted_in_and_an_explicit_cpu_policy_as_forced_cpu() -> Result<()> {
-    let model = SelectedModel::ContextCompact;
+    let model = SelectedModel::Arbiter;
     let catalog = runtime::catalog_profiles()?;
     // The service's own candidates for the compiled CPU tiers of this model.
     let tiers = catalog
@@ -781,7 +774,7 @@ fn no_selection_records_its_rows_and_reports_unsupported_system_and_a_stopped_op
         .context("compiled Compact description absent")?;
     let mut doc = document();
     doc.context.enabled = true;
-    doc.context.selected_model = Some(SelectedModel::ContextCompact);
+    doc.context.selected_model = Some(SelectedModel::Arbiter);
     doc.context.indexes = vec![airk_core::arbiter::Enrollment {
         index_id: airk_core::index_catalog::IndexId::from_identity(
             airk_core::identity::Incarnation::from_bytes([31; 16]),
@@ -809,7 +802,7 @@ fn no_selection_records_its_rows_and_reports_unsupported_system_and_a_stopped_op
     ];
     let no_fit = DeviceSelection {
         schema: DEVICE_STATUS_SCHEMA.into(),
-        model: SelectedModel::ContextCompact,
+        model: SelectedModel::Arbiter,
         policy: DevicePolicy::Auto,
         gpu_precision: GpuPrecisionPreference::Auto,
         selected: None,
@@ -819,7 +812,7 @@ fn no_selection_records_its_rows_and_reports_unsupported_system_and_a_stopped_op
     let reason = disclosure(&no_fit);
     assert!(
         reason.starts_with(
-            "Context Compact is not active. No admitted route fits this system. GPU use is not turned on in service resources. The "
+            "Arbiter is not active. No admitted route fits this system. GPU use is not turned on in service resources. The "
         ),
         "{reason}"
     );
@@ -885,7 +878,7 @@ fn no_selection_records_its_rows_and_reports_unsupported_system_and_a_stopped_op
     let mut stopped_rows = rows.clone();
     let stopped = DeviceSelection {
         schema: DEVICE_STATUS_SCHEMA.into(),
-        model: SelectedModel::ContextCompact,
+        model: SelectedModel::Arbiter,
         policy: DevicePolicy::Auto,
         gpu_precision: GpuPrecisionPreference::Auto,
         selected: None,
@@ -929,7 +922,7 @@ fn no_selection_records_its_rows_and_reports_unsupported_system_and_a_stopped_op
     assert_eq!(status.availability, Availability::Failed);
     assert!(
         status.reason.starts_with(
-            "Context Compact is not active. The operation stopped and nothing further was tried: deadline_expired."
+            "Arbiter is not active. The operation stopped and nothing further was tried: deadline_expired."
         ),
         "{}",
         status.reason

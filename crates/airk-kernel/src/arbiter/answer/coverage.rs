@@ -511,6 +511,10 @@ pub(crate) fn present(
         Some(windows[position])
     };
     let mut index = 0;
+    // Each shown span's position among all the call's rows, so a repeat
+    // names the one row that shows its text (Core `CardEvidence.same_as`).
+    let mut row_of: Vec<Option<usize>> = vec![None; spans.len()];
+    let mut rows = 0;
     let mut out = Vec::with_capacity(needs.len());
     for need in needs {
         let mut shown = Shown::default();
@@ -527,7 +531,8 @@ pub(crate) fn present(
             let citation = &span.hit.citation;
             if to > from {
                 let repeat = first[index] != index;
-                let source = spans[first[index]];
+                row_of[index] = Some(rows);
+                rows += 1;
                 shown.evidence.push(CardEvidence {
                     path: citation.path.clone(),
                     start_line: citation.start_line,
@@ -541,11 +546,7 @@ pub(crate) fn present(
                     skipped_bytes: if repeat { 0 } else { from },
                     cut_bytes: if repeat { 0 } else { text.len() - to },
                     truncated: span.hit.truncated,
-                    same_as: repeat.then(|| airk_core::native_loop::EvidencePlace {
-                        path: source.hit.citation.path.clone(),
-                        start_line: source.hit.citation.start_line,
-                        end_line: source.hit.citation.end_line,
-                    }),
+                    same_as: if repeat { row_of[first[index]] } else { None },
                 });
                 shown.presented.push(unit(from, to));
                 if from > 0 {

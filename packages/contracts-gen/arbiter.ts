@@ -672,8 +672,7 @@ export type DegradationReason = "deadline_estimate" | "queue_wait" | "device_una
 export type DeterministicRule = "every_proposed_need" | "top_focus_span" | "first_extracted_term" | "explicit_breaks";
 
 export type DeviceCatalog = {
-    context_compact: Array<VariantReference>;
-    context_large: Array<VariantReference>;
+    arbiter: Array<VariantReference>;
     focus: Array<VariantReference>;
     schema: string;
 };
@@ -686,6 +685,12 @@ export type DeviceCatalogBinding = {
 export type DeviceConfiguration = {
     catalog: Incarnation;
     context: DeviceStageConfiguration;
+    /**
+     * The Context selection a migration retired (a Large selection of
+     * configuration/4 or /3). The Context stage is then disabled with no
+     * model; the next Context configuration clears it.
+     */
+    context_retired?: RetiredModel | null;
     device_catalog: DeviceCatalogBinding;
     focus: DeviceStageConfiguration;
     installation: Sha256Digest;
@@ -1322,6 +1327,12 @@ export type RecordUse = {
 
 export type RelevanceHypothesis = "useful" | "complementary" | "redundant" | "uncertain";
 
+/**
+ * A selection the service retired and cleared on migration. Status reports it
+ * until the stage is configured again; it is never a selection.
+ */
+export type RetiredModel = "context_large";
+
 export type RevisionEnvelope = {
     collection: string;
     generation: number;
@@ -1406,7 +1417,7 @@ export type SegmentOutcome = {
     rule?: number | null;
 };
 
-export type SelectedModel = "focus" | "context_compact" | "context_large";
+export type SelectedModel = "focus" | "arbiter";
 
 export type SelectedVariant = {
     adapter_key: string;
@@ -1633,7 +1644,7 @@ export type UnrunReason = "deadline" | "budget" | "round_limit" | "not_chosen";
 export type UseCause = "part_search" | "need_search" | "structural_read" | "follow_up" | "shared_read";
 
 /**
- * Exactly three logical model slots; variants do not add selected models.
+ * Exactly two logical model slots; variants do not add selected models.
  * Each reference resolves only through the authenticated native catalog owner.
  */
 export type VariantReference = {

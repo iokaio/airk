@@ -20,7 +20,7 @@ fn publication_hf_primary_has_no_fictitious_github_asset_but_real_backup_is_proj
     let catalog = serde_json::json!({"schema":CATALOG_SCHEMA,"profiles":profiles});
     let bytes = serde_json::to_vec(&catalog)?;
     let primary = project(&bytes, "v1.9.0")?;
-    assert_eq!(primary.profiles.len(), 3);
+    assert_eq!(primary.profiles.len(), 2);
     assert!(primary.assets.is_empty());
     assert_eq!(
         primary.compiled_catalog_sha256,

@@ -241,9 +241,7 @@ impl Fixture {
         ensure!(
             matches!(
                 profile.model,
-                ModelChoice::FocusQwenReranker06B
-                    | ModelChoice::ContextQwenCompact
-                    | ModelChoice::ContextQwenLarge
+                ModelChoice::FocusQwenReranker06B | ModelChoice::ContextQwenCompact
             ) && profile.max_tokens == if focus { 512 } else { 8192 },
             "eligibility profile maximum shape is not the selected canonical boundary"
         );

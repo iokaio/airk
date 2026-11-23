@@ -105,9 +105,11 @@ def _arm(arm: str, configuration: str, path: str, focus: str, context: str | Non
     return entry
 
 
-def gate_arms(profiles: dict) -> list[dict]:
+def gate_arms(profiles: dict, context_value: str = "context_compact") -> list[dict]:
+    """The arms. ``context_value`` is the Context model value replies carry: ``context_compact`` for the LG
+    series as it ran, ``arbiter`` for L7 (step LH renamed the wire value)."""
     p = profiles
-    compact16 = {"context": "context_compact", "device": "cuda", "precision": "float16", "mode": "top_score"}
+    compact16 = {"context": context_value, "device": "cuda", "precision": "float16", "mode": "top_score"}
     large16 = {"context": "context_large", "device": "cuda", "precision": "float16", "mode": "top_score"}
     return [
         _arm("F", "focus", "focus", p["focus"], None, {"context": None}),
@@ -394,7 +396,7 @@ def l7_spec(series: str, r_root: Path, profiles: dict, repos: list[str], budget:
     """The new baseline of L7 (plan section 2 "after LG", 12.8): Search, Parse, and the loop as Focus only (F),
     Arbiter with Focus (C) and Arbiter only (A). CUDA only: no CPU cells. Large was dropped after LG."""
     spec = base_spec(series, r_root, repos, note or "L7 baseline: the loop on CUDA, Parse and Search", budget)
-    arms = {e["arm"]: e for e in gate_arms(profiles)}
+    arms = {e["arm"]: e for e in gate_arms(profiles, "arbiter")}
     results = [{"configuration": "search", "path": "search", "device": "none"},
                {"configuration": "parse", "path": "parse", "device": "none"}]
     results += [{**arms[arm], "reuse": True} for arm in L7_ARMS]
@@ -428,7 +430,7 @@ def shakedown_spec(series: str, r_root: Path, out_root: Path, handle: str, scena
     spec["scenario_ids"] = list(scenario_ids)
     spec["prompts_freeze"] = str(out_root / "design" / "prompts-freeze.json")
     spec["settle_repos"] = repos
-    entry = {e["arm"]: e for e in gate_arms(profiles)}[arm]
+    entry = {e["arm"]: e for e in gate_arms(profiles, "arbiter")}[arm]
     spec["gate"] = {"pairs": [], "precision_pairs": [], "profiles": dict(profiles), "lifetimes": {},
                     "precision": {"run": False, "reason": "a shakedown runs no precision check"},
                     "concurrency_path": "unqueued (no job table); a distinct scenario question per concurrent call",

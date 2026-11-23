@@ -482,29 +482,19 @@ What does not hold yet, with the follow-up owner:
   relevant lines come after the cut shows the model its beginning; the cut
   is disclosed (`after` in the view, `basis_omitted` in the log), not
   corrected. A snippet is marked (`snippet`), not completed.
-- **A repeat row's relevance can describe text outside the shown window**
-  (delta review L-a of `936c9b94`; owner: the primary agent, with the next
-  identity move). A repeat row keeps its own span's Focus relevance, scored
-  for its own sub-need's question, while its text is the first row's
-  window. When two sub-needs with different identifiers gather one text
-  that is too long to show whole, the second's scored lines can lie outside
-  that window. Leaving the relevance out would break Core's rank order of
-  rows, so the fix needs the Core row shape or a rule sentence in the view.
-- **`same_as` names a row by its place, and a place need not be unique**
-  (delta review L-b; owner: the primary agent, with the next Core wire
-  decision). Two spans at the same lines with different texts (a snippet
-  and a whole chunk), followed by a copy of the second, make the reference
-  ambiguous to the model. Naming the row by its position needs the Core
-  `CardEvidence` shape.
-- **The rules call segments independent, and a repeat row points into
-  another segment** (delta review L-c; owner: the primary agent, with the
-  next identity move, because the sentence is in `loop_cards.rs`). The
-  Follow-up rules also lack Coverage's sentence on an empty evidence list.
-- **A doc comment in `native_loop.rs` is stale** (owner: the primary agent,
-  with the next identity move). `CardEvidence.excerpt` still says an
-  excerpt "starts where the text Focus scored starts". It holds that place
-  and may start earlier (`coverage::window`). The file feeds the loop
-  identities, so the comment was left alone.
+- **Closed in step LH (change-log entry 62): review lows L-a, L-b, L-c and
+  the stale `CardEvidence.excerpt` comment.** L-a: the Coverage and
+  Follow-up rules now say a repeat row keeps its own Focus score, judged for
+  its own sub-need, which may concern lines outside the part shown (the Core
+  rank order keeps the relevance, so the rule sentence is the fix). L-b: a
+  repeat names the row that shows its text by its position in the call
+  (Core `CardEvidence.same_as`), shown to the model as
+  `s<segment> row <place>`, so two rows at one place are never confused.
+  L-c: the rules say a segment is judged against its own cards, subject and
+  evidence, and that the text a repeat row names in another segment counts
+  as its own; the Follow-up rules carry Coverage's sentence on an empty
+  evidence list. The `excerpt` comment says an excerpt holds the start of
+  the scored text and may start before it.
 - **A window short of the least excerpt grows only from spare bytes**
   (delta review L-d, fixed in part). It is not paid for by shortening
   another span's window, so a call can still be refused when another split

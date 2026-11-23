@@ -3,7 +3,7 @@ use super::*;
 fn candidate(id: u8, gpu: bool, rejection: Option<SelectionReason>) -> AdvisoryCandidate {
     AdvisoryCandidate {
         manifest: Sha256Digest::from_bytes([id; 32]),
-        model: SelectedModel::ContextCompact,
+        model: SelectedModel::Arbiter,
         execution_identity: if gpu {
             "literal-cuda-execution"
         } else {
@@ -28,7 +28,7 @@ fn candidate(id: u8, gpu: bool, rejection: Option<SelectionReason>) -> AdvisoryC
 fn auto_prefers_gpu_and_forced_cpu_is_explicit() -> Result<()> {
     let rows = [candidate(2, false, None), candidate(1, true, None)];
     let auto = select(
-        SelectedModel::ContextCompact,
+        SelectedModel::Arbiter,
         DevicePolicy::Auto,
         GpuPrecisionPreference::Auto,
         GpuUse::OptedIn,
@@ -41,7 +41,7 @@ fn auto_prefers_gpu_and_forced_cpu_is_explicit() -> Result<()> {
         Sha256Digest::from_bytes([1; 32])
     );
     let cpu = select(
-        SelectedModel::ContextCompact,
+        SelectedModel::Arbiter,
         DevicePolicy::Cpu,
         GpuPrecisionPreference::Auto,
         GpuUse::OptedIn,
@@ -75,7 +75,7 @@ fn all_gpu_pre_dispatch_failures_use_same_model_cpu_with_exact_reason() -> Resul
     ] {
         let rows = [candidate(1, true, Some(reason)), candidate(2, false, None)];
         let result = select(
-            SelectedModel::ContextCompact,
+            SelectedModel::Arbiter,
             DevicePolicy::Auto,
             GpuPrecisionPreference::Auto,
             GpuUse::OptedIn,
@@ -98,7 +98,7 @@ fn cpu_fit_failure_and_absent_cpu_never_substitute_another_model() -> Result<()>
         candidate(2, false, Some(SelectionReason::CpuFitInsufficient)),
     ];
     let result = select(
-        SelectedModel::ContextCompact,
+        SelectedModel::Arbiter,
         DevicePolicy::Auto,
         GpuPrecisionPreference::Auto,
         GpuUse::OptedIn,
@@ -112,7 +112,7 @@ fn cpu_fit_failure_and_absent_cpu_never_substitute_another_model() -> Result<()>
         SelectionReason::CpuFitInsufficient
     );
     let result = select(
-        SelectedModel::ContextCompact,
+        SelectedModel::Arbiter,
         DevicePolicy::Auto,
         GpuPrecisionPreference::Auto,
         GpuUse::OptedIn,
@@ -126,10 +126,10 @@ fn cpu_fit_failure_and_absent_cpu_never_substitute_another_model() -> Result<()>
         SelectionReason::NoQualifiedCpu
     );
     let mut foreign = candidate(3, false, None);
-    foreign.model = SelectedModel::ContextLarge;
+    foreign.model = SelectedModel::Focus;
     assert!(
         select(
-            SelectedModel::ContextCompact,
+            SelectedModel::Arbiter,
             DevicePolicy::Auto,
             GpuPrecisionPreference::Auto,
             GpuUse::OptedIn,
@@ -150,7 +150,7 @@ fn deterministic_adapter_order_and_generation_revalidation() -> Result<()> {
     ];
     assert_eq!(
         select(
-            SelectedModel::ContextCompact,
+            SelectedModel::Arbiter,
             DevicePolicy::Auto,
             GpuPrecisionPreference::Auto,
             GpuUse::OptedIn,
@@ -164,7 +164,7 @@ fn deterministic_adapter_order_and_generation_revalidation() -> Result<()> {
         Sha256Digest::from_bytes([1; 32])
     );
     let result = select(
-        SelectedModel::ContextCompact,
+        SelectedModel::Arbiter,
         DevicePolicy::Auto,
         GpuPrecisionPreference::Auto,
         GpuUse::OptedIn,
@@ -181,7 +181,7 @@ fn deterministic_adapter_order_and_generation_revalidation() -> Result<()> {
     );
     assert!(
         select(
-            SelectedModel::ContextCompact,
+            SelectedModel::Arbiter,
             DevicePolicy::Auto,
             GpuPrecisionPreference::Auto,
             GpuUse::OptedIn,
@@ -196,7 +196,7 @@ fn deterministic_adapter_order_and_generation_revalidation() -> Result<()> {
 #[test]
 fn original_deadline_and_uncertain_settlement_forbid_replay() -> Result<()> {
     let result = select(
-        SelectedModel::ContextCompact,
+        SelectedModel::Arbiter,
         DevicePolicy::Auto,
         GpuPrecisionPreference::Auto,
         GpuUse::OptedIn,
@@ -282,7 +282,7 @@ fn default_auto_and_unknown_wire_fields_refuse() -> Result<()> {
         )
         .is_err()
     );
-    assert!(serde_json::from_str::<DeviceCatalog>(r#"{"schema":"airk.arbiter.device-catalog/1","focus":[],"context_compact":[],"context_large":[],"fourth":[]}"#).is_err());
+    assert!(serde_json::from_str::<DeviceCatalog>(r#"{"schema":"airk.arbiter.device-catalog/2","focus":[],"arbiter":[],"context_large":[]}"#).is_err());
     Ok(())
 }
 
@@ -396,12 +396,11 @@ fn gpu_execution_identity_binds_every_policy_and_cpu_runtime_cannot_impersonate_
     Ok(())
 }
 #[test]
-fn three_slot_catalog_requires_every_slot_and_canonical_resolution() -> Result<()> {
+fn two_slot_catalog_requires_every_slot_and_canonical_resolution() -> Result<()> {
     let empty = DeviceCatalog {
         schema: DEVICE_CATALOG_SCHEMA.into(),
         focus: vec![],
-        context_compact: vec![],
-        context_large: vec![],
+        arbiter: vec![],
     };
     assert!(empty.validate(|_| None).is_err());
     let mut profile: Profile = serde_json::from_slice(include_bytes!(
@@ -415,8 +414,7 @@ fn three_slot_catalog_requires_every_slot_and_canonical_resolution() -> Result<(
     let bad = DeviceCatalog {
         schema: DEVICE_CATALOG_SCHEMA.into(),
         focus: vec![row.clone()],
-        context_compact: vec![row.clone()],
-        context_large: vec![row],
+        arbiter: vec![row],
     };
     assert!(bad.validate(|_| Some(&profile)).is_err()); // historical/foreign model cannot acquire Focus
     assert!(bad.validate(|_| None).is_err());
@@ -437,7 +435,7 @@ fn operation_wide_failures_never_fall_through_to_another_device() -> Result<()> 
                 candidate(3, true, None),
             ];
             let result = select(
-                SelectedModel::ContextCompact,
+                SelectedModel::Arbiter,
                 policy,
                 GpuPrecisionPreference::Auto,
                 GpuUse::OptedIn,
@@ -489,12 +487,11 @@ pub(super) fn literal_profile(slot: SelectedModel, id: u8, gpu: bool) -> Result<
     Ok(profile)
 }
 #[test]
-fn exact_three_slots_materialize_distinct_cpu_gpu_and_refuse_cross_model() -> Result<()> {
+fn exact_two_slots_materialize_distinct_cpu_gpu_and_refuse_cross_model() -> Result<()> {
     let profiles = [
         literal_profile(SelectedModel::Focus, 1, false)?,
-        literal_profile(SelectedModel::ContextCompact, 2, false)?,
-        literal_profile(SelectedModel::ContextCompact, 3, true)?,
-        literal_profile(SelectedModel::ContextLarge, 4, false)?,
+        literal_profile(SelectedModel::Arbiter, 2, false)?,
+        literal_profile(SelectedModel::Arbiter, 3, true)?,
     ];
     let row = |i: usize| -> Result<VariantReference> {
         Ok(VariantReference {
@@ -505,32 +502,31 @@ fn exact_three_slots_materialize_distinct_cpu_gpu_and_refuse_cross_model() -> Re
     let catalog = DeviceCatalog {
         schema: DEVICE_CATALOG_SCHEMA.into(),
         focus: vec![row(0)?],
-        context_compact: vec![row(1)?, row(2)?],
-        context_large: vec![row(3)?],
+        arbiter: vec![row(1)?, row(2)?],
     };
     let resolve = |pin| profiles.iter().find(|profile| profile.manifest == pin);
     catalog.validate(resolve)?;
     assert_eq!(
         catalog
-            .materialize(SelectedModel::ContextCompact, profiles[2].manifest, resolve)?
+            .materialize(SelectedModel::Arbiter, profiles[2].manifest, resolve)?
             .runtime,
         "onnxruntime-cuda/1.30.0"
     );
     assert!(
         catalog
-            .materialize(SelectedModel::ContextLarge, profiles[2].manifest, resolve)
+            .materialize(SelectedModel::Focus, profiles[2].manifest, resolve)
             .is_err()
     );
     let mut stale = catalog.clone();
-    stale.context_compact[1].execution_identity = "onnxruntime-cpu/1.30.0".into();
+    stale.arbiter[1].execution_identity = "onnxruntime-cpu/1.30.0".into();
     assert!(stale.validate(resolve).is_err());
     let mut duplicate = catalog.clone();
-    duplicate.context_compact.push(row(1)?);
+    duplicate.arbiter.push(row(1)?);
     assert!(duplicate.validate(resolve).is_err());
     assert!(
         catalog
             .materialize(
-                SelectedModel::ContextCompact,
+                SelectedModel::Arbiter,
                 Sha256Digest::from_bytes([99; 32]),
                 resolve
             )
@@ -541,7 +537,7 @@ fn exact_three_slots_materialize_distinct_cpu_gpu_and_refuse_cross_model() -> Re
 #[test]
 fn enabled_legacy_migrates_auto_without_changing_model_enrollment_or_consent() -> Result<()> {
     let focus = literal_profile(SelectedModel::Focus, 7, false)?;
-    let compact = literal_profile(SelectedModel::ContextCompact, 8, false)?;
+    let compact = literal_profile(SelectedModel::Arbiter, 8, false)?;
     let legacy = crate::arbiter::stage_tests::configuration(true, true);
     let before = legacy.canonical_bytes()?;
     let migrated = DeviceConfiguration::migrate_legacy(&legacy, test_binding(), |pin| {
@@ -557,7 +553,7 @@ fn enabled_legacy_migrates_auto_without_changing_model_enrollment_or_consent() -
     assert_eq!(migrated.focus.selected_model, Some(SelectedModel::Focus));
     assert_eq!(
         migrated.context.selected_model,
-        Some(SelectedModel::ContextCompact)
+        Some(SelectedModel::Arbiter)
     );
     assert_eq!(migrated.focus.device_policy, DevicePolicy::Auto);
     assert_eq!(migrated.context.device_policy, DevicePolicy::Auto);
@@ -614,8 +610,8 @@ fn materialization_never_returns_a_changed_unverified_resolver_reference() -> Re
     use std::cell::Cell;
     let profiles = [
         literal_profile(SelectedModel::Focus, 1, false)?,
-        literal_profile(SelectedModel::ContextCompact, 2, false)?,
-        literal_profile(SelectedModel::ContextLarge, 3, false)?,
+        literal_profile(SelectedModel::Arbiter, 2, false)?,
+        literal_profile(SelectedModel::Focus, 3, false)?,
     ];
     let row = |i: usize| -> Result<VariantReference> {
         Ok(VariantReference {
@@ -626,8 +622,7 @@ fn materialization_never_returns_a_changed_unverified_resolver_reference() -> Re
     let catalog = DeviceCatalog {
         schema: DEVICE_CATALOG_SCHEMA.into(),
         focus: vec![row(0)?],
-        context_compact: vec![row(1)?],
-        context_large: vec![row(2)?],
+        arbiter: vec![row(1)?],
     };
     let calls = Cell::new(0usize);
     let resolve = |pin| {
@@ -642,8 +637,7 @@ fn materialization_never_returns_a_changed_unverified_resolver_reference() -> Re
             profiles.iter().find(|profile| profile.manifest == pin)
         }
     };
-    let selected =
-        catalog.materialize(SelectedModel::ContextCompact, profiles[1].manifest, resolve)?;
+    let selected = catalog.materialize(SelectedModel::Arbiter, profiles[1].manifest, resolve)?;
     assert_eq!(calls.get(), 1);
     assert!(std::ptr::eq(selected, &profiles[1]));
     assert_ne!(selected.model, ModelChoice::ContextQwenLarge);
@@ -663,11 +657,7 @@ fn materialization_never_returns_a_changed_unverified_resolver_reference() -> Re
     };
     assert!(
         catalog
-            .materialize(
-                SelectedModel::ContextCompact,
-                profiles[1].manifest,
-                wrong_first
-            )
+            .materialize(SelectedModel::Arbiter, profiles[1].manifest, wrong_first)
             .is_err()
     );
     assert_eq!(calls.get(), 1);
@@ -710,7 +700,7 @@ fn gpu_precision_preference_is_independent_of_device_and_reports_cpu_fallback() 
     let cpu = candidate(3, false, None);
     let rows = [fp16.clone(), cpu.clone(), fp32.clone()];
     let auto = select(
-        SelectedModel::ContextCompact,
+        SelectedModel::Arbiter,
         DevicePolicy::Auto,
         GpuPrecisionPreference::Auto,
         GpuUse::OptedIn,
@@ -723,7 +713,7 @@ fn gpu_precision_preference_is_independent_of_device_and_reports_cpu_fallback() 
         Some(DevicePrecision::Float32)
     );
     let selected = select(
-        SelectedModel::ContextCompact,
+        SelectedModel::Arbiter,
         DevicePolicy::Auto,
         GpuPrecisionPreference::Fp16,
         GpuUse::OptedIn,
@@ -738,7 +728,7 @@ fn gpu_precision_preference_is_independent_of_device_and_reports_cpu_fallback() 
     let mut low = fp32;
     low.rejection = Some(SelectionReason::DeviceMemoryInsufficient);
     let automatic = select(
-        SelectedModel::ContextCompact,
+        SelectedModel::Arbiter,
         DevicePolicy::Auto,
         GpuPrecisionPreference::Auto,
         GpuUse::OptedIn,
@@ -751,7 +741,7 @@ fn gpu_precision_preference_is_independent_of_device_and_reports_cpu_fallback() 
         Some(DevicePrecision::Float16)
     );
     let explicit = select(
-        SelectedModel::ContextCompact,
+        SelectedModel::Arbiter,
         DevicePolicy::Auto,
         GpuPrecisionPreference::Fp32,
         GpuUse::OptedIn,

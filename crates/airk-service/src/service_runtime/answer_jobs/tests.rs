@@ -10,7 +10,7 @@ use super::schedule::{
 use super::*;
 use airk_core::{
     arbiter::{
-        ScopeBinding, Stage,
+        ScopeBinding,
         answer_loop::{BudgetV3, DegradationReason, MAX_QUEUE_POSITION, REQUEST_SCHEMA_V3},
         device::SelectedModel,
     },
@@ -90,7 +90,18 @@ fn flat(ms: u64) -> CostTable {
             per_sub_need_round_ms: 0,
         },
         compact: None,
-        large: None,
+    }
+}
+/// The Arbiter priced as the retired Large was (8 s fixed, 4 s a part, 8 s a
+/// sub-need round), so the arithmetic in these tests keeps its round numbers.
+fn arbiter_costs() -> CostTable {
+    CostTable {
+        compact: Some(StageCosts {
+            fixed_ms: 8_000,
+            per_part_ms: 4_000,
+            per_sub_need_round_ms: 8_000,
+        }),
+        ..CostTable::default()
     }
 }
 fn schedule(config: JobTableConfig) -> Schedule<&'static str> {
@@ -146,14 +157,14 @@ fn gathering_limit_has_a_floor_of_two_and_a_user_cap() {
 
 #[test]
 fn degrade_to_fit_discloses_each_reduction_cheapest_loss_first() {
-    let costs = CostTable::default();
+    let costs = arbiter_costs();
     let requested = Shape {
         parts: 4,
         sub_needs: 4,
         rounds: 3,
-        model: Some(ContextRung::Large),
+        model: Some(ContextRung::Compact),
     };
-    // Large at full shape: 8 + 4 x (4 + 12 x 8) = 408 s; at two rounds
+    // Arbiter at full shape: 8 + 4 x (4 + 12 x 8) = 408 s; at two rounds
     // 280 s, which fits 300 s alone.
     let fitted = estimate::degrade_to_fit(&costs, 1000, requested, 300 * SECOND, 300 * SECOND)
         .expect("fits degraded");
@@ -165,33 +176,25 @@ fn degrade_to_fit_discloses_each_reduction_cheapest_loss_first() {
         }
     );
     assert_eq!(fitted.degradations.len(), 1);
-    // In 200 s, Compact at two rounds fits: 4 + 4 x (2 + 8 x 4) = 140 s.
+    // In 200 s, one round fits: 8 + 4 x (4 + 4 x 8) = 152 s. With one model
+    // there is no model step; the model stays.
     let fitted = estimate::degrade_to_fit(&costs, 1000, requested, 200 * SECOND, 200 * SECOND)
         .expect("fits degraded");
     assert_eq!(
         fitted.shape,
         Shape {
-            rounds: 2,
-            model: Some(ContextRung::Compact),
+            rounds: 1,
             ..requested
         }
     );
-    assert_eq!(fitted.work_ms, 140 * SECOND);
+    assert_eq!(fitted.work_ms, 152 * SECOND);
     assert!(matches!(
         fitted.degradations.as_slice(),
-        [
-            Degradation::Rounds {
-                requested: 3,
-                applied: 2,
-                reason: DegradationReason::DeadlineEstimate
-            },
-            Degradation::Model {
-                stage: Stage::Context,
-                requested: SelectedModel::ContextLarge,
-                applied: Some(SelectedModel::ContextCompact),
-                reason: DegradationReason::DeadlineEstimate
-            }
-        ]
+        [Degradation::Rounds {
+            requested: 3,
+            applied: 1,
+            reason: DegradationReason::DeadlineEstimate
+        }]
     ));
     // The work alone fits; only a queue wait forces the cut.
     let fitted =
@@ -217,67 +220,27 @@ fn degrade_to_fit_discloses_each_reduction_cheapest_loss_first() {
     ));
 }
 
-/// Review C7: Compact on a slower device than Large must not push the fit
-/// down to the no-model loop while Large at one round would have fitted.
-#[test]
-fn the_model_step_keeps_large_when_compact_costs_more() {
-    let costs = CostTable {
-        compact: Some(StageCosts {
-            fixed_ms: 20_000,
-            per_part_ms: 20_000,
-            per_sub_need_round_ms: 20_000,
-        }),
-        large: Some(StageCosts {
-            fixed_ms: 2_000,
-            per_part_ms: 1_000,
-            per_sub_need_round_ms: 2_000,
-        }),
-        ..CostTable::default()
-    };
-    let requested = Shape {
-        parts: 4,
-        sub_needs: 4,
-        rounds: 3,
-        model: Some(ContextRung::Large),
-    };
-    // Large: 2 + 4 x (1 + 12 x 2) = 102 s; at one round 2 + 4 x (1 + 8) = 38 s.
-    let fitted =
-        estimate::degrade_to_fit(&costs, 1000, requested, 40 * SECOND, 40 * SECOND).unwrap();
-    assert_eq!(
-        fitted.shape,
-        Shape {
-            rounds: 1,
-            ..requested
-        }
-    );
-    assert!(
-        fitted
-            .degradations
-            .iter()
-            .all(|degradation| !matches!(degradation, Degradation::Model { .. }))
-    );
-}
-
 #[test]
 fn an_unavailable_rung_is_disclosed_as_model_unavailable() {
     let costs = CostTable {
-        large: None,
+        compact: None,
         ..CostTable::default()
     };
     let requested = Shape {
         parts: 1,
         sub_needs: 1,
         rounds: 1,
-        model: Some(ContextRung::Large),
+        model: Some(ContextRung::Compact),
     };
     let fitted =
         estimate::degrade_to_fit(&costs, 1000, requested, 600 * SECOND, 600 * SECOND).unwrap();
-    assert_eq!(fitted.shape.model, Some(ContextRung::Compact));
+    assert_eq!(fitted.shape.model, None);
     assert!(matches!(
         fitted.degradations.as_slice(),
         [Degradation::Model {
             reason: DegradationReason::ModelUnavailable,
-            applied: Some(SelectedModel::ContextCompact),
+            requested: SelectedModel::Arbiter,
+            applied: None,
             ..
         }]
     ));
@@ -374,25 +337,27 @@ fn the_same_request_in_the_same_scope_attaches_and_never_across_scopes() {
 #[test]
 fn a_retry_wanting_more_runs_separately_and_one_wanting_no_more_attaches() {
     let mut table = schedule(JobTableConfig::default());
-    let large = Some(ContextRung::Large);
+    let model = Some(ContextRung::Compact);
     let short = admitted(
         table
-            .submit(scope(4), request("q", 200_000), large, None, 0)
+            .submit(scope(4), request("q", 200_000), model, None, 0)
             .unwrap(),
     );
     let [started] = <[StartedJob; 1]>::try_from(table.dispatch(0)).unwrap();
-    assert_eq!(started.shape.model, Some(ContextRung::Compact));
-    // 600 s would admit Large at the full shape (408 s): a separate job.
+    // The Arbiter at full shape is 4 + 4 x (2 + 12 x 4) = 204 s; two rounds
+    // (140 s) fit 200 s.
+    assert_eq!(started.shape.rounds, 2);
+    // 600 s would admit the full shape: a separate job.
     let long = admitted(
         table
-            .submit(scope(4), request("q", 600_000), large, None, 1)
+            .submit(scope(4), request("q", 600_000), model, None, 1)
             .unwrap(),
     );
     assert_ne!(long, short);
     // The latest job now answers the digest; a call wanting no more than
     // what it applies attaches to it.
     assert!(matches!(
-        table.submit(scope(4), request("q", 600_000), large, None, 1),
+        table.submit(scope(4), request("q", 600_000), model, None, 1),
         Ok(Submitted::Attached(attached)) if attached == long
     ));
     // The short job's own continuation still reaches it, with the
@@ -1046,14 +1011,14 @@ async fn a_ticket_or_a_disclosed_degradation_when_the_deadline_cannot_be_met() {
                 per_part_ms: 0,
                 per_sub_need_round_ms: 0,
             },
-            ..CostTable::default()
+            ..arbiter_costs()
         },
         ..JobTableConfig::default()
     };
     let mut harness = harness(config);
     let table = harness.table.clone();
-    // Two Large Answers fill the lane; each degrades to fit 300 s
-    // (Large 4 x 4 x 3 is 408 s; two rounds are 280 s).
+    // Two Arbiter Answers fill the lane; each degrades to fit 300 s
+    // (4 x 4 x 3 is 408 s; two rounds are 280 s).
     let mut held = vec![];
     for question in ["first", "second"] {
         let table = table.clone();
@@ -1062,7 +1027,7 @@ async fn a_ticket_or_a_disclosed_degradation_when_the_deadline_cannot_be_met() {
                 .call(
                     scope(4),
                     request(question, 300_000),
-                    Some(ContextRung::Large),
+                    Some(ContextRung::Compact),
                     None,
                     deadline_in(Duration::from_secs(300)),
                 )
@@ -1071,7 +1036,7 @@ async fn a_ticket_or_a_disclosed_degradation_when_the_deadline_cannot_be_met() {
         let (job, release) = harness.next_start().await;
         assert_eq!(
             (job.shape.rounds, job.shape.model),
-            (2, Some(ContextRung::Large))
+            (2, Some(ContextRung::Compact))
         );
         assert!(matches!(
             job.degradations.as_slice(),

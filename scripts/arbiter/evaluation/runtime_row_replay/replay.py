@@ -6,7 +6,8 @@ runtime.rs, works on copies in a fresh temporary directory, and prints one
 line per check. Exit 0 only when every hash matches the recorded value.
 
 Chain proved (LF-normalized SHA-256 of runtime.rs):
-  live c9008eef  --reverse l4-runtime-hooks.patch-->        9ede486c
+  live 66b02a58  --reverse lh-large-retirement.patch-->      c9008eef (L4)
+  L4 c9008eef    --reverse l4-runtime-hooks.patch-->        9ede486c
   881787f0 4d420821 --reverse routing (f3978a12..179bb1da)--> 9ede486c
   9ede486c --reverse L5 (179bb1da..881787f0)-->              7b465076 (f3978a12)
 """
@@ -25,9 +26,12 @@ EXPECTED = {
     "routing 179bb1da": "258d43714a14169d8ca0dd5993890bdcaa26204c13a8e583f83bb6e63bb698e0",
     "L5 881787f0": "4d420821574d4d032175433a938f4d54bd74c7d9bb3834e599b16d68d486969f",
     "intermediate": "9ede486c03ef639d365b6d46e2a43d075408591abd327f589e34b91ff41b993d",
-    "live": "c9008eef62a5af16791e3325b44ef0ada7e789c7b6bf5d50c4dc83ee32c05603",
+    "L4": "c9008eef62a5af16791e3325b44ef0ada7e789c7b6bf5d50c4dc83ee32c05603",
+    "live": "66b02a58c1ba429fcdd25cb9da1a181a1765be4699b9a935ddb3d7e7bae439dc",
 }
 HOOKS = pathlib.Path(__file__).with_name("l4-runtime-hooks.patch")
+# Step LH: the device catalog's two slots after Large was retired.
+LH = pathlib.Path(__file__).with_name("lh-large-retirement.patch")
 
 
 def lf_sha(data: bytes) -> str:
@@ -79,8 +83,10 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="airk-row-replay-") as temp:
         work = pathlib.Path(temp)
         (work / RUNTIME).parent.mkdir(parents=True)
-        # 1. The live source minus the L4 hooks is the intermediate source.
+        # 0. The live source minus step LH's hunks is L4's source.
         (work / RUNTIME).write_bytes(live.replace(b"\r\n", b"\n"))
+        check("L4", reverse(work, LH.read_bytes()))
+        # 1. L4's source minus the L4 hooks is the intermediate source.
         check("intermediate", reverse(work, HOOKS.read_bytes()))
         # 2. L5's source minus the routing is the same intermediate source.
         (work / RUNTIME).write_bytes(git(repo, "show", f"881787f0:{RUNTIME}"))

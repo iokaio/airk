@@ -122,7 +122,7 @@ impl NativeController for Scorer {
             return Ok(None);
         }
         Ok(Some(LoopModel {
-            model: device::SelectedModel::ContextCompact,
+            model: device::SelectedModel::Arbiter,
             device: v3::ExecutionDevice::Cuda,
             precision: Some(device::DevicePrecision::Float16),
         }))
@@ -471,7 +471,7 @@ fn abstained_or_none_falls_back_with_recorded_rule() -> Result<()> {
                 ),
                 "{decision:?}"
             );
-            assert_eq!(decision.model, Some(device::SelectedModel::ContextCompact));
+            assert_eq!(decision.model, Some(device::SelectedModel::Arbiter));
         } else {
             assert_eq!(decision.source.kind(), v3::SourceKind::Deterministic);
             assert_eq!(decision.model, None);
@@ -896,14 +896,10 @@ fn shown(
     }
 }
 
-/// A row at `place` whose text an earlier row of the call shows.
-fn repeat(place: (&str, usize, usize)) -> airk_core::native_loop::CardEvidence {
+/// A row at `place` whose text the call's row at position `row` shows.
+fn repeat(place: (&str, usize, usize), row: usize) -> airk_core::native_loop::CardEvidence {
     airk_core::native_loop::CardEvidence {
-        same_as: Some(airk_core::native_loop::EvidencePlace {
-            path: place.0.into(),
-            start_line: place.1,
-            end_line: place.2,
-        }),
+        same_as: Some(row),
         ..shown(place, "", (0, 0))
     }
 }
@@ -1030,7 +1026,7 @@ fn coverage_and_follow_up_calls_show_each_sub_need_what_was_read() -> Result<()>
         shown(GUARD_PLACE, GUARD, (0, 0)),
         shown(GUIDE_PLACE, GUIDE, (0, 0)),
     ];
-    let repeats = [repeat(GUARD_PLACE), repeat(GUIDE_PLACE)];
+    let repeats = [repeat(GUARD_PLACE, 0), repeat(GUIDE_PLACE, 1)];
     let read = [
         search_unit(&outcome, 0, (0, 49))?,
         search_unit(&outcome, 1, (0, 42))?,
@@ -1112,7 +1108,10 @@ fn a_model_s_choice_rests_on_the_excerpts_it_was_shown() -> Result<()> {
             ]
         );
         if let Some(second) = call.segments.get(1) {
-            assert_eq!(second.evidence, [repeat(GUARD_PLACE), repeat(GUIDE_PLACE)]);
+            assert_eq!(
+                second.evidence,
+                [repeat(GUARD_PLACE, 0), repeat(GUIDE_PLACE, 1)]
+            );
         }
         let total: usize = call
             .segments
@@ -1215,10 +1214,7 @@ fn a_decision_the_model_does_not_take_rests_on_the_whole_spans() -> Result<()> {
                         "{:?}",
                         entry.decision
                     );
-                    assert_eq!(
-                        entry.decision.model,
-                        Some(device::SelectedModel::ContextCompact)
-                    );
+                    assert_eq!(entry.decision.model, Some(device::SelectedModel::Arbiter));
                     rests_on(entry, &whole, &[]);
                 }
                 assert!(
@@ -1302,7 +1298,7 @@ fn a_reservation_too_small_to_show_the_spans_makes_no_call() -> Result<()> {
                     ),
                     "{reserve} tokens: {decision:?}"
                 );
-                assert_eq!(decision.model, Some(device::SelectedModel::ContextCompact));
+                assert_eq!(decision.model, Some(device::SelectedModel::Arbiter));
                 assert_eq!(decision.card_slot, None, "no slot is used");
                 rests_on(
                     entry,
@@ -1768,7 +1764,7 @@ fn focus_and_arbiter_are_separate_switches() -> Result<()> {
         for entry in &outcome.custody.log.entries {
             if let Some(selected) = entry.decision.model {
                 assert!(card, "{name}: a decision names a model");
-                assert_eq!(selected, device::SelectedModel::ContextCompact, "{name}");
+                assert_eq!(selected, device::SelectedModel::Arbiter, "{name}");
             }
         }
         if let Some(scorer) = scorer {

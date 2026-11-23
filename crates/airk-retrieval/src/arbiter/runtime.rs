@@ -1528,8 +1528,7 @@ pub fn device_catalog() -> Result<airk_core::arbiter::device::DeviceCatalog> {
     let mut value = DeviceCatalog {
         schema: DEVICE_CATALOG_SCHEMA.into(),
         focus: Vec::new(),
-        context_compact: Vec::new(),
-        context_large: Vec::new(),
+        arbiter: Vec::new(),
     };
     for p in &profiles {
         let row = VariantReference {
@@ -1538,8 +1537,7 @@ pub fn device_catalog() -> Result<airk_core::arbiter::device::DeviceCatalog> {
         };
         match SelectedModel::from_model(p.model)? {
             SelectedModel::Focus => value.focus.push(row),
-            SelectedModel::ContextCompact => value.context_compact.push(row),
-            SelectedModel::ContextLarge => value.context_large.push(row),
+            SelectedModel::Arbiter => value.arbiter.push(row),
         }
     }
     value.validate(|sha| profiles.iter().find(|p| p.manifest == sha))?;

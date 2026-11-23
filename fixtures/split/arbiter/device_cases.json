@@ -25,7 +25,7 @@
           },
           "installation": "0101010101010101010101010101010101010101010101010101010101010101",
           "revision": 1,
-          "schema": "airk.arbiter.configuration/4"
+          "schema": "airk.arbiter.configuration/5"
         },
         "context": {
           "active_profile": null,
@@ -35,16 +35,7 @@
           "models": [
             {
               "availability": "unqualified",
-              "model": "context_compact",
-              "reason": "Synthetic no compiled variant; no qualification",
-              "tasks": [
-                "airk.context_action.v1"
-              ],
-              "variants": []
-            },
-            {
-              "availability": "unqualified",
-              "model": "context_large",
+              "model": "arbiter",
               "reason": "Synthetic no compiled variant; no qualification",
               "tasks": [
                 "airk.context_action.v1"
@@ -115,7 +106,7 @@
           },
           "installation": "0101010101010101010101010101010101010101010101010101010101010101",
           "revision": 1,
-          "schema": "airk.arbiter.configuration/4"
+          "schema": "airk.arbiter.configuration/5"
         },
         "context": {
           "active_profile": null,
@@ -125,16 +116,7 @@
           "models": [
             {
               "availability": "unqualified",
-              "model": "context_compact",
-              "reason": "Synthetic no compiled variant; no qualification",
-              "tasks": [
-                "airk.context_action.v1"
-              ],
-              "variants": []
-            },
-            {
-              "availability": "unqualified",
-              "model": "context_large",
+              "model": "arbiter",
               "reason": "Synthetic no compiled variant; no qualification",
               "tasks": [
                 "airk.context_action.v1"
@@ -242,7 +224,7 @@
       }
     },
     {
-      "id": "context_compact_auto_fp32_gpu",
+      "id": "arbiter_auto_fp32_gpu",
       "status": {
         "configuration": {
           "catalog": "02020202020202020202020202020202",
@@ -258,7 +240,7 @@
                 ]
               }
             ],
-            "selected_model": "context_compact"
+            "selected_model": "arbiter"
           },
           "device_catalog": {
             "catalog": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
@@ -273,7 +255,7 @@
           },
           "installation": "0101010101010101010101010101010101010101010101010101010101010101",
           "revision": 1,
-          "schema": "airk.arbiter.configuration/4"
+          "schema": "airk.arbiter.configuration/5"
         },
         "context": {
           "active_profile": "2020202020202020202020202020202020202020202020202020202020202020",
@@ -283,7 +265,7 @@
           "models": [
             {
               "availability": "ready",
-              "model": "context_compact",
+              "model": "arbiter",
               "reason": "Synthetic native model-admission observation; no inferred client permission",
               "tasks": [
                 "airk.context_action.v1"
@@ -354,24 +336,15 @@
                   ]
                 }
               ]
-            },
-            {
-              "availability": "unqualified",
-              "model": "context_large",
-              "reason": "Synthetic no compiled variant; no qualification",
-              "tasks": [
-                "airk.context_action.v1"
-              ],
-              "variants": []
             }
           ],
           "queued": 0,
           "reason": "Synthetic native typed state; NOT an execution/qualification claim",
           "running": 0,
-          "selected_model": "context_compact",
+          "selected_model": "arbiter",
           "selection": {
             "gpu_precision": "auto",
-            "model": "context_compact",
+            "model": "arbiter",
             "operation_failure": null,
             "policy": "auto",
             "reasons": [],
@@ -412,7 +385,7 @@
       }
     },
     {
-      "id": "context_compact_auto_fp16_when_fp32_unavailable",
+      "id": "arbiter_auto_fp16_when_fp32_unavailable",
       "status": {
         "configuration": {
           "catalog": "02020202020202020202020202020202",
@@ -428,7 +401,7 @@
                 ]
               }
             ],
-            "selected_model": "context_compact"
+            "selected_model": "arbiter"
           },
           "device_catalog": {
             "catalog": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
@@ -443,7 +416,7 @@
           },
           "installation": "0101010101010101010101010101010101010101010101010101010101010101",
           "revision": 1,
-          "schema": "airk.arbiter.configuration/4"
+          "schema": "airk.arbiter.configuration/5"
         },
         "context": {
           "active_profile": "2121212121212121212121212121212121212121212121212121212121212121",
@@ -453,7 +426,7 @@
           "models": [
             {
               "availability": "ready",
-              "model": "context_compact",
+              "model": "arbiter",
               "reason": "Synthetic native model-admission observation; no inferred client permission",
               "tasks": [
                 "airk.context_action.v1"
@@ -524,24 +497,15 @@
                   ]
                 }
               ]
-            },
-            {
-              "availability": "unqualified",
-              "model": "context_large",
-              "reason": "Synthetic no compiled variant; no qualification",
-              "tasks": [
-                "airk.context_action.v1"
-              ],
-              "variants": []
             }
           ],
           "queued": 0,
           "reason": "Synthetic native typed state; NOT an execution/qualification claim",
           "running": 0,
-          "selected_model": "context_compact",
+          "selected_model": "arbiter",
           "selection": {
             "gpu_precision": "auto",
-            "model": "context_compact",
+            "model": "arbiter",
             "operation_failure": null,
             "policy": "auto",
             "reasons": [
@@ -588,7 +552,7 @@
       }
     },
     {
-      "id": "context_compact_requested_fp16_actual_cpu_fallback",
+      "id": "arbiter_requested_fp16_actual_cpu_fallback",
       "status": {
         "configuration": {
           "catalog": "02020202020202020202020202020202",
@@ -604,7 +568,7 @@
                 ]
               }
             ],
-            "selected_model": "context_compact"
+            "selected_model": "arbiter"
           },
           "device_catalog": {
             "catalog": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
@@ -619,7 +583,7 @@
           },
           "installation": "0101010101010101010101010101010101010101010101010101010101010101",
           "revision": 1,
-          "schema": "airk.arbiter.configuration/4"
+          "schema": "airk.arbiter.configuration/5"
         },
         "context": {
           "active_profile": "1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
@@ -629,7 +593,7 @@
           "models": [
             {
               "availability": "ready",
-              "model": "context_compact",
+              "model": "arbiter",
               "reason": "Synthetic native model-admission observation; no inferred client permission",
               "tasks": [
                 "airk.context_action.v1"
@@ -688,24 +652,15 @@
                   ]
                 }
               ]
-            },
-            {
-              "availability": "unqualified",
-              "model": "context_large",
-              "reason": "Synthetic no compiled variant; no qualification",
-              "tasks": [
-                "airk.context_action.v1"
-              ],
-              "variants": []
             }
           ],
           "queued": 0,
           "reason": "Synthetic native typed state; NOT an execution/qualification claim",
           "running": 0,
-          "selected_model": "context_compact",
+          "selected_model": "arbiter",
           "selection": {
             "gpu_precision": "fp16",
-            "model": "context_compact",
+            "model": "arbiter",
             "operation_failure": null,
             "policy": "auto",
             "reasons": [
@@ -752,7 +707,7 @@
       }
     },
     {
-      "id": "context_large_requested_fp32_runtime_unavailable",
+      "id": "arbiter_requested_fp32_runtime_unavailable",
       "status": {
         "configuration": {
           "catalog": "02020202020202020202020202020202",
@@ -768,7 +723,7 @@
                 ]
               }
             ],
-            "selected_model": "context_large"
+            "selected_model": "arbiter"
           },
           "device_catalog": {
             "catalog": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
@@ -783,7 +738,7 @@
           },
           "installation": "0101010101010101010101010101010101010101010101010101010101010101",
           "revision": 1,
-          "schema": "airk.arbiter.configuration/4"
+          "schema": "airk.arbiter.configuration/5"
         },
         "context": {
           "active_profile": null,
@@ -792,17 +747,8 @@
           "gpu_precision": "fp32",
           "models": [
             {
-              "availability": "unqualified",
-              "model": "context_compact",
-              "reason": "Synthetic no compiled variant; no qualification",
-              "tasks": [
-                "airk.context_action.v1"
-              ],
-              "variants": []
-            },
-            {
               "availability": "requested",
-              "model": "context_large",
+              "model": "arbiter",
               "reason": "Synthetic native model-admission observation; no inferred client permission",
               "tasks": [
                 "airk.context_action.v1"
@@ -821,7 +767,7 @@
                   "device_evidence": null,
                   "download_bytes": 1073741831,
                   "execution_identity": "onnxruntime-cpu/1.30.0/physical1/intra1/inter1/sequential/spinning0",
-                  "manifest": "2929292929292929292929292929292929292929292929292929292929292929",
+                  "manifest": "1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
                   "memory_reservation_bytes": 1048576,
                   "model_admission": "qualified",
                   "precision": null,
@@ -842,7 +788,7 @@
                   },
                   "download_bytes": 1073741831,
                   "execution_identity": "onnxruntime-cuda/1.30.0/device-execution/b52f0ce83d1207e968c7a34424a41244198639564cd532878d8216c71eeea944",
-                  "manifest": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a",
+                  "manifest": "2020202020202020202020202020202020202020202020202020202020202020",
                   "memory_reservation_bytes": 1048576,
                   "model_admission": "qualified",
                   "precision": "float32",
@@ -863,7 +809,7 @@
                   },
                   "download_bytes": 1073741831,
                   "execution_identity": "onnxruntime-cuda/1.30.0/device-execution/7beb89a105c967a497268ad384d2c14ab4257531948f923b5a4e5aded5d3980b",
-                  "manifest": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+                  "manifest": "2121212121212121212121212121212121212121212121212121212121212121",
                   "memory_reservation_bytes": 1048576,
                   "model_admission": "qualified",
                   "precision": "float16",
@@ -878,10 +824,10 @@
           "queued": 0,
           "reason": "Synthetic native typed state; NOT an execution/qualification claim",
           "running": 0,
-          "selected_model": "context_large",
+          "selected_model": "arbiter",
           "selection": {
             "gpu_precision": "fp32",
-            "model": "context_large",
+            "model": "arbiter",
             "operation_failure": null,
             "policy": "auto",
             "reasons": [
@@ -921,7 +867,7 @@
       }
     },
     {
-      "id": "context_large_fp16_qualified_gpu",
+      "id": "arbiter_fp16_qualified_gpu",
       "status": {
         "configuration": {
           "catalog": "02020202020202020202020202020202",
@@ -937,7 +883,7 @@
                 ]
               }
             ],
-            "selected_model": "context_large"
+            "selected_model": "arbiter"
           },
           "device_catalog": {
             "catalog": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
@@ -952,341 +898,7 @@
           },
           "installation": "0101010101010101010101010101010101010101010101010101010101010101",
           "revision": 1,
-          "schema": "airk.arbiter.configuration/4"
-        },
-        "context": {
-          "active_profile": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
-          "availability": "ready",
-          "device_policy": "auto",
-          "gpu_precision": "fp16",
-          "models": [
-            {
-              "availability": "unqualified",
-              "model": "context_compact",
-              "reason": "Synthetic no compiled variant; no qualification",
-              "tasks": [
-                "airk.context_action.v1"
-              ],
-              "variants": []
-            },
-            {
-              "availability": "ready",
-              "model": "context_large",
-              "reason": "Synthetic native model-admission observation; no inferred client permission",
-              "tasks": [
-                "airk.context_action.v1"
-              ],
-              "variants": [
-                {
-                  "availability": "requested",
-                  "backend": null,
-                  "cpu_fit": {
-                    "inter_threads": 1,
-                    "intra_threads": 1,
-                    "minimum_physical_cores": 1,
-                    "sequential": true,
-                    "spinning": false
-                  },
-                  "device_evidence": null,
-                  "download_bytes": 1073741831,
-                  "execution_identity": "onnxruntime-cpu/1.30.0/physical1/intra1/inter1/sequential/spinning0",
-                  "manifest": "2929292929292929292929292929292929292929292929292929292929292929",
-                  "memory_reservation_bytes": 1048576,
-                  "model_admission": "qualified",
-                  "precision": null,
-                  "reason": "Synthetic native view fixture; NOT hardware/model qualification",
-                  "tasks": [
-                    "airk.context_action.v1"
-                  ]
-                },
-                {
-                  "availability": "requested",
-                  "backend": "cuda",
-                  "device_evidence": {
-                    "execution_identity": "onnxruntime-cuda/1.30.0/device-execution/b52f0ce83d1207e968c7a34424a41244198639564cd532878d8216c71eeea944",
-                    "numerical": "3333333333333333333333333333333333333333333333333333333333333333",
-                    "placement": "3535353535353535353535353535353535353535353535353535353535353535",
-                    "resources": "3434343434343434343434343434343434343434343434343434343434343434",
-                    "target": "x86_64-pc-windows-msvc"
-                  },
-                  "download_bytes": 1073741831,
-                  "execution_identity": "onnxruntime-cuda/1.30.0/device-execution/b52f0ce83d1207e968c7a34424a41244198639564cd532878d8216c71eeea944",
-                  "manifest": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a",
-                  "memory_reservation_bytes": 1048576,
-                  "model_admission": "qualified",
-                  "precision": "float32",
-                  "reason": "Synthetic native view fixture; NOT hardware/model qualification",
-                  "tasks": [
-                    "airk.context_action.v1"
-                  ]
-                },
-                {
-                  "availability": "ready",
-                  "backend": "cuda",
-                  "device_evidence": {
-                    "execution_identity": "onnxruntime-cuda/1.30.0/device-execution/7beb89a105c967a497268ad384d2c14ab4257531948f923b5a4e5aded5d3980b",
-                    "numerical": "3333333333333333333333333333333333333333333333333333333333333333",
-                    "placement": "3535353535353535353535353535353535353535353535353535353535353535",
-                    "resources": "3434343434343434343434343434343434343434343434343434343434343434",
-                    "target": "x86_64-pc-windows-msvc"
-                  },
-                  "download_bytes": 1073741831,
-                  "execution_identity": "onnxruntime-cuda/1.30.0/device-execution/7beb89a105c967a497268ad384d2c14ab4257531948f923b5a4e5aded5d3980b",
-                  "manifest": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
-                  "memory_reservation_bytes": 1048576,
-                  "model_admission": "qualified",
-                  "precision": "float16",
-                  "reason": "Synthetic native view fixture; NOT hardware/model qualification",
-                  "tasks": [
-                    "airk.context_action.v1"
-                  ]
-                }
-              ]
-            }
-          ],
-          "queued": 0,
-          "reason": "Synthetic native typed state; NOT an execution/qualification claim",
-          "running": 0,
-          "selected_model": "context_large",
-          "selection": {
-            "gpu_precision": "fp16",
-            "model": "context_large",
-            "operation_failure": null,
-            "policy": "auto",
-            "reasons": [],
-            "schema": "airk.arbiter.device-status/1",
-            "selected": {
-              "adapter_key": "synthetic-adapter",
-              "backend": "cuda",
-              "capability_epoch": 1,
-              "execution_identity": "onnxruntime-cuda/1.30.0/device-execution/7beb89a105c967a497268ad384d2c14ab4257531948f923b5a4e5aded5d3980b",
-              "manifest": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
-              "precision": "float16"
-            }
-          }
-        },
-        "focus": {
-          "active_profile": null,
-          "availability": "disabled",
-          "device_policy": "auto",
-          "gpu_precision": "auto",
-          "models": [
-            {
-              "availability": "unqualified",
-              "model": "focus",
-              "reason": "Synthetic no compiled variant; no qualification",
-              "tasks": [
-                "airk.focus_rank.v1"
-              ],
-              "variants": []
-            }
-          ],
-          "queued": 0,
-          "reason": "Literal native-contract structural fixture; no execution authority",
-          "running": 0,
-          "selected_model": null,
-          "selection": null
-        },
-        "schema": "airk.arbiter.status/3"
-      }
-    },
-    {
-      "id": "no_admitted_variant",
-      "status": {
-        "configuration": {
-          "catalog": "02020202020202020202020202020202",
-          "context": {
-            "device_policy": "auto",
-            "enabled": true,
-            "gpu_precision": "auto",
-            "indexes": [
-              {
-                "index_id": "idx_05050505050505050505050505050505",
-                "tasks": [
-                  "airk.context_action.v1"
-                ]
-              }
-            ],
-            "selected_model": "context_large"
-          },
-          "device_catalog": {
-            "catalog": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
-            "source": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
-          },
-          "focus": {
-            "device_policy": "auto",
-            "enabled": false,
-            "gpu_precision": "auto",
-            "indexes": [],
-            "selected_model": null
-          },
-          "installation": "0101010101010101010101010101010101010101010101010101010101010101",
-          "revision": 1,
-          "schema": "airk.arbiter.configuration/4"
-        },
-        "context": {
-          "active_profile": null,
-          "availability": "unqualified",
-          "device_policy": "auto",
-          "gpu_precision": "auto",
-          "models": [
-            {
-              "availability": "unqualified",
-              "model": "context_compact",
-              "reason": "Synthetic no compiled variant; no qualification",
-              "tasks": [
-                "airk.context_action.v1"
-              ],
-              "variants": []
-            },
-            {
-              "availability": "unqualified",
-              "model": "context_large",
-              "reason": "Synthetic native model-admission observation; no inferred client permission",
-              "tasks": [
-                "airk.context_action.v1"
-              ],
-              "variants": [
-                {
-                  "availability": "unqualified",
-                  "backend": null,
-                  "cpu_fit": {
-                    "inter_threads": 1,
-                    "intra_threads": 1,
-                    "minimum_physical_cores": 1,
-                    "sequential": true,
-                    "spinning": false
-                  },
-                  "device_evidence": null,
-                  "download_bytes": 1073741831,
-                  "execution_identity": "onnxruntime-cpu/1.30.0/physical1/intra1/inter1/sequential/spinning0",
-                  "manifest": "2929292929292929292929292929292929292929292929292929292929292929",
-                  "memory_reservation_bytes": 1048576,
-                  "model_admission": "unavailable",
-                  "precision": null,
-                  "reason": "Synthetic native view fixture; NOT hardware/model qualification",
-                  "tasks": [
-                    "airk.context_action.v1"
-                  ]
-                },
-                {
-                  "availability": "unqualified",
-                  "backend": "cuda",
-                  "device_evidence": null,
-                  "download_bytes": 1073741831,
-                  "execution_identity": "onnxruntime-cuda/1.30.0/device-execution/b52f0ce83d1207e968c7a34424a41244198639564cd532878d8216c71eeea944",
-                  "manifest": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a",
-                  "memory_reservation_bytes": 1048576,
-                  "model_admission": "unavailable",
-                  "precision": "float32",
-                  "reason": "Synthetic native view fixture; NOT hardware/model qualification",
-                  "tasks": [
-                    "airk.context_action.v1"
-                  ]
-                },
-                {
-                  "availability": "unqualified",
-                  "backend": "cuda",
-                  "device_evidence": null,
-                  "download_bytes": 1073741831,
-                  "execution_identity": "onnxruntime-cuda/1.30.0/device-execution/7beb89a105c967a497268ad384d2c14ab4257531948f923b5a4e5aded5d3980b",
-                  "manifest": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
-                  "memory_reservation_bytes": 1048576,
-                  "model_admission": "unavailable",
-                  "precision": "float16",
-                  "reason": "Synthetic native view fixture; NOT hardware/model qualification",
-                  "tasks": [
-                    "airk.context_action.v1"
-                  ]
-                }
-              ]
-            }
-          ],
-          "queued": 0,
-          "reason": "Synthetic native typed state; NOT an execution/qualification claim",
-          "running": 0,
-          "selected_model": "context_large",
-          "selection": {
-            "gpu_precision": "auto",
-            "model": "context_large",
-            "operation_failure": null,
-            "policy": "auto",
-            "reasons": [
-              {
-                "adapter_key": null,
-                "manifest": null,
-                "reason": "unqualified"
-              }
-            ],
-            "schema": "airk.arbiter.device-status/1",
-            "selected": null
-          }
-        },
-        "focus": {
-          "active_profile": null,
-          "availability": "disabled",
-          "device_policy": "auto",
-          "gpu_precision": "auto",
-          "models": [
-            {
-              "availability": "unqualified",
-              "model": "focus",
-              "reason": "Synthetic no compiled variant; no qualification",
-              "tasks": [
-                "airk.focus_rank.v1"
-              ],
-              "variants": []
-            }
-          ],
-          "queued": 0,
-          "reason": "Literal native-contract structural fixture; no execution authority",
-          "running": 0,
-          "selected_model": null,
-          "selection": null
-        },
-        "schema": "airk.arbiter.status/3"
-      }
-    },
-    {
-      "id": "both_stages_independent",
-      "status": {
-        "configuration": {
-          "catalog": "02020202020202020202020202020202",
-          "context": {
-            "device_policy": "auto",
-            "enabled": true,
-            "gpu_precision": "fp16",
-            "indexes": [
-              {
-                "index_id": "idx_05050505050505050505050505050505",
-                "tasks": [
-                  "airk.context_action.v1"
-                ]
-              }
-            ],
-            "selected_model": "context_compact"
-          },
-          "device_catalog": {
-            "catalog": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
-            "source": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
-          },
-          "focus": {
-            "device_policy": "cpu",
-            "enabled": true,
-            "gpu_precision": "auto",
-            "indexes": [
-              {
-                "index_id": "idx_05050505050505050505050505050505",
-                "tasks": [
-                  "airk.focus_rank.v1"
-                ]
-              }
-            ],
-            "selected_model": "focus"
-          },
-          "installation": "0101010101010101010101010101010101010101010101010101010101010101",
-          "revision": 1,
-          "schema": "airk.arbiter.configuration/4"
+          "schema": "airk.arbiter.configuration/5"
         },
         "context": {
           "active_profile": "2121212121212121212121212121212121212121212121212121212121212121",
@@ -1296,7 +908,7 @@
           "models": [
             {
               "availability": "ready",
-              "model": "context_compact",
+              "model": "arbiter",
               "reason": "Synthetic native model-admission observation; no inferred client permission",
               "tasks": [
                 "airk.context_action.v1"
@@ -1367,24 +979,331 @@
                   ]
                 }
               ]
-            },
-            {
-              "availability": "unqualified",
-              "model": "context_large",
-              "reason": "Synthetic no compiled variant; no qualification",
-              "tasks": [
-                "airk.context_action.v1"
-              ],
-              "variants": []
             }
           ],
           "queued": 0,
           "reason": "Synthetic native typed state; NOT an execution/qualification claim",
           "running": 0,
-          "selected_model": "context_compact",
+          "selected_model": "arbiter",
           "selection": {
             "gpu_precision": "fp16",
-            "model": "context_compact",
+            "model": "arbiter",
+            "operation_failure": null,
+            "policy": "auto",
+            "reasons": [],
+            "schema": "airk.arbiter.device-status/1",
+            "selected": {
+              "adapter_key": "synthetic-adapter",
+              "backend": "cuda",
+              "capability_epoch": 1,
+              "execution_identity": "onnxruntime-cuda/1.30.0/device-execution/7beb89a105c967a497268ad384d2c14ab4257531948f923b5a4e5aded5d3980b",
+              "manifest": "2121212121212121212121212121212121212121212121212121212121212121",
+              "precision": "float16"
+            }
+          }
+        },
+        "focus": {
+          "active_profile": null,
+          "availability": "disabled",
+          "device_policy": "auto",
+          "gpu_precision": "auto",
+          "models": [
+            {
+              "availability": "unqualified",
+              "model": "focus",
+              "reason": "Synthetic no compiled variant; no qualification",
+              "tasks": [
+                "airk.focus_rank.v1"
+              ],
+              "variants": []
+            }
+          ],
+          "queued": 0,
+          "reason": "Literal native-contract structural fixture; no execution authority",
+          "running": 0,
+          "selected_model": null,
+          "selection": null
+        },
+        "schema": "airk.arbiter.status/3"
+      }
+    },
+    {
+      "id": "no_admitted_variant",
+      "status": {
+        "configuration": {
+          "catalog": "02020202020202020202020202020202",
+          "context": {
+            "device_policy": "auto",
+            "enabled": true,
+            "gpu_precision": "auto",
+            "indexes": [
+              {
+                "index_id": "idx_05050505050505050505050505050505",
+                "tasks": [
+                  "airk.context_action.v1"
+                ]
+              }
+            ],
+            "selected_model": "arbiter"
+          },
+          "device_catalog": {
+            "catalog": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+            "source": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
+          },
+          "focus": {
+            "device_policy": "auto",
+            "enabled": false,
+            "gpu_precision": "auto",
+            "indexes": [],
+            "selected_model": null
+          },
+          "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+          "revision": 1,
+          "schema": "airk.arbiter.configuration/5"
+        },
+        "context": {
+          "active_profile": null,
+          "availability": "unqualified",
+          "device_policy": "auto",
+          "gpu_precision": "auto",
+          "models": [
+            {
+              "availability": "unqualified",
+              "model": "arbiter",
+              "reason": "Synthetic native model-admission observation; no inferred client permission",
+              "tasks": [
+                "airk.context_action.v1"
+              ],
+              "variants": [
+                {
+                  "availability": "unqualified",
+                  "backend": null,
+                  "cpu_fit": {
+                    "inter_threads": 1,
+                    "intra_threads": 1,
+                    "minimum_physical_cores": 1,
+                    "sequential": true,
+                    "spinning": false
+                  },
+                  "device_evidence": null,
+                  "download_bytes": 1073741831,
+                  "execution_identity": "onnxruntime-cpu/1.30.0/physical1/intra1/inter1/sequential/spinning0",
+                  "manifest": "1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
+                  "memory_reservation_bytes": 1048576,
+                  "model_admission": "unavailable",
+                  "precision": null,
+                  "reason": "Synthetic native view fixture; NOT hardware/model qualification",
+                  "tasks": [
+                    "airk.context_action.v1"
+                  ]
+                },
+                {
+                  "availability": "unqualified",
+                  "backend": "cuda",
+                  "device_evidence": null,
+                  "download_bytes": 1073741831,
+                  "execution_identity": "onnxruntime-cuda/1.30.0/device-execution/b52f0ce83d1207e968c7a34424a41244198639564cd532878d8216c71eeea944",
+                  "manifest": "2020202020202020202020202020202020202020202020202020202020202020",
+                  "memory_reservation_bytes": 1048576,
+                  "model_admission": "unavailable",
+                  "precision": "float32",
+                  "reason": "Synthetic native view fixture; NOT hardware/model qualification",
+                  "tasks": [
+                    "airk.context_action.v1"
+                  ]
+                },
+                {
+                  "availability": "unqualified",
+                  "backend": "cuda",
+                  "device_evidence": null,
+                  "download_bytes": 1073741831,
+                  "execution_identity": "onnxruntime-cuda/1.30.0/device-execution/7beb89a105c967a497268ad384d2c14ab4257531948f923b5a4e5aded5d3980b",
+                  "manifest": "2121212121212121212121212121212121212121212121212121212121212121",
+                  "memory_reservation_bytes": 1048576,
+                  "model_admission": "unavailable",
+                  "precision": "float16",
+                  "reason": "Synthetic native view fixture; NOT hardware/model qualification",
+                  "tasks": [
+                    "airk.context_action.v1"
+                  ]
+                }
+              ]
+            }
+          ],
+          "queued": 0,
+          "reason": "Synthetic native typed state; NOT an execution/qualification claim",
+          "running": 0,
+          "selected_model": "arbiter",
+          "selection": {
+            "gpu_precision": "auto",
+            "model": "arbiter",
+            "operation_failure": null,
+            "policy": "auto",
+            "reasons": [
+              {
+                "adapter_key": null,
+                "manifest": null,
+                "reason": "unqualified"
+              }
+            ],
+            "schema": "airk.arbiter.device-status/1",
+            "selected": null
+          }
+        },
+        "focus": {
+          "active_profile": null,
+          "availability": "disabled",
+          "device_policy": "auto",
+          "gpu_precision": "auto",
+          "models": [
+            {
+              "availability": "unqualified",
+              "model": "focus",
+              "reason": "Synthetic no compiled variant; no qualification",
+              "tasks": [
+                "airk.focus_rank.v1"
+              ],
+              "variants": []
+            }
+          ],
+          "queued": 0,
+          "reason": "Literal native-contract structural fixture; no execution authority",
+          "running": 0,
+          "selected_model": null,
+          "selection": null
+        },
+        "schema": "airk.arbiter.status/3"
+      }
+    },
+    {
+      "id": "both_stages_independent",
+      "status": {
+        "configuration": {
+          "catalog": "02020202020202020202020202020202",
+          "context": {
+            "device_policy": "auto",
+            "enabled": true,
+            "gpu_precision": "fp16",
+            "indexes": [
+              {
+                "index_id": "idx_05050505050505050505050505050505",
+                "tasks": [
+                  "airk.context_action.v1"
+                ]
+              }
+            ],
+            "selected_model": "arbiter"
+          },
+          "device_catalog": {
+            "catalog": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+            "source": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
+          },
+          "focus": {
+            "device_policy": "cpu",
+            "enabled": true,
+            "gpu_precision": "auto",
+            "indexes": [
+              {
+                "index_id": "idx_05050505050505050505050505050505",
+                "tasks": [
+                  "airk.focus_rank.v1"
+                ]
+              }
+            ],
+            "selected_model": "focus"
+          },
+          "installation": "0101010101010101010101010101010101010101010101010101010101010101",
+          "revision": 1,
+          "schema": "airk.arbiter.configuration/5"
+        },
+        "context": {
+          "active_profile": "2121212121212121212121212121212121212121212121212121212121212121",
+          "availability": "ready",
+          "device_policy": "auto",
+          "gpu_precision": "fp16",
+          "models": [
+            {
+              "availability": "ready",
+              "model": "arbiter",
+              "reason": "Synthetic native model-admission observation; no inferred client permission",
+              "tasks": [
+                "airk.context_action.v1"
+              ],
+              "variants": [
+                {
+                  "availability": "requested",
+                  "backend": null,
+                  "cpu_fit": {
+                    "inter_threads": 1,
+                    "intra_threads": 1,
+                    "minimum_physical_cores": 1,
+                    "sequential": true,
+                    "spinning": false
+                  },
+                  "device_evidence": null,
+                  "download_bytes": 1073741831,
+                  "execution_identity": "onnxruntime-cpu/1.30.0/physical1/intra1/inter1/sequential/spinning0",
+                  "manifest": "1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
+                  "memory_reservation_bytes": 1048576,
+                  "model_admission": "qualified",
+                  "precision": null,
+                  "reason": "Synthetic native view fixture; NOT hardware/model qualification",
+                  "tasks": [
+                    "airk.context_action.v1"
+                  ]
+                },
+                {
+                  "availability": "requested",
+                  "backend": "cuda",
+                  "device_evidence": {
+                    "execution_identity": "onnxruntime-cuda/1.30.0/device-execution/b52f0ce83d1207e968c7a34424a41244198639564cd532878d8216c71eeea944",
+                    "numerical": "3333333333333333333333333333333333333333333333333333333333333333",
+                    "placement": "3535353535353535353535353535353535353535353535353535353535353535",
+                    "resources": "3434343434343434343434343434343434343434343434343434343434343434",
+                    "target": "x86_64-pc-windows-msvc"
+                  },
+                  "download_bytes": 1073741831,
+                  "execution_identity": "onnxruntime-cuda/1.30.0/device-execution/b52f0ce83d1207e968c7a34424a41244198639564cd532878d8216c71eeea944",
+                  "manifest": "2020202020202020202020202020202020202020202020202020202020202020",
+                  "memory_reservation_bytes": 1048576,
+                  "model_admission": "qualified",
+                  "precision": "float32",
+                  "reason": "Synthetic native view fixture; NOT hardware/model qualification",
+                  "tasks": [
+                    "airk.context_action.v1"
+                  ]
+                },
+                {
+                  "availability": "ready",
+                  "backend": "cuda",
+                  "device_evidence": {
+                    "execution_identity": "onnxruntime-cuda/1.30.0/device-execution/7beb89a105c967a497268ad384d2c14ab4257531948f923b5a4e5aded5d3980b",
+                    "numerical": "3333333333333333333333333333333333333333333333333333333333333333",
+                    "placement": "3535353535353535353535353535353535353535353535353535353535353535",
+                    "resources": "3434343434343434343434343434343434343434343434343434343434343434",
+                    "target": "x86_64-pc-windows-msvc"
+                  },
+                  "download_bytes": 1073741831,
+                  "execution_identity": "onnxruntime-cuda/1.30.0/device-execution/7beb89a105c967a497268ad384d2c14ab4257531948f923b5a4e5aded5d3980b",
+                  "manifest": "2121212121212121212121212121212121212121212121212121212121212121",
+                  "memory_reservation_bytes": 1048576,
+                  "model_admission": "qualified",
+                  "precision": "float16",
+                  "reason": "Synthetic native view fixture; NOT hardware/model qualification",
+                  "tasks": [
+                    "airk.context_action.v1"
+                  ]
+                }
+              ]
+            }
+          ],
+          "queued": 0,
+          "reason": "Synthetic native typed state; NOT an execution/qualification claim",
+          "running": 0,
+          "selected_model": "arbiter",
+          "selection": {
+            "gpu_precision": "fp16",
+            "model": "arbiter",
             "operation_failure": null,
             "policy": "auto",
             "reasons": [],
@@ -1509,7 +1428,7 @@
                 ]
               }
             ],
-            "selected_model": "context_compact"
+            "selected_model": "arbiter"
           },
           "device_catalog": {
             "catalog": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
@@ -1524,7 +1443,7 @@
           },
           "installation": "0101010101010101010101010101010101010101010101010101010101010101",
           "revision": 1,
-          "schema": "airk.arbiter.configuration/4"
+          "schema": "airk.arbiter.configuration/5"
         },
         "context": {
           "active_profile": null,
@@ -1534,7 +1453,7 @@
           "models": [
             {
               "availability": "requested",
-              "model": "context_compact",
+              "model": "arbiter",
               "reason": "Synthetic native model-admission observation; no inferred client permission",
               "tasks": [
                 "airk.context_action.v1"
@@ -1593,24 +1512,15 @@
                   ]
                 }
               ]
-            },
-            {
-              "availability": "unqualified",
-              "model": "context_large",
-              "reason": "Synthetic no compiled variant; no qualification",
-              "tasks": [
-                "airk.context_action.v1"
-              ],
-              "variants": []
             }
           ],
           "queued": 0,
           "reason": "Synthetic native typed state; NOT an execution/qualification claim",
           "running": 0,
-          "selected_model": "context_compact",
+          "selected_model": "arbiter",
           "selection": {
             "gpu_precision": "auto",
-            "model": "context_compact",
+            "model": "arbiter",
             "operation_failure": null,
             "policy": "auto",
             "reasons": [],
@@ -1660,7 +1570,7 @@
                 ]
               }
             ],
-            "selected_model": "context_compact"
+            "selected_model": "arbiter"
           },
           "device_catalog": {
             "catalog": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
@@ -1675,7 +1585,7 @@
           },
           "installation": "0101010101010101010101010101010101010101010101010101010101010101",
           "revision": 1,
-          "schema": "airk.arbiter.configuration/4"
+          "schema": "airk.arbiter.configuration/5"
         },
         "context": {
           "active_profile": null,
@@ -1685,7 +1595,7 @@
           "models": [
             {
               "availability": "requested",
-              "model": "context_compact",
+              "model": "arbiter",
               "reason": "Synthetic native model-admission observation; no inferred client permission",
               "tasks": [
                 "airk.context_action.v1"
@@ -1744,24 +1654,15 @@
                   ]
                 }
               ]
-            },
-            {
-              "availability": "unqualified",
-              "model": "context_large",
-              "reason": "Synthetic no compiled variant; no qualification",
-              "tasks": [
-                "airk.context_action.v1"
-              ],
-              "variants": []
             }
           ],
           "queued": 0,
           "reason": "Synthetic native typed state; NOT an execution/qualification claim",
           "running": 0,
-          "selected_model": "context_compact",
+          "selected_model": "arbiter",
           "selection": {
             "gpu_precision": "auto",
-            "model": "context_compact",
+            "model": "arbiter",
             "operation_failure": null,
             "policy": "auto",
             "reasons": [],
@@ -1811,7 +1712,7 @@
                 ]
               }
             ],
-            "selected_model": "context_compact"
+            "selected_model": "arbiter"
           },
           "device_catalog": {
             "catalog": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
@@ -1826,7 +1727,7 @@
           },
           "installation": "0101010101010101010101010101010101010101010101010101010101010101",
           "revision": 1,
-          "schema": "airk.arbiter.configuration/4"
+          "schema": "airk.arbiter.configuration/5"
         },
         "context": {
           "active_profile": null,
@@ -1836,7 +1737,7 @@
           "models": [
             {
               "availability": "requested",
-              "model": "context_compact",
+              "model": "arbiter",
               "reason": "Synthetic native model-admission observation; no inferred client permission",
               "tasks": [
                 "airk.context_action.v1"
@@ -1895,24 +1796,15 @@
                   ]
                 }
               ]
-            },
-            {
-              "availability": "unqualified",
-              "model": "context_large",
-              "reason": "Synthetic no compiled variant; no qualification",
-              "tasks": [
-                "airk.context_action.v1"
-              ],
-              "variants": []
             }
           ],
           "queued": 0,
           "reason": "Synthetic native typed state; NOT an execution/qualification claim",
           "running": 0,
-          "selected_model": "context_compact",
+          "selected_model": "arbiter",
           "selection": {
             "gpu_precision": "auto",
-            "model": "context_compact",
+            "model": "arbiter",
             "operation_failure": null,
             "policy": "auto",
             "reasons": [],
@@ -1962,7 +1854,7 @@
                 ]
               }
             ],
-            "selected_model": "context_compact"
+            "selected_model": "arbiter"
           },
           "device_catalog": {
             "catalog": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
@@ -1977,7 +1869,7 @@
           },
           "installation": "0101010101010101010101010101010101010101010101010101010101010101",
           "revision": 1,
-          "schema": "airk.arbiter.configuration/4"
+          "schema": "airk.arbiter.configuration/5"
         },
         "context": {
           "active_profile": null,
@@ -1987,7 +1879,7 @@
           "models": [
             {
               "availability": "requested",
-              "model": "context_compact",
+              "model": "arbiter",
               "reason": "Synthetic native model-admission observation; no inferred client permission",
               "tasks": [
                 "airk.context_action.v1"
@@ -2046,24 +1938,15 @@
                   ]
                 }
               ]
-            },
-            {
-              "availability": "unqualified",
-              "model": "context_large",
-              "reason": "Synthetic no compiled variant; no qualification",
-              "tasks": [
-                "airk.context_action.v1"
-              ],
-              "variants": []
             }
           ],
           "queued": 0,
           "reason": "Synthetic native typed state; NOT an execution/qualification claim",
           "running": 0,
-          "selected_model": "context_compact",
+          "selected_model": "arbiter",
           "selection": {
             "gpu_precision": "auto",
-            "model": "context_compact",
+            "model": "arbiter",
             "operation_failure": null,
             "policy": "auto",
             "reasons": [],
@@ -2113,7 +1996,7 @@
                 ]
               }
             ],
-            "selected_model": "context_compact"
+            "selected_model": "arbiter"
           },
           "device_catalog": {
             "catalog": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
@@ -2128,7 +2011,7 @@
           },
           "installation": "0101010101010101010101010101010101010101010101010101010101010101",
           "revision": 1,
-          "schema": "airk.arbiter.configuration/4"
+          "schema": "airk.arbiter.configuration/5"
         },
         "context": {
           "active_profile": null,
@@ -2138,7 +2021,7 @@
           "models": [
             {
               "availability": "requested",
-              "model": "context_compact",
+              "model": "arbiter",
               "reason": "Synthetic native model-admission observation; no inferred client permission",
               "tasks": [
                 "airk.context_action.v1"
@@ -2197,24 +2080,15 @@
                   ]
                 }
               ]
-            },
-            {
-              "availability": "unqualified",
-              "model": "context_large",
-              "reason": "Synthetic no compiled variant; no qualification",
-              "tasks": [
-                "airk.context_action.v1"
-              ],
-              "variants": []
             }
           ],
           "queued": 0,
           "reason": "Synthetic native typed state; NOT an execution/qualification claim",
           "running": 0,
-          "selected_model": "context_compact",
+          "selected_model": "arbiter",
           "selection": {
             "gpu_precision": "auto",
-            "model": "context_compact",
+            "model": "arbiter",
             "operation_failure": null,
             "policy": "auto",
             "reasons": [],
@@ -2264,7 +2138,7 @@
                 ]
               }
             ],
-            "selected_model": "context_compact"
+            "selected_model": "arbiter"
           },
           "device_catalog": {
             "catalog": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
@@ -2279,7 +2153,7 @@
           },
           "installation": "0101010101010101010101010101010101010101010101010101010101010101",
           "revision": 1,
-          "schema": "airk.arbiter.configuration/4"
+          "schema": "airk.arbiter.configuration/5"
         },
         "context": {
           "active_profile": null,
@@ -2289,7 +2163,7 @@
           "models": [
             {
               "availability": "requested",
-              "model": "context_compact",
+              "model": "arbiter",
               "reason": "Synthetic native model-admission observation; no inferred client permission",
               "tasks": [
                 "airk.context_action.v1"
@@ -2348,24 +2222,15 @@
                   ]
                 }
               ]
-            },
-            {
-              "availability": "unqualified",
-              "model": "context_large",
-              "reason": "Synthetic no compiled variant; no qualification",
-              "tasks": [
-                "airk.context_action.v1"
-              ],
-              "variants": []
             }
           ],
           "queued": 0,
           "reason": "Synthetic native typed state; NOT an execution/qualification claim",
           "running": 0,
-          "selected_model": "context_compact",
+          "selected_model": "arbiter",
           "selection": {
             "gpu_precision": "auto",
-            "model": "context_compact",
+            "model": "arbiter",
             "operation_failure": null,
             "policy": "auto",
             "reasons": [],
@@ -2415,7 +2280,7 @@
                 ]
               }
             ],
-            "selected_model": "context_compact"
+            "selected_model": "arbiter"
           },
           "device_catalog": {
             "catalog": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
@@ -2430,7 +2295,7 @@
           },
           "installation": "0101010101010101010101010101010101010101010101010101010101010101",
           "revision": 1,
-          "schema": "airk.arbiter.configuration/4"
+          "schema": "airk.arbiter.configuration/5"
         },
         "context": {
           "active_profile": null,
@@ -2440,7 +2305,7 @@
           "models": [
             {
               "availability": "requested",
-              "model": "context_compact",
+              "model": "arbiter",
               "reason": "Synthetic native model-admission observation; no inferred client permission",
               "tasks": [
                 "airk.context_action.v1"
@@ -2499,24 +2364,15 @@
                   ]
                 }
               ]
-            },
-            {
-              "availability": "unqualified",
-              "model": "context_large",
-              "reason": "Synthetic no compiled variant; no qualification",
-              "tasks": [
-                "airk.context_action.v1"
-              ],
-              "variants": []
             }
           ],
           "queued": 0,
           "reason": "Synthetic native typed state; NOT an execution/qualification claim",
           "running": 0,
-          "selected_model": "context_compact",
+          "selected_model": "arbiter",
           "selection": {
             "gpu_precision": "auto",
-            "model": "context_compact",
+            "model": "arbiter",
             "operation_failure": null,
             "policy": "auto",
             "reasons": [],
@@ -2566,7 +2422,7 @@
                 ]
               }
             ],
-            "selected_model": "context_compact"
+            "selected_model": "arbiter"
           },
           "device_catalog": {
             "catalog": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
@@ -2581,7 +2437,7 @@
           },
           "installation": "0101010101010101010101010101010101010101010101010101010101010101",
           "revision": 1,
-          "schema": "airk.arbiter.configuration/4"
+          "schema": "airk.arbiter.configuration/5"
         },
         "context": {
           "active_profile": null,
@@ -2591,7 +2447,7 @@
           "models": [
             {
               "availability": "requested",
-              "model": "context_compact",
+              "model": "arbiter",
               "reason": "Synthetic native model-admission observation; no inferred client permission",
               "tasks": [
                 "airk.context_action.v1"
@@ -2650,24 +2506,15 @@
                   ]
                 }
               ]
-            },
-            {
-              "availability": "unqualified",
-              "model": "context_large",
-              "reason": "Synthetic no compiled variant; no qualification",
-              "tasks": [
-                "airk.context_action.v1"
-              ],
-              "variants": []
             }
           ],
           "queued": 0,
           "reason": "Synthetic native typed state; NOT an execution/qualification claim",
           "running": 0,
-          "selected_model": "context_compact",
+          "selected_model": "arbiter",
           "selection": {
             "gpu_precision": "auto",
-            "model": "context_compact",
+            "model": "arbiter",
             "operation_failure": null,
             "policy": "auto",
             "reasons": [],
@@ -2717,7 +2564,7 @@
                 ]
               }
             ],
-            "selected_model": "context_compact"
+            "selected_model": "arbiter"
           },
           "device_catalog": {
             "catalog": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
@@ -2732,7 +2579,7 @@
           },
           "installation": "0101010101010101010101010101010101010101010101010101010101010101",
           "revision": 1,
-          "schema": "airk.arbiter.configuration/4"
+          "schema": "airk.arbiter.configuration/5"
         },
         "context": {
           "active_profile": null,
@@ -2742,7 +2589,7 @@
           "models": [
             {
               "availability": "requested",
-              "model": "context_compact",
+              "model": "arbiter",
               "reason": "Synthetic native model-admission observation; no inferred client permission",
               "tasks": [
                 "airk.context_action.v1"
@@ -2801,24 +2648,15 @@
                   ]
                 }
               ]
-            },
-            {
-              "availability": "unqualified",
-              "model": "context_large",
-              "reason": "Synthetic no compiled variant; no qualification",
-              "tasks": [
-                "airk.context_action.v1"
-              ],
-              "variants": []
             }
           ],
           "queued": 0,
           "reason": "Synthetic native typed state; NOT an execution/qualification claim",
           "running": 0,
-          "selected_model": "context_compact",
+          "selected_model": "arbiter",
           "selection": {
             "gpu_precision": "auto",
-            "model": "context_compact",
+            "model": "arbiter",
             "operation_failure": null,
             "policy": "auto",
             "reasons": [],
@@ -2868,7 +2706,7 @@
                 ]
               }
             ],
-            "selected_model": "context_compact"
+            "selected_model": "arbiter"
           },
           "device_catalog": {
             "catalog": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
@@ -2883,7 +2721,7 @@
           },
           "installation": "0101010101010101010101010101010101010101010101010101010101010101",
           "revision": 1,
-          "schema": "airk.arbiter.configuration/4"
+          "schema": "airk.arbiter.configuration/5"
         },
         "context": {
           "active_profile": null,
@@ -2893,7 +2731,7 @@
           "models": [
             {
               "availability": "requested",
-              "model": "context_compact",
+              "model": "arbiter",
               "reason": "Synthetic native model-admission observation; no inferred client permission",
               "tasks": [
                 "airk.context_action.v1"
@@ -2952,24 +2790,15 @@
                   ]
                 }
               ]
-            },
-            {
-              "availability": "unqualified",
-              "model": "context_large",
-              "reason": "Synthetic no compiled variant; no qualification",
-              "tasks": [
-                "airk.context_action.v1"
-              ],
-              "variants": []
             }
           ],
           "queued": 0,
           "reason": "Synthetic native typed state; NOT an execution/qualification claim",
           "running": 0,
-          "selected_model": "context_compact",
+          "selected_model": "arbiter",
           "selection": {
             "gpu_precision": "auto",
-            "model": "context_compact",
+            "model": "arbiter",
             "operation_failure": null,
             "policy": "auto",
             "reasons": [],
@@ -3019,7 +2848,7 @@
                 ]
               }
             ],
-            "selected_model": "context_compact"
+            "selected_model": "arbiter"
           },
           "device_catalog": {
             "catalog": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
@@ -3034,7 +2863,7 @@
           },
           "installation": "0101010101010101010101010101010101010101010101010101010101010101",
           "revision": 1,
-          "schema": "airk.arbiter.configuration/4"
+          "schema": "airk.arbiter.configuration/5"
         },
         "context": {
           "active_profile": "1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
@@ -3044,7 +2873,7 @@
           "models": [
             {
               "availability": "ready",
-              "model": "context_compact",
+              "model": "arbiter",
               "reason": "Synthetic native model-admission observation; no inferred client permission",
               "tasks": [
                 "airk.context_action.v1"
@@ -3103,24 +2932,15 @@
                   ]
                 }
               ]
-            },
-            {
-              "availability": "unqualified",
-              "model": "context_large",
-              "reason": "Synthetic no compiled variant; no qualification",
-              "tasks": [
-                "airk.context_action.v1"
-              ],
-              "variants": []
             }
           ],
           "queued": 0,
           "reason": "Synthetic native typed state; NOT an execution/qualification claim",
           "running": 0,
-          "selected_model": "context_compact",
+          "selected_model": "arbiter",
           "selection": {
             "gpu_precision": "auto",
-            "model": "context_compact",
+            "model": "arbiter",
             "operation_failure": null,
             "policy": "auto",
             "reasons": [],
@@ -3177,7 +2997,7 @@
                 ]
               }
             ],
-            "selected_model": "context_compact"
+            "selected_model": "arbiter"
           },
           "device_catalog": {
             "catalog": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
@@ -3192,7 +3012,7 @@
           },
           "installation": "0101010101010101010101010101010101010101010101010101010101010101",
           "revision": 1,
-          "schema": "airk.arbiter.configuration/4"
+          "schema": "airk.arbiter.configuration/5"
         },
         "context": {
           "active_profile": null,
@@ -3202,7 +3022,7 @@
           "models": [
             {
               "availability": "requested",
-              "model": "context_compact",
+              "model": "arbiter",
               "reason": "Synthetic native model-admission observation; no inferred client permission",
               "tasks": [
                 "airk.context_action.v1"
@@ -3261,24 +3081,15 @@
                   ]
                 }
               ]
-            },
-            {
-              "availability": "unqualified",
-              "model": "context_large",
-              "reason": "Synthetic no compiled variant; no qualification",
-              "tasks": [
-                "airk.context_action.v1"
-              ],
-              "variants": []
             }
           ],
           "queued": 0,
           "reason": "Synthetic native typed state; NOT an execution/qualification claim",
           "running": 0,
-          "selected_model": "context_compact",
+          "selected_model": "arbiter",
           "selection": {
             "gpu_precision": "auto",
-            "model": "context_compact",
+            "model": "arbiter",
             "operation_failure": null,
             "policy": "auto",
             "reasons": [],
@@ -3328,7 +3139,7 @@
                 ]
               }
             ],
-            "selected_model": "context_compact"
+            "selected_model": "arbiter"
           },
           "device_catalog": {
             "catalog": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
@@ -3343,7 +3154,7 @@
           },
           "installation": "0101010101010101010101010101010101010101010101010101010101010101",
           "revision": 1,
-          "schema": "airk.arbiter.configuration/4"
+          "schema": "airk.arbiter.configuration/5"
         },
         "context": {
           "active_profile": null,
@@ -3353,7 +3164,7 @@
           "models": [
             {
               "availability": "requested",
-              "model": "context_compact",
+              "model": "arbiter",
               "reason": "Synthetic native model-admission observation; no inferred client permission",
               "tasks": [
                 "airk.context_action.v1"
@@ -3412,24 +3223,15 @@
                   ]
                 }
               ]
-            },
-            {
-              "availability": "unqualified",
-              "model": "context_large",
-              "reason": "Synthetic no compiled variant; no qualification",
-              "tasks": [
-                "airk.context_action.v1"
-              ],
-              "variants": []
             }
           ],
           "queued": 0,
           "reason": "Synthetic native typed state; NOT an execution/qualification claim",
           "running": 0,
-          "selected_model": "context_compact",
+          "selected_model": "arbiter",
           "selection": {
             "gpu_precision": "auto",
-            "model": "context_compact",
+            "model": "arbiter",
             "operation_failure": null,
             "policy": "auto",
             "reasons": [],
@@ -3479,7 +3281,7 @@
                 ]
               }
             ],
-            "selected_model": "context_compact"
+            "selected_model": "arbiter"
           },
           "device_catalog": {
             "catalog": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
@@ -3494,7 +3296,7 @@
           },
           "installation": "0101010101010101010101010101010101010101010101010101010101010101",
           "revision": 1,
-          "schema": "airk.arbiter.configuration/4"
+          "schema": "airk.arbiter.configuration/5"
         },
         "context": {
           "active_profile": null,
@@ -3504,7 +3306,7 @@
           "models": [
             {
               "availability": "requested",
-              "model": "context_compact",
+              "model": "arbiter",
               "reason": "Synthetic native model-admission observation; no inferred client permission",
               "tasks": [
                 "airk.context_action.v1"
@@ -3563,24 +3365,15 @@
                   ]
                 }
               ]
-            },
-            {
-              "availability": "unqualified",
-              "model": "context_large",
-              "reason": "Synthetic no compiled variant; no qualification",
-              "tasks": [
-                "airk.context_action.v1"
-              ],
-              "variants": []
             }
           ],
           "queued": 0,
           "reason": "Synthetic native typed state; NOT an execution/qualification claim",
           "running": 0,
-          "selected_model": "context_compact",
+          "selected_model": "arbiter",
           "selection": {
             "gpu_precision": "auto",
-            "model": "context_compact",
+            "model": "arbiter",
             "operation_failure": null,
             "policy": "auto",
             "reasons": [],
@@ -3642,7 +3435,7 @@
           "enabled": false,
           "gpu_precision": "auto",
           "indexes": [],
-          "selected_model": "context_compact"
+          "selected_model": "arbiter"
         },
         "expected_revision": 1,
         "operation": "configure_device",
@@ -3828,7 +3621,7 @@
               ]
             }
           ],
-          "selected_model": "context_compact"
+          "selected_model": "arbiter"
         },
         "expected_revision": 1,
         "operation": "configure_device",
@@ -3850,7 +3643,7 @@
               ]
             }
           ],
-          "selected_model": "context_compact"
+          "selected_model": "arbiter"
         },
         "expected_revision": 1,
         "operation": "configure_device",
@@ -3872,7 +3665,7 @@
               ]
             }
           ],
-          "selected_model": "context_compact"
+          "selected_model": "arbiter"
         },
         "expected_revision": 1,
         "operation": "configure_device",
@@ -3894,7 +3687,7 @@
               ]
             }
           ],
-          "selected_model": "context_compact"
+          "selected_model": "arbiter"
         },
         "expected_revision": 1,
         "operation": "configure_device",
@@ -3916,7 +3709,7 @@
               ]
             }
           ],
-          "selected_model": "context_compact"
+          "selected_model": "arbiter"
         },
         "expected_revision": 1,
         "operation": "configure_device",
@@ -3938,7 +3731,7 @@
               ]
             }
           ],
-          "selected_model": "context_compact"
+          "selected_model": "arbiter"
         },
         "expected_revision": 1,
         "operation": "configure_device",
@@ -3953,7 +3746,7 @@
           "enabled": false,
           "gpu_precision": "bf16",
           "indexes": [],
-          "selected_model": "context_compact"
+          "selected_model": "arbiter"
         },
         "expected_revision": 1,
         "operation": "configure_device",
@@ -3986,7 +3779,7 @@
           },
           "installation": "0101010101010101010101010101010101010101010101010101010101010101",
           "revision": 1,
-          "schema": "airk.arbiter.configuration/4"
+          "schema": "airk.arbiter.configuration/5"
         },
         "context": {
           "active_profile": null,
@@ -3996,16 +3789,7 @@
           "models": [
             {
               "availability": "unqualified",
-              "model": "context_compact",
-              "reason": "Synthetic no compiled variant; no qualification",
-              "tasks": [
-                "airk.context_action.v1"
-              ],
-              "variants": []
-            },
-            {
-              "availability": "unqualified",
-              "model": "context_large",
+              "model": "arbiter",
               "reason": "Synthetic no compiled variant; no qualification",
               "tasks": [
                 "airk.context_action.v1"
@@ -4069,7 +3853,7 @@
           },
           "installation": "0101010101010101010101010101010101010101010101010101010101010101",
           "revision": 1,
-          "schema": "airk.arbiter.configuration/4"
+          "schema": "airk.arbiter.configuration/5"
         },
         "context": {
           "active_profile": null,
@@ -4079,16 +3863,7 @@
           "models": [
             {
               "availability": "unqualified",
-              "model": "context_compact",
-              "reason": "Synthetic no compiled variant; no qualification",
-              "tasks": [
-                "airk.context_action.v1"
-              ],
-              "variants": []
-            },
-            {
-              "availability": "unqualified",
-              "model": "context_large",
+              "model": "arbiter",
               "reason": "Synthetic no compiled variant; no qualification",
               "tasks": [
                 "airk.context_action.v1"
@@ -4153,7 +3928,7 @@
       "id": "initialization_unresolved_current3"
     },
     {
-      "id": "context_compact_gpu_not_opted_in_cpu",
+      "id": "arbiter_gpu_not_opted_in_cpu",
       "status": {
         "configuration": {
           "catalog": "02020202020202020202020202020202",
@@ -4169,7 +3944,7 @@
                 ]
               }
             ],
-            "selected_model": "context_compact"
+            "selected_model": "arbiter"
           },
           "device_catalog": {
             "catalog": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
@@ -4184,7 +3959,7 @@
           },
           "installation": "0101010101010101010101010101010101010101010101010101010101010101",
           "revision": 1,
-          "schema": "airk.arbiter.configuration/4"
+          "schema": "airk.arbiter.configuration/5"
         },
         "context": {
           "active_profile": "1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
@@ -4194,7 +3969,7 @@
           "models": [
             {
               "availability": "ready",
-              "model": "context_compact",
+              "model": "arbiter",
               "reason": "Synthetic native model-admission observation; no inferred client permission",
               "tasks": [
                 "airk.context_action.v1"
@@ -4253,24 +4028,15 @@
                   ]
                 }
               ]
-            },
-            {
-              "availability": "unqualified",
-              "model": "context_large",
-              "reason": "Synthetic no compiled variant; no qualification",
-              "tasks": [
-                "airk.context_action.v1"
-              ],
-              "variants": []
             }
           ],
           "queued": 0,
           "reason": "Synthetic native typed state; NOT an execution/qualification claim",
           "running": 0,
-          "selected_model": "context_compact",
+          "selected_model": "arbiter",
           "selection": {
             "gpu_precision": "auto",
-            "model": "context_compact",
+            "model": "arbiter",
             "operation_failure": null,
             "policy": "auto",
             "reasons": [
@@ -4317,7 +4083,7 @@
       }
     },
     {
-      "id": "context_compact_no_qualified_gpu_route_cpu",
+      "id": "arbiter_no_qualified_gpu_route_cpu",
       "status": {
         "configuration": {
           "catalog": "02020202020202020202020202020202",
@@ -4333,7 +4099,7 @@
                 ]
               }
             ],
-            "selected_model": "context_compact"
+            "selected_model": "arbiter"
           },
           "device_catalog": {
             "catalog": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
@@ -4348,7 +4114,7 @@
           },
           "installation": "0101010101010101010101010101010101010101010101010101010101010101",
           "revision": 1,
-          "schema": "airk.arbiter.configuration/4"
+          "schema": "airk.arbiter.configuration/5"
         },
         "context": {
           "active_profile": "1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
@@ -4358,7 +4124,7 @@
           "models": [
             {
               "availability": "ready",
-              "model": "context_compact",
+              "model": "arbiter",
               "reason": "Synthetic native model-admission observation; no inferred client permission",
               "tasks": [
                 "airk.context_action.v1"
@@ -4417,24 +4183,15 @@
                   ]
                 }
               ]
-            },
-            {
-              "availability": "unqualified",
-              "model": "context_large",
-              "reason": "Synthetic no compiled variant; no qualification",
-              "tasks": [
-                "airk.context_action.v1"
-              ],
-              "variants": []
             }
           ],
           "queued": 0,
           "reason": "Synthetic native typed state; NOT an execution/qualification claim",
           "running": 0,
-          "selected_model": "context_compact",
+          "selected_model": "arbiter",
           "selection": {
             "gpu_precision": "auto",
-            "model": "context_compact",
+            "model": "arbiter",
             "operation_failure": null,
             "policy": "auto",
             "reasons": [
@@ -4481,7 +4238,7 @@
       }
     },
     {
-      "id": "context_compact_no_fit_unsupported_system",
+      "id": "arbiter_no_fit_unsupported_system",
       "status": {
         "configuration": {
           "catalog": "02020202020202020202020202020202",
@@ -4497,7 +4254,7 @@
                 ]
               }
             ],
-            "selected_model": "context_compact"
+            "selected_model": "arbiter"
           },
           "device_catalog": {
             "catalog": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
@@ -4512,7 +4269,7 @@
           },
           "installation": "0101010101010101010101010101010101010101010101010101010101010101",
           "revision": 1,
-          "schema": "airk.arbiter.configuration/4"
+          "schema": "airk.arbiter.configuration/5"
         },
         "context": {
           "active_profile": null,
@@ -4522,7 +4279,7 @@
           "models": [
             {
               "availability": "requested",
-              "model": "context_compact",
+              "model": "arbiter",
               "reason": "Synthetic native model-admission observation; no inferred client permission",
               "tasks": [
                 "airk.context_action.v1"
@@ -4581,24 +4338,15 @@
                   ]
                 }
               ]
-            },
-            {
-              "availability": "unqualified",
-              "model": "context_large",
-              "reason": "Synthetic no compiled variant; no qualification",
-              "tasks": [
-                "airk.context_action.v1"
-              ],
-              "variants": []
             }
           ],
           "queued": 0,
           "reason": "Synthetic native typed state; NOT an execution/qualification claim",
           "running": 0,
-          "selected_model": "context_compact",
+          "selected_model": "arbiter",
           "selection": {
             "gpu_precision": "auto",
-            "model": "context_compact",
+            "model": "arbiter",
             "operation_failure": null,
             "policy": "auto",
             "reasons": [
@@ -4643,7 +4391,7 @@
       }
     },
     {
-      "id": "context_compact_deadline_operation_failure",
+      "id": "arbiter_deadline_operation_failure",
       "status": {
         "configuration": {
           "catalog": "02020202020202020202020202020202",
@@ -4659,7 +4407,7 @@
                 ]
               }
             ],
-            "selected_model": "context_compact"
+            "selected_model": "arbiter"
           },
           "device_catalog": {
             "catalog": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
@@ -4674,7 +4422,7 @@
           },
           "installation": "0101010101010101010101010101010101010101010101010101010101010101",
           "revision": 1,
-          "schema": "airk.arbiter.configuration/4"
+          "schema": "airk.arbiter.configuration/5"
         },
         "context": {
           "active_profile": null,
@@ -4684,7 +4432,7 @@
           "models": [
             {
               "availability": "requested",
-              "model": "context_compact",
+              "model": "arbiter",
               "reason": "Synthetic native model-admission observation; no inferred client permission",
               "tasks": [
                 "airk.context_action.v1"
@@ -4743,24 +4491,15 @@
                   ]
                 }
               ]
-            },
-            {
-              "availability": "unqualified",
-              "model": "context_large",
-              "reason": "Synthetic no compiled variant; no qualification",
-              "tasks": [
-                "airk.context_action.v1"
-              ],
-              "variants": []
             }
           ],
           "queued": 0,
           "reason": "Synthetic native typed state; NOT an execution/qualification claim",
           "running": 0,
-          "selected_model": "context_compact",
+          "selected_model": "arbiter",
           "selection": {
             "gpu_precision": "auto",
-            "model": "context_compact",
+            "model": "arbiter",
             "operation_failure": "deadline_expired",
             "policy": "auto",
             "reasons": [

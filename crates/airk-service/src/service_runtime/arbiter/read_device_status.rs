@@ -60,7 +60,7 @@ impl Owner {
             Ok(None) | Err(_) => {
                 return ScopedDeviceStatus::unavailable(
                     scope,
-                    "Current device configuration4 is absent, retained, or unavailable; no migration was performed.",
+                    "Current device configuration is absent, retained, awaiting migration, or unavailable; no migration was performed.",
                 );
             }
         };

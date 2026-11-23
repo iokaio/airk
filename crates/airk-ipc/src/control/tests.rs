@@ -276,7 +276,7 @@ async fn tools_call_frame_retains_original_parent_until_response_and_sends_once(
 
 #[test]
 fn device_management_frame_keeps_exact_policy_precision_and_legacy_cpu_separate() -> Result<()> {
-    let literal = serde_json::json!({"arbiter":{"request":{"operation":"configure_device","stage":"context","expected_revision":7,"configuration":{"enabled":false,"selected_model":"context_compact","device_policy":"auto","gpu_precision":"fp16","indexes":[]}}}});
+    let literal = serde_json::json!({"arbiter":{"request":{"operation":"configure_device","stage":"context","expected_revision":7,"configuration":{"enabled":false,"selected_model":"arbiter","device_policy":"auto","gpu_precision":"fp16","indexes":[]}}}});
     let method: airk_core::service::ControlMethod = serde_json::from_value(literal.clone())?;
     assert_eq!(serde_json::to_value(method)?, literal);
     let legacy = serde_json::json!({"arbiter":{"request":{"operation":"configure","stage":"focus","expected_revision":7,"enabled":false,"selected_profile":null,"indexes":[]}}});

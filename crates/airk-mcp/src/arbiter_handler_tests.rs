@@ -393,7 +393,7 @@ fn wire_clock() -> airk_core::read_attempt::ReadClock {
 }
 fn loop_model() -> airk_kernel::arbiter::LoopModel {
     airk_kernel::arbiter::LoopModel {
-        model: device::SelectedModel::ContextCompact,
+        model: device::SelectedModel::Arbiter,
         device: v3::ExecutionDevice::Cuda,
         precision: Some(device::DevicePrecision::Float16),
     }

@@ -85,8 +85,8 @@ fn project(bytes: &[u8], tag: &str) -> Result<Publication> {
     );
     let catalog: Catalog = serde_json::from_slice(bytes)?;
     ensure!(
-        catalog.schema == CATALOG_SCHEMA && catalog.profiles.len() == 3,
-        "publication requires the three selected qualified stage profiles"
+        catalog.schema == CATALOG_SCHEMA && catalog.profiles.len() == 2,
+        "publication requires the two selected qualified stage profiles"
     );
     let mut models = BTreeSet::new();
     let mut manifests = BTreeSet::new();
@@ -146,7 +146,6 @@ fn project(bytes: &[u8], tag: &str) -> Result<Publication> {
             == BTreeSet::from([
                 ModelChoice::FocusQwenReranker06B,
                 ModelChoice::ContextQwenCompact,
-                ModelChoice::ContextQwenLarge,
             ]),
         "incomplete model slot coverage"
     );
@@ -181,7 +180,7 @@ mod tests {
         Ok(())
     }
     #[test]
-    #[ignore = "requires the three actually qualified selected stage profiles"]
+    #[ignore = "requires the two actually qualified selected stage profiles"]
     fn compiled_publication_matches_retained_production_projection() -> Result<()> {
         let projection = compiled_publication(concat!("v", env!("CARGO_PKG_VERSION")))?;
         let value = serde_json::to_value(&projection)?;
@@ -205,7 +204,6 @@ mod tests {
         for (i, model) in [
             ModelChoice::FocusQwenReranker06B,
             ModelChoice::ContextQwenCompact,
-            ModelChoice::ContextQwenLarge,
         ]
         .into_iter()
         .enumerate()
@@ -315,10 +313,10 @@ mod tests {
         let profiles = selected_profiles()?;
         let input = serde_json::json!({"schema":CATALOG_SCHEMA,"profiles":profiles});
         let positive = project(&serde_json::to_vec(&input)?, "v1.9.0")?;
-        assert_eq!(positive.profiles.len(), 3);
+        assert_eq!(positive.profiles.len(), 2);
         assert!(!positive.assets.is_empty());
         let mut cases = vec![
-            serde_json::json!({"name":"hypothetical_three_selected_stage_profiles","accepted":true,"projection":positive}),
+            serde_json::json!({"name":"hypothetical_two_selected_stage_profiles","accepted":true,"projection":positive}),
         ];
         for (name, mut value) in [
             ("missing_slot", input.clone()),

@@ -252,8 +252,10 @@ pub struct CardEvidence {
     /// Absent when Focus did not score the span.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub focus: Option<f32>,
-    /// The shown part of the span's text, on character boundaries. It starts
-    /// where the text Focus scored starts. Empty only for a repeat.
+    /// The shown part of the span's text, on character boundaries. It holds
+    /// the start of the text Focus scored and may start before it (a window
+    /// placed to use the row's whole share); without a Focus score it starts
+    /// at the span's start. Empty only for a repeat.
     pub excerpt: String,
     /// Bytes of the span's text before the excerpt, which are not shown.
     pub skipped_bytes: usize,
@@ -261,10 +263,13 @@ pub struct CardEvidence {
     pub cut_bytes: usize,
     /// The read returned only part of its text (`Hit.truncated`).
     pub truncated: bool,
-    /// An earlier row of the same call that shows this very text. The call
-    /// shows a text once; a repeat names that row and carries no excerpt.
+    /// The earlier row of the same call that shows this very text, by its
+    /// position among all the call's rows (segment after segment, in request
+    /// order, from 0). The call shows a text once; a repeat names that row and
+    /// carries no excerpt. A position names one row even when two rows share
+    /// a place (review L-b).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub same_as: Option<EvidencePlace>,
+    pub same_as: Option<usize>,
 }
 impl CardEvidence {
     pub fn place(&self) -> EvidencePlace {
@@ -284,11 +289,8 @@ impl CardEvidence {
             "invalid card segment evidence"
         );
         match &self.same_as {
-            Some(shown) => ensure!(
-                shown.valid()
-                    && self.excerpt.is_empty()
-                    && self.skipped_bytes == 0
-                    && self.cut_bytes == 0,
+            Some(_) => ensure!(
+                self.excerpt.is_empty() && self.skipped_bytes == 0 && self.cut_bytes == 0,
                 "a repeated evidence row names where its text is shown and shows none"
             ),
             // A cut excerpt holds at least the minimum; a shorter one runs
@@ -531,11 +533,8 @@ impl NativeCardRequest {
         // A repeat names an earlier row of this call that shows its text.
         ensure!(
             rows.iter().enumerate().all(|(position, row)| {
-                row.same_as.as_ref().is_none_or(|shown| {
-                    rows[..position]
-                        .iter()
-                        .any(|earlier| earlier.same_as.is_none() && earlier.place() == *shown)
-                })
+                row.same_as
+                    .is_none_or(|shown| shown < position && rows[shown].same_as.is_none())
             }),
             "a repeated evidence row names no earlier row that shows its text"
         );

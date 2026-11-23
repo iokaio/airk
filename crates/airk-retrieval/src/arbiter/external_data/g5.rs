@@ -155,11 +155,7 @@ fn node(
         matches!(a.get("scale"), Some(Attribute::Float(0x3db504f3))),
         "G5 original head128 scale bits differ"
     );
-    let heads = if model == ModelChoice::ContextQwenLarge {
-        32
-    } else {
-        16
-    };
+    let heads = 16;
     integer(&a, "num_heads", heads)?;
     if focus {
         ensure!(
@@ -334,9 +330,7 @@ pub(crate) fn audit(
     ensure!(
         matches!(
             choice,
-            ModelChoice::FocusQwenReranker06B
-                | ModelChoice::ContextQwenCompact
-                | ModelChoice::ContextQwenLarge
+            ModelChoice::FocusQwenReranker06B | ModelChoice::ContextQwenCompact
         ),
         "G5 unknown selected model"
     );
@@ -348,11 +342,7 @@ pub(crate) fn audit(
         }
     }
     let mut graph = Cursor(graph.context("G5 graph missing")?);
-    let layers = if choice == ModelChoice::ContextQwenLarge {
-        36
-    } else {
-        28
-    };
+    let layers = 28;
     let private_outputs = if choice == ModelChoice::FocusQwenReranker06B {
         BTreeSet::new()
     } else {

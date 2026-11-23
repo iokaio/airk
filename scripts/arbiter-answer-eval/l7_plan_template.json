@@ -106,7 +106,7 @@
           "context": "context-compact-fp16-cuda"
         },
         "arm_check": {
-          "context": "context_compact",
+          "context": "arbiter",
           "device": "cuda",
           "precision": "float16",
           "mode": "top_score",
@@ -126,7 +126,7 @@
           "context": "context-compact-fp16-cuda"
         },
         "arm_check": {
-          "context": "context_compact",
+          "context": "arbiter",
           "device": "cuda",
           "precision": "float16",
           "mode": "top_score",

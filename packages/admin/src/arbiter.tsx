@@ -16,8 +16,7 @@ const operations = { status_device: OPS.arbiterStatus, initialize_device: OPS.ar
   migrate_device: OPS.arbiterMigrate, provision_device: OPS.arbiterProvision, cancel_device: OPS.arbiterCancel, remove_device: OPS.arbiterRemove, recover_device: OPS.arbiterRecover } as const;
 export function stageModelTitle(stage: Stage, model: SelectedModel): string | null {
   if (stage === 'focus' && model === 'focus') return 'Arbiter Focus';
-  if (stage === 'context' && model === 'context_compact') return 'Arbiter Context — Compact';
-  if (stage === 'context' && model === 'context_large') return 'Arbiter Context — Large';
+  if (stage === 'context' && model === 'arbiter') return 'Arbiter';
   return null;
 }
 /** Native model-admission observations are descriptive, never an execution permit. */
@@ -95,7 +94,7 @@ function observationOf(result: CallResult): Status | null {
   if (result.kind !== 'ok' || rec(result.envelope.result).status !== 'arbiter_device') return null;
   const value = rec(rec(result.envelope.result).observation), configuration = rec(value.configuration);
   if (value.initialization != null && typeof rec(value.initialization).reason !== 'string') return null;
-  if (value.schema !== 'airk.arbiter.status/3' || configuration.schema !== 'airk.arbiter.configuration/4'
+  if (value.schema !== 'airk.arbiter.status/3' || configuration.schema !== 'airk.arbiter.configuration/5'
       || !Number.isSafeInteger(configuration.revision) || Number(configuration.revision) < 1
       || !stages.every(stage => Array.isArray(rec(value[stage]).models)
         && (rec(value[stage]).models as unknown[]).every(entry => typeof rec(entry).model === 'string'

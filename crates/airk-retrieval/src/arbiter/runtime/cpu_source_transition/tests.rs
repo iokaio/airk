@@ -121,10 +121,10 @@ fn source_row_refuses_wrong_current_core_or_task_policy() -> Result<()> {
 fn transition_never_admits_context_or_relabels_a_current_profile() -> Result<()> {
     let catalog: serde_json::Value =
         serde_json::from_slice(include_bytes!("../../release-catalog.json"))?;
-    for index in [1, 2] {
-        let profile: Profile = serde_json::from_value(catalog["profiles"][index].clone())?;
-        assert!(CpuSourceTransition::admit(&profile).is_err());
-    }
+    // The one Context (Arbiter) descriptor; the Large one left in step LH.
+    assert_eq!(catalog["profiles"].as_array().map(Vec::len), Some(2));
+    let profile: Profile = serde_json::from_value(catalog["profiles"][1].clone())?;
+    assert!(CpuSourceTransition::admit(&profile).is_err());
     let mut relabeled = legacy_focus()?;
     relabeled.policy = digest(CURRENT_TASK)?;
     relabeled
@@ -244,7 +244,7 @@ fn publisher_census_row_refuses_old_task_and_preserves_legacy_payload() -> Resul
 fn cuda_bridge_and_driver_closure_preserve_closed_cpu_runtime_source() -> Result<()> {
     assert_eq!(
         source_sha(include_bytes!("../../runtime.rs"))?.to_string(),
-        "c9008eef62a5af16791e3325b44ef0ada7e789c7b6bf5d50c4dc83ee32c05603"
+        "66b02a58c1ba429fcdd25cb9da1a181a1765be4699b9a935ddb3d7e7bae439dc"
     );
     assert_eq!(
         source_sha(include_bytes!("../cuda/windows.rs"))?.to_string(),
@@ -260,7 +260,7 @@ fn cuda_bridge_and_driver_closure_preserve_closed_cpu_runtime_source() -> Result
     let record = serde_json::to_value(witness.record(&profile)?)?;
     assert_eq!(
         record["current_runtime_source"],
-        "c9008eef62a5af16791e3325b44ef0ada7e789c7b6bf5d50c4dc83ee32c05603"
+        "66b02a58c1ba429fcdd25cb9da1a181a1765be4699b9a935ddb3d7e7bae439dc"
     );
     assert_eq!(
         record["current_task_policy"],
@@ -277,15 +277,15 @@ fn placement_diagnostic_supplement_binds_current_runtime_without_qualification_t
 -> Result<()> {
     assert_eq!(
         source_sha(include_bytes!("../../runtime.rs"))?.to_string(),
-        "c9008eef62a5af16791e3325b44ef0ada7e789c7b6bf5d50c4dc83ee32c05603"
+        "66b02a58c1ba429fcdd25cb9da1a181a1765be4699b9a935ddb3d7e7bae439dc"
     );
     assert_eq!(
         source_sha(include_bytes!("../cuda/diagnostic.rs"))?.to_string(),
-        "b784131c62c38719d10ae2878e859abd488c36213d54bd5ba3a2c9c695200219"
+        "0efbf86c4c268bac9c193299c2121cf4e3757ccd59fd5bb6320607d6c71851c1"
     );
     assert_eq!(
         source_sha(include_bytes!("../cuda.rs"))?.to_string(),
-        "3526ef91760fb1a15cc9ee47dfdc06230e5013b051ac6717831f8c1562a0e5b2"
+        "ddb31240be63ede67d57020247ab1ae0d66233b39453a928f8181f95440974e5"
     );
     assert_ne!(
         CURRENT_RUNTIME_SOURCE,
@@ -304,7 +304,7 @@ fn placement_diagnostic_supplement_binds_current_runtime_without_qualification_t
 fn final_graph_metadata_supplement_binds_current_source_without_policy_admission() -> Result<()> {
     assert_eq!(
         source_sha(include_bytes!("../../runtime.rs"))?.to_string(),
-        "c9008eef62a5af16791e3325b44ef0ada7e789c7b6bf5d50c4dc83ee32c05603"
+        "66b02a58c1ba429fcdd25cb9da1a181a1765be4699b9a935ddb3d7e7bae439dc"
     );
     assert_eq!(
         source_sha(include_bytes!("../cuda/graph_metadata.rs"))?.to_string(),
@@ -327,7 +327,7 @@ fn final_graph_metadata_supplement_binds_current_source_without_policy_admission
 fn g5_supplement_binds_exact_current_source_without_relabelling_old_row() -> Result<()> {
     assert_eq!(
         source_sha(include_bytes!("../../runtime.rs"))?.to_string(),
-        "c9008eef62a5af16791e3325b44ef0ada7e789c7b6bf5d50c4dc83ee32c05603"
+        "66b02a58c1ba429fcdd25cb9da1a181a1765be4699b9a935ddb3d7e7bae439dc"
     );
     let profile = legacy_focus()?;
     let before = serde_json::to_vec(&profile)?;
@@ -335,7 +335,7 @@ fn g5_supplement_binds_exact_current_source_without_relabelling_old_row() -> Res
     let record = serde_json::to_value(witness.record(&profile)?)?;
     assert_eq!(
         record["current_runtime_source"],
-        "c9008eef62a5af16791e3325b44ef0ada7e789c7b6bf5d50c4dc83ee32c05603"
+        "66b02a58c1ba429fcdd25cb9da1a181a1765be4699b9a935ddb3d7e7bae439dc"
     );
     assert_ne!(
         record["current_runtime_source"],
@@ -362,13 +362,15 @@ fn loop_admission_supplement_moves_the_runtime_row_without_relabelling_legacy_ev
     let live = source_sha(include_bytes!("../../runtime.rs"))?.to_string();
     assert_eq!(
         live,
-        "c9008eef62a5af16791e3325b44ef0ada7e789c7b6bf5d50c4dc83ee32c05603"
+        "66b02a58c1ba429fcdd25cb9da1a181a1765be4699b9a935ddb3d7e7bae439dc"
     );
     for historical in [
         "7b4650767610eafdfea4b6c273e042008e4eae4654dde516d438c6ee2f8449b3",
         "258d43714a14169d8ca0dd5993890bdcaa26204c13a8e583f83bb6e63bb698e0",
         "4d420821574d4d032175433a938f4d54bd74c7d9bb3834e599b16d68d486969f",
         "9ede486c03ef639d365b6d46e2a43d075408591abd327f589e34b91ff41b993d",
+        // L4's own runtime source, before step LH retired Large.
+        "c9008eef62a5af16791e3325b44ef0ada7e789c7b6bf5d50c4dc83ee32c05603",
     ] {
         assert_ne!(live, historical);
         assert_ne!(CURRENT_RUNTIME_SOURCE, Some(historical));
@@ -386,9 +388,10 @@ fn loop_admission_supplement_moves_the_runtime_row_without_relabelling_legacy_ev
     assert_eq!(record["legacy_runtime_source"], LEGACY_RUNTIME_SOURCE);
     assert_eq!(record["legacy_manifest"], LEGACY_MANIFEST);
     assert_eq!(record["current_task_policy"], CURRENT_TASK);
-    assert_eq!(
+    assert_eq!(record["row"], LH_ROW, "the new row is pinned");
+    assert_ne!(
         record["row"], "e0575e9418adc5340f741aaf039488e7ddd77349b962f242817630b09bc751a1",
-        "the new row is pinned"
+        "the L4 row is not relabelled"
     );
     assert_ne!(
         record["row"], "09842b67ad09a739412ccdb6c20efe51c43f4b5dd0c0ca74f122c2f0b51e2f58",
@@ -397,5 +400,49 @@ fn loop_admission_supplement_moves_the_runtime_row_without_relabelling_legacy_ev
     assert_eq!(record["task_qualification_transferred"], false);
     assert_eq!(record["public_source_rewritten"], false);
     assert_eq!(serde_json::to_vec(&profile)?, before);
+    Ok(())
+}
+
+/// The CPU Focus transition row after step LH (change-log entry 62).
+const LH_ROW: &str = "ee9b14de2c5066180ee9a2bbe0dfc854c2490ad79e215db7b0d0f70df3eddccc";
+
+/// Step LH retired the Large Context model: `runtime.rs` (device catalog
+/// slots), `cuda.rs` (the Large FP32 probe) and `cuda/diagnostic.rs` (the
+/// Large FP16 diagnostic admission) changed. Each old pin no longer describes
+/// its source, the legacy Focus descriptor and its pins are unchanged, and the
+/// row the live source produces is new.
+#[test]
+fn lh_large_retirement_moves_the_runtime_row_and_keeps_the_legacy_descriptor() -> Result<()> {
+    for (live, old, new) in [
+        (
+            source_sha(include_bytes!("../../runtime.rs"))?,
+            "c9008eef62a5af16791e3325b44ef0ada7e789c7b6bf5d50c4dc83ee32c05603",
+            "66b02a58c1ba429fcdd25cb9da1a181a1765be4699b9a935ddb3d7e7bae439dc",
+        ),
+        (
+            source_sha(include_bytes!("../cuda.rs"))?,
+            "3526ef91760fb1a15cc9ee47dfdc06230e5013b051ac6717831f8c1562a0e5b2",
+            "ddb31240be63ede67d57020247ab1ae0d66233b39453a928f8181f95440974e5",
+        ),
+        (
+            source_sha(include_bytes!("../cuda/diagnostic.rs"))?,
+            "b784131c62c38719d10ae2878e859abd488c36213d54bd5ba3a2c9c695200219",
+            "0efbf86c4c268bac9c193299c2121cf4e3757ccd59fd5bb6320607d6c71851c1",
+        ),
+    ] {
+        assert_ne!(live.to_string(), old);
+        assert_eq!(live.to_string(), new);
+    }
+    assert_eq!(
+        CURRENT_RUNTIME_SOURCE,
+        Some("66b02a58c1ba429fcdd25cb9da1a181a1765be4699b9a935ddb3d7e7bae439dc")
+    );
+    let profile = legacy_focus()?;
+    assert_eq!(profile_sha(&profile)?.to_string(), LEGACY_PROFILE);
+    let record = serde_json::to_value(CpuSourceTransition::admit(&profile)?.record(&profile)?)?;
+    assert_eq!(record["row"], LH_ROW);
+    assert_eq!(record["legacy_runtime_source"], LEGACY_RUNTIME_SOURCE);
+    assert_eq!(record["task_qualification_transferred"], false);
+    assert_eq!(record["public_source_rewritten"], false);
     Ok(())
 }

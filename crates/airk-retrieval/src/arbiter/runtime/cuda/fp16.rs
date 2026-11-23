@@ -52,7 +52,6 @@ fn family(model: ModelChoice) -> Result<(&'static str, &'static str)> {
             Ok(("focus-qwen3-reranker-06b", "EFFICIENT_ATTENTION"))
         }
         ModelChoice::ContextQwenCompact => Ok(("context-qwen3-17b", "FLASH_ATTENTION")),
-        ModelChoice::ContextQwenLarge => Ok(("context-qwen3-4b", "FLASH_ATTENTION")),
         _ => anyhow::bail!("G5 supports only selected Qwen model slots"),
     }
 }
@@ -121,14 +120,6 @@ impl ProtectedContextMha {
                 graph_bytes: 854_973,
                 weights: "0c4bd89d032e7dd821071c3559776cd3da50d54d84b6e575373fd8cf7003a7c3",
                 weight_bytes: 3_441_397_760,
-            }),
-            ModelChoice::ContextQwenLarge => Ok(Self {
-                prefix: "airk_large_cutlass",
-                layers: 36,
-                graph: "c1b5776144c6d9af07d08552cae40e491d8f866e89c53bab567adeeb32ca75e4",
-                graph_bytes: 1_100_471,
-                weights: "5b053f02795e72ff88123b28f89d3f2c89da055e9ed2228bc60809dd0a2b4270",
-                weight_bytes: 8_045_328_384,
             }),
             _ => anyhow::bail!("protected efficient MHA requires a Context model"),
         }
@@ -472,11 +463,6 @@ pub fn prepare_fp16_probe_profile(
             "c79c672513b874ab773ee7df8d4518e110d1e6196ae45076ce718f5b5dc6f7b4",
             4,
         ),
-        ModelChoice::ContextQwenLarge => (
-            "private-cuda-fp16-large-efficient-probe-v1",
-            "f8ba5d3ea8a4269739ec5e517e61e4ec1f2f94560ea60014a4f5a9476c32fd94",
-            16,
-        ),
         _ => anyhow::bail!("G5 unsupported model"),
     };
     ensure!(
@@ -703,10 +689,6 @@ pub fn prepare_protected_mha_profile(
         ModelChoice::ContextQwenCompact => (
             "private-cuda-fp16-context-compact-protected-mha-v1",
             "c79c672513b874ab773ee7df8d4518e110d1e6196ae45076ce718f5b5dc6f7b4",
-        ),
-        ModelChoice::ContextQwenLarge => (
-            "private-cuda-fp16-context-large-protected-mha-v1",
-            "f8ba5d3ea8a4269739ec5e517e61e4ec1f2f94560ea60014a4f5a9476c32fd94",
         ),
         _ => anyhow::bail!("protected efficient MHA requires a Context model"),
     };

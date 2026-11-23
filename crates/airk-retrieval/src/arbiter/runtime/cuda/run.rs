@@ -71,11 +71,6 @@ impl Binding {
         tokens: usize,
     ) -> Result<(Vec<f32>, Vec<Vec<u16>>)> {
         let full_cut = super::super::Scorer::is_full_projection_tap_group(taps) && tokens == 1014;
-        let large_attention = taps == super::super::Scorer::LARGE_ATTENTION17 && tokens == 32;
-        let large_dense = taps == super::super::Scorer::LARGE_DENSE17 && tokens == 32;
-        let large_hidden = taps == super::super::Scorer::LARGE_QKV_HIDDEN_TAPS && tokens == 32;
-        let large_projection =
-            taps == super::super::Scorer::LARGE_FP16_PROJECTION_TAPS && tokens == 32;
         let decision_only =
             taps == super::super::Scorer::COMPACT_QKV_DECISION_TAPS && tokens == 1024;
         ensure!(
@@ -84,8 +79,6 @@ impl Binding {
                 && input.input_ids.len() == tokens
                 && input.candidate_positions.len() == if full_cut { 7 } else { 8 }
                 && (full_cut
-                    || large_attention || large_dense || large_hidden
-                    || large_projection
                     || decision_only
                     || taps
                         .iter()
@@ -101,7 +94,7 @@ impl Binding {
             false,
             |mut selected| {
                 for &(name, width) in taps {
-                    if (full_cut || large_hidden) && name.starts_with("/scorer/") {
+                    if full_cut && name.starts_with("/scorer/") {
                         let buffer = Tensor::from_array((
                             [1, tokens, width],
                             vec![0.0_f32; tokens * width],
@@ -123,7 +116,7 @@ impl Binding {
                         let value = outputs
                             .get(name)
                             .with_context(|| format!("Compact FP16 tap missing: {name}"))?;
-                        if (full_cut || large_hidden) && name.starts_with("/scorer/") {
+                        if full_cut && name.starts_with("/scorer/") {
                             let (shape, values) = value.try_extract_tensor::<f32>()?;
                             ensure!(
                                 shape.as_ref() == [1, tokens as i64, width as i64]
@@ -154,7 +147,7 @@ impl Binding {
                             name,
                             "/airk_g5/attention/13/k16" | "/airk_g5/attention/13/v16"
                         );
-                        let retained = if decision_only || (full_cut && !keep_context) || large_dense {
+                        let retained = if decision_only || (full_cut && !keep_context) {
                             &values[(tokens - 1) * width..]
                         } else {
                             values

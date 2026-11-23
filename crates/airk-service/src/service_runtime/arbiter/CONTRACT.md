@@ -1045,3 +1045,35 @@ evaluation catalog; product builds have no constructor for it.
 
 All closed in `9fea69ae`; counts in `docs/arbiter/answer-loop-changes.md`
 entry 35.
+
+## One Context model and the configuration/4 transition (step LH, 23 November 2026)
+
+- **Models.** The Context stage serves one model, the Arbiter
+  (`ModelChoice::ContextQwenCompact`); the release catalog no longer holds
+  the Large CPU FP32 descriptor. Device status lists `arbiter` for Context.
+  The private CUDA evaluation seam admits an Arbiter Answer graph or a
+  strict-GPU Focus profile; the Large FP32 and Large FP16 entries described
+  above are history (their receipts stay in private roots). The Large CPU
+  Auto-fallback guard left with the descriptor.
+- **The compiled transition.** `device_management::configuration4_transition`
+  names the one old binding a configuration/4 document may carry (catalog
+  `514233c3…1366`, source `c7cf9d32…301c`, the `device-catalog/1` of the
+  release that held Large; pinned as literals and checked against the
+  retained `fixtures/arbiter/configuration4/binding.json`) and the compiled
+  binding of the current catalog. `current_device_configuration` observes the
+  stored document's binding first: configuration/4 under the old binding is
+  migrated by the store (`migrate_v4_checked`, the exact /4 bytes retained as
+  `configuration-v4-<sha256>.retained` before the atomic replacement);
+  configuration/4 under any other binding, or /5 under a binding other than
+  the compiled one, is refused. Evidence reads (`read_device_status`) never
+  migrate; they report the configuration unavailable until a management read
+  has migrated it.
+- **A retired Large selection** is reported on the Context stage while the
+  stage is disabled and `context_retired` is set: "The Large Context model
+  was retired, so this stage was turned off and its selection cleared; its
+  index enrollments are kept. Select Arbiter to use the Context stage
+  again." Any Context `ConfigureDevice` clears the marker. Arbiter is never
+  selected automatically.
+- **Holds:** `device_management::retained_tests` (4 tests: retained files
+  pinned; the transition runs from the retained binding to the compiled one;
+  each retained /4 document migrates as decided; the retired reason).

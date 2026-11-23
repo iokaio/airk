@@ -16,7 +16,7 @@ impl DeviceCatalog {
         self.validate(resolve)?;
         let bytes = serde_json::to_vec(self)?;
         Ok(DeviceCatalogBinding {
-            catalog: framed_digest(b"airk.arbiter.device-catalog/1", &[&bytes]),
+            catalog: framed_digest(b"airk.arbiter.device-catalog/2", &[&bytes]),
             source,
         })
     }
@@ -72,6 +72,7 @@ impl DeviceConfiguration {
             device_catalog,
             focus: DeviceStageConfiguration::disabled(),
             context: DeviceStageConfiguration::disabled(),
+            context_retired: None,
         }
     }
     pub fn stage(&self, stage: Stage) -> &DeviceStageConfiguration {
@@ -243,9 +244,7 @@ impl DeviceStageStatus {
         );
         let expected = match stage {
             Stage::Focus => BTreeSet::from([SelectedModel::Focus]),
-            Stage::Context => {
-                BTreeSet::from([SelectedModel::ContextCompact, SelectedModel::ContextLarge])
-            }
+            Stage::Context => BTreeSet::from([SelectedModel::Arbiter]),
         };
         let mut models = BTreeSet::new();
         let mut manifests = BTreeSet::new();

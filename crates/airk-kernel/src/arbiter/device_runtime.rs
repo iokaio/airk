@@ -50,11 +50,6 @@ impl NativeConfiguration {
                     },
                     "GPU precision differs from current consent"
                 );
-            } else if profile.model == airk_core::arbiter::ModelChoice::ContextQwenLarge {
-                ensure!(
-                    profile.qualification.is_some(),
-                    "unqualified known-failed Large CPU is not device fallback"
-                );
             }
             ensure!(
                 variants.insert(stage, profile).is_none(),

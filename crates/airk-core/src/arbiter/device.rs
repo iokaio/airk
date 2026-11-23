@@ -5,8 +5,11 @@ use crate::identity::framed_digest;
 use anyhow::Context;
 
 pub const DEVICE_EXECUTION_SCHEMA: &str = "airk.arbiter.device-execution/1";
-pub const DEVICE_CATALOG_SCHEMA: &str = "airk.arbiter.device-catalog/1";
-pub const DEVICE_CONFIGURATION_SCHEMA: &str = "airk.arbiter.configuration/4";
+pub const DEVICE_CATALOG_SCHEMA: &str = "airk.arbiter.device-catalog/2";
+pub const DEVICE_CONFIGURATION_SCHEMA: &str = "airk.arbiter.configuration/5";
+/// The configuration before Large was retired. It is read only to migrate it
+/// (`DeviceConfiguration::migrate_v4`); nothing writes it.
+pub const DEVICE_CONFIGURATION_V4_SCHEMA: &str = "airk.arbiter.configuration/4";
 pub const DEVICE_STATUS_SCHEMA: &str = "airk.arbiter.device-status/1";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -21,39 +24,52 @@ pub enum DevicePolicy {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum SelectedModel {
+    /// The Focus reranker (Qwen3-Reranker-0.6B), the one model of the Focus stage.
     Focus,
-    ContextCompact,
-    ContextLarge,
+    /// The Arbiter (Qwen3-1.7B, `ModelChoice::ContextQwenCompact`), the one
+    /// model of the Context stage. Wire value `arbiter`.
+    Arbiter,
 }
 impl SelectedModel {
     /// Supported model-family roles are descriptive metadata, not admission.
     pub fn supported_tasks(self) -> BTreeSet<Task> {
         match self {
             Self::Focus => BTreeSet::from([Task::FocusRank]),
-            Self::ContextCompact | Self::ContextLarge => BTreeSet::from([Task::ContextAction]),
+            Self::Arbiter => BTreeSet::from([Task::ContextAction]),
         }
     }
     pub fn model(self) -> ModelChoice {
         match self {
             Self::Focus => ModelChoice::FocusQwenReranker06B,
-            Self::ContextCompact => ModelChoice::ContextQwenCompact,
-            Self::ContextLarge => ModelChoice::ContextQwenLarge,
+            Self::Arbiter => ModelChoice::ContextQwenCompact,
         }
     }
     pub fn stage(self) -> Stage {
         match self {
             Self::Focus => Stage::Focus,
-            _ => Stage::Context,
+            Self::Arbiter => Stage::Context,
         }
     }
+    /// The selectable model of a catalog model. The retired Large
+    /// (`ContextQwenLarge`) and the historical four-choice models have none.
     pub fn from_model(model: ModelChoice) -> Result<Self> {
         match model {
             ModelChoice::FocusQwenReranker06B => Ok(Self::Focus),
-            ModelChoice::ContextQwenCompact => Ok(Self::ContextCompact),
-            ModelChoice::ContextQwenLarge => Ok(Self::ContextLarge),
+            ModelChoice::ContextQwenCompact => Ok(Self::Arbiter),
+            ModelChoice::ContextQwenLarge => {
+                anyhow::bail!("the retired Large Context model cannot acquire a device slot")
+            }
             _ => anyhow::bail!("historical model cannot acquire a device slot"),
         }
     }
+}
+/// A selection the service retired and cleared on migration. Status reports it
+/// until the stage is configured again; it is never a selection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RetiredModel {
+    /// The Large Context model (`context_large` in configuration/4).
+    ContextLarge,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -265,7 +281,7 @@ impl DeviceExecution {
         ))
     }
 }
-/// Exactly three logical model slots; variants do not add selected models.
+/// Exactly two logical model slots; variants do not add selected models.
 /// Each reference resolves only through the authenticated native catalog owner.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -278,15 +294,13 @@ pub struct VariantReference {
 pub struct DeviceCatalog {
     pub schema: String,
     pub focus: Vec<VariantReference>,
-    pub context_compact: Vec<VariantReference>,
-    pub context_large: Vec<VariantReference>,
+    pub arbiter: Vec<VariantReference>,
 }
 impl DeviceCatalog {
     pub fn slot(&self, slot: SelectedModel) -> &[VariantReference] {
         match slot {
             SelectedModel::Focus => &self.focus,
-            SelectedModel::ContextCompact => &self.context_compact,
-            SelectedModel::ContextLarge => &self.context_large,
+            SelectedModel::Arbiter => &self.arbiter,
         }
     }
     /// Resolve exactly once per variant and return the SAME reference checked
@@ -320,11 +334,7 @@ impl DeviceCatalog {
         );
         let mut manifests = BTreeSet::new();
         let mut count = 0usize;
-        for slot in [
-            SelectedModel::Focus,
-            SelectedModel::ContextCompact,
-            SelectedModel::ContextLarge,
-        ] {
+        for slot in [SelectedModel::Focus, SelectedModel::Arbiter] {
             ensure!(!self.slot(slot).is_empty(), "missing selected model slot");
             for row in self.slot(slot) {
                 count += 1;
@@ -398,6 +408,11 @@ pub struct DeviceConfiguration {
     pub device_catalog: DeviceCatalogBinding,
     pub focus: DeviceStageConfiguration,
     pub context: DeviceStageConfiguration,
+    /// The Context selection a migration retired (a Large selection of
+    /// configuration/4 or /3). The Context stage is then disabled with no
+    /// model; the next Context configuration clears it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_retired: Option<RetiredModel>,
 }
 impl DeviceConfiguration {
     pub fn validate(&self) -> Result<()> {
@@ -407,6 +422,11 @@ impl DeviceConfiguration {
         );
         self.focus.validate(Stage::Focus)?;
         self.context.validate(Stage::Context)?;
+        ensure!(
+            self.context_retired.is_none()
+                || (!self.context.enabled && self.context.selected_model.is_none()),
+            "a retired Context selection leaves the stage disabled with no model"
+        );
         let indexes: BTreeSet<_> = self
             .focus
             .indexes
@@ -430,33 +450,47 @@ impl DeviceConfiguration {
         resolve: impl Fn(Sha256Digest) -> Option<&'a Profile>,
     ) -> Result<Self> {
         legacy.validate()?;
-        let stage =
-            |old: &StageConfiguration, expected: Stage| -> Result<DeviceStageConfiguration> {
-                let selected_model = match old.selected_profile {
-                    None => None,
-                    Some(manifest) => {
-                        let profile =
-                            resolve(manifest).context("legacy selected profile unresolved")?;
-                        profile.validate()?;
-                        ensure!(
-                            profile.manifest == manifest
-                                && profile.device_execution.is_none()
-                                && profile.runtime == RUNTIME,
-                            "legacy profile cannot acquire GPU identity"
-                        );
+        let mut context_retired = None;
+        let mut stage = |old: &StageConfiguration,
+                         expected: Stage|
+         -> Result<DeviceStageConfiguration> {
+            let mut enabled = old.enabled;
+            let selected_model = match old.selected_profile {
+                None => None,
+                Some(manifest) => {
+                    let profile =
+                        resolve(manifest).context("legacy selected profile unresolved")?;
+                    profile.validate()?;
+                    ensure!(
+                        profile.manifest == manifest
+                            && profile.device_execution.is_none()
+                            && profile.runtime == RUNTIME,
+                        "legacy profile cannot acquire GPU identity"
+                    );
+                    if expected == Stage::Context && profile.model == ModelChoice::ContextQwenLarge
+                    {
+                        // Large was retired: the stage is disabled with no model,
+                        // its enrollments kept; Arbiter is never selected for it.
+                        context_retired = Some(RetiredModel::ContextLarge);
+                        enabled = false;
+                        None
+                    } else {
                         Some(SelectedModel::from_model(profile.model)?)
                     }
-                };
-                let value = DeviceStageConfiguration {
-                    enabled: old.enabled,
-                    selected_model,
-                    device_policy: DevicePolicy::Auto,
-                    gpu_precision: GpuPrecisionPreference::Auto,
-                    indexes: old.indexes.clone(),
-                };
-                value.validate(expected)?;
-                Ok(value)
+                }
             };
+            let value = DeviceStageConfiguration {
+                enabled,
+                selected_model,
+                device_policy: DevicePolicy::Auto,
+                gpu_precision: GpuPrecisionPreference::Auto,
+                indexes: old.indexes.clone(),
+            };
+            value.validate(expected)?;
+            Ok(value)
+        };
+        let focus = stage(&legacy.focus, Stage::Focus)?;
+        let context = stage(&legacy.context, Stage::Context)?;
         let value = Self {
             schema: DEVICE_CONFIGURATION_SCHEMA.into(),
             installation: legacy.installation,
@@ -466,8 +500,9 @@ impl DeviceConfiguration {
                 .checked_add(1)
                 .context("configuration revision exhausted")?,
             device_catalog,
-            focus: stage(&legacy.focus, Stage::Focus)?,
-            context: stage(&legacy.context, Stage::Context)?,
+            focus,
+            context,
+            context_retired,
         };
         value.validate()?;
         Ok(value)
@@ -513,7 +548,8 @@ pub enum SelectionReason {
     GpuNotOptedIn,
     // GPU use is on and no qualified route or variant serves this model here.
     NoQualifiedGpuRoute,
-    // The Context ladder's step from Large down to Compact (device/ladder.rs).
+    // Reserved: a step down to a smaller model. Nothing emits it since the
+    // Large model and its ladder were retired (change-log entry 56, decision 7).
     SmallerModelSelected,
 }
 /// available_bytes is an actual native observation after existing real device
@@ -869,8 +905,8 @@ mod state;
 pub use state::*;
 mod disclosure;
 pub use disclosure::*;
-mod ladder;
-pub use ladder::*;
+mod migration;
+pub use migration::{Configuration4Transition, configuration4_binding};
 pub mod capacity;
 
 mod receipt_runtime;

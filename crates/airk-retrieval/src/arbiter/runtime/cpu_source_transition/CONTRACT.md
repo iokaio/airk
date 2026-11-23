@@ -399,7 +399,8 @@ LF-normalized SHA-256 of `runtime.rs`:
 | `179bb1da` | `258d43714a14169d8ca0dd5993890bdcaa26204c13a8e583f83bb6e63bb698e0` | + private evaluation policy routing |
 | `881787f0` | `4d420821574d4d032175433a938f4d54bd74c7d9bb3834e599b16d68d486969f` | + L5 evaluation-only protected admission |
 | intermediate | `9ede486c03ef639d365b6d46e2a43d075408591abd327f589e34b91ff41b993d` | `881787f0` with the routing hunks removed |
-| current | `c9008eef62a5af16791e3325b44ef0ada7e789c7b6bf5d50c4dc83ee32c05603` | + L4 loop admission hooks |
+| L4 | `c9008eef62a5af16791e3325b44ef0ada7e789c7b6bf5d50c4dc83ee32c05603` | + L4 loop admission hooks |
+| current | `66b02a58c1ba429fcdd25cb9da1a181a1765be4699b9a935ddb3d7e7bae439dc` | + LH: the device catalog's two slots (Large retired) |
 
 Proof by byte-exact inverse replay, run on copies of the file:
 1. Reverse-applying the `runtime.rs` hunks of `git diff f3978a12 179bb1da`
@@ -461,3 +462,27 @@ pins the row `e0575e9418adc5340f741aaf039488e7ddd77349b962f242817630b09bc751a1`,
 inverse replays above from Git history and the retained
 `l4-runtime-hooks.patch` (8 checks, exit 0; receipt
 `answer-loop/L4/proof/replay-receipt.txt`). Closed in `a2275554`.
+
+## Step LH: the Large retirement moves the runtime row (23 November 2026)
+
+Retiring the Large Context model (change-log entry 62) changed three pinned
+sources: `runtime.rs` (`device_catalog()` fills two slots, `focus` and
+`arbiter`), `cuda.rs` (the Large FP32 probe left) and `cuda/diagnostic.rs`
+(the Large FP16 diagnostic admission left).
+
+| Source | Before LH | After LH |
+| --- | --- | --- |
+| `runtime.rs` | `c9008eef62a5af16791e3325b44ef0ada7e789c7b6bf5d50c4dc83ee32c05603` | `66b02a58c1ba429fcdd25cb9da1a181a1765be4699b9a935ddb3d7e7bae439dc` |
+| `cuda.rs` | `3526ef91760fb1a15cc9ee47dfdc06230e5013b051ac6717831f8c1562a0e5b2` | `ddb31240be63ede67d57020247ab1ae0d66233b39453a928f8181f95440974e5` |
+| `cuda/diagnostic.rs` | `b784131c62c38719d10ae2878e859abd488c36213d54bd5ba3a2c9c695200219` | `0efbf86c4c268bac9c193299c2121cf4e3757ccd59fd5bb6320607d6c71851c1` |
+| CPU Focus row | `e0575e9418adc5340f741aaf039488e7ddd77349b962f242817630b09bc751a1` | `ee9b14de2c5066180ee9a2bbe0dfc854c2490ad79e215db7b0d0f70df3eddccc` |
+
+`CURRENT_RUNTIME_SOURCE` names `66b02a58`. The legacy descriptor (`73d884fb…`),
+its catalog member and every legacy pin are unchanged; no task qualification
+is transferred. Proof: reverse-applying the LH hunks of `runtime.rs`
+(`scripts/arbiter/evaluation/runtime_row_replay/lh-large-retirement.patch`) to
+the live source gives exactly `c9008eef`, and the rest of the L4 chain still
+holds (`replay.py`, 9 checks, exit 0). Control:
+`lh_large_retirement_moves_the_runtime_row_and_keeps_the_legacy_descriptor`
+asserts each old value no longer describes its source, the new values and the
+new row; the L4 control keeps `e0575e94` as a row that is not relabelled.

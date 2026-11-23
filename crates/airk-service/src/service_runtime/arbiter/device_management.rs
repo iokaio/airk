@@ -362,6 +362,34 @@ pub(super) fn binding() -> Result<DeviceCatalogBinding> {
         profiles.iter().find(|p| p.manifest == id)
     })
 }
+/// The Context stage reason after a migration retired a Large selection.
+#[cfg(feature = "local-inference")]
+pub(super) const RETIRED_LARGE_REASON: &str = "The Large Context model was retired, so this stage was turned off and its selection cleared; its index enrollments are kept. Select Arbiter to use the Context stage again.";
+/// The device-catalog binding of the release that still held the Large Context
+/// model (`device-catalog/1`: slots `focus`, `context_compact`,
+/// `context_large`). configuration/4 documents carry it. It is pinned here as
+/// literals; `retained_tests` checks it against the retained
+/// `fixtures/arbiter/configuration4/binding.json`.
+#[cfg(feature = "local-inference")]
+const CONFIGURATION4_CATALOG: &str =
+    "514233c3512271e9dd0bca1075bd20947f70c44612b847b6aef6fc1907031366";
+#[cfg(feature = "local-inference")]
+const CONFIGURATION4_SOURCE: &str =
+    "c7cf9d32afe55ee2f21531ab1dbc0171bb12a1fb10a4cecb78ef223736cc301c";
+/// The one compiled configuration/4 transition: from the Large-era binding to
+/// `new`, the binding of the compiled catalog.
+#[cfg(feature = "local-inference")]
+pub(super) fn configuration4_transition(
+    new: DeviceCatalogBinding,
+) -> Result<airk_core::arbiter::device::Configuration4Transition> {
+    Ok(airk_core::arbiter::device::Configuration4Transition {
+        old: DeviceCatalogBinding {
+            catalog: CONFIGURATION4_CATALOG.parse()?,
+            source: CONFIGURATION4_SOURCE.parse()?,
+        },
+        new,
+    })
+}
 #[cfg(feature = "local-inference")]
 fn load_policy(
     store: &airk_store::service::arbiter::ConfigurationStore,
@@ -703,6 +731,11 @@ impl Owner {
                     .map_err(|_| anyhow::anyhow!("native lifecycle unavailable"))?;
                 ensure!(!lifecycle.stopping, "native lifecycle stopping");
                 *current.stage_mut(stage) = configuration;
+                if stage == Stage::Context {
+                    // A new Context configuration is the person's answer to a
+                    // retired selection; the notice goes with it.
+                    current.context_retired = None;
+                }
                 current.revision = current
                     .revision
                     .checked_add(1)
@@ -964,7 +997,7 @@ impl StageOwner {
         );
         let models = match self.stage {
             Stage::Focus => vec![SelectedModel::Focus],
-            Stage::Context => vec![SelectedModel::ContextCompact, SelectedModel::ContextLarge],
+            Stage::Context => vec![SelectedModel::Arbiter],
         }
         .into_iter()
         .map(|model| {
@@ -1109,6 +1142,11 @@ impl StageOwner {
                     .into()
             } else if actual_resident && !device_eligible {
                 "The GPU session remains resident, but local eligibility is absent or stale; explicit Auto management must reaccept it within its original allowance.".into()
+            } else if self.stage == Stage::Context
+                && !requested.enabled
+                && document.context_retired.is_some()
+            {
+                RETIRED_LARGE_REASON.into()
             } else if !life.reason.is_empty() {
                 life.reason.clone()
             } else if resident {
@@ -1134,10 +1172,6 @@ fn cpu_model_admission(profile: &Profile) -> Result<ExecutionProfile> {
     ensure!(
         profile.device_execution.is_none(),
         "GPU profile cannot be projected as CPU"
-    );
-    ensure!(
-        cpu_model_allowed(profile.model, runtime::is_local_test_profile(profile)),
-        "known failed unqualified Large CPU is not Auto fallback"
     );
     ExecutionProfile::from_release(profile.manifest)
 }
@@ -2770,10 +2804,6 @@ fn settled_phase(phase: Availability) -> Availability {
         | Availability::Failed => Availability::Requested,
     }
 }
-#[cfg(any(feature = "local-inference", test))]
-fn cpu_model_allowed(model: ModelChoice, local_candidate: bool) -> bool {
-    !(model == ModelChoice::ContextQwenLarge && local_candidate)
-}
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -2790,9 +2820,22 @@ impl StageOwner {
             .device(binding.clone())
             .inspect_device_binding()?
         {
+            if observed.configuration4 {
+                // The one compiled transition: configuration/4 under the
+                // catalog that still held Large, to /5 under the current one.
+                let transition = configuration4_transition(binding.clone())?;
+                ensure!(
+                    observed.binding == transition.old,
+                    "configuration4 is bound to a catalog no compiled transition names; no unknown source rebind is authorized"
+                );
+                return self
+                    .configuration
+                    .device(binding)
+                    .migrate_v4_checked(&transition, || catalog_live(self, None));
+            }
             ensure!(
                 observed.binding == binding,
-                "configuration4 requires an exact authenticated compiled catalog transition; no unknown source rebind is authorized"
+                "configuration5 requires an exact authenticated compiled catalog transition; no unknown source rebind is authorized"
             );
         }
         self.configuration.device(binding).load_or_migrate(

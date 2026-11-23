@@ -1397,11 +1397,6 @@ pub fn prepare_fp32_probe_profile(
             "c79c672513b874ab773ee7df8d4518e110d1e6196ae45076ce718f5b5dc6f7b4",
             4,
         ),
-        ModelChoice::ContextQwenLarge => (
-            "private-cuda-fp32-context-large-probe-v1",
-            "f8ba5d3ea8a4269739ec5e517e61e4ec1f2f94560ea60014a4f5a9476c32fd94",
-            16,
-        ),
         _ => anyhow::bail!("first FP32 probe is original unfused Context only"),
     };
     let models = cpu

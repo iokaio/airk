@@ -578,7 +578,9 @@ pub enum Degradation {
         applied: usize,
         reason: DegradationReason,
     },
-    /// Down the model ladder; no applied model is the no-model loop.
+    /// A stage's model did not run: `applied` is absent, the no-model loop.
+    /// (A step down to a smaller model left with the Large model; the field
+    /// stays so the wire shape is unchanged.)
     Model {
         stage: Stage,
         requested: SelectedModel,
@@ -922,15 +924,10 @@ impl ContextResponseV3 {
                     applied,
                     ..
                 } => {
+                    // Each stage has one model, so the only step left is to
+                    // no model (the no-model loop).
                     ensure!(
-                        requested.stage() == *stage
-                            && matches!(
-                                (requested, applied),
-                                (
-                                    SelectedModel::ContextLarge,
-                                    Some(SelectedModel::ContextCompact)
-                                ) | (_, None)
-                            ),
+                        requested.stage() == *stage && applied.is_none(),
                         "invalid Answer model degradation"
                     );
                     ensure!(

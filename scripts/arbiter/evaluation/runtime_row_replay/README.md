@@ -22,3 +22,9 @@ a silent re-pin. The Rust control
 `loop_admission_supplement_moves_the_runtime_row_without_relabelling_legacy_evidence`
 pins the live source and the new row value; this script proves the relation to
 the reviewed predecessors.
+
+**Step LH (23 November 2026).** Retiring the Large Context model changed
+`device_catalog()` in `runtime.rs` (two slots, `focus` and `arbiter`). The
+script now first reverse-applies `lh-large-retirement.patch` (the LH hunks of
+`runtime.rs`) to the live source and checks that the result is L4's
+`c9008eef`, then continues the L4 chain. Live is `66b02a58`.

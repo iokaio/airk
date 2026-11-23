@@ -300,19 +300,10 @@ fn excerpt(
     }
 }
 
-/// A row that repeats the text the row at `shown` shows.
-fn repeated(
-    path: &str,
-    lines: (usize, usize),
-    focus: Option<f32>,
-    shown: (&str, usize, usize),
-) -> CardEvidence {
+/// A row that repeats the text the call's row at position `shown` shows.
+fn repeated(path: &str, lines: (usize, usize), focus: Option<f32>, shown: usize) -> CardEvidence {
     CardEvidence {
-        same_as: Some(airk_core::native_loop::EvidencePlace {
-            path: shown.0.into(),
-            start_line: shown.1,
-            end_line: shown.2,
-        }),
+        same_as: Some(shown),
         ..excerpt(path, lines, focus, "", (0, 0))
     }
 }
@@ -774,7 +765,8 @@ fn a_text_is_shown_once_in_a_call_and_its_repeats_name_that_row() -> Result<()> 
     // 300 bytes: were each copy to take a share, each would get 100, which
     // is below the minimum. The one shown copy takes all 300.
     let shown = present(&gather, &needs, 300).context("one text to show")?;
-    let place = ("src/guard.rs", 1, 40);
+    // The call's first row shows the text.
+    let place = 0;
     assert_eq!(
         shown,
         [

@@ -62,7 +62,6 @@ impl BoundedContextOptimizer {
         #[cfg(windows)]
         let maximum_payload = match profile.model {
             ModelChoice::ContextQwenCompact => 9_443,
-            ModelChoice::ContextQwenLarge => 12_067,
             _ => anyhow::bail!("Windows bounded CPU payload requires a Context model"),
         };
         ensure!(
@@ -180,7 +179,6 @@ fn host_scope() -> Result<&'static [u8]> {
 fn model_scope(model: ModelChoice) -> Result<&'static [u8]> {
     match model {
         ModelChoice::ContextQwenCompact => Ok(b"qwen3-1.7b"),
-        ModelChoice::ContextQwenLarge => Ok(b"qwen3-4b"),
         _ => anyhow::bail!("bounded CUDA execution requires a Context model"),
     }
 }
@@ -356,13 +354,9 @@ mod tests {
     #[test]
     fn measured_options_separate_model_and_optimizer_without_profile_promotion() -> Result<()> {
         use BoundedContextOptimizer::{Level3, ProtectedProjections};
-        use ModelChoice::{ContextQwenCompact, ContextQwenLarge, FocusQwenReranker06B};
+        use ModelChoice::{ContextQwenCompact, FocusQwenReranker06B};
         let compact = ProtectedProjections.provider_options(ContextQwenCompact)?;
         assert_ne!(compact, Level3.provider_options(ContextQwenCompact)?);
-        assert_ne!(
-            compact,
-            ProtectedProjections.provider_options(ContextQwenLarge)?
-        );
         assert_ne!(
             compact,
             super::super::super::fp16_provider_options_digest(ContextQwenCompact)?

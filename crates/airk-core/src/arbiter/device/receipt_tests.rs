@@ -27,14 +27,12 @@ fn receipt_runtime_closed_cpu_and_gpu_digest_vocabulary() -> Result<()> {
 }
 #[test]
 fn profile_receipt_runtime_keeps_cpu_bytes_and_binds_gpu_execution() -> Result<()> {
-    let cpu =
-        crate::arbiter::device::tests::literal_profile(SelectedModel::ContextCompact, 1, false)?;
+    let cpu = crate::arbiter::device::tests::literal_profile(SelectedModel::Arbiter, 1, false)?;
     assert_eq!(cpu.advice_runtime()?, RUNTIME);
     let before = serde_json::to_vec(&cpu)?;
     cpu.validate()?;
     assert_eq!(serde_json::to_vec(&cpu)?, before);
-    let mut gpu =
-        crate::arbiter::device::tests::literal_profile(SelectedModel::ContextCompact, 2, true)?;
+    let mut gpu = crate::arbiter::device::tests::literal_profile(SelectedModel::Arbiter, 2, true)?;
     let original = gpu.advice_runtime()?;
     assert_eq!(original, gpu.device_execution_identity()?);
     assert!(valid_advice_runtime(&original));

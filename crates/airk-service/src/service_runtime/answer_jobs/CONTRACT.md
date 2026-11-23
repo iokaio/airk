@@ -53,15 +53,13 @@ these that applies:
    its deadline.
 2. **Degrade to fit.** Reductions are applied one step at a time, cheapest
    loss first:
-   - rounds down to two;
-   - the model step;
    - rounds down to one;
    - sub-needs and parts down to two, then down to one;
    - last, the no-model loop.
 
-   The model step leaves Large for Compact only where Compact is cheaper for
-   the shape. Once the step is taken, each later shape runs on the cheaper
-   of the two available rungs, with ties going to Large.
+   The Context stage has one model, the Arbiter, so there is no step from
+   one model to another (step LH retired Large and its model step;
+   change-log entry 62).
 
    Each reduction is disclosed with reason `deadline_estimate` when the
    requested work alone exceeds the deadline, and `queue_wait` otherwise. A

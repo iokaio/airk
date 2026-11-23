@@ -62,7 +62,7 @@ def exercise(root, fixture, record, check, *, existing_index=None, stored_enable
     if status.get("initialization") is not None:
         status = arbiter("initialize",{"operation":"initialize_device","expected_legacy_configuration":None})
     def configure(previous,policy,label):
-        settings = {"enabled":False,"selected_model":"context_compact","device_policy":policy,"gpu_precision":"fp16",
+        settings = {"enabled":False,"selected_model":"arbiter","device_policy":policy,"gpu_precision":"fp16",
                     "indexes":[{"index_id":index,"tasks":["airk.context_action.v1"]}]}
         response = arbiter(label,{"operation":"configure_device","stage":"context",
                            "expected_revision":previous["configuration"]["revision"],"configuration":settings})

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 /// The Context model that would score loop card calls now, as the native
 /// owner observes its selected profile: model, device and (GPU only)
-/// precision. Large never runs on the CPU. Observation only; no authority.
+/// precision. Observation only; no authority.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeCardModel {
@@ -60,11 +60,7 @@ impl NativeCardModel {
         use crate::arbiter::{answer_loop::ExecutionDevice, device::SelectedModel};
         let cpu = self.device == ExecutionDevice::Cpu;
         ensure!(
-            matches!(
-                self.model,
-                SelectedModel::ContextCompact | SelectedModel::ContextLarge
-            ) && !(self.model == SelectedModel::ContextLarge && cpu)
-                && cpu == self.precision.is_none(),
+            self.model == SelectedModel::Arbiter && cpu == self.precision.is_none(),
             "invalid loop card model observation"
         );
         Ok(())

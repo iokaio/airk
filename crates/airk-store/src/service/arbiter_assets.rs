@@ -228,14 +228,18 @@ impl AssetGeneration {
     fn configuration(self) -> &'static str {
         match self {
             Self::LegacyV3 => CONFIGURATION_SCHEMA,
-            Self::DeviceV4 => airk_core::arbiter::device::DEVICE_CONFIGURATION_SCHEMA,
+            // assets/4 receipts name configuration/4, the document generation they
+            // were introduced with. The literal is part of the assets/4 format and
+            // stays when the configuration moves to /5 (step LH), so receipts of
+            // assets already downloaded keep decoding.
+            Self::DeviceV4 => airk_core::arbiter::device::DEVICE_CONFIGURATION_V4_SCHEMA,
         }
     }
 }
 fn partial_schema(record: &Record) -> Result<&'static str> {
     match (record.schema.as_str(), record.configuration_schema.as_str()) {
         ("airk.arbiter.assets/3", CONFIGURATION_SCHEMA) => Ok("airk.arbiter.partial/3"),
-        ("airk.arbiter.assets/4", airk_core::arbiter::device::DEVICE_CONFIGURATION_SCHEMA) => {
+        ("airk.arbiter.assets/4", airk_core::arbiter::device::DEVICE_CONFIGURATION_V4_SCHEMA) => {
             Ok("airk.arbiter.partial/4")
         }
         _ => anyhow::bail!("unknown asset generation partial proof"),

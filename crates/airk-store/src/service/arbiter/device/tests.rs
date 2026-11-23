@@ -440,13 +440,10 @@ fn catalog_profiles() -> Result<Vec<Profile>> {
             axes: vec!["batch_1".into(), "options".into()],
         },
     };
-    let mut large = compact.clone();
-    large.model = ModelChoice::ContextQwenLarge;
-    large.manifest = Sha256Digest::from_bytes([5; 32]);
-    for value in [&focus, &compact, &large] {
+    for value in [&focus, &compact] {
         value.validate()?;
     }
-    Ok(vec![focus, compact, large])
+    Ok(vec![focus, compact])
 }
 fn catalog(profiles: &[Profile]) -> Result<DeviceCatalog> {
     use airk_core::arbiter::device::*;
@@ -459,8 +456,7 @@ fn catalog(profiles: &[Profile]) -> Result<DeviceCatalog> {
     Ok(DeviceCatalog {
         schema: DEVICE_CATALOG_SCHEMA.into(),
         focus: vec![row(0)?],
-        context_compact: vec![row(1)?],
-        context_large: vec![row(2)?],
+        arbiter: vec![row(1)?],
     })
 }
 #[test]
@@ -719,5 +715,84 @@ fn ambiguous_legacy_or_revoked_initialization_observation_refuses() -> Result<()
             .is_err()
     );
     assert!(!root.path().join(DIRECTORY).exists());
+    Ok(())
+}
+
+/// The retained configuration/4 document with Large selected (LH), written by
+/// the build before Large was retired for this fixture's installation `01…`
+/// and source catalog `02…`.
+const RETAINED_LARGE: &[u8] =
+    include_bytes!("../../../../../../fixtures/arbiter/configuration4/large-enabled.json");
+const RETAINED_BINDING: &[u8] =
+    include_bytes!("../../../../../../fixtures/arbiter/configuration4/binding.json");
+
+#[test]
+fn configuration4_is_migrated_only_under_the_compiled_transition_and_its_bytes_retained()
+-> Result<()> {
+    let (root, store) = fixture()?;
+    let old: DeviceCatalogBinding = serde_json::from_slice(RETAINED_BINDING)?;
+    let directory = root.path().join("arbiter-v3");
+    std::fs::create_dir(&directory)?;
+    std::fs::write(directory.join("configuration.json"), RETAINED_LARGE)?;
+    let device = store.device(binding());
+    // Ordinary decoding refuses configuration/4; the binding is observable.
+    assert!(device.load().is_err());
+    let observed = device
+        .inspect_device_binding()?
+        .context("binding observation")?;
+    assert!(observed.configuration4);
+    assert_eq!(
+        (observed.binding.clone(), observed.revision),
+        (old.clone(), 2)
+    );
+    // A transition from another binding, or to another, is refused and
+    // leaves the bytes as they were.
+    let foreign = Configuration4Transition {
+        old: binding(),
+        new: binding(),
+    };
+    assert!(device.migrate_v4_checked(&foreign, || Ok(())).is_err());
+    let elsewhere = Configuration4Transition {
+        old: old.clone(),
+        new: DeviceCatalogBinding {
+            catalog: Sha256Digest::from_bytes([12; 32]),
+            source: Sha256Digest::from_bytes([13; 32]),
+        },
+    };
+    assert!(device.migrate_v4_checked(&elsewhere, || Ok(())).is_err());
+    assert_eq!(
+        std::fs::read(directory.join("configuration.json"))?,
+        RETAINED_LARGE
+    );
+    let transition = Configuration4Transition {
+        old,
+        new: binding(),
+    };
+    let migrated = device.migrate_v4_checked(&transition, || Ok(()))?;
+    assert_eq!(migrated.schema, "airk.arbiter.configuration/5");
+    assert_eq!(migrated.revision, 3);
+    assert_eq!(migrated.device_catalog, binding());
+    assert!(!migrated.context.enabled);
+    assert_eq!(migrated.context.selected_model, None);
+    assert_eq!(migrated.context.indexes.len(), 1);
+    assert_eq!(migrated.context_retired, Some(RetiredModel::ContextLarge));
+    // The /5 document is now current and the exact /4 bytes are retained.
+    let StoredConfiguration::Device(current) = device.load()? else {
+        anyhow::bail!("migrated configuration is not current");
+    };
+    assert_eq!(current, migrated);
+    let retained = std::fs::read_dir(&directory)?
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("configuration-v4-")
+        })
+        .map(|entry| std::fs::read(entry.path()))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    assert_eq!(retained, vec![RETAINED_LARGE.to_vec()]);
+    // Running it again changes nothing.
+    assert_eq!(device.migrate_v4_checked(&transition, || Ok(()))?, migrated);
     Ok(())
 }

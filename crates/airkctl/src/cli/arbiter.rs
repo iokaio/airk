@@ -514,7 +514,7 @@ mod device_tests {
     }
     #[test]
     fn device_configure_keeps_native_precision_policy_and_entire_enrollment() {
-        let literal = br#"{"operation":"configure_device","stage":"context","expected_revision":7,"configuration":{"enabled":false,"selected_model":"context_compact","device_policy":"auto","gpu_precision":"fp32","indexes":[]}}"#;
+        let literal = br#"{"operation":"configure_device","stage":"context","expected_revision":7,"configuration":{"enabled":false,"selected_model":"arbiter","device_policy":"auto","gpu_precision":"fp32","indexes":[]}}"#;
         let file = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(file.path(), literal).unwrap();
         let parsed = request(Command::Configure {
@@ -528,7 +528,7 @@ mod device_tests {
         );
         for bytes in [
             br#"{"operation":"configure_device","stage":"context","expected_revision":7,"configuration":{"enabled":false,"selected_model":"focus","device_policy":"auto","gpu_precision":"fp32","indexes":[]}}"#.as_slice(),
-            br#"{"operation":"configure_device","stage":"context","expected_revision":7,"configuration":{"enabled":false,"selected_model":"context_compact","device_policy":"auto","gpu_precision":"unknown","indexes":[]}}"#.as_slice(),
+            br#"{"operation":"configure_device","stage":"context","expected_revision":7,"configuration":{"enabled":false,"selected_model":"arbiter","device_policy":"auto","gpu_precision":"unknown","indexes":[]}}"#.as_slice(),
             br#"{"operation":"configure","stage":"context","expected_revision":7,"enabled":false,"selected_profile":null,"indexes":[],"device_policy":"auto"}"#.as_slice(),
         ] {std::fs::write(file.path(),bytes).unwrap();assert!(request(Command::Configure { legacy:false, file:file.path().into() }).is_err());}
     }

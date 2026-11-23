@@ -2726,3 +2726,71 @@ Numbered 30 until 22 November 2026; renumbered because L4's entries take
   retirement notes in `scripts/arbiter-fp16-execution/CONTRACT.md`,
   `scripts/arbiter/evaluation/linux_cuda/FP16_QUALIFICATION.md` and
   `scripts/cuda-component-execution/README.md`.
+
+### 62. Large leaves Core, kernel, retrieval and service; the model value is `arbiter`; configuration/5
+
+- **Step LH, commit 5 (23 November 2026): the one identity, state and wire
+  move of LH**, under entry 56's decisions.
+- **Wire.** `SelectedModel` is `focus` | `arbiter` (Rust `Focus`, `Arbiter`);
+  `context_compact` and `context_large` are gone from configuration, device
+  status, `airkctl` JSON and an Answer's `decisions[].model`.
+  `airk.arbiter.device-catalog/2` has the slots `focus` and `arbiter`.
+  The Context stage of device status lists one model. `Degradation::Model`
+  keeps its shape; only a step to no model is valid. The schema capture and
+  the generated TypeScript were regenerated (`arbiter_device_contract` 3).
+- **State.** `airk.arbiter.configuration/5` adds `context_retired`. The
+  service's one compiled transition (old binding: catalog `514233c3…1366`,
+  source `c7cf9d32…301c`) migrates a stored /4 document on the first
+  management read, retaining the exact /4 bytes; evidence reads never
+  migrate. A /4 Large selection becomes a disabled Context stage with no
+  model, its enrollments, policy and precision kept, and the reason "The
+  Large Context model was retired, …; Select Arbiter …". Arbiter is never
+  selected for it. assets/4 receipts keep naming configuration/4, so
+  downloaded assets keep decoding.
+- **Catalog.** The release catalog lost the Large CPU FP32 descriptor
+  (`unqualified-local-test-context-qwen3-4b-fp32-r1`) and the `context_large`
+  slot. `ModelChoice::ContextQwenLarge` stays decodable (retained private
+  profiles); `SelectedModel::from_model` refuses it.
+- **Removed.** Core `device::ladder`; the Large-on-CPU rule in `cards.rs`
+  and `card_model.rs`; the Large loop calibration admission; kernel Large
+  model admission and the dead Large CPU device-fallback branch; retrieval
+  Large bounded-hybrid policies, `open_large_*`, the Large tap cuts and T32
+  checks, the Large Answer recipe, the Large FP32 probe, the Large FP16
+  efficient probe and protected-MHA geometry, the Large G5 arms, the Large
+  bounded-execution scope and payload; service Large private CUDA admission,
+  the Large host/device envelope and the Large CPU guard; the estimator's
+  Large rung and model step (answer_jobs, L2c's module: one rung now).
+- **Review items closed.** L-a (rule sentence on a repeat row's relevance),
+  L-b (`CardEvidence.same_as` is the row position; the view shows
+  `s<segment> row <place>`), L-c (segments are judged with their own
+  evidence, a named row in another segment counts as theirs; Follow-up has
+  the empty-evidence sentence), the `CardEvidence.excerpt` comment, and the
+  one-turn task check of the Compact Answer route in `bounded_hybrid.rs`
+  (`declares_context_task`, entry 51's follow-up).
+- **Identities that moved** (old -> new; pinned in
+  `loop_cards::tests::recorded_loop_policy_identities` and the
+  `cpu_source_transition` tests, recorded in the compiler and
+  `cpu_source_transition` CONTRACTs): Core loop semantics `99b87f98…` ->
+  `0a7130f7…`; split `32fcf95c…` -> `ec185b65…`; plan `e180b6be…` ->
+  `b1800b6b…`; coverage `f71c7c7e…` -> `4655560b…`; follow-up `fe85b1e0…` ->
+  `21704226…`; `runtime.rs` `c9008eef…` -> `66b02a58…` (inverse replay:
+  `scripts/arbiter/evaluation/runtime_row_replay`, 9 checks); `cuda.rs`
+  `3526ef91…` -> `ddb31240…`; `cuda/diagnostic.rs` `b784131c…` ->
+  `0efbf86c…`; CPU Focus row `e0575e94…` -> `ee9b14de…`. The CUDA math
+  policy, the bounded-hybrid validator and the bounded-execution policy move
+  with their sources (not literal pins); every FP16 CUDA profile is emitted
+  again (entry 63). The batched Focus identity over the release pair policy
+  binds the loop semantics and moved too: `839af2a5…` -> `31ff048b…`.
+- **Evidence.** Clippy `-D warnings`, all targets, default and all
+  features, on core, kernel, retrieval, store, service, mcp, ipc, https,
+  airkctl and inference; the Nextest selections and harness suite listed in
+  the LH hand-back. Tests: `device::migration::tests` (6), service
+  `retained_tests` (4) on the retained /4 bytes, the store migration test,
+  `focus_and_arbiter_are_separate_switches`, the rewritten estimator tests.
+- **Kept on purpose.** Historical `ModelChoice::ContextQwenLarge` arms in
+  CPU qualification, regeneration and final-distribution code that
+  reproduce retained receipts; the `Qwen3-4B` download allow-list (retained
+  profiles carry those URLs); the asset-store custody test that used the
+  Large closure (it needs a new input; owner: the primary).
+- **Not verified here.** Linux-only `cuda/linux/product.rs` and
+  `gnu_cutlass.rs` (step LX).

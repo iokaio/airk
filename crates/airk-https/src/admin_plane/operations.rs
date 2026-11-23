@@ -209,7 +209,7 @@ mod device_operation_tests {
         use airk_core::arbiter::{ManagementRequest, Stage};
         use airk_core::identity::Sha256Digest;
         let mut configuration = DeviceStageConfiguration::disabled();
-        configuration.selected_model = Some(SelectedModel::ContextCompact);
+        configuration.selected_model = Some(SelectedModel::Arbiter);
         configuration.gpu_precision = GpuPrecisionPreference::Fp16;
         for (operation, method, request, legacy) in [
             (

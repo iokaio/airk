@@ -201,17 +201,19 @@ fn graph_with_extra(c: &Config, extra: &[u8]) -> (Vec<u8>, BTreeMap<String, u64>
     )
 }
 #[test]
-fn three_literal_selected_rosters_admit_actual_half_boundaries() -> Result<()> {
+fn two_literal_selected_rosters_admit_actual_half_boundaries() -> Result<()> {
     for (choice, c, expected) in [
         (ModelChoice::FocusQwenReranker06B, config(true, 28, 16), 28),
         (ModelChoice::ContextQwenCompact, config(false, 28, 16), 28),
-        (ModelChoice::ContextQwenLarge, config(false, 36, 32), 36),
     ] {
         let (g, f) = graph(&c);
         let nodes = audit(&g, &f, choice)?;
         assert_eq!(nodes.len(), expected);
         assert!(nodes.iter().all(|n| n.domain == "com.microsoft"));
     }
+    // The retired Large roster (36 layers, 32 heads) is no longer admitted.
+    let (g, f) = graph(&config(false, 36, 32));
+    assert!(audit(&g, &f, ModelChoice::ContextQwenLarge).is_err());
     Ok(())
 }
 #[test]
@@ -311,10 +313,7 @@ fn focus_unwritten_padded_queries_require_explicit_sanitization() {
 
 #[test]
 fn context_present_outputs_are_required_in_exact_order() {
-    for (model, layers, heads) in [
-        (ModelChoice::ContextQwenCompact, 28, 16),
-        (ModelChoice::ContextQwenLarge, 36, 32),
-    ] {
+    for (model, layers, heads) in std::iter::once((ModelChoice::ContextQwenCompact, 28, 16)) {
         for present_outputs in [
             &[][..],
             &["present_key"][..],

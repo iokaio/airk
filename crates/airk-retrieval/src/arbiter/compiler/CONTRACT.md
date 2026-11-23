@@ -234,6 +234,21 @@ below.
 | `airk.context_follow_up.v1` | `89809e2d8377aaa29a14c86d87d2243336e079a0b1cbf9e378498f45fa62de15` | `104b24bbda6baccb77609f1bbe1490f8c9beacc526c839ba920665c291f391b1` |
 | Batched Focus over the release pair policy | `50ba5c856d5f3ed81d86eacd62094de14599f56fcb39939126643758a7fae04a` | `19e8564765aaa68cad46fb08c287c22f78399657ab3e9e1ae345790b2dda0df4` |
 
+Step LH (change-log entry 62) moved the five loop identities again: Core
+`cards.rs`, `calibration.rs` and `native_loop.rs` (Large removed; `same_as`
+names a row by position) and this owner's rule sentences (reviews L-a, L-c).
+The batched Focus identity over the release pair policy binds the Core loop
+semantics and moved with them: `839af2a52020bfc7d8bbb2e2a13fbea517c86ba9d866b6830ab378853c493c90` ->
+`31ff048b5f08b42799ff403036d594cf72be6db04b9205b15d4d9f61652bec62`.
+
+| Identity | Before LH | After LH |
+| --- | --- | --- |
+| Core loop semantics | `99b87f98a14d427d5e1a16a3a0710dc838682298846cc464060947aa292209fd` | `0a7130f70f7c618591908b6e63bb8df619d50176a2e1af8d09cce4345ce37e8b` |
+| `airk.context_split.v1` | `32fcf95cfba16db0fcfb969d39ca55a08fa0ae0622ae00a731e3e41fa3568755` | `ec185b656eb82797d89f433e8c6708c5d0e45a389f0041fb2833e1bcd7b15f3f` |
+| `airk.context_plan.v1` | `e180b6be12945656bbb863dfe6ad59771182356c6ad2da68a1d77de7d3492593` | `b1800b6b09cf4fa4f14e88b331a5f89afc793dd0e3c67aa74d6e9688ac572f81` |
+| `airk.context_coverage.v1` | `f71c7c7eecd867d97b1a07e3ec0faf12869f6761c3c34c02c10138568d73462e` | `4655560b1bbc4c276cd6c350a26f291ab3ad5e8669d7ad16a3d5736ddd971244` |
+| `airk.context_follow_up.v1` | `fe85b1e08cefbf6446a9156c3cd5e37aab112733a225ff3847e5ce8392be7ae7` | `217042265b29a767acd99c414abc2b57009dfe4c157e6364b76f2fe92cb57f27` |
+
 **Fifth move: Follow-up evidence and the review of the fourth move
 (recorded decision, 22 November 2026; change log entry 44).** These values
 were replaced by the sixth move below.
@@ -348,8 +363,11 @@ order (Focus rank order, checked by Core):
     and after the excerpt, each absent when zero;
   - `snippet` is present (true) when the read itself returned only part of
     the text there;
-  - a repeat row has `same_as`, the `path:start-end` of the row that shows
-    its text, and no `text`;
+  - a repeat row has `same_as`, `s<segment> row <place>` naming the row
+    that shows its text (its segment label and its place, from 1, in that
+    segment's evidence; it may be another segment), and no `text`. Until
+    step LH it was that row's `path:start-end`, which two rows can share
+    (review L-b, change-log entry 62);
 - `not_shown` counts gathered spans the call shows nothing of, and is absent
   when zero;
 - a sub-need with nothing to show has `evidence: []`;

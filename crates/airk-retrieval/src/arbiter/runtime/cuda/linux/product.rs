@@ -77,7 +77,7 @@ mod tests {
             },
         }];
         assert_eq!(limits(&fixture, model, graph)?.maximum_payload, 48);
-        assert!(limits(&fixture, ModelChoice::ContextQwenLarge, graph).is_err());
+        assert!(limits(&fixture, ModelChoice::FocusQwenReranker06B, graph).is_err());
         assert!(limits(&fixture, model, Sha256Digest::from_bytes([8; 32])).is_err());
         assert!(limits(&[], model, graph).is_err());
         Ok(())
