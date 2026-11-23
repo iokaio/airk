@@ -28,6 +28,10 @@ replaced airk by munarium as the second evaluation repository, so that the
 index under test holds nothing about the experiment. From then on "both
 repositories" means munarium and bookbuilder. The airk index is no longer
 built or used (section 2, "munarium replaces airk").
+**After LG, set by the user on 23 November 2026:** Large is dropped, the
+remaining Context model is called Arbiter, Focus and Arbiter become
+separate switches for Answer, and L7 runs on Windows and Linux CUDA, with
+the next stop after L7 (section 2, "after LG").
 [Parent plan](final-plan.md) · [Ledger](../simplify/one-process-ledger.md)
 
 ## 1. The question
@@ -253,6 +257,66 @@ Just move forward with completing section 12 through LG."
     the user's word at the LG review.
   - Reports treat munarium as they treat bookbuilder: locations and note
     identifiers, and no quoted source.
+
+### Changed by the user on 23 November: after LG, one model named Arbiter, Focus optional, and L7 on Windows and Linux CUDA
+
+On 23 November 2026 at about 06:35 UTC, while the shakedown before the LG
+gate was still finding defects, the user wrote: "My gut tells me that when
+you finish LG, we're going to learn that Arbiter Large is not worth keeping
+given its bulk and our earlier evidence. I want you to finish the LG step
+and document the results. Then I want you to drop Arbiter Large and use only
+the Compact model. This means that you can drop the Compact label and just
+call it Arbiter. Since we will allow the user to turn on Focus feature
+separately and leave Arbiter turned off, I want you to allow the user to turn
+off Focus and turn on Arbiter as part of the Answer flow. We will later
+consider whether the Focus feature is a good idea for other MCP retrieval
+tools such as search. Then I want you to finish the work through L7 for
+Windows and Linux for CUDA. Once that is done, I want to examine the results
+before we move forward."
+
+- **LG is finished and documented first,** with all three arms, Large
+  included. Its report is the record of why Large goes.
+- **No stop at LG.** The decisions the LG stop was waiting for are given in
+  advance, so work continues after the gate report and its commit. The next
+  stop is after L7.
+- **Large is dropped after LG is documented.** Its catalog entries,
+  profiles, routes, ladder rung and tests are removed with evidence, under
+  the deletion rule of the assignment (section 12.7.1, "If Large is
+  dropped"). One guard, by my reading: if the gate shows Large meeting the
+  bar of section 12.7.1 by a wide margin, I report that before deleting
+  anything, because the user's expectation was the opposite.
+- **The remaining Context model is called Arbiter.** The "Compact" label
+  goes from what a user sees and from the public selection values.
+  Identifiers inside files that feed pinned identities change only with the
+  next identity move, and each rename of a wire value or persisted value is
+  recorded as a contract decision where it is made.
+- **Focus and Arbiter are separate switches for Answer.** A user may run
+  Answer with neither, with Focus only, with Arbiter only, or with both.
+  Arbiter without Focus is new: the loop then works on spans in retrieval
+  order, and the evidence shown to the model is not ranked by Focus.
+- **Focus for other tools is a later question.** Whether Focus should serve
+  `search` and the other MCP retrieval tools is not part of this work.
+- **L7 runs on Windows CUDA and on Linux CUDA.** Section 12.0 limited
+  section 12 to CUDA on the A6000 under Windows. Linux CUDA now joins for
+  L6 and L7: the same loop, harness, scenarios and judging, on the same
+  card.
+- **The device ladder** of section 12.5 becomes: Arbiter on the GPU, then
+  Arbiter on the CPU. CPU fallback is still not tested in section 12.
+- **L7's cells, by my reading:** Arbiter with Focus, Arbiter only, Focus
+  only, Parse and Search, on both repositories and on both operating
+  systems. The baseline is followed by the three change sets of the
+  standing rule (section 5.2), and then work stops for the user's
+  examination.
+- **Open points, taken by my reading until the user corrects them.**
+  - The precision check of section 12.7.3 was deferred from LG because the
+    FP32 profiles do not declare the loop's tasks. With Large gone it would
+    cover Arbiter and Focus only; it stays deferred unless the user asks
+    for it.
+  - The revised job design (section 12.4.2, steps L2c to L2e) and the
+    Workbench move to /3 continue beside L7 and are merged when reviewed;
+    they are not L7's subject.
+  - The sealed set for munarium is written before the first change set of
+    L7 is fitted.
 
 ## 3. The test
 
@@ -1137,6 +1201,9 @@ Receipts are in the private GPU-track folder and in the CUDA image records;
 | Answer reply frame 128 KiB | Set by the user on 22 November. Answer only; every other tool keeps 64 KiB (section 12.9) |
 | No second loaded copy of a model on any device | Set by the user on 22 November. Capacity comes from batching, concurrent runs on one session and overflow to another device, decided at runtime (section 12.5.1) |
 | Answer jobs, revised (section 12.4.2) | Approved by the user on 23 November. One call always returns evidence; jobs are owned by the service with their own authority; reuse by digest stays on with a `fresh` way out; unattended jobs yield; a ticket follow-up counts as a turn. Not in the LG gate image |
+| Large is dropped after LG is documented; the remaining Context model is called Arbiter | Set by the user on 23 November. LG runs with all three arms and is documented first; there is no stop at LG |
+| Focus and Arbiter are separate switches for Answer | Set by the user on 23 November. Answer runs with neither, Focus only, Arbiter only or both. Focus for other tools is a later question |
+| L6 and L7 on Windows CUDA and Linux CUDA; stop after L7 | Set by the user on 23 November. Extends section 12.0, which was Windows CUDA only |
 
 ## 12. Answer as a local multi-round loop
 
@@ -1147,6 +1214,10 @@ locally, with local models, the query, read, notice-a-gap and query-again
 work that an agent otherwise pays for in turns and tokens.
 
 ### 12.0 Scope: CUDA only
+
+**Extended on 23 November 2026:** from L6 on, Linux CUDA joins Windows CUDA on
+the same card (section 2, "after LG"). Everything up to and including the LG
+gate is Windows CUDA only, as written below.
 
 Set by the user on 22 November 2026. Every effort in this section is built,
 tested and gated on CUDA, on the RTX A6000 (48 GB), and on nothing else.
@@ -2103,9 +2174,11 @@ user for the decisions after L7. It is not acted on during section 12.
 | L2c | Answer jobs, revised (section 12.4.2): service-owned authority and attempt, the wait kept apart from the work budget, failures per invocation, reuse with `fresh` and an invocation key, unattended jobs yielding, a supervised deadline for job work, per-delivery records. Built on `loop/l2b-wire`; not in the LG gate image | The decisive disconnect test passes through a real supervisor session, with one worker execution on the receipt; an independent review passes |
 | L2d | One call always returns evidence (section 12.4.2): retrieval and the deterministic loop at once, the model part queued or reduced, a handle-only continuation that returns only what is new; the harness counts a ticket follow-up as a turn | Tests show no reply without evidence, a continuation that repeats nothing, and independent executions for `fresh` calls |
 | L2e | Workbench, Explorer, the Admin Search screen and the service-client check on Answer /3, then on the job path with partial evidence, "Stop waiting" and "Cancel job" | The extension sends /3 and renders, navigates, copies and exports a /3 reply; then a recovered Answer is as usable as an immediate one |
-| LG | The two model gates in one series: Large against Compact on CUDA (section 12.7.1), and Focus only against Focus with Compact on CUDA (section 12.7.2), CUDA only, with the replay-only precision check of section 12.7.3. Arm C's runs serve both | Gate report and commit; **stop for the user's personal review and decisions on Large and on Compact**, while work not depending on those decisions continues |
+| LG | The two model gates in one series: Large against Compact on CUDA (section 12.7.1), and Focus only against Focus with Compact on CUDA (section 12.7.2), CUDA only, with the replay-only precision check of section 12.7.3. Arm C's runs serve both | Gate report and commit; no stop: the user gave the decisions in advance on 23 November (section 2, "after LG"). The precision check is deferred (it needs FP32 loop profiles), and the gate measures concurrency on the unqueued path |
+| LH | After LG is documented: drop Large with evidence (catalog entries, profiles, routes, the ladder rung, tests); call the remaining Context model Arbiter in what a user sees and in the public selection values; make Focus and Arbiter separate switches for Answer, including Arbiter without Focus | The four combinations (neither, Focus only, Arbiter only, both) each run the loop on a real service with a smoke test; the removals pass a clean compile and Clippy; each renamed wire or persisted value is a recorded contract decision |
+| LX | Linux CUDA for the loop: the service and fixture built and run on the Linux host with the same card, the start-up math option supplied on Linux, the harness driving a Linux lifetime | A shakedown passes end to end on Linux CUDA, as it must on Windows before LG |
 | L6 | Workspace gate | Clippy and tests across the workspace on the matrix of CONTRIBUTING; known failures listed with their owners |
-| L7 | The evaluation starts over on the loop, on CUDA only. First, a new baseline on both repositories: the loop on the CUDA routes the gate decisions keep, the Focus-only loop, Parse and Search. There are no CPU cells. Then change sets with weight and calibration refinement as in section 5, each series judged and committed on its own | The new baseline report, then one report and commit per series; stop for the user's inspection after the iterations the user sets |
+| L7 | The evaluation starts over on the loop, on Windows CUDA and Linux CUDA. First, a new baseline on both repositories: Arbiter with Focus, Arbiter only, Focus only, Parse and Search. There are no CPU cells. Then change sets with weight and calibration refinement as in section 5, each series judged and committed on its own | The new baseline report, then one report and commit per series; **stop for the user's examination** after the baseline and the three change sets of the standing rule |
 
 E8 (the sealed set) and E9 (the final report) follow L7 on the user's word.
 The new evaluation's reports are numbered after the one-turn reports, which

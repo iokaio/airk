@@ -98,6 +98,30 @@ The user resumed the Windows and Linux FP16 campaign after D: cleanup. Keep new 
   free-space floor falls from 1037825253376 to 842404241408 bytes. The 100 GiB
   physical floor, per-job reservations, cleanup owners and monitoring of
   actual free space still apply.
+- **What follows LG, set by the user on 23 November 2026 at about 06:35
+  UTC.** "I want you to finish the LG step and document the results. Then I
+  want you to drop Arbiter Large and use only the Compact model. This means
+  that you can drop the Compact label and just call it Arbiter. … I want you
+  to allow the user to turn off Focus and turn on Arbiter as part of the
+  Answer flow. … Then I want you to finish the work through L7 for Windows
+  and Linux for CUDA. Once that is done, I want to examine the results before
+  we move forward."
+  - LG runs with all three arms and is documented. There is no stop at LG;
+    the next stop is after L7.
+  - After LG: Large is removed with evidence; the remaining Context model is
+    called Arbiter; Answer runs with neither model, Focus only, Arbiter only
+    or both. Focus for other tools is a later question.
+  - L6 and L7 run on Windows CUDA and on Linux CUDA.
+  - By my reading: if the gate shows Large meeting its bar by a wide margin,
+    that is reported before anything is deleted; L7 is the baseline and the
+    three change sets of the standing rule.
+  - Recorded in the plan, section 2 ("after LG") and steps LH and LX.
+- **Gate precondition, 23 November 2026.** The gate does not run until one
+  shakedown has passed end to end on a real service, with search records,
+  Focus calls and model-sourced decisions in a real reply. Each gate root
+  allows one CUDA lifetime.
+- **New agents run on Opus at medium reasoning** (user, 23 November 2026,
+  about 01:25 UTC: "We're nearing our Fable limit").
 - **D: floor lowered to 200 GiB free, 23 November 2026 at about 00:20 UTC.**
   The user wrote: "You can take the D drive down to 200GB free if needed."
   The D: free-space floor for the Answer-loop campaign is now

@@ -16226,3 +16226,26 @@ five gate roots are untouched.
 **Running at this entry:** the shakedown agent only.
 
 **Disk.** D: free 924,347,572,224 bytes; the floor is 214,748,364,800.
+
+### 23 November 2026 at 06:43 UTC — user direction for what follows LG
+
+The user wrote at about 06:35 UTC: "I want you to finish the LG step and document the results. Then
+I want you to drop Arbiter Large and use only the Compact model. This means that you can drop the
+Compact label and just call it Arbiter. … I want you to allow the user to turn off Focus and turn on
+Arbiter as part of the Answer flow. We will later consider whether the Focus feature is a good idea
+for other MCP retrieval tools such as search. Then I want you to finish the work through L7 for
+Windows and Linux for CUDA. Once that is done, I want to examine the results before we move forward."
+
+- **Recorded** in the plan (section 2, "after LG"; section 11; section 12.0; steps LG, LH, LX and L7
+  of section 12.8), in `docs/agent-current-work.md` and in the current-assignment rules.
+- **Order of work:** LG with all three arms, documented, no stop; LH (drop Large with evidence, the
+  name Arbiter, Focus and Arbiter as separate switches); LX (Linux CUDA for the loop); L6; L7 on both
+  operating systems; then stop for the user's examination.
+- **My readings, for the user to correct:** if the gate shows Large meeting its bar by a wide
+  margin, that is reported before anything is deleted; L7 is the baseline and three change sets;
+  L7's cells are Arbiter with Focus, Arbiter only, Focus only, Parse and Search; the precision check
+  stays deferred; the job design and the Workbench move continue beside L7.
+- **Known at this entry and relevant to LX:** the start-up code that sets the GPU math option is
+  Windows-only, so a Linux CUDA service would refuse every FP16 open as the code stands.
+- **State of LG at this entry:** the gate has not started. The shakedown agent is rebuilding its
+  image from `1b5882ee` and waits for a fresh root to finish embedding.
