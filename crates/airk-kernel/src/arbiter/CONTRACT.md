@@ -187,12 +187,17 @@ same authority is not.
   - `scoped_source_projection` of an expected publication that a newer one
     replaced is `publication_busy`; the combined frontend decides whether
     the member's evidence is read again.
-  - A source configuration ahead of the publication, when the authority
-    resolves against it, is `ScopeReconcilePending`: code
-    `scope_reconcile_pending`, retryable, `retry_after_ms: 250`,
-    `repeat_same_request`. A scope that resolves against neither is still
-    `ScopeReadRefused`, and a published root outside the authority still
-    makes it a refused partial scope.
+  - A source configuration ahead of the publication is
+    `ScopeReconcilePending` (code `scope_reconcile_pending`, retryable,
+    `retry_after_ms: 250`, `repeat_same_request`) only when the same request
+    would pass once that configuration is published: the authority resolves
+    against it and, for index metadata (settings, roots, rebuild roster),
+    still covers every configured source in full (`covers_sources`). A scope
+    that resolves against neither, or that the configuration would leave
+    partial (a configured root outside the authority, a saved recovery
+    source it does not cover), is still `ScopeReadRefused`; reconciling
+    would never lift it (entry 67 addendum). A published root outside the
+    authority still makes it a refused partial scope.
   - Genesis (sequence 0, no collection state): the authority is checked
     against the source configuration, so a multi-root scope whose roots are
     configured is `BootstrapPublicationPending` like a single-root one; an
