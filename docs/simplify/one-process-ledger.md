@@ -16381,3 +16381,60 @@ complete pass; s11 is building. The spent roots were reclaimed (receipt
 
 **Running at this entry:** the shakedown agent, rebuilding from `24c506db`
 for the complete pass on s10; the parity agent on its branch.
+
+### 23 November 2026 at 11:14 UTC — the shakedown passed; the LG gate is running
+
+**Shakedown passed end to end** on root s10 with the image built from
+`24c506db` (pipeline tests): the smoke test; all ten munarium scenarios at
+the default budget with default verification (3.2 to 8.5 s, bodies 53 to 93
+KB, decisions taken by Compact, every Focus pair scored, arm check clean);
+three replays; one Haiku session of 6 turns with both Sonnet judges valid;
+the gate tooling and report builder; two Answers at once; Large beside
+Compact on one question.
+
+**Bookbuilder check on spare root C32, before the gate.** The smoke test
+passed and all ten scenarios replied, but three replies carried failed
+reads.
+- **Product defect, fixed in `de0dde02` (pushed, no identity moved):** the
+  loop read a 40-line window past a hit as if every source were text; a
+  hit in a Word document is one block, and the context tool refuses a range
+  that crosses document locations. The loop now follows the hit's own
+  location kind: a document hit is read only over its cited lines and only
+  when its text was cut. The tool's refusal is typed `invalid_arguments`.
+  Kernel arbiter selection 212 of 212; pin controls 14 of 14.
+- **Harness defect, fixed (`ffb06c32`):** the report stripped quotations
+  from the judges' reasons but the rest still paraphrased private content.
+  Reasons are now withheld for munarium and bookbuilder.
+- **Harness, first call (`c3fb9de5`):** the wrapper issues each session's
+  first Answer itself with the product's defaults, and replays use the same
+  arguments (plan section 3.5). Before, the agent had chosen terse mode and
+  verification off, so replays and sessions saw different renderings.
+- **Coverage on bookbuilder is low and real:** 7 of 61 essential notes in
+  the first replies. On two scenarios checked, none of the cited source
+  files appears in the reply at all; documents and Markdown outrank them.
+  On munarium the figure was 14 of 52.
+
+**Verified before the gate.** The gate image `lg-gate-076cc17d` (built from
+`de0dde02` plus the harness at `c3b077f6`): on bookbuilder with a CPU
+lifetime from L32's base, six Answers with no failed record; on munarium
+with a CUDA lifetime on s11, the smoke test and three Answers with
+model-sourced decisions. A cut document hit read over its own lines is
+covered by a unit test only.
+
+**The gate, series `06-gate-lg`.** The preflight passed in full (13 checks).
+The three lifetimes started side by side from their bases
+(`06-gate-lg-C-base`, `06-gate-lg-L-base2`, `06-gate-lg-F-base`) and were
+ready at 11:04 UTC. Warm times: C Focus 9.4 s and Compact 10.2 s; L Focus
+8.8 s and Large 17.7 s; F Focus 8.3 s. All three arms passed their smoke
+tests on both repositories with clean arm checks. Running at this entry:
+the replays, then judged sessions, second sessions on close calls, and the
+concurrency test.
+
+**Not in the gate image, on their own branches:** the reproducible-records
+change (`loop/reproducible-records`), the revised job design
+(`loop/l2b-wire`, L2c), the Workbench move to /3 (`loop/workbench-v3`).
+
+**Open after the gate, with owners as recorded above:** reload of an
+idle-unloaded stage on demand; the first vectors job of a fresh root;
+untyped lane refusals; admission accounting at 64 KiB; the Linux start-up
+math option; verification receipts of 15 to 29 KB per reply.
