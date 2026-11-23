@@ -16145,3 +16145,84 @@ shakedown root and then running the shakedown end to end. It does not run
 the gate.
 
 **Disk.** D: free 1,000,687,271,936 bytes; the floor is 214,748,364,800.
+
+### 23 November 2026 at 06:25 UTC — two product fixes from the shakedown: loop profiles warm, and wave reads keep the caller's scopes
+
+**Still no Context model has taken a decision in a real service.** The
+shakedown has now found five defects, each one step further in. The gate
+waits for one shakedown to pass end to end.
+
+**`69033135` (pushed): the private Answer routes accept a loop Context
+profile** (change-log entry 51). The protected MHA, protected QKV and Large
+FP32 routes in `bounded_hybrid/layer0/answer.rs` required the one-turn
+task. No identity moved: the file is in no `include_bytes!` list and the
+pin controls pass. Retrieval arbiter 315 of 315; service arbiter 176 of 177
+(the known device-configuration test). Shown to work by the next shakedown:
+Configure was accepted and the earlier refusal is gone.
+- A trace of a loop profile along the service route, by reading, found one
+  more check for the one-turn task: the FP32 Compact route at
+  `bounded_hybrid.rs:1005`. It is not on the gate's path, and that file is
+  hashed into the bounded-hybrid validator, so it waits for the next
+  identity move. Owner: whoever builds FP32 loop profiles.
+
+**Harness defect (`loop/l5c` `477b306b`): the fixture service had no
+`ORT_CUDA_GEMM_OPTIONS`.** The FP16 warm requires the value 2, unchanged
+since the runtime initialised. The product's `main` sets it; the fixture
+runs the service as a test binary and skipped that. The launcher now sets
+it for every CUDA lifetime, refuses a conflicting inherited value, and the
+preflight checks it. By reading, that option is the only thing the
+product's start-up does before the runtime initialises.
+- **Product defect candidate, off the gate's path:** `startup_math` is
+  Windows-only, while the FP16 environment check has no platform gate. A
+  Linux CUDA service would refuse every FP16 open unless the user set the
+  variable. Owner: the Linux CUDA work, after LG.
+
+**`1b5882ee` (pushed): each wave read runs under the caller's bindings**
+(change-log entry 52). Since `038472de` a wave of two or more reads ran on
+plain scoped threads that had none of the caller's thread-local bindings.
+- **Effect in a real service:** every search read inside an Answer failed
+  with "embedding worker is unavailable; native adapter not installed", so
+  each part stopped at Retrieve and Focus never ran. In the Focus-only
+  replays coverage was 1 of 4, 0 of 5 and 0 of 5.
+- **A second effect:** the workers also lacked the execution scope and the
+  grant state, so drain, quarantine, cancel, stall, expiry and pause passed
+  silently at a read's checkpoints.
+- **Fix:** `wave.rs` captures `service_execution::Inherited` on the driver
+  thread and binds it around each threaded read, the mechanism the indexing
+  helper threads already use.
+- **Evidence:** two new tests fail on the old code (a wave of two returned
+  no connector, no execution scope and no cancellation for every read) and
+  pass on the new. Kernel arbiter and service-execution selection 212 of
+  212; MCP handler selection 33 of 33; Clippy exit 0 with all and default
+  features. No identity moved.
+- **Why it was not caught:** the kernel tests use synthetic readers, and the
+  CLI integration fixture builds its indexes with vectors off. No
+  integration test runs an Answer through the real handler against an index
+  whose search needs the embedding connector. The shakedown and the new
+  per-arm smoke test now cover it.
+- **The hunt:** no other thread hop on the Answer path loses the bindings.
+  Card calls, batched Focus, the probes and Union run on the driver thread.
+
+**Harness safeguards (`loop/l5c` `73251efc`, `136fe169`; 226 tests).** The
+old arm check passed three Focus-only replies in which every search read had
+failed. The new one refuses an arm whose staged Focus took no part and
+counts failed reads. A smoke test runs right after each arm's lifetime
+starts: a search record without a failure, a Focus call, and a model-sourced
+decision where a model is staged. The preflight refuses a plan without it.
+
+**Open, with owner.**
+
+| Item | State | Owner |
+| --- | --- | --- |
+| The first vectors job of a fresh root fails on the new image | Seen on three of four fresh roots (`helper_unavailable`, then `project_operation_failed` 1.2 s after start); a restart resumes the embedding. The gate roots were built with the older image. Gate lifetimes embed nothing | a new agent, after LG |
+| Combined Answer parity (Open case) | Passed once after the wave fix, after failing three runs in four. One pass proves nothing; the fixture has vectors off, so the wave defect is probably not its cause | a new agent, after LG |
+| Reply rows cut around the text Focus scored | Finished as a patch (`L4\parked-reply-windows-on-f682af51.patch`), kernel tests 59 of 59, parity run not completed | applied only if the shakedown shows replies are often trimmed |
+| L2c parity comparators and the L2d design points | Waiting on the primary agent | after LG |
+
+**Shakedown roots.** `fixture-s1-shakedown` and `fixture-s5-shakedown` have
+spent their CUDA lifetimes. `s6` and `s7` are embedding after a restart. The
+five gate roots are untouched.
+
+**Running at this entry:** the shakedown agent only.
+
+**Disk.** D: free 924,347,572,224 bytes; the floor is 214,748,364,800.
