@@ -2290,3 +2290,44 @@ Numbered 30 until 22 November 2026; renumbered because L4's entries take
   Core owner.
 - **Where:** Core arbiter `CONTRACT.md` (reply `model_work` and the decision
   log), kernel arbiter `CONTRACT.md` (batched Focus).
+- **Why the live Focus calls scored nothing (second commit):** the service
+  refused every loop batch of more than four pairs before reserving it. Its
+  admission still carried the one-turn check `score_count <=
+  max_candidates`, and both live Focus profiles (CUDA and the CPU twin)
+  declare `max_candidates` 4; the kernel sizes batches up to 32 pairs and
+  reads only the pair token limit. The refusal came back as an error, which
+  the kernel holds as unknown work. Confirmed live: with the default budget
+  no pair reached native; with `max_sub_needs=1, round_input_tokens=8192`
+  (batches of at most 4) 5 pairs were scored on CUDA. `max_candidates` bounds
+  one native request; a loop pair is one single-candidate job, so the batch
+  admission now needs one candidate to fit, 1 to 32 pairs and a sufficient
+  reservation. A refusal before the reservation is a declined call (nothing
+  charged), and every not-applied batch names its typed stop with scored and
+  dispatched counts in its receipt reason and in the service log (service
+  `CONTRACT.md`, "Batch admission and refusals"). Test
+  `a_batch_wider_than_the_one_turn_candidate_cap_is_admitted` (5 and 32
+  pairs on a `max_candidates` 4 profile; the old predicate refused both) and
+  `a_batch_that_was_not_applied_names_its_stop_and_counts`. Gap: the stage
+  owner's admission against a live resident is not unit-tested (it needs a
+  native resident); the live service confirmed the reading.
+- **Why no card call ran (third commit):** the private Compact and Large
+  Answer routes refuse a job whose deadline is more than one operation (the
+  frozen resource policy's 120 s) away, after compile and before dispatch.
+  A loop card call carried the whole Answer deadline, so at 300 s every call
+  more than 120 s before the end was refused and settled as unknown work.
+  Confirmed live: at `deadline_ms=110000` all six card calls dispatched and
+  scored; at 300 s none. A card call's and a Focus pair job's lane deadline
+  is now the earlier of the Answer's and one operation from now; the limit
+  itself is unchanged. Card calls that take no decision are logged with the
+  code of their settled reason. Test
+  `a_card_call_far_from_the_answer_deadline_gets_one_operation` (250 s and
+  600 s before the Answer's end: lane deadline 120 s away and admitted by the
+  route's rule, restated by hand; a nearer Answer deadline kept). Open: the
+  private route's admission expiry (`graph.expires`) is set by the
+  evaluation fixture and also bounds every job; and the lane's own
+  post-compile pre-dispatch refusals (deadline, authority, headroom, the
+  private route's deadline) are untyped errors that a card call can only
+  hold as unknown work. Typing them as `KnownInputRefusal` would change the
+  lane contract and is left for a decision.
+- **Identities:** the second and third commits change no identity-feeding
+  file.

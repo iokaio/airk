@@ -63,6 +63,45 @@ impl Owner {
     }
 }
 
+/// The longest lane deadline of one model operation: the frozen resource
+/// policy's per-operation deadline (120 s). An Answer may run up to 600 s,
+/// but each card call or Focus pair job is one operation, and the private
+/// Answer routes refuse a job whose deadline lies further away than one
+/// operation (change-log entry 53); before, every card call made more than
+/// 120 s before a 300 s Answer's end was refused there and never ran.
+#[cfg(any(feature = "local-inference", test))]
+pub(super) fn operation_deadline(answer: Instant, now: Instant) -> Instant {
+    let operation = Duration::from_millis(
+        airk_core::arbiter::resource_policy::ResourcePolicy::software_v2().deadline_ms,
+    );
+    now.checked_add(operation)
+        .map_or(answer, |limit| answer.min(limit))
+}
+
+/// The service-log code of a card call that took no decision, by its
+/// settled reason; `None` for a scored, abstained or accepted call.
+#[cfg(feature = "local-inference")]
+fn card_refusal_code(outcome: &Outcome) -> Option<&'static str> {
+    let reason = match outcome {
+        Outcome::Unavailable { reason }
+        | Outcome::Unsupported { reason }
+        | Outcome::InvalidInput { reason } => reason.as_str(),
+        _ => return None,
+    };
+    Some(match reason {
+        UNKNOWN => "card_call_outcome_unknown",
+        NOT_ADMITTED => "card_call_not_admitted",
+        ROSTER_REFUSED => "card_call_roster_refused",
+        INPUT_REFUSED => "card_call_input_refused",
+        QUEUE_REFUSED => "card_call_queue_refused",
+        RESIDENT_UNAVAILABLE => "card_call_resident_unavailable",
+        SCORE_FAILED => "card_call_score_failed",
+        SCORES_INVALID => "card_call_scores_invalid",
+        LATE_CHANGE => "card_call_late_change",
+        _ => "card_call_unavailable",
+    })
+}
+
 /// Every segment's outcome set to one unavailable reason.
 #[cfg(any(feature = "local-inference", test))]
 fn unavailable(advice: &mut CardAdvice, reason: &str) {
@@ -438,11 +477,13 @@ impl StageOwner {
                 || loop_cards::policy_digest(card_stage)? != request.task_policy
             {
                 not_dispatched(&mut advice, NOT_ADMITTED, true);
+                self.record_model_refusal("card_call_not_admitted");
                 advice.validate()?;
                 return Ok(Some(advice));
             }
             let Ok(prompt) = loop_cards::prompt(&request) else {
                 not_dispatched(&mut advice, ROSTER_REFUSED, true);
+                self.record_model_refusal("card_call_roster_refused");
                 advice.validate()?;
                 return Ok(Some(advice));
             };
@@ -476,12 +517,15 @@ impl StageOwner {
                     request.partition.as_ref(),
                     airk_process::monotonic::now_ns()?,
                 )?;
-            let deadline = deadline.min(
-                Instant::now()
-                    .checked_add(Duration::from_nanos(
-                        ticket.remaining_ns(airk_process::monotonic::now_ns()?),
-                    ))
-                    .context("loop ledger deadline overflow")?,
+            let deadline = operation_deadline(
+                deadline.min(
+                    Instant::now()
+                        .checked_add(Duration::from_nanos(
+                            ticket.remaining_ns(airk_process::monotonic::now_ns()?),
+                        ))
+                        .context("loop ledger deadline overflow")?,
+                ),
+                Instant::now(),
             );
             let reserved = request.remaining_input_tokens;
             let live = self.card_authority(&request, profile.manifest)?;
@@ -544,6 +588,9 @@ impl StageOwner {
                         reason: LATE_CHANGE.into(),
                     };
                 }
+            }
+            if let Some(code) = advice.segments.first().and_then(|segment| card_refusal_code(&segment.outcome)) {
+                self.record_model_refusal(code);
             }
             advice.validate()?;
             Ok(Some(advice))

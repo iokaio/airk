@@ -211,6 +211,59 @@ fn a_complete_batch_after_authority_changed_is_not_applied() -> Result<()> {
     Ok(())
 }
 
+/// Change-log entry 53. The live Focus profiles declare `max_candidates` 4;
+/// the old admission (`score_count <= max_candidates`) refused every loop
+/// batch of 5 or more pairs before reserving, as an error. A batch is up to
+/// 32 single-candidate pair jobs, so 5 and 32 pairs are admitted.
+#[test]
+fn a_batch_wider_than_the_one_turn_candidate_cap_is_admitted() {
+    for pairs in [1, 4, 5, 32] {
+        assert_eq!(
+            batch_admission(4, 1_024, pairs, pairs * 1_024),
+            Ok(()),
+            "{pairs} pairs"
+        );
+    }
+    assert_eq!(
+        batch_admission(4, 1_024, 33, 33 * 1_024),
+        Err("focus_batch_over_ceiling")
+    );
+    assert_eq!(
+        batch_admission(4, 1_024, 0, 0),
+        Err("focus_batch_over_ceiling")
+    );
+    assert_eq!(
+        batch_admission(4, 1_024, 5, 5 * 1_024 - 1),
+        Err("focus_batch_reservation_short")
+    );
+    assert_eq!(
+        batch_admission(0, 1_024, 5, 5 * 1_024),
+        Err("focus_batch_profile_width")
+    );
+}
+
+#[test]
+fn a_batch_that_was_not_applied_names_its_stop_and_counts() -> Result<()> {
+    let (ledger, ticket) = reserved()?;
+    let mut receipt = receipt(3)?;
+    receipt.pairs = vec![pair(0, 0.1)];
+    receipt.work.candidates = 1;
+    settle(&ledger, ticket, &mut receipt, 512, true, true)?;
+    receipt.reason = BatchStop::LaneRefused.reason(1, 3, &receipt.reason);
+    assert!(
+        receipt
+            .reason
+            .starts_with("focus_batch_lane_refused: 1 of 3 pairs scored. "),
+        "{}",
+        receipt.reason
+    );
+    receipt.validate(&receipt_scope()?, &budget())?;
+    // A long settlement reason is cut to the compact bound on a character.
+    let long = BatchStop::InvalidScore.reason(0, 32, &"é".repeat(300));
+    assert!(long.len() <= 256 && long.starts_with("focus_batch_invalid_score: 0 of 32"));
+    Ok(())
+}
+
 fn receipt_scope() -> Result<ScopeBinding> {
     Ok(ScopeBinding {
         installation: Sha256Digest::from_bytes([6; 32]),

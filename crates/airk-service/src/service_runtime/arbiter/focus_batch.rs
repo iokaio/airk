@@ -24,7 +24,106 @@ const NOT_QUEUED: &str = "The native lane queued no pair of this batch; no model
 const FAILED: &str =
     "A native Focus pair failed or returned invalid logits; no partial ranking was applied.";
 
+/// Whether a loop Focus batch may be reserved, or the typed code of its
+/// refusal. A Focus profile's `max_candidates` bounds one native request:
+/// the one-turn path sends a prefix of up to that many candidates. A loop
+/// batch never sends more than one candidate to a lane job (each pair is its
+/// own job, scored alone within the profile's per-pair token limit), so it
+/// needs only that one candidate fits; the batch itself is bounded by the
+/// loop's 32-pair ceiling and by its reservation (change-log entry 53).
+#[cfg(feature = "local-inference")]
+pub(super) fn batch_admission(
+    max_candidates: usize,
+    pair_tokens: usize,
+    pairs: usize,
+    reserved_tokens: usize,
+) -> std::result::Result<(), &'static str> {
+    if max_candidates == 0 || pair_tokens == 0 {
+        return Err("focus_batch_profile_width");
+    }
+    if !(1..=airk_core::arbiter::answer_loop::MAX_FOCUS_BATCH_PAIRS).contains(&pairs) {
+        return Err("focus_batch_over_ceiling");
+    }
+    if pair_tokens
+        .checked_mul(pairs)
+        .is_none_or(|needed| needed > reserved_tokens)
+    {
+        return Err("focus_batch_reservation_short");
+    }
+    Ok(())
+}
+
+/// Why a batch's pair loop stopped before every pair was scored, so a
+/// batch that was not applied says which step stopped it.
+#[cfg(feature = "local-inference")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum BatchStop {
+    /// The lane queued no further pair (refusal, resident unavailable, or
+    /// the deadline while awaiting reuse admission).
+    LaneRefused,
+    Deadline,
+    /// Source authority or the configuration changed.
+    AuthorityChanged,
+    /// A pair's work is not known (lost completion or token mismatch).
+    Unsettled,
+    /// A pair completed with a failure.
+    PairFailed,
+    /// A pair's score was not two finite logits.
+    InvalidScore,
+    /// Every pair ran; the settlement did not apply the ranking.
+    NotApplied,
+}
+#[cfg(feature = "local-inference")]
+impl BatchStop {
+    pub(super) fn code(self) -> &'static str {
+        match self {
+            Self::LaneRefused => "focus_batch_lane_refused",
+            Self::Deadline => "focus_batch_deadline",
+            Self::AuthorityChanged => "focus_batch_authority_changed",
+            Self::Unsettled => "focus_batch_unsettled",
+            Self::PairFailed => "focus_batch_pair_failed",
+            Self::InvalidScore => "focus_batch_invalid_score",
+            Self::NotApplied => "focus_batch_not_applied",
+        }
+    }
+    /// The receipt reason: the typed cause, the scored and dispatched pair
+    /// counts, then the settlement's own reason.
+    pub(super) fn reason(self, scored: usize, dispatched: usize, settled: &str) -> String {
+        let reason = format!(
+            "{}: {scored} of {dispatched} pairs scored. {settled}",
+            self.code()
+        );
+        if reason.len() <= airk_core::arbiter::answer_loop::MAX_COMPACT_REASON_BYTES {
+            return reason;
+        }
+        let mut end = airk_core::arbiter::answer_loop::MAX_COMPACT_REASON_BYTES;
+        while !reason.is_char_boundary(end) {
+            end -= 1;
+        }
+        reason[..end].to_owned()
+    }
+}
+
 impl StageOwner {
+    /// Record a model call this owner refused or stopped, by its typed code,
+    /// in the service log (an existing `ModelFailed` record; no new kind).
+    #[cfg(feature = "local-inference")]
+    pub(super) fn record_model_refusal(&self, code: &str) {
+        let log = self
+            .lifecycle
+            .lock()
+            .ok()
+            .and_then(|state| state.source_log.clone());
+        if let Some(log) = log {
+            log.record_code(
+                airk_core::service_logs::LogKind::ModelFailed,
+                None,
+                None,
+                Some(code),
+            );
+        }
+    }
+
     pub(super) async fn focus_batch(
         &self,
         request: NativeFocusRequestV3,
@@ -102,13 +201,18 @@ impl StageOwner {
             let task_policy =
                 focus_scoring::validated_focus_task_policy(&profile, native_execution.as_ref())?;
             let pair_tokens = profile.max_tokens;
-            ensure!(
-                request.score_count <= profile.max_candidates
-                    && pair_tokens
-                        .checked_mul(request.score_count)
-                        .is_some_and(|reserved| reserved <= request.remaining_input_tokens),
-                "Focus batch exceeds the qualified profile or its reservation"
-            );
+            // A refusal before the reservation is a declined call: nothing
+            // was reserved or run, so it is never returned as an error the
+            // kernel would have to hold as unknown work (change-log entry 53).
+            if let Err(code) = batch_admission(
+                profile.max_candidates,
+                pair_tokens,
+                request.score_count,
+                request.remaining_input_tokens,
+            ) {
+                self.record_model_refusal(code);
+                return Ok(None);
+            }
             let mut original = request.read_attempt;
             original.remaining_ns = original.remaining_ns.min(
                 deadline
@@ -116,7 +220,7 @@ impl StageOwner {
                     .as_nanos()
                     .min(u64::MAX as u128) as u64,
             );
-            let ticket = self
+            let reserved = self
                 .loop_ledger
                 .lock()
                 .map_err(|_| anyhow::anyhow!("loop NN ledger unavailable"))?
@@ -131,7 +235,11 @@ impl StageOwner {
                     &request.attribution,
                     request.partition.as_ref(),
                     airk_process::monotonic::now_ns()?,
-                )?;
+                );
+            let Ok(ticket) = reserved else {
+                self.record_model_refusal("focus_batch_ledger_refused");
+                return Ok(None);
+            };
             let deadline = deadline.min(
                 Instant::now()
                     .checked_add(Duration::from_nanos(
@@ -190,13 +298,20 @@ impl StageOwner {
             let mut settled = true;
             let mut failed = false;
             let mut refused = false;
+            // Why the pair loop stopped before scoring every pair.
+            let mut stop = None;
             for (index, candidate) in request
                 .candidates
                 .iter()
                 .take(request.score_count)
                 .enumerate()
             {
-                if Instant::now() >= deadline || !live(&request.scope) {
+                if Instant::now() >= deadline {
+                    stop = Some(BatchStop::Deadline);
+                    break;
+                }
+                if !live(&request.scope) {
+                    stop = Some(BatchStop::AuthorityChanged);
                     break;
                 }
                 let question = request
@@ -212,7 +327,8 @@ impl StageOwner {
                             worker: request.worker.worker,
                             scope: request.scope.clone(),
                             task: Task::FocusRank,
-                            deadline,
+                            // One pair job is one model operation.
+                            deadline: card_scoring::operation_deadline(deadline, Instant::now()),
                             authority: live.clone(),
                             state: String::new(),
                             question: question.clone(),
@@ -240,6 +356,7 @@ impl StageOwner {
                     // it stay settled and the batch stops here.
                     _ => {
                         refused = true;
+                        stop = Some(BatchStop::LaneRefused);
                         break;
                     }
                 };
@@ -270,6 +387,7 @@ impl StageOwner {
                         .is_err()
                     {
                         settled = false;
+                        stop = Some(BatchStop::Unsettled);
                         break;
                     }
                 }
@@ -303,6 +421,7 @@ impl StageOwner {
                 };
                 let Some((actual, queued, compiled_time, inferred)) = measured else {
                     settled = false;
+                    stop = Some(BatchStop::Unsettled);
                     break;
                 };
                 if compiled.is_none() {
@@ -311,6 +430,7 @@ impl StageOwner {
                     compile_us = compile_us.saturating_add(compiled_time);
                 } else if tokens != before.saturating_add(actual) {
                     settled = false;
+                    stop = Some(BatchStop::Unsettled);
                     break;
                 }
                 inference_us = inference_us.saturating_add(inferred);
@@ -323,6 +443,11 @@ impl StageOwner {
                     },
                     _ => {
                         failed = true;
+                        stop = Some(if logits.is_some() {
+                            BatchStop::InvalidScore
+                        } else {
+                            BatchStop::PairFailed
+                        });
                         break;
                     }
                 };
@@ -353,6 +478,14 @@ impl StageOwner {
                 receipt.availability = Availability::Failed;
                 receipt.ranked = (0..count).map(|index| index as u16).collect();
                 receipt.reason = CHANGED.into();
+                stop = Some(BatchStop::AuthorityChanged);
+            }
+            if !receipt.applied {
+                // Every pair ran but authority or the deadline lapsed after
+                // the loop: the settlement names that case.
+                let stop = stop.unwrap_or(BatchStop::NotApplied);
+                receipt.reason = stop.reason(receipt.pairs.len(), count, &receipt.reason);
+                self.record_model_refusal(stop.code());
             }
             batch_response(receipt, &request)
         }

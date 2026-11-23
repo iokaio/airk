@@ -254,3 +254,30 @@ fn a_failed_score_keeps_no_decision() -> Result<()> {
     ));
     Ok(())
 }
+
+/// The private Answer route's rule for one operation (retrieval
+/// `bounded_hybrid::require_answer_deadline`), restated by hand: a job's
+/// deadline is ahead of now and at most one operation (120 s) away.
+fn route_admits(now: Instant, deadline: Instant) -> bool {
+    now < deadline && deadline.duration_since(now) <= Duration::from_secs(120)
+}
+
+/// Change-log entry 53: a card call made 250 s before a 300 s Answer's end
+/// carried the Answer's deadline and the route refused it before dispatch.
+/// Its lane deadline is now one operation away; the operation's own limit is
+/// unchanged, and a nearer Answer deadline is kept.
+#[test]
+fn a_card_call_far_from_the_answer_deadline_gets_one_operation() {
+    let now = Instant::now();
+    for seconds in [250, 600] {
+        let answer = now + Duration::from_secs(seconds);
+        assert!(!route_admits(now, answer), "the old lane deadline");
+        let lane = operation_deadline(answer, now);
+        assert_eq!(lane, now + Duration::from_secs(120));
+        assert!(route_admits(now, lane) && lane < answer, "{seconds} s");
+        // Later in the same operation it still fits; it never exceeds one.
+        assert!(route_admits(now + Duration::from_secs(119), lane));
+    }
+    let near = now + Duration::from_secs(60);
+    assert_eq!(operation_deadline(near, now), near);
+}

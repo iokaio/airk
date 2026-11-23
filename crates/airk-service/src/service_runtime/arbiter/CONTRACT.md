@@ -951,6 +951,43 @@ overhead against per-pair time on the A6000 belongs to L5/LG; it was not run
 here (no GPU work in L4). Ranking applies only when every scored pair
 completed with finite logits before the deadline and authority still holds.
 
+**Batch admission and refusals** (change-log entry 53). A Focus profile's
+`max_candidates` bounds one native request: the one-turn path sends a prefix
+of up to that many candidates in one call. A loop batch sends each pair as
+its own lane job with one candidate, scored alone within the profile's
+per-pair token limit (`max_tokens`, 1,024 on the CUDA route) and the lane's
+one-candidate shape, so a batch of up to 32 pairs stays inside what the
+profile was qualified for: per-pair tokens, per-pair compilation and one
+pair per forward. A batch is admitted when one candidate fits the profile,
+it holds 1 to 32 pairs, and pair tokens times pairs fit its reservation
+(`batch_admission`). Before, the one-turn check `score_count <=
+max_candidates` (4 on the live profiles) refused every batch of 5 or more
+pairs, and returned that refusal as an error, which the kernel had to hold
+as unknown work: every live Answer ran without Focus. A refusal before the
+reservation (admission or the loop ledger) now returns a declined call:
+nothing reserved, nothing charged, and the kernel rolls back its ordinal.
+A batch that was not applied names its stop in its receipt reason, a typed
+code and the scored and dispatched counts before the settlement's reason
+(`focus_batch_lane_refused`, `_deadline`, `_authority_changed`,
+`_unsettled`, `_pair_failed`, `_invalid_score`, `_not_applied`). Every
+refusal and stop is also recorded in the service log as a `ModelFailed`
+record with that code (no new record kind). Each pair job's lane deadline
+is one operation (see "One model operation").
+
+**One model operation** (change-log entry 53). A card call or a Focus pair
+job is one model operation, and its lane deadline is the earlier of the
+Answer's deadline and now plus the frozen resource policy's per-operation
+deadline (120 s; `operation_deadline`). The private Answer routes refuse a
+job whose deadline is further away than one operation; before, every card
+call made more than 120 s before the end of a 300 s Answer was refused
+there, after compile and before dispatch, so no card call ran (live: Compact
+and Large, every call `unavailable`). The per-operation limit is unchanged.
+A card call that takes no decision is recorded in the service log with the
+code of its settled reason (`card_call_outcome_unknown`,
+`card_call_not_admitted`, `card_call_roster_refused`, `card_call_input_refused`,
+`card_call_queue_refused`, `card_call_resident_unavailable`,
+`card_call_score_failed`, `card_call_scores_invalid`, `card_call_late_change`).
+
 **Ledger.** Card slots are valid in `1..=context_calls`, Focus ordinals in
 `1..=focus_calls`, one card call at most 8,192 tokens, one Focus call at
 most `round_input_tokens`; the attempt pool is `input_tokens` and each part
