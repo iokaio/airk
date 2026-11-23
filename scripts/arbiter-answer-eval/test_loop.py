@@ -398,6 +398,28 @@ class LoopReply(unittest.TestCase):
         # Any failed record still refuses the reply, named apart from service failures (invalid_arguments too).
         self.assertTrue(any("refused or failed otherwise" in p for p in loop_reply.check_arm(failed, arm)))
 
+    def test_an_arbiter_only_arm_refuses_any_focus_work(self):
+        # Arm A (LH): Focus is switched off, so a reply that shows a Focus call, names a Focus profile, or holds
+        # evidence without disclosing focus_absent was not produced by the arm.
+        arm = {"context": None, "focus": False}
+        body = focus_only(case("two_parts_valid"))
+        body["decision_log"]["focus_calls"] = 0
+        body.setdefault("model_work", {}).update(focus_calls=0, focus_profile=None)
+        body["degradations"] = [d for d in body["degradations"] if d.get("kind") != "focus_absent"]
+        self.assertTrue(loop_reply.records(body))
+        self.assertIn("Focus is off in this arm and the reply does not disclose focus_absent",
+                      loop_reply.check_arm(body, arm))
+        body["degradations"].append({"kind": "focus_absent"})
+        self.assertEqual(loop_reply.check_arm(body, arm), [])
+        ran = copy.deepcopy(body)
+        ran["decision_log"]["focus_calls"] = 2
+        self.assertTrue(any("2 Focus calls ran" in p for p in loop_reply.check_arm(ran, arm)))
+        named = copy.deepcopy(body)
+        named["model_work"]["focus_profile"] = "ab" * 32
+        self.assertTrue(any("names Focus profile" in p for p in loop_reply.check_arm(named, arm)))
+        with self.assertRaises(ValueError):
+            loop_reply.arm_requirement({"context": None, "focus": "off"})
+
     def test_later_reads_are_classed_against_the_answer_rows(self):
         answer = {"schema": loop_reply.RESPONSE_SCHEMA, "records": [{"canonical_result": {
             "projection": evidence.LOOP_PROJECTION_PREFIX + "1", "spans": [
@@ -1084,6 +1106,7 @@ class Specs(TempDir):
         self.assertEqual(sorted(arms), sorted([*make_loop_spec.JUDGED_ARMS, *make_loop_spec.PRECISION_ARMS]))
         self.assertEqual(len(spec["scenario_ids"]), 20)
         self.assertEqual(arms["F"]["arm_check"], {"context": None, "focus": True})
+        self.assertNotIn("A", arms)  # the LG series stays as it ran: arm A is an L7 arm
         self.assertTrue(all(e["arm_check"]["focus"] for e in arms.values()))  # every gate arm stages Focus
         self.assertEqual(arms["L"]["arm_check"]["context"], "context_large")
         self.assertEqual(arms["L32"]["arm_check"]["precision"], "float32")
@@ -1209,14 +1232,21 @@ class Specs(TempDir):
         self.assertEqual(sorted(inputs["outcomes"]), ["C-L", "F-C"])
 
     def test_l7_spec_has_no_cpu_cells_and_the_template_is_current(self):
-        spec = make_loop_spec.l7_spec("l7", self.tmp, make_loop_spec.PROFILES, list(common.REPOS), ["compact"], {})
+        # L7 after LG: Search, Parse, Focus only, Arbiter with Focus, Arbiter only; no Large and no CPU cell.
+        spec = make_loop_spec.l7_spec("l7", self.tmp, make_loop_spec.PROFILES, list(common.REPOS), {})
         names = [run_pass.Pass.result_name(e) for e in spec["results"]]
-        self.assertEqual(names, ["search", "parse", "focus-gpu", "compact-gpu"])
-        groups = make_loop_spec.l7_plan(self.tmp / "spec.json", spec, self.tmp)[0]["sessions"]["groups"]
-        self.assertEqual(groups, [["@any", "@any", "search,parse"]])
+        self.assertEqual(names, ["search", "parse", "focus-gpu", "compact-gpu", "arbiter-gpu"])
+        plan = make_loop_spec.l7_plan(self.tmp / "spec.json", spec, self.tmp)
+        self.assertEqual(plan[0]["sessions"]["groups"], [["@any", "@any", "search,parse"]])
+        self.assertEqual(plan[1]["sessions"]["groups"],
+                         [["focus-1024-cuda", None, "focus-gpu"],
+                          ["focus-1024-cuda", "context-compact-fp16-cuda", "compact-gpu"],
+                          [None, "context-compact-fp16-cuda", "arbiter-gpu"]])
         self.assertFalse(any(e.get("device") == "cpu" for e in spec["results"]))
-        with self.assertRaises(common.HarnessError):
-            make_loop_spec.l7_spec("l7", self.tmp, make_loop_spec.PROFILES, ["airk"], ["huge"], {})
+        self.assertFalse(any(e.get("arm") in ("L", "L32") for e in spec["results"]))
+        arbiter = spec["results"][-1]
+        self.assertEqual(arbiter["arm_stages"], {"focus": None, "context": "context-compact-fp16-cuda"})
+        self.assertIs(arbiter["arm_check"]["focus"], False)
         committed = common.read_json(HERE / "l7_plan_template.json")
         self.assertEqual(committed, make_loop_spec.template(), "regenerate l7_plan_template.json (make_loop_spec.py template)")
 
@@ -1246,6 +1276,19 @@ class PlanHook(TempDir):
         receipt = common.read_json(self.tmp / "s2.json")
         self.assertEqual((receipt["from"]["context"], receipt["to"]["context"], receipt["ok"]), ("c16", "l16", True))
         self.assertEqual(receipt["lifetime"], "L40-gate")
+
+    def test_an_arbiter_only_switch_releases_focus_and_needs_known_stages(self):
+        # Arm A after arm C releases Focus and keeps the Context model; as the plan's first switch it is refused,
+        # because a Focus seeded at the lifetime's start would stay on unseen.
+        plan = self.plan()
+        with self.assertRaises(common.HarnessError):
+            plan.switch_context({"focus": None, "context": "c16"})
+        self.assertEqual(plan.calls, [])
+        with contextlib.redirect_stdout(io.StringIO()):
+            plan.switch_context({"focus": "f-w8", "context": "c16"})
+            plan.switch_context({"focus": None, "context": "c16"})
+        self.assertEqual(plan.calls, [("f-w8", True, "focus"), ("c16", True, "context"), ("f-w8", False, "focus")])
+        self.assertEqual(plan.live_cuda, {"focus": None, "context": "c16"})
 
     def test_resume_seeds_live_stages_and_gate_steps_build_commands(self):
         args = argparse.Namespace(r_root=self.tmp, log=self.tmp / "p.jsonl", plan=None, from_step=3, hold=False,

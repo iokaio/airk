@@ -44,7 +44,7 @@ COLUMNS = ["series", "repo", "slot", "kind", "configuration", "device", "session
            "judge1_grade", "judge2_grade", "adjudicated_grade", "correct_finish", "turns_to_finish",
            "first_call_yield", "essential_covered", "essential_total", "bytes", "elapsed_ms",
            "rubric_b_j1", "rubric_b_j2", "cost_usd"]
-ANSWER_CONFIGS = ("noModel", "focus", "compact", "large", "answer")
+ANSWER_CONFIGS = ("noModel", "focus", "compact", "large", "answer", "arbiter")
 BASELINES = ("parse", "search")
 
 

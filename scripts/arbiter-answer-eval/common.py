@@ -42,10 +42,12 @@ PATH_TOOLS: dict[str, list[str]] = {
     "focus": ANSWER_SET,
     "compact": ANSWER_SET,
     "large": ANSWER_SET,
+    # Arbiter only (LH): the Context model with Focus switched off.
+    "arbiter": ANSWER_SET,
     "search": ["airk_search", *READS],
     "parse": ["airk_parse"],
 }
-ANSWER_PATHS = ("answer", "noModel", "focus", "compact", "large")
+ANSWER_PATHS = ("answer", "noModel", "focus", "compact", "large", "arbiter")
 PRIMARY_ARG = {"airk_answer": "question", "airk_search": "query", "airk_parse": "text"}
 
 # Answer /3, the local loop (plan section 12; CONTRACT.md "Answer loop wire contract version 3"). The

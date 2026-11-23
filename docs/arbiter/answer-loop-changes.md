@@ -2600,3 +2600,32 @@ Numbered 30 until 22 November 2026; renumbered because L4's entries take
 - **Where.** `crates/airk-service/src/service_runtime/evaluation_fixture_tests/execution_observer.rs`;
   the service Arbiter `CONTRACT.md` (dispatch observer paragraph);
   `scripts/arbiter-answer-eval/{fixture.py, gpu_fixture.py, make_loop_spec.py, FIXTURE.md}`.
+
+### 58. The harness gets an Arbiter-only arm; Large leaves the L7 plan
+
+- **Step LH, commit 1 (23 November 2026).** Arm A runs the remaining
+  Context model (Arbiter, the former Compact) with Focus switched off. It is
+  an L7 arm, not an LG arm: `make_loop_spec.py gate` builds F, C and L as the
+  series ran, so LG stays reproducible. `make_loop_spec.py l7` (no `--keep`
+  any more) writes Search, Parse, F, C and A; the L7 template is regenerated
+  without Large.
+- **Arm check.** An arm's `focus` requirement is now three-valued: true
+  (Focus staged, must take part), false (arm A: no Focus call, no Focus
+  profile in `model_work`, and `focus_absent` disclosed whenever the reply
+  holds evidence), absent (not checked).
+- **Lifetimes and switches.** `lg_lifetimes.py` accepts a Context-only pair
+  for arm A and starts it with `--seed-cpu none`, so no Focus is staged; a
+  lifetimes file names C, L and F (LG) or arms of C, F and A (no Large).
+  `run_plan.py switch_context` refuses a switch to no Focus while the live
+  stages are unknown (the plan's first switch), because a Focus seeded at
+  start could not be released; after a known switch it releases Focus.
+  The dispatch census allowance per session is now `common.TURN_CAP` (12,
+  the value entry 57 used).
+- **Evidence.** Harness tests `test_an_arbiter_only_arm_refuses_any_focus_work`,
+  `test_l7_spec_has_no_cpu_cells_and_the_template_is_current`,
+  `test_an_arbiter_only_switch_releases_focus_and_needs_known_stages`,
+  `test_an_arbiter_only_arm_needs_no_focus_entry_and_seeds_none`; suite 237
+  tests OK.
+- **Where.** `scripts/arbiter-answer-eval/{loop_reply.py, make_loop_spec.py,
+  lg_lifetimes.py, run_plan.py, common.py, grade.py, l7_plan_template.json,
+  README.md}` and their tests.

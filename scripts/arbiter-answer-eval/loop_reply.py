@@ -377,8 +377,13 @@ def arm_requirement(arm: dict) -> dict:
     precision = arm.get("precision")
     if precision is not None and precision not in PRECISIONS:
         raise ValueError(f"unknown precision {precision!r}")
+    # ``focus``: True when the arm stages Focus (it must take part), False when the arm runs without Focus (arm A,
+    # Arbiter only: Focus must be absent), absent when the arm does not say (older specs; not checked).
+    focus = arm.get("focus")
+    if focus not in (True, False, None):
+        raise ValueError(f"the arm's focus requirement is true, false or absent, not {focus!r}")
     return {"context": context, "device": arm.get("device", "cuda"), "precision": precision,
-            "mode": arm.get("mode", "top_score"), "focus": bool(arm.get("focus", False))}
+            "mode": arm.get("mode", "top_score"), "focus": focus}
 
 
 # A read the service failed to run (not a scope refusal or an empty result): its evidence is missing for a
@@ -390,11 +395,22 @@ def stage_problems(body: Any, want: dict) -> list[str]:
     """Problems common to every arm: Focus staged and taking no part, and reads the service failed to run."""
     problems = []
     log = body.get("decision_log") if isinstance(body.get("decision_log"), dict) else {}
-    if want["focus"]:
+    if want["focus"] is True:
         calls = _int(log.get("focus_calls")) or 0
         if "focus_absent" in degradation_kinds(body) or calls == 0:
             problems.append(f"Focus is staged and took no part ({calls} Focus calls"
                             + (", focus_absent" if "focus_absent" in degradation_kinds(body) else "") + ")")
+    elif want["focus"] is False:
+        # Arbiter only (arm A): Focus is switched off, so no Focus call, no Focus profile in the model work, and
+        # the reply discloses focus_absent whenever it holds evidence Focus would have ranked.
+        calls = _int(log.get("focus_calls")) or 0
+        work = body.get("model_work") if isinstance(body.get("model_work"), dict) else {}
+        if calls or _int(work.get("focus_calls")):
+            problems.append(f"Focus is off in this arm and {calls or work.get('focus_calls')} Focus calls ran")
+        if work.get("focus_profile") is not None:
+            problems.append(f"Focus is off in this arm and the reply names Focus profile {work.get('focus_profile')}")
+        if records(body) and "focus_absent" not in degradation_kinds(body):
+            problems.append("Focus is off in this arm and the reply does not disclose focus_absent")
     # Any failed record refuses the reply (coordinator, 23 November 2026): a service failure (``read_failed``) and
     # a read the service refused as invalid (``invalid_arguments``, such as a range across document locations,
     # which the loop should never send) both leave the arm's evidence short. They are named apart.

@@ -35,7 +35,12 @@ import json
 from pathlib import Path
 
 # Device and host GiB declared per judged arm (measured peaks rounded up with headroom).
-MEMORY = {"C": (10, 16), "L": (18, 24), "F": (3, 8)}
+MEMORY = {"C": (10, 16), "L": (18, 24), "F": (3, 8), "A": (8, 16)}
+# Arms that run with Focus switched off (A, Arbiter only, LH): the pair needs no Focus entry and the lifetime
+# starts with no CPU stage seeded, so Focus is never staged in it.
+NO_FOCUS = ("A",)
+# The arms the LG series ran; a lifetimes file names a pair for each of the arms it lays out.
+LG_ARMS = ("C", "L", "F")
 # The index names of every LG lifetime, in fixture.py's order (the repository with denies first). The
 # bookbuilder scenarios are served by the bookbuilder-v2 index through index-aliases.json, copied into each
 # root. Scenario repositories (what the settled guard checks) are common.REPOS: munarium and bookbuilder.
@@ -62,11 +67,11 @@ def arm_row(arm, series, r_root, image, pair, pair_sha, base=None, seconds=21000
     require(Path(pair).is_file() and sha256(pair) == pair_sha, f"pair of arm {arm} changed: {pair}")
     profiles = json.loads(Path(pair).read_bytes())["profiles"]
     stages = {row["stage"] for row in profiles.values() if "model" in row}
-    require("focus" in stages, f"arm {arm} needs a pair with a CUDA Focus entry")
+    require(arm in NO_FOCUS or "focus" in stages, f"arm {arm} needs a pair with a CUDA Focus entry")
     require(arm == "F" or "context" in stages, f"arm {arm} needs a CUDA Context entry")
     start = ["--image", str(image), "--model", "pair", "--pair", str(pair), "--pair-sha256", pair_sha,
              "--repositories", REPOSITORIES, "--seconds", str(seconds)]
-    start += ["--restart-from", base] if base else ["--seed-cpu", "focus"]
+    start += ["--restart-from", base] if base else ["--seed-cpu", "none" if arm in NO_FOCUS else "focus"]
     device, host = MEMORY[arm]
     require(root_arm is None or bool(base), f"arm {arm} in the root of {root_arm} needs that root's base")
     fixtures = Path(r_root) / f"fixture-{series}-{root_arm or arm}"
@@ -129,7 +134,8 @@ def build(series, r_root, image, pairs, bases, roots=None):
     """Rows for the judged arms C, L and F (a pair each) and for every precision arm that names a base.
     ``roots`` maps a judged arm to the arm whose root it runs in (a spare root, ``--root L=C32``)."""
     roots = dict(roots or {})
-    require(set(pairs) == set(MEMORY), "pairs for C, L and F are required")
+    require(set(pairs) == set(LG_ARMS) or (bool(pairs) and set(pairs) <= set(MEMORY) - {"L"}),
+            "pairs for C, L and F (the LG series), or for arms of C, F and A (after LG: no Large)")
     unknown = sorted(set(bases) - set(MEMORY) - set(PRECISION))
     require(not unknown, f"unknown arms in --base: {unknown}")
     require(set(roots) <= set(MEMORY) and set(roots.values()) <= set(MEMORY) | set(PRECISION),

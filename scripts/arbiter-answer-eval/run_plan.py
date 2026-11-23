@@ -213,6 +213,11 @@ class Plan:
         warm, so the two Context models are never resident together. A step whose stages are already live
         records a receipt with ``unchanged`` and runs nothing."""
         wanted = {"focus": body.get("focus"), "context": body.get("context")}
+        # Arbiter only (arm A) switches Focus off. Before the plan's first switch it does not know which Focus
+        # profile is live (a lifetime may start with Focus seeded), so it could not release it: refuse rather
+        # than run arm A with Focus still on.
+        common.require(wanted["focus"] is not None or self.live_cuda is not None,
+                       "a switch to no Focus needs the live stages known: switch to an arm with Focus first")
         lifetime = self.lifetime_name()
         repos = body.get("repositories")  # index names; None stages every index of the lifetime
         receipt = {"schema": "airk.private.answer-eval-switch/1", "at": common.now_iso(), "lifetime": lifetime,

@@ -55,6 +55,23 @@ class LifetimesTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 lg.build("s", root, root, dict(pairs, C=(str(root / "nofocus.json"), sha)), {})
 
+    def test_an_arbiter_only_arm_needs_no_focus_entry_and_seeds_none(self):
+        # LH: arm A runs the remaining Context model with Focus off. Its pair holds the Context entry alone and a
+        # fresh lifetime seeds no CPU stage, so Focus is never staged in it. Large is not among the arms.
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            pairs = self.pairs(root)
+            sha = write(root / "A.json", {"profiles": {"c": {"stage": "context", "model": "compact"}}})
+            out = lg.build("07-l7", root, root / "image", {"C": pairs["C"], "F": pairs["F"],
+                                                           "A": (str(root / "A.json"), sha)}, {})
+            self.assertEqual(sorted(out), ["A", "C", "F"])
+            args = out["A"]["start_args"]
+            self.assertEqual(args[args.index("--seed-cpu") + 1], "none")
+            self.assertEqual(out["A"]["device_gib"], 8)
+            self.assertEqual(out["C"]["start_args"][out["C"]["start_args"].index("--seed-cpu") + 1], "focus")
+            with self.assertRaises(ValueError):  # Large is not an arm after LG
+                lg.build("07-l7", root, root / "image", {"C": pairs["C"], "L": pairs["L"]}, {})
+
     def test_the_lifetimes_index_the_loop_pair_and_no_airk(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

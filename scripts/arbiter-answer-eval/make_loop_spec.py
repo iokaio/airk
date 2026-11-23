@@ -16,6 +16,7 @@ index):
 | L | ``large`` | large | the gate's Focus route | Large FP16 CUDA | 12.7.1 (judged) |
 | C32 | ``compactFp32`` | compact | the gate's Focus route | Compact FP32 CUDA | 12.7.3, replays only |
 | L32 | ``largeFp32`` | large | the gate's Focus route | Large FP32 CUDA | 12.7.3, replays only |
+| A | ``arbiter`` | arbiter | none (Focus off) | Compact FP16 CUDA (Arbiter) | LH and L7: Arbiter only |
 | CF16 | ``compactFocusFp16`` | compact | Focus FP16 CUDA | Compact FP16 CUDA | 12.7.3, replays only |
 | CF32 | ``compactFocusFp32`` | compact | Focus FP32 CUDA | Compact FP16 CUDA | 12.7.3, replays only |
 
@@ -23,6 +24,11 @@ The gate's Focus route is W8 at 1,024 tokens (changes entry 10); the Focus
 precision arms compare FP32 with FP16 and FP16 with the W8 route of arm C.
 A precision arm runs judged sessions only when ``gate.py precision`` escalates
 it; its entry is then run with ``run_pass.py --only <name>``.
+
+Arm A (Arbiter only, added in LH after Large was dropped) is not a gate arm: the
+LG series (``gate``) still builds exactly F, C and L, so it stays reproducible.
+L7 runs Search, Parse, F (Focus only), C (Arbiter with Focus) and A (Arbiter
+only); Large is out of the L7 plan and its template.
 
 Arm identity: an entry's ``arm_check`` is checked on every replay and on the
 digest call before any agent session (``run_pass``), from the reply's own
@@ -41,7 +47,7 @@ restored (the user widened LG to 24 hours; L2b wires the job table into the
 live Answer path): 2 and 4 concurrent Answers per arm, one arm at a time.
 
 ``python -I -B make_loop_spec.py gate --series 06-gate-lg --lifetimes <L5C lifetimes.json>``
-``python -I -B make_loop_spec.py l7 --series 07-loop-baseline --keep compact``
+``python -I -B make_loop_spec.py l7 --series 07-loop-baseline``
 ``python -I -B make_loop_spec.py template --out scripts/arbiter-answer-eval/l7_plan_template.json``
 """
 
@@ -75,6 +81,8 @@ PROFILES = {
     "large_fp32": "context-large-cuda",
 }
 JUDGED_ARMS = ("F", "C", "L")
+# The L7 loop arms (plan section 2, "after LG"): Focus only, Arbiter with Focus, Arbiter only.
+L7_ARMS = ("F", "C", "A")
 PRECISION_ARMS = ("C32", "L32", "CF16", "CF32")
 # (stage, FP32-side arm, FP16-side arm): 12.7.3's comparisons, one stage at a time.
 PRECISION_PAIRS = (("compact", "C32", "C"), ("large", "L32", "L"), ("focus", "CF32", "CF16"), ("focus", "CF16", "C"))
@@ -84,8 +92,9 @@ GATE_PAIRS = (("C", "L"), ("F", "C"))
 def _arm(arm: str, configuration: str, path: str, focus: str, context: str | None, check: dict, *,
          replay_only: bool = False, precision_stage: str | None = None) -> dict:
     # Every arm that stages Focus requires it to take part (loop_reply.stage_problems): on 23 November 2026 a
-    # Focus-only arm whose search reads all failed ran no Focus call and passed the old check.
-    check = dict(check, focus=True) if focus else dict(check)
+    # Focus-only arm whose search reads all failed ran no Focus call and passed the old check. An arm that does
+    # not stage Focus (A) requires it to be absent: no Focus call, no Focus profile, focus_absent disclosed.
+    check = dict(check, focus=bool(focus))
     entry = {"arm": arm, "configuration": configuration, "path": path, "device": "gpu",
              "arm_stages": {"focus": focus, "context": context}, "arm_check": check, "reuse": False,
              "call_timeout": 900, "session_timeout": 3600}
@@ -112,6 +121,8 @@ def gate_arms(profiles: dict) -> list[dict]:
              replay_only=True, precision_stage="focus"),
         _arm("CF32", "compactFocusFp32", "compact", p["focus_fp32"], p["compact"], compact16,
              replay_only=True, precision_stage="focus"),
+        # Arbiter only (LH): the remaining Context model with Focus switched off.
+        _arm("A", "arbiter", "arbiter", None, p["compact"], compact16),
     ]
 
 
@@ -175,7 +186,7 @@ JUDGE_SESSIONS = 12
 # dispatch per model call). Agent sessions choose their own number of Answer calls; SESSION_ANSWERS is the
 # allowance per session (first and second), above the LG sessions' use. Past the bound the recorder fails with a
 # message naming it, so a lifetime that needs more is seen, not silently cut.
-SESSION_ANSWERS = 12
+SESSION_ANSWERS = common.TURN_CAP
 REPLAY_ANSWERS = 2
 CENSUS_FLOOR = 1024
 CENSUS_MAX = 65536
@@ -266,8 +277,8 @@ def gate_spec(series: str, r_root: Path, profiles: dict, repos: list[str], budge
                     "dispatch_census": census}
     spec["results"] = []
     for entry in gate_arms(profiles):
-        if not precision and entry["arm"] not in JUDGED_ARMS:
-            continue
+        if entry["arm"] not in JUDGED_ARMS + (PRECISION_ARMS if precision else ()):
+            continue  # arm A is not an LG arm: the series stays as it ran
         entry["handle"] = handle_path(lifetimes[entry["arm"]])
         if lifetimes[entry["arm"]].get("launcher") == "gpu_fixture.py":
             entry["stage_guard"] = stage_guard(lifetimes[entry["arm"]]["fixtures"], lifetimes[entry["arm"]]["lifetime"],
@@ -379,19 +390,14 @@ def gate_report_inputs(spec: dict, r_root: Path) -> dict:
 # ---------------------------------------------------------------- L7
 
 
-def l7_spec(series: str, r_root: Path, profiles: dict, repos: list[str], keep: list[str], budget: dict,
-            note: str = "") -> dict:
-    """The new baseline of L7 (plan 12.6, 12.8): Parse, Search, the Focus-only loop and the loop on every CUDA
-    route the gate decisions keep. CUDA only: no CPU cells."""
-    for name in keep:
-        common.require(name in ("compact", "large"), f"unknown kept route {name!r}")
+def l7_spec(series: str, r_root: Path, profiles: dict, repos: list[str], budget: dict, note: str = "") -> dict:
+    """The new baseline of L7 (plan section 2 "after LG", 12.8): Search, Parse, and the loop as Focus only (F),
+    Arbiter with Focus (C) and Arbiter only (A). CUDA only: no CPU cells. Large was dropped after LG."""
     spec = base_spec(series, r_root, repos, note or "L7 baseline: the loop on CUDA, Parse and Search", budget)
     arms = {e["arm"]: e for e in gate_arms(profiles)}
     results = [{"configuration": "search", "path": "search", "device": "none"},
-               {"configuration": "parse", "path": "parse", "device": "none"},
-               {**arms["F"], "reuse": True}]
-    for name in keep:
-        results.append({**arms[{"compact": "C", "large": "L"}[name]], "reuse": True})
+               {"configuration": "parse", "path": "parse", "device": "none"}]
+    results += [{**arms[arm], "reuse": True} for arm in L7_ARMS]
     spec["results"] = results
     return spec
 
@@ -440,13 +446,14 @@ PLACEHOLDER_R = Path("<R>")
 
 
 def template() -> dict:
-    """The L7 plan template: the spec and plan for ``--keep compact,large`` with placeholders for R and the
-    series; ``make_loop_spec.py l7`` writes the concrete files."""
-    spec = l7_spec("<series>", PLACEHOLDER_R, PROFILES, list(common.REPOS), ["compact", "large"], {})
+    """The L7 plan template: the spec and plan with placeholders for R and the series; ``make_loop_spec.py l7``
+    writes the concrete files."""
+    spec = l7_spec("<series>", PLACEHOLDER_R, PROFILES, list(common.REPOS), {})
     spec_path = PLACEHOLDER_R / "passes" / "<series>" / "spec.json"
     return {"schema": "airk.private.answer-eval-l7-plan-template/1",
-            "note": ("Generated by make_loop_spec.py template. Keep only the routes the gate decisions keep "
-                     "(--keep); prompts-freeze.json must be re-frozen for the loop before the first judged pass."),
+            "note": ("Generated by make_loop_spec.py template. Large was dropped after LG; the loop arms are Focus "
+                     "only, Arbiter with Focus and Arbiter only. prompts-freeze.json must be re-frozen for the loop "
+                     "before the first judged pass."),
             "spec": json.loads(json.dumps(spec).replace("\\\\", "/")),
             "plan": json.loads(json.dumps(l7_plan(spec_path, spec, PLACEHOLDER_R)).replace("\\\\", "/"))}
 
@@ -474,8 +481,6 @@ def main(argv: list[str] | None = None) -> int:
         if name == "gate":
             sub.add_argument("--lifetimes", type=Path,
                              help="JSON {arm: {fixtures, lifetime, launcher, start_args, device_gib, host_gib}} overrides")
-        if name == "l7":
-            sub.add_argument("--keep", required=True, help="CUDA routes the gate decisions keep: compact,large")
     sub = commands.add_parser("template")
     sub.add_argument("--out", type=Path, required=True)
     sub = commands.add_parser("shakedown")
@@ -516,7 +521,7 @@ def main(argv: list[str] | None = None) -> int:
         directory = _write(args.r_root, args.series, spec, gate_plan(spec_path, spec, args.r_root),
                            gate_report_inputs(spec, args.r_root))
     else:
-        spec = l7_spec(args.series, args.r_root, profiles, repos, args.keep.split(","), budget, args.note)
+        spec = l7_spec(args.series, args.r_root, profiles, repos, budget, args.note)
         directory = _write(args.r_root, args.series, spec, l7_plan(spec_path, spec, args.r_root))
     print(directory)
     return 0
