@@ -2569,3 +2569,43 @@ Numbered 30 until 22 November 2026; renumbered because L4's entries take
 - **Not changed by these decisions:** the stage name `context`, the task
   names `airk.context_*`, the degradation `context_absent`, the name
   "Arbiter" for the whole subsystem in crate, module and schema names.
+
+### 65. A reader open waits out WAL-index recovery instead of refusing the read
+
+Numbered 65 because the unmerged `loop/lh` already holds entries 57 to 64.
+
+- **Found by:** the independent review of `loop/l2b-wire` (ledger, 23
+  November 2026). `admin_sign_in_reads_and_cross_plane_refusals` failed 7
+  of 20 stress iterations on `705ab312` and 7 of 20 on the branch; the
+  branch's job test failed up to 4 of 20. Every captured refusal was
+  `CurrentReadContention` with SQLite extended code 261
+  (`SQLITE_BUSY_RECOVERY`).
+- **Cause:** a read-only current-database open has `busy_timeout(0)`, so a
+  reader that meets another connection rebuilding the WAL index this instant
+  is refused at once. Query threads have no open admission. The Answer
+  loop's canonical reads repeat such a refusal (`BUSY_REPEATS`), but
+  `Kernel::arbiter_publication` (called by `focus_pair_tokens` in
+  `Loop::rounds`) does not, so the whole Answer failed with
+  `publication_busy`. Status reads in a readiness poll failed the same way.
+  Two Answers at once on one service were enough.
+- **Fix (owner: store):** the open is repeated every 5 ms for at most
+  500 ms while the error is exactly `SQLITE_BUSY_RECOVERY`. Recovery holds
+  no publication, and no snapshot exists before the open returns, so nothing
+  of the caller's work is repeated. Every other contention still refuses at
+  once, and a longer recovery still becomes `publication_busy`.
+- **Tests:** store `database::recovery_tests` (injected clock and sleep):
+  recovery waited out then opened; BUSY, LOCKED, BUSY_SNAPSHOT, CORRUPT and
+  IOERR returned at once without waiting; recovery past 500 ms returned
+  after 100 waits. Stress reproduction, the same 17-test group
+  (`combined_reads` Answer tests and `admin_plane`), `--stress-count 20`:
+  `publication_busy` failures went from 3 of 20 on `705ab312` (and 6 of 20
+  on `loop/l2b-wire`) to 0 of 20 with this change.
+- **Not fixed here, a second failure class of the same test:** right after
+  its Index job, the test's `airk_diagnostics` readiness read is refused
+  with `scoped_read_unavailable` (not retryable): 4 of 20 on `705ab312`, 1
+  of 20 on the branch, 5 of 20 with this change. The reviewer counted both
+  classes together. Its cause is not yet diagnosed.
+- **Identities:** none moved; no identity-feeding file changed. No wire,
+  digest input or persisted format changed.
+- **Where:** store `current/CONTRACT.md` ("Reader open and WAL-index
+  recovery").

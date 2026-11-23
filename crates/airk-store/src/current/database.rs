@@ -9,6 +9,8 @@ use rusqlite::{
 use std::io::{Read, Write};
 use std::{fs, path::Path, time::Duration};
 
+#[cfg(test)]
+mod recovery_tests;
 #[cfg(all(test, windows))]
 mod tests;
 
@@ -375,7 +377,52 @@ pub(crate) fn open_reader(path: &Path) -> Result<Connection> {
     open_reader_budget(path, false)
 }
 
+/// How long a reader open waits for another connection's WAL-index recovery.
+/// Recovery rebuilds the shared index from a bounded WAL and holds no
+/// publication; it is not a writer the reader would queue behind.
+const WAL_RECOVERY_WAIT: Duration = Duration::from_millis(500);
+const WAL_RECOVERY_STEP: Duration = Duration::from_millis(5);
+
+/// Opens a read-only connection and its snapshot. Readers otherwise reject
+/// contention at once (`busy_timeout(0)`), but `SQLITE_BUSY_RECOVERY` means
+/// only that another connection is rebuilding the WAL index this instant:
+/// the open is repeated for at most `WAL_RECOVERY_WAIT`. Nothing of the
+/// caller's work is repeated, since no snapshot existed yet. Every other
+/// BUSY or LOCKED still returns at once and becomes `CurrentReadContention`.
 pub(crate) fn open_reader_budget(path: &Path, legacy_budget: bool) -> Result<Connection> {
+    let started = std::time::Instant::now();
+    wait_out_wal_recovery(
+        || open_reader_once(path, legacy_budget),
+        || started.elapsed(),
+        std::thread::sleep,
+    )
+}
+
+/// The decision of `open_reader_budget`, with its clock and sleep injected.
+fn wait_out_wal_recovery<T>(
+    mut open: impl FnMut() -> Result<T>,
+    elapsed: impl Fn() -> Duration,
+    sleep: impl Fn(Duration),
+) -> Result<T> {
+    loop {
+        match open() {
+            Err(error) if wal_recovery_in_progress(&error) && elapsed() < WAL_RECOVERY_WAIT => {
+                sleep(WAL_RECOVERY_STEP.min(WAL_RECOVERY_WAIT.saturating_sub(elapsed())));
+            }
+            result => return result,
+        }
+    }
+}
+
+fn wal_recovery_in_progress(error: &anyhow::Error) -> bool {
+    matches!(
+        error.downcast_ref::<rusqlite::Error>(),
+        Some(rusqlite::Error::SqliteFailure(code, _))
+            if code.extended_code == rusqlite::ffi::SQLITE_BUSY_RECOVERY
+    )
+}
+
+fn open_reader_once(path: &Path, legacy_budget: bool) -> Result<Connection> {
     plain_database(path)?;
     let journal = path.with_file_name("current.sqlite3-journal");
     ensure!(
