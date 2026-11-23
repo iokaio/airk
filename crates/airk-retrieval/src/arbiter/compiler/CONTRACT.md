@@ -357,6 +357,15 @@ of the call's scores:
 - top-score mode (test-support only, `DecisionMode::TopScore`): the top card,
   ties to the lowest symbol, never abstaining, with no rule.
 
+**A loop profile is a valid profile (change log entry 46).** Core accepts a
+Context profile that declares the card tasks (`Stage::declares`), so a
+profile from `admit_loop_tasks` passes `Profile::validate`,
+`ExecutionProfile::for_qualification` and
+`EvaluationCatalog::from_native_lease`, and reaches the scorer's own
+checks. Release publication (`publication.rs`) still takes only the
+one-turn task for a Context profile: publishing loop profiles in a release
+catalog is the product rollout after L7 (change log entry 31).
+
 **Admission.** `runtime/loop_tasks.rs` admits a Context profile that declares
 exactly the four card tasks under these policies, or exactly the one-turn
 task, never both. `admit_loop_tasks` declares the tasks on a Context profile

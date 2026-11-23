@@ -219,6 +219,114 @@ fn wrong_stage_task_duplicate_and_empty_enrollment_refuse() -> Result<()> {
     }
     Ok(())
 }
+const CARD_TASKS: [Task; 4] = [
+    Task::ContextSplit,
+    Task::ContextPlan,
+    Task::ContextCoverage,
+    Task::ContextFollowUp,
+];
+
+/// A Context profile that declares the Answer loop's four card tasks, each
+/// with a policy, as the retrieval admission owner emits it.
+fn loop_profile() -> Result<Profile> {
+    let mut profile = current_profile(Stage::Context)?;
+    profile.tasks = BTreeSet::from(CARD_TASKS);
+    profile.task_policies = CARD_TASKS
+        .iter()
+        .zip(60u8..)
+        .map(|(task, byte)| (*task, digest(byte)))
+        .collect();
+    Ok(profile)
+}
+
+/// The loop card tasks run under the Context enrollment (change-log entry
+/// 31). A Context profile may declare them and a Context status row may list
+/// them; an enrollment may not name them, and no other stage or task is let
+/// in with them.
+#[test]
+fn a_context_profile_may_declare_the_loop_card_tasks_and_nothing_else_may() -> Result<()> {
+    // The one-turn Context profile is valid as before.
+    current_profile(Stage::Context)?.validate()?;
+    // A loop profile passes the stage check and the whole profile check.
+    let looped = loop_profile()?;
+    looped.validate_stage(Stage::Context)?;
+    looped.validate()?;
+    for task in CARD_TASKS {
+        assert!(Stage::Context.declares(task), "{task:?}");
+        assert!(
+            !Stage::Context.permits(task),
+            "{task:?}: not an enrollment task"
+        );
+        assert!(!Stage::Focus.declares(task), "{task:?}");
+    }
+    assert!(Stage::Context.declares(Task::ContextAction));
+    assert!(Stage::Focus.declares(Task::FocusRank));
+    assert!(!Stage::Context.declares(Task::FocusRank));
+    assert!(!Stage::Context.declares(Task::ContextNextRead));
+    assert!(!Stage::Focus.declares(Task::ContextAction));
+    let unsupported = |profile: &Profile| {
+        let error = profile.validate().unwrap_err().to_string();
+        error.contains("Arbiter profile has unsupported stage task")
+    };
+    // A Focus profile that declares a card task is still refused.
+    let mut focus = current_profile(Stage::Focus)?;
+    focus.validate()?;
+    focus.tasks.insert(Task::ContextCoverage);
+    focus
+        .task_policies
+        .insert(Task::ContextCoverage, digest(70));
+    assert!(unsupported(&focus), "Focus never scores cards");
+    // A Context profile that declares a task of no current stage, or the
+    // Focus task, is still refused, alone or beside the card tasks.
+    for foreign in [Task::ContextNextRead, Task::FocusRank] {
+        let mut alone = current_profile(Stage::Context)?;
+        alone.tasks = BTreeSet::from([foreign]);
+        alone.task_policies = BTreeMap::from([(foreign, digest(71))]);
+        assert!(unsupported(&alone), "{foreign:?}");
+        let mut beside = loop_profile()?;
+        beside.tasks.insert(foreign);
+        beside.task_policies.insert(foreign, digest(71));
+        assert!(unsupported(&beside), "{foreign:?} beside the card tasks");
+    }
+    // Every declared card task still needs its policy.
+    let mut unbound = loop_profile()?;
+    unbound.task_policies.remove(&Task::ContextPlan);
+    assert!(unbound.validate().is_err());
+    // A status row of the Context stage may list the card tasks; a Focus
+    // row may not.
+    let mut reported = status(configuration(true, true), Availability::Failed);
+    let enrolled = reported.configuration.clone();
+    let context = |reported: &Status| {
+        reported
+            .context
+            .validate(Stage::Context, enrolled.stage(Stage::Context))
+    };
+    context(&reported)?;
+    reported.context.profiles[0].tasks = BTreeSet::from(CARD_TASKS);
+    context(&reported)?;
+    reported.context.profiles[0].tasks.insert(Task::FocusRank);
+    assert!(context(&reported).is_err());
+    reported
+        .focus
+        .validate(Stage::Focus, enrolled.stage(Stage::Focus))?;
+    reported.focus.profiles[0].tasks = BTreeSet::from([Task::ContextSplit]);
+    assert!(
+        reported
+            .focus
+            .validate(Stage::Focus, enrolled.stage(Stage::Focus))
+            .is_err()
+    );
+    // An enrollment still names the Context task only.
+    let mut enrollment = enrolled.stage(Stage::Context).clone();
+    enrollment.validate(Stage::Context)?;
+    enrollment.indexes[0].tasks = BTreeSet::from([Task::ContextCoverage]);
+    assert!(
+        enrollment.validate(Stage::Context).is_err(),
+        "card tasks are not enrollment tasks"
+    );
+    Ok(())
+}
+
 #[test]
 fn current_profiles_bind_stage_task_policy_and_distinct_pair_abi() -> Result<()> {
     for stage in [Stage::Focus, Stage::Context] {

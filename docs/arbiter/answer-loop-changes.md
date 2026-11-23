@@ -1737,3 +1737,90 @@ Numbered 30 until 22 November 2026; renumbered because L4's entries take
   - **Validation:** workspace Clippy with `-D warnings`, all targets and
     all features: exit 0. Nextest over the kernel's arbiter tests and the
     identity pins: all passed, and the pins are unchanged.
+
+### 46. A Context profile may declare the loop card tasks
+
+- **Step:** a blocker found by the LG agent while re-emitting the FP16
+  profiles at `936c9b94`, fixed in the main tree ahead of entry 45.
+- **What was wrong:**
+  - Core refused every profile that declared a loop card task.
+    `Profile::validate_stage` required every declared task to pass
+    `Stage::permits`, which allows only the Focus task for Focus and the
+    one-turn task for Context and predates the loop.
+  - `Profile::validate` calls it, and `validate` runs when a profile enters
+    the evaluation catalog, is prepared for qualification, is read from the
+    release catalog and when a scorer is opened. So a profile from
+    `admit_loop_tasks` could not be loaded on the CPU or on CUDA, and every
+    card decision would have come back not dispatched.
+  - It was not seen in L4 because its tests called
+    `validate_selected_policies` and `calibration_set` on the admitted
+    profile, never `validate`.
+  - Observed: the Compact profile, after `admit_loop_tasks`, refused with
+    "Arbiter profile has unsupported stage task".
+- **What changed:**
+  - **Core (`stages.rs`):** `Stage::declares(task)` is the stage's
+    enrollment task and, for Context, the four card tasks.
+    `Profile::validate_stage` and `StageStatus::validate` use it.
+  - **Core (`device/state.rs`):** the device status rows of a model and of
+    its variants use it too. A variant row carries its profile's tasks, so
+    a loop profile in the catalog would have made the device status
+    invalid.
+  - **Service (`arbiter.rs`, `supports_stage_task`):** a profile that
+    declares the card tasks serves an index enrolled for the Context task.
+    Before, such a profile made every enrolled index report
+    `UnsupportedTask`, and a device configuration that selected it was
+    refused.
+- **What did not change, by the decision of entry 31:** `Stage::permits`,
+  enrollment, eligibility and the persisted configuration still name only
+  the enrollment task; the card tasks run under the Context enrollment
+  (kernel `eligible_for`, the lane's `enrollment_task` and the service's
+  card admission already check the one-turn task for them).
+- **Traced and left alone:**
+  - the retrieval catalog and scorer paths (`runtime.rs`): their per-task
+    policy checks apply only to the tasks a profile declares, and the card
+    policies are checked by `validate_selected_policies`;
+  - the lane's and the service's card admission, which test the profile's
+    own task list;
+  - `SelectedModel::supported_tasks`, which is descriptive: a model row
+    without variants still lists the one-turn task;
+  - release publication (`publication.rs`), which takes only the one-turn
+    task for a Context profile. Publishing loop profiles in a release
+    catalog is the product rollout after L7.
+- **Identities:** none moved. The changed sources are `stages.rs`,
+  `device/state.rs` and the service's `arbiter.rs`; none is an input of the
+  loop semantics, the card or Focus policies, the Context or Focus
+  semantics digests, the CPU source transition pins or the FP16 math
+  policy. The pinned identities and the transition controls pass unchanged.
+- **Evidence (tests with hand-written expectations):**
+  - Core `stage_tests`:
+    `a_context_profile_may_declare_the_loop_card_tasks_and_nothing_else_may`
+    (a loop profile passes `validate`; a Context status row may list the
+    card tasks; a Focus profile with a card task, a Context profile with
+    the Focus task or a task of no current stage, a Focus status row with a
+    card task and an enrollment that names a card task are all refused).
+  - Retrieval `runtime::loop_tasks::tests`:
+    `a_loop_profile_is_a_valid_profile_and_enters_a_catalog` (a catalog
+    Context profile after `admit_loop_tasks` passes `validate`, is accepted
+    by `for_qualification`, enters an evaluation catalog and yields its
+    execution profile).
+  - Service `failure_tests`:
+    `a_loop_profile_serves_an_index_enrolled_for_context`.
+  - Not tested: opening a scorer on such a profile, which needs the model.
+- **Validation (main tree):**
+  - Clippy with `-D warnings` over all targets: the workspace with all
+    features, exit 0; Core, retrieval, inference, kernel, service,
+    supervisor and MCP with default features, exit 0;
+  - nextest, all features, over the arbiter tests of Core, retrieval and
+    service: 662 run, 661 passed (Core 172, retrieval 314, service 175).
+    The one failure is the service test
+    `ambiguous_or_corrupt_configuration_status_never_invents_a_legacy_digest_or_writable_config`.
+    It fails the same way in L4's final run and in the integration run
+    before this change, and it does not touch the changed code;
+  - the service's three stage-task tests, with the new one: 3 run, 3
+    passed;
+  - the run was made in a tree that also held the uncommitted work of entry
+    45, which this commit does not include.
+- **Where:** Core arbiter `CONTRACT.md` ("Which tasks a profile may
+  declare"), retrieval compiler `CONTRACT.md` ("A loop profile is a valid
+  profile"), service arbiter `CONTRACT.md` ("A loop profile serves an index
+  enrolled for Context").

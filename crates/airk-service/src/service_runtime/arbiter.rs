@@ -882,7 +882,15 @@ fn supports_stage_task(
         Stage::Focus => Task::FocusRank,
         Stage::Context => Task::ContextAction,
     };
-    enrollment.contains(&task) && profile.contains(&task)
+    // The Answer loop's card tasks run under the Context enrollment
+    // (change-log entry 31): a profile that declares them serves an index
+    // enrolled for the Context task, as one that declares that task does.
+    enrollment.contains(&task)
+        && profile.iter().any(|declared| {
+            *declared == task
+                || (stage == Stage::Context
+                    && airk_core::arbiter::answer_loop::is_card_task(*declared))
+        })
 }
 
 pub(super) fn failure(error: anyhow::Error) -> ControlResponse {

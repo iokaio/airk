@@ -880,6 +880,15 @@ refused by the metadata relay and framed like the other private Arbiter
 methods. Answer /2's `joint_ledger.rs` and `joint_scoring.rs` are unchanged
 and are deleted with v2.
 
+**A loop profile serves an index enrolled for Context** (change log entry
+46). `supports_stage_task` asks whether the selected profile can serve an
+index's enrollment. The card tasks run under the Context enrollment, so a
+profile that declares them serves an index enrolled for the Context task,
+as a profile that declares that task does. Before this, a loop profile made
+every enrolled index report `UnsupportedTask` and could not be selected for
+a device ("no native admitted variant for the requested tasks"). A Focus
+profile is unaffected.
+
 **Card model.** `ArbiterCardModel` returns the selected Context profile's
 model, device and (GPU only) precision when the stage is ready, the index is
 enrolled for Context and the profile declares all four card tasks; otherwise

@@ -276,3 +276,41 @@ fn arbiter_authority_loss_is_never_relabelled_optional_runtime_failure() {
         assert_eq!(code, expected);
     }
 }
+
+/// The loop card tasks run under the Context enrollment: a profile that
+/// declares them serves an index enrolled for the Context task. Nothing
+/// else is served that was not before.
+#[test]
+fn a_loop_profile_serves_an_index_enrolled_for_context() {
+    use std::collections::BTreeSet;
+    let cards = BTreeSet::from([
+        Task::ContextSplit,
+        Task::ContextPlan,
+        Task::ContextCoverage,
+        Task::ContextFollowUp,
+    ]);
+    let context = BTreeSet::from([Task::ContextAction]);
+    let focus = BTreeSet::from([Task::FocusRank]);
+    let next_read = BTreeSet::from([Task::ContextNextRead]);
+    for (stage, enrollment, profile, served) in [
+        (Stage::Context, &context, &context, true),
+        (Stage::Context, &context, &cards, true),
+        (Stage::Focus, &focus, &focus, true),
+        // Card tasks never serve Focus, and the Focus task never serves
+        // Context.
+        (Stage::Focus, &focus, &cards, false),
+        (Stage::Context, &context, &focus, false),
+        // An index that is not enrolled for the stage's own task is not
+        // served, whatever the profile declares.
+        (Stage::Context, &focus, &cards, false),
+        (Stage::Context, &cards, &cards, false),
+        // A task of no current stage serves nothing.
+        (Stage::Context, &context, &next_read, false),
+    ] {
+        assert_eq!(
+            supports_stage_task(stage, enrollment, profile),
+            served,
+            "{stage:?}: enrolled {enrollment:?}, profile {profile:?}"
+        );
+    }
+}

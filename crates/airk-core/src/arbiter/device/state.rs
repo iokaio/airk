@@ -256,7 +256,7 @@ impl DeviceStageStatus {
                     && models.insert(model.model)
                     && !model.reason.is_empty()
                     && model.reason.len() <= 1024
-                    && model.tasks.iter().all(|task| stage.permits(*task)),
+                    && model.tasks.iter().all(|task| stage.declares(*task)),
                 "foreign/duplicate device model slot"
             );
             if !model.variants.is_empty() {
@@ -281,7 +281,7 @@ impl DeviceStageStatus {
             for variant in &model.variants {
                 ensure!(
                     !variant.tasks.is_empty()
-                        && variant.tasks.iter().all(|task| stage.permits(*task))
+                        && variant.tasks.iter().all(|task| stage.declares(*task))
                         && variant.download_bytes.is_none_or(|bytes| bytes > 0)
                         && variant
                             .memory_reservation_bytes

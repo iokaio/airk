@@ -15,11 +15,23 @@ impl Stage {
     pub fn is_context(&self) -> bool {
         *self == Self::Context
     }
+    /// The task an index is enrolled for at this stage, and the only one a
+    /// persisted enrollment may name.
     pub fn permits(self, task: Task) -> bool {
         matches!(
             (self, task),
             (Self::Focus, Task::FocusRank) | (Self::Context, Task::ContextAction)
         )
+    }
+    /// A task a profile of this stage may declare and a status row may
+    /// list: the stage's enrollment task, and for Context also the Answer
+    /// loop's four card tasks. The card tasks run under the Context
+    /// enrollment, so `permits`, enrollment and the persisted configuration
+    /// do not name them (change-log entry 31). Which tasks a Context
+    /// profile declares together (the one-turn task, or exactly the four
+    /// card tasks) is the retrieval admission owner's rule.
+    pub fn declares(self, task: Task) -> bool {
+        self.permits(task) || (self == Self::Context && answer_loop::is_card_task(task))
     }
 }
 impl ModelChoice {
@@ -171,7 +183,7 @@ impl Profile {
             "Arbiter profile stage/model mismatch"
         );
         ensure!(
-            !self.tasks.is_empty() && self.tasks.iter().all(|task| stage.permits(*task)),
+            !self.tasks.is_empty() && self.tasks.iter().all(|task| stage.declares(*task)),
             "Arbiter profile has unsupported stage task"
         );
         ensure!(
@@ -288,7 +300,7 @@ impl StageStatus {
             ensure!(
                 profile.model.stage() == Some(stage)
                     && models.insert(profile.model)
-                    && profile.tasks.iter().all(|task| stage.permits(*task)),
+                    && profile.tasks.iter().all(|task| stage.declares(*task)),
                 "foreign or duplicate Arbiter stage status profile"
             );
             if let Some(fit) = &profile.cpu_fit {

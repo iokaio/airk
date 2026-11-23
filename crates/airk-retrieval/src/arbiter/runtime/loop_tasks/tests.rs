@@ -17,6 +17,63 @@ fn current_context() -> Result<Profile> {
     Ok(profile)
 }
 
+/// A profile that `admit_loop_tasks` produced is a valid Core profile, can
+/// be qualified and enters a private evaluation catalog. Before Core let a
+/// Context profile declare the card tasks, each of these refused it with
+/// "Arbiter profile has unsupported stage task", so no loop profile could be
+/// loaded on any device.
+#[test]
+fn a_loop_profile_is_a_valid_profile_and_enters_a_catalog() -> Result<()> {
+    let mut looped = current_context()?;
+    admit_loop_tasks(&mut looped)?;
+    looped.validate()?;
+    looped.validate_stage(Stage::Context)?;
+    validate_selected_policies(&looped)?;
+    ExecutionProfile::for_qualification(looped.clone())?;
+    #[cfg(feature = "test-support")]
+    {
+        // An evaluation catalog holds candidates, which carry no final
+        // qualification.
+        let mut candidate = looped.clone();
+        candidate.qualification = None;
+        // SAFETY: a unit value stands in for the service lease; the catalog
+        // only holds it, and this test opens no scorer.
+        let catalog =
+            unsafe { EvaluationCatalog::from_native_lease(Arc::new(()), vec![candidate.clone()])? };
+        assert_eq!(catalog.profiles().len(), 1);
+        assert_eq!(catalog.profiles()[0].tasks, looped.tasks);
+        catalog.execution_profile(candidate.manifest)?;
+    }
+    // A Focus profile that declares a card task is refused by Core itself.
+    let mut focus = catalog_profiles()?
+        .into_iter()
+        .find(|profile| profile.model == ModelChoice::FocusQwenReranker06B)
+        .context("catalog Focus profile")?;
+    focus.tasks.insert(Task::ContextSplit);
+    focus.task_policies.insert(
+        Task::ContextSplit,
+        crate::arbiter::loop_cards::task_policy(Task::ContextSplit)?,
+    );
+    let error = focus.validate().unwrap_err().to_string();
+    assert!(
+        error.contains("Arbiter profile has unsupported stage task"),
+        "{error}"
+    );
+    // A Context profile that declares a task of no current stage is too.
+    let mut unknown = looped;
+    unknown.tasks.insert(Task::ContextNextRead);
+    unknown.task_policies.insert(
+        Task::ContextNextRead,
+        crate::arbiter::tasks::policy_digest()?,
+    );
+    let error = unknown.validate().unwrap_err().to_string();
+    assert!(
+        error.contains("Arbiter profile has unsupported stage task"),
+        "{error}"
+    );
+    Ok(())
+}
+
 #[test]
 fn context_profiles_admit_one_turn_or_exactly_the_four_loop_tasks() -> Result<()> {
     let one_turn = current_context()?;

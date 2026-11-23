@@ -1547,6 +1547,27 @@ degradation explains the difference.
 and enrollment are unchanged; admitting the new tasks is L4's. `Decision`
 gains `loop_card` and `loop_cards`; Advice /1 and advice /2 refuse them.
 
+**Which tasks a profile may declare (`Stage::declares`, change log entry
+46).** A profile of a stage may declare, and a status row of that stage may
+list, the stage's enrollment task and, for Context, the four card tasks.
+
+- `Profile::validate_stage` (and so `Profile::validate`),
+  `StageStatus::validate` and the device status rows of
+  `device/state.rs` use `declares`.
+- `Stage::permits`, enrollment (`StageConfiguration::validate`) and
+  eligibility still name only the enrollment task. The card tasks run under
+  the Context enrollment (change log entry 31), so no persisted
+  configuration names them.
+- Core does not say which tasks a Context profile declares together. The
+  retrieval admission owner does: the one-turn task, or exactly the four
+  card tasks, never both.
+- A Focus profile that declares a card task, and a Context profile that
+  declares the Focus task or a task of no current stage, are refused as
+  before ("Arbiter profile has unsupported stage task").
+- Until this rule, Core refused every profile that declared a card task,
+  so a profile from `admit_loop_tasks` could not be validated, enter a
+  catalog or open a scorer on any device.
+
 `CardAdvice` (`airk.arbiter.advice/3`) is one batched card call: the advice
 /2 bindings, its `card_slot` (1..=64), reserved and observed tokens (at most
 8,192), a per-part and per-round attribution equal to the observed tokens,
