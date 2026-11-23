@@ -2239,7 +2239,45 @@ arbiter `CONTRACT.md` ("Answer job kernel"), supervisor
     batch. In another batch `admin_sign_in_reads_and_cross_plane_refusals`
     failed once on a typed `publication_busy` Answer refusal (no replay
     allowed); it passed alone and in the repeat, and the same batch on
-    `705ab312` passed once. Not attributed; open.
+    `705ab312` passed once. Not attributed; open. (Diagnosed below.)
+- **The coordinator's four follow-up items (23 November 2026).**
+  - **Item 1, the intermittent `publication_busy`: a fault of main, not of
+    the job path.** Stress runs of the same group (`combined_reads` Answer
+    tests and `admin_plane`): `admin_sign_in_reads_and_cross_plane_refusals`
+    failed 7 of 20 on the branch and 7 of 20 on `705ab312`; 5 of 15 with the
+    `admin_plane` binary alone. Every failure is on its readiness
+    `airk_diagnostics` poll after the Index job, before the test's first
+    Answer. A temporary render-site capture (never committed) showed each as
+    `CurrentReadContention` from SQLite extended code 261
+    (`SQLITE_BUSY_RECOVERY`, "database is locked"), never the gate's
+    "applying an update": a read-only current-database open, which has a
+    zero busy timeout (`airk-store` `current/database.rs`, `open_reader_budget`)
+    and no open admission on query threads (`current/admission.rs`: only
+    service work installs `with_work_admission`), met another connection
+    rebuilding the WAL index. The test treats the typed `repeat_same_request`
+    as fatal. The branch's new decisive test
+    (`answer_jobs_outlive_their_makers_session_and_are_recovered_by_their_handle`)
+    failed 4 of 20, then 0 of 10 and 1 of 10, on the same code: with origin
+    backtraces, the whole-Answer refusal comes from
+    `Kernel::arbiter_publication` called by `focus_pair_tokens` in
+    `Loop::rounds` (kernel `arbiter/answer.rs`), a current-database open the
+    loop does not repeat, while its canonical reads absorb the same 261
+    (about 70 captured, all recovered by `BUSY_REPEATS`). The job's blocking
+    thread and the direct handler's thread have the same (no) open admission;
+    the test drives two Answers at once in one service, which the direct
+    path also allows. Owners: the current reader's open admission (store) or
+    the loop's non-canonical publication reads (kernel arbiter); neither is
+    changed here, and no test limit or retry was added.
+  - **Item 2:** a reply packed to `reply_limit - reserve`, with the largest
+    valid delivery record and status, renders within 131,072 bytes with and
+    without verification, and the largest rendered Answer result fits the
+    147,456-byte worker frame; the reserve is unchanged (`0d52546c`).
+  - **Item 3:** `answer_job_stuck` and `answer_authority_ended` say whether
+    the job's reads ran (`query_submitted`), recorded in the service
+    `answer_jobs` CONTRACT (`db314433`).
+  - **Item 4:** the combined frontend bounds a combined Answer's job options
+    and refuses `invocation_key`, `wait_ms` and `interactive` with the typed
+    `invalid_native_arguments` (`02f46ebc`).
 
 ### 49. The job table stays out of the LG gate image; the gate measures concurrency on the unqueued path
 
