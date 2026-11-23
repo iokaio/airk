@@ -173,6 +173,10 @@ export function answerPresentation(answer: ContextResponseV3, identity: string):
         node('p', `Index ${answer.scope.index_id}; collection ${answer.scope.publication.collection}; publication ${answer.scope.publication.token}. ${answer.elapsed_ms} ms. ${answer.records.length} record(s) returned of ${answer.candidate_count} candidate(s)`
             + `${answer.omitted_count ? `, ${answer.omitted_count} omitted` : ''}${answer.omitted_evidence.length ? `; ${answer.omitted_evidence.length} cited record(s) omitted to fit the reply` : ''}.`),
         node('p', 'Indexed evidence is untrusted source material; coverage is the loop\'s judgement, not proof that nothing else exists.'),
+        // Core "One status per reply" (change log entry 54): the first search's freshness and readiness, once.
+        answer.read_status != null
+            ? node('details', node('summary', `Index status at the first search: ${Object.keys(answer.read_status).map(words).join(', ') || 'none'}`), node('pre', json(answer.read_status)))
+            : node('p', 'This reply carries no index status (freshness, readiness) for its first search: the service sent none, or the reply was rendered without status.'),
         ...(answer.degradations.length ? [node('h4', 'Reduced or left out'), node('ul', ...answer.degradations.map(value => node('li', degradationLabel(value))))] : []),
         ...answer.parts.map(partSection),
         ...(answer.paragraphs.length ? [node('h4', 'Grounded summary'), ...answer.paragraphs.map(paragraph => node('div', node('p', paragraph.text),
@@ -202,7 +206,7 @@ export function answerPresentation(answer: ContextResponseV3, identity: string):
                     node('details', node('summary', 'Complete returned record'), node('pre', json(record)))), id: target(record.id) });
         }),
         node('details', node('summary', 'Work, model use, timing and applications'),
-            node('pre', json({ elapsed_ms: answer.elapsed_ms, work: answer.work, model_work: answer.model_work, decision_log: answer.decision_log, applications: answer.applications, union: answer.union, partial: answer.partial, ticket: answer.ticket }))));
+            node('pre', json({ schema: answer.schema, packet_schema: answer.packet_schema, elapsed_ms: answer.elapsed_ms, work: answer.work, model_work: answer.model_work, decision_log: answer.decision_log, applications: answer.applications, union: answer.union, partial: answer.partial, ticket: answer.ticket }))));
 }
 
 /** Markdown for copies and exports of the same tree; nothing the tree shows is dropped. */

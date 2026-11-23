@@ -87,6 +87,18 @@ test('Markdown of the tree keeps its headings, lists and excerpts and escapes ev
     assert.match(markdown,/```\n\{\n {2}"arguments"/);
 });
 
+test('read_status is shown whole when the reply carries it and its absence is said, in the tree and its Markdown',()=>{
+    // Core "One status per reply" (change log entry 54); the field values here are independent of the client.
+    const answer=emitted('two_parts_valid');assert.equal(answer.read_status,undefined);
+    assert.match(text(answerPresentation(answer,'n')),/carries no index status/);
+    answer.read_status={freshness:{state:'current',observed_unix_ms:1763856000000},semantic_readiness:{state:'ready'}};
+    const view=answerPresentation(answer,'r'),markdown=answerNodeMarkdown(view);
+    assert.ok(nodes(view).some(node=>node.tag==='pre'&&node.children.includes(JSON.stringify(answer.read_status,null,2))),'the whole status object is shown');
+    assert.match(text(view),/Index status at the first search: freshness, semantic readiness/);
+    assert.ok(markdown.includes('"observed_unix_ms": 1763856000000')&&markdown.includes('"semantic_readiness"'),'Markdown keeps the status');
+    assert.ok(nodes(view).some(node=>node.tag==='pre'&&node.children[0].includes('"packet_schema"')),'packet_schema is retained');
+});
+
 test('the Answer default budget module inlines only the Rust-emitted default',async()=>{
     const {module:{ANSWER_DEFAULT_BUDGET},text:bundle}=await compile('../src/answerBudget.ts');
     assert.deepEqual(ANSWER_DEFAULT_BUDGET,cases.default_budget);assert.ok(Object.isFrozen(ANSWER_DEFAULT_BUDGET));
