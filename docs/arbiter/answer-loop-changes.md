@@ -2629,3 +2629,27 @@ Numbered 30 until 22 November 2026; renumbered because L4's entries take
 - **Where.** `scripts/arbiter-answer-eval/{loop_reply.py, make_loop_spec.py,
   lg_lifetimes.py, run_plan.py, common.py, grade.py, l7_plan_template.json,
   README.md}` and their tests.
+
+### 59. Focus and Arbiter are separate switches: the kernel proof
+
+- **Step LH, commit 2 (23 November 2026).** No behaviour changed: the
+  inventory found no code that couples the Context stage to Focus (one stage
+  owner per stage in the service; the kernel loop reads `focus_application`
+  and `card_model` separately). This commit adds the proof that all four
+  combinations run.
+- **Evidence.** Kernel test
+  `arbiter::answer::model::tests::focus_and_arbiter_are_separate_switches`
+  runs a compound question (two parts, so Union runs) with neither stage,
+  Focus only, Arbiter only and both, and checks for each: `focus_absent`
+  exactly when Focus is off, `context_absent` exactly when Arbiter is off,
+  Focus calls and the `model_work.focus_profile` only with Focus, card calls
+  and model-sourced decisions only with Arbiter, every decision's model the
+  Context model, and, for Arbiter only, every evidence row unscored and
+  shown from byte 0 (entry 56, decision 6). 1 test, passed; Clippy
+  `-D warnings` on `airk-kernel` default and all features passed.
+- **Not covered here.** The same four combinations on a real CUDA service
+  are LH's acceptance run, after review (the harness arm A of entry 58
+  checks those replies).
+- **Where.** `crates/airk-kernel/src/arbiter/answer/model/tests.rs` (the
+  synthetic scorer gained a `card` switch; the file was also run through
+  rustfmt).

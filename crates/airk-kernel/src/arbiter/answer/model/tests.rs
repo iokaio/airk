@@ -49,6 +49,8 @@ struct Scorer {
     only: Option<airk_core::arbiter::Task>,
     /// Synthetic Focus scores spans at this path above every other span.
     prefer: Option<&'static str>,
+    /// A Context (card) model is configured. False is the Focus-only switch.
+    card: bool,
 }
 
 impl NativeController for Scorer {
@@ -116,6 +118,9 @@ impl NativeController for Scorer {
         _: ScopedReadRef,
         _: &airk_core::evidence::RevisionEnvelope,
     ) -> Result<Option<LoopModel>> {
+        if !self.card {
+            return Ok(None);
+        }
         Ok(Some(LoopModel {
             model: device::SelectedModel::ContextCompact,
             device: v3::ExecutionDevice::Cuda,
@@ -292,6 +297,25 @@ fn scorer(
         deadlines: Mutex::new(vec![]),
         only,
         prefer,
+        card: true,
+    });
+    Ok((fixture_with(scorer.clone(), owner)?, scorer))
+}
+
+/// Focus and the Context model (Arbiter) as two separate switches.
+fn switched(focus: bool, card: bool) -> Result<(Fixture, Arc<Scorer>)> {
+    let owner = Arc::new(Owner::new());
+    let scorer = Arc::new(Scorer {
+        owner: owner.clone(),
+        mode: Mode::Accept,
+        requests: Mutex::new(vec![]),
+        profile: Sha256Digest::from_bytes([40; 32]),
+        calls: AtomicU64::new(0),
+        focus,
+        deadlines: Mutex::new(vec![]),
+        only: None,
+        prefer: None,
+        card,
     });
     Ok((fixture_with(scorer.clone(), owner)?, scorer))
 }
@@ -542,7 +566,10 @@ fn delivered_card_work_binds_context_to_its_own_application() -> Result<()> {
     let (fixture, scorer) = scored(Mode::Accept)?;
     let reply = answer(&fixture)?.response;
     assert!(scorer.calls.load(Ordering::Acquire) >= 1);
-    assert!(reply.decision_log.card_calls > 0, "the reply made card calls");
+    assert!(
+        reply.decision_log.card_calls > 0,
+        "the reply made card calls"
+    );
     let bindings = airk_core::combined_context::reply_delivery_bindings(&reply)?;
     let context = bindings
         .iter()
@@ -1671,6 +1698,103 @@ fn the_reply_carries_each_text_once_and_keeps_every_location() -> Result<()> {
             .collect();
         let distinct: BTreeSet<&str> = shown.iter().copied().collect();
         assert_eq!(shown.len(), distinct.len(), "{:?}", request.task);
+    }
+    Ok(())
+}
+
+/// LH: Focus and the Context model (Arbiter) are separate switches. Each of
+/// the four combinations runs the whole loop over a compound question, to
+/// Union, and the reply says which stages took part: degradations, the call
+/// counts, the Focus profile and the model of every decision.
+#[test]
+fn focus_and_arbiter_are_separate_switches() -> Result<()> {
+    use v3::Degradation;
+    let neither = super::super::tests::fixture()?;
+    let mut runs = vec![("neither", answer(&neither)?, None)];
+    for (name, focus, card) in [
+        ("focus only", true, false),
+        ("arbiter only", false, true),
+        ("both", true, true),
+    ] {
+        let (fixture, scorer) = switched(focus, card)?;
+        runs.push((name, answer(&fixture)?, Some(scorer)));
+    }
+    for (name, outcome, scorer) in &runs {
+        let response = &outcome.response;
+        let focus = matches!(*name, "focus only" | "both");
+        let card = matches!(*name, "arbiter only" | "both");
+        assert_eq!(
+            response.parts.len(),
+            2,
+            "{name}: a compound question reaches Union"
+        );
+        let focus_absent = response
+            .degradations
+            .iter()
+            .any(|d| matches!(d, Degradation::FocusAbsent));
+        let context_absent = response
+            .degradations
+            .iter()
+            .any(|d| matches!(d, Degradation::ContextAbsent));
+        assert_eq!(focus_absent, !focus, "{name}: focus_absent");
+        assert_eq!(context_absent, !card, "{name}: context_absent");
+        assert_eq!(
+            response.decision_log.focus_calls > 0,
+            focus,
+            "{name}: Focus calls"
+        );
+        assert_eq!(
+            response.model_work.focus_calls > 0,
+            focus,
+            "{name}: model work Focus calls"
+        );
+        assert_eq!(
+            response.model_work.focus_profile.is_some(),
+            focus,
+            "{name}: Focus profile"
+        );
+        assert_eq!(
+            response.decision_log.card_calls > 0,
+            card,
+            "{name}: card calls"
+        );
+        assert_eq!(
+            response.model_work.context_calls > 0,
+            card,
+            "{name}: model work card calls"
+        );
+        let model = response.decision_log.count(None, v3::SourceKind::Model);
+        assert_eq!(model > 0, card, "{name}: model-sourced decisions");
+        for entry in &outcome.custody.log.entries {
+            if let Some(selected) = entry.decision.model {
+                assert!(card, "{name}: a decision names a model");
+                assert_eq!(selected, device::SelectedModel::ContextCompact, "{name}");
+            }
+        }
+        if let Some(scorer) = scorer {
+            assert_eq!(
+                scorer.calls.load(Ordering::Acquire) > 0,
+                card,
+                "{name}: scorer calls"
+            );
+            if card && !focus {
+                // Arbiter without Focus: the spans are shown unscored, in the
+                // order they were gathered, each from its start.
+                for request in scorer.requests.lock().unwrap().iter() {
+                    for row in request
+                        .segments
+                        .iter()
+                        .flat_map(|segment| &segment.evidence)
+                    {
+                        assert_eq!(row.focus, None, "{name}: no Focus score is shown");
+                        assert_eq!(
+                            row.skipped_bytes, 0,
+                            "{name}: an unscored span starts at byte 0"
+                        );
+                    }
+                }
+            }
+        }
     }
     Ok(())
 }
