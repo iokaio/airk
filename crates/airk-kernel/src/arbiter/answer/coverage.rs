@@ -23,8 +23,9 @@ pub(crate) struct Span {
     pub(crate) round: u8,
     pub(crate) focus: Option<f32>,
     /// Where the text Focus scored starts in the hit's text (its Focus
-    /// window); 0 when Focus did not score the span. An excerpt starts here,
-    /// so the relevance beside it describes the text that is shown.
+    /// window); 0 when Focus did not score the span. An excerpt always
+    /// holds this place, so the relevance beside it describes text that is
+    /// shown.
     pub(crate) from: usize,
 }
 impl Span {
@@ -390,6 +391,29 @@ pub(crate) fn excerpt_cuts(texts: &[&str], allowance: usize) -> Vec<usize> {
         .collect()
 }
 
+/// The byte range of `text` that an excerpt of at most `size` bytes shows.
+/// - All of the text when it fits.
+/// - Otherwise a window of `size` bytes that holds `from`, the start of the
+///   text Focus scored: it starts at `from`, or earlier where the text ends
+///   before `size` bytes from there, so the whole size is used.
+///
+/// Both ends fall on character boundaries, which can make the window up to
+/// three bytes shorter at each end.
+pub(crate) fn window(text: &str, from: usize, size: usize) -> (usize, usize) {
+    if size >= text.len() {
+        return (0, text.len());
+    }
+    let mut start = from.min(text.len() - size);
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    let mut end = (start + size).min(text.len());
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    (start, end)
+}
+
 /// What one card call shows of one sub-need's spans: the rows its roster
 /// carries, and the log's account of them for a decision the model takes.
 /// A shown span is logged as the byte range of its excerpt; the text before
@@ -405,8 +429,10 @@ pub(crate) struct Shown {
 
 /// The evidence rows of one card call: each sub-need's ranked spans, cut to
 /// the call's excerpt allowance.
-/// - An excerpt starts at its span's Focus window, so it shows the text
-///   Focus scored.
+/// - A text that fits its share is shown whole. A longer one is shown as a
+///   window that holds the start of the text Focus scored (`window`), so
+///   the relevance beside it describes text that is shown and no byte of
+///   the share is left unused.
 /// - A text is shown once in a call. A later span with the same text (the
 ///   same span gathered for a second sub-need, or a copy at another place)
 ///   is a row that names the row showing it, and takes no allowance.
@@ -437,25 +463,52 @@ pub(crate) fn present(
         .collect();
     let texts: Vec<&str> = shows
         .iter()
-        .map(|index| {
-            let span = spans[*index];
-            &span.hit.text[span.from.min(span.hit.text.len())..]
-        })
+        .map(|index| spans[*index].hit.text.as_str())
         .collect();
     let cuts = excerpt_cuts(&texts, allowance);
-    if cuts
+    let mut windows: Vec<(usize, usize)> = shows
+        .iter()
+        .zip(&cuts)
+        .map(|(index, cut)| window(&spans[*index].hit.text, spans[*index].from, *cut))
+        .collect();
+    // Character boundaries can leave a window a few bytes short of the
+    // least excerpt although its share was enough. Such a window grows by
+    // whole characters while the call's allowance still has the bytes.
+    let used: usize = windows.iter().map(|(start, end)| end - start).sum();
+    let mut spare = allowance.saturating_sub(used);
+    for (text, (start, end)) in texts.iter().zip(&mut windows) {
+        while *end - *start < MIN_EXCERPT_BYTES && *end - *start < text.len() {
+            let (mut lower, mut upper) = (*start, *end);
+            if upper < text.len() {
+                upper += 1;
+                while !text.is_char_boundary(upper) {
+                    upper += 1;
+                }
+            } else {
+                lower -= 1;
+                while !text.is_char_boundary(lower) {
+                    lower -= 1;
+                }
+            }
+            let cost = (upper - lower) - (*end - *start);
+            if cost > spare {
+                break;
+            }
+            spare -= cost;
+            (*start, *end) = (lower, upper);
+        }
+    }
+    if windows
         .iter()
         .zip(&texts)
-        .any(|(cut, text)| *cut < MIN_EXCERPT_BYTES && *cut < text.len())
+        .any(|((start, end), text)| end - start < MIN_EXCERPT_BYTES && end - start < text.len())
     {
         return None;
     }
     // The shown byte range of every span, a repeat taking its first's.
     let range = |index: usize| {
-        let shown = first[index];
-        let position = shows.iter().position(|item| *item == shown)?;
-        let from = spans[shown].from.min(spans[shown].hit.text.len());
-        Some((from, from + cuts[position]))
+        let position = shows.iter().position(|item| *item == first[index])?;
+        Some(windows[position])
     };
     let mut index = 0;
     let mut out = Vec::with_capacity(needs.len());

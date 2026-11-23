@@ -528,6 +528,125 @@ fn a_call_that_cannot_show_every_span_the_minimum_is_not_made() -> Result<()> {
 }
 
 #[test]
+fn a_window_holds_the_scored_text_and_uses_its_whole_size() {
+    let text = format!("{}{}{}", "h".repeat(400), "m".repeat(300), "t".repeat(300));
+    // The text fits: all of it, wherever Focus scored.
+    assert_eq!(window(&text, 400, 1000), (0, 1000));
+    assert_eq!(window(&text, 400, 7680), (0, 1000));
+    // It does not fit: from the scored text on.
+    assert_eq!(window(&text, 400, 300), (400, 700));
+    assert_eq!(window(&text, 0, 300), (0, 300));
+    // The scored text is near the end: the window ends with the text and
+    // starts earlier, so no byte of the size is unused.
+    assert_eq!(window(&text, 900, 300), (700, 1000));
+    assert_eq!(window(&text, 999, 999), (1, 1000));
+    // Two-byte characters: a window never splits one. From byte 100, 301
+    // bytes end inside a character; anchored at the end, 301 bytes would
+    // start inside one.
+    let accents = "é".repeat(300);
+    assert_eq!(window(&accents, 100, 301), (100, 400));
+    assert_eq!(window(&accents, 500, 301), (300, 600));
+    assert_eq!(window(&accents, 0, 0), (0, 0));
+}
+
+/// The reviewer's case: one 3,072-byte read whose identifier first appears
+/// at byte 1,900. The whole span fits the call's allowance, so the model is
+/// shown all of it, as the deterministic rule read it, and nothing is
+/// logged as omitted.
+#[test]
+fn a_span_that_fits_is_shown_whole_wherever_focus_scored_it() -> Result<()> {
+    let scope = scope();
+    let mut gather = Gathering::new(v3::BudgetV3::default(), scope.clone())?;
+    let text = format!(
+        "{}fn restart_guard() {{}}\n{}",
+        "// doc line\n".repeat(158),
+        "x".repeat(1154)
+    );
+    assert_eq!(
+        (text.len(), text.find("fn restart_guard")),
+        (3072, Some(1896))
+    );
+    let record = retain(
+        &mut gather,
+        ("search", v3::LoopRead::Search),
+        json!({"query":"need"}),
+        Some(1),
+        FollowUp::Keyword,
+        reply(&scope, vec![hit("src/guard.rs", 1, 170, &text)]),
+    )?;
+    let mut found = spans(&gather, 1, 1, 1);
+    found[0].focus = Some(0.8);
+    found[0].from = 1896;
+    let shown = present(&gather, &[&found[..]], 7680).context("the span fits")?;
+    assert_eq!(
+        shown,
+        [Shown {
+            evidence: vec![excerpt("src/guard.rs", (1, 170), Some(0.8), &text, (0, 0))],
+            unshown: 0,
+            presented: vec![unit(&gather, record, 0, (0, 3072))],
+            omitted: vec![],
+        }]
+    );
+    // With room for 2,000 bytes the window still holds the scored line and
+    // ends with the text: bytes 1,072 to 3,072.
+    let shown = present(&gather, &[&found[..]], 2000).context("a window fits")?;
+    assert_eq!(
+        shown[0].evidence,
+        [excerpt(
+            "src/guard.rs",
+            (1, 170),
+            Some(0.8),
+            &text[1072..],
+            (1072, 0)
+        )]
+    );
+    assert_eq!(shown[0].presented, [unit(&gather, record, 0, (1072, 3072))]);
+    assert_eq!(shown[0].omitted, [unit(&gather, record, 0, (0, 1072))]);
+    Ok(())
+}
+
+/// Character boundaries can leave a window just short of the least excerpt.
+/// It grows by whole characters when the call's allowance has the bytes,
+/// and the call is refused only when it has not.
+#[test]
+fn a_window_short_by_a_character_grows_when_the_allowance_has_the_bytes() -> Result<()> {
+    let scope = scope();
+    let mut gather = Gathering::new(v3::BudgetV3::default(), scope.clone())?;
+    // 200 three-byte characters and 300 two-byte ones: 600 bytes each.
+    let (wide, accents) = ("日".repeat(200), "é".repeat(300));
+    retain(
+        &mut gather,
+        ("search", v3::LoopRead::Search),
+        json!({"query":"need"}),
+        Some(1),
+        FollowUp::Keyword,
+        reply(
+            &scope,
+            vec![
+                hit("docs/wide.md", 1, 9, &wide),
+                hit("docs/accents.md", 1, 9, &accents),
+            ],
+        ),
+    )?;
+    let found = spans(&gather, 1, 1, 1);
+    let lengths = |allowance: usize| {
+        present(&gather, &[&found[..]], allowance).map(|shown| {
+            shown[0]
+                .evidence
+                .iter()
+                .map(|row| row.excerpt.len())
+                .collect::<Vec<_>>()
+        })
+    };
+    // 515 bytes are 257 a span. Whole characters give 255 and 256, and the
+    // four bytes left over pay for one more three-byte character.
+    assert_eq!(lengths(515), Some(vec![258, 256]));
+    // 513 bytes leave two bytes over: not enough for that character.
+    assert_eq!(lengths(513), None);
+    Ok(())
+}
+
+#[test]
 fn an_excerpt_starts_where_focus_scored_and_marks_a_snippet() -> Result<()> {
     let scope = scope();
     let mut gather = Gathering::new(v3::BudgetV3::default(), scope.clone())?;
@@ -568,6 +687,20 @@ fn an_excerpt_starts_where_focus_scored_and_marks_a_snippet() -> Result<()> {
             ],
         }]
     );
+    // Scored near its end, the span is shown from further back, so the 300
+    // bytes are all used and the scored text is still inside.
+    found[0].from = 900;
+    let shown = present(&gather, &[&found[..]], 300).context("one span fits")?;
+    assert_eq!(
+        (
+            shown[0].evidence[0].excerpt.as_str(),
+            shown[0].evidence[0].skipped_bytes,
+            shown[0].evidence[0].cut_bytes
+        ),
+        ("t".repeat(300).as_str(), 700, 0)
+    );
+    assert_eq!(shown[0].presented, [unit(&gather, record, 0, (700, 1000))]);
+    assert_eq!(shown[0].omitted, [unit(&gather, record, 0, (0, 700))]);
     Ok(())
 }
 

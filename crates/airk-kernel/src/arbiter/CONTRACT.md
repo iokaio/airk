@@ -271,12 +271,17 @@ What holds:
   - The call's excerpts total at most its excerpt allowance (Core
     `native_loop::evidence_allowance` of the tokens the call reserves: 7,680
     bytes at 8,192 tokens). The existing reservation bounds it.
-  - **Where an excerpt starts:** at the start of the text Focus scored (the
-    span's Focus window, `software::focus_window`, carried back from the
-    Focus ranking), or at the start of the span when Focus did not score it.
-    The relevance beside an excerpt therefore describes the text shown.
-    `skipped_bytes` and `cut_bytes` say what lies before and after it, and
-    `truncated` repeats `Hit.truncated`.
+  - **Which part of a span is shown** (`coverage::window`): all of it when
+    it fits its share. Otherwise a window of the share's size that holds the
+    start of the text Focus scored (the span's Focus window,
+    `software::focus_window`, carried back from the Focus ranking). The
+    window starts there, or earlier where fewer bytes than the share follow,
+    so the share is used fully. A span Focus did not score is shown from its
+    start. The relevance beside an excerpt therefore describes text that is
+    shown. `skipped_bytes` and `cut_bytes` say what lies before and after
+    it, and `truncated` repeats `Hit.truncated`. Until the delta review of
+    `936c9b94` an excerpt always started at the scored text, which hid the
+    head of a span that would have fit whole.
   - **A text is shown once in a call.** A later span of the call with the
     same text (the same span gathered for a second sub-need, or a copy at
     another place) is a row that names the row showing it (`same_as`) and
@@ -294,7 +299,9 @@ What holds:
     (`coverage::present` returns `None`): the deterministic order decides,
     the decision is logged `not_dispatched` with reason `token_budget`, and
     the part's `ModelShare` is disclosed. A call for sub-needs with no spans
-    is made without evidence.
+    is made without evidence. Character boundaries can leave a window a few
+    bytes short of 256 although its share was enough; it then grows by whole
+    characters while the call's allowance has spare bytes.
   - Excerpts are parts of hits of records already read and retained under
     the Answer's revision fence. Building them reads nothing.
   - **Subjects:** a Coverage and a Follow-up roster name the sub-need in the
@@ -381,6 +388,33 @@ What does not hold yet, with the follow-up owner:
   relevant lines come after the cut shows the model its beginning; the cut
   is disclosed (`after` in the view, `basis_omitted` in the log), not
   corrected. A snippet is marked (`snippet`), not completed.
+- **A repeat row's relevance can describe text outside the shown window**
+  (delta review L-a of `936c9b94`; owner: the primary agent, with the next
+  identity move). A repeat row keeps its own span's Focus relevance, scored
+  for its own sub-need's question, while its text is the first row's
+  window. When two sub-needs with different identifiers gather one text
+  that is too long to show whole, the second's scored lines can lie outside
+  that window. Leaving the relevance out would break Core's rank order of
+  rows, so the fix needs the Core row shape or a rule sentence in the view.
+- **`same_as` names a row by its place, and a place need not be unique**
+  (delta review L-b; owner: the primary agent, with the next Core wire
+  decision). Two spans at the same lines with different texts (a snippet
+  and a whole chunk), followed by a copy of the second, make the reference
+  ambiguous to the model. Naming the row by its position needs the Core
+  `CardEvidence` shape.
+- **The rules call segments independent, and a repeat row points into
+  another segment** (delta review L-c; owner: the primary agent, with the
+  next identity move, because the sentence is in `loop_cards.rs`). The
+  Follow-up rules also lack Coverage's sentence on an empty evidence list.
+- **A doc comment in `native_loop.rs` is stale** (owner: the primary agent,
+  with the next identity move). `CardEvidence.excerpt` still says an
+  excerpt "starts where the text Focus scored starts". It holds that place
+  and may start earlier (`coverage::window`). The file feeds the loop
+  identities, so the comment was left alone.
+- **A window short of the least excerpt grows only from spare bytes**
+  (delta review L-d, fixed in part). It is not paid for by shortening
+  another span's window, so a call can still be refused when another split
+  of its allowance would have fit.
 - **The allowance ignores a profile's compiler ceiling** (review L1 of
   `54b1e7a2`; owner: whoever admits the card tasks on a CPU Context
   profile). A call reserves up to 8,192 tokens whatever the profile, and the

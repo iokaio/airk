@@ -1514,10 +1514,15 @@ Numbered 30 until 22 November 2026; renumbered because L4's entries take
     tokens that call no longer fits (minus 13.2%) and 41 munarium windows
     pass the limit. At one byte a token the bookbuilder tail is still
     refused (34 windows), so a smaller allowance buys almost nothing.
-  - **Expected refusals:** 43 of 94,879 bookbuilder windows (0.045%) and no
-    munarium window need more than a full call can hold; 27 of 58,118 runs
-    of eight consecutive bookbuilder windows of one file do (0.046%). A real
-    call mixes spans of several files, so the rate in use is at most this.
+  - **Windows a full call cannot hold:** 43 of 94,879 bookbuilder windows
+    (0.045%) and no munarium window; 27 of 58,118 runs of eight consecutive
+    bookbuilder windows of one file (0.046%). This is a rate of windows,
+    not of calls: a call is refused when the average of its excerpts passes
+    the limit, so the share of refused calls can be up to eight times the
+    share of windows, or lower. The windows are fixed-offset slices of
+    every file, not the spans retrieval returns. The rate in use is read
+    from the gate's receipts. (Corrected after the delta review, L-e; the
+    first wording claimed the rate in use was at most the window rate.)
   - **On a refusal:** the lane refuses the call before any model work, the
     reservation is released, the receipt records zero observed tokens, the
     decision takes the deterministic order on the whole spans, the slot
@@ -1697,3 +1702,38 @@ Numbered 30 until 22 November 2026; renumbered because L4's entries take
   `CONTRACT.md` ("Fifth move" and "Evidence and verdict in the view"),
   service arbiter `CONTRACT.md`, and
   `scripts/arbiter/evaluation/card_excerpt_tokens/README.md`.
+- **After the delta review** (private review
+  `answer-loop/review-d/review-936c9b94.md`: every finding on `54b1e7a2`
+  closed, one new medium and eight lows), in a kernel-only commit that
+  moves no identity:
+  - **Medium, fixed:** an excerpt always started at the text Focus scored,
+    so a span that would have fit whole lost its head. The reviewer's case
+    is one 3,072-byte read whose identifier first appears at byte 1,900:
+    the model saw bytes 1,900 to 3,072 while about 6,500 bytes of allowance
+    went unused. Now a text that fits its share is shown whole, and a
+    longer one is shown as a window of the share's size that holds the
+    scored text and starts earlier where fewer bytes follow
+    (`coverage::window`). The log names what lies before and after the
+    window as omitted. Tests:
+    `a_window_holds_the_scored_text_and_uses_its_whole_size`,
+    `a_span_that_fits_is_shown_whole_wherever_focus_scored_it`, the
+    tail-anchored case in
+    `an_excerpt_starts_where_focus_scored_and_marks_a_snippet`, and the
+    loop test, renamed
+    `evidence_follows_the_focus_rank_and_holds_the_scored_text`.
+  - **L-d, fixed in part:** a window that character boundaries leave a few
+    bytes short of 256 grows by whole characters while the call's allowance
+    has spare bytes (test
+    `a_window_short_by_a_character_grows_when_the_allowance_has_the_bytes`).
+    It is not paid for by shortening another window.
+  - **L-e, corrected:** the wording on expected refusals, above and in the
+    measurement README.
+  - **Recorded with owners, not changed** (kernel arbiter `CONTRACT.md`,
+    "What does not hold yet"): L-a (a repeat row's relevance), L-b
+    (`same_as` names a place), L-c (a rule sentence in `loop_cards.rs`) and
+    a stale doc comment in `native_loop.rs`. Their fixes need files that
+    feed the loop identities, which the FP16 profiles are being emitted
+    against.
+  - **Validation:** workspace Clippy with `-D warnings`, all targets and
+    all features: exit 0. Nextest over the kernel's arbiter tests and the
+    identity pins: all passed, and the pins are unchanged.

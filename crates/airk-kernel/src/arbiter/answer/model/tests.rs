@@ -1322,11 +1322,12 @@ fn a_reservation_too_small_to_show_the_spans_makes_no_call() -> Result<()> {
 }
 
 /// The search returned the guide before the guard. Focus scored the guard
-/// above the guide, and scored the guard from the line that names it. The
-/// evidence follows the Focus rank and each excerpt starts where the scored
-/// text starts. The test fails if ranking does nothing.
+/// above the guide, and scored the guard from the line that names it, at
+/// byte 1,500 of 9,000. The evidence follows the Focus rank, and the guard's
+/// excerpt holds the scored text and uses its whole share: the 7,638 bytes
+/// that end with the span. The test fails if ranking does nothing.
 #[test]
-fn evidence_follows_the_focus_rank_and_starts_at_the_scored_text() -> Result<()> {
+fn evidence_follows_the_focus_rank_and_holds_the_scored_text() -> Result<()> {
     let late = late_guard();
     assert_eq!(late.find(GUARD), Some(1500));
     let (fixture, scorer) = scorer(Mode::Accept, true, None, Some(GUARD_PATH))?;
@@ -1359,15 +1360,17 @@ fn evidence_follows_the_focus_rank_and_starts_at_the_scored_text() -> Result<()>
         call.segments[0].cards[0].text,
         "s1 covered: crates/k/src/guard.rs:10-40, docs/guard.md:1-12"
     );
-    // The guard's scored text starts at byte 1,500; the 7,500 bytes from
-    // there fit the allowance. The guide is short and shown whole.
+    // The guide is short and shown whole, which leaves the guard 7,638 of
+    // the 7,680 bytes. Its scored text starts at byte 1,500, and 7,500
+    // bytes follow it. The window therefore starts 138 bytes earlier, at
+    // byte 1,362, and no byte of the share is unused.
     assert_eq!(
         (
             rows[0].excerpt.as_str(),
             rows[0].skipped_bytes,
             rows[0].cut_bytes
         ),
-        (&late[1500..], 1500, 0)
+        (&late[1362..], 1362, 0)
     );
     assert_eq!(
         (rows[1].excerpt.as_str(), rows[1].skipped_bytes),
@@ -1379,10 +1382,10 @@ fn evidence_follows_the_focus_rank_and_starts_at_the_scored_text() -> Result<()>
     rests_on(
         entry,
         &[
-            search_unit(&outcome, 1, (1500, 9000))?,
+            search_unit(&outcome, 1, (1362, 9000))?,
             search_unit(&outcome, 0, (0, 42))?,
         ],
-        &[search_unit(&outcome, 1, (0, 1500))?],
+        &[search_unit(&outcome, 1, (0, 1362))?],
     );
     Ok(())
 }

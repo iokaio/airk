@@ -99,11 +99,18 @@ reservation, with the larger frame:
   bookbuilder-v2 (34 against 43). The tail there is number tables and runs
   of escaped characters at 1.2 to 2.0 tokens a byte, which no ratio near
   ordinary text can hold.
-- **Expected refusals at the rule:** no munarium window, and 43 of 94,879
-  bookbuilder-v2 windows (0.045%), need more than a full call can hold. Of
-  58,118 runs of eight consecutive bookbuilder-v2 windows of one file, 27
-  do (0.046%). A real call mixes spans of several files and shows short
-  spans whole, so the rate in use is at most this.
+- **Windows a full call cannot hold, at the rule:** no munarium window, and
+  43 of 94,879 bookbuilder-v2 windows (0.045%). Of 58,118 runs of eight
+  consecutive bookbuilder-v2 windows of one file, 27 pass the limit
+  (0.046%).
+- **What this does not measure:** the share of real calls that are
+  refused. A call is refused when the average of its excerpts passes the
+  limit, which needs at least one such window in it. If every such window
+  sat in a different call, the share of refused calls would be up to eight
+  times the share of windows; a dense window beside ordinary text still
+  fits, which lowers it. The windows are also fixed-offset slices of every
+  file, not the spans retrieval returns. The rate in use is read from the
+  gate's receipts (card advice with zero observed tokens).
 - **What a refusal costs:** the lane refuses the call before any model work
   and releases its reservation. The decision takes the deterministic order
   on the whole spans, the receipt records zero observed tokens, the card
