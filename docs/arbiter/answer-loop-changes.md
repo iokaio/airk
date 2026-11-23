@@ -2451,8 +2451,12 @@ Numbered 30 until 22 November 2026; renumbered because L4's entries take
   now builds the two observed replies with equal ids and digests and
   requires a changed record id, `full_bytes`, `full_digest`, basis or log
   digest to make the replies differ.
-- **Parity runs:** the two `combined_reads` parity tests passed in 5 of 5
-  runs each with the fix (`parity-cli-after-1` to `-5`).
+- **Parity runs:** without the fix (at `c1e613c7`) the many-and-open test
+  failed in 3 of 5 runs and the single-index test passed in 5 of 5; one
+  more run with the diagnostic failed the many-and-open test once. With the
+  fix both passed in 5 of 5 runs each on `c1e613c7` and again after the
+  rebase on `de0dde02` (receipts `parity-cli-before-*`, `parity-cli-after-*`
+  and `parity-cli-final-*` in the campaign's `answer-loop\repro`).
 - **Tests:** kernel
   `runs_differing_only_in_read_status_give_byte_equal_replies` (two runs
   with different request ids and freshness on every read and one structural
