@@ -24,7 +24,7 @@ fn default_budget_is_the_literal_recorded_decision() -> Result<()> {
         serde_json::to_value(&budget)?,
         json!({
             "deadline_ms":300000,"max_bytes":262144,"max_parts":4,"max_sub_needs":4,
-            "rounds":3,"calls":132,"fanout":8,"candidates":132,"input_tokens":196608,
+            "rounds":3,"calls":132,"fanout":8,"candidates":132,"input_tokens":380000,
             "round_input_tokens":32768,"context_calls":48,"focus_calls":24,"focus_pairs":192
         })
     );
@@ -38,12 +38,19 @@ fn default_budget_is_the_literal_recorded_decision() -> Result<()> {
     small.max_bytes = 50_000;
     assert_eq!(reply_limit(&small), 50_000);
     assert_eq!(MAX_DECISIONS, 101);
-    // The pool funds two parts through every round at the round allowance
-    // (recorded budget decision, change-log entry 44).
-    assert_eq!(
-        DEFAULT_INPUT_TOKENS,
-        2 * budget.rounds * budget.round_input_tokens
-    );
+    // The user's decision of 23 November 2026 (change-log entry 50): the
+    // default pool is the maximum, 380,000 tokens.
+    assert_eq!(DEFAULT_INPUT_TOKENS, 380_000);
+    assert_eq!(MAX_INPUT_TOKENS, 380_000);
+    // Four parts share it equally: 95,000 a part, above the about 84,900 a
+    // part spends over three rounds with evidence-carrying card calls, and
+    // the pool needs no particular multiple (the round allowance is a cap,
+    // not a divisor).
+    assert_eq!(budget.input_tokens / budget.max_parts, 95_000);
+    assert_eq!(budget.input_tokens % budget.max_parts, 0);
+    let mut over = budget.clone();
+    over.input_tokens = 380_001;
+    assert!(over.validate().is_err(), "a pool above 380,000 is refused");
     Ok(())
 }
 
@@ -57,7 +64,7 @@ const MAXIMA: [(&str, u64); 13] = [
     ("calls", 160),
     ("fanout", 12),
     ("candidates", 160),
-    ("input_tokens", 262_144),
+    ("input_tokens", 380_000),
     ("round_input_tokens", 32_768),
     ("context_calls", 64),
     ("focus_calls", 48),
@@ -1008,7 +1015,7 @@ fn refusals() -> Vec<(&'static str, Mutation, &'static str)> {
         ),
         (
             "work_tokens_over_pool",
-            |r| r.work.input_tokens = 196_609,
+            |r| r.work.input_tokens = 380_001,
             "Answer original work budget exceeded",
         ),
         (

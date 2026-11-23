@@ -1376,7 +1376,7 @@ Every field is required and validated, never silently replaced.
 | `calls` | 1..=160 | 132 | Round one 4 x (1 + 4 x 6) = 100, later rounds 4 x 2 x 4 = 32; 28 spare |
 | `fanout` | 1..=12 | 8 | Peak concurrent reads in one round of one part; default as /2 |
 | `candidates` | 1..=160 | 132 | One candidate record per read before dedup, so equal to `calls` |
-| `input_tokens` | 1..=262,144 | 196,608 | Attempt pool: two parts through three rounds at the round allowance (2 x 3 x 32,768); recorded budget decision, change log entry 44 |
+| `input_tokens` | 1..=380,000 | 380,000 | Attempt pool, user decision of 23 November 2026 (change log entry 50): four parts get 95,000 each (less a quarter of the Split call), above the about 84,900 a part spends over three rounds with evidence-carrying card calls. No multiple is required: the round allowance caps a part-round, it does not divide the pool. Was 196,608 (entry 44) with a maximum of 262,144 |
 | `round_input_tokens` | 1..=32,768 | 32,768 | Two batched coverage calls and one follow-up call at 8,192, plus 16 Focus pairs at 512 |
 | `context_calls` | 1..=64 | 48 | Card calls (slots): 1 Split + 4 Plan + 12 x 2 coverage + 8 x 2 follow-up = 45 with two-sub-need batching |
 | `focus_calls` | 1..=48 | 24 | 4 x 3 x 4 unbatched; default two calls a part-round |

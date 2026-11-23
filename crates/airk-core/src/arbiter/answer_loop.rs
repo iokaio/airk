@@ -42,12 +42,15 @@ pub const DEFAULT_CANDIDATES: usize = DEFAULT_CALLS;
 pub const MAX_CANDIDATES: usize = MAX_CALLS;
 pub const MAX_FANOUT: usize = 12;
 pub const DEFAULT_FANOUT: usize = 8;
-/// Model input tokens over the whole attempt.
-pub const MAX_INPUT_TOKENS: usize = 262_144;
-/// Two parts, three rounds each, at the whole round allowance: a two-part
-/// Answer can keep its Context model through its last round. Raised from
-/// 131,072 when card calls began to carry evidence (change log entry 44).
-pub const DEFAULT_INPUT_TOKENS: usize = 2 * MAX_ROUNDS * MAX_ROUND_INPUT_TOKENS;
+/// Model input tokens over the whole attempt: the user's decision of 23
+/// November 2026 (change log entry 50). A four-part Answer gets about 95,000
+/// a part, above the about 84,900 a part spends over three rounds with
+/// evidence-carrying card calls, so it keeps its Context model through its
+/// last round. Raised from 262,144.
+pub const MAX_INPUT_TOKENS: usize = 380_000;
+/// The default is the whole pool. It was 196,608 (two parts through three
+/// rounds, change log entry 44) and 131,072 before that.
+pub const DEFAULT_INPUT_TOKENS: usize = MAX_INPUT_TOKENS;
 /// Model input tokens of one round of one part. At the gate's settings a
 /// round with four open sub-needs spends about 30,200 of them: 16 Focus
 /// pairs at 1,024 tokens, two batched Coverage calls and two batched

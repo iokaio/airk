@@ -1988,3 +1988,58 @@ Numbered 30 until 22 November 2026; renumbered because L4's entries take
   through the supervisor (`L2b\l2c-h1-repro.log`).
 - **Where:** plan sections 12.4.2 and 12.8; the ledger entries of 23
   November at 00:31 and 01:18 UTC.
+
+### 50. The Answer token pool is 380,000 by default and at most
+
+- **Decision (user, 23 November 2026):** "we're going to have to expand the
+  full Answer budget to 380,000 tokens." `input_tokens` of the Answer /3
+  budget now defaults to 380,000 and accepts at most 380,000 (it was 196,608
+  by default with a maximum of 262,144, entry 44).
+- **Why:** at the gate's settings a full evidence call observes about 3,800
+  tokens, a part's round costs about 30,200 and a part over three rounds
+  about 84,900 (entry 44). With 196,608 a four-part Answer gets about 48,200
+  a part and loses its card calls in round 2, disclosed as `not_dispatched`
+  with reason `token_budget`. Funding four parts needs about 340,000.
+- **Shape check:** no rule asks the pool to be a multiple of anything. The
+  round allowance (32,768) caps each part-round and is not a divisor, and
+  validation asks only `1..=380,000` and `round_input_tokens <=
+  input_tokens`. After an evidence-sized Split call (3,800) each of four
+  parts gets 94,050 (376,200 / 4, no remainder); with no Split charge 95,000.
+  Plan plus three rounds take about 88,200 of it, 5,850 to spare. A combined
+  Answer over three members gives 126,667, 126,667 and 126,666.
+- **What follows the number:** `MAX_INPUT_TOKENS` and `DEFAULT_INPUT_TOKENS`
+  in Core `answer_loop.rs`; everything else reads the budget: the kernel
+  part shares and their hand-back (`shares.rs`), the card-call reservation
+  cap in `model.rs`, the combined Answer member shares and the widest budget
+  (`combined_context/answer.rs`), the native allowance clamp
+  (`native_loop.rs`) and the service loop ledger. No code beyond the two
+  constants changed. The Rust-emitted semantic cases
+  (`fixtures/split/arbiter/answer_loop_cases.json`) were regenerated through
+  their Core owner: the default budget, the `input_tokens` maximum and
+  over-maximum cases and the over-pool refusal (380,001). The arbiter schema,
+  the TypeScript views and the help content carry no number and did not
+  change.
+- **Model time:** a full four-part Answer makes 45 card calls (1 Split, 4
+  Plan, 24 Coverage, 16 Follow-up). At about 1.7 s a full evidence call on
+  Compact that is about 77 s of card calls; at about 4.4 s on Large about
+  198 s. Focus time comes on top and is not measured here. The deadline
+  (300 s by default, at most 600 s) still bounds the Answer: the model-time
+  shedding of entry 44 holds a card call back when its estimate exceeds the
+  part's model time, so on Large a four-part Answer may now lose late calls
+  for time (reason `deadline`) where it used to lose them for tokens.
+- **Identities:** none moved. `answer_loop.rs` and the test files feed no
+  identity; no identity-feeding file (Core `answer_loop/cards.rs`,
+  `calibration.rs`, `focus_batch.rs`, `log.rs`, `semantics.rs`,
+  `native_loop.rs`; retrieval `loop_cards.rs`, the task policies,
+  `compiler.rs`, `compiler/qwen.rs`, `runtime.rs`) changed, and the pin
+  control `recorded_loop_policy_identities` and the `cpu_source_transition`
+  tests pass unchanged.
+- **Tests:** Core `default_budget_is_the_literal_recorded_decision` pins
+  380,000, 95,000 a part and the refusal of 380,001; kernel
+  `default_pool_funds_four_parts_through_three_evidence_rounds` runs the
+  real part shares under the default budget and walks the measured costs:
+  every round is funded, while the old 196,608 gives 48,202 a part and loses
+  round 2. That test is at the share level: the synthetic kernel fixture
+  closes its sub-needs in round 1 and cannot hold a four-part Answer open for
+  three rounds, so no end-to-end loop run at gate costs is claimed.
+- **Where:** Core arbiter `CONTRACT.md` ("Budget").

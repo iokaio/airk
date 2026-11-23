@@ -81,3 +81,47 @@ fn reserve_keeps_compose_and_union_time() {
     );
     assert!(short.compose_union_ms > 0 && short.dispatch_ms > 0);
 }
+
+/// Change log entry 50 (user decision, 23 November 2026): the default pool of
+/// 380,000 tokens funds a four-part Answer through its last round when card
+/// calls carry evidence. Costs measured at the gate (entry 44): a full
+/// evidence call observes about 3,800 tokens; a part's round about 30,200
+/// (16 Focus pairs at 1,024 plus its card calls); the last round, which has
+/// no Follow-up, about 24,000. The Split call is charged before the shares.
+#[test]
+fn default_pool_funds_four_parts_through_three_evidence_rounds() {
+    const SPLIT: usize = 3_800;
+    const PLAN: usize = 3_800;
+    const ROUNDS: [usize; 3] = [30_200, 30_200, 24_000];
+    let budget = v3::BudgetV3::default();
+    assert_eq!(budget.input_tokens, 380_000);
+    // Each measured round fits the round allowance, so only the part's
+    // share can stop it.
+    assert!(ROUNDS.iter().all(|round| *round <= budget.round_input_tokens));
+    let shares = Shares::allocate(&budget, 4, budget.context_calls - 1, 380_000 - SPLIT);
+    let tokens: Vec<_> = shares.parts.iter().map(|share| share.tokens).collect();
+    assert_eq!(tokens, [94_050, 94_050, 94_050, 94_050]);
+    // Plan, then three rounds: 88,200 of the 94,050, so the last round's
+    // calls are funded with 5,850 to spare.
+    let mut left = 94_050 - PLAN;
+    for round in ROUNDS {
+        assert!(round <= left, "a round lost its model for tokens");
+        left -= round;
+    }
+    assert_eq!(left, 5_850);
+    // The old default of 196,608 gives 48,202 a part: Plan and round one
+    // (34,000), then round two (30,200) no longer fits.
+    let old = v3::BudgetV3 {
+        input_tokens: 196_608,
+        ..v3::BudgetV3::default()
+    };
+    let shares = Shares::allocate(&old, 4, old.context_calls - 1, 196_608 - SPLIT);
+    assert_eq!(shares.parts[0].tokens, 48_202);
+    assert!(PLAN + ROUNDS[0] + ROUNDS[1] > shares.parts[0].tokens);
+    // A pool above the maximum is refused.
+    let over = v3::BudgetV3 {
+        input_tokens: 380_001,
+        ..v3::BudgetV3::default()
+    };
+    assert!(over.validate().is_err());
+}
