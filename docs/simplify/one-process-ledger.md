@@ -16986,3 +16986,59 @@ names the r4 pairs (copy of the old file:
 **State.** D: free 770,214,612,992 bytes. Nothing is running; GPU and Cargo owner
 markers released. Next: open item 1, then the L2c merge (rebased over LH),
 fresh bases and L7.
+
+### 23 November 2026 at 21:30 UTC — Local trust plan, phase A: fences become consistency checks (change-log entry 67); merged into `feat/arbiter-final`
+
+**User's word:** accept the four local-trust recommendations and fix them
+before L7, fences first ([plan](local-trust-plan.md)).
+
+**Source.** One Opus agent at medium effort, worktree
+`answer-loop\trust-a\wt`, branch `loop/trust-a` from `7ca9347c`, identity
+`TYAI\tdotn` (SID ...-1002, Owner equal) verified and guard run. Commits
+`b122069c` (kernel, Core, store, MCP), `7e44aee0` (frontend, catalog-control,
+service) and `8c19647d` (entry 67 with the site table). `feat/arbiter-final`
+was fast-forwarded to `8c19647d`.
+
+**What changed.**
+- A changed authority still refuses.
+- After model work (Answer, joint, v1 delivery, Focus), a newer publication
+  is the new typed `publication_advanced` (not retryable, not replay-safe).
+  The Focus policy stale now renders as `arbiter_context_action_stale`
+  instead of `read_failed`.
+- Read-only reads (scoped metadata, a combined member without model work,
+  usage pagination) are read again at most three times, then
+  `publication_busy`. Source projection of a replaced publication is
+  `publication_busy`.
+- A source configuration ahead of its publication is the new retryable
+  `scope_reconcile_pending`, including genesis multi-root scopes; a root
+  configured nowhere still refuses. Unfrozen sources are
+  `SourcePolicyReadUnavailable`.
+- Begin-side catalog admission: `CatalogAdmissionPending` (rendered
+  `catalog_connection_busy`), `CatalogRevisionChanged`,
+  `CatalogClockPending`. Delivery-side checks still refuse. The four
+  blanket `map_err`s in `tools_call.rs` keep typed transients' codes.
+- One test expectation changed: `configured_roots()`/`roots()` after
+  `add_root` without reindexing are `ScopeReconcilePending`, not a refusal.
+
+**Validation** (agent; target `target-l2b`, incremental on, logs
+`answer-loop\trust-a\logs`): Clippy `-D warnings` over core, store, kernel,
+mcp, catalog-control, frontend and service, all targets, all features and
+default features, clean (47 s, 66 s). Nextest focused selection 461 of 461
+(3:52). The 19 new or changed tests against the reverted behaviour: 0 of 19
+pass, each on its expected assertion. Stress group (`combined_reads` Answer
++ `admin_plane`), 20 iterations: **340 of 340** (17:03). `check-repo.ps1`
+and `git diff --check` clean. Primary agent reviewed the production diff
+independently; no findings.
+
+**Left, with reasons (entry 67):** service arbiter `catalog_clock()` checks
+(only a poisoned mutex returns none); untyped Supervisor transients (no unit
+fixture); unknown-outcome transients (typing them retryable contradicts the
+`ConnectionSetupPending` rule, a user-level question); `with_scope_issue`
+(shared by pre-dispatch and in-flight checks). **Not verified:** the
+combined member re-read and pagination restart against a live race (only
+classifier tests); whether LH open item 1 (the status read refused
+`scoped_connection_unavailable`) is closed; Linux and macOS; the LH switch
+sequence on a CUDA lifetime (phase D).
+
+**State.** D: free 728,168,509,440 bytes. Nothing running. Next: phase B,
+credential and grant removal.
