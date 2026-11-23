@@ -1962,3 +1962,29 @@ Numbered 30 until 22 November 2026; renumbered because L4's entries take
   declare"), retrieval compiler `CONTRACT.md` ("A loop profile is a valid
   profile"), service arbiter `CONTRACT.md` ("A loop profile serves an index
   enrolled for Context").
+
+### 49. The job table stays out of the LG gate image; the gate measures concurrency on the unqueued path
+
+- **Step:** LG preparation. Numbered after 47 and 48, which the job agent
+  uses on its branch for L2c and L2d.
+- **What:** the first job-table wiring (`loop/l2b-wire` at `24184339`) is not
+  merged before LG. Test 4 of plan sections 12.7.1 and 12.7.2 ("throughput
+  with 2 and 4 concurrent Answers, using the queueing of section 12.4.1")
+  runs two and four concurrent Answers on the unqueued path, where only the
+  per-index lane rule orders model work, with a distinct question per
+  concurrent call. The gate report says so.
+- **Why:** an independent review found two high and seven medium defects.
+  A job's reads were revoked when its maker's session ended, so the
+  retry-after-timeout case failed and the kept failure refused identical
+  requests for ten minutes. Kept replies answered repeated and concurrent
+  copies of a question with the first run's timings, which would have
+  counted one run several times in the gate. Fixing both and reviewing again
+  cost more than the gate gained.
+- **What replaces it:** the job design the user approved on 23 November
+  (plan section 12.4.2, steps L2c, L2d and L2e), built beside the gate and
+  merged after it.
+- **Evidence:** `review-l2b\review-24184339.md` in the private `answer-loop`
+  folder; the disconnect defect was later reproduced by a failing test
+  through the supervisor (`L2b\l2c-h1-repro.log`).
+- **Where:** plan sections 12.4.2 and 12.8; the ledger entries of 23
+  November at 00:31 and 01:18 UTC.

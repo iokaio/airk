@@ -15947,3 +15947,97 @@ Rust-emitted cases file and records the budget sent in each receipt.
 
 **Base roots at 01:20 UTC.** All five still embedding bookbuilder-v2;
 munarium ready in all; no error. D: free 1,103 GB.
+
+### 23 November 2026 at 02:23 UTC — integration round closed: Follow-up evidence, the profile blocker and the duplicate rule
+
+**Commits on `feat/arbiter-final`, pushed** (integration agent, handed back;
+resume note `L4\RESUME-INTEGRATION.md` in the private `answer-loop` folder):
+
+| Commit | What | Identity moved |
+| --- | --- | --- |
+| `23d8f4d4` | `airk-service` builds without `local-inference` again | no |
+| `936c9b94` | Follow-up rosters show the sub-need's kind, its coverage verdict and bounded evidence; the first review's findings closed; excerpt allowance 7,680 bytes at 8,192 tokens; default token pool 196,608; decision source `not_dispatched` | six |
+| `54155bb3` | A span that fits its share is shown whole; a longer one as a window holding the text Focus scored | no |
+| `ffa08c04` | A Context profile may declare the loop's four card tasks; the service accepts such a profile for an index enrolled for Context | no |
+| `5f971a70` | The duplicate rule: each text is carried once in the reply | no |
+
+**The six identities, moved once at `936c9b94`** (old, new): Core loop
+semantics `307cb4a3…` to `2f89a3ae…`; `airk.context_split.v1` `fecca3cb…` to
+`f1ecc7d9…`; `airk.context_plan.v1` `487f22fd…` to `064ec90a…`;
+`airk.context_coverage.v1` `846f1db0…` to `c2eab6c9…`;
+`airk.context_follow_up.v1` `104b24bb…` to `b1edccc6…`; batched Focus
+`19e85647…` to `f90f9c77…`. Proof: the pin control fails on the old values
+(`int2-nextest-ids-old-pins.log`). `compiler.rs`, `compiler/qwen.rs` and
+`runtime.rs` are untouched.
+
+**The profile blocker (`ffa08c04`).** Core refused every profile declaring
+the loop's card tasks, and the service would have reported every enrolled
+index as unsupported under such a profile. L4's tests had never run the full
+profile validation. Found by the LG agent's re-emission; fixed with tests in
+Core, retrieval and the service. Release publication still takes only the
+one-turn task; that belongs to the rollout after L7.
+
+**The duplicate rule (`5f971a70`, change-log entry 45).** A row of a
+record's spans carries either its text (with `also_at` for other places
+holding the same text, and `overlaps` for a part another row carries) or
+`same_as`, a pointer to the row that has the text. The Union summary counts
+`repeats_merged` and `overlaps_trimmed`. The kept copy is the one with the
+highest Focus relevance, then the earliest read, then the earliest hit. Only
+exact repeats are merged: near-identical merging was not shipped, because a
+looser rule could merge two different facts.
+
+**Validation, per commit** (logs in the private `answer-loop\L4` folder):
+workspace Clippy `-D warnings` with all features exit 0 at each; default
+features exit 0 for the crates each commit touches; nextest 16 of 16
+(`23d8f4d4`), 1,074 of 1,074 (`936c9b94`), 194 of 194 (`54155bb3`), 661 of
+662 (`ffa08c04`), and the handler and Union selections at `5f971a70`.
+
+**Open, with owner.**
+
+| Item | State | Owner |
+| --- | --- | --- |
+| Combined Answer parity test `current_answer_many_and_open_keep_complete_cli_pipe_and_https_mcp_packets` | Failed once in its Open case (one member's outline read was 3,557 bytes on one transport and 3,066 on the other), passed on one repeat with unchanged inputs. Not shown stable; the cause is unknown. The retained pair is `artifacts\testing\combined-reads\11d7b9b8d227b6fcb574d67b394ca04b.json`. The gate uses single-index Answers | a new agent, after LG; before any combined Answer is measured |
+| Overlap trimming between two different spans inside one card call | Not built; a card call shows byte-equal text once | next identity move |
+| Review lows L-a, L-b, L-c and the `CardEvidence.excerpt` comment | Their files feed identities the profiles pin | next identity move |
+| A four-part Answer loses card calls in round 2 | Funding it needs about 340,000 tokens, above the 262,144 maximum. Disclosed in the reply as `not_dispatched` with `token_budget` | decided with the LG results |
+| `failure_tests::ambiguous_or_corrupt_configuration_status_…` | Fails since 17 November | the D08 device-configuration owner |
+| TypeScript typecheck after the schema changes | Not run on main | the Workbench agent, on its rebase |
+| Review of `5f971a70`, `ffa08c04` and `54155bb3` | Running, read-only | reviewer |
+
+**Measured on the A6000 by the re-emission dry run** (fixed test rows, not
+real cards): Compact FP16 reload 7.6 s, warm call 54 ms at 32 tokens, 213 ms
+at 1,024 and 1,715 ms at 8,192, sampled process peak 6,410 MiB. Large FP16
+reload 16.9 s, 91 ms, 467 ms and 4,594 ms, peak 14,586 MiB. Compact's final
+profile from the build holding `ffa08c04` is byte-identical to the dry run's.
+
+**Second blocker, found by the shakedown.** The private evaluation fixture
+did not start on main: its test-support code still built Answer /2 templates
+("missing field `max_parts`"). The bases had started only because they use
+the older image. The LG agent fixes it on `loop/l5c` as its own commit.
+
+**Base roots.** All five reached semantic readiness. Base L took two
+lifetimes: the first ended at 01:28 UTC on one refused status poll after 3.6
+hours, its service settled cleanly, and `06-gate-lg-L-base2` continued the
+embedding.
+
+**Change of model for agents.** The user wrote at about 01:25 UTC: "We're
+nearing our Fable limit. When current agents finish, start new agents using
+Opus at medium reasoning." New agents are launched that way. The job agent
+was restarted so (L2c and L2d); the Workbench agent was already on Opus. The
+LG agent hands back after the bases, the shakedown, the final profiles and
+the pairs, with a stand-alone procedure; a new agent builds the gate image
+and runs the gate.
+
+**Job design, L2c.** The new job agent wrote the ownership contracts and
+reproduced the first wiring's disconnect defect with a failing test through
+the supervisor (`l2c-h1-repro.log`). Accepted: a job kernel with its own
+revocation flag registered on the grant's lease, and the job options kept
+beside the /3 request so that no pinned file moves. Residual to record: a
+job outlives its caller only for the remaining lease.
+
+**Disk.** D: free 1,065 GB at the integration agent's release; the main
+target grew to 256.8 GB.
+
+**Next action.** The review of the last three commits; the fixture fix and
+the shakedown; Large confirmed on the A6000 and the three pairs; then the
+gate image from `5f971a70` plus `loop/l5c`, the short trial and the gate.
