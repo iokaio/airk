@@ -2925,3 +2925,67 @@ Numbered 65 because the unmerged `loop/lh` already holds entries 57 to 64.
 - **Identities:** none moved; no identity-feeding file changed. No wire,
   digest input or persisted format changed.
 - **Where:** kernel arbiter `CONTRACT.md` ("G4 scoped device diagnostics").
+
+### 67. Fences become consistency checks (local trust plan, phase A)
+
+- **Why:** the user's [local trust plan](../simplify/local-trust-plan.md)
+  (23 November 2026), decision 4 and phase A. Scope, admission and delivery
+  fences reported harmless races as permanent refusals (entries 65 and 66,
+  and the `scoped_connection_unavailable` in LH's acceptance). Entry 66's
+  pattern now applies everywhere: a changed authority is still a refusal; a
+  publication that moved under the same authority is read again, or
+  answered with the retryable `publication_busy`; work that already spent
+  model tokens is never replayed and reports the typed, non-replayable
+  `publication_advanced`.
+- **New codes:**
+  - `publication_advanced` (Core `scoped_reads::PublicationAdvanced`;
+    `retryable: false`, `query_replay_safe: false`, no `action`). Recorded
+    in kernel arbiter `CONTRACT.md` ("Fences as consistency checks") and the
+    combined Answer `CONTRACT.md`.
+  - `scope_reconcile_pending` (kernel `retrieval_retry::ScopeReconcilePending`;
+    retryable, `retry_after_ms: 250`, `repeat_same_request`). Recorded in
+    kernel arbiter `CONTRACT.md`.
+  - Catalog-control `CatalogAdmissionPending` is a new type, rendered with
+    the existing `catalog_connection_busy`. Recorded in service runtime
+    `CONTRACT.md`.
+
+| Site | What it detects | Old | New | Test (fails on the old code) |
+|---|---|---|---|---|
+| kernel `arbiter.rs` v1 delivery fences (2) | authority or publication changed after the gathering | untyped `read_failed` | fingerprint: `ScopeReadRefused`; publication: `publication_advanced` | `arbiter::focus::tests::v1_delivery_after_a_publication_landed_is_publication_advanced` (yes) |
+| kernel `arbiter/answer.rs` `finish` | the same, Answer /3 | untyped `read_failed` | the same split | `airk-mcp` `publication_landing_after_model_work_is_typed_publication_advanced_without_replay` (yes: `read_failed`) |
+| kernel `arbiter/joint.rs` (2) | the same, joint | untyped `read_failed` | the same split | `joint_delivery_after_a_publication_landed_is_publication_advanced` (yes) |
+| kernel `arbiter/focus.rs` Focus fence | authority, publication or Focus policy changed after ranking | `FocusPostExecutionStale` for all three | fingerprint: refusal; publication: `publication_advanced`; policy: `FocusPostExecutionStale` | `focus_publication_moved_after_native_work_is_publication_advanced` (yes) |
+| `airk-mcp` `response.rs` | `FocusPostExecutionStale` rendering | `read_failed` | `arbiter_context_action_stale`, not retryable, not replay-safe | `focus_policy_change_after_native_work_renders_typed_stale_refusal` (yes) |
+| kernel `scoped_index_metadata` (token and embedded publication) | publication landed during the read | `ScopeReadRefused` | read again, at most 3 observations, then `publication_busy` | `scoped_metadata_reads_again_when_a_publication_lands` (yes) |
+| kernel `scoped_source_projection` (2) | expected publication replaced | `ScopeReadRefused` | `publication_busy` | `source_projection_of_a_replaced_publication_is_publication_busy` (yes) |
+| kernel `SessionScope::attach` (`compile_atoms` on a new publication) | a granted root configured but not yet published | `ScopeReadRefused` | `scope_reconcile_pending`; unconfigured roots still refuse | `configuration_ahead_of_the_publication_is_pending_reconcile_not_refusal` (yes) |
+| kernel `require_index_metadata` roots comparison | configuration ahead of the publication | `ScopeReadRefused` | `scope_reconcile_pending` when the authority resolves against the configuration; a real partial scope still refuses | `scoped_metadata_with_configuration_ahead_is_pending_reconcile` (yes) |
+| kernel `require_bootstrap_authority` | genesis, multi-root scope | `ScopeReadRefused` | checked against the configuration: `BootstrapPublicationPending` (`publication_busy`); unconfigured still refuses | `genesis_multi_root_scope_with_configured_roots_is_pending` (yes) |
+| store `source_policy.rs` `require_source_policy_live` | sources not frozen yet | `ScopeReadRefused` | `SourcePolicyReadUnavailable`; reserved roots still refuse | `unfrozen_sources_are_policy_unavailable_and_reserved_roots_refuse` (yes) |
+| frontend `combined_frontend.rs` `read_member` | member projection refused because the publication moved | `source_projection_expired` | read-only member read again (3), model work `publication_advanced`, still moving `publication_busy` | `moved_member_publication_is_classified_by_its_typed_native_receipt` (classifier only, new functions) |
+| frontend `combined_frontend/answer.rs` | the same, Answer member | `source_projection_expired` | `publication_advanced` | the same classifier test |
+| frontend `usage_client.rs` pagination | publication moved between pages, same scope | untyped failure | collected again (3), then `publication_busy` | `a_newer_publication_during_pagination_is_the_typed_restart` (header comparison only, new function) |
+| frontend `project_client.rs` `setup_retryable` | typed in-process setup transients | not retryable | retried and `retryable: true` | `typed_in_process_setup_transients_are_retryable` (yes) |
+| catalog-control `begin_issue`, `capture_current_issue` | fence in flight; moved revision; clock behind | `ScopeReadRefused` | `CatalogAdmissionPending`, `CatalogRevisionChanged`, `CatalogClockPending`; namespace and delivery still refuse | `begin_side_transients_are_typed_and_delivery_still_refuses` (yes) |
+| catalog-control `require_worker_start` | worker start during a census fence | `ScopeReadRefused` | `CatalogAdmissionPending` | `worker_start_during_a_census_fence_is_admission_pending` (yes) |
+| service `connection_failure_code` | `CatalogAdmissionPending` | `scoped_connection_unavailable` | `catalog_connection_busy` | `begin_side_catalog_admission_pending_is_the_busy_code` (yes) |
+| service `tools_call.rs` (4 `map_err`) | any setup failure | `scoped_read_unavailable` | typed transients keep their code; the rest refuse, no text | `selection_setup_keeps_typed_transients_and_refuses_the_rest` (new function) |
+
+- **Changed test expectation:** kernel
+  `current_metadata_handlers_accept_full_source_and_refuse_subset_or_new_alias`
+  asserted that `configured_roots()` and `roots()` refuse once a root is
+  configured but not published. That is the refusal this entry turns into
+  `scope_reconcile_pending`; it now asserts `ScopeReconcilePending`. Its
+  later assertions (the published root makes the scope partial and refused)
+  are unchanged.
+- **Left, with reasons:** the service arbiter `catalog_clock()` checks (the clock is `None`
+  only when the gate's lock is poisoned, so there is no pending state to
+  split); `collection_state()` being `None` after genesis (not reachable:
+  genesis is handled first); the Supervisor's untyped draining, retiring,
+  exchange-pending and outcome-unknown messages (no Supervisor unit fixture;
+  and the outcome-unknown ones contradict the documented rule that unknown
+  outcomes never construct `ConnectionSetupPending`); the combined cursor
+  projection (`combined_cursor_expired` is a true expiry); and the batched
+  Focus fence (already a typed non-replayable refusal).
+- **Identities:** none moved; no identity-feeding file changed. No wire
+  shape changed beyond the new error codes; no persisted format changed.
