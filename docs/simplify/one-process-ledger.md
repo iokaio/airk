@@ -15845,3 +15845,52 @@ running.
 **Running.** The integration round (Follow-up evidence, review rulings,
 allowance, default-features fix; then the deduplication), the base roots,
 and the job-table review.
+
+### 23 November 2026 at 00:31 UTC — the job table stays out of the gate image
+
+**Independent review of `loop/l2b-wire` at `24184339`** (read-only, nothing
+run, on a cheaper model): 2 high, 7 medium, 5 low. Record:
+`review-l2b\review-24184339.md` in the private `answer-loop` folder.
+
+- **Sound:** no way was found for one authority to get another authority's
+  work. The attach key covers installation, catalog, index, the whole
+  authority fingerprint, the configuration revision and every budget field
+  but the deadline; ticket ids are salted, scoped and dead after a restart;
+  no lock is held across an await; with the table absent the live path is
+  unchanged.
+- **H1:** when the maker's connection ends, the session teardown revokes the
+  scoped reads that the job's kernel shares. The job then fails at its next
+  read, the failure is kept, and every identical request in that scope is
+  refused for 600 s. That is the feature's central case, a retry after a
+  client timeout. The wiring tests call the local tools without a supervisor
+  session, so they do not see it.
+- **H2:** within one service lifetime a kept reply answers repeated and
+  concurrent copies of a question, with the first run's timings and model
+  work. Gate measurements taken through the table would count one run
+  several times.
+- **Medium:** a running job is joined whatever its deadline; job work has no
+  reap boundary, so a stuck job blocks the gathering floor and the owner's
+  idle exit; `include_status` is not in the scope key; an attached reply can
+  be invalid under the caller's own budget; transient untyped failures are
+  kept for ten minutes; six risky paths have no test; the parity tests no
+  longer prove that independent runs through different transports agree.
+
+**Decision (primary agent).** The job table is not merged before LG and is
+not in the gate image.
+- **Why:** H2 would corrupt the gate's numbers unless attach and retention
+  were switched off, which removes what the table adds; H1 breaks its main
+  case on the real supervisor path; fixing both, the mediums and the missing
+  supervisor-level tests, then reviewing again, costs more time and tokens
+  than the gate gains.
+- **Effect on the gate:** test 4 of plan sections 12.7.1 and 12.7.2 measures
+  two and four concurrent Answers on the unqueued path (the per-index lane
+  rule only), with distinct questions, and the report says so. This is the
+  fallback recorded on 22 November at 21:20 UTC. It changes a gate mechanic
+  and is logged as change-log entry 46 when the integration agent releases
+  that file.
+- **Owner and next step:** L2b, after the LG decisions: decouple a job's
+  revocation from session teardown, compare deadlines when joining a running
+  job, a reap boundary for job work, `include_status` in the scope, do not
+  keep transient failures, record `attached` per call, a setting that
+  disables attach and retention for measurement, and tests through the
+  supervisor `query()` path. The branch stays at `24184339`.
