@@ -1333,7 +1333,7 @@ Caps below 128 KiB that would refuse or cut a full reply are marked **cuts**.
 | Frontend public envelope | `airk-frontend/src/combined_frontend.rs:51` | 1,048,576 | Fits |
 | Kernel Focus reply budget | `airk-kernel/src/arbiter/focus.rs:800` | 65,536 | **cuts** search-Focus room inside Answer |
 | Kernel context reply reserve | `airk-kernel/src/arbiter.rs:229` (`context_reply_reserve`) | 4,096 reserved | Reserve only; recheck against 131,072 |
-| Service IPC default frame | `airk-core/src/service.rs:34`, `:1305` (`MAX_FRAME_BYTES`) | 65,536 | **cuts** for any Answer path on a default method |
+| Service IPC default frame | `airk-core/src/service.rs:34`, `:1305` (`MAX_FRAME_BYTES`) | 65,536 | **cuts** for any Answer path on a default method. The worker query reply of an Answer now uses `MAX_ANSWER_REPLY_FRAME_BYTES` (147,456; `query_reply_frame`) at the worker's write and the frontend's read (change-log entry 53); before, an Answer reply above 64 KiB failed its frame, the worker dropped the stream and the caller saw `scoped_observation_unavailable` |
 | Service tools-call and Arbiter frames | `airk-core/src/service.rs:1278`, `:1295`, `:1300` | 4,194,304 | Fits |
 | Host session response frame | `airk-host/src/session_protocol.rs:32` | 16,777,216 | Fits |
 | airkctl rpc request limit | `airkctl/src/cli.rs:2912` | 65,536 | Request side only |

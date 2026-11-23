@@ -47,9 +47,15 @@ where
             // The worker's existing hard-reap budget is the tool's ceiling (125 s,
             // or Answer's 605 s). A later transport timeout is still UNKNOWN and
             // must await native reap below.
-            local_ipc::read_message::<_, protocol::QueryResult>(
+            // An Answer reply arrives in the Answer frame (change-log entry 53).
+            local_ipc::read_message_limited::<_, protocol::QueryResult>(
                 &mut stream,
                 airk_core::read_attempt::read_budget_for_tool(&query.tool) + Duration::from_secs(5),
+                if query.native.is_some() {
+                    airk_core::service::MAX_FRAME_BYTES
+                } else {
+                    airk_core::service::query_reply_frame(&query.tool)
+                },
             )
             .await
             .and_then(|response| response.context("native query disconnected before completion"))

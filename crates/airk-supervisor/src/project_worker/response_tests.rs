@@ -140,3 +140,32 @@ fn early_worker_errors_use_closed_native_envelopes() -> Result<()> {
     assert!(!unknown.to_string().contains("private/sentinel"));
     Ok(())
 }
+
+/// Change-log entry 53: an Answer reply above 64 KiB used to fail its frame
+/// at the worker, which dropped the stream, so the caller saw only
+/// `scoped_observation_unavailable`. An Answer query's reply now has the
+/// Answer frame; other tools keep 65,536; a reply above its frame is
+/// answered with a typed refusal that fits the default frame.
+#[test]
+fn an_answer_reply_has_the_answer_frame_and_an_oversized_one_is_refused_typed() -> Result<()> {
+    let mut reply = admission_rejection(airk_core::service::AdmissionError::Busy);
+    let text = "x".repeat(100_000);
+    reply.result = json!({"content":[{"type":"text","text":text}],"isError":false});
+    let mut frame = Vec::new();
+    assert!(service_ipc::write_frame_limited(&mut frame, &reply, MAX_FRAME_BYTES).is_err());
+    assert_eq!(airk_core::service::query_reply_frame("airk_search"), 65_536);
+    assert_eq!(airk_core::service::query_reply_frame("airk_answer"), 147_456);
+    frame.clear();
+    service_ipc::write_frame_limited(
+        &mut frame,
+        &reply,
+        airk_core::service::query_reply_frame("airk_answer"),
+    )?;
+    let refused = frame_exceeded(&reply, MAX_FRAME_BYTES);
+    frame.clear();
+    service_ipc::write_frame_limited(&mut frame, &refused, MAX_FRAME_BYTES)?;
+    assert_eq!(refused.result["isError"], true);
+    assert_eq!(body(&refused.result)["error"]["code"], "reply_frame_exceeded");
+    assert_eq!(refused.result["structuredContent"]["error"]["maximum_bytes"], 65_536);
+    Ok(())
+}

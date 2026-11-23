@@ -442,7 +442,7 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 Err(error) => {
                     let mut reply = admission_rejection_observed(error, &response_kernel)?;
                     reply.status_receipt = tools.status_receipt();
-                    deliver(&mut stream, &reply, &state, grant.scope, purpose).await?;
+                    deliver(&mut stream, &reply, &state, grant.scope, purpose, MAX_FRAME_BYTES).await?;
                     if reply.rebind { return Ok(()); }
                     continue;
                 }
@@ -450,6 +450,12 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
             tools.restore_status_receipt(request.status_receipt);
             // The permit and revision materialization survive transport cancellation.
             let native_read = request.native.is_some();
+            // An Answer reply needs the Answer frame (change-log entry 53).
+            let reply_frame = if native_read {
+                MAX_FRAME_BYTES
+            } else {
+                airk_core::service::query_reply_frame(&request.tool)
+            };
             let response = match tokio::time::timeout_at(query_deadline, async {
                 match request.native {
                     Some(native) => match &read_context {
@@ -499,7 +505,7 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
                     request_id: budget.request_id, identity: state.identity, scope: protocol::reply_scope(grant.scope),
                 });
             let reply = protocol::QueryResult { read_admission, result: value, status_receipt: tools.status_receipt(), rebind: false };
-            let result = deliver(&mut stream, &reply, &state, grant.scope, purpose).await;
+            let result = deliver(&mut stream, &reply, &state, grant.scope, purpose, reply_frame).await;
             state
                 .broker
                 .lock()
@@ -519,6 +525,20 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
     result
 }
 
+/// The typed refusal delivered in place of a reply larger than its frame.
+fn frame_exceeded(reply: &protocol::QueryResult, limit: usize) -> protocol::QueryResult {
+    let body = serde_json::json!({"error":{"code":"reply_frame_exceeded","retryable":false,
+        "message":format!("The completed reply exceeds the {limit}-byte reply frame; narrow the request's byte budget and run it again."),
+        "maximum_bytes":limit}});
+    protocol::QueryResult {
+        read_admission: None,
+        result: serde_json::json!({"content":[{"type":"text","text":body.to_string()}],
+            "structuredContent":body,"isError":true}),
+        status_receipt: reply.status_receipt,
+        rebind: false,
+    }
+}
+
 /// Serialize first, then fence immediately before delivery. A result completed
 /// before revocation cannot be delivered from a retained serialized response.
 async fn deliver(
@@ -527,9 +547,16 @@ async fn deliver(
     state: &State,
     scope: Option<airk_core::service::ScopedReadRef>,
     purpose: SessionPurpose,
+    limit: usize,
 ) -> Result<()> {
     let mut frame = Vec::new();
-    service_ipc::write_frame_limited(&mut frame, reply, MAX_FRAME_BYTES)?;
+    if service_ipc::write_frame_limited(&mut frame, reply, limit).is_err() {
+        // A completed reply that cannot be framed is answered with a typed
+        // refusal, never a dropped stream the caller can only read as an
+        // unknown observation (change-log entry 53).
+        frame.clear();
+        service_ipc::write_frame_limited(&mut frame, &frame_exceeded(reply, limit), MAX_FRAME_BYTES)?;
+    }
     deliver_frame(stream, &frame, || {
         let guard = state
             .scopes

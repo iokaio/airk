@@ -166,3 +166,50 @@ async fn actual_partial_frame_closes_socket_and_cannot_return_capacity_from_canc
     assert_eq!(capacity.available_permits(), 1);
     Ok(())
 }
+
+/// Change-log entry 53: an Answer reply crosses the worker channel in the
+/// Answer frame, just under and just over the old 65,536 bytes and near the
+/// Answer limit; any other tool keeps 65,536 (the old limit for both).
+#[tokio::test]
+async fn an_answer_reply_above_the_default_frame_is_read_whole() -> Result<()> {
+    for (tool, text, delivered) in [
+        ("airk_answer", 65_000, true),
+        ("airk_answer", 66_000, true),
+        ("airk_answer", 140_000, true),
+        ("airk_search", 66_000, false),
+    ] {
+        let mut sent = query();
+        sent.tool = tool.into();
+        let context = airk_mcp::read_attempt::ReadAttemptContext::new(
+            Instant::now() + Duration::from_secs(5),
+            Default::default(),
+        );
+        let (client, mut peer) = tokio::io::duplex(1 << 20);
+        let task = tokio::spawn(submit(client, sent, identity(), None, context));
+        let received: Option<Query> =
+            local_ipc::read_message(&mut peer, Duration::from_secs(5)).await?;
+        assert!(received.is_some());
+        local_ipc::write_message_limited(
+            &mut peer,
+            &protocol::QueryResult {
+                read_admission: None,
+                result: serde_json::json!({"content":[{"type":"text","text":"x".repeat(text)}]}),
+                status_receipt: Default::default(),
+                rebind: false,
+            },
+            Duration::from_secs(5),
+            airk_core::service::MAX_ANSWER_REPLY_FRAME_BYTES,
+        )
+        .await?;
+        drop(peer);
+        let (result, _) = task.await?;
+        assert_eq!(result.is_ok(), delivered, "{tool} {text}");
+        if delivered {
+            assert_eq!(
+                result?.result["content"][0]["text"].as_str().map(str::len),
+                Some(text)
+            );
+        }
+    }
+    Ok(())
+}

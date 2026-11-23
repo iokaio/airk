@@ -32,7 +32,23 @@ pub struct NativeNextReadRequest {
 
 pub const PROTOCOL_VERSION: u32 = 1;
 pub const MAX_FRAME_BYTES: usize = 65_536;
+/// The worker query reply frame that carries an Answer /3 result: its
+/// 131,072-byte rendered reply plus 16 KiB for the query result envelope
+/// (status receipt, admission proof). Every other tool keeps
+/// [`MAX_FRAME_BYTES`] (change-log entry 53).
+pub const MAX_ANSWER_REPLY_FRAME_BYTES: usize =
+    crate::arbiter::answer_loop::MAX_ANSWER_RESPONSE_BYTES + 16_384;
 pub const MAX_GRANT_TTL_MS: u64 = 30_000;
+
+/// The reply frame of one worker query for `tool`: the Answer frame for
+/// Answer, the default frame for every other tool.
+pub fn query_reply_frame(tool: &str) -> usize {
+    if crate::read_attempt::is_answer_tool(tool) {
+        MAX_ANSWER_REPLY_FRAME_BYTES
+    } else {
+        MAX_FRAME_BYTES
+    }
+}
 
 /// Complete native records observed after an accepted catalog request became
 /// uncertain. Missing observation is not evidence that no effects occurred.

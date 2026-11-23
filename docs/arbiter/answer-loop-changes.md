@@ -2358,3 +2358,24 @@ Numbered 30 until 22 November 2026; renumbered because L4's entries take
   escaped fit. The trimming disclosure at a 1,024-byte allocation is the
   existing kernel verification test. Gap: no test runs the live scenario's
   reply through the handler. No identity-feeding file changed.
+- **The fourth commit exposed a 64 KiB worker frame (fifth commit):** on the
+  image built from `07d0a51c` every default-budget Answer with verification
+  on failed as a whole with `scoped_observation_unavailable` (no
+  `scope_observation`, nothing in the service log); with verification off
+  the same Answers passed. Cause: the project worker frames each query reply
+  with `MAX_FRAME_BYTES` (65,536) and the frontend reads it with the same
+  limit. The old receipt allocation, (65,536 - reply) / 2, had kept reply
+  plus receipt under that frame by accident; sized in the Answer frame, a
+  receipt of 10 to 23 KB pushed the rendered reply past 64 KiB, the worker
+  could not frame it and dropped the stream, and the caller could only
+  report an unknown observation. The 131,072-byte Answer frame of the L2
+  decision had never been carried by this channel. Fix: an Answer query's
+  reply uses `MAX_ANSWER_REPLY_FRAME_BYTES` (131,072 plus 16 KiB for the
+  query result envelope; `airk_core::service::query_reply_frame`) at the
+  worker's write and the frontend's read; other tools and native reads keep
+  65,536; a reply larger than its frame is answered with a typed
+  `reply_frame_exceeded` refusal that fits the default frame instead of a
+  dropped stream. Test (supervisor)
+  `an_answer_reply_has_the_answer_frame_and_an_oversized_one_is_refused_typed`:
+  a 100 KB reply fails the old frame, fits the Answer frame, and the refusal
+  is typed. Gap: no end-to-end test through a real worker stream.
