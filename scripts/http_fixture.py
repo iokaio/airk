@@ -124,55 +124,6 @@ def validate_enrollment(connection, control, selection, connection_id, *, refere
     return connection
 
 
-def enroll_native(run, install, control, selection, connection_id, client="unknown", *, deadline=None):
-    """Legacy (pre-U110): submit once via the installer. run follows Fixture.run's argument API.
-    Since U110 no read needs this; use read_endpoint and a per-call scope.
-
-    Returns bare HttpConnectionInfo, not the private control response envelope.
-    The native reply has no client field; attribution is the exact supplied CLI
-    label and must be checked through usage observations by attribution tests.
-    """
-    labels = {"unknown": "unknown", "codex": "codex", "claude_code": "claude-code",
-              "vscode": "vscode", "copilot_cli": "copilot-cli", "cli": "cli",
-              "explorer": "airk-explorer", "workbench": "airk-workbench"}
-    if client not in labels or not re.fullmatch(r"[0-9a-f]{32}", connection_id):
-        raise ValueError("invalid native enrollment client or connection ID")
-    until = time.monotonic() + 60 if deadline is None else deadline
-    private = Path(control).resolve(strict=True) / "http-1"
-    metadata = private.lstat()
-    if (not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode)
-            or getattr(metadata, "st_file_attributes", 0) & 0x400
-            or os.name != "nt" and (metadata.st_uid != os.geteuid() or metadata.st_mode & 0o077)):
-        raise ValueError("native enrollment parent is not the owned private HTTP directory")
-    payload = json.dumps(selection, separators=(",", ":")).encode("utf-8")
-    if len(payload) > 49152:
-        raise ValueError("native enrollment selection exceeds protected input bound")
-    path = private / ("fixture-selection-" + uuid.uuid4().hex + ".json")
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    try:
-        with os.fdopen(descriptor, "wb") as stream:
-            stream.write(payload)
-        private_bytes(path, control, 49152)
-        remaining = until - time.monotonic()
-        if remaining <= 0:
-            raise TimeoutError("native enrollment deadline exhausted before submission")
-        result = run("runtime", "http-connection", "--install-dir", str(install),
-                     "--selection-file", str(path), "--connection-id", connection_id,
-                     "--client", labels[client], timeout=remaining)
-        if not isinstance(result, dict):
-            encoded = result.stdout.encode("utf-8") if isinstance(result.stdout, str) else result.stdout
-            if result.returncode or len(encoded) > 61440:
-                raise ValueError("native HTTPS enrollment refused or exceeded metadata bound")
-            result = json.loads(encoded)
-        elif len(json.dumps(result, separators=(",", ":")).encode("utf-8")) > 61440:
-            raise ValueError("native HTTPS enrollment exceeded metadata bound")
-        if time.monotonic() >= until:
-            raise TimeoutError("native enrollment deadline exhausted after submission; outcome unknown")
-        return validate_enrollment(result, control, selection, connection_id)
-    finally:
-        path.unlink()
-
-
 def contained_private_path(reference, root):
     """Prove ancestry by existing filesystem identities, including Win32 paths.
 

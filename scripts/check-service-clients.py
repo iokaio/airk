@@ -1186,12 +1186,6 @@ class Fixture:
                 child.kill()
                 child.wait(timeout=15)
 
-    def enroll_http(self, selection, connection_id, client="unknown", *, deadline=None):
-        """Legacy (pre-U110) credential enrollment, kept only for harnesses that
-        have not moved to the tokenless endpoint; this harness never calls it."""
-        return http_transport().enroll_native(self.service_run, self.install, self.control, selection, connection_id,
-                                              client, deadline=deadline)
-
     def open_service(self):
         return ("--service-runtime-dir", str(self.control))
 
