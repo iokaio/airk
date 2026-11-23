@@ -1095,6 +1095,33 @@ class Specs(TempDir):
             self.assertIn(fp32, arms)
             self.assertIn(fp16, arms)
 
+    def test_gate_lifetimes_carry_a_dispatch_census_from_the_plan(self):
+        # The LG lifetimes ended on the fixed 1,024-dispatch census (23 November 2026). A gate lifetime now gets a
+        # bound from its plan: 20 scenarios and 2 repositories at the default budget's 24 Focus + 48 Context
+        # calls: (2 smoke + 20 x 2 replays + 20 x 2 x 12 session Answers + 2 + 4 concurrent) x 72 = 38,016.
+        self.assertEqual(make_loop_spec.lifetime_answers(20, 2, [2, 4]), 528)
+        budget = {"focus_calls": 24, "context_calls": 48}
+        self.assertEqual(make_loop_spec.dispatch_census(528, budget), 38016)
+        self.assertEqual(make_loop_spec.dispatch_census(1, budget), 1024)  # never below the old bound
+        with self.assertRaises(common.HarnessError):
+            make_loop_spec.dispatch_census(1000, budget)  # 72,000 is above the service's 65,536
+        spec = make_loop_spec.gate_spec("lg", self.tmp, make_loop_spec.PROFILES, list(common.REPOS), {})
+        expected = make_loop_spec.dispatch_census(
+            make_loop_spec.lifetime_answers(20, 2, [2, 4]), common.ANSWER_BUDGET_DEFAULT)
+        self.assertEqual(spec["gate"]["dispatch_census"], expected)
+        for row in spec["gate"]["lifetimes"].values():
+            args = row["start_args"]
+            self.assertEqual(args[args.index("--dispatch-census") + 1], str(expected))
+        # A lifetime that names a smaller census, or turns the observer off, is refused.
+        small = {"C": {"start_args": ["--dispatch-census", "2048"]}}
+        with self.assertRaises(common.HarnessError):
+            make_loop_spec.gate_spec("lg", self.tmp, make_loop_spec.PROFILES, list(common.REPOS), {},
+                                     lifetimes=make_loop_spec.gate_lifetimes("lg", self.tmp, small))
+        off = {"C": {"start_args": ["--no-dispatch-observer"]}}
+        with self.assertRaises(common.HarnessError):
+            make_loop_spec.gate_spec("lg", self.tmp, make_loop_spec.PROFILES, list(common.REPOS), {},
+                                     lifetimes=make_loop_spec.gate_lifetimes("lg", self.tmp, off))
+
     def test_cuda_arms_carry_a_stage_guard_for_each_session(self):
         # Every session of a CUDA arm first checks its stages are active (gpu_fixture.py ensure).
         overrides = {a: {"launcher": "gpu_fixture.py"} for a in make_loop_spec.JUDGED_ARMS}

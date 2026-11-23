@@ -271,7 +271,14 @@ deadlines remain the sole execution authority.
 The JSON event and summary types are owned by Inference execution_observer,
 using actual Core ScopeBinding/Task/digests and the native ScoreReceipt rather
 than consumer mirrors. The ignored fixture alone accepts explicit true/false
-AIRK_NATIVE_DISPATCH_OBSERVER; default is absent. Complete recorder evidence is
+AIRK_NATIVE_DISPATCH_OBSERVER; default is absent. The fixture recorder's
+dispatch census is bounded per lifetime by AIRK_NATIVE_DISPATCH_CENSUS_BOUND
+(a whole number from 1 to 65,536; absent keeps the earlier 1,024), and its
+record and byte bounds scale with it (4 records and 4 KiB per record per
+dispatch, never below 8,192 records and 64 MiB); a dispatch past the bound
+fails the recorder with a message naming the bound and the variable. The
+evaluation harness sets it from the lifetime's plan (LH, change log entry 57:
+the LG gate's three lifetimes ended on the fixed 1,024). Complete recorder evidence is
 not model, task, source-trajectory or release qualification. The driver mutates
 only after the actual dispatch marker, requires matching successful finite
 native return after its trigger plus actual settlement/release evidence, and

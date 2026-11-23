@@ -2569,3 +2569,34 @@ Numbered 30 until 22 November 2026; renumbered because L4's entries take
 - **Not changed by these decisions:** the stage name `context`, the task
   names `airk.context_*`, the degradation `context_absent`, the name
   "Arbiter" for the whole subsystem in crate, module and schema names.
+
+### 57. The evaluation fixture's dispatch census is set per lifetime
+
+- **Step LH, commit 0 (23 November 2026).** The fixture's native dispatch
+  recorder refused the 1,025th dispatch of a lifetime ("private native
+  dispatch census bound exceeded"). Each of the LG gate's three arm
+  lifetimes passed 1,024 dispatches (arm C: 1,025 admitted, 3,073 records,
+  4.45 MB), so none wrote a settled close (`closed.json`) and step 16 of the
+  gate plan closed nothing cleanly. The replies were not affected.
+- **What changed.** The bound stays, because the recorder keeps one binding
+  per dispatch in memory, but a lifetime may set it:
+  `AIRK_NATIVE_DISPATCH_CENSUS_BOUND`, a whole number from 1 to 65,536;
+  absent keeps 1,024. The record and byte bounds follow it (4 records and
+  4 KiB per record per dispatch, never below the former 8,192 records and
+  64 MiB). A dispatch past the bound fails with a message that names the
+  bound and the variable. The harness passes it as `--dispatch-census N` on
+  `fixture.py start` and `gpu_fixture.py start`; `make_loop_spec.py gate`
+  sets N for every gate lifetime from its plan: the Answers the plan sends it
+  (smoke, two per scenario for replays, twelve per session for the first and
+  second sessions, and the concurrency runs) times the budget's
+  `focus_calls + context_calls`. For the LG shape (20 scenarios, 2
+  repositories, default budget) that is 528 × 72 = 38,016. A lifetime row
+  that names a smaller census, or turns the observer off, is refused.
+- **Evidence.** The Rust unit test
+  `execution_observer::census_default_keeps_the_old_bound_and_a_lifetime_may_raise_it`
+  admits dispatch 1,025 under a raised bound (the old code refused it) and
+  still refuses 1,025 by default; harness tests `DispatchCensus` (fixture)
+  and `test_gate_lifetimes_carry_a_dispatch_census_from_the_plan` (spec).
+- **Where.** `crates/airk-service/src/service_runtime/evaluation_fixture_tests/execution_observer.rs`;
+  the service Arbiter `CONTRACT.md` (dispatch observer paragraph);
+  `scripts/arbiter-answer-eval/{fixture.py, gpu_fixture.py, make_loop_spec.py, FIXTURE.md}`.

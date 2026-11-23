@@ -14,6 +14,23 @@ fixture = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(fixture)
 
 
+class DispatchCensus(unittest.TestCase):
+    def test_census_is_a_whole_number_within_the_service_ceiling(self):
+        self.assertEqual(fixture.census_bound("38016"), 38016)
+        self.assertEqual(fixture.census_bound(65536), 65536)
+        for bad in ("0", "65537", "-1", "+5", "1e4", " 10", "", "x"):
+            with self.assertRaises(argparse.ArgumentTypeError, msg=bad):
+                fixture.census_bound(bad)
+
+    def test_worker_variables_carry_the_census_only_with_the_observer(self):
+        self.assertEqual(fixture.census_extras(True, None), {"AIRK_NATIVE_DISPATCH_OBSERVER": "true"})
+        self.assertEqual(fixture.census_extras(True, 38016),
+                         {"AIRK_NATIVE_DISPATCH_OBSERVER": "true", "AIRK_NATIVE_DISPATCH_CENSUS_BOUND": "38016"})
+        self.assertEqual(fixture.census_extras(False, None), {"AIRK_NATIVE_DISPATCH_OBSERVER": "false"})
+        with self.assertRaises(Exception):
+            fixture.census_extras(False, 38016)
+
+
 class Exclusions(unittest.TestCase):
     def test_exact_and_subtree_rules(self):
         for path in ("docs/arbiter/final-plan-fp16.md", "docs/arbiter/answer-evaluation/README.md",

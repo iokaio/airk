@@ -141,8 +141,13 @@ The result is `<fixtures>/leak-probe-<n>.json`, schema
 ## Limits
 
 One lifetime lasts at most six hours (the selector's bound). The dispatch
-observer holds at most 8,192 records per lifetime; pass
-`--no-dispatch-observer` for long runs that do not need it. A restart needs the
+observer admits 1,024 native dispatches per lifetime unless the lifetime names
+a census: `start --dispatch-census N` (1 to 65,536; the service variable
+`AIRK_NATIVE_DISPATCH_CENSUS_BOUND`), and its record and byte bounds grow with
+it. A gate lifetime gets N from its plan (`make_loop_spec.py gate`: the
+Answers the plan sends it times the budget's Focus and Context calls); the LG
+gate's lifetimes ended on the old fixed 1,024. Pass `--no-dispatch-observer`
+for long runs that do not need the observer. A restart needs the
 previous lifetime closed cleanly with idle stages. Results describe this
 private image and host, not the installed product.
 

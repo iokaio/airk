@@ -169,6 +169,48 @@ ARM_SESSIONS = 4
 JUDGE_SESSIONS = 12
 
 
+# The fixture's native dispatch census (fixture.py census_bound). Each LG gate lifetime passed the old fixed
+# bound of 1,024 dispatches and none settled its close (23 November 2026), so a gate lifetime's bound comes from
+# its plan: the Answers the plan sends to it, each allowed the budget's Focus and Context calls (one native
+# dispatch per model call). Agent sessions choose their own number of Answer calls; SESSION_ANSWERS is the
+# allowance per session (first and second), above the LG sessions' use. Past the bound the recorder fails with a
+# message naming it, so a lifetime that needs more is seen, not silently cut.
+SESSION_ANSWERS = 12
+REPLAY_ANSWERS = 2
+CENSUS_FLOOR = 1024
+CENSUS_MAX = 65536
+
+
+def lifetime_answers(scenarios: int, repos: int, concurrency_levels: list[int]) -> int:
+    """The Answers a gate plan sends to one arm's lifetime: the smoke (one per repository), the replays, a first
+    and a second session per scenario, and the concurrency runs."""
+    return repos + scenarios * REPLAY_ANSWERS + scenarios * 2 * SESSION_ANSWERS + sum(concurrency_levels)
+
+
+def dispatch_census(answers: int, budget: dict) -> int:
+    """The census bound for a lifetime of ``answers`` Answers at ``budget``: each Answer may dispatch its
+    ``focus_calls`` and ``context_calls``. Never below the old bound; refused above the service's ceiling."""
+    per_answer = int(budget["focus_calls"]) + int(budget["context_calls"])
+    common.require(per_answer > 0 and answers > 0, "a census needs Answers and model calls")
+    census = max(CENSUS_FLOOR, answers * per_answer)
+    common.require(census <= CENSUS_MAX, f"{answers} Answers at {per_answer} model calls each need a census of "
+                                         f"{census}, above the fixture's {CENSUS_MAX}: split the lifetime")
+    return census
+
+
+def with_census(row: dict, census: int) -> dict:
+    """A lifetime row whose launcher start options carry ``--dispatch-census``; a row that names one keeps it
+    only when it is at least the plan's."""
+    args = list(row.get("start_args") or [])
+    if "--dispatch-census" in args:
+        named = int(args[args.index("--dispatch-census") + 1])
+        common.require(named >= census, f"lifetime {row.get('lifetime')} names a dispatch census of {named}, "
+                                        f"below the {census} its plan needs")
+        return dict(row)
+    common.require("--no-dispatch-observer" not in args, "a gate lifetime keeps the dispatch observer")
+    return dict(row, start_args=args + ["--dispatch-census", str(census)], dispatch_census=census)
+
+
 def gate_lifetimes(series: str, r_root: Path, overrides: dict | None = None) -> dict[str, dict]:
     """One lifetime per arm: its fixture root, lifetime name, launcher, start options, memory and stages."""
     out = {}
@@ -210,13 +252,18 @@ def gate_spec(series: str, r_root: Path, profiles: dict, repos: list[str], budge
     spec = base_spec(series, r_root, repos, note or "LG: plan 12.7.1 and 12.7.2" + (", and 12.7.3" if precision
                                                                                      else ""), budget)
     lifetimes = lifetimes or gate_lifetimes(series, r_root)
+    levels = [2, 4]
+    census = dispatch_census(lifetime_answers(len(spec["scenario_ids"]), len(repos), levels),
+                             spec["answer_defaults"]["budget"])
+    lifetimes = {arm: with_census(row, census) for arm, row in lifetimes.items()}
     spec["gate"] = {"pairs": [list(p) for p in GATE_PAIRS],
                     "precision_pairs": [list(p) for p in PRECISION_PAIRS] if precision else [],
                     "precision": {"run": bool(precision), "reason": None if precision else PRECISION_DEFERRED},
                     # The job table is not part of the gate: concurrent Answers take the unqueued path. Every
                     # concurrent call is a different scenario's question (gate.concurrency).
                     "concurrency_path": "unqueued (no job table); a distinct scenario question per concurrent call",
-                    "profiles": dict(profiles), "lifetimes": lifetimes, "concurrency_levels": [2, 4]}
+                    "profiles": dict(profiles), "lifetimes": lifetimes, "concurrency_levels": levels,
+                    "dispatch_census": census}
     spec["results"] = []
     for entry in gate_arms(profiles):
         if not precision and entry["arm"] not in JUDGED_ARMS:

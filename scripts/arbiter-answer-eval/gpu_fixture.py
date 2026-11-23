@@ -365,6 +365,9 @@ def start(args):
                  "--cuda-variant-inputs-sha256", args.cuda_variant_inputs_sha256, "--layers", args.layers]
     if not args.dispatch_observer:
         argv.append("--no-dispatch-observer")
+    FX.census_extras(args.dispatch_observer, args.dispatch_census)  # refused before launch, not in the worker
+    if args.dispatch_census is not None:
+        argv += ["--dispatch-census", str(args.dispatch_census)]
     before =(sha256(Path(__file__)), sha256(HERE / "fixture.py"))
     result = owner["run_evaluation_fixture"](argv, FX.ROOT, life / "outer.log", args.seconds + 600,
                                              os.environ | {FX.OWNER_VARIABLE: str(life)})
@@ -614,6 +617,8 @@ def main():
         sub.add_argument("--seed-cpu", choices=SEEDS)
         sub.add_argument("--synthetic-root")
         sub.add_argument("--no-dispatch-observer", dest="dispatch_observer", action="store_false")
+        # The native dispatch census of the lifetime (fixture.py census_bound); make_loop_spec sets it from the plan.
+        sub.add_argument("--dispatch-census", type=FX.census_bound)
         sub.add_argument("--image", required=True)
         # Change set 1 with a CUDA provisional-read variant (all four or none).
         sub.add_argument("--change-set-inputs")

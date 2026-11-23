@@ -43,6 +43,31 @@ HANDLE_SCHEMA = "airk.private.answer-eval-fixture-handle/1"
 OWNER_VARIABLE = "AIRK_ANSWER_EVAL_FIXTURE_OWNER"
 # The owned Job observer allows at most 21,600 s, including a 600 s settlement margin.
 MAX_SECONDS = 21000
+# The fixture's native dispatch recorder refuses a dispatch past its census bound
+# (crates/airk-service/src/service_runtime/evaluation_fixture_tests/execution_observer.rs). Absent, the bound is
+# 1,024, which each LG gate lifetime passed (23 November 2026), so none settled its close. A gate lifetime sets
+# it from its plan (make_loop_spec.dispatch_census); the service accepts 1 to 65,536.
+CENSUS_VARIABLE = "AIRK_NATIVE_DISPATCH_CENSUS_BOUND"
+CENSUS_MAX = 65536
+
+
+def census_bound(value):
+    """``--dispatch-census``: a whole number from 1 to CENSUS_MAX (the service refuses anything else)."""
+    text = str(value)
+    if not (text.isascii() and text.isdigit() and 1 <= int(text) <= CENSUS_MAX):
+        raise argparse.ArgumentTypeError(f"the dispatch census is a whole number from 1 to {CENSUS_MAX}, not {text!r}")
+    return int(text)
+
+
+def census_extras(dispatch_observer, census):
+    """The recorder variables of a worker: the observer switch and, when the lifetime names one, its census."""
+    extra = {"AIRK_NATIVE_DISPATCH_OBSERVER": "true" if dispatch_observer else "false"}
+    if census is not None:
+        require(dispatch_observer, "--dispatch-census bounds the dispatch observer; it needs the observer on")
+        extra[CENSUS_VARIABLE] = str(census_bound(census))
+    return extra
+
+
 SHUTDOWN_MARGIN = 300
 COMMAND_SECONDS = 120
 # The software-v2 selector requires exactly one Focus, one Compact and one Large
@@ -1322,7 +1347,7 @@ def worker(args):
     temp.mkdir()
     seconds = args.seconds
     deadline = time.monotonic() + seconds
-    extra = {"AIRK_NATIVE_DISPATCH_OBSERVER": "true" if args.dispatch_observer else "false"}
+    extra = census_extras(args.dispatch_observer, getattr(args, "dispatch_census", None))
     prior = None
     if args.restart_from:
         prior, restart = restart_request(Path(args.fixtures), args.restart_from, life,
@@ -1542,6 +1567,9 @@ def start(args):
             argv += ["--accept-unidle-close", args.accept_unidle_close]
     if not args.dispatch_observer:
         argv.append("--no-dispatch-observer")
+    census_extras(args.dispatch_observer, args.dispatch_census)  # refused before launch, not in the worker
+    if args.dispatch_census is not None:
+        argv += ["--dispatch-census", str(args.dispatch_census)]
     before = sha256(Path(__file__))
     result = owner["run_evaluation_fixture"](argv, ROOT, life / "outer.log", args.seconds + 600,
                                              os.environ | {OWNER_VARIABLE: str(life)})
@@ -2328,6 +2356,8 @@ def main():
     begin.add_argument("--repositories", type=lambda v: [x for x in v.split(",") if x],
                        default=list(DEFAULT_REPOSITORIES))
     begin.add_argument("--no-dispatch-observer", dest="dispatch_observer", action="store_false")
+    begin.add_argument("--dispatch-census", type=census_bound,
+                       help=f"the lifetime's native dispatch census bound (1 to {CENSUS_MAX}; absent: 1,024)")
     begin.add_argument("--accept-unidle-close", metavar="LIFETIME=SHA256",
                        help="a recorded one-time exception from UNIDLE_CLOSE_EXCEPTIONS for --restart-from")
     hidden = sub.add_parser("worker")
@@ -2338,6 +2368,7 @@ def main():
     add_selector_arguments(hidden)
     hidden.add_argument("--repositories", type=lambda v: [x for x in v.split(",") if x], default=[])
     hidden.add_argument("--no-dispatch-observer", dest="dispatch_observer", action="store_false")
+    hidden.add_argument("--dispatch-census", type=census_bound)
     hidden.add_argument("--accept-unidle-close")
     halt = sub.add_parser("stop", help="write the lifetime's stop file")
     halt.add_argument("--lifetime", required=True)
