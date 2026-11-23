@@ -10,3 +10,22 @@ Owner: `airk-cli::runtime_commands`. Native installation/managed metadata remain
 Primary validation selects `runtime_commands::connection_observation_tests`, `runtime_commands::managed_service::tests` and `role_admission::tests` with the affected feature graph. Retain actual before/after inline sizes and the original managed-mode stack overflow reproduction. Compiler/metadata tests do not qualify an installed service or an OS login journey.
 
 Observed before repair: public run/run_with inline state was54,920/54,896 bytes, already below64KiB, while the original managed metadata test still overflowed the ordinary Windows stack. Direct Box::pin at resident await sites also failed that original test. Therefore the type-size ceiling alone neither reproduces nor proves the fix; separate synchronous construction boundaries and the actual original ordinary-stack metadata regressions are required evidence.
+
+## HTTP connection commands removed (23 November 2026, local trust plan B, change-log entry 68)
+
+`airk runtime http-connection`, `http-connection-info`, `http-credential`,
+`http-revoke`, `http-legacy-connection` and `http-legacy-union-connection`
+are removed with enrollment. `http-endpoint`, `http-trust` and
+`http-issuer-rotation` are unchanged (TLS is phase C).
+`lookup-http-connection` now requires `--purpose predecessor-cleanup` and
+`--predecessor`: it is the installer's predecessor-cleanup compatibility row
+(`runtime_install::http_cleanup::lookup`), which reads the retained
+credential ledger read-only and never treats a revoked or unavailable id as
+foreign. Tests: installer
+`clean_break_http_disposal_cli_requires_explicit_purpose_and_predecessor`
+and airk-cli `native_http_endpoint_remains_and_connection_commands_are_removed`.
+
+`airk setup` no longer enrolls a client: it installs a reviewed payload
+(`--runtime-source`, `--approved-sha256`) and names `airkctl agents connect`
+as the next step. Its client, connection, scope, session and launch inputs
+no longer parse (`setup_no_longer_accepts_enrollment_scope_session_or_launch_inputs`).

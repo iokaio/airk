@@ -60,9 +60,12 @@ states and policies are kept. `--connection-id` and `--selection-file` are
 refused; `--open` is accepted and ignored. `rk agents list` reports older
 entries that still carry a token, a helper or a `<connection-id>` placeholder
 as needing repair (`https_unknown_connection` with that detail), and `rk
-agents repair` strips those fields. `agents credential`, `info`, `verify`,
-`revoke`, `default` and `launch` remain in the CLI but no longer affect agents;
-the credential machinery is unused and will be removed separately.
+agents repair` strips those fields. Since 23 November 2026 (local trust plan
+B) `agents credential`, `info`, `verify`, `revoke`, `default` and `launch`
+are removed, and the service neither opens nor writes the credential ledger.
+An old helper entry that still runs `agents credential` fails until `agents
+repair` (or the extension's Reconnect) rewrites it; an old VS Code token input
+gets a fixed placeholder, which the endpoint ignores.
 
 **Scope is a tool parameter.** Every read tool takes `index_ids` and
 `index_set_ids` (ids or names, union, at most 32 each) and `workspace` (an
@@ -294,8 +297,7 @@ unverified; historical stdio formats do not qualify those fields.
 | Windsurf | Blocked; HTTPS adapter unverified. Historical connection details are not automatic modern setup. | None retained for 1.8.14 HTTPS. | Complete trusted HTTPS/client qualification. |
 
 Source owners are the [extension client catalog and serializers](../packages/vscode/src/model.ts),
-[native setup serializer](../crates/airk-cli/src/main.rs),
-[native setup contract tests](../crates/airk-cli/src/http_setup_tests.rs),
+[native setup (payload installation only since local trust plan B)](../crates/airk-cli/src/main.rs),
 [owned configuration locations](../packages/vscode/src/agentMigration.ts),
 [Codex and Claude configuration editors in `airkctl`](../crates/airkctl/src/agents/config/edit.rs) and
 [Claude project configuration](../packages/vscode/src/agentConfig.ts).
@@ -347,8 +349,10 @@ A host cannot reach a container's private loopback merely by copying its URL.
 > being reworked under the [split plan](split/split-plan.md) (Phases 6–7).
 > Since U110 client setup is `airkctl agents connect`, which writes only the
 > endpoint URL; the grant and credential steps of the interim `setup` described
-> below predate U110 and are not needed for MCP access. `airkctl agents launch`
-> remains but no longer matters for agents.
+> below predate U110 and are not needed for MCP access. Since 23 November 2026
+> (local trust plan B) `setup` installs a reviewed payload only and enrolls no
+> client, and `airkctl agents launch` is removed; the setup steps below that
+> name clients, scopes, connections or launch are history.
 
 Standalone Windows, macOS and Linux installer support is implemented in source for the CLI and native
 MCP/HTTPS service only. They do not install a VSIX or VS Code extension, run Code

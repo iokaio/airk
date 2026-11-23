@@ -192,3 +192,25 @@ Tests: `connection_setup_contract_tests::begin_side_catalog_admission_pending_is
 `tools_call::tests::selection_setup_keeps_typed_transients_and_refuses_the_rest`,
 catalog-control `catalog_admission::tests::begin_side_transients_are_typed_and_delivery_still_refuses`
 and `worker_start_during_a_census_fence_is_admission_pending`.
+
+## The local agent session only (23 November 2026, local trust plan B, change-log entry 68)
+
+- Startup no longer opens or creates the credential ledger
+  (`http-1/credentials.json`); the HTTPS owner holds no credential store.
+  An existing ledger and token files stay on disk as retained data that
+  nothing writes; installer predecessor cleanup still reads them.
+- Every `/mcp` and JSON API request is the built-in local agent session: the
+  gateway validates only that the endpoint's catalog is ready in its
+  namespace (`http_backend::validate` of the open selection) and reads
+  through `open_reads::response`, as `airkctl tools call --index/--set`
+  does over the pipe.
+- Removed control methods: `HttpEnroll`, `HttpRevoke`,
+  `AgentConnectionInfo`, `AgentConnectionOwnership`,
+  `AgentConnectionVerify`, `AgentConnectionDefaults`. M2 `ToolsCatalog` and
+  M3 `ToolSelection::Open` no longer take `connection_id`; open reads name
+  their scope or a workspace whose stored default applies. Agent choice
+  (U105/U109) is gone; every open read uses the U110 local catalog.
+- Kept: per-call scope (`index_ids`, `index_set_ids`, `workspace`),
+  Agent-plane leases keyed by the native caller, `lease_generation`, catalog
+  fences, window and Admin selections, loopback and the Host and `Origin`
+  checks.

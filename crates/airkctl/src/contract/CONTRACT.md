@@ -406,3 +406,14 @@ Every other Invoke and every AdminCall keeps `MAX_INVOKE_DEADLINE_MS`
 (125,000 ms). The retained frame fixtures and `transport_budget.json` are
 unchanged; `invoke_deadline_limit` is tested directly. The VS Code session
 client applies the same rule to the argv it builds (`tools call <tool>`).
+
+## Connection commands removed (23 November 2026, local trust plan B, change-log entry 68)
+
+`agents info`, `credential`, `revoke`, `verify`, `launch` and `default`,
+`agents list --connection-id`, and `tools list|help|call --connection` are
+removed. A removed subcommand answers the typed `not_yet_served` refusal
+(exit 5) as any unknown command does; a removed argument of a served command
+is a usage error (exit 2). Neither reaches the service
+(`cli::tests::open_agent_arguments_are_checked_before_the_service`).
+`docs/cli-reference.md` and `airk-mcp`'s `help/cli_commands.json` are
+regenerated from the parser.

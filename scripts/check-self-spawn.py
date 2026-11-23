@@ -127,9 +127,6 @@ STARTS = {
         "portable/removal requests; surviving owner replaces uninstall.spawn_setup "
         "process primitive; exact child observation never kills admitted effects "
         "on timeout, original custody/receipt remains authoritative (I2/R10)",
-    ("crates/airkctl/src/launch.rs", "launch"):
-        "external: the user's Claude Code, Codex or VS Code client in the foreground "
-        "(`airkctl agents launch`, U91); not an airk process",
     ("crates/airk-process/src/detached.rs", "spawn_detached"):
         "primitive: detached Windows service start that inherits no handles",
     ("crates/airk-installer/src/runtime_install.rs", "self_test_observation"):
@@ -154,9 +151,6 @@ STARTS = {
     ("crates/airk-installer/src/service_manager_macos.rs", "invoke"):
         "one-shot: the verified Mac login target's `runtime` login status/register/"
         "unregister command, bounded",
-    ("crates/airk-cli/src/standalone_setup/launch.rs", "launch_client"):
-        "external: `airk setup --launch` runs the chosen coding client in the user's "
-        "terminal and waits for it",
     ("crates/airk-installer/src/universal_launcher.rs", "run"):
         "one-shot: the universal launcher forwards a typed command to the selected "
         "installation and waits for it",

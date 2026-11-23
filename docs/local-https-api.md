@@ -17,10 +17,19 @@ indexing mutations or private management commands.
 > can read every index. A read names its scope per call (`index_ids`,
 > `index_set_ids` or `workspace`; see [MCP tools](mcp.md)). Statements below
 > about credential files, bearer values, grants and connection IDs describe the
-> earlier contract; that machinery remains compiled but unused and will be
-> removed separately.
+> earlier contract. Local trust plan B (23 November 2026) removed enrollment,
+> the credential, connection IDs, revocation, agent choice and the connection
+> commands; phase C rewrites this page for plain HTTP.
 
 ## Obtain a connection
+
+> **Removed by local trust plan B (23 November 2026).** Nothing in this
+> section exists any more: there is no enrollment, credential file, connection
+> ID, `agents info`, `agents credential`, `agents revoke`, `airk runtime
+> http-connection`/`http-credential`/`http-revoke` or `airk.httpCredential`
+> secret. `airkctl agents connect` writes the endpoint URL only, and every
+> request is the built-in local agent session. The text below is kept as
+> history until phase C rewrites the page.
 
 > **Command names after split Phase 4.** `airkctl` is the CLI. `runtime
 > http-connection` is now `airkctl agents connect`, `http-connection-info` is

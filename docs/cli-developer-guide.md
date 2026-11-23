@@ -98,16 +98,10 @@ For a relationship investigation, a returned type/impl ID may provide bounded as
 - [airkctl](#airkctl)
 - [airkctl agents](#airkctl-agents)
 - [airkctl agents connect](#airkctl-agents-connect)
-- [airkctl agents credential](#airkctl-agents-credential)
-- [airkctl agents default](#airkctl-agents-default)
 - [airkctl agents endpoint](#airkctl-agents-endpoint)
-- [airkctl agents info](#airkctl-agents-info)
-- [airkctl agents launch](#airkctl-agents-launch)
 - [airkctl agents list](#airkctl-agents-list)
 - [airkctl agents remove](#airkctl-agents-remove)
 - [airkctl agents repair](#airkctl-agents-repair)
-- [airkctl agents revoke](#airkctl-agents-revoke)
-- [airkctl agents verify](#airkctl-agents-verify)
 - [airkctl changes](#airkctl-changes)
 - [airkctl code-facts](#airkctl-code-facts)
 - [airkctl configure](#airkctl-configure)
@@ -225,30 +219,6 @@ Usage: airkctl agents connect [OPTIONS] --client <CLIENT>
 
 **Implementation:** [manage.rs](../crates/airkctl/src/agents/manage.rs). **Tests:** [agents/config/tests.rs](../crates/airkctl/src/agents/config/tests.rs). Full options: [parser reference](cli-reference.md#airkctl-agents-connect).
 
-## airkctl agents credential
-
-**Purpose:** Print an existing, unrevoked connection's bearer header for an agent's header helper.
-
-**Behavior and developer use:** Offline: reads only the owner-private credential files; never starts the service, enrolls, rotates or logs the token. `--format header-json` prints `{"Authorization":"Bearer <token>"}`. Since U110 the endpoint ignores `Authorization` and `agents connect` writes no helper, so this command no longer matters for agents; it remains until the unused credential machinery is removed. `agents repair` strips older helper entries.
-
-```text
-Usage: airkctl agents credential [OPTIONS] --connection-id <CONNECTION_ID> --format <FORMAT>
-```
-
-**Implementation:** [agents.rs](../crates/airkctl/src/agents.rs). Full options: [parser reference](cli-reference.md#airkctl-agents-credential).
-
-## airkctl agents default
-
-**Purpose:** Set an open connection's default scope and agent choice; the agent's next call uses it.
-
-**Behavior and developer use:** Sets a connection's stored default scope and agent choice. Since U110 every MCP session is the built-in local agent session, which has no stored connection default, so this command no longer affects agents; use [`airkctl scope default`](#airkctl-scope-default) for the workspace default an agent reads. It remains until the unused connection machinery is removed. Prints `{"schema":1,"connectionId":…,"open":{…}}`.
-
-```text
-Usage: airkctl agents default [OPTIONS] --connection-id <CONNECTION_ID>
-```
-
-**Implementation:** [agents.rs](../crates/airkctl/src/agents.rs). **Tests:** [cli/tests.rs](../crates/airkctl/src/cli/tests.rs). Full options: [parser reference](cli-reference.md#airkctl-agents-default).
-
 ## airkctl agents endpoint
 
 **Purpose:** Read the owner-authenticated local HTTPS endpoint without enrolling a client.
@@ -260,30 +230,6 @@ Usage: airkctl agents endpoint [OPTIONS]
 ```
 
 **Implementation:** [agents.rs](../crates/airkctl/src/agents.rs). Full options: [parser reference](cli-reference.md#airkctl-agents-endpoint).
-
-## airkctl agents info
-
-**Purpose:** Read an existing connection's verified references without issuing credentials.
-
-**Behavior and developer use:** Prints the document `runtime http-connection-info` printed for --connection-id. Since U110 connections no longer matter for agents.
-
-```text
-Usage: airkctl agents info [OPTIONS] --connection-id <CONNECTION_ID>
-```
-
-**Implementation:** [agents.rs](../crates/airkctl/src/agents.rs). Full options: [parser reference](cli-reference.md#airkctl-agents-info).
-
-## airkctl agents launch
-
-**Purpose:** Start Claude Code, Codex or VS Code on this connection in the foreground.
-
-**Behavior and developer use:** Since U110 this no longer matters for agents (the endpoint takes no token); it remains until the unused credential machinery is removed. The credential goes only into the client's environment and the AIRK issuer is added to its trust; existing CA bundles stay enabled. Arguments after `--` go to the client. Exits with the client's status.
-
-```text
-Usage: airkctl agents launch [OPTIONS] --client <CLIENT> --connection-id <CONNECTION_ID> [-- <ARGS>...]
-```
-
-**Implementation:** [launch.rs](../crates/airkctl/src/launch.rs). **Tests:** [launch/tests.rs](../crates/airkctl/src/launch/tests.rs). Full options: [parser reference](cli-reference.md#airkctl-agents-launch).
 
 ## airkctl agents list
 
@@ -320,30 +266,6 @@ Usage: airkctl agents repair [OPTIONS]
 ```
 
 **Implementation:** [manage.rs](../crates/airkctl/src/agents/manage.rs). **Tests:** [agents/config/tests.rs](../crates/airkctl/src/agents/config/tests.rs). Full options: [parser reference](cli-reference.md#airkctl-agents-repair).
-
-## airkctl agents revoke
-
-**Purpose:** Revoke one local HTTPS connection while preserving its original receipt.
-
-**Behavior and developer use:** Prints the document `runtime http-revoke` printed. Since U110 revoking a connection does not stop agent access: `/mcp` takes no token.
-
-```text
-Usage: airkctl agents revoke [OPTIONS] --connection-id <CONNECTION_ID>
-```
-
-**Implementation:** [agents.rs](../crates/airkctl/src/agents.rs). Full options: [parser reference](cli-reference.md#airkctl-agents-revoke).
-
-## airkctl agents verify
-
-**Purpose:** Probe the service's own MCP endpoint with a connection's stored credential.
-
-**Behavior and developer use:** Checks one --connection-id against the running service. Since U110 the endpoint ignores credentials, so this no longer tests agent access.
-
-```text
-Usage: airkctl agents verify [OPTIONS] --connection-id <CONNECTION_ID>
-```
-
-**Implementation:** [agents.rs](../crates/airkctl/src/agents.rs). Full options: [parser reference](cli-reference.md#airkctl-agents-verify).
 
 ## airkctl changes
 
