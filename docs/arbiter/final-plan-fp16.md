@@ -1136,6 +1136,7 @@ Receipts are in the private GPU-track folder and in the CUDA image records;
 | Standing authorization for changes section 12 needs | Set by the user on 22 November. Each change is logged in `answer-loop-changes.md` for the user's review after L7 |
 | Answer reply frame 128 KiB | Set by the user on 22 November. Answer only; every other tool keeps 64 KiB (section 12.9) |
 | No second loaded copy of a model on any device | Set by the user on 22 November. Capacity comes from batching, concurrent runs on one session and overflow to another device, decided at runtime (section 12.5.1) |
+| Answer jobs, revised (section 12.4.2) | Approved by the user on 23 November. One call always returns evidence; jobs are owned by the service with their own authority; reuse by digest stays on with a `fresh` way out; unattended jobs yield; a ticket follow-up counts as a turn. Not in the LG gate image |
 
 ## 12. Answer as a local multi-round loop
 
@@ -1427,6 +1428,10 @@ numbers were accepted by the user on 22 November:
 written as speculation for review. Its open points take the defaults at the
 end of this section unless the user changes them.
 
+**Revised on 23 November 2026 by section 12.4.2,** which governs where the
+two differ: what a ticket means, who owns a job, reuse by digest, and the
+rule that a reply always carries evidence.
+
 **The concern.** An AI harness may launch several agents that all call
 Answer at once. Answer calls will last minutes, and the model lane runs one
 job at a time. An agent at the back of the queue could then wait long
@@ -1525,6 +1530,109 @@ the user may change any of them):
 - **Global gathering limit:** set by the runtime capacity rules of section
   12.5.1 from the model lanes actually available, with a floor of 2 and a
   user setting to cap it. It is not a fixed number.
+
+### 12.4.2 Answer jobs, revised: one call returns evidence; jobs are owned by the service
+
+**Approved by the user on 23 November 2026 at about 01:15 UTC.** It follows
+the independent review of the first job-table wiring (`loop/l2b-wire` at
+`24184339`: two high and seven medium findings, ledger entry of 23 November
+at 00:31 UTC) and an outside proposal that the user asked me to evaluate. The
+user approved my evaluation: "Get it added to the plan and incorporated into
+your work and launch agents that will get it done." Where this section and
+12.4.1 differ, this section governs.
+
+**The aim, in order.** First, fewer turns for an MCP agent: an agent should
+almost never need a second call to get its evidence. Second, a usable Answer
+in Workbench and Explorer.
+
+**What a ticket means.** An accepted job means AIRK holds enough authority
+and information to finish that Answer even if the client closes now, until
+the job's own deadline and on the publication it was accepted for.
+
+**Adopted from the proposal.**
+- **Service-owned jobs with their own authority.** At submission the service
+  binds the request, the authorized scope, the indexed publication, the
+  configuration and the budget to a job. At dispatch the supervisor opens a
+  fresh read context and native attempt owned by the job, derived from the
+  caller's verified grant. A disconnect ends only that caller's wait. A real
+  grant revocation, expiry, service shutdown or an authorized cancel ends the
+  work. A handle alone grants nothing: status, result and cancel are
+  authorized again each time.
+- **The caller's wait is separate from the work budget and the queue
+  expiry.** A short wait never shrinks a job. Reductions are applied, and
+  disclosed, only when the work itself cannot fit.
+- **A failure belongs to its own invocation.** Its caller can learn what
+  happened; a fresh call proceeds after a transient failure.
+- **Each delivery is rendered for its caller,** under that caller's current
+  authority, verification settings and reply budget, and records queue time,
+  run time, the caller's wait and whether the work was reused.
+- **A supervised deadline for job work,** with verified settlement before a
+  stuck worker's capacity is used again.
+- **Continue with the handle alone,** through the same `airk_answer` tool.
+  The reply states the exact follow-up call.
+- **Bounded, in-memory retention** for one service lifetime: ten minutes at
+  most, invalidated by a new publication, under a byte cap. A restart or an
+  eviction shows as an expired handle.
+- **Native MCP Tasks** may be offered over the same job when a client
+  negotiates it. It is not required.
+
+**Changed from the proposal, for the turn goal.**
+1. **Never a bare ticket.** Reads are not the scarce resource; the model is.
+   Every call runs retrieval and the deterministic loop at once and returns
+   cited evidence within the caller's wait. Only the model's part queues or
+   is reduced. A reply that has more coming says what a follow-up would add,
+   so the agent can weigh it against a search of its own.
+2. **A continuation returns only what is new:** the added evidence and the
+   remaining gaps, with references to what was already delivered. This is
+   the rule of section 12.1, "No repeated facts", applied across calls.
+3. **Reuse by request digest stays on by default, with an explicit way
+   out.** An unmodified agent does not generate and reuse an invocation key,
+   so for it the digest is the only retry identity there is. Reuse applies
+   within the same authority, publication and execution policy, and only to
+   complete results or to results cut no earlier than the caller's own
+   limits. A `fresh` request always starts an independent run, and the
+   evaluation harness always asks for one. A client that can carry a key
+   (Workbench uses its turn identifier) gets exact retry recovery: the same
+   key and inputs recover the same job, and the same key with changed inputs
+   is a conflict.
+4. **Unattended jobs yield to attended ones.** An agent host that timed out
+   usually does not return. A job with no waiting caller takes model capacity
+   only when no attended job wants it, and expires at its deadline. A
+   Workbench job is the exception, because a person reopens the panel.
+
+**Measurement.** A ticket follow-up is a turn for an ordinary agent and is
+counted as one. The harness wrapper's convention of following tickets
+unseen is kept only as a separately labelled, wrapper-assisted reading.
+Every evaluation call is `fresh`, with a distinct worker-start receipt
+naming the requested and the actual model.
+
+**Workbench and Explorer.** One extension-side Answer client. It sends
+Answer /3, uses the turn identifier as the invocation key, follows the job
+by itself, shows queued, running and finished states with partial evidence
+as each round completes, and offers "Stop waiting" and "Cancel job" as
+separate actions. Explorer opens the same Workbench turn. The request, the
+result decoder, citation navigation and copy and export move to /3
+together, so a recovered Answer is as usable as an immediate one.
+
+**Acceptance.**
+- **The decisive test:** disconnect the real submitting client after the
+  service accepts the job, let the supervisor tear the session down, and
+  require a later scoped read and model call to succeed; then reconnect and
+  recover the result, with one worker execution on the receipt. Repeat with
+  a queued job and no polling client. Revoke the grant while the client is
+  gone and require further reads and delivery to be refused.
+- No reply without evidence where the index holds any; a continuation that
+  repeats nothing; two and four `fresh` concurrent calls give two and four
+  executions.
+- An independent security and correctness review, as for the first wiring.
+
+**Order.** None of this is in the LG gate image; the gate measures
+concurrency on the unqueued path and says so. The work runs beside LG on its
+own branches and is merged after the gate. How far the durable-job part
+needs to go for agents is settled with the LG results: if Answers on CUDA
+finish well inside a host's wait, the one-call path with a bounded wait and
+progress covers agents, and the full job path is mainly for Workbench and
+heavy concurrency.
 
 ### 12.5 Devices
 
@@ -1992,6 +2100,9 @@ user for the decisions after L7. It is not acted on during section 12.
 | L4 | Service and retrieval: the split, plan, coverage and follow-up task policies, ledger slots, per-attempt lane admission for parts, cross-part candidate batching (and the Focus per-candidate question decision), and the calibration format with the deterministic order used where the model abstains | Service tests pass; policy identities are recorded |
 | L5 | CUDA devices: the Focus CUDA route; the FP16 CUDA profiles for Compact and Large with the loop's tasks, the gates' decision mode, switching the Context model within a lifetime, and the short trial (section 12.5.2); the Context ladder's GPU rungs with typed reasons; idle unload with pre-warm and reload handling (section 12.5) | Each CUDA route runs the loop on the A6000, with receipts recording peak GPU memory, per-call time and reload time; an Answer arriving during a reload starts on reads or a lower rung and does not time out. No CPU route is tested (section 12.0) |
 | L5b | Runtime capacity on CUDA (section 12.5.1): the warm-time calibration run, GPU and queue measurements, concurrent runs on one session with per-run CUDA streams, shed-and-recover, capacity-based lane admission, settings and status. Overflow to another device is deferred (section 12.0) | Tests show no second copy is ever loaded, capacity rises only within the memory floor and when measured gain holds, and the stage sheds under injected memory pressure without interrupting running calls; peak GPU memory recorded |
+| L2c | Answer jobs, revised (section 12.4.2): service-owned authority and attempt, the wait kept apart from the work budget, failures per invocation, reuse with `fresh` and an invocation key, unattended jobs yielding, a supervised deadline for job work, per-delivery records. Built on `loop/l2b-wire`; not in the LG gate image | The decisive disconnect test passes through a real supervisor session, with one worker execution on the receipt; an independent review passes |
+| L2d | One call always returns evidence (section 12.4.2): retrieval and the deterministic loop at once, the model part queued or reduced, a handle-only continuation that returns only what is new; the harness counts a ticket follow-up as a turn | Tests show no reply without evidence, a continuation that repeats nothing, and independent executions for `fresh` calls |
+| L2e | Workbench, Explorer, the Admin Search screen and the service-client check on Answer /3, then on the job path with partial evidence, "Stop waiting" and "Cancel job" | The extension sends /3 and renders, navigates, copies and exports a /3 reply; then a recovered Answer is as usable as an immediate one |
 | LG | The two model gates in one series: Large against Compact on CUDA (section 12.7.1), and Focus only against Focus with Compact on CUDA (section 12.7.2), CUDA only, with the replay-only precision check of section 12.7.3. Arm C's runs serve both | Gate report and commit; **stop for the user's personal review and decisions on Large and on Compact**, while work not depending on those decisions continues |
 | L6 | Workspace gate | Clippy and tests across the workspace on the matrix of CONTRIBUTING; known failures listed with their owners |
 | L7 | The evaluation starts over on the loop, on CUDA only. First, a new baseline on both repositories: the loop on the CUDA routes the gate decisions keep, the Focus-only loop, Parse and Search. There are no CPU cells. Then change sets with weight and calibration refinement as in section 5, each series judged and committed on its own | The new baseline report, then one report and commit per series; stop for the user's inspection after the iterations the user sets |

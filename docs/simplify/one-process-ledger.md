@@ -15894,3 +15894,56 @@ not in the gate image.
   keep transient failures, record `attached` per call, a setting that
   disables attach and retention for measurement, and tests through the
   supervisor `query()` path. The branch stays at `24184339`.
+
+### 23 November 2026 at 01:18 UTC — the job design is revised and approved; the FP16 re-emission meets a Core blocker
+
+**Answer jobs, revised (plan section 12.4.2).** The user asked me to evaluate
+an outside proposal for the job table and queue, and at about 01:15 UTC
+approved the evaluation: "Get it added to the plan and incorporated into your
+work and launch agents that will get it done."
+- **Adopted:** service-owned jobs with their own authority and native
+  attempt; the caller's wait kept apart from the work budget; failures per
+  invocation; per-delivery rendering and records; a supervised deadline for
+  job work; continuation by handle alone.
+- **Changed for the turn goal:** a reply always carries evidence, so only
+  the model's part queues or is reduced; a continuation returns only what is
+  new; reuse by digest stays on by default with a `fresh` way out, which the
+  harness always uses; unattended jobs yield to attended ones.
+- **Measurement:** a ticket follow-up counts as a turn for an ordinary agent.
+- **Work order:** new steps L2c (ownership), L2d (one call with evidence,
+  delta continuation) and L2e (Workbench, Explorer, Admin Search and the
+  service-client check on /3, then on the job path). None is in the LG gate
+  image.
+
+**Integration round, continued.**
+- `54155bb3` (not pushed at this entry): the delta review's medium is fixed
+  in the kernel only. A span that fits its share is shown whole; a longer one
+  is shown as a window that holds the text Focus scored. No identity moved.
+  Clippy exit 0; nextest 194 run, 194 passed.
+- The reply-level duplicate rule is built and in validation. Trimming
+  overlapping text between two different spans inside one card call is not
+  built; it is recorded with an owner. A card call already shows byte-equal
+  text once.
+- Two low findings (L-a, L-b) and a doc comment in `native_loop.rs` wait for
+  the next identity move, because their files feed identities the profiles
+  pin.
+
+**Blocker found by the LG agent during the FP16 re-emission, at 01:20 UTC.**
+Core refuses every profile that declares the four loop card tasks:
+`Stage::permits` allows only Focus ranking and the one-turn Context action,
+and `Profile::validate()` runs wherever a catalog is built or a scorer is
+opened. L4's tests never called `validate()` on an admitted profile. With
+the product as it stood, arms C and L could not load a loop profile, and
+every card decision would have come back not dispatched. No GPU step has
+run. Owner: the integration agent, ahead of the duplicate rule, with the
+identity impact established before the commit. The LG agent may dry-run the
+rest of the pipeline on a provisional local change; final profiles come only
+from a build that holds the main fix.
+
+**Harness.** The reviewer of `936c9b94` found that the harness still forced
+the old 131,072-token budget on every Answer. The LG agent's branch already
+sent 196,608, hand-copied; it now reads the default budget from the
+Rust-emitted cases file and records the budget sent in each receipt.
+
+**Base roots at 01:20 UTC.** All five still embedding bookbuilder-v2;
+munarium ready in all; no error. D: free 1,103 GB.
