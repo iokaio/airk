@@ -1830,7 +1830,6 @@ async fn emit_private_arbiter_configuration() -> Result<()> {
                 selection: airk_core::service::ToolSelection::Open {
                     index_ids: vec![binding.index_id.to_string()],
                     index_set_ids: vec![],
-                    connection_id: None,
                     workspace: None,
                 },
                 response_mode: airk_core::service::ToolResponseMode::Full,

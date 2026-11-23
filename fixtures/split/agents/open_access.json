@@ -29,8 +29,8 @@
   "tool_selection": {
     "accepted": [
       {
-        "name": "ids_and_names_with_connection",
-        "bytes": "{\"open\":{\"index_ids\":[\"idx_02020202020202020202020202020202\",\"Docs\"],\"index_set_ids\":[\"Team set\"],\"connection_id\":\"21212121212121212121212121212121\"}}"
+        "name": "ids_and_names",
+        "bytes": "{\"open\":{\"index_ids\":[\"idx_02020202020202020202020202020202\",\"Docs\"],\"index_set_ids\":[\"Team set\"]}}"
       },
       {
         "name": "default_scope",
@@ -38,6 +38,11 @@
       }
     ],
     "rejected": [
+      {
+        "name": "connection_id_removed",
+        "stage": "serde",
+        "bytes": "{\"open\":{\"index_ids\":[\"idx_02020202020202020202020202020202\",\"Docs\"],\"index_set_ids\":[\"Team set\"],\"connection_id\":\"21212121212121212121212121212121\"}}"
+      },
       {
         "name": "null_connection",
         "stage": "serde",

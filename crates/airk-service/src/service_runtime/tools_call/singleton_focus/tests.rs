@@ -343,7 +343,7 @@ fn actual_open_resolution_and_registered_lease_own_singleton_vs_mixed_focus_allo
     };
     for count in [1, 2, 32] {
         let names: Vec<_> = (1..=count).map(|n| format!("fixture-{n}")).collect();
-        let requested = agent_scope::requested(&names, &[], None).map_err(anyhow::Error::msg)?;
+        let requested = agent_scope::requested(&names, &[]).map_err(anyhow::Error::msg)?;
         let resolved = agent_scope::resolve(&listing, requested).map_err(anyhow::Error::msg)?;
         assert_eq!(resolved.len(), count as usize);
         let identity = open_scope_identity(namespace, revision, &resolved)?;

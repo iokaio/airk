@@ -657,8 +657,9 @@ def operations():
         ("logs.recent", "Logs", ALL4), ("logs.export", "LogsExport", MGMT),
         # The local HTTPS MCP endpoint an agent is pointed at (no credential).
         ("agents.endpoint", "AgentEndpoint", MGMT),
-        ("agents.connection", "HttpConnectionInfo", MGMT), ("agents.ownership", "HttpConnectionOwnership", MGMT),
-        ("agents.verify", "AgentConnectionVerify", MGMT), ("https.trust_status", "HttpTrust.Inspect", MGMT),
+        # Local trust plan B: the connection reads (agents.connection, .ownership,
+        # .verify) were removed with the credential.
+        ("https.trust_status", "HttpTrust.Inspect", MGMT),
         ("https.rotation_status", "HttpIssuerRotation.Status", MGMT), ("models.catalog", "ModelCatalog", MGMT),
         ("indexes.resolve", "ResolveProject", ["pipe", "airkctl", "session"]),
     ]
@@ -710,11 +711,8 @@ def operations():
         ("service.login_startup_install", "LoginStartup.Install", MGMT, "mutation", "natural", natural),
         ("service.login_startup_uninstall", "LoginStartup.Uninstall", MGMT, "mutation", "natural", natural),
         ("service.record_client_error", "RecordClientError", ALL4, "mutation", "natural", natural),
-        ("agents.revoke", "HttpRevoke", MGMT, "mutation", "natural", natural),
-        # U105: an open connection's default scope and agent choice; the Explorer's
-        # applied search scope relays it (session). Fenced by its defaults revision.
-        ("agents.connection_defaults", "AgentConnectionDefaults", LOCAL + ["session"], "mutation", "natural",
-         natural),
+        # Local trust plan B: agents.revoke and agents.connection_defaults were
+        # removed with the credential and the open connection's stored defaults.
     ]
     for operation, method, surfaces, effect, idempotency, conformance in mutations:
         yield row(operation, method, "management", surfaces, effect, idempotency, conformance)
@@ -730,8 +728,6 @@ NEVER = [
     {"item": "upgrade_checkpoints", "methods": ["PrepareUpgradeCheckpoint", "ObserveUpgradeCheckpoint",
                                                 "UpgradeRecoveryProbe", "ReleaseUpgradeAdmission"],
      "reason": "Upgrade checkpoints are installer-class owner-pipe operations."},
-    {"item": "credential_enrollment", "methods": ["HttpEnroll"],
-     "reason": "Credential-creating; `airkctl agents connect` only. The Agents page shows the command."},
     {"item": "admin_launch_code", "methods": ["AdminLaunchCode"], "reason": "A1 is owner pipe only."},
     {"item": "admin_session_revocation", "methods": ["AdminEndSessions"],
      "reason": "Ending every admin session after a suspected leak is an owner-pipe method (L4)."},
@@ -773,7 +769,8 @@ def invalid_tables():
     yield bad("admin_read_without_p8", "conformance_missing", {**read, "conformance": ["P3", "P5"]})
     yield bad("evidence_read_without_p7", "conformance_missing",
               {**read, "plane": "evidence", "conformance": ["P3", "P5", "P6", "P8"]})
-    yield bad("admin_enroll", "never_over_http", {**good, "operation": "agents.enroll", "method": "HttpEnroll"})
+    yield bad("admin_launch_code_row", "never_over_http",
+              {**good, "operation": "admin.launch_code", "method": "AdminLaunchCode"})
     yield bad("admin_rotation_commit", "never_over_http",
               {**good, "operation": "https.rotation_commit", "method": "HttpIssuerRotation.Commit"})
     yield bad("admin_action_of_never_method", "never_over_http",

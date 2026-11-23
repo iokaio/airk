@@ -601,13 +601,13 @@ async fn calls_need_the_cookie_the_token_and_a_reviewed_operation() {
     );
     // A mutation whose reply never arrives has an unknown outcome; it is
     // neither refused nor retryable under a new key.
-    let revoke = json!({"http_revoke": {"connection_id": "1c".repeat(16)}}).to_string();
+    let forget = json!({"client_request_forget": {"nonce": "1c".repeat(16)}}).to_string();
     let (status, _, reply) = answer(
         &plane,
         call(
-            "/admin/api/v1/call/agents.revoke",
+            "/admin/api/v1/call/requests.forget",
             Some(csrf.as_str()),
-            &revoke,
+            &forget,
         ),
         PeerProof::SameUser,
     )
@@ -1158,15 +1158,7 @@ fn grants_end_with_their_session_and_never_cross_instances() {
 #[test]
 fn rows_without_a_control_method_follow_the_reviewed_mapping() {
     use operations::{MAPPINGS, Served, served};
-    let expected: [(&str, Served); 4] = [
-        (
-            "HttpConnectionInfo",
-            Served::Equivalent("AgentConnectionInfo"),
-        ),
-        (
-            "HttpConnectionOwnership",
-            Served::Equivalent("AgentConnectionOwnership"),
-        ),
+    let expected: [(&str, Served); 2] = [
         ("LogsExport", Served::Equivalent("Logs")),
         ("HttpTrust.Inspect", Served::TrustInspect),
     ];
@@ -1205,18 +1197,18 @@ fn rows_without_a_control_method_follow_the_reviewed_mapping() {
 #[tokio::test]
 async fn mapped_rows_are_served_by_their_mapping() {
     let (plane, sent, _) = scripted_plane(vec![Some(ControlResponse::Failure {
-        code: "agent_connection_unknown".into(),
+        code: "logs_unavailable".into(),
     })]);
     let (cookie, csrf) = sign_in(&plane).await;
-    // agents.connection is AgentConnectionInfo.
-    let info = json!({"agent_connection_info": {"connection_id": "1c".repeat(16)}});
+    // logs.export is Logs.
+    let logs = json!({"logs": {"limit": 10}});
     let (status, _) = envelope(
         &plane,
-        api_call(&cookie, &csrf, "agents.connection", &info.to_string()),
+        api_call(&cookie, &csrf, "logs.export", &logs.to_string()),
     )
     .await;
     assert_eq!(status, 409);
-    assert_eq!(*sent.lock().unwrap(), [info]);
+    assert_eq!(*sent.lock().unwrap(), [logs]);
     // Trust inspection takes exactly its body; this plane has no inspector.
     let (status, _) = envelope(
         &plane,

@@ -758,13 +758,14 @@ fn clean_break_http_disposal_cli_requires_explicit_purpose_and_predecessor() -> 
         "--connection-id",
         "01010101010101010101010101010101",
     ];
-    assert!(Arguments::try_parse_from(base).is_ok());
+    // Local trust plan B: the lookup serves predecessor cleanup only.
+    assert!(Arguments::try_parse_from(base).is_err());
     let mut args = base.to_vec();
     args.extend(["--purpose", "predecessor-cleanup"]);
     assert!(Arguments::try_parse_from(&args).is_err());
     args.extend(["--predecessor", "original"]);
     assert!(
-        matches!(Arguments::try_parse_from(args)?.runtime, RuntimeCommand::LookupHttpConnection { purpose:Some(purpose), predecessor:Some(predecessor), .. } if purpose == "predecessor-cleanup" && predecessor == "original")
+        matches!(Arguments::try_parse_from(args)?.runtime, RuntimeCommand::LookupHttpConnection { purpose, predecessor, .. } if purpose == "predecessor-cleanup" && predecessor == "original")
     );
     let mut args = base.to_vec();
     args.extend(["--predecessor", "original"]);

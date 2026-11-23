@@ -35,12 +35,6 @@
           "bytes": "{\"tools_catalog\":{\"detail\":{\"list\":{\"schemas\":false}},\"combined\":{\"schema\":1,\"context_key\":\"0505050505050505050505050505050505050505050505050505050505050505\",\"namespace\":\"2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\",\"expected_catalog_revision\":4,\"grant_id\":\"grt_2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\",\"expected_grant_revision\":3,\"project_ids\":[\"prj_2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\"],\"index_ids\":[\"idx_2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\"]}}}",
           "request_frame_budget": 65536,
           "response_frame_budget": 1048576
-        },
-        {
-          "name": "list_for_an_open_connection",
-          "bytes": "{\"tools_catalog\":{\"detail\":{\"list\":{\"schemas\":false}},\"connection_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\"}}",
-          "request_frame_budget": 65536,
-          "response_frame_budget": 1048576
         }
       ],
       "rejected_methods": [
@@ -79,6 +73,10 @@
         {
           "name": "combined_extra_field",
           "bytes": "{\"tools_catalog\":{\"detail\":{\"list\":{\"schemas\":false}},\"combined\":{\"schema\":1,\"context_key\":\"0505050505050505050505050505050505050505050505050505050505050505\",\"namespace\":\"2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\",\"expected_catalog_revision\":4,\"grant_id\":\"grt_2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\",\"expected_grant_revision\":3,\"project_ids\":[\"prj_2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b\"],\"extra\":1}}}"
+        },
+        {
+          "name": "list_for_an_open_connection_removed",
+          "bytes": "{\"tools_catalog\":{\"detail\":{\"list\":{\"schemas\":false}},\"connection_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\"}}"
         }
       ],
       "responses": [
@@ -758,17 +756,11 @@
     },
     {
       "variant": "agent_connections",
-      "method": "M15a, M15",
+      "method": "M15a",
       "methods": [
         {
           "name": "endpoint",
           "bytes": "{\"agent_endpoint\":{}}",
-          "request_frame_budget": 65536,
-          "response_frame_budget": 65536
-        },
-        {
-          "name": "connection_info",
-          "bytes": "{\"agent_connection_info\":{\"connection_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\"}}",
           "request_frame_budget": 65536,
           "response_frame_budget": 65536
         }
@@ -777,14 +769,6 @@
         {
           "name": "endpoint_unit_spelling",
           "bytes": "\"agent_endpoint\""
-        },
-        {
-          "name": "info_without_id",
-          "bytes": "{\"agent_connection_info\":{}}"
-        },
-        {
-          "name": "info_with_token",
-          "bytes": "{\"agent_connection_info\":{\"connection_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\",\"token\":\"x\"}}"
         }
       ],
       "responses": [
@@ -805,54 +789,48 @@
       ]
     },
     {
-      "variant": "agent_reads",
-      "method": "M16, V1",
-      "methods": [
-        {
-          "name": "ownership",
-          "bytes": "{\"agent_connection_ownership\":{\"connection_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\"}}",
-          "request_frame_budget": 65536,
-          "response_frame_budget": 65536
-        },
-        {
-          "name": "verify",
-          "bytes": "{\"agent_connection_verify\":{\"connection_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\"}}",
-          "request_frame_budget": 65536,
-          "response_frame_budget": 65536
-        }
-      ],
+      "variant": "agent_connection_methods_removed",
+      "method": "Local trust plan B (23 November 2026): M15, M16, V1 and U105 connection methods, HttpEnroll and HttpRevoke and their replies no longer decode.",
+      "methods": [],
       "rejected_methods": [
         {
-          "name": "ownership_without_id",
-          "bytes": "{\"agent_connection_ownership\":{}}"
+          "name": "connection_info_removed",
+          "bytes": "{\"agent_connection_info\":{\"connection_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\"}}"
         },
         {
-          "name": "ownership_with_purpose",
-          "bytes": "{\"agent_connection_ownership\":{\"connection_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\",\"purpose\":\"predecessor-cleanup\"}}"
+          "name": "ownership_removed",
+          "bytes": "{\"agent_connection_ownership\":{\"connection_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\"}}"
         },
         {
-          "name": "verify_with_token",
-          "bytes": "{\"agent_connection_verify\":{\"connection_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\",\"token\":\"x\"}}"
+          "name": "verify_removed",
+          "bytes": "{\"agent_connection_verify\":{\"connection_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\"}}"
+        },
+        {
+          "name": "choice_only_removed",
+          "bytes": "{\"agent_connection_defaults\":{\"connection_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\",\"expected_defaults_revision\":3,\"agent_choice\":\"on\"}}"
+        },
+        {
+          "name": "default_scope_removed",
+          "bytes": "{\"agent_connection_defaults\":{\"connection_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\",\"expected_defaults_revision\":1,\"index_ids\":[\"idx_02020202020202020202020202020202\"],\"index_set_ids\":[\"prj_01010101010101010101010101010101\"]}}"
+        },
+        {
+          "name": "clear_default_scope_removed",
+          "bytes": "{\"agent_connection_defaults\":{\"connection_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\",\"expected_defaults_revision\":2,\"index_ids\":[],\"index_set_ids\":[]}}"
         }
       ],
-      "responses": [
+      "responses": [],
+      "rejected_responses": [
         {
-          "name": "ownership",
+          "name": "ownership_removed",
           "bytes": "{\"status\":\"agent_connection_ownership\",\"result\":{\"connection_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\",\"schema\":1,\"status\":\"not_owned\"}}"
         },
         {
-          "name": "verified",
+          "name": "verified_removed",
           "bytes": "{\"status\":\"agent_connection_verified\",\"result\":{\"connection_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\",\"http_status\":200,\"schema\":1,\"url\":\"https://127.0.0.1:57421/mcp\",\"verified\":true}}"
-        }
-      ],
-      "rejected_responses": [
-        {
-          "name": "ownership_without_result",
-          "bytes": "{\"status\":\"agent_connection_ownership\"}"
         },
         {
-          "name": "verified_without_result",
-          "bytes": "{\"status\":\"agent_connection_verified\"}"
+          "name": "stored_removed",
+          "bytes": "{\"status\":\"agent_connection_defaults\",\"connection_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\",\"open\":{\"defaults_revision\":4,\"default_index_ids\":[\"idx_02020202020202020202020202020202\"],\"default_index_set_ids\":[],\"agent_choice\":\"on\"}}"
         }
       ]
     },
@@ -1201,72 +1179,6 @@
         {
           "name": "unknown_use",
           "bytes": "{\"status\":\"folder_listing\",\"listing\":{\"schema\":1,\"path\":\"D:/code\",\"parent\":\"D:/\",\"breadcrumb\":[{\"name\":\"D:\",\"path\":\"D:/\"},{\"name\":\"code\",\"path\":\"D:/code\"}],\"entries\":[{\"name\":\".cache\",\"path\":\"D:/code/.cache\",\"kind\":\"folder\",\"hidden\":true},{\"name\":\"airk\",\"path\":\"D:/code/airk\",\"kind\":\"folder\",\"indexes\":[{\"index\":\"airk\",\"use\":\"watched\"}]},{\"name\":\"shared\",\"path\":\"D:/code/shared\",\"kind\":\"link\"}],\"continuation\":\"shared\",\"truncated\":false,\"marks_complete\":true}}"
-        }
-      ]
-    },
-    {
-      "variant": "agent_connection_defaults",
-      "method": "U105 (contract step; served later, refused not_yet_served until then)",
-      "methods": [
-        {
-          "name": "choice_only",
-          "bytes": "{\"agent_connection_defaults\":{\"connection_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\",\"expected_defaults_revision\":3,\"agent_choice\":\"on\"}}",
-          "request_frame_budget": 65536,
-          "response_frame_budget": 65536
-        },
-        {
-          "name": "default_scope",
-          "bytes": "{\"agent_connection_defaults\":{\"connection_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\",\"expected_defaults_revision\":1,\"index_ids\":[\"idx_02020202020202020202020202020202\"],\"index_set_ids\":[\"prj_01010101010101010101010101010101\"]}}",
-          "request_frame_budget": 65536,
-          "response_frame_budget": 65536
-        },
-        {
-          "name": "clear_default_scope",
-          "bytes": "{\"agent_connection_defaults\":{\"connection_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\",\"expected_defaults_revision\":2,\"index_ids\":[],\"index_set_ids\":[]}}",
-          "request_frame_budget": 65536,
-          "response_frame_budget": 65536
-        }
-      ],
-      "rejected_methods": [
-        {
-          "name": "without_revision",
-          "bytes": "{\"agent_connection_defaults\":{\"connection_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\",\"agent_choice\":\"on\"}}"
-        },
-        {
-          "name": "null_choice",
-          "bytes": "{\"agent_connection_defaults\":{\"connection_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\",\"expected_defaults_revision\":1,\"agent_choice\":null}}"
-        },
-        {
-          "name": "unknown_choice",
-          "bytes": "{\"agent_connection_defaults\":{\"connection_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\",\"expected_defaults_revision\":1,\"agent_choice\":\"auto\"}}"
-        },
-        {
-          "name": "index_names",
-          "bytes": "{\"agent_connection_defaults\":{\"connection_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\",\"expected_defaults_revision\":1,\"index_ids\":[\"Docs\"]}}"
-        },
-        {
-          "name": "extra_field",
-          "bytes": "{\"agent_connection_defaults\":{\"connection_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\",\"expected_defaults_revision\":1,\"generation\":2}}"
-        }
-      ],
-      "responses": [
-        {
-          "name": "stored",
-          "bytes": "{\"status\":\"agent_connection_defaults\",\"connection_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\",\"open\":{\"defaults_revision\":4,\"default_index_ids\":[\"idx_02020202020202020202020202020202\"],\"default_index_set_ids\":[],\"agent_choice\":\"on\"}}"
-        },
-        {
-          "name": "not_yet_served",
-          "bytes": "{\"status\":\"failure\",\"code\":\"not_yet_served\"}"
-        }
-      ],
-      "rejected_responses": [
-        {
-          "name": "without_state",
-          "bytes": "{\"status\":\"agent_connection_defaults\",\"connection_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\"}"
-        },
-        {
-          "name": "choice_missing",
-          "bytes": "{\"status\":\"agent_connection_defaults\",\"connection_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\",\"open\":{\"defaults_revision\":4,\"default_index_ids\":[],\"default_index_set_ids\":[]}}"
         }
       ]
     }

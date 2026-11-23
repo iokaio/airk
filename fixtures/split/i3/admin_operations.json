@@ -1014,69 +1014,6 @@
    ]
   },
   {
-   "operation": "agents.connection",
-   "method": "HttpConnectionInfo",
-   "plane": "management",
-   "surfaces": [
-    "pipe",
-    "airkctl",
-    "admin"
-   ],
-   "authorization": [
-    "owner_pipe",
-    "admin_session_csrf"
-   ],
-   "effect": "read",
-   "idempotency": "read",
-   "conformance": [
-    "P3",
-    "P5",
-    "P8"
-   ]
-  },
-  {
-   "operation": "agents.ownership",
-   "method": "HttpConnectionOwnership",
-   "plane": "management",
-   "surfaces": [
-    "pipe",
-    "airkctl",
-    "admin"
-   ],
-   "authorization": [
-    "owner_pipe",
-    "admin_session_csrf"
-   ],
-   "effect": "read",
-   "idempotency": "read",
-   "conformance": [
-    "P3",
-    "P5",
-    "P8"
-   ]
-  },
-  {
-   "operation": "agents.verify",
-   "method": "AgentConnectionVerify",
-   "plane": "management",
-   "surfaces": [
-    "pipe",
-    "airkctl",
-    "admin"
-   ],
-   "authorization": [
-    "owner_pipe",
-    "admin_session_csrf"
-   ],
-   "effect": "read",
-   "idempotency": "read",
-   "conformance": [
-    "P3",
-    "P5",
-    "P8"
-   ]
-  },
-  {
    "operation": "https.trust_status",
    "method": "HttpTrust.Inspect",
    "plane": "management",
@@ -2291,47 +2228,6 @@
     "P3",
     "P5"
    ]
-  },
-  {
-   "operation": "agents.revoke",
-   "method": "HttpRevoke",
-   "plane": "management",
-   "surfaces": [
-    "pipe",
-    "airkctl",
-    "admin"
-   ],
-   "authorization": [
-    "owner_pipe",
-    "admin_session_csrf"
-   ],
-   "effect": "mutation",
-   "idempotency": "natural",
-   "conformance": [
-    "P2",
-    "P3",
-    "P5"
-   ]
-  },
-  {
-   "operation": "agents.connection_defaults",
-   "method": "AgentConnectionDefaults",
-   "plane": "management",
-   "surfaces": [
-    "pipe",
-    "airkctl",
-    "session"
-   ],
-   "authorization": [
-    "owner_pipe"
-   ],
-   "effect": "mutation",
-   "idempotency": "natural",
-   "conformance": [
-    "P2",
-    "P3",
-    "P5"
-   ]
   }
  ],
  "never_over_http": [
@@ -2376,13 +2272,6 @@
     "ReleaseUpgradeAdmission"
    ],
    "reason": "Upgrade checkpoints are installer-class owner-pipe operations."
-  },
-  {
-   "item": "credential_enrollment",
-   "methods": [
-    "HttpEnroll"
-   ],
-   "reason": "Credential-creating; `airkctl agents connect` only. The Agents page shows the command."
   },
   {
    "item": "admin_launch_code",
@@ -3039,12 +2928,12 @@
    ]
   },
   {
-   "name": "admin_enroll",
+   "name": "admin_launch_code_row",
    "reason": "never_over_http",
    "rows": [
     {
-     "operation": "agents.enroll",
-     "method": "HttpEnroll",
+     "operation": "admin.launch_code",
+     "method": "AdminLaunchCode",
      "plane": "management",
      "surfaces": [
       "pipe",

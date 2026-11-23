@@ -617,12 +617,14 @@ fn installed_query_scope_calls_and_shell_retain_canonical_authority() -> Result<
     Ok(())
 }
 
-/// Current CLI enrollment never infers a grant from an old-looking registration.
-/// The positive read connection and its revocation use an actual native owner.
+/// Public migration commands must not bootstrap an installation from untrusted
+/// paths. Standalone adoption is refused (standalone_adoption_unsupported); the
+/// remaining legacy cache maintenance is covered by the runtime_install tests.
+/// Local trust plan B: the native endpoint read stays; enrollment, credential,
+/// connection-info, revocation and legacy-connection commands are gone, and
+/// the ownership lookup serves predecessor cleanup only.
 #[test]
-fn native_http_commands_preserve_private_selection_and_revocation() -> Result<()> {
-    use airk_core::identity::Sha256Digest;
-    use sha2::{Digest, Sha256};
+fn native_http_endpoint_remains_and_connection_commands_are_removed() -> Result<()> {
     let source = tempfile::tempdir()?;
     let data = tempfile::tempdir()?;
     fs::write(
@@ -630,19 +632,6 @@ fn native_http_commands_preserve_private_selection_and_revocation() -> Result<()
         b"# Native HTTP command fixture\n",
     )?;
     let service = common::Service::reviewed(source.path(), data.path(), "http-commands");
-    let inputs = tempfile::tempdir()?;
-    let private = inputs.path().join("private");
-    airk_cli::local_ipc::prepare_root(&private)?;
-    let write_input = |name: &str, value: &Value| -> Result<std::path::PathBuf> {
-        let path = private.join(name);
-        fs::write(&path, serde_json::to_vec(value)?)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
-        }
-        Ok(path)
-    };
     let runtime = |role: &str| {
         let mut command = service.installed_command(source.path(), data.path(), "http-commands");
         command
@@ -650,258 +639,37 @@ fn native_http_commands_preserve_private_selection_and_revocation() -> Result<()
             .arg(service.install_dir());
         command
     };
-    let value = |command: &mut Command| -> Result<Value> {
-        let output = command.output()?;
-        ensure!(
-            output.status.success(),
-            "native HTTP command failed: {}{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        Ok(serde_json::from_slice(&output.stdout)?)
-    };
-    let endpoint = value(&mut runtime("http-endpoint"))?;
+    let output = runtime("http-endpoint").output()?;
+    ensure!(
+        output.status.success(),
+        "native HTTP endpoint read failed: {}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let endpoint: Value = serde_json::from_slice(&output.stdout)?;
     assert_eq!(endpoint["state"], "ready");
-    let id = airk_kernel::service_broker::new_instance_id()?.to_string();
-    let selection = write_input(
-        "selection.json",
-        &serde_json::to_value(service.http_selection())?,
-    )?;
-    let enroll = || -> Result<Value> {
-        value(
-            runtime("http-connection")
-                .arg("--selection-file")
-                .arg(&selection)
-                .args(["--connection-id", &id, "--client", "codex"]),
-        )
-    };
-    let enrolled = enroll()?;
-    assert_eq!(enrolled["connection_id"], id);
-    assert_eq!(enrolled["endpoint"], endpoint);
-    assert_eq!(
-        enrolled["selection"],
-        serde_json::to_value(service.http_selection())?
-    );
-    assert!(enrolled.get("token").is_none());
-    assert!(enrolled["credential_file"].is_string() && enrolled["ca_certificate_file"].is_string());
-    assert_eq!(
-        enroll()?,
-        enrolled,
-        "same-ID retry changed authority or credential references"
-    );
-    let existing = value(runtime("http-connection-info").args(["--connection-id", &id]))?;
-    assert_eq!(existing, enrolled);
-
-    let airk_core::service::ControlResponse::Health {
-        observation: health,
-    } = service.request(airk_core::service::ControlMethod::Health)
-    else {
-        anyhow::bail!("missing owner identity before read-only connection lookup");
-    };
-    let active = health
-        .runtime_sha256
-        .as_deref()
-        .context("approved runtime missing")?;
-    let lookup = |identifier: &str| {
-        value(runtime("lookup-http-connection").args([
-            "--expected-active",
-            active,
-            "--connection-id",
-            identifier,
-        ]))
-    };
-    let credential = Path::new(
-        enrolled["credential_file"]
-            .as_str()
-            .context("credential path missing")?,
-    );
-    let credential_bytes = fs::read(credential)?;
-    // The header helper for agents started outside VS Code prints exactly the
-    // owner-private bearer of the existing connection; it enrolls nothing.
-    let header = || {
-        let mut command = runtime("http-credential");
-        command.args(["--connection-id", &id, "--format", "header-json"]);
-        command
-    };
-    assert_eq!(
-        value(&mut header())?,
-        json!({"Authorization": format!("Bearer {}", std::str::from_utf8(&credential_bytes)?)})
-    );
+    let id = "01".repeat(16);
+    for removed in [
+        "http-connection",
+        "http-connection-info",
+        "http-credential",
+        "http-revoke",
+        "http-legacy-connection",
+        "http-legacy-union-connection",
+    ] {
+        let output = runtime(removed).args(["--connection-id", &id]).output()?;
+        assert!(!output.status.success(), "{removed} still runs");
+    }
+    let output = runtime("lookup-http-connection")
+        .args(["--expected-active", "current", "--connection-id", &id])
+        .output()?;
     assert!(
-        fs::read(credential)? == credential_bytes,
-        "the header helper must not rotate credentials"
+        !output.status.success(),
+        "the lookup needs the predecessor-cleanup purpose"
     );
-    let owned = lookup(&id)?;
-    assert_eq!(owned["status"], "owned");
-    assert_eq!(owned["connection"], enrolled);
-    assert_eq!(owned["active"], active);
-    assert_eq!(owned["connection_id"], id);
-    let unknown_id = airk_kernel::service_broker::new_instance_id()?.to_string();
-    let unknown = lookup(&unknown_id)?;
-    assert_eq!(unknown["status"], "not_owned");
-    assert_eq!(unknown["connection_id"], unknown_id);
-    assert!(unknown.get("connection").is_none());
-    assert!(
-        !runtime("http-connection-info")
-            .args(["--connection-id", &unknown_id])
-            .output()?
-            .status
-            .success()
-    );
-    assert!(
-        fs::read(credential)? == credential_bytes,
-        "lookup must not rotate credentials"
-    );
-    assert_eq!(
-        value(runtime("http-connection-info").args(["--connection-id", &id]))?,
-        enrolled
-    );
-
-    // Both operations inspect existing metadata only: no trust install/remove
-    // and no rotation prepare/commit occurs in this ordinary CLI regression.
-    let trust = value(runtime("http-trust").args(["--action", "inspect"]))?;
-    assert_eq!(trust["schema"], 1);
-    assert_eq!(trust["ca_sha256"], endpoint["ca_sha256"]);
-    let rotation = value(runtime("http-issuer-rotation").args(["--action", "status"]))?;
-    assert_eq!(rotation["schema"], 1);
-    assert_eq!(rotation["current_endpoint"], endpoint);
-    assert!(rotation["rotation"].is_null());
-
-    // These are explicitly current, non-imported declarations. Hash the actual
-    // owned declaration bytes; native migration must request review, never mint
-    // predecessor authority or silently reuse the current read grant.
-    let declaration = serde_json::to_vec(
-        &json!({"schema":1,"kind":"current_fixture","registration":service.project}),
-    )?;
-    let receipt = Sha256Digest::from_bytes(Sha256::digest(&declaration).into()).to_string();
-    fs::write(private.join("current-declaration.json"), &declaration)?;
-    let registration = write_input(
-        "registration.json",
-        &serde_json::to_value(&service.project)?,
-    )?;
-    let legacy_id = airk_kernel::service_broker::new_instance_id()?.to_string();
-    let legacy = value(
-        runtime("http-legacy-connection")
-            .arg("--registration-file")
-            .arg(registration)
-            .args([
-                "--configuration-receipt",
-                &receipt,
-                "--connection-id",
-                &legacy_id,
-                "--client",
-                "codex",
-            ]),
-    )?;
-    assert_eq!(legacy["status"], "review_required");
-    assert_eq!(legacy["code"], "legacy_selection_review_required");
-    assert_eq!(
-        legacy["registration"],
-        serde_json::to_value(&service.project)?
-    );
-    assert!(
-        !runtime("http-connection-info")
-            .args(["--connection-id", &legacy_id])
-            .output()?
-            .status
-            .success()
-    );
-    let second_source = tempfile::tempdir()?;
-    let second_data = tempfile::tempdir()?;
-    fs::write(
-        second_source.path().join("original.md"),
-        b"# Second current declaration\n",
-    )?;
-    let second =
-        service.additional_project(second_source.path(), second_data.path(), "http-second")?;
-    let second_declaration =
-        serde_json::to_vec(&json!({"schema":1,"kind":"current_fixture","registration":second}))?;
-    let second_receipt =
-        Sha256Digest::from_bytes(Sha256::digest(&second_declaration).into()).to_string();
-    fs::write(
-        private.join("second-current-declaration.json"),
-        second_declaration,
-    )?;
-    let union = write_input(
-        "registrations.json",
-        &json!({"schema":1,"no_default_project":true,"registrations":[
-            {"registration":service.project,"configuration_receipt":receipt},
-            {"registration":second,"configuration_receipt":second_receipt}
-        ]}),
-    )?;
-    let union_id = airk_kernel::service_broker::new_instance_id()?.to_string();
-    let refused = value(
-        runtime("http-legacy-union-connection")
-            .arg("--registrations-file")
-            .arg(union)
-            .args(["--connection-id", &union_id, "--client", "codex"]),
-    )?;
-    assert_eq!(refused["status"], "review_required");
-    assert_eq!(refused["code"], "legacy_union_review_required");
-    assert_eq!(refused["no_default_project"], true);
-    assert_eq!(
-        refused["resolutions"]
-            .as_array()
-            .context("missing complete union resolutions")?
-            .len(),
-        2
-    );
-    assert!(
-        !runtime("http-connection-info")
-            .args(["--connection-id", &union_id])
-            .output()?
-            .status
-            .success()
-    );
-    let revoked = value(runtime("http-revoke").args(["--connection-id", &id]))?;
-    assert_eq!(revoked["connection_id"], id);
-    let credential_snapshot = || -> Result<Option<Vec<u8>>> {
-        match fs::read(credential) {
-            Ok(bytes) => Ok(Some(bytes)),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(error.into()),
-        }
-    };
-    let credential_after_revoke = credential_snapshot()?;
-    let refused_header = header().output()?;
-    assert!(!refused_header.status.success() && refused_header.stdout.is_empty());
-    assert!(
-        !String::from_utf8_lossy(&refused_header.stderr)
-            .contains(std::str::from_utf8(&credential_bytes)?),
-        "a refused header helper never prints the revoked token"
-    );
-    let unavailable = lookup(&id)?;
-    assert_eq!(unavailable["status"], "unavailable");
-    assert_eq!(unavailable["code"], "owned_connection_revoked");
-    assert!(unavailable.get("connection").is_none());
-    assert!(
-        credential_snapshot()? == credential_after_revoke,
-        "lookup must not recreate a revoked credential"
-    );
-    let airk_core::service::ControlResponse::Health { observation: after } =
-        service.request(airk_core::service::ControlMethod::Health)
-    else {
-        anyhow::bail!("missing owner identity after read-only connection lookup");
-    };
-    assert_eq!(after.instance, health.instance);
-    assert!(
-        !runtime("http-connection-info")
-            .args(["--connection-id", &id])
-            .output()?
-            .status
-            .success()
-    );
-    assert_eq!(
-        fs::read(source.path().join("original.md"))?,
-        b"# Native HTTP command fixture\n"
-    );
-    service.shutdown_reviewed()?;
     Ok(())
 }
 
-/// Public migration commands must not bootstrap an installation from untrusted
-/// paths. Standalone adoption is refused (standalone_adoption_unsupported); the
-/// remaining legacy cache maintenance is covered by the runtime_install tests.
 #[test]
 fn legacy_runtime_commands_require_an_existing_owned_installation() -> Result<()> {
     let owner = tempfile::tempdir()?;

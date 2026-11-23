@@ -1,17 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Native adapter primitives shared by service/client executable modes.
 extern crate self as airk_cli;
-#[cfg(test)]
-pub(crate) use airk_catalog_control::catalog_grant_draft;
-#[cfg(test)]
-pub(crate) use airk_catalog_control::catalog_host_context;
 /// I3 admin HTTP contract (split C5): leaf types, pure admission decisions and
 /// the generated-schema owner. `admin_plane` is its handler (Phase 5).
 pub use airk_endpoint::admin_contract;
 pub use airk_endpoint::http_endpoint;
 pub use airk_frontend::combined_frontend;
-#[cfg(test)]
-pub(crate) use airk_host::catalog_test_fixture;
 pub use airk_host::embedding_pool_protocol;
 pub use airk_inference::embedding_client;
 pub use airk_inference::embedding_pool_bootstrap;
@@ -66,7 +60,6 @@ pub use airk_host::source_protocol;
 
 pub use airk_supervisor::source_worker;
 
-pub(crate) use airk_host::user_paths;
 #[cfg(unix)]
 pub use airk_inference::unix_guardian;
 

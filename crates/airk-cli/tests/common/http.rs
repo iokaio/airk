@@ -75,7 +75,6 @@ impl Scope {
         airk_core::service::ToolSelection::Open {
             index_ids: self.index_ids.clone(),
             index_set_ids: self.index_set_ids.clone(),
-            connection_id: None,
             workspace: None,
         }
     }

@@ -661,18 +661,17 @@ async fn real_tls_scope_refusal_preserves_fresh_403_and_fences_old_buffered_evid
         let mut f = fixture(port)?;
         let refuse = Arc::new(AtomicBool::new(false));
         let validation = refuse.clone();
-        Arc::get_mut(&mut f.gateway.0).unwrap().validate =
-            Arc::new(move |_context| {
-                let validation = validation.clone();
-                Box::pin(async move {
-                    anyhow::ensure!(
-                        !validation.load(Ordering::SeqCst),
-                        "native scope no longer valid"
-                    );
-                    Ok(Arc::new(|| Ok(Arc::new(Echo) as Arc<dyn RemoteTools>))
-                        as AuthenticatedBackendFactory)
-                })
-            });
+        Arc::get_mut(&mut f.gateway.0).unwrap().validate = Arc::new(move |_context| {
+            let validation = validation.clone();
+            Box::pin(async move {
+                anyhow::ensure!(
+                    !validation.load(Ordering::SeqCst),
+                    "native scope no longer valid"
+                );
+                Ok(Arc::new(|| Ok(Arc::new(Echo) as Arc<dyn RemoteTools>))
+                    as AuthenticatedBackendFactory)
+            })
+        });
         let mut roots = rustls::RootCertStore::empty();
         roots.add(rustls::pki_types::CertificateDer::from(f.ca.clone()))?;
         let config = rustls::ClientConfig::builder_with_provider(Arc::new(

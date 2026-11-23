@@ -171,7 +171,7 @@ enum Command {
         #[arg(long)]
         owner_watch: bool,
     },
-    /// Agent configuration: endpoint, list, connect, repair and remove; agents need no token (U110). info, verify, credential, launch, default and revoke are legacy connection commands.
+    /// Agent configuration: endpoint, manual, list, connect, repair and remove; agents need no token (U110).
     Agents {
         #[command(subcommand)]
         action: AgentsCommand,
@@ -358,38 +358,11 @@ enum AgentsCommand {
         #[arg(long, default_value = "airk")]
         server_key: String,
     },
-    /// Legacy (pre-U110): read an existing connection's verified references; agents no longer use connections.
-    Info {
-        /// The service's control directory (default: --service-runtime-dir, else the installation's).
-        #[arg(long)]
-        runtime_dir: Option<PathBuf>,
-        #[arg(long)]
-        connection_id: airk_core::identity::Incarnation,
-    },
-    /// Legacy (pre-U110): print an existing connection's bearer header. The MCP endpoint ignores it.
-    ///
-    /// Offline: reads only the owner-private credential files; never starts the
-    /// service, enrolls, rotates or logs the token. `--format header-json` prints
-    /// {"Authorization":"Bearer <token>"}. Since U110 agents need no token; `agents repair`
-    /// removes credential helpers from agent configuration.
-    Credential {
-        /// The service's control directory (default: --service-runtime-dir, else the installation's).
-        #[arg(long)]
-        runtime_dir: Option<PathBuf>,
-        #[arg(long)]
-        connection_id: airk_core::identity::Incarnation,
-        #[arg(long, value_parser = ["header-json"])]
-        format: String,
-    },
     /// Classify AIRK's entries in agent configuration files; read-only.
-    ///
-    /// With --connection-id, report only whether this installation owns that connection.
     List {
         /// The service's control directory (default: --service-runtime-dir, else the installation's).
         #[arg(long)]
         runtime_dir: Option<PathBuf>,
-        #[arg(long)]
-        connection_id: Option<airk_core::identity::Incarnation>,
         /// A project folder to check (repeatable; default: the current directory).
         #[arg(long = "project")]
         projects: Vec<PathBuf>,
@@ -466,70 +439,6 @@ enum AgentsCommand {
         /// Leave this user's agent configuration files out.
         #[arg(long)]
         no_user: bool,
-    },
-    /// Legacy (pre-U110): probe the service's own MCP endpoint with a connection's stored credential.
-    Verify {
-        /// The service's control directory (default: --service-runtime-dir, else the installation's).
-        #[arg(long)]
-        runtime_dir: Option<PathBuf>,
-        #[arg(long)]
-        connection_id: airk_core::identity::Incarnation,
-    },
-    /// Legacy (pre-U110): start Claude Code, Codex or VS Code on a connection in the foreground (U91).
-    ///
-    /// The credential goes only into the client's environment (the endpoint ignores it since
-    /// U110) and the AIRK issuer is added to its trust; existing CA bundles stay enabled. Exits
-    /// with the client's status.
-    Launch {
-        /// The service's control directory (default: --service-runtime-dir, else the installation's).
-        #[arg(long)]
-        runtime_dir: Option<PathBuf>,
-        #[arg(long, value_enum)]
-        client: crate::agents::Client,
-        #[arg(long)]
-        connection_id: airk_core::identity::Incarnation,
-        /// The client's working folder (default: the current directory).
-        #[arg(long)]
-        directory: Option<PathBuf>,
-        /// Arguments for the client, after `--`.
-        #[arg(last = true)]
-        args: Vec<std::ffi::OsString>,
-    },
-    /// Legacy (pre-U110): set an open connection's default scope and agent choice. Agents now use workspace defaults: see `airkctl scope default`.
-    ///
-    /// --index and --set take an id, exact name or unique case-insensitive name and replace the
-    /// whole default scope;
-    /// --clear empties it. Without --expected-revision the current defaults revision is
-    /// read first. Prints {"schema":1,"connectionId":…,"open":{…}}.
-    Default {
-        /// The service's control directory (default: --service-runtime-dir, else the installation's).
-        #[arg(long)]
-        runtime_dir: Option<PathBuf>,
-        #[arg(long)]
-        connection_id: airk_core::identity::Incarnation,
-        /// An index (`idx_…`, exact name or unique case-insensitive name) in the default scope (repeatable).
-        #[arg(long = "index")]
-        indexes: Vec<String>,
-        /// An index set (`prj_…`, exact name or unique case-insensitive name) in the default scope (repeatable).
-        #[arg(long = "set")]
-        sets: Vec<String>,
-        /// Empty the default scope.
-        #[arg(long, conflicts_with_all = ["indexes", "sets"])]
-        clear: bool,
-        /// Whether the agent may name indexes and sets itself and list them.
-        #[arg(long, value_parser = ["off", "on"])]
-        agent_choice: Option<String>,
-        /// Refuse unless the stored defaults are at this revision.
-        #[arg(long)]
-        expected_revision: Option<u64>,
-    },
-    /// Legacy (pre-U110): revoke one local HTTPS connection while preserving its original receipt.
-    Revoke {
-        /// The service's control directory (default: --service-runtime-dir, else the installation's).
-        #[arg(long)]
-        runtime_dir: Option<PathBuf>,
-        #[arg(long)]
-        connection_id: airk_core::identity::Incarnation,
     },
 }
 
@@ -949,22 +858,16 @@ enum ToolsCommand {
     /// List the connection's unified tools; --json includes complete schemas and annotations.
     ///
     /// Agents on the HTTPS endpoint see read tools that take index_ids, index_set_ids or workspace,
-    /// plus list_scopes (U110). --connection (legacy) lists a pre-U110 open connection's catalog.
+    /// plus list_scopes (U110).
     List {
         #[arg(long)]
         json: bool,
-        /// Legacy (pre-U110): an open agent connection whose catalog to list.
-        #[arg(long)]
-        connection: Option<airk_core::identity::Incarnation>,
     },
     /// Show a tool's description, input schema, defaults and argument template.
     Help {
         tool: String,
         #[arg(long)]
         json: bool,
-        /// Legacy (pre-U110): an open agent connection whose catalog to read.
-        #[arg(long)]
-        connection: Option<airk_core::identity::Incarnation>,
     },
     /// Invoke an MCP tool and print its unchanged result envelope as JSON.
     ///
@@ -972,8 +875,7 @@ enum ToolsCommand {
     /// case-insensitive name) through the open read path an agent uses; --workspace reads the
     /// default scope stored for that folder (U110), and with neither the read is refused
     /// scope_required, exactly as an agent's MCP call. list_scopes always takes that path and lists
-    /// indexes, index sets and workspace defaults. --connection (legacy) applies a pre-U110 open
-    /// connection's stored default and agent choice.
+    /// indexes, index sets and workspace defaults.
     Call {
         tool: String,
         /// JSON object; omit for {}. Maximum 64 KiB.
@@ -990,9 +892,6 @@ enum ToolsCommand {
         /// name (repeatable).
         #[arg(long = "set")]
         sets: Vec<String>,
-        /// Legacy (pre-U110): the open agent connection whose default scope and agent choice apply.
-        #[arg(long)]
-        connection: Option<airk_core::identity::Incarnation>,
         /// An absolute workspace folder: with no --index/--set, its stored default scope applies
         /// (U110), as for an agent's MCP call.
         #[arg(long)]
@@ -1227,19 +1126,14 @@ fn version(cx: &mut Context) -> u8 {
 }
 
 fn catalog(cx: &mut Context, selection: &Selection, action: ToolsCommand) -> u8 {
-    let (detail, json, connection_id) = match action {
-        ToolsCommand::List { json, connection } => (
+    let (detail, json) = match action {
+        ToolsCommand::List { json } => (
             ToolsCatalogDetail::List {
                 schemas: json || cx.output == Output::Json,
             },
             json,
-            connection,
         ),
-        ToolsCommand::Help {
-            tool,
-            json,
-            connection,
-        } => (ToolsCatalogDetail::Help { tool }, json, connection),
+        ToolsCommand::Help { tool, json } => (ToolsCatalogDetail::Help { tool }, json),
         ToolsCommand::Call { .. } | ToolsCommand::Shell => {
             unreachable!("calls and the console are not catalog reads")
         }
@@ -1257,7 +1151,6 @@ fn catalog(cx: &mut Context, selection: &Selection, action: ToolsCommand) -> u8 
         ControlMethod::ToolsCatalog {
             detail,
             combined: selection.combined.clone().map(Box::new),
-            connection_id,
         },
         VERSION,
     ) {
@@ -2111,16 +2004,10 @@ impl AgentsCommand {
         match self {
             AgentsCommand::Endpoint { runtime_dir }
             | AgentsCommand::Manual { runtime_dir, .. }
-            | AgentsCommand::Info { runtime_dir, .. }
-            | AgentsCommand::Revoke { runtime_dir, .. }
-            | AgentsCommand::Credential { runtime_dir, .. }
             | AgentsCommand::List { runtime_dir, .. }
             | AgentsCommand::Connect { runtime_dir, .. }
             | AgentsCommand::Repair { runtime_dir, .. }
-            | AgentsCommand::Remove { runtime_dir, .. }
-            | AgentsCommand::Verify { runtime_dir, .. }
-            | AgentsCommand::Default { runtime_dir, .. }
-            | AgentsCommand::Launch { runtime_dir, .. } => runtime_dir.clone(),
+            | AgentsCommand::Remove { runtime_dir, .. } => runtime_dir.clone(),
         }
     }
 }
@@ -2247,26 +2134,6 @@ fn agents_command(cx: &mut Context, selection: Selection, action: AgentsCommand)
             Ok((project_folders(projects)?, airkctl, user))
         };
     let result = match &action {
-        AgentsCommand::Launch {
-            client,
-            connection_id,
-            directory,
-            args,
-            ..
-        } => {
-            let directory = directory.clone().unwrap_or_else(|| PathBuf::from("."));
-            return match crate::launch::launch(
-                &control,
-                VERSION,
-                *client,
-                *connection_id,
-                &directory,
-                args,
-            ) {
-                Ok(code) => u8::try_from(code).unwrap_or(1),
-                Err(line) => fail(cx, &line),
-            };
-        }
         AgentsCommand::Endpoint { .. } => crate::agents::endpoint(&control, VERSION),
         AgentsCommand::Manual {
             client,
@@ -2293,53 +2160,8 @@ fn agents_command(cx: &mut Context, selection: Selection, action: AgentsCommand)
                 server_key,
             ),
         },
-        AgentsCommand::Info { connection_id, .. } => {
-            crate::agents::info(&control, VERSION, *connection_id)
-        }
-        AgentsCommand::Revoke { connection_id, .. } => {
-            crate::agents::revoke(&control, VERSION, *connection_id)
-        }
-        AgentsCommand::Credential { connection_id, .. } => {
-            crate::agents::credential(&control, *connection_id)
-        }
-        AgentsCommand::Verify { connection_id, .. } => {
-            crate::agents::verify(&control, VERSION, *connection_id)
-        }
-        AgentsCommand::Default {
-            connection_id,
-            indexes,
-            sets,
-            clear,
-            agent_choice,
-            expected_revision,
-            ..
-        } => crate::agents::default_scope(
-            &control,
-            VERSION,
-            *connection_id,
-            crate::agents::DefaultsRequest {
-                indexes: indexes.clone(),
-                sets: sets.clone(),
-                clear: *clear,
-                agent_choice: agent_choice.as_deref().map(|choice| {
-                    if choice == "on" {
-                        airk_core::service_http_credentials::AgentChoice::On
-                    } else {
-                        airk_core::service_http_credentials::AgentChoice::Off
-                    }
-                }),
-                expected_revision: *expected_revision,
-            },
-        ),
         AgentsCommand::List {
-            connection_id: Some(id),
-            ..
-        } => crate::agents::ownership(&control, VERSION, *id),
-        AgentsCommand::List {
-            connection_id: None,
-            projects,
-            no_user,
-            ..
+            projects, no_user, ..
         }
         | AgentsCommand::Repair {
             projects, no_user, ..
@@ -2744,7 +2566,7 @@ fn call(
     call_resolved(cx, control, selection, tool, arguments)
 }
 
-/// `tools call --index/--set/--connection` (U105): M3 `ToolSelection::Open`,
+/// `tools call --index/--set/--workspace` (U105): M3 `ToolSelection::Open`,
 /// the open read path an agent's MCP calls use. It names no project or
 /// session, so it cannot be combined with one.
 fn open_call(
@@ -2757,7 +2579,7 @@ fn open_call(
     if selection.project.is_some() || selection.catalog.is_some() || selection.combined.is_some() {
         return usage(
             cx,
-            "--index, --set and --connection cannot be combined with a project or session selection",
+            "--index, --set and --workspace cannot be combined with a project or session selection",
         );
     }
     if let Err(error) = open.validate() {
@@ -3738,7 +3560,6 @@ fn dispatch(cx: &mut Context, command: Command, selection: Selection) -> u8 {
                     args_file,
                     indexes,
                     sets,
-                    connection,
                     workspace,
                 },
         } => match crate::tools::read_arguments(args.as_deref(), args_file.as_deref()) {
@@ -3746,7 +3567,6 @@ fn dispatch(cx: &mut Context, command: Command, selection: Selection) -> u8 {
             Ok(arguments)
                 if indexes.is_empty()
                     && sets.is_empty()
-                    && connection.is_none()
                     && workspace.is_none()
                     && tool != airk_core::agent_scope::LIST_SCOPES =>
             {
@@ -3756,7 +3576,6 @@ fn dispatch(cx: &mut Context, command: Command, selection: Selection) -> u8 {
                 let open = ToolSelection::Open {
                     index_ids: indexes,
                     index_set_ids: sets,
-                    connection_id: connection,
                     workspace,
                 };
                 open_call(cx, &selection, tool, arguments, open)

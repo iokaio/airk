@@ -1,17 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
-//! U105/U106 (`docs/split/open-agent-access.md` §7): the HTTPS backend of an
-//! open agent connection. `airk-https` cannot depend on `airk-service`, so the
-//! service injects [`OpenHooks`]: the open-read path (`OpenReader`, the same
-//! function M3 `ToolSelection::Open` reaches) and a reader of the connection's
-//! current agent choice. Nothing is captured at connect time: `catalog()`
-//! reads the choice on every `tools/list`, and every call reads the stored
-//! defaults through the service, so a defaults or choice change applies to
-//! the next request on the same session (the credential generation, and so
-//! the gateway's cached service, never changes).
-use airk_core::{
-    identity::Incarnation, service::ControlResponse, service_http_credentials::AgentChoice,
-    usage::ClientFamily,
-};
+//! U105/U110 (`docs/split/open-agent-access.md` §7): the HTTPS backend of the
+//! built-in local agent session. `airk-https` cannot depend on `airk-service`,
+//! so the service injects [`OpenHooks`]: the open-read path (`OpenReader`, the
+//! same function M3 `ToolSelection::Open` reaches). Nothing is captured at
+//! connect time: every call names its scope, or its workspace, and reads
+//! through the service.
+use airk_core::{service::ControlResponse, usage::ClientFamily};
 use airk_mcp::remote::{RemoteFuture, RemoteTools, Tool, http::AuthenticatedBackendFactory};
 use serde_json::{Map, Value};
 use std::{
@@ -23,7 +17,6 @@ use std::{
 /// One open read as the HTTPS backend hands it to the service: the call's
 /// selectors removed from its arguments and passed as names.
 pub struct OpenRead {
-    pub connection_id: Incarnation,
     pub index_names: Vec<String>,
     pub set_names: Vec<String>,
     /// U110: the caller's workspace folder (explicit, or filled from the
@@ -37,22 +30,17 @@ pub struct OpenRead {
 /// The service's open-read path.
 pub type OpenReader =
     Arc<dyn Fn(OpenRead) -> Pin<Box<dyn Future<Output = ControlResponse> + Send>> + Send + Sync>;
-/// The connection's current agent choice (`None`: not an active open
-/// connection), read from the live credential store without disk I/O.
-pub type OpenChoice = Arc<dyn Fn(Incarnation) -> Option<AgentChoice> + Send + Sync>;
 
-/// The service-injected hooks of every open connection.
+/// The service-injected hooks of the local agent session.
 #[derive(Clone)]
 pub struct OpenHooks {
     pub reader: OpenReader,
-    pub choice: OpenChoice,
 }
 
-/// The session factory of one authenticated open connection.
-pub fn open_factory(connection_id: Incarnation, hooks: OpenHooks) -> AuthenticatedBackendFactory {
+/// The session factory of the local agent session.
+pub fn open_factory(hooks: OpenHooks) -> AuthenticatedBackendFactory {
     Arc::new(move || {
         Ok(Arc::new(OpenBackend {
-            connection_id,
             hooks: hooks.clone(),
             client: Mutex::new(ClientFamily::Unknown),
             responses: airk_mcp::response::OpenStatusSession::default(),
@@ -60,14 +48,7 @@ pub fn open_factory(connection_id: Incarnation, hooks: OpenHooks) -> Authenticat
     })
 }
 
-impl OpenBackend {
-    fn local(&self) -> bool {
-        self.connection_id == airk_core::service_http::LOCAL_AGENT_CONNECTION
-    }
-}
-
 struct OpenBackend {
-    connection_id: Incarnation,
     hooks: OpenHooks,
     client: Mutex<ClientFamily>,
     responses: airk_mcp::response::OpenStatusSession,
@@ -109,15 +90,12 @@ fn envelope(response: ControlResponse) -> Value {
 
 impl RemoteTools for OpenBackend {
     fn catalog(&self) -> Vec<Tool> {
-        if self.local() {
-            return airk_mcp::open::local_catalog();
-        }
-        airk_mcp::open::catalog((self.hooks.choice)(self.connection_id).unwrap_or_default())
+        airk_mcp::open::local_catalog()
     }
     /// U110: the local agent session's reads and list take `workspace`,
     /// which the bridge may fill from the client's MCP roots.
     fn fills_workspace(&self, tool: &str) -> bool {
-        self.local() && airk_mcp::open::takes_workspace(tool)
+        airk_mcp::open::takes_workspace(tool)
     }
     /// Help is answered by the service against this connection's catalog.
     fn local_help(&self) -> bool {
@@ -166,7 +144,6 @@ impl RemoteTools for OpenBackend {
             let response_tool = tool.clone();
             let response_arguments = arguments.clone();
             let response = (self.hooks.reader)(OpenRead {
-                connection_id: self.connection_id,
                 index_names,
                 set_names,
                 workspace,
@@ -190,11 +167,7 @@ mod tests {
 
     type Seen = Arc<Mutex<Vec<(Vec<String>, Vec<String>, String, Map<String, Value>)>>>;
 
-    fn hooks(
-        choice: Arc<Mutex<Option<AgentChoice>>>,
-        seen: Seen,
-        answer: ControlResponse,
-    ) -> OpenHooks {
+    fn hooks(seen: Seen, answer: ControlResponse) -> OpenHooks {
         // `ControlResponse` is not `Clone`; each call answers a decoded copy.
         let answer = serde_json::to_value(answer).unwrap();
         OpenHooks {
@@ -208,7 +181,6 @@ mod tests {
                 let answer: ControlResponse = serde_json::from_value(answer.clone()).unwrap();
                 Box::pin(async move { answer })
             }),
-            choice: Arc::new(move |_| *choice.lock().unwrap()),
         }
     }
     fn names(tools: &[Tool]) -> Vec<String> {
@@ -216,26 +188,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_catalog_follows_the_current_choice_without_a_new_session() -> anyhow::Result<()> {
-        let choice = Arc::new(Mutex::new(Some(AgentChoice::Off)));
-        let seen = Seen::default();
-        let factory = open_factory(
-            Incarnation::from_bytes([3; 16]),
-            hooks(choice.clone(), seen, ControlResponse::Stopping),
-        );
-        let backend = factory()?;
+    async fn the_local_session_offers_the_local_catalog() -> anyhow::Result<()> {
+        let backend = open_factory(hooks(Seen::default(), ControlResponse::Stopping))()?;
         assert_eq!(
             names(&backend.catalog()),
-            names(&airk_mcp::open::catalog(AgentChoice::Off))
+            names(&airk_mcp::open::local_catalog())
         );
-        *choice.lock().unwrap() = Some(AgentChoice::On);
-        assert_eq!(
-            names(&backend.catalog()),
-            names(&airk_mcp::open::catalog(AgentChoice::On))
-        );
-        // A revoked or unknown connection offers the choice-off catalog.
-        *choice.lock().unwrap() = None;
-        assert!(!names(&backend.catalog()).contains(&"list_scopes".to_owned()));
         assert!(!backend.local_help());
         assert!(!backend.uses_response_mode("list_scopes"));
         assert!(backend.uses_response_mode("search"));
@@ -245,19 +203,14 @@ mod tests {
 
     #[tokio::test]
     async fn calls_pass_selectors_as_names_and_keep_service_codes() -> anyhow::Result<()> {
-        let choice = Arc::new(Mutex::new(Some(AgentChoice::On)));
         let seen = Seen::default();
         let result = json!({"content":[],"structuredContent":{"ok":true},"isError":false});
-        let backend = open_factory(
-            Incarnation::from_bytes([3; 16]),
-            hooks(
-                choice.clone(),
-                seen.clone(),
-                ControlResponse::ToolResult {
-                    result: result.clone(),
-                },
-            ),
-        )()?;
+        let backend = open_factory(hooks(
+            seen.clone(),
+            ControlResponse::ToolResult {
+                result: result.clone(),
+            },
+        ))()?;
         let arguments = json!({"query":"q","index_ids":["docs","idx_01010101010101010101010101010101"],
             "index_set_ids":["web"]});
         let answer = backend
@@ -289,21 +242,17 @@ mod tests {
         }
         assert_eq!(seen.lock().unwrap().len(), 1);
         // A refusal keeps the service's stable code.
-        let refusing = open_factory(
-            Incarnation::from_bytes([3; 16]),
-            hooks(
-                choice,
-                Seen::default(),
-                ControlResponse::Failure {
-                    code: "agent_scope_choice_disabled".into(),
-                },
-            ),
-        )()?;
+        let refusing = open_factory(hooks(
+            Seen::default(),
+            ControlResponse::Failure {
+                code: "scope_required".into(),
+            },
+        ))()?;
         let answer = refusing.call("search".into(), Map::new()).await?;
         assert_eq!(answer["isError"], true);
         assert_eq!(
             answer["structuredContent"]["error"]["code"],
-            "agent_scope_choice_disabled"
+            "scope_required"
         );
         Ok(())
     }
@@ -322,16 +271,12 @@ mod tests {
             "read_scope":{"index_ids":["idx_01010101010101010101010101010101"],"source":"explicit"},
             "hits":[{"path":"native.md","text":"unchanged evidence"}]});
         let result = airk_mcp::unified::success(body.clone());
-        let factory = open_factory(
-            airk_core::service_http::LOCAL_AGENT_CONNECTION,
-            hooks(
-                Arc::new(Mutex::new(None)),
-                Seen::default(),
-                ControlResponse::ToolResult {
-                    result: result.clone(),
-                },
-            ),
-        );
+        let factory = open_factory(hooks(
+            Seen::default(),
+            ControlResponse::ToolResult {
+                result: result.clone(),
+            },
+        ));
         let first = factory()?;
         let second = factory()?;
         let args = json!({"index_ids":["one"]}).as_object().unwrap().clone();

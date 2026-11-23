@@ -12,9 +12,6 @@ use std::{fs, io::Read, path::Path, process::Command};
 
 mod managed_service;
 
-pub use crate::runtime_http_commands::existing_connection as existing_http_connection;
-pub use crate::runtime_http_commands::setup as setup_http_connection;
-
 pub async fn run(command: &RuntimeCommand) -> Result<()> {
     run_with(command, &crate::cli_io::CliIo::process()).await
 }
@@ -58,22 +55,6 @@ async fn run_with_owned(command: &RuntimeCommand, io: &crate::cli_io::CliIo) -> 
             )
             .await?
         }
-        RuntimeCommand::HttpLegacyUnionConnection {
-            install_dir,
-            registrations_file,
-            connection_id,
-            client,
-            explorer_descriptor,
-        } => {
-            http_commands::enroll_legacy_union(
-                install_dir,
-                registrations_file,
-                *connection_id,
-                client,
-                explorer_descriptor.as_deref(),
-            )
-            .await?
-        }
         RuntimeCommand::HttpTrust {
             install_dir,
             action,
@@ -82,60 +63,15 @@ async fn run_with_owned(command: &RuntimeCommand, io: &crate::cli_io::CliIo) -> 
         RuntimeCommand::HttpEndpoint { install_dir } => {
             http_commands::endpoint(install_dir).await?
         }
-        RuntimeCommand::HttpConnectionInfo {
-            install_dir,
-            connection_id,
-        } => http_commands::existing_connection(install_dir, *connection_id).await?,
-        RuntimeCommand::HttpCredential {
-            install_dir,
-            connection_id,
-            format: _,
-        } => http_commands::credential_header(install_dir, *connection_id)?,
+        // Predecessor cleanup only (a reviewed compatibility row): the
+        // retained credential ledger is read, never written.
         RuntimeCommand::LookupHttpConnection {
             install_dir,
             expected_active,
             connection_id,
-            purpose,
+            purpose: _,
             predecessor,
-        } => {
-            if purpose.is_some() {
-                http_cleanup::lookup(
-                    install_dir,
-                    expected_active,
-                    predecessor
-                        .as_deref()
-                        .context("predecessor cleanup requires exact predecessor")?,
-                    *connection_id,
-                )?
-            } else {
-                ensure!(
-                    predecessor.is_none(),
-                    "predecessor is only valid for cleanup-purpose lookup"
-                );
-                http_commands::lookup_connection(install_dir, expected_active, *connection_id)
-                    .await?
-            }
-        }
-        RuntimeCommand::HttpConnection {
-            install_dir,
-            selection_file,
-            connection_id,
-            client,
-            explorer_descriptor,
-        } => {
-            http_commands::enroll(
-                install_dir,
-                selection_file,
-                *connection_id,
-                client,
-                explorer_descriptor.as_deref(),
-            )
-            .await?
-        }
-        RuntimeCommand::HttpRevoke {
-            install_dir,
-            connection_id,
-        } => http_commands::revoke(install_dir, *connection_id).await?,
+        } => http_cleanup::lookup(install_dir, expected_active, predecessor, *connection_id)?,
         RuntimeCommand::ReplaceInstallation {
             install_dir,
             candidate_sha256,
@@ -164,28 +100,6 @@ async fn run_with_owned(command: &RuntimeCommand, io: &crate::cli_io::CliIo) -> 
                     generation.as_deref(),
                 )?)?
             }
-        }
-        RuntimeCommand::HttpLegacyConnection {
-            install_dir,
-            registration_file,
-            configuration_receipt,
-            connection_id,
-            client,
-            explorer_descriptor,
-            origin_sha256,
-            reattach_connection_id,
-        } => {
-            http_commands::enroll_legacy(
-                install_dir,
-                registration_file,
-                *configuration_receipt,
-                *connection_id,
-                client,
-                explorer_descriptor.as_deref(),
-                *origin_sha256,
-                *reattach_connection_id,
-            )
-            .await?
         }
         // The in-place P5 catalog upgrade was removed: refuse before reading
         // stdin, the installation or its control state.

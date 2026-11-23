@@ -16,7 +16,7 @@ use std::{
 };
 mod imported_legacy;
 mod open;
-pub use open::{OpenChoice, OpenHooks, OpenRead, OpenReader, open_factory};
+pub use open::{OpenHooks, OpenRead, OpenReader, open_factory};
 
 fn live(context: &ReadAttemptContext) -> Result<()> {
     ensure!(

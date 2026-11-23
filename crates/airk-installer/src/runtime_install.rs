@@ -132,27 +132,8 @@ pub enum RuntimeCommand {
         #[arg(long)]
         install_dir: PathBuf,
     },
-    /// Read an existing connection's verified references without issuing credentials.
-    HttpConnectionInfo {
-        #[arg(long)]
-        install_dir: PathBuf,
-        #[arg(long)]
-        connection_id: airk_core::identity::Incarnation,
-    },
-    /// Print an existing, unrevoked connection's bearer header for an agent's header helper.
-    ///
-    /// Reads only the owner-private credential file of this installation; it never starts
-    /// the service, enrolls, rotates or logs the token. `--format header-json` prints
-    /// {"Authorization":"Bearer <token>"}.
-    HttpCredential {
-        #[arg(long)]
-        install_dir: PathBuf,
-        #[arg(long)]
-        connection_id: airk_core::identity::Incarnation,
-        #[arg(long, value_parser = ["header-json"])]
-        format: String,
-    },
-    /// Read-only typed connection ownership lookup; revoked or unavailable IDs never become foreign.
+    /// Read-only typed predecessor connection ownership lookup for cleanup; revoked or
+    /// unavailable IDs never become foreign. It reads the retained credential ledger only.
     LookupHttpConnection {
         #[arg(long)]
         install_dir: PathBuf,
@@ -161,13 +142,9 @@ pub enum RuntimeCommand {
         #[arg(long)]
         connection_id: airk_core::identity::Incarnation,
         #[arg(long, value_parser = ["predecessor-cleanup"])]
-        purpose: Option<String>,
-        #[arg(
-            long,
-            requires = "purpose",
-            required_if_eq("purpose", "predecessor-cleanup")
-        )]
-        predecessor: Option<String>,
+        purpose: String,
+        #[arg(long)]
+        predecessor: String,
     },
     /// Inspect or explicitly manage this native issuer in the current user's trust store.
     HttpTrust {
@@ -177,19 +154,6 @@ pub enum RuntimeCommand {
         action: HttpTrustAction,
         #[arg(long,required_if_eq_any=[("action","install"),("action","remove")])]
         expected_ca_sha256: Option<airk_core::identity::Sha256Digest>,
-    },
-    /// Enroll a saved native selection and return protected credential references.
-    HttpConnection {
-        #[arg(long)]
-        install_dir: PathBuf,
-        #[arg(long)]
-        selection_file: PathBuf,
-        #[arg(long)]
-        connection_id: airk_core::identity::Incarnation,
-        #[arg(long)]
-        client: String,
-        #[arg(long)]
-        explorer_descriptor: Option<PathBuf>,
     },
     /// Through 1.9.0: remove earlier AIRK state before a fresh empty install.
     /// Explicit same-build installs require full uninstall at every version.
@@ -217,47 +181,7 @@ pub enum RuntimeCommand {
         #[arg(long)]
         apply: bool,
     },
-    /// Revoke one local HTTPS connection while preserving its original receipt.
-    HttpRevoke {
-        #[arg(long)]
-        install_dir: PathBuf,
-        #[arg(long)]
-        connection_id: airk_core::identity::Incarnation,
-    },
 
-    /// Migrate exact owned predecessor configuration using existing imported authority.
-    HttpLegacyConnection {
-        #[arg(long)]
-        install_dir: PathBuf,
-        #[arg(long)]
-        registration_file: PathBuf,
-        #[arg(long)]
-        configuration_receipt: airk_core::identity::Sha256Digest,
-        /// Exact native original declaration identity when several saved indexes share a configuration file and logical registration.
-        #[arg(long)]
-        origin_sha256: Option<airk_core::identity::Sha256Digest>,
-        #[arg(long)]
-        connection_id: airk_core::identity::Incarnation,
-        #[arg(long)]
-        client: String,
-        #[arg(long)]
-        explorer_descriptor: Option<PathBuf>,
-        #[arg(long)]
-        reattach_connection_id: Option<airk_core::identity::Incarnation>,
-    },
-    /// Migrate an original no-default multi-project declaration without widening authority.
-    HttpLegacyUnionConnection {
-        #[arg(long)]
-        install_dir: PathBuf,
-        #[arg(long)]
-        registrations_file: PathBuf,
-        #[arg(long)]
-        connection_id: airk_core::identity::Incarnation,
-        #[arg(long)]
-        client: String,
-        #[arg(long)]
-        explorer_descriptor: Option<PathBuf>,
-    },
     /// Read one exact saved source scope, without electing a service or opening an index.
     SourceScope {
         #[arg(long)]

@@ -69,14 +69,6 @@ pub(super) enum Served {
 
 /// The reviewed mapping of table methods that name no `ControlMethod`.
 pub(super) const MAPPINGS: &[(&str, Served)] = &[
-    (
-        "HttpConnectionInfo",
-        Served::Equivalent("AgentConnectionInfo"),
-    ),
-    (
-        "HttpConnectionOwnership",
-        Served::Equivalent("AgentConnectionOwnership"),
-    ),
     ("LogsExport", Served::Equivalent("Logs")),
     ("HttpTrust.Inspect", Served::TrustInspect),
 ];

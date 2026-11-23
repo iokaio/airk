@@ -777,7 +777,6 @@ fn relay_rule(method: &ControlMethod) -> Relay {
         | M::ObserveUpgradeCheckpoint { .. }
         | M::UpgradeRecoveryProbe { .. }
         | M::ReleaseUpgradeAdmission { .. }
-        | M::HttpEnroll { .. }
         | M::WindowOpen { .. }
         | M::WindowRenew { .. }
         | M::WindowClose { .. }

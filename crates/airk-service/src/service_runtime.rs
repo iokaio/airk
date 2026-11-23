@@ -218,16 +218,6 @@ fn revoke_agent_dropped(state: &State, dropped: agent_plane::Dropped) {
     );
 }
 
-/// Drop every agent lease of `connection` (its defaults changed or it was
-/// revoked) and revoke their nonces with the plane's lock released.
-fn revoke_agent_connection(state: &State, connection: airk_core::identity::Incarnation) {
-    let dropped = match state.agents.lock() {
-        Ok(mut agents) => agents.revoke_connection(connection),
-        Err(_) => return,
-    };
-    revoke_agent_dropped(state, dropped);
-}
-
 /// `RevokeScope` for each pair on a blocking thread.
 fn revoke_scopes(
     state: &State,
@@ -782,49 +772,6 @@ fn canonical_control(
                     .map(|owner| owner.descriptor().map(Box::new))
                     .transpose()?,
             },
-            ControlMethod::HttpEnroll {
-                connection_id,
-                selection,
-                client,
-                explorer_descriptor,
-                reattach_connection_id,
-            } => match state.http.get() {
-                Some(owner) => match owner
-                    .enroll(
-                        &state.control_root,
-                        connection_id,
-                        *selection,
-                        explorer_descriptor.map(std::path::PathBuf::from),
-                        client,
-                        reattach_connection_id,
-                    )
-                    .await
-                {
-                    Ok(connection) => ControlResponse::HttpConnection {
-                        connection: Box::new(connection),
-                    },
-                    Err(_) => ControlResponse::Failure {
-                        code: "http_enrollment_refused".into(),
-                    },
-                },
-                None => ControlResponse::Failure {
-                    code: "http_catalog_not_ready".into(),
-                },
-            },
-            ControlMethod::HttpRevoke { connection_id } => match state.http.get() {
-                Some(owner) => match owner.revoke(connection_id).await {
-                    Ok(()) => {
-                        revoke_agent_connection(&state, connection_id);
-                        ControlResponse::HttpRevoked { connection_id }
-                    }
-                    Err(_) => ControlResponse::Failure {
-                        code: "http_revocation_refused".into(),
-                    },
-                },
-                None => ControlResponse::Failure {
-                    code: "http_catalog_not_ready".into(),
-                },
-            },
             ControlMethod::UpgradeRecoveryProbe { operation_id } => {
                 state.checkpoint.validate_recovery(&state, operation_id)?
             }
@@ -1095,26 +1042,11 @@ fn canonical_control(
             ControlMethod::ToolsCatalog {
                 detail,
                 combined: None,
-                connection_id: None,
             } => airk_frontend::tool_catalog::response(&detail)?,
             ControlMethod::ToolsCatalog {
                 detail,
                 combined: Some(request),
-                connection_id: None,
             } => tools_call::combined_catalog(&state.control_root, &detail, &request).await,
-            // U105: an open connection's catalog follows its agent choice.
-            ControlMethod::ToolsCatalog {
-                detail,
-                combined: None,
-                connection_id: Some(connection_id),
-            } => open_reads::catalog(&state, &detail, connection_id).await,
-            ControlMethod::ToolsCatalog {
-                combined: Some(_),
-                connection_id: Some(_),
-                ..
-            } => ControlResponse::Failure {
-                code: "invalid_tool_catalog_selection".into(),
-            },
             ControlMethod::ClientRequestPrepare {
                 caller,
                 key,
@@ -1231,15 +1163,6 @@ fn canonical_control(
                 }
             }
             ControlMethod::AgentEndpoint {} => agents::endpoint(&state.control_root).await,
-            ControlMethod::AgentConnectionInfo { connection_id } => {
-                agents::connection(&state.control_root, connection_id).await
-            }
-            ControlMethod::AgentConnectionOwnership { connection_id } => {
-                agents::ownership(&state.control_root, connection_id).await
-            }
-            ControlMethod::AgentConnectionVerify { connection_id } => {
-                agents::verify(&state.control_root, connection_id).await
-            }
             ControlMethod::WorkspaceScopeDefault {
                 folders,
                 index_ids,
@@ -1247,25 +1170,6 @@ fn canonical_control(
             } => open_reads::set_workspace_default(&state, folders, index_ids, index_set_ids).await,
             ControlMethod::WorkspaceScopeDefaults {} => {
                 open_reads::workspace_defaults_response(&state).await
-            }
-            ControlMethod::AgentConnectionDefaults {
-                connection_id,
-                expected_defaults_revision,
-                index_ids,
-                index_set_ids,
-                agent_choice,
-            } => {
-                open_reads::defaults(
-                    &state,
-                    connection_id,
-                    airk_endpoint::http_endpoint::OpenDefaultsChange {
-                        expected_defaults_revision,
-                        index_ids,
-                        index_set_ids,
-                        agent_choice,
-                    },
-                )
-                .await
             }
             ControlMethod::HttpIssuerRotation { action } => {
                 rotation::response(&state.control_root, action, effect_check).await
@@ -1459,8 +1363,8 @@ fn canonical_control(
                 )
                 .await
             }
-            // U105: an open read (a connection's default scope, or named
-            // indexes and sets), leased through the agent plane.
+            // U105: an open read (named indexes and sets, or a workspace
+            // default), leased through the agent plane.
             ControlMethod::ToolsCall {
                 tool,
                 arguments,
@@ -1468,7 +1372,6 @@ fn canonical_control(
                     airk_core::service::ToolSelection::Open {
                         index_ids,
                         index_set_ids,
-                        connection_id,
                         workspace,
                     },
                 response_mode,
@@ -1484,7 +1387,6 @@ fn canonical_control(
                 open_reads::response_with_context(
                     &state,
                     open_reads::OpenCall {
-                        connection_id,
                         index_names: index_ids,
                         set_names: index_set_ids,
                         workspace,
