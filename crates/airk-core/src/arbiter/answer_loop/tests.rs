@@ -475,7 +475,7 @@ fn response() -> ContextResponseV3 {
         }],
         union: UnionSummary {
             dedup_count: 1,
-            conflicts: vec![],
+            ..UnionSummary::default()
         },
         partial: None,
         ticket: None,

@@ -1487,3 +1487,190 @@ fn top_score_plan_is_accepted_when_the_reference_card_scores_highest() -> Result
     }
     Ok(())
 }
+
+/// A hit of `path` at `lines` in the file whose content hash is `file`.
+fn file_hit(path: &str, file: u8, lines: (usize, usize), text: &str) -> Value {
+    json!({"citation":{"path":path,
+            "content_hash":Sha256Digest::from_bytes([file; 32]).to_string(),
+            "start_line":lines.0,"end_line":lines.1,
+            "location":airk_core::DocumentLocation::Lines {start:lines.0,end:lines.1}},
+        "text":text,"truncated":false})
+}
+
+/// The 29-byte lines `first..=last` of one file.
+fn module_lines(first: usize, last: usize) -> String {
+    (first..=last)
+        .map(|number| format!("line {number:03} of the guard module\n"))
+        .collect()
+}
+
+const VENDOR_PATH: &str = "vendor/guard.md";
+
+/// Every search finds the same four hits: lines 10 to 40 of the guard, the
+/// overlapping lines 30 to 60 of the same file, the guide, and a copy of
+/// the guide at another place.
+fn repeated_hits() -> Value {
+    json!([
+        file_hit(GUARD_PATH, 1, (10, 40), &module_lines(10, 40)),
+        file_hit(GUARD_PATH, 1, (30, 60), &module_lines(30, 60)),
+        file_hit(GUIDE_PATH, 2, (1, 12), GUIDE),
+        file_hit(VENDOR_PATH, 3, (1, 12), GUIDE),
+    ])
+}
+
+/// The rule "Answer does not repeat facts", on the reply. Two parts and
+/// their sub-needs each run searches that find the same four hits. The
+/// reply carries each text once, names that copy from every repeat, trims
+/// the overlap of the two guard spans, lists the guide's other place, and
+/// keeps every location. The no-model path and the model path do the same.
+#[test]
+fn the_reply_carries_each_text_once_and_keeps_every_location() -> Result<()> {
+    let hits = repeated_hits();
+    let plain = super::super::tests::fixture()?;
+    let (scored, scorer) = scored(Mode::Accept)?;
+    for (name, fixture) in [("no model", &plain), ("model", &scored)] {
+        let outcome = answer_over_hits(
+            &fixture.kernel,
+            &fixture.publication,
+            request(QUESTION),
+            &hits,
+        )?;
+        let reply = &outcome.response;
+        assert_eq!(reply.parts.len(), 2, "{name}");
+        // Every span row of the reply, with its record.
+        let rows: Vec<(Sha256Digest, &Value)> = reply
+            .records
+            .iter()
+            .flat_map(|record| {
+                record.canonical_result["spans"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|row| (record.id, row))
+            })
+            .collect();
+        // No location is dropped: every search record still lists its four
+        // hits, each with its place.
+        let searches: Vec<_> = reply
+            .records
+            .iter()
+            .filter(|record| record.operation == v3::LoopRead::Search)
+            .collect();
+        assert!(
+            searches.len() >= 3,
+            "{name}: the parts and sub-needs searched"
+        );
+        for record in &searches {
+            let places: Vec<(&str, u64)> = record.canonical_result["spans"]
+                .as_array()
+                .context("spans")?
+                .iter()
+                .map(|row| {
+                    (
+                        row["path"].as_str().unwrap_or(""),
+                        row["start_line"].as_u64().unwrap_or(0),
+                    )
+                })
+                .collect();
+            assert_eq!(
+                places,
+                [
+                    (GUARD_PATH, 10),
+                    (GUARD_PATH, 30),
+                    (GUIDE_PATH, 1),
+                    (VENDOR_PATH, 1)
+                ],
+                "{name}"
+            );
+            assert_eq!(record.canonical_result["hits_total"], 4);
+        }
+        // Each text is carried exactly once in the whole reply: the first
+        // guard span whole, the second without the eleven lines (319 bytes)
+        // they share, and the guide.
+        let mut texts: Vec<&str> = rows
+            .iter()
+            .filter_map(|(_, row)| row["text"].as_str())
+            .collect();
+        texts.sort_unstable();
+        let (first, rest) = (module_lines(10, 40), module_lines(41, 60));
+        let mut expected = [first.as_str(), rest.as_str(), GUIDE];
+        expected.sort_unstable();
+        assert_eq!(texts, expected, "{name}");
+        // The single copies are in the earliest search: no Focus ran, so
+        // the earliest read and hit ranks highest.
+        let carrier = searches[0].id;
+        let at = |pointer: &str| json!({"record":carrier,"pointer":pointer});
+        let mut repeats = 0;
+        for (record, row) in &rows {
+            let pointer = row["pointer"].as_str().context("pointer")?;
+            let carries = *record == carrier;
+            match (row["path"].as_str(), row["start_line"].as_u64()) {
+                (Some(GUARD_PATH), Some(10)) if carries => {
+                    assert_eq!(row["text"], first.as_str());
+                    assert!(row.get("overlaps").is_none() && row.get("same_as").is_none());
+                }
+                (Some(GUARD_PATH), Some(30)) if carries => {
+                    assert_eq!(row["text"], rest.as_str());
+                    let mut shared = at("/hits/0");
+                    shared["bytes"] = json!(319);
+                    shared["side"] = json!("head");
+                    assert_eq!(row["overlaps"], json!([shared]), "{name}");
+                }
+                (Some(GUIDE_PATH), _) if carries => {
+                    assert_eq!(row["text"], GUIDE);
+                    assert_eq!(row["also_at"], json!(["vendor/guard.md:1-12"]), "{name}");
+                }
+                // Every other row is a repeat: it has no text and names the
+                // row that carries its text.
+                (path, _) => {
+                    repeats += 1;
+                    assert!(row.get("text").is_none(), "{name}: {row}");
+                    assert!(row.get("within").is_none(), "{name}: {row}");
+                    let of = match (path, pointer) {
+                        (Some(GUIDE_PATH | VENDOR_PATH), _) => "/hits/2",
+                        (_, "/hits/0") => "/hits/0",
+                        _ => "/hits/1",
+                    };
+                    assert_eq!(row["same_as"], at(of), "{name}: {row}");
+                }
+            }
+        }
+        // The reply says how many spans were merged and trimmed.
+        assert!(repeats >= 9, "{name}: three searches or more, {repeats}");
+        assert_eq!(reply.union.repeats_merged, repeats, "{name}");
+        assert_eq!(reply.union.overlaps_trimmed, 1, "{name}");
+        // The repeats came from both parts and from more than one sub-need.
+        let uses: Vec<_> = reply
+            .record_uses
+            .iter()
+            .filter(|item| searches.iter().any(|record| record.id == item.record))
+            .collect();
+        let parts: BTreeSet<u8> = uses.iter().map(|item| item.part).collect();
+        let needs: BTreeSet<(u8, Option<u8>)> =
+            uses.iter().map(|item| (item.part, item.need)).collect();
+        assert_eq!(parts, BTreeSet::from([1, 2]), "{name}");
+        assert!(needs.len() >= 3, "{name}: {needs:?}");
+        // A search of a later round, where one ran, repeats nothing either:
+        // the single copies above already account for every text.
+        for item in uses.iter().filter(|item| item.round >= 2) {
+            assert_ne!(
+                item.record, carrier,
+                "{name}: the carrier is a round-one read"
+            );
+        }
+    }
+    // The model saw each text once in a call as well: no call shows a text
+    // in two rows.
+    for request in scorer.requests.lock().unwrap().iter() {
+        let shown: Vec<&str> = request
+            .segments
+            .iter()
+            .flat_map(|segment| &segment.evidence)
+            .filter(|row| row.same_as.is_none())
+            .map(|row| row.excerpt.as_str())
+            .collect();
+        let distinct: BTreeSet<&str> = shown.iter().copied().collect();
+        assert_eq!(shown.len(), distinct.len(), "{:?}", request.task);
+    }
+    Ok(())
+}

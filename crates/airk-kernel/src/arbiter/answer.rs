@@ -25,6 +25,7 @@ mod follow;
 mod gather;
 mod model;
 mod plan;
+mod repeats;
 mod retrieve;
 mod shares;
 mod split;

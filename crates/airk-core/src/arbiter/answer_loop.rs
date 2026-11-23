@@ -48,8 +48,10 @@ pub const MAX_INPUT_TOKENS: usize = 262_144;
 /// Answer can keep its Context model through its last round. Raised from
 /// 131,072 when card calls began to carry evidence (change log entry 44).
 pub const DEFAULT_INPUT_TOKENS: usize = 2 * MAX_ROUNDS * MAX_ROUND_INPUT_TOKENS;
-/// Model input tokens of one round of one part: two batched coverage calls
-/// and one follow-up call at 8,192, plus 16 Focus pairs at 512.
+/// Model input tokens of one round of one part. At the gate's settings a
+/// round with four open sub-needs spends about 30,200 of them: 16 Focus
+/// pairs at 1,024 tokens, two batched Coverage calls and two batched
+/// Follow-up calls with evidence (change log entry 44).
 pub const MAX_ROUND_INPUT_TOKENS: usize = 32_768;
 /// Context card calls (slots). A full loop with two-sub-need batching is
 /// 1 Split + 4 Plan + 24 coverage + 16 follow-up = 45.
@@ -462,7 +464,22 @@ pub struct UnionSummary {
     pub dedup_count: usize,
     /// Noted, never silently resolved.
     pub conflicts: Vec<ConflictNote>,
+    /// Spans of the retained records whose text the reply carries once, in
+    /// another span: exact repeats, and spans that lie within a longer span
+    /// of the same file. Each such span names the one that carries its text
+    /// (`same_as`). Absent when there is none.
+    #[serde(default, skip_serializing_if = "no_spans")]
+    pub repeats_merged: usize,
+    /// Spans trimmed of text that another span of the same file carries
+    /// (`overlaps`). Absent when there is none.
+    #[serde(default, skip_serializing_if = "no_spans")]
+    pub overlaps_trimmed: usize,
 }
+fn no_spans(count: &usize) -> bool {
+    *count == 0
+}
+/// The most spans one reply can merge or trim: every hit of every read.
+pub const MAX_MERGED_SPANS: usize = 4096;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -1197,6 +1214,13 @@ impl ContextResponseV3 {
                 self.union.dedup_count >= merged
             },
             "Answer dedup count differs from record provenance"
+        );
+        ensure!(
+            self.union.repeats_merged <= MAX_MERGED_SPANS
+                && self.union.overlaps_trimmed <= MAX_MERGED_SPANS
+                && (!self.records.is_empty()
+                    || self.union.repeats_merged + self.union.overlaps_trimmed == 0),
+            "Answer merged spans without records, or beyond every read's hits"
         );
         ensure!(
             self.union.conflicts.len() <= MAX_CONFLICTS,

@@ -263,6 +263,23 @@ What holds:
   per projection (`hits_total`, `rows_total`, `truncated`); a part is
   `shortened` only when records are omitted, as Core validates against
   `omitted_count`.
+- **The reply carries each text once** (`answer/repeats.rs`, change log
+  entry 45; Core contract, "One text, one copy in the reply").
+  - Union plans what every span row of the reply carries
+    (`repeats::plan`) over the retained records' hits: all of them at the
+    first trimming level, the cited ones from then on. The plan is made
+    again for every packing attempt, so a row never names one that was
+    trimmed away.
+  - An exact repeat names the row that carries its text (`same_as`), and
+    that row lists other places (`also_at`). Among spans of one file region
+    the longer text keeps an overlap: a span inside it names it
+    (`within`), and a span that shares its head or tail is trimmed
+    (`overlaps`). Comparisons are of bytes; nothing near-identical is
+    merged.
+  - Every row keeps its pointer and location, so no provenance is lost, and
+    `hits_total` still counts every hit.
+  - The freed bytes stay in the reply frame: Union measures the reply as it
+    will be sent.
 - **Card rosters show bounded evidence excerpts** (change log entries 43
   and 44).
   - A Coverage or Follow-up card call shows each sub-need the spans gathered
@@ -437,11 +454,21 @@ What does not hold yet, with the follow-up owner:
   and 4,096-byte paths, so a call can pass the frame. The lane then refuses
   it before model work and the deterministic order decides. Nothing bounds
   the frame's parts to make that impossible.
-- **Repeats are merged within one call only** (owner: the duplicate rule,
-  change log entry 45). The same text at two places, or the same span for
-  two sub-needs, is shown once in a card call. Overlapping spans of one
-  file, and repeats across calls, rounds, parts and the reply, are not
-  merged yet.
+- **A card call can still show overlapping text** (owner: the primary
+  agent; change log entry 45). A call shows a text once when two of its
+  spans have the very same text. Two different spans of one file whose
+  lines overlap (a chunk and its neighbour) are still shown as two
+  excerpts, and the shared lines take allowance twice. The reply trims
+  such overlaps; the call does not yet. A text shown in one call is shown
+  again in a later call or round that gathers it: each call is scored on
+  its own, so this is not a repeat the rule removes.
+- **Near-identical texts are not merged** (decision, change log entry 45).
+  Only byte-equal text is. Any looser rule could merge two different
+  facts, such as two versions of a function.
+- **A span that holds a trimmed shorter span is not merged with it**
+  (limit of `repeats::plan`). The longer text is planned first, so this
+  needs a span trimmed at one end that then lies whole inside a third
+  span. Both texts are then carried.
 
 ### Review findings and resolutions (Answer /3 loop)
 

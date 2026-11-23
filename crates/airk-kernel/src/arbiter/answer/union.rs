@@ -6,7 +6,9 @@
 //! Each record is sent as compact spans (location, content hash and the
 //! excerpt read) instead of the whole canonical search result with its
 //! metadata; the intact canonical result stays in custody beside the reply,
-//! bound by the record id. To fit the frame Union omits, in this order:
+//! bound by the record id. A text is sent once: a span that repeats another
+//! names it, and an overlap of two spans of one file stays in one of them
+//! (`repeats`). To fit the frame Union omits, in this order:
 //! decisions (oldest deterministic first, disclosed by the log summary), hits
 //! no sub-need cited, excerpt bytes, the paragraphs' location lists, then
 //! whole records by keep rank.
@@ -63,20 +65,81 @@ fn revision(body: &Value) -> Value {
         .unwrap_or(Value::Null)
 }
 
+/// What the parts cited, and every record's hits, read once for all the
+/// packing attempts.
+struct Cited<'a> {
+    /// Pointers each record's spans were cited at, with their best Focus.
+    spans: &'a BTreeMap<usize, BTreeMap<String, Option<f32>>>,
+    records: &'a BTreeSet<usize>,
+    hits: &'a [Vec<(String, Hit)>],
+}
+
+/// What the reply carries of each span, and how one span names another.
+struct Sharing<'a> {
+    /// The plan's entry of each span the reply carries, by record index and
+    /// hit position.
+    carried: BTreeMap<(usize, usize), &'a repeats::Carried>,
+    /// The record id and pointer of the plan's span `of`.
+    reference: &'a dyn Fn(usize) -> Value,
+}
+
 /// A record's compact span projection at a trimming level.
-fn project(record: &Record, cited: &BTreeMap<String, Option<f32>>, level: usize) -> Value {
+/// - A span that carries text has `text`. Where another span of the same
+///   file carries part of it, `overlaps` names that span, the bytes and the
+///   side (`head` or `tail`) they were trimmed from. `also_at` lists the
+///   other places where the very same text was found.
+/// - A span whose text another span carries has `same_as` (that span's
+///   record and pointer) and no `text`; `within` says its text is a part of
+///   that span's text.
+fn project(
+    (index, record): (usize, &Record),
+    hits: &[(String, Hit)],
+    cited: &BTreeMap<String, Option<f32>>,
+    level: usize,
+    sharing: &Sharing<'_>,
+) -> Value {
     let bytes = serde_json::to_vec(&record.body).unwrap_or_default();
-    let hits = super::coverage::record_hits(record);
     let mut spans = Vec::new();
-    for (pointer, hit) in &hits {
+    for (position, (pointer, hit)) in hits.iter().enumerate() {
         let focus = cited.get(pointer);
-        if level >= 1 && focus.is_none() {
+        let Some(carried) = sharing.carried.get(&(index, position)) else {
             continue;
-        }
-        let (text, cut) = truncate(&hit.text, EXCERPT_BYTES[level]);
+        };
         let mut span = json!({"pointer":pointer,"path":hit.citation.path,"start_line":hit.citation.start_line,
-            "end_line":hit.citation.end_line,"content_hash":hit.citation.content_hash,"text":text,
-            "truncated":hit.truncated || cut});
+            "end_line":hit.citation.end_line,"content_hash":hit.citation.content_hash});
+        match carried {
+            repeats::Carried::Text {
+                start,
+                end,
+                overlaps,
+                also_at,
+            } => {
+                let (text, cut) = truncate(&hit.text[*start..*end], EXCERPT_BYTES[level]);
+                span["text"] = json!(text);
+                span["truncated"] = json!(hit.truncated || cut);
+                if !overlaps.is_empty() {
+                    span["overlaps"] = overlaps
+                        .iter()
+                        .map(|(of, bytes, head)| {
+                            let mut other = (sharing.reference)(*of);
+                            other["bytes"] = json!(bytes);
+                            other["side"] = json!(if *head { "head" } else { "tail" });
+                            other
+                        })
+                        .collect();
+                }
+                if !also_at.is_empty() {
+                    span["also_at"] = json!(also_at);
+                }
+            }
+            repeats::Carried::Same { of, within } => {
+                span["same_as"] = (sharing.reference)(*of);
+                span["truncated"] = json!(hit.truncated);
+                if *within {
+                    span["within"] = json!(true);
+                }
+            }
+        }
         if let Some(Some(score)) = focus {
             span["focus"] = json!(score);
         }
@@ -315,6 +378,11 @@ pub(crate) fn assemble(
         }
     }
     let order = omission_order(gather, &cited);
+    let hits: Vec<Vec<(String, Hit)>> = gather
+        .records
+        .iter()
+        .map(super::coverage::record_hits)
+        .collect();
     let mut decisions = total;
     let mut level = 0usize;
     let mut omitted = 0usize;
@@ -323,8 +391,11 @@ pub(crate) fn assemble(
         let response = build(
             assembly,
             &log,
-            &cited_spans,
-            &cited,
+            &Cited {
+                spans: &cited_spans,
+                records: &cited,
+                hits: &hits,
+            },
             decisions,
             level,
             &removed,
@@ -350,14 +421,55 @@ pub(crate) fn assemble(
 fn build(
     assembly: &Assembly<'_>,
     log: &v3::DecisionLog,
-    cited_spans: &BTreeMap<usize, BTreeMap<String, Option<f32>>>,
-    cited: &BTreeSet<usize>,
+    cited: &Cited<'_>,
     decisions: usize,
     level: usize,
     removed: &BTreeSet<usize>,
 ) -> Result<v3::ContextResponseV3> {
+    let (cited_spans, cited, hits) = (cited.spans, cited.records, cited.hits);
     let gather = assembly.gather;
     let empty = BTreeMap::new();
+    // Every span this reply carries, in record order and then hit order:
+    // the retained records' hits, and from the first trimming level on only
+    // the cited ones. Each text is carried once among them.
+    let mut keys: Vec<(usize, usize)> = Vec::new();
+    let mut candidates = Vec::new();
+    for (index, found) in hits.iter().enumerate() {
+        if removed.contains(&index) {
+            continue;
+        }
+        let cited = cited_spans.get(&index).unwrap_or(&empty);
+        for (position, (pointer, hit)) in found.iter().enumerate() {
+            let focus = cited.get(pointer);
+            if level >= 1 && focus.is_none() {
+                continue;
+            }
+            keys.push((index, position));
+            candidates.push(repeats::Candidate {
+                hit,
+                focus: focus.copied().flatten(),
+            });
+        }
+    }
+    let plan = repeats::plan(&candidates);
+    let reference = |of: usize| {
+        let (record, position) = keys[of];
+        json!({"record":gather.records[record].id,"pointer":hits[record][position].0})
+    };
+    let sharing = Sharing {
+        carried: keys.iter().copied().zip(&plan).collect(),
+        reference: &reference,
+    };
+    let repeats_merged = plan
+        .iter()
+        .filter(|carried| matches!(carried, repeats::Carried::Same { .. }))
+        .count();
+    let overlaps_trimmed = plan
+        .iter()
+        .filter(|carried| {
+            matches!(carried, repeats::Carried::Text { overlaps, .. } if !overlaps.is_empty())
+        })
+        .count();
     let records: Vec<v3::LoopEvidence> = gather
         .records
         .iter()
@@ -368,7 +480,13 @@ fn build(
             operation: record.operation,
             arguments: record.arguments.clone().into_iter().collect(),
             role: EvidenceRole::Unknown,
-            canonical_result: project(record, cited_spans.get(&index).unwrap_or(&empty), level),
+            canonical_result: project(
+                (index, record),
+                &hits[index],
+                cited_spans.get(&index).unwrap_or(&empty),
+                level,
+                &sharing,
+            ),
         })
         .collect();
     let removed_ids: BTreeSet<Sha256Digest> = removed
@@ -576,6 +694,8 @@ fn build(
         union: v3::UnionSummary {
             dedup_count,
             conflicts,
+            repeats_merged,
+            overlaps_trimmed,
         },
         partial,
         ticket: None,

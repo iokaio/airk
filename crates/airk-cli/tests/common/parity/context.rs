@@ -7,7 +7,10 @@
 //! normalizes only:
 //! - transport identities: each canonical read's top-level `request_id`
 //!   (through `strict`), and the record ids derived from those bodies, which
-//!   are renamed by position and rebound everywhere the reply cites them;
+//!   are renamed by position and rebound everywhere the reply cites them.
+//!   A span row of a projection that names another row (`same_as`, or an
+//!   entry of `overlaps`) cites that row's record id, and it must be a
+//!   record of the same reply;
 //! - digests the reply cannot recompute because they bind record ids, read
 //!   bodies or measured work (`decision_log.digest`, each decision's
 //!   `basis.digest` and `receipt`, each span projection's `full_digest`):
@@ -89,6 +92,20 @@ fn logical(domain: &[u8], position: usize) -> Result<Value> {
         domain,
         &[&ordinal.to_le_bytes()],
     ))?)
+}
+
+/// Rebind the record id a span row cites when it names another row. The id
+/// must be a record of the same reply.
+fn cite(name: &mut Value, ids: &BTreeMap<String, Value>) -> Result<()> {
+    let id = name["record"]
+        .as_str()
+        .context("a span row names a row without a record id")?
+        .to_owned();
+    name["record"] = ids
+        .get(&id)
+        .context("a span row names a record that is not in the reply")?
+        .clone();
+    Ok(())
 }
 
 /// Rebind every cited record id outside the canonical results.
@@ -180,6 +197,26 @@ fn reply(raw: &Value, budget: &BudgetV3) -> Result<Value> {
     if let Some(fields) = result.as_object_mut() {
         for (key, field) in fields.iter_mut() {
             rebind(field, &ids, key == "records");
+        }
+    }
+    // Inside a projection only the rows that name another row cite a record.
+    for position in 0..typed.records.len() {
+        let spans = result["records"][position]["canonical_result"]["spans"]
+            .as_array_mut()
+            .into_iter()
+            .flatten();
+        for span in spans {
+            if let Some(name) = span.get_mut("same_as") {
+                cite(name, &ids)?;
+            }
+            for overlap in span
+                .get_mut("overlaps")
+                .and_then(Value::as_array_mut)
+                .into_iter()
+                .flatten()
+            {
+                cite(overlap, &ids)?;
+            }
         }
     }
     // Lists the kernel keeps in record-id order are in a transport-derived

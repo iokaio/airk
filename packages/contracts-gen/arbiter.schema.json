@@ -6344,6 +6344,18 @@
           "format": "uint",
           "minimum": 0,
           "type": "integer"
+        },
+        "overlaps_trimmed": {
+          "description": "Spans trimmed of text that another span of the same file carries\n(`overlaps`). Absent when there is none.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "repeats_merged": {
+          "description": "Spans of the retained records whose text the reply carries once, in\nanother span: exact repeats, and spans that lie within a longer span\nof the same file. Each such span names the one that carries its text\n(`same_as`). Absent when there is none.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
         }
       },
       "required": [

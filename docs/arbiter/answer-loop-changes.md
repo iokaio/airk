@@ -1738,6 +1738,144 @@ Numbered 30 until 22 November 2026; renumbered because L4's entries take
     all features: exit 0. Nextest over the kernel's arbiter tests and the
     identity pins: all passed, and the pins are unchanged.
 
+### 45. The reply carries each text once
+
+- **Step:** the user's rule of 22 November 2026, about 23:15 UTC: "The
+  Answer plumbing should ignore duplicate or repeated facts. It just wastes
+  space." Built after entry 44, in the main tree.
+- **What was wrong:**
+  - Every read's hits were sent in its own record. A part's search and each
+    sub-need's search often return the same chunks, so the same text was
+    sent several times, once a record.
+  - Two chunks of one file that share lines were both sent whole.
+  - The same text found at two places (a vendored copy) was sent twice.
+  - The frame is 131,072 bytes. Repeats pushed Union into its trimming
+    levels and record omissions sooner than the evidence warranted.
+- **What changed:**
+  - **Kernel (`answer/repeats.rs`, `answer/union.rs`):** before Union writes
+    the records, it plans what each span row carries, over every row of the
+    reply. A row carries its text or names the row that does.
+  - **Exact repeats:** rows with the very same text. The highest-ranked one
+    carries it; the others have `same_as` `{record, pointer}` and no
+    `text`. This works across sub-needs, rounds and parts.
+  - **Rank and tie-break:** a row with a Focus relevance before one
+    without, a higher relevance before a lower one, then the earliest read,
+    then the earliest hit of that read.
+  - **The same text at another place:** that row is a repeat too and keeps
+    its own location; the carrying row lists the place in `also_at`.
+  - **Overlapping spans of one file** (equal path and content hash, line
+    ranges that meet): the longer text keeps what they share. A span found
+    whole in it names it with `within: true`. A span that shares its head or
+    tail is carried without those bytes, and `overlaps` names the row, the
+    bytes and the side. Overlaps under 32 bytes are left alone.
+  - **Counts (Core `UnionSummary`):** `repeats_merged`, the rows without
+    text, and `overlaps_trimmed`, the rows with `overlaps`. Both are absent
+    when zero.
+  - **Nothing is dropped:** every row keeps its pointer, path, lines and
+    content hash, and `hits_total` still counts every hit.
+- **Reply fields, with an example.** Three rows of two search records; the
+  second search found the first span again, the span after it, and a copy
+  of a guide the first search also found:
+
+  ```json
+  {"pointer":"/hits/2","path":"docs/guard.md","start_line":1,"end_line":12,
+   "content_hash":"…","text":"# Restart guard\n…","truncated":false,
+   "also_at":["vendor/guard.md:1-12"]}
+  {"pointer":"/hits/0","path":"crates/k/src/guard.rs","start_line":10,
+   "end_line":40,"content_hash":"…","truncated":false,
+   "same_as":{"record":"<first search's record id>","pointer":"/hits/0"}}
+  {"pointer":"/hits/1","path":"crates/k/src/guard.rs","start_line":30,
+   "end_line":60,"content_hash":"…","text":"<lines 41 to 60>",
+   "truncated":false,
+   "overlaps":[{"record":"<first search's record id>","pointer":"/hits/0",
+                "bytes":319,"side":"head"}]}
+  ```
+
+  and in the reply's `union`: `"repeats_merged": 9, "overlaps_trimmed": 1`.
+  A reader that wants a row's text follows `same_as` to the named record and
+  pointer. A reader that wants a trimmed row's whole text puts the named
+  bytes back at the named side.
+- **Exact only, by decision.** Every comparison is of bytes. Near-identical
+  merging is not shipped: any looser rule (ignoring whitespace, a
+  similarity threshold) can merge two different facts, such as two versions
+  of one function, and the rule's purpose is to save space, not to judge
+  equivalence. A test holds four near-identical pairs apart.
+- **The budget.** The frame is measured on the reply as sent, so a repeat
+  costs its reference (about 150 bytes) and not its text. The saved bytes
+  are spent by the existing packing: decisions, uncited hits, excerpt bytes
+  and whole records are omitted later or not at all. Retention while
+  gathering is unchanged: it counts what was read, and custody keeps every
+  canonical result intact.
+- **Every path and transport.** Union builds the one reply, so the
+  no-model path, the model path, MCP and the CLI carry the same rows.
+- **What a card call shows.** Since entry 44 a call shows byte-equal text
+  once and gives the freed allowance to its other spans. Not done: two
+  different spans of one file whose lines overlap are still shown as two
+  excerpts in a call. The excerpt windows and the trims would have to be
+  solved together; it is recorded with an owner in the kernel arbiter
+  contract, "What does not hold yet".
+- **Wire change:** two optional counts on the public reply's `union`. The
+  arbiter schema and the generated TypeScript views are regenerated through
+  their owners. The Rust-emitted semantic cases are unchanged, because the
+  counts are absent when zero. The span rows are JSON inside a record's
+  `canonical_result` (`airk.arbiter.loop-evidence/1`); a row may now lack
+  `text` and may carry `same_as`, `within`, `overlaps` and `also_at`. The
+  MCP help content and `public_answer_cases.json` show no reply rows and
+  did not change.
+- **Identities:** none moved. `answer_loop.rs`, `union.rs` and the new
+  module feed no identity, and the pinned identities pass unchanged.
+- **Also in this commit:** a stale doc comment on the round allowance in
+  `answer_loop.rs` (delta review L-h) is corrected.
+- **Evidence (tests with hand-written expectations):**
+  - Kernel `answer::repeats::tests`:
+    `overlap_is_exact_and_needs_a_real_run_of_bytes`,
+    `an_exact_repeat_is_carried_by_its_highest_ranked_instance`,
+    `two_different_texts_are_never_merged`,
+    `overlapping_spans_of_one_file_share_their_text_once`,
+    `a_span_inside_a_longer_one_names_it_and_so_do_its_repeats`.
+  - Kernel `answer::model::tests`, through the whole loop:
+    `the_reply_carries_each_text_once_and_keeps_every_location`. Two parts
+    and their sub-needs search and find the same four hits (two overlapping
+    spans of one file, a guide and its copy elsewhere), once without a
+    model and once with the synthetic scorer. It checks the single copies,
+    every `same_as`, the trimmed overlap, `also_at`, the counts, that every
+    location is kept, and that no card call shows a text in two rows.
+  - MCP `arbiter_handler_tests`: the check of every projection row against
+    the direct canonical read (`assert_projection_matches_direct_read`) now
+    covers a row with text, a trimmed row and a row that names another, and
+    the handler test asserts that no two rows of a reply carry the same
+    text.
+- **The parity comparator** (`crates/airk-cli/tests/common/parity/context.rs`)
+  renames record ids by position, because they differ by transport. A row
+  that names another row cites a record id inside a projection, where the
+  comparator did not look. It now rebinds exactly those ids and refuses one
+  that is not a record of the same reply.
+- **Validation (main tree):**
+  - Clippy with `-D warnings` over all targets: the workspace with all
+    features, exit 0; `airk-mcp` and `airk-cli` again after their test
+    changes, exit 0; `airk-service` with default features, exit 0;
+  - nextest, all features, over the loop, compose, union and handler tests
+    with the identity pins: 173 run, 171 passed. The two failures were the
+    MCP handler tests that read `text` on every row; with them updated the
+    MCP arbiter tests are 7 run, 7 passed;
+  - the generated views are in sync with the schema, exit 0;
+  - **the CLI parity binary (`combined_reads`), run once in full:** 64 run,
+    62 passed. The two failures were the Answer parity tests, because of
+    the record ids in the new rows. After the comparator change the
+    binary's six Answer tests were run again: 5 passed. The sixth,
+    `current_answer_many_and_open_keep_complete_cli_pipe_and_https_mcp_packets`,
+    failed in its Open case: one member's `outline` read had 3,557 bytes on
+    one transport and 3,066 on the other, which changed that member's used
+    bytes and the next member's allowance. Both transports reported the
+    same rows and the same `repeats_merged`. One repeat of that test on
+    unchanged inputs passed. The duplicate rule does not touch a read's
+    body or its size, but why that read differed once is not established,
+    and the test needs an owner (retained pair:
+    `artifacts/testing/combined-reads/11d7b9b8d227b6fcb574d67b394ca04b.json`).
+- **Where:** Core arbiter `CONTRACT.md` ("One text, one copy in the
+  reply"), kernel arbiter `CONTRACT.md` ("The reply carries each text once"
+  and "What does not hold yet").
+
 ### 46. A Context profile may declare the loop card tasks
 
 - **Step:** a blocker found by the LG agent while re-emitting the FP16

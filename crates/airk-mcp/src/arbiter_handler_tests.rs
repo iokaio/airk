@@ -100,11 +100,41 @@ fn scoped_kernel(
     })
 }
 
+/// The span row a `same_as` object names: the row of that record at that
+/// pointer.
+fn named_row<'a>(packet: &'a Value, name: &Value) -> Option<&'a Value> {
+    packet["records"]
+        .as_array()?
+        .iter()
+        .find(|record| record["id"] == name["record"])?["canonical_result"]["spans"]
+        .as_array()?
+        .iter()
+        .find(|row| row["pointer"] == name["pointer"])
+}
+
+/// The text a span row stands for, as far as the reply says it: its own
+/// text, or the text of the row it names. A row marked `within` is a part
+/// of the text returned here.
+fn row_text<'a>(packet: &'a Value, row: &'a Value) -> Option<&'a str> {
+    match row.get("same_as") {
+        Some(name) => named_row(packet, name)?["text"].as_str(),
+        None => row["text"].as_str(),
+    }
+}
+
 /// Every span of a reply's record projection is a hit the same canonical
-/// read returns directly: same location, content hash and (possibly
-/// shortened) text, at the same publication.
+/// read returns directly: same location and content hash at the same
+/// publication, and the hit's text.
+/// - A row with `text` and no `overlaps` carries the hit's text, possibly
+///   shortened.
+/// - A row with `overlaps` carries the hit's text without the bytes other
+///   rows carry: its text and those bytes add up to the hit's text.
+/// - A row with `same_as` carries no text and names a row of the reply that
+///   does. That row's text is the hit's text, or holds it when the row is
+///   marked `within`.
 async fn assert_projection_matches_direct_read(
     tools: &mut local::LocalTools,
+    packet: &Value,
     record: &Value,
 ) -> Result<()> {
     let operation = record["operation"].as_str().context("record operation")?;
@@ -121,28 +151,56 @@ async fn assert_projection_matches_direct_read(
     let direct = body(&tools.call(tool.clone(), args).await?)?;
     let spans = projection["spans"].as_array().context("projection spans")?;
     for span in spans {
-        let text = span["text"].as_str().context("span text")?;
         // The span names the hit's pointer inside the read body.
         let hit = span["pointer"]
             .as_str()
             .and_then(|pointer| direct.pointer(pointer))
-            .cloned();
+            .cloned()
+            .with_context(|| format!("{tool}: span names no hit of its read: {span}"))?;
+        let citation = &hit["citation"];
         ensure!(
-            hit.iter().any(|hit| {
-                let citation = &hit["citation"];
-                citation["path"] == span["path"]
-                    && citation["start_line"] == span["start_line"]
-                    && citation["end_line"] == span["end_line"]
-                    && citation["content_hash"] == span["content_hash"]
-                    && hit["text"].as_str().is_some_and(|full| {
-                        if span["truncated"] == true {
-                            full.starts_with(text.trim_end_matches('…'))
-                        } else {
-                            full == text
-                        }
-                    })
-            }),
-            "{tool}: projected span is not a hit of the same canonical read: {span}"
+            citation["path"] == span["path"]
+                && citation["start_line"] == span["start_line"]
+                && citation["end_line"] == span["end_line"]
+                && citation["content_hash"] == span["content_hash"],
+            "{tool}: projected span is not at its hit's location: {span}"
+        );
+        let full = hit["text"].as_str().context("hit text")?;
+        let same_text = match (span.get("same_as"), span["text"].as_str()) {
+            // A repeat: no text of its own, and a named row that carries it.
+            (Some(name), None) => {
+                let carrier = named_row(packet, name)
+                    .with_context(|| format!("{tool}: a repeat names no row: {span}"))?;
+                let carried = carrier["text"]
+                    .as_str()
+                    .with_context(|| format!("{tool}: a repeat names a row without text"))?;
+                let whole = carrier["truncated"] != true && carrier.get("overlaps").is_none();
+                match (span["within"] == true, whole) {
+                    (false, true) => carried == full,
+                    (false, false) => full.contains(carried.trim_end_matches('…')),
+                    (true, true) => carried.contains(full),
+                    (true, false) => true,
+                }
+            }
+            (None, Some(text)) => match span["overlaps"].as_array() {
+                // Trimmed of what other rows carry: the bytes add up.
+                Some(overlaps) => {
+                    let trimmed: u64 = overlaps
+                        .iter()
+                        .filter_map(|overlap| overlap["bytes"].as_u64())
+                        .sum();
+                    full.contains(text.trim_end_matches('…'))
+                        && (span["truncated"] == true
+                            || text.len() as u64 + trimmed == full.len() as u64)
+                }
+                None if span["truncated"] == true => full.starts_with(text.trim_end_matches('…')),
+                None => full == text,
+            },
+            _ => false,
+        };
+        ensure!(
+            same_text,
+            "{tool}: projected span does not stand for its hit's text: {span}"
         );
     }
     ensure!(
@@ -188,8 +246,21 @@ async fn disabled_native_answer_expands_real_scoped_evidence_and_preserves_full_
     assert!(!packet.to_string().contains("SECRET_PRIVATE_ARCHIVE"));
     assert!(!packet.to_string().contains("private/secret.txt"));
     for record in records {
-        assert_projection_matches_direct_read(&mut tools, record).await?;
+        assert_projection_matches_direct_read(&mut tools, &packet, record).await?;
     }
+    // Each text is carried once: no two rows of the reply have the same text.
+    let texts: Vec<&str> = records
+        .iter()
+        .flat_map(|record| {
+            record["canonical_result"]["spans"]
+                .as_array()
+                .into_iter()
+                .flatten()
+        })
+        .filter_map(|row| row["text"].as_str())
+        .collect();
+    let distinct: std::collections::BTreeSet<&str> = texts.iter().copied().collect();
+    assert_eq!(texts.len(), distinct.len(), "{packet}");
     assert!(serde_json::to_vec(&reply)?.len() <= v3::MAX_ANSWER_RESPONSE_BYTES);
     // The actual partial index cannot expose whole-index status as a shortcut.
     assert!(kernel.status().is_err());
@@ -293,10 +364,10 @@ async fn canonical_answer_context_handles_one_line_eof_and_late_verified_hits() 
             .as_array()
             .unwrap()
             .iter()
-            .find(|span| span["text"].as_str().is_some_and(|t| t.contains("amber_eof")))
+            .find(|span| row_text(&packet, span).is_some_and(|t| t.contains("amber_eof")))
             .context("the expansion keeps the evidence line")?;
         assert_eq!(span["end_line"], expected_line, "{name}: {span}");
-        assert_projection_matches_direct_read(&mut tools, expansion).await?;
+        assert_projection_matches_direct_read(&mut tools, &packet, expansion).await?;
         tools.close().await?;
     }
     Ok(())

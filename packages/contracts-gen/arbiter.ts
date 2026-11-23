@@ -1600,6 +1600,18 @@ export type UnionSummary = {
      * Findings merged into a record another part also found.
      */
     dedup_count: number;
+    /**
+     * Spans trimmed of text that another span of the same file carries
+     * (`overlaps`). Absent when there is none.
+     */
+    overlaps_trimmed?: number;
+    /**
+     * Spans of the retained records whose text the reply carries once, in
+     * another span: exact repeats, and spans that lie within a longer span
+     * of the same file. Each such span names the one that carries its text
+     * (`same_as`). Absent when there is none.
+     */
+    repeats_merged?: number;
 };
 
 export type UnrunRead = {

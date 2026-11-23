@@ -1428,7 +1428,9 @@ round runs at most one read per sub-need. One Context card call is at most
 - **record_uses:** every (record, part, sub-need, round, cause) finding of a
   retained record; causes are part_search, need_search, structural_read
   (round one), follow_up (later rounds) and shared_read.
-- **union:** `dedup_count` equals the findings merged into a record another
+- **union:** `repeats_merged` and `overlaps_trimmed` count the span rows
+  whose text the reply carries once in another row ("One text, one copy in
+  the reply"). `dedup_count` equals the findings merged into a record another
   part also found when nothing was omitted, and is at least that otherwise;
   `conflicts` are divergent_definition (two or more records) or
   divergent_verdict (one or more), each naming two or more parts that found
@@ -1496,6 +1498,59 @@ round runs at most one read per sub-need. One Context card call is at most
   timings are disclosure only: they must be retained in `work`, but they
   overlap across batched and concurrent calls and are not compared with the
   deadline. `candidate_count` is at most `work.calls`.
+
+### One text, one copy in the reply
+
+Recorded decision of 22 November 2026, on the user's rule "The Answer
+plumbing should ignore duplicate or repeated facts. It just wastes space."
+(change log entry 45). It changes what a record's projection carries and
+adds two counts; no location and no record is ever dropped by it.
+
+- **Where the text is:** each retained record's `canonical_result` is the
+  kernel's span projection (`airk.arbiter.loop-evidence/1`): one row per
+  hit, with its `pointer`, `path`, `start_line`, `end_line` and
+  `content_hash`. A row carries the hit's `text`, or names the row that
+  does.
+- **Exact repeats:** of rows with the very same text, one carries it. The
+  others have no `text` and a `same_as` object `{record, pointer}`: the
+  record id and hit pointer of the carrying row. This holds across
+  sub-needs, rounds and parts, because the rule runs over every row of the
+  reply.
+- **Which row carries it:** the highest-ranked one. A row with a Focus
+  relevance ranks above one without, a higher relevance above a lower one,
+  then the earliest read, then the earliest hit of that read.
+- **The same text at another place:** the row at the other place is a
+  repeat like any other and keeps its own location. The carrying row lists
+  every other place in `also_at`, as `path:start-end` strings.
+- **Overlapping spans of one file:** two rows are in one region when their
+  path and content hash are equal and their line ranges meet. Among such
+  rows the longer text keeps what they share (ties by the rank above).
+  - A text found whole in a longer one has no `text`, `same_as` the longer
+    row and `within: true`.
+  - A text that shares its head or tail with one is carried without those
+    bytes, and `overlaps` lists `{record, pointer, bytes, side}` for each
+    part trimmed, with `side` `head` or `tail`. The row's whole text is its
+    `text` with those parts of the named rows put back.
+  - An overlap shorter than 32 bytes is left alone.
+- **Exact only:** every comparison is of bytes. Texts that differ in one
+  byte, in indentation or in line endings are different texts and are both
+  carried. Near-identical texts are not merged.
+- **Counts:** `union.repeats_merged` is the number of rows without `text`,
+  and `union.overlaps_trimmed` the number of rows with `overlaps`. Both are
+  absent when zero and at most 4,096 (`MAX_MERGED_SPANS`). They count the
+  rows of the reply as sent; Core does not recompute them, because a
+  projection is opaque to it.
+- **Budget:** the reply frame is measured on the reply as sent, so a merged
+  repeat costs its reference and not its text, and Union reaches its
+  trimming levels and record omissions later or not at all. Retention while
+  gathering (`max_bytes`) is unchanged: it counts what was read, and
+  custody keeps every canonical result intact.
+- **Every path and transport:** the rule is part of Union, which builds the
+  one reply for the no-model path and the model path and for every
+  transport.
+- **Generated views:** the arbiter schema and the generated TypeScript views
+  carry the two counts. The projection rows are JSON inside
+  `canonical_result` and are not typed there.
 
 ### Decision log (service custody, retained by L2b)
 
