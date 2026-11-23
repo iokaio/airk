@@ -16649,3 +16649,52 @@ medium) on branch `loop/lh` in the `L5C` worktree with target
 `target-cuda`; it stops for primary review after its sixth commit and the
 profile re-emission, before any evaluation image is built. The S1 base
 build is still running.
+
+### 23 November 2026 at 14:46 UTC — Answer jobs (L2c) reviewed: three defects fixed, one intermittent failure under diagnosis; it merges after LH
+
+**`loop/l2b-wire`, independent review** (a fresh Opus agent, not the
+implementer), rebased onto `705ab312`, head `a46ff188`, not merged. The
+branch touches no pinned-identity file.
+
+| Finding | Failure it caused | Outcome |
+| --- | --- | --- |
+| The ticket reply lacked entry 54's `read_status` | The branch did not compile on the new base | Fixed, `91a4a528` |
+| An owner counted a job only once it ran | An owner whose only work was a queued job, with its maker gone, left after 15 s idle and the job was dropped unrun | Fixed, `11f77b61`, with a test that counts 0 on the old code |
+| An invocation key attached without the publication check | A key recovered after a reindex returned the answer of the older publication | Fixed, `85c1ddc0`, with a test |
+| `admin_sign_in_reads_and_cross_plane_refusals` failed once in three branch runs on a typed `publication_busy`, and passed its one run on main | Unknown: one run on main decides nothing | **Open.** The reviewer diagnoses it by reading and a focused reproduction on both trees; no limit is relaxed and no retry added |
+| No test shows a reply packed to its limit, with status and the delivery record, inside 131,072 bytes | A full reply could exceed its limit | Open, same agent: add the test, fix the reserve if it fails |
+| `answer_job_stuck` and `answer_authority_ended` say `query_submitted:false` although reads ran | A client may replay work that ran | Open, same agent |
+| The combined frontend parses the job options and never validates them | An option that silently does nothing | Open, same agent |
+| A job is bounded by the lease in force at submission (at most 300 s); jobs run without an owner read permit once their maker leaves | Recorded limits, not defects | Left |
+
+- **Primary review:** read the three fixes and agree with them.
+- **Validation by the reviewer** (target `target-l2b`, logs
+  `answer-loop\L2b\scratch-review`): Clippy with warnings denied on eight
+  crates, all targets, with all features and with default features, exit 0;
+  Nextest broad set 1,301 of 1,302 (the one failure is the known base
+  failure of entry 40); focused set 286 of 286; MCP `answer_jobs` 6 of 6;
+  the CLI batch (both transport parity tests, the disconnect and injection
+  tests, the Admin plane) 18 of 19 then 19 of 19, and 17 of 17 on main.
+- **Sequencing decision (primary agent).** L2c merges after LH, not before:
+  LH's acceptance then runs on the Answer path the gate already proved, and
+  L2c gets its own live check afterwards, so a failing Answer points at one
+  change. The branch is rebased over LH then (its job estimate names Large
+  and `context_compact`).
+- **The live check proposed for L2c,** on one fixture lifetime: two and four
+  `fresh` calls at once; a repeat that reuses; two calls with a 3 s wait
+  whose clients exit, recovered by continuation after 20 s of silence;
+  recovery after the grant is revoked; a stop with a job in flight.
+- **L2d is not started.** Its eight decision points are in
+  `answer-loop\L2b\RESUME.md`. One is a question of scope for the user: LG
+  measured a median first reply of 8 to 12 s with four at once all served,
+  so the full job path (evidence at once, continuations) may buy an agent
+  little over a single call with a bounded wait. L2d stays in the plan; it
+  is built after the L7 baseline is running unless the user narrows it.
+
+**Roots.** Spare root S1's base closed at 13:39 UTC (verified:
+`closed.json` present, aliases copied, no fixture service left). Two unused
+CUDA lifetimes: L32 and S1. D: free 844,230,492,160 bytes at 13:43 UTC.
+
+**Running at this entry:** the LH agent (branch `loop/lh`); the L2c
+reviewer on the four open items. The review queue holds no unreviewed
+branch.
