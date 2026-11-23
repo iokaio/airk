@@ -631,10 +631,11 @@ impl TextRangeRead<'_> {
                 .filter(|chunk| chunk.end_line >= start && chunk.start_line <= end)
                 .map(|chunk| &chunk.location);
             let first = locations.next().context("document location unavailable")?;
-            ensure!(
-                locations.all(|location| location == first),
-                "range crosses document locations; request one page/block/slide at a time"
-            );
+            // An argument the source cannot serve, not a failed read: typed
+            // so a caller tells the two apart by code.
+            if !locations.all(|location| location == first) {
+                return Err(airk_core::read_arguments::crossed_document_locations().into());
+            }
             first.clone()
         };
         Ok(location)

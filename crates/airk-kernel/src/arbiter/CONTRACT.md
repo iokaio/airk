@@ -402,6 +402,30 @@ What holds:
   (`Shares::round_model_ms`: the time left before the Compose and Union
   reserve, divided by the active parts and the rounds left). The decision is
   then logged `not_dispatched` with reason `deadline`.
+- **A document hit gets no line window** (change log entry 55). The
+  whole-chunk `context` read that Retrieve (Chunks, Literal and
+  Documentation steps), Follow-up and the /2 change-set planner give a hit
+  is shaped by `software::whole_chunk_after` from the hit's own citation
+  location, never from its path. A `Lines` hit, or a `Mapped` region of a
+  UTF-8 composite host, keeps its window (at least
+  `WHOLE_CHUNK_LINES` past the first cited line, at most 100). A hit at a
+  native document location (page, block, slide, table or worksheet row) is
+  read one location at a time by the context tool, which refuses a range
+  that crosses into the next location; so its read is confined to its own
+  cited lines and planned only when the hit's text was cut (a focused
+  snippet). An uncut document hit already carries those lines, and no read
+  is planned. Documentation picks the first documentation hit a read can add
+  to. Outline on a document returns its headings; `imports` on a document
+  returns no rows (a wasted call, not a failure); `symbols`, `references`
+  and excerpt reads stay inside the cited rows they come from. Tests
+  `document_hits_get_no_line_window_and_code_hits_keep_theirs` and
+  `a_document_top_span_is_read_only_within_its_own_location`.
+- **A refused document range is typed.** The context and read-file tools
+  refuse a range across document locations with
+  `airk_core::read_arguments::crossed_document_locations()`: code
+  `invalid_arguments`, field `range`, not `retryable`, rendered by the MCP
+  handler as that typed receipt instead of `read_failed`. The Answer loop
+  does not read message text.
 What does not hold yet, with the follow-up owner:
 
 - **Canonical reads are not cancelled at the reserve** (L4/L2b). A read

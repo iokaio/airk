@@ -1320,7 +1320,19 @@ fn retained_text_ranges_preserve_overlap_original_locations_and_selected_damage_
         let short = projected.read_selected(3, 3, 7)?;
         assert_eq!(short.text, "last");
         assert!(short.truncated);
-        assert!(projected.read_selected(3, 4, 100).is_err());
+        // Crossing into the next location is a typed argument refusal,
+        // not a failed read; one location at a time is served.
+        let Err(crossed) = projected.read_selected(3, 4, 100) else {
+            anyhow::bail!("a range across two locations is refused");
+        };
+        let typed = crossed
+            .downcast_ref::<airk_core::read_arguments::ReadArgumentError>()
+            .context("typed refusal")?;
+        assert_eq!(
+            (typed.code, typed.field.as_str()),
+            ("invalid_arguments", "range")
+        );
+        assert_eq!(projected.read_selected(4, 4, 100)?.text, "next\n");
         assert_eq!(projected.read_strict(1, 3, 100)?.text, full.text);
         let certificate = read
             .certify_file_projections(&fixture.store, "document.txt")?

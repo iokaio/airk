@@ -88,6 +88,11 @@ the unchanged original call for their owning authority and error checks. A
 longer parent never refreshes the nested Answer ceiling after setup. Generic
 reads retain their supported original allowance, including queries over30s.
 Malformed arguments retain the canonical handler's existing error envelope.
+A `context` or `read_file` range that crosses two locations of a document
+source (page, block, slide, table or worksheet row) is refused as invalid
+arguments for that source, not as a failed read: the typed receipt
+`invalid_arguments`, field `range`, `retryable` false
+(`airk_core::read_arguments::crossed_document_locations`, 23 November 2026).
 
 P9's [permanent exclusions](source-policy.md) apply to canonical native handlers
 and delivery fences across CLI tool calls/shell/convenience commands, MCP aliases

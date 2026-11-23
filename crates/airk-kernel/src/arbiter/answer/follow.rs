@@ -202,21 +202,28 @@ pub(crate) fn candidates(
         }
     }
     let top = spans.first();
-    // A truncated or snippet-only top span: read its whole chunk.
-    if let Some(span) = top.filter(|span| {
-        span.hit.truncated
-            || span
-                .hit
-                .citation
-                .end_line
-                .saturating_sub(span.hit.citation.start_line)
-                < 8
-    }) {
+    // A truncated or snippet-only top span: read its whole chunk, within
+    // what its location admits (`software::whole_chunk_after`).
+    if let Some((span, after)) = top
+        .filter(|span| {
+            span.hit.truncated
+                || span
+                    .hit
+                    .citation
+                    .end_line
+                    .saturating_sub(span.hit.citation.start_line)
+                    < 8
+        })
+        .and_then(|span| {
+            software::whole_chunk_after(&span.hit, software::Shape::PRODUCT.whole_chunk_lines)
+                .map(|after| (span, after))
+        })
+    {
         let citation = &span.hit.citation;
         push(
             &mut out,
             ("context", v3::LoopRead::Context),
-            json!({"path":citation.path,"line":citation.start_line,"before":0,"after":software::Shape::PRODUCT.whole_chunk_lines,"max_bytes":software::Shape::PRODUCT.read_bytes}),
+            json!({"path":citation.path,"line":citation.start_line,"before":0,"after":after,"max_bytes":software::Shape::PRODUCT.read_bytes}),
             (FollowUp::WholeChunk, Step::Leaf),
             &span.location(),
             hop,

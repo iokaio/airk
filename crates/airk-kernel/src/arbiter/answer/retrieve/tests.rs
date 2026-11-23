@@ -2,6 +2,7 @@
 //! Per-sub-need recipes over synthetic canonical replies.
 use super::*;
 use crate::arbiter::answer::tests::{hit, reply, scope};
+use airk_core::DocumentLocation;
 
 fn need(kind: NeedKind, subject: Option<&str>, query: &str) -> Need {
     Need {
@@ -230,6 +231,157 @@ fn implementation_configuration_interfaces_and_errors_plan_their_structural_read
         let next = react(&mut gather, 1, &need, step, &record)?;
         assert_eq!(tools(&next.reads), expected, "{kind:?}");
     }
+    Ok(())
+}
+
+/// A search hit at a native document location (page, block, slide).
+fn document_hit(
+    path: &str,
+    (start, end): (usize, usize),
+    location: DocumentLocation,
+    truncated: bool,
+) -> Value {
+    json!({"citation":{"path":path,"content_hash":"abc","start_line":start,"end_line":end,
+        "location":location},"text":"document text","truncated":truncated})
+}
+
+/// Every planned `context` read of `path` must stay inside `start..=end`:
+/// the context tool reads a document one location at a time.
+fn confined(reads: &[Dispatch], path: &str, (start, end): (usize, usize)) {
+    for read in reads
+        .iter()
+        .filter(|read| read.tool == "context" && read.arguments["path"] == path)
+    {
+        let line = read.arguments["line"].as_u64().unwrap() as usize;
+        let after = read.arguments["after"].as_u64().unwrap() as usize;
+        assert_eq!(read.arguments["before"], 0, "{path}");
+        assert!(
+            line >= start && line + after <= end,
+            "{path}: {line}+{after}"
+        );
+    }
+}
+
+#[test]
+fn document_hits_get_no_line_window_and_code_hits_keep_theirs() -> Result<()> {
+    let scope = scope();
+    let mut gather = Gathering::new(v3::BudgetV3::default(), scope.clone())?;
+    // Chunks: an uncut paragraph (block) gets no context read, only its
+    // outline; a cut PDF page is read over its own cited lines only.
+    let docx = "pro/docs/plan.docx";
+    let pdf = "pro/papers/report.pdf";
+    let body = reply(
+        &scope,
+        vec![
+            document_hit(
+                docx,
+                (87, 87),
+                DocumentLocation::Block { number: 31 },
+                false,
+            ),
+            document_hit(pdf, (300, 305), DocumentLocation::Page { number: 12 }, true),
+        ],
+    );
+    let implementation = need(NeedKind::Implementation, None, "forward plan");
+    let first = initial(&mut gather, 1, &implementation)?;
+    let index = run(&mut gather, first[0].clone(), body)?;
+    let record = gather.records[index].clone();
+    let next = react(&mut gather, 1, &implementation, Step::Chunks, &record)?;
+    assert_eq!(tools(&next.reads), ["outline", "context", "outline"]);
+    assert_eq!(next.reads[0].arguments["path"], docx);
+    assert_eq!(
+        (
+            &next.reads[1].arguments["path"],
+            &next.reads[1].arguments["line"],
+            &next.reads[1].arguments["after"]
+        ),
+        (&json!(pdf), &json!(300), &json!(5))
+    );
+    confined(&next.reads, docx, (87, 87));
+    confined(&next.reads, pdf, (300, 305));
+
+    // Literal: an uncut slide already carries its text; nothing more to read.
+    let errors = need(NeedKind::Errors, None, "deck failure");
+    let first = initial(&mut gather, 1, &errors)?;
+    let index = run(
+        &mut gather,
+        first[0].clone(),
+        reply(
+            &scope,
+            vec![document_hit(
+                "pro/decks/review.pptx",
+                (40, 52),
+                DocumentLocation::Slide { number: 4 },
+                false,
+            )],
+        ),
+    )?;
+    let record = gather.records[index].clone();
+    let next = react(&mut gather, 1, &errors, Step::Literal, &record)?;
+    assert!(next.reads.is_empty(), "{:?}", tools(&next.reads));
+
+    // Documentation: an uncut document under docs/ is passed over for the
+    // first documentation hit a whole-chunk read can add to.
+    let docs = need(NeedKind::Documentation, None, "approach documentation");
+    let first = initial(&mut gather, 1, &docs)?;
+    let index = run(
+        &mut gather,
+        first[0].clone(),
+        reply(
+            &scope,
+            vec![
+                document_hit(
+                    "pro/docs/approach.docx",
+                    (308, 308),
+                    DocumentLocation::Block { number: 77 },
+                    false,
+                ),
+                hit("docs/guide.md", 3, 9, "Guide"),
+            ],
+        ),
+    )?;
+    let record = gather.records[index].clone();
+    let next = react(&mut gather, 1, &docs, Step::Search, &record)?;
+    assert_eq!(tools(&next.reads), ["context"]);
+    assert_eq!(next.reads[0].arguments["path"], "docs/guide.md");
+    assert_eq!(next.reads[0].arguments["after"], 40);
+
+    // A code hit keeps its line window, unchanged: at least 40 lines past
+    // its first cited line, at most 100.
+    let code = need(NeedKind::Overview, None, "restart guard overview");
+    let first = initial(&mut gather, 1, &code)?;
+    let index = run(
+        &mut gather,
+        first[0].clone(),
+        reply(
+            &scope,
+            vec![
+                hit("src/guard.rs", 10, 12, "fn guard() {}"),
+                hit("src/long.rs", 1, 150, "fn long() {}"),
+            ],
+        ),
+    )?;
+    let record = gather.records[index].clone();
+    let next = react(&mut gather, 1, &code, Step::Chunks, &record)?;
+    let windows: Vec<_> = next
+        .reads
+        .iter()
+        .filter(|read| read.tool == "context")
+        .map(|read| {
+            (
+                read.arguments["path"].clone(),
+                read.arguments["line"].clone(),
+                read.arguments["after"].clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        windows,
+        [
+            (json!("src/guard.rs"), json!(10), json!(40)),
+            (json!("src/long.rs"), json!(1), json!(100))
+        ]
+    );
     Ok(())
 }
 

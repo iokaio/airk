@@ -134,6 +134,54 @@ fn a_snippet_top_span_reads_its_whole_chunk_and_cards_name_each_read() -> Result
 }
 
 #[test]
+fn a_document_top_span_is_read_only_within_its_own_location() -> Result<()> {
+    let gather = Gathering::new(v3::BudgetV3::default(), scope())?;
+    let at = |location: airk_core::DocumentLocation, truncated: bool| Span {
+        record: 0,
+        pointer: "/hits/0".into(),
+        hit: serde_json::from_value(json!({"citation":{"path":"pro/docs/plan.docx",
+            "content_hash":"abc","start_line":87,"end_line":88,"location":location},
+            "text":"Forward plan","truncated":truncated}))
+        .unwrap(),
+        round: 1,
+        focus: None,
+        from: 0,
+    };
+    // An uncut paragraph block: the span already holds its text whole.
+    let uncut = candidates(
+        &gather,
+        1,
+        &need("x"),
+        &[at(airk_core::DocumentLocation::Block { number: 31 }, false)],
+        &BTreeSet::new(),
+        &BTreeSet::new(),
+    )?;
+    assert!(!uncut.iter().any(|candidate| candidate.tool == "context"));
+    // A cut page: its own two cited lines, never a 40-line window.
+    let cut = candidates(
+        &gather,
+        1,
+        &need("x"),
+        &[at(airk_core::DocumentLocation::Page { number: 3 }, true)],
+        &BTreeSet::new(),
+        &BTreeSet::new(),
+    )?;
+    let context: Vec<_> = cut
+        .iter()
+        .filter(|candidate| candidate.tool == "context")
+        .map(|candidate| {
+            (
+                candidate.arguments["line"].clone(),
+                candidate.arguments["before"].clone(),
+                candidate.arguments["after"].clone(),
+            )
+        })
+        .collect();
+    assert_eq!(context, [(json!(87), json!(0), json!(1))]);
+    Ok(())
+}
+
+#[test]
 fn a_rejected_quote_does_not_hide_the_next_error_string() {
     assert_eq!(
         error_strings("don't touch 'retry_refused' here"),

@@ -209,23 +209,31 @@ fn locations(body: &Value) -> Vec<(String, usize, usize, Option<String>)> {
         .collect()
 }
 
+/// A hit's whole-chunk read, or `None` when its location admits no useful
+/// one (`software::whole_chunk_after`): a document hit is never given a
+/// line window past its own location.
 fn whole_chunk(
     gather: &mut Gathering,
     at: (u8, Option<u8>, u8),
     hit: &Hit,
     cause: Cause,
-) -> Result<Dispatch> {
+) -> Result<Option<Dispatch>> {
     let citation = &hit.citation;
-    let after = (citation.end_line - citation.start_line).clamp(SHAPE.whole_chunk_lines, 100);
-    gather.dispatch(
-        ("context", v3::LoopRead::Context),
-        json!({"path":citation.path,"line":citation.start_line,"before":0,"after":after,"max_bytes":SHAPE.read_bytes}),
-        at,
-        cause,
-        FollowUp::WholeChunk,
-        Step::Leaf,
-        &citation.path,
-    )
+    let lines = (citation.end_line - citation.start_line).clamp(SHAPE.whole_chunk_lines, 100);
+    let Some(after) = software::whole_chunk_after(hit, lines) else {
+        return Ok(None);
+    };
+    gather
+        .dispatch(
+            ("context", v3::LoopRead::Context),
+            json!({"path":citation.path,"line":citation.start_line,"before":0,"after":after,"max_bytes":SHAPE.read_bytes}),
+            at,
+            cause,
+            FollowUp::WholeChunk,
+            Step::Leaf,
+            &citation.path,
+        )
+        .map(Some)
 }
 
 fn outline(
@@ -360,13 +368,15 @@ pub(crate) fn react(
                         round: 1,
                     }));
             }
+            // The first documentation hit a whole-chunk read can add to.
             if need.kind == NeedKind::Documentation
-                && let Some(document) = found
-                    .iter()
-                    .find(|hit| software::is_document_path(&hit.citation.path))
+                && let Some(document) = found.iter().find(|hit| {
+                    software::is_document_path(&hit.citation.path)
+                        && software::whole_chunk_after(hit, SHAPE.whole_chunk_lines).is_some()
+                })
             {
                 out.reads
-                    .push(whole_chunk(gather, at, document, Cause::Structural)?);
+                    .extend(whole_chunk(gather, at, document, Cause::Structural)?);
             }
         }
         (Step::Chunks, _) => {
@@ -374,7 +384,7 @@ pub(crate) fn react(
             let mut outlined = BTreeSet::new();
             for hit in found.iter().take(SHAPE.kept) {
                 out.reads
-                    .push(whole_chunk(gather, at, hit, Cause::Structural)?);
+                    .extend(whole_chunk(gather, at, hit, Cause::Structural)?);
                 if outlined.len() < SHAPE.outlined_files
                     && outlined.insert(hit.citation.path.clone())
                 {
@@ -415,7 +425,7 @@ pub(crate) fn react(
         (Step::Literal, _) => {
             if let Some(top) = hits(&record.body).first() {
                 out.reads
-                    .push(whole_chunk(gather, at, top, Cause::Structural)?);
+                    .extend(whole_chunk(gather, at, top, Cause::Structural)?);
             }
         }
         _ => {}

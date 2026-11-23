@@ -2379,3 +2379,59 @@ Numbered 30 until 22 November 2026; renumbered because L4's entries take
   `an_answer_reply_has_the_answer_frame_and_an_oversized_one_is_refused_typed`:
   a 100 KB reply fails the old frame, fits the Answer frame, and the refusal
   is typed. Gap: no end-to-end test through a real worker stream.
+
+### 55. A document hit gets no line window; the refused range is typed
+
+- **Found by:** a live evaluation service on a private repository that holds
+  `.docx` files. Three of ten scenario questions carried failed records:
+  `airk_context` with `line` at a hit's first cited line, `before` 0,
+  `after` 40, refused `read_failed` "range crosses document locations;
+  request one page/block/slide at a time". A repository of code and
+  Markdown never hit it.
+- **Cause:** the loop's whole-chunk `context` read (Retrieve's Chunks,
+  Literal and Documentation steps, the Follow-up candidate for a cut or
+  short top span, and the /2 change-set planner) always asked for at least
+  40 lines past a hit's first cited line, as if every source were line text.
+  A source not read as UTF-8 text keeps each chunk at one native location
+  (a DOCX paragraph is one `Block`, often one line), and the context tool
+  serves such a source one location at a time. The Documentation step also
+  chose its hit by path (`/docs/`), which matches `.docx` files.
+- **Fix:** one owning rule, `software::whole_chunk_after`, decides from the
+  hit's own citation location, never from its path or extension. A `Lines`
+  hit (or a `Mapped` region, which only UTF-8 composite hosts produce) keeps
+  its window unchanged. A page, block, slide, table-row or worksheet-row hit
+  is read only over its own cited lines, which lie inside its location, and
+  only when its text was cut (Focus narrows a cut hit's citation to the
+  snippet's lines and sets `truncated`). An uncut document hit already
+  carries all of those lines, so a read would return the same text: it is
+  omitted rather than replaced by a neighbouring location, because the hit
+  does not say where its location ends and a neighbour read would be a guess
+  the tool could still refuse. Documentation takes the first documentation
+  hit a read can add to.
+- **The other structural reads on documents:** `outline` returns the
+  document's heading facts (useful, succeeds). `imports` on a document
+  returns no rows (a wasted call, not a failure; left as is). `symbols` and
+  `references` are name lookups; their excerpt `read_file` reads stay inside
+  the cited rows they come from, so they cannot cross a location. Governing
+  probes read only `CONTRACT.md` and `README.md` after `file_info`. The
+  Tests sub-need uses `references` and excerpts, as above, or a search. None
+  produces a failed record.
+- **Typing:** the refusal (store `text_range.rs` and the kernel's retained
+  snapshot path) is now `airk_core::read_arguments::crossed_document_locations()`,
+  the existing typed `ReadArgumentError`: code `invalid_arguments`, field
+  `range`, not retryable. The MCP handler already renders that type as its
+  receipt, so callers see `invalid_arguments` instead of `read_failed` and
+  can tell an argument the source cannot serve from a read that failed. The
+  message text is unchanged. The Answer loop does not match on it.
+- **Tests (hand-written, no private text):** kernel
+  `document_hits_get_no_line_window_and_code_hits_keep_theirs` (an uncut
+  block gets only its outline, a cut page is read over lines 300 to 305
+  only, an uncut slide gets nothing, Documentation passes over an uncut
+  `docs/` DOCX for a Markdown hit with its 40-line window, and code hits keep
+  windows of 40 and 100); `a_document_top_span_is_read_only_within_its_own_location`
+  (Follow-up: none for an uncut block, lines 87 to 88 for a cut page). Store
+  `native_projection_tests` now asserts the crossing refusal's type, code
+  and field and that the next location alone is served.
+- **Identities:** none moved; no identity-feeding file changed.
+- **Where:** kernel arbiter `CONTRACT.md` ("Answer /3 loop"),
+  `docs/read-interface-parity.md` (typed refusal).

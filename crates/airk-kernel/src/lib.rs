@@ -763,10 +763,9 @@ impl Kernel {
                 .filter(|c| c.end_line >= start_line && c.start_line <= end_line)
                 .map(|c| &c.location);
             let location = locations.next().context("document location unavailable")?;
-            ensure!(
-                locations.all(|other| other == location),
-                "range crosses document locations; request one page/block/slide at a time"
-            );
+            if !locations.all(|other| other == location) {
+                return Err(airk_core::read_arguments::crossed_document_locations().into());
+            }
             location.clone()
         };
         Self::selected_lines_response(

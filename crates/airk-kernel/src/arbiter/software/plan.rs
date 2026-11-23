@@ -389,18 +389,23 @@ impl Gathering {
                 hit.citation.start_line,
                 hit.citation.end_line,
             );
-            let chunk = self.followup(
-                FollowUp::WholeChunk,
-                ("context", NativeRead::Context),
-                // A pool hit cites only its focused snippet (often 1-12 lines);
-                // the whole-chunk read covers at least WHOLE_CHUNK_LINES from it.
-                json!({"path":path,"line":start,"before":0,"after":(end - start).clamp(WHOLE_CHUNK_LINES, 100),"max_bytes":per_read}),
-                "",
-                (path, start, end),
-                round,
-            )?;
-            lanes.entry(FollowUp::WholeChunk).or_default().push(chunk.clone());
-            in_order.push(chunk);
+            // A pool hit cites only its focused snippet (often 1-12 lines);
+            // the whole-chunk read covers at least WHOLE_CHUNK_LINES from it,
+            // or only the hit's own location for a document hit.
+            if let Some(after) =
+                whole_chunk_after(hit, (end - start).clamp(WHOLE_CHUNK_LINES, 100))
+            {
+                let chunk = self.followup(
+                    FollowUp::WholeChunk,
+                    ("context", NativeRead::Context),
+                    json!({"path":path,"line":start,"before":0,"after":after,"max_bytes":per_read}),
+                    "",
+                    (path, start, end),
+                    round,
+                )?;
+                lanes.entry(FollowUp::WholeChunk).or_default().push(chunk.clone());
+                in_order.push(chunk);
+            }
             if self.plan.outlined.len() < OUTLINED_FILES && self.plan.outlined.insert(path.to_owned()) {
                 let outline = self.followup(
                     FollowUp::Outline,

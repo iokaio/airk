@@ -27,6 +27,18 @@ impl ReadArgumentError {
         body
     }
 }
+/// A line range of a document source (one that is not read as UTF-8 text)
+/// that spans more than one page, block, slide, table row or worksheet row.
+/// Such a source is read one location at a time, so the request's arguments
+/// are invalid for it: `invalid_arguments` on field `range`, never a failed
+/// read.
+pub fn crossed_document_locations() -> ReadArgumentError {
+    ReadArgumentError::new(
+        "invalid_arguments",
+        "range",
+        "range crosses document locations; request one page/block/slide at a time",
+    )
+}
 fn bounded(value: &str, maximum: usize) -> (&str, bool) {
     let mut end = value.len().min(maximum);
     while !value.is_char_boundary(end) {

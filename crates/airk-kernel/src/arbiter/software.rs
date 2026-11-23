@@ -298,6 +298,34 @@ pub(super) const FIRST_CONTEXT_ESTIMATE_MS: u64 = 12_000;
 pub(super) const SINGLE_CONTEXT_CALL_MS: u64 = 30_000;
 pub(super) const READ_RESERVE_MS: u64 = 10_000;
 
+/// The `after` of a hit's whole-chunk `context` read (which starts at the
+/// hit's first cited line with `before` 0), or `None` when no such read is
+/// planned. The hit's own citation decides, never its path:
+///
+/// - A line-located hit (`Lines`, or a `Mapped` region of a UTF-8 composite
+///   host) admits any window inside the file: `line_after`.
+/// - A hit at a native document location (page, block, slide, table row or
+///   worksheet row) is read by the context tool one location at a time; a
+///   window that crosses into the next location is refused. Its cited lines
+///   lie inside its own location, so the read is confined to them, and it is
+///   planned only when the hit's text was cut (`truncated`, as a focused
+///   snippet is). An uncut hit already carries those lines whole, so the
+///   read would add nothing.
+pub(crate) fn whole_chunk_after(hit: &Hit, line_after: usize) -> Option<usize> {
+    let citation = &hit.citation;
+    match citation.location {
+        airk_core::DocumentLocation::Lines { .. } | airk_core::DocumentLocation::Mapped { .. } => {
+            Some(line_after)
+        }
+        _ => hit.truncated.then(|| {
+            citation
+                .end_line
+                .saturating_sub(citation.start_line)
+                .min(airk_core::native_reads::CONTEXT_RADIUS_MAX)
+        }),
+    }
+}
+
 /// The software follow-ups promoted into the Answer /3 product path: change
 /// set 1's shape as constants, never an evaluation layer.
 #[derive(Clone, Copy, Debug, PartialEq)]
