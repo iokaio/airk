@@ -16313,3 +16313,71 @@ and the Cargo targets. The spent roots are to be reclaimed with a receipt.
 `07d0a51c` for a complete pass on root s8 (smoke test, all ten munarium
 scenarios, replays, one session with two judges, one Answer with Large, two
 Answers at once); the parity investigation.
+
+### 23 November 2026 at 09:18 UTC — a Context model's decisions stand on a real service; the 64 KiB channel limit found and fixed
+
+**First reply with model-sourced decisions** (root s8, image from `07d0a51c`
+with both fixture decision-mode fixes; pipeline test, verification off):
+5.6 s, body 45,254 bytes, two parts both covered; five card calls all
+dispatched and scored by Compact FP16 on CUDA in top-score mode (split 1,
+plan 2, coverage 2), no fallback; one Focus batch of 8 pairs, all scored; no
+read failure; the arm check and all three smoke conditions pass.
+
+**Regression from `07d0a51c`, found by that run.** With default verification
+every Answer failed with `scoped_observation_unavailable`.
+- **Cause:** the project worker framed every query reply at 65,536 bytes
+  and the frontend read it at the same limit. A larger rendered Answer could
+  not be framed; the worker dropped the stream and the frontend mapped the
+  disconnect to that code, with no observation and nothing logged. The
+  Answer's 131,072-byte limit had never been carried on this channel;
+  `07d0a51c` exposed it by letting the verification receipt grow.
+- **Confirmed live:** an Answer with verification off failed the same way;
+  the largest passing text-only envelope was 63,399 bytes.
+- **Fix `24c506db` (pushed):** an Answer's query result uses a frame of
+  147,456 bytes between worker and frontend; other tools keep 65,536; an
+  over-size reply gets a typed `reply_frame_exceeded`. The 131,072 limit is
+  stated as the rendered text-only tool result. No identity moved.
+  Supervisor and frontend selections 108 of 108; Clippy exit 0 with all and
+  default features. Not yet run on a live service.
+- **Not changed:** broker admission still charges 64 KiB per query; the
+  Admin plane's and the `airkctl` admin call's byte caps are not checked.
+
+**Reproducibility.** Three runs of one question on one lifetime had the same
+eight reads, in the same order, with the same sizes. Two runs differed only
+because the CUDA Focus stage had been unloaded while idle and later Answers
+ran without it.
+- **Harness:** before every step that issues Answers, and between sessions,
+  the plan verifies each required stage is active and re-enables it,
+  recording the reload; the idle-unload time is set longer than a gate
+  lifetime where the fixture allows.
+- **Product gap, owner after the gate:** an Answer does not reload an
+  idle-unloaded stage on demand, as plan section 12.5 expects.
+
+**Transport parity tests: cause found, by reading** (parity agent).
+- Every inner read's body carries `request_id` and an observation timestamp,
+  and the Answer hashes the body into the record's identity, so record ids
+  and every digest derived from them differ on every run. The comparator
+  hid this by renaming ids by position.
+- The 491-byte difference seen in the failing pairs is a readiness
+  annotation attached after each read: when its observation meets
+  contention among four concurrent reads, a shorter "unavailable" note is
+  silently substituted. Evidence (paths, lines, text) is equal between runs.
+- **Decision by the primary agent under plan 12.9 (change-log entry 54 when
+  it lands):** an Answer's record identity excludes volatile per-read
+  status; custody keeps the result as received; the reply carries one status
+  observation at reply level when asked; a readiness observation that meets
+  contention is retried. This amends Core arbiter CONTRACT lines 321 to 327.
+  It is built on branch `loop/reproducible-records` in its own worktree and
+  is not in the next evaluation image.
+
+**Large, one pipeline data point:** on one question with decisions standing,
+Large (reload 19.6 s, Answer 6.6 s) made the same five choices as Compact
+with different scores.
+
+**Roots.** s8 has spent its CUDA lifetime. s10 is closed and takes the
+complete pass; s11 is building. The spent roots were reclaimed (receipt
+`L5C\runs\reclaim-20261123.json`): D: free rose from 832,986,632,192 to
+956,099,747,840 bytes.
+
+**Running at this entry:** the shakedown agent, rebuilding from `24c506db`
+for the complete pass on s10; the parity agent on its branch.
