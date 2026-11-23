@@ -116,6 +116,10 @@ invocation key gives exact retry recovery. The same key in the same scope
 with the same request recovers its job, finished, failed or running. The same
 key with a changed request, or another `include_status` or reserve, is the
 typed refusal `answer_invocation_conflict`. A key lives as long as its job.
+A key recovers its job only on a publication that job is valid for, as a
+digest and a continuation do: after a new publication the same key and
+request run again, and the key then names the new job (independent review
+of the rebased L2c, `an_invocation_key_never_recovers_a_result_of_an_older_publication`).
 
 **Failures belong to their invocation** (M5, H1). A failed job's failure goes
 to the calls waiting on it when it fails, to a continuation that names the

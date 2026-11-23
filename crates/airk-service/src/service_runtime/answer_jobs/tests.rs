@@ -4,7 +4,7 @@
 //! releases through events, waiting on them under deadlines, never sleeping.
 use super::estimate::{Shape, StageCosts};
 use super::schedule::{
-    ENTRY_OVERHEAD_BYTES, EntryState, JobView, Schedule, Submitted, gathering_limit,
+    ENTRY_OVERHEAD_BYTES, EntryState, JobOptions, JobView, Schedule, Submitted, gathering_limit,
     publication_digest, request_digest,
 };
 use super::*;
@@ -560,6 +560,47 @@ fn results_are_kept_ten_minutes_then_dropped() {
             .view(&scope(4), &id, finished_at + RETENTION)
             .is_none()
     );
+}
+
+/// An invocation key recovers its own job only on the publication that job
+/// ran on: after a new publication the same key and request run again, as a
+/// call by digest or by continuation would (plan 12.4.2, "invalidated by a
+/// new publication").
+#[test]
+fn an_invocation_key_never_recovers_a_result_of_an_older_publication() {
+    let mut table = schedule(JobTableConfig::default());
+    let keyed = JobOptions {
+        key: Some("turn-1".into()),
+        ..JobOptions::default()
+    };
+    let submit_keyed = |table: &mut Schedule<&'static str>, generation: u8, now: u64| {
+        table
+            .submit_with(
+                scope(4),
+                small("kept", 300_000),
+                None,
+                Some(publication(generation)),
+                now,
+                &keyed,
+            )
+            .unwrap()
+    };
+    let id = admitted(submit_keyed(&mut table, 1, 0));
+    table.dispatch(0);
+    table.finish(&id, done_on("kept", 100, 1), 5 * SECOND);
+    // Same publication: the key recovers the job.
+    assert!(matches!(
+        submit_keyed(&mut table, 1, 6 * SECOND),
+        Submitted::Attached(attached) if attached == id
+    ));
+    // A newer publication: the key runs the request again.
+    let again = admitted(submit_keyed(&mut table, 2, 7 * SECOND));
+    assert_ne!(again, id);
+    // And from then on the key names the new job.
+    assert!(matches!(
+        submit_keyed(&mut table, 2, 8 * SECOND),
+        Submitted::Attached(attached) if attached == again
+    ));
 }
 
 /// Review C1 and S4: results, failures and running jobs of an older

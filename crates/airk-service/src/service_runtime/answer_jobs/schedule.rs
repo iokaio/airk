@@ -605,12 +605,19 @@ impl<R> Schedule<R> {
         if let Some(key) = &key
             && let Some(id) = self.keys.get(key).copied()
         {
-            match self.jobs.get(&id) {
-                Some(job) if job.scope == scope && job.request_digest == digest => {
-                    return Ok(Submitted::Attached(id));
-                }
-                Some(_) => return Ok(Submitted::KeyConflict),
-                None => {
+            // A key recovers its job only on the publication that job is
+            // valid for, as a digest or a continuation does; after a new
+            // publication the same key and request run again.
+            let named = self.jobs.get(&id).map(|job| {
+                (
+                    job.scope == scope && job.request_digest == digest,
+                    self.publication_ok(job, publication),
+                )
+            });
+            match named {
+                Some((true, true)) => return Ok(Submitted::Attached(id)),
+                Some((false, _)) => return Ok(Submitted::KeyConflict),
+                Some((true, false)) | None => {
                     self.keys.remove(key);
                 }
             }
