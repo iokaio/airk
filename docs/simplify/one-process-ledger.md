@@ -16698,3 +16698,98 @@ CUDA lifetimes: L32 and S1. D: free 844,230,492,160 bytes at 13:43 UTC.
 **Running at this entry:** the LH agent (branch `loop/lh`); the L2c
 reviewer on the four open items. The review queue holds no unreviewed
 branch.
+
+### 23 November 2026 at 17:14 UTC — LH reviewed, ready for its acceptance run; the L2c items closed; the intermittent `publication_busy` is a fault of main
+
+**Restart.** The VS Code host of the coordinating session hung at about
+15:15 UTC with the extension host spinning and was closed. The LH agent and
+the L2c reviewer froze mid-call; nothing committed was lost. Both were
+restarted from a Claude desktop session (primary agent there) at 15:26 UTC
+as fresh Opus agents at medium effort, each given its original brief word
+for word plus the live git state. The L2b worktree was found detached at
+`705ab312` with the item 2–4 work in a stash; the new reviewer restored
+both. Two orphaned PowerShell processes from 21 November, each spinning a
+core for about 34 hours, were stopped on the user's word.
+
+**L2c follow-up, `loop/l2b-wire` head `1bf80aed`** (four commits above
+`a46ff188`, signed off, not pushed, not merged):
+
+| Item | Outcome |
+| --- | --- |
+| 1. Intermittent `publication_busy` | **A fault of main, not of the job path.** `admin_sign_in_reads_and_cross_plane_refusals` failed 7 of 20 on the branch and 7 of 20 on `705ab312`. Every capture is `CurrentReadContention` with SQLite extended code 261 (`SQLITE_BUSY_RECOVERY`): a read-only current-database open with `busy_timeout(0)` (`airk-store/src/current/database.rs:402`, verified by the primary) meeting a WAL-index rebuild, and query threads get no open admission. In the job test the whole-Answer refusal comes from `Kernel::arbiter_publication` via `focus_pair_tokens` in `Loop::rounds`, an open the loop does not repeat. No limit relaxed, no retry added. **Open, release-relevant:** two Answers at once on one service can fail this way. Owner: the store's reader-open admission or the kernel arbiter's publication read; to be fixed before the L7 runs rely on concurrent Answers. |
+| 2. Reply at its limit with status and the delivery record | Test added (`0d52546c`); fits 131,072 rendered and the 147,456-byte frame; reserve unchanged, only extracted |
+| 3. `query_submitted` on `answer_job_stuck` / `answer_authority_ended` | `true` once the loop ran, `false` only before it began (`db314433`); service `answer_jobs` CONTRACT |
+| 4. Combined frontend job options | Validated as on the single-index path; `fresh` answers; `invocation_key`, `wait_ms`, `interactive` refused with `invalid_native_arguments` before any member is queried (`02f46ebc`); combined Answer CONTRACT. The refusal does not name the option (left) |
+
+Reviewer validation: Clippy `-D warnings` on mcp, frontend, service,
+supervisor and cli, all targets, all and default features, exit 0; Nextest
+163 of 163 (MCP `answer_jobs`, supervisor `response_tests`, frontend); CLI
+`combined_reads` Answer tests 8 of 8; `check-repo.ps1` and `git diff --check`
+clean. Logs: `answer-loop\L2b\scratch-review`. Not run: rustfmt, a live
+service check. Primary review read items 3 and 4 and verified the cited
+open; accepted. The branch still merges after LH, rebased over it (LH
+reduced its `answer_jobs/estimate.rs` to one rung, so that rebase
+conflicts).
+
+**LH, `loop/lh` head `ee552125`** (seven commits above `9d63df97`, change-log
+entries 57–64, signed off, not pushed, not merged):
+
+| Commit | Content |
+| --- | --- |
+| `e4829569` | Dispatch census set per fixture lifetime |
+| `c01c5a13` | Harness arm A (Arbiter only); Large out of the L7 plan |
+| `47b236b5` | Kernel test: Focus and Arbiter are separate switches |
+| `b43b1de0` | Retained configuration/4 fixtures, catalog binding, status sample |
+| `b633b25b` | Large-only private qualification runners and CUTLASS diagnostics removed (narrower than the inventory; callers from identity files went with commit 5) |
+| `360178c5` | The one identity, state and wire move: `SelectedModel::{Focus, Arbiter}`, public value `arbiter`, `device-catalog/2`, configuration/4 → /5 with its migration, schema `arbiter_device_contract` 3, review items L-a/L-b/L-c |
+| `ee552125` | Names Focus and Arbiter in Admin (assets rebuilt), MCP help, VS Code help, README and documents; re-emission record |
+
+- **Identities moved** (old → new, each pinned with the old value asserted
+  absent and recorded in its CONTRACT): Core loop semantics `99b87f98…` →
+  `0a7130f7…`; split, plan, coverage, follow-up and batched Focus policies;
+  `runtime.rs` `c9008eef…` → `66b02a58…` (proved by reverse-applying the LH
+  patch in `runtime_row_replay`), `cuda.rs`, `cuda/diagnostic.rs`, the CPU
+  Focus row; the Arbiter FP16 bounded policy. Identity-feeding files changed
+  only in `360178c5` (primary checked per commit).
+- **Re-emitted once from `360178c5`:** Arbiter FP16 loop profile
+  `fd4a1f31…`, manifest `e90b7f75…`; CUDA Focus 1024 unchanged
+  (`ef232291…`). Pairs `pair-C-r4` (both) `6045d57f…` and `pair-A-r4`
+  (Arbiter only) `df1bb1c7…`; the r3 pairs are withdrawn and
+  `gate-inputs.json` must move to r4 before the spec is built.
+- **Migration:** a stored Large selection becomes Context disabled with
+  `context_retired: context_large` and a reason; Arbiter is never
+  auto-selected; the /4 bytes are retained; evidence reads never migrate.
+  Tests: Core `device::migration` 6, service `retained_tests` 4, a store
+  test on a real store.
+- **Validation** (target `target-cuda`, logs `answer-loop\L5C\logs`):
+  Clippy `-D warnings` on the ten touched crates, default and all features,
+  and inference `gpu-cuda,test-support`, exit 0; Nextest main selection
+  1,156 run, 1,144 passed, 12 failed (2 fixed and rerun with the pin and
+  migration set, 20 of 20); inference CUDA 8 of 8, retrieval CUDA 20 of 20;
+  MCP help 20 of 20; `combined_reads` Answer 5 of 5; harness unittest 237
+  OK; `contract_types.py arbiter --check` exit 0; Admin 77 of 77, VS Code
+  explorer 16 of 16, UI help 6 of 6; `check-repo.ps1` and
+  `git diff --check` before each of commits 4–6.
+- **Failures not caused by LH** (primary checked the logs):
+  `ambiguous_or_corrupt_configuration_status_never_invents_a_legacy_digest_or_writable_config`
+  already failed on 22 November (`L5C\logs\f8-nextest-service.log`, before
+  LH); 10 `airkctl agents::config` tests refuse in the nested worktree
+  ("cannot safely retain a recovery copy here"); Admin `serviceSetup.dom`
+  fails on a browser DOM deadline. Owners: the base failure goes with the
+  entry-40 base failures; the other two are environment refusals of this
+  worktree, to be shown passing on the main checkout before merge.
+- **Not verified:** the Linux-only files
+  (`retrieval .../cuda/linux/product.rs`, inference `gnu_cutlass.rs`; step
+  LX); the Linux warm of the new profile; the asset-custody test
+  `actual_large_finalization…` needs a new input once Large has left the
+  catalog (owner: primary).
+
+**Primary review: LH accepted for its acceptance run.** Next action: build
+the image from `ee552125`, move `gate-inputs.json` to the r4 pairs, and run
+the four combinations (neither, Focus only, Arbiter only, both) on a fresh
+CUDA fixture root. LH merges into `feat/arbiter-final` after that run; L2c
+follows, rebased over it.
+
+**Roots and disk.** The S1 base had closed at 13:39 UTC (previous entry);
+nothing of it was running at the restart. D: free 786,180,501,504 bytes at this
+entry. Nothing is running.
