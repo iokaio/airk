@@ -16896,3 +16896,93 @@ entry 65 (`c4e53359`) 15 of 20; with entry 66, 20 of 20.
 `gate-inputs.json` to the r4 pairs, the four switch combinations on a fresh
 CUDA root). LH and L2c are rebased over `15b1b8cd` when they merge. D: free
 777,676,390,400 bytes. Nothing is running.
+
+### 23 November 2026 at 19:55 UTC — LH accepted on Windows CUDA: the four switch combinations on one live service; LH merged into `feat/arbiter-final`
+
+**User's word:** start LH's acceptance run.
+
+**Source.** `loop/lh` merged with `feat/arbiter-final` `fe024f5e` (entries 65
+and 66) as `2f3404ad`; the only conflict, the change log, was resolved to
+entries 55 to 66 in order. On `2f3404ad` (wrapper `L5C\cargo.ps1`, target
+`target-cuda`): Clippy `-D warnings` on store, kernel, mcp and cli, all
+targets, all features, exit 0 (65 s); Nextest `database::recovery_tests` and
+`scoped_device_diagnostics_tests` 8 of 8 (291 s).
+
+**Acceptance run** (one Opus agent at medium effort; receipts
+`answer-loop\L5C\lh-acceptance`, 79 files, all owned by `TYAI\tdotn`;
+primary agent checked `summary.json` per reply):
+
+- **Image:** `lh-accept-7cd59fe1` from `2f3404ad`, clean tree. Service
+  `7cd59fe1…18ecc`, CLI `e64be98a…fa54`.
+- **Lifetime:** one CUDA lifetime on root S1 (`06-gate-lg-C32`, a restart of
+  `06-gate-lg-S1-base`), pair-C-r4, dispatch census 4096, idle unload 0. It
+  was switched only by Configure, closed cleanly and is restartable.
+- **Smoke:** munarium-A1 and bookbuilder-A1 from the frozen set at the
+  default budget (380,000) and default verification, each step:
+
+| Step | Configuration | Problems | Failed records | Focus calls/pairs per reply | Context decisions |
+| --- | --- | --- | --- | --- | --- |
+| N | neither | 0 | 0 | 0 / 0 | deterministic only |
+| F | Focus only (`focus-1024-cuda`) | 0 | 0 | 1 / 4 | deterministic only |
+| C | both (Arbiter `e90b7f75`) | 0 | 0 | 1 / 8 | 5 and 4 `model`/arbiter (CUDA, FP16); munarium also 1 deterministic coverage |
+| A | Arbiter only | 0 | 0 | 0 / 0 | 5 and 5 `model`/arbiter |
+| N2 | neither again (disable **failed**) | 3 per reply | 0 | 0 / 0 | 5 `model`/arbiter: the arm check refused it correctly |
+| N3 | neither again (disable repeated once) | 0 | 0 | 0 / 0 | deterministic only |
+
+  Stage warm: Focus 11.5 s, Arbiter 9.9 s; disable about 1 s each. GPU
+  memory: 1,153 MiB idle, 2,928 with Focus, 7,311 with both, 7,808 with
+  Arbiter only, 1,390 with neither.
+- **What the user sees:** live `airk_help` (topic `arbiter`) names Focus and
+  Arbiter as separate switches, with no Large. Before any switch, `airkctl
+  arbiter status` showed `configuration/5`: both stages disabled, models
+  `focus` and `arbiter`. **After every switch, that read refused with
+  `arbiter_unavailable`** (the fixture switches through the legacy
+  configuration/3 Configure), so configuration/5 with selected values was
+  not observed. Admin was not observed live (its assets are in `airk.exe`,
+  not in the fixture image); source and built assets carry Focus and Arbiter.
+- **Acceptance (plan 12.8 row LH):** each of the four combinations ran the
+  loop on a real service and passed its smoke, with model-sourced decisions
+  where a model was on. **Accepted** by the primary agent, with the open
+  items below.
+
+**Open items** (owners named; none blocks LH's merge):
+1. **Product, release-relevant, a third failure class:** after the
+   Arbiter-only Answers, the configuration emitter's status read was refused
+   `scoped_connection_unavailable` (not retryable, query not submitted;
+   "canonical status refused source publication"), so the first disable
+   failed. One read-only probe later both indexes read, and the agent
+   repeated the disable once, which succeeded. Owner: primary; diagnose like
+   entries 65 and 66 before L7, which switches configurations.
+2. **Product question:** `airkctl arbiter status` refuses
+   (`arbiter_unavailable`) once a legacy Configure has named an
+   evaluation-only CUDA profile. Owner: primary; decide whether that is
+   intended.
+3. **Harness:** `fixture.py` reads `fixture\ready.json` as soon as it exists,
+   while the service is still writing it (`PermissionError` errno 13). This
+   spent root L32 before any combination ran. Owner: primary; fix before the
+   next lifetime.
+4. **Harness gap:** `make_loop_spec.py shakedown --arm` accepts F, C and L,
+   not A or "neither". The agent built those specs through
+   `lh_make_specs.py`. That script and four probes (`lh_*.py`) live only in
+   the ignored `L5C\lh-acceptance`, against the rule that authored code
+   lives in maintained folders. Owner: primary; move the arms into
+   `make_loop_spec.py` (and the probes into `scripts/arbiter-answer-eval`,
+   with README) when the harness is next changed, before L7.
+5. **Roots:** L32 and S1 are spent; **no spare gate root is left.** L7 needs
+   fresh bases.
+
+**Merge.** The LH review's two pre-merge conditions were checked in the main
+checkout on `2f3404ad` (target `target-l2b`):
+- airkctl `agents::config` failed 12 of 50 with the agent shell's
+  `GIT_EDITOR`, `GIT_ASKPASS` and `GIT_TERMINAL_PROMPT` set, and passed **50
+  of 50** without them. This is an environment refusal, not LH: LH changed
+  only `airkctl/src/cli/arbiter.rs`.
+- Admin `serviceSetup.dom` passed **7 of 7**.
+
+`feat/arbiter-final` was fast-forwarded to `2f3404ad`. `gate-inputs.json` now
+names the r4 pairs (copy of the old file:
+`lh-acceptance\gate-inputs.before-r4.json`).
+
+**State.** D: free 770,214,612,992 bytes. Nothing is running; GPU and Cargo owner
+markers released. Next: open item 1, then the L2c merge (rebased over LH),
+fresh bases and L7.
