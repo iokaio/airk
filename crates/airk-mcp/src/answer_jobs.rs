@@ -188,6 +188,9 @@ pub struct AnswerJobRefusal {
     pub code: String,
     pub message: String,
     pub retryable: bool,
+    /// The job's work had started reading when it was refused: its reads
+    /// ran, and a retry repeats them. False only when nothing was read.
+    pub query_submitted: bool,
 }
 impl std::fmt::Display for AnswerJobRefusal {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -196,41 +199,48 @@ impl std::fmt::Display for AnswerJobRefusal {
 }
 impl std::error::Error for AnswerJobRefusal {}
 impl AnswerJobRefusal {
-    fn new(code: &str, message: &str, retryable: bool) -> Self {
+    fn new(code: &str, message: &str, retryable: bool, query_submitted: bool) -> Self {
         Self {
             code: code.into(),
             message: message.into(),
             retryable,
+            query_submitted,
         }
     }
-    /// The same key in this authority already names another request.
+    /// The same key in this authority already names another request; no job
+    /// was made and nothing was read.
     pub fn key_conflict() -> Self {
         Self::new(
             "answer_invocation_conflict",
             "this invocation key already names a different Answer request; use a new key",
             false,
+            false,
         )
     }
     /// The job's grant, lease or owner ended before or while it ran.
-    pub fn authority_ended() -> Self {
+    /// `query_submitted`: whether the job had started its reads.
+    pub fn authority_ended(query_submitted: bool) -> Self {
         Self::new(
             "answer_authority_ended",
             "the Answer job's read authority ended before it finished; send the request again on a live connection",
             true,
+            query_submitted,
         )
     }
-    /// The job passed its deadline and grace; its owner is quarantined.
+    /// The job passed its deadline and grace; its owner is quarantined. Its
+    /// reads ran, and may still be running.
     pub fn stuck() -> Self {
         Self::new(
             "answer_job_stuck",
             "the Answer job did not finish within its deadline; its owner stopped admitting work",
+            true,
             true,
         )
     }
     pub(crate) fn receipt(&self) -> serde_json::Value {
         serde_json::json!({"error":{
             "code":self.code,"message":self.message,"retryable":self.retryable,
-            "query_submitted":false
+            "query_submitted":self.query_submitted
         }})
     }
 }
@@ -484,9 +494,9 @@ fn work(
                 return Err(not_run("the Answer job's owner is stopping"));
             }
             // Its grant, lease or owner may have ended while it was queued:
-            // that refusal is this invocation's alone.
+            // that refusal is this invocation's alone, and nothing was read.
             if kernel.scoped_read_fingerprint().is_err() {
-                return Err(refused(AnswerJobRefusal::authority_ended(), false, None));
+                return Err(refused(AnswerJobRefusal::authority_ended(false), false, None));
             }
             let job_deadline = Instant::now()
                 .checked_add(Duration::from_millis(admission.run_ms.max(1)))
@@ -500,8 +510,9 @@ fn work(
             let kernel = match prepared {
                 Ok(kernel) => kernel,
                 Err(error) if kernel.scoped_read_fingerprint().is_err() => {
+                    // Ended while its attempt was minted: still nothing read.
                     let _ = error;
-                    return Err(refused(AnswerJobRefusal::authority_ended(), false, None));
+                    return Err(refused(AnswerJobRefusal::authority_ended(false), false, None));
                 }
                 Err(error) => return Err(failure(&error)),
             };
@@ -585,8 +596,9 @@ fn run_job(
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(run))
         .unwrap_or_else(|_| Err(anyhow::anyhow!("retrieval worker failed")))
         .map_err(|error| {
+            // The loop had started: its reads ran.
             if kernel.scoped_read_fingerprint().is_err() {
-                refused(AnswerJobRefusal::authority_ended(), false, None)
+                refused(AnswerJobRefusal::authority_ended(true), false, None)
             } else {
                 failure(&error)
             }

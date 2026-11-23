@@ -76,10 +76,13 @@ fn a_failure_keeps_the_receipt_the_direct_path_renders_and_says_what_a_retry_may
     assert!(!own.retain && !own.not_run);
     assert_eq!(rendered(&delivered_failure(own.payload)), rendered(&refused));
     // A refusal of the job path itself renders as its typed receipt.
-    for refusal in [
-        AnswerJobRefusal::authority_ended(),
-        AnswerJobRefusal::stuck(),
-        AnswerJobRefusal::key_conflict(),
+    // Each says whether the job's reads ran (independent review, item 3): a
+    // client told nothing was submitted may replay work that did run.
+    for (refusal, submitted) in [
+        (AnswerJobRefusal::authority_ended(false), false),
+        (AnswerJobRefusal::authority_ended(true), true),
+        (AnswerJobRefusal::stuck(), true),
+        (AnswerJobRefusal::key_conflict(), false),
     ] {
         let carried = refused_failure(refusal.clone());
         assert!(!carried.retain);
@@ -88,6 +91,7 @@ fn a_failure_keeps_the_receipt_the_direct_path_renders_and_says_what_a_retry_may
         let receipt: serde_json::Value = serde_json::from_str(text).expect("a JSON receipt");
         assert_eq!(receipt["error"]["code"], refusal.code.as_str(), "{body}");
         assert_eq!(receipt["error"]["retryable"], refusal.retryable, "{body}");
+        assert_eq!(receipt["error"]["query_submitted"], submitted, "{body}");
     }
 
     // An untyped failure is kept with its message, and renders as before.
@@ -473,7 +477,12 @@ async fn a_jobs_work_runs_on_its_own_kernel_and_attempt_after_its_maker_is_gone(
         .map(|reply| reply.elapsed_ms)
         .expect_err("a revoked job kernel reads nothing");
     assert!(!ended.not_run && !ended.retain);
-    assert!(delivered_failure(ended.payload).is::<AnswerJobRefusal>());
+    let ended = delivered_failure(ended.payload);
+    let refusal = ended
+        .downcast_ref::<AnswerJobRefusal>()
+        .expect("a typed job refusal");
+    // Refused before its loop started: nothing was read.
+    assert!(!refusal.query_submitted, "{refusal:?}");
 
     // Once the owner stops, a job does not start. (A fresh session: the
     // maker above shared, and revoked, the fixture's session scope.)
@@ -546,6 +555,11 @@ async fn a_job_past_its_deadline_quarantines_its_owner_and_holds_capacity_until_
     assert_eq!(owner.jobs_in_flight(), 0);
     let receipt = rendered(&delivered_failure(failure.payload));
     assert!(receipt.to_string().contains("answer_job_stuck"), "{receipt}");
+    // Its reads ran (and may still run): the receipt says so.
+    let text: serde_json::Value = serde_json::from_str(
+        receipt["content"][0]["text"].as_str().expect("a text block"),
+    )?;
+    assert_eq!(text["error"]["query_submitted"], true, "{receipt}");
     // Its capacity is not free until the blocking work has returned.
     let mut settling = failure.settling.expect("a stuck job is still settling");
     let early = tokio::select! {

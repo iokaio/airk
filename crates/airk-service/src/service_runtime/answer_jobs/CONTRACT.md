@@ -77,10 +77,13 @@ force when it was submitted ends: at most 300 s from that lease's
 installation, whatever its own `deadline_ms`. A queued job whose lease ends
 before dispatch is refused at dispatch with the typed, retryable
 `answer_authority_ended`, for its own invocation only; nothing is kept for
-other callers. Carrying jobs across a renewal of the same grant revision
-(the supervisor moving their kernels to the renewed entry, and the card and
-Focus calls naming the renewed lease) is the follow-up that would lift this
-bound. Owner: L2c follow-up, before Answers longer than the lease are relied
+other callers. The refusal's `query_submitted` says whether the job's reads
+had started: `false` only when it ended before its loop began (at dispatch
+or while its attempt was minted), so nothing was read; `true` when it ended
+while the loop ran, so its reads ran and a retry repeats them. Carrying
+jobs across a renewal of the same grant revision (the supervisor moving
+their kernels to the renewed entry, and the card and Focus calls naming the
+renewed lease) is the follow-up that would lift this bound. Owner: L2c follow-up, before Answers longer than the lease are relied
 on.
 
 **Every call is authorized again.** Status, result and cancel reach a job
@@ -149,7 +152,8 @@ deadline plus the 5 s grace:
 - its owner is quarantined (`AnswerJobAuthority::stuck`; an in-process
   owner's `StuckReason::QueryDeadline`), so it admits nothing more;
 - the calls waiting on the job get the typed unretained failure
-  `answer_job_stuck`;
+  `answer_job_stuck`, with `query_submitted: true` (its reads ran and may
+  still be running);
 - the owner stops counting the job as running, so it cannot hold the idle
   exit open for ever;
 - the job's gathering slot stays held, as settling, until the blocking task
