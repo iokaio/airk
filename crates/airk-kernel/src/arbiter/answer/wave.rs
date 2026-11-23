@@ -8,7 +8,10 @@
 //! that read runs. Every claimed read runs, so the reads that ran are always
 //! a prefix of the wave: the unstarted rest is released exactly as in a
 //! sequential driver. A read that panics halts the wave; the panic of the
-//! lowest such read is raised again after every worker has stopped.
+//! lowest such read is raised again after every worker has stopped. Each
+//! threaded read runs under the caller's inherited worker bindings
+//! (`service_execution::Inherited`), as an inline read does on the caller's
+//! own thread; an unbound caller binds nothing.
 use std::sync::{
     Mutex, PoisonError,
     atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -50,6 +53,11 @@ pub(super) fn run<T: Send>(
             hook(count);
         }
     });
+    // A read is part of the caller's work: it runs under exactly the caller's
+    // worker bindings (execution scope, embedding connector, accepted grant),
+    // bound for that read alone and restored when it returns, so nothing one
+    // read binds reaches the next read on the same worker.
+    let inherited = crate::service_execution::Inherited::capture();
     let next = AtomicUsize::new(0);
     let halted = AtomicBool::new(false);
     let slots: Vec<Mutex<Option<std::thread::Result<T>>>> =
@@ -66,8 +74,10 @@ pub(super) fn run<T: Send>(
                     if index >= count {
                         break;
                     }
-                    let value =
-                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| read(index)));
+                    let value = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        let _bound = inherited.bind();
+                        read(index)
+                    }));
                     if value.as_ref().map_or(true, halt) {
                         halted.store(true, Ordering::Release);
                     }

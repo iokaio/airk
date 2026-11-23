@@ -241,6 +241,20 @@ What holds:
   log or custody. A read that panics halts the wave and its panic (the
   lowest-index one) is raised again. Governing `file_info` probes, batched
   Focus and card calls run on the driver thread at the round barrier.
+- **A wave worker reads as the caller.** The runner captures the driver
+  thread's worker bindings (`service_execution::Inherited`: the in-process
+  `ExecutionScope`, the embedding `ConnectorScope` and the accepted grant's
+  allowance) before it spawns, and binds them around each threaded read,
+  restoring the worker's previous bindings when the read returns or unwinds.
+  A read therefore finds the same embedding connector, drains, cancels and
+  expires at its checkpoints exactly as an inline read on the driver thread
+  does, and nothing one read binds reaches the next read on that worker or
+  the caller. An unbound driver (a child-process owner) binds nothing, so its
+  workers keep the process slots. Everything else a read is fenced by
+  (deadline, read attempt and its cancellation, revision, publication fence,
+  scoped-read authority) is carried by the reader and its arguments, not by
+  the thread. Tests `every_wave_worker_reads_under_the_callers_scopes` and
+  `a_binding_left_on_a_worker_reaches_neither_its_next_read_nor_the_caller`.
 - **Per-part model shares.** Shares are cut after Split. A card call batches
   rosters of one part only and is charged to that part's slot share; its
   reservation is capped by the part's token share. Focus is sized by each

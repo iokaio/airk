@@ -131,6 +131,153 @@ fn no_read_is_claimed_after_the_reserve_or_a_halting_read() {
     assert!(run(0, &|| false, &|index| index, &|_| false).is_empty());
 }
 
+/// A connector a read can recognize: the real thread-local lookup
+/// (`embedding_worker::connector`) must return exactly this one.
+struct Marked;
+impl airk_retrieval::embedding_worker::Connector for Marked {
+    fn open(
+        &self,
+        _location: airk_retrieval::embedding_worker::ModelLocation,
+        _identity: &str,
+    ) -> anyhow::Result<std::sync::Arc<dyn airk_retrieval::embedding_worker::RemoteSession>> {
+        anyhow::bail!("test connector opens nothing")
+    }
+}
+
+fn marked_scope() -> (
+    airk_retrieval::embedding_worker::ConnectorScope,
+    std::sync::Arc<dyn airk_retrieval::embedding_worker::Connector>,
+) {
+    let connector: std::sync::Arc<dyn airk_retrieval::embedding_worker::Connector> =
+        std::sync::Arc::new(Marked);
+    let scope = airk_retrieval::embedding_worker::ConnectorScope::new();
+    scope.install(connector.clone()).unwrap();
+    (scope, connector)
+}
+
+/// The thread's connector is exactly `expected` (not a process fallback).
+fn sees(expected: &std::sync::Arc<dyn airk_retrieval::embedding_worker::Connector>) -> bool {
+    airk_retrieval::embedding_worker::connector()
+        .is_ok_and(|found| std::sync::Arc::ptr_eq(&found, expected))
+}
+
+fn worker_identity(byte: u8) -> airk_core::service::WorkerIdentity {
+    use airk_core::identity::{Incarnation, Sha256Digest};
+    airk_core::service::WorkerIdentity {
+        service: Incarnation::from_bytes([byte; 16]),
+        worker: Incarnation::from_bytes([byte.wrapping_add(1); 16]),
+        project: Sha256Digest::from_bytes([byte; 32]),
+        fencing_generation: 1,
+    }
+}
+
+/// A wave of two and of four reads: every read, on a worker thread, sees the
+/// caller's connector, the caller's execution scope and the caller's accepted
+/// grant, so a canceled grant stops the read's own checkpoint. On the old
+/// runner the workers saw none of them: the connector lookup failed with
+/// "embedding worker is unavailable" and the checkpoint passed.
+#[test]
+fn every_wave_worker_reads_under_the_callers_scopes() -> anyhow::Result<()> {
+    use crate::service_execution as execution;
+    let root = tempfile::tempdir()?;
+    let identity = worker_identity(9);
+    let scope = execution::ExecutionScope::new();
+    scope.install(root.path(), identity)?;
+    let (connector_scope, connector) = marked_scope();
+    let _execution = scope.bind_thread();
+    let _connector = connector_scope.bind_thread();
+    let caller = std::thread::current().id();
+    for (turn, count) in [(30u8, 2usize), (31, 4)] {
+        let grant = airk_core::service_resources::WorkAllowance {
+            id: airk_core::identity::Incarnation::from_bytes([turn; 16]),
+            identity,
+            job: airk_core::identity::Sha256Digest::from_bytes([turn; 32]),
+            extraction_threads: 1,
+            inference_threads: 1,
+            working_memory_bytes: 128 << 20,
+            background_io_bytes_per_second: 1 << 20,
+            ttl_ms: 60_000,
+        };
+        execution::activate(&grant)?;
+        execution::run(grant.clone(), || {
+            execution::control(identity, grant.id, false, true, false)?;
+            let seen = run(
+                count,
+                &|| false,
+                &|_| {
+                    let off_caller = std::thread::current().id() != caller;
+                    let stopped = execution::checkpoint()
+                        .err()
+                        .is_some_and(|stop| stop.is::<execution::Canceled>());
+                    (
+                        off_caller,
+                        sees(&connector),
+                        execution::ExecutionScope::current().is_some(),
+                        stopped,
+                    )
+                },
+                &|_| false,
+            );
+            assert_eq!(
+                seen,
+                vec![(true, true, true, true); count],
+                "wave of {count}: (off the caller, connector, execution scope, canceled grant)"
+            );
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
+/// A binding a read leaves behind on its worker never reaches the worker's
+/// next read, and nothing a worker bound reaches the caller.
+#[test]
+fn a_binding_left_on_a_worker_reaches_neither_its_next_read_nor_the_caller() {
+    let (caller_scope, caller_connector) = marked_scope();
+    let (stray_scope, stray_connector) = marked_scope();
+    let reads = 2 * READS_IN_FLIGHT;
+    let runs = Mutex::new(Vec::new());
+    {
+        let _caller = caller_scope.bind_thread();
+        let seen = run(
+            reads,
+            &|| false,
+            &|_| {
+                let before = sees(&caller_connector);
+                // A read that leaks its own binding on the worker thread.
+                std::mem::forget(stray_scope.bind_thread());
+                runs.lock().unwrap().push(std::thread::current().id());
+                before
+            },
+            &|_| false,
+        );
+        assert_eq!(seen, vec![true; reads], "a read saw another read's binding");
+        // Eight reads on four workers: some worker ran two or more, so the
+        // check above covered a read after a leak on its own thread.
+        let runs = runs.into_inner().unwrap();
+        assert!(
+            runs.iter()
+                .any(|thread| runs.iter().filter(|other| *other == thread).count() > 1),
+            "no worker ran a second read: {runs:?}"
+        );
+        assert!(sees(&caller_connector), "the caller lost its binding");
+        assert!(!sees(&stray_connector));
+    }
+    // The caller's own guard restores it to unbound; a wave from an unbound
+    // caller binds nothing on its workers.
+    assert!(airk_retrieval::embedding_worker::ConnectorScope::current().is_none());
+    let unbound = run(
+        2,
+        &|| false,
+        &|_| {
+            airk_retrieval::embedding_worker::ConnectorScope::current().is_none()
+                && crate::service_execution::ExecutionScope::current().is_none()
+        },
+        &|_| false,
+    );
+    assert_eq!(unbound, vec![true, true]);
+}
+
 #[test]
 fn a_panicking_read_halts_the_wave_and_the_lowest_panic_is_raised() {
     let calls = AtomicUsize::new(0);

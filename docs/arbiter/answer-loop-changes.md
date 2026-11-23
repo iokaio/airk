@@ -2157,3 +2157,60 @@ Numbered 30 until 22 November 2026; renumbered because L4's entries take
   `ambiguous_or_corrupt_configuration_status_never_invents_a_legacy_digest_or_writable_config`.
   Not run: a warm of a loop profile on a device.
 - **Where:** retrieval CUDA `CONTRACT.md` (the protected MHA recipe).
+### 52. Wave workers read under the caller's worker bindings
+
+- **Found by:** a live evaluation service. Inside an Answer every search
+  read of a wave of two or more failed `read_failed` "embedding worker is
+  unavailable; native adapter not installed"; symbols reads succeeded, each
+  part stopped refused at Retrieve, and Focus never ran (`focus_calls` 0,
+  `focus_absent`) although its stage was ready. A one-read wave, which runs
+  inline, worked.
+- **Cause:** the scoped-thread wave of L3-9 (`038472de`, entries 20 and 21
+  describe its reads) spawned plain `std::thread::scope` workers. An
+  in-process owner keeps its execution owner and embedding connector in
+  thread-local slots bound on its runtime threads; a wave worker had none.
+  The MCP reader runs a plan read inline on the calling thread, so the read
+  ran on the unbound worker and `embedding_worker::connector()` fell back to
+  the process slot, which the service process never installs. The same
+  workers also missed the `ExecutionScope` (drain and quarantine at a
+  checkpoint) and the accepted grant's allowance (cancel, stall, expiry,
+  pause); those failed open, which is worse than the visible connector
+  failure. Kernel tests used synthetic readers that need no binding.
+- **Fix:** `answer/wave.rs` captures `service_execution::Inherited` on the
+  driver thread before spawning and binds it around each threaded read; the
+  guard restores the worker's previous bindings when the read returns or
+  unwinds. This is the mechanism the indexing helper threads in
+  `current/update.rs` already use; no new mechanism or dependency edge.
+- **Hunt for the same defect on the Answer path:** the wave is the only
+  thread hop reachable from `Kernel::answer_with`. Card calls, batched Focus,
+  `file_info` probes and Union run on the driver thread. The reader's
+  inline plan read in `airk-mcp` (`execute_verified_policy`, `plan_read`)
+  stays on the calling thread, now bound. Retrieval has no non-test thread
+  hop on the query path (`embedding_batch::parallel_map` is test-only), nor
+  does the store. The combined Answer's frontend `spawn_blocking` calls read
+  only selection snapshots under the control root; member reads go to each
+  member's own owner runtime, whose threads are bound for life. The store's
+  connection admission and quota lock policies are set only inside accepted
+  work (`service_execution::run`), never on a request's driver thread, so a
+  worker matches its driver without them. `ServiceComputeScope` is per thread
+  by design and is never inherited.
+- **Tests (hand-written, waiting on no sleep):** kernel
+  `every_wave_worker_reads_under_the_callers_scopes` binds a real
+  `ConnectorScope` and an installed `ExecutionScope`, cancels an accepted
+  grant, and asserts that every read of a wave of two and of four runs off
+  the caller's thread, finds exactly the caller's connector through
+  `embedding_worker::connector()`, sees the execution scope and stops
+  canceled at its own checkpoint.
+  `a_binding_left_on_a_worker_reaches_neither_its_next_read_nor_the_caller`
+  has every read of an eight-read wave leak a stray binding and asserts that
+  each read still saw the caller's connector (some worker ran two), that the
+  caller kept its own, and that an unbound caller's workers see none. Both
+  failed on the old runner (wave of two: connector, scope and canceled grant
+  all absent) and pass now.
+- **Gap:** no integration test runs an Answer through the real handler on an
+  in-process owner against an index whose search needs the embedding
+  connector; the evaluation's shakedown covers it.
+- **Identities:** none moved; no file in an identity source list changed.
+  The pin control `recorded_loop_policy_identities` and the
+  `cpu_source_transition` tests pass.
+- **Where:** kernel arbiter `CONTRACT.md` ("Answer /3 loop").
