@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { strict as assert } from 'node:assert';
-import {wholeAnswerSourceFixture,answerSourceFixture,answerRecord,answerIndex,answerProject,answerRoot,answerHash,answerPublication} from './workbenchAnswerFixture';
+import {answerSourceFixture,emittedReply,loopCases,answerRecord,answerIndex,answerProject,answerHash,answerPublication} from './workbenchAnswerFixture';
+/** The webview sends the Core default when no custom budget is given. */
+const DEFAULT_BUDGET=loopCases.default_budget;
 import Module from 'node:module';
 import { test } from 'node:test';
 import type { LaunchSpec } from '../model';
@@ -38,31 +40,37 @@ test('A7 Workbench custom request matches the actual Rust public Answer case and
     assert.equal(example.accepted,true);
     const f=fixture();
     try{
-        await f.state.select(A);await tick();f.respond(async()=>({payload:{schema:'airk.arbiter.context/2',records:[],paragraphs:[]}}));
+        await f.state.select(A);await tick();f.respond(async()=>({payload:emittedReply()}));
         await f.state.message({type:'answer',question:example.arguments.question,budget:example.arguments.budget});
         assert.deepEqual(f.created[0].requests.find(entry=>entry.tool==='airk_answer')?.args,example.arguments,'all native custom budget fields and the mandatory native schema travel unchanged');
     }finally{f.provider.dispose();}
 });
 
-// Renderer/host controls use synthetic opaque responses, not native parity evidence.
-test('A7 actual Workbench answer uses original bounded request and keeps complete result in copy/export', async () => {
-    const f = fixture();
-    const native: Value = { schema: 'airk.arbiter.context/2', question: 'Find the ownership fence', paragraphs: [], records: [], gaps: ['definition'],
-        stop: 'no_valid_read', candidate_count: 0, omitted_count: 2, applications: [], work: { calls: 1 }, advice: [], future_native_field: { all: ['retained'] } };
+// Host controls over the Rust-emitted reply; the transport is injected, not native parity evidence.
+test('A7 Workbench Answer sends /3 with the Core default budget, waits past 125 s and keeps the complete reply in copy/export', async () => {
+    const f = fixture(), native = emittedReply();
+    native.future_native_field = { all: ['retained'] };
     try {
         await f.state.select(A); await tick();
         f.respond(async tool => ({ payload: tool === 'airk_answer' ? native : { tag: tool } }));
-        await f.state.message({ type: 'answer', question: 'Find the ownership fence' }); await f.state.saveQueue;
+        await f.state.message({ type: 'answer', question: 'Find the ownership fence', budget: DEFAULT_BUDGET }); await f.state.saveQueue;
         const request = f.created[0].requests.find(entry => entry.tool === 'airk_answer');
-        assert.deepEqual(request?.args, { schema: 'airk.arbiter.context.request/2', question: 'Find the ownership fence',
-            budget: { calls: 8, rounds: 3, fanout: 8, input_tokens: 8192, candidates: 32, max_bytes: 262144, deadline_ms: 120000 } });
+        assert.deepEqual(request?.args, { schema: loopCases.request_schema, question: 'Find the ownership fence', budget: DEFAULT_BUDGET });
+        assert.equal(request?.options?.timeout, DEFAULT_BUDGET.deadline_ms + 5000, 'Answer waits its deadline plus delivery, not the 125 s read cap');
         const turn = f.state.session!.turns.at(-1)!; assert.deepEqual(turn.envelope, native);
         const exported = JSON.parse(renderExport(f.state.session!, 'json', turn.id));
         assert.deepEqual(exported.turns[0].envelope, native);
-        assert.match(renderExport(f.state.session!, 'markdown', turn.id), /future_native_field/);
+        const text = renderExport(f.state.session!, 'markdown', turn.id);
+        assert.match(text, /future_native_field/); assert.match(text, /#### Part 1: Where is the restart guard defined\?/);
         await f.state.message({ type: 'rerun', turn: turn.id });
         assert.equal(f.created[0].calls.filter(tool => tool === 'airk_answer').length, 2);
+        assert.deepEqual(f.created[0].requests.filter(entry => entry.tool === 'airk_answer').at(-1)?.args, request?.args, 'rerun sends the original /3 request');
         assert.equal(f.created[0].calls.filter(tool => tool === 'airk_parse').length, 0, 'answer rerun never changes into a neighboring parser/context read');
+        await f.state.message({ type: 'answer', question: 'Ceiling', budget: { ...DEFAULT_BUDGET, deadline_ms: 600000 } });
+        assert.equal(f.created[0].requests.filter(entry => entry.tool === 'airk_answer').at(-1)?.options?.timeout, 605000);
+        await f.state.message({ type: 'refresh' });
+        const other = f.created[0].requests.find(entry => entry.tool === 'airk_status');
+        assert.ok(other === undefined || Number(other.options?.timeout) <= 125000, 'other tools keep their own bounds');
     } finally { f.provider.dispose(); }
 });
 test('A7 late answer cannot cross the existing window authority fence', async () => {
@@ -70,26 +78,26 @@ test('A7 late answer cannot cross the existing window authority fence', async ()
     try {
         await f.state.select(A); await tick();
         f.respond(tool => tool === 'airk_answer' ? held.promise : Promise.resolve({ payload: { tag: tool } }));
-        const reading = f.state.message({ type: 'answer', question: 'Original window question' }); await tick();
+        const reading = f.state.message({ type: 'answer', question: 'Original window question', budget: DEFAULT_BUDGET }); await tick();
         f.scope('replacement-window-grant');
-        held.resolve({ payload: { schema: 'airk.arbiter.context/2', complete: 'late-private-original' } });
+        held.resolve({ payload: { ...emittedReply(), complete: 'late-private-original' } });
         await reading;
         assert.ok(!f.state.session!.turns.some(turn => turn.envelope?.complete === 'late-private-original'));
     } finally { held.resolve({ payload: {} }); f.provider.dispose(); }
 });
 
 test('A7 full question and custom budget survive request transport rerun and complete exports',async()=>{
-    const f=fixture(),question='é'.repeat(8192),budget={calls:2,rounds:1,fanout:2,input_tokens:512,candidates:4,max_bytes:4096,deadline_ms:1200};
+    const f=fixture(),question='é'.repeat(8192),budget={...DEFAULT_BUDGET,calls:2,rounds:1,fanout:2,input_tokens:512,round_input_tokens:512,candidates:4,max_bytes:20480,deadline_ms:1200};
     try{
-        await f.state.select(A);await tick();f.respond(async()=>({payload:{schema:'airk.arbiter.context/2',question,records:[],paragraphs:[]}}));
+        await f.state.select(A);await tick();f.respond(async()=>({payload:{...emittedReply(),question}}));
         await f.state.message({type:'answer',question,budget});await f.state.saveQueue;
         const turn=f.state.session!.turns.at(-1)!;
         assert.equal(turn.input.length,4096);assert.equal(turn.request?.question,question);
-        assert.deepEqual(f.created[0].requests.find(entry=>entry.tool==='airk_answer')?.args,{schema:'airk.arbiter.context.request/2',question,budget});
+        assert.deepEqual(f.created[0].requests.find(entry=>entry.tool==='airk_answer')?.args,{schema:'airk.arbiter.context.request/3',question,budget});
         assert.equal(JSON.parse(renderExport(f.state.session!,'json',turn.id)).turns[0].request.question,question);
         assert.ok(renderExport(f.state.session!,'markdown',turn.id).includes(question));
         await f.state.message({type:'rerun',turn:turn.id});
-        assert.deepEqual(f.created[0].requests.filter(entry=>entry.tool==='airk_answer').at(-1)?.args,{schema:'airk.arbiter.context.request/2',question,budget});
+        assert.deepEqual(f.created[0].requests.filter(entry=>entry.tool==='airk_answer').at(-1)?.args,{schema:'airk.arbiter.context.request/3',question,budget});
     }finally{f.provider.dispose();}
 });
 const spec=(project:string):LaunchSpec=>({command:'/fixture/airk',root:`/fixture/${project}`,dataDir:`/fixture/data-${project}`,collection:'fixture',name:project===A?'A':'B',service:{installDir:'/fixture/runtime',project}});
@@ -107,9 +115,9 @@ function fixture(attach=false) {
         findShortcut:async():Promise<Value|undefined>=>undefined,
     };
     class FakeClient {
-        readonly calls:string[]=[];readonly requests:{tool:string;args:Value}[]=[];disposed=0;canceled=0;
+        readonly calls:string[]=[];readonly requests:{tool:string;args:Value;options?:Value}[]=[];disposed=0;canceled=0;
         constructor(readonly spec:LaunchSpec){created.push(this);}
-        call(tool:string,args:Value={}):Promise<{payload:Value}>{this.calls.push(tool);this.requests.push({tool,args:structuredClone(args)});return response(tool,this);}
+        call(tool:string,args:Value={},options?:Value):Promise<{payload:Value}>{this.calls.push(tool);this.requests.push({tool,args:structuredClone(args),...(options?{options:{...options}}:{})});return response(tool,this);}
         cancel():void{this.canceled++;}
         dispose():void{this.disposed++;}
     }
@@ -872,18 +880,18 @@ test('A7 answer source jump resolves native record and hit then rechecks file_in
     try{
         await f.state.select(A);await tick();
         f.respond(async tool=>({payload:tool==='airk_answer'?answer:info}));
-        await f.state.message({type:'answer',question:'Original answer question'});
+        await f.state.message({type:'answer',question:'Original answer question',budget:DEFAULT_BUDGET});
         const turn=f.state.session!.turns.at(-1)!;
         const before=structuredClone(turn.envelope);
-        await f.state.message({type:'openAnswerCitation',turn:turn.id,record:answerRecord,hit:0});
+        await f.state.message({type:'openAnswerCitation',turn:turn.id,record:answerRecord,span:0});
         assert.equal(f.opened.length,1);
         assert.equal(f.opened[0].root,'/native/verified-original');assert.equal(f.opened[0].relative,'api/source.rs');
         assert.equal(f.opened[0].contentHash,answerHash);assert.equal(f.opened[0].startLine,7);
         assert.deepEqual(f.created[0].requests.find(value=>value.tool==='airk_file_info')?.args,{path:'api/source.rs',project_ids:[answerProject],index_ids:[answerIndex],revision:answerPublication.token,known_hash:answerHash,response_mode:'full'});
         assert.deepEqual(turn.envelope,before);
-        for(const bad of [{record:'99'.repeat(32),hit:0},{record:answerRecord,hit:1}])await assert.rejects(f.state.message({type:'openAnswerCitation',turn:turn.id,...bad}),/no unambiguous native source/);
+        for(const bad of [{record:'99'.repeat(32),span:0},{record:answerRecord,span:1}])await assert.rejects(f.state.message({type:'openAnswerCitation',turn:turn.id,...bad}),/no unambiguous native source/);
         (info.source_verification as Value).sources=[{...((info.source_verification as Value).sources as Value[])[0],source_root_id:'src_'+'99'.repeat(16)}];
-        await assert.rejects(f.state.message({type:'openAnswerCitation',turn:turn.id,record:answerRecord,hit:0}),/source identity changed/);
+        await assert.rejects(f.state.message({type:'openAnswerCitation',turn:turn.id,record:answerRecord,span:0}),/source identity changed/);
         assert.equal(f.opened.length,1);
     }finally{f.provider.dispose();}
 });
@@ -894,16 +902,16 @@ test('A7 answer source jump rejects restored turns and scope or native consent c
         try{
             await f.state.select(A);await tick();
             f.respond(async tool=>({payload:tool==='airk_answer'?answer:info}));
-            await f.state.message({type:'answer',question:'Original answer question'});
+            await f.state.message({type:'answer',question:'Original answer question',budget:DEFAULT_BUDGET});
             let turn=f.state.session!.turns.at(-1)!;
             if(boundary==='restored'){
                 turn=structuredClone(turn);f.state.session!.turns=[turn];
                 const calls=f.created[0].requests.length;
-                await assert.rejects(f.state.message({type:'openAnswerCitation',turn:turn.id,record:answerRecord,hit:0}),/no longer authorized/);
+                await assert.rejects(f.state.message({type:'openAnswerCitation',turn:turn.id,record:answerRecord,span:0}),/no longer authorized/);
                 assert.equal(f.created[0].requests.length,calls);continue;
             }
             f.respond(async tool=>{assert.equal(tool,'airk_file_info');entered.resolve();return held.promise;});
-            const pending=f.state.message({type:'openAnswerCitation',turn:turn.id,record:answerRecord,hit:0});
+            const pending=f.state.message({type:'openAnswerCitation',turn:turn.id,record:answerRecord,span:0});
             await entered.promise;
             if(boundary==='scope')f.scope('replaced-native-window');
             if(boundary==='replaced-turn')f.state.session!.turns=[structuredClone(turn)];
@@ -924,13 +932,13 @@ test('A7 answer source Open refuses changed publication hash and ambiguous nativ
         try{
             await f.state.select(A);await tick();
             f.respond(async tool=>({payload:tool==='airk_answer'?answer:info}));
-            await f.state.message({type:'answer',question:'Original answer question'});
+            await f.state.message({type:'answer',question:'Original answer question',budget:DEFAULT_BUDGET});
             const turn=f.state.session!.turns.at(-1)!;
             if(failure==='publication')info.publication={collection:'fixture',token:`airk-r1:${'36'.repeat(16)}:5:${'37'.repeat(32)}`};
             if(failure==='hash')((info.source_verification as Value).sources as Value[])[0].expected_hash='99'.repeat(32);
             if(failure==='ambiguous')((info.source_verification as Value).sources as Value[]).push(structuredClone(((info.source_verification as Value).sources as Value[])[0]));
             if(failure==='outside-index')((info.source_verification as Value).origins as Value[])[0].index_id='idx_'+'99'.repeat(16);
-            await assert.rejects(f.state.message({type:'openAnswerCitation',turn:turn.id,record:answerRecord,hit:0}),/source identity changed/);
+            await assert.rejects(f.state.message({type:'openAnswerCitation',turn:turn.id,record:answerRecord,span:0}),/source identity changed/);
             assert.equal(f.opened.length,0,failure);
         }finally{f.provider.dispose();}
     }
@@ -938,51 +946,51 @@ test('A7 answer source Open refuses changed publication hash and ambiguous nativ
 
 test('A7 explicit Open source navigation uses native empty Project attribution without inventing a set',async()=>{
     const f=fixture(),{answer,info}=answerSourceFixture();
-    const body=(answer.records as Value[])[0].canonical_result as Value;
-    ((body.source_verification as Value).origins as Value[])[0].project_ids=[];
-    ((body.scope_observation as Value).members as Value[])[0].memberships=[];
+    ((answer.source_verification as Value).origins as Value[])[0].project_ids=[];
     ((info.source_verification as Value).origins as Value[])[0].project_ids=[];
     try{
         (f.provider as any).host.openSelectionSpec=(selection:{indexes:string[];sets:string[]},label:string)=>openSelectionSpec({command:'/fixture/airkctl',root:'/fixture/source',installDir:'/fixture/runtime'},selection,label);
         await f.state.message({type:'openSelection',indexes:[answerIndex],sets:[]});await tick();
         f.respond(async tool=>({payload:tool==='airk_answer'?answer:info}));
-        await f.state.message({type:'answer',question:'Explicit named-index answer'});
+        await f.state.message({type:'answer',question:'Explicit named-index answer',budget:DEFAULT_BUDGET});
         const turn=f.state.session!.turns.at(-1)!;
-        await f.state.message({type:'openAnswerCitation',turn:turn.id,record:answerRecord,hit:0});
+        await f.state.message({type:'openAnswerCitation',turn:turn.id,record:answerRecord,span:0});
         assert.equal(f.opened.length,1);
         assert.deepEqual(f.created[0].requests.find(value=>value.tool==='airk_file_info')?.args,{path:'api/source.rs',project_ids:[],index_ids:[answerIndex],revision:answerPublication.token,known_hash:answerHash,response_mode:'full'});
     }finally{f.provider.dispose();}
 });
 
-test('current /2 Workbench does not reinterpret an unsupported saved answer version as a parse request',async()=>{
+test('Workbench does not reinterpret an earlier saved answer version as a parse request or resend it',async()=>{
+    for(const schema of ['airk.arbiter.context.request/1','airk.arbiter.context.request/2']){
     const f=fixture();
     try{
         await f.state.select(A);await tick();
         const turn={id:'unsupported-answer',at:1,input:'Saved question',format:'structured' as const,
-            request:{schema:'airk.arbiter.context.request/1',question:'Saved question',budget:{calls:1}}};
+            request:{schema,question:'Saved question',budget:{calls:1}}};
         f.state.session!.turns.push(turn);
         const before=structuredClone(turn),calls=f.created[0].requests.length;
-        await assert.rejects(f.state.message({type:'rerun',turn:turn.id}),/unsupported contract version/);
+        await assert.rejects(f.state.message({type:'rerun',turn:turn.id}),/earlier contract the service no longer accepts/);
         assert.equal(f.created[0].requests.length,calls);assert.deepEqual(turn,before);
     }finally{f.provider.dispose();}
+    }
 });
 
 
 test('A7 combined Answer source actions resolve the exact member and reject cross-member locators before native effects',async()=>{
     const f=fixture(),{answer,info}=answerSourceFixture(),other='idx_'+'77'.repeat(16);
     const second=JSON.parse(JSON.stringify(answer).replaceAll(answerIndex,other));
-    const combined={schema:'airk.combined-read/1',context:{schema:'airk.combined-context/1'},
+    const combined={schema:'airk.combined-read/1',context:{schema:'airk.combined-context/2'},
         publication_vector:{members:[{index_id:answerIndex,publication:answerPublication},{index_id:other,publication:answerPublication}]},
         members:[{index_id:answerIndex,outcome:'complete',result:{content:[],structuredContent:answer}},
             {index_id:other,outcome:'complete',result:{content:[],structuredContent:second}}]};
     try{
         await f.state.select(A);await tick();f.respond(async tool=>({payload:tool==='airk_answer'?combined:info}));
-        await f.state.message({type:'answer',question:'Member-bound answer'});
+        await f.state.message({type:'answer',question:'Member-bound answer',budget:DEFAULT_BUDGET});
         const turn=f.state.session!.turns.at(-1)!,before=structuredClone(turn.envelope);
-        for(const member of [undefined,2])await assert.rejects(f.state.message({type:'openAnswerCitation',turn:turn.id,record:answerRecord,hit:0,...(member===undefined?{}:{member})}),/no unambiguous native source/);
+        for(const member of [undefined,2])await assert.rejects(f.state.message({type:'openAnswerCitation',turn:turn.id,record:answerRecord,span:0,...(member===undefined?{}:{member})}),/no unambiguous native source/);
         assert.equal(f.created[0].requests.filter(value=>value.tool==='airk_file_info').length,0);
-        await f.state.message({type:'openAnswerCitation',turn:turn.id,record:answerRecord,hit:0,member:0});assert.equal(f.opened.length,1);
-        await assert.rejects(f.state.message({type:'openAnswerCitation',turn:turn.id,record:answerRecord,hit:0,member:1}),/source identity changed|complete source location/);
+        await f.state.message({type:'openAnswerCitation',turn:turn.id,record:answerRecord,span:0,member:0});assert.equal(f.opened.length,1);
+        await assert.rejects(f.state.message({type:'openAnswerCitation',turn:turn.id,record:answerRecord,span:0,member:1}),/source identity changed|complete source location/);
         assert.equal(f.opened.length,1,'foreign member metadata never opens the first member source');
         assert.deepEqual(f.created[0].requests.filter(value=>value.tool==='airk_file_info').map(value=>(value.args as Value).index_ids),[[answerIndex],[other]]);
         assert.deepEqual(turn.envelope,before,'complete outer/member evidence remains unchanged');
@@ -990,37 +998,16 @@ test('A7 combined Answer source actions resolve the exact member and reject cros
 });
 
 
-test('A7 paired foreign record authorization and canonical fingerprint refuse before file_info',async()=>{
-    for(const combined of [false,true]){
-        const f=fixture(),{answer,info}=answerSourceFixture(),record=(answer.records as Value[])[0];
-        (record.scope as Value).authorization='99'.repeat(32);((record.canonical_result as Value).scope_observation as Value).fingerprint='99'.repeat(32);
-        const response=combined?{schema:'airk.combined-read/1',context:{schema:'airk.combined-context/1'},publication_vector:{members:[{index_id:answerIndex,publication:answerPublication}]},members:[{index_id:answerIndex,outcome:'complete',result:answer}]}:answer;
+test('A7 a receipt naming another index or publication refuses before file_info',async()=>{
+    for(const combined of [false,true])for(const change of ['index','publication']){
+        const f=fixture(),{answer,info}=answerSourceFixture(),origin=((answer.source_verification as Value).origins as Value[])[0];
+        if(change==='index')origin.index_id='idx_'+'99'.repeat(16);else origin.publication=`airk-r1:${'03'.repeat(16)}:9:${'04'.repeat(32)}`;
+        const response=combined?{schema:'airk.combined-read/1',context:{schema:'airk.combined-context/2'},publication_vector:{members:[{index_id:answerIndex,publication:answerPublication}]},members:[{index_id:answerIndex,outcome:'complete',result:answer}]}:answer;
         try{
             await f.state.select(A);await tick();f.respond(async tool=>({payload:tool==='airk_answer'?response:info}));
-            await f.state.message({type:'answer',question:'Scope binding'});const turn=f.state.session!.turns.at(-1)!;
-            await assert.rejects(f.state.message({type:'openAnswerCitation',turn:turn.id,record:answerRecord,hit:0,...(combined?{member:0}:{})}),/no unambiguous native source/);
+            await f.state.message({type:'answer',question:'Scope binding',budget:DEFAULT_BUDGET});const turn=f.state.session!.turns.at(-1)!;
+            await assert.rejects(f.state.message({type:'openAnswerCitation',turn:turn.id,record:answerRecord,span:0,...(combined?{member:0}:{})}),/no unambiguous native source/);
             assert.equal(f.created[0].requests.filter(value=>value.tool==='airk_file_info').length,0);assert.equal(f.opened.length,0);
         }finally{f.provider.dispose();}
     }
-});
-
-test('A7 whole-context receipt source jump keeps exact file_info and editor fences',async()=>{
-    const f=fixture(),{answer,info}=wholeAnswerSourceFixture();
-    try{
-        await f.state.select(A);await tick();
-        f.respond(async tool=>({payload:tool==='airk_answer'?answer:info}));
-        await f.state.message({type:'answer',question:'Original answer question'});
-        const turn=f.state.session!.turns.at(-1)!;
-        const before=structuredClone(turn.envelope);
-        await f.state.message({type:'openAnswerCitation',turn:turn.id,record:answerRecord,hit:0});
-        assert.equal(f.opened.length,1);
-        assert.equal(f.opened[0].root,'/native/verified-original');assert.equal(f.opened[0].relative,'api/source.rs');
-        assert.equal(f.opened[0].contentHash,answerHash);assert.equal(f.opened[0].startLine,7);
-        assert.deepEqual(f.created[0].requests.find(value=>value.tool==='airk_file_info')?.args,{path:'api/source.rs',project_ids:[answerProject],index_ids:[answerIndex],revision:answerPublication.token,known_hash:answerHash,response_mode:'full'});
-        assert.deepEqual(turn.envelope,before);
-        for(const bad of [{record:'99'.repeat(32),hit:0},{record:answerRecord,hit:1}])await assert.rejects(f.state.message({type:'openAnswerCitation',turn:turn.id,...bad}),/no unambiguous native source/);
-        (info.source_verification as Value).sources=[{...((info.source_verification as Value).sources as Value[])[0],source_root_id:'src_'+'99'.repeat(16)}];
-        await assert.rejects(f.state.message({type:'openAnswerCitation',turn:turn.id,record:answerRecord,hit:0}),/source identity changed/);
-        assert.equal(f.opened.length,1);
-    }finally{f.provider.dispose();}
 });

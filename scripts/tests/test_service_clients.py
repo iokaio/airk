@@ -842,15 +842,18 @@ class ServiceClientTests(unittest.TestCase):
     def test_answer_request_consumes_current_rust_case_without_changing_budget(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "request.json"
-            original = {"schema":"airk.arbiter.context.request/2", "question":"Rust fixture", "budget":{"deadline_ms":20000,"calls":3}}
+            original = {"schema":"airk.arbiter.context.request/3", "question":"Rust fixture", "budget":{"deadline_ms":20000,"calls":3,"context_calls":1}}
             path.write_text(json.dumps({"examples":[{"name":"complete_native_request","accepted":True,"arguments":original}]}),encoding="utf-8")
             actual = CLIENTS.current_answer_arguments("polaronlymarker", path)
             self.assertEqual(actual, {**original,"question":"polaronlymarker","response_mode":"full"})
             self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["examples"][0]["arguments"], original)
-            original["schema"] = "airk.arbiter.context.request/1"
-            path.write_text(json.dumps({"examples":[{"name":"complete_native_request","accepted":True,"arguments":original}]}),encoding="utf-8")
-            with self.assertRaisesRegex(AssertionError,"Current /2"):
-                CLIENTS.current_answer_arguments("polaronlymarker", path)
+            for older in ("airk.arbiter.context.request/1", "airk.arbiter.context.request/2"):
+                original["schema"] = older
+                path.write_text(json.dumps({"examples":[{"name":"complete_native_request","accepted":True,"arguments":original}]}),encoding="utf-8")
+                with self.assertRaisesRegex(AssertionError,"Current /3"):
+                    CLIENTS.current_answer_arguments("polaronlymarker", path)
+        actual = CLIENTS.current_answer_arguments("polaronlymarker")
+        self.assertEqual(actual["schema"], "airk.arbiter.context.request/3", "the checked-in Rust-emitted public case is /3")
 
     def test_finite_answer_never_uses_retry_path_or_replays_a_failure(self):
         fixture = CLIENTS.Fixture.__new__(CLIENTS.Fixture)
@@ -868,9 +871,14 @@ class ServiceClientTests(unittest.TestCase):
         fixture.query.assert_not_called()
 
     def test_answer_packet_keeps_complete_fields_and_authenticates_duplicate(self):
-        packet={"schema":"airk.arbiter.context/2","records":[{"future":{"request_id":"evidence-owned"}}],"future":{"coverage":"unknown"}}
+        packet={"schema":"airk.arbiter.context/3","records":[{"future":{"request_id":"evidence-owned"}}],"future":{"coverage":"unknown"}}
         envelope={"content":[{"type":"text","text":json.dumps(packet)}],"structuredContent":copy.deepcopy(packet)}
         self.assertEqual(CLIENTS.answer_packet(envelope),packet)
+        for refused in ({"schema":"airk.arbiter.context/2"},{"schema":"airk.combined-read/1","context":{"schema":"airk.combined-context/1"}}):
+            with self.assertRaisesRegex(AssertionError,"Unexpected"):
+                CLIENTS.answer_packet({"content":[{"type":"text","text":json.dumps(refused)}]})
+        combined={"schema":"airk.combined-read/1","context":{"schema":"airk.combined-context/2"}}
+        self.assertEqual(CLIENTS.answer_packet({"content":[{"type":"text","text":json.dumps(combined)}]}),combined)
         envelope["structuredContent"]["future"]["coverage"]="invented"
         with self.assertRaisesRegex(AssertionError,"duplicates differ"):
             CLIENTS.answer_packet(envelope)
@@ -881,7 +889,7 @@ class ServiceClientTests(unittest.TestCase):
             executable=root / "owned-validator.bin"
             executable.write_bytes(b"identified prebuilt Rust test image")
             fixture=type("Captured",(),{"owner":root,"answer_validator":executable,"environment":{},"answer_comparisons":[]})()
-            packet={"schema":"airk.arbiter.context/2","future":{"request_id":"evidence-owned"}}
+            packet={"schema":"airk.arbiter.context/3","future":{"request_id":"evidence-owned"}}
             envelope={"content":[{"type":"text","text":json.dumps(packet)}],"structuredContent":packet}
             wrong_source=False
             def run(command,**options):
@@ -891,7 +899,7 @@ class ServiceClientTests(unittest.TestCase):
                 self.assertEqual(captured,{"arguments":{"original":"request"},"left":envelope,"right":envelope,"right_mcp_protocol":"2025-11-25"})
                 sources={name:CLIENTS.file_sha256(Path(CLIENTS.__file__).parents[1]/name) for name in CLIENTS.ANSWER_VALIDATOR_SOURCES}
                 if wrong_source:sources["crates/airk-cli/tests/common/parity/context.rs"]="00"*32
-                proof={"schema":1,"full_envelopes_equal":True,"scope":"validated-unassessed-fallback-only","compiled_sources":sources,
+                proof={"schema":1,"full_envelopes_equal":True,"scope":"validated-normalized-full-answer-v3","compiled_sources":sources,
                        "input_sha256":CLIENTS.file_sha256(capture),"validator_sha256":CLIENTS.file_sha256(executable)}
                 return subprocess.CompletedProcess(command,0,"AIRK_CONTEXT_PARITY_VALIDATED "+json.dumps(proof)+"\n","")
             with patch.object(CLIENTS.subprocess,"run",side_effect=run) as observed:

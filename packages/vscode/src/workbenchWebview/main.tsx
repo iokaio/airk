@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
-import { answerPartitions, isAnswerEnvelope } from '../workbenchAnswerNavigation';
+import { ANSWER_SCHEMA, answerPartitions, isAnswerEnvelope } from '../workbenchAnswerNavigation';
 import { publicationRelationLabel } from '../publications';
 import { h, render, type ComponentChildren } from 'preact';
-import { answerPresentation, type AnswerNode } from '../../../ui/src/answerPresentation';
-import type { ContextResponseV2 } from '../../../contracts-gen/arbiter';
+import { answerPresentation, answerStatusLine, type AnswerNode } from '../answerPresentation';
+import { ANSWER_DEFAULT_BUDGET } from '../../../ui/src/answerBudget';
+import { ANSWER_REQUEST_SCHEMA, answerTransportTimeout } from '../workbenchAnswerClient';
+import type { ContextResponseV3 } from '../generated/arbiter';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { applyWorkbenchUpdate, defaultWorkbenchFormDraft, normalizeWorkbenchFormDraft, object, openSelectionLines, parseWorkbenchMessage, toolFormArguments, validateOpenSelection, Value, EvidenceCard, WorkbenchFormDraft, WorkbenchMessage, WorkbenchState, WorkbenchTurn, workbenchToolFields, WORKBENCH_CONTEXT_BUDGET } from '../workbenchContracts';
+import { applyWorkbenchUpdate, defaultWorkbenchFormDraft, normalizeWorkbenchFormDraft, object, openSelectionLines, parseWorkbenchMessage, toolFormArguments, validateOpenSelection, Value, EvidenceCard, WorkbenchFormDraft, WorkbenchMessage, WorkbenchState, WorkbenchTurn, workbenchToolFields } from '../workbenchContracts';
 import {verificationLabel} from '../sourceVerification';
 import { canonical, combinedReadDetails, discoveryDetails, markdown, materializeCapabilityMember, openSelectionArgv, searchExecutionLabel, workbenchStepReportOmissions } from '../workbenchRender';
 import './style.css';
@@ -13,17 +15,23 @@ declare function acquireVsCodeApi(): { postMessage(message:WorkbenchMessage):voi
 const vscode=acquireVsCodeApi(),send=(message:WorkbenchMessage)=>vscode.postMessage(message);
 const COMMANDS=['/search','/symbols','/code-facts','/refs','/read','/outline','/files','/info','/imports','/facts','/changes --since','/status','/diagnostics','/capabilities','/context','/relationships','/help'];
 const RECIPES=[['definition','Explore a definition'],['documents','Collect document evidence'],['impact','Find possible impact'],['tests','Find test mentions'],['component','Explore a component'],['readiness','Check retrieval readiness']];
-function AnswerView(props: { answer: ContextResponseV2; identity: string; cards: EvidenceCard[]; disabled: boolean; member?:number }) {
-    const show = (value: AnswerNode | string): ComponentChildren => typeof value === 'string' ? value : h(value.tag, {
-        ...(value.id ? { id: value.id, tabIndex: -1 } : {}),
-        ...(value.citationTarget ? { type: 'button', onClick: () => { const record = document.getElementById(value.citationTarget!);
-            record?.closest('details')?.setAttribute('open', ''); record?.focus(); record?.scrollIntoView({ block: 'start' }); } } : {}),
-    }, ...value.children.map(show));
-    return <>{show(answerPresentation(props.answer, props.member===undefined?props.identity:`${props.identity}-member-${props.member}`))}<section aria-label="Open cited answer sources">
-        <h4>Open cited sources</h4><p class="note">Source locations are resolved by the native host from the retained record and checked again before opening.</p>
-        {props.cards.length ? props.cards.map(card=><button type="button" disabled={props.disabled} onClick={()=>send({type:'openAnswerCitation',turn:props.identity,record:card.step,hit:Number(card.resultPointer?.slice('/hits/'.length)),...(props.member===undefined?{}:{member:props.member})})}>
-            Open {card.path}:{card.start} · record {card.step.slice(0,12)}</button>) : <p>No unambiguous native source locator was returned. Complete original evidence remains available above.</p>}
-    </section></>;
+function AnswerView(props: { answer: ContextResponseV3; identity: string; cards: EvidenceCard[]; disabled: boolean; member?:number }) {
+    // Every located span the tree offers opens through the host's retained card for it; the renderer never names a source.
+    const cardFor=(record:string,span:number)=>props.cards.find(card=>card.step===record&&card.resultPointer===`/spans/${span}`);
+    const open=(record:string,span:number)=>send({type:'openAnswerCitation',turn:props.identity,record,span,...(props.member===undefined?{}:{member:props.member})});
+    const show = (value: AnswerNode | string): ComponentChildren => {
+        if(typeof value === 'string')return value;
+        const locator=value.sourceLocator,card=locator&&cardFor(locator.record,locator.span);
+        return h(value.tag, {
+            ...(value.id ? { id: value.id, tabIndex: -1 } : {}),
+            ...(value.citationTarget ? { type: 'button', onClick: () => { const record = document.getElementById(value.citationTarget!);
+                record?.closest('details')?.setAttribute('open', ''); record?.focus(); record?.scrollIntoView({ block: 'start' }); } } : {}),
+            ...(locator ? { type: 'button', class: 'source', disabled: props.disabled||!card, title: card?'Open the cited lines':'No verified source binding was returned for this span',
+                onClick: () => open(locator.record,locator.span) } : {}),
+        }, ...value.children.map(show));
+    };
+    return <>{show(answerPresentation(props.answer, props.member===undefined?props.identity:`${props.identity}-member-${props.member}`))}
+        {!props.cards.length&&<p class="note">No cited span carried a verified source binding, so none can be opened here. Every returned record remains above and in copies and exports.</p>}</>;
 }
 interface ToolFormProps {
     state:WorkbenchState;issue:string;currentDraft:()=>WorkbenchFormDraft|undefined;
@@ -137,7 +145,7 @@ function Turn({turn,state}:{turn:WorkbenchTurn;state:WorkbenchState}){
             {Array.isArray(plan.steps)&&plan.steps.length>0&&['prepared','needs_input'].includes(String(envelope.status))&&<button disabled={state.busy} onClick={()=>{setEdit(true);setDraft(planText);}}>Review proposed plan</button>}
             {edit&&<div class="editor"><label>Plan JSON<textarea value={draft} onInput={e=>setDraft(e.currentTarget.value)} spellcheck={false}/></label><button onClick={()=>runPlan(true)}>Prepare edited plan</button><button disabled={state.busy} onClick={()=>runPlan(false)}>Run plan</button>{issue&&<p role="alert">{issue}</p>}</div>}
             {Array.isArray(envelope.requires_input)&&envelope.requires_input.length>0&&<div class="warning"><p>{envelope.requires_input.map(r=>String(object(r).reason??r)).join(' · ')}</p>{envelope.requires_input.flatMap(raw=>{const requirement=object(raw);return Array.isArray(requirement.choices)&&['name','path'].includes(String(requirement.field))?requirement.choices.map(choice=><button disabled={state.busy} onClick={()=>{const revised=JSON.parse(planText);revised.digest='';const target=revised.steps.find((s:any)=>s.id===requirement.step);if(target){if(requirement.field==='path'){const source=revised.steps.find((s:any)=>s.id===target.bind?.[0]?.from);if(source){source.args.path=choice;}}else{target.args.name=choice;}send({type:'run',input:turn.input,prepare:false,plan:revised});}}}>Use {String(choice)}</button>):[];})}<button disabled={state.busy} onClick={()=>send({type:'run',input:`/search ${JSON.stringify(turn.input)}`,prepare:true})}>Prepare text search</button><button disabled={state.busy} onClick={()=>send({type:'run',input:'/status',prepare:false})}>Index status</button><button disabled={state.busy} onClick={()=>send({type:'run',input:'/diagnostics',prepare:false})}>Diagnostics</button></div>}
-            <section class="result"><header><span>{String(envelope.status ?? envelope.stop ?? object(envelope.context).termination ?? 'native result')} · {envelope.schema==='airk.combined-read/1'&&isAnswerEnvelope(envelope)?`${answerPartitions(envelope).length} native members`: `${envelope.schema === 'airk.arbiter.context/2' && Array.isArray(envelope.records) ? envelope.records.length : cards.length} retained records`}</span><div role="group" aria-label="Output format">{(['structured','json','markdown'] as const).map(f=><button aria-pressed={format===f} onClick={()=>setFormat(f)}>{f}</button>)}</div></header>
+            <section class="result"><header><span>{envelope.schema===ANSWER_SCHEMA?answerStatusLine(envelope as unknown as ContextResponseV3):String(envelope.status ?? envelope.stop ?? object(envelope.context).termination ?? 'native result')} · {envelope.schema==='airk.combined-read/1'&&isAnswerEnvelope(envelope)?`${answerPartitions(envelope).length} native members`: `${envelope.schema === ANSWER_SCHEMA && Array.isArray(envelope.records) ? envelope.records.length : cards.length} retained records`}</span><div role="group" aria-label="Output format">{(['structured','json','markdown'] as const).map(f=><button aria-pressed={format===f} onClick={()=>setFormat(f)}>{f}</button>)}</div></header>
                 {Array.isArray(envelope.warnings)&&envelope.warnings.map(w=><p class="note">{String(w)}</p>)}
                 {Array.isArray(envelope.completeness)&&envelope.completeness.length>0&&<p class="warning">Incomplete: {envelope.completeness.map(String).join('; ')}</p>}
                 {format==='structured'?<>
@@ -171,7 +179,9 @@ function Turn({turn,state}:{turn:WorkbenchTurn;state:WorkbenchState}){
                 </footer>
             </section>
         </>}
-        {!turn.envelope&&(state.busy&&state.session?.turns.at(-1)?.id===turn.id?<p role="status">Collecting evidence…</p>:<button disabled={state.busy} onClick={()=>send({type:'rerun',turn:turn.id})}>Re-run with current evidence</button>)}
+        {!turn.envelope&&(state.busy&&state.session?.turns.at(-1)?.id===turn.id?<p role="status">{object(turn.request).schema===ANSWER_REQUEST_SCHEMA
+            ?`Answer running since ${new Date(turn.at).toLocaleTimeString()}; it waits up to ${Math.round(answerTransportTimeout(object(object(turn.request).budget) as {deadline_ms:number})/1000)} s for the reply. This connection reports no loop stage yet; the reply shows every stage that ran.`
+            :'Collecting evidence…'}</p>:<button disabled={state.busy} onClick={()=>send({type:'rerun',turn:turn.id})}>Re-run with current evidence</button>)}
     </article>;
 }
 type Menu = 'history' | 'settings' | 'add' | 'selection' | 'context' | 'options' | 'forms';
@@ -206,7 +216,7 @@ function Icon({name}:{name:'plus'|'history'|'settings'|'new'|'send'|'stop'|'rese
 }
 function App(){
     const [state,setState]=useState<WorkbenchState>({projects:[],recent:[],cards:{},busy:false,save:'',persistence:true}),[input,setInput]=useState(''),[menu,setMenu]=useState<Menu>(),[history,setHistory]=useState(-1),[title,setTitle]=useState(''),[formIssue,setFormIssue]=useState('');
-    const [contextQuestion,setContextQuestion]=useState(''),[contextBudget,setContextBudget]=useState(()=>JSON.stringify(WORKBENCH_CONTEXT_BUDGET,null,2)),[contextIssue,setContextIssue]=useState('');
+    const [contextQuestion,setContextQuestion]=useState(''),[contextBudget,setContextBudget]=useState(()=>JSON.stringify(ANSWER_DEFAULT_BUDGET,null,2)),[contextIssue,setContextIssue]=useState('');
     const liveState=useRef(state);liveState.current=state;
     const formDraft=normalizeWorkbenchFormDraft(state.session?.formDraft)??defaultWorkbenchFormDraft(),scope=formDraft.scope,recipe=formDraft.recipe;
     const currentDraft=():WorkbenchFormDraft|undefined=>{
@@ -238,7 +248,7 @@ function App(){
     const gatherContext=(custom=false)=>{
         if(!state.project||state.busy)return;
         try{
-            const message=parseWorkbenchMessage({type:'answer',question:contextQuestion,...(custom?{budget:JSON.parse(contextBudget)}:{})});
+            const message=parseWorkbenchMessage({type:'answer',question:contextQuestion,budget:custom?JSON.parse(contextBudget):structuredClone(ANSWER_DEFAULT_BUDGET)});
             if(!message)throw new Error('Provide a nonempty question within 16,384 UTF-8 bytes and every integer native budget field.');
             send(message);setContextIssue('');setContextQuestion('');if(contextQuestion===input.trim())setInput('');closeMenu(true);
         }catch(error){setContextIssue(error instanceof Error?error.message:String(error));}

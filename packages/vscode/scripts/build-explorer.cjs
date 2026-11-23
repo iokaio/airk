@@ -22,11 +22,13 @@ const SHARED_MANAGEMENT_INPUTS = [
         'EvidenceToolsScreen.tsx', 'ReviewScreen.tsx', 'StrategiesScreen.tsx', 'browserEvidenceRoutes.ts', 'browserReview.ts',
         'evidenceExports.ts', 'guidedEvidence.ts', 'strategyRunner.ts', 'strategyWorkspace.ts', 'workflowLifetime.ts'].map(file => `../admin/src/${file}`),
     ...['browserPilot.ts', 'helpMarkdown.ts', 'helpRoute.ts', 'helpSchema.ts', 'helpSearch.ts', 'helpToolPresentation.ts',
-        'management.ts', 'nativeMetadataCodec.ts', 'answerPresentation.ts', 'nativeSessionLifetime.ts', 'navigation.ts', 'pilotContract.ts', 'pilotPresentation.ts', 'pilotProjection.ts', 'usagePresentation.ts',
+        'management.ts', 'nativeMetadataCodec.ts', 'answerPresentation.ts', 'answerBudget.ts', 'nativeSessionLifetime.ts', 'navigation.ts', 'pilotContract.ts', 'pilotPresentation.ts', 'pilotProjection.ts', 'usagePresentation.ts',
         'evidenceCore.ts', 'review.ts', 'strategies.ts']
         .map(file => `../ui/src/${file}`), '../ui/generated/help-manifest.json',
+    // Answer /3 defaults: the Rust-emitted semantic cases, inlined field by field.
+    '../../fixtures/split/arbiter/answer_loop_cases.json',
     // Shared Search reuses the existing pure UI budget/validation owner, never a host/session controller.
-    'src/workbenchContracts.ts', 'src/workbenchAnswerNavigation.ts', 'src/sourceVerification.ts',
+    'src/workbenchContracts.ts', 'src/workbenchAnswerNavigation.ts', 'src/answerPresentation.ts', 'src/workbenchAnswerClient.ts', 'src/sourceVerification.ts',
     // Credential-free evidence algorithms and inert Plan imports reused by browser adapters.
     'src/explorerEvidenceCore.ts', 'src/explorerSearch.ts', 'src/explorerFacts.ts', 'src/workbenchRender.ts',
     'src/generated/arbiterBudget.ts', 'src/nativeMessageLimits.ts', 'src/explorerReviewCore.ts', 'src/explorerStrategyRunnerCore.ts', 'src/explorerPlanFiles.ts',
@@ -248,7 +250,7 @@ async function build() {
     checkInputs('Webview', webview.metafile, [/^src\/explorerWebview\//, ...CONTRACTS, ...SHARED_MANAGEMENT_INPUTS, /^node_modules\/preact\//, /^airk-explorer-help:/, /^airk-shared-admin-css:/]);
     const workbench = await esbuild.build({ ...common, entryPoints: ['src/workbenchWebview/main.tsx'], outfile: 'out/workbenchWebview.js',
         format: 'iife', platform: 'browser', target: 'es2022', jsx: 'automatic', jsxImportSource: 'preact', banner: { js: preactBanner() } });
-    checkInputs('Workbench', workbench.metafile, [/^src\/workbenchWebview\//, '../ui/src/answerPresentation.ts', '../ui/src/nativeMetadataCodec.ts', 'src/workbenchAnswerNavigation.ts', 'src/workbenchContracts.ts', 'src/generated/arbiterBudget.ts', 'src/workbenchRender.ts', 'src/sourceVerification.ts', 'src/publications.ts', /^node_modules\/preact\//]);
+    checkInputs('Workbench', workbench.metafile, [/^src\/workbenchWebview\//, 'src/answerPresentation.ts', 'src/workbenchAnswerClient.ts', '../ui/src/answerBudget.ts', '../../fixtures/split/arbiter/answer_loop_cases.json', '../ui/src/nativeMetadataCodec.ts', 'src/workbenchAnswerNavigation.ts', 'src/workbenchContracts.ts', 'src/generated/arbiterBudget.ts', 'src/workbenchRender.ts', 'src/sourceVerification.ts', 'src/publications.ts', /^node_modules\/preact\//]);
     const assistance = await esbuild.build({
         ...common,
         entryPoints: ['src/explorerAssistance/main.ts'],

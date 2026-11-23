@@ -150,20 +150,22 @@ def current_answer_arguments(question, fixture_path=None):
              if case.get("accepted") is True and case.get("name") == "complete_native_request"]
     assert len(cases) == 1, "Current Rust Answer request case is missing or ambiguous"
     arguments = json.loads(json.dumps(cases[0]["arguments"]))
-    assert arguments.get("schema") == "airk.arbiter.context.request/2", "Current /2 Rust Answer request fixture is required"
+    assert arguments.get("schema") == "airk.arbiter.context.request/3", "Current /3 Rust Answer request fixture is required"
     arguments["question"] = question
     arguments["response_mode"] = "full"
     return arguments
 
 
 ANSWER_VALIDATOR_TEST = "retained_current_answer_pair_validates_full_transport_results"
+# The owners the Rust validator compiles in (combined_reads.rs `compiled_sources`).
 ANSWER_VALIDATOR_SOURCES = (
     "crates/airk-cli/tests/combined_reads.rs", "crates/airk-cli/tests/common/parity/context.rs",
-    "crates/airk-cli/tests/common/parity/strict.rs", "crates/airk-core/src/arbiter/context_action.rs",
-    "crates/airk-core/src/combined_context.rs", "crates/airk-core/src/context_records.rs",
-    "crates/airk-kernel/src/arbiter.rs",
-    "crates/airk-mcp/src/lib.rs", "fixtures/split/arbiter/public_answer_cases.json",
+    "crates/airk-cli/tests/common/parity/strict.rs", "crates/airk-core/src/arbiter/answer_loop.rs",
+    "crates/airk-core/src/combined_context.rs", "crates/airk-core/src/combined_context/answer.rs",
+    "crates/airk-core/src/context_records.rs", "crates/airk-kernel/src/arbiter.rs",
+    "crates/airk-mcp/src/lib.rs", "fixtures/split/arbiter/answer_loop_cases.json",
 )
+ANSWER_VALIDATOR_SCOPE = "validated-normalized-full-answer-v3"
 
 
 def validate_answer_pair(fixture, label, arguments, left, right, protocol=None):
@@ -190,7 +192,7 @@ def validate_answer_pair(fixture, label, arguments, left, right, protocol=None):
     assert len(receipts) == 1, "Rust Answer validator did not emit exactly one proof"
     proof = receipts[0]
     assert proof.get("schema") == 1 and proof.get("full_envelopes_equal") is True, "Rust Answer validator proof incomplete"
-    assert proof.get("scope") == "validated-unassessed-fallback-only", "Unexpected Answer qualification scope"
+    assert proof.get("scope") == ANSWER_VALIDATOR_SCOPE, "Unexpected Answer qualification scope"
     assert proof.get("compiled_sources") == sources, "Answer validator compiled source/fixture identities differ from current owners"
     assert proof.get("input_sha256") == input_hash == file_sha256(capture), "Retained Answer input changed"
     assert proof.get("validator_sha256") == binary == file_sha256(executable), "Answer validator image changed"
@@ -206,7 +208,9 @@ def answer_packet(envelope):
     packet = tool_value(envelope)
     if "structuredContent" in envelope:
         assert packet == envelope["structuredContent"], "Answer text/structured duplicates differ"
-    assert packet.get("schema") in ("airk.arbiter.context/2", "airk.combined-read/1"), "Unexpected current Answer packet"
+    assert packet.get("schema") in ("airk.arbiter.context/3", "airk.combined-read/1"), "Unexpected current Answer packet"
+    if packet.get("schema") == "airk.combined-read/1":
+        assert (packet.get("context") or {}).get("schema") == "airk.combined-context/2", "Unexpected combined Answer summary"
     return packet
 
 
@@ -1831,7 +1835,7 @@ def qualify(runtime, files, model, answer_validator=None, *, preserve_pair_metad
                       "mcp_lifecycles": mcp_lifecycles,
                       "airkctl_session": session,
                       "answer_transports": {"executed": bool(fixture.answer_comparisons),
-                                            "scope": "validated-unassessed-fallback-only" if fixture.answer_comparisons else "not_executed",
+                                            "scope": ANSWER_VALIDATOR_SCOPE if fixture.answer_comparisons else "not_executed",
                                             "comparisons": fixture.answer_comparisons,
                                             "remaining": ["learned prompt/decision transport parity", "many/Open/Admin actual native integration selections"]},
                       # start() proved the installed service bytes equal the runtime's image.
@@ -1852,7 +1856,7 @@ def main():
     parser.add_argument("--runtime-dir", type=Path, required=True)
     parser.add_argument("--files", type=int, default=16)
     parser.add_argument("--model", action="store_true")
-    parser.add_argument("--answer-validator", type=Path, help="Prebuilt current combined_reads integration test binary for full /2 unassessed Answer transport parity; never invokes Cargo")
+    parser.add_argument("--answer-validator", type=Path, help="Prebuilt current combined_reads integration test binary for full normalized Answer /3 transport parity; never invokes Cargo")
     parser.add_argument("--preserve-pair-metadata", action="store_true",
                         help="Stage the original verified split pair, including its original manifest and build receipt")
     parser.add_argument("--cold-clients-only", action="store_true", help="Fresh sequential and concurrent four-client HTTPS first-status checks")

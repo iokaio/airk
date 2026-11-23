@@ -2,10 +2,13 @@
 /** Pure host/webview contract. Evidence content is always inert text. */
 import type { PublicationRelation } from './publications';
 import type {CapabilityFieldDisplay} from './nativeMetadataCodec';
-import type { Budget } from './generated/arbiter';
-import { DEFAULT_CONTEXT_BUDGET } from './generated/arbiterBudget';
-export const WORKBENCH_CONTEXT_BUDGET: Readonly<Budget> = Object.freeze({ ...DEFAULT_CONTEXT_BUDGET });
+import type { BudgetV3 } from './generated/arbiter';
 export type Value = Record<string, unknown>;
+/** The generated BudgetV3 field names, checked both ways at compile time: a regenerated field breaks the build here. */
+export const ANSWER_BUDGET_FIELDS = ['calls', 'candidates', 'context_calls', 'deadline_ms', 'fanout', 'focus_calls', 'focus_pairs', 'input_tokens',
+    'max_bytes', 'max_parts', 'max_sub_needs', 'round_input_tokens', 'rounds'] as const satisfies readonly (keyof BudgetV3)[];
+type MissingBudgetField = Exclude<keyof BudgetV3, typeof ANSWER_BUDGET_FIELDS[number]>;
+export const ANSWER_BUDGET_FIELDS_COMPLETE: [MissingBudgetField] extends [never] ? true : MissingBudgetField = true;
 /** Core workbench::MAX_STEP_REPORTS: twelve calls with six bound report slots. */
 export {WORKBENCH_MAX_STEP_REPORTS} from './nativeMetadataCodec';
 export const WORKBENCH_HELP_ROUTE='help?focus=engine-workbench';
@@ -196,7 +199,7 @@ export function toolFormArguments(schema:unknown,values:Record<string,string>,co
     return Object.fromEntries(entries);
 }
 export type WorkbenchMessage =
-    | { type: 'answer'; question: string; budget?: Budget }
+    | { type: 'answer'; question: string; budget: BudgetV3 }
     | {type:'exportReferenceRefresh';id:string;format:'json'|'markdown';action:'copy'|'save'}
     | {type:'refreshReferences';turn:string;cards:string[];mode:'selected_only'|'full_reconcile_reviewed'}
     | {type:'checkReferenceRefresh'|'requeryReferenceRefresh';id:string}
@@ -206,7 +209,7 @@ export type WorkbenchMessage =
     | { type: 'run'; input: string; prepare: boolean; recipe?: string; plan?: Value; pathPrefix?: string }
     | { type: 'rerun' | 'saveStrategy' | 'remember'; turn: string }
     | { type: 'open' | 'context'; turn: string; card: string }
-    | { type: 'openAnswerCitation'; turn: string; record: string; hit: number; member?: number }
+    | { type: 'openAnswerCitation'; turn: string; record: string; span: number; member?: number }
     | { type:'continue'; turn:string; step:string }
     | { type:'followTarget';turn:string;step:string;target:string }
     | { type:'followDefinition';turn:string;step:string;name:string;path:string }
@@ -225,8 +228,9 @@ export function parseWorkbenchMessage(raw: unknown): WorkbenchMessage | undefine
     const exact = (keys: string[]) => Object.keys(v).every(k => keys.includes(k));
     if (type === 'answer' && exact(['type', 'question', 'budget']) && str('question', 16384)
         && new TextEncoder().encode(String(v.question)).length <= 16384 && String(v.question).trim()
-        && (v.budget === undefined || (Object.keys(object(v.budget)).length === Object.keys(WORKBENCH_CONTEXT_BUDGET).length
-            && Object.keys(WORKBENCH_CONTEXT_BUDGET).every(key => Number.isSafeInteger(object(v.budget)[key]) && Number(object(v.budget)[key]) >= 0)))) return v as WorkbenchMessage;
+        // Exactly the BudgetV3 fields as non-negative integers; their ranges are the native request's to validate.
+        && Object.keys(object(v.budget)).length === ANSWER_BUDGET_FIELDS.length
+        && ANSWER_BUDGET_FIELDS.every(key => Number.isSafeInteger(object(v.budget)[key]) && Number(object(v.budget)[key]) >= 0)) return v as WorkbenchMessage;
     if (typeof type !== 'string' || JSON.stringify(raw).length > (type==='formDraft'?132096:40000)) { return; }
     const formFence=()=>str('sessionId')&&str('project',64)&&/^[0-9a-f]{64}$/.test(String(v.project))
         &&Number.isSafeInteger(v.epoch)&&Number(v.epoch)>=0&&Number.isSafeInteger(v.revision)&&Number(v.revision)>0&&Number(v.revision)<=2147483647
@@ -250,7 +254,7 @@ export function parseWorkbenchMessage(raw: unknown): WorkbenchMessage | undefine
     if (type === 'run' && exact(['type','input','prepare','recipe','plan','pathPrefix']) && str('input',4096) && typeof v.prepare === 'boolean' && (v.pathPrefix===undefined || str('pathPrefix',1024))
         && (v.recipe === undefined || str('recipe')) && (v.plan === undefined || Object.keys(object(v.plan)).length > 0)) { return v as WorkbenchMessage; }
     if (['rerun','saveStrategy','remember'].includes(type) && exact(['type','turn']) && str('turn')) { return v as WorkbenchMessage; }
-    if(type==='openAnswerCitation'&&exact(['type','turn','record','hit','member'])&&str('turn')&&typeof v.record==='string'&&/^[0-9a-f]{64}$/.test(v.record)&&Number.isSafeInteger(v.hit)&&Number(v.hit)>=0&&(v.member===undefined||Number.isSafeInteger(v.member)&&Number(v.member)>=0))return v as WorkbenchMessage;
+    if(type==='openAnswerCitation'&&exact(['type','turn','record','span','member'])&&str('turn')&&typeof v.record==='string'&&/^[0-9a-f]{64}$/.test(v.record)&&Number.isSafeInteger(v.span)&&Number(v.span)>=0&&(v.member===undefined||Number.isSafeInteger(v.member)&&Number(v.member)>=0))return v as WorkbenchMessage;
     if (['open','context'].includes(type) && exact(['type','turn','card']) && str('turn') && str('card')) { return v as WorkbenchMessage; }
     if(type==='continue'&&exact(['type','turn','step'])&&str('turn')&&str('step')){return v as WorkbenchMessage;}
     if(type==='followTarget'&&exact(['type','turn','step','target'])&&str('turn')&&str('step')&&str('target',4096)){return v as WorkbenchMessage;}

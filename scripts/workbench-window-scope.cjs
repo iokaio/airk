@@ -122,14 +122,14 @@ async function runSlash(text, expectedSelection) {
   observations.push({ text, selection: expectedSelection, delivery: delivered, turn: structuredClone(turn) });
 }
 function qualifiedAnswerPartitions(envelope) {
-  assert.ok(envelope && ['airk.arbiter.context/2','airk.combined-read/1'].includes(envelope.schema),
+  assert.ok(envelope && ['airk.arbiter.context/3','airk.combined-read/1'].includes(envelope.schema),
     'current Answer must be an explicit singleton /2 or combined /1 envelope');
   const combined=envelope.schema==='airk.combined-read/1';
-  if(combined)assert.equal(envelope.context?.schema,'airk.combined-context/1');
+  if(combined)assert.equal(envelope.context?.schema,'airk.combined-context/2');
   const partitions=answerPartitions(envelope);
   assert.equal(partitions.length,1,'these automatic and explicit fixtures each select exactly one index');
   assert.equal(partitions[0].outcome,combined?'complete':'local');
-  assert.equal(partitions[0].packet?.schema,'airk.arbiter.context/2');
+  assert.equal(partitions[0].packet?.schema,'airk.arbiter.context/3');
   return partitions;
 }
 async function runAnswer(expectedSelection) {
@@ -157,7 +157,7 @@ async function runAnswer(expectedSelection) {
   assert.ok(card,'actual native source verification must provide an unambiguous Answer citation');
   const sourceBefore=deliveries.length,openBefore=editorOpens.length;
   journeyStage=`answer-${expectedSelection}-file-info-and-open`;
-  await workbench.message({type:'openAnswerCitation',turn:turn.id,record:card.step,hit:Number(card.resultPointer.split('/').at(-1)),member:card.answerMember});
+  await workbench.message({type:'openAnswerCitation',turn:turn.id,record:card.step,span:Number(card.resultPointer.split('/').at(-1)),member:card.answerMember});
   const info=parsedDelivery('airk_file_info',sourceBefore),args=JSON.parse(info.argv[info.argv.indexOf('--args')+1]);
   assert.equal(args.path,card.path);assert.equal(args.known_hash,card.hash);assert.equal(args.revision,card.publication);
   assert.deepEqual(args.index_ids,[card.indexId]);assert.deepEqual(args.project_ids,card.projectIds);

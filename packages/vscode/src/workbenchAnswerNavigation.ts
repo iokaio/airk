@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Host projection of existing native receipts. It grants no live read authority.
 import type {NativeMetadataCodec} from './nativeMetadataCodec';
-import type { ContextResponseV2, NativeRead } from './generated/arbiter';
+import type { ContextResponseV3 } from './generated/arbiter';
 import { object, type Value } from './workbenchContracts';
 import { nativeVerification, readResultBody } from './sourceVerification';
 import { comparePublication } from './publications';
@@ -9,49 +9,33 @@ const digest = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-f]{
 const indexId = (v: unknown): v is string => typeof v === 'string' && /^idx_[0-9a-f]{32}$/.test(v);
 const projectIds = (v: unknown): v is string[] => Array.isArray(v)
     && new Set(v).size === v.length && v.every(id => typeof id === 'string' && /^prj_[0-9a-f]{32}$/.test(id));
-// Explicit per-surface applicability, checked against the generated native enum.
-// Definitions/fact discovery, References' nested evidence and document sections
-// need their own native locator owners; a coincidental `hits` field is not one.
-const sourceHitOperation: Record<NativeRead, boolean> = {
-    search: true, context: true, read_evidence: true,
-    definitions: false, references: false, document_sections: false,
-};
 const equalPublication = (a: unknown, b: unknown, collection: unknown): boolean => typeof collection === 'string'
     && comparePublication({ authority: 'native-answer', collection, publication: a }, { authority: 'native-answer', collection, publication: b }) === 'equal';
 
-/** JSON semantic equality retains every native scope field; object key order is not authority. */
-function sameNativeJson(left:unknown,right:unknown):boolean {
-    if(left===right)return true;
-    if(left===null||right===null||typeof left!=='object'||typeof right!=='object')return false;
-    if(Array.isArray(left)||Array.isArray(right))return Array.isArray(left)&&Array.isArray(right)&&left.length===right.length
-        &&left.every((value,index)=>sameNativeJson(value,right[index]));
-    const a=left as Record<string,unknown>,b=right as Record<string,unknown>,keys=Object.keys(a);
-    return keys.length===Object.keys(b).length&&keys.every(key=>Object.hasOwn(b,key)&&sameNativeJson(a[key],b[key]));
-}
-
+export const ANSWER_SCHEMA='airk.arbiter.context/3', COMBINED_ANSWER_SCHEMA='airk.combined-context/2';
 /** Display projection only. The full original outer result remains the export owner. */
-export interface AnswerPartition { member?: number; indexId?: string; outcome: string; packet?: ContextResponseV2; raw: Value }
-function contextPacket(raw: unknown): ContextResponseV2 | undefined {
-    const body=readResultBody(raw);
-    if(body.schema!=='airk.arbiter.context/2'||!Array.isArray(body.records)||!Array.isArray(body.paragraphs)
-        ||!Array.isArray(body.assessment_history)||!Array.isArray(body.gaps)||!Object.keys(object(body.assessment)).length)return;
-    return body as unknown as ContextResponseV2;
+export interface AnswerPartition { member?: number; indexId?: string; outcome: string; packet?: ContextResponseV3; raw: Value }
+function contextPacket(raw: unknown): ContextResponseV3 | undefined {
+    const body=readResultBody(raw),scope=object(body.scope);
+    if(body.schema!==ANSWER_SCHEMA||typeof body.question!=='string'||!Array.isArray(body.records)||!Array.isArray(body.parts)||!Array.isArray(body.paragraphs)
+        ||!Array.isArray(body.decisions)||!Array.isArray(body.degradations)||!Array.isArray(body.record_uses)||!Array.isArray(body.omitted_evidence)
+        ||!Object.keys(object(body.decision_log)).length||!Object.keys(object(body.union)).length||!indexId(scope.index_id)||!Object.keys(object(scope.publication)).length)return;
+    return body as unknown as ContextResponseV3;
 }
+/** Answer /3, alone or as the members of one combined Answer. /2 replies are history: shown whole, never navigated. */
 export function isAnswerEnvelope(envelope:Value):boolean {
-    return envelope.schema==='airk.arbiter.context/2'||envelope.schema==='airk.combined-read/1'&&object(envelope.context).schema==='airk.combined-context/1';
+    return envelope.schema===ANSWER_SCHEMA||envelope.schema==='airk.combined-read/1'&&object(envelope.context).schema===COMBINED_ANSWER_SCHEMA;
 }
 export function answerPartitions(envelope:Value):AnswerPartition[] {
-    if(envelope.schema==='airk.arbiter.context/2')return [{outcome:'local',packet:contextPacket(envelope),raw:envelope}];
+    if(envelope.schema===ANSWER_SCHEMA)return [{outcome:'local',packet:contextPacket(envelope),raw:envelope}];
     if(!isAnswerEnvelope(envelope)||!Array.isArray(envelope.members))return [];
     const members=envelope.members.map(object),ids=members.map(member=>member.index_id);
     const vector=object(envelope.publication_vector),publications=Array.isArray(vector.members)?vector.members.map(object):[];
     return members.map((raw,member)=>{
         const packet=contextPacket(raw.result),index=raw.index_id;
-        const heads=publications.filter(head=>head.index_id===index),scope=object(object(packet?.assessment).scope),publication=object(scope.publication);
+        const heads=publications.filter(head=>head.index_id===index),scope=object(packet?.scope),publication=object(scope.publication);
         const bound=indexId(index)&&ids.filter(id=>id===index).length===1&&scope.index_id===index&&heads.length===1
-            &&equalPublication(scope.publication,heads[0].publication,publication.collection)
-            &&packet?.records.every(record=>sameNativeJson(record.scope,scope)&&object(record.scope).index_id===index
-                &&equalPublication(object(record.scope).publication,heads[0].publication,publication.collection));
+            &&equalPublication(scope.publication,heads[0].publication,publication.collection);
         return {member,indexId:typeof index==='string'?index:undefined,outcome:String(raw.outcome??'unknown'),
             ...(bound?{packet}:{}),raw};
     });
@@ -107,7 +91,7 @@ export function answerSourceBinding(body: Value, path: string, hash: string, ind
         source_relative_path: source.source_relative_path, publication };
 }
 
-/** Flatten only supported native hit arrays, preserving record ID and hit locator. */
+/** Flatten every located span of each record, preserving record ID and span locator. */
 export function answerEvidenceRows(envelope: Value): Value[] { return answerEvidenceRowsAt(envelope); }
 type ReceiptCustody = {owner:Value;prefix:string};
 function structuredBodyPrefix(raw:unknown):string|undefined {
@@ -124,31 +108,24 @@ function answerEvidenceRowsAt(envelope:Value,inherited?:ReceiptCustody):Value[] 
         const child=custody?{owner:custody.owner,prefix:`${custody.prefix}/members/${partition.member}/result${prefix}`}:undefined;
         return answerEvidenceRowsAt(partition.packet as unknown as Value,child).map(row=>({...row,answer_member:partition.member}));
     });
-    if (envelope.schema !== 'airk.arbiter.context/2' || !Array.isArray(envelope.records)) return [];
-    const records = envelope.records.map(object), ids = records.map(record => record.id);
-    const scope=object(object(envelope.assessment).scope);
-    if(records.some(record=>!sameNativeJson(record.scope,scope)))return [];
+    const packet=contextPacket(envelope);
+    if(!packet)return [];
+    const scope=packet.scope as unknown as Value,publication=object(scope.publication),ids=packet.records.map(record=>record.id);
     if (ids.some(id => !digest(id)) || new Set(ids).size !== ids.length) return [];
-    return records.flatMap((record, recordPosition) => {
-        if (!Object.hasOwn(sourceHitOperation, String(record.operation)) || !sourceHitOperation[record.operation as NativeRead]) return [];
-        const scope = object(record.scope), body = object(record.canonical_result), publication = object(scope.publication);
-        const observation = object(body.scope_observation), members = Array.isArray(observation.members) ? observation.members.map(object) : [];
-        const own = members.filter(member => member.index_id === scope.index_id);
-        if (!indexId(scope.index_id) || !digest(scope.authorization) || observation.fingerprint !== scope.authorization || own.length !== 1
-            || !equalPublication(body.publication, publication, body.collection) || !Array.isArray(body.hits)) return [];
-        return body.hits.flatMap((raw, hit) => {
-            const row = object(raw), citation = object(row.citation);
-            if (typeof citation.path !== 'string' || !digest(citation.content_hash)) return [];
-            // Current native Answer verifies the complete context packet once.
-            // Its reference paths are rooted at that packet, not each nested
-            // canonical read. A present invalid whole receipt never falls back.
-            const origin = answerSourceBinding(body, citation.path, citation.content_hash, String(scope.index_id), publication,
-                custody ? `${custody.prefix}/records/${recordPosition}/canonical_result/hits/${hit}/citation` : `/hits/${hit}/citation`,
-                custody?.owner ?? body);
-            const memberships = Array.isArray(own[0].memberships) ? own[0].memberships.map(object) : [];
-            if (!origin || !Array.isArray(own[0].source_root_ids) || !own[0].source_root_ids.includes(origin.source_root_id)
-                || !(origin.project_ids as string[]).every(id => memberships.some(member => member.project_id === id))) return [];
-            return [{ ...row, origin, publication: publication.token, step: record.id, result_pointer: `/hits/${hit}` }];
+    // The reply carries one scope and one whole-reply verification receipt;
+    // each record is a span projection whose spans are the receipt's locators.
+    const owner=custody?.owner??envelope,prefix=custody?.prefix??'',fence={publication:scope.publication,collection:publication.collection};
+    return packet.records.flatMap((record, recordPosition) => {
+        const body=object(record.canonical_result);
+        if(body.revision!=null&&body.revision!==publication.token)return [];
+        return (Array.isArray(body.spans)?body.spans:[]).flatMap((raw, span) => {
+            const row = object(raw);
+            if (typeof row.path !== 'string' || !digest(row.content_hash) || !Number.isSafeInteger(row.start_line) || !Number.isSafeInteger(row.end_line)) return [];
+            const origin = answerSourceBinding(fence, row.path, row.content_hash, String(scope.index_id), scope.publication,
+                `${prefix}/records/${recordPosition}/canonical_result/spans/${span}`, owner);
+            if (!origin) return [];
+            return [{ citation:{path:row.path,content_hash:row.content_hash,start_line:row.start_line,end_line:row.end_line},
+                ...(typeof row.text==='string'?{text:row.text}:{}), span:row, origin, publication: publication.token, step: record.id, result_pointer: `/spans/${span}` }];
         });
     });
 }

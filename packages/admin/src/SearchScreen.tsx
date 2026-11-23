@@ -20,9 +20,9 @@ import { concurrencyNote } from './scopeConcurrency';
 import manifest from '../../ui/generated/help-manifest.json';
 import { helpToolPresentation, renderHelpNode } from '../../ui/src/helpToolPresentation';
 import { h } from 'preact';
-import { WORKBENCH_CONTEXT_BUDGET } from '../../vscode/src/workbenchContracts';
-import type { ContextRequestV2 } from '../../contracts-gen/arbiter';
-import { answerPresentation, type AnswerNode } from '../../ui/src/answerPresentation';
+import { ANSWER_DEFAULT_BUDGET } from '../../ui/src/answerBudget';
+import { answerRequest } from '../../vscode/src/workbenchAnswerClient';
+import { answerNodeMarkdown, answerPresentation, type AnswerNode } from '../../ui/src/answerPresentation';
 import { createBrowserNativeMetadataCodec } from '../../ui/src/nativeMetadataCodec';
 import { createAnswerNavigation, isAnswerEnvelope } from '../../vscode/src/workbenchAnswerNavigation';
 
@@ -187,7 +187,7 @@ export function createSearchWorkspace(deps: { run(operation: Operation, request:
 }
 export function guidedArguments(kind: 'search' | 'answer', text: string, retrieval: string, path: string, limit: number, advanced: Rec): Rec {
   if (kind === 'answer') {
-    const request: ContextRequestV2 = { schema: 'airk.arbiter.context.request/2', question: text, budget: structuredClone(WORKBENCH_CONTEXT_BUDGET) };
+    const request = answerRequest(text, ANSWER_DEFAULT_BUDGET);
     return { ...request, ...advanced, schema: request.schema, question: text };
   }
   return { ...advanced, query: text, mode: retrieval, limit, ...(path ? { path_prefix: path } : {}) };
@@ -220,7 +220,8 @@ function SharedAnswer({ raw, identity }: { raw: Rec; identity: string }): JSX.El
   let partitions: ReturnType<typeof navigation.answerPartitions> = [], sources: ReturnType<typeof navigation.answerEvidenceRows> = [];
   try { partitions = navigation.answerPartitions(raw); sources = navigation.answerEvidenceRows(raw); }
   catch { return <p role="alert">The native Answer could not be restored. Its complete original response remains available below.</p>; }
-  const show = (value: AnswerNode | string): JSX.Element | string => typeof value === 'string' ? <Text value={value} /> : h(value.tag, {
+  // Located spans are shown, not opened: this management view has no editor source authority.
+  const show = (value: AnswerNode | string): JSX.Element | string => typeof value === 'string' ? <Text value={value} /> : value.sourceLocator ? <span>{value.children.map(show)}</span> : h(value.tag, {
     ...(value.id ? { id: value.id, tabIndex: -1 } : {}),
     ...(value.citationTarget ? { type: 'button', onClick: () => { const target = document.getElementById(value.citationTarget!); target?.closest('details')?.setAttribute('open', ''); target?.focus(); target?.scrollIntoView({ block: 'start' }); } } : {}),
   }, ...value.children.map(show));
@@ -236,13 +237,22 @@ function SharedAnswer({ raw, identity }: { raw: Rec; identity: string }): JSX.El
     {!partitions.length && <p>No supported current Answer packet could be projected. The complete original response remains below.</p>}
   </section>;
 }
+/** The readable Answer, member by member, then the complete original request and response. */
+function answerMarkdown(root: Rec, original: unknown, request: unknown): string {
+  let partitions: ReturnType<ReturnType<typeof createAnswerNavigation>['answerPartitions']> = [];
+  try { partitions = createAnswerNavigation().answerPartitions(root); } catch { /* The complete response below is retained. */ }
+  const readable = partitions.map(partition => `${partition.member === undefined ? '' : `## Index ${partition.indexId ?? 'unavailable'} · member ${partition.member} · ${partition.outcome}\n\n`}${partition.packet
+    ? answerNodeMarkdown(answerPresentation(partition.packet, partition.member === undefined ? 'export' : `export-member-${partition.member}`))
+    : 'No valid locally bound current Answer packet was returned for this member; the complete response below retains it.'}`).join('\n\n');
+  return `${readable}\n\n${completeSearchMarkdown(original, request)}`;
+}
 function Results({ state, request, verifiedScope, logicalBody, metadataError, more }: { state: CallState; request: { tool: string; arguments: Rec; scope: string } | null; verifiedScope: boolean; logicalBody: Rec | null; metadataError: string | null; more?(cursor: string): void }): JSX.Element | null {
   const [notice, setNotice] = useState('');
   if (state.phase !== 'done') return <Outcome state={state} />;
   if (state.result.kind !== 'ok') return <><Outcome state={state} /><details><summary>Complete actual read outcome</summary><JsonBlock value={state.result} name="airk-search-outcome.json" /></details></>;
   const original = state.result.envelope.result, raw = searchBody(original), root = logicalBody ?? raw, answer = isAnswerEnvelope(root), cursor = request ? returnedSearchCursor(original, request.tool) : null;
   const members = root.schema === 'airk.combined-read/1' && Array.isArray(root.members) ? root.members.map(rec) : [{ outcome: 'local', result: root }];
-  const markdown = completeSearchMarkdown(original, request);
+  const markdown = answer ? answerMarkdown(root, original, request) : completeSearchMarkdown(original, request);
   const copy = async (text: string) => { try { if (!navigator.clipboard) throw new Error('Clipboard unavailable; use Download.'); await navigator.clipboard.writeText(text); setNotice('Copied complete response.'); } catch (error) { setNotice(String(error)); } };
   return <section aria-label="Search results"><div class="row"><h3>{verifiedScope ? 'Indexed evidence' : 'Actual native response — scope not verified'}</h3><button onClick={() => void copy(JSON.stringify(original, null, 2))}>Copy complete JSON</button><button onClick={() => void copy(markdown)}>Copy complete Markdown</button><button onClick={() => downloadText('airk-search.json', JSON.stringify(original, null, 2), 'application/json')}>Download JSON</button><button onClick={() => downloadText('airk-search.md', markdown, 'text/markdown')}>Download Markdown</button></div>
     {notice && <p role="status"><Text value={notice} /></p>}
@@ -296,7 +306,7 @@ export function Search(props:{guidedRoute?:BrowserEvidenceRoute;onGuidedRoute?:(
         <div class="row"><label class="field">Read<select value={kind} onChange={event => { setKind(event.currentTarget.value === 'answer' ? 'answer' : 'search'); setCustom(false); }}><option value="search">Search indexed evidence</option><option value="answer">Gather cited context for a question</option></select></label><Field label={kind === 'answer' ? 'Question' : 'Query'} wide value={query} placeholder="Where is request cancellation handled?" onInput={setQuery} /></div>
         {!custom && kind === 'search' && <div class="row"><label class="field">Retrieval mode<select value={retrieval} onChange={event => setRetrieval(event.currentTarget.value)}><option value="lexical">Text</option><option value="hybrid">Hybrid</option><option value="vector">Semantic</option></select></label><Field label="Path prefix (optional)" value={path} onInput={setPath} /><NumberField label="Result limit" value={limit} min={1} max={100} onInput={setLimit} /></div>}
         <button type="submit" disabled={!view.applied || view.loading || view.applying || view.result.phase === 'pending' || advanced === null || (!custom && !query.trim())}>{custom ? 'Run selected read' : kind === 'answer' ? 'Gather cited context' : 'Search'}</button>
-        <details><summary>Advanced tools, arguments and full native schema</summary><label><input type="checkbox" checked={custom} onChange={event => setCustom(event.currentTarget.checked)} />Use an advanced native tool with exactly the JSON arguments below</label><label class="field">Native tool<select value={tool} onChange={event => setTool(event.currentTarget.value)}>{manifest.tools.map(item => <option value={item.name}>{item.name}</option>)}</select></label><Field label="Other native tool name (optional)" value={tool} onInput={setTool} /><label class="field">Native arguments JSON<textarea rows={5} value={extra} class={advanced === null ? 'invalid' : ''} onInput={event => setExtra(event.currentTarget.value)} /></label><p>Advanced tool mode sends this object unchanged. Guided search keeps every extra field; the visible query, retrieval mode and limit take precedence. Question mode retains a supplied budget; otherwise it uses the existing Workbench context budget.</p><label class="field">Response detail<select value={response} onChange={event => setResponse(event.currentTarget.value === 'terse' ? 'terse' : 'full')}><option value="full">Full</option><option value="terse">Terse</option></select></label>{definition && renderHelpNode((tag, children) => h(tag, {}, ...children), helpToolPresentation(definition))}</details>
+        <details><summary>Advanced tools, arguments and full native schema</summary><label><input type="checkbox" checked={custom} onChange={event => setCustom(event.currentTarget.checked)} />Use an advanced native tool with exactly the JSON arguments below</label><label class="field">Native tool<select value={tool} onChange={event => setTool(event.currentTarget.value)}>{manifest.tools.map(item => <option value={item.name}>{item.name}</option>)}</select></label><Field label="Other native tool name (optional)" value={tool} onInput={setTool} /><label class="field">Native arguments JSON<textarea rows={5} value={extra} class={advanced === null ? 'invalid' : ''} onInput={event => setExtra(event.currentTarget.value)} /></label><p>Advanced tool mode sends this object unchanged. Guided search keeps every extra field; the visible query, retrieval mode and limit take precedence. Question mode sends Answer /3 and retains a supplied budget; otherwise it uses the Core default Answer budget (up to 300 s; the service refuses more than 600 s).</p><label class="field">Response detail<select value={response} onChange={event => setResponse(event.currentTarget.value === 'terse' ? 'terse' : 'full')}><option value="full">Full</option><option value="terse">Terse</option></select></label>{definition && renderHelpNode((tag, children) => h(tag, {}, ...children), helpToolPresentation(definition))}</details>
       </form></section>
       {GUIDED_EVIDENCE_ROUTES.map(route=><section hidden={props.guidedRoute!==route}><EvidenceToolsScreen route={route} scopeIdentity={view.applied?.scopeIdentity} disabled={!view.applied||view.loading||view.applying||view.result.phase==='pending'} capture={()=>captureFor(route)} active={visible&&props.guidedRoute===route}/></section>)}
       <section hidden={!isBrowserReviewRoute(props.guidedRoute)}><BrowserReviewScreen route={isBrowserReviewRoute(props.guidedRoute)?props.guidedRoute:'review/changes'} scopeIdentity={view.applied?.scopeIdentity} disabled={!view.applied||view.loading||view.applying||view.result.phase==='pending'} capture={()=>captureFor(isBrowserReviewRoute(props.guidedRoute)?props.guidedRoute:'review/changes')} active={visible&&isBrowserReviewRoute(props.guidedRoute)}/></section>

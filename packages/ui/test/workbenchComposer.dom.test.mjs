@@ -8,7 +8,8 @@ import {readFile,writeFile} from 'node:fs/promises';
 import {browserAvailable,browserHarness} from './browserHarness.mjs';
 const {build}=createRequire(new URL('../../vscode/package.json',import.meta.url))('esbuild');
 const root=fileURLToPath(new URL('../../vscode/',import.meta.url));
-const native=JSON.parse(await readFile(new URL('../../../fixtures/split/arbiter/budget_cases.json',import.meta.url),'utf8'));
+// Answer /3 defaults: the Rust-emitted loop cases.
+const native=JSON.parse(await readFile(new URL('../../../fixtures/split/arbiter/answer_loop_cases.json',import.meta.url),'utf8'));
 async function fixture(t,{width=420,project=true}={}){
  const bundle=await build({absWorkingDir:root,entryPoints:['src/workbenchWebview/main.tsx'],bundle:true,write:false,outdir:'out/unused-composer-dom',format:'iife',platform:'browser',jsx:'automatic',jsxImportSource:'preact'});
  const browser=await browserHarness();t.after(async()=>{try{await browser.close();}finally{t.diagnostic(JSON.stringify({browser_ownership:browser.observation}));}});

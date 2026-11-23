@@ -245,10 +245,14 @@ test('selected Markdown and JSON share the complete selected response including 
     assert.equal(selected.evidence.length,1);assert.deepEqual(selected.evidence[0],turn.envelope.evidence[0]);assert.doesNotMatch(md,/unselected/);
 });
 
-test('cited context admits full native UTF8 questions and exact integer budget fields',()=>{
-    const budget={calls:2,rounds:1,fanout:2,input_tokens:512,candidates:4,max_bytes:4096,deadline_ms:1200};
+test('cited context admits full native UTF8 questions and exact integer budget fields',async()=>{
+    // The Rust-emitted Answer /3 default carries every BudgetV3 field.
+    const cases=JSON.parse(await fs.readFile(path.resolve(__dirname,'../../../../fixtures/split/arbiter/answer_loop_cases.json'),'utf8'));
+    const budget={...cases.default_budget,calls:2,rounds:1,fanout:2,input_tokens:512,candidates:4,max_bytes:4096,deadline_ms:1200};
     const question='é'.repeat(8192);
     assert.deepEqual(parseWorkbenchMessage({type:'answer',question,budget}),{type:'answer',question,budget});
+    assert.equal(parseWorkbenchMessage({type:'answer',question:'ok'}),undefined,'an Answer message carries its whole budget');
+    assert.equal(parseWorkbenchMessage({type:'answer',question:'ok',budget:{calls:2,rounds:1,fanout:2,input_tokens:512,candidates:4,max_bytes:4096,deadline_ms:1200}}),undefined,'a /2 budget is refused');
     assert.equal(parseWorkbenchMessage({type:'answer',question:question+'é',budget}),undefined);
     assert.equal(parseWorkbenchMessage({type:'answer',question:'ok',budget:{...budget,extra:1}}),undefined);
     assert.equal(parseWorkbenchMessage({type:'answer',question:'ok',budget:{...budget,calls:1.5}}),undefined);

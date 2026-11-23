@@ -38,7 +38,7 @@ def input_inventory():
              if path.is_file() and path.suffix in ('.py', '.cjs', '.mjs', '.json')]
     paths.extend(path for path in compiled.rglob('*') if path.is_file())
     paths.extend(ROOT / name for name in ('packages/vscode/package.json', 'packages/vscode/package-lock.json',
-        'fixtures/split/arbiter/public_answer_cases.json', 'fixtures/split/arbiter/context_action_cases.json',
+        'fixtures/split/arbiter/public_answer_cases.json', 'fixtures/split/arbiter/answer_loop_cases.json',
         'packages/contracts-gen/arbiter.schema.json'))
     return {path.relative_to(ROOT).as_posix(): sha256(path) for path in sorted(paths)}
 
@@ -59,7 +59,7 @@ def qualify(runtime, node, report, target):
     examples = [row for row in public_answer['examples'] if row['name'] == 'complete_native_request' and row['accepted']]
     assert len(examples) == 1, 'Exactly one actual Rust current Answer request is required'
     answer_request = examples[0]['arguments']
-    assert answer_request['schema'] == 'airk.arbiter.context.request/2'
+    assert answer_request['schema'] == 'airk.arbiter.context.request/3'
     assert '\n' not in answer_request['question'] and '\r' not in answer_request['question']
     with clients.owned_client_fixture() as directory:
         owner = Path(directory).resolve(strict=True)

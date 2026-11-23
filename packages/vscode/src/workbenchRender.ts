@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import {DISPLAY_PROJECTION_TURNS} from './nativeMetadataCodec';
 export {SHARED_CAPABILITY_REFERENCE,shareableCapabilityField,materializeCapabilityMember,DISPLAY_PROJECTION_TURNS} from './nativeMetadataCodec';
-import { answerEvidenceRows, isAnswerEnvelope } from './workbenchAnswerNavigation';
+import { ANSWER_SCHEMA, answerEvidenceRows, answerPartitions, isAnswerEnvelope } from './workbenchAnswerNavigation';
+import { answerNodeMarkdown, answerPresentation, answerStatusLine } from './answerPresentation';
+import type { ContextResponseV3 } from './generated/arbiter';
 import {nativeVerification,readResultBody,selectedVerification,verificationLabel} from './sourceVerification';
 import { Continuation, EvidenceCard, object, Value, WorkbenchSession, WorkbenchTurn, WORKBENCH_MAX_STEP_REPORTS } from './workbenchContracts';
 
@@ -334,8 +336,12 @@ export function markdown(turn: WorkbenchTurn, selected?: Set<string>,projection=
         const label=searchExecutionLabel(details.execution);
         return Object.keys(details).length?[...(label?[escape(label)]:[]),`### ${escape(String(report.tool??report.id??'Step'))} discovery details\n\n${fenced(canonical(details))}`]:[];
     });
-    return [`## ${escape(turn.input.replaceAll('\n',' '))}`, `Status: ${escape(String(e.status ?? e.stop ?? object(e.context).termination ?? turn.error ?? 'trimmed'))}`, `Publication: ${escape(String(e.publication ?? object(object(object(e.assessment).scope).publication).token ?? (isAnswerEnvelope(e)&&e.schema==='airk.combined-read/1'?'Independent member publication vector retained in complete response':'not available')))}`,
-        `Scope: ${escape(String(object(e.plan).path_prefix ?? ''))}`, ...(turn.selection ? [`Explicit selection: ${escape(openSelectionArgv(turn.selection).join(' '))}`] : []), ...(turn.trimmed ? ['Saved result was trimmed; re-run to collect current evidence.'] : []), ...content,
+    // An Answer reads for a person first: the tree Workbench shows, per partition, before the complete response.
+    const answer=!selected&&isAnswerEnvelope(e)?answerPartitions(e).map(partition=>`${partition.member===undefined?'':`### Index ${escape(partition.indexId??'unavailable')} · member ${partition.member} · ${escape(partition.outcome)}\n\n`}${partition.packet
+        ?answerNodeMarkdown(answerPresentation(partition.packet,`${turn.id}${partition.member===undefined?'':`-member-${partition.member}`}`))
+        :'No valid locally bound current Answer packet was returned for this member; the complete response below retains it.'}`):[];
+    return [`## ${escape(turn.input.replaceAll('\n',' '))}`, `Status: ${escape(e.schema===ANSWER_SCHEMA?answerStatusLine(e as unknown as ContextResponseV3):String(e.status ?? e.stop ?? object(e.context).termination ?? turn.error ?? 'trimmed'))}`, `Publication: ${escape(String(e.publication ?? object(object(e.scope).publication).token ?? (isAnswerEnvelope(e)&&e.schema==='airk.combined-read/1'?'Independent member publication vector retained in complete response':'not available')))}`,
+        `Scope: ${escape(String(object(e.plan).path_prefix ?? ''))}`, ...(turn.selection ? [`Explicit selection: ${escape(openSelectionArgv(turn.selection).join(' '))}`] : []), ...(turn.trimmed ? ['Saved result was trimmed; re-run to collect current evidence.'] : []), ...answer, ...content,
         ...(e.scope_observation!==undefined?[`### Recorded scope observation\n\n${fenced(canonical(e.scope_observation))}`]:[]),
         ...(selected?[`### ${selectedChecks?.requested?'Selected evidence and dated source observations':'Selected evidence'}\n\n${fenced(canonical({evidence:selectedRows,...(selectedChecks?.requested?{source_verification_observations:selectedChecks.observations,selected_verification_accounting:selectedChecks.accounting}:{})}))}`]:[]),
         ...metadata,...(turn.request ? [`### Complete original request\n\n${fenced(canonical(turn.request))}`] : []),

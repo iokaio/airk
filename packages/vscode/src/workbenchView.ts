@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
-import { READ_TRANSPORT_DEADLINE_MS, READ_TRANSPORT_OVERHEAD_MS } from './generated/arbiterBudget';
+import { READ_TRANSPORT_DEADLINE_MS } from './generated/arbiterBudget';
+import { answerRequest, ANSWER_REQUEST_SCHEMA, runAnswer } from './workbenchAnswerClient';
 import { answerSourceBinding, isAnswerEnvelope } from './workbenchAnswerNavigation';
 import {captureWorkbenchRefresh,sameRefreshAuthority,type ReferenceRefreshControl} from './workbenchReferenceRefresh';
 import {refreshQueryTool,type ReferenceRefreshFlow,type RefreshFlowHost} from './referenceRefresh';
 import {validateCombinedCatalogSession} from './catalogSession';
 import {NativeMetadataProjectionCache} from './nativeMetadata';
 import * as vscode from 'vscode';
-import type { Budget, ContextRequestV2 } from './generated/arbiter';
-import { WORKBENCH_CONTEXT_BUDGET } from './workbenchContracts';
+import type { BudgetV3 } from './generated/arbiter';
 import * as path from 'node:path';
 import { comparePublication, comparePublicationVector, type PublicationObservation, type PublicationRelation } from './publications';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -316,21 +316,21 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
         }
         this.send();
     }
-    private async answer(question: string, budget: Budget = WORKBENCH_CONTEXT_BUDGET): Promise<void> {
+    private async answer(question: string, budget: BudgetV3): Promise<void> {
         this.authorized();
         if (!this.session) throw new Error('Choose a project or explicit index selection first.');
         this.stop();
         const session = this.session, client = this.evidence(), generation = this.generation, identity = this.clientIdentity;
         const named = this.selectedSpec()?.openSelection;
-        const request: ContextRequestV2 = { schema: 'airk.arbiter.context.request/2', question,
-            budget: structuredClone(budget) };
+        const request = answerRequest(question, budget);
         // The existing persisted title field stays bounded; the full question and
         // every budget field remain in the original request and native result.
         const turn: WorkbenchTurn = { id: randomUUID(), at: Date.now(), input: question.slice(0, 4096), format: 'structured', request: structuredClone(request),
             ...(named ? { selection: { indexes: [...named.indexes], sets: [...named.sets] } } : {}) };
         session.turns.push(turn); this.busy = true; this.notice = undefined; this.send();
         try {
-            const result = await client.call('airk_answer', request, { supersede: 'workbench', timeout: Math.min(READ_TRANSPORT_DEADLINE_MS, budget.deadline_ms + READ_TRANSPORT_OVERHEAD_MS) });
+            // Answer waits for its own deadline plus delivery (up to 605 s); every other tool keeps 125 s.
+            const result = await runAnswer({ call: (body, timeout) => client.call('airk_answer', body, { supersede: 'workbench', timeout }) }, request);
             if (generation !== this.generation || session !== this.session || client !== this.client
                 || identity !== this.clientIdentity || identity !== this.evidenceIdentity() || !this.permitted()) return;
             turn.envelope = result.rawPayload ?? result.payload;
@@ -500,7 +500,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
             case 'openAnswerCitation': {
                 const turn=this.session?.turns.find(value=>value.id===message.turn);
                 if(!turn?.envelope||!isAnswerEnvelope(this.logical(turn)))throw new Error('Answer citation expired.');
-                const card=evidenceCards(this.logical(turn)).find(value=>value.step===message.record&&value.resultPointer===`/hits/${message.hit}`&&value.answerMember===message.member);
+                const card=evidenceCards(this.logical(turn)).find(value=>value.step===message.record&&value.resultPointer===`/spans/${message.span}`&&value.answerMember===message.member);
                 if(!card)throw new Error('Answer citation has no unambiguous native source location.');
                 await this.openAnswerSource(turn,card);break;
             }
@@ -555,8 +555,8 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
                 // inspect its retained plan before discarding any revision fence.
                 assertPortablePlanInputs(object(object(turn.envelope).plan));
                 const request=object(turn.request),plan=request.plan?planForWorkbenchRerun(object(request.plan)):undefined;
-                if(typeof request.schema==='string'&&request.schema.startsWith('airk.arbiter.context.request/')&&request.schema!=='airk.arbiter.context.request/2')throw new Error('This saved answer request uses an unsupported contract version; submit a new current context request.');
-                if (request.schema === 'airk.arbiter.context.request/2') await this.answer(String(request.question), request.budget as Budget);
+                if(typeof request.schema==='string'&&request.schema.startsWith('airk.arbiter.context.request/')&&request.schema!==ANSWER_REQUEST_SCHEMA)throw new Error('This saved Answer used an earlier contract the service no longer accepts; ask the question again for a current Answer.');
+                if (request.schema === ANSWER_REQUEST_SCHEMA) await this.answer(String(request.question), request.budget as BudgetV3);
                 else await this.run(turn.input,false,typeof object(request.recipe).id==='string'?String(object(request.recipe).id):undefined,plan,typeof request.path_prefix==='string'?request.path_prefix:undefined);
             }break;}
             case 'saveStrategy':{

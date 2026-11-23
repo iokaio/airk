@@ -23,7 +23,7 @@ class WorkbenchEvidenceTests(unittest.TestCase):
             for name in ('scripts/peer.cjs', 'packages/vscode/out/workbenchView.js',
                          'packages/vscode/out/workbenchRender.js',
                          'packages/vscode/package.json', 'packages/vscode/package-lock.json',
-                         'fixtures/split/arbiter/public_answer_cases.json', 'fixtures/split/arbiter/context_action_cases.json',
+                         'fixtures/split/arbiter/public_answer_cases.json', 'fixtures/split/arbiter/answer_loop_cases.json',
                          'packages/contracts-gen/arbiter.schema.json'):
                 target = root / name
                 target.parent.mkdir(parents=True, exist_ok=True)
@@ -79,7 +79,7 @@ class WorkbenchEvidenceTests(unittest.TestCase):
             package = SimpleNamespace(validate_runtime=lambda *_: ({'airkctl.exe': 'exact-original'}, None))
             def run(argv, **_):
                 request = json.loads(Path(argv[-1]).read_bytes())
-                self.assertEqual(request['answer_request']['schema'], 'airk.arbiter.context.request/2')
+                self.assertEqual(request['answer_request']['schema'], 'airk.arbiter.context.request/3')
                 self.assertEqual(request['answer_request']['question'], 'amber_marker')
                 self.assertTrue(all(request['answer_request']['question'] in Path(file).read_text() for file in request['source_hashes']))
                 Path(request['output']).write_text(json.dumps({'exactComparisons': 10, 'answerComparisons': answers, 'answerSourceOpens': sources}))

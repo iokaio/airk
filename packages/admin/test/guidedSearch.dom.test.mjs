@@ -51,13 +51,20 @@ test('browser guided Search chooses names without IDs, retains full advanced fie
 // synthetic Admin transport scope. Original fixture files remain untouched.
 // Their original bearer grants are not browser grants; rewriting the transport
 // observations here establishes UI semantics, never actual I3 qualification.
-const nativeCases=JSON.parse(await readFile(new URL('../../../fixtures/split/arbiter/combined_answer_cases.json',import.meta.url),'utf8')).cases;
-const contextCases=JSON.parse(await readFile(new URL('../../../fixtures/split/arbiter/context_action_cases.json',import.meta.url),'utf8')).cases;
-const direct=contextCases.find(item=>item.accepted&&item.input?.records?.length&&item.input?.assessment_history?.length);
-nativeCases.push({name:'actual_context_packet_with_synthetic_i3_scope_observation',output:direct.input});
+// Answer /3: the Rust-emitted reply alone, and a synthetic combined wrapper
+// of emitted replies (no Rust-emitted combined /3 case exists yet).
+const loopCases=JSON.parse(await readFile(new URL('../../../fixtures/split/arbiter/answer_loop_cases.json',import.meta.url),'utf8'));
+const emittedReply=structuredClone(loopCases.response_cases.find(row=>row.id==='two_parts_valid').response);
+const otherIndex='idx_'+'77'.repeat(16),otherReply=JSON.parse(JSON.stringify(emittedReply).replaceAll(emittedReply.scope.index_id,otherIndex));
+const combinedReply={schema:'airk.combined-read/1',context:{schema:'airk.combined-context/2',future:{kept:true}},
+ selection:{project_ids:[],index_ids:[emittedReply.scope.index_id,otherIndex,'idx_'+'78'.repeat(16)]},
+ publication_vector:{authority:'07'.repeat(32),members:[emittedReply.scope.index_id,otherIndex,'idx_'+'78'.repeat(16)].map(index_id=>({index_id,publication:emittedReply.scope.publication}))},
+ members:[{index_id:emittedReply.scope.index_id,outcome:'complete',is_error:false,result:emittedReply},{index_id:otherIndex,outcome:'complete',is_error:false,result:otherReply},
+  {index_id:'idx_'+'78'.repeat(16),outcome:'failed',is_error:true,result:{isError:true,content:[{type:'text',text:'retry later'}]}}]};
+const nativeCases=[{name:'emitted_answer_v3_with_synthetic_i3_scope_observation',output:emittedReply},{name:'synthetic_combined_answer_v3',output:combinedReply}];
 function adminAnswerFixture(nativeCase){
  const original=nativeCase.output,output=structuredClone(original);
- const ids=output.members?output.members.map(member=>member.index_id):[output.assessment.scope.index_id];
+ const ids=output.members?output.members.map(member=>member.index_id):[output.scope.index_id];
  const authority='67'.repeat(32),ns='12'.repeat(16),project='prj_'+'34'.repeat(16);
  const source={owner:'admin',scope_identity:authority,catalog_revision:7};
  const observation=members=>({selection:structuredClone(source),members:members.map(index_id=>({index_id}))});
@@ -83,7 +90,7 @@ test('all Answer fixtures bind explicit synthetic Admin transport through the re
    return {kind:'ok',status:200,envelope:{schema:'airk-admin/1',ok:true,result}};
   }});
   await owner.reload();owner.choose([f.project],[]);await owner.apply();
-  const result=await owner.execute('answer',{schema:'airk.arbiter.context.request/2',question:'Where is café defined?'},'full');
+  const result=await owner.execute('answer',{schema:'airk.arbiter.context.request/3',question:'Where is café defined?',budget:loopCases.default_budget},'full');
   assert.ok(result,nativeCase.name);assert.equal(owner.view().verifiedScope,true);assert.deepEqual(result.raw,f.raw);
   const output=result.logical;
   if(original.members){assert.deepEqual(output.publication_vector,original.publication_vector);for(let i=0;i<original.members.length;i++){const member=output.members[i];if(original.members[i].outcome==='complete'&&!original.members[i].is_error){const {scope_observation,...context}=member.result;assert.deepEqual(context,original.members[i].result);}else assert.deepEqual(member,original.members[i]);}}
@@ -106,18 +113,20 @@ for(const nativeCase of nativeCases)test(`guided Search shared Answer entrypoint
  await browser.evaluate(`(()=>{const input=[...document.querySelectorAll('label')].find(node=>node.textContent.startsWith('Question')).querySelector('input');input.value='Where is café defined?';input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
  await browser.observed(`!document.querySelector('form button[type="submit"]').disabled`);
  await browser.evaluate(`document.querySelector('form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}))`);
- await browser.observed(`document.body.textContent.includes('Evidence-grounded context')`);
+ await browser.observed(`document.body.textContent.includes('Across parts')`);
  assert.equal(await browser.evaluate(`document.querySelector('[aria-label="Search results"] h3')?.textContent`),'Indexed evidence');
  const successful=nativeCase.output.members?nativeCase.output.members.filter(member=>member.outcome==='complete'):[nativeCase.output];
- assert.equal(await browser.evaluate(`document.querySelectorAll('[id^="answer-management-answer-"]').length`),successful.length);
- assert.equal(await browser.evaluate(`new Set([...document.querySelectorAll('[id^="answer-management-answer-"]')].map(node=>node.id)).size`),successful.length);
- const targets=await browser.evaluate(`(()=>{const buttons=[...document.querySelectorAll('button')].filter(node=>node.textContent.startsWith('Read evidence '));return buttons.map(button=>{button.click();return document.activeElement.id;});})()`);
- assert.equal(new Set(targets).size,successful.length,'same record SHA in distinct native members must retain distinct citation targets');
- assert.ok(await browser.evaluate(`document.body.textContent.includes('Local partition assessment')&&document.body.textContent.includes('Assessment history')&&document.body.textContent.includes('Original evidence records')`));
+ const records=successful.length*emittedReply.records.length;
+ assert.equal(await browser.evaluate(`document.querySelectorAll('[id^="answer-management-answer-"]').length`),records);
+ assert.equal(await browser.evaluate(`new Set([...document.querySelectorAll('[id^="answer-management-answer-"]')].map(node=>node.id)).size`),records);
+ const targets=await browser.evaluate(`(()=>{const buttons=[...document.querySelectorAll('button')].filter(node=>/^(search|symbols) [0-9a-f]{12} · /.test(node.textContent));return buttons.map(button=>{button.click();return document.activeElement.id;});})()`);
+ assert.equal(new Set(targets).size,records,'same record SHA in distinct native members must retain distinct citation targets');
+ assert.ok(await browser.evaluate(`['Part 1: Where is the restart guard defined?','Sub-need 2.1 (documentation): README section on search','Evidence records','Decisions','Model decided (top score)'].every(text=>document.body.textContent.includes(text))`));
  await browser.evaluate(`[...document.querySelectorAll('button')].find(node=>node.textContent==='Copy complete JSON').click()`);
  await browser.observed('window.copied!==undefined');assert.deepEqual(JSON.parse(await browser.evaluate('window.copied')),raw);
  await browser.evaluate(`[...document.querySelectorAll('button')].find(node=>node.textContent==='Copy complete Markdown').click()`);
- await browser.observed(`window.copied.startsWith('# AIRK indexed evidence')`);assert.ok((await browser.evaluate('window.copied')).includes(JSON.stringify(raw,null,2)));
+ await browser.observed(`window.copied!==undefined&&window.copied.includes('# AIRK indexed evidence')`);const copied=await browser.evaluate('window.copied');
+ assert.ok(copied.includes(JSON.stringify(raw,null,2)),'the complete response is in the Markdown copy');assert.ok(copied.includes('#### Part 1: Where is the restart guard defined?'),'the readable Answer precedes it');
  const request=await browser.evaluate(`window.calls.find(call=>call.operation==='search.call').request.tools_call.arguments`);
- assert.equal(request.schema,'airk.arbiter.context.request/2');assert.equal(request.question,'Where is café defined?');
+ assert.equal(request.schema,loopCases.request_schema);assert.equal(request.question,'Where is café defined?');assert.deepEqual(request.budget,loopCases.default_budget);
 });
