@@ -5375,84 +5375,36 @@ fn answer_reply_case() -> Result<(airk_core::arbiter::answer_loop::BudgetV3, Val
     Ok((budget, reply))
 }
 
-/// The case reply as one transport observed it: every canonical read body
-/// carries this observation's request id, so its record ids and projected
-/// body digests differ, and every custody digest and timing differs; the
-/// evidence and decisions are the same.
+/// The case reply as one transport observed it. Since change-log entry 54
+/// its record ids and the digests that bind them are the same on every
+/// transport and run; what differs is the reply's request id, its timing,
+/// the observation time of its one `read_status`, and each Focus receipt
+/// digest, which binds measured model work.
 fn observed_answer_reply(
     header: u8,
     index: Option<IndexId>,
 ) -> Result<(airk_core::arbiter::answer_loop::BudgetV3, Value)> {
     let (budget, mut reply) = answer_reply_case()?;
-    let records = reply["records"].as_array().context("reply records")?.len();
-    let mut renamed = std::collections::BTreeMap::new();
-    for position in 0..records {
-        let record = &mut reply["records"][position];
-        record["canonical_result"]["full_digest"] = json!(Sha256Digest::from_bytes(
-            [header.wrapping_mul(16).wrapping_add(0x40 + u8::try_from(position)?); 32]
-        ));
-        let id = serde_json::to_value(Sha256Digest::from_bytes(
-            [header.wrapping_mul(16).wrapping_add(u8::try_from(position)?); 32],
-        ))?;
-        renamed.insert(
-            record["id"].as_str().context("record id")?.to_owned(),
-            id.clone(),
-        );
-        record["id"] = id;
-    }
-    // Every place the reply cites a record, named explicitly.
-    let mut citations = vec!["/omitted_evidence".to_string()];
-    for (part, value) in reply["parts"].as_array().context("parts")?.iter().enumerate() {
-        for need in 0..value["sub_needs"].as_array().context("sub-needs")?.len() {
-            citations.push(format!("/parts/{part}/sub_needs/{need}/evidence"));
-        }
-    }
-    for paragraph in 0..reply["paragraphs"].as_array().context("paragraphs")?.len() {
-        citations.push(format!("/paragraphs/{paragraph}/evidence"));
-    }
-    for conflict in 0..reply["union"]["conflicts"].as_array().context("conflicts")?.len() {
-        citations.push(format!("/union/conflicts/{conflict}/evidence"));
-    }
-    for pointer in citations {
-        for id in reply
-            .pointer_mut(&pointer)
-            .and_then(Value::as_array_mut)
-            .with_context(|| format!("citation list {pointer}"))?
-        {
-            *id = renamed
-                .get(id.as_str().context("cited id")?)
-                .context("citation of an unknown record")?
+    // Focus receipt digests: distinct before stay distinct after.
+    let mut custody = std::collections::BTreeMap::new();
+    for position in 0..reply["decisions"].as_array().context("decisions")?.len() {
+        if let Some(receipt) = reply["decisions"][position].get_mut("receipt") {
+            let next = u8::try_from(custody.len())?;
+            *receipt = custody
+                .entry(receipt.as_str().context("receipt digest")?.to_owned())
+                .or_insert_with(|| {
+                    json!(Sha256Digest::from_bytes(
+                        [header.wrapping_mul(16).wrapping_add(0x80 + next); 32]
+                    ))
+                })
                 .clone();
         }
     }
-    for position in 0..reply["record_uses"].as_array().context("uses")?.len() {
-        let id = &mut reply["record_uses"][position]["record"];
-        *id = renamed
-            .get(id.as_str().context("used id")?)
-            .context("use of an unknown record")?
-            .clone();
-    }
-    // Custody digests: distinct before stay distinct after, equal stay equal.
-    let mut custody = std::collections::BTreeMap::new();
-    let mut digest = |value: &mut Value| -> Result<()> {
-        let next = u8::try_from(custody.len())?;
-        *value = custody
-            .entry(value.as_str().context("custody digest")?.to_owned())
-            .or_insert_with(|| {
-                json!(Sha256Digest::from_bytes(
-                    [header.wrapping_mul(16).wrapping_add(0x80 + next); 32]
-                ))
-            })
-            .clone();
-        Ok(())
-    };
-    digest(&mut reply["decision_log"]["digest"])?;
-    for position in 0..reply["decisions"].as_array().context("decisions")?.len() {
-        digest(&mut reply["decisions"][position]["basis"]["digest"])?;
-        if let Some(receipt) = reply["decisions"][position].get_mut("receipt") {
-            digest(receipt)?;
-        }
-    }
+    reply["request_id"] = json!(Incarnation::from_bytes([header; 16]));
+    reply["read_status"] = json!({"freshness":{"state":"idle","requested_watermark":3,
+        "completed_watermark":3,"running_watermark":null,"last_success_unix_ms":5,
+        "error":null,"live_source_verified":false,"observed_unix_ms":1_000 + u64::from(header)},
+        "discovery_readiness":{"state":"ready"}});
     let timing = u64::from(header);
     reply["elapsed_ms"] = json!(1000 + timing);
     reply["work"]["compile_us"] = json!(40 + timing);
@@ -5527,17 +5479,43 @@ fn answer_reply_comparison_normalizes_only_transport_identities_custody_and_timi
     changed["future"]["request_id"] = json!("different-evidence-owned");
     let (left, right) = common::parity::context::pair(&wire, &changed, &budget)?;
     assert_ne!(left, right, "unknown outer fields cannot disappear");
+    // Since entry 54 a projection carries no per-read status and record ids
+    // and the digests binding them are compared as sent: any change differs.
     let mut changed = later.clone();
     changed["records"][0]["canonical_result"]["request_id"] = json!("not-an-incarnation");
-    assert!(common::parity::context::pair(&raw, &changed, &budget).is_err());
+    let (left, right) = common::parity::context::pair(&raw, &changed, &budget)?;
+    assert_ne!(left, right, "a projection gained a per-read field");
     let mut changed = later.clone();
     changed["records"][1]["canonical_result"]["full_digest"] =
         changed["records"][0]["canonical_result"]["full_digest"].clone();
     let (left, right) = common::parity::context::pair(&raw, &changed, &budget)?;
     assert_ne!(left, right, "two different read bodies cannot become one");
-    let mut changed = later.clone();
-    changed["records"][0]["canonical_result"]["full_digest"] = json!(17);
-    assert!(common::parity::context::pair(&raw, &changed, &budget).is_err());
+    for (field, value) in [("full_digest", json!("ab".repeat(32))), ("full_bytes", json!(1))] {
+        let mut changed = later.clone();
+        changed["records"][0]["canonical_result"][field] = value;
+        let (left, right) = common::parity::context::pair(&raw, &changed, &budget)?;
+        assert_ne!(left, right, "{field}");
+    }
+    for (pointer, value) in [
+        ("/decision_log/digest", json!("cd".repeat(32))),
+        ("/decisions/2/basis/digest", json!("ef".repeat(32))),
+    ] {
+        let mut changed = later.clone();
+        *changed
+            .pointer_mut(pointer)
+            .with_context(|| format!("tamper pointer {pointer}"))? = value;
+        if let Ok((left, right)) = common::parity::context::pair(&raw, &changed, &budget) {
+            assert_ne!(left, right, "{pointer}");
+        }
+    }
+    // A record renamed everywhere it is cited is a different reply.
+    let mut renamed = later.clone();
+    let old = renamed["records"][0]["id"].as_str().context("id")?.to_owned();
+    let text = renamed.to_string().replace(&old, &"0f".repeat(32));
+    renamed = serde_json::from_str(&text)?;
+    if let Ok((left, right)) = common::parity::context::pair(&raw, &renamed, &budget) {
+        assert_ne!(left, right, "renamed record id");
+    }
     let mut changed = later.clone();
     changed["parts"][0]["deadline_share_ms"] = json!(budget.deadline_ms + 1);
     assert!(common::parity::context::pair(&raw, &changed, &budget).is_err());

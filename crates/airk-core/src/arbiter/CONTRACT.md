@@ -1614,7 +1614,9 @@ search's "full execution/readiness metadata").
   the result without the volatile fields (the stable form). `full_bytes` is
   the serialized length of the stable form and `full_digest` its digest;
   retention accounting while gathering (`max_bytes`, omission) counts the
-  stable form too, so two runs keep or omit the same records.
+  stable form too, so two runs keep or omit the same records. `work.bytes`
+  is therefore smaller than before this change by each retained read's
+  status bytes; measurements on either side of it are not comparable.
 - **What custody holds:** the complete result as received, status
   included. Nothing is removed from what custody keeps; only the identity
   and the reply leave the status out.
@@ -1628,6 +1630,8 @@ search's "full execution/readiness metadata").
 - **Validation:** Core accepts a reply with or without `read_status`; a
   present one is non-empty and carries only `READ_STATUS_FIELDS`. The
   arbiter schema and generated TypeScript views carry the optional field.
+  The saved-source verification selection digest leaves `read_status` out,
+  as it leaves the other status fields out.
 - **Standalone reads and Parse:** unchanged. A tool called directly keeps
   its status fields, and Workbench steps keep the full MCP result.
 - **Readiness observation:** an MCP read's readiness annotation that meets

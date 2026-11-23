@@ -14,6 +14,14 @@ incarnation parsed from its exact retained publication token. Timestamps alone
 do not constitute a state transition; failure text and all other substantive
 status fields remain part of the digest.
 
+A read's readiness observation, added after its handler, is repeated within
+two seconds while it meets typed contention; if contention lasts, the read
+fails with its typed `repeat_same_request` hint. It never silently carries
+`discovery_observation` in place of a readiness observation it could have
+made (change-log entry 54). An Answer reply's one `read_status` stays in
+full mode and with `include_status=true`, and is dropped from a terse reply
+otherwise.
+
 Only unchanged top-level freshness, readiness, discovery observation and
 indexing fields may be omitted. Full, include_status and explicit status,
 diagnostics, capabilities and changes repeat them. Error envelopes retain
