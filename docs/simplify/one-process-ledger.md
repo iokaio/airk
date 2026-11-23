@@ -16839,3 +16839,60 @@ reproduction.
 
 **State:** LH's acceptance run waits for that diagnosis. D: free 776,434,839,552
 bytes. Nothing is running.
+
+### 23 November 2026 at 19:07 UTC — Diagnostics no longer refuse a read that overlapped a new publication (`15b1b8cd`); the admin stress group passes 20 of 20
+
+**User's word:** diagnose and fix the `scoped_read_unavailable` class. They
+suggested a slim reader/writer lock; the fix keeps the existing optimistic
+read instead (reason below).
+
+**Diagnosis.** A temporary capture at the MCP refusal render points (never
+committed; patch `answer-loop\busy\diag-scope.patch`) was built in a
+throwaway target `target-diag` with `CARGO_PROFILE_{DEV,TEST}_DEBUG=line-tables-only`
+and run with `_NT_SYMBOL_PATH` at its PDBs. The first run had no symbols,
+because the installed fixture copy of `airk.exe` does not find its PDB.
+`admin_plane` alone, 25 iterations: 8 failures, and all 8 captures were
+created at `Kernel::scoped_device_status` (kernel `arbiter.rs`), called by
+`airk_diagnostics`. After the native device read, it typed a moved
+publication like a changed authority (`ScopeReadRefused`). An Index's
+semantic publication lands just after its text publication, so a readiness
+read overlapping it was refused permanently. `target-diag` (about 30 GB) was
+removed after the diagnosis.
+
+**Change, `15b1b8cd`** (change-log entry 66, kernel arbiter `CONTRACT.md`,
+G4): a changed authority is still `ScopeReadRefused`. A newer publication
+under the same authority means the device status is observed again against
+it, at most three observations within the original deadline, then
+`publication_busy` (`CurrentGateContention::Applying`, retryable). A lock was
+not used: the writer would wait behind a native observation, which can take
+up to the read's deadline, and readers and the writer already coordinate by
+snapshot-and-verify. **Test-side change, flagged:** the `admin_plane`
+readiness loop now treats exactly `publication_busy` / `repeat_same_request`
+as "not yet settled", within its 30 s deadline and at most 50 repeats. Other
+failures still fail and are retained. Not changed: the Answer and joint
+delivery fences, which also compare the publication and fail untyped (no
+failing test points at them). Primary agent's own work, self-review.
+
+**Validation** (target `target-l2b`, incremental on, logs `answer-loop\busy\logs`):
+
+| Run | Result | Elapsed |
+| --- | --- | --- |
+| `cargo nextest run --profile ci -p airk-mcp --lib --all-features -E 'test(/scoped_device_diagnostics_tests::/)'` | 5 of 5 | 221 s |
+| the two new tests on the old kernel code | 0 of 2: both `scoped_read_unavailable` | |
+| `cargo clippy -p airk-kernel -p airk-mcp -p airk-cli --all-targets --all-features -- -D warnings`, and default features | exit 0, exit 0 | 78 s, 65 s |
+| stress group (`combined_reads` Answer + `admin_plane`), 20, kernel change only (`stress-cli-fix-2.log`) | 19 of 20 (1 `publication_busy` at readiness) | 508 s |
+| same, with the test change (`stress-cli-fix-3.log`) | **20 of 20** | 504 s |
+| `rustfmt --check` on the changed files, `check-repo.ps1`, `git diff --check` | clean | |
+
+`cargo fmt --check` on the whole kernel and MCP crates reports differences
+in files this change does not touch (for example
+`combined_reads/tests/context.rs`, `arbiter_handler_tests.rs`); they are
+older than this change and were left as they are.
+
+**Admin stress history, 20 iterations:** main `705ab312` 13 of 20; with
+entry 65 (`c4e53359`) 15 of 20; with entry 66, 20 of 20.
+
+**Next action:** LH's acceptance run (image from `loop/lh` `ee552125`,
+`gate-inputs.json` to the r4 pairs, the four switch combinations on a fresh
+CUDA root). LH and L2c are rebased over `15b1b8cd` when they merge. D: free
+777,676,390,400 bytes. Nothing is running.
