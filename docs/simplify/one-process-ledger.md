@@ -17141,3 +17141,65 @@ catalog tables (`0e0cf233`); keep unknown setup outcomes as refusals
 
 **Running:** the grant removal and record cleanup (`loop/trust-b2`, target
 `target-l2b`) and the L2c rebase (`loop/l2c`, new target `target-l2c`).
+### 24 November 2026 at 05:45 UTC — Phase B complete: grant removal, credential ledger removal, operation-record pruning and L2c merged (entries 68 parts 3–5, 69, 70)
+
+**User's words:** "Keep going. Get it all done."; "Order the implementation
+and testing the way you recommend."; record decisions in
+[the plan](local-trust-plan.md).
+
+**Branches** (Opus agents at medium effort, identity `TYAI\tdotn` verified
+in each; reviewed by the primary agent before merging):
+- `loop/trust-b2` `7dfc5fcc`, grant removal: reads are authorized only by
+  in-memory window (W4) and Admin (A2) selections and open reads; grant
+  types, `Authority::Catalog`, grant control methods, reference refresh, the
+  Admin Grants tab, the VS Code grant UI and the session flags removed; the
+  catalog upgrade step deletes grant receipts and drops seven tables (the
+  grant tables, `legacy_index_projects`, `index_context_imports`, the two
+  adopted-authority tables) in one transaction, with the schema-identity
+  check extended to the new terminal layouts.
+- `loop/trust-b3` `b0482b9b`: credential ledger reader removed and the
+  ledger files deleted on upgrade; operation receipts pruned (keep unfinished
+  and reader-needed receipts and the newest 256, rotate the epoch; 1,101
+  mutations pass); finished splits pruned (70 pass); acknowledged retired
+  definitions deleted; the `index-catalog-upgrade.json` refusal and finished
+  clean-break journals removed. **`rebuild.json` is kept:** it holds the
+  default location for new index data, so it is not a dead journal.
+- `loop/trust-b4` `b3be2f4c`: Focus tests moved to the singleton path every
+  production single-index read uses (no regression); workspace `serde_json`
+  `float_roundtrip` enabled (a score changed by one ULP across the pipe and
+  the delivery digest refused; no pinned identity moves); a restart backoff
+  after a failed start is final; the `tools` admission race and the
+  `admin_plane` revision race fixed without normalising identities; VS Code
+  saved refresh intents are discarded on load and dead predecessor code
+  removed.
+- `loop/trust-int` `0a38f0f6`: the above, `feat/arbiter-final` and
+  `loop/l2c` merged. L2c Answer jobs now hold the caller's selection or open
+  read from the worker's selection ledger (ended by the selection's
+  revocation, lease expiry or close; `answer_authority_ended` with
+  `query_submitted`). Fixes: the Large-only 8192 selector test adapted to
+  the Arbiter; `airkctl arbiter status` after a legacy Configure now refuses
+  with the existing typed `arbiter_configuration_migration_refused`,
+  pointing to `status-legacy`.
+
+**Validation on `0a38f0f6`** (agent; target `target-l2b-cli`, CPU
+environment, logs `answer-loop\trust-int\logs`): workspace Clippy `-D
+warnings`, all and default features, clean; Nextest workspace lib and bins
+4,772 of 4,772 (15 min); `airk-cli` integration 479 of 479 (20 min); stress
+group (`combined_reads` Answer + `admin_plane`) **20 of 20** (12 min); L2c
+named tests 74 of 74 and 3 of 3; VS Code 1,023 of 1,025 (2 skipped); Admin
+303 of 305 (2 skipped); shared UI 215 of 216 (the shared-editor Service
+test, reported before the change); contract checks, harness 252 OK,
+`check-repo.ps1`, `git diff --check` clean. `feat/arbiter-final`
+fast-forwarded to `0a38f0f6` by the primary agent.
+
+**Not verified:** Linux, macOS, an installed service, end-to-end selection
+revocation of a queued job; L2c's own lines are not rustfmt-clean (inherited
+from `loop/l2c`).
+
+**Note:** in the main checkout, `check-repo.ps1` reports a broken link in
+the user's untracked `docs/design/ui-review-unification-plan.md` to the
+removed `packages/vscode/src/workbenchReferenceRefresh.ts`. The file is not
+the agents' and was left as it is.
+
+**State.** D: free 433,093,414,912 bytes. No build running. Next: phase C
+from [the map](local-trust-phase-c-map.md).
