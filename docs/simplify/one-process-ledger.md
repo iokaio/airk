@@ -17203,3 +17203,49 @@ the agents' and was left as it is.
 
 **State.** D: free 433,093,414,912 bytes. No build running. Next: phase C
 from [the map](local-trust-phase-c-map.md).
+### 24 November 2026 at 09:50 UTC — Phase C: loopback over plain HTTP (entry 71); merged into `feat/arbiter-final`
+
+**Source.** One Opus agent at medium effort (with three Opus helpers for
+TypeScript, scripts and docs, reviewed by it), worktree `trust-b4\wt`,
+branch `loop/trust-c` from `0d8aef9e`, target `target-l2b-cli`, identity
+`TYAI\tdotn` verified. Commits `19b15522` (legacy readers and the
+remove-only trust retirer), `b4c2ccbc` (trust and rotation consumers
+removed; `SetupOptions` trust phases replaced by `RetireLegacyTrust`),
+`1683c9b2` (gateway on plain TCP, `FlushTrackedIo<FencedIo<TcpStream>>`;
+descriptor without CA fields; cookie `airk_admin`, `HttpOnly;
+SameSite=Strict; Path=/`), `e5c4b58d` (clients), `90f03d40` (scripts,
+examples, installers, `docs/local-http-api.md`, 12 CONTRACTs), `af21ea1d`
+(persisted-record fix and upgrade test), `ebf6b68c`, `4b51adf9` (entry 71).
+`feat/arbiter-final` fast-forwarded to `4b51adf9`; the primary agent also
+removed a stale README sentence about the removed credential helper.
+
+**Migration as built.** An old `https` endpoint record is read as legacy; the
+service binds the same port and publishes the next generation over `http`.
+Setup's `retire_legacy_trust` step (user session, never the service) removes
+the CA named by an `installed` receipt, by DER SHA-256, from Windows
+CurrentUser\Root or the macOS login keychain, then deletes the TLS files by
+exact name; other receipt phases are reported and left. Agent entries with
+`https://127.0.0.1:<port>/mcp` are repaired by `agents repair` / Reconnect.
+
+**Deviation, accepted by the primary agent:** `SetupOptions.trust` is kept as
+a read-only `Option<LegacyTrustChoice>`. The settled setup record of this
+machine's installation embeds `"trust":"ask"` under digests over its exact
+bytes; dropping the field stopped every service start (`unknown field
+'trust'`, then `setup_owner_refused`). It is never written or used, and an
+operation naming it is refused. This is required by the user's decision to
+migrate old installs automatically.
+
+**Validation** (agent, logs `answer-loop\trust-c\logs`): Clippy `-D
+warnings`, workspace, all and default features, clean; `cargo tree` shows no
+`rcgen` or `x509-parser`, and `rustls` only under `airk-service` (downloads);
+Nextest lib and bins 4,743 of 4,743; `airk-cli` integration 487 of 487,
+including the new end-to-end `trust_upgrade`; stress group 20 of 20; VS Code
+1,024 of 1,026; Admin 302 of 304; shared UI 215 of 216 (known); contract
+checks, harness 252 OK, Python with no new failure, `check-repo.ps1` clean.
+
+**Not verified:** macOS keychain removal; Safari; Linux; Admin opening in
+Edge or Chrome without a certificate step; a real upgrade of this machine's
+installation. **Left:** `fixtures/cli-golden/windows/airk.json` (a capture
+of the old binary; recapture at the phase D build).
+
+**State.** D: free 358,530,031,616 bytes. No build running. Next: phase D.

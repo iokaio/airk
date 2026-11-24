@@ -105,8 +105,7 @@ system refuses the registration, AIRK starts on demand instead and reports why.
 
 **Agents connect directly over HTTP:** agents use the service's
 `http://127.0.0.1:<port>/mcp` endpoint, and no AIRK process runs per agent.
-Claude Code and Codex get their token from a one-shot
-`airkctl agents credential` helper. If an installation replaced an earlier
+The endpoint takes no token or credential. If an installation replaced an earlier
 one and left an agent entry broken, Explorer warns you (notification, banner,
 status bar and Management → Agents). **Reconnect** fixes the entry after one
 confirmation, using an existing index. Reconnect does not create indexes; use
