@@ -1038,6 +1038,43 @@ retired with the grants (D8). `head` is shared with the reader.
 | Settings outside the index format | `compression_mode`, `configure_compression`, `extraction_policy_bytes`, `configure_extraction_policy_bytes`, `vector_policy_bytes`, `configure_vector_policy_bytes`, `shared_model_default`, `shared_model_runtime`, `shared_model_source`, `embedded_default_reference`, `embedded_model_binding`, `installed_model`, `validate_model_reference`, `with_embedded_service_models`, `with_service_models`, `service_incarnation`, `managed_collection_directory`, `invalidate_owned_state_before_mutation`, `with_split_access`, `directory`, `lock`, `new` | Kept |
 | Shared names to check | `catalog`, `facts`, `facts_page`, `relationships`, `receipt` | Older-format reads or other types of the same name; P1.1 settles each |
 
+### Caller map and integration order (24 November 2026)
+
+A read-only agent mapped every caller of the old store (its report is kept
+in this session's record; the findings that change the plan are here).
+
+- **Accelerators can be dropped at once.** Every reader function with a
+  private or accelerated branch falls back to a strict path when it is absent
+  (`private_query_eligible` false, projections `None`). Public reads stay
+  correct through those strict paths.
+- **Payloads are enough for object reads.** The full artifact is rebuilt
+  from the payload with `airk_core::binding::bind_payload` and the compact
+  record, so the `payloads` table replaces the extraction objects. Every
+  read-side call site has a reader in scope except one helper
+  (`current.rs`, `load_lexical_artifact`), whose callers do.
+- **Q5 has a consequence.** Many read paths call `read_retained_source` or
+  `verify_retained_source` for every file. For plain text the payload's text
+  is the source bytes. For PDF, DOCX, XLSX and PPTX, which keep extracted
+  text only, those calls must stop: verification becomes a check of the
+  stored source hash, and the callers that only use the bytes for plain text
+  stop reading them for other files.
+- **The head must still validate.** `CurrentHead::token()` calls
+  `validate()`, which checks the graph head and the empty-map root at
+  sequence 0. The synthesized head either satisfies it or `validate()` and
+  the token digest change as section 5.8 says.
+- **Outside Kernel** the only real users of the index store are the split
+  control (`collection_state`), the supervisor (funding and lifecycle), the
+  inference pool's object lease, a contention error type in the frontend,
+  and installer settings capture. airk-mcp calls only Kernel.
+
+Integration order, smallest first: (1) `CurrentRead` opens a reader of the
+new engine and synthesizes its head; (2) files, collection state, path
+lookups, metadata, handles and resources from the new tables; (3) stubs for
+accelerators, integrity and the journal; (4) lexical search and reference
+paging over `fts`; (5) object reads through the reader; (6) the base-pass
+writer; (7) status. Then vectors, relationships and imported analysis,
+changes, and Verify.
+
 ## 10. Document history
 
 | Date | Change |
