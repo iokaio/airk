@@ -37,9 +37,11 @@ chore.
    - Also remove **reviewed grants entirely**: Admin's Grants tab, VS Code's
      grant picker, `--catalog-session` and `--combined-session`, and
      `CatalogGrantDraft`.
-   - The grant tables in `service-1.4.sqlite3` and the credential ledger stay
-     as retained data that nothing writes. That needs no `airk-state/1`
-     schema change.
+   - The grant tables in `service-1.4.sqlite3` and the credential ledger
+     (`http-1/credentials.json` and its token files) are removed on upgrade
+     (user, 23 November 2026, replacing the earlier "retained data"
+     reading). Predecessor cleanup recognises AIRK's agent-config entries by
+     their known shapes instead of reading the ledger.
    - Grant operation records are deleted on upgrade (user, 23 November
      2026): `CreateGrant` and `RevokeGrant` are removed outright, and the
      catalog registry deletes the `index_operation_receipts` rows that name
@@ -114,7 +116,8 @@ Order (each step compiles and passes Clippy before the next):
    `grant_id`, `grant_revision`, `provenance` and `grant` halves of
    `ScopedReadRef` and `ScopeObservation`. Regenerate the I3 contracts and
    TypeScript.
-7. **Retained:** the sqlite grant tables and the ledger file, left untouched.
+7. **Removed on upgrade:** the sqlite grant tables, the grant operation
+   receipts and the credential ledger (see decision 3).
 
 Deletion evidence follows the assignment's rule. First lift the
 module-level `#![allow(dead_code)]` in `catalog_admission.rs`,
