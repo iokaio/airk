@@ -4188,4 +4188,3 @@ arbiter `CONTRACT.md` ("Answer job kernel"), supervisor
   cookie and origin, `SetupOptions`/`SetupPhase` and the I1/I2/I3/I4
   fixtures changed under the plan's recorded decision; `SetupOptions.trust`
   stays as a read-only legacy field (see the gap above).
-
