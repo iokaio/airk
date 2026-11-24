@@ -4,6 +4,13 @@ These instructions are mandatory for the active assignment. Standing rules remai
 
 All unlinked filesystem paths below are repository-relative unless absolute or prefixed with `~/`.
 
+**24 November 2026. Answer completion is paused.** The user stopped
+qualification pending a separate indexing refactor by Claude. Wait for the
+user's direction before resuming Answer qualification. The two incomplete
+evaluation indexes were deleted at the user's direction. Start fresh on the
+reviewed refactor when the campaign resumes. See the
+[pause and disposal receipt](simplify/one-process-ledger.md#24-november-2026--answer-completion-paused-for-indexing-refactor).
+
 The user resumed the Windows and Linux FP16 campaign after D: cleanup. Keep new Windows work on D:, reuse the existing checkout target with one Cargo owner, and apply the standing disk budget and fixture disposal rules. Retained receipts remain evidence under their original identities. Removed fixture installations must be restored or replaced by a verified compatible installation before reuse.
 
 | Need | Source |

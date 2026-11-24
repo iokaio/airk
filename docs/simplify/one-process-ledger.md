@@ -17507,3 +17507,39 @@ The installed Claude Code executable exists outside the old VS Code
 extension path. Its file version is 2.1.330.0 and its SHA-256 is
 `fa797c1bc7d4a3511da42622bae53a2b7f1276ae328c668f2bfef44635301caa`.
 Pin its actual path in the generated Windows L7 spec before scoring.
+
+### 24 November 2026 — Answer completion paused for indexing refactor
+
+The user stopped the Answer completion campaign because indexing was too
+slow and will have Claude refactor indexing independently. The user
+explicitly authorized deleting both partial indexes. Resume the Answer
+campaign only at the user's direction after that refactor.
+
+The original `win-shake-r1-base` service received the fixture's stop-file
+request. The helper launched one automatic successor because the original
+was restartable. The same-human PowerShell session stopped that exact
+retry driver and sent the same stop-file request to `win-shake-r1-base2`.
+Both native services exited 0, completed shutdown, and returned the lease.
+Their original native closure SHA-256 values are
+`6d3220d492bc8ea4d86f6fefbb439d4bec85f23da4d430b080a3d2ab0caf325e` and
+`7ee528981afa42826c1be14f0c56e2b8b31214fb0dcc51c241cc4f26b8f8ca0c`.
+The driver exit reflects the requested stop. Neither lifetime reached
+full semantic readiness. No fixture process or retry driver remained.
+
+Under `fixture-win-shake-r1/indexes`, checked ownership, directory policy,
+resolved paths, reparse points and the absence of tracked files, then used
+`Remove-Item -LiteralPath <audited index> -Recurse -Force` for
+`bookbuilder-v2` (61,502 files) and `munarium` (6,966 files).
+Verified both directories absent. D: free rose from 614,659,080,192 to
+616,989,728,768 bytes, gaining 2,330,648,576 bytes. The fixture's
+`abandoned-indexes.json` records both closures and marks the discarded
+indexes ineligible for any restart or reuse. The source exports, model
+assets, staged pair, and small receipts were retained.
+
+The Windows CUDA shakedown, L6 and L7 did not run. The local L7 harness
+edits bind its runner and stage switching to the same explicit fixture.
+The focused `test_loop.py` Specs and PlanHook run passed all 13 selected
+tests. Those edits remain outside commit history under the one-commit
+rule for judged series. The next evaluation needs fresh indexes produced
+by the refactored code, semantic readiness and leak checks before the
+live shakedown.
