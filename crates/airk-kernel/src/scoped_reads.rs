@@ -1117,6 +1117,8 @@ impl Kernel {
             reader_attachments: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
             service_source_checks: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            metadata_observed: Mutex::new(None),
         }));
         Ok(kernel)
     }

@@ -2142,147 +2142,11 @@ Numbered 30 until 22 November 2026; renumbered because L4's entries take
   profile"), service arbiter `CONTRACT.md` ("A loop profile serves an index
   enrolled for Context").
 
-### 47. Answer jobs owned by the service (L2c)
-
-Plan section 12.4.2, step L2c, built on `loop/l2b-wire` after the review of
-`24184339` (H1, H2, M1 to M7). Not in the LG gate image. Recorded contract
-decisions: service `answer_jobs/CONTRACT.md` ("Service-owned jobs"), kernel
-arbiter `CONTRACT.md` ("Answer job kernel"), supervisor
-`project_worker/CONTRACT.md` ("Answer job authority"), Core arbiter
-`CONTRACT.md` ("Answer job options and delivery record").
-
-- **What changed:**
-  - a job has its own read kernel (`Kernel::answer_job_kernel`: the maker's
-    frozen authority with its own revocation flag), registered by the owner
-    on the grant's installed lease (`Scopes::attach_job`), and its own
-    native attempt and read context minted at dispatch
-    (`AnswerJobAuthority::attempt`);
-  - the caller's wait (`wait_ms`, the transport attempt) is apart from the
-    work budget (`deadline_ms`); reuse by digest needs the same deadline;
-  - `fresh`, `invocation_key` and `interactive` beside the request
-    (`AnswerJobOptions`), and a delivery record beside every job reply
-    (`AnswerDeliveryRecord`); `elapsed_ms` is the caller's own wait;
-  - failures belong to their invocation; attended jobs dispatch first and
-    unattended ones expire at their due time; a supervised deadline with a
-    5 s grace quarantines the owner and holds the slot until the work
-    settles.
-- **Review findings:**
-  - **H1** (session teardown revoked the job): fixed by the job kernel.
-    Reproduced first on the old code (`answer_job_tests`, 1 failed), passing
-    after the fix; decisive test through the real service below.
-  - **H2** (kept replies stand in for fresh runs): `fresh` always runs; the
-    delivery record says `reused`; the harness sends `fresh`.
-  - **M1, M4** (a run cut for another caller's limits, an invalid reused
-    reply): reuse only of work asked with the same deadline; each delivery
-    is validated against the caller's own budget.
-  - **M2** (no reap boundary): supervised deadline and settling capacity.
-  - **M3** (`include_status` headroom): folded into the scope.
-  - **M5** (transient failures pinned): failures never reach a call by
-    digest.
-  - **M6** (missing tests): added, below.
-  - **M7** (transport parity): the parity tests still compare one kept
-    reply through each transport; the delivery record and `elapsed_ms` are
-    per delivery. Not changed here; for the parity owner.
-- **Residual (recorded):** the lease in force at submission bounds a job
-  (at most 300 s); nothing renews it for a job whose maker has gone, and a
-  renewal fences it. See the service contract.
-- **Test support:** a `test-support`-only job gate
-  (`AIRK_TEST_ANSWER_JOB_GATE`), never in product builds.
-- **Validation** (target `answer-loop/target-l2b`, `--locked --offline`,
-  commands and logs in the L2b notes, `commands.tsv`):
-  - Clippy `-D warnings`, all targets, airk-core, -kernel, -mcp,
-    -supervisor, -service, -https, -frontend and -cli: exit 0 with default
-    features (`l2c-clippy-8`, then -service `l2c-clippy-9` and -cli
-    `l2c-clippy-cli-default` after later edits) and with all features
-    (`l2c-clippy-all-1`, -cli `l2c-clippy-cli-all`);
-  - focused nextest, default features: 280 run, 278 passed
-    (`l2c-nextest-2`); the two service failures were tests asserting the old
-    attach rules, updated, then the job-table set 48 of 48
-    (`l2c-nextest-4`);
-  - broad nextest, all features (airk-mcp, -supervisor, -frontend, -https
-    whole; kernel, core and service Answer and arbiter sets): 1,267 run,
-    1,264 passed (`l2c-nextest-all-1`). Two failures were the advertised
-    Answer schema and Help captures, regenerated through their owners
-    (`l2c-regen-*`) and passing (`l2c-rerun-1`); the third is the known base
-    failure of entry 40;
-  - airk-cli `combined_reads` and `admin_plane`, all features: 78 run, 75
-    passed (`l2c-cli-all-1`); after the parity normalizer learned the
-    delivery record, one of the three passes (`l2c-rerun-1`). **Two remain
-    failing:** `current_answer_single_index_preserves_complete_pipe_cli_and_https_mcp_results`
-    and `admin_sign_in_reads_and_cross_plane_refusals`. They compare one kept
-    reply through two transports; it is now rendered per delivery, so
-    `elapsed_ms`, the delivery record and the verification receipt's
-    `receipt_bytes_budget` (frame minus reply bytes) differ by a few bytes.
-    The normalizers belong to the parity owner (review M7); not changed
-    here;
-  - the decisive test and the injection test: 2 of 2
-    (`l2c-cli-decisive-1`); the mutation restoring the shared flag fails it
-    (`l2c-cli-mutation-shared-flag`, exit 100);
-  - `scripts/check-repo.ps1` exit 0; `git diff --check` clean.
-- **Independent review after the rebase onto `705ab312` (23 November
-  2026).** The branch was rebased onto entries 49 to 55; only this entry and
-  the parity normalizer's comment conflicted. Three defects were closed, each
-  with a test or build that failed on the old code:
-  - the ticket reply lacked entry 54's optional `read_status` and did not
-    compile on the new base (a ticket ran no read, so it carries none);
-  - an invocation key recovered its job without the publication check the
-    digest and continuation paths make, so after a new publication a keyed
-    call got the old publication's result
-    (`an_invocation_key_never_recovers_a_result_of_an_older_publication`);
-  - an owner counted a job only while it ran, so an owner whose only work was
-    a queued job left as idle after 15 s and the job was dropped unrun,
-    against "What a ticket means" (plan 12.4.2)
-    (`a_queued_job_keeps_its_owner_from_leaving_as_idle_until_its_work_ends`).
-  - On this base the two airk-cli parity tests that failed above no longer
-    fail on a comparison difference (entry 54 compares record ids and digests
-    as sent): `combined_reads` Answer tests and `admin_plane`, 19 of 19 in one
-    batch. In another batch `admin_sign_in_reads_and_cross_plane_refusals`
-    failed once on a typed `publication_busy` Answer refusal (no replay
-    allowed); it passed alone and in the repeat, and the same batch on
-    `705ab312` passed once. Not attributed; open. (Diagnosed below.)
-- **The coordinator's four follow-up items (23 November 2026).**
-  - **Item 1, the intermittent `publication_busy`: a fault of main, not of
-    the job path.** Stress runs of the same group (`combined_reads` Answer
-    tests and `admin_plane`): `admin_sign_in_reads_and_cross_plane_refusals`
-    failed 7 of 20 on the branch and 7 of 20 on `705ab312`; 5 of 15 with the
-    `admin_plane` binary alone. Every failure is on its readiness
-    `airk_diagnostics` poll after the Index job, before the test's first
-    Answer. A temporary render-site capture (never committed) showed each as
-    `CurrentReadContention` from SQLite extended code 261
-    (`SQLITE_BUSY_RECOVERY`, "database is locked"), never the gate's
-    "applying an update": a read-only current-database open, which has a
-    zero busy timeout (`airk-store` `current/database.rs`, `open_reader_budget`)
-    and no open admission on query threads (`current/admission.rs`: only
-    service work installs `with_work_admission`), met another connection
-    rebuilding the WAL index. The test treats the typed `repeat_same_request`
-    as fatal. The branch's new decisive test
-    (`answer_jobs_outlive_their_makers_session_and_are_recovered_by_their_handle`)
-    failed 4 of 20, then 0 of 10 and 1 of 10, on the same code: with origin
-    backtraces, the whole-Answer refusal comes from
-    `Kernel::arbiter_publication` called by `focus_pair_tokens` in
-    `Loop::rounds` (kernel `arbiter/answer.rs`), a current-database open the
-    loop does not repeat, while its canonical reads absorb the same 261
-    (about 70 captured, all recovered by `BUSY_REPEATS`). The job's blocking
-    thread and the direct handler's thread have the same (no) open admission;
-    the test drives two Answers at once in one service, which the direct
-    path also allows. Owners: the current reader's open admission (store) or
-    the loop's non-canonical publication reads (kernel arbiter); neither is
-    changed here, and no test limit or retry was added.
-  - **Item 2:** a reply packed to `reply_limit - reserve`, with the largest
-    valid delivery record and status, renders within 131,072 bytes with and
-    without verification, and the largest rendered Answer result fits the
-    147,456-byte worker frame; the reserve is unchanged (`0d52546c`).
-  - **Item 3:** `answer_job_stuck` and `answer_authority_ended` say whether
-    the job's reads ran (`query_submitted`), recorded in the service
-    `answer_jobs` CONTRACT (`db314433`).
-  - **Item 4:** the combined frontend bounds a combined Answer's job options
-    and refuses `invocation_key`, `wait_ms` and `interactive` with the typed
-    `invalid_native_arguments` (`02f46ebc`).
-
 ### 49. The job table stays out of the LG gate image; the gate measures concurrency on the unqueued path
 
 - **Step:** LG preparation. Numbered after 47 and 48, which the job agent
-  uses on its branch for L2c and L2d.
+  used on its branch for L2c and L2d (L2c's entry is now 69; 48 was never
+  written).
 - **What:** the first job-table wiring (`loop/l2b-wire` at `24184339`) is not
   merged before LG. Test 4 of plan sections 12.7.1 and 12.7.2 ("throughput
   with 2 and 4 concurrent Answers, using the queueing of section 12.4.1")
@@ -3494,3 +3358,203 @@ Numbered 65 because the unmerged `loop/lh` already holds entries 57 to 64.
       (`test_package_extension...test_actual_compiled_runtime_imports_are_all_staged`)
       fails on `mcpStdioSession.js -> ./answerDeadline`, which phase B did
       not touch.
+
+### 69. Answer jobs owned by the service (L2c)
+
+Numbered 47 on `loop/l2b-wire` until 24 November 2026; renumbered 69 when
+the branch was brought onto entries 49 to 68 as `loop/l2c`. Its commits
+before that move, and the ledger entries of 23 November, cite it as entry
+47.
+
+Plan section 12.4.2, step L2c, built on `loop/l2b-wire` after the review of
+`24184339` (H1, H2, M1 to M7). Not in the LG gate image. Recorded contract
+decisions: service `answer_jobs/CONTRACT.md` ("Service-owned jobs"), kernel
+arbiter `CONTRACT.md` ("Answer job kernel"), supervisor
+`project_worker/CONTRACT.md` ("Answer job authority"), Core arbiter
+`CONTRACT.md` ("Answer job options and delivery record").
+
+- **What changed:**
+  - a job has its own read kernel (`Kernel::answer_job_kernel`: the maker's
+    frozen authority with its own revocation flag), registered by the owner
+    on the grant's installed lease (`Scopes::attach_job`), and its own
+    native attempt and read context minted at dispatch
+    (`AnswerJobAuthority::attempt`);
+  - the caller's wait (`wait_ms`, the transport attempt) is apart from the
+    work budget (`deadline_ms`); reuse by digest needs the same deadline;
+  - `fresh`, `invocation_key` and `interactive` beside the request
+    (`AnswerJobOptions`), and a delivery record beside every job reply
+    (`AnswerDeliveryRecord`); `elapsed_ms` is the caller's own wait;
+  - failures belong to their invocation; attended jobs dispatch first and
+    unattended ones expire at their due time; a supervised deadline with a
+    5 s grace quarantines the owner and holds the slot until the work
+    settles.
+- **Review findings:**
+  - **H1** (session teardown revoked the job): fixed by the job kernel.
+    Reproduced first on the old code (`answer_job_tests`, 1 failed), passing
+    after the fix; decisive test through the real service below.
+  - **H2** (kept replies stand in for fresh runs): `fresh` always runs; the
+    delivery record says `reused`; the harness sends `fresh`.
+  - **M1, M4** (a run cut for another caller's limits, an invalid reused
+    reply): reuse only of work asked with the same deadline; each delivery
+    is validated against the caller's own budget.
+  - **M2** (no reap boundary): supervised deadline and settling capacity.
+  - **M3** (`include_status` headroom): folded into the scope.
+  - **M5** (transient failures pinned): failures never reach a call by
+    digest.
+  - **M6** (missing tests): added, below.
+  - **M7** (transport parity): the parity tests still compare one kept
+    reply through each transport; the delivery record and `elapsed_ms` are
+    per delivery. Not changed here; for the parity owner.
+- **Residual (recorded):** the lease in force at submission bounds a job
+  (at most 300 s); nothing renews it for a job whose maker has gone, and a
+  renewal fences it. See the service contract.
+- **Test support:** a `test-support`-only job gate
+  (`AIRK_TEST_ANSWER_JOB_GATE`), never in product builds.
+- **Validation** (target `answer-loop/target-l2b`, `--locked --offline`,
+  commands and logs in the L2b notes, `commands.tsv`):
+  - Clippy `-D warnings`, all targets, airk-core, -kernel, -mcp,
+    -supervisor, -service, -https, -frontend and -cli: exit 0 with default
+    features (`l2c-clippy-8`, then -service `l2c-clippy-9` and -cli
+    `l2c-clippy-cli-default` after later edits) and with all features
+    (`l2c-clippy-all-1`, -cli `l2c-clippy-cli-all`);
+  - focused nextest, default features: 280 run, 278 passed
+    (`l2c-nextest-2`); the two service failures were tests asserting the old
+    attach rules, updated, then the job-table set 48 of 48
+    (`l2c-nextest-4`);
+  - broad nextest, all features (airk-mcp, -supervisor, -frontend, -https
+    whole; kernel, core and service Answer and arbiter sets): 1,267 run,
+    1,264 passed (`l2c-nextest-all-1`). Two failures were the advertised
+    Answer schema and Help captures, regenerated through their owners
+    (`l2c-regen-*`) and passing (`l2c-rerun-1`); the third is the known base
+    failure of entry 40;
+  - airk-cli `combined_reads` and `admin_plane`, all features: 78 run, 75
+    passed (`l2c-cli-all-1`); after the parity normalizer learned the
+    delivery record, one of the three passes (`l2c-rerun-1`). **Two remain
+    failing:** `current_answer_single_index_preserves_complete_pipe_cli_and_https_mcp_results`
+    and `admin_sign_in_reads_and_cross_plane_refusals`. They compare one kept
+    reply through two transports; it is now rendered per delivery, so
+    `elapsed_ms`, the delivery record and the verification receipt's
+    `receipt_bytes_budget` (frame minus reply bytes) differ by a few bytes.
+    The normalizers belong to the parity owner (review M7); not changed
+    here;
+  - the decisive test and the injection test: 2 of 2
+    (`l2c-cli-decisive-1`); the mutation restoring the shared flag fails it
+    (`l2c-cli-mutation-shared-flag`, exit 100);
+  - `scripts/check-repo.ps1` exit 0; `git diff --check` clean.
+- **Independent review after the rebase onto `705ab312` (23 November
+  2026).** The branch was rebased onto entries 49 to 55; only this entry and
+  the parity normalizer's comment conflicted. Three defects were closed, each
+  with a test or build that failed on the old code:
+  - the ticket reply lacked entry 54's optional `read_status` and did not
+    compile on the new base (a ticket ran no read, so it carries none);
+  - an invocation key recovered its job without the publication check the
+    digest and continuation paths make, so after a new publication a keyed
+    call got the old publication's result
+    (`an_invocation_key_never_recovers_a_result_of_an_older_publication`);
+  - an owner counted a job only while it ran, so an owner whose only work was
+    a queued job left as idle after 15 s and the job was dropped unrun,
+    against "What a ticket means" (plan 12.4.2)
+    (`a_queued_job_keeps_its_owner_from_leaving_as_idle_until_its_work_ends`).
+  - On this base the two airk-cli parity tests that failed above no longer
+    fail on a comparison difference (entry 54 compares record ids and digests
+    as sent): `combined_reads` Answer tests and `admin_plane`, 19 of 19 in one
+    batch. In another batch `admin_sign_in_reads_and_cross_plane_refusals`
+    failed once on a typed `publication_busy` Answer refusal (no replay
+    allowed); it passed alone and in the repeat, and the same batch on
+    `705ab312` passed once. Not attributed; open. (Diagnosed below.)
+- **The coordinator's four follow-up items (23 November 2026).**
+  - **Item 1, the intermittent `publication_busy`: a fault of main, not of
+    the job path.** Stress runs of the same group (`combined_reads` Answer
+    tests and `admin_plane`): `admin_sign_in_reads_and_cross_plane_refusals`
+    failed 7 of 20 on the branch and 7 of 20 on `705ab312`; 5 of 15 with the
+    `admin_plane` binary alone. Every failure is on its readiness
+    `airk_diagnostics` poll after the Index job, before the test's first
+    Answer. A temporary render-site capture (never committed) showed each as
+    `CurrentReadContention` from SQLite extended code 261
+    (`SQLITE_BUSY_RECOVERY`, "database is locked"), never the gate's
+    "applying an update": a read-only current-database open, which has a
+    zero busy timeout (`airk-store` `current/database.rs`, `open_reader_budget`)
+    and no open admission on query threads (`current/admission.rs`: only
+    service work installs `with_work_admission`), met another connection
+    rebuilding the WAL index. The test treats the typed `repeat_same_request`
+    as fatal. The branch's new decisive test
+    (`answer_jobs_outlive_their_makers_session_and_are_recovered_by_their_handle`)
+    failed 4 of 20, then 0 of 10 and 1 of 10, on the same code: with origin
+    backtraces, the whole-Answer refusal comes from
+    `Kernel::arbiter_publication` called by `focus_pair_tokens` in
+    `Loop::rounds` (kernel `arbiter/answer.rs`), a current-database open the
+    loop does not repeat, while its canonical reads absorb the same 261
+    (about 70 captured, all recovered by `BUSY_REPEATS`). The job's blocking
+    thread and the direct handler's thread have the same (no) open admission;
+    the test drives two Answers at once in one service, which the direct
+    path also allows. Owners: the current reader's open admission (store) or
+    the loop's non-canonical publication reads (kernel arbiter); neither is
+    changed here, and no test limit or retry was added.
+  - **Item 2:** a reply packed to `reply_limit - reserve`, with the largest
+    valid delivery record and status, renders within 131,072 bytes with and
+    without verification, and the largest rendered Answer result fits the
+    147,456-byte worker frame; the reserve is unchanged (`0d52546c`).
+  - **Item 3:** `answer_job_stuck` and `answer_authority_ended` say whether
+    the job's reads ran (`query_submitted`), recorded in the service
+    `answer_jobs` CONTRACT (`db314433`).
+  - **Item 4:** the combined frontend bounds a combined Answer's job options
+    and refuses `invocation_key`, `wait_ms` and `interactive` with the typed
+    `invalid_native_arguments` (`02f46ebc`).
+- **Rebase onto LH and entries 65 to 68 (24 November 2026, branch
+  `loop/l2c` from `e2ca0e47`).** The 14 commits of `loop/l2b-wire`
+  (`a0d04ad7` to `1bf80aed`) were cherry-picked in order; none was dropped.
+  Two textual conflicts, and four places where the text merged but the code
+  assumed what LH removed:
+  - `airk-mcp` `response.rs`: entry 67's `FocusPostExecutionStale` and
+    `PublicationAdvanced` renders and L2b's `AnswerQueueBusy` render all
+    kept. A job failure keeps its typed receipt through
+    `PreservedReadFailure`, so a job that meets a newer publication after
+    model work is the typed `publication_advanced` of entry 67, kept for its
+    invocation only and never reused by digest (M5 above).
+  - `answer_jobs/estimate.rs` (LH wins): LH left one rung, the Arbiter.
+    `CostTable::only` no longer names a Large rung. With one rung the ladder
+    never climbs, so `configured_rung_only` changes no plan today; it is kept
+    (service `answer_jobs/CONTRACT.md`, "One rung per job").
+  - `answer_jobs/wiring.rs` (LH wins): the kernel's Context model maps
+    `SelectedModel::Arbiter` to the one rung; `ContextLarge` and
+    `ContextCompact` are gone.
+  - Tests (LH wins): the kernel admission tests disclose
+    `"requested":"arbiter"`. The wiring rung test now shows an Arbiter job
+    priced past its deadline dropping to the no-model loop
+    (`a_job_is_fitted_on_its_own_rung_and_only_drops_to_the_no_model_loop`;
+    the Large-to-Compact case it also showed left with Large). The
+    unmeasured-costs test prices the Arbiter as Large was (8 s, 4 s, 8 s), as
+    LH did in `answer_jobs/tests.rs`, so its 408 s arithmetic stands.
+  - `scoped_reads.rs`: the job kernel's copy of the session scope gets
+    entry 67's empty `metadata_observed` test seam. Commit `01bd1020` alone
+    does not build its kernel test target; the follow-up commit fixes it.
+  - Entry 68 removed no type L2c uses; the job authority stays on the
+    installed grant lease. The grant removal (local trust plan B5/B6) will
+    meet `Scopes::attach_job`, `detach_job` and `SessionJobAuthority` in
+    `airk-supervisor` `project_worker/scopes.rs`; a second rebase is expected.
+  - The L2b wiring notes above that name Large (the 408 s placeholder, a
+    Large job planned on Compact) are history from before LH.
+- **Validation of the rebase** (target `answer-loop/target-l2c`, CPU
+  environment of `L3/build-env.json`, incremental on, `--locked --offline
+  --timings`, logs in the private `answer-loop/L2c/logs`):
+  - workspace Clippy `-D warnings --all-targets`, all features: exit 0
+    (44 s, warm after a first run that found the missing seam); default
+    features: exit 0 (79 s);
+  - Nextest `--profile ci --all-features --lib --bins` over airk-core,
+    -kernel, -mcp, -supervisor, -service, -https, -frontend and -cli: 2,174
+    of 2,174 (734 s with the build);
+  - L2c's own tests by name (kernel `answer::admission::`, MCP and service
+    `answer_jobs::`, supervisor `answer_job_tests::` and `response_tests::`,
+    frontend `combined_frontend::answer`, and the three `combined_reads` job
+    tests): 76 of 76;
+  - `python scripts/dev/contract_types.py --check arbiter`: exit 0;
+  - the stress group (`combined_reads` Answer tests and `admin_plane`), 20
+    iterations: **19 of 20**. The one failure is
+    `admin_sign_in_reads_and_cross_plane_refusals` at `admin_plane.rs:445`:
+    the Admin `indexes.list` page and the pipe's `Projects` page differ only
+    in the registry revision (2 and 3). **A fault of main, not of L2c:** the
+    same test alone on unchanged `e2ca0e47`, 40 iterations, failed once in
+    the same way (39 of 40). By reading, not confirmed: the registry revision
+    is bumped by the source watcher recording or invalidating its roots
+    (`airk-store` `service/registry/watch.rs`), which can land between the
+    two reads. No assertion was changed. Open for the primary agent.
