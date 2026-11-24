@@ -957,8 +957,8 @@ def verify_https_reconnect(invoke, binary, install, control, root, project, sele
         network.close()
 
 
-def reviewed_fixture(rpc, source, data, collection="upgrade"):
-    """Explicitly set up one fictional Index and a one-Project grant natively."""
+def reviewed_fixture(rpc, source, data, collection="upgrade", *, persistent_grant=True):
+    """Set up one fictional Index and its Project; retain grants for predecessor fixtures."""
     def key():
         epoch = rpc("request_epoch")
         return {"namespace": epoch["namespace"], "epoch": epoch["epoch"], "nonce": uuid.uuid4().hex}
@@ -986,14 +986,16 @@ def reviewed_fixture(rpc, source, data, collection="upgrade"):
            "scope": [{"source_root_id": receipt["source_ids"][0], "kind": "subtree", "path": ""}]},
            "expected_scope_revision": 1, "expected_membership_revision": None})
     descriptor = rpc({"catalog_host_context": {"key": context_key, "expected_catalog_revision": revision}})["descriptor"]
-    grant = rpc({"catalog_grant_draft": {"context_key": context_key, "selection": {"key": key(),
-        "expected_catalog_revision": revision, "project_ids": [project], "index_ids": [index]}}})["draft"]
-    granted = rpc({"catalog_apply": {"request": grant["request"], "preview_digest": grant["preview_digest"]}})
-    if granted.get("status") != "catalog_applied":
-        raise RuntimeError("Reviewed predecessor grant was not applied: " + json.dumps(granted))
     selected = {"schema": 1, "context_key": context_key, "namespace": descriptor["namespace"],
-        "expected_catalog_revision": granted["receipt"]["catalog_revision"], "grant_id": grant["request"]["operation"]["grant"]["id"],
-        "expected_grant_revision": 1, "index_id": index, "project_ids": [project]}
+        "expected_catalog_revision": revision, "index_id": index, "project_ids": [project]}
+    if persistent_grant:
+        grant = rpc({"catalog_grant_draft": {"context_key": context_key, "selection": {"key": key(),
+            "expected_catalog_revision": revision, "project_ids": [project], "index_ids": [index]}}})["draft"]
+        granted = rpc({"catalog_apply": {"request": grant["request"], "preview_digest": grant["preview_digest"]}})
+        if granted.get("status") != "catalog_applied":
+            raise RuntimeError("Reviewed predecessor grant was not applied: " + json.dumps(granted))
+        selected.update(expected_catalog_revision=granted["receipt"]["catalog_revision"],
+                        grant_id=grant["request"]["operation"]["grant"]["id"], expected_grant_revision=1)
     detail = rpc({"catalog_detail": {"entity": {"kind": "index", "id": index}, "expected_catalog_revision": selected["expected_catalog_revision"]}})["detail"]
     registration = detail["item"]["value"]["backing"]
     if (not Path(registration["root"]).samefile(source) or not Path(registration["data_root"]).samefile(data)

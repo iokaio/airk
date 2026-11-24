@@ -16,7 +16,7 @@ Start at sign-in and restart/stop are separate task sections.
 
 ## Optional Arbiter stages
 
-The approved source design separates **Focus** (Qwen3-Reranker-0.6B) from **Arbiter** (Qwen3-1.7B); the Large model (Qwen3-4B) was retired. Focus ranks MiniLM's retrieved candidates and can run with Context off. Context assesses evidence and guides bounded additional reads. Only one Context model is active. These controls require a service version with stage support and qualified profiles; inspect the running service rather than assuming this guide enables them.
+The approved source design separates **Focus** (Qwen3-Reranker-0.6B) from **Arbiter** (Qwen3-1.7B); the Large model (Qwen3-4B) was retired. Focus ranks MiniLM's retrieved candidates and can run with Arbiter off. Arbiter assesses evidence and guides bounded additional reads. These controls require a service version with stage support and qualified profiles; inspect the running service rather than assuming this guide enables them.
 
 Both stages are off by default and need their own explicit index enrollment and verified supported assets. Model selection is intended configuration; active readiness additionally needs task/platform support and current resources. Status, ordinary queries and Help never authorize model downloads. Choose a model and use its **Download** action to request assets explicitly. Downloading does not enable a stage or enroll indexes. Select the indexes and tasks that stage may read, choose **Enable**, then **Apply** that stage's choices. Turning one stage off keeps the other stage's choices. Use **Cancel** or **Recover** for a failed model operation and refresh status before another change whose outcome is unknown.
 

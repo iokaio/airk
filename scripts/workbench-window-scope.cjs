@@ -123,7 +123,7 @@ async function runSlash(text, expectedSelection) {
 }
 function qualifiedAnswerPartitions(envelope) {
   assert.ok(envelope && ['airk.arbiter.context/3','airk.combined-read/1'].includes(envelope.schema),
-    'current Answer must be an explicit singleton /2 or combined /1 envelope');
+    'current Answer must be an explicit singleton /3 or combined /1 envelope');
   const combined=envelope.schema==='airk.combined-read/1';
   if(combined)assert.equal(envelope.context?.schema,'airk.combined-context/2');
   const partitions=answerPartitions(envelope);
@@ -142,18 +142,18 @@ async function runAnswer(expectedSelection) {
   const partitions=qualifiedAnswerPartitions(turn.envelope);
   assert.deepEqual(turn.request,original,'Workbench uses the complete unchanged Rust-emitted current request');
   assert.deepEqual(JSON.parse(delivered.argv[delivered.argv.indexOf('--args')+1]),original,'real framed native request preserves every input field');
-  assert.deepEqual(turn.envelope,nativeBody(delivered),'complete native /2 result including all work, history, provenance and records is retained');
+  assert.deepEqual(turn.envelope,nativeBody(delivered),'complete native Answer result including all work, history, provenance and records is retained');
   if(expectedSelection==='window')assert.ok(!delivered.argv.includes('--index')&&!delivered.argv.includes('--service-project'));
   else assert.ok(delivered.argv.includes('--index'));
   assert.ok(partitions[0].packet.records.length>0,'actual question search must retain canonical evidence');
-  assert.ok(partitions[0].packet.records.some(record=>record.canonical_result?.hits?.length>0),'indexed exact Rust fixture question must return actual hits');
+  assert.ok(partitions[0].packet.records.some(record => record.operation === "search" && record.canonical_result?.projection === "airk.arbiter.loop-evidence/1" && record.canonical_result.hits_total > 0 && record.canonical_result.spans.some(span => typeof span.text === "string" && span.text.includes(original.question))),'indexed exact Rust fixture question must return actual hits');
   journeyStage=`answer-${expectedSelection}-copy-export`;
   await workbench.message({type:'copy',turn:turn.id,format:'json'});
   assert.deepEqual(JSON.parse(copied).turns[0],turn,'actual host copy preserves entire original turn/request/result');
   await workbench.message({type:'export',turn:turn.id,format:'json'});
   assert.equal(exportsWritten.at(-1),exportFile);
   assert.deepEqual(JSON.parse(fs.readFileSync(exportFile,'utf8')).turns[0],turn,'actual host export preserves entire original turn/request/result');
-  const cards=evidenceCards(turn.envelope),card=cards.find(card=>card.step&&/^\/hits\/\d+$/.test(card.resultPointer));
+  const cards=evidenceCards(turn.envelope),card=cards.find(card=>card.step&&/^\/spans\/\d+$/.test(card.resultPointer));
   assert.ok(card,'actual native source verification must provide an unambiguous Answer citation');
   const sourceBefore=deliveries.length,openBefore=editorOpens.length;
   journeyStage=`answer-${expectedSelection}-file-info-and-open`;

@@ -49,7 +49,7 @@ native support rather than inferring availability from a visible model name.
 Review configuration and consent per stage and immutable index. Selection is
 not active readiness: authenticated assets, supported tasks/platform/backend and
 current resource admission are separate requirements. Ordinary search, status
-and Help never approve downloads. Focus can run with Context off; turning both
+and Help never approve downloads. Focus can run with Arbiter off; turning both
 off preserves ordinary retrieval. Missing or unavailable stages report their
 reason and retain normal retrieval, including its existing completeness refusals.
 

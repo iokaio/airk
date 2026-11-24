@@ -30,7 +30,7 @@ Page changes announce the retained result range. Previous/Next use the same cont
 
 ## MiniLM, Focus and Context
 
-MiniLM supplies reusable vectors for candidate retrieval. The approved **Focus** stage uses Qwen3-Reranker-0.6B to rerank a bounded retrieved set; it cannot find evidence omitted by candidate retrieval. Focus is designed to run independently with **Arbiter Context** off. Context Compact (Qwen3-1.7B) and Large (Qwen3-4B) add evidence assessment and bounded follow-up reads. Relevance scores do not prove evidence sufficiency.
+MiniLM supplies reusable vectors for candidate retrieval. The approved **Focus** stage uses Qwen3-Reranker-0.6B to rerank a bounded retrieved set; it cannot find evidence omitted by candidate retrieval. Focus can run with **Arbiter** off. Arbiter (Qwen3-1.7B) assesses evidence and guides bounded follow-up reads. Relevance scores do not prove evidence sufficiency.
 
 Check the actual service's supported and qualified stages before enabling them; new stage controls are still being introduced in this source candidate. They require explicit stage/index consent and resource admission. Ordinary search remains available with explicit not-applied reasons when optional work is unavailable. Full provenance, publication identity, errors and any disclosed reordering or omissions remain part of the native result.
 

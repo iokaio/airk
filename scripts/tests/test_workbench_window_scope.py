@@ -68,14 +68,27 @@ class WorkbenchEvidenceTests(unittest.TestCase):
                     self.control.mkdir(); self.projects = {}; self.scopes = {}
                 def __enter__(self): return self
                 def __exit__(self, *_): events.append('native-cleanup')
-                def register(self, name, source, _data):
-                    self.projects[name] = {'root': str(source), 'binding': name}
-                    self.scopes[name] = {'index_id': name}
+                def rpc(self, *_): raise AssertionError('inert fixture RPC must not execute')
                 def job(self, *_): pass
-                def published_status(self, *_): pass
+                def open_tool(self, name, tool, arguments, *, deadline):
+                    self.assert_selected_read(name, tool, arguments, deadline)
+                    return {'publication': name}
+                @staticmethod
+                def assert_selected_read(name, tool, arguments, deadline):
+                    assert name in ('workbench-a', 'workbench-b')
+                    assert tool == 'airk_diagnostics' and arguments == {'response_mode': 'full'} and deadline == 7
                 def assert_alive(self): pass
 
-            clients = SimpleNamespace(owned_client_fixture=owned, Fixture=Fixture)
+            def reviewed_fixture(_rpc, source, data, *, collection, persistent_grant):
+                self.assertFalse(persistent_grant)
+                self.assertEqual(data, owner / 'data' / collection)
+                return {'root': str(source), 'binding': collection, 'collection': collection}, {'index_id': collection}
+            def observe_publication(read, collection, binding, _deadline):
+                self.assertEqual(binding, collection)
+                self.assertEqual(read(7), {'publication': collection})
+            setup = SimpleNamespace(reviewed_fixture=reviewed_fixture)
+            clients = SimpleNamespace(owned_client_fixture=owned, Fixture=Fixture,
+                                      observe_publication=observe_publication, tool_value=lambda value: value)
             package = SimpleNamespace(validate_runtime=lambda *_: ({'airkctl.exe': 'exact-original'}, None))
             def run(argv, **_):
                 request = json.loads(Path(argv[-1]).read_bytes())
@@ -84,7 +97,7 @@ class WorkbenchEvidenceTests(unittest.TestCase):
                 self.assertTrue(all(request['answer_request']['question'] in Path(file).read_text() for file in request['source_hashes']))
                 Path(request['output']).write_text(json.dumps({'exactComparisons': 10, 'answerComparisons': answers, 'answerSourceOpens': sources}))
                 return SimpleNamespace(returncode=0, stdout='', stderr='')
-            with patch.object(HARNESS, 'module', side_effect=lambda name, _: clients if name == 'workbench_native_clients' else package), \
+            with patch.object(HARNESS, 'module', side_effect=lambda name, _: {'workbench_native_clients': clients, 'workbench_native_setup': setup, 'workbench_native_package': package}[name]), \
                     patch.object(HARNESS, 'input_inventory', return_value={'compiled': 'sealed'}), \
                     patch.object(HARNESS.subprocess, 'run', side_effect=run), \
                     patch.object(HARNESS.subprocess, 'check_output', return_value='v24.15.0\n'), \

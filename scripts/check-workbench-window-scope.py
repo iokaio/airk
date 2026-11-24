@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -76,10 +77,16 @@ def qualify(runtime, node, report, target):
             roots.append(source)
         with clients.Fixture(runtime, owner) as fixture:
             assert fixture.cli is not None and fixture.catalog_authority
+            setup = module('workbench_native_setup', ROOT / 'scripts/check-runtime-upgrade.py')
             for name, source in zip(('workbench-a', 'workbench-b'), roots):
-                fixture.register(name, source, owner / 'data')
+                registration, selection = setup.reviewed_fixture(
+                    fixture.rpc, source, owner / 'data' / name, collection=name, persistent_grant=False)
+                fixture.projects[name], fixture.scopes[name] = registration, selection
                 fixture.job(name, 'index')
-                fixture.published_status(name)
+                clients.observe_publication(
+                    lambda until: clients.tool_value(fixture.open_tool(
+                        name, 'airk_diagnostics', {'response_mode': 'full'}, deadline=until)),
+                    registration['collection'], registration['binding'], time.monotonic() + 90)
             output = owner / 'workbench-observations.json'
             request = {
                 'runtime': str(runtime), 'owner': str(owner), 'cli': str(fixture.cli),

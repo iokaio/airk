@@ -17330,3 +17330,31 @@ The restored 1.8.208 runtime from the earlier release worktree was refused
 before execution by the frozen target's changed research provenance hash.
 Use a newly sealed pair for live validation. The original design proposal
 remains in its own UI worktree and in the user's untracked checkout file.
+
+On Windows, the signed UI checkpoint `f8300a5f` passed 1,539 UI tests
+with four environment-gated skips and zero failures. The installed universal
+1.8.208 VSIX passed isolated Explorer activation and asset handoff with
+native execution disabled (`artifacts/installed-explorer-preflight/run-nenmN4`).
+The sealed debug pair is in `artifacts/native-workbench/runtime`. Cargo used
+the warm UI target, six jobs, offline resolution, incremental compilation
+and timings. The service and CLI compiled in 2m 27s and 52.63s respectively.
+The live Admin selector
+`test(=admin_sign_in_reads_and_cross_plane_refusals)` passed in 19.644s
+(one selected, eleven filtered; build 1m 38s), exercising plain HTTP
+sign-in, cross-plane refusals and canonical Answer parity.
+
+The Workbench gate initially failed before setup on the removed persistent
+grant verb. Explicit index selection exposed a second stale assertion: the
+actual native Answer returned hits in the current span projection. The
+corrected fixture preserves predecessor grant tests, compares complete
+current results, and passes with 16 exact comparisons, two Answer routes
+and two native citation checks. The same sealed checkpoint pair and
+production Workbench host were used. The receipt in
+`artifacts/native-workbench/workbench-r3.json` confirms source preservation
+and fixture cleanup. Six focused harness tests also passed.
+
+Independent reviews confirmed the native Rust and wire contracts are
+unchanged from the frozen target. Active Help now names Focus and Arbiter,
+and the parity guide matches the current Answer schema. Remaining
+qualification limits are the separately gated captures and the full
+installed native and cross-platform journeys.
