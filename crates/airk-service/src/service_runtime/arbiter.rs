@@ -148,8 +148,19 @@ impl Owner {
         self.context.configuration()
     }
     fn status(&self) -> Result<Status> {
-        self.context.require_legacy_operation()?;
-        let configuration = match self.configuration() {
+        // A positively observed current device configuration routes to the
+        // typed device status. Any other failure to observe it (unreadable or
+        // malformed bytes) is not that observation: the read stays
+        // nonwritable and reports the failure, exactly as an unreadable
+        // legacy configuration does, and leaves the bytes untouched.
+        let configuration = match self.context.require_legacy_operation() {
+            Err(error) if error.is::<device_management::CurrentDeviceRequired>() => {
+                return Err(error);
+            }
+            Err(error) => Err(error.context("Device configuration observation is unavailable")),
+            Ok(()) => self.configuration(),
+        };
+        let configuration = match configuration {
             Ok(configuration) => configuration,
             Err(error) => {
                 let (digest, digest_reason) = match self.configuration.legacy_configuration_digest() {
