@@ -3149,3 +3149,105 @@ Numbered 65 because the unmerged `loop/lh` already holds entries 57 to 64.
 - **Not verified:** the reviewed-fixture integration tests above (they need
   the `local-inference` build), any installed journey, the extension in a
   real editor, and the Linux and macOS builds.
+- **Part 2 (same day, after review):**
+  - **Entry 67 regression** fixed and recorded in entry 67's addendum
+    (`58c0b9bf` here; `9285a1a6` on `loop/trust-b-entry67` from `4d462202`,
+    for cherry-picking to `feat/arbiter-final`).
+  - **B4 remainder** (`85ba0ad6`). Evidence for each removal: no caller after
+    the removal of enrollment, or a compiler dead-code error under Clippy.
+
+| Item | Evidence |
+|---|---|
+| `CredentialStore` (write, authenticate, ownership, attachment retirement, open defaults), `IssuedCredential`, `AuthenticatedCredential`, `read_client_token`, `authority_digest`, `ConnectionOwnership`, `OpenDefaults*`, `AttachmentRetirementProof` | Only enrollment, revocation, connection reads and the credential helper used them (all removed in part 1); predecessor cleanup moved to the lenient reader |
+| Strict ledger types `Ledger`, `Record`, `RevocationReason`; `token_id`, `client_token`, `validate_attachment`, `same_authority` | Replaced by the untyped reader; no other caller |
+| `agent_connection.rs` (`OpenConnectionState`, `AgentChoice`) | Only the strict ledger and `HttpConnectionInfo.open` used them |
+| `HttpConnectionInfo`, `MAX_CONNECTION_BYTES`, `MAX_HTTP_SELECTION_BYTES`, `MAX_IMPORTED_HTTP_MEMBER_BYTES` | No caller after enrollment's removal (`git grep`: definition only) |
+| `HttpSelection::ImportedLegacy`/`ImportedLegacyUnion`, `NativeImportedHttpSelection`/`Union`, `CatalogLegacyAuthority::admits_configuration` | Only imported-legacy enrollment and the strict ledger used them |
+| `http_backend::validate`/`validate_details`/`factory`/`factory_attached`, `LazyBackend`, `imported_legacy` | The gateway serves only the local session; replaced by `validate_open` |
+| Installer `http_legacy` (`resolve`, `resolve_claim`, `validate`, `validate_registry`) | Its only callers were `enroll_legacy*` and the imported-legacy backend |
+| Endpoint `read_selection_file`, `read_registration_file`, `read_registrations_file` | Inputs of the removed enrollment commands |
+| `explorer_assistance::window_retired` | Clippy `dead-code` after the store's removal |
+| `open_refusal::AGENT_SCOPE_CHOICE_DISABLED`, `AGENT_CONNECTION_NOT_OPEN`, `AGENT_DEFAULTS_CONFLICT`, `LOCAL_AGENT_CONNECTION` | No producer or reader left (`git grep`: definition only) |
+
+  - **Compatibility row kept:** predecessor cleanup reads the retained
+    ledger through `RetainedLedger`. It is lenient and read-only: untyped
+    JSON, only `schema`, `binding` and per record `id`, `revoked`,
+    `expires_unix_ms`, `verifier`, plus retirement markers. It never writes,
+    and it refuses if the bytes change during capture. A current
+    installation with no ledger and no credential file owns nothing; that is
+    every installation since B. Tests: `retained_ledger::tests`
+    (hand-written old-install ledger, byte-identical afterwards; the
+    captured v1 fixture) and the installer `clean_break_*` lookups.
+  - **Harness scripts** (`3d22b08c`): `http_fixture.py` loses
+    `enroll_native`; `check-service-clients.py` loses its unused
+    `enroll_http`; `check-vsix-upgrade-editor.cjs` reads `runtime
+    http-endpoint`. `check-container.py` keeps calling `runtime
+    http-connection` only on its pre-U110 predecessor-image branch (the
+    current-build branch already reads the endpoint), and
+    `validate_enrollment` stays for it.
+  - **Left, needing a decision:**
+    - **B5/B6 (reviewed grants and the catalog-grant authority arm).**
+      Removing `CatalogOperation::CreateGrant`/`RevokeGrant` changes a
+      persisted format. `FenceIntent` stores the whole `CatalogRequest`
+      in `index_operation_receipts`, and `RevokeGrant` requires an
+      authority fence (`catalog_management.rs`
+      `requires_authority_fence`). The service decodes stored intents at
+      startup (`airk-store` `runtime_contract.rs`, `fences.rs`,
+      `source_change.rs`, `split.rs`). A retained intent naming
+      `RevokeGrant` would then fail to decode. The first brief says to stop
+      such a step, so it was not started. Options for the user:
+      - keep the two variants as decode-only (refused on new requests);
+      - or approve a migration of retained intents.
+
+      The Admin Grants tab, the VS Code grant UI, `--catalog-session`,
+      `--combined-session` and `CatalogGrantDraft` do not touch persisted
+      formats. They can go once that choice is made, together with
+      rewriting the reviewed-grant integration fixtures onto open reads.
+    - **`scripts/setup-local-test.py`.** Its whole flow is pre-U110
+      enrollment: a selection or registration file, `runtime
+      http-connection`/`http-legacy-connection`, `setup
+      --existing-connection-id` and a bearer environment variable in the
+      Codex entry. It needs a redesign around `airkctl agents connect`,
+      not an edit. Its unit tests mock the old calls and still pass.
+  - **Integration environment** (from the L3 and trust-a builds): static
+    CPU ONNX Runtime (`ORT_LIB_LOCATION` = `ort130-x64-owned-r5\aggregate`,
+    `ORT_SKIP_DOWNLOAD=1`, `ORT_PREFER_DYNAMIC_LINK=0`,
+    `ORT_LIB_PROFILE=Release`, `LIBONNXRUNTIME_NO_PKG_CONFIG=1`), the
+    bundled model directory, the offline `CARGO_HOME`,
+    `CARGO_PROFILE_DEV_OPT_LEVEL=2`, `--all-features --profile ci`, and
+    `TEMP`/`TMP` on D: in the trust-b folder. With it the reviewed-fixture
+    self-test passes. `admin_plane`, `combined_reads`, `cli_commands`,
+    `tools`, `mcp` and `service_runtime` pass 196 of 196 (2 skipped).
+  - **The `payload_bytes` failure** of
+    `capabilities_plans_keep_complete_native_cli_and_mcp_results_above_read_frame`
+    did not reproduce. It passed once on base `4d462202` and once on
+    `loop/trust-b` in that environment. The part-1 failure compared
+    `payload_bytes` 123934 against 123932, and the only other differences
+    were timing and identity fields. Two `elapsed_ms` values of different
+    digit counts (112 and 93) account for the two bytes. The test is
+    therefore timing-dependent. It was not retried and not loosened.
+  - **Pre-existing:** `airk-service`
+    `arbiter::failure_tests::ambiguous_or_corrupt_configuration_status_never_invents_a_legacy_digest_or_writable_config`
+    fails with `--all-features` on base `4d462202` as well. That is
+    `logs/base-items-3b.log`; the arbiter configuration status is not
+    touched by B.
+  - **Validated (part 2)**, Windows, target `target-l2b`, the integration
+    environment above:
+    - Clippy `-D warnings`, workspace, `--all-targets`, with all features
+      and with default features: clean.
+    - Nextest `--lib --bins --all-features --profile ci` of `airk-core`,
+      `-endpoint`, `-installer`, `-https`, `-service`, `airkctl`,
+      `airk-mcp`, `-kernel`, `-store` and `airk-cli`: 3,414 of 3,415
+      passed. The one failure is the `airk-service` arbiter test above,
+      which also fails on base.
+    - `airk-cli` integration (six binaries): 196 of 196.
+    - `packages/vscode` 1,145 of 1,147 (2 skipped); `packages/admin` 303 of
+      305 (2 skipped); shared UI 93 of 93.
+    - `contract_types.py i2|i3|arbiter --check`; `check-repo.ps1`;
+      `git diff --check`.
+    - Python `unittest discover` over `scripts/tests`: 2,331 run, 46 not
+      passing. Rerunning the same modules on base `4d462202` failed 55, so
+      none is new. One rerun individually here
+      (`test_package_extension...test_actual_compiled_runtime_imports_are_all_staged`)
+      fails on `mcpStdioSession.js -> ./answerDeadline`, which phase B did
+      not touch.
