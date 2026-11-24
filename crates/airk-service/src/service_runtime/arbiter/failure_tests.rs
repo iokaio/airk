@@ -206,6 +206,39 @@ fn legacy_status_still_routes_a_valid_current_device_configuration_to_device_sta
     );
     Ok(())
 }
+/// A configuration/3 saved by a legacy Configure that names a profile the
+/// release catalog cannot resolve (the shakedown's evaluation-only CUDA
+/// profile) cannot be migrated to the device configuration. StatusDevice
+/// keeps refusing, and leaves the saved bytes as they are, but the refusal is
+/// the typed `arbiter_configuration_migration_refused` of Core's
+/// `initialization_unresolved_current3` case, not the catch-all
+/// `arbiter_unavailable`; `airkctl arbiter status-legacy` reads that state.
+#[cfg(feature = "local-inference")]
+#[test]
+fn status_device_of_an_unresolvable_configuration3_is_the_typed_migration_refusal() -> Result<()> {
+    let (root, owner) = status_owner_fixture()?;
+    let current = owner.configuration.initialize_checked(None, || Ok(()))?;
+    let mut legacy = current.clone();
+    legacy.revision = current.revision + 1;
+    legacy.context.selected_profile =
+        Some(airk_core::identity::Sha256Digest::from_bytes([0x5a; 32]));
+    owner.configuration.apply(current.revision, &legacy)?;
+    let saved = std::fs::read(root.path().join("arbiter-v3/configuration.json"))?;
+    // The StatusDevice route: `manage_device_native` answers it with
+    // `device_status`, and the control plane renders errors with `failure`.
+    let refused = owner
+        .device_status()
+        .expect_err("an unresolvable configuration/3 is not migrated");
+    let ControlResponse::Failure { code } = failure(refused) else {
+        panic!("expected exact native failure variant");
+    };
+    assert_eq!(code, "arbiter_configuration_migration_refused");
+    assert_eq!(
+        std::fs::read(root.path().join("arbiter-v3/configuration.json"))?,
+        saved
+    );
+    Ok(())
+}
 #[test]
 fn answer_application_requires_joint_task_in_actual_enrollment_and_profile() {
     use std::collections::BTreeSet;

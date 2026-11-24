@@ -631,7 +631,8 @@ impl Owner {
         // The owner's store is the Context stage's store.
         self.context.current_device_configuration()
     }
-    fn device_status(&self) -> Result<DeviceStatus> {
+    /// The StatusDevice reply (and the reply of every other device operation).
+    pub(super) fn device_status(&self) -> Result<DeviceStatus> {
         let binding = binding()?;
         if let Some(initialization) = self
             .configuration

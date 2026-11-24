@@ -913,6 +913,12 @@ pub(super) fn failure(error: anyhow::Error) -> ControlResponse {
             .is_some()
         {
             "scoped_read_unavailable"
+        } else if error
+            .downcast_ref::<airk_core::arbiter::device::LegacyProfileUnresolved>()
+            .is_some()
+        {
+            // Core's `initialization_unresolved_current3` case.
+            "arbiter_configuration_migration_refused"
         } else {
             "arbiter_unavailable"
         }

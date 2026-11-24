@@ -441,6 +441,22 @@ impl DeviceConfiguration {
         Ok(())
     }
 }
+/// A saved configuration/3 names a selected profile that the compiled catalog
+/// cannot resolve (for example a private evaluation-only profile written by a
+/// legacy Configure), so it cannot be migrated to the device configuration.
+/// Migration refuses and keeps the saved bytes. The service renders it as
+/// `arbiter_configuration_migration_refused`; `airkctl arbiter status-legacy`
+/// still reads that configuration.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LegacyProfileUnresolved;
+impl std::fmt::Display for LegacyProfileUnresolved {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(
+            "legacy selected profile unresolved: the saved configuration/3 cannot be migrated; read it with `airkctl arbiter status-legacy`",
+        )
+    }
+}
+impl std::error::Error for LegacyProfileUnresolved {}
 impl DeviceConfiguration {
     /// Explicit migration preserves consent/indexes and uses the user-approved Auto policy while preserving exact model,
     /// consent and enrollment. Existing /4 Cpu settings are never migrated.
@@ -458,8 +474,7 @@ impl DeviceConfiguration {
             let selected_model = match old.selected_profile {
                 None => None,
                 Some(manifest) => {
-                    let profile =
-                        resolve(manifest).context("legacy selected profile unresolved")?;
+                    let profile = resolve(manifest).ok_or(LegacyProfileUnresolved)?;
                     profile.validate()?;
                     ensure!(
                         profile.manifest == manifest

@@ -1068,3 +1068,25 @@ entry 35.
 - **Holds:** `device_management::retained_tests` (4 tests: retained files
   pinned; the transition runs from the retained binding to the compiled one;
   each retained /4 document migrates as decided; the retired reason).
+
+## An unresolvable configuration/3 is a typed migration refusal (24 November 2026)
+
+- **Case.** A configuration/3 saved by a legacy Configure (`airkctl arbiter
+  configure --legacy`) may name a selected profile that the compiled
+  catalog cannot resolve, such as the evaluation fixture's private CUDA
+  profile. The device operations migrate /3 to the device configuration
+  first (`current_device_configuration`, Store `load_or_migrate`), and Core
+  `DeviceConfiguration::migrate_legacy` cannot resolve that profile.
+- **Refusal kept.** Nothing is migrated and the saved /3 bytes stay as they
+  are; StatusDevice and every other device operation refuse.
+- **Typed code.** The refusal is Core's typed `LegacyProfileUnresolved`,
+  rendered by `failure()` as `arbiter_configuration_migration_refused`, the
+  code Core's Rust-emitted case `initialization_unresolved_current3`
+  already names (`fixtures/split/arbiter/device_cases.json`), not the
+  catch-all `arbiter_unavailable`. No new wire code. Its message says the
+  saved configuration/3 cannot be migrated and to read it with
+  `airkctl arbiter status-legacy` (the retained Status/2 read). Other migration failures keep `arbiter_unavailable`.
+- **Holds:** `failure_tests::status_device_of_an_unresolvable_configuration3_is_the_typed_migration_refusal`
+  (writes a /3 naming an unresolvable profile, calls the StatusDevice reply
+  `device_status`, asserts the code and that the saved bytes are unchanged;
+  it failed before the change with `arbiter_unavailable`).
