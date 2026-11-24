@@ -11,6 +11,26 @@ evaluation indexes were deleted at the user's direction. Start fresh on the
 reviewed refactor when the campaign resumes. See the
 [pause and disposal receipt](simplify/one-process-ledger.md#24-november-2026--answer-completion-paused-for-indexing-refactor).
 
+**24 November 2026. The indexing performance plan is the work in progress.**
+The user wrote: "We will do this work first before returning to what it was
+doing." The governing plan is
+[docs/indexing/performance-plan.md](indexing/performance-plan.md): decisions
+D1 to D8, a design sketch, the user's answers to questions Q1 to Q10 and
+steps P0 to P7. Read it before any indexing work.
+
+- Branch: `feat/index-plain-store`, created from the head of
+  `feat/arbiter-final`. The user authorized pushing this branch to `origin`
+  on 24 November 2026. No PR, merge, publication or deployment is authorized.
+- Implementation starts at step P0.2 on the user's word. Nothing is
+  implemented yet.
+- The plan changes a persisted index format, the embedding model (one FP16
+  MiniLM file in place of the two INT8 files) and lexical result order, and
+  adds one service setting. Its section 5.13 lists every contract change and
+  is the recorded contract decision for them.
+- `feat/arbiter-final` and the Answer campaign stay paused as described
+  above. Codex's uncommitted Answer-evaluation files in the working tree are
+  not part of this work and must stay untouched.
+
 The user resumed the Windows and Linux FP16 campaign after D: cleanup. Keep new Windows work on D:, reuse the existing checkout target with one Cargo owner, and apply the standing disk budget and fixture disposal rules. Retained receipts remain evidence under their original identities. Removed fixture installations must be restored or replaced by a verified compatible installation before reuse.
 
 | Need | Source |

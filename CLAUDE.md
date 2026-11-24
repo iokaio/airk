@@ -73,9 +73,11 @@ AIRK is an independent Artifact Indexing and Retrieval Kernel. These standing ru
 
 ## Current assignment
 
-Read [current campaign instructions](docs/agent-current-work.md) before resuming work: scope, permissions, deadline, active plans, ledger, host/target paths, private roots and user exceptions are mandatory. Resume from live source and exact receipts, not historical status. Currently: `feat/arbiter-final`, with pushes of that branch to `origin` authorized; no PR, merge, publication or deployment authorization.
+Read [current campaign instructions](docs/agent-current-work.md) before resuming work: scope, permissions, deadline, active plans, ledger, host/target paths, private roots and user exceptions are mandatory. Resume from live source and exact receipts, not historical status. Currently: `feat/index-plain-store` (created from `feat/arbiter-final` on 24 November 2026), with pushes of that branch to `origin` authorized; no PR, merge, publication or deployment authorization. `feat/arbiter-final` is paused and keeps its own push authorization.
 
-The active plan is the [Answer evaluation plan](docs/arbiter/final-plan-fp16.md); the user gave the word to start it on 21 November 2026, for the first three iterations. The user set these rules for it on 21 November 2026:
+The active plan is the [indexing performance plan](docs/indexing/performance-plan.md). On 24 November 2026 the user stopped the Answer work and wrote: "We will do this work first before returning to what it was doing." Its decisions D1 to D8 and the answers to its questions Q1 to Q10 are the user's. Implementation starts at step P0.2 on the user's word.
+
+The [Answer evaluation plan](docs/arbiter/final-plan-fp16.md) is paused until the user resumes it. The user gave the word to start it on 21 November 2026, for the first three iterations, and set these rules for it on 21 November 2026; they apply again when it resumes:
 
 - Agent sessions run in headless Claude Code on Haiku (`claude-haiku-5-5`); judge sessions run in headless Claude Code on Sonnet (`claude-sonnet-5-5`); both at medium effort (changed by the user on 21 November from Sonnet agents and Opus judges). The first round (baseline and change set 1) uses airk alone; later rounds use both repositories. This harness is the approved agent orchestration for the evaluation. It is evaluation tooling, never product, and runs as the verified human.
 - One commit per series: a series' change-set code (or, for the baseline, the harness), its report, its evaluation results file and its ledger entry land together in one signed-off commit, so commits and results compare one to one. Nothing of a series is committed before it is judged.

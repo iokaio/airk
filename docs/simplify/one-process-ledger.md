@@ -17543,3 +17543,61 @@ tests. Those edits remain outside commit history under the one-commit
 rule for judged series. The next evaluation needs fresh indexes produced
 by the refactored code, semantic readiness and leak checks before the
 live shakedown.
+
+### 24 November 2026 — Indexing performance plan written; decisions and answers recorded
+
+Primary agent: Claude Code. The user asked for an analysis of indexing
+speed, then directed: "We will do this work first before returning to what
+it was doing." The plan is
+[docs/indexing/performance-plan.md](../indexing/performance-plan.md).
+
+**Identity.** The shell, the file-write tool and the edit tool were each
+observed as `TYAI\tdotn`, SID `S-1-5-21-3678370870-3858642417-826968105-1002`,
+with the same default owner and Explorer owner. The guard's human-execution,
+output-parent and created-output checks passed for `docs/indexing` and the
+plan file.
+
+**Evidence used.** Existing receipts only. Base pass: 2.8 files a second
+(munarium, 1,023 files in 360 to 372 s) and 4.8 (bookbuilder-v2, 8,116 files
+in 1,675 to 1,720 s). Vectors: 20 a second after the 22 November fixes, with
+graph insertion at 19.2 ms for each vector. One-thread INT8 inference: 21.5
+passages a second. No new measurement ran. The ranking of costs inside the
+base pass comes from reading code and is not profiled.
+
+**Decisions by the user.** D1: tamper-evidence of AIRK's own index files is
+not a requirement ("Not required"). D2 to D8, accepted with "All of your
+recommendations are accepted": one stored copy of each file's text; change
+detection by file stat with a hash audit; about a million vectors for each
+index with an exact flat scan, which retires DiskANN; vectors need not be
+bit-identical; indexes are rebuilt with no migration; one disk sync for each
+batch; free-space and size-cap checks in place of grants.
+
+**Answers to the plan's questions.**
+
+- Q1: go straight to the plain store; the session pool is not shipped on
+  the old store.
+- Q2: embedding on the graphics card is in this plan (against my
+  recommendation).
+- Q3: semantic units unchanged.
+- Q4: BM25 ranking in the same change (against my recommendation).
+- Q5: extracted text only for binary documents.
+- Q6: an index that cannot be rebuilt is reported and its files are left.
+- Q7: branch `feat/index-plain-store` from the head of `feat/arbiter-final`,
+  with pushes of that branch to `origin` authorized.
+- Q8: the assignment file, `CLAUDE.md`, `AGENTS.md` and this ledger updated.
+- Q9: one FP16 MiniLM file for both routes; the two INT8 files retire.
+- Q10: "Separate setting. 'allow' by default." (against my recommendation).
+
+**Correction.** My first report said parallel inference alone would make
+vectors 10 to 15 times faster. Graph insertion caps the old store near 52
+vectors a second, so the gain there is about 2.5 times. The plan states this
+in its section 1.
+
+**AIRK MCP.** Bound. `status` returned `member_deadline_exhausted` for both
+live indexes, so the analysis used local source reading.
+
+**Not done.** No code changed, no build ran and nothing was measured. The
+platforms for Q10 are read as Windows CUDA and Linux CUDA and are not
+confirmed by the user. `AGENTS.md` and `CLAUDE.md` received the same edit
+and stay byte-identical. Next action: step P0.2 of the plan, on the user's
+word.

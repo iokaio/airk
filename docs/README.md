@@ -432,6 +432,7 @@ The [Windows build/editor guide](windows-local-build.md) describes pair builds, 
 - [Ingestion limits, machine sizing and index detail](ingestion-limits.md)
 - [Per-collection extraction policy](extraction-policy.md)
 - [Measured scale and performance qualification](scale-qualification.md)
+- [Indexing performance plan: analysis, decisions, plain-store design and steps (24 November 2026, not implemented)](indexing/performance-plan.md)
 - [October 21 indexing feedback review, implementation and measurement](history/indexing-speed-review-2026-10-21.md)
 - [October 21 follow-up: durable rebuilds, exact completion reports and guarded lexical cache](history/indexing-follow-up-2026-10-21.md)
 - [Historical 1.2 indexing optimization and qualification record](history/indexingenhancements.md)
