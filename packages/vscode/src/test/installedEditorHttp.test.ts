@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
-// Fictional TLS transport regressions; actual native qualification is separate.
+// Fictional loopback HTTP transport regressions; actual native qualification is separate.
 import {test} from 'node:test';
 import {strict as assert} from 'node:assert';
-import * as https from 'node:https';
+import * as http from 'node:http';
 import type {Duplex} from 'node:stream';
-import {ca,cert,key} from './fixtures/httpTlsFixture';
 import {InstalledHttpTransport,InstalledHttpFailure,installedHttpIdentity,installedHttpReply} from './installedEditorHttp';
 const authorization='Bearer airk1.'+'a'.repeat(32)+'.'+'b'.repeat(64);
-function definition(port:number,extra={}){return {uri:{toString:()=>`https://127.0.0.1:${port}/mcp`},headers:{Authorization:authorization,'X-AIRK-Response-Mode':'full'},...extra};}
+function definition(port:number,extra={}){return {uri:{toString:()=>`http://127.0.0.1:${port}/mcp`},headers:{Authorization:authorization,'X-AIRK-Response-Mode':'full'},...extra};}
 test('actual HTTP definition binds credential and cannot replace framing or introduce a process',()=>{
     assert.equal(installedHttpIdentity(definition(12345)).credentialId,'a'.repeat(32));
     for(const extra of [{command:'airk'},{args:[]},{env:{}},{headers:{Authorization:authorization,'X-AIRK-Response-Mode':'full',Host:'foreign'}},{headers:{Authorization:authorization,'X-AIRK-Response-Mode':'full',authorization}},{headers:{Authorization:authorization+'\r\nHost: foreign','X-AIRK-Response-Mode':'full'}}])assert.throws(()=>installedHttpIdentity(definition(12345,extra)));
-    assert.throws(()=>installedHttpIdentity({...definition(12345),uri:{toString:()=> 'http://127.0.0.1:12345/mcp'}}));
+    // Local trust plan C: a legacy https URL is never an installed endpoint.
+    assert.throws(()=>installedHttpIdentity({...definition(12345),uri:{toString:()=> 'https://127.0.0.1:12345/mcp'}}));
 });
 test('complete JSON/SSE retains notifications and future fields, rejects crossed IDs and truncation',()=>{
     const reply={jsonrpc:'2.0',id:7,result:{full:{future:[1,'�']}}},notice={jsonrpc:'2.0',method:'notifications/progress',params:{unknown:true}};
@@ -24,9 +24,9 @@ test('complete JSON/SSE retains notifications and future fields, rejects crossed
     assert.throws(()=>installedHttpReply(bytes.subarray(0,bytes.length-2),'text/event-stream',7));
     assert.throws(()=>installedHttpReply(Buffer.from(JSON.stringify({...reply,error:{code:1}})),'application/json',7));
 });
-test('actual CA-validated HTTPS keeps raw responses and session, closes own sockets, never replays reset',async()=>{
+test('actual loopback HTTP keeps raw responses and session, closes own sockets, never replays reset',async()=>{
     const sockets=new Set<Duplex>(),seen:any[]=[];
-    const server=https.createServer({cert,key},async(request,response)=>{
+    const server=http.createServer(async(request,response)=>{
         const chunks:Buffer[]=[];for await(const chunk of request)chunks.push(Buffer.from(chunk));
         const body=Buffer.concat(chunks).length?JSON.parse(Buffer.concat(chunks).toString('utf8')):undefined;
         seen.push({method:request.method,headers:request.headers,body,socket:request.socket});
@@ -40,12 +40,8 @@ test('actual CA-validated HTTPS keeps raw responses and session, closes own sock
     server.on('connection',socket=>{sockets.add(socket);socket.once('close',()=>sockets.delete(socket));});
     await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
     const address=server.address();assert.ok(address&&typeof address==='object');
-    const client=new InstalledHttpTransport(definition(address.port),Buffer.from(ca));
-    const untrusted=new InstalledHttpTransport(definition(address.port),Buffer.from(''));
+    const client=new InstalledHttpTransport(definition(address.port));
     try{
-        await assert.rejects(untrusted.request('initialize',{},3000),error=>error instanceof InstalledHttpFailure&&error.kind==='network'&&error.detail.response_bytes===0);
-        await untrusted.close();
-        assert.equal(seen.length,0,'Untrusted issuer never reaches HTTP dispatch');
         const initialized=await client.request('initialize',{},3000);assert.deepEqual(initialized.result.future,{retained:true});
         await client.notify('notifications/initialized',3000);
         assert.deepEqual((await client.request('tools/list',{},3000)).result,{complete:{unknown:[1,2,3]}});
@@ -59,5 +55,5 @@ test('actual CA-validated HTTPS keeps raw responses and session, closes own sock
         assert.equal(seen.length,before+1,'One request, no retry');
         const receipt=await client.close() as any;assert.equal(receipt.client_closed,true);assert.equal(receipt.service_stop_requested,false);assert.equal(receipt.server_session_delete.state,'acknowledged');
         assert.equal(seen.at(-1).method,'DELETE');assert.equal(server.listening,true);
-    }finally{await untrusted.close();await client.close();for(const socket of sockets)socket.destroy();await new Promise<void>(resolve=>server.close(()=>resolve()));}
+    }finally{await client.close();for(const socket of sockets)socket.destroy();await new Promise<void>(resolve=>server.close(()=>resolve()));}
 });

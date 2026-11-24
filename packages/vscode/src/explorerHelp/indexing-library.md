@@ -16,4 +16,4 @@ Show index details reads the index's detail, sources, the index sets that use it
 
 Open in AIRK Admin on a row opens that index in the AIRK Admin index library. When AIRK has no index yet, Create an index for this folder opens the index library prefilled with that window folder.
 
-Choose Open AIRK Admin to open the admin pages. Choose where... picks In VS Code (the Simple Browser, with a single-use sign-in link kept only in memory) or In my browser; the choice is remembered in the airk.admin.openIn setting. If the VS Code browser reports a certificate problem, choose Open in my browser.
+Choose Open AIRK Admin to open the admin pages. Choose where... picks In VS Code (the Simple Browser, with a single-use sign-in link kept only in memory) or In my browser; the choice is remembered in the airk.admin.openIn setting.

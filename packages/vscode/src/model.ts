@@ -59,7 +59,7 @@ export function eligibleEvent(file: string, root: string, dataDir: string): bool
 
 /** One MCP server in an agent configuration. Legacy entries exist only for migration. */
 export interface ServerEntry { readonly key: string; readonly command: string; readonly args: readonly string[]; readonly label: string; readonly http?:HttpConnectionInfo;
-    /** HTTPS only: per-connection credential command for clients outside VS Code. */
+    /** HTTP only: per-connection credential command for clients outside VS Code. */
     readonly helper?:HttpCredentialHelper }
 export const ASSISTANCE_KEY = 'airk_explorer';
 export const UNIFIED_KEY = 'airk';

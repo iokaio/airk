@@ -44,7 +44,7 @@ and the service.
 
 **Current source version: 1.8.207 (15 November 2026).** The service and extension are separate products with synchronized source versions. The [Arbiter final implementation campaign](https://github.com/iokaio/airk/blob/main/docs/arbiter/final-plan.md) is in progress. The source navigation now has a flat rail for Overview, Search, Indexes, Activity, Agents, Service, Code, Documents, Evidence, Review, Strategies and Help; Workbench remains a separate workspace. The sealed Windows R3 assets, packages and signed client/model preflight pass under their recorded candidate identity; installed checks remain open.
 
-Editor management reaches the native Admin owner through its verified `airkctl session`; credentials stay native-held. Browser Admin retains its HTTPS sign-in and anti-forgery protections. Original request/recovery identities survive uncertain results within their owning live session; a disconnect or ended session does not authorize automatic replay. Complete native results remain available alongside structured views.
+Editor management reaches the native Admin owner through its verified `airkctl session`; credentials stay native-held. Browser Admin retains its single-use sign-in and anti-forgery protections over loopback HTTP. Original request/recovery identities survive uncertain results within their owning live session; a disconnect or ended session does not authorize automatic replay. Complete native results remain available alongside structured views.
 
 Arbiter contextual answers are optional, off by default and require explicit immutable-index enrollment plus a verified supported profile. Actual readiness, refusals and gaps remain visible. This source candidate does not establish independent model/task/device qualification, installed-editor acceptance or publication. See the [current plan](https://github.com/iokaio/airk/blob/main/docs/arbiter/final-plan.md) and [execution ledger](https://github.com/iokaio/airk/blob/main/docs/simplify/one-process-ledger.md). Version 1.9.0 remains reserved for final delivery after its gates pass; the [earlier 1.9.0 record](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.9.0.md), packages and screenshots retain their historical identities.
 
@@ -97,12 +97,12 @@ One AIRK MCP endpoint gives independently configured clients access to the same 
 
 | Client | AIRK setup route |
 |---|---|
-| VS Code / Copilot Chat | Implemented native HTTPS provider/project configuration and VS Code’s MCP controls. |
-| Claude Code | Implemented project HTTPS configuration and client approval. |
-| Codex | Implemented scoped HTTPS TOML configuration and the client’s MCP controls. |
-| Other clients, including Gemini, Antigravity, Cursor, Cline, Roo and Junie | Automatic HTTPS configuration and migration are unsupported. Manual compatibility must be verified against that client's TLS and scope requirements. |
+| VS Code / Copilot Chat | Implemented native HTTP provider/project configuration and VS Code’s MCP controls. |
+| Claude Code | Implemented project HTTP configuration and client approval. |
+| Codex | Implemented scoped HTTP TOML configuration and the client’s MCP controls. |
+| Other clients, including Gemini, Antigravity, Cursor, Cline, Roo and Junie | Automatic HTTP configuration and migration are unsupported. Manual compatibility must be verified against that client's scope requirements. |
 
-These are implemented adapter routes, not completed installed-client/platform qualification. Use the built-in setup guide and [integration documentation](https://github.com/iokaio/airk/blob/main/docs/agent-integration.md). AIRK’s connection check verifies its loopback HTTPS endpoint (no token since U110); the external client still needs its own TLS trust, reconnection and a read that names its scope (index_ids, index_set_ids or workspace). Local tools can use the [documented HTTPS API](https://github.com/iokaio/airk/blob/main/docs/local-https-api.md); that generic API does not establish compatibility with another client's configuration format.
+These are implemented adapter routes, not completed installed-client/platform qualification. Use the built-in setup guide and [integration documentation](https://github.com/iokaio/airk/blob/main/docs/agent-integration.md). AIRK’s connection check verifies its loopback HTTP endpoint (no token since U110, no certificate since local trust plan C); the external client still needs reconnection and a read that names its scope (index_ids, index_set_ids or workspace). Local tools can use the [documented local HTTP API](https://github.com/iokaio/airk/blob/main/docs/local-https-api.md); that generic API does not establish compatibility with another client's configuration format.
 
 ## Local control and transparent limits
 
@@ -112,7 +112,7 @@ AIRK does not use a remote inference service. If you give retrieved evidence to 
 
 Usage reporting can help inspect retrieval activity and supplied measurement scenarios. Context, token or cost savings depend on the task and agent; AIRK does not promise a universal reduction in tokens, time or bills.
 
-Developer references: [MCP tools](https://github.com/iokaio/airk/blob/main/docs/mcp-developer-guide.md) and [CLI commands](https://github.com/iokaio/airk/blob/main/docs/cli-developer-guide.md) explain purpose, examples and implementation ownership. Current CLI `tools list/help/call/shell` and public HTTPS share the Rust-owned unified catalog. Read `airkctl tools list --json` for its complete actual schemas; Help reads require a connected service but no selected project.
+Developer references: [MCP tools](https://github.com/iokaio/airk/blob/main/docs/mcp-developer-guide.md) and [CLI commands](https://github.com/iokaio/airk/blob/main/docs/cli-developer-guide.md) explain purpose, examples and implementation ownership. Current CLI `tools list/help/call/shell` and the local HTTP endpoint share the Rust-owned unified catalog. Read `airkctl tools list --json` for its complete actual schemas; Help reads require a connected service but no selected project.
 
 ## Version and setup notes
 

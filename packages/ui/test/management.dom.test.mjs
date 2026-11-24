@@ -128,9 +128,9 @@ test('real shared editor Service uses native port, explicit Arbiter enrollment/C
       assert.deepEqual(complete, usage.i3.body.result.document);
     }
     await browser.evaluate(`window.navigateManagement('service')`);
-    await browser.observed(`[...document.querySelectorAll('summary')].find(summary=>summary.textContent==='HTTPS and certificate trust')`);
-    await browser.evaluate(`[...document.querySelectorAll('summary')].find(summary=>summary.textContent==='HTTPS and certificate trust').click()`);
-    await browser.observed(`[...document.querySelectorAll('h2')].some(heading=>heading.textContent==='HTTPS issuer'&&heading.getClientRects().length)`);
+    await browser.observed(`[...document.querySelectorAll('summary')].find(summary=>summary.textContent==='Start AIRK when I sign in')`);
+    await browser.evaluate(`[...document.querySelectorAll('summary')].find(summary=>summary.textContent==='Start AIRK when I sign in').click()`);
+    await browser.observed(`[...document.querySelectorAll('h2')].some(heading=>heading.textContent==='Start at sign-in'&&heading.getClientRects().length)`);
     await browser.evaluate(`[...document.querySelectorAll('button')].find(button=>button.textContent==='Close management session').click()`);
     await browser.observed(`document.body.textContent.includes('captured management session is closed')`);
     assert.equal(await browser.evaluate(`window.requests.filter(message=>message.type==='admin.session').length`), 1, 'close never automatically recaptures a replacement');

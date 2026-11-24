@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { X509Certificate, createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 
 type InputStamp={dev:number;ino:number;birthtimeMs:number;mode:number;uid:number};
 type InputOwner={control:string;directory:string;parent:InputStamp;directoryStamp:InputStamp;file:InputStamp};
@@ -64,10 +64,10 @@ export async function publishNativeInput(control:string,content:string,check:()=
 export type HttpSelection={kind:'open';selection:{namespace:string}};
 export interface EndpointDescriptor {
     schema:1;installation:string;user:string;namespace:string;generation:number;service_instance:string;
-    executable_sha256:string;url:string;ca_sha256:string;certificate_sha256:string;
+    executable_sha256:string;url:string;
     state:'recovering'|'ready'|'stopping';predecessor_digest:string|null;
 }
-export interface HttpConnectionInfo {schema:1;connection_id:string;endpoint:EndpointDescriptor;selection:HttpSelection;ca_certificate_file:string;credential_file:string;
+export interface HttpConnectionInfo {schema:1;connection_id:string;endpoint:EndpointDescriptor;selection:HttpSelection;
     open?:{defaults_revision:number;default_index_ids:string[];default_index_set_ids:string[];agent_choice:'off'|'on'}}
 export interface AttachmentRetirementProof {
     schema:1;connection_id:string;installation:string;namespace:string;client:string;
@@ -76,10 +76,19 @@ export interface AttachmentRetirementProof {
 function object(value:unknown):Record<string,any>{if(!value||typeof value!=='object'||Array.isArray(value))throw Error('invalid_http_connection');return value as Record<string,any>;}
 function keys(value:Record<string,any>,fields:string[]):void{if(Object.keys(value).some(key=>!fields.includes(key))||fields.some(key=>!Object.hasOwn(value,key)))throw Error('invalid_http_connection_fields');}
 function hex(value:unknown,length=64):void{if(typeof value!=='string'||!new RegExp(`^[a-f0-9]{${length}}$`).test(value))throw Error('invalid_http_identity');}
-export function httpUrl(value:unknown):string{
-    if(typeof value!=='string'||!/^https:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}\/mcp$/.test(value))throw Error('invalid_http_endpoint');
-    const port=Number(value.slice('https://127.0.0.1:'.length,-4));if(port<1||port>65535)throw Error('invalid_http_port');return value;
+function loopbackUrl(value:unknown,scheme:'http'|'https'):string{
+    const pattern=scheme==='http'?/^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}\/mcp$/:/^https:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}\/mcp$/;
+    if(typeof value!=='string'||!pattern.test(value))throw Error('invalid_http_endpoint');
+    const port=Number(value.slice(`${scheme}://127.0.0.1:`.length,-4));if(port<1||port>65535)throw Error('invalid_http_port');return value;
 }
+/** The current loopback endpoint: exactly `http://127.0.0.1:<port>/mcp`. */
+export function httpUrl(value:unknown):string{return loopbackUrl(value,'http');}
+/** An `https://127.0.0.1:<port>/mcp` URL an older HTTPS build wrote. Use it only
+ * to recognise AIRK's legacy agent entries so they are reported and rewritten;
+ * it is never a connectable endpoint. */
+export function legacyHttpsUrl(value:unknown):string{return loopbackUrl(value,'https');}
+/** Recognition only: the current URL or a legacy HTTPS one. */
+export function recognizedHttpUrl(value:unknown):string{try{return httpUrl(value);}catch{return legacyHttpsUrl(value);}}
 export function validateHttpSelection(input:unknown):HttpSelection{
     const value=object(input);keys(value,['kind','selection']);
     if(value.kind==='open'){const selection=object(value.selection);keys(selection,['namespace']);hex(selection.namespace,32);return {kind:'open',selection:{namespace:selection.namespace}};}
@@ -115,17 +124,17 @@ export function validateAttachmentRetirement(input:unknown,connection:HttpConnec
     return structuredClone(value) as AttachmentRetirementProof;
 }
 export function validateEndpoint(input:unknown):EndpointDescriptor{
-    const endpoint=object(input);keys(endpoint,['schema','installation','user','namespace','generation','service_instance','executable_sha256','url','ca_sha256','certificate_sha256','state','predecessor_digest']);
+    const endpoint=object(input);keys(endpoint,['schema','installation','user','namespace','generation','service_instance','executable_sha256','url','state','predecessor_digest']);
     if(endpoint.schema!==1||!Number.isSafeInteger(endpoint.generation)||endpoint.generation<1||typeof endpoint.user!=='string'||!/^[\x21-\x7e]{1,256}$/.test(endpoint.user)||!['recovering','ready','stopping'].includes(endpoint.state))throw Error('invalid_http_descriptor');
-    for(const field of ['installation','executable_sha256','ca_sha256','certificate_sha256'])hex(endpoint[field]);
+    for(const field of ['installation','executable_sha256'])hex(endpoint[field]);
     for(const field of ['namespace','service_instance'])hex(endpoint[field],32);if(endpoint.predecessor_digest!==null)hex(endpoint.predecessor_digest);httpUrl(endpoint.url);
     return endpoint as EndpointDescriptor;
 }
-export function validateHttpConnection(input:unknown,expected?:HttpSelection,directory?:string):HttpConnectionInfo{
+export function validateHttpConnection(input:unknown,expected?:HttpSelection):HttpConnectionInfo{
     if(Buffer.byteLength(JSON.stringify(input))>61440)throw Error('http_connection_bound');
     const value=object(input);
     // (U105) `open` is present exactly for an open connection: its stored default scope and agent choice.
-    keys(value,['schema','connection_id','endpoint','selection','ca_certificate_file','credential_file',...(Object.hasOwn(value,'open')?['open']:[])]);
+    keys(value,['schema','connection_id','endpoint','selection',...(Object.hasOwn(value,'open')?['open']:[])]);
     if(value.schema!==1)throw Error('unsupported_http_connection');hex(value.connection_id,32);
     const endpoint=validateEndpoint(value.endpoint);
     const selection=validateHttpSelection(value.selection);if(selection.selection.namespace!==endpoint.namespace||expected&&!sameHttpAuthority(selection,expected))throw Error('crossed_http_selection');
@@ -134,40 +143,9 @@ export function validateHttpConnection(input:unknown,expected?:HttpSelection,dir
         if(!Number.isSafeInteger(open.defaults_revision)||open.defaults_revision<1||open.agent_choice!=='off'&&open.agent_choice!=='on')throw Error('invalid_http_open_state');
         for(const [field,prefix] of [['default_index_ids','idx_'],['default_index_set_ids','prj_']] as const){const items=open[field];
             if(!Array.isArray(items)||items.length>32||new Set(items).size!==items.length||!items.every(item=>typeof item==='string'&&new RegExp(`^${prefix}[0-9a-f]{32}$`).test(item)))throw Error('invalid_http_open_state');}}
-    for(const field of ['ca_certificate_file','credential_file'])if(typeof value[field]!=='string'||value[field].length>4096||!path.isAbsolute(value[field])||/[\x00-\x1f]/.test(value[field]))throw Error('invalid_http_private_reference');
-    const parent=directory??path.dirname(value.ca_certificate_file);
-    if(!sameFile(value.ca_certificate_file,path.join(parent,'ca.pem'))||!sameFile(value.credential_file,path.join(parent,`credential-${value.connection_id}.token`)))throw Error('crossed_http_private_reference');
     return structuredClone({...value,selection}) as HttpConnectionInfo;
 }
 
-function sameFile(left:string,right:string):boolean{
-    const normalize=(value:string)=>process.platform==='win32'?path.toNamespacedPath(path.resolve(value)).toLowerCase():value;
-    return normalize(left)===normalize(right);
-}
-/** Native setup has already checked the private ACL; recheck filesystem identity
- * on every open. Never accept a repository-nominated path or redirected ancestor. */
-async function boundedFile(filename:string,maximum:number,ownerPrivate:boolean):Promise<Buffer>{
-    if(!sameFile(await fs.realpath(filename),filename))throw Error('redirected_http_private_reference');
-    const stat=await fs.lstat(filename);if(!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1||stat.size>maximum||ownerPrivate&&process.platform!=='win32'&&((stat.mode&0o077)!==0||typeof process.getuid==='function'&&stat.uid!==process.getuid()))throw Error('unsafe_http_private_file');
-    const handle=await fs.open(filename,'r');
-    try{
-        const opened=await handle.stat();if(opened.dev!==stat.dev||opened.ino!==stat.ino||opened.size!==stat.size)throw Error('changed_http_private_file');
-        const bytes=Buffer.alloc(maximum+1);let used=0;
-        while(used<bytes.length){const result=await handle.read(bytes,used,bytes.length-used,null);if(!result.bytesRead)break;used+=result.bytesRead;}
-        const after=await handle.stat();if(used!==stat.size||used>maximum||after.size!==stat.size||after.mtimeMs!==stat.mtimeMs)throw Error('changed_http_private_file');return bytes.subarray(0,used);
-    }finally{await handle.close();}
-}
-/** An existing user-selected public trust bundle is additive, never a token or key. */
-export async function httpPublicTrustFile(filename:string,maximum=2097152):Promise<Buffer>{return boundedFile(filename,maximum,false);}
-const privateBytes=(filename:string,maximum:number)=>boundedFile(filename,maximum,true);
-export async function httpMaterial(input:HttpConnectionInfo):Promise<{url:string;ca:Buffer;credential:string}>{
-    const info=validateHttpConnection(input);if(info.endpoint.state!=='ready')throw Error('http_endpoint_not_ready');
-    const ca=await privateBytes(info.ca_certificate_file,65536),credential=(await privateBytes(info.credential_file,103)).toString('utf8');
-    if(ca.includes('PRIVATE KEY')||(ca.toString('ascii').match(/-----BEGIN CERTIFICATE-----/g)??[]).length!==1)throw Error('invalid_http_public_ca');
-    const certificate=new X509Certificate(ca);if(createHash('sha256').update(certificate.raw).digest('hex')!==info.endpoint.ca_sha256||!certificate.ca)throw Error('crossed_http_ca');
-    if(!new RegExp(`^airk1\\.${info.connection_id}\\.[a-f0-9]{64}$`).test(credential))throw Error('crossed_http_credential');
-    return {url:info.endpoint.url,ca,credential};
-}
 export function credentialEnvironment(info:HttpConnectionInfo):string{return 'AIRK_MCP_TOKEN_'+info.connection_id.toUpperCase();}
 
 export function vscodeCredentialInputId(info:HttpConnectionInfo):string{return 'airkToken_'+info.connection_id;}

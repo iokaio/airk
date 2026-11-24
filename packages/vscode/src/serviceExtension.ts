@@ -214,7 +214,7 @@ class SplitExtension implements vscode.Disposable {
     /** §8.4 "Service found", U28: once per window, remove this window's
      * pre-split stdio AIRK entries (for example `airk-launcher.exe … mcp`)
      * whose folder has no index in the service, and record them. They can never
-     * be served: the service is HTTPS only. HTTPS entries are left to
+     * be served: the service is HTTP only. HTTP entries are left to
      * `airkctl agents`. */
     private stdioRetired?: Promise<void>;
     retireStdioEntries(): Promise<void> {
@@ -227,7 +227,7 @@ class SplitExtension implements vscode.Disposable {
             const previous = this.context.workspaceState.get<RemovedEntry[]>(REMOVED_ENTRIES_KEY, []);
             await this.context.workspaceState.update(REMOVED_ENTRIES_KEY, [...previous, ...removed].slice(-256));
             for (const entry of removed) { this.output.appendLine(`AIRK: removed ${entry.agent} entry "${entry.serverKey}" from ${entry.file}: ${entry.reason}`); }
-            this.notify('info', `Removed ${removed.length} retired AIRK agent ${removed.length === 1 ? 'entry' : 'entries'} (stdio; the AIRK Service serves HTTPS only; see Output). Once this folder has an index, create a connection in AIRK Admin and use Connect Coding Agent.`, ['airk.showExtensionOutput']);
+            this.notify('info', `Removed ${removed.length} retired AIRK agent ${removed.length === 1 ? 'entry' : 'entries'} (stdio; the AIRK Service serves HTTP only; see Output). Once this folder has an index, create a connection in AIRK Admin and use Connect Coding Agent.`, ['airk.showExtensionOutput']);
         })().catch(error => {
             // A failed attempt (service not answering yet) may run again on the next ready state.
             this.stdioRetired = undefined;

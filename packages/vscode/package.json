@@ -361,7 +361,7 @@
               "Open AIRK Admin in VS Code's Simple Browser with a single-use sign-in link that is kept only in memory."
             ],
             "default": "external",
-            "markdownDescription": "Where **Open AIRK Admin** opens the AIRK admin pages. Choose **Open AIRK Admin › Choose where…** in the Explorer to change it. If the VS Code browser cannot open the page or reports a certificate problem, AIRK offers to open it in your browser instead."
+            "markdownDescription": "Where **Open AIRK Admin** opens the AIRK admin pages. Choose **Open AIRK Admin › Choose where…** in the Explorer to change it. If the VS Code browser cannot open the page, AIRK offers to open it in your browser instead."
           },
           "airk.explorer.assistance.enabled": {
             "type": "boolean",

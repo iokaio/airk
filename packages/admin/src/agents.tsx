@@ -2,12 +2,12 @@
 // Agents: how a coding agent reaches this service's MCP endpoint (U110). The
 // page explains connecting an agent and choosing its scope (per call, or the
 // workspace default a VS Code window's applied search scope stores), reads the
-// live endpoint (agents.endpoint, M15a) and certificate trust
-// (https.trust_status), and shows manual snippets in the exact shape
-// `airkctl agents connect` writes: the endpoint URL and the response-mode header
-// only. The endpoint needs no token, so no credential, connection id or header
-// helper appears here. Every read keeps its complete native result in a
-// collapsed JSON block.
+// live endpoint (agents.endpoint, M15a), and shows manual snippets in the exact
+// shape `airkctl agents connect` writes: the endpoint URL and the response-mode
+// header only. The endpoint is plain HTTP on 127.0.0.1 (local trust plan C) and
+// needs no token, so no certificate, credential, connection id or header helper
+// appears here. Every read keeps its complete native result in a collapsed JSON
+// block.
 import { Fragment, type ComponentChildren, type JSX } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { body, OPS } from './operations';
@@ -170,7 +170,6 @@ function Badge(props: { tone: 'ok' | 'warn' | 'bad' | 'neutral'; children: Compo
 // ---------------------------------------------------------------------------
 // Native manual entries preserve Rust's escaping and exact bytes.
 const MODE_HEADER = 'X-AIRK-Response-Mode';
-const CA_PLACEHOLDER = '<path to the AIRK CA certificate file>';
 
 export function manualEntriesOf(state: CallState): AgentManualEntry[] {
   const manual = okResult(state)?.manual;
@@ -180,16 +179,6 @@ export function manualEntriesOf(state: CallState): AgentManualEntry[] {
       && ['project', 'user'].includes(String(value.scope)) && ['json', 'toml'].includes(String(value.format))
       && typeof value.file === 'string' && typeof value.text === 'string';
   }) : [];
-}
-
-function isWindowsPlatform(platform: string | undefined): boolean {
-  if (platform !== undefined) return platform === 'windows';
-  return navigator.userAgent.includes('Windows');
-}
-
-function setEnvCommand(name: string, value: string, windows: boolean): string {
-  const literal = windows ? `'${value.replaceAll("'", "''")}'` : `'${value.replaceAll("'", `'"'"'`)}'`;
-  return windows ? `$env:${name} = ${literal}` : `export ${name}=${literal}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -238,7 +227,7 @@ function ConnectCard(): JSX.Element {
 }
 
 // ---------------------------------------------------------------------------
-// (2) Endpoint and trust.
+// (2) Endpoint.
 
 const STATE_TEXT: Record<string, [string, 'ok' | 'warn' | 'bad']> = {
   ready: ['Ready: agents can connect now.', 'ok'],
@@ -246,7 +235,7 @@ const STATE_TEXT: Record<string, [string, 'ok' | 'warn' | 'bad']> = {
   stopping: ['Stopping: the service is shutting down; connections will fail until it starts again.', 'bad'],
 };
 
-type Endpoint = { url: string; state?: string; ca_sha256?: string; certificate_sha256?: string; generation?: unknown };
+type Endpoint = { url: string; state?: string; generation?: unknown };
 
 function endpointOf(state: CallState): Endpoint | undefined {
   const result = okResult(state);
@@ -257,88 +246,11 @@ function endpointOf(state: CallState): Endpoint | undefined {
   const out: Endpoint = { url, generation: endpoint.generation };
   const s = str(endpoint.state);
   if (s !== undefined) out.state = s;
-  const ca = str(endpoint.ca_sha256);
-  if (ca !== undefined) out.ca_sha256 = ca;
-  const cert = str(endpoint.certificate_sha256);
-  if (cert !== undefined) out.certificate_sha256 = cert;
   return out;
 }
 
-type Trust = {
-  trusted: boolean;
-  present: boolean;
-  owned: boolean;
-  outcome?: string;
-  store?: string;
-  platform?: string;
-  guidance?: string;
-  ca_sha256?: string;
-};
-
-function trustOf(state: CallState): Trust | undefined {
-  const r = okResult(state);
-  if (r === undefined || typeof r.trusted !== 'boolean') return undefined;
-  const t: Trust = { trusted: r.trusted, present: r.present === true, owned: r.owned === true };
-  for (const key of ['outcome', 'store', 'platform', 'guidance', 'ca_sha256'] as const) {
-    const value = str(r[key]);
-    if (value !== undefined) t[key] = value;
-  }
-  return t;
-}
-
-function TrustSummary(props: { trust: Trust; ca: string | undefined }): JSX.Element {
-  const t = props.trust;
-  const ca = t.ca_sha256 ?? props.ca;
-  const where = t.store !== undefined ? ` (${t.store})` : '';
-  let headline: JSX.Element;
-  if (t.trusted) {
-    headline = (
-      <p>
-        <Badge tone="ok">Trusted</Badge> Your account's certificate store{where} trusts AIRK's local HTTPS
-        issuer{t.owned ? ', installed by AIRK' : ''}. Clients that use the operating system's store can connect
-        without extra steps.
-      </p>
-    );
-  } else if (t.outcome === 'unsupported') {
-    headline = (
-      <p>
-        <Badge tone="warn">No OS trust on this platform</Badge> AIRK cannot add its issuer to a per-user store
-        here. Give each client the AIRK CA certificate file instead (see the per-client steps below).
-      </p>
-    );
-  } else {
-    headline = (
-      <p>
-        <Badge tone="bad">Not trusted</Badge> AIRK's local HTTPS issuer is{' '}
-        {t.present ? 'in your certificate store but not trusted' : 'not in your certificate store'}
-        {where}. Agents will refuse the connection until it is trusted. Run this in a terminal on this machine;
-        the operating system may ask you to confirm:
-      </p>
-    );
-  }
-  return (
-    <div class="au-trust">
-      {headline}
-      {!t.trusted && t.outcome !== 'unsupported' && ca !== undefined ? (
-        <Cmd text={`airkctl service trust install --expected-ca-sha256 ${ca}`} />
-      ) : null}
-      {t.guidance !== undefined ? (
-        <p class="muted">
-          <Text value={t.guidance} />
-        </p>
-      ) : null}
-      <p class="muted">
-        Some clients use their own certificate list rather than the system store. For those, add the AIRK CA
-        file as an additional certificate, as shown in each client&apos;s steps below. Check the store again
-        with <code>airkctl service trust inspect</code>.
-      </p>
-    </div>
-  );
-}
-
-function EndpointCard(props: { endpoint: CallState; trust: CallState; onReload: () => void }): JSX.Element {
+function EndpointCard(props: { endpoint: CallState; onReload: () => void }): JSX.Element {
   const e = endpointOf(props.endpoint);
-  const t = trustOf(props.trust);
   const stateText = e?.state !== undefined ? STATE_TEXT[e.state] : undefined;
   return (
     <Panel title="Your AIRK MCP endpoint">
@@ -370,9 +282,6 @@ function EndpointCard(props: { endpoint: CallState; trust: CallState; onReload: 
         <p class="error">The service answered without an endpoint; see the complete result below.</p>
       ) : null}
       <Problem state={props.endpoint} />
-      <h3>Certificate trust</h3>
-      {t !== undefined ? <TrustSummary trust={t} ca={e?.ca_sha256} /> : null}
-      <Problem state={props.trust} />
       <div class="row">
         <button type="button" class="secondary" onClick={props.onReload}>
           Refresh
@@ -382,17 +291,10 @@ function EndpointCard(props: { endpoint: CallState; trust: CallState; onReload: 
         <summary>Troubleshooting</summary>
         <Facts
           rows={[
-            ['Transport', 'Streamable HTTP over HTTPS (IPv4 loopback only)'],
-            [
-              'Issuer (CA) SHA-256',
-              <code>
-                <Text value={e?.ca_sha256 ?? 'not reported'} />
-              </code>,
-            ],
+            ['Transport', 'Streamable HTTP over plain HTTP (IPv4 loopback only, no certificate)'],
           ]}
         />
         <Complete state={props.endpoint} label="Complete endpoint result (JSON)" />
-        <Complete state={props.trust} label="Complete trust result (JSON)" />
       </details>
     </Panel>
   );
@@ -410,25 +312,11 @@ const CLIENTS: { id: Client; label: string }[] = [
   { id: 'other', label: 'Other MCP clients' },
 ];
 
-export function ManualCard(props: { entries: readonly AgentManualEntry[]; url: string | undefined; ca: string | undefined; platform: string | undefined }): JSX.Element {
+export function ManualCard(props: { entries: readonly AgentManualEntry[]; url: string | undefined }): JSX.Element {
   const [client, setClient] = useState<Client>('claude');
-  const url = props.url ?? 'https://127.0.0.1:<port>/mcp';
-  const windows = isWindowsPlatform(props.platform);
+  const url = props.url ?? 'http://127.0.0.1:<port>/mcp';
   const manual = props.entries.find(entry => entry.client === client);
   const snippet = manual ? <Snippet caption={manual.file} text={manual.text} /> : <p role="status">The service has not reported a manual entry for this agent. Refresh the endpoint, or run <code>airkctl agents manual --client {client} --project &lt;folder&gt;</code>.</p>;
-  const trustCommand =
-    props.ca !== undefined
-      ? `airkctl service trust install --expected-ca-sha256 ${props.ca}`
-      : 'airkctl service trust install --expected-ca-sha256 <issuer-sha256>';
-
-  const caFileNote = (
-    <p class="muted">
-      Replace the placeholder with the path of the AIRK CA certificate file. If the variable already names a bundle,
-      add the AIRK certificate to a combined copy instead of replacing it, so your other trusted roots keep working.
-      Never turn off certificate checks.
-    </p>
-  );
-
   let panel: JSX.Element;
   switch (client) {
     case 'claude':
@@ -439,10 +327,6 @@ export function ManualCard(props: { entries: readonly AgentManualEntry[]; url: s
             existing <code>mcpServers</code>).
           </p>
           {snippet}
-          <h4>Trust</h4>
-          <p>Start Claude Code with the AIRK CA certificate added to Node's trusted roots:</p>
-          <Cmd text={setEnvCommand('NODE_EXTRA_CA_CERTS', CA_PLACEHOLDER, windows)} />
-          {caFileNote}
         </>
       );
       break;
@@ -453,10 +337,6 @@ export function ManualCard(props: { entries: readonly AgentManualEntry[]; url: s
             Add this to <code>~/.codex/config.toml</code> (or the project's <code>.codex/config.toml</code>).
           </p>
           {snippet}
-          <h4>Trust</h4>
-          <p>Start Codex with the AIRK CA certificate:</p>
-          <Cmd text={setEnvCommand('CODEX_CA_CERTIFICATE', CA_PLACEHOLDER, windows)} />
-          {caFileNote}
         </>
       );
       break;
@@ -467,16 +347,6 @@ export function ManualCard(props: { entries: readonly AgentManualEntry[]; url: s
             Add this to <code>.vscode/mcp.json</code> (or your user <code>mcp.json</code>).
           </p>
           {snippet}
-          <h4>Trust</h4>
-          <p>
-            VS Code uses the operating system's store. On Windows and macOS, install the AIRK issuer for your
-            account (the certificate trust section above shows whether it is already trusted):
-          </p>
-          <Cmd text={trustCommand} />
-          <p class="muted">
-            On Linux there is no automatic per-user trust: an administrator must install the reviewed issuer in the
-            system store and VS Code's NSS store. Reload the MCP server in VS Code after trust changes.
-          </p>
         </>
       );
       break;
@@ -495,20 +365,14 @@ export function ManualCard(props: { entries: readonly AgentManualEntry[]; url: s
                   <CopyButton text={url} />
                 </span>,
               ],
-              ['Transport', 'Streamable HTTP (HTTPS). Stdio and SSE are not offered.'],
+              ['Transport', 'Streamable HTTP (plain HTTP on 127.0.0.1). Stdio and SSE are not offered.'],
               [
                 'Header',
                 <>
                   Optionally <code>{MODE_HEADER}: terse</code>. No authorization header is needed.
                 </>,
               ],
-              [
-                'Certificate',
-                <>
-                  Issued by AIRK's local CA (SHA-256 <code>{props.ca ?? 'see above'}</code>). Trust it in the OS
-                  store or give the client the CA file.
-                </>,
-              ],
+              ['Certificate', 'None: the endpoint is plain HTTP on the loopback address, so there is nothing to trust.'],
             ]}
           />
         </>
@@ -554,19 +418,16 @@ export function ManualCard(props: { entries: readonly AgentManualEntry[]; url: s
 
 export function Agents(): JSX.Element {
   const [endpoint, runEndpoint] = useCall();
-  const [trust, runTrust] = useCall();
   const reload = (): void => {
     void runEndpoint(OPS.agentsEndpoint, body.agentsEndpoint());
-    void runTrust(OPS.trustStatus, body.trustStatus());
   };
   useEffect(reload, []);
   const e = endpointOf(endpoint);
-  const t = trustOf(trust);
   return (
     <>
       <ConnectCard />
-      <EndpointCard endpoint={endpoint} trust={trust} onReload={reload} />
-      <ManualCard entries={manualEntriesOf(endpoint)} url={e?.url} ca={e?.ca_sha256 ?? t?.ca_sha256} platform={t?.platform} />
+      <EndpointCard endpoint={endpoint} onReload={reload} />
+      <ManualCard entries={manualEntriesOf(endpoint)} url={e?.url} />
     </>
   );
 }

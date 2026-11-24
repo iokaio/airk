@@ -8,11 +8,11 @@ import {renderExport} from '../workbenchRender';
 import {refreshHttpAgentConfig} from '../agentMigration';
 import type {WorkbenchSession} from '../workbenchContracts';
 
-function connection():HttpConnectionInfo{return {schema:1,connection_id:'11'.repeat(16),endpoint:{schema:1,installation:'22'.repeat(32),user:'fixture',namespace:'33'.repeat(16),generation:1,service_instance:'44'.repeat(16),executable_sha256:'55'.repeat(32),url:'https://127.0.0.1:57421/mcp',ca_sha256:'66'.repeat(32),certificate_sha256:'77'.repeat(32),state:'ready',predecessor_digest:null},selection:{kind:'open',selection:{namespace:'33'.repeat(16)}},open:{defaults_revision:1,default_index_ids:['idx_'+'bb'.repeat(16)],default_index_set_ids:['prj_'+'aa'.repeat(16)],agent_choice:'off'},ca_certificate_file:path.resolve('owned','ca.pem'),credential_file:path.resolve('owned','credential-'+ '11'.repeat(16)+'.token')};}
+function connection():HttpConnectionInfo{return {schema:1,connection_id:'11'.repeat(16),endpoint:{schema:1,installation:'22'.repeat(32),user:'fixture',namespace:'33'.repeat(16),generation:1,service_instance:'44'.repeat(16),executable_sha256:'55'.repeat(32),url:'http://127.0.0.1:57421/mcp',state:'ready',predecessor_digest:null},selection:{kind:'open',selection:{namespace:'33'.repeat(16)}},open:{defaults_revision:1,default_index_ids:['idx_'+'bb'.repeat(16)],default_index_set_ids:['prj_'+'aa'.repeat(16)],agent_choice:'off'}};}
 
 test('owned endpoint acceptance requires exact automatic configuration rewrite and retained non-AIRK preimage',()=>{
     for(const agent of ['codex','claude','copilot'] as const){
-        const before=connection(),after=structuredClone(before);after.endpoint.url='https://127.0.0.1:57422/mcp';after.endpoint.generation++;after.endpoint.service_instance='ab'.repeat(16);
+        const before=connection(),after=structuredClone(before);after.endpoint.url='http://127.0.0.1:57422/mcp';after.endpoint.generation++;after.endpoint.service_instance='ab'.repeat(16);
         const original=ownedConfigurationSource(agent,before),updated=refreshHttpAgentConfig(agent,original,after,before.endpoint.url);
         assertOwnedConfigurationRefresh(agent,original,updated,before,after);
         assert.throws(()=>assertOwnedConfigurationRefresh(agent,original,original,before,after),/configuration|rewrite/);

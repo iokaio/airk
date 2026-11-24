@@ -22,7 +22,9 @@ import {
 
 /** The agent `agents list` names → the `--client` Management › Agents offers (U91). */
 const CLIENT_OF: Readonly<Record<string, AgentClient>> = { claude: 'claude', codex: 'codex', copilot: 'vscode' };
-const ENDPOINT_URL = /^https:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}\/mcp$/;
+/** The current endpoint; an entry may also carry the legacy `https://` URL an HTTPS build wrote. */
+const ENDPOINT_URL = /^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}\/mcp$/;
+const ENTRY_URL = /^https?:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}\/mcp$/;
 
 /** One recognized entry as the Agents screen lists it. */
 export interface AgentEntryView {
@@ -87,7 +89,7 @@ export function agentEntries(report: unknown): AgentEntryView[] {
         const client = typeof entry.agent === 'string' ? CLIENT_OF[entry.agent] : undefined;
         if (!client || typeof entry.file !== 'string' || typeof entry.serverKey !== 'string') { return []; }
         return [{ client, agent: String(entry.agent), file: entry.file, scope: typeof entry.scope === 'string' ? entry.scope : 'project', serverKey: entry.serverKey,
-            ...(typeof entry.url === 'string' && ENDPOINT_URL.test(entry.url) ? { url: entry.url } : {}),
+            ...(typeof entry.url === 'string' && ENTRY_URL.test(entry.url) ? { url: entry.url } : {}),
             status: typeof entry.status === 'string' ? entry.status : null }];
     });
 }

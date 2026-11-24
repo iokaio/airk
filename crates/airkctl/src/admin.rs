@@ -3,7 +3,7 @@
 //! §2.7 A1 and §4.5 as amended by the adopted security review H1, H2, M5).
 //!
 //! Both ask the service for a single-use launch code over the owner pipe
-//! and build `https://127.0.0.1:<port>/admin/launch#c=<code>`; the code is
+//! and build `http://127.0.0.1:<port>/admin/launch#c=<code>` (local trust plan C); the code is
 //! only ever in the fragment. `url` prints it for manual use. `open` never
 //! puts it in a process argument (H1): it writes an owner-only redirect file
 //! in the service's owner-private control folder and opens that file.
@@ -17,7 +17,7 @@ const REDIRECT_FOLDER: &str = "admin-launch";
 
 /// The launch URL (`admin_contract::launch_url`): the code in the fragment.
 pub fn launch_url(port: u16, code: &str) -> String {
-    format!("https://127.0.0.1:{port}/admin/launch#c={code}")
+    format!("http://127.0.0.1:{port}/admin/launch#c={code}")
 }
 
 /// The admin pages a route may open (contracts §4.5, U97).
@@ -217,11 +217,8 @@ mod tests {
         let route = route("index-library", &[("root", "C:\\Users\\me\\My Docs")]);
         assert_eq!(route, "index-library?root=C%3A%5CUsers%5Cme%5CMy%20Docs");
         assert_eq!(
-            with_route(
-                "https://127.0.0.1:1/admin/launch#c=abc".into(),
-                Some(&route)
-            ),
-            "https://127.0.0.1:1/admin/launch#c=abc&route=index-library%3Froot%3DC%253A%255CUsers%255Cme%255CMy%2520Docs"
+            with_route("http://127.0.0.1:1/admin/launch#c=abc".into(), Some(&route)),
+            "http://127.0.0.1:1/admin/launch#c=abc&route=index-library%3Froot%3DC%253A%255CUsers%255Cme%255CMy%2520Docs"
         );
         assert_eq!(with_route("u".into(), None), "u");
     }

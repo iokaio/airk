@@ -2,7 +2,7 @@
 //! The typed `airkctl` facade: the extension's only runtime channel to the
 //! AIRK Service (I2) and its only process starter (plan §4.4, §8, §10.3).
 //! Features receive this facade; none of them spawns, opens a pipe, socket or
-//! HTTPS connection, or reads service credentials or state.
+//! HTTP connection, or reads service credentials or state.
 import * as path from 'node:path';
 import type { ErrorLine, ServiceStatus } from '../generated/i2';
 import { airkctlEnvironment, exitClass, spawnBounded, splitErrorLine, type Spawner } from './runner';

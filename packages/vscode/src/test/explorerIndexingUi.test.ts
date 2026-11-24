@@ -371,7 +371,7 @@ test('U110 Management › Agents puts the task first: pick an agent, Connect, se
     const state:any={trusted:true,nativeExecutionEnabled:true,connection:'ready',projects:[],features:{},searchScope};
     const props:any={state,route:{workspace:'manage',tab:'agents'},go(){},publications:[]};
     const f=webview('agents.tsx',state,exports=>exports.AgentsScreen(props));
-    const url='https://127.0.0.1:61021/mcp',report={entries:[],checked:[],future_native_field:'kept'};
+    const url='http://127.0.0.1:61021/mcp',report={entries:[],checked:[],future_native_field:'kept'};
     const scopeItems=[{kind:'set',id:projectId,name:'Application Project',description:'Services <b>and</b> UI'},{kind:'index',id:secondId}];
     const listed={folder:'/work/app',folders:['/work/app','/work/lib'],report,endpoint:{url,state:'ready'},endpointReport:{url,state:'ready'},
         defaultsReport:{schema:1,entries:[]},windowScope:{items:scopeItems},
@@ -398,7 +398,7 @@ test('U110 Management › Agents puts the task first: pick an agent, Connect, se
     const details=nodes(tree).find(node=>node.type==='details'&&nodes(node).some(child=>child.type==='summary'&&text(child)==='Details'));
     assert.ok(details&&!details.props.open,'Details is collapsed');
     assert.deepEqual(plain(component(details,'CompleteNativeResponse').map(node=>node.props.value)),[report,{url,state:'ready'},{schema:1,entries:[]}],'the complete native reports are kept');
-    assert.ok(component(details,'AdminButton').some(node=>node.props.page==='agents'),'AIRK Admin › Agents stays reachable for manual setup and trust');
+    assert.ok(component(details,'AdminButton').some(node=>node.props.page==='agents'),'AIRK Admin › Agents stays reachable for manual setup');
     // Copy puts the URL on the clipboard.
     button(tree,/^Copy$/).props.onClick();await f.flush();
     assert.deepEqual(f.sent.map(fields).at(-1),{type:'clipboard.write',text:url});

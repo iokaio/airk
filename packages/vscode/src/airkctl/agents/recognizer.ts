@@ -71,9 +71,16 @@ export function declarations(agent: Agent, source: string): Declaration[] {
 }
 
 export const airkKey = (key: string) => key === 'airk' || key.startsWith('airk-') || key.startsWith('airk_');
-/** Exactly `https://127.0.0.1:<port>/mcp`. */
-export function httpUrl(value: string): boolean {
-    const match = /^https:\/\/127\.0\.0\.1:([1-9][0-9]{0,4})\/mcp$/.exec(value);
+/** Recognition: the current `http://127.0.0.1:<port>/mcp`, or the legacy
+ * `https://127.0.0.1:<port>/mcp` an HTTPS build wrote (recognize.rs `http_url`). */
+export function httpUrl(value: string): boolean { return currentUrl(value) || legacyUrl(value); }
+/** The current endpoint form, `http://127.0.0.1:<port>/mcp` (recognize.rs `current_url`). */
+export function currentUrl(value: string): boolean { return loopbackUrl(value, 'http'); }
+/** Local trust plan C: the `https://` form an HTTPS build wrote. Still AIRK's,
+ * never current (recognize.rs `legacy_url`). */
+export function legacyUrl(value: string): boolean { return loopbackUrl(value, 'https'); }
+function loopbackUrl(value: string, scheme: 'http' | 'https'): boolean {
+    const match = (scheme === 'http' ? /^http:\/\/127\.0\.0\.1:([1-9][0-9]{0,4})\/mcp$/ : /^https:\/\/127\.0\.0\.1:([1-9][0-9]{0,4})\/mcp$/).exec(value);
     return !!match && Number(match[1]) <= 65535;
 }
 export function isAbsolute(value: string): boolean {
@@ -142,8 +149,8 @@ function headerKeys(fields: Json, table: string, name: string): string[] | null 
     return Object.keys(headers).filter(key => key.toLowerCase() === name.toLowerCase());
 }
 
-/** Whether `row` is an AIRK entry (recognize.rs `recognize`). U110: an HTTPS
- * entry is AIRK's by its loopback AIRK URL plus an AIRK key or a legacy AIRK
+/** Whether `row` is an AIRK entry (recognize.rs `recognize`). U110: an HTTP
+ * entry (transport `https` on the wire, either URL scheme) is AIRK's by its loopback AIRK URL plus an AIRK key or a legacy AIRK
  * credential marker, in either scope; its legacy credential fields are listed
  * in `stale`. */
 export function recognize(agent: Agent, scope: Scope, row: Declaration, verified: readonly string[] = [], windows = false): Recognized | undefined {
@@ -251,7 +258,7 @@ function removeInput(source: string, id: string): string {
     return existing && count === 0 ? jsonc.removeElement(source, ['inputs'], existing.index) : source;
 }
 
-/** Delete a recognized entry (HTTPS or retired stdio) and, for VS Code, its
+/** Delete a recognized entry (HTTP or retired stdio) and, for VS Code, its
  * credential input once nothing references it (edit.rs `remove`). */
 export function remove(agent: Agent, scope: Scope, source: string, target: Target): string {
     const recognized = owned(agent, scope, source, target);

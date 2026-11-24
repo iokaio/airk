@@ -237,10 +237,8 @@ export const body = {
   /** U101: Windows login startup. */
   loginStartup: (action: 'status' | 'install' | 'uninstall') => ({ login_startup: { action } }),
   logsRecent: (limit: number) => ({ logs: { limit } }),
-  /** M15a: the checked local HTTPS endpoint (AgentEndpoint {}). */
+  /** M15a: the checked local HTTP endpoint (AgentEndpoint {}). */
   agentsEndpoint: () => ({ agent_endpoint: {} }),
-  trustStatus: () => ({ http_trust: { action: 'inspect' } }),
-  rotationStatus: () => ({ http_issuer_rotation: { action: 'status' } }),
   serviceStop: () => ({ lifecycle: { action: 'stop' } }),
   serviceRestart: () => ({ lifecycle: { action: 'restart' } }),
   toolsList: () => ({ tools_catalog: { detail: { list: { schemas: false } } } }),

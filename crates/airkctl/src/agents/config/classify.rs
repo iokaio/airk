@@ -188,7 +188,7 @@ impl<'a> Classifier<'a> {
             Recognized::Https { url, id, stale } => {
                 entry.transport = Transport::Https;
                 entry.connection_id = id;
-                entry.status = https_status(agent, &url, !stale.is_empty(), observations);
+                entry.status = https_status(&url, !stale.is_empty(), observations);
             }
         }
         Some(entry)
@@ -196,25 +196,15 @@ impl<'a> Classifier<'a> {
 }
 
 /// U110: stale credential fields first (they are determined by the file
-/// alone), then the live endpoint, then trust for the clients that need it.
-fn https_status(
-    agent: Agent,
-    url: &str,
-    stale: bool,
-    observations: &Observations<'_>,
-) -> Option<Class> {
+/// alone), then the endpoint. Local trust plan C: an `https://` entry an
+/// HTTPS build wrote is a mismatch whatever the live endpoint is, and there
+/// is no trust to check.
+fn https_status(url: &str, stale: bool, observations: &Observations<'_>) -> Option<Class> {
     if stale {
         return Some(Class::HttpsUnknownConnection);
     }
-    if observations.endpoint_url? != url {
+    if super::recognize::legacy_url(url) || observations.endpoint_url? != url {
         return Some(Class::HttpsEndpointMismatch);
-    }
-    if matches!(agent, Agent::Claude | Agent::Codex) {
-        return match observations.trust_installed {
-            Some(false) => Some(Class::HttpsTrustMissing),
-            Some(true) => Some(Class::Ok),
-            None => None,
-        };
     }
     Some(Class::Ok)
 }

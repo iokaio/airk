@@ -25,7 +25,7 @@ export interface InstalledEditorC8Host {
 
 export interface InstalledEditorC8Definition {
     uri: {toString(): string}; headers: Record<string, string>; version?: string;
-    ca: Buffer; nativeConnection: HttpConnectionInfo;
+    nativeConnection: HttpConnectionInfo;
 }
 export interface InstalledEditorC8EndpointHost {
     deadline: number;
@@ -117,8 +117,7 @@ export async function checkInstalledEditorC8Endpoint(host: InstalledEditorC8Endp
         assert.deepEqual(scope(after.nativeConnection), scope(before.nativeConnection));
         const beforeClock=row(before.nativeConnection.selection.selection).expected_catalog_revision,afterClock=row(after.nativeConnection.selection.selection).expected_catalog_revision;
         assert.ok(Number.isSafeInteger(beforeClock)&&Number.isSafeInteger(afterClock)&&afterClock>=beforeClock,'Endpoint refresh cannot regress the native metadata clock');
-        assert.deepEqual(after.ca, before.ca, 'Port relocation retains normal CA trust');
-        for (const field of ['installation', 'user', 'namespace', 'ca_sha256', 'executable_sha256'] as const) {
+        for (const field of ['installation', 'user', 'namespace', 'executable_sha256'] as const) {
             assert.equal(next[field], old[field], 'Relocation retains endpoint ' + field);
         }
         await bounded(() => host.verifyFresh(after!));

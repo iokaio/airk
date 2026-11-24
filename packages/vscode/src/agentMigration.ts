@@ -2,7 +2,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import {httpUrl,validateHttpConnection,type HttpConnectionInfo} from './serviceHttp';
+import {recognizedHttpUrl,validateHttpConnection,type HttpConnectionInfo} from './serviceHttp';
 import { consolidateJson, consolidateToml } from './unifiedAgentConfig';
 import { LaunchSpec, unifiedEntry, httpServerFields, credentialHelperConnectionId, type HttpCredentialHelper } from './model';
 import { launchDescriptorPath } from './explorerAssistanceLaunch';
@@ -26,7 +26,7 @@ const strings = (args: unknown): args is string[] => Array.isArray(args) && args
  * `verifiedLaunchers` are absolute images that native inventory or the reconnect
  * ledger proved belonged to an AIRK installation of this user (including the
  * universal `AIRK/launcher/airk-launcher`); `staleHttpIds` are connection IDs the
- * current native owner reported as unknown, so their exact AIRK-generated HTTPS
+ * current native owner reported as unknown, so their exact AIRK-generated HTTP
  * declarations may be replaced. A foreign command or shape is still refused. */
 export interface MigrationRecognition {
     readonly verifiedLaunchers?: readonly string[];
@@ -39,13 +39,16 @@ function ownLauncher(spec: LaunchSpec, command: unknown, verified: readonly stri
     return typeof command === 'string' && path.isAbsolute(command) && (same(command, spec.command) || same(command, installLauncher(spec)!)
         || verified.some(launcher => path.isAbsolute(launcher) && same(command, launcher)));
 }
+/** `url` is `current` or the legacy HTTPS form of the same loopback endpoint. */
+function sameEndpoint(url: string, current: string): boolean { return url === current || current.startsWith('http://') && url === 'https://' + current.slice('http://'.length); }
 const plainObject = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
-/** An AIRK-generated HTTPS declaration for connection `id`, with either the
- * environment-variable or the credential-helper delivery. Any other field set
+/** An AIRK-generated HTTP declaration for connection `id`, with either the
+ * environment-variable or the credential-helper delivery. The URL is the current
+ * `http://127.0.0.1:<port>/mcp` or a legacy `https://` one an older build wrote. Any other field set
  * (a command, a foreign header or token source) is not AIRK's shape. */
 export function airkHttpDeclaration(agent: LocalAgent, fields: Record<string, unknown>, id: string): boolean {
     if (!/^[a-f0-9]{32}$/.test(id) || 'command' in fields || 'args' in fields || 'serverUrl' in fields || typeof fields.url !== 'string') { return false; }
-    try { httpUrl(fields.url); } catch { return false; }
+    try { recognizedHttpUrl(fields.url); } catch { return false; }
     const environment = 'AIRK_MCP_TOKEN_' + id.toUpperCase();
     if (agent === 'codex') {
         if (fields.type !== undefined || fields.headers !== undefined || fields.env_http_headers !== undefined || 'headersHelper' in fields) { return false; }
@@ -110,7 +113,7 @@ export function migrateAgentConfig(agent: LocalAgent, spec: LaunchSpec, storage:
     const options={retrievalKey:selectedKey??`airk-${spec.collection}`,...(selectedKey?{onlyKey:true,targetKey:selectedKey,selectedFamily:selectedKey==='airk'?'unified' as const:'retrieval' as const}:{}),entry:unifiedEntry(spec,includeAssistance?descriptor:undefined),fields,warn,remove,
         recognizes:(family:'retrieval'|'explorer'|'unified',fields:Record<string,unknown>)=>{
             if(spec.http&&family==='unified'&&typeof fields.url==='string'){
-                const candidate=fields.url===spec.http.endpoint.url?spec:previous?.http&&fields.url===previous.http.endpoint.url?previous:undefined;
+                const candidate=sameEndpoint(fields.url,spec.http.endpoint.url)?spec:previous?.http&&sameEndpoint(fields.url,previous.http.endpoint.url)?previous:undefined;
                 if(candidate?.http&&airkHttpDeclaration(agent,fields,candidate.http.connection_id))return true;
                 // A connection the current native owner no longer knows: only
                 // its exact AIRK-generated shape is replaced, never a foreign entry.
@@ -119,7 +122,7 @@ export function migrateAgentConfig(agent: LocalAgent, spec: LaunchSpec, storage:
             }
             if(family==='explorer')return recognizedAssistance(spec,storage,fields.command,fields.args,verified);
             // A verified launcher's entry may name another profile's attachment
-            // descriptor; the HTTPS replacement never carries that argument.
+            // descriptor; the HTTP replacement never carries that argument.
             const verifiedCommand=typeof fields.command==='string'&&verified.some(launcher=>path.isAbsolute(launcher)&&same(launcher,String(fields.command)));
             if(family==='retrieval'&&!verifiedCommand)return matches(fields.command,fields.args);
             if(!strings(fields.args))return false;
@@ -139,7 +142,7 @@ export function migrateAgentConfig(agent: LocalAgent, spec: LaunchSpec, storage:
 /** Existing HTTP credentials carry their native selection. Endpoint refresh
  * must never reconstruct that authority from a configuration directory. */
 export function httpConfigurationConnectionId(agent:LocalAgent,fields:Record<string,unknown>):string|undefined{
-    if(typeof fields.url!=='string')return;try{httpUrl(fields.url);}catch{return;}
+    if(typeof fields.url!=='string')return;try{recognizedHttpUrl(fields.url);}catch{return;}
     if(agent==='codex'){const value=fields.bearer_token_env_var;return typeof value==='string'?/^AIRK_MCP_TOKEN_([A-F0-9]{32})$/.exec(value)?.[1].toLowerCase():value===undefined?credentialHelperConnectionId(fields.http_headers_helper):undefined;}
     const headers=fields.headers;if(!headers||typeof headers!=='object'||Array.isArray(headers))return;
     const value=(headers as Record<string,unknown>).Authorization;if(typeof value!=='string')return;
@@ -147,7 +150,7 @@ export function httpConfigurationConnectionId(agent:LocalAgent,fields:Record<str
     return match?(match[1]??match[2]).toLowerCase():undefined;
 }
 export function refreshHttpAgentConfig(agent:LocalAgent,source:string,connection:HttpConnectionInfo,previousUrl:string,serverKey='airk',helper?:HttpCredentialHelper):string{
-    const info=validateHttpConnection(connection),url=httpUrl(previousUrl),client=agent==='copilot'?'vscode':agent;
+    const info=validateHttpConnection(connection),url=recognizedHttpUrl(previousUrl),client=agent==='copilot'?'vscode':agent;
     const expected=httpServerFields(client,info,agent==='codex'||agent==='claude'?helper:undefined);
     // Only the open selection remains (change-log entry 68 part 5): the
     // standalone-adoption reattachment and its preserved aliases had no native producer.

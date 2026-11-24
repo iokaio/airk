@@ -96,9 +96,10 @@ test('credential input and the endpoint URL are strict', async () => {
     assert.equal(await inputCredential(airkctl, { connection_id: '01'.repeat(16) }), 'airk-local-session');
     await assert.rejects(inputCredential(airkctl, { connection_id: '01'.repeat(16), extra: 1 }), /invalid_http_credential_arguments/);
     await assert.rejects(inputCredential(airkctl, { connection_id: 'NOT-AN-ID' }), /invalid_http_credential_arguments/);
-    assert.equal(connectionUrl({ endpoint: { url: 'https://127.0.0.1:57421/mcp' } }), 'https://127.0.0.1:57421/mcp');
-    assert.equal(connectionUrl({ endpoint: { url: 'https://example.com/mcp' } }), undefined);
-    assert.equal(connectionUrl({ url: 'https://127.0.0.1:61021/mcp', state: 'ready' }), 'https://127.0.0.1:61021/mcp', 'an agents endpoint answer');
+    assert.equal(connectionUrl({ endpoint: { url: 'http://127.0.0.1:57421/mcp' } }), 'http://127.0.0.1:57421/mcp');
+    assert.equal(connectionUrl({ endpoint: { url: 'http://example.com/mcp' } }), undefined);
+    assert.equal(connectionUrl({ endpoint: { url: 'https://127.0.0.1:57421/mcp' } }), undefined, 'local trust plan C: a legacy https URL is never the current endpoint');
+    assert.equal(connectionUrl({ url: 'http://127.0.0.1:61021/mcp', state: 'ready' }), 'http://127.0.0.1:61021/mcp', 'an agents endpoint answer');
 });
 
 test('U110 agents connect and scope default argv: URL-only connect, one --workspace per folder, no selectors clears', () => {

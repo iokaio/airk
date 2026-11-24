@@ -148,8 +148,6 @@ impl Finding {
 pub(crate) struct Observations<'a> {
     /// The URL the running service publishes, when known.
     pub(crate) endpoint_url: Option<&'a str>,
-    /// Whether this user's OS store trusts the local issuer; `None` = unknown.
-    pub(crate) trust_installed: Option<bool>,
     /// `Some(false)` only for an observed absence; `None` when unknown.
     pub(crate) path_exists: &'a dyn Fn(&str) -> Option<bool>,
     /// Executables proven to belong to an AIRK installation of this user;

@@ -27,7 +27,7 @@ test('actual outer Explorer preserves draft nodes and pending outcomes through s
         if(message.type==='admin.session')return window.reply(message,{epoch:message.epoch,serviceInstance:'c'.repeat(32),pending:[]});
         if(message.type==='admin.call'){
           if(message.operation==='files.browse'&&window.holdBrowse){window.heldBrowse=message;return;}
-          if(message.operation==='https.trust_status'){window.heldTrust=message;return;}
+          if(message.operation==='service.login_startup_status'){window.heldLogin=message;return;}
           const result=message.operation==='catalog.page'?{status:'catalog_page',page:{namespace:'e'.repeat(32),revision:1,items:[],continuation:null}}:message.operation==='indexes.progress'?{pending_job:{state:'running'}}:{};
           return window.reply(message,{epoch:message.epoch,current:true,reply:{httpStatus:200,body:JSON.stringify({schema:'airk-admin/1',ok:true,operation:message.operation,result})}});
         }
@@ -40,20 +40,20 @@ test('actual outer Explorer preserves draft nodes and pending outcomes through s
     await browser.evaluate(`{const panel=[...document.querySelectorAll('.panel')].find(p=>p.querySelector('h2')?.textContent==='Set up an index');window.originalDraft=[...panel.querySelectorAll('label')].find(label=>label.textContent.trim()==='Name').querySelector('input');originalDraft.value='Outer navigation retained draft';originalDraft.dispatchEvent(new Event('input',{bubbles:true}));[...panel.querySelectorAll('button')].find(button=>button.textContent==='Browse…').click();}`);
     await browser.observed(`document.querySelector('[role="dialog"][aria-modal="true"]')`);
     await browser.evaluate(`window.navigate('#manage/service')`);
-    await browser.observed(`[...document.querySelectorAll('summary')].find(summary=>summary.textContent==='HTTPS and certificate trust')`);
+    await browser.observed(`[...document.querySelectorAll('summary')].find(summary=>summary.textContent==='Start AIRK when I sign in')`);
     await browser.observed(`!document.querySelector('[role="dialog"][aria-modal="true"]')&&![...document.querySelectorAll('.rail,.topbar')].some(node=>node.inert)`);
     assert.equal(await browser.evaluate(`window.originalDraft.isConnected&&window.originalDraft.value==='Outer navigation retained draft'&&!window.originalDraft.getClientRects().length`),true);
-    await browser.evaluate(`[...document.querySelectorAll('summary')].find(summary=>summary.textContent==='HTTPS and certificate trust').click()`);
-    await browser.evaluate(`[...document.querySelectorAll('button')].find(button=>button.textContent==='Trust status').click()`);
-    await browser.observed(`window.heldTrust`);
+    await browser.evaluate(`[...document.querySelectorAll('summary')].find(summary=>summary.textContent==='Start AIRK when I sign in').click()`);
+    await browser.evaluate(`[...[...document.querySelectorAll('summary')].find(summary=>summary.textContent==='Start AIRK when I sign in').parentElement.querySelectorAll('button')].find(button=>button.textContent.trim()==='Status').click()`);
+    await browser.observed(`window.heldLogin`);
     await browser.evaluate(`window.navigate('#help')`);
-    await browser.observed(`[...document.querySelectorAll('summary')].find(summary=>summary.textContent==='HTTPS and certificate trust').getClientRects().length===0`);
+    await browser.observed(`[...document.querySelectorAll('summary')].find(summary=>summary.textContent==='Start AIRK when I sign in').getClientRects().length===0`);
     await browser.evaluate(`window.navigate('#overview')`);
     await browser.observed(`document.querySelector('.rail [aria-current="page"]')?.textContent.includes('Overview')`);
     assert.equal(await browser.evaluate('window.originalDraft.isConnected'),true);
-    await browser.evaluate(`window.reply(window.heldTrust,{epoch:11,current:true,reply:{httpStatus:200,body:JSON.stringify({schema:'airk-admin/1',ok:true,operation:'https.trust_status',result:{full_original_native:{future:['retained-through-navigation']}}})}});window.navigate('#manage/service')`);
-    await browser.observed(`[...document.querySelectorAll('summary')].find(summary=>summary.textContent==='HTTPS and certificate trust').getClientRects().length>0&&document.body.textContent.includes('retained-through-navigation')`);
-    assert.equal(await browser.evaluate(`window.requests.filter(message=>message.operation==='https.trust_status').length`),1,'navigation never repeats the held native read');
+    await browser.evaluate(`window.reply(window.heldLogin,{epoch:11,current:true,reply:{httpStatus:200,body:JSON.stringify({schema:'airk-admin/1',ok:true,operation:'service.login_startup_status',result:{full_original_native:{future:['retained-through-navigation']}}})}});window.navigate('#manage/service')`);
+    await browser.observed(`[...document.querySelectorAll('summary')].find(summary=>summary.textContent==='Start AIRK when I sign in').getClientRects().length>0&&document.body.textContent.includes('retained-through-navigation')`);
+    assert.equal(await browser.evaluate(`window.requests.filter(message=>message.operation==='service.login_startup_status').length`),1,'navigation never repeats the held native read');
     await browser.evaluate(`window.navigate('#indexing/library')`);
     await browser.observed(`window.originalDraft.getClientRects().length>0`);
     assert.equal(await browser.evaluate(`window.originalDraft.value`),'Outer navigation retained draft');

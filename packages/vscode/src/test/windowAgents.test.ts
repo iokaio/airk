@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import { AirkctlCommandError } from '../airkctl/session';
 import { agentEntries, endpointOf, WindowAgents, type AgentScopeSource } from '../airkctl/features/windowAgents';
 
-const folder = '/work/app', docs = '/work/docs', url = 'https://127.0.0.1:5000/mcp';
+const folder = '/work/app', docs = '/work/docs', url = 'http://127.0.0.1:5000/mcp';
 const idx = (n: number) => 'idx_' + n.toString(16).padStart(2, '0').repeat(16);
 const prj = (n: number) => 'prj_' + n.toString(16).padStart(2, '0').repeat(16);
 const claudeRow = { agent: 'claude', scope: 'project', file: '/work/app/.mcp.json', containerPath: ['mcpServers'], serverKey: 'airk', transport: 'https', status: 'ok', url };
@@ -19,7 +19,7 @@ const report = { checked: ['/work/app/.mcp.json'], findings: [], blockers: [], e
     { agent: 'copilot', scope: 'project', file: '/work/app/.vscode/mcp.json', containerPath: ['servers'], serverKey: 'airk', transport: 'https', status: null },
     { agent: 'gemini', scope: 'project', file: '/work/app/.gemini/settings.json', containerPath: ['mcpServers'], serverKey: 'airk', transport: 'stdio', status: 'stdio_retired' },
 ] };
-const endpoint = { url, state: 'ready', ca_sha256: 'ab'.repeat(32) };
+const endpoint = { url, state: 'ready' };
 const defaults = { schema: 1, entries: [
     { folder: '/work', index_ids: [idx(1)], index_set_ids: [], applied_unix_ms: 10 },
     { folder: '/work/app', index_ids: [idx(5)], index_set_ids: [prj(1)], applied_unix_ms: 20 },
@@ -80,7 +80,10 @@ test('U110 an unreadable endpoint or defaults document is reported on the view; 
     assert.deepEqual(agentEntries({ entries: [{ agent: 'codex', file: 'c', serverKey: 'airk', url: 'https://example.com/mcp', status: 'ok' }] }),
         [{ client: 'codex', agent: 'codex', file: 'c', scope: 'project', serverKey: 'airk', status: 'ok' }], 'a non-loopback URL is not shown');
     assert.deepEqual(endpointOf({ endpoint: { url } }), { url });
-    assert.equal(endpointOf({ url: 'http://127.0.0.1:5000/mcp' }), undefined);
+    assert.equal(endpointOf({ url: 'https://127.0.0.1:5000/mcp' }), undefined, 'local trust plan C: a legacy https URL is never the endpoint');
+    assert.deepEqual(agentEntries({ entries: [{ agent: 'claude', file: 'c', serverKey: 'airk', url: 'https://127.0.0.1:5000/mcp', status: 'https_endpoint_mismatch' }] }),
+        [{ client: 'claude', agent: 'claude', file: 'c', scope: 'project', serverKey: 'airk', url: 'https://127.0.0.1:5000/mcp', status: 'https_endpoint_mismatch' }],
+        'a legacy https entry keeps its URL so the mismatch is visible');
 });
 
 test('U110 Connect writes the URL-only entry with agents connect and stores the window scope as the workspace default of every folder', async () => {

@@ -8,7 +8,7 @@ related_airk_help: explorer, roles, agent-setup, mcp, workflows, arbiter
 ---
 # Work with an AI agent
 
-AIRK agents connect directly to the native service over loopback HTTPS; the endpoint needs no token or credential. VS Code is an optional setup interface; closing Explorer does not proxy or end a standalone agent connection. Inspect the running catalog rather than relying on a fixed tool count. Reconnect an agent after changing its saved configuration or upgrading the service when its tool catalog needs refreshing.
+AIRK agents connect directly to the native service over loopback HTTP; the endpoint needs no token or credential. VS Code is an optional setup interface; closing Explorer does not proxy or end a standalone agent connection. Inspect the running catalog rather than relying on a fixed tool count. Reconnect an agent after changing its saved configuration or upgrading the service when its tool catalog needs refreshing.
 
 Connect one MCP server named airk; agents choose which indexes they read on each call. Its tools distinguish indexed evidence (search, read_file, symbols), documentation (help), quick readiness (status), detailed troubleshooting (diagnostics), and reviewed UI drafts (draft_search, draft_strategy, draft_plan, suggest_view). Native evidence remains available when Explorer is closed. Each agent loads its own configuration and completes its trust prompts.
 
@@ -38,7 +38,7 @@ UI_NOT_ATTACHED means no matching trusted window; open the project in VS Code an
 
 The attachment uses the configured project's canonical root to find a matching trusted window. Check the current selected project before proposing work in a multi-root window. Configure remote agents on the remote extension host; local-agent connectivity is not established by copying remote paths.
 
-New entries use the discovered HTTPS endpoint and AIRK's local certificate trust; no token or credential helper is written. Stdio MCP and the stable launcher are retired. Reads never create an index. Use airkctl agents --help, airkctl scope --help and the actual native reports for headless setup and repair. A changed workspace default applies to later calls; a client may need to refresh its cached tools list after an upgrade.
+New entries use the discovered local HTTP endpoint; no token, credential helper or certificate is written. Stdio MCP and the stable launcher are retired. Reads never create an index. Use airkctl agents --help, airkctl scope --help and the actual native reports for headless setup and repair. A changed workspace default applies to later calls; a client may need to refresh its cached tools list after an upgrade.
 
 A status timeout reports unknown readiness. Cold installed-runtime verification stays shared within the MCP session, so later polls do not restart it; verification failures remain errors. Use diagnostics to inspect runtime and work separately. Cached status includes its observation age and never proves that live source bytes match the publication.
 

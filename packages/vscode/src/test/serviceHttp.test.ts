@@ -4,12 +4,9 @@ import {strict as assert} from 'node:assert';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import {X509Certificate,createHash} from 'node:crypto';
-import {validateHttpConnection,httpUrl,httpMaterial,HttpConnectionInfo,HttpSelection,credentialEnvironment,validateHttpSelection,httpAuthorityDigest,validateAttachmentRetirement,publishNativeInput,removeNativeInput} from '../serviceHttp';
+import {validateHttpConnection,validateEndpoint,httpUrl,legacyHttpsUrl,recognizedHttpUrl,HttpConnectionInfo,HttpSelection,credentialEnvironment,validateHttpSelection,httpAuthorityDigest,validateAttachmentRetirement,publishNativeInput,removeNativeInput} from '../serviceHttp';
 import {serializeServers,LaunchSpec} from '../model';
 import {migrateAgentConfig} from '../agentMigration';
-import {ca} from './fixtures/httpTlsFixture';
-const digest=(value:Buffer)=>createHash('sha256').update(value).digest('hex');
 
 test('native setup input requires an existing directory and preserves its policy and retained preimage',async()=>{
     const owner=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'airk-native-input-'))),control=path.join(owner,'control'),directory=path.join(control,'http-1');
@@ -49,14 +46,14 @@ test('native setup input refuses a redirected HTTP directory without changing it
     }finally{await fs.rm(owner,{recursive:true,force:true});}
 });
 function selection():HttpSelection{return {kind:'open',selection:{namespace:'b'.repeat(32)}};}
-function info(directory:string):HttpConnectionInfo{return {schema:1,connection_id:'f'.repeat(32),endpoint:{schema:1,installation:'1'.repeat(64),user:'fixture',namespace:'b'.repeat(32),generation:1,service_instance:'2'.repeat(32),executable_sha256:'3'.repeat(64),url:'https://127.0.0.1:57421/mcp',ca_sha256:digest(new X509Certificate(ca).raw),certificate_sha256:'4'.repeat(64),state:'ready',predecessor_digest:null},selection:selection(),open:{defaults_revision:1,default_index_ids:[],default_index_set_ids:[],agent_choice:'off'},ca_certificate_file:path.join(directory,'ca.pem'),credential_file:path.join(directory,'credential-'+ 'f'.repeat(32)+'.token')};}
+function info():HttpConnectionInfo{return {schema:1,connection_id:'f'.repeat(32),endpoint:{schema:1,installation:'1'.repeat(64),user:'fixture',namespace:'b'.repeat(32),generation:1,service_instance:'2'.repeat(32),executable_sha256:'3'.repeat(64),url:'http://127.0.0.1:57421/mcp',state:'ready',predecessor_digest:null},selection:selection(),open:{defaults_revision:1,default_index_ids:[],default_index_set_ids:[],agent_choice:'off'}};}
 
 test('native authority digest uses shared frozen vectors and normalizes only the catalog minimum',async()=>{
     const fixture=JSON.parse(await fs.readFile(path.resolve(__dirname,'../../src/test/fixtures/httpAuthorityDigest.json'),'utf8'));assert.equal(fixture.schema,1);
     for(const vector of fixture.vectors){const original=structuredClone(vector.selection);assert.equal(httpAuthorityDigest(vector.selection),vector.authority_sha256,vector.name);assert.deepEqual(vector.selection,original);if(vector.selection.kind==='open'){vector.selection.selection.namespace='c'.repeat(32);assert.notEqual(httpAuthorityDigest(vector.selection),vector.authority_sha256);continue;}vector.selection.selection.expected_catalog_revision++;assert.equal(httpAuthorityDigest(vector.selection),vector.authority_sha256);vector.selection.selection.expected_grant_revision++;assert.notEqual(httpAuthorityDigest(vector.selection),vector.authority_sha256);}
 });
 test('attachment retirement proof binds exact native connection, installation, client and complete authority',()=>{
-    const connection=info(path.resolve('fixture')),proof={schema:1,connection_id:connection.connection_id,installation:connection.endpoint.installation,namespace:connection.endpoint.namespace,client:'claude_code',expires_unix_ms:200,explorer_descriptor_sha256:'a'.repeat(64),authority_sha256:httpAuthorityDigest(connection.selection)};
+    const connection=info(),proof={schema:1,connection_id:connection.connection_id,installation:connection.endpoint.installation,namespace:connection.endpoint.namespace,client:'claude_code',expires_unix_ms:200,explorer_descriptor_sha256:'a'.repeat(64),authority_sha256:httpAuthorityDigest(connection.selection)};
     assert.deepEqual(validateAttachmentRetirement(proof,connection,'claude',100),proof);
     for(const mutate of [
         (value:any)=>value.schema=2,(value:any)=>value.connection_id='0'.repeat(32),(value:any)=>value.installation='0'.repeat(64),
@@ -67,35 +64,39 @@ test('attachment retirement proof binds exact native connection, installation, c
     assert.throws(()=>validateAttachmentRetirement(proof,connection,'unknown',100));
 });
 test('(U105) an open connection carries exactly its open state; other connections never do',()=>{
-    const open:any=info(path.resolve('fixture'));open.open={defaults_revision:3,default_index_ids:['idx_'+'1'.repeat(32)],default_index_set_ids:['prj_'+'2'.repeat(32)],agent_choice:'off'};
+    const open:any=info();open.open={defaults_revision:3,default_index_ids:['idx_'+'1'.repeat(32)],default_index_set_ids:['prj_'+'2'.repeat(32)],agent_choice:'off'};
     assert.deepEqual(validateHttpConnection(open),open);
     for(const change of [(v:any)=>{delete v.open;},(v:any)=>v.open.agent_choice='all',(v:any)=>v.open.defaults_revision=0,(v:any)=>v.open.default_index_ids=['prj_'+'2'.repeat(32)],
         (v:any)=>v.open.default_index_set_ids=['prj_'+'2'.repeat(32),'prj_'+'2'.repeat(32)],(v:any)=>v.open.extra=1]){const candidate=structuredClone(open);change(candidate);assert.throws(()=>validateHttpConnection(candidate));}
 });
 test('HTTP DTO keeps the exact open authority and refuses the removed imported legacy kinds',()=>{
-    const value=info(path.resolve('fixture'));assert.deepEqual(validateHttpConnection(value,selection()),value);
+    const value=info();assert.deepEqual(validateHttpConnection(value,selection()),value);
     assert.throws(()=>validateHttpConnection(value,{kind:'open',selection:{namespace:'c'.repeat(32)}}),/crossed_http_selection/);
     // Change-log entry 68 part 5: the imported legacy selections had no native producer and are no HTTP selection.
     for(const kind of ['imported_legacy','imported_legacy_union'])assert.throws(()=>validateHttpSelection({kind,selection:{namespace:'b'.repeat(32)}}),/invalid_http_selection/);
-    for(const url of ['http://127.0.0.1:57421/mcp','https://localhost:57421/mcp','https://127.0.0.1:057421/mcp','https://127.0.0.1:65536/mcp','https://127.0.0.1:57421/mcp?token=x','https://user@127.0.0.1:57421/mcp'])assert.throws(()=>httpUrl(url));
+    assert.equal(httpUrl('http://127.0.0.1:57421/mcp'),'http://127.0.0.1:57421/mcp');
+    for(const url of ['https://127.0.0.1:57421/mcp','http://localhost:57421/mcp','http://127.0.0.1:057421/mcp','http://127.0.0.1:65536/mcp','http://127.0.0.1:0/mcp','http://127.0.0.1:57421/mcp?token=x','http://user@127.0.0.1:57421/mcp','http://127.0.0.1:57421/mcp/'])assert.throws(()=>httpUrl(url),url);
 });
-test('owner-private HTTP material binds DER issuer and exact native credential identity',async()=>{
-    const directory=await fs.mkdtemp(path.join(os.tmpdir(),'airk-http-material-'));
-    try{
-        const value=info(directory);await fs.writeFile(value.ca_certificate_file,ca,{mode:0o600});await fs.writeFile(value.credential_file,'airk1.'+value.connection_id+'.'+'a'.repeat(64),{mode:0o600});
-        assert.equal((await httpMaterial(value)).url,value.endpoint.url);
-        await fs.writeFile(value.credential_file,'airk1.'+'0'.repeat(32)+'.'+'a'.repeat(64));await assert.rejects(httpMaterial(value),/credential/);
-        await fs.writeFile(value.credential_file,'airk1.'+value.connection_id+'.'+'a'.repeat(64)+'\n');await assert.rejects(httpMaterial(value),/private|credential/);
-        await fs.writeFile(value.credential_file,'airk1.'+value.connection_id+'.'+'a'.repeat(64));
-        const crossed=structuredClone(value);crossed.endpoint.ca_sha256='0'.repeat(64);await assert.rejects(httpMaterial(crossed),/ca/);
-    }finally{assert.equal(path.dirname(path.resolve(directory)),path.resolve(os.tmpdir()));assert.match(path.basename(directory),/^airk-http-material-/);await fs.rm(directory,{recursive:true});}
+test('local trust plan C: a legacy https entry URL is recognized only, never a current endpoint',()=>{
+    assert.equal(legacyHttpsUrl('https://127.0.0.1:57421/mcp'),'https://127.0.0.1:57421/mcp');
+    for(const url of ['http://127.0.0.1:57421/mcp','https://localhost:57421/mcp','https://127.0.0.1:65536/mcp','https://127.0.0.1:57421/mcp?token=x'])assert.throws(()=>legacyHttpsUrl(url),url);
+    for(const url of ['http://127.0.0.1:57421/mcp','https://127.0.0.1:57421/mcp'])assert.equal(recognizedHttpUrl(url),url);
+    for(const url of ['ftp://127.0.0.1:57421/mcp','https://localhost:57421/mcp','http://127.0.0.1:65536/mcp'])assert.throws(()=>recognizedHttpUrl(url),url);
+    const endpoint=info().endpoint;assert.deepEqual(validateEndpoint(structuredClone(endpoint)),endpoint);
+    assert.throws(()=>validateEndpoint({...endpoint,url:'https://127.0.0.1:57421/mcp'}),/invalid_http_endpoint/,'a descriptor is never https');
+    for(const field of ['ca_sha256','certificate_sha256'])assert.throws(()=>validateEndpoint({...endpoint,[field]:'6'.repeat(64)}),/invalid_http_connection_fields/,field);
+    for(const field of ['ca_certificate_file','credential_file'])assert.throws(()=>validateHttpConnection({...info(),[field]:path.resolve('fixture','ca.pem')}),/invalid_http_connection_fields/,field);
 });
 test('HTTP serializers use references, preserve policies and never emit executable launches or tokens',()=>{
-    const value=info(path.resolve('fixture')),spec:LaunchSpec={command:path.resolve('native/airk'),root:path.resolve('source'),dataDir:path.resolve('data'),collection:'fixture',name:'Fixture',service:{installDir:path.resolve('native'),project:'1'.repeat(64)},http:value};
+    const value=info(),spec:LaunchSpec={command:path.resolve('native/airk'),root:path.resolve('source'),dataDir:path.resolve('data'),collection:'fixture',name:'Fixture',service:{installDir:path.resolve('native'),project:'1'.repeat(64)},http:value};
     const tokenName=credentialEnvironment(value);
     for(const client of ['codex','claude','vscode'] as const){const source=serializeServers(client,[{key:'airk',command:spec.command,args:[],label:'AIRK',http:value}]);assert.ok(source.includes(value.endpoint.url));assert.ok(source.includes(client==='vscode'?'airkToken_'+value.connection_id:tokenName));assert.ok(!source.includes('credential-'));assert.ok(!source.includes(spec.command));assert.ok(!source.includes('airk1.'));}
     const source=JSON.stringify({mcpServers:{airk:{type:'http',url:value.endpoint.url,headers:{Authorization:'Bearer ${'+tokenName+'}','X-AIRK-Response-Mode':'full'},disabled:true},other:{command:'preserve'}},policy:'keep'});
     const output=migrateAgentConfig('claude',spec,path.resolve('extension'),source);const parsed=JSON.parse(output);assert.equal(parsed.policy,'keep');assert.equal(parsed.mcpServers.airk.disabled,true);assert.equal(parsed.mcpServers.airk.headers['X-AIRK-Response-Mode'],'full');assert.equal(parsed.mcpServers.other.command,'preserve');assert.deepEqual(JSON.parse(migrateAgentConfig('claude',spec,path.resolve('extension'),output)),parsed);
-    const foreign=JSON.parse(source);foreign.mcpServers.airk.url='https://127.0.0.1:60000/mcp';assert.throws(()=>migrateAgentConfig('claude',spec,path.resolve('extension'),JSON.stringify(foreign)),/Unrecognized/);
+    const foreign=JSON.parse(source);foreign.mcpServers.airk.url='http://127.0.0.1:60000/mcp';assert.throws(()=>migrateAgentConfig('claude',spec,path.resolve('extension'),JSON.stringify(foreign)),/Unrecognized/);
+    const legacyForeign=JSON.parse(source);legacyForeign.mcpServers.airk.url='https://127.0.0.1:60000/mcp';assert.throws(()=>migrateAgentConfig('claude',spec,path.resolve('extension'),JSON.stringify(legacyForeign)),/Unrecognized/,'a legacy https entry on another port is not this connection');
+    const legacy=JSON.parse(source);legacy.mcpServers.airk.url='https://127.0.0.1:57421/mcp';
+    const repaired=JSON.parse(migrateAgentConfig('claude',spec,path.resolve('extension'),JSON.stringify(legacy)));
+    assert.equal(repaired.mcpServers.airk.url,'http://127.0.0.1:57421/mcp','the legacy https form of this endpoint is rewritten to http');assert.equal(repaired.mcpServers.airk.disabled,true);assert.equal(repaired.mcpServers.other.command,'preserve');
     assert.throws(()=>serializeServers('amazon-q',[{key:'airk',command:spec.command,args:[],label:'AIRK',http:value}]),/compatibility_unverified/);
 });

@@ -1,20 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 /** Actual qualification transport. Complete RPC/native bodies stay in evidence. */
 import {strict as assert} from 'node:assert';
-import * as https from 'node:https';
-import * as tls from 'node:tls';
+import * as http from 'node:http';
 import type {ClientRequest} from 'node:http';
 import type {Socket} from 'node:net';
 import {httpUrl} from '../serviceHttp';
 
 export class InstalledHttpFailure extends Error {
     constructor(readonly kind:'http'|'network'|'protocol'|'timeout'|'closed',readonly detail:{code?:string;status?:number;response_bytes:number;body?:unknown}){
-        super(`Installed HTTPS ${kind} refusal (${detail.code??detail.status??'unavailable'})`);
+        super(`Installed HTTP ${kind} refusal (${detail.code??detail.status??'unavailable'})`);
     }
 }
 export function installedHttpIdentity(definition:any):{url:string;credentialId:string;headers:Record<string,string>} {
     assert.ok(definition&&typeof definition.uri?.toString==='function');
-    for(const field of ['command','args','env','cwd'])assert.equal(definition[field],undefined,'HTTPS definition cannot start a client process');
+    for(const field of ['command','args','env','cwd'])assert.equal(definition[field],undefined,'HTTP definition cannot start a client process');
     const url=httpUrl(definition.uri.toString()),headers:Record<string,string>={},seen=new Set<string>();
     assert.ok(definition.headers&&typeof definition.headers==='object');
     for(const [name,value] of Object.entries(definition.headers)){
@@ -49,16 +48,15 @@ export function installedHttpReply(bytes:Buffer,type:string,id:number|undefined,
     return {messages,...(reply?{reply}:{})};
 }
 export class InstalledHttpTransport {
-    private readonly agent:https.Agent;
+    private readonly agent:http.Agent;
     private readonly pending=new Set<ClientRequest>();
     private readonly sockets=new Set<Socket>();
     private sequence=0;private session?:string;private protocol='2025-11-25';private closed=false;private received=0;
     readonly observations:unknown[]=[];
     private readonly identity:ReturnType<typeof installedHttpIdentity>;
-    constructor(definition:any,ca:Buffer){
+    constructor(definition:any){
         this.identity=installedHttpIdentity(definition);
-        const roots=typeof tls.getCACertificates==='function'?tls.getCACertificates('default'):tls.rootCertificates;
-        this.agent=new https.Agent({keepAlive:true,maxSockets:8,ca:[...roots,ca],rejectUnauthorized:true});
+        this.agent=new http.Agent({keepAlive:true,maxSockets:8});
     }
     request(method:string,params:unknown,timeout:number):Promise<any>{return this.exchange('POST',{jsonrpc:'2.0',id:++this.sequence,method,params},timeout);}
     notify(method:string,timeout:number):Promise<any>{return this.exchange('POST',{jsonrpc:'2.0',method},timeout);}
@@ -70,7 +68,7 @@ export class InstalledHttpTransport {
             let settled=false,total=0;const chunks:Buffer[]=[];let status:number|undefined;
             const finish=(error?:unknown,value?:unknown)=>{if(settled)return;settled=true;clearTimeout(timer);error?reject(error):resolve(value);};
             const headers={...this.identity.headers,'Content-Type':'application/json',Accept:'application/json, text/event-stream','MCP-Protocol-Version':this.protocol,...(this.session?{'Mcp-Session-Id':this.session}:{})};
-            const request=https.request(this.identity.url,{method:verb,headers,agent:this.agent},response=>{
+            const request=http.request(this.identity.url,{method:verb,headers,agent:this.agent},response=>{
                 status=response.statusCode;const type=String(response.headers['content-type']??'').split(';')[0].trim();
                 const session=response.headers['mcp-session-id'];
                 if(session!==undefined){if(typeof session!=='string'||!/^[\x21-\x7e]{1,256}$/.test(session)||this.session!==undefined&&session!==this.session){response.destroy();finish(new InstalledHttpFailure('protocol',{response_bytes:0,body:'Changed HTTP session identity'}));return;}this.session=session;}
@@ -98,13 +96,13 @@ export class InstalledHttpTransport {
         });
     }
     async close():Promise<unknown>{
-        if(this.closed)return {transport:'https',client_closed:true};
+        if(this.closed)return {transport:'http',client_closed:true};
         let deletion:unknown={state:'not_stateful'};
         if(this.session){try{deletion={state:'acknowledged',response:await this.exchange('DELETE',undefined,2000)};}catch(error){deletion={state:'unconfirmed',error:String(error),detail:error instanceof InstalledHttpFailure?error.detail:undefined};}}
         this.closed=true;for(const request of this.pending)request.destroy();
         const closing=[...this.sockets].map(socket=>new Promise<void>(resolve=>socket.once('close',()=>resolve())));
         this.agent.destroy();let timer:NodeJS.Timeout|undefined;
-        try{await Promise.race([Promise.all(closing),new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(Error('Owned HTTPS sockets did not close')),3000);})]);}finally{if(timer)clearTimeout(timer);}
-        return {transport:'https',client_closed:true,server_session_delete:deletion,received_bytes:this.received,service_stop_requested:false};
+        try{await Promise.race([Promise.all(closing),new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(Error('Owned HTTP sockets did not close')),3000);})]);}finally{if(timer)clearTimeout(timer);}
+        return {transport:'http',client_closed:true,server_session_delete:deletion,received_bytes:this.received,service_stop_requested:false};
     }
 }

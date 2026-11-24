@@ -61,11 +61,12 @@ fn unverified(agent: Agent) -> String {
     format!("http_client_compatibility_unverified: {}", agent.name())
 }
 
+/// Only the current `http://` form is ever written (local trust plan C).
 fn checked(url: &str) -> Result<(), String> {
-    if recognize::http_url(url) {
+    if recognize::current_url(url) {
         Ok(())
     } else {
-        Err(format!("invalid AIRK HTTPS endpoint {url:?}"))
+        Err(format!("invalid AIRK HTTP endpoint {url:?}"))
     }
 }
 

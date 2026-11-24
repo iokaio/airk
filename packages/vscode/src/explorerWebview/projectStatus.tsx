@@ -140,12 +140,11 @@ export function WorkProgress(props: { entry: ManagedProject }) {
 /** What one finding means for the user, in plain words. */
 export function agentFindingExplanation(finding: AgentConfigFinding): string {
     switch (finding.problem) {
-        case 'stdio_missing_command': return `This entry starts an AIRK program that no longer exists (an earlier AIRK installation was replaced or removed). AIRK now connects agents over local HTTPS. Reconnect replaces this entry for ${finding.label}; other servers and settings are kept.`;
-        case 'stdio_retired': return `This entry starts AIRK as a local stdio program. AIRK no longer accepts stdio MCP connections; agents connect over local HTTPS. Reconnect replaces this entry for ${finding.label}; other servers and settings are kept.`;
-        case 'https_unknown_connection': return 'This HTTPS entry uses a connection that the current AIRK service does not know (its installation was replaced). Reconnect creates a new connection and updates this entry.';
-        case 'https_endpoint_mismatch': return 'This HTTPS entry points to an earlier AIRK address. Reconnect updates it to the address the service publishes now.';
-        case 'https_helper_missing': return 'The credential helper of this HTTPS entry names an AIRK program that no longer exists (the runtime was upgraded). Reconnect points it at the current program; the connection itself is unchanged.';
-        case 'https_trust_missing': return 'This entry is current, but your user certificate store does not trust the AIRK local HTTPS issuer, so an agent started outside VS Code cannot verify the connection. Reconnect offers to install that trust.';
+        case 'stdio_missing_command': return `This entry starts an AIRK program that no longer exists (an earlier AIRK installation was replaced or removed). AIRK now connects agents over local HTTP. Reconnect replaces this entry for ${finding.label}; other servers and settings are kept.`;
+        case 'stdio_retired': return `This entry starts AIRK as a local stdio program. AIRK no longer accepts stdio MCP connections; agents connect over local HTTP. Reconnect replaces this entry for ${finding.label}; other servers and settings are kept.`;
+        case 'https_unknown_connection': return 'This HTTP entry uses a connection that the current AIRK service does not know (its installation was replaced). Reconnect creates a new connection and updates this entry.';
+        case 'https_endpoint_mismatch': return 'This HTTP entry points to an earlier AIRK address (an https:// address from an older AIRK, or an old port). Reconnect updates it to the address the service publishes now.';
+        case 'https_helper_missing': return 'The credential helper of this HTTP entry names an AIRK program that no longer exists (the runtime was upgraded). Reconnect points it at the current program; the connection itself is unchanged.';
         default: return `This file could not be checked: ${finding.detail ?? 'it could not be read.'} Review it manually.`;
     }
 }

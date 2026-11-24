@@ -2,7 +2,9 @@
 //! Declarations and AIRK ownership recognition: ports of
 //! `globalConfigDeclarations` (unifiedAgentConfig.ts), `stdioCommand`
 //! (agentConfigHealth.ts), `recordedRoot`/`recordedCollection`/`samePath`
-//! (agentReconnect.ts) and `httpUrl` (serviceHttp.ts). U110: `/mcp` needs no
+//! (agentReconnect.ts) and `httpUrl` (serviceHttp.ts). Local trust plan C:
+//! the endpoint is `http://127.0.0.1:<port>/mcp`; an `https://` entry an
+//! HTTPS build wrote is still AIRK's (and always an endpoint mismatch). U110: `/mcp` needs no
 //! credential, so an HTTPS entry is AIRK's by its loopback AIRK URL plus an
 //! AIRK server key (`airk`, `airk-…`, `airk_…`), or plus a legacy AIRK
 //! credential marker (the U92 `<absolute airkctl> agents credential
@@ -108,10 +110,26 @@ pub(super) fn airk_key(key: &str) -> bool {
     key == "airk" || key.starts_with("airk-") || key.starts_with("airk_")
 }
 
-/// `httpUrl`: exactly `https://127.0.0.1:<port>/mcp`.
+/// `httpUrl`: exactly `http://127.0.0.1:<port>/mcp`, or the
+/// `https://127.0.0.1:<port>/mcp` an HTTPS build wrote (`legacy_url`).
 pub(super) fn http_url(value: &str) -> bool {
+    current_url(value) || legacy_url(value)
+}
+
+/// The current endpoint form, `http://127.0.0.1:<port>/mcp`.
+pub(super) fn current_url(value: &str) -> bool {
+    loopback_url(value, "http://127.0.0.1:")
+}
+
+/// Local trust plan C: the `https://127.0.0.1:<port>/mcp` form an HTTPS build
+/// wrote. Still AIRK's, never current.
+pub(super) fn legacy_url(value: &str) -> bool {
+    loopback_url(value, "https://127.0.0.1:")
+}
+
+fn loopback_url(value: &str, prefix: &str) -> bool {
     let Some(port) = value
-        .strip_prefix("https://127.0.0.1:")
+        .strip_prefix(prefix)
         .and_then(|rest| rest.strip_suffix("/mcp"))
     else {
         return false;

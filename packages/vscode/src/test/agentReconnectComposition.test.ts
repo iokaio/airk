@@ -48,7 +48,7 @@ function entry(agent: Entry['agent'], key: string, status: Entry['status'], id?:
         agent, scope: 'project', file: `/reviewed/${agent}.config`,
         containerPath: [agent === 'codex' ? 'mcp_servers' : agent === 'copilot' ? 'servers' : 'mcpServers'],
         serverKey: key, transport: id ? 'https' : 'stdio', status,
-        ...(id ? { connectionId: id, url: 'https://127.0.0.1:62133/mcp' } : { command: 'airk' }),
+        ...(id ? { connectionId: id, url: 'http://127.0.0.1:62133/mcp' } : { command: 'airk' }),
     };
 }
 

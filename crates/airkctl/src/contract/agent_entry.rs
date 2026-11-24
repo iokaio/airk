@@ -36,7 +36,6 @@ pub(crate) enum Class {
     HttpsUnknownConnection,
     HttpsEndpointMismatch,
     HttpsHelperMissing,
-    HttpsTrustMissing,
     Ok,
     Unreadable,
 }

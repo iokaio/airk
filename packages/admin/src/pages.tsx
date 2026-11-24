@@ -339,8 +339,6 @@ export function Service(props: { onLifecycle: (action: 'stop' | 'restart') => vo
     await runResources(OPS.resources, body.resources());
     if (ticket === readNumber.current && origin === currentSession()) setObservedSession(origin);
   };
-  const [trust, runTrust] = useCall();
-  const [rotation, runRotation] = useCall();
   const [lifecycle, runLifecycle] = useCall();
   const [, changed] = useState(0);
   const session = currentSession();
@@ -419,25 +417,6 @@ export function Service(props: { onLifecycle: (action: 'stop' | 'restart') => vo
         {outcomeSession === session && gpuOutcome.phase !== 'idle' && <details open><summary>GPU setting result</summary><Outcome state={gpuOutcome} /></details>}
         <details><summary>Details: complete resource result</summary><Outcome state={resources} /></details>
       </Panel>
-      <details><summary>HTTPS and certificate trust</summary>
-      <Panel title="HTTPS issuer">
-        <div class="row">
-          <button type="button" onClick={() => void runTrust(OPS.trustStatus, body.trustStatus())}>
-            Trust status
-          </button>
-          <button type="button" onClick={() => void runRotation(OPS.rotationStatus, body.rotationStatus())}>
-            Rotation status
-          </button>
-        </div>
-        <Outcome state={trust} />
-        <Outcome state={rotation} />
-        <p>Changing OS trust is never done over HTTP. Run on this machine:</p>
-        <Command text="airkctl service trust inspect" />
-        <Command text="airkctl service trust install --expected-ca-sha256 <issuer-sha256>" />
-        <Command text="airkctl service trust remove --expected-ca-sha256 <issuer-sha256>" />
-        <Command text="airkctl service issuer-rotation status" />
-      </Panel>
-      </details>
       <details><summary>Start AIRK when I sign in</summary>
       <LoginStartup />
       </details>

@@ -50,8 +50,6 @@ export const OPS = {
   loginUninstall: 'service.login_startup_uninstall',
   logsRecent: 'logs.recent',
   agentsEndpoint: 'agents.endpoint',
-  trustStatus: 'https.trust_status',
-  rotationStatus: 'https.rotation_status',
   serviceStop: 'service.stop',
   serviceRestart: 'service.restart',
   arbiterStatus: 'arbiter.status',

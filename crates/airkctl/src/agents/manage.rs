@@ -111,7 +111,7 @@ pub fn manual(
     let endpoint = crate::agents::endpoint(inputs.control, inputs.version)?;
     let url = endpoint["url"]
         .as_str()
-        .ok_or_else(|| refused("the AIRK service's HTTPS endpoint names no URL"))?;
+        .ok_or_else(|| refused("the AIRK service's HTTP endpoint names no URL"))?;
     serde_json::to_value(manual_entry(client, scope, &file, server_key, url)?).map_err(refused)
 }
 
@@ -165,8 +165,6 @@ fn observe<T>(inputs: &Inputs<'_>, read: impl FnOnce(&Observations<'_>) -> T) ->
     let url = endpoint_url(inputs);
     let observations = Observations {
         endpoint_url: url.as_deref(),
-        // Trust inspection joins with `service trust` (3e.5); until then unknown.
-        trust_installed: None,
         path_exists: &config::path_exists,
         verified_launchers: &[],
         windows: cfg!(windows),

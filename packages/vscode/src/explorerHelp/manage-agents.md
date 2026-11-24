@@ -10,7 +10,7 @@ related_airk_help: agent-setup, mcp
 
 Agents connects coding agents to this window's folder. Choose the agent (Claude Code, Codex or VS Code / GitHub Copilot) and choose **Connect**. Connect writes AIRK's entry in that agent's project configuration (`airkctl agents connect`): only the MCP endpoint URL and the `X-AIRK-Response-Mode: terse` header. AIRK keeps your other servers and settings in the file. The line under the agent shows whether this folder has an entry for it and its status; **Remove** deletes this folder's AIRK entry for that agent.
 
-The endpoint line shows the local MCP address (`https://127.0.0.1:PORT/mcp`) with **Copy**. The endpoint needs no token or credential: there is no connection to create, renew or revoke. It is local HTTPS with AIRK's own certificate; AIRK Admin › Agents shows certificate trust and manual configuration for each agent. Any local process that can reach 127.0.0.1 can read your indexes through it.
+The endpoint line shows the local MCP address (`http://127.0.0.1:PORT/mcp`) with **Copy**. The endpoint needs no token or credential: there is no connection to create, renew or revoke. It is plain HTTP on 127.0.0.1, with no certificate to trust; AIRK Admin › Agents shows manual configuration for each agent. An older `https://` entry is reported as pointing to an earlier address, and Reconnect rewrites it. Any local process that can reach 127.0.0.1 can read your indexes through it.
 
 ## Set up manually
 

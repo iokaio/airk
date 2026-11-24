@@ -52,7 +52,7 @@ export class McpStdioSession {
     /** Initialize and acknowledge over an injected transport; rejects (and closes it) if the handshake fails. */
     static async open(options: McpStdioOptions, handshakeTimeout = 90000): Promise<{ session: McpStdioSession; initialize: any }> {
         requireNativeExecution();
-        if (!options.launch) { throw new McpSessionError('stdio_mcp_retired', 'AIRK no longer starts MCP over stdio. Connect over the enrolled HTTPS connection.'); }
+        if (!options.launch) { throw new McpSessionError('stdio_mcp_retired', 'AIRK no longer starts MCP over stdio. Connect over the local HTTP endpoint.'); }
         const env = { ...process.env, ...options.env };
         const child = options.launch(options.command, options.args, { cwd: options.cwd, env });
         const session = new McpStdioSession(child, options.maxMessageBytes ?? DEFAULT_MCP_MESSAGE_BYTES);

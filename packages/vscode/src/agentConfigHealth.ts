@@ -6,8 +6,9 @@
  * and the reconnect ledger captured before an installation was replaced.
  *
  * Every stdio AIRK entry is retired (the native runtime refuses stdio MCP);
- * an absent absolute command is reported as `stdio_missing_command`. HTTPS
- * entries are classified only from host-supplied native observations. Nothing
+ * an absent absolute command is reported as `stdio_missing_command`. HTTP
+ * entries are classified only from host-supplied native observations, except that
+ * a legacy `https://` entry an HTTPS build wrote is always an endpoint mismatch. Nothing
  * is written, no process is started, redirected project folders are not
  * followed, and a user-level entry needs ownership evidence before it is
  * reported, so unrelated servers are never flagged.
@@ -20,6 +21,7 @@ import { findingsDigest, ledgerEntryFor, parserAgent, plainPath, recordedCollect
 import type { AgentConfigFinding, AgentEntryStatus } from './explorerContracts';
 import { globalConfigDeclarations, type ConfigurationAgent, type ConfigurationFile } from './unifiedAgentConfig';
 import { commandExecutable } from './model';
+import { legacyHttpsUrl } from './serviceHttp';
 
 export const AGENT_CONFIG_LABELS: Record<LocalAgent, string> = {
     claude: 'Claude Code', codex: 'Codex', copilot: 'VS Code / GitHub Copilot Chat', gemini: 'Gemini CLI',
@@ -56,15 +58,13 @@ export interface AgentHealthHttp {
     lookup(connectionId: string): Promise<HttpOwnership>;
     /** The URL the current service publishes, when known. */
     readonly endpointUrl?: string;
-    /** Whether this user's OS store trusts the local issuer; undefined when unknown. Asked at most once per check. */
-    issuerTrusted?(): Promise<boolean | undefined>;
 }
 export interface AgentConfigHealthOptions {
     /** Whether an absolute command path exists. Only `false` produces `stdio_missing_command`. */
     readonly exists?: (command: string) => Promise<boolean>;
     /** Throws when the caller's trust or project selection changed; called around every file read. */
     readonly check?: () => void;
-    /** Native observations for HTTPS entries. Without them HTTPS entries are not classified. */
+    /** Native observations for HTTP entries. Without them HTTP entries are not classified. */
     readonly http?: AgentHealthHttp;
     /** Executables proven to belong to an AIRK installation of this user. */
     readonly verifiedLaunchers?: readonly string[];
@@ -100,7 +100,7 @@ async function commandExists(command: string): Promise<boolean> {
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 const verifiedCommand = (command: string, verified: readonly string[]) => path.isAbsolute(plainPath(command)) && verified.some(launcher => samePath(launcher, command));
 
-interface Classifier { exists: (command: string) => Promise<boolean>; check: () => void; http?: AgentHealthHttp; verified: readonly string[]; ledger?: ReconnectLedger; lookups: Map<string, Promise<HttpOwnership>>; trust?: Promise<boolean | undefined> }
+interface Classifier { exists: (command: string) => Promise<boolean>; check: () => void; http?: AgentHealthHttp; verified: readonly string[]; ledger?: ReconnectLedger; lookups: Map<string, Promise<HttpOwnership>> }
 
 /** Classify one declaration, or return undefined when it is not a recognized AIRK entry. */
 async function classify(agent: LocalAgent, scope: 'project' | 'user', file: string, row: { serverKey: string; containerPath: string[]; fields: Record<string, unknown> }, context: Classifier): Promise<AgentConfigEntry | undefined> {
@@ -129,24 +129,21 @@ async function classify(agent: LocalAgent, scope: 'project' | 'user', file: stri
     if (!pending) { pending = http.lookup(id).catch((): HttpOwnership => ({ status: 'unavailable' })); context.lookups.set(id, pending); }
     const owner = await pending; context.check();
     const located = { ...base, connectionId: id, ...(ledger?.root ? { root: ledger.root } : {}) };
-    if (owner.status === 'unavailable') { return undefined; }
+    // Local trust plan C: an `https://` URL is never current, whatever the live endpoint is.
+    const legacy = (() => { try { legacyHttpsUrl(row.fields.url); return true; } catch { return false; } })();
+    if (owner.status === 'unavailable') { return legacy ? { ...located, status: 'https_endpoint_mismatch' } : undefined; }
     if (owner.status === 'not_owned') {
         // An unknown user-level connection is reported only when it named the
         // current endpoint or was captured, never for an unrelated server.
         if (scope === 'user' && !ledger && row.fields.url !== http.endpointUrl) { return undefined; }
         return { ...located, status: 'https_unknown_connection' };
     }
-    if (row.fields.url !== owner.url) { return { ...located, status: 'https_endpoint_mismatch' }; }
+    if (legacy || row.fields.url !== owner.url) { return { ...located, status: 'https_endpoint_mismatch' }; }
     // A credential helper naming a retired runtime image is refreshed to the current one, not reconnected.
     const helper = commandExecutable(agent === 'codex' ? row.fields.http_headers_helper : agent === 'claude' ? row.fields.headersHelper : undefined);
     if (helper && path.isAbsolute(helper)) {
         const present = await context.exists(helper); context.check();
         if (!present) { return { ...located, status: 'https_helper_missing' }; }
-    }
-    if (agent === 'claude' || agent === 'codex') {
-        context.trust ??= http.issuerTrusted ? http.issuerTrusted().catch(() => undefined) : Promise.resolve(undefined);
-        const trusted = await context.trust; context.check();
-        if (trusted === false) { return { ...located, status: 'https_trust_missing' }; }
     }
     return { ...located, status: 'ok' };
 }

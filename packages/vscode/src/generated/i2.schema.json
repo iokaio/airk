@@ -90,7 +90,6 @@
         "https_unknown_connection",
         "https_endpoint_mismatch",
         "https_helper_missing",
-        "https_trust_missing",
         "ok",
         "unreadable"
       ],

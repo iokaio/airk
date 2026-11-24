@@ -28,7 +28,7 @@ export const SCOPE_NOTE = 'Agents choose indexes or index sets on each call. A c
 const STATUS_TEXT: Record<string, string> = {
     ok: 'Connected', stdio_retired: 'Retired stdio entry', stdio_missing_command: 'Stdio entry with a missing command',
     https_unknown_connection: 'Old entry (reconnect to update it)', https_endpoint_mismatch: 'Wrong endpoint (reconnect to update it)',
-    https_helper_missing: 'Old entry (reconnect to update it)', https_trust_missing: 'Certificate trust missing', unreadable: 'File could not be read',
+    https_helper_missing: 'Old entry (reconnect to update it)', unreadable: 'File could not be read',
 };
 
 export interface AgentEntryView { client: AgentClient; agent: string; file: string; scope: string; serverKey: string; url?: string; status: string | null }
@@ -147,7 +147,7 @@ export function AgentsScreen(props: ScreenProps) {
                 ? <ul class="agent-entries">{entries.map((entry, at) => <li key={`${entry.file}:${entry.serverKey}:${at}`}>
                     <strong>{label(entry.client)}</strong> · <code class="path">{entry.file}</code> · {entry.serverKey} · {statusText(entry.status)}</li>)}</ul>
                 : <p class="muted">No AIRK agent entries in this folder.</p>)}
-            <p class="muted">AIRK writes only its own entry (the endpoint URL and the response-mode header) and keeps your other servers. The endpoint is local HTTPS with AIRK's own certificate; AIRK Admin › Agents shows certificate trust and manual setup.</p>
+            <p class="muted">AIRK writes only its own entry (the endpoint URL and the response-mode header) and keeps your other servers. The endpoint is local HTTP on 127.0.0.1; AIRK Admin › Agents shows manual setup.</p>
             {view?.report !== undefined && <CompleteNativeResponse value={view.report as Record<string, unknown>} />}
             {view?.endpointReport !== undefined && <CompleteNativeResponse value={view.endpointReport as Record<string, unknown>} />}
             {view?.defaultsReport !== undefined && <CompleteNativeResponse value={view.defaultsReport as Record<string, unknown>} />}

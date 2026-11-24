@@ -12,7 +12,7 @@
  */
 import { createHash } from 'node:crypto';
 import * as path from 'node:path';
-import { httpUrl } from './serviceHttp';
+import { recognizedHttpUrl } from './serviceHttp';
 import { commandExecutable } from './model';
 import { globalConfigDeclarations, type ConfigurationAgent } from './unifiedAgentConfig';
 import type { LocalAgent } from './agentMigration';
@@ -26,8 +26,8 @@ export type ReconnectScope = 'project' | 'user';
 export interface ClientReferences {
     /** Absolute paths of every executable in the folders the plan removes. */
     readonly executables: readonly string[];
+    /** The old loopback MCP endpoint: `http://`, or the `https://` an older HTTPS build published. */
     readonly httpEndpoint: string | null;
-    readonly caSha256: string | null;
 }
 
 export interface ReconnectLedgerEntry {
@@ -85,10 +85,8 @@ export function clientReferences(plan: unknown): ClientReferences | undefined {
     if (!object(value) || !Array.isArray(value.executables) || value.executables.length > MAX_EXECUTABLES || !value.executables.every(absolute)) { fail('invalid_replacement_client_references'); }
     const raw = value as Record<string, unknown>;
     let endpoint: string | null = null;
-    if (raw.http_endpoint !== null && raw.http_endpoint !== undefined) { try { endpoint = httpUrl(raw.http_endpoint); } catch { fail('invalid_replacement_client_references'); } }
-    const ca = raw.ca_sha256 ?? null;
-    if (ca !== null && (typeof ca !== 'string' || !/^[a-f0-9]{64}$/.test(ca))) { fail('invalid_replacement_client_references'); }
-    return { executables: [...raw.executables as string[]], httpEndpoint: endpoint, caSha256: ca as string | null };
+    if (raw.http_endpoint !== null && raw.http_endpoint !== undefined) { try { endpoint = recognizedHttpUrl(raw.http_endpoint); } catch { fail('invalid_replacement_client_references'); } }
+    return { executables: [...raw.executables as string[]], httpEndpoint: endpoint };
 }
 
 /** One spelling per endpoint: scheme and host case, the default port and a trailing slash do not distinguish URLs. */
@@ -158,7 +156,7 @@ export function validateReconnectLedger(value: unknown): ReconnectLedger {
     if (!object(value) || value.schema !== 1 || !Number.isSafeInteger(value.capturedAt) || !absolute(value.installDir) || !Array.isArray(value.entries)
         || value.entries.length > MAX_ENTRIES || !Array.isArray(value.blockers) || value.blockers.length > MAX_ENTRIES || Buffer.byteLength(JSON.stringify(value)) > MAX_BYTES) { fail('invalid_reconnect_ledger'); }
     const ledger = value as unknown as ReconnectLedger;
-    clientReferences({ client_references: { executables: ledger.references?.executables, http_endpoint: ledger.references?.httpEndpoint, ca_sha256: ledger.references?.caSha256 } });
+    clientReferences({ client_references: { executables: ledger.references?.executables, http_endpoint: ledger.references?.httpEndpoint } });
     for (const entry of ledger.entries) {
         if (!object(entry) || !AGENTS.includes(entry.agent) || !['project', 'user'].includes(entry.scope) || !absolute(entry.destination) || typeof entry.serverKey !== 'string'
             || !entry.serverKey || entry.serverKey.length > 256 || !Array.isArray(entry.containerPath) || !entry.containerPath.length || entry.containerPath.length > 3
@@ -213,29 +211,20 @@ export function findingsDigest(findings: readonly { file: string; containerPath?
 export interface HostArtifactObservation {
     readonly mementoKeys: readonly string[];
     readonly environment: readonly { name: string; replace: boolean; value: string }[];
-    readonly bundles: readonly { file: string; certificates: readonly string[] }[];
 }
-export interface HostArtifactRetirement { readonly mementos: string[]; readonly environment: string[]; readonly bundles: string[]; readonly retained: string[] }
+export interface HostArtifactRetirement { readonly mementos: string[]; readonly environment: string[] }
 const HTTP_MEMENTO = /^airk\.http\.(?:legacy|standalone|connection|union)\./;
 /**
  * Select eligible already-proven rows. The caller must recheck each preimage
- * before mutation and report actual outcomes, including retained failures.
- * Without the removed CA digest no bundle is proposed for retirement.
+ * before mutation and report actual outcomes. Local trust plan C: the endpoint
+ * has no CA, so no CA bundle or CA environment variable is proposed.
  */
-export function replacedHostArtifacts(observed: HostArtifactObservation, references: ClientReferences, trustDirectory: string): HostArtifactRetirement {
-    const result: HostArtifactRetirement = { mementos: [], environment: [], bundles: [], retained: [] };
-    if (observed.mementoKeys.length > 4096 || observed.environment.length > 4096 || observed.bundles.length > 1024) { fail('replaced_host_artifact_bound'); }
+export function replacedHostArtifacts(observed: HostArtifactObservation): HostArtifactRetirement {
+    const result: HostArtifactRetirement = { mementos: [], environment: [] };
+    if (observed.mementoKeys.length > 4096 || observed.environment.length > 4096) { fail('replaced_host_artifact_bound'); }
     for (const key of observed.mementoKeys) { if (HTTP_MEMENTO.test(key)) { result.mementos.push(key); } }
-    for (const bundle of observed.bundles) {
-        if (!samePath(path.dirname(bundle.file), trustDirectory)) { continue; }
-        if (references.caSha256 !== null && bundle.certificates.includes(references.caSha256)) { result.bundles.push(bundle.file); }
-        else { result.retained.push(bundle.file); }
-    }
     for (const variable of observed.environment) {
-        if (!variable.replace) { continue; }
-        if (/^AIRK_MCP_TOKEN_[A-F0-9]{32}$/.test(variable.name)) { result.environment.push(variable.name); continue; }
-        if ((variable.name === 'NODE_EXTRA_CA_CERTS' || variable.name === 'CODEX_CA_CERTIFICATE') && samePath(path.dirname(variable.value), trustDirectory)
-            && !result.retained.some(file => samePath(file, variable.value))) { result.environment.push(variable.name); }
+        if (variable.replace && /^AIRK_MCP_TOKEN_[A-F0-9]{32}$/.test(variable.name)) { result.environment.push(variable.name); }
     }
     return result;
 }

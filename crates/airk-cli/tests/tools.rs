@@ -2881,16 +2881,12 @@ fn airkctl_agents_connect_list_repair_remove_on_a_live_service() -> anyhow::Resu
     for entry in entries {
         assert!(entry.get("connectionId").is_none(), "{entry}");
         assert_eq!(entry["url"], url);
+        // The wire name of the URL transport is unchanged; the URL is http
+        // (local trust plan C) and no trust observation exists any more.
         assert_eq!(entry["transport"], "https");
+        assert!(url.starts_with("http://127.0.0.1:"), "{url}");
         assert_eq!(entry["scope"], "project");
-        assert_eq!(
-            entry["status"],
-            if entry["agent"] == "copilot" {
-                json!("ok")
-            } else {
-                Value::Null
-            }
-        );
+        assert_eq!(entry["status"], json!("ok"), "{entry}");
     }
     // Every retired source form refuses and preserves all complete files.
     let id = "0123456789abcdef0123456789abcdef";
@@ -2977,6 +2973,35 @@ fn airkctl_agents_connect_list_repair_remove_on_a_live_service() -> anyhow::Resu
                 serde_json::from_str::<Value>(text)?
             );
         }
+    }
+    assert_eq!(list()?["findings"], json!([]));
+    // Local trust plan C: an entry an HTTPS build wrote (the same port, the
+    // https:// URL, no credential) is AIRK's, an endpoint mismatch, and repair
+    // rewrites it to the live http:// endpoint.
+    let legacy = url.replacen("http://", "https://", 1);
+    for (_, file, text) in &connected_files {
+        fs::write(file, text.replace(url, &legacy))?;
+    }
+    let old = list()?;
+    let findings = old["findings"].as_array().unwrap();
+    assert_eq!(findings.len(), 3, "{old}");
+    assert!(
+        findings
+            .iter()
+            .all(|finding| finding["problem"] == "https_endpoint_mismatch"
+                && finding["url"] == legacy.as_str()),
+        "{old}"
+    );
+    let repaired = success(ctl(&["repair", "--project", folder, "--no-user"])?);
+    let actions = repaired["actions"].as_array().unwrap();
+    assert_eq!(actions.len(), 3, "{repaired}");
+    for action in actions {
+        assert_eq!(action["changed"], true, "{action}");
+        assert_eq!(action["url"], url);
+        assert_eq!(action["problem"], "https_endpoint_mismatch");
+    }
+    for (_, file, text) in &connected_files {
+        assert_eq!(fs::read_to_string(file)?, *text);
     }
     assert_eq!(list()?["findings"], json!([]));
     let no_op = success(ctl(&["repair", "--project", folder, "--no-user"])?);

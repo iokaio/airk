@@ -75,7 +75,7 @@ def cases():
     ], {"outstanding": 1, "issued_codes": [1]})
     yield case("one_shot_url", "`airkctl admin url` prints the code only as the URL fragment", [
         *issued(0, 1),
-        {"at_ms": 0, "channel": "stdout", "write": f"https://127.0.0.1:{PORT}/admin/launch#c={code(1)}\n"},
+        {"at_ms": 0, "channel": "stdout", "write": f"http://127.0.0.1:{PORT}/admin/launch#c={code(1)}\n"},
     ], {"outstanding": 1, "issued_codes": [1]})
     yield case("single_use", "Consumption is one atomic compare-and-remove; a replay is refused", [
         *issued(0, 1), consume(1_000, code(1), True), consume(1_001, code(1), False),

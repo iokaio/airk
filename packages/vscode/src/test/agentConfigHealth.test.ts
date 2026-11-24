@@ -54,17 +54,39 @@ test('AIRK stdio entries whose command exists, or is a PATH command, are retired
     assert.deepEqual(probe.probes, [present], 'a PATH-relative command is never probed');
 });
 
-test('HTTPS AIRK entries are not checked by the configuration check', async t => {
+test('HTTP AIRK entries are not checked without native observations', async t => {
     const root = await project(t, {
-        '.mcp.json': JSON.stringify({ mcpServers: { airk: { type: 'http', url: 'https://127.0.0.1:45123/mcp', headers: { Authorization: 'Bearer ${AIRK_MCP_TOKEN_0123}' } } } }),
-        '.vscode/mcp.json': JSON.stringify({ servers: { airk: { type: 'http', url: 'https://127.0.0.1:45123/mcp', command: path.join(os.tmpdir(), 'gone', 'airk') } } }),
-        '.codex/config.toml': '[mcp_servers.airk]\nurl = "https://127.0.0.1:45123/mcp"\nbearer_token_env_var = "AIRK_MCP_TOKEN_0123"\n',
+        '.mcp.json': JSON.stringify({ mcpServers: { airk: { type: 'http', url: 'http://127.0.0.1:45123/mcp', headers: { Authorization: 'Bearer ${AIRK_MCP_TOKEN_0123}' } } } }),
+        '.vscode/mcp.json': JSON.stringify({ servers: { airk: { type: 'http', url: 'http://127.0.0.1:45123/mcp', command: path.join(os.tmpdir(), 'gone', 'airk') } } }),
+        '.codex/config.toml': '[mcp_servers.airk]\nurl = "http://127.0.0.1:45123/mcp"\nbearer_token_env_var = "AIRK_MCP_TOKEN_0123"\n',
     });
     const probe = existing();
     const health = await checkAgentConfigHealth(root, { exists: probe.exists });
     assert.deepEqual(health.findings, []);
     assert.deepEqual(health.checked, ['.codex/config.toml', '.mcp.json', '.vscode/mcp.json']);
     assert.deepEqual(probe.probes, []);
+});
+
+test('local trust plan C: a legacy https entry is recognized and always an endpoint mismatch; the current http entry is ok', async t => {
+    const id = 'ab'.repeat(16), current = 'http://127.0.0.1:45123/mcp', legacy = 'https://127.0.0.1:45123/mcp';
+    const entry = (url: string) => ({ type: 'http', url, headers: { Authorization: 'Bearer ${AIRK_MCP_TOKEN_' + id.toUpperCase() + '}' } });
+    const root = await project(t, {
+        '.mcp.json': JSON.stringify({ mcpServers: { airk: entry(legacy), 'airk-current': entry(current) } }),
+        '.codex/config.toml': `[mcp_servers.airk]\nurl = "${legacy}"\nbearer_token_env_var = "AIRK_MCP_TOKEN_${id.toUpperCase()}"\n`,
+    });
+    const lookups: string[] = [];
+    const owned = { endpointUrl: current, lookup: async (value: string) => { lookups.push(value); return { status: 'owned' as const, url: current }; } };
+    const health = await checkAgentConfigHealth(root, { exists: existing().exists, http: owned });
+    assert.deepEqual(health.findings.map(({ agent, serverKey, problem, url, connectionId }) => ({ agent, serverKey, problem, url, connectionId })), [
+        { agent: 'codex', serverKey: 'airk', problem: 'https_endpoint_mismatch', url: legacy, connectionId: id },
+        { agent: 'claude', serverKey: 'airk', problem: 'https_endpoint_mismatch', url: legacy, connectionId: id },
+    ], 'the current http entry is ok and not reported');
+    assert.deepEqual(lookups, [id], 'one native lookup per connection');
+    // The scheme alone decides a legacy entry; an unavailable observation leaves only the current entry unclassified.
+    const unavailable = await checkAgentConfigHealth(root, { exists: existing().exists, http: { endpointUrl: current, lookup: async () => ({ status: 'unavailable' as const }) } });
+    assert.deepEqual(unavailable.findings.map(({ agent, problem }) => ({ agent, problem })), [
+        { agent: 'codex', problem: 'https_endpoint_mismatch' }, { agent: 'claude', problem: 'https_endpoint_mismatch' },
+    ]);
 });
 
 test('Codex TOML, Copilot and nested-folder AIRK entries with missing commands are reported in location order', async t => {

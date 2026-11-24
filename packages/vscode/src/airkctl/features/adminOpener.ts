@@ -41,12 +41,12 @@ export function adminArgs(target: AdminTarget): string[] {
         ...(target.showSet !== undefined ? ['--show-set', target.showSet] : [])];
 }
 
-/** The `admin url --output json` document's URL; only `https:` is accepted. */
+/** The `admin url --output json` document's URL; only the loopback `http:` launch URL is accepted (local trust plan C). */
 export function adminUrl(stdout: string): string | undefined {
     try {
         const value = JSON.parse(stdout) as { url?: unknown };
         if (typeof value?.url !== 'string' || value.url.length > 8192) { return undefined; }
-        return new URL(value.url).protocol === 'https:' ? value.url : undefined;
+        return new URL(value.url).protocol === 'http:' ? value.url : undefined;
     } catch { return undefined; }
 }
 
@@ -68,8 +68,6 @@ export interface AdminOpenerHost {
 }
 
 export class AdminOpener {
-    /** The certificate follow-up offer of the last VS Code open (tests await it). */
-    followUp: Promise<void> = Promise.resolve();
     constructor(private readonly host: AdminOpenerHost) {}
 
     /** Open `target` where `airk.admin.openIn` says; `choose` asks "In VS Code" / "In my browser" and remembers the answer. */
@@ -88,8 +86,8 @@ export class AdminOpener {
         if (result.class !== 'success') { throw new AirkctlCommandError(argv, { ...result, stdout: '' }); }
         const url = adminUrl(result.stdout);
         if (!url) {
-            this.host.log(`AIRK Admin (${target.page}): airkctl admin url did not return an https URL.`);
-            if (await this.host.offerBrowser('AIRK Admin could not be opened in VS Code: no HTTPS sign-in link was returned.')) { await this.external(args, target.page); }
+            this.host.log(`AIRK Admin (${target.page}): airkctl admin url did not return an http URL.`);
+            if (await this.host.offerBrowser('AIRK Admin could not be opened in VS Code: no sign-in link was returned.')) { await this.external(args, target.page); }
             return where;
         }
         try {
@@ -100,9 +98,6 @@ export class AdminOpener {
             return where;
         }
         this.host.log(`AIRK Admin (${target.page}) opened in VS Code.`);
-        this.followUp = this.host.offerBrowser('AIRK Admin opened in VS Code. If it reports a certificate problem, open it in your browser.')
-            .then(chosen => chosen ? this.external(args, target.page) : undefined)
-            .catch(error => this.host.log(`AIRK Admin: ${error instanceof Error ? error.message : String(error)}`));
         return where;
     }
 

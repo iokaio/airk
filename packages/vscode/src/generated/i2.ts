@@ -36,7 +36,7 @@ export type AgentManualEntry = {
  * The §6.4 classes, plus `unreadable` for a present file that could not be
  * read or parsed (it could hide a broken entry).
  */
-export type Class = "stdio_retired" | "stdio_missing_command" | "https_unknown_connection" | "https_endpoint_mismatch" | "https_helper_missing" | "https_trust_missing" | "ok" | "unreadable";
+export type Class = "stdio_retired" | "stdio_missing_command" | "https_unknown_connection" | "https_endpoint_mismatch" | "https_helper_missing" | "ok" | "unreadable";
 
 export type ClientIdentity = {
     name: string;

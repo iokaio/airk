@@ -23,7 +23,7 @@ export const AGENT_INSTRUCTION_FILES = {
 } as const;
 /** Classification of one recognized AIRK entry in an agent configuration.
  * Every stdio entry is retired: the native runtime refuses stdio MCP. */
-export type AgentEntryStatus = 'stdio_retired' | 'stdio_missing_command' | 'https_unknown_connection' | 'https_endpoint_mismatch' | 'https_helper_missing' | 'https_trust_missing' | 'ok';
+export type AgentEntryStatus = 'stdio_retired' | 'stdio_missing_command' | 'https_unknown_connection' | 'https_endpoint_mismatch' | 'https_helper_missing' | 'ok';
 /** One problem in a recognized AIRK entry of a project or user-level agent
  * configuration (`agents.configHealth`, Explorer alerts). `unreadable` names a
  * present file that could not be read or parsed, so its entries could not be checked. */

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import * as fs from 'node:fs/promises';
-import {HttpConnectionInfo,vscodeCredentialInput,vscodeCredentialInputId,vscodeCredentialInputForId,httpUrl} from './serviceHttp';
+import {HttpConnectionInfo,vscodeCredentialInput,vscodeCredentialInputId,vscodeCredentialInputForId,recognizedHttpUrl} from './serviceHttp';
 import * as path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { applyEdits, findNodeAtLocation, getNodeValue, modify, Node, ParseError, parseTree } from 'jsonc-parser';
@@ -70,7 +70,8 @@ function vscodeCredentialReferences(source:string,requireInput=true):{id:string;
     for(const [server,entry]of Object.entries(servers) as [string,any][]){
         if(!entry||typeof entry!=='object'||Array.isArray(entry)||entry.type!=='http'||'command'in entry||'args'in entry)continue;
         const auth=entry.headers?.Authorization,match=typeof auth==='string'?/^Bearer \$\{input:airkToken_([a-f0-9]{32})\}$/.exec(auth):undefined;if(!match)continue;
-        try{httpUrl(entry.url);}catch{continue;}
+        // A legacy HTTPS entry is still AIRK's; credential release compares the exact current URL.
+        try{recognizedHttpUrl(entry.url);}catch{continue;}
         const id=match[1],input=vscodeCredentialInputForId(id),marker='${input:'+input.id+'}';
         if(requireInput){
             if(JSON.stringify(value).split(marker).length-1!==1)continue;

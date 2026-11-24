@@ -52,7 +52,7 @@ export interface ExplorerHost {
     pilotIdentity?(): object;
     /** Native Admin lifetime changes only with its actual I2 owner, not a repeated health probe. */
     adminManagementIdentity?(): object;
-    /** Resolve an already reviewed selection against protected native HTTPS setup. */
+    /** Resolve an already reviewed selection against protected native HTTP setup. */
     prepareEvidenceConnection?(spec:LaunchSpec,client?:'airk-explorer'|'airk-workbench'):Promise<LaunchSpec>;
     /** Select the drafted indexes and index sets as the window search scope, then prefill an inert Workbench form. */
     prefillCombinedSearch?(search: SearchDraft): Promise<void>;
@@ -108,7 +108,7 @@ export interface ExplorerHost {
     /** This window's agent drafts (Suggestions Inbox). */
     readonly suggestions: SuggestionStore;
     readonly handoffs?: HandoffPublisher;
-    /** Host check of one project's agent files with native HTTPS observations and the reconnect ledger. */
+    /** Host check of one project's agent files with native HTTP observations and the reconnect ledger. */
     agentConfigHealth?(root: string, check: () => void): Promise<AgentConfigHealth>;
     /** Current proactive agent-configuration alert, when findings remain. */
     agentConfigAlerts?(): AgentConfigAlerts | undefined;

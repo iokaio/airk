@@ -9,7 +9,7 @@ import { AdminOpener, adminArgs, adminUrl, type AdminOpenerHost, type AdminOpenI
 import type { InvokeResult } from '../airkctl/session';
 
 const index = 'idx_' + '12'.repeat(16), set = 'prj_' + '34'.repeat(16);
-const URL_SECRET = 'https://127.0.0.1:47123/admin/launch#c=one-time-sign-in-code&route=index-library';
+const URL_SECRET = 'http://127.0.0.1:47123/admin/launch#c=one-time-sign-in-code&route=index-library';
 const ok = (stdout = ''): InvokeResult => ({ exitCode: 0, class: 'success', stdout, stderr: 'warning: this URL signs in to AIRK Admin' });
 
 function host(openIn: AdminOpenIn, overrides: Partial<AdminOpenerHost> = {}) {
@@ -29,7 +29,7 @@ function host(openIn: AdminOpenIn, overrides: Partial<AdminOpenerHost> = {}) {
     return { value, calls };
 }
 const neverLogged = (calls: { logs: string[] }) => {
-    for (const line of calls.logs) { assert.ok(!line.includes('one-time-sign-in-code') && !line.includes('https://'), `URL logged: ${line}`); }
+    for (const line of calls.logs) { assert.ok(!line.includes('one-time-sign-in-code') && !line.includes('http://') && !line.includes('https://'), `URL logged: ${line}`); }
 };
 
 test('admin arguments name the page and at most one index-library prefill, in airkctl flag form', () => {
@@ -43,9 +43,9 @@ test('admin arguments name the page and at most one index-library prefill, in ai
     ]) { assert.throws(() => adminArgs(bad as never), /AIRK Admin cannot open this page/, JSON.stringify(bad)); }
 });
 
-test('only an https URL from admin url --output json is accepted', () => {
+test('only an http URL from admin url --output json is accepted', () => {
     assert.equal(adminUrl(JSON.stringify({ url: URL_SECRET })), URL_SECRET);
-    for (const stdout of [JSON.stringify({ url: 'http://127.0.0.1:1/admin/launch#c=x' }), JSON.stringify({ url: 'javascript:alert(1)' }), JSON.stringify({ link: URL_SECRET }), 'not json', '']) {
+    for (const stdout of [JSON.stringify({ url: 'https://127.0.0.1:1/admin/launch#c=x' }), JSON.stringify({ url: 'javascript:alert(1)' }), JSON.stringify({ link: URL_SECRET }), 'not json', '']) {
         assert.equal(adminUrl(stdout), undefined, stdout);
     }
 });
@@ -63,21 +63,13 @@ test('opening in VS Code passes the single-use URL only to the Simple Browser an
     const { value, calls } = host('vscode');
     const opener = new AdminOpener(value);
     assert.equal(await opener.open({ page: 'index-library', showIndex: index }), 'vscode');
-    await opener.followUp;
     assert.deepEqual(calls.url, [['--page', 'index-library', '--show-index', index]]);
     assert.deepEqual(calls.shown, [URL_SECRET]); assert.deepEqual(calls.open, []);
-    assert.match(calls.offers[0], /certificate problem/, 'a certificate failure can still be sent to the browser');
+    assert.deepEqual(calls.offers, [], 'a successful VS Code open offers no certificate follow-up');
     neverLogged(calls);
-    for (const message of calls.offers) { assert.ok(!message.includes('one-time-sign-in-code')); }
 });
 
-test('a certificate report or a failed Simple Browser opens a fresh browser sign-in, never the same URL', async () => {
-    const reported = host('vscode', { offerBrowser: async () => true });
-    const opener = new AdminOpener(reported.value);
-    await opener.open({ page: 'activity' }); await opener.followUp;
-    assert.deepEqual(reported.calls.open, [['--page', 'activity']], 'the browser fallback asks airkctl for its own sign-in');
-    neverLogged(reported.calls);
-
+test('a failed Simple Browser opens a fresh browser sign-in, never the same URL', async () => {
     const broken = host('vscode', { showInVsCode: async () => { throw new Error('command simpleBrowser.show not found'); } });
     broken.value.offerBrowser = async message => { broken.calls.offers.push(message); return true; };
     await new AdminOpener(broken.value).open({ page: 'storage' });
@@ -89,10 +81,10 @@ test('a certificate report or a failed Simple Browser opens a fresh browser sign
     assert.deepEqual(declined.calls.open, [], 'nothing opens unless the user chooses the browser');
 });
 
-test('plain http and failed url commands never reach the Simple Browser and keep no URL in the error', async () => {
-    const http = host('vscode', { url: async () => ok(JSON.stringify({ url: 'http://127.0.0.1:1/admin/launch#c=one-time-sign-in-code' })) });
-    await new AdminOpener(http.value).open({ page: 'overview' });
-    assert.deepEqual(http.calls.shown, []); assert.match(http.calls.offers[0], /no HTTPS sign-in link/); neverLogged(http.calls);
+test('a legacy https URL and failed url commands never reach the Simple Browser and keep no URL in the error', async () => {
+    const legacy = host('vscode', { url: async () => ok(JSON.stringify({ url: 'https://127.0.0.1:1/admin/launch#c=one-time-sign-in-code' })) });
+    await new AdminOpener(legacy.value).open({ page: 'overview' });
+    assert.deepEqual(legacy.calls.shown, []); assert.match(legacy.calls.offers[0], /no sign-in link was returned/); neverLogged(legacy.calls);
 
     const failed = host('vscode', { url: async () => ({ exitCode: 4, class: 'refused', stdout: JSON.stringify({ url: URL_SECRET }), stderr: '' }) });
     await assert.rejects(new AdminOpener(failed.value).open({ page: 'overview' }), (error: { result?: InvokeResult }) => {
@@ -105,9 +97,9 @@ test('Choose where asks In VS Code or In my browser, remembers the answer and us
     let asked = 0;
     const chosen = host('external', { choose: async current => { asked++; assert.equal(current, 'external'); return 'vscode'; } });
     const opener = new AdminOpener(chosen.value);
-    await opener.open({ page: 'agents' }, true); await opener.followUp;
+    await opener.open({ page: 'agents' }, true);
     assert.equal(asked, 1); assert.deepEqual(chosen.calls.remembered, ['vscode']); assert.deepEqual(chosen.calls.url, [['--page', 'agents']]);
-    await opener.open({ page: 'agents' }); await opener.followUp;
+    await opener.open({ page: 'agents' });
     assert.equal(asked, 1, 'the remembered choice is used without asking'); assert.equal(chosen.calls.url.length, 2);
 
     const dismissed = host('vscode');

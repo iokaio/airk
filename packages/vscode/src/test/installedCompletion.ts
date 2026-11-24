@@ -17,8 +17,7 @@ export function ownedConfigurationSource(agent:InstalledAgent,connection:HttpCon
 export function assertOwnedConfigurationRefresh(agent:InstalledAgent,before:string,after:string,original:HttpConnectionInfo,current:HttpConnectionInfo):void {
     assert.equal(current.connection_id,original.connection_id,'Owned configuration credential identity');
     assert.ok(sameHttpAuthority(current.selection,original.selection),'Owned configuration authority/scope');
-    assert.equal(current.ca_certificate_file,original.ca_certificate_file);assert.equal(current.credential_file,original.credential_file);
-    for(const field of ['installation','user','namespace','ca_sha256','executable_sha256'] as const)assert.equal(current.endpoint[field],original.endpoint[field]);
+    for(const field of ['installation','user','namespace','executable_sha256'] as const)assert.equal(current.endpoint[field],original.endpoint[field]);
     assert.ok(current.endpoint.generation>original.endpoint.generation);assert.notEqual(current.endpoint.service_instance,original.endpoint.service_instance);assert.notEqual(current.endpoint.url,original.endpoint.url);
     const expected=refreshHttpAgentConfig(agent as LocalAgent,before,current,original.endpoint.url);
     assert.notEqual(expected,before,'Expected a saved configuration endpoint rewrite');

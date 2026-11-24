@@ -12,9 +12,9 @@ Stopping the AIRK Service and reviewing its runtime are in AIRK Admin, Service. 
 
 Opening **Service** reads current resources and Arbiter status automatically. **Refresh resources** and **Refresh Arbiter status** read them again. Resource summaries distinguish observed CPU and memory from configured reservations; unavailable measurements remain unavailable. Complete native results, including diagnostic fields, stay in **Details**. A retained Arbiter observation is labeled when a refresh fails.
 
-Certificate trust, start at sign-in and restart/stop are separate task sections. Advanced management uses AIRK Admin. Explorer also keeps Agents, Activity, Usage and evidence reads inside this window; choose the corresponding main destination for those native service results.
+Start at sign-in and restart/stop are separate task sections. Advanced management uses AIRK Admin. Explorer also keeps Agents, Activity, Usage and evidence reads inside this window; choose the corresponding main destination for those native service results.
 
-Choose Open AIRK Admin to open the admin pages. Choose where... picks In VS Code (the Simple Browser, with a single-use sign-in link kept only in memory) or In my browser; the choice is remembered in the airk.admin.openIn setting. If the VS Code browser reports a certificate problem, choose Open in my browser.
+Choose Open AIRK Admin to open the admin pages. Choose where... picks In VS Code (the Simple Browser, with a single-use sign-in link kept only in memory) or In my browser; the choice is remembered in the airk.admin.openIn setting.
 
 ## Optional Arbiter stages
 

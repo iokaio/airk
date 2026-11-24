@@ -43,7 +43,7 @@ test('U110 a cleared scope clears the defaults; an unchanged automatic scope is 
     const f = fixture(argv => {
         if (argv[0] === 'scope' && argv[1] === 'default' && fail) { throw Object.assign(new Error('The control root is read-only.'), { code: 'workspace_defaults_unwritable' }); }
         if (argv[1] === 'list') { return { entries: [] }; }
-        if (argv[1] === 'endpoint') { return { url: 'https://127.0.0.1:5000/mcp', state: 'ready' }; }
+        if (argv[1] === 'endpoint') { return { url: 'http://127.0.0.1:5000/mcp', state: 'ready' }; }
         if (argv[1] === 'defaults') { return { schema: 1, entries: [] }; }
         return { schema: 1, entries: [] };
     });

@@ -175,7 +175,7 @@ export function connectionUrl(info: unknown): string | undefined {
     const record = info && typeof info === 'object' ? info as Record<string, unknown> : {};
     const endpoint = record.endpoint && typeof record.endpoint === 'object' ? record.endpoint as Record<string, unknown> : {};
     const url = typeof endpoint.url === 'string' ? endpoint.url : typeof record.url === 'string' ? record.url : undefined;
-    return url && /^https:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}\/mcp$/.test(url) ? url : undefined;
+    return url && /^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}\/mcp$/.test(url) ? url : undefined;
 }
 
 /** One removal the no-service sweep made, kept so Explorer can list it (U12). */
@@ -213,9 +213,9 @@ export interface SweepOptions {
 }
 
 /** Service found (§8.4, U28): a pre-split stdio entry can never be served (the
- * service is HTTPS only). It is removed and recorded when no index of the
+ * service is HTTP only). It is removed and recorded when no index of the
  * service covers its root; an entry whose root is indexed is left for
- * "Connect Coding Agent", which writes an HTTPS entry for a connection. */
+ * "Connect Coding Agent", which writes an HTTP entry for a connection. */
 export function retiredStdioWithoutIndex(indexedRoots: readonly string[], windows = process.platform === 'win32'): SweepOptions {
     const same = (left: string, right: string) => {
         const a = path.resolve(left), b = path.resolve(right);
@@ -224,7 +224,7 @@ export function retiredStdioWithoutIndex(indexedRoots: readonly string[], window
     return {
         select: (entry, folder) => entry.recognized.kind === 'stdio'
             && !indexedRoots.some(root => same(root, entry.recognized.kind === 'stdio' && entry.recognized.root ? entry.recognized.root : folder)),
-        reason: () => 'Retired stdio AIRK entry with no AIRK Service index for its folder; the AIRK Service serves HTTPS only.',
+        reason: () => 'Retired stdio AIRK entry with no AIRK Service index for its folder; the AIRK Service serves HTTP only.',
     };
 }
 
@@ -237,8 +237,8 @@ export function retiredStdioWithoutIndex(indexedRoots: readonly string[], window
 export async function sweepWithoutService(folders: readonly string[], files: SweepFileSystem = systemSweepFileSystem, now = Date.now,
     options: SweepOptions = {}): Promise<{ removed: RemovedEntry[]; skipped: { file: string; reason: string }[] }> {
     const select = options.select ?? (() => true);
-    const reasonFor = options.reason ?? ((entry: Removal) => entry.recognized.kind === 'stdio' ? 'Retired stdio AIRK entry; the AIRK Service serves HTTPS only.'
-        : 'AIRK HTTPS entry with no installed AIRK Service to serve it.');
+    const reasonFor = options.reason ?? ((entry: Removal) => entry.recognized.kind === 'stdio' ? 'Retired stdio AIRK entry; the AIRK Service serves HTTP only.'
+        : 'AIRK HTTP entry with no installed AIRK Service to serve it.');
     const removed: RemovedEntry[] = [], skipped: { file: string; reason: string }[] = [];
     for (const root of folders) {
         let realRoot: string;
