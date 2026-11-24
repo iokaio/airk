@@ -203,24 +203,24 @@ under source review; this correction has no new backend qualification yet.
 
 An additional HTTP disposal correction is implemented in source; qualification
 is in progress. The administrative
-`predecessor_cleanup` proof is separate from ordinary live-grant lookup: it can
-identify expired/revoked historical ownership for disposal without renewing
-credentials or authorizing reads. The complete bounded original HTTP snapshot
-and host client metadata must be durable before retirement. Fresh-namespace
-ownership collisions and unavailable observations block disposal. Only the
-owning fresh HTTP service can initialize its first durable empty ledger before
-publishing an endpoint; metadata reads cannot repair a missing ledger or treat
-it as proof of absence. See the [reset contract](upgrade-rebuild-fallback.md).
+`predecessor_cleanup` proof is separate from any live read: it identifies the
+predecessor installation and its endpoint for disposal without renewing
+credentials or authorizing reads. Since local trust plan B (23 November 2026)
+no installation keeps a credential ledger; the service deletes a retired one
+on upgrade, and a predecessor's agent-config entries are recognised by their
+known shapes (`Bearer`, `headersHelper`, `http_headers_helper`,
+`bearer_token_env_var`) at the predecessor's exact endpoint URL. The complete
+bounded original HTTP snapshot and host client metadata must be durable before
+retirement. A newer installation serving the predecessor's URL and unavailable
+observations block disposal. See the [reset contract](upgrade-rebuild-fallback.md).
 Earlier r34 checks do not qualify these new inputs.
 
 After verified predecessor exit and before the state fork, native reset captures
-the complete original private HTTP ownership inventory, bounded to 128 IDs and
-64 KiB. The durable journal retains its original control root, namespace,
-predecessor and operation identity after old-control deletion. It stores neither
-token plaintext nor live grants. Missing, corrupt or orphan metadata reports
-`unavailable`; it does not prove an empty inventory. A compacted retired marker
-without a token digest cannot prove ownership of an environment token, so that
-unproven environment entry is preserved.
+the original private HTTP endpoint metadata, bounded to 64 KiB. The durable
+journal retains its original control root, namespace, predecessor and operation
+identity after old-control deletion. It stores neither token plaintext nor live
+grants, and it reads no credential ledger. Missing or foreign endpoint metadata
+reports `unavailable`.
 
 `runtime lookup-http-connection --purpose predecessor-cleanup --predecessor
 <originalSHA> --expected-active <CURRENTselectedSHA>` returns the disposal-only
@@ -229,9 +229,8 @@ remain separate. `runtime inspect-legacy-launchers --purpose predecessor-cleanup
 allows an exact selected predecessor-pair ownership read for pre-reset client
 capture; ordinary HTTPS inspection keeps its existing gate. The journal retains
 verified predecessor main/stable/universal-launcher metadata, and explicit
-`command_images` excludes the staged candidate. The fresh service persists its
-first empty ledger under its `ServiceLease` before TLS startup, without allowing
-reads to create or repair an absent ledger.
+`command_images` excludes the staged candidate. The fresh service creates no
+credential ledger.
 
 The reset's final bootstrap probe now uses an opaque native permit issued only
 for the exact admitted clean-break operation in `Starting`, its matching saved

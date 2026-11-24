@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Factory-reset configuration ownership, independent of service/token liveness.
+//! Factory-reset configuration ownership, independent of service liveness.
+//!
+//! Since local trust plan B no installation keeps a credential ledger (the
+//! service deletes a retired one on upgrade), so this never reads one. A
+//! predecessor's agent-config entries are recognised by their known shapes,
+//! which name the connection id; this read identifies the predecessor's
+//! endpoint and whether a newer installation could claim it.
 use super::*;
 use airk_core::{
     identity::{Incarnation, Sha256Digest},
@@ -19,7 +25,6 @@ pub(super) fn capture(root: &Path, predecessor: &str, control: &Path) -> Predece
         endpoint: None,
         ca_certificate_file_sha256: None,
         complete: false,
-        owners: Vec::new(),
         failure: None,
     };
     let captured = (|| -> Result<()> {
@@ -35,10 +40,6 @@ pub(super) fn capture(root: &Path, predecessor: &str, control: &Path) -> Predece
             endpoint.executable_sha256.to_string() == runtime_pair::digest_file(&main)?,
             "predecessor HTTP endpoint executable differs from approved predecessor"
         );
-        // The retained ledger, read-only (local trust plan B).
-        let ledger =
-            airk_endpoint::http_endpoint::RetainedLedger::read_existing(&private, binding)?;
-        let owners = ledger.cleanup_owners(unix_ms()?)?;
         let ca_hash = if let Some(bytes) =
             airk_endpoint::http_endpoint::read_private(&private, "ca.pem", 16 * 1024)?
         {
@@ -57,13 +58,11 @@ pub(super) fn capture(root: &Path, predecessor: &str, control: &Path) -> Predece
         };
         snapshot.endpoint = Some(endpoint);
         snapshot.ca_certificate_file_sha256 = ca_hash;
-        snapshot.owners = owners;
         snapshot.complete = true;
         snapshot.validate()
     })();
     if let Err(error) = captured {
         snapshot.complete = false;
-        snapshot.owners.clear();
         snapshot.failure = Some(HttpCleanupFailure {
             code: "predecessor_http_metadata_unavailable".into(),
             message: failure_message(&error),
@@ -87,7 +86,6 @@ fn failure_message(error: &anyhow::Error) -> String {
 fn current_namespace_ownership(
     root: &Path,
     snapshot: &PredecessorHttpSnapshot,
-    id: Incarnation,
 ) -> (
     Option<Incarnation>,
     &'static str,
@@ -110,22 +108,18 @@ fn current_namespace_ownership(
             Some(current) != snapshot.namespace,
             "new HTTP control reused predecessor namespace"
         );
+        // A newer installation in its own namespace issues no connection (local
+        // trust plan B). It can still serve the predecessor's exact URL again;
+        // an entry there may then be its own, so that is never cleared.
         let binding = airk_endpoint::http_endpoint::installation_binding(&control, current)?;
-        let private = control.join("http-1");
-        // Since local trust plan B a current installation issues no
-        // connection and keeps no ledger: with no ledger and no credential
-        // file it owns nothing. Anything else is read as a retained ledger.
-        if airk_endpoint::http_endpoint::holds_no_credentials(&private)? {
-            return Ok("not_owned");
-        }
-        let ledger =
-            airk_endpoint::http_endpoint::RetainedLedger::read_existing(&private, binding)?;
-        let owners = ledger.cleanup_owners(unix_ms()?)?;
-        Ok(if owners.iter().any(|owner| owner.connection_id == id) {
-            "owned"
-        } else {
-            "not_owned"
-        })
+        let served =
+            airk_endpoint::http_endpoint::load_descriptor(&control.join("http-1"), &binding)?;
+        ensure!(
+            served.as_ref().map(|endpoint| &endpoint.url)
+                != snapshot.endpoint.as_ref().map(|endpoint| &endpoint.url),
+            "the current installation serves the predecessor's HTTP endpoint URL"
+        );
+        Ok("not_owned")
     })();
     match observed {
         Ok(status) => (namespace, status, None),
@@ -173,13 +167,9 @@ pub fn lookup(
     };
     snapshot.validate()?;
     let (current_namespace, current_ownership, current_failure) =
-        current_namespace_ownership(root, &snapshot, id);
+        current_namespace_ownership(root, &snapshot);
     let current_clear = matches!(current_ownership, "same_predecessor" | "not_owned");
-    let owner = snapshot
-        .owners
-        .iter()
-        .find(|owner| owner.connection_id == id)
-        .filter(|_| current_clear);
+    let owned = snapshot.complete && current_clear;
     let private = Path::new(&snapshot.control_dir).join("http-1");
     let reply = PredecessorHttpLookup {
         schema: 1,
@@ -190,30 +180,14 @@ pub fn lookup(
         control_dir: snapshot.control_dir.clone(),
         namespace: snapshot.namespace,
         connection_id: id,
-        status: if !snapshot.complete || !current_clear {
-            "unavailable"
-        } else if owner.is_some() {
-            "owned"
-        } else {
-            "not_owned"
-        }
-        .into(),
-        ownership: owner.map(|owner| owner.ownership),
+        status: if owned { "owned" } else { "unavailable" }.into(),
         endpoint: snapshot.endpoint.clone(),
-        ca_certificate_file: owner.map(|_| private.join("ca.pem").to_string_lossy().into_owned()),
-        credential_file: owner.map(|_| {
-            private
-                .join(format!("credential-{id}.token"))
-                .to_string_lossy()
-                .into_owned()
-        }),
-        credential_sha256: owner.and_then(|owner| owner.credential_sha256),
+        ca_certificate_file: owned.then(|| private.join("ca.pem").to_string_lossy().into_owned()),
         ca_certificate_file_sha256: snapshot.ca_certificate_file_sha256,
         qualification: HttpCleanupQualification {
             live_authority: false,
             source: source.into(),
             snapshot_complete: snapshot.complete,
-            credential_digest_algorithm: "sha256_full_airk1_token".into(),
             current_namespace,
             current_namespace_ownership: current_ownership.into(),
             current_namespace_failure: current_failure,

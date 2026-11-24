@@ -483,6 +483,33 @@ fn require_retired_executables(root: &Path, plan: &Plan) -> Result<()> {
     Ok(())
 }
 
+/// Delete the finished cleanup journal of `old_control` (the user's record
+/// cleanups of 23 November 2026, item 5). The caller has already made the
+/// rebuild journal's `cleanup_complete` durable, so nothing resumes from this
+/// plan. Only an exact, regular, intact journal whose plan is `Complete` for
+/// this predecessor is deleted; anything else is left for review.
+pub(super) fn retire_journal(root: &Path, old_control: &Path) -> Result<bool> {
+    let path = root.join(journal_name(old_control));
+    match fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.file_type().is_file() => {}
+        Ok(_) => return Ok(false),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.into()),
+    }
+    let envelope: Envelope = serde_json::from_slice(&read_bounded(&path, MAX_PLAN)?)?;
+    if sha(&serde_json::to_vec(&envelope.plan)?) != envelope.sha256
+        || envelope.plan.old_control != old_control
+        || envelope.plan.phase != Phase::Complete
+    {
+        return Ok(false);
+    }
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
 /// Called under the installation lock only after all replacement jobs succeeded.
 /// Returns complete=false for a bounded continuation, never a successful subset.
 pub(super) fn cleanup(

@@ -70,6 +70,8 @@ mod binding_lookup;
 
 mod retirement_evidence;
 pub use retirement_evidence::NativeIndexRetirementEvidence;
+// Bounded operation records (record cleanups of 23 November 2026, items 1-3).
+pub(super) mod record_pruning;
 
 pub(crate) mod wal;
 

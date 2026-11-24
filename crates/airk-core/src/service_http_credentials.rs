@@ -1,22 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The installation binding of the HTTPS identity, and the names and bounds
-//! of the credential ledger an installation from before local trust plan B
-//! (23 November 2026) retains. Credentials are no longer issued, read or
-//! authenticated; `airk-endpoint`'s read-only `RetainedLedger` reads the
-//! retained ledger for predecessor cleanup only.
+//! The installation binding of the HTTPS identity, and the names of the
+//! credential ledger an installation from before local trust plan B
+//! (23 November 2026) left behind. Credentials are no longer issued, read or
+//! authenticated; `airk-endpoint`'s `retired_credentials::remove` deletes
+//! those files on upgrade.
 use crate::identity::{Incarnation, Sha256Digest};
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-/// The ledger file inside the HTTPS private folder.
+/// The retired ledger file inside the HTTPS private folder.
 pub const STORE: &str = "credentials.json";
-/// The ledger read bound.
-pub const MAX_STORE: usize = 1_048_576;
-/// The ledger record bound.
-pub const MAX_CREDENTIALS: usize = 128;
-/// A retained native credential token is exactly this long.
-pub const MAX_TOKEN: usize = 103;
 
 /// The installation, user and namespace an HTTPS identity belongs to.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,8 +42,8 @@ impl InstallationBinding {
     }
 }
 
-/// The token file (or, after revocation, retirement marker) of connection
-/// `id` in the retained ledger's folder.
+/// The retired token file (or retirement marker) of connection `id` in the
+/// ledger's folder.
 pub fn filename(id: Incarnation) -> String {
     format!("credential-{id}.token")
 }

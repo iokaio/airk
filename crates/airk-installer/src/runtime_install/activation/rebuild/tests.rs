@@ -450,63 +450,29 @@ async fn clean_break_bootstrap_epoch_uses_exact_native_transport_before_selectio
     Ok(())
 }
 
-/// One record of a credential ledger as an installation from before local
-/// trust plan B wrote it (hand-written, independent of the reader).
-fn retained_record(
-    id: Incarnation,
-    namespace: Incarnation,
-    expires: u64,
-    revoked: bool,
-    verifier: u8,
-) -> serde_json::Value {
-    let mut record = serde_json::json!({"client":"codex","id":id,"generation":1,
-        "selection":{"kind":"scoped","selection":{"schema":1,"context_key":"cd".repeat(32),
-            "namespace":namespace,"expected_catalog_revision":1,
-            "grant_id":format!("grt_{id}"),"expected_grant_revision":1,
-            "index_id":format!("idx_{id}"),"project_ids":[format!("prj_{id}")]}},
-        "explorer_descriptor":null,"expires_unix_ms":expires,
-        "verifier":format!("{verifier:02x}").repeat(32),"revoked":revoked});
-    if revoked {
-        record["revocation_reason"] = serde_json::json!("explicit");
-    }
-    record
-}
-
-/// Write an old installation's retained ledger, its 103-byte tokens and the
-/// retirement markers of revoked ids, owner-private.
-fn write_retained_ledger(
-    private: &Path,
-    binding: &airk_endpoint::http_endpoint::InstallationBinding,
-    records: &[serde_json::Value],
-    tokens: &[Incarnation],
-    retired: &[Incarnation],
-) -> Result<()> {
+/// A credential ledger and token files as an installation from before local
+/// trust plan B left them (hand-written). Predecessor cleanup must neither
+/// need nor touch them: they prove nothing and the service deletes them.
+fn write_old_ledger(private: &Path, ids: &[Incarnation]) -> Result<Vec<(PathBuf, Vec<u8>)>> {
     crate::local_ipc::prepare_root(private)?;
-    let write = |name: &str, bytes: &[u8]| -> Result<()> {
-        fs::write(private.join(name), bytes)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(private.join(name), fs::Permissions::from_mode(0o600))?;
-        }
-        Ok(())
-    };
-    let ledger = serde_json::json!({"schema":1,"binding":binding,"records":records});
-    write("credentials.json", &serde_json::to_vec(&ledger)?)?;
-    for id in tokens {
-        write(
-            &format!("credential-{id}.token"),
-            format!("airk1.{id}.{}", "e".repeat(64)).as_bytes(),
-        )?;
+    let records: Vec<_> = ids
+        .iter()
+        .map(|id| serde_json::json!({"id":id,"revoked":false,"expires_unix_ms":1,"verifier":"0a".repeat(32)}))
+        .collect();
+    let mut written = vec![(
+        private.join("credentials.json"),
+        serde_json::to_vec(&serde_json::json!({"schema":1,"records":records}))?,
+    )];
+    for id in ids {
+        written.push((
+            private.join(format!("credential-{id}.token")),
+            format!("airk1.{id}.{}", "e".repeat(64)).into_bytes(),
+        ));
     }
-    for id in retired {
-        let marker = serde_json::json!({"schema":1,"binding":binding,"id":id,"revoked":true});
-        write(
-            &format!("credential-{id}.token"),
-            &serde_json::to_vec(&marker)?,
-        )?;
+    for (path, bytes) in &written {
+        fs::write(path, bytes)?;
     }
-    Ok(())
+    Ok(written)
 }
 
 fn predecessor_http_fixture() -> Result<(tempfile::TempDir, PathBuf, Journal, Vec<Incarnation>)> {
@@ -541,25 +507,10 @@ fn predecessor_http_fixture() -> Result<(tempfile::TempDir, PathBuf, Journal, Ve
     let binding =
         airk_endpoint::http_endpoint::installation_binding(&journal.old_control, namespace)?;
     let private = journal.old_control.join("http-1");
+    crate::local_ipc::prepare_root(&private)?;
     let ids: Vec<_> = (201..205)
         .map(|byte| Incarnation::from_bytes([byte; 16]))
         .collect();
-    let now = unix_ms()?;
-    // The old installation's retained ledger: an active connection whose token
-    // was removed (the ledger record still proves ownership), an expired one,
-    // one revoked and compacted out of the ledger (only its retirement marker
-    // remains) and one revoked in place.
-    write_retained_ledger(
-        &private,
-        &binding,
-        &[
-            retained_record(ids[0], namespace, now + 3_600_000, false, 1),
-            retained_record(ids[1], namespace, 2, false, 2),
-            retained_record(ids[3], namespace, now + 3_600_000, true, 4),
-        ],
-        &[ids[1]],
-        &[ids[2], ids[3]],
-    )?;
     let (main, _) = verify_runtime(&root, &journal.prior.active)?;
     let endpoint = EndpointDescriptor {
         schema: 1,
@@ -587,47 +538,56 @@ fn initialize_fixture_http_owner(control: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Ownership is by shape since local trust plan B: any connection id an
+/// AIRK-shaped entry names is answered for the identified predecessor, with
+/// or without a retained ledger, and the retained files are left untouched.
 #[test]
-fn clean_break_native_http_lookup_owns_stopped_expired_revoked_and_retired_without_tokens()
--> Result<()> {
-    use airk_core::service_http_cleanup::{HttpCleanupOwnership, PredecessorHttpLookup};
+fn clean_break_native_http_lookup_identifies_the_predecessor_without_a_ledger() -> Result<()> {
+    use airk_core::service_http_cleanup::PredecessorHttpLookup;
     let (_owner, root, journal, ids) = predecessor_http_fixture()?;
-    for (index, state) in [
-        HttpCleanupOwnership::Active,
-        HttpCleanupOwnership::Expired,
-        HttpCleanupOwnership::Revoked,
-        HttpCleanupOwnership::Revoked,
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let raw = http_cleanup::lookup(
-            &root,
-            &journal.prior.active,
-            &journal.prior.active,
-            ids[index],
-        )?;
-        let lookup: PredecessorHttpLookup = serde_json::from_value(raw)?;
-        lookup.validate()?;
-        assert_eq!(lookup.status, "owned");
-        assert_eq!(lookup.ownership, Some(state));
-        assert!(!lookup.qualification.live_authority);
-        assert_eq!(lookup.operation_id, None);
-        assert_eq!(lookup.snapshot.owners.len(), 4);
-        assert_eq!(lookup.credential_sha256.is_some(), index != 2);
+    let private = journal.old_control.join("http-1");
+    let mut observed = Vec::new();
+    for with_ledger in [false, true] {
+        let retained = if with_ledger {
+            write_old_ledger(&private, &ids[..2])?
+        } else {
+            Vec::new()
+        };
+        for id in ids
+            .iter()
+            .copied()
+            .chain([Incarnation::from_bytes([209; 16])])
+        {
+            let raw =
+                http_cleanup::lookup(&root, &journal.prior.active, &journal.prior.active, id)?;
+            let lookup: PredecessorHttpLookup = serde_json::from_value(raw)?;
+            lookup.validate()?;
+            assert_eq!(lookup.status, "owned");
+            assert_eq!(lookup.connection_id, id);
+            assert!(!lookup.qualification.live_authority);
+            assert_eq!(lookup.operation_id, None);
+            assert_eq!(
+                lookup.qualification.current_namespace_ownership,
+                "same_predecessor"
+            );
+            assert_eq!(
+                lookup.ca_certificate_file.as_deref().map(Path::new),
+                Some(private.join("ca.pem").as_path())
+            );
+            observed.push(lookup.snapshot);
+        }
+        for (path, bytes) in &retained {
+            assert_eq!(&fs::read(path)?, bytes, "{}", path.display());
+        }
     }
-    let lookup: PredecessorHttpLookup = serde_json::from_value(http_cleanup::lookup(
-        &root,
-        &journal.prior.active,
-        &journal.prior.active,
-        Incarnation::from_bytes([209; 16]),
-    )?)?;
-    assert_eq!(lookup.status, "not_owned");
+    // The ledger changes nothing in the snapshot.
+    assert!(observed.windows(2).all(|pair| pair[0] == pair[1]));
     Ok(())
 }
 
 #[test]
 fn clean_break_http_snapshot_survives_headless_old_control_and_payload_retirement() -> Result<()> {
+    use airk_core::service_http::{EndpointDescriptor, EndpointState, LoopbackMcpUrl};
     use airk_core::service_http_cleanup::PredecessorHttpLookup;
     let (owner, root, mut journal, ids) = predecessor_http_fixture()?;
     let snapshot = http_cleanup::capture(&root, &journal.prior.active, &journal.old_control);
@@ -674,24 +634,35 @@ fn clean_break_http_snapshot_survives_headless_old_control_and_payload_retiremen
         metadata["predecessor_executable"]
     );
     assert_eq!(fs::read(source)?, source_before);
-    // A fresh namespace may legitimately issue the same explicit ID and URL.
-    // Original ownership must never authorize deleting its newer configuration.
+    // A fresh namespace may serve the predecessor's exact URL again. An entry
+    // there may then be the current installation's, so the predecessor's
+    // identity must never authorize removing it.
     let control = journal.control();
     let namespace = ServiceRegistry::open_saved(&control)?.incarnation()?;
     let binding = airk_endpoint::http_endpoint::installation_binding(&control, namespace)?;
-    // A successor that was itself a pre-B build may have issued the same id.
-    write_retained_ledger(
-        &control.join("http-1"),
-        &binding,
-        &[retained_record(
-            ids[2],
+    let predecessor_url = lookup.endpoint.as_ref().unwrap().url;
+    let current = |url: LoopbackMcpUrl| -> Result<EndpointDescriptor> {
+        Ok(EndpointDescriptor {
+            schema: 1,
+            installation: binding.installation,
+            user: binding.user.clone(),
             namespace,
-            unix_ms()? + 3_600_000,
-            false,
-            3,
-        )],
-        &[ids[2]],
-        &[],
+            generation: 1,
+            service_instance: Incarnation::from_bytes([210; 16]),
+            executable_sha256: Sha256Digest::from_bytes([211; 32]),
+            url,
+            ca_sha256: Sha256Digest::from_bytes([212; 32]),
+            certificate_sha256: Sha256Digest::from_bytes([213; 32]),
+            state: EndpointState::Ready,
+            predecessor_digest: None,
+        })
+    };
+    let private = control.join("http-1");
+    airk_endpoint::http_endpoint::publish_descriptor(
+        &private,
+        &binding,
+        &current(predecessor_url)?,
+        None,
     )?;
     let collision: PredecessorHttpLookup = serde_json::from_value(http_cleanup::lookup(
         &root,
@@ -701,39 +672,45 @@ fn clean_break_http_snapshot_survives_headless_old_control_and_payload_retiremen
     )?)?;
     collision.validate()?;
     assert_eq!(collision.status, "unavailable");
-    assert_eq!(collision.qualification.current_namespace_ownership, "owned");
-    assert!(collision.credential_file.is_none() && collision.ownership.is_none());
+    assert_eq!(
+        collision.qualification.current_namespace_ownership,
+        "unavailable"
+    );
+    assert!(collision.qualification.current_namespace_failure.is_some());
+    assert!(collision.ca_certificate_file.is_none());
     assert_eq!(collision.snapshot, lookup.snapshot);
-    fs::remove_file(control.join("http-1/credentials.json"))?;
-    let unknown: PredecessorHttpLookup = serde_json::from_value(http_cleanup::lookup(
+    // On another port the current installation cannot own the entry.
+    fs::remove_file(private.join("endpoint.json"))?;
+    airk_endpoint::http_endpoint::publish_descriptor(
+        &private,
+        &binding,
+        &current(LoopbackMcpUrl::new(57422)?)?,
+        None,
+    )?;
+    let distinct: PredecessorHttpLookup = serde_json::from_value(http_cleanup::lookup(
         &root,
         &journal.candidate,
         &journal.prior.active,
         ids[2],
     )?)?;
-    assert_eq!(unknown.status, "unavailable");
+    distinct.validate()?;
+    assert_eq!(distinct.status, "owned");
     assert_eq!(
-        unknown.qualification.current_namespace_ownership,
-        "unavailable"
+        distinct.qualification.current_namespace_ownership,
+        "not_owned"
     );
-    assert!(unknown.qualification.current_namespace_failure.is_some());
     Ok(())
 }
 
 #[test]
-fn clean_break_native_http_lookup_refuses_missing_foreign_or_orphan_metadata() -> Result<()> {
-    for fault in [
-        "missing_ledger",
-        "wrong_namespace",
-        "wrong_executable",
-        "orphan_token",
-    ] {
+fn clean_break_native_http_lookup_refuses_missing_or_foreign_metadata() -> Result<()> {
+    for fault in ["missing_endpoint", "wrong_namespace", "wrong_executable"] {
         let (_owner, root, journal, ids) = predecessor_http_fixture()?;
         let private = journal.old_control.join("http-1");
+        let path = private.join("endpoint.json");
         match fault {
-            "missing_ledger" => fs::remove_file(private.join("credentials.json"))?,
+            "missing_endpoint" => fs::remove_file(&path)?,
             "wrong_namespace" | "wrong_executable" => {
-                let path = private.join("endpoint.json");
                 let mut endpoint: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
                 if fault == "wrong_namespace" {
                     endpoint["namespace"] = serde_json::json!(Incarnation::from_bytes([210; 16]));
@@ -743,34 +720,16 @@ fn clean_break_native_http_lookup_refuses_missing_foreign_or_orphan_metadata() -
                 }
                 fs::write(path, serde_json::to_vec(&endpoint)?)?;
             }
-            "orphan_token" => {
-                let path = private.join(format!(
-                    "credential-{}.token",
-                    Incarnation::from_bytes([211; 16])
-                ));
-                fs::write(
-                    &path,
-                    format!(
-                        "airk1.{}.{}",
-                        Incarnation::from_bytes([211; 16]),
-                        "a".repeat(64)
-                    ),
-                )?;
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-                }
-            }
             _ => unreachable!(),
         }
         let raw =
             http_cleanup::lookup(&root, &journal.prior.active, &journal.prior.active, ids[0])?;
         let lookup: airk_core::service_http_cleanup::PredecessorHttpLookup =
             serde_json::from_value(raw)?;
+        lookup.validate()?;
         assert_eq!(lookup.status, "unavailable", "{fault}");
-        assert!(!lookup.snapshot.complete && lookup.snapshot.owners.is_empty());
-        assert!(lookup.ownership.is_none());
+        assert!(!lookup.snapshot.complete && lookup.snapshot.failure.is_some());
+        assert!(lookup.ca_certificate_file.is_none());
     }
     Ok(())
 }

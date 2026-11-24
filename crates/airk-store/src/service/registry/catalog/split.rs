@@ -22,6 +22,7 @@ use std::{
 
 mod finalization;
 pub(crate) use finalization::CheckpointReceiptClassifier;
+pub(super) use finalization::prune_finished_splits;
 const RESERVED_COMPLETION_BYTES: usize = 3 * 1024 * 1024;
 const MAX_ACTIVE: i64 = 8;
 /// Conservative native format capacity, independent of selected document size.

@@ -2072,3 +2072,152 @@ fn clean_break_namespace_retires_active_shell(funded: bool, foreign_capsule: boo
     );
     Ok(())
 }
+
+/// A fresh split request on the fixture's original index, keyed by `nonce`
+/// under a newly issued request epoch (which runs the catalog record pruning).
+fn next_split_request(
+    registry: &mut ServiceRegistry,
+    template: &SplitRequest,
+    nonce: u128,
+) -> Result<(SplitRequest, SourcePolicy, SplitPolicyPlan)> {
+    let observed =
+        registry.catalog_split_source_state(template.original_index, CatalogRevision::INITIAL)?;
+    let (namespace, epoch) = registry.request_epoch()?;
+    let mut request = template.clone();
+    request.key = RequestKey {
+        namespace,
+        epoch,
+        nonce: Incarnation::from_bytes(nonce.to_be_bytes()),
+    };
+    let plan = observed.policy.compile_split(
+        observed.policy.identity()?,
+        airk_core::catalog_management::catalog_operation_id(request.caller, &request.key)?,
+        &request.selectors,
+        request.destination.clone(),
+    )?;
+    request.expected_catalog_revision = observed.catalog_revision;
+    request.expected_definition_revision = observed.index.definition_revision;
+    request.expected_source_revision = observed.index.source_revision;
+    request.source_configuration = observed.source_configuration;
+    request.baseline = observed.baseline;
+    request.before_policy_digest = observed.policy.identity()?;
+    request.original_watch_digest = observed.watch_digest;
+    request.compiled_plan_digest =
+        framed_digest(b"airk/catalog-split-plan/1", &[&serde_json::to_vec(&plan)?]);
+    request.validate_plan(&observed.policy, &plan)?;
+    Ok((request, observed.policy, plan))
+}
+
+/// Accept, cancel and finish one split before its fence, as
+/// `canceled_never_prepared_destination_uses_pinned_absence_and_finishes_without_storage`.
+fn finished_canceled_split(
+    registry: &mut ServiceRegistry,
+    request: &SplitRequest,
+    before: &SourcePolicy,
+    plan: &SplitPolicyPlan,
+) -> Result<Incarnation> {
+    let operation = request.operation_id()?;
+    let accepted = registry.catalog_reserve_split(request, before, plan)?;
+    registry.catalog_cancel_split(operation, accepted.receipt_digest)?;
+    let state = registry.catalog_split_state(operation)?;
+    let proof = NativeSplitAbsentDestination::capture(&state)?;
+    let lease = crate::service::ProjectLease::acquire(
+        &registry.root,
+        request.destination_registration.binding,
+    )?;
+    let authorized = registry.catalog_authorize_split_absent_cleanup(&lease, proof)?;
+    drop(lease);
+    let complete = registry.catalog_finish_split(operation, authorized.receipt_digest)?;
+    assert_eq!(
+        complete.receipt.state,
+        SplitRunState::CanceledBeforeFence {
+            cleanup_pending: false
+        }
+    );
+    Ok(operation)
+}
+
+/// Record cleanups of 23 November 2026, item 2: finished splits are pruned,
+/// keeping the newest few, so more than 64 splits succeed; an unfinished
+/// split is never pruned, and a pruned split's key expires.
+#[test]
+fn more_than_64_splits_succeed_and_an_unfinished_split_survives() -> Result<()> {
+    let (_temp, mut registry, template, _, _) = fixture()?;
+    let mut finished = Vec::new();
+    for nonce in 1..=70u128 {
+        let (request, before, plan) = next_split_request(&mut registry, &template, nonce)?;
+        finished.push((
+            request.clone(),
+            finished_canceled_split(&mut registry, &request, &before, &plan)?,
+        ));
+        let count: i64 = registry.connection.query_row(
+            "SELECT count(*) FROM index_split_operations",
+            [],
+            |row| row.get(0),
+        )?;
+        if count >= 64 {
+            let first = registry.catalog_split_status(finished[0].1)?;
+            let rows: Vec<(String, String, i64)> = registry
+                .connection
+                .prepare("SELECT operation_id,role,active FROM index_split_participants")?
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+                .collect::<rusqlite::Result<_>>()?;
+            let jobs: i64 = registry.connection.query_row(
+                "SELECT count(*) FROM index_split_jobs",
+                [],
+                |row| row.get(0),
+            )?;
+            panic!(
+                "split count {count} after split {nonce}: first {:?} {:?}; participants {rows:?}; jobs {jobs}; epoch {:?}",
+                first.as_ref().map(|value| &value.receipt.state),
+                first.as_ref().map(|value| &value.finalization),
+                registry.saved_request_epoch()?
+            );
+        }
+    }
+    // The newest finished splits are kept and still answer their key.
+    let (newest, operation) = finished.last().unwrap();
+    assert!(registry.catalog_split_status(*operation)?.is_some());
+    assert!(
+        registry
+            .catalog_split_receipt(newest.caller, &newest.key)?
+            .is_some()
+    );
+    // The first was pruned with its children; its epoch was rotated away.
+    let (oldest, operation) = &finished[0];
+    assert!(registry.catalog_split_status(*operation)?.is_none());
+    for table in [
+        "index_split_history",
+        "index_split_participants",
+        "index_split_recoveries",
+        "index_split_jobs",
+    ] {
+        let left: i64 = registry.connection.query_row(
+            &format!("SELECT count(*) FROM {table} WHERE operation_id=?1"),
+            [operation.to_string()],
+            |row| row.get(0),
+        )?;
+        assert_eq!(left, 0, "{table} kept a pruned split's rows");
+    }
+    assert!(oldest.key.epoch < registry.saved_request_epoch()?.1);
+    // An unfinished split survives a pass that keeps no finished split.
+    let (request, before, plan) = next_split_request(&mut registry, &template, 100)?;
+    let accepted = registry.catalog_reserve_split(&request, &before, &plan)?;
+    let tx = registry
+        .connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let deleted = prune_finished_splits(&tx, 0)?;
+    tx.commit()?;
+    assert!(deleted > 0);
+    let left: Vec<String> = registry
+        .connection
+        .prepare("SELECT operation_id FROM index_split_operations")?
+        .query_map([], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    assert_eq!(left, vec![accepted.receipt.operation_id.to_string()]);
+    assert_eq!(
+        registry.catalog_split_status(accepted.receipt.operation_id)?,
+        Some(accepted)
+    );
+    Ok(())
+}

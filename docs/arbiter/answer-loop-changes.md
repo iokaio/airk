@@ -3367,6 +3367,123 @@ Numbered 65 because the unmerged `loop/lh` already holds entries 57 to 64.
       receipt pruning), 2 (finished split pruning), 3 (tombstoned index
       definitions) and 5 (`index-catalog-upgrade.json`, `rebuild.json`,
       clean-break journal). Item 4 (dead tables) is done above.
+- **Part 4: the credential ledger and operation records (B, pieces 5 and the
+  record cleanups; branch `loop/trust-b3` from `7dfc5fcc`).**
+  - **Why:** the user's decisions of 23 November 2026 (local trust plan,
+    decision 3): the credential ledger is removed on upgrade, predecessor
+    cleanup recognises AIRK's agent-config entries by their known shapes, and
+    the operation records are bounded. This build was never deployed beyond
+    its author's machine, so no backward compatibility is owed for these
+    application records. No table schema changes; only rows and dead files
+    are deleted.
+  - **Removed:**
+
+| Item | Evidence |
+|---|---|
+| `airk-endpoint` `RetainedLedger`, `holds_no_credentials` and their tests; Core `MAX_STORE`, `MAX_CREDENTIALS`, `MAX_TOKEN`; `fixtures/split/agents/credentials_ledger_v1.json` (and its `Dockerfile`, `.dockerignore` and `container-inputs.json` lines) | Their only caller was installer predecessor cleanup, which now reads no ledger (Clippy `-D warnings`, `git grep`) |
+| Core `HttpCleanupOwner`, `HttpCleanupOwnership`, `MAX_HTTP_CLEANUP_OWNERS`; the snapshot's `owners`; the lookup's `ownership`, `credential_file`, `credential_sha256`, `credential_digest_algorithm`; the `not_owned` lookup status and the `owned` current-namespace status | Ledger-derived; no producer once the ledger is not read |
+| The `index-catalog-upgrade.json` refusal in Genesis admission | Nothing writes or reads the file; the owner receipt's `catalog_upgrade` fence is what admitted an in-place upgrade, and it still refuses on its own |
+
+  - **Credential files deleted on upgrade:** the service's HTTP owner calls
+    `retired_credentials::remove` on `http-1` before preparing it. It deletes
+    `credentials.json` and the canonical `credential-<id>.token` files,
+    exact names inside that folder only, inspected with `symlink_metadata`
+    and never followed; a link, directory or look-alike name stays, and the
+    folder goes only when it is then empty. Tests `retired_credentials::tests`:
+    an old folder with a ledger, two tokens, a marker and look-alikes keeps
+    only the non-credential entries; a folder of only credentials is removed;
+    the same names one level up and in a sibling folder and a link's target
+    stay byte-identical (the link case runs only where a link can be created).
+  - **Predecessor cleanup by shape:** `http_cleanup::capture` records the
+    predecessor's endpoint and CA digest and reads no ledger;
+    `current_namespace_ownership` no longer reads the current installation's
+    ledger. `lookup` answers `owned` for the connection id an AIRK-shaped
+    entry names when the predecessor is identified and no newer installation
+    can claim it, else `unavailable`. One guard replaces the ledger collision
+    check: a newer installation that serves the predecessor's exact endpoint
+    URL makes the lookup `unavailable`, since an entry there may be its own.
+    The shapes are the `Bearer`, `headersHelper`, `http_headers_helper` and
+    `bearer_token_env_var` forms `airkctl agents repair` recognises
+    (`agents::config::recognize`; its `legacy_*` tests repair each form and
+    leave foreign servers byte-identical). Installer tests:
+    `clean_break_native_http_lookup_identifies_the_predecessor_without_a_ledger`
+    (with and without an old ledger, which stays byte-identical),
+    `clean_break_http_snapshot_survives_headless_old_control_and_payload_retirement`,
+    `clean_break_native_http_lookup_refuses_missing_or_foreign_metadata`.
+  - **Record cleanups** (registry and split `CONTRACT.md`):
+    1. `index_operation_receipts` is pruned in the request-epoch pass
+       (`catalog::record_pruning`, run inside `prune_job_receipts`, so also by
+       `maintain_job_receipts`). From 896 of its 1,024 rows it keeps every
+       unfinished receipt (the checkpoint's terminal classifier), every
+       terminal receipt a live reader needs (a retained tombstone's
+       `RetireIndex` fence, a source-change begin until its completion is
+       applied, the current policy's fence, a retained split's fences and
+       final receipts) and the newest 256 other terminal receipts; the
+       request epoch rotates when any is deleted. N = 256: a retry comes from
+       its own caller within seconds, and 256 leaves room under the cap.
+       Readers checked: `runtime_contract::required_capabilities`,
+       `retirement_evidence`, `source_change::discovery` and recovery,
+       `checkpoint::receipts`, the policy parent read and the split readers;
+       `adopted_authority.rs` was removed in part 3. Test:
+       `more_than_1024_catalog_mutations_succeed_and_unfinished_receipts_survive`
+       (1,101 mutations; two unfinished receipts survive; the newest key
+       still answers; the first key expires and replays nothing).
+    2. Finished splits (complete with the final acknowledgment, or canceled
+       before the fence with cleanup done and any final plan acknowledged) are pruned from 48 of 64, keeping
+       the newest 8, children first (`ON DELETE RESTRICT`), with their final
+       receipts; the epoch rotates. Test:
+       `more_than_64_splits_succeed_and_an_unfinished_split_survives` (70
+       splits; an accepted split survives a pass that keeps none).
+    3. A tombstoned `index_definitions` row is deleted once its `RetireIndex`
+       fence is applied, no fence is pending, its registration is gone or
+       unregistered with the cleanup guard cleared, and
+       `service_removed_projects` holds its cleanup identity; its sources,
+       aliases, description and retained registration go with it. Test:
+       `acknowledged_retirement_cleanup_deletes_the_tombstone_and_frees_its_fence`.
+    5. `index-catalog-upgrade.json` is deleted by the read-write open and
+       Genesis admission when no owner fence names an upgrade (genesis test
+       `competing_intents_unexplained_fences_and_missing_owned_database_refuse`).
+       The finished `clean-break-cleanup-<sha>.json` journal is deleted after
+       the rebuild journal durably records `cleanup_complete`, and on a later
+       continuation tick if a crash left it (`retire_journal`; test
+       `clean_break_finished_cleanup_journal_is_retired_and_others_stay`).
+       `index-catalog-genesis.json` and the schema-11 backups are kept.
+  - **Left, with reasons:**
+    - **`rebuild.json` is not deleted.** After `Complete` and
+      `cleanup_complete` it is still read: `default_project_data` takes the
+      successor's default data root (`rebuild-default-<operation>`) from it,
+      so deleting it would move where every new index stores its data. That
+      is a behaviour change the decision did not cover. Deleting it needs that
+      root recorded elsewhere first, or the user's choice.
+    - **The extension's predecessor-proof validators**
+      (`packages/vscode/src/serviceHttp.ts` `validatePredecessorHttpLookup`,
+      `validateOwnedPredecessorHttpProof`) still expect the removed
+      ledger-derived fields. They have no production caller
+      (`captureCleanBreakClientCleanup` is called only by tests), and
+      `packages/vscode` belongs to another agent in this round.
+    - A tombstone that a source policy still names stays, with its fence: its
+      policy job keeps the registration through its foreign key.
+  - **Validated** (Windows, target `target-l2b`, incremental on, the
+    integration environment of part 2; logs in `trust-b3/logs`):
+    - Clippy `-D warnings --workspace --all-targets`, all features
+      (`cl-ws-all`, 1 min 22 s) and default features (`cl-ws-default`,
+      1 min 6 s): clean.
+    - Nextest `--profile ci --all-features --lib --bins` of `airk-core`,
+      `airk-endpoint`, `airk-store`, `airk-installer`, `airk-service`: 2,300 of
+      2,300 passed, 40 skipped (`nt-final`, 7 min 8 s). The first run
+      (`nt-b1`) failed only the new split test: a canceled split also runs
+      a final plan, which `finished` now requires to be acknowledged.
+    - `airk-cli` integration, all features: `catalog_upgrade`,
+      `cli_commands`, `service_runtime`, `unregister_native`,
+      `native_owner_recovery`, `service_only`: 96 of 96, 1 skipped (`nt-cli`,
+      8 min 44 s).
+    - `rustfmt --check` of the changed files, `scripts/check-repo.ps1`
+      (1 min 23 s) and `git diff --check`: clean. `boundary_check.py` reports
+      the same three failures as base `7dfc5fcc` (`airk-core` and
+      `airk-retrieval` module cycles, `airk-mcp` `explorer_offline.rs`), none
+      new.
+  - **Not verified:** `airkctl` tests (its code is unchanged), the extension,
+    an installed upgrade, Linux and macOS.
 - **Part 5: phase B leftovers (branch `loop/trust-b4` from `7dfc5fcc`).**
   The failures part 3 left, and its TypeScript leftovers. Base: `7dfc5fcc`.
   - **Focus on one-index reads (eight tests).** Checked from source first:

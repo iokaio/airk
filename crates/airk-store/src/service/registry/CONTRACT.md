@@ -68,3 +68,54 @@ schema-identity check is extended to the terminal layout, never relaxed;
 `fixtures/schema/airk-state-1-terminal/` (derived by
 `scripts/dev/derive_terminal_registry_schema.py`) retains the terminal
 schemas.
+
+## Bounded operation records and dead files (change-log entry 68 part 4)
+
+The user's record cleanups of 23 November 2026 (local trust plan, decision 3)
+bound the catalog's operation records. This build was never deployed beyond
+its author's machine, so no backward compatibility is owed for them. No table
+schema changes; only rows and dead files are deleted.
+
+- **Receipt pruning** (`catalog::record_pruning`). `index_operation_receipts`
+  admits at most 1,024 rows and previously evicted none, so the catalog refused
+  every change after about 1,024 changes. The request-epoch pass
+  (`request_epoch`, and the supervisor's `maintain_job_receipts`) now runs a
+  catalog pass inside the job-receipt pass's immediate transaction. From 896
+  rows it keeps every receipt the checkpoint's terminal classifier
+  (`checkpoint::receipts::terminal`) calls unfinished, every terminal receipt a
+  live reader needs, and the newest 256 other terminal receipts of the
+  `catalog_management`, `catalog_management_fenced`,
+  `catalog_source_completion` and `catalog_index_setup` kinds. Protected
+  readers: retirement evidence (a `RetireIndex` fence while its definition is
+  retained), source-change recovery (a begin until its completion is
+  applied), the current source policy's fence, and the fences and final
+  receipts of a retained split. When a receipt is deleted the request epoch
+  rotates, as for job receipts, so its key expires explicitly
+  (`catalog request key expired`) and is never replayed. 256 is far beyond any
+  retry window (a retry comes from its own caller within seconds) and leaves
+  room under the cap for the bounded protected owners. Readers checked:
+  `runtime_contract::required_capabilities` (the pruned rows lower no
+  recorded schema; `user_version` keeps it), retirement evidence,
+  source-change discovery and recovery, the checkpoint capture, the source
+  policy parent read and the split readers; `adopted_authority.rs` was
+  removed in part 3. Test:
+  `operations::tests::more_than_1024_catalog_mutations_succeed_and_unfinished_receipts_survive`.
+- **Finished splits** are pruned in the same pass; see the split `CONTRACT.md`.
+- **Retired definitions** (`retirement_evidence::delete_retired_definitions`).
+  A tombstoned `index_definitions` row is deleted once its retirement cleanup
+  is acknowledged: its complete `RetireIndex` fence is applied, no fence is
+  pending, its registration is gone or kept unregistered with its cleanup guard
+  cleared, and `service_removed_projects` holds its exact cleanup identity. A
+  definition still named by a membership, a context default, a source policy,
+  an active split participant or an enabled source stays. Its sources, aliases,
+  description and the retained registration go with it; a registration that
+  anything else still refers to keeps both (the foreign-key refusal rolls that
+  one back). The removal history stays. Afterwards its retirement evidence
+  answers none, and its fence is ordinary prunable history. Test:
+  `source_change::tests::retirement_evidence::acknowledged_retirement_cleanup_deletes_the_tombstone_and_frees_its_fence`.
+- **`index-catalog-upgrade.json`** no longer refuses startup. With no owner
+  fence nothing admitted it and nothing reads it, so the read-write open and
+  Genesis admission delete it (`genesis::retire_dead_upgrade_journal`); under a
+  `catalog_upgrade` owner fence it stays and the fence refuses on its own.
+  `index-catalog-genesis.json` and the schema-11 backups are kept. Test:
+  `genesis::tests::competing_intents_unexplained_fences_and_missing_owned_database_refuse`.

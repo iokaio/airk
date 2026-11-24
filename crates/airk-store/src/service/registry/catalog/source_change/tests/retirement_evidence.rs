@@ -496,3 +496,73 @@ fn historical_purged_registration_requires_exact_surviving_cleanup_marker() -> R
     );
     Ok(())
 }
+
+fn prune_pass(registry: &mut ServiceRegistry) -> Result<bool> {
+    let tx = registry
+        .connection
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let rotate = super::super::super::record_pruning::prune(&tx)?;
+    tx.commit()?;
+    Ok(rotate)
+}
+
+fn exists(registry: &ServiceRegistry, sql: &str, id: &str) -> Result<bool> {
+    Ok(registry
+        .connection
+        .query_row(&format!("SELECT EXISTS({sql})"), [id], |row| row.get(0))?)
+}
+
+/// Record cleanups of 23 November 2026, item 3: a tombstoned definition is
+/// deleted once its retirement cleanup is acknowledged and the cleanup
+/// identity is recorded, and only then does its retirement fence become
+/// prunable history. Before cleanup both are kept.
+#[test]
+fn acknowledged_retirement_cleanup_deletes_the_tombstone_and_frees_its_fence() -> Result<()> {
+    let (_temp, mut registry, original) = fixture()?;
+    let request = retire_request(&mut registry, &original)?;
+    let index = id(&request);
+    let retired = apply(&mut registry, &request)?;
+    let fence = retired.metadata.operation_id.to_string();
+    let backing = registry
+        .catalog_index_retirement_evidence(index)?
+        .context("retirement proof missing")?
+        .index
+        .backing;
+    let tombstone = "SELECT 1 FROM index_definitions WHERE id=?1";
+    let receipt = "SELECT 1 FROM index_operation_receipts WHERE id=?1";
+    // Before the physical cleanup: the tombstone, its proof and its fence stay,
+    // even through a receipt pass that keeps no history.
+    prune_pass(&mut registry)?;
+    let tx = registry.connection.unchecked_transaction()?;
+    super::super::super::record_pruning::prune_receipts(&tx, 0)?;
+    tx.commit()?;
+    assert!(exists(&registry, tombstone, &index.to_string())?);
+    assert!(exists(&registry, receipt, &fence)?);
+    assert!(registry.catalog_index_retirement_evidence(index)?.is_some());
+
+    // The owning cleanup commits and records the cleanup identity.
+    assert!(registry.purge_removed_project_turn(backing.binding)?);
+    assert!(registry.project_was_removed(backing.binding)?);
+    prune_pass(&mut registry)?;
+    assert!(!exists(&registry, tombstone, &index.to_string())?);
+    assert!(!exists(
+        &registry,
+        "SELECT 1 FROM index_sources WHERE index_id=?1",
+        &index.to_string()
+    )?);
+    assert!(!exists(
+        &registry,
+        "SELECT 1 FROM projects WHERE binding=?1",
+        &backing.binding.to_string()
+    )?);
+    // The removal history stays: it still suppresses the removed source.
+    assert!(registry.project_was_removed(backing.binding)?);
+    assert!(registry.catalog_index_retirement_evidence(index)?.is_none());
+    // The fence is now ordinary history, and a pass that keeps none prunes it.
+    assert!(exists(&registry, receipt, &fence)?);
+    let tx = registry.connection.unchecked_transaction()?;
+    assert!(super::super::super::record_pruning::prune_receipts(&tx, 0)? >= 1);
+    tx.commit()?;
+    assert!(!exists(&registry, receipt, &fence)?);
+    Ok(())
+}

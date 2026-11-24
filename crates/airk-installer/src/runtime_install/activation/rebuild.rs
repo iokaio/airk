@@ -1421,7 +1421,12 @@ fn continue_clean_break_observing(
         return Ok(());
     }
     let mut journal = read(root)?.context("clean-break operation missing")?;
-    if !journal.clean_break || journal.phase != Phase::Complete || journal.cleanup_complete {
+    if journal.clean_break && journal.phase == Phase::Complete && journal.cleanup_complete {
+        // A finished cleanup journal left by an interrupted retirement.
+        clean_break_cleanup::retire_journal(root, &journal.old_control)?;
+        return Ok(());
+    }
+    if !journal.clean_break || journal.phase != Phase::Complete {
         return Ok(());
     }
     let lock = match install_lock(root) {
@@ -1527,6 +1532,10 @@ fn continue_clean_break_observing(
             journal.cleanup_failure = None;
             journal.cleanup_observation = Some(observation);
             journal.save(root)?;
+            if journal.cleanup_complete {
+                // Durably complete above: the cleanup plan is finished history.
+                clean_break_cleanup::retire_journal(root, &journal.old_control)?;
+            }
         }
         Err(error) => {
             journal.cleanup_failure = Some(RebuildFailure {

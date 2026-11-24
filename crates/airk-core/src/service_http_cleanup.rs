@@ -1,31 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Historical configuration disposal proof. Never a credential or live grant.
+//!
+//! Since local trust plan B (23 November 2026) no installation keeps a
+//! credential ledger: the service deletes the retired ledger and its token
+//! files on upgrade. A predecessor's agent-config entries are therefore
+//! recognised by their known shapes (the `Bearer`, `headersHelper`,
+//! `http_headers_helper` and `bearer_token_env_var` forms, which name the
+//! connection id), not by a ledger record. This proof identifies the
+//! predecessor installation, its endpoint and whether a newer installation
+//! could own that endpoint, so a cleanup removes only an AIRK-shaped entry at
+//! the predecessor's exact endpoint URL and never one it does not recognise.
 use super::service_http::EndpointDescriptor;
 use crate::identity::{Incarnation, Sha256Digest};
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeSet, path::Path, str::FromStr};
+use std::{path::Path, str::FromStr};
 
-pub const MAX_HTTP_CLEANUP_OWNERS: usize = 128;
 pub const MAX_HTTP_CLEANUP_BYTES: usize = 64 * 1024;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HttpCleanupOwnership {
-    Active,
-    Expired,
-    Revoked,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct HttpCleanupOwner {
-    pub connection_id: Incarnation,
-    pub ownership: HttpCleanupOwnership,
-    /// SHA-256 of the entire original UTF-8 `airk1.<id>.<secret>` token.
-    /// Retired ownership-only markers need not retain this digest.
-    pub credential_sha256: Option<Sha256Digest>,
-}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -46,7 +37,6 @@ pub struct PredecessorHttpSnapshot {
     pub endpoint: Option<EndpointDescriptor>,
     pub ca_certificate_file_sha256: Option<Sha256Digest>,
     pub complete: bool,
-    pub owners: Vec<HttpCleanupOwner>,
     pub failure: Option<HttpCleanupFailure>,
 }
 
@@ -63,17 +53,6 @@ impl PredecessorHttpSnapshot {
                 && !self.control_dir.chars().any(char::is_control),
             "invalid HTTP cleanup control"
         );
-        ensure!(
-            self.owners.len() <= MAX_HTTP_CLEANUP_OWNERS,
-            "HTTP cleanup inventory exceeds bound"
-        );
-        let mut ids = BTreeSet::new();
-        ensure!(
-            self.owners
-                .iter()
-                .all(|owner| ids.insert(owner.connection_id)),
-            "duplicate HTTP cleanup owner"
-        );
         if let Some(endpoint) = &self.endpoint {
             endpoint.validate()?;
             ensure!(
@@ -83,9 +62,8 @@ impl PredecessorHttpSnapshot {
         }
         ensure!(
             self.complete == self.failure.is_none()
-                && (!self.complete || self.namespace.is_some() && self.endpoint.is_some())
-                && (self.complete || self.owners.is_empty()),
-            "incomplete HTTP cleanup inventory cannot imply absence or a selected subset"
+                && (!self.complete || self.namespace.is_some() && self.endpoint.is_some()),
+            "incomplete HTTP cleanup metadata cannot identify the predecessor"
         );
         if let Some(failure) = &self.failure {
             ensure!(
@@ -106,14 +84,17 @@ pub struct HttpCleanupQualification {
     pub live_authority: bool,
     pub source: String,
     pub snapshot_complete: bool,
-    pub credential_digest_algorithm: String,
     pub current_namespace: Option<Incarnation>,
+    /// `same_predecessor`, `not_owned` (a newer installation, which issues no
+    /// connection) or `unavailable`.
     pub current_namespace_ownership: String,
     pub current_namespace_failure: Option<HttpCleanupFailure>,
 }
 
-/// Administrative setup read. The full original snapshot remains in the DTO;
-/// query fields select a single ID without replacing the complete inventory.
+/// Administrative setup read for one connection id taken from an AIRK-shaped
+/// agent-config entry. `owned` means the predecessor is identified and no
+/// newer installation can claim its endpoint, so such an entry whose URL is
+/// `endpoint.url` is the predecessor's; `unavailable` means it is not known.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PredecessorHttpLookup {
@@ -126,11 +107,8 @@ pub struct PredecessorHttpLookup {
     pub namespace: Option<Incarnation>,
     pub connection_id: Incarnation,
     pub status: String,
-    pub ownership: Option<HttpCleanupOwnership>,
     pub endpoint: Option<EndpointDescriptor>,
     pub ca_certificate_file: Option<String>,
-    pub credential_file: Option<String>,
-    pub credential_sha256: Option<Sha256Digest>,
     pub ca_certificate_file_sha256: Option<Sha256Digest>,
     pub qualification: HttpCleanupQualification,
     pub snapshot: PredecessorHttpSnapshot,
@@ -149,8 +127,7 @@ impl PredecessorHttpLookup {
                 && self.endpoint == self.snapshot.endpoint
                 && self.ca_certificate_file_sha256 == self.snapshot.ca_certificate_file_sha256
                 && !self.qualification.live_authority
-                && self.qualification.snapshot_complete == self.snapshot.complete
-                && self.qualification.credential_digest_algorithm == "sha256_full_airk1_token",
+                && self.qualification.snapshot_complete == self.snapshot.complete,
             "HTTP cleanup lookup crossed original snapshot"
         );
         ensure!(
@@ -162,11 +139,6 @@ impl PredecessorHttpLookup {
             },
             "invalid HTTP cleanup snapshot lineage"
         );
-        let owner = self
-            .snapshot
-            .owners
-            .iter()
-            .find(|owner| owner.connection_id == self.connection_id);
         let current_clear = match self.qualification.current_namespace_ownership.as_str() {
             "same_predecessor" => {
                 ensure!(
@@ -184,15 +156,6 @@ impl PredecessorHttpLookup {
                     "HTTP cleanup current absence lacks namespace observation"
                 );
                 true
-            }
-            "owned" => {
-                ensure!(
-                    self.qualification.current_namespace.is_some()
-                        && self.qualification.current_namespace != self.namespace
-                        && self.qualification.current_namespace_failure.is_none(),
-                    "HTTP cleanup newer ownership lacks namespace observation"
-                );
-                false
             }
             "unavailable" => {
                 ensure!(
@@ -213,36 +176,16 @@ impl PredecessorHttpLookup {
         }
         let private = Path::new(&self.control_dir).join("http-1");
         match self.status.as_str() {
-            "owned" => {
-                let owner = owner
-                    .ok_or_else(|| anyhow::anyhow!("HTTP cleanup ID lacks original ownership"))?;
-                ensure!(
-                    current_clear
-                        && self.snapshot.complete
-                        && self.ownership == Some(owner.ownership)
-                        && self.credential_sha256 == owner.credential_sha256
-                        && self.ca_certificate_file.as_deref().map(Path::new)
-                            == Some(private.join("ca.pem").as_path())
-                        && self.credential_file.as_deref().map(Path::new)
-                            == Some(
-                                private
-                                    .join(format!("credential-{}.token", self.connection_id))
-                                    .as_path()
-                            ),
-                    "HTTP cleanup owned proof changed"
-                );
-            }
-            "not_owned" | "unavailable" => ensure!(
-                self.ownership.is_none()
-                    && self.credential_sha256.is_none()
-                    && self.ca_certificate_file.is_none()
-                    && self.credential_file.is_none()
-                    && if self.status == "not_owned" {
-                        current_clear && self.snapshot.complete && owner.is_none()
-                    } else {
-                        !self.snapshot.complete || !current_clear
-                    },
-                "unobserved HTTP cleanup ownership cannot imply absence"
+            "owned" => ensure!(
+                current_clear
+                    && self.snapshot.complete
+                    && self.ca_certificate_file.as_deref().map(Path::new)
+                        == Some(private.join("ca.pem").as_path()),
+                "HTTP cleanup owned proof changed"
+            ),
+            "unavailable" => ensure!(
+                self.ca_certificate_file.is_none() && (!self.snapshot.complete || !current_clear),
+                "unobserved HTTP cleanup ownership cannot imply ownership"
             ),
             _ => anyhow::bail!("invalid HTTP cleanup ownership status"),
         }

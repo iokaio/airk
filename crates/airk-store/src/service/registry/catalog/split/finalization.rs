@@ -748,3 +748,104 @@ pub(super) fn latch(
     db.execute("INSERT INTO index_operation_receipts VALUES(?1,?2,'attention',?3,?4) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,payload=excluded.payload WHERE kind=excluded.kind",params![identity(old.receipt.operation_id,b"error")?.to_string(),ERROR_KIND,i64::try_from(revision)?,serde_json::to_vec(code)?])?;
     get(db, old.receipt.operation_id)
 }
+
+/// Whether a split is finished for good: complete with its final funding
+/// acknowledgment and no attention, or canceled before its fence with its
+/// cleanup done. Neither can be reopened (`cancel` and `resume` refuse both).
+fn finished(value: &SplitSnapshot) -> bool {
+    let acknowledged = value.finalization.as_ref().map(|status| {
+        status.progress == SplitFinalizationProgress::Complete && status.attention.is_none()
+    });
+    match value.receipt.state {
+        SplitRunState::Complete => acknowledged == Some(true),
+        // A cancellation may or may not have run a final publication plan;
+        // when it did, that plan must be acknowledged too.
+        SplitRunState::CanceledBeforeFence {
+            cleanup_pending: false,
+        } => acknowledged != Some(false),
+        _ => false,
+    }
+}
+
+/// Prune finished splits, keeping the newest `keep` (the user's record
+/// cleanups of 23 November 2026, item 2). A split is deleted only when it is
+/// finished, none of its participants is active and none of its jobs is
+/// pending or running. Children go first because every split table refers to
+/// the operation with `ON DELETE RESTRICT`; the final plan, error,
+/// acknowledgment and slot receipts go with it. Returns how many were deleted;
+/// the caller rotates the request epoch so their retry keys expire.
+pub(in crate::service::registry) fn prune_finished_splits(
+    db: &Connection,
+    keep: usize,
+) -> Result<usize> {
+    if !available(db)? {
+        return Ok(0);
+    }
+    let mut statement = db.prepare(
+        "SELECT operation_id,epoch FROM index_split_operations ORDER BY epoch DESC,operation_id DESC LIMIT 65",
+    )?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    drop(statement);
+    ensure!(rows.len() <= 64, "split operation roster exceeds capacity");
+    let extraction: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='index_split_extraction_policies')",
+        [],
+        |row| row.get(0),
+    )?;
+    let mut kept = 0;
+    let mut deleted = 0;
+    for (operation, _) in rows {
+        let operation: Incarnation = operation.parse()?;
+        let value = get(db, operation)?.context("split roster row disappeared")?;
+        let busy: bool = db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM index_split_participants WHERE operation_id=?1 AND active=1) OR EXISTS(SELECT 1 FROM index_split_jobs s JOIN service_jobs j ON j.id=s.job WHERE s.operation_id=?1 AND j.state IN('pending','running'))",
+            [operation.to_string()],
+            |row| row.get(0),
+        )?;
+        if busy || !finished(&value) {
+            continue;
+        }
+        if kept < keep {
+            kept += 1;
+            continue;
+        }
+        for (part, kind) in [
+            (&b"plan"[..], PLAN_KIND),
+            (b"error", ERROR_KIND),
+            (b"ack", ACK_KIND),
+        ] {
+            db.execute(
+                "DELETE FROM index_operation_receipts WHERE id=?1 AND kind=?2",
+                params![identity(operation, part)?.to_string(), kind],
+            )?;
+        }
+        for digest in value.receipt.terminal_publication_slots.values() {
+            db.execute(
+                "DELETE FROM index_operation_receipts WHERE id=?1 AND kind=?2",
+                params![slot_row(*digest)?.to_string(), SLOT_KIND],
+            )?;
+        }
+        let id = operation.to_string();
+        if extraction {
+            db.execute(
+                "DELETE FROM index_split_extraction_policies WHERE operation_id=?1",
+                [&id],
+            )?;
+        }
+        for table in [
+            "index_split_recoveries",
+            "index_split_jobs",
+            "index_split_history",
+            "index_split_participants",
+            "index_split_operations",
+        ] {
+            db.execute(&format!("DELETE FROM {table} WHERE operation_id=?1"), [&id])?;
+        }
+        deleted += 1;
+    }
+    Ok(deleted)
+}

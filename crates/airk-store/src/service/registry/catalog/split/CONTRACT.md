@@ -11,3 +11,20 @@ For ExistingNamedSet, the matching legacy project effect must retain the origina
 The existing immediate membership transaction enables the validated destination, applies unrelated reviewed project effects, creates/reuses the grouping, confirms both memberships, and advances the original split receipt atomically. Failure rolls all metadata back. Replay uses the original request key/operation; it does not infer authority from an existing same-name set. Grouped membership receipts use their new Core-documented digest domain. Neither grouping nor set deletion creates grants, rewrites selections/defaults or changes member lifecycle.
 
 DeleteProject remains the only set-deletion owner. It removes the set and its associations/preferences, preserving member definitions, source rows/files, stored publications, configuration, work/watch ownership and other memberships. Native grouping matrix tests cover signed/checked SQLite revisions, rollback, original-key replay, conflicts, existing-set scope preservation, empty/stale deletion and active-work preservation. Supervisor split qualification drives the full native split/fence/publication/funding pipeline and checks grouping plus member evidence before/after real fenced set deletion; running those selectors is required before claiming that outcome.
+
+## Finished-split pruning (record cleanups of 23 November 2026, item 2)
+
+At most 64 split operations are retained (`index_split_capacity`), and before
+change-log entry 68 part 4 nothing removed one. `finalization::prune_finished_splits`
+now deletes a split once it is finished for good: complete with its final
+funding acknowledgment and no attention, or canceled before its fence with its
+cleanup done (and its final plan, when it ran one, acknowledged). Neither can
+be reopened. A split with an active participant or a
+pending or running job is kept. Children are deleted before the operation,
+because every split table refers to it with `ON DELETE RESTRICT`: extraction
+policy, recoveries, jobs, history, its inactive participant rows, and its final
+plan, error, acknowledgment and slot receipts. The newest 8 finished splits
+are kept. Pruning runs in the registry's request-epoch pass
+(`catalog::record_pruning`) once 48 splits are retained, and the epoch rotates,
+so a pruned split's request and recovery keys expire. Test:
+`split::tests::more_than_64_splits_succeed_and_an_unfinished_split_survives`.

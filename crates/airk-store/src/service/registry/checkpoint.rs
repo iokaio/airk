@@ -681,7 +681,7 @@ fn capture_other_work(connection: &Connection, snapshot: &mut CheckpointSnapshot
     Ok(())
 }
 
-mod receipts;
+pub(in crate::service::registry) mod receipts;
 use receipts::capture_operation_receipts;
 #[cfg(test)]
 pub(crate) use receipts::terminal as terminal_operation_receipt;

@@ -1200,6 +1200,108 @@ mod tests {
         );
         Ok(())
     }
+    /// Record cleanups of 23 November 2026, item 1: terminal receipts are
+    /// pruned when a request epoch is issued, so the catalog keeps accepting
+    /// changes beyond its 1,024-row cap; unfinished receipts survive, the
+    /// newest stay answerable, and a pruned key expires instead of replaying.
+    #[test]
+    fn more_than_1024_catalog_mutations_succeed_and_unfinished_receipts_survive() -> Result<()> {
+        let (_root, mut registry) = setup()?;
+        // Unfinished work of two owners: never pruned, never counted as history.
+        let completion = Incarnation::from_bytes([200; 16]).to_string();
+        let foreign = Incarnation::from_bytes([201; 16]).to_string();
+        registry.connection.execute(
+            "INSERT INTO index_operation_receipts VALUES(?1,'catalog_source_completion','reserved',1,zeroblob(16384))",
+            [&completion],
+        )?;
+        registry.connection.execute(
+            "INSERT INTO index_operation_receipts VALUES(?1,'unknown_owner','prepared',1,X'7b7d')",
+            [&foreign],
+        )?;
+        let caller = Incarnation::from_bytes([5; 16]);
+        let mutate = |registry: &mut ServiceRegistry,
+                      n: u128,
+                      operation: CatalogOperation|
+         -> Result<(RequestKey, CatalogReceipt)> {
+            let (namespace, epoch) = registry.request_epoch()?;
+            let key = RequestKey {
+                namespace,
+                epoch,
+                nonce: Incarnation::from_bytes((n + 1000).to_be_bytes()),
+            };
+            let request = CatalogRequest {
+                caller,
+                key: key.clone(),
+                expected_catalog_revision: state(&registry.connection)?.revision,
+                operation,
+            };
+            Ok((key, apply(registry, &request)?))
+        };
+        let (first_key, _) = mutate(
+            &mut registry,
+            0,
+            CatalogOperation::CreateProject {
+                id: project(),
+                name: "Renamed 0".into(),
+            },
+        )?;
+        let mut last = None;
+        for n in 1..=1100u128 {
+            let revision: i64 = registry.connection.query_row(
+                "SELECT definition_revision FROM query_projects WHERE id=?1",
+                [project().to_string()],
+                |row| row.get(0),
+            )?;
+            last = Some(mutate(
+                &mut registry,
+                n,
+                CatalogOperation::RenameProject {
+                    id: project(),
+                    expected_definition_revision: CatalogRevision::try_from(u64::try_from(
+                        revision,
+                    )?)?,
+                    name: format!("Renamed {n}"),
+                },
+            )?);
+            let count: i64 = registry.connection.query_row(
+                "SELECT count(*) FROM index_operation_receipts",
+                [],
+                |row| row.get(0),
+            )?;
+            assert!(count < 1024, "receipt count {count} after mutation {n}");
+        }
+        for id in [&completion, &foreign] {
+            let kept: bool = registry.connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM index_operation_receipts WHERE id=?1)",
+                [id],
+                |row| row.get(0),
+            )?;
+            assert!(kept, "unfinished receipt {id} was pruned");
+        }
+        // The newest receipt stays answerable to its own retry.
+        let (last_key, last_receipt) = last.unwrap();
+        assert_eq!(
+            registry.catalog_receipt(caller, &last_key)?,
+            Some(last_receipt)
+        );
+        // The first receipt was pruned and its epoch rotated away: the key
+        // expires explicitly, and replaying it changes nothing.
+        assert!(first_key.epoch < registry.saved_request_epoch()?.1);
+        assert!(registry.catalog_receipt(caller, &first_key).is_err());
+        let replay = CatalogRequest {
+            caller,
+            key: first_key,
+            expected_catalog_revision: state(&registry.connection)?.revision,
+            operation: CatalogOperation::CreateProject {
+                id: project(),
+                name: "Renamed 0".into(),
+            },
+        };
+        let before = state(&registry.connection)?;
+        assert!(registry.catalog_preview(&replay).is_err());
+        assert_eq!(state(&registry.connection)?, before);
+        Ok(())
+    }
     #[test]
     fn source_pages_are_index_scoped_and_reject_records_larger_than_budget() -> Result<()> {
         let (_root, mut registry) = setup()?;

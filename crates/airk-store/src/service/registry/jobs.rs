@@ -394,15 +394,28 @@ impl ServiceRegistry {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let (count_full, pressure) = receipt_pressure(&transaction, needs_job)?;
-        if pressure {
-            let pinned = super::catalog::source_change::pinned_jobs(&transaction)?;
-            let pins =
-                serde_json::to_string(&pinned.iter().map(ToString::to_string).collect::<Vec<_>>())?;
-            let deleted = transaction.execute("DELETE FROM service_jobs WHERE seq IN(
+        // Catalog operation records share the request epoch; their retry keys
+        // expire by the same rotation (record cleanups of 23 November 2026).
+        let catalog_keys = if super::catalog::record_pruning::pressure(&transaction)? {
+            super::catalog::record_pruning::prune(&transaction)?
+        } else {
+            false
+        };
+        if pressure || catalog_keys {
+            let deleted = if pressure {
+                let pinned = super::catalog::source_change::pinned_jobs(&transaction)?;
+                let pins = serde_json::to_string(
+                    &pinned.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                )?;
+                let deleted = transaction.execute("DELETE FROM service_jobs WHERE seq IN(
                 SELECT seq FROM service_jobs WHERE state IN('succeeded','failed','canceled') AND (?1 IS NULL OR id<>?1)
                 AND id NOT IN(SELECT value FROM json_each(?2)) ORDER BY seq LIMIT 64)", params![protected.map(|id|id.to_string()),pins])?;
-            ensure!(deleted > 0 || !count_full, JobError::Capacity);
-            if deleted > 0 {
+                ensure!(deleted > 0 || !count_full, JobError::Capacity);
+                deleted
+            } else {
+                0
+            };
+            if deleted > 0 || catalog_keys {
                 let epoch: i64 = transaction.query_row(
                     "SELECT request_epoch FROM service_meta WHERE id=1",
                     [],
@@ -426,6 +439,7 @@ impl ServiceRegistry {
     pub fn maintain_job_receipts(&mut self) -> Result<()> {
         let observation = self.connection.unchecked_transaction()?;
         let (_, pressure) = receipt_pressure(&observation, false)?;
+        let pressure = pressure || super::catalog::record_pruning::pressure(&observation)?;
         observation.commit()?;
         if pressure {
             // Recheck after obtaining exclusion: the observation grants no authority.
