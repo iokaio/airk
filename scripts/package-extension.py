@@ -63,6 +63,7 @@ MODULES = ("extension.js", "extensionUpdateLoader.js", "uninstallHook.js", "serv
            "indexingCatalog.js", "indexingSplit.js", "indexingCatalogController.js",
            "indexLibrary.js",
            "workbenchView.js", "workbenchContracts.js", "workbenchRender.js", "workbenchAnswerNavigation.js", "sharedCapabilityFields.js",
+           "answerDeadline.js", "answerPresentation.js", "workbenchAnswerClient.js",
            "workbenchSessions.js", "workbenchStrategies.js")
 # esbuild outputs; referenced by URI or path from host modules, never require()d.
 BUNDLES = ("explorerWebview.js", "explorerWebview.css", "explorerAssistance.js", "workbenchWebview.js", "workbenchWebview.css", "help-manifest.json")
