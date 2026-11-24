@@ -657,8 +657,9 @@ def operations():
         ("agents.endpoint", "AgentEndpoint", MGMT),
         # Local trust plan B: the connection reads (agents.connection, .ownership,
         # .verify) were removed with the credential.
-        ("https.trust_status", "HttpTrust.Inspect", MGMT),
-        ("https.rotation_status", "HttpIssuerRotation.Status", MGMT), ("models.catalog", "ModelCatalog", MGMT),
+        # Local trust plan C: https.trust_status and https.rotation_status were
+        # removed with the loopback issuer.
+        ("models.catalog", "ModelCatalog", MGMT),
         ("indexes.resolve", "ResolveProject", ["pipe", "airkctl", "session"]),
     ]
     for operation, method, surfaces in reads:
@@ -721,7 +722,6 @@ NEVER = [
      "reason": "Actual native worker and redeemed source authority are owner-pipe internal only."},
     {"item": "bearer_credentials", "methods": [],
      "reason": "Bearer tokens and credential files never leave the owner plane."},
-    {"item": "private_keys", "methods": [], "reason": "TLS leaf and issuer private keys."},
     {"item": "connection_grants", "methods": ["Connect", "ConnectScoped"], "reason": "Raw ConnectionGrant."},
     {"item": "upgrade_checkpoints", "methods": ["PrepareUpgradeCheckpoint", "ObserveUpgradeCheckpoint",
                                                 "UpgradeRecoveryProbe", "ReleaseUpgradeAdmission"],
@@ -731,9 +731,6 @@ NEVER = [
      "reason": "Ending every admin session after a suspected leak is an owner-pipe method (L4)."},
     {"item": "window_leases", "methods": ["WindowOpen", "WindowRenew", "WindowClose", "AssistanceDrain",
                                           "HandoffPublish"], "reason": "W1-W3, W7-W8 carry a window lease."},
-    {"item": "certificate_trust_changes", "methods": ["HttpIssuerRotation.Stage", "HttpIssuerRotation.Commit",
-                                                      "HttpIssuerRotation.Finalize"],
-     "reason": "Trust install/remove are offline airkctl operations; rotation stages trust (L8). Status only."},
     {"item": "uninstall_and_setup_role", "methods": [], "reason": "Installer and setup role only."},
     {"item": "raw_relay", "methods": [], "reason": "`airkctl service rpc` is an owner-pipe raw relay."},
 ]
@@ -769,8 +766,6 @@ def invalid_tables():
               {**read, "plane": "evidence", "conformance": ["P3", "P5", "P6", "P8"]})
     yield bad("admin_launch_code_row", "never_over_http",
               {**good, "operation": "admin.launch_code", "method": "AdminLaunchCode"})
-    yield bad("admin_rotation_commit", "never_over_http",
-              {**good, "operation": "https.rotation_commit", "method": "HttpIssuerRotation.Commit"})
     yield bad("admin_action_of_never_method", "never_over_http",
               {**good, "operation": "agents.connect", "method": "Connect.Project"})
     keyed_rule = {"mode": "generate", "caller": "caller", "key": "key"}

@@ -30,8 +30,8 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Capabilities of the served operations of this build (contracts §3.5); an
 /// unserved operation's capability is absent. `window-scope/1`: W4 and
 /// single-index reads under it (selection authority S1b). Not yet:
-/// `assistance/1` (Phase 5), `handoff/1` (M12), `offline-recovery/1` (trust
-/// and issuer recovery, 3e.5; login status, Phase 7).
+/// `assistance/1` (Phase 5), `handoff/1` (M12), `offline-recovery/1` (login
+/// status, Phase 7).
 const CAPABILITIES: &[&str] = &[
     "session/2",
     "events/1",
@@ -235,7 +235,7 @@ enum Command {
         #[arg(long)]
         runtime_dir: Option<PathBuf>,
     },
-    /// The AIRK service: start, stop, status, logs, requests, trust and management.
+    /// The AIRK service: start, stop, status, logs, requests and management.
     Service {
         #[command(subcommand)]
         action: ServiceCommand,
@@ -407,18 +407,6 @@ enum AgentsCommand {
     },
 }
 
-#[derive(Clone, Copy, clap::ValueEnum)]
-enum TrustAction {
-    Inspect,
-    Install,
-    Remove,
-}
-
-#[derive(Clone, Copy, clap::ValueEnum)]
-enum IssuerRotationAction {
-    Status,
-}
-
 #[derive(clap::Args)]
 struct ExplorerIo {
     /// Tool arguments as one JSON object, exactly as for the MCP tool of the same name.
@@ -583,7 +571,7 @@ enum RequestsCommand {
 #[derive(Subcommand)]
 #[command(disable_help_subcommand = true)]
 enum ServiceCommand {
-    /// Register this extracted portable runtime without login startup, trust, or automatic start.
+    /// Register this extracted portable runtime without login startup or automatic start.
     Setup {
         #[arg(long, required_unless_present = "resume")]
         portable: bool,
@@ -622,7 +610,7 @@ enum ServiceCommand {
         runtime_dir: Option<PathBuf>,
     },
     /// Remove this AIRK Service installation through its signed setup step: stop the service,
-    /// remove login startup, the certificate trust it added, and the install pointer and record.
+    /// remove login startup, the certificate trust an older HTTPS build added, and the install pointer and record.
     ///
     /// Index data, service state, cache and logs are kept unless --purge-indexes. airkctl hands
     /// the work to setup and exits; `airkctl service status` and the printed receipt report the
@@ -654,27 +642,6 @@ enum ServiceCommand {
         output_file: Option<PathBuf>,
         #[arg(long, default_value = "json", value_parser = ["json", "text"])]
         format: String,
-    },
-    /// This installation's HTTPS issuer in your OS trust store; works while the service is down.
-    ///
-    /// install and remove need --expected-ca-sha256, the reviewed issuer digest that inspect
-    /// prints; the OS may ask you to confirm.
-    Trust {
-        /// The service's control directory (default: --service-runtime-dir, else the installation's).
-        #[arg(long)]
-        runtime_dir: Option<PathBuf>,
-        #[arg(value_enum)]
-        action: TrustAction,
-        #[arg(long)]
-        expected_ca_sha256: Option<airk_core::identity::Sha256Digest>,
-    },
-    /// The saved HTTPS issuer rotation and current endpoint (status only in this version).
-    IssuerRotation {
-        /// The service's control directory (default: --service-runtime-dir, else the installation's).
-        #[arg(long)]
-        runtime_dir: Option<PathBuf>,
-        #[arg(value_enum)]
-        action: IssuerRotationAction,
     },
     /// Mark a stuck stop or restart record abandoned (U80); a finished record is printed unchanged.
     AbandonLifecycle {
@@ -3083,45 +3050,6 @@ fn service(cx: &mut Context, mut selection: Selection, action: ServiceCommand) -
             stdin,
         } => {
             return rpc_service(cx, selection, runtime_dir, request_file, stdin);
-        }
-        ServiceCommand::Trust {
-            runtime_dir,
-            action,
-            expected_ca_sha256,
-        } => {
-            let control = match runtime_dir.or(selection.control.clone()) {
-                Some(control) => control,
-                None => match installed(cx) {
-                    Ok(verified) => PathBuf::from(&verified.record.locations.state),
-                    Err(code) => return code,
-                },
-            };
-            use airk_process::cert_trust::Action;
-            let action = match action {
-                TrustAction::Inspect => Action::Inspect,
-                TrustAction::Install => Action::Install,
-                TrustAction::Remove => Action::Remove,
-            };
-            return match crate::trust::trust(&control, action, expected_ca_sha256) {
-                Ok(value) => json_line(cx, &value),
-                Err(line) => fail(cx, &line),
-            };
-        }
-        ServiceCommand::IssuerRotation {
-            runtime_dir,
-            action: IssuerRotationAction::Status,
-        } => {
-            let control = match runtime_dir.or(selection.control.clone()) {
-                Some(control) => control,
-                None => match installed(cx) {
-                    Ok(verified) => PathBuf::from(&verified.record.locations.state),
-                    Err(code) => return code,
-                },
-            };
-            return match crate::rotation::status(&control, VERSION) {
-                Ok(value) => json_line(cx, &value),
-                Err(line) => fail(cx, &line),
-            };
         }
         ServiceCommand::AbandonLifecycle {
             runtime_dir,

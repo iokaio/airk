@@ -15,7 +15,6 @@ pub enum RecoveryField {
     Cache,
     Logs,
     LoginStartup,
-    Trust,
     Start,
     PlacementRequired,
     CompletionRequired,
@@ -37,7 +36,6 @@ impl std::str::FromStr for RecoveryField {
             "cache" => Self::Cache,
             "logs" => Self::Logs,
             "login-startup" => Self::LoginStartup,
-            "trust" => Self::Trust,
             "start" => Self::Start,
             "placement-required" => Self::PlacementRequired,
             "completion-required" => Self::CompletionRequired,
@@ -61,7 +59,6 @@ impl RecoveryField {
             Self::Cache => "cache",
             Self::Logs => "logs",
             Self::LoginStartup => "login-startup",
-            Self::Trust => "trust",
             Self::Start => "start",
             Self::PlacementRequired => "placement-required",
             Self::CompletionRequired => "completion-required",
@@ -241,7 +238,6 @@ pub(super) fn emit(request: &SetupRequest, field: RecoveryField, clock: Clock) -
         RecoveryField::Cache => setup.operation.locations.cache.clone(),
         RecoveryField::Logs => setup.operation.locations.logs.clone(),
         RecoveryField::LoginStartup => setup.operation.options.login_startup.to_string(),
-        RecoveryField::Trust => scalar(setup.operation.options.trust)?,
         RecoveryField::Start => setup.operation.options.start.to_string(),
         RecoveryField::PlacementRequired => {
             if plan::removes(setup.operation.kind) {

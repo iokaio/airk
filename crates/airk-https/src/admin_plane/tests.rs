@@ -243,9 +243,9 @@ fn the_reviewed_table_validates_and_names_control_methods() {
     let health = serde_json::to_value(ControlMethod::Health).unwrap();
     assert!(operations::names("Health", &health));
     assert!(!operations::names("Resources", &health));
-    let status = json!({"http_issuer_rotation": {"action": "status"}});
-    assert!(operations::names("HttpIssuerRotation.Status", &status));
-    assert!(!operations::names("HttpIssuerRotation.Commit", &status));
+    let stop = json!({"lifecycle": {"action": "stop"}});
+    assert!(operations::names("Lifecycle.Stop", &stop));
+    assert!(!operations::names("Lifecycle.Restart", &stop));
     let launch = serde_json::to_value(ControlMethod::AdminLaunchCode {}).unwrap();
     assert!(table.never_over_http(&launch));
     assert!(!table.never_over_http(&health));
@@ -1158,10 +1158,7 @@ fn grants_end_with_their_session_and_never_cross_instances() {
 #[test]
 fn rows_without_a_control_method_follow_the_reviewed_mapping() {
     use operations::{MAPPINGS, Served, served};
-    let expected: [(&str, Served); 2] = [
-        ("LogsExport", Served::Equivalent("Logs")),
-        ("HttpTrust.Inspect", Served::TrustInspect),
-    ];
+    let expected: [(&str, Served); 1] = [("LogsExport", Served::Equivalent("Logs"))];
     assert_eq!(MAPPINGS, expected);
     // A name is a `ControlMethod` variant when decoding it fails for a
     // reason other than an unknown variant.
@@ -1187,9 +1184,6 @@ fn rows_without_a_control_method_follow_the_reviewed_mapping() {
                 assert!(!is_variant(&row.method), "{}", row.operation);
                 assert!(is_variant(method), "{}", row.operation);
             }
-            Served::TrustInspect => {
-                assert!(!is_variant(&row.method), "{}", row.operation)
-            }
         }
     }
 }
@@ -1209,32 +1203,6 @@ async fn mapped_rows_are_served_by_their_mapping() {
     .await;
     assert_eq!(status, 409);
     assert_eq!(*sent.lock().unwrap(), [logs]);
-    // Trust inspection takes exactly its body; this plane has no inspector.
-    let (status, _) = envelope(
-        &plane,
-        api_call(
-            &cookie,
-            &csrf,
-            "https.trust_status",
-            r#"{"http_trust":{"action":"install"}}"#,
-        ),
-    )
-    .await;
-    assert_eq!(status, 400);
-    let (status, reply) = envelope(
-        &plane,
-        api_call(
-            &cookie,
-            &csrf,
-            "https.trust_status",
-            r#"{"http_trust":{"action":"inspect"}}"#,
-        ),
-    )
-    .await;
-    assert_eq!(
-        (status, error_code(&reply).as_str()),
-        (503, "not_yet_served")
-    );
     assert_eq!(sent.lock().unwrap().len(), 1);
 }
 

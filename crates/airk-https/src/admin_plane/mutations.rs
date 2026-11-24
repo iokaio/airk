@@ -461,9 +461,6 @@ pub(super) fn outcome(response: &ControlResponse) -> NativeOutcome {
         }
         ControlResponse::ToolCallFailed { .. } => NativeOutcome::Refused("tool_call_failed".into()),
         ControlResponse::AgentRefused { .. } => NativeOutcome::Refused("agent_refused".into()),
-        ControlResponse::HttpIssuerRotationRefused { .. } => {
-            NativeOutcome::Refused("http_issuer_rotation_refused".into())
-        }
         ControlResponse::ExplorerOfflineFailed { .. } => {
             NativeOutcome::Refused("explorer_offline_failed".into())
         }
@@ -537,7 +534,6 @@ pub(super) fn outcome(response: &ControlResponse) -> NativeOutcome {
         | ControlResponse::ToolResult { .. }
         | ControlResponse::AgentEndpoint { .. }
         | ControlResponse::WorkspaceScopeDefaults { .. }
-        | ControlResponse::HttpIssuerRotation { .. }
         | ControlResponse::LifecycleAbandoned { .. }
         | ControlResponse::StorageInventory { .. }
         | ControlResponse::StoragePurgePlan { .. }

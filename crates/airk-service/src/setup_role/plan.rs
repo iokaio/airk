@@ -72,9 +72,11 @@ pub(crate) enum Action {
     WritePointer,
     RegisterLogin,
     Start,
-    ApplyTrust,
+    /// Local trust plan C: remove an HTTPS build's owned CA from this user's
+    /// trust store and delete its TLS files (remove-only, in the user's
+    /// session; macOS may ask the user).
+    RetireLegacyTrust,
     UnregisterLogin,
-    RemoveTrust,
     RemovePointer,
     RemoveRecord,
     PurgeData,
@@ -111,10 +113,10 @@ pub(crate) fn purges(kind: OperationKind, options: &SetupOptions) -> bool {
 
 /// The complete ordered action list of an operation.
 ///
-/// Placing kinds start the service before applying trust: the HTTPS issuer
-/// that trust installs is created by the service on its first start, so the
-/// receipt records `started`/`healthy` before the trust phase (a recorded
-/// deviation from the §5.6 table order; each phase is still separate).
+/// Placing kinds retire an HTTPS build's trust (local trust plan C) after
+/// the drain and placement and before the start, so the new service never
+/// sees the old TLS files; removing kinds retire it where the trust removal
+/// used to run.
 pub(crate) fn actions(
     kind: OperationKind,
     options: &SetupOptions,
@@ -129,7 +131,7 @@ pub(crate) fn actions(
             Lock,
             Drain,
             UnregisterLogin,
-            RemoveTrust,
+            RetireLegacyTrust,
             RemovePointer,
             RemoveRecord,
         ];
@@ -150,10 +152,11 @@ pub(crate) fn actions(
     if options.login_startup {
         list.push(RegisterLogin);
     }
+    list.push(RetireLegacyTrust);
     if options.start {
         list.push(Start);
     }
-    list.extend([ApplyTrust, Close]);
+    list.push(Close);
     Ok(list)
 }
 
@@ -278,11 +281,8 @@ pub(crate) fn satisfied(action: Action, kind: OperationKind, recorded: &[SetupPh
             has(P::LoginRegistered) || has(P::LoginFailed) || has(P::LoginUnsupported)
         }
         Action::Start => has(P::Healthy),
-        Action::ApplyTrust => {
-            has(P::TrustApplied) || has(P::TrustDeclined) || has(P::TrustUnsupported)
-        }
+        Action::RetireLegacyTrust => has(P::LegacyTrustRetired),
         Action::UnregisterLogin => has(P::LoginUnregistered),
-        Action::RemoveTrust => has(P::TrustRemoved),
         Action::RemovePointer => has(P::PointerRemoved),
         Action::RemoveRecord => has(P::RecordRemoved),
         Action::PurgeData => has(P::DataPurged),

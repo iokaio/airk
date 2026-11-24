@@ -47,8 +47,6 @@ pub mod state_contract;
 pub use state_contract::InitializedProbe;
 pub mod upgrade_stop;
 pub use managed::ManagedLifecycle;
-pub mod http_rotation;
-mod issuer_lifecycle;
 pub mod legacy_caches;
 pub mod legacy_launchers;
 pub mod legacy_maintenance;
@@ -110,23 +108,6 @@ pub enum VerificationBasis {
 
 #[derive(Subcommand)]
 pub enum RuntimeCommand {
-    /// Explicitly stage, commit or finalize an authenticated local issuer rotation.
-    HttpIssuerRotation {
-        #[arg(long)]
-        install_dir: PathBuf,
-        #[arg(long, value_enum)]
-        action: HttpIssuerRotationAction,
-        #[arg(long)]
-        operation_id: Option<airk_core::identity::Incarnation>,
-        #[arg(long)]
-        expected_ca_sha256: Option<airk_core::identity::Sha256Digest>,
-        #[arg(long)]
-        expected_descriptor_sha256: Option<airk_core::identity::Sha256Digest>,
-        #[arg(long)]
-        expected_receipt_sha256: Option<airk_core::identity::Sha256Digest>,
-        #[arg(long, default_value_t = 86400, value_parser = clap::value_parser!(u32).range(60..=86400))]
-        overlap_seconds: u32,
-    },
     /// Read the owner-authenticated local HTTPS endpoint without enrolling a client.
     HttpEndpoint {
         #[arg(long)]
@@ -145,15 +126,6 @@ pub enum RuntimeCommand {
         purpose: String,
         #[arg(long)]
         predecessor: String,
-    },
-    /// Inspect or explicitly manage this native issuer in the current user's trust store.
-    HttpTrust {
-        #[arg(long)]
-        install_dir: PathBuf,
-        #[arg(long, value_enum)]
-        action: HttpTrustAction,
-        #[arg(long,required_if_eq_any=[("action","install"),("action","remove")])]
-        expected_ca_sha256: Option<airk_core::identity::Sha256Digest>,
     },
     /// Through 1.9.0: remove earlier AIRK state before a fresh empty install.
     /// Explicit same-build installs require full uninstall at every version.
@@ -737,23 +709,6 @@ pub(crate) const INSTALLATION_PROBE: airk_host::user_paths::InstallationProbe =
 /// Native user paths for `channel`, with this installer's layout facts.
 pub fn discover_user_paths(channel: RuntimeChannel) -> Result<airk_host::user_paths::UserPaths> {
     airk_host::user_paths::UserPaths::discover(channel, INSTALLATION_PROBE)
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
-pub enum HttpIssuerRotationAction {
-    Status,
-    Prepare,
-    TrustNew,
-    Commit,
-    Finalize,
-    Abort,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
-pub enum HttpTrustAction {
-    Inspect,
-    Install,
-    Remove,
 }
 
 #[derive(Subcommand)]
@@ -2669,29 +2624,10 @@ pub fn quiescent(root: &Path) -> Result<Quiescence> {
     })
 }
 
-/// Call under the installer lock before accepting any competing installer
-/// transaction. Ordinary Start and the issuer operation itself do not use it.
-pub fn require_issuer_rotation_settled(root: &Path) -> Result<()> {
-    if let Some(control) = airk_host::install_layout::issuer_rotation_control(root)?
-        && let Some(record) = airk_endpoint::http_endpoint::rotation::read(&control)?
-    {
-        ensure!(
-            matches!(
-                record.phase,
-                airk_endpoint::http_endpoint::rotation::Phase::Finalized
-                    | airk_endpoint::http_endpoint::rotation::Phase::Aborted
-            ),
-            "issuer_rotation_pending_before_runtime_mutation: finish or abort the exact issuer operation first"
-        );
-    }
-    Ok(())
-}
-
 /// Public manager registration/policy mutations must not invalidate a native
 /// operation's captured supervisor. Stop and exact internal recovery retain
 /// their separate ownership checks and do not call this admission gate.
 pub fn require_manager_change_settled(root: &Path) -> Result<()> {
-    require_issuer_rotation_settled(root)?;
     legacy_maintenance::require_settled(root)
 }
 
@@ -2725,7 +2661,6 @@ pub async fn activate_rebuilding_reviewed(
     if activation::rebuild::pending(root)? || activation::rebuild::repair_pending(root, identity)? {
         return activation::rebuild::activate(root, identity, expected).await;
     }
-    require_issuer_rotation_settled(root)?;
     retirement::require_previous_settled(root)?;
     legacy_launchers::require_settled(root)?;
     payload_repair::require_settled(root)?;
@@ -2789,7 +2724,6 @@ async fn activate_with_expected(
     if activation::selection(root)?.is_some() {
         state_contract::candidate(root, identity)?;
     }
-    require_issuer_rotation_settled(root)?;
     retirement::require_previous_settled(root)?;
     legacy_launchers::require_settled(root)?;
     if let Some(expected) = expected

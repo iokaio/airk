@@ -519,7 +519,9 @@ pub(super) async fn detach(root: &Path) -> Result<serde_json::Value> {
         None
     };
     if policy.lifecycle == ManagedLifecycle::UserOnDemand {
-        airk_endpoint::http_endpoint::trust::remove_owned(
+        // Local trust plan C: an old HTTPS installation's owned CA and TLS
+        // files are retired by the remove-only legacy retirer.
+        airk_endpoint::http_endpoint::legacy_trust::retire(
             &airk_host::install_layout::saved_control(root)?,
         )?;
     }

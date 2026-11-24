@@ -344,7 +344,6 @@ impl AdminPlane {
             secrets: self.secrets.clone(),
             native: self.native.clone(),
             scope_check: self.scope_check.clone(),
-            trust_inspect: self.trust_inspect.clone(),
             selection: self.selection.clone(),
             selection_reader,
             delivery_guard_factory: self.delivery_guard_factory.clone(),

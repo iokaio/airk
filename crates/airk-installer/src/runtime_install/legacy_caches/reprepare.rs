@@ -177,7 +177,6 @@ pub fn reprepare(
     let root = root.canonicalize()?;
     let _lock = existing_install_lock(&root)?;
     selected(&root, expected)?;
-    require_issuer_rotation_settled(&root)?;
     activation::require_settled(&root)?;
     payload_repair::require_settled(&root)?;
     lifecycle::require_settled(&root)?;

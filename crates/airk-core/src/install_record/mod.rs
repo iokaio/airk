@@ -213,13 +213,6 @@ pub struct Acknowledgements {
     pub index_reset: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TrustChoice {
-    Ask,
-    Skip,
-}
-
 /// Index handling on uninstall (U32): ask, keep (unattended default) or purge.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -233,7 +226,6 @@ pub enum IndexDeletion {
 #[serde(deny_unknown_fields)]
 pub struct SetupOptions {
     pub login_startup: bool,
-    pub trust: TrustChoice,
     pub start: bool,
     pub delete_indexes: IndexDeletion,
 }
@@ -294,8 +286,8 @@ pub struct StartRequest {
 }
 
 /// Durable phases of one setup transaction (plan §9.6), in order. Login,
-/// trust and readiness are recorded separately so one success cannot hide
-/// another's failure.
+/// the legacy trust retirement and readiness are recorded separately so one
+/// success cannot hide another's failure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SetupPhase {
@@ -310,14 +302,13 @@ pub enum SetupPhase {
     /// This platform's login startup is not implemented by this build; the
     /// step's detail names why (Phase 7).
     LoginUnsupported,
-    TrustApplied,
-    TrustDeclined,
-    TrustUnsupported,
+    /// Local trust plan C: the remove-only retirement of an HTTPS build's
+    /// owned CA and TLS files (placing and removing kinds alike).
+    LegacyTrustRetired,
     Started,
     Healthy,
     // Uninstall and purge (U20, U32): each removal is recorded separately.
     LoginUnregistered,
-    TrustRemoved,
     PointerRemoved,
     RecordRemoved,
     /// Only with `delete_indexes: purge` or the `purge` kind.
@@ -535,7 +526,6 @@ impl SetupOperation {
                 operation.kind,
                 OperationKind::Install | OperationKind::Repair | OperationKind::Upgrade
             ) || operation.options.login_startup
-                || operation.options.trust != TrustChoice::Skip
                 || operation.options.start
                 || operation.options.delete_indexes != IndexDeletion::Keep)
         {

@@ -720,7 +720,6 @@ fn predecessor_stop_allows_reset(
 async fn advance(root: &Path, journal: &mut Journal) -> Result<Selection> {
     journal.validate(root)?;
     require_candidate(root, &journal.candidate)?;
-    require_issuer_rotation_settled(root)?;
     if !journal.clean_break {
         lifecycle::require_settled(root)?;
     }
@@ -742,7 +741,6 @@ async fn advance(root: &Path, journal: &mut Journal) -> Result<Selection> {
                 airk_host::install_layout::saved_control(root)? == journal.old_control,
                 "rebuild original control changed"
             );
-            require_issuer_rotation_settled(root)?;
             payload_repair::require_settled(root)?;
             launcher_repair::require_settled(root)?;
             if journal.manager {

@@ -331,7 +331,6 @@ pub fn inspect(
     }
     let plan = capture(root, expected, context, input)?;
     if prepare {
-        require_issuer_rotation_settled(root)?;
         activation::require_settled(root)?;
         payload_repair::require_settled(root)?;
         save(
@@ -424,7 +423,6 @@ pub fn retire(root: &Path, expected: &str, inspection_sha: &str) -> Result<serde
     let root = canonical.as_path();
     let _lock = existing_install_lock(root)?;
     selected(root, expected)?;
-    require_issuer_rotation_settled(root)?;
     activation::require_settled(root)?;
     payload_repair::require_settled(root)?;
     lifecycle::require_settled(root)?;

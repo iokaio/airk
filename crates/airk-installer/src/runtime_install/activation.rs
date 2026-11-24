@@ -4,6 +4,7 @@ use super::*;
 
 mod catalog_upgrade;
 mod checkpoint;
+#[cfg(test)]
 pub(super) use checkpoint::prepare_native_checkpoint;
 pub mod rebuild;
 pub(super) use rebuild::SuccessorPermit;
@@ -594,7 +595,6 @@ pub(super) async fn resume(root: &Path) -> Result<()> {
         rebuild::resume(root).await?;
         return Ok(());
     }
-    require_issuer_rotation_settled(root)?;
     let mut intent = pending(root)?.context("no pending activation")?;
     result(root)?;
     let fresh = intent.phase == Phase::Probe && intent.prior.is_none();
@@ -857,7 +857,6 @@ pub(super) async fn begin(root: &Path, candidate: &str) -> Result<Selection> {
     if rebuild::pending(root)? {
         return rebuild::resume(root).await;
     }
-    require_issuer_rotation_settled(root)?;
     managed::require_unmanaged(root)?;
     verify_runtime(root, candidate)?;
     ensure!(
@@ -911,7 +910,6 @@ pub(super) async fn begin(root: &Path, candidate: &str) -> Result<Selection> {
 }
 
 pub async fn abort(root: &Path) -> Result<()> {
-    require_issuer_rotation_settled(root)?;
     let Some(mut intent) = pending(root)? else {
         return Ok(());
     };

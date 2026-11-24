@@ -239,7 +239,6 @@ fn validate(
 }
 
 pub fn abort(root: &Path, identity: &str) -> Result<()> {
-    require_issuer_rotation_settled(root)?;
     let (intent, inventory) = StageIntent::read(root, identity)?;
     let directory = intent.directory(root);
     if directory.try_exists()? {
@@ -328,7 +327,6 @@ pub(super) fn stage_locked_with_verifier(
     execution: (bool, impl FnOnce(&Path) -> Result<()>),
 ) -> Result<Approval> {
     let (launcher, verify) = execution;
-    require_issuer_rotation_settled(root)?;
     managed::require_unmanaged(root)?;
     ensure!(
         !root.join("uninstall.json").try_exists()?,

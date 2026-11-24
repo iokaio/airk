@@ -10,7 +10,7 @@ use airk_core::{
     identity::{Incarnation, Sha256Digest},
     install_record::{
         Acknowledgements, IndexDeletion, MAX_SETUP_OPERATION_LIFETIME_MS, OperationKind,
-        SETUP_OPERATION_SCHEMA, SetupOperation, SetupOptions, TrustChoice, canonical,
+        SETUP_OPERATION_SCHEMA, SetupOperation, SetupOptions, canonical,
     },
 };
 use serde_json::{Value, json};
@@ -77,7 +77,6 @@ pub fn operation(
         payload_inventory_sha256,
         options: SetupOptions {
             login_startup: false,
-            trust: TrustChoice::Skip,
             start: false,
             delete_indexes: if purge {
                 IndexDeletion::Purge

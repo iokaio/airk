@@ -3,8 +3,9 @@
 ; The installer only places the fixed section 9.5 layout and hands every other
 ; step to the signed airk image's private setup role (U15, U16, U33):
 ;   bin\airkctl.exe, service\airk.exe, notices\, payload-inventory.json.
-; Predecessor removal, login startup, certificate trust, the install record
-; and the install pointer belong to setup, never to this script.
+; Predecessor removal, login startup, the retirement of an older HTTPS
+; build's certificate trust, the install record and the install pointer
+; belong to setup, never to this script.
 ;
 ; Build through scripts/build-local-service-installer.py, which defines:
 ;   AirkVersion, AirkPayload (the staged layout), AirkOutput, AirkArtifact,
@@ -332,9 +333,9 @@ end;
 // setup folder and return its path. Setup refuses anything but these
 // canonical bytes.
 function WriteOperation(const Kind, Locations, InventorySha, DeleteIndexes: String;
-  Acknowledged, LoginStartup, Trust, Start: Boolean): String;
+  Acknowledged, LoginStartup, Start: Boolean): String;
 var
-  Folder, Id, Text, TrustChoice: String;
+  Folder, Id, Text: String;
   Created: Int64;
 begin
   Id := NewOperationId;
@@ -342,7 +343,6 @@ begin
   if not CreateDir(Folder) then
     RaiseException('AIRK could not create its setup operation folder ' + Folder);
   Created := UnixMillis;
-  if Trust then TrustChoice := 'ask' else TrustChoice := 'skip';
   Text := '{"schema":"airk-setup-operation/1","operation_id":"' + Id + '"' +
     ',"kind":"' + Kind + '"' +
     ',"created_unix_ms":' + IntToStr(Created) +
@@ -353,7 +353,6 @@ begin
     ',"locations":' + Locations +
     ',"payload_inventory_sha256":"' + InventorySha + '"' +
     ',"options":{"login_startup":' + JsonBool(LoginStartup) +
-    ',"trust":"' + TrustChoice + '"' +
     ',"start":' + JsonBool(Start) +
     ',"delete_indexes":"' + DeleteIndexes + '"}}' + #10;
   Result := Folder + '\operation.json';
@@ -439,7 +438,7 @@ var
   Operation, Json: String;
 begin
   Operation := WriteOperation('install', InstallLocations, '{#AirkInventorySHA}', 'keep',
-    False, False, False, False);
+    False, False, False);
   if RunSetup(PreflightImage(Operation), Operation, '--plan') <> 0 then
     RaiseException(SetupFailure(Operation));
   Text := ReadText(ExtractFileDir(Operation) + '\plan.txt');
@@ -724,7 +723,7 @@ begin
   for I := 1 to ParamCount do begin
     Arg := Uppercase(ParamStr(I));
     if (Pos('/DIR=', Arg) = 1) or (Pos('/DATA=', Arg) = 1) or
-       (Pos('/CACHE=', Arg) = 1) or (Pos('/TRUST', Arg) = 1) or
+       (Pos('/CACHE=', Arg) = 1) or
        (Pos('/ACKNOWLEDGE-RESET', Arg) = 1) or (Pos('/CLIALIAS', Arg) = 1) or
        (Pos('/NOCLIALIAS', Arg) = 1) or (Pos('/AUTOCLIALIAS', Arg) = 1) then
       RaiseException('/AIRKOPERATION resumes original locations and options; overrides are forbidden.');
@@ -754,9 +753,6 @@ begin
   if (Value <> 'true') and (Value <> 'false') then RaiseException('Invalid native completion observation.');
   RecoveryCompletion := Value = 'true';
   if RecoveryPlacement and (not RecoveryCompletion) then RaiseException('Native placement and completion observations conflict.');
-  if RecoveryCompletion and WizardSilent then
-    if RecoveryField(RecoveryOperation, 'trust') <> 'skip' then
-      RaiseException('The original request requires consent; resume interactively without --silent.');
 end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;
@@ -794,7 +790,7 @@ var
   Operation: String;
 begin
   Operation := WriteOperation('install', InstallLocations, '{#AirkInventorySHA}', 'keep',
-    False, True, False, True);
+    False, True, True);
   if RunSetup(PreflightImage(Operation), Operation, '--probe-cli-alias ' + Flags) <> 0 then
     RaiseException(SetupFailure(Operation));
   Result := Trim(ReadText(ExtractFileDir(Operation) + '\cli-alias-probe.txt'));
@@ -929,8 +925,8 @@ end;
 
 { Unattended installs take the same choices as arguments (section 9.1):
   /DIR=, /DATA=, /CACHE=, and /ACKNOWLEDGE-RESET when an earlier AIRK
-  installation will be removed; /TRUST asks for certificate trust (an
-  unattended install skips it by default because the OS asks for consent). }
+  installation will be removed. The local service is plain HTTP on
+  127.0.0.1, so there is no certificate trust to ask for. }
 function Acknowledged: Boolean;
 begin
   if WizardSilent then
@@ -942,7 +938,6 @@ end;
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   Text: String;
-  Trust: Boolean;
 begin
   Result := '';
   try
@@ -963,15 +958,9 @@ begin
         Result := Text + #13#10 + 'Pass /ACKNOWLEDGE-RESET to confirm this unattended install.';
         Exit;
       end;
-      Trust := False;
-      if ExpandConstant('{param:TRUST|0}') <> '0' then begin
-        Result := 'Certificate trust needs consent. Run interactive setup or omit /TRUST.';
-        Exit;
-      end;
-    end else
-      Trust := True;
+    end;
     SetupOperation := WriteOperation('install', InstallLocations, '{#AirkInventorySHA}', 'keep',
-      Acknowledged, True, Trust, True);
+      Acknowledged, True, True);
     AcquireWrapperLease(PreflightImage(SetupOperation), SetupOperation);
     { Retirement and the drain run before any file is replaced (section 9.6). }
     if RunSetup(PreflightImage(SetupOperation), SetupOperation, '--prepare ' + AliasFlags) <> 0 then
@@ -1106,7 +1095,7 @@ begin
       if Operation = '' then Operation := WriteOperation('uninstall',
         LocationsJson(RemoveBackslashUnlessRoot(ExpandConstant('{app}')),
           PreviousRoot('DataRoot'), PreviousRoot('CacheRoot')),
-        '{#AirkInventorySHA}', DeleteIndexes, False, False, False, False);
+        '{#AirkInventorySHA}', DeleteIndexes, False, False, False);
       if not FileExists(Operation) then RaiseException('The original uninstall operation is missing.');
       UninstallOperationSHA := GetSHA256OfFile(Operation);
       Image := RetainedInstalledImage(Operation);

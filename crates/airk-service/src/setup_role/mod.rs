@@ -31,7 +31,7 @@ use airk_core::{
         Contracts, Executable, Executables, InstallPointer, InstallRecord, InstalledBy, Installer,
         Leftover, MAX_REPLACEMENT_NOTICE_LIFETIME_MS, POINTER_SCHEMA, RECORD_FILE, RECORD_SCHEMA,
         REPLACEMENT_NOTICE_SCHEMA, ReplacementNotice, SETUP_RECEIPT_SCHEMA, SetupFailure,
-        SetupOperation, SetupPhase, SetupReceipt, SetupStep, Signing, TrustChoice, canonical,
+        SetupOperation, SetupPhase, SetupReceipt, SetupStep, Signing, canonical,
     },
 };
 use anyhow::{Context, Result, bail, ensure};
@@ -759,9 +759,8 @@ impl Setup {
             Action::WritePointer => self.write_pointer(),
             Action::RegisterLogin => self.register_login(),
             Action::Start => self.start(),
-            Action::ApplyTrust => self.apply_trust(),
+            Action::RetireLegacyTrust => self.retire_legacy_trust(),
             Action::UnregisterLogin => self.unregister_login(),
-            Action::RemoveTrust => self.remove_trust(),
             Action::RemovePointer => self.remove_pointer(),
             Action::RemoveRecord => self.remove_record(),
             Action::PurgeData => self.purge_data(),
@@ -1455,28 +1454,6 @@ impl Setup {
         }
     }
 
-    fn apply_trust(&mut self) -> Result<()> {
-        if self.operation.options.trust == TrustChoice::Skip {
-            return self.record(SetupPhase::TrustDeclined, "skipped", "trust: skip");
-        }
-        if self.host == Host::Linux {
-            return self.record(
-                SetupPhase::TrustUnsupported,
-                "unsupported",
-                "per-user certificate trust is not automatic on Linux",
-            );
-        }
-        match effects::apply_trust(&self.state()) {
-            Ok(Some(detail)) => self.record(SetupPhase::TrustApplied, "applied", detail),
-            Ok(None) => self.record(
-                SetupPhase::TrustDeclined,
-                "deferred",
-                "the HTTPS issuer exists after the service's first start; run `airkctl service trust install` then",
-            ),
-            Err(error) => self.record(SetupPhase::TrustDeclined, "failed", format!("{error:#}")),
-        }
-    }
-
     /// The installation identity a removal acts on (`None`: nothing installed).
     fn removal_target(&self) -> Option<(PathBuf, Incarnation)> {
         self.existing.as_ref().map(|installed| {
@@ -1518,27 +1495,37 @@ impl Setup {
         }
     }
 
-    fn remove_trust(&mut self) -> Result<()> {
+    /// Local trust plan C: retire an HTTPS build's owned CA and TLS files
+    /// (`http_endpoint::legacy_trust`). A portable installation owned no OS
+    /// trust; without an installation or a state root there is nothing to
+    /// retire. A failure leaves the CA and its receipt for review and is
+    /// recorded, never fatal.
+    fn retire_legacy_trust(&mut self) -> Result<()> {
         if self
             .existing
             .as_ref()
             .is_some_and(|installed| installed.record.installed_by.installer == Installer::Portable)
         {
             return self.record(
-                SetupPhase::TrustRemoved,
+                SetupPhase::LegacyTrustRetired,
                 "absent",
                 "portable installation owns no OS trust integration",
             );
         }
         if self.existing.is_none() {
-            return self.record(SetupPhase::TrustRemoved, "absent", "no installation");
+            return self.record(SetupPhase::LegacyTrustRetired, "absent", "no installation");
         }
-        match effects::remove_trust(&self.state()) {
-            Ok(detail) => self.record(SetupPhase::TrustRemoved, "removed", detail),
+        match effects::retire_legacy_trust(&self.state()) {
+            Ok((detail, residue)) => {
+                for item in residue {
+                    self.leave("user certificate trust", item, false);
+                }
+                self.record(SetupPhase::LegacyTrustRetired, "retired", detail)
+            }
             Err(error) => {
                 let reason = format!("{error:#}");
                 self.leave("user certificate trust", reason.clone(), false);
-                self.record(SetupPhase::TrustRemoved, "left", reason)
+                self.record(SetupPhase::LegacyTrustRetired, "left", reason)
             }
         }
     }

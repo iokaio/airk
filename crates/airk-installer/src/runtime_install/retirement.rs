@@ -354,7 +354,6 @@ pub async fn retire_previous(root: &Path, expected: &str) -> Result<serde_json::
     let root = canonical.as_path();
     let _lock = install_lock(root)?;
     activation::rebuild::require_retirement_allowed(root)?;
-    require_issuer_rotation_settled(root)?;
     managed::require_unmanaged(root)?;
     activation::require_settled(root)?;
     payload_repair::require_settled(root)?;
@@ -410,7 +409,6 @@ pub(super) fn retire_clean_break_locked_recording(
     record: &mut dyn FnMut(&serde_json::Value) -> Result<()>,
 ) -> Result<serde_json::Value> {
     activation::rebuild::require_retirement_allowed(root)?;
-    require_issuer_rotation_settled(root)?;
     managed::require_unmanaged(root)?;
     activation::require_settled(root)?;
     payload_repair::require_settled(root)?;
@@ -489,7 +487,6 @@ fn preflight_remove(root: &Path, identity: &str) -> Result<()> {
 }
 
 fn remove_with(root: &Path, identity: &str, perform: bool) -> Result<()> {
-    require_issuer_rotation_settled(root)?;
     let mut inventory = validated_inventory(root, identity)?;
     airk_host::process_roles::inventory(&mut inventory.files);
     // Preflight ancillary receipts before deleting any payload bytes. This also
@@ -673,7 +670,6 @@ fn uninstall_process_paths(root: &Path, runtimes: &[String]) -> Result<Vec<PathB
 }
 
 pub async fn uninstall(root: &Path) -> Result<serde_json::Value> {
-    require_issuer_rotation_settled(root)?;
     if managed::is_configured(root)? {
         return managed::detach(root).await;
     }
@@ -746,7 +742,8 @@ pub async fn uninstall(root: &Path) -> Result<serde_json::Value> {
     crate::universal_launcher::retire_for(root, channel)?;
     let _quiescence = quiescent(root)
         .context("service/project/embedding ownership must release before runtime removal")?;
-    airk_endpoint::http_endpoint::trust::remove_owned(&airk_host::install_layout::saved_control(
+    // Local trust plan C: an old HTTPS installation's owned CA and TLS files.
+    airk_endpoint::http_endpoint::legacy_trust::retire(&airk_host::install_layout::saved_control(
         root,
     )?)?;
     let selected = root.join("selected.json");

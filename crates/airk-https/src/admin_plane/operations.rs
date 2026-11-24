@@ -61,17 +61,10 @@ pub(super) enum Served {
     /// The implemented `ControlMethod` with the same result; the request body
     /// is that method's JSON.
     Equivalent(&'static str),
-    /// `https.trust_status`: the read-only trust inspection `airk runtime
-    /// http-trust --action inspect` ran, through the same callers, in the
-    /// service. Its body is exactly `{"http_trust":{"action":"inspect"}}`.
-    TrustInspect,
 }
 
 /// The reviewed mapping of table methods that name no `ControlMethod`.
-pub(super) const MAPPINGS: &[(&str, Served)] = &[
-    ("LogsExport", Served::Equivalent("Logs")),
-    ("HttpTrust.Inspect", Served::TrustInspect),
-];
+pub(super) const MAPPINGS: &[(&str, Served)] = &[("LogsExport", Served::Equivalent("Logs"))];
 
 /// How the row whose table `method` is `method` is served.
 pub(super) fn served(method: &str) -> Served {
@@ -99,7 +92,7 @@ pub(super) fn snake(name: &str) -> String {
 
 /// Whether the canonical JSON of a decoded `ControlMethod` is the table's
 /// `method`: a variant (`Health`), or one action of it
-/// (`HttpIssuerRotation.Status`, matched on its `action` field).
+/// (`Lifecycle.Stop`, matched on its `action` field).
 pub(super) fn names(method: &str, encoded: &Value) -> bool {
     let (variant, action) = match method.split_once('.') {
         Some((variant, action)) => (variant, Some(action)),

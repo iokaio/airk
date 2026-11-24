@@ -171,9 +171,6 @@ if [ -n "$resume" ]; then
     completion_required=$(recovery_field completion-required) || fail 'original native completion could not be reconciled.'
     case $completion_required in true|false) ;; *) fail 'invalid native completion observation.' ;; esac
     [ "$placement_required" = false ] || [ "$completion_required" = true ] || fail 'native placement/completion observation conflicts.'
-    if [ "$completion_required" = true ] && [ "$unattended" = true ]; then
-        [ "$(recovery_field trust)" = skip ] || fail 'the original request requires consent; resume interactively without --silent.'
-    fi
     id=$(recovery_field operation-id) || fail 'original operation identity was refused.'
 fi
 
@@ -231,7 +228,7 @@ j_state=$(json_path "$state")
 j_cache=$(json_path "$cache")
 j_logs=$(json_path "$logs")
 sequence=0
-write_operation() { # kind acknowledged login trust start
+write_operation() { # kind acknowledged login start
     sequence=$((sequence + 1))
     folder="$work/operation-$sequence"
     /bin/mkdir -m 700 "$folder"
@@ -241,9 +238,9 @@ write_operation() { # kind acknowledged login trust start
     [[ ${#id} -eq 32 ]] || fail 'could not create an operation identity.'
     created=$(( $(/bin/date +%s) * 1000 ))
     operation="$folder/operation.json"
-    printf '{"schema":"airk-setup-operation/1","operation_id":"%s","kind":"%s","created_unix_ms":%s,"expires_unix_ms":%s,"requested_by":"dmg","acknowledgements":{"predecessor_removal":%s,"index_reset":%s},"locations":{"program":"%s","data":"%s","state":"%s","cache":"%s","logs":"%s"},"payload_inventory_sha256":"%s","options":{"login_startup":%s,"trust":"%s","start":%s,"delete_indexes":"keep"}}\n' \
+    printf '{"schema":"airk-setup-operation/1","operation_id":"%s","kind":"%s","created_unix_ms":%s,"expires_unix_ms":%s,"requested_by":"dmg","acknowledgements":{"predecessor_removal":%s,"index_reset":%s},"locations":{"program":"%s","data":"%s","state":"%s","cache":"%s","logs":"%s"},"payload_inventory_sha256":"%s","options":{"login_startup":%s,"start":%s,"delete_indexes":"keep"}}\n' \
         "$id" "$1" "$created" "$((created + 600000))" "$2" "$2" \
-        "$j_program" "$j_data" "$j_state" "$j_cache" "$j_logs" "$inventory_sha256" "$3" "$4" "$5" > "$operation"
+        "$j_program" "$j_data" "$j_state" "$j_cache" "$j_logs" "$inventory_sha256" "$3" "$4" > "$operation"
     /bin/cp "$operation" "$folder/operation-request.json"
     recovery_request="$folder/operation-request.json"
 }
@@ -286,7 +283,7 @@ if [ -n "$resume" ]; then
         run_setup "$image" --prepare || { setup_failure; fail 'original setup could not resume preparation; nothing was placed.'; }
     fi
 else
-write_operation install false false skip false
+write_operation install false false false
 run_setup "$image" --plan || { setup_failure; fail 'setup could not review this installation.'; }
 plan=$(/bin/cat "$folder/plan.json")
 /usr/bin/tr -d '\r' < "$folder/plan.txt"
@@ -305,9 +302,7 @@ if [[ $needs_acknowledgement == true && $acknowledged == false ]]; then
 fi
 
 # Retirement and the drain run before any file is replaced (section 9.6).
-trust=skip
-[[ $interactive == false ]] || trust=ask
-write_operation install "$acknowledged" "$login" "$trust" "$start"
+write_operation install "$acknowledged" "$login" "$start"
 lease_wrapper "$operation" fresh
 run_setup "$image" --prepare || { setup_failure; fail 'setup did not prepare the installation; nothing was placed.'; }
 

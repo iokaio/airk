@@ -116,7 +116,7 @@ fn current_help_tasks_have_complete_native_guides_and_continuations() {
         ),
         (
             "trust",
-            vec!["HTTPS", "single-use", "TLS", "Silent installers skip trust"],
+            vec!["HTTP", "single-use", "127.0.0.1", "no certificate to trust"],
         ),
         (
             "agent-setup",

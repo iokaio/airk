@@ -290,7 +290,6 @@ fn apply_with(
     stage: impl FnOnce(&Path, &Path, &Approval) -> Result<Approval>,
 ) -> Result<serde_json::Value> {
     let _lock = install_lock(root)?;
-    require_issuer_rotation_settled(root)?;
     managed::require_unmanaged(root)?;
     if exists(&root.join(RESULT))? {
         let result: Intent = serde_json::from_slice(&read_bounded(&root.join(RESULT), 16_384)?)?;

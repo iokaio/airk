@@ -159,10 +159,6 @@ pub(super) fn exec_script(request: &SetupRequest, clock: Clock) -> Result<()> {
         // exec preserves this exact kernel lock/open description. Every shell
         // copy/mv descendant inherits it; abrupt shell death cannot release
         // exclusion while a producer still owns a descriptor.
-        ensure!(
-            !request.wrapper_silent || setup.operation.options.trust == TrustChoice::Skip,
-            "silent recovery requires original trust-skip choice; resume manually"
-        );
         let mut command = std::process::Command::new("/bin/bash");
         command
             .arg(&script)

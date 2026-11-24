@@ -1161,7 +1161,6 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         | ControlMethod::AgentEndpoint {}
         | ControlMethod::WorkspaceScopeDefault { .. }
         | ControlMethod::WorkspaceScopeDefaults {}
-        | ControlMethod::HttpIssuerRotation { .. }
         | ControlMethod::AdminLaunchCode {}
         | ControlMethod::AdminScopeGrant { .. } => {
             anyhow::bail!("not a registry method")

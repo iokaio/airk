@@ -479,16 +479,6 @@ pub enum ControlMethod {
     },
     /// U110: every stored workspace default.
     WorkspaceScopeDefaults {},
-    /// M18 (split step 3e.5, `service issuer-rotation status`): the saved
-    /// issuer rotation and current endpoint, as `airk runtime
-    /// http-issuer-rotation --action status` printed them, read at the
-    /// service's own control root. The other actions are not served: prepare
-    /// and commit need the install layout and a service stop and start, and
-    /// trust-new, abort and finalize change OS trust, which `airkctl` does
-    /// locally (U75).
-    HttpIssuerRotation {
-        action: HttpIssuerRotationStep,
-    },
     /// M20 (U80): mark a stuck lifecycle record abandoned in the ledger; a
     /// terminal record answers unchanged. A record this instance is draining
     /// is refused (`lifecycle_request_in_progress`).
@@ -732,7 +722,6 @@ impl ControlMethod {
             | Self::AgentEndpoint {}
             | Self::WorkspaceScopeDefault { .. }
             | Self::WorkspaceScopeDefaults {}
-            | Self::HttpIssuerRotation { .. }
             | Self::AdminScopeGrant { .. } => {
                 return Some("console_method_not_reviewed");
             }
@@ -1031,13 +1020,6 @@ impl ToolSelection {
             Self::Unselected | Self::Project { .. } | Self::Window { .. } | Self::Admin => Ok(()),
         }
     }
-}
-
-/// The issuer-rotation step the service performs for M18; only the read so far.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HttpIssuerRotationStep {
-    Status,
 }
 
 /// The response mode an M3 call applies (`terse` unless `full`).
@@ -1583,17 +1565,6 @@ pub enum ControlResponse {
     /// M15a/M15 refused. `message` is the full error chain bounded to 4,096
     /// characters, as the pre-split CLI's `operation_failed` line carried it.
     AgentRefused {
-        message: String,
-    },
-    /// M18: `{schema, rotation, receipt_sha256, current_endpoint,
-    /// current_descriptor_sha256, finalize_overdue, trust_result, guidance}`,
-    /// the document `airk runtime http-issuer-rotation` printed.
-    HttpIssuerRotation {
-        result: serde_json::Value,
-    },
-    /// M18 refused. `message` is the full error chain bounded to 4,096
-    /// characters, as the pre-split CLI's `operation_failed` line carried it.
-    HttpIssuerRotationRefused {
         message: String,
     },
     /// M20: the record, abandoned (or already terminal).

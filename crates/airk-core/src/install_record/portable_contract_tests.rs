@@ -8,7 +8,8 @@ const CASES: &str = include_str!("../../../../fixtures/split/i4/portable_cases.j
 fn portable_contract_has_explicit_ownership_and_no_implicit_os_integration() {
     let cases: Value = serde_json::from_str(CASES).unwrap();
     let rows = cases["operations"].as_array().unwrap();
-    assert_eq!(rows.len(), 6);
+    // Local trust plan C removed the trust option and its refused row.
+    assert_eq!(rows.len(), 5);
     for row in rows {
         let text = row["text"].as_str().unwrap();
         let parsed: SetupOperation = serde_json::from_str(text).unwrap();

@@ -7,7 +7,7 @@ use airk_core::{
     identity::{Incarnation, Sha256Digest},
     install_record::{
         Acknowledgements, IndexDeletion, Locations, OperationKind, SETUP_OPERATION_SCHEMA,
-        SETUP_RECEIPT_SCHEMA, SetupOperation, SetupOptions, SetupPhase, SetupReceipt, TrustChoice,
+        SETUP_RECEIPT_SCHEMA, SetupOperation, SetupOptions, SetupPhase, SetupReceipt,
     },
 };
 use serde_json::Value;
@@ -77,7 +77,6 @@ fn operation(kind: OperationKind) -> SetupOperation {
         payload_inventory_sha256: Sha256Digest::from_bytes([5; 32]),
         options: SetupOptions {
             login_startup: true,
-            trust: TrustChoice::Ask,
             start: true,
             delete_indexes: IndexDeletion::Keep,
         },
@@ -176,8 +175,8 @@ fn acknowledged_placing_reset_purges_after_drain_and_before_any_publication() {
             Action::WriteRecord,
             Action::WritePointer,
             Action::RegisterLogin,
+            Action::RetireLegacyTrust,
             Action::Start,
-            Action::ApplyTrust,
             Action::Close,
         ]
     );

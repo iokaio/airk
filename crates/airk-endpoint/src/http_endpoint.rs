@@ -17,10 +17,8 @@ pub mod legacy_trust;
 mod metadata;
 pub mod retired_credentials;
 mod tls;
-pub mod trust;
 pub use metadata::{load_descriptor, publish_descriptor};
 pub use tls::{TlsBundleIdentity, TlsIdentity};
-pub mod rotation;
 
 pub use airk_core::service_http_credentials::InstallationBinding;
 
@@ -35,6 +33,15 @@ pub fn installation_binding(control: &Path, namespace: Incarnation) -> Result<In
     let control = control.canonicalize()?;
     let user = crate::local_ipc::current_user()?;
     InstallationBinding::derive(&control, &user, namespace)
+}
+
+/// The URL of the saved endpoint record of the installation at `control`,
+/// read against its existing native namespace without starting a service or
+/// creating anything. `None` when no record exists.
+pub fn saved_endpoint_url(control: &Path) -> Result<Option<String>> {
+    let registry = airk_store::service::registry::ServiceRegistry::open_saved(control)?;
+    let binding = installation_binding(control, registry.incarnation()?)?;
+    Ok(load_descriptor(&control.join("http-1"), &binding)?.map(|value| value.url.to_string()))
 }
 
 /// The socket remains owned throughout publication and conversion to async I/O.

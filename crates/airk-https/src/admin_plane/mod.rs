@@ -76,9 +76,6 @@ pub type ScopeCheck = Arc<
         + Send
         + Sync,
 >;
-/// `https.trust_status`: the read-only trust inspection, run in the service.
-pub type TrustInspect =
-    Arc<dyn Fn() -> Pin<Box<dyn Future<Output = anyhow::Result<Value>> + Send>> + Send + Sync>;
 
 /// The scoped-read admission gate's side of an A2 grant's in-memory read
 /// authority (selection authority §3.1, §3.3), injected by
@@ -118,8 +115,6 @@ pub type SelectionReader = Arc<
 const BODY_SECONDS: u64 = 15;
 /// Response frames stay well under the listener's 1 MiB frame bound.
 const CHUNK_BYTES: usize = 256 * 1024;
-/// A native failure message in an envelope, bounded as the CLI's error line.
-const MAX_MESSAGE_CHARS: usize = 4096;
 /// At most 32 slots × 16 sessions × 64 KiB = 32 MiB of cached reply bodies.
 const MAX_PREPARED_REPLY_BYTES: usize = 64 * 1024;
 
@@ -152,8 +147,6 @@ pub struct AdminPlane {
     native_admission: Option<Arc<dyn Fn() -> Result<(), AdminCode> + Send + Sync>>,
     /// Without it `search.select_scope` answers `not_yet_served`.
     scope_check: Option<ScopeCheck>,
-    /// Without it `https.trust_status` answers `not_yet_served`.
-    trust_inspect: Option<TrustInspect>,
     /// Without it an A2 grant holds no read authority.
     selection: Option<SelectionAuthority>,
     /// Without it a search under an A2 grant answers `not_yet_served`.
@@ -301,7 +294,6 @@ impl AdminPlane {
             native: Arc::new(Mutex::new(native::Requests::default())),
             native_admission: None,
             scope_check: None,
-            trust_inspect: None,
             selection: None,
             selection_reader: None,
             delivery_guard_factory: None,
@@ -330,7 +322,6 @@ impl AdminPlane {
             native: self.native.clone(),
             native_admission: self.native_admission.clone(),
             scope_check: self.scope_check.clone(),
-            trust_inspect: self.trust_inspect.clone(),
             selection: self.selection.clone(),
             selection_reader: self.selection_reader.clone(),
             delivery_guard_factory: self.delivery_guard_factory.clone(),
@@ -364,12 +355,6 @@ impl AdminPlane {
     /// Serve A2 grants with the shared catalog check.
     pub fn with_scope_check(mut self, check: ScopeCheck) -> Self {
         self.scope_check = Some(check);
-        self
-    }
-
-    /// Serve `https.trust_status` with the service's trust inspection.
-    pub fn with_trust_inspect(mut self, inspect: TrustInspect) -> Self {
-        self.trust_inspect = Some(inspect);
         self
     }
 
@@ -624,7 +609,6 @@ impl AdminPlane {
         let target = match operations::served(&row.method) {
             Served::Direct => row.method.as_str(),
             Served::Equivalent(method) => method,
-            Served::TrustInspect => return self.trust_status(operation, &body).await,
         };
         if !operations::names(target, &body) {
             return Err(AdminCode::AdminMalformedRequest);
@@ -1248,37 +1232,6 @@ impl AdminPlane {
         self.native_admission
             .as_ref()
             .map_or(Ok(()), |admit| admit())
-    }
-
-    /// `https.trust_status` (mapping `HttpTrust.Inspect`): the inspection's
-    /// complete status document.
-    async fn trust_status(&self, operation: &str, body: &Value) -> Result<HttpResponse, AdminCode> {
-        if *body != serde_json::json!({"http_trust": {"action": "inspect"}}) {
-            return Err(AdminCode::AdminMalformedRequest);
-        }
-        let inspect = self.trust_inspect.as_ref().ok_or(AdminCode::NotYetServed)?;
-        Ok(match inspect().await {
-            Ok(status) => success(operation, status, None),
-            Err(error) => {
-                let message: String = format!("{error:#}")
-                    .chars()
-                    .take(MAX_MESSAGE_CHARS)
-                    .collect();
-                let envelope = FailureEnvelope {
-                    schema: contract::ENVELOPE_SCHEMA.to_owned(),
-                    ok: false,
-                    error: ErrorBody {
-                        code: "operation_failed".into(),
-                        class: ErrorClass::Refused,
-                        retryable: false,
-                        retry_after_ms: None,
-                        native: Some(serde_json::json!({ "message": message })),
-                    },
-                    review: None,
-                };
-                api(ErrorClass::Refused.status(), &envelope, None)
-            }
-        })
     }
 
     #[cfg(test)]

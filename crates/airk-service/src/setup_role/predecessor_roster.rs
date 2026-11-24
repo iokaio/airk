@@ -381,7 +381,7 @@ pub(super) fn unretired_items() -> Result<Vec<Leftover>> {
         ] {
             roster.candidate(
                 &path.join(leaf),
-                "original AIRK user-trust receipt; only trust::remove_owned may retire it",
+                "original AIRK user-trust receipt; only legacy_trust::retire may retire it",
                 false,
             );
         }

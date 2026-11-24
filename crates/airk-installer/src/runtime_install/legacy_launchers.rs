@@ -440,7 +440,6 @@ pub(super) fn retire_locked_recording(
 ) -> Result<serde_json::Value> {
     activation::rebuild::require_retirement_allowed(root)?;
     selected_https(root, expected)?;
-    require_issuer_rotation_settled(root)?;
     managed::require_unmanaged(root)?;
     activation::require_settled(root)?;
     payload_repair::require_settled(root)?;

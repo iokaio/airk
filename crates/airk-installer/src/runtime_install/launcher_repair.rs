@@ -289,7 +289,6 @@ pub fn repair(root: &Path, runtime: &str) -> Result<bool> {
     // embedding payload twice when creating the initial intent.
     let (main, _, inventory) = verify_runtime_inventory(root, runtime)?;
     if runtime_pair::single_executable(&main)? {
-        require_issuer_rotation_settled(root)?;
         require_settled(root)?;
         // Never copy a sealed application main outside its bundle. Preserve any
         // genuine predecessor launcher and receipt until explicit retirement.
@@ -325,7 +324,6 @@ pub(super) fn repair_client_verified(root: &Path, runtime: &str, image: &Path) -
 }
 
 fn repair_verified(root: &Path, runtime: &str, main: &Path) -> Result<()> {
-    require_issuer_rotation_settled(root)?;
     let intent = if exists(&root.join(INTENT))? {
         Intent::read(root)?
     } else {
@@ -359,7 +357,6 @@ fn repair_verified(root: &Path, runtime: &str, main: &Path) -> Result<()> {
 }
 
 pub fn abort(root: &Path) -> Result<()> {
-    require_issuer_rotation_settled(root)?;
     if !exists(&root.join(INTENT))? {
         return Ok(());
     }

@@ -84,7 +84,6 @@ Every public `airkctl` command and subcommand, exactly as `airkctl <command> --h
 - [`airkctl service abandon-lifecycle`](#airkctl-service-abandon-lifecycle)
 - [`airkctl service health`](#airkctl-service-health)
 - [`airkctl service inventory`](#airkctl-service-inventory)
-- [`airkctl service issuer-rotation`](#airkctl-service-issuer-rotation)
 - [`airkctl service login`](#airkctl-service-login)
 - [`airkctl service logs`](#airkctl-service-logs)
 - [`airkctl service prepare-configuration`](#airkctl-service-prepare-configuration)
@@ -108,7 +107,6 @@ Every public `airkctl` command and subcommand, exactly as `airkctl <command> --h
 - [`airkctl service start`](#airkctl-service-start)
 - [`airkctl service status`](#airkctl-service-status)
 - [`airkctl service stop`](#airkctl-service-stop)
-- [`airkctl service trust`](#airkctl-service-trust)
 - [`airkctl service uninstall`](#airkctl-service-uninstall)
 - [`airkctl session`](#airkctl-session)
 - [`airkctl settings`](#airkctl-settings)
@@ -163,7 +161,7 @@ Commands:
   library        The index library: list, show and set up indexes (the admin pages' Index library)
   folders        List the folders in PATH (folders only, links never followed), or the starting list without one (M24: AIRK Admin's Browse dialog)
   projects       List the projects registered with the service (same fields as the MCP `projects` tool)
-  service        The AIRK service: start, stop, status, logs, requests, trust and management
+  service        The AIRK service: start, stop, status, logs, requests and management
   parse          Plan, and with --execute run, a multi-step read-only evidence request
   changes        Report indexed changes since a revision token: added, modified and removed files, symbols and documents
   code-facts     Inspect code facts and signatures with exact default name matching and bounded continuation
@@ -3884,20 +3882,18 @@ Options:
 ## airkctl service
 
 ```text
-The AIRK service: start, stop, status, logs, requests, trust and management
+The AIRK service: start, stop, status, logs, requests and management
 
 Usage: airkctl service [OPTIONS] <COMMAND>
 
 Commands:
-  setup                  Register this extracted portable runtime without login startup, trust, or automatic start
+  setup                  Register this extracted portable runtime without login startup or automatic start
   setup-receipt          Validate the native setup receipt for the current verified installation, without starting it
   start                  Start the installed service (the install record's verified airk) and wait until it is healthy
   stop                   Stop the service and wait until its process exits; a saved Stop keeps automatic starts off
   restart                Stop the service, wait until its process exits, then start the installed service again
-  uninstall              Remove this AIRK Service installation through its signed setup step: stop the service, remove login startup, the certificate trust it added, and the install pointer and record
+  uninstall              Remove this AIRK Service installation through its signed setup step: stop the service, remove login startup, the certificate trust an older HTTPS build added, and the install pointer and record
   logs                   Read the service's diagnostic logs (recent from the running service; all, raw or stopped-service reads from the local files)
-  trust                  This installation's HTTPS issuer in your OS trust store; works while the service is down
-  issuer-rotation        The saved HTTPS issuer rotation and current endpoint (status only in this version)
   abandon-lifecycle      Mark a stuck stop or restart record abandoned (U80); a finished record is printed unchanged
   status                 Report the installation and whether the service is running, with its saved Stop and any unfinished stop or restart
   record-error           Record a bounded client error (JSON on stdin) without needing the service to run
@@ -4027,48 +4023,6 @@ Options:
 The service's locations (program, data, state, cache, logs) with sizes (U100)
 
 Usage: airkctl service inventory [OPTIONS]
-
-Options:
-      --output <OUTPUT>
-          Result and error format: json writes one JSON document or error line
-
-          [default: text]
-          [possible values: json, text]
-
-      --runtime-dir <RUNTIME_DIR>
-          The service's control directory (default: --service-runtime-dir, else the installation's)
-
-      --service-runtime-dir <SERVICE_RUNTIME_DIR>
-          The AIRK service's control directory
-
-      --service-project <SERVICE_PROJECT>
-          A registered project binding
-
-      --root <ROOT>
-          The project folder (default: the current folder)
-
-          [default: .]
-
-      --data-dir <DATA_DIR>
-          The project's data folder (default: the installation's data location)
-
-      --collection <COLLECTION>
-          [default: default]
-
-  -h, --help
-          Print help
-```
-
-## airkctl service issuer-rotation
-
-```text
-The saved HTTPS issuer rotation and current endpoint (status only in this version)
-
-Usage: airkctl service issuer-rotation [OPTIONS] <ACTION>
-
-Arguments:
-  <ACTION>
-          [possible values: status]
 
 Options:
       --output <OUTPUT>
@@ -4809,7 +4763,7 @@ Options:
 ## airkctl service setup
 
 ```text
-Register this extracted portable runtime without login startup, trust, or automatic start
+Register this extracted portable runtime without login startup or automatic start
 
 Usage: airkctl service setup [OPTIONS]
 
@@ -5049,57 +5003,10 @@ Options:
           Print help
 ```
 
-## airkctl service trust
-
-```text
-This installation's HTTPS issuer in your OS trust store; works while the service is down.
-
-install and remove need --expected-ca-sha256, the reviewed issuer digest that inspect prints; the OS may ask you to confirm.
-
-Usage: airkctl service trust [OPTIONS] <ACTION>
-
-Arguments:
-  <ACTION>
-          [possible values: inspect, install, remove]
-
-Options:
-      --output <OUTPUT>
-          Result and error format: json writes one JSON document or error line
-
-          [default: text]
-          [possible values: json, text]
-
-      --runtime-dir <RUNTIME_DIR>
-          The service's control directory (default: --service-runtime-dir, else the installation's)
-
-      --expected-ca-sha256 <EXPECTED_CA_SHA256>
-
-
-      --service-runtime-dir <SERVICE_RUNTIME_DIR>
-          The AIRK service's control directory
-
-      --service-project <SERVICE_PROJECT>
-          A registered project binding
-
-      --root <ROOT>
-          The project folder (default: the current folder)
-
-          [default: .]
-
-      --data-dir <DATA_DIR>
-          The project's data folder (default: the installation's data location)
-
-      --collection <COLLECTION>
-          [default: default]
-
-  -h, --help
-          Print help (see a summary with '-h')
-```
-
 ## airkctl service uninstall
 
 ```text
-Remove this AIRK Service installation through its signed setup step: stop the service, remove login startup, the certificate trust it added, and the install pointer and record.
+Remove this AIRK Service installation through its signed setup step: stop the service, remove login startup, the certificate trust an older HTTPS build added, and the install pointer and record.
 
 Index data, service state, cache and logs are kept unless --purge-indexes. airkctl hands the work to setup and exits; `airkctl service status` and the printed receipt report the outcome. On Windows, Settings > Apps > AIRK Service also removes the program files.
 

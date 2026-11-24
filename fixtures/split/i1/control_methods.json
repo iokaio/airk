@@ -823,17 +823,14 @@
       ]
     },
     {
-      "variant": "issuer_rotation",
-      "method": "M18",
-      "methods": [
-        {
-          "name": "status",
-          "bytes": "{\"http_issuer_rotation\":{\"action\":\"status\"}}",
-          "request_frame_budget": 65536,
-          "response_frame_budget": 65536
-        }
-      ],
+      "variant": "issuer_rotation_removed",
+      "method": "Local trust plan C (23 November 2026): M18 HttpIssuerRotation and its replies no longer decode; loopback has no issuer.",
+      "methods": [],
       "rejected_methods": [
+        {
+          "name": "status_removed",
+          "bytes": "{\"http_issuer_rotation\":{\"action\":\"status\"}}"
+        },
         {
           "name": "without_action",
           "bytes": "{\"http_issuer_rotation\":{}}"
@@ -851,17 +848,16 @@
           "bytes": "{\"http_issuer_rotation\":{\"action\":\"status\",\"operation_id\":\"1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c\"}}"
         }
       ],
-      "responses": [
+      "responses": [],
+      "rejected_responses": [
         {
-          "name": "status_without_rotation",
+          "name": "status_without_rotation_removed",
           "bytes": "{\"status\":\"http_issuer_rotation\",\"result\":{\"current_descriptor_sha256\":null,\"current_endpoint\":null,\"finalize_overdue\":false,\"guidance\":\"Issuer replacement requires explicit client trust enrollment and reconnect. The overlap deadline does not remove OS trust automatically. Finalize only removes exact owned trust; unknown outcomes require review.\",\"receipt_sha256\":null,\"rotation\":null,\"schema\":1,\"trust_result\":null}}"
         },
         {
-          "name": "refused",
+          "name": "refused_removed",
           "bytes": "{\"status\":\"http_issuer_rotation_refused\",\"message\":\"issuer rotation installation changed\"}"
-        }
-      ],
-      "rejected_responses": [
+        },
         {
           "name": "status_without_result",
           "bytes": "{\"status\":\"http_issuer_rotation\"}"

@@ -338,24 +338,6 @@ pub fn validate_catalog_control(
     Ok(())
 }
 
-/// Read-only routing for installer transaction exclusion, including incomplete
-/// initial staging. A known issuer journal never falls back to another control.
-pub fn issuer_rotation_control(root: &Path) -> Result<Option<PathBuf>> {
-    let Some(layout) = Layout::read(root)? else {
-        return Ok(None);
-    };
-    let control = layout.state.join("control");
-    if !exists(&control.join("http-1/issuer-rotation.json"))? {
-        return Ok(None);
-    }
-    ensure!(
-        layout.ready && layout.claimed()?,
-        "issuer journal exists in an unclaimed runtime layout"
-    );
-    require_control(&control)?;
-    Ok(Some(control))
-}
-
 /// Log lookup may use verified layout ownership even when registry authority is unavailable.
 pub fn saved_control(root: &Path) -> Result<PathBuf> {
     let layout = Layout::read(root)?.context("runtime state layout missing")?;

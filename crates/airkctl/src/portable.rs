@@ -8,7 +8,7 @@ use airk_core::{
     identity::{Incarnation, Sha256Digest},
     install_record::{
         Acknowledgements, IndexDeletion, Locations, MAX_SETUP_OPERATION_LIFETIME_MS, OperationKind,
-        SETUP_OPERATION_SCHEMA, SetupOperation, SetupOptions, TrustChoice, canonical,
+        SETUP_OPERATION_SCHEMA, SetupOperation, SetupOptions, canonical,
         payload_inventory::{INVENTORY_FILE, MAX_INVENTORY_BYTES, PayloadInventory},
     },
     runtime_metadata::{MAX_RUNTIME_METADATA_BYTES, SplitRuntimeMetadata},
@@ -146,7 +146,6 @@ fn operation(
         payload_inventory_sha256: inventory,
         options: SetupOptions {
             login_startup: false,
-            trust: TrustChoice::Skip,
             start: false,
             delete_indexes: IndexDeletion::Keep,
         },

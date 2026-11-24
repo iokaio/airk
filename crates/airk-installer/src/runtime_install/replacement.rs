@@ -502,8 +502,6 @@ pub(super) struct ClientReferences {
     executables: Vec<PathBuf>,
     /// The old loopback MCP endpoint, from its saved descriptor if present.
     http_endpoint: Option<String>,
-    /// The old issuer CA digest, from the same descriptor.
-    ca_sha256: Option<String>,
 }
 
 /// A display path without the Windows verbatim drive prefix, as agent
@@ -551,13 +549,12 @@ fn client_references(install: &Path, locations: &[PathBuf]) -> Result<ClientRefe
     executables.sort();
     executables.dedup();
     let endpoint = airk_host::install_layout::saved_control(install)
-        .and_then(|control| airk_endpoint::http_endpoint::trust::saved_identity(&control))
+        .and_then(|control| airk_endpoint::http_endpoint::saved_endpoint_url(&control))
         .ok()
-        .map(|(_, endpoint)| endpoint);
+        .flatten();
     Ok(ClientReferences {
         executables,
-        http_endpoint: endpoint.as_ref().map(|endpoint| endpoint.url.to_string()),
-        ca_sha256: endpoint.map(|endpoint| endpoint.ca_sha256.to_string()),
+        http_endpoint: endpoint,
     })
 }
 
@@ -959,8 +956,9 @@ fn apply_ordered(
 
 /// Retire the installation's own CurrentUser/Root (or login keychain) issuer
 /// through its ownership receipt under `control/http-1`, before that folder
-/// moves. An issuer AIRK did not install is never removed; any failure is
-/// returned as residue with the CA digest, never dropped.
+/// moves (the remove-only legacy retirer, local trust plan C). An issuer AIRK
+/// did not install is never removed; any failure or residue is returned,
+/// never dropped.
 fn retire_owned_trust(install: &Path) -> (serde_json::Value, Vec<String>) {
     let control = match airk_host::install_layout::saved_control(install) {
         Ok(control) => control,
@@ -982,22 +980,21 @@ fn retire_owned_trust(install: &Path) -> (serde_json::Value, Vec<String>) {
             };
         }
     };
-    match airk_endpoint::http_endpoint::trust::remove_owned(&control) {
-        Ok(status) => (
-            serde_json::to_value(status).unwrap_or(serde_json::Value::Null),
-            Vec::new(),
+    match airk_endpoint::http_endpoint::legacy_trust::retire(&control) {
+        Ok(report) => (
+            serde_json::json!({ "outcome": report.summary() }),
+            report
+                .residue
+                .iter()
+                .map(|item| format!("user trust: {item}"))
+                .collect(),
         ),
-        Err(error) => {
-            let ca = airk_endpoint::http_endpoint::trust::saved_identity(&control)
-                .map(|(_, endpoint)| endpoint.ca_sha256.to_string())
-                .unwrap_or_else(|_| "unknown".into());
-            (
-                serde_json::Value::Null,
-                vec![format!(
-                    "user trust: the owned AIRK issuer (CA SHA-256 {ca}) was not removed: {error:#}; remove it from the user trust store manually"
-                )],
-            )
-        }
+        Err(error) => (
+            serde_json::Value::Null,
+            vec![format!(
+                "user trust: the owned AIRK issuer was not removed: {error:#}; remove it from the user trust store manually"
+            )],
+        ),
     }
 }
 

@@ -23,7 +23,6 @@ fn portable_operation_has_explicit_ownership_and_no_os_integration() {
     assert_eq!(request.requested_by, "airkctl-portable");
     assert!(!request.options.login_startup);
     assert!(!request.options.start);
-    assert_eq!(request.options.trust, TrustChoice::Skip);
     assert_eq!(request.options.delete_indexes, IndexDeletion::Keep);
     assert!(!request.acknowledgements.index_reset);
     assert!(!request.acknowledgements.predecessor_removal);

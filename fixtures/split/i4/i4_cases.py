@@ -67,7 +67,7 @@ def operation():
         "created_unix_ms": NOW, "expires_unix_ms": NOW + 600_000, "requested_by": "inno",
         "acknowledgements": {"predecessor_removal": True, "index_reset": True},
         "locations": locations(), "payload_inventory_sha256": "5" * 64,
-        "options": {"login_startup": True, "trust": "ask", "start": True, "delete_indexes": "keep"},
+        "options": {"login_startup": True, "start": True, "delete_indexes": "keep"},
     }
 
 
@@ -207,8 +207,8 @@ def cases():
          "expect": "install_file_oversize"},
     ]
     phases = ["locked", "predecessors_retired", "service_drained", "placed", "record_written", "pointer_written",
-              "login_registered", "login_failed", "login_unsupported", "trust_applied", "trust_declined",
-              "trust_unsupported", "started", "healthy", "login_unregistered", "trust_removed", "pointer_removed",
+              "login_registered", "login_failed", "login_unsupported", "legacy_trust_retired",
+              "started", "healthy", "login_unregistered", "pointer_removed",
               "record_removed", "data_purged", "complete"]
 
     def receipt(**changes):

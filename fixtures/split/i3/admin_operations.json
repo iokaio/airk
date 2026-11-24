@@ -989,48 +989,6 @@
    ]
   },
   {
-   "operation": "https.trust_status",
-   "method": "HttpTrust.Inspect",
-   "plane": "management",
-   "surfaces": [
-    "pipe",
-    "airkctl",
-    "admin"
-   ],
-   "authorization": [
-    "owner_pipe",
-    "admin_session_csrf"
-   ],
-   "effect": "read",
-   "idempotency": "read",
-   "conformance": [
-    "P3",
-    "P5",
-    "P8"
-   ]
-  },
-  {
-   "operation": "https.rotation_status",
-   "method": "HttpIssuerRotation.Status",
-   "plane": "management",
-   "surfaces": [
-    "pipe",
-    "airkctl",
-    "admin"
-   ],
-   "authorization": [
-    "owner_pipe",
-    "admin_session_csrf"
-   ],
-   "effect": "read",
-   "idempotency": "read",
-   "conformance": [
-    "P3",
-    "P5",
-    "P8"
-   ]
-  },
-  {
    "operation": "models.catalog",
    "method": "ModelCatalog",
    "plane": "management",
@@ -2226,11 +2184,6 @@
    "reason": "Bearer tokens and credential files never leave the owner plane."
   },
   {
-   "item": "private_keys",
-   "methods": [],
-   "reason": "TLS leaf and issuer private keys."
-  },
-  {
    "item": "connection_grants",
    "methods": [
     "Connect",
@@ -2272,15 +2225,6 @@
     "HandoffPublish"
    ],
    "reason": "W1-W3, W7-W8 carry a window lease."
-  },
-  {
-   "item": "certificate_trust_changes",
-   "methods": [
-    "HttpIssuerRotation.Stage",
-    "HttpIssuerRotation.Commit",
-    "HttpIssuerRotation.Finalize"
-   ],
-   "reason": "Trust install/remove are offline airkctl operations; rotation stages trust (L8). Status only."
   },
   {
    "item": "uninstall_and_setup_role",
@@ -2909,40 +2853,6 @@
     {
      "operation": "admin.launch_code",
      "method": "AdminLaunchCode",
-     "plane": "management",
-     "surfaces": [
-      "pipe",
-      "airkctl",
-      "admin"
-     ],
-     "authorization": [
-      "owner_pipe",
-      "admin_session_csrf"
-     ],
-     "effect": "mutation",
-     "idempotency": "request_key",
-     "conformance": [
-      "P1",
-      "P2",
-      "P3",
-      "P5",
-      "P9"
-     ],
-     "request_key": {
-      "mode": "generate",
-      "caller": "caller",
-      "key": "key"
-     }
-    }
-   ]
-  },
-  {
-   "name": "admin_rotation_commit",
-   "reason": "never_over_http",
-   "rows": [
-    {
-     "operation": "https.rotation_commit",
-     "method": "HttpIssuerRotation.Commit",
      "plane": "management",
      "surfaces": [
       "pipe",

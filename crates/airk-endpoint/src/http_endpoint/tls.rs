@@ -336,30 +336,6 @@ impl TlsIdentity {
         Ok(())
     }
 
-    /// Generate once in an absent owner-private stage. A directory surviving an
-    /// interrupted attempt without a bundle is uncertain and cannot mint a
-    /// second issuer. A missing public export can resume from its exact bundle.
-    pub(crate) fn create_staged_bundle(
-        staged_new: &Path,
-        binding: InstallationBinding,
-        now_unix_ms: u64,
-    ) -> Result<TlsBundleIdentity> {
-        match std::fs::symlink_metadata(staged_new) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                Self::load_or_create(staged_new, binding.clone(), now_unix_ms)?;
-            }
-            Err(error) => return Err(error.into()),
-            Ok(_) => {
-                crate::local_ipc::require_existing_root(staged_new)?;
-                let bytes = read_private(staged_new, BUNDLE, MAX_BUNDLE)?
-                    .context("existing HTTP issuer stage has no known bundle")?;
-                let bundle = checked_bundle(&bytes, &binding)?;
-                immutable_private(staged_new, CA_FILE, bundle.ca_pem.as_bytes(), MAX_CA)?;
-            }
-        }
-        Self::inspect_bundle(staged_new, &binding)
-    }
-
     /// Freeze the latest legitimate leaf only after native stop/exclusion.
     /// The immutable prepared issuer/key remains the original approval proof.
     pub fn snapshot_current_predecessor(
@@ -603,6 +579,3 @@ impl TlsIdentity {
         self.config.clone().into()
     }
 }
-
-#[cfg(test)]
-mod rotation_tests;

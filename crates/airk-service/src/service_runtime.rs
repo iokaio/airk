@@ -35,7 +35,6 @@ mod open_reads;
 mod policy_writer;
 mod registration;
 mod resolve;
-mod rotation;
 mod scope_grant;
 mod source_delivery;
 mod stop_budget;
@@ -327,30 +326,6 @@ fn admin_scope_check(control: std::path::PathBuf) -> airk_https::admin_plane::Sc
             tokio::task::spawn_blocking(move || scope_grant::check(&control, &selection))
                 .await
                 .unwrap_or_else(|_| Err(scope_grant::SCOPE_UNAVAILABLE.to_owned()))
-        })
-    })
-}
-
-/// The admin plane's `https.trust_status`: the status `airk runtime
-/// http-trust --action inspect` printed, through the same callers
-/// (`http_endpoint::trust::saved_identity` and `manage(Inspect)`), which
-/// read the saved endpoint and the OS trust store and change nothing.
-fn admin_trust_inspect(control: std::path::PathBuf) -> airk_https::admin_plane::TrustInspect {
-    Arc::new(move || {
-        let control = control.clone();
-        Box::pin(async move {
-            tokio::task::spawn_blocking(move || -> Result<serde_json::Value> {
-                let (binding, endpoint) =
-                    airk_endpoint::http_endpoint::trust::saved_identity(&control)?;
-                let status = airk_endpoint::http_endpoint::trust::manage(
-                    &control.join("http-1"),
-                    binding,
-                    endpoint.ca_sha256,
-                    airk_endpoint::http_endpoint::trust::Action::Inspect,
-                )?;
-                Ok(serde_json::to_value(status)?)
-            })
-            .await?
         })
     })
 }
@@ -1042,9 +1017,6 @@ fn canonical_control(
             ControlMethod::WorkspaceScopeDefaults {} => {
                 open_reads::workspace_defaults_response(&state).await
             }
-            ControlMethod::HttpIssuerRotation { action } => {
-                rotation::response(&state.control_root, action, effect_check).await
-            }
             // A1 (contracts §2.7): owner pipe only; the code is in this reply only.
             ControlMethod::AdminLaunchCode {} => {
                 match state.http.get().map(|owner| owner.descriptor()) {
@@ -1444,7 +1416,6 @@ async fn serve_owned(
     airk_installer::runtime_install::require_baseline_service(root)?;
     local_ipc::prepare_root(root)?;
     let lease = acquire_single_instance(root)?;
-    airk_endpoint::http_endpoint::rotation::require_start_allowed(root)?;
     airk_host::install_layout::record_control_root(&lease)?;
     // An installed (admitted) start gives a control root without a catalog its
     // fresh Genesis first: before the lifecycle and stop checks open the
@@ -1599,8 +1570,7 @@ async fn serve_owned(
         admin_dispatch(root.canonicalize()?, instance),
         instance,
     )
-    .with_scope_check(admin_scope_check(root.canonicalize()?))
-    .with_trust_inspect(admin_trust_inspect(root.canonicalize()?));
+    .with_scope_check(admin_scope_check(root.canonicalize()?));
     let policy_state = reader_state.clone();
     let admin = admin.with_delivery_guard_factory(Arc::new(move |expected, context| {
         let state = policy_state

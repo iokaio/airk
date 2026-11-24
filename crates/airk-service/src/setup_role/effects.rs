@@ -3,8 +3,9 @@
 //! predecessor discovery and receipts-only retirement
 //! (`runtime_install::replacement`, U13/U14), the I1 control endpoint for the
 //! drain, exact-image process audits (`legacy_processes`), login registration
-//! (`service_manager`), user trust (`http_endpoint::trust` over
-//! `airk_process::cert_trust`), and the installed `airkctl` for the start
+//! (`service_manager`), the remove-only legacy trust retirement
+//! (`http_endpoint::legacy_trust` over `airk_process::cert_trust`), and the
+//! installed `airkctl` for the start
 //! (U94: one start implementation).
 use super::plan::Host;
 pub(crate) mod program_files;
@@ -439,32 +440,13 @@ pub(crate) fn unregister_login(
     Ok("removed")
 }
 
-/// Install the service's HTTPS issuer into this user's trust store (the OS
-/// shows its consent dialog). `None` when the issuer does not exist yet.
-pub(crate) fn apply_trust(state: &Path) -> Result<Option<String>> {
-    let Ok((binding, endpoint)) = airk_endpoint::http_endpoint::trust::saved_identity(state) else {
-        return Ok(None);
-    };
-    let status = airk_endpoint::http_endpoint::trust::manage(
-        &state.join("http-1"),
-        binding,
-        endpoint.ca_sha256,
-        airk_endpoint::http_endpoint::trust::Action::Install,
-    )?;
-    Ok(Some(format!(
-        "{} (CA SHA-256 {})",
-        status.outcome, status.ca_sha256
-    )))
-}
-
-/// Remove trust this installation added, through its ownership receipt.
-pub(crate) fn remove_trust(state: &Path) -> Result<String> {
-    Ok(
-        match airk_endpoint::http_endpoint::trust::remove_owned(state)? {
-            Some(status) => format!("{} (CA SHA-256 {})", status.outcome, status.ca_sha256),
-            None => "none_owned".into(),
-        },
-    )
+/// Local trust plan C: remove the CA an HTTPS build's setup installed in
+/// this user's trust store (exactly the one its receipt names, by DER
+/// SHA-256), then delete its TLS files. Returns the receipt detail and what
+/// was left for review.
+pub(crate) fn retire_legacy_trust(state: &Path) -> Result<(String, Vec<String>)> {
+    let report = airk_endpoint::http_endpoint::legacy_trust::retire(state)?;
+    Ok((report.summary(), report.residue))
 }
 
 /// Start the installed service through the installed `airkctl` (U94).

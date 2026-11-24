@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Trusted CLI actions for the offline runtime installer and launcher.
 //! Moved from `runtime_install::commands` (split step 2b): the dispatcher
-//! serves the runtime and reaches the frontend and HTTPS setup, which sit above
+//! serves the runtime and reaches the frontend and HTTP setup, which sit above
 //! the installer.
 use crate::install_files::{launcher_path, main_name, read_bounded};
 use crate::runtime_http_commands as http_commands;
@@ -33,33 +33,6 @@ fn resident_service(root: &Path) -> impl std::future::Future<Output = Result<()>
 
 async fn run_with_owned(command: &RuntimeCommand, io: &crate::cli_io::CliIo) -> Result<()> {
     let output = match command {
-        RuntimeCommand::HttpIssuerRotation {
-            install_dir,
-            action,
-            operation_id,
-            expected_ca_sha256,
-            expected_descriptor_sha256,
-            expected_receipt_sha256,
-            overlap_seconds,
-        } => {
-            http_rotation::run(
-                install_dir,
-                http_rotation::Input {
-                    action: *action,
-                    operation: *operation_id,
-                    expected_ca: *expected_ca_sha256,
-                    expected_descriptor: *expected_descriptor_sha256,
-                    expected_receipt: *expected_receipt_sha256,
-                    overlap_seconds: *overlap_seconds,
-                },
-            )
-            .await?
-        }
-        RuntimeCommand::HttpTrust {
-            install_dir,
-            action,
-            expected_ca_sha256,
-        } => http_commands::trust(install_dir, *action, *expected_ca_sha256).await?,
         RuntimeCommand::HttpEndpoint { install_dir } => {
             http_commands::endpoint(install_dir).await?
         }
@@ -325,7 +298,6 @@ async fn run_with_owned(command: &RuntimeCommand, io: &crate::cli_io::CliIo) -> 
         )?)?,
         RuntimeCommand::AbortLayout { install_dir } => {
             let _lock = install_lock(install_dir)?;
-            require_issuer_rotation_settled(install_dir)?;
             crate::install_layout::abort(install_dir)?;
             serde_json::json!({"pending_layout_aborted":true,"state_preserved":true})
         }
@@ -335,7 +307,6 @@ async fn run_with_owned(command: &RuntimeCommand, io: &crate::cli_io::CliIo) -> 
             expected_active,
         } => {
             let _lock = install_lock(install_dir)?;
-            require_issuer_rotation_settled(install_dir)?;
             managed::require_unmanaged(install_dir)?;
             if let (Some(candidate), Some(active)) = (expected_candidate, expected_active) {
                 activation::require_superseded(install_dir, candidate, active)?;
@@ -532,7 +503,6 @@ async fn run_with_owned(command: &RuntimeCommand, io: &crate::cli_io::CliIo) -> 
         } => {
             managed::require_unmanaged(install_dir)?;
             let _lock = install_lock(install_dir)?;
-            require_issuer_rotation_settled(install_dir)?;
             activation::require_settled(install_dir)?;
             match fs::symlink_metadata(install_dir.join("selected.json")) {
                 Ok(_) => {
@@ -621,7 +591,6 @@ async fn run_with_owned(command: &RuntimeCommand, io: &crate::cli_io::CliIo) -> 
         RuntimeCommand::Uninstall { install_dir } => {
             let _lock = install_lock(install_dir)?;
             legacy_caches::require_settled(install_dir)?;
-            require_issuer_rotation_settled(install_dir)?;
             payload_repair::require_settled(install_dir)?;
             retirement::uninstall(install_dir).await?
         }
@@ -630,7 +599,6 @@ async fn run_with_owned(command: &RuntimeCommand, io: &crate::cli_io::CliIo) -> 
             runtime_sha256,
         } => {
             let _lock = install_lock(install_dir)?;
-            require_issuer_rotation_settled(install_dir)?;
             payload_repair::require_settled(install_dir)?;
             staging::abort(install_dir, runtime_sha256)?;
             serde_json::json!({"aborted_stage":runtime_sha256,"promoted_runtime_preserved":install_dir.join("runtimes").join(runtime_sha256).try_exists()?})
@@ -638,7 +606,6 @@ async fn run_with_owned(command: &RuntimeCommand, io: &crate::cli_io::CliIo) -> 
         RuntimeCommand::RepairLauncher { install_dir } => {
             managed::require_unmanaged(install_dir)?;
             let _lock = install_lock(install_dir)?;
-            require_issuer_rotation_settled(install_dir)?;
             activation::require_settled(install_dir)?;
             crate::service_manager::ServiceManager::for_runtime(install_dir)?
                 .require_stopped_for_maintenance()?;
@@ -651,7 +618,6 @@ async fn run_with_owned(command: &RuntimeCommand, io: &crate::cli_io::CliIo) -> 
         }
         RuntimeCommand::AbortLauncherRepair { install_dir } => {
             let _lock = install_lock(install_dir)?;
-            require_issuer_rotation_settled(install_dir)?;
             activation::require_settled(install_dir)?;
             crate::service_manager::ServiceManager::for_runtime(install_dir)?
                 .require_stopped_for_maintenance()?;
@@ -1171,35 +1137,6 @@ mod connection_observation_tests {
 #[cfg(test)]
 mod dispatch_tests {
     use super::*;
-    use crate::runtime_commands as commands;
-    use crate::runtime_install::tests::issuer_gate_fixture;
-
-    #[test]
-    fn login_registration_changes_refuse_pending_issuer_but_preserve_stop_and_observation()
-    -> Result<()> {
-        let (_owner, root, control, _record) = issuer_gate_fixture()?;
-        let journal = control.join("http-1/issuer-rotation.json");
-        let original = fs::read(&journal)?;
-        for action in [LoginCommand::Install, LoginCommand::Uninstall] {
-            let error = commands::require_login_registration_change(&root, &action)
-                .expect_err("manager registration must preserve captured issuer owner");
-            assert!(
-                error
-                    .to_string()
-                    .contains("issuer_rotation_pending_before_runtime_mutation")
-            );
-        }
-        for action in [
-            LoginCommand::Plan,
-            LoginCommand::Status,
-            LoginCommand::Start,
-            LoginCommand::Stop,
-        ] {
-            commands::require_login_registration_change(&root, &action)?;
-        }
-        assert_eq!(fs::read(journal)?, original);
-        Ok(())
-    }
 
     #[test]
     fn standalone_adoption_commands_refuse_before_any_installation_access() {

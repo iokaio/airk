@@ -1479,17 +1479,15 @@ fn replacement_plan_names_every_client_reference_it_breaks() -> Result<()> {
                     .join("airk.exe")
             )],
             http_endpoint: None,
-            ca_sha256: None,
         },
-        "no saved endpoint descriptor means no endpoint or CA reference"
+        "no saved endpoint descriptor means no endpoint reference"
     );
     let value = serde_json::to_value(&plan)?;
     assert_eq!(
         value["client_references"],
         serde_json::json!({
             "executables": [plain(airk_host::user_paths::canonical_location(runtime.parent().unwrap())?.join("airk.exe"))],
-            "http_endpoint": null,
-            "ca_sha256": null
+            "http_endpoint": null
         })
     );
     assert!(
