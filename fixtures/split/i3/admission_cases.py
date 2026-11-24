@@ -25,13 +25,13 @@ GENERATOR = "fixtures/split/i3/admission_cases.py"
 CONTRACT = "docs/split/contracts.md §4, §4.11; docs/split/security-review-i3.md"
 PORT = 57421
 HOST = "127.0.0.1:57421"
-ORIGIN = "https://127.0.0.1:57421"
+ORIGIN = "http://127.0.0.1:57421"  # local trust plan C: plain HTTP on loopback
 NOW = 50_000_000
 COOKIE = base64.urlsafe_b64encode(bytes(range(32))).rstrip(b"=").decode()
 CODE = base64.urlsafe_b64encode(bytes(range(32, 64))).rstrip(b"=").decode()
 CSRF = base64.urlsafe_b64encode(bytes(range(64, 96))).rstrip(b"=").decode()
 INSTANCE = "e1" * 16
-JAR = "__Host-airk_admin=" + COOKIE
+JAR = "airk_admin=" + COOKIE  # local trust plan C: no __Host- prefix, no Secure
 
 
 def admit(route, touches_idle=False):
@@ -112,7 +112,10 @@ def admission_cases():
     yield case("redirect_without_trailing_slash", page("/admin"), admit(REDIRECT))
     yield case("static_exact_origin_allowed", page("/admin/", origin=[ORIGIN], sec_fetch_site=["same-origin"]),
                admit(SHELL))
-    yield case("static_other_port_origin_refused", page("/admin/", origin=["https://127.0.0.1:3000"]),
+    yield case("static_other_port_origin_refused", page("/admin/", origin=["http://127.0.0.1:3000"]),
+               ORIGIN_REFUSED)
+    # Local trust plan C: the old HTTPS origin of the same port is another origin.
+    yield case("static_https_origin_refused", page("/admin/", origin=["https://127.0.0.1:57421"]),
                ORIGIN_REFUSED)
     yield case("static_null_origin_refused", page("/admin/", origin=["null"]), ORIGIN_REFUSED)
     yield case("static_bearer_refused", page("/admin/", authorization=1), BEARER)
@@ -156,7 +159,7 @@ def admission_cases():
     yield case("call_with_live_session", api(call), admit(STOP, True), session=LIVE)
     yield case("call_cross_origin_refused", api(call, origin=["https://evil.example"], sec_fetch_site=["cross-site"]),
                ORIGIN_REFUSED, session=LIVE)
-    yield case("call_other_127_port_page_refused", api(call, origin=["https://127.0.0.1:3000"],
+    yield case("call_other_127_port_page_refused", api(call, origin=["http://127.0.0.1:3000"],
                                                        sec_fetch_site=["same-site"]), ORIGIN_REFUSED, session=LIVE)
     yield case("call_cross_site_form_post_refused",
                api(call, origin=["https://evil.example"], sec_fetch_site=["cross-site"], sec_fetch_mode="navigate",
@@ -209,7 +212,7 @@ def admission_cases():
     # The bearer plane and unrelated paths stay with the existing pipeline.
     yield case("mcp_is_not_admin", api("/mcp", cookie=[JAR]), NOT_ADMIN, session=LIVE)
     yield case("api_v1_is_not_admin", api("/api/v1/tools/search"), NOT_ADMIN)
-    yield case("absolute_form_is_not_admin", page("https://127.0.0.1:57421/admin/"), NOT_ADMIN)
+    yield case("absolute_form_is_not_admin", page("http://127.0.0.1:57421/admin/"), NOT_ADMIN)
     yield case("uppercase_admin_is_not_admin", page("/ADMIN/"), NOT_ADMIN)
     yield case("admin_prefixed_word_not_found", page("/adminx"), NOT_FOUND)
     yield case("traversal_to_mcp_not_found", api("/admin/../mcp"), NOT_FOUND, session=LIVE)
@@ -252,7 +255,7 @@ def path_cases():
                    "/admin/API/v1/session", "/adminx", "/admin-x", "/admin/assets/" + "a" * 129,
                    "/admin/api/v1/session/", "/admin/api/v1/call/service.stop/extra", "/admin/~/launch"):
         yield path(target, gone)
-    for target in ("/mcp", "/api/v1/tools", "/", "*", "https://127.0.0.1:57421/admin/", "/ADMIN", "", "/Admin/"):
+    for target in ("/mcp", "/api/v1/tools", "/", "*", "http://127.0.0.1:57421/admin/", "/ADMIN", "", "/Admin/"):
         yield path(target, other)
 
 
@@ -260,20 +263,21 @@ def cookie_cases():
     yield {"headers": [], "admin_cookies": 0}
     yield {"headers": [JAR], "admin_cookies": 1}
     yield {"headers": ["a=1; " + JAR + "; b=2"], "admin_cookies": 1}
-    yield {"headers": [JAR + "; __Host-airk_admin=other"], "admin_cookies": 2}
-    yield {"headers": [JAR, "__Host-airk_admin=other"], "admin_cookies": 2}
-    yield {"headers": ["__host-airk_admin=" + COOKIE], "admin_cookies": 0}
-    yield {"headers": ["airk_admin=" + COOKIE], "admin_cookies": 0}
-    yield {"headers": ["__Host-airk_admin"], "admin_cookies": 0}
-    yield {"headers": ["__Host-airk_admin="], "admin_cookies": 1}
-    yield {"headers": ["  __Host-airk_admin =" + COOKIE + ";"], "admin_cookies": 1}
-    yield {"headers": ["x=__Host-airk_admin=" + COOKIE], "admin_cookies": 0}
+    yield {"headers": [JAR + "; airk_admin=other"], "admin_cookies": 2}
+    yield {"headers": [JAR, "airk_admin=other"], "admin_cookies": 2}
+    yield {"headers": ["AIRK_ADMIN=" + COOKIE], "admin_cookies": 0}
+    # Local trust plan C: the old __Host- cookie of an HTTPS build is another name.
+    yield {"headers": ["__Host-airk_admin=" + COOKIE], "admin_cookies": 0}
+    yield {"headers": ["airk_admin"], "admin_cookies": 0}
+    yield {"headers": ["airk_admin="], "admin_cookies": 1}
+    yield {"headers": ["  airk_admin =" + COOKIE + ";"], "admin_cookies": 1}
+    yield {"headers": ["x=airk_admin=" + COOKIE], "admin_cookies": 0}
 
 
 def bearer_plane_cases():
     yield {"headers": [JAR], "expect": {"status": 403, "code": "cookie_on_bearer_plane"}}
     yield {"headers": ["session=abc; theme=dark"], "expect": None}
-    yield {"headers": ["__host-airk_admin=" + COOKIE], "expect": None}
+    yield {"headers": ["AIRK_ADMIN=" + COOKIE], "expect": None}
     yield {"headers": [], "expect": None}
 
 
@@ -358,7 +362,7 @@ def launch_document():
         "schema": "airk.split-fixture.i3-launch-exchange/1",
         "contract": CONTRACT,
         "generator": GENERATOR,
-        "launch_url": {"port": PORT, "code": CODE, "url": "https://127.0.0.1:57421/admin/launch#c=" + CODE},
+        "launch_url": {"port": PORT, "code": CODE, "url": "http://127.0.0.1:57421/admin/launch#c=" + CODE},
         "exchanges": exchanges,
         "admission": admission,
         "responses": [{"name": "exchange_result", "json": {"csrf": CSRF, "idle_expires_in_ms": 1_800_000,
@@ -408,11 +412,11 @@ def headers_document():
             "redirect": security + no_store + [["location", "/admin/"]],
         },
         "never_sent_prefixes": ["access-control-"],
-        "cookie_name": "__Host-airk_admin",
+        "cookie_name": "airk_admin",
         "csrf_header": "x-airk-csrf",
         "set_cookie": {"value": COOKIE,
-                       "header": "__Host-airk_admin=" + COOKIE + "; Secure; HttpOnly; SameSite=Strict; Path=/"},
-        "clear_cookie": "__Host-airk_admin=; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=0",
+                       "header": "airk_admin=" + COOKIE + "; HttpOnly; SameSite=Strict; Path=/"},
+        "clear_cookie": "airk_admin=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0",
         "redacted_request_headers": ["authorization", "cookie", "x-airk-csrf"],
         "exchange_secret_fields": ["code", "csrf"],
         "bare_status_exceptions": [400, 431],

@@ -194,13 +194,13 @@
  "never_sent_prefixes": [
   "access-control-"
  ],
- "cookie_name": "__Host-airk_admin",
+ "cookie_name": "airk_admin",
  "csrf_header": "x-airk-csrf",
  "set_cookie": {
   "value": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
-  "header": "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8; Secure; HttpOnly; SameSite=Strict; Path=/"
+  "header": "airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8; HttpOnly; SameSite=Strict; Path=/"
  },
- "clear_cookie": "__Host-airk_admin=; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=0",
+ "clear_cookie": "airk_admin=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0",
  "redacted_request_headers": [
   "authorization",
   "cookie",

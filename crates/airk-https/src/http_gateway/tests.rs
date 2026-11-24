@@ -5,7 +5,7 @@ use airk_core::{
     index_catalog::{CatalogRevision, QueryProjectId},
     service_http::{EndpointState, LoopbackMcpUrl},
 };
-use airk_endpoint::http_endpoint::{InstallationBinding, TlsIdentity};
+use airk_endpoint::http_endpoint::InstallationBinding;
 use airk_mcp::remote::{RemoteFuture, RemoteTools};
 use anyhow::Context as _;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -47,7 +47,7 @@ impl AsyncWrite for PolicyIo {
         if this.armed.load(Ordering::SeqCst) {
             assert!(
                 this.policy.try_lock().is_err(),
-                "Store policy was released before actual ciphertext write poll"
+                "Store policy was released before the actual socket write poll"
             );
         }
         Pin::new(&mut this.inner).poll_write(cx, bytes)
@@ -195,7 +195,6 @@ struct Fixture {
     token: String,
     checks: Arc<AtomicUsize>,
     fenced: Arc<AtomicBool>,
-    ca: Vec<u8>,
 }
 fn fixture(port: u16) -> anyhow::Result<Fixture> {
     let root = tempfile::tempdir()?;
@@ -206,10 +205,6 @@ fn fixture(port: u16) -> anyhow::Result<Fixture> {
         user: crate::local_ipc::current_user()?,
         namespace: Incarnation::from_bytes([2; 16]),
     };
-    let identity = TlsIdentity::load_or_create(&path, binding.clone(), now_ms())?;
-    let bundle: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(path.join("tls-identity.json"))?)?;
-    let ca = serde_json::from_value(bundle["ca_der"].clone())?;
     let endpoint = EndpointDescriptor {
         schema: 1,
         installation: binding.installation,
@@ -219,8 +214,6 @@ fn fixture(port: u16) -> anyhow::Result<Fixture> {
         service_instance: Incarnation::from_bytes([3; 16]),
         executable_sha256: Sha256Digest::from_bytes([4; 32]),
         url: LoopbackMcpUrl::new(port)?,
-        ca_sha256: identity.ca_sha256(),
-        certificate_sha256: identity.certificate_sha256(),
         state: EndpointState::Ready,
         predecessor_digest: None,
     };
@@ -237,7 +230,6 @@ fn fixture(port: u16) -> anyhow::Result<Fixture> {
     });
     let fenced = Arc::new(AtomicBool::new(false));
     let fence = fenced.clone();
-    let (_sender, tls) = watch::channel(identity.acceptor());
     let native_gate = NativeCatalogAdmission::new(
         endpoint.service_instance,
         endpoint.namespace,
@@ -246,7 +238,6 @@ fn fixture(port: u16) -> anyhow::Result<Fixture> {
     )?;
     let gateway = Gateway::new(
         &endpoint,
-        tls,
         validate,
         NativeAdmission {
             delivery_guard_factory: Arc::new(|_, _| Ok(Arc::new(PassDelivery))),
@@ -262,7 +253,6 @@ fn fixture(port: u16) -> anyhow::Result<Fixture> {
         token,
         checks,
         fenced,
-        ca,
     })
 }
 fn request(f: &Fixture, path: &str) -> Request<Full<Bytes>> {
@@ -393,31 +383,21 @@ async fn output_byte_charge_follows_actual_network_clones_and_never_silently_tru
     Ok(())
 }
 #[tokio::test]
-async fn real_loopback_tls_gateway_serves_tokenless_canonical_json_and_drains() -> anyhow::Result<()>
-{
+async fn real_loopback_http_gateway_serves_tokenless_canonical_json_and_drains()
+-> anyhow::Result<()> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let foreign = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
     let held = BoundEndpoint::bind(Some(foreign.local_addr()?.port()))?;
     let port = held.port()?;
     let f = fixture(port)?;
-    let mut roots = rustls::RootCertStore::empty();
-    roots.add(rustls::pki_types::CertificateDer::from(f.ca.clone()))?;
-    let config = rustls::ClientConfig::builder_with_provider(Arc::new(
-        rustls::crypto::ring::default_provider(),
-    ))
-    .with_safe_default_protocol_versions()?
-    .with_root_certificates(roots)
-    .with_no_client_auth();
-    let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
     let shutdown = CancellationToken::new();
     let stop = shutdown.clone();
     let gateway = f.gateway.clone();
     let task = tokio::spawn(async move { gateway.run(held, stop).await });
-    // U110: four real TLS requests, two with a stale bearer header and two
-    // with none; every one is served and no token is echoed.
+    // U110: four real plain-HTTP requests, two with a stale bearer header and
+    // two with none; every one is served and no token is echoed.
     let mut requests = tokio::task::JoinSet::new();
     for attempt in 0..4 {
-        let connector = connector.clone();
         let token = f.token.clone();
         let authorization = if attempt % 2 == 0 {
             format!("Authorization: Bearer {token}\r\n")
@@ -425,16 +405,13 @@ async fn real_loopback_tls_gateway_serves_tokenless_canonical_json_and_drains() 
             String::new()
         };
         requests.spawn(async move {
-            let socket = tokio::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port)).await?;
-            let mut tls = connector.connect(
-                rustls::pki_types::ServerName::try_from("127.0.0.1")?, socket,
-            ).await?;
+            let mut socket = tokio::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port)).await?;
             let wire = format!(
                 "POST /api/v1/tools/airk_search HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n{authorization}Content-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}"
             );
-            tls.write_all(wire.as_bytes()).await?;
+            socket.write_all(wire.as_bytes()).await?;
             let mut bytes = Vec::new();
-            tokio::time::timeout(Duration::from_secs(5), tls.read_to_end(&mut bytes)).await??;
+            tokio::time::timeout(Duration::from_secs(5), socket.read_to_end(&mut bytes)).await??;
             let response = String::from_utf8(bytes)?;
             anyhow::ensure!(response.starts_with("HTTP/1.1 200"), "{response}");
             anyhow::ensure!(response.contains("\"retained\":true"));
@@ -486,127 +463,88 @@ impl Drop for LifetimeProbe {
     }
 }
 
+/// Local trust plan C (rewritten from the TLS-buffer version): the
+/// production stack over plain TCP. A request bound past its deadline or
+/// cancelled cannot put one more byte on the socket, and keeps admission
+/// until the connection closes.
 #[tokio::test]
-async fn buffered_tls_request_deadline_and_cancellation_fence_actual_bytes_until_close()
--> anyhow::Result<()> {
+async fn request_deadline_and_cancellation_fence_actual_bytes_until_close() -> anyhow::Result<()> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     for cancel in [false, true] {
-        for read_driven in [false, true] {
-            let f = fixture(57421)?;
-            let delivery = ConnectionFence::new(f.gateway.0.native_gate.clone());
-            let (server_socket, client_socket) = tokio::io::duplex(65536);
-            let bytes = Arc::new(AtomicUsize::new(0));
-            let raw = FencedIo {
+        let f = fixture(57421)?;
+        let delivery = ConnectionFence::new(f.gateway.0.native_gate.clone());
+        let (server_socket, mut client) = tokio::io::duplex(65536);
+        let bytes = Arc::new(AtomicUsize::new(0));
+        // The production stack over plain TCP: Hyper writes into
+        // `FlushTrackedIo`, every socket effect goes through `FencedIo`.
+        let mut server = FlushTrackedIo {
+            inner: FencedIo {
                 inner: CountWrites {
                     inner: server_socket,
                     bytes: bytes.clone(),
                 },
                 delivery: delivery.clone(),
-            };
-            let mut roots = rustls::RootCertStore::empty();
-            roots.add(rustls::pki_types::CertificateDer::from(f.ca.clone()))?;
-            let config = rustls::ClientConfig::builder_with_provider(Arc::new(
-                rustls::crypto::ring::default_provider(),
-            ))
-            .with_safe_default_protocol_versions()?
-            .with_root_certificates(roots)
-            .with_no_client_auth();
-            let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
-            let acceptor = f.gateway.0.tls.borrow().clone();
-            let (server, client) = tokio::time::timeout(Duration::from_secs(5), async {
-                tokio::join!(
-                    acceptor.accept(raw),
-                    connector.connect(
-                        rustls::pki_types::ServerName::try_from("127.0.0.1").unwrap(),
-                        client_socket
-                    )
-                )
-            })
-            .await?;
-            let mut server = FlushTrackedIo {
-                inner: server?,
-                delivery: delivery.clone(),
-            };
-            let mut client = client?;
-            let dropped = Arc::new(AtomicUsize::new(0));
-            let canceled = CancellationToken::new();
-            let context = ReadAttemptContext::new(
-                Instant::now() + Duration::from_millis(40),
-                canceled.clone(),
-            )
-            .with_lifetime_guard(Arc::new(LifetimeProbe(dropped.clone())));
-            delivery.bind_request(context).await?;
-            std::io::Write::write_all(
-                &mut server.inner.get_mut().1.writer(),
-                b"buffered private response",
-            )?;
-            delivery.body_complete();
-            let before = bytes.load(Ordering::SeqCst);
-            if cancel {
-                canceled.cancel();
-            } else {
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-            if read_driven {
-                client.get_mut().0.write_all(&[23, 3, 3, 0, 1, 0]).await?;
-                assert!(
-                    tokio::time::timeout(Duration::from_secs(2), server.read(&mut [0u8; 32]))
-                        .await?
-                        .is_err()
-                );
-            } else {
-                assert!(server.flush().await.is_err());
-            }
-            assert_eq!(
-                bytes.load(Ordering::SeqCst),
-                before,
-                "expired/canceled ciphertext escaped raw request fence"
-            );
-            assert_eq!(
-                dropped.load(Ordering::SeqCst),
-                0,
-                "blocked TLS ciphertext still owns admission"
-            );
-            drop(server);
-            assert_eq!(
-                dropped.load(Ordering::SeqCst),
-                1,
-                "actual connection close releases delivery ownership"
-            );
+            },
+            delivery: delivery.clone(),
+        };
+        let dropped = Arc::new(AtomicUsize::new(0));
+        let canceled = CancellationToken::new();
+        let context =
+            ReadAttemptContext::new(Instant::now() + Duration::from_millis(40), canceled.clone())
+                .with_lifetime_guard(Arc::new(LifetimeProbe(dropped.clone())));
+        delivery.bind_request(context).await?;
+        // Control: before the deadline the bound request's bytes reach the socket.
+        server.write_all(b"head").await?;
+        server.flush().await?;
+        let mut head = [0u8; 4];
+        tokio::time::timeout(Duration::from_secs(5), client.read_exact(&mut head)).await??;
+        assert_eq!(&head, b"head");
+        delivery.body_complete();
+        let before = bytes.load(Ordering::SeqCst);
+        if cancel {
+            canceled.cancel();
+        } else {
+            tokio::time::sleep(Duration::from_millis(50)).await;
         }
+        // After the deadline or the cancellation no byte of the private
+        // response reaches the socket, whether written or only flushed.
+        assert!(server.write_all(b"private response").await.is_err());
+        assert!(server.flush().await.is_err());
+        assert_eq!(
+            bytes.load(Ordering::SeqCst),
+            before,
+            "expired/canceled bytes escaped the request fence"
+        );
+        assert_eq!(
+            dropped.load(Ordering::SeqCst),
+            0,
+            "an unflushed request still owns admission"
+        );
+        drop(server);
+        assert_eq!(
+            dropped.load(Ordering::SeqCst),
+            1,
+            "actual connection close releases delivery ownership"
+        );
     }
     Ok(())
 }
 
 #[tokio::test]
-async fn real_tls_keeps_sequential_and_pipelined_requests_on_their_own_flush_boundary()
+async fn real_http_keeps_sequential_and_pipelined_requests_on_their_own_flush_boundary()
 -> anyhow::Result<()> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let foreign = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
     let held = BoundEndpoint::bind(Some(foreign.local_addr()?.port()))?;
     let port = held.port()?;
     let f = fixture(port)?;
-    let mut roots = rustls::RootCertStore::empty();
-    roots.add(rustls::pki_types::CertificateDer::from(f.ca.clone()))?;
-    let config = rustls::ClientConfig::builder_with_provider(Arc::new(
-        rustls::crypto::ring::default_provider(),
-    ))
-    .with_safe_default_protocol_versions()?
-    .with_root_certificates(roots)
-    .with_no_client_auth();
-    let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
     let stop = CancellationToken::new();
     let gateway = f.gateway.clone();
     let shutdown = stop.clone();
     let owner = tokio::spawn(async move { gateway.run(held, shutdown).await });
     let socket = tokio::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port)).await?;
-    let tls = connector
-        .connect(
-            rustls::pki_types::ServerName::try_from("127.0.0.1")?,
-            socket,
-        )
-        .await?;
-    let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(tls)).await?;
+    let (mut sender, connection) =
+        hyper::client::conn::http1::handshake(TokioIo::new(socket)).await?;
     let client = tokio::spawn(connection);
     for _ in 0..3 {
         let request = Request::builder()
@@ -624,13 +562,7 @@ async fn real_tls_keeps_sequential_and_pipelined_requests_on_their_own_flush_bou
     }
     drop(sender);
     tokio::time::timeout(Duration::from_secs(3), client).await???;
-    let socket = tokio::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port)).await?;
-    let mut tls = connector
-        .connect(
-            rustls::pki_types::ServerName::try_from("127.0.0.1")?,
-            socket,
-        )
-        .await?;
+    let mut socket = tokio::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port)).await?;
     let wire = |close: bool| {
         format!(
             "POST /api/v1/tools/airk_search HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAuthorization: Bearer {}\r\nContent-Type: application/json\r\nContent-Length: 2\r\n{}\r\n{{}}",
@@ -638,10 +570,11 @@ async fn real_tls_keeps_sequential_and_pipelined_requests_on_their_own_flush_bou
             if close { "Connection: close\r\n" } else { "" }
         )
     };
-    tls.write_all(format!("{}{}", wire(false), wire(true)).as_bytes())
+    socket
+        .write_all(format!("{}{}", wire(false), wire(true)).as_bytes())
         .await?;
     let mut replies = Vec::new();
-    tokio::time::timeout(Duration::from_secs(5), tls.read_to_end(&mut replies)).await??;
+    tokio::time::timeout(Duration::from_secs(5), socket.read_to_end(&mut replies)).await??;
     let replies = String::from_utf8(replies)?;
     assert_eq!(replies.matches("HTTP/1.1 200").count(), 2, "{replies}");
     assert_eq!(replies.matches("\"retained\":true").count(), 2, "{replies}");
@@ -651,10 +584,10 @@ async fn real_tls_keeps_sequential_and_pipelined_requests_on_their_own_flush_bou
 }
 
 #[tokio::test]
-async fn real_tls_scope_refusal_preserves_fresh_403_and_fences_old_buffered_evidence()
+async fn real_http_scope_refusal_preserves_fresh_403_and_fences_old_unsent_evidence()
 -> anyhow::Result<()> {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    for read_driven in [false, true] {
+    use tokio::io::AsyncWriteExt;
+    {
         let foreign = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
         let held = BoundEndpoint::bind(Some(foreign.local_addr()?.port()))?;
         let port = held.port()?;
@@ -672,44 +605,22 @@ async fn real_tls_scope_refusal_preserves_fresh_403_and_fences_old_buffered_evid
                     as AuthenticatedBackendFactory)
             })
         });
-        let mut roots = rustls::RootCertStore::empty();
-        roots.add(rustls::pki_types::CertificateDer::from(f.ca.clone()))?;
-        let config = rustls::ClientConfig::builder_with_provider(Arc::new(
-            rustls::crypto::ring::default_provider(),
-        ))
-        .with_safe_default_protocol_versions()?
-        .with_root_certificates(roots)
-        .with_no_client_auth();
-        let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
         let delivery = ConnectionFence::new(f.gateway.0.native_gate.clone());
         let bytes = Arc::new(AtomicUsize::new(0));
         let (old_socket, old_peer) = tokio::io::duplex(65536);
-        let raw = FencedIo {
-            inner: CountWrites {
-                inner: old_socket,
-                bytes: bytes.clone(),
+        // The old connection's production stack over plain TCP.
+        let mut old_server = FlushTrackedIo {
+            inner: FencedIo {
+                inner: CountWrites {
+                    inner: old_socket,
+                    bytes: bytes.clone(),
+                },
+                delivery: delivery.clone(),
             },
             delivery: delivery.clone(),
         };
-        let acceptor = f.gateway.0.tls.borrow().clone();
-        let (old_server, old_client) = tokio::time::timeout(Duration::from_secs(5), async {
-            tokio::join!(
-                acceptor.accept(raw),
-                connector.connect(
-                    rustls::pki_types::ServerName::try_from("127.0.0.1").unwrap(),
-                    old_peer
-                )
-            )
-        })
-        .await
-        .context("scope-refusal fixture: original buffered TLS handshake deadline")?;
-        let mut old_server = FlushTrackedIo {
-            inner: old_server?,
-            delivery: delivery.clone(),
-        };
-        let mut old_client = old_client?;
         // Use the actual native gateway dispatch to bind the old validated read
-        // context, then retain its real result in rustls before any socket flush.
+        // context, then hold its real result unsent before any socket write.
         let response = f
             .gateway
             .handle_on_connection(
@@ -721,10 +632,10 @@ async fn real_tls_scope_refusal_preserves_fresh_403_and_fences_old_buffered_evid
         assert_eq!(response.status(), StatusCode::OK);
         let old_body = response.into_body().collect().await?.to_bytes();
         assert!(String::from_utf8_lossy(&old_body).contains("\"retained\":true"));
-        std::io::Write::write_all(&mut old_server.inner.get_mut().1.writer(), &old_body)?;
-        // The copied bytes now belong to rustls; the production delivery wrapper
-        // retains request admission until flush or transport close. Do not retain
-        // a second application Bytes owner across factory shutdown.
+        // Keep a plain copy of the evidence; the production delivery wrapper
+        // retains request admission until flush or transport close. Do not
+        // retain a second application Bytes owner across factory shutdown.
+        let old_evidence = old_body.to_vec();
         drop(old_body);
         let read_cell = Arc::downgrade(
             &f.gateway
@@ -750,15 +661,9 @@ async fn real_tls_scope_refusal_preserves_fresh_403_and_fences_old_buffered_evid
         let gateway = f.gateway.clone();
         let shutdown = stop.clone();
         let server = tokio::spawn(async move { gateway.run(held, shutdown).await });
-        let socket = tokio::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port)).await?;
-        let fresh = connector
-            .connect(
-                rustls::pki_types::ServerName::try_from("127.0.0.1")?,
-                socket,
-            )
-            .await?;
+        let fresh = tokio::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port)).await?;
         // Hyper decodes HTTP framing (including chunked bodies) over the real
-        // TLS socket; raw bytes after the headers are not necessarily JSON.
+        // TCP socket; raw bytes after the headers are not necessarily JSON.
         let (mut sender, connection) =
             hyper::client::conn::http1::handshake(TokioIo::new(fresh)).await?;
         let client = tokio::spawn(connection);
@@ -769,7 +674,7 @@ async fn real_tls_scope_refusal_preserves_fresh_403_and_fences_old_buffered_evid
         );
         let response = tokio::time::timeout(Duration::from_secs(5), sender.send_request(req))
             .await
-            .context("scope-refusal fixture: fresh HTTPS response headers deadline")??;
+            .context("scope-refusal fixture: fresh HTTP response headers deadline")??;
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
         assert_eq!(
             response.headers()[http::header::CONTENT_TYPE],
@@ -780,7 +685,7 @@ async fn real_tls_scope_refusal_preserves_fresh_403_and_fences_old_buffered_evid
             http_body_util::Limited::new(response.into_body(), 8192).collect(),
         )
         .await
-        .context("scope-refusal fixture: fresh HTTPS decoded body deadline")?
+        .context("scope-refusal fixture: fresh HTTP decoded body deadline")?
         .map_err(anyhow::Error::from_boxed)?
         .to_bytes();
         assert_eq!(
@@ -789,7 +694,7 @@ async fn real_tls_scope_refusal_preserves_fresh_403_and_fences_old_buffered_evid
         );
         assert!(!String::from_utf8_lossy(&refusal_body).contains(&f.token));
         eprintln!(
-            "scope-refusal fixture: decoded native HTTP403 body (read_driven={read_driven}): {}",
+            "scope-refusal fixture: decoded native HTTP403 body: {}",
             String::from_utf8_lossy(&refusal_body)
         );
         drop(sender);
@@ -798,25 +703,14 @@ async fn real_tls_scope_refusal_preserves_fresh_403_and_fences_old_buffered_evid
             .context("scope-refusal fixture: fresh Hyper client shutdown deadline")???;
         assert!(f.gateway.0.client.lock().unwrap().is_none());
         assert!(delivery.check().is_err());
-        if read_driven {
-            old_client
-                .get_mut()
-                .0
-                .write_all(&[23, 3, 3, 0, 1, 0])
-                .await?;
-            assert!(
-                tokio::time::timeout(Duration::from_secs(2), old_server.read(&mut [0u8; 32]))
-                    .await
-                    .context("scope-refusal fixture: old buffered TLS read-driven fence deadline")?
-                    .is_err()
-            );
-        } else {
-            assert!(old_server.flush().await.is_err());
-        }
+        // The retired context's evidence cannot reach the socket: neither the
+        // write nor the flush passes the fence.
+        assert!(old_server.write_all(&old_evidence).await.is_err());
+        assert!(old_server.flush().await.is_err());
         assert_eq!(
             bytes.load(Ordering::SeqCst),
             before,
-            "retired read context emitted buffered TLS evidence"
+            "retired read context emitted its evidence"
         );
         assert!(
             delivery
@@ -825,15 +719,13 @@ async fn real_tls_scope_refusal_preserves_fresh_403_and_fences_old_buffered_evid
             "old TCP cannot replace its retired read context"
         );
         drop(old_server);
-        drop(old_client);
+        drop(old_peer);
         drop(delivery);
         assert!(
             read_cell.upgrade().is_none(),
             "closed sockets must release their retired context cell"
         );
-        eprintln!(
-            "scope-refusal fixture: old buffered TLS output fenced (read_driven={read_driven},bytes={before})"
-        );
+        eprintln!("scope-refusal fixture: old unsent output fenced (bytes={before})");
         stop.cancel();
         tokio::time::timeout(Duration::from_secs(5), server)
             .await
@@ -1063,86 +955,6 @@ impl AsyncWrite for CountWrites {
 }
 
 #[tokio::test]
-async fn tls_read_driven_alert_cannot_flush_ciphertext_after_native_fence() -> anyhow::Result<()> {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    for below_tls in [false, true] {
-        let f = fixture(57421)?;
-        let delivery = ConnectionFence::new(f.gateway.0.native_gate.clone());
-        let (server_socket, client_socket) = tokio::io::duplex(65536);
-        let bytes = Arc::new(AtomicUsize::new(0));
-        let raw = FencedIo {
-            inner: CountWrites {
-                inner: server_socket,
-                bytes: bytes.clone(),
-            },
-            delivery: if below_tls {
-                delivery.clone()
-            } else {
-                ConnectionFence::new(f.gateway.0.native_gate.clone())
-            },
-        };
-        let mut roots = rustls::RootCertStore::empty();
-        roots.add(rustls::pki_types::CertificateDer::from(f.ca.clone()))?;
-        let config = rustls::ClientConfig::builder_with_provider(Arc::new(
-            rustls::crypto::ring::default_provider(),
-        ))
-        .with_safe_default_protocol_versions()?
-        .with_root_certificates(roots)
-        .with_no_client_auth();
-        let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
-        let acceptor = f.gateway.0.tls.borrow().clone();
-        let (server, client) = tokio::time::timeout(Duration::from_secs(5), async {
-            tokio::join!(
-                acceptor.accept(raw),
-                connector.connect(
-                    rustls::pki_types::ServerName::try_from("127.0.0.1").unwrap(),
-                    client_socket
-                )
-            )
-        })
-        .await?;
-        let mut server = server?;
-        let mut client = client?;
-        let namespace = f.gateway.0.namespace;
-        delivery.capture(namespace)?;
-        // Queue a real rustls application record, without flushing the socket.
-        std::io::Write::write_all(&mut server.get_mut().1.writer(), b"retained evidence")?;
-        let before = bytes.load(Ordering::SeqCst);
-        close_native(&f.gateway.0.native_gate, namespace)?;
-        // Invalid encrypted record triggers rustls read_io's last-gasp write.
-        client.get_mut().0.write_all(&[23, 3, 3, 0, 1, 0]).await?;
-        let mut reader: Box<dyn AsyncRead + Unpin> = if below_tls {
-            Box::new(server)
-        } else {
-            Box::new(FencedIo {
-                inner: server,
-                delivery,
-            })
-        };
-        let mut output = [0u8; 32];
-        assert!(
-            tokio::time::timeout(Duration::from_secs(2), reader.read(&mut output))
-                .await?
-                .is_err()
-        );
-        if below_tls {
-            assert_eq!(
-                bytes.load(Ordering::SeqCst),
-                before,
-                "fenced raw socket must receive no post-fence TLS bytes"
-            );
-        } else {
-            assert!(
-                bytes.load(Ordering::SeqCst) > before,
-                "control demonstrates a TLS read can bypass an outer write-only fence"
-            );
-        }
-        f.gateway.close().await;
-    }
-    Ok(())
-}
-
-#[tokio::test]
 async fn async_scope_validation_cannot_cross_the_captured_delivery_fence() -> anyhow::Result<()> {
     let mut f = fixture(57421)?;
     let gate = f.gateway.0.native_gate.clone();
@@ -1226,11 +1038,11 @@ async fn a_native_fence_after_validation_cannot_be_undone_by_delayed_cache_inser
 #[cfg(feature = "local-inference")]
 type ClockTestSender = hyper::client::conn::http1::SendRequest<Full<Bytes>>;
 
-/// A real CA-validated HTTPS exchange against the supplied native status owner.
+/// A real loopback HTTP exchange against the supplied native status owner.
 /// Callers hold their inference lane separately; this helper owns only ingress.
 /// Its only caller (`inference_owner_tests`) exists with `local-inference`.
 #[cfg(feature = "local-inference")]
-pub(crate) async fn live_https_status(
+pub(crate) async fn live_http_status(
     backend: Arc<dyn RemoteTools>,
 ) -> anyhow::Result<serde_json::Value> {
     let endpoint = BoundEndpoint::bind(None)?;
@@ -1247,7 +1059,7 @@ pub(crate) async fn live_https_status(
     let gateway = f.gateway.clone();
     let server = tokio::spawn(async move { gateway.run(endpoint, shutdown).await });
     let exchange = async {
-        let (mut sender, connection) = clock_test_tcp(&f, port).await?;
+        let (mut sender, connection) = clock_test_tcp(port).await?;
         let response = clock_test_exchange(
             &f,
             &mut sender,
@@ -1259,7 +1071,7 @@ pub(crate) async fn live_https_status(
         drop(sender);
         tokio::time::timeout(Duration::from_secs(5), connection).await???;
         let (status, _, body) = response?;
-        assert_eq!(status, StatusCode::OK, "native status over HTTPS: {body}");
+        assert_eq!(status, StatusCode::OK, "native status over HTTP: {body}");
         Ok::<_, anyhow::Error>(body)
     }
     .await;
@@ -1270,29 +1082,13 @@ pub(crate) async fn live_https_status(
 
 #[cfg(feature = "local-inference")]
 async fn clock_test_tcp(
-    f: &Fixture,
     port: u16,
 ) -> anyhow::Result<(
     ClockTestSender,
     tokio::task::JoinHandle<Result<(), hyper::Error>>,
 )> {
-    let mut roots = rustls::RootCertStore::empty();
-    roots.add(rustls::pki_types::CertificateDer::from(f.ca.clone()))?;
-    let config = rustls::ClientConfig::builder_with_provider(Arc::new(
-        rustls::crypto::ring::default_provider(),
-    ))
-    .with_safe_default_protocol_versions()?
-    .with_root_certificates(roots)
-    .with_no_client_auth();
-    let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
     let socket = tokio::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port)).await?;
-    let tls = connector
-        .connect(
-            rustls::pki_types::ServerName::try_from("127.0.0.1")?,
-            socket,
-        )
-        .await?;
-    let (sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(tls)).await?;
+    let (sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(socket)).await?;
     Ok((sender, tokio::spawn(connection)))
 }
 #[cfg(feature = "local-inference")]
@@ -1364,18 +1160,21 @@ async fn the_local_session_survives_a_revision_move_on_the_same_connection() -> 
     Ok(())
 }
 
+/// Local trust plan C (rewritten from the TLS-buffer version): a policy
+/// change after the result was computed, before the actual socket poll,
+/// refuses the write itself, so no byte of the result reaches the socket.
 #[tokio::test]
-async fn native_policy_fences_buffered_tls_bytes_at_actual_write_poll() -> anyhow::Result<()> {
+async fn native_policy_fences_unsent_bytes_at_actual_write_poll() -> anyhow::Result<()> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    for read_driven in [false, true] {
-        for prefix in [false, true] {
-            let f = fixture(57427)?;
-            let delivery = ConnectionFence::new(f.gateway.0.native_gate.clone());
-            let (socket, peer) = tokio::io::duplex(65536);
-            let bytes = Arc::new(AtomicUsize::new(0));
-            let policy = Arc::new(Mutex::new(1u64));
-            let armed = Arc::new(AtomicBool::new(false));
-            let raw = FencedIo {
+    for prefix in [false, true] {
+        let f = fixture(57427)?;
+        let delivery = ConnectionFence::new(f.gateway.0.native_gate.clone());
+        let (socket, mut client) = tokio::io::duplex(65536);
+        let bytes = Arc::new(AtomicUsize::new(0));
+        let policy = Arc::new(Mutex::new(1u64));
+        let armed = Arc::new(AtomicBool::new(false));
+        let mut server = FlushTrackedIo {
+            inner: FencedIo {
                 inner: PolicyIo {
                     inner: CountWrites {
                         inner: socket,
@@ -1385,88 +1184,51 @@ async fn native_policy_fences_buffered_tls_bytes_at_actual_write_poll() -> anyho
                     armed: armed.clone(),
                 },
                 delivery: delivery.clone(),
-            };
-            let mut roots = rustls::RootCertStore::empty();
-            roots.add(rustls::pki_types::CertificateDer::from(f.ca.clone()))?;
-            let config = rustls::ClientConfig::builder_with_provider(Arc::new(
-                rustls::crypto::ring::default_provider(),
-            ))
-            .with_safe_default_protocol_versions()?
-            .with_root_certificates(roots)
-            .with_no_client_auth();
-            let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
-            let acceptor = f.gateway.0.tls.borrow().clone();
-            let (server, client) = tokio::time::timeout(Duration::from_secs(5), async {
-                tokio::join!(
-                    acceptor.accept(raw),
-                    connector.connect(
-                        rustls::pki_types::ServerName::try_from("127.0.0.1").unwrap(),
-                        peer
-                    )
-                )
-            })
-            .await?;
-            let mut server = server?;
-            let mut client = client?;
-            let context = ReadAttemptContext::new(
-                Instant::now() + Duration::from_secs(30),
-                CancellationToken::new(),
-            );
-            let polls = Arc::new(AtomicUsize::new(0));
-            context.retain_delivery_guard(Arc::new(PolicyDelivery {
-                current: policy.clone(),
-                expected: 1,
-                polls: polls.clone(),
-            }))?;
-            delivery.bind_request(context).await?;
-            armed.store(true, Ordering::SeqCst);
-            if prefix {
-                server.write_all(b"part").await?;
-                server.flush().await?;
-                let mut observed = [0; 4];
-                tokio::time::timeout(Duration::from_secs(5), client.read_exact(&mut observed))
-                    .await??;
-                assert_eq!(&observed, b"part");
-            }
-            std::io::Write::write_all(
-                &mut server.get_mut().1.writer(),
-                b"buffered mixed NN result",
-            )?;
-            assert!(
-                server.get_ref().1.wants_write(),
-                "fixture must retain actual queued ciphertext"
-            );
-            let before = bytes.load(Ordering::SeqCst);
-            let polls_before = polls.load(Ordering::SeqCst);
-            *policy.lock().unwrap() = 2; // disable/profile switch after computation, before actual socket poll
-            let failed = tokio::time::timeout(Duration::from_secs(5), async {
-                if read_driven {
-                    // Ordinary incoming application data does not flush queued TLS
-                    // output. An invalid encrypted record drives pinned tokio-rustls
-                    // read_io's last-gasp alert write through the actual raw fence.
-                    client.get_mut().0.write_all(&[23, 3, 3, 0, 1, 0]).await?;
-                    let mut buffer = [0; 1];
-                    server.read(&mut buffer).await.map(|_| ())
-                } else {
-                    server.flush().await
-                }
-            })
-            .await?;
-            assert!(
-                failed.is_err(),
-                "revoked TLS output must refuse (read_driven={read_driven},prefix={prefix})"
-            );
-            assert!(
-                polls.load(Ordering::SeqCst) > polls_before,
-                "TLS must actually attempt the guarded write, including the read-driven alert"
-            );
-            assert_eq!(
-                bytes.load(Ordering::SeqCst),
-                before,
-                "revoked ciphertext reached actual socket"
-            );
-            f.gateway.close().await;
+            },
+            delivery: delivery.clone(),
+        };
+        let context = ReadAttemptContext::new(
+            Instant::now() + Duration::from_secs(30),
+            CancellationToken::new(),
+        );
+        let polls = Arc::new(AtomicUsize::new(0));
+        context.retain_delivery_guard(Arc::new(PolicyDelivery {
+            current: policy.clone(),
+            expected: 1,
+            polls: polls.clone(),
+        }))?;
+        delivery.bind_request(context).await?;
+        armed.store(true, Ordering::SeqCst);
+        if prefix {
+            server.write_all(b"part").await?;
+            server.flush().await?;
+            let mut observed = [0; 4];
+            tokio::time::timeout(Duration::from_secs(5), client.read_exact(&mut observed))
+                .await??;
+            assert_eq!(&observed, b"part");
         }
+        let before = bytes.load(Ordering::SeqCst);
+        let polls_before = polls.load(Ordering::SeqCst);
+        *policy.lock().unwrap() = 2; // disable/profile switch after computation, before actual socket poll
+        let failed = tokio::time::timeout(Duration::from_secs(5), async {
+            server.write_all(b"buffered mixed NN result").await?;
+            server.flush().await
+        })
+        .await?;
+        assert!(
+            failed.is_err(),
+            "revoked output must refuse (prefix={prefix})"
+        );
+        assert!(
+            polls.load(Ordering::SeqCst) > polls_before,
+            "the write must actually attempt the guarded socket effect"
+        );
+        assert_eq!(
+            bytes.load(Ordering::SeqCst),
+            before,
+            "revoked bytes reached actual socket"
+        );
+        f.gateway.close().await;
     }
     Ok(())
 }
@@ -1865,9 +1627,9 @@ async fn an_answer_marked_after_its_stream_began_outlives_the_120_second_bound()
     Ok(())
 }
 
-/// L2 gap 1 (L2 deviation 10): a live HTTPS connection carrying an Answer
+/// L2 gap 1 (L2 deviation 10): a live HTTP connection carrying an Answer
 /// stays open past 120 s to its result. The real per-connection serve runs
-/// TLS and HTTP/1.1 over an in-memory socket with the connection fence, so
+/// HTTP/1.1 over an in-memory socket with the connection fence, so
 /// both bounds apply: `OutputBody` widens its stream bound and
 /// `ConnectionFence::widen_output_deadline` widens the IO deadline checked at
 /// each socket write. Both now read Tokio's clock, so paused time drives
@@ -1878,7 +1640,7 @@ async fn an_answer_marked_after_its_stream_began_outlives_the_120_second_bound()
 /// written at 130 s. (A search is no control here: without progress rmcp
 /// sends its head only with the result, so its bound starts then.)
 #[tokio::test(start_paused = true)]
-async fn a_live_tls_connection_keeps_an_answer_open_past_120_seconds_to_its_result()
+async fn a_live_http_connection_keeps_an_answer_open_past_120_seconds_to_its_result()
 -> anyhow::Result<()> {
     const BODY_BOUND: usize = 256 * 1024;
     {
@@ -1888,32 +1650,9 @@ async fn a_live_tls_connection_keeps_an_answer_open_past_120_seconds_to_its_resu
             .context("the fixture gateway is not shared yet")?
             .sse_keep_alive_off = true;
         let (server_socket, client_socket) = tokio::io::duplex(65536);
-        let acceptor = f.gateway.0.tls.borrow().clone();
-        let handshake = Arc::new(Semaphore::new(1)).acquire_owned().await?;
-        let server = tokio::spawn(f.gateway.clone().serve_accepted(
-            server_socket,
-            acceptor,
-            None,
-            handshake,
-        ));
-        let mut roots = rustls::RootCertStore::empty();
-        roots.add(rustls::pki_types::CertificateDer::from(f.ca.clone()))?;
-        let config = rustls::ClientConfig::builder_with_provider(Arc::new(
-            rustls::crypto::ring::default_provider(),
-        ))
-        .with_safe_default_protocol_versions()?
-        .with_root_certificates(roots)
-        .with_no_client_auth();
-        let tls = tokio::time::timeout(
-            Duration::from_secs(10),
-            tokio_rustls::TlsConnector::from(Arc::new(config)).connect(
-                rustls::pki_types::ServerName::try_from("127.0.0.1")?,
-                client_socket,
-            ),
-        )
-        .await??;
+        let server = tokio::spawn(f.gateway.clone().serve_accepted(server_socket, None));
         let (mut sender, connection) =
-            hyper::client::conn::http1::handshake(TokioIo::new(tls)).await?;
+            hyper::client::conn::http1::handshake(TokioIo::new(client_socket)).await?;
         let client = tokio::spawn(connection);
         let authority = f.gateway.0.authority.clone();
         let post = |body: serde_json::Value, session: Option<&http::HeaderValue>| {
@@ -1962,7 +1701,7 @@ async fn a_live_tls_connection_keeps_an_answer_open_past_120_seconds_to_its_resu
         let response = tokio::time::timeout(
             Duration::from_secs(300),
             sender.send_request(post(
-                serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":tool,"arguments":{"hold_seconds":130},"_meta":{"progressToken":"live-tls"}}}),
+                serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":tool,"arguments":{"hold_seconds":130},"_meta":{"progressToken":"live-http"}}}),
                 Some(&session),
             )?),
         )

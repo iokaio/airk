@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Bounded HTTPS ingress. Every `/mcp` and JSON API request is the built-in
+//! Bounded loopback HTTP ingress (local trust plan C: plain TCP on
+//! 127.0.0.1, no TLS). Every `/mcp` and JSON API request is the built-in
 //! local agent session (U110); native admission is checked for every request.
 use airk_catalog_control::catalog_admission::{IssueTicket, NativeCatalogAdmission};
 use airk_core::{identity::Incarnation, service_http::EndpointDescriptor};
@@ -32,7 +33,7 @@ use std::{
 };
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::{
-    sync::{OwnedSemaphorePermit, Semaphore, watch},
+    sync::{OwnedSemaphorePermit, Semaphore},
     task::JoinSet,
 };
 use tokio_util::sync::CancellationToken;
@@ -64,7 +65,6 @@ pub struct NativeAdmission {
 }
 
 const CONNECTIONS: usize = 128;
-const HANDSHAKES: usize = 32;
 const AUTH_TASKS: usize = 16;
 const OUTPUT_BYTES: usize = 32 * 1024 * 1024;
 const MAX_FRAME: usize = 1024 * 1024;
@@ -103,10 +103,8 @@ struct State {
     sessions: HttpSessionBudget,
     client: Mutex<Option<CachedService>>,
     connections: Arc<Semaphore>,
-    handshakes: Arc<Semaphore>,
     validation: Arc<Semaphore>,
     output: Arc<Semaphore>,
-    tls: watch::Receiver<tokio_rustls::TlsAcceptor>,
     closed: CancellationToken,
     native_gate: NativeCatalogAdmission,
     admit: AdmitRequest,
@@ -128,7 +126,6 @@ pub struct Gateway(Arc<State>);
 impl Gateway {
     pub fn new(
         endpoint: &EndpointDescriptor,
-        tls: watch::Receiver<tokio_rustls::TlsAcceptor>,
         validate: ValidateRequest,
         native: NativeAdmission,
     ) -> anyhow::Result<Self> {
@@ -141,10 +138,8 @@ impl Gateway {
             sessions: HttpSessionBudget::new(SESSIONS)?,
             client: Mutex::new(None),
             connections: Arc::new(Semaphore::new(CONNECTIONS)),
-            handshakes: Arc::new(Semaphore::new(HANDSHAKES)),
             validation: Arc::new(Semaphore::new(AUTH_TASKS)),
             output: Arc::new(Semaphore::new(OUTPUT_BYTES)),
-            tls,
             closed: CancellationToken::new(),
             native_gate: native.gate,
             admit: native.admit,
@@ -202,13 +197,12 @@ impl Gateway {
                     let (socket,peer)=match accepted {Ok(value)=>value,Err(error)=>{failure=Some(error);break;}};
                     if !peer.ip().is_loopback(){continue;}
                     let Ok(connection)=self.0.connections.clone().try_acquire_owned() else{continue;};
-                    let Ok(handshake)=self.0.handshakes.clone().try_acquire_owned() else{continue;};
-                    let gateway=self.clone();let acceptor=self.0.tls.borrow().clone();
+                    let gateway=self.clone();
                     // The 4-tuple for the admin plane's same-user peer proof (H1).
                     let admin_peer=socket.local_addr().ok().map(|server|crate::admin_plane::ConnectionPeer::new(peer,server));
                     tasks.spawn(async move {
                         let _connection=connection;
-                        gateway.serve_accepted(socket,acceptor,admin_peer,handshake).await;
+                        gateway.serve_accepted(socket,admin_peer).await;
                     });
                 }
             }
@@ -221,34 +215,28 @@ impl Gateway {
             None => Ok(()),
         }
     }
-    /// One accepted connection: TLS, then HTTP/1.1 over the fenced socket,
-    /// until it ends or the gateway closes. The listener and the tests that
-    /// drive a real connection over an in-memory socket share it.
+    /// One accepted connection: HTTP/1.1 over the fenced socket, until it
+    /// ends or the gateway closes. The listener and the tests that drive a
+    /// real connection over an in-memory socket share it. Hyper's 15 s
+    /// header read timeout bounds an idle or slow client.
     async fn serve_accepted<S>(
         self,
         socket: S,
-        acceptor: tokio_rustls::TlsAcceptor,
         admin_peer: Option<crate::admin_plane::ConnectionPeer>,
-        handshake: tokio::sync::OwnedSemaphorePermit,
     ) where
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
         let gateway = self;
+        if gateway.0.closed.is_cancelled() {
+            return;
+        }
         let delivery = ConnectionFence::new(gateway.0.native_gate.clone());
-        // Fence the actual socket: TLS reads may also flush queued
-        // ciphertext (for example while sending a protocol alert).
+        // Fence the actual socket: every byte Hyper writes or flushes passes
+        // the delivery fence before it reaches the TCP stream.
         let socket = FencedIo {
             inner: socket,
             delivery: delivery.clone(),
         };
-        let tls = tokio::select! {
-            _ = gateway.0.closed.cancelled() => return,
-            result = tokio::time::timeout(Duration::from_secs(15), acceptor.accept(socket)) => match result {
-                Ok(Ok(tls)) => tls,
-                _ => return,
-            },
-        };
-        drop(handshake);
         let disconnected = gateway.0.closed.child_token();
         let cleanup = CancelOnDrop {
             token: disconnected.clone(),
@@ -276,11 +264,11 @@ impl Gateway {
             .header_read_timeout(Duration::from_secs(15))
             .max_buf_size(16 * 1024)
             .max_headers(64);
-        let tls = FlushTrackedIo {
-            inner: tls,
+        let io = FlushTrackedIo {
+            inner: socket,
             delivery: socket_delivery,
         };
-        let connection = builder.serve_connection(TokioIo::new(tls), requests);
+        let connection = builder.serve_connection(TokioIo::new(io), requests);
         tokio::pin!(connection);
         tokio::select! {
             _ = cleanup.token.cancelled() => {},
@@ -609,7 +597,7 @@ impl ReadContextDelivery {
     }
 }
 /// One ticket for the entire TCP connection. An invalid old ticket is never
-/// replaced while Hyper or rustls can still retain an earlier response.
+/// replaced while Hyper can still retain an earlier response.
 #[derive(Clone)]
 struct ConnectionFence {
     gate: NativeCatalogAdmission,
@@ -737,7 +725,7 @@ impl ConnectionFence {
         self.flushed.notify_waiters();
     }
     /// Only validated evidence contexts bind this cell. Once captured it cannot
-    /// be replaced while an old response may remain buffered in Hyper or TLS.
+    /// be replaced while an old response may remain buffered in Hyper.
     fn bind_read_context(&self, cell: ReadDeliveryCell) -> anyhow::Result<()> {
         let mut held = self
             .read_context
@@ -977,8 +965,9 @@ struct FencedIo<S> {
     delivery: ConnectionFence,
 }
 
-/// Observe the TLS flush boundary while enforcement stays below TLS. Hyper's
-/// HTTP/1 writer flushes its queued plaintext before this flush can succeed.
+/// Observe Hyper's flush boundary while enforcement stays at the socket
+/// (`FlushTrackedIo<FencedIo<TcpStream>>`). Hyper's HTTP/1 writer flushes its
+/// queued bytes through the fence before this flush can succeed.
 struct FlushTrackedIo<S> {
     inner: S,
     delivery: ConnectionFence,
@@ -1099,13 +1088,6 @@ fn is_admin_target<B>(request: &Request<B>) -> bool {
             ),
             airk_endpoint::admin_contract::PathMatch::NotAdmin
         )
-}
-#[cfg(test)]
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|value| value.as_millis().min(u64::MAX as u128) as u64)
-        .unwrap_or(u64::MAX)
 }
 fn error(status: StatusCode, code: &'static str) -> Box<HttpResponse> {
     Box::new(

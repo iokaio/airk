@@ -40,12 +40,8 @@ toml.workspace = true
 tokio = { workspace = true, features = ["net", "io-util", "sync"] }
 tempfile.workspace = true
 sha2.workspace = true
-rustls.workspace = true
-tokio-rustls.workspace = true
 ring.workspace = true
-rcgen.workspace = true
 schemars = "1.2.2"
-x509-parser.workspace = true
 subtle.workspace = true
 time.workspace = true
 bytes.workspace = true

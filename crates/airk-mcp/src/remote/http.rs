@@ -478,8 +478,8 @@ impl HttpReadService {
         anyhow::ensure!(
             origins
                 .iter()
-                .all(|origin| origin == &format!("https://{authority}")),
-            "only the exact local HTTPS origin may be allowed"
+                .all(|origin| origin == &format!("http://{authority}")),
+            "only the exact local HTTP origin may be allowed"
         );
         let closed = CancellationToken::new();
         let sessions = Arc::new(BoundedSessions::new(budget, limits, closed.clone()));

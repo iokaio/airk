@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The `/admin` plane against a live reviewed service (split Phase 5): A1 via
-//! `airkctl admin url`, the launch-code exchange over real TLS pinned to the
-//! service's issuer, admin reads through the canonical handlers, a keyed
+//! `airkctl admin url`, the launch-code exchange over real loopback HTTP
+//! (local trust plan C), admin reads through the canonical handlers, a keyed
 //! mutation round trip, the admin read grant (A2), and the cross-plane
 //! refusals.
 mod common;
@@ -10,9 +10,8 @@ use airk_core::{
     usage::ClientFamily,
 };
 use anyhow::{Context, Result, ensure};
-use rustls::pki_types::{CertificateDer, ServerName, pem::PemObject};
 use serde_json::{Value, json};
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{path::Path, time::Duration};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// Platforms with a same-user peer observer (review H1); elsewhere the admin
@@ -199,43 +198,25 @@ fn dechunk(mut bytes: &[u8]) -> Result<Vec<u8>> {
     }
 }
 
-/// One request on a fresh TLS connection pinned to the service's issuer.
-fn exchange(port: u16, ca: &CertificateDer<'static>, request: String) -> Result<Reply> {
+/// One request on a fresh plain-HTTP loopback connection.
+fn exchange(port: u16, request: String) -> Result<Reply> {
     exchange_before(
         port,
-        ca,
         request,
         std::time::Instant::now() + Duration::from_secs(60),
     )
 }
-fn exchange_before(
-    port: u16,
-    ca: &CertificateDer<'static>,
-    request: String,
-    deadline: std::time::Instant,
-) -> Result<Reply> {
+fn exchange_before(port: u16, request: String, deadline: std::time::Instant) -> Result<Reply> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
     let bytes = runtime.block_on(async {
-        let mut roots = rustls::RootCertStore::empty();
-        roots.add(ca.clone())?;
-        let config = rustls::ClientConfig::builder_with_provider(Arc::new(
-            rustls::crypto::ring::default_provider(),
-        ))
-        .with_safe_default_protocol_versions()?
-        .with_root_certificates(roots)
-        .with_no_client_auth();
-        let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
         let exchange = async {
-            let socket =
+            let mut socket =
                 tokio::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port)).await?;
-            let mut tls = connector
-                .connect(ServerName::try_from("127.0.0.1")?, socket)
-                .await?;
-            tls.write_all(request.as_bytes()).await?;
+            socket.write_all(request.as_bytes()).await?;
             let mut bytes = Vec::new();
-            (&mut tls).take(8 << 20).read_to_end(&mut bytes).await?;
+            (&mut socket).take(8 << 20).read_to_end(&mut bytes).await?;
             Ok::<_, anyhow::Error>(bytes)
         };
         tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), exchange)
@@ -316,7 +297,7 @@ fn admin_url(control: &Path) -> (u8, String, String) {
 fn parse_launch(url: &str) -> (u16, String) {
     let rest = url
         .trim()
-        .strip_prefix("https://127.0.0.1:")
+        .strip_prefix("http://127.0.0.1:")
         .expect("loopback launch URL");
     let (port, fragment) = rest.split_once("/admin/launch#c=").expect("launch path");
     (port.parse().unwrap(), fragment.to_owned())
@@ -328,8 +309,10 @@ fn admin_sign_in_reads_and_cross_plane_refusals() -> Result<()> {
     let data = tempfile::tempdir()?;
     let service = common::Service::reviewed(source.path(), data.path(), "admin-plane");
     let control = service.control.clone();
-    let ca = CertificateDer::from_pem_slice(&std::fs::read(control.join("http-1").join("ca.pem"))?)
-        .context("issuer certificate")?;
+    // Local trust plan C: no issuer is created; an HTTPS build's TLS files
+    // never appear in a fresh installation.
+    assert!(!control.join("http-1").join("ca.pem").exists());
+    assert!(!control.join("http-1").join("tls-identity.json").exists());
 
     let (code, stdout, stderr) = admin_url(&control);
     assert_eq!(code, 0, "{stderr}");
@@ -337,7 +320,7 @@ fn admin_sign_in_reads_and_cross_plane_refusals() -> Result<()> {
     let (port, launch_code) = parse_launch(&stdout);
     assert_eq!(launch_code.len(), 43);
     let host = format!("127.0.0.1:{port}");
-    let origin = format!("https://{host}");
+    let origin = format!("http://{host}");
     let api = |target: &str, extra: &[(&str, &str)], body: &str| -> Result<Reply> {
         let mut headers = vec![
             ("Host", host.as_str()),
@@ -346,20 +329,18 @@ fn admin_sign_in_reads_and_cross_plane_refusals() -> Result<()> {
             ("Content-Type", "application/json"),
         ];
         headers.extend_from_slice(extra);
-        exchange(port, &ca, http_request("POST", target, &headers, body))
+        exchange(port, http_request("POST", target, &headers, body))
     };
 
     // The static shell needs no session; a bearer is refused on /admin.
     let shell = exchange(
         port,
-        &ca,
         http_request("GET", "/admin/", &[("Host", host.as_str())], ""),
     )?;
     assert_eq!(shell.status, 200);
     assert_eq!(shell.header("cache-control"), Some("no-store"));
     let bearer = exchange(
         port,
-        &ca,
         http_request(
             "GET",
             "/admin/",
@@ -393,7 +374,15 @@ fn admin_sign_in_reads_and_cross_plane_refusals() -> Result<()> {
         .next()
         .context("cookie pair")?
         .to_owned();
-    assert!(cookie.starts_with("__Host-airk_admin="), "{set_cookie}");
+    assert!(cookie.starts_with("airk_admin="), "{set_cookie}");
+    // Local trust plan C: no `Secure` and no `__Host-` prefix over plain HTTP.
+    assert_eq!(
+        set_cookie.split_once('=').map(|(_, rest)| rest
+            .split_once(';')
+            .map(|(_, attributes)| attributes.trim())),
+        Some(Some("HttpOnly; SameSite=Strict; Path=/")),
+        "{set_cookie}"
+    );
     let envelope = signed_in.json();
     assert_eq!(envelope["operation"], "session.exchange");
     let csrf = envelope["result"]["csrf"]
@@ -491,7 +480,6 @@ fn admin_sign_in_reads_and_cross_plane_refusals() -> Result<()> {
     // The admin cookie is refused on the bearer plane.
     let mcp = exchange(
         port,
-        &ca,
         http_request(
             "POST",
             "/mcp",
@@ -606,12 +594,7 @@ fn admin_sign_in_reads_and_cross_plane_refusals() -> Result<()> {
                     ("Content-Type", "application/json"),
                 ];
                 headers.extend_from_slice(&authenticated);
-                exchange_before(
-                    port,
-                    &ca,
-                    http_request("POST", target, &headers, body),
-                    deadline,
-                )
+                exchange_before(port, http_request("POST", target, &headers, body), deadline)
             };
             let enqueue =
                 json!({"enqueue":{"project":service.project.binding,"kind":"index"}}).to_string();
@@ -807,7 +790,7 @@ fn admin_sign_in_reads_and_cross_plane_refusals() -> Result<()> {
         );
         let native_session = airk_core::native_admin::NativeAdminSessionSecret::new(
             cookie
-                .strip_prefix("__Host-airk_admin=")
+                .strip_prefix("airk_admin=")
                 .context("owned session cookie")?
                 .to_owned(),
             csrf.clone(),

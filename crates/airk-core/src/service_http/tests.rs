@@ -11,8 +11,6 @@ fn endpoint() -> EndpointDescriptor {
         service_instance: Incarnation::from_bytes([3; 16]),
         executable_sha256: Sha256Digest::from_bytes([4; 32]),
         url: LoopbackMcpUrl::new(PREFERRED_HTTP_PORT).unwrap(),
-        ca_sha256: Sha256Digest::from_bytes([5; 32]),
-        certificate_sha256: Sha256Digest::from_bytes([6; 32]),
         state: EndpointState::Ready,
         predecessor_digest: None,
     }
@@ -21,18 +19,19 @@ fn endpoint() -> EndpointDescriptor {
 #[test]
 fn loopback_urls_reject_redirect_and_authority_ambiguities() {
     for invalid in [
-        "http://127.0.0.1:57421/mcp",
-        "https://localhost:57421/mcp",
-        "https://127.0.0.2:57421/mcp",
-        "https://[::1]:57421/mcp",
-        "https://127.0.0.1:0/mcp",
-        "https://127.0.0.1:057421/mcp",
-        "https://127.0.0.1:65536/mcp",
-        "https://127.0.0.1:+443/mcp",
-        "https://127.0.0.1:443/mcp?token=secret",
-        "https://127.0.0.1:443/mcp#fragment",
-        "https://user@127.0.0.1:443/mcp",
-        "https://127.0.0.1:443/mcp/../api",
+        // Local trust plan C: an HTTPS URL is a legacy record, never current.
+        "https://127.0.0.1:57421/mcp",
+        "http://localhost:57421/mcp",
+        "http://127.0.0.2:57421/mcp",
+        "http://[::1]:57421/mcp",
+        "http://127.0.0.1:0/mcp",
+        "http://127.0.0.1:057421/mcp",
+        "http://127.0.0.1:65536/mcp",
+        "http://127.0.0.1:+443/mcp",
+        "http://127.0.0.1:443/mcp?token=secret",
+        "http://127.0.0.1:443/mcp#fragment",
+        "http://user@127.0.0.1:443/mcp",
+        "http://127.0.0.1:443/mcp/../api",
     ] {
         assert!(invalid.parse::<LoopbackMcpUrl>().is_err(), "{invalid}");
     }
@@ -40,6 +39,8 @@ fn loopback_urls_reject_redirect_and_authority_ambiguities() {
         let url = LoopbackMcpUrl::new(port).unwrap();
         assert_eq!(url.to_string().parse::<LoopbackMcpUrl>().unwrap(), url);
         assert_eq!(url.port(), port);
+        assert_eq!(url.to_string(), format!("http://127.0.0.1:{port}/mcp"));
+        assert_eq!(url.origin(), format!("http://127.0.0.1:{port}"));
     }
 }
 
@@ -55,6 +56,10 @@ fn descriptor_rejects_unknown_versions_fields_and_oversize_before_use() -> Resul
     assert!(EndpointDescriptor::decode(&serde_json::to_vec(&invalid)?).is_err());
     invalid["schema"] = 1.into();
     invalid["token"] = "must-not-be-in-a-descriptor".into();
+    assert!(EndpointDescriptor::decode(&serde_json::to_vec(&invalid)?).is_err());
+    invalid.as_object_mut().unwrap().remove("token");
+    // Local trust plan C: the CA and leaf digests are gone from the shape.
+    invalid["ca_sha256"] = "05".repeat(32).into();
     assert!(EndpointDescriptor::decode(&serde_json::to_vec(&invalid)?).is_err());
     assert!(EndpointDescriptor::decode(&vec![b' '; MAX_ENDPOINT_BYTES + 1]).is_err());
     let mut relocated = original.clone();
@@ -90,7 +95,13 @@ fn an_old_https_endpoint_record_decodes_as_legacy() -> Result<()> {
         legacy.digest,
         crate::identity::framed_digest(b"airk-http-endpoint/1", &[old.as_bytes()])
     );
+    // The current shape refuses it (unknown CA and leaf fields, an HTTPS
+    // URL); the saved-record reader takes the legacy arm.
+    assert!(EndpointDescriptor::decode(old.as_bytes()).is_err());
     let saved = SavedEndpoint::decode(old.as_bytes())?;
+    assert!(matches!(saved, SavedEndpoint::Legacy(_)));
+    assert_eq!(saved.url(), "https://127.0.0.1:57423/mcp");
+    assert_eq!(saved.executable_sha256(), Sha256Digest::from_bytes([1; 32]));
     assert_eq!(saved.port(), 57423);
     assert_eq!(saved.generation(), 7);
     assert_eq!(saved.digest()?, legacy.digest);

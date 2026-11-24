@@ -30,8 +30,6 @@ pub struct EndpointDescriptor {
     pub service_instance: Incarnation,
     pub executable_sha256: Sha256Digest,
     pub url: LoopbackMcpUrl,
-    pub ca_sha256: Sha256Digest,
-    pub certificate_sha256: Sha256Digest,
     pub state: EndpointState,
     pub predecessor_digest: Option<Sha256Digest>,
 }
@@ -83,6 +81,7 @@ pub struct LegacyEndpoint {
     pub user: String,
     pub namespace: Incarnation,
     pub generation: u64,
+    pub executable_sha256: Sha256Digest,
     pub port: u16,
     /// The digest an HTTPS build gave the record: its framed bytes, which
     /// that build wrote as the canonical encoding of the record.
@@ -102,6 +101,7 @@ impl LegacyEndpoint {
             user: String,
             namespace: Incarnation,
             generation: u64,
+            executable_sha256: Sha256Digest,
             url: String,
         }
         ensure!(
@@ -127,6 +127,7 @@ impl LegacyEndpoint {
             user: record.user,
             namespace: record.namespace,
             generation: record.generation,
+            executable_sha256: record.executable_sha256,
             port,
             digest: crate::identity::framed_digest(b"airk-http-endpoint/1", &[bytes]),
         })
@@ -156,6 +157,22 @@ impl SavedEndpoint {
         match self {
             Self::Current(value) => value.url.port(),
             Self::Legacy(value) => value.port,
+        }
+    }
+
+    /// The URL the record names: `http://…` for a current record, the old
+    /// `https://…` one for a legacy record (what agent configs still hold).
+    pub fn url(&self) -> String {
+        match self {
+            Self::Current(value) => value.url.to_string(),
+            Self::Legacy(value) => format!("https://127.0.0.1:{}/mcp", value.port),
+        }
+    }
+
+    pub fn executable_sha256(&self) -> Sha256Digest {
+        match self {
+            Self::Current(value) => value.executable_sha256,
+            Self::Legacy(value) => value.executable_sha256,
         }
     }
 

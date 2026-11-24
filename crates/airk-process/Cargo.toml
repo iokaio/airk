@@ -11,9 +11,6 @@ publish.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-# U90: issuer PEM parsing, receipt serde and DER digests; already in the
-# graph (airk-cli) at these versions and feature sets.
-rustls.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

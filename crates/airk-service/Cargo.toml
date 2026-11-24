@@ -46,9 +46,7 @@ rustls.workspace = true
 tokio-rustls.workspace = true
 webpki-roots = "=1.0.9"
 ring.workspace = true
-rcgen.workspace = true
 schemars = "1.2.2"
-x509-parser.workspace = true
 subtle.workspace = true
 time.workspace = true
 bytes.workspace = true

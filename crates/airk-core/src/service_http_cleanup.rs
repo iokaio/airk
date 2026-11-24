@@ -10,7 +10,7 @@
 //! predecessor installation, its endpoint and whether a newer installation
 //! could own that endpoint, so a cleanup removes only an AIRK-shaped entry at
 //! the predecessor's exact endpoint URL and never one it does not recognise.
-use super::service_http::EndpointDescriptor;
+use super::service_http::{LoopbackMcpUrl, SavedEndpoint};
 use crate::identity::{Incarnation, Sha256Digest};
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
@@ -25,6 +25,36 @@ pub struct HttpCleanupFailure {
     pub message: String,
 }
 
+/// The predecessor's endpoint as its agent configs name it. Local trust plan
+/// C: the predecessor may be an HTTPS build, so its URL is kept as written,
+/// `http://127.0.0.1:<port>/mcp` or the older `https://` spelling.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PredecessorEndpoint {
+    pub url: String,
+    pub namespace: Incarnation,
+    pub executable_sha256: Sha256Digest,
+}
+
+impl PredecessorEndpoint {
+    pub fn of(saved: &SavedEndpoint) -> Self {
+        Self {
+            url: saved.url(),
+            namespace: saved.binding().2,
+            executable_sha256: saved.executable_sha256(),
+        }
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.url.parse::<LoopbackMcpUrl>().is_ok()
+                || LoopbackMcpUrl::legacy_https_port(&self.url).is_some(),
+            "invalid HTTP cleanup endpoint URL"
+        );
+        Ok(())
+    }
+}
+
 /// Complete original private metadata, retained before its namespace is removed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -34,8 +64,7 @@ pub struct PredecessorHttpSnapshot {
     pub predecessor: String,
     pub control_dir: String,
     pub namespace: Option<Incarnation>,
-    pub endpoint: Option<EndpointDescriptor>,
-    pub ca_certificate_file_sha256: Option<Sha256Digest>,
+    pub endpoint: Option<PredecessorEndpoint>,
     pub complete: bool,
     pub failure: Option<HttpCleanupFailure>,
 }
@@ -107,9 +136,7 @@ pub struct PredecessorHttpLookup {
     pub namespace: Option<Incarnation>,
     pub connection_id: Incarnation,
     pub status: String,
-    pub endpoint: Option<EndpointDescriptor>,
-    pub ca_certificate_file: Option<String>,
-    pub ca_certificate_file_sha256: Option<Sha256Digest>,
+    pub endpoint: Option<PredecessorEndpoint>,
     pub qualification: HttpCleanupQualification,
     pub snapshot: PredecessorHttpSnapshot,
 }
@@ -125,7 +152,6 @@ impl PredecessorHttpLookup {
                 && self.control_dir == self.snapshot.control_dir
                 && self.namespace == self.snapshot.namespace
                 && self.endpoint == self.snapshot.endpoint
-                && self.ca_certificate_file_sha256 == self.snapshot.ca_certificate_file_sha256
                 && !self.qualification.live_authority
                 && self.qualification.snapshot_complete == self.snapshot.complete,
             "HTTP cleanup lookup crossed original snapshot"
@@ -174,17 +200,13 @@ impl PredecessorHttpLookup {
                 "HTTP cleanup current failure exceeds bound"
             );
         }
-        let private = Path::new(&self.control_dir).join("http-1");
         match self.status.as_str() {
             "owned" => ensure!(
-                current_clear
-                    && self.snapshot.complete
-                    && self.ca_certificate_file.as_deref().map(Path::new)
-                        == Some(private.join("ca.pem").as_path()),
+                current_clear && self.snapshot.complete,
                 "HTTP cleanup owned proof changed"
             ),
             "unavailable" => ensure!(
-                self.ca_certificate_file.is_none() && (!self.snapshot.complete || !current_clear),
+                !self.snapshot.complete || !current_clear,
                 "unobserved HTTP cleanup ownership cannot imply ownership"
             ),
             _ => anyhow::bail!("invalid HTTP cleanup ownership status"),

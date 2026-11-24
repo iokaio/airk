@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Actual HTTPS fixture client. Owns a thread/runtime, never an AIRK frontend process.
+//! Actual loopback HTTP fixture client (local trust plan C: plain TCP). Owns a
+//! thread/runtime, never an AIRK frontend process.
 #![allow(dead_code)]
 use airk_core::{
     identity::Incarnation,
@@ -11,13 +12,12 @@ use bytes::Bytes;
 use http_body_util::{BodyExt, Full, Limited};
 use hyper_util::rt::TokioIo;
 use ring::rand::{SecureRandom, SystemRandom};
-use rustls::pki_types::{CertificateDer, ServerName, pem::PemObject};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     collections::VecDeque,
     path::{Path, PathBuf},
-    sync::{Arc, mpsc},
+    sync::mpsc,
     thread,
     time::{Duration, Instant},
 };
@@ -38,12 +38,12 @@ pub struct HttpRefused {
 }
 impl std::fmt::Display for HttpRefused {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "HTTPS fixture refused ({}): {}", self.status, self.body)
+        write!(f, "HTTP fixture refused ({}): {}", self.status, self.body)
     }
 }
 impl std::error::Error for HttpRefused {}
 
-/// U110: the per-call scope this fixture names on every read. The HTTPS MCP
+/// U110: the per-call scope this fixture names on every read. The HTTP MCP
 /// endpoint takes no credential; every session is the service's local agent
 /// session, and a read names `index_ids`/`index_set_ids` (ids or names) or a
 /// `workspace`. `Scope::none()` names nothing, so a read is refused
@@ -158,7 +158,7 @@ impl HttpMcpSession {
         )?;
         ensure!(
             fresh.endpoint == self.endpoint,
-            "explicit reconnect changed the HTTPS endpoint"
+            "explicit reconnect changed the HTTP endpoint"
         );
         Ok(fresh)
     }
@@ -278,7 +278,7 @@ impl HttpMcpSession {
         let (sender, receiver) = mpsc::channel();
         self.commands
             .as_ref()
-            .context("HTTPS fixture closed")?
+            .context("HTTP fixture closed")?
             .send(Command::FreshTcp(sender))?;
         receiver.recv_timeout(TIMEOUT + Duration::from_secs(5))??;
         Ok(())
@@ -286,19 +286,19 @@ impl HttpMcpSession {
     pub fn send_until(&mut self, mut value: Value, deadline: Instant) -> Result<()> {
         self.scope.inject(&mut value);
         let replies = submit_until(
-            self.commands.as_ref().context("HTTPS fixture closed")?,
+            self.commands.as_ref().context("HTTP fixture closed")?,
             value,
             deadline,
         )?;
         ensure!(
             self.pending.len() + replies.len() <= 128,
-            "HTTPS fixture pending message bound exceeded"
+            "HTTP fixture pending message bound exceeded"
         );
         self.pending.extend(replies);
         Ok(())
     }
     pub fn receive_until(&mut self, id: i64, deadline: Instant) -> Result<Value> {
-        ensure!(Instant::now() < deadline, "HTTPS reply deadline exhausted");
+        ensure!(Instant::now() < deadline, "HTTP reply deadline exhausted");
         self.receive(id)
     }
     pub fn receive(&mut self, id: i64) -> Result<Value> {
@@ -306,10 +306,10 @@ impl HttpMcpSession {
             .pending
             .iter()
             .position(|reply| reply.get("id").and_then(Value::as_i64) == Some(id))
-            .context("matching HTTPS JSON-RPC reply missing")?;
+            .context("matching HTTP JSON-RPC reply missing")?;
         self.pending
             .remove(position)
-            .context("matching HTTPS reply disappeared")
+            .context("matching HTTP reply disappeared")
     }
     /// Deliberate malformed/exact-bound transport probes. Normal calls remain bounded.
     pub fn probe(&mut self, bytes: Vec<u8>) -> Result<Option<Value>> {
@@ -320,17 +320,17 @@ impl HttpMcpSession {
         let (sender, receiver) = mpsc::channel();
         self.commands
             .as_ref()
-            .context("HTTPS fixture closed")?
+            .context("HTTP fixture closed")?
             .send(Command::Probe(bytes, sender))?;
         let mut replies = receiver.recv_timeout(TIMEOUT + Duration::from_secs(5))??;
         ensure!(
             replies.len() <= 1,
-            "single-response HTTPS probe returned multiple messages"
+            "single-response HTTP probe returned multiple messages"
         );
         Ok(replies.pop())
     }
     pub fn receive_value(&mut self) -> Result<Value> {
-        self.pending.pop_front().context("HTTPS reply missing")
+        self.pending.pop_front().context("HTTP reply missing")
     }
     pub fn request(&mut self, id: i64, method: &str, params: Value) -> Result<Value> {
         self.request_until(id, method, params, Instant::now() + TIMEOUT)
@@ -365,7 +365,7 @@ impl HttpMcpSession {
         if let Some(worker) = self.thread.take() {
             worker
                 .join()
-                .map_err(|_| anyhow::anyhow!("HTTPS fixture thread panicked"))?;
+                .map_err(|_| anyhow::anyhow!("HTTP fixture thread panicked"))?;
         }
         result
     }
@@ -379,7 +379,6 @@ impl Drop for HttpMcpSession {
 struct Wire {
     sender: hyper::client::conn::http1::SendRequest<Full<Bytes>>,
     task: tokio::task::JoinHandle<Result<(), hyper::Error>>,
-    tls_config: Arc<rustls::ClientConfig>,
     endpoint: EndpointDescriptor,
     /// A fixture-local label naming this transport's retained failure evidence.
     label: Incarnation,
@@ -402,8 +401,8 @@ impl Wire {
         else {
             anyhow::bail!("native fixture health unavailable")
         };
-        // U110: the endpoint and its issuer come from the service's endpoint
-        // read; nothing is enrolled and no credential exists.
+        // U110: the endpoint comes from the service's endpoint read; nothing
+        // is enrolled, no credential exists and there is no issuer to pin.
         let deadline = Instant::now() + TIMEOUT;
         let endpoint = loop {
             let response = airk_cli::service_runtime::request_for_instance(
@@ -424,7 +423,7 @@ impl Wire {
                     tokio::time::sleep(Duration::from_millis(25)).await;
                 }
                 other => anyhow::bail!(
-                    "HTTPS endpoint unavailable: {}",
+                    "HTTP endpoint unavailable: {}",
                     serde_json::to_string(&other)?
                 ),
             }
@@ -440,52 +439,13 @@ impl Wire {
             endpoint.service_instance == health.instance
                 && endpoint.user == health.user
                 && endpoint.executable_sha256.to_string() == health.executable_sha256,
-            "HTTPS fixture native identity changed"
+            "HTTP fixture native identity changed"
         );
-        let root = control.join("http-1");
-        ensure!(root.is_dir(), "HTTPS fixture private root missing");
-        airk_cli::local_ipc::prepare_root(&root)?;
-        let path = root.join("ca.pem");
-        let metadata = std::fs::symlink_metadata(&path)?;
         ensure!(
-            metadata.is_file() && !metadata.file_type().is_symlink() && metadata.len() <= 8192,
-            "invalid fixture issuer file"
+            endpoint.url.to_string() == format!("http://127.0.0.1:{}/mcp", endpoint.url.port()),
+            "HTTP fixture endpoint is not plain loopback HTTP"
         );
-        #[cfg(windows)]
-        {
-            use std::os::windows::fs::MetadataExt;
-            ensure!(
-                metadata.file_attributes() & 0x400 == 0,
-                "redirected fixture issuer"
-            );
-        }
-        use std::io::Read;
-        let mut pem = Vec::new();
-        std::fs::File::open(path)?
-            .take(8193)
-            .read_to_end(&mut pem)?;
-        ensure!(pem.len() <= 8192, "fixture issuer grew beyond bound");
-        let certificates =
-            CertificateDer::pem_slice_iter(&pem).collect::<std::result::Result<Vec<_>, _>>()?;
-        ensure!(
-            certificates.len() == 1
-                && Sha256::digest(certificates[0].as_ref()).as_slice()
-                    == endpoint.ca_sha256.as_bytes(),
-            "fixture issuer differs from native control"
-        );
-        // This isolated native fixture pins its reviewed local issuer. It never
-        // modifies/replaces a user's OS or application trust configuration.
-        let mut roots = rustls::RootCertStore::empty();
-        roots.add(certificates[0].clone().into_owned())?;
-        let config = Arc::new(
-            rustls::ClientConfig::builder_with_provider(Arc::new(
-                rustls::crypto::ring::default_provider(),
-            ))
-            .with_safe_default_protocol_versions()?
-            .with_root_certificates(roots)
-            .with_no_client_auth(),
-        );
-        let (sender, task) = Self::connect(&endpoint, config.clone()).await?;
+        let (sender, task) = Self::connect(&endpoint).await?;
         let mut random = [0u8; 16];
         SystemRandom::new()
             .fill(&mut random)
@@ -493,7 +453,6 @@ impl Wire {
         Ok(Self {
             sender,
             task,
-            tls_config: config,
             endpoint,
             label: Incarnation::from_bytes(random),
             session: None,
@@ -506,7 +465,6 @@ impl Wire {
     }
     async fn connect(
         endpoint: &EndpointDescriptor,
-        config: Arc<rustls::ClientConfig>,
     ) -> Result<(
         hyper::client::conn::http1::SendRequest<Full<Bytes>>,
         tokio::task::JoinHandle<Result<(), hyper::Error>>,
@@ -514,25 +472,13 @@ impl Wire {
         let socket =
             tokio::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, endpoint.url.port()))
                 .await?;
-        let tls = tokio_rustls::TlsConnector::from(config)
-            .connect(ServerName::try_from("127.0.0.1")?, socket)
-            .await?;
-        let peer = tls
-            .get_ref()
-            .1
-            .peer_certificates()
-            .and_then(|certificates| certificates.first())
-            .context("fixture TLS peer certificate missing")?;
-        ensure!(
-            Sha256::digest(peer.as_ref()).as_slice() == endpoint.certificate_sha256.as_bytes(),
-            "fixture TLS peer differs from native control"
-        );
-        let (sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(tls)).await?;
+        let (sender, connection) =
+            hyper::client::conn::http1::handshake(TokioIo::new(socket)).await?;
         let task = tokio::spawn(connection);
         Ok((sender, task))
     }
     async fn fresh_tcp(&mut self) -> Result<()> {
-        let (sender, task) = Self::connect(&self.endpoint, self.tls_config.clone()).await?;
+        let (sender, task) = Self::connect(&self.endpoint).await?;
         self.task.abort();
         self.sender = sender;
         self.task = task;
@@ -549,7 +495,7 @@ impl Wire {
             .unwrap_or_default();
         ensure!(
             bytes.len() <= 65_536,
-            "HTTPS fixture request exceeds native frame bound"
+            "HTTP fixture request exceeds native frame bound"
         );
         let protocol = request_protocol(value, self.initialized, &self.protocol)?;
         self.exchange_bytes(method, bytes, protocol).await
@@ -590,7 +536,7 @@ impl Wire {
             .get(http::header::CONTENT_TYPE)
             .map(|value| value.to_str().map(str::to_owned))
             .transpose()
-            .context("HTTPS fixture returned invalid Content-Type")?;
+            .context("HTTP fixture returned invalid Content-Type")?;
         if let Some(session) = response.headers().get("mcp-session-id") {
             let session = session.to_str()?;
             ensure!(
@@ -598,7 +544,7 @@ impl Wire {
                     && session.len() <= 256
                     && session.bytes().all(|byte| byte.is_ascii_graphic())
                     && self.session.as_ref().is_none_or(|old| old == session),
-                "HTTPS fixture session identity changed"
+                "HTTP fixture session identity changed"
             );
             self.session = Some(session.into());
         }
@@ -610,7 +556,7 @@ impl Wire {
         self.sequence += 1;
         decode_http_body(status, content_type.as_deref(), &bytes)
             .map_err(|error| {
-                let context=format!("HTTPS fixture {method_name} /mcp status={} content_type={:?} body_bytes={} body_sha256={:x} prefix={:?}",
+                let context=format!("HTTP fixture {method_name} /mcp status={} content_type={:?} body_bytes={} body_sha256={:x} prefix={:?}",
                     status.as_u16(),content_type,bytes.len(),Sha256::digest(&bytes),
                     String::from_utf8_lossy(&bytes[..bytes.len().min(96)]));
                 if error.downcast_ref::<HttpRefused>().is_none()
@@ -626,7 +572,7 @@ impl Wire {
             .await
             .with_context(|| {
                 format!(
-                    "HTTPS JSON-RPC method={:?} id={:?}",
+                    "HTTP JSON-RPC method={:?} id={:?}",
                     value.get("method"),
                     value.get("id")
                 )
@@ -664,7 +610,7 @@ fn submit_until(
 ) -> Result<Vec<Value>> {
     ensure!(
         Instant::now() < deadline,
-        "HTTPS request deadline exhausted before submission"
+        "HTTP request deadline exhausted before submission"
     );
     let (sender, receiver) = mpsc::channel();
     let method = value.get("method").cloned().unwrap_or(Value::Null);
@@ -672,11 +618,11 @@ fn submit_until(
     commands.send(Command::Send(value, deadline, sender))?;
     let replies = receiver
         .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-        .with_context(|| format!("HTTPS fixture delivery deadline: method={method}, id={id}"))?
-        .with_context(|| format!("HTTPS fixture request failed: method={method}, id={id}"))?;
+        .with_context(|| format!("HTTP fixture delivery deadline: method={method}, id={id}"))?
+        .with_context(|| format!("HTTP fixture request failed: method={method}, id={id}"))?;
     ensure!(
         Instant::now() < deadline,
-        "HTTPS request deadline exhausted before delivery"
+        "HTTP request deadline exhausted before delivery"
     );
     Ok(replies)
 }
@@ -752,7 +698,7 @@ fn decode_http_body(
 ) -> Result<Vec<Value>> {
     ensure!(
         bytes.len() <= 1_048_576,
-        "HTTPS fixture response exceeds byte bound"
+        "HTTP fixture response exceeds byte bound"
     );
     if !status.is_success() {
         let body = if bytes.is_empty() {
@@ -778,14 +724,14 @@ fn decode_http_body(
         .trim();
     if mime.eq_ignore_ascii_case("application/json") {
         return Ok(vec![
-            serde_json::from_slice(bytes).context("invalid HTTPS JSON response")?,
+            serde_json::from_slice(bytes).context("invalid HTTP JSON response")?,
         ]);
     }
     ensure!(
         mime.eq_ignore_ascii_case("text/event-stream"),
-        "unsupported HTTPS fixture response Content-Type"
+        "unsupported HTTP fixture response Content-Type"
     );
-    let text = std::str::from_utf8(bytes).context("invalid HTTPS SSE UTF-8")?;
+    let text = std::str::from_utf8(bytes).context("invalid HTTP SSE UTF-8")?;
     let normalized = text
         .strip_prefix('\u{feff}')
         .unwrap_or(text)
@@ -796,9 +742,9 @@ fn decode_http_body(
     for line in normalized.split('\n') {
         if line.is_empty() {
             if !data.is_empty() {
-                ensure!(messages.len() < 128, "HTTPS SSE message bound exceeded");
+                ensure!(messages.len() < 128, "HTTP SSE message bound exceeded");
                 messages.push(serde_json::from_str(&data.join("\n")).with_context(|| {
-                    format!("invalid HTTPS SSE JSON message {}", messages.len() + 1)
+                    format!("invalid HTTP SSE JSON message {}", messages.len() + 1)
                 })?);
                 data.clear();
             }
@@ -809,7 +755,7 @@ fn decode_http_body(
             }
         }
     }
-    ensure!(data.is_empty(), "HTTPS SSE response ended within a message");
+    ensure!(data.is_empty(), "HTTP SSE response ended within a message");
     Ok(messages)
 }
 
@@ -839,7 +785,7 @@ fn retain_http_failure(
             .write_all(&bytes)?;
     }
     eprintln!(
-        "HTTPS fixture response evidence retained at {}",
+        "HTTP fixture response evidence retained at {}",
         path.display()
     );
     Ok(())

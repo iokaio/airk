@@ -346,7 +346,7 @@ fn request(
 }
 
 const HOST: (&str, &str) = ("host", "127.0.0.1:41234");
-const ORIGIN: (&str, &str) = ("origin", "https://127.0.0.1:41234");
+const ORIGIN: (&str, &str) = ("origin", "http://127.0.0.1:41234");
 const SAME_ORIGIN: (&str, &str) = ("sec-fetch-site", "same-origin");
 const JSON: (&str, &str) = ("content-type", "application/json");
 

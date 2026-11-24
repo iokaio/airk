@@ -8,12 +8,22 @@
 //! endpoint and whether a newer installation could claim it.
 use super::*;
 use airk_core::{
-    identity::{Incarnation, Sha256Digest},
+    identity::Incarnation,
+    service_http::{LoopbackMcpUrl, SavedEndpoint},
     service_http_cleanup::{
-        HttpCleanupFailure, HttpCleanupQualification, PredecessorHttpLookup,
+        HttpCleanupFailure, HttpCleanupQualification, PredecessorEndpoint, PredecessorHttpLookup,
         PredecessorHttpSnapshot,
     },
 };
+
+/// The loopback port an endpoint URL names, current `http://` or legacy
+/// `https://` (local trust plan C).
+fn url_port(url: &str) -> Option<u16> {
+    url.parse::<LoopbackMcpUrl>()
+        .map(LoopbackMcpUrl::port)
+        .ok()
+        .or_else(|| LoopbackMcpUrl::legacy_https_port(url))
+}
 
 pub(super) fn capture(root: &Path, predecessor: &str, control: &Path) -> PredecessorHttpSnapshot {
     let mut snapshot = PredecessorHttpSnapshot {
@@ -23,7 +33,6 @@ pub(super) fn capture(root: &Path, predecessor: &str, control: &Path) -> Predece
         control_dir: control.to_string_lossy().into_owned(),
         namespace: None,
         endpoint: None,
-        ca_certificate_file_sha256: None,
         complete: false,
         failure: None,
     };
@@ -34,30 +43,15 @@ pub(super) fn capture(root: &Path, predecessor: &str, control: &Path) -> Predece
         snapshot.namespace = Some(namespace);
         let binding = airk_endpoint::http_endpoint::installation_binding(control, namespace)?;
         let private = control.join("http-1");
-        let endpoint = airk_endpoint::http_endpoint::load_descriptor(&private, &binding)?
+        // Local trust plan C: the predecessor may be an HTTPS build; its
+        // record is read through the legacy arm and kept as its URL.
+        let endpoint = airk_endpoint::http_endpoint::load_saved(&private, &binding)?
             .context("predecessor HTTP endpoint metadata is unavailable")?;
         ensure!(
-            endpoint.executable_sha256.to_string() == runtime_pair::digest_file(&main)?,
+            endpoint.executable_sha256().to_string() == runtime_pair::digest_file(&main)?,
             "predecessor HTTP endpoint executable differs from approved predecessor"
         );
-        let ca_hash = if let Some(bytes) =
-            airk_endpoint::http_endpoint::read_private(&private, "ca.pem", 16 * 1024)?
-        {
-            use rustls::pki_types::{CertificateDer, pem::PemObject};
-            let certs = CertificateDer::pem_slice_iter(&bytes)
-                .collect::<std::result::Result<Vec<_>, _>>()?;
-            ensure!(
-                certs.len() == 1
-                    && Sha256Digest::from_bytes(Sha256::digest(certs[0].as_ref()).into())
-                        == endpoint.ca_sha256,
-                "predecessor public CA differs from saved HTTP endpoint"
-            );
-            Some(Sha256Digest::from_bytes(Sha256::digest(&bytes).into()))
-        } else {
-            None
-        };
-        snapshot.endpoint = Some(endpoint);
-        snapshot.ca_certificate_file_sha256 = ca_hash;
+        snapshot.endpoint = Some(PredecessorEndpoint::of(&endpoint));
         snapshot.complete = true;
         snapshot.validate()
     })();
@@ -109,15 +103,18 @@ fn current_namespace_ownership(
             "new HTTP control reused predecessor namespace"
         );
         // A newer installation in its own namespace issues no connection (local
-        // trust plan B). It can still serve the predecessor's exact URL again;
-        // an entry there may then be its own, so that is never cleared.
+        // trust plan B). It can still serve the predecessor's port again (over
+        // HTTP where the predecessor used HTTPS, local trust plan C); an entry
+        // there may then be its own, so that is never cleared.
         let binding = airk_endpoint::http_endpoint::installation_binding(&control, current)?;
-        let served =
-            airk_endpoint::http_endpoint::load_descriptor(&control.join("http-1"), &binding)?;
+        let served = airk_endpoint::http_endpoint::load_saved(&control.join("http-1"), &binding)?;
         ensure!(
-            served.as_ref().map(|endpoint| &endpoint.url)
-                != snapshot.endpoint.as_ref().map(|endpoint| &endpoint.url),
-            "the current installation serves the predecessor's HTTP endpoint URL"
+            served.as_ref().map(SavedEndpoint::port)
+                != snapshot
+                    .endpoint
+                    .as_ref()
+                    .and_then(|endpoint| url_port(&endpoint.url)),
+            "the current installation serves the predecessor's HTTP endpoint port"
         );
         Ok("not_owned")
     })();
@@ -170,7 +167,6 @@ pub fn lookup(
         current_namespace_ownership(root, &snapshot);
     let current_clear = matches!(current_ownership, "same_predecessor" | "not_owned");
     let owned = snapshot.complete && current_clear;
-    let private = Path::new(&snapshot.control_dir).join("http-1");
     let reply = PredecessorHttpLookup {
         schema: 1,
         purpose: "predecessor_cleanup".into(),
@@ -182,8 +178,6 @@ pub fn lookup(
         connection_id: id,
         status: if owned { "owned" } else { "unavailable" }.into(),
         endpoint: snapshot.endpoint.clone(),
-        ca_certificate_file: owned.then(|| private.join("ca.pem").to_string_lossy().into_owned()),
-        ca_certificate_file_sha256: snapshot.ca_certificate_file_sha256,
         qualification: HttpCleanupQualification {
             live_authority: false,
             source: source.into(),

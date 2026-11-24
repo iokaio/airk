@@ -5,7 +5,7 @@
  "launch_url": {
   "port": 57421,
   "code": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8",
-  "url": "https://127.0.0.1:57421/admin/launch#c=ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8"
+  "url": "http://127.0.0.1:57421/admin/launch#c=ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8"
  },
  "exchanges": [
   {
@@ -246,7 +246,7 @@
      "127.0.0.1:57421"
     ],
     "origin": [
-     "https://127.0.0.1:57421"
+     "http://127.0.0.1:57421"
     ],
     "sec_fetch_site": [
      "same-origin"
@@ -279,7 +279,7 @@
      "127.0.0.1:57421"
     ],
     "origin": [
-     "https://127.0.0.1:57421"
+     "http://127.0.0.1:57421"
     ],
     "sec_fetch_site": [
      "same-origin"
@@ -314,7 +314,7 @@
      "127.0.0.1:57421"
     ],
     "origin": [
-     "https://127.0.0.1:57421"
+     "http://127.0.0.1:57421"
     ],
     "sec_fetch_site": [
      "same-origin"
@@ -347,7 +347,7 @@
      "127.0.0.1:57421"
     ],
     "origin": [
-     "https://127.0.0.1:57421"
+     "http://127.0.0.1:57421"
     ],
     "sec_fetch_site": [
      "same-origin"
@@ -359,7 +359,7 @@
     ],
     "content_length": 2,
     "cookie": [
-     "__Host-airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+     "airk_admin=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
     ],
     "csrf_headers": 1,
     "peer": "other_user"

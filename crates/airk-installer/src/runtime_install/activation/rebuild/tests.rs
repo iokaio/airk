@@ -521,8 +521,6 @@ fn predecessor_http_fixture() -> Result<(tempfile::TempDir, PathBuf, Journal, Ve
         service_instance: Incarnation::from_bytes([206; 16]),
         executable_sha256: runtime_pair::digest_file(&main)?.parse()?,
         url: LoopbackMcpUrl::new(57421)?,
-        ca_sha256: Sha256Digest::from_bytes([207; 32]),
-        certificate_sha256: Sha256Digest::from_bytes([208; 32]),
         state: EndpointState::Stopping,
         predecessor_digest: None,
     };
@@ -530,7 +528,7 @@ fn predecessor_http_fixture() -> Result<(tempfile::TempDir, PathBuf, Journal, Ve
     Ok((owner, root, journal, ids))
 }
 
-/// A successor's HTTPS folder as a post-B service leaves it: no ledger and no
+/// A successor's HTTP folder as a post-B service leaves it: no ledger and no
 /// credential file.
 fn initialize_fixture_http_owner(control: &Path) -> Result<()> {
     let _lease = ServiceLease::acquire(control)?;
@@ -571,8 +569,11 @@ fn clean_break_native_http_lookup_identifies_the_predecessor_without_a_ledger() 
                 "same_predecessor"
             );
             assert_eq!(
-                lookup.ca_certificate_file.as_deref().map(Path::new),
-                Some(private.join("ca.pem").as_path())
+                lookup
+                    .endpoint
+                    .as_ref()
+                    .map(|endpoint| endpoint.url.as_str()),
+                Some("http://127.0.0.1:57421/mcp")
             );
             observed.push(lookup.snapshot);
         }
@@ -640,7 +641,7 @@ fn clean_break_http_snapshot_survives_headless_old_control_and_payload_retiremen
     let control = journal.control();
     let namespace = ServiceRegistry::open_saved(&control)?.incarnation()?;
     let binding = airk_endpoint::http_endpoint::installation_binding(&control, namespace)?;
-    let predecessor_url = lookup.endpoint.as_ref().unwrap().url;
+    let predecessor_url: LoopbackMcpUrl = lookup.endpoint.as_ref().unwrap().url.parse()?;
     let current = |url: LoopbackMcpUrl| -> Result<EndpointDescriptor> {
         Ok(EndpointDescriptor {
             schema: 1,
@@ -651,8 +652,6 @@ fn clean_break_http_snapshot_survives_headless_old_control_and_payload_retiremen
             service_instance: Incarnation::from_bytes([210; 16]),
             executable_sha256: Sha256Digest::from_bytes([211; 32]),
             url,
-            ca_sha256: Sha256Digest::from_bytes([212; 32]),
-            certificate_sha256: Sha256Digest::from_bytes([213; 32]),
             state: EndpointState::Ready,
             predecessor_digest: None,
         })
@@ -677,7 +676,6 @@ fn clean_break_http_snapshot_survives_headless_old_control_and_payload_retiremen
         "unavailable"
     );
     assert!(collision.qualification.current_namespace_failure.is_some());
-    assert!(collision.ca_certificate_file.is_none());
     assert_eq!(collision.snapshot, lookup.snapshot);
     // On another port the current installation cannot own the entry.
     fs::remove_file(private.join("endpoint.json"))?;
@@ -729,7 +727,6 @@ fn clean_break_native_http_lookup_refuses_missing_or_foreign_metadata() -> Resul
         lookup.validate()?;
         assert_eq!(lookup.status, "unavailable", "{fault}");
         assert!(!lookup.snapshot.complete && lookup.snapshot.failure.is_some());
-        assert!(lookup.ca_certificate_file.is_none());
     }
     Ok(())
 }

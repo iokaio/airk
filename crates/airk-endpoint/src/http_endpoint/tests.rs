@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
-use std::{io::Cursor, sync::Arc};
+use airk_core::identity::Sha256Digest;
+use std::sync::Arc;
 
 fn binding() -> InstallationBinding {
     InstallationBinding {
@@ -27,15 +28,6 @@ fn private_root() -> PrivateRoot {
         path,
     }
 }
-fn now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis()
-        .try_into()
-        .unwrap()
-}
-
 #[test]
 fn descriptor_cas_preserves_identity_and_requires_generation_for_relocation() {
     use airk_core::service_http::{EndpointDescriptor, EndpointState, LoopbackMcpUrl};
@@ -50,8 +42,6 @@ fn descriptor_cas_preserves_identity_and_requires_generation_for_relocation() {
         service_instance: Incarnation::from_bytes([12; 16]),
         executable_sha256: Sha256Digest::from_bytes([13; 32]),
         url: LoopbackMcpUrl::new(57421).unwrap(),
-        ca_sha256: Sha256Digest::from_bytes([14; 32]),
-        certificate_sha256: Sha256Digest::from_bytes([15; 32]),
         state: EndpointState::Ready,
         predecessor_digest: None,
     };
@@ -74,7 +64,6 @@ fn descriptor_cas_preserves_identity_and_requires_generation_for_relocation() {
     );
     let expected = next.digest().unwrap();
     next.predecessor_digest = Some(expected);
-    next.certificate_sha256 = Sha256Digest::from_bytes([16; 32]);
     next.state = EndpointState::Stopping;
     publish_descriptor(root.path(), &binding, &next, Some(expected)).unwrap();
     assert_eq!(load_descriptor(root.path(), &binding).unwrap(), Some(next));
@@ -135,84 +124,67 @@ fn concurrent_port_fallback_retains_distinct_sockets_without_contacting_occupant
     );
 }
 
+/// Local trust plan C: an endpoint record an HTTPS build wrote is read as a
+/// legacy predecessor. It is never a current descriptor; its port and
+/// generation carry forward, the next publication must chain to its digest
+/// with a higher generation, and then the record is current HTTP.
 #[test]
-fn issuer_persists_leaf_renews_and_mismatched_public_export_fails() {
+fn a_legacy_https_record_is_carried_forward_by_the_next_http_generation() {
+    use airk_core::service_http::{
+        EndpointDescriptor, EndpointState, LoopbackMcpUrl, SavedEndpoint,
+    };
     let root = private_root();
-    let now = now();
-    let original = TlsIdentity::load_or_create(root.path(), binding(), now).unwrap();
-    let restarted = TlsIdentity::load_or_create(root.path(), binding(), now + 1000).unwrap();
-    assert_eq!(original.ca_sha256(), restarted.ca_sha256());
-    assert_eq!(
-        original.certificate_sha256(),
-        restarted.certificate_sha256()
+    let binding = binding();
+    let old = serde_json::json!({
+        "schema": 1, "installation": binding.installation, "user": binding.user,
+        "namespace": binding.namespace, "generation": 4,
+        "service_instance": Incarnation::from_bytes([12; 16]),
+        "executable_sha256": Sha256Digest::from_bytes([13; 32]),
+        "url": "https://127.0.0.1:57431/mcp", "ca_sha256": Sha256Digest::from_bytes([14; 32]),
+        "certificate_sha256": Sha256Digest::from_bytes([15; 32]), "state": "stopping",
+        "predecessor_digest": null,
+    });
+    let bytes = serde_json::to_vec(&old).unwrap();
+    write_private(root.path(), "endpoint.json", &bytes, 4096, false).unwrap();
+    assert_eq!(load_descriptor(root.path(), &binding).unwrap(), None);
+    let saved = load_saved(root.path(), &binding).unwrap().unwrap();
+    let SavedEndpoint::Legacy(legacy) = &saved else {
+        panic!("an HTTPS record must decode as legacy");
+    };
+    assert_eq!((legacy.port, legacy.generation), (57431, 4));
+    let expected = saved.digest().unwrap();
+    let mut next = EndpointDescriptor {
+        schema: 1,
+        installation: binding.installation,
+        user: binding.user.clone(),
+        namespace: binding.namespace,
+        generation: 4,
+        service_instance: Incarnation::from_bytes([16; 16]),
+        executable_sha256: Sha256Digest::from_bytes([17; 32]),
+        url: LoopbackMcpUrl::new(saved.port()).unwrap(),
+        state: EndpointState::Ready,
+        predecessor_digest: Some(expected),
+    };
+    // The same generation, a missing or wrong predecessor digest: refused.
+    assert!(publish_descriptor(root.path(), &binding, &next, Some(expected)).is_err());
+    next.generation = 5;
+    assert!(publish_descriptor(root.path(), &binding, &next, None).is_err());
+    let mut crossed = next.clone();
+    crossed.predecessor_digest = Some(Sha256Digest::from_bytes([18; 32]));
+    assert!(
+        publish_descriptor(root.path(), &binding, &crossed, crossed.predecessor_digest).is_err()
     );
-    let renewed =
-        TlsIdentity::load_or_create(root.path(), binding(), now + 24 * 86_400_000).unwrap();
-    assert_eq!(original.ca_sha256(), renewed.ca_sha256());
-    assert_ne!(original.certificate_sha256(), renewed.certificate_sha256());
-    write_private(root.path(), "ca.pem", b"different issuer", 8192, true).unwrap();
-    assert!(TlsIdentity::load_or_create(root.path(), binding(), now).is_err());
-}
-
-#[test]
-fn expiring_issuer_fails_without_silent_trust_replacement() {
-    let root = private_root();
-    let now = now();
-    TlsIdentity::load_or_create(root.path(), binding(), now).unwrap();
-    let bundle = std::fs::read(root.path().join("tls-identity.json")).unwrap();
-    let ca = std::fs::read(root.path().join("ca.pem")).unwrap();
-    assert!(TlsIdentity::load_or_create(root.path(), binding(), now + 3620 * 86_400_000).is_err());
+    publish_descriptor(root.path(), &binding, &next, Some(expected)).unwrap();
     assert_eq!(
-        std::fs::read(root.path().join("tls-identity.json")).unwrap(),
-        bundle
+        load_descriptor(root.path(), &binding).unwrap(),
+        Some(next.clone())
     );
-    assert_eq!(std::fs::read(root.path().join("ca.pem")).unwrap(), ca);
-}
-
-fn handshake(identity: &TlsIdentity, ca: Vec<u8>, name: &str) -> anyhow::Result<()> {
-    let mut roots = rustls::RootCertStore::empty();
-    roots.add(rustls::pki_types::CertificateDer::from(ca))?;
-    let config = rustls::ClientConfig::builder_with_provider(Arc::new(
-        rustls::crypto::ring::default_provider(),
-    ))
-    .with_safe_default_protocol_versions()?
-    .with_root_certificates(roots)
-    .with_no_client_auth();
-    let mut client = rustls::ClientConnection::new(
-        Arc::new(config),
-        rustls::pki_types::ServerName::try_from(name.to_owned())?,
-    )?;
-    let mut server = rustls::ServerConnection::new(identity.server_config())?;
-    for _ in 0..8 {
-        let mut wire = Vec::new();
-        client.write_tls(&mut wire)?;
-        server.read_tls(&mut Cursor::new(wire))?;
-        server.process_new_packets()?;
-        let mut wire = Vec::new();
-        server.write_tls(&mut wire)?;
-        client.read_tls(&mut Cursor::new(wire))?;
-        client.process_new_packets()?;
-        if !client.is_handshaking() && !server.is_handshaking() {
-            return Ok(());
-        }
-    }
-    anyhow::bail!("handshake did not complete")
-}
-fn ca_der(root: &Path) -> Vec<u8> {
-    let bundle: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(root.join("tls-identity.json")).unwrap()).unwrap();
-    serde_json::from_value(bundle["ca_der"].clone()).unwrap()
-}
-#[test]
-fn real_rustls_handshake_validates_ip_and_issuer() {
-    let root = private_root();
-    let identity = TlsIdentity::load_or_create(root.path(), binding(), now()).unwrap();
-    assert!(handshake(&identity, ca_der(root.path()), "127.0.0.1").is_ok());
-    assert!(handshake(&identity, ca_der(root.path()), "localhost").is_err());
-    assert!(handshake(&identity, ca_der(root.path()), "127.0.0.2").is_err());
-    let other = private_root();
-    TlsIdentity::load_or_create(other.path(), binding(), now()).unwrap();
-    assert!(handshake(&identity, ca_der(other.path()), "127.0.0.1").is_err());
+    assert_eq!(next.url.to_string(), "http://127.0.0.1:57431/mcp");
+    // Another installation's legacy record is refused like a current one.
+    write_private(root.path(), "endpoint.json", &bytes, 4096, true).unwrap();
+    let mut foreign = binding;
+    foreign.namespace = Incarnation::from_bytes([19; 16]);
+    assert!(load_saved(root.path(), &foreign).is_err());
 }
 
 #[cfg(unix)]

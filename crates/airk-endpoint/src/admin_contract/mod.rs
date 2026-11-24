@@ -23,8 +23,13 @@ pub use schema::document as schema_document;
 pub const I3_CONTRACT: u32 = 1;
 /// The `schema` field of every admin API response body.
 pub const ENVELOPE_SCHEMA: &str = "airk-admin/1";
-/// The only admin cookie name; matched exactly (case-sensitive).
-pub const COOKIE_NAME: &str = "__Host-airk_admin";
+/// The only admin cookie name; matched exactly (case-sensitive). Local trust
+/// plan C: loopback is plain HTTP, so the name has no `__Host-` prefix (which
+/// requires `Secure`) and the cookie is not `Secure` (Safari keeps no
+/// `Secure` cookie on `http://127.0.0.1`). Cookies are not port-scoped:
+/// another local HTTP service on 127.0.0.1 could read or overwrite it;
+/// `HttpOnly` and the server-side session binding limit that.
+pub const COOKIE_NAME: &str = "airk_admin";
 /// The anti-forgery request header (HTTP header names are case-insensitive).
 pub const CSRF_HEADER: &str = "x-airk-csrf";
 /// Launch codes, cookies and anti-forgery tokens are independent 256-bit
@@ -64,9 +69,8 @@ pub const PERMISSIONS_POLICY: &str = "accelerometer=(), autoplay=(), camera=(), 
 geolocation=(), gyroscope=(), magnetometer=(), microphone=(), midi=(), payment=(), \
 publickey-credentials-get=(), screen-wake-lock=(), serial=(), usb=(), xr-spatial-tracking=()";
 pub const ASSET_CACHE_CONTROL: &str = "private, max-age=31536000, immutable";
-/// `Set-Cookie` that clears the session under `__Host-` rules (L4).
-pub const CLEAR_SESSION_COOKIE: &str =
-    "__Host-airk_admin=; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=0";
+/// `Set-Cookie` that clears the session (L4), with the attributes it was set with.
+pub const CLEAR_SESSION_COOKIE: &str = "airk_admin=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0";
 /// Request headers whose values are never logged or reported (L9).
 pub const REDACTED_REQUEST_HEADERS: &[&str] = &["authorization", "cookie", "x-airk-csrf"];
 /// Body fields of the session exchange whose values are never logged (L9).
@@ -82,18 +86,18 @@ pub fn expected_host(port: u16) -> String {
 
 /// The exact `Origin` the admin API accepts.
 pub fn expected_origin(port: u16) -> String {
-    format!("https://127.0.0.1:{port}")
+    format!("http://127.0.0.1:{port}")
 }
 
 /// The launch URL `airkctl admin open` delivers through its owner-only
 /// redirect file. The code is in the fragment, never in a query (review I3).
 pub fn launch_url(port: u16, code: &str) -> String {
-    format!("https://127.0.0.1:{port}/admin/launch#c={code}")
+    format!("http://127.0.0.1:{port}/admin/launch#c={code}")
 }
 
 /// The `Set-Cookie` value of a freshly minted session (M2 rule 2).
 pub fn session_cookie(value: &str) -> String {
-    format!("{COOKIE_NAME}={value}; Secure; HttpOnly; SameSite=Strict; Path=/")
+    format!("{COOKIE_NAME}={value}; HttpOnly; SameSite=Strict; Path=/")
 }
 
 /// Canonical unpadded base64url of exactly 32 bytes.
@@ -690,7 +694,7 @@ pub fn exchange(
     }
 }
 
-/// The values of every `__Host-airk_admin` cookie across all `Cookie`
+/// The values of every `airk_admin` cookie across all `Cookie`
 /// headers. Other cookies are ignored and never logged (M2 rule 4).
 pub fn admin_cookies(headers: &[String]) -> Vec<&str> {
     headers

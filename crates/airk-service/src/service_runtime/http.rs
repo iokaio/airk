@@ -1,37 +1,28 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The native service owns the retained HTTPS socket and identity. Every
-//! request is the built-in local agent session (U110); the service never
-//! opens or creates a credential ledger, and deletes a retired one on
-//! upgrade (local trust plan B).
+//! The native service owns the retained loopback HTTP socket (local trust
+//! plan C: plain TCP, no TLS identity). Every request is the built-in local
+//! agent session (U110); the service never opens or creates a credential
+//! ledger, and deletes a retired one on upgrade (local trust plan B). An
+//! upgraded installation's first start reads the HTTPS build's endpoint
+//! record as a legacy predecessor: it keeps the port and publishes the next
+//! generation over HTTP. The old CA and TLS files are retired by setup, in
+//! the user's session (`http_endpoint::legacy_trust`), never here.
 use super::*;
 use airk_core::service_http::{
     EndpointDescriptor, EndpointState, HTTP_CONTRACT_VERSION, LoopbackMcpUrl,
 };
-use airk_endpoint::http_endpoint::{self, BoundEndpoint, InstallationBinding, TlsIdentity};
-use std::{
-    path::PathBuf,
-    sync::Weak,
-    time::{SystemTime, UNIX_EPOCH},
-};
-use tokio::sync::watch;
+use airk_endpoint::http_endpoint::{self, BoundEndpoint, InstallationBinding};
+use std::{path::PathBuf, sync::Weak};
 use tokio_util::sync::CancellationToken;
 
 pub(super) struct Owner {
     root: PathBuf,
     binding: InstallationBinding,
     descriptor: Mutex<EndpointDescriptor>,
-    tls: watch::Sender<tokio_rustls::TlsAcceptor>,
     shutdown: CancellationToken,
     checkpoint: Arc<checkpoint::Coordinator>,
 }
 type StartedOwner = (Arc<Owner>, tokio::task::JoinHandle<Result<()>>);
-
-fn now_ms() -> Result<u64> {
-    Ok(SystemTime::now()
-        .duration_since(UNIX_EPOCH)?
-        .as_millis()
-        .try_into()?)
-}
 
 /// U105 (§7): the local agent session's hook: the service's open-read path
 /// (the one M3 `ToolSelection::Open` reaches).
@@ -82,9 +73,10 @@ impl Owner {
         local_ipc::prepare_root(&root)?;
         // This is the stable protected installation/control root, never a versioned payload path.
         let binding = http_endpoint::installation_binding(&state.control_root, clock.namespace)?;
-        let previous = http_endpoint::load_descriptor(&root, &binding)?;
-        let held = BoundEndpoint::bind(previous.as_ref().map(|value| value.url.port()))?;
-        let identity = TlsIdentity::load_or_create(&root, binding.clone(), now_ms()?)?;
+        // Current or legacy (an HTTPS build's record): the port and the
+        // generation carry forward either way.
+        let previous = http_endpoint::load_saved(&root, &binding)?;
+        let held = BoundEndpoint::bind(previous.as_ref().map(|value| value.port()))?;
         let descriptor = EndpointDescriptor {
             schema: HTTP_CONTRACT_VERSION,
             installation: binding.installation,
@@ -92,15 +84,13 @@ impl Owner {
             namespace: binding.namespace,
             generation: previous.as_ref().map_or(Ok(1), |value| {
                 value
-                    .generation
+                    .generation()
                     .checked_add(1)
                     .ok_or_else(|| anyhow::anyhow!("HTTP endpoint generation exhausted"))
             })?,
             service_instance: state.instance,
             executable_sha256: state.executable_sha256.parse()?,
             url: LoopbackMcpUrl::new(held.port()?)?,
-            ca_sha256: identity.ca_sha256(),
-            certificate_sha256: identity.certificate_sha256(),
             state: if state.checkpoint.admission_closed()? {
                 EndpointState::Recovering
             } else {
@@ -108,10 +98,9 @@ impl Owner {
             },
             predecessor_digest: previous
                 .as_ref()
-                .map(EndpointDescriptor::digest)
+                .map(airk_core::service_http::SavedEndpoint::digest)
                 .transpose()?,
         };
-        let (tls, receiver) = watch::channel(identity.acceptor());
         let control = state.control_root.clone();
         let weak: Weak<State> = Arc::downgrade(state);
         let open_hooks = open_hooks(weak.clone());
@@ -149,7 +138,6 @@ impl Owner {
             Arc::new(move || Ok(Arc::new(checkpoint.admit()?)));
         let gateway = airk_https::http_gateway::Gateway::new(
             &descriptor,
-            receiver,
             validate,
             airk_https::http_gateway::NativeAdmission {
                 closed,
@@ -170,7 +158,6 @@ impl Owner {
             root,
             binding,
             descriptor: Mutex::new(descriptor),
-            tls,
             shutdown: CancellationToken::new(),
             checkpoint: state.checkpoint.clone(),
         });
@@ -214,33 +201,10 @@ impl Owner {
         Ok(())
     }
 
-    /// The caller serializes this periodic maintenance and shutdown publication.
+    /// The caller serializes this periodic maintenance and shutdown
+    /// publication. With no leaf to renew it republishes only a changed state.
     pub(super) fn refresh(&self) -> Result<()> {
-        let identity = TlsIdentity::load_or_create(&self.root, self.binding.clone(), now_ms()?)?;
-        let mut descriptor = self
-            .descriptor
-            .lock()
-            .map_err(|_| anyhow::anyhow!("HTTP descriptor unavailable"))?;
-        let state = if self.shutdown.is_cancelled() {
-            EndpointState::Stopping
-        } else if self.checkpoint.admission_closed()? {
-            EndpointState::Recovering
-        } else {
-            EndpointState::Ready
-        };
-        if descriptor.certificate_sha256 != identity.certificate_sha256()
-            || descriptor.state != state
-        {
-            let expected = descriptor.digest()?;
-            let mut next = descriptor.clone();
-            next.state = state;
-            next.certificate_sha256 = identity.certificate_sha256();
-            next.predecessor_digest = Some(expected);
-            http_endpoint::publish_descriptor(&self.root, &self.binding, &next, Some(expected))?;
-            self.tls.send_replace(identity.acceptor());
-            *descriptor = next;
-        }
-        Ok(())
+        self.update_state()
     }
 
     pub(super) fn stop(&self) -> Result<()> {

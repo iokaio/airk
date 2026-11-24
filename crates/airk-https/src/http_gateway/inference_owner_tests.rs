@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Native inference owner status over the actual HTTPS gateway. Moved from
+//! Native inference owner status over the actual loopback HTTP gateway. Moved from
 //! `inference_engine::pool::owner::tests` (split step 2b): it drives the
 //! gateway, which sits above inference.
 use crate::local_ipc;
@@ -20,7 +20,7 @@ use tokio::sync::oneshot;
 fn held_inference_keeps_native_status_responsive_and_checkpoint_charged() -> Result<()> {
     // Hold the canonical compute lane at its existing pre-compute hook. This
     // exercises real owner threads, charges, model lifetime and the native stop
-    // barrier. HTTPS uses the actual gateway and this exact provider's status;
+    // barrier. HTTP uses the actual gateway and this exact provider's status;
     // this component fixture does not claim installed-editor qualification.
     fn enqueue(
         owner: &InferenceOwner,
@@ -194,14 +194,14 @@ fn held_inference_keeps_native_status_responsive_and_checkpoint_charged() -> Res
         }
     }
     let owner = Arc::new(Mutex::new(owner));
-    let https = runtime.block_on(crate::http_gateway::tests::live_https_status(Arc::new(
+    let http = runtime.block_on(crate::http_gateway::tests::live_http_status(Arc::new(
         Status(owner.clone()),
     )))?;
     let mut expected = serde_json::to_value(&status)?;
     expected["query_concurrency"] = airk_core::service_resources::DEFAULT_QUERY_CONCURRENCY.into();
-    assert_eq!(https["structuredContent"], expected, "{https}");
+    assert_eq!(http["structuredContent"], expected, "{http}");
     let mut owner = Arc::try_unwrap(owner)
-        .map_err(|_| anyhow::anyhow!("HTTPS retained native status owner"))?
+        .map_err(|_| anyhow::anyhow!("HTTP retained native status owner"))?
         .into_inner()
         .map_err(|_| anyhow::anyhow!("native status owner poisoned"))?;
 

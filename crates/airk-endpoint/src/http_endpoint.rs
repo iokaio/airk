@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Owner-private HTTPS identity and endpoint metadata, and the removal of the
-//! credential ledger older installations left (local trust plan B).
-use airk_core::{
-    identity::{Incarnation, Sha256Digest},
-    service_http::PREFERRED_HTTP_PORT,
-};
+//! Owner-private endpoint metadata of the loopback HTTP listener, and the
+//! removal of what older installations left: the credential ledger (local
+//! trust plan B) and the HTTPS identity and OS trust (local trust plan C,
+//! `legacy_trust`).
+use airk_core::{identity::Incarnation, service_http::PREFERRED_HTTP_PORT};
 use anyhow::Result;
 
 use std::{
@@ -16,9 +15,7 @@ use std::{
 pub mod legacy_trust;
 mod metadata;
 pub mod retired_credentials;
-mod tls;
-pub use metadata::{load_descriptor, publish_descriptor};
-pub use tls::{TlsBundleIdentity, TlsIdentity};
+pub use metadata::{load_descriptor, load_saved, publish_descriptor};
 
 pub use airk_core::service_http_credentials::InstallationBinding;
 
@@ -35,13 +32,14 @@ pub fn installation_binding(control: &Path, namespace: Incarnation) -> Result<In
     InstallationBinding::derive(&control, &user, namespace)
 }
 
-/// The URL of the saved endpoint record of the installation at `control`,
-/// read against its existing native namespace without starting a service or
-/// creating anything. `None` when no record exists.
+/// The URL of the saved endpoint record of the installation at `control`
+/// (an older `https://` URL for a legacy record), read against its existing
+/// native namespace without starting a service or creating anything. `None`
+/// when no record exists.
 pub fn saved_endpoint_url(control: &Path) -> Result<Option<String>> {
     let registry = airk_store::service::registry::ServiceRegistry::open_saved(control)?;
     let binding = installation_binding(control, registry.incarnation()?)?;
-    Ok(load_descriptor(&control.join("http-1"), &binding)?.map(|value| value.url.to_string()))
+    Ok(load_saved(&control.join("http-1"), &binding)?.map(|value| value.url()))
 }
 
 /// The socket remains owned throughout publication and conversion to async I/O.
@@ -75,11 +73,6 @@ impl BoundEndpoint {
 /// Moved to `airk-ipc` (U90) so `airkctl` keeps the same owner-private records.
 pub use airk_ipc::private_record::read_private;
 use airk_ipc::private_record::write_private;
-
-fn digest(bytes: &[u8]) -> Sha256Digest {
-    use sha2::{Digest, Sha256};
-    Sha256Digest::from_bytes(Sha256::digest(bytes).into())
-}
 
 #[cfg(test)]
 mod tests;

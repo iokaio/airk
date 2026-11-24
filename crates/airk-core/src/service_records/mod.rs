@@ -201,7 +201,9 @@ impl MaintenanceObservation {
 /// envelope with room for re-encoding.
 pub const MAX_TOOLS_CALL_REQUEST_BYTES: usize = 128 * 1024;
 
-/// Exactly one canonical IPv4 loopback MCP URL. No DNS, redirects or userinfo.
+/// Exactly one canonical IPv4 loopback MCP URL, `http://127.0.0.1:<port>/mcp`
+/// (local trust plan C). No DNS, redirects or userinfo; an older
+/// `https://` URL is only read through `legacy_https_port`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct LoopbackMcpUrl(u16);
@@ -219,14 +221,15 @@ impl LoopbackMcpUrl {
         self.0
     }
 
+    /// Local trust plan C: loopback is served over plain HTTP.
     pub fn origin(self) -> String {
-        format!("https://127.0.0.1:{}", self.0)
+        format!("http://127.0.0.1:{}", self.0)
     }
 }
 
 impl fmt::Display for LoopbackMcpUrl {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "https://127.0.0.1:{}/mcp", self.0)
+        write!(f, "http://127.0.0.1:{}/mcp", self.0)
     }
 }
 
@@ -234,7 +237,7 @@ impl FromStr for LoopbackMcpUrl {
     type Err = anyhow::Error;
 
     fn from_str(value: &str) -> Result<Self> {
-        Self::new(canonical_port(value, "https://127.0.0.1:")?)
+        Self::new(canonical_port(value, "http://127.0.0.1:")?)
     }
 }
 
