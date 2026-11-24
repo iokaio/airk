@@ -17042,3 +17042,58 @@ sequence on a CUDA lifetime (phase D).
 
 **State.** D: free 728,168,509,440 bytes. Nothing running. Next: phase B,
 credential and grant removal.
+
+### 23 November 2026 at 23:55 UTC — Local trust plan, phase B parts 1 and 2 merged (entry 68); two pre-existing failures fixed; grant removal re-planned
+
+**User's words:** "Keep going. Get it all done."; then, for grants: delete the
+grant operation records, drop the grant tables and the credential ledger on
+upgrade, because this build was never deployed beyond this machine (recorded
+in [the plan](local-trust-plan.md), `ec3a89e1`, `d3f1f79f`).
+
+**Merged** `loop/trust-b` (one Opus agent at medium effort, worktree
+`answer-loop\trust-b\wt`, target `answer-loop\target-l2b`, identity
+`TYAI\tdotn` verified) as `aee20ee9`. Its tree equals `loop/trust-b` plus the
+plan page. It holds:
+- B1–B3: the gateway's local session replaces the synthetic credential;
+  startup no longer opens the credential ledger; the `airkctl agents
+  info|credential|revoke|verify|launch|default` commands, `HttpEnroll`,
+  `HttpRevoke`, the `AgentConnection*` methods, the interim setup enrollment
+  and the Admin connection rows are removed;
+- B4: `connection_id`, agent choice, `CredentialStore`, the strict ledger
+  types and `agent_connection.rs` are removed; installer predecessor cleanup
+  reads the old ledger through a lenient read-only `RetainedLedger`
+  (superseded by the user's later decision; removed in the next part);
+- the harness scripts no longer call the removed commands, except
+  `setup-local-test.py`, still to be redesigned.
+
+**Cherry-picked fixes** (each on its own branch, then onto
+`feat/arbiter-final`):
+- `ed04ad36` (entry 67 addendum): `scope_reconcile_pending` only when the same
+  request would pass once the configuration is published; a partial scope
+  refuses. Two `airk-mcp` `native_scoped_settings_tests` that entry 67 broke
+  pass again (7 of 7); phase A's filter had not selected them.
+- `d55962ee` (cherry-pick of `274073b6`): the `airk-service` Arbiter
+  status read no longer lets a malformed device configuration escape before
+  its own unavailable path (introduced by `c02643ad`, 17 November). The test
+  `ambiguous_or_corrupt_configuration_status_never_invents_a_legacy_digest_or_writable_config`
+  passes; its expectation was not changed.
+
+**Validation** (agent, CPU build environment from `L3\build-env.json` with
+this target; logs `answer-loop\trust-b\logs`) on `45e52356`: workspace Clippy
+`-D warnings`, all targets, all and default features, clean; Nextest lib and
+bins over ten crates 3,414 of 3,415 (the one failure is the status test fixed
+above: 183 of 183 `arbiter::` tests and Clippy pass on the fix); airk-cli
+integration, six binaries, 196 of 196; VS Code 1,145 of 1,147 (2 skipped);
+Admin 303 of 305 (2 skipped); shared UI 93 of 93; contract checks pass;
+Python 46 not passing against 55 on base, none new. Primary agent:
+`check-repo.ps1` on `aee20ee9`, passed.
+
+**Not done:** B5/B6 (reviewed grants) is one atomic change. `grant_id`
+appears 1,467 times in 368 files, `ScopedReadAuthority` embeds a
+`ReviewedGrant`, and the grant tables sit inside the catalog's strict
+schema-identity chain, so dropping them needs a new catalog layout. Next: a
+fresh agent for the store upgrade step, the grant code removal, the
+integration fixture rewrite onto open reads, the Admin and VS Code removal,
+and the ledger removal, landing together.
+
+**State.** D: free 664,937,668,608 bytes. No build running.
