@@ -3949,3 +3949,92 @@ arbiter `CONTRACT.md` ("Answer job kernel"), supervisor
     is bumped by the source watcher recording or invalidating its roots
     (`airk-store` `service/registry/watch.rs`), which can land between the
     two reads. No assertion was changed. Open for the primary agent.
+
+### 70. Phase B and L2c integrated: Answer jobs on selection authority; two fixes
+
+- **Where (24 November 2026):** branch `loop/trust-int` from `loop/trust-b4`
+  (`b3be2f4c`), with merge commits of `loop/trust-b3` (`b0482b9b`, as
+  `caf98910`), `feat/arbiter-final` (`1a657010`, as `46cd7b59`) and
+  `loop/l2c` (`1ec685ed`, as `38166936`). Change-log conflicts: entry 68
+  keeps parts 1 to 5 in order (part 4 before part 5), and entry 69 follows.
+- **L2c on selection authority.** Entry 69 left a job's authority on the
+  reviewed-grant lease, which entry 68 part 3 removed. A job now holds the
+  read authority its caller redeemed: a W4 window or A2 Admin selection
+  (`SelectionReadAuthority`) or a U105 open read (`OpenReadAuthority`), both
+  installed in the worker's selection ledger. `Scopes::attach_job` registers
+  the job kernel (`Kernel::answer_job_kernel`, the maker's frozen scope with
+  its own revocation flag, never wider) on that ledger entry beside its
+  sessions; `detach_job` and `SessionJobAuthority` take the same slot. No
+  design decision was needed: the selection ledger has the same install,
+  renewal and revocation shape the grant ledger had.
+  - **Guarantees kept.** A queued job keeps its owner from leaving as idle
+    (unchanged `answer_jobs_in_flight`). The job outlives its maker's query
+    session (`SessionFence::drop` revokes only the session kernel). Its
+    authority ends with the selection: the host's `RevokeScope`, sent when
+    the window, Admin or agent selection that owns it ends, revokes it, as do
+    lease expiry, lease renewal and the owner's close; the job's refusal is
+    then `answer_authority_ended` with `query_submitted` saying whether its
+    reads ran. A newer catalog revision is a new selection with its own
+    nonce; there is no grant revision to fence any more.
+  - **Entry 67's fences are unchanged:** the job reads through the same
+    scoped kernel paths (publication moved under the same authority is read
+    again or `publication_busy`; after model work `publication_advanced`).
+  - **Tests moved from grants to selections:** supervisor `answer_job_tests`
+    now runs each case for a selection and for an open read, and adds
+    `a_revoked_selection_ends_only_its_own_jobs`; the MCP `answer_jobs` and
+    service `wiring` fixtures use a W4 selection (`other_grant` became
+    `other_selection`, another nonce); the three `combined_reads` job tests
+    read one index, or both, through `window_for`. Contracts updated:
+    supervisor `project_worker/CONTRACT.md` ("Answer job authority"),
+    service `answer_jobs/CONTRACT.md`, kernel arbiter `CONTRACT.md`.
+  - **Shared Help manifest** regenerated (`f649fe40`): part 5 regenerated it
+    before L2c's `fresh`, `interactive`, `invocation_key` and `wait_ms`
+    arrived, so the merged VS Code build refused it as stale.
+- **Fix: `context_8192_selector_requires_all_live_original_eight_option_row`**
+  (`6737649a`). It unwrapped a catalog profile for `ContextQwenLarge`, which
+  LH removed, and panicked at `tests.rs:139` on every tree since LH (entry
+  68 part 5). The selector checks now run for the catalog's one Context
+  profile, the Arbiter, with every assertion unchanged, and the test asserts
+  that no Large profile is left. Chosen over deleting the test because the
+  8192-token eight-option rule still applies to the Arbiter. Before:
+  `logs/nt-fix1-before.log` (fails); after: `nt-fix1-after.log`.
+- **Fix: a typed refusal for an unresolvable configuration/3** (`043e4c04`).
+  After a legacy Configure saved a /3 naming a profile the release catalog
+  cannot resolve, `airkctl arbiter status` refused with the catch-all
+  `arbiter_unavailable`. The refusal and the saved bytes are kept; Core now
+  returns `LegacyProfileUnresolved` (its message points to `airkctl arbiter
+  status-legacy`) and `failure()` renders `arbiter_configuration_migration_refused`,
+  the code Core's `initialization_unresolved_current3` case already names, so
+  no wire code is new. Test
+  `failure_tests::status_device_of_an_unresolvable_configuration3_is_the_typed_migration_refusal`
+  failed before with `arbiter_unavailable` (`nt-fix2-before.log`). Recorded
+  in the service arbiter `CONTRACT.md`.
+- **Validated** (Windows, target `target-l2b-cli`, the CPU environment of
+  `trust-b4/build-env.json`, incremental on, `--locked --offline`; logs in
+  the private `answer-loop/trust-int/logs`):
+  - Clippy `-D warnings --workspace --all-targets`: all features clean in
+    1 min 35 s (`cl-all-final`), default features clean in 1 min 5 s
+    (`cl-default-final`).
+  - Nextest `--workspace --lib --bins --all-features --profile ci`: 4,772 of
+    4,772 passed, 202 skipped, 15 min 1 s (`nt-ws-final`). The selector test
+    above now passes; no failure remains.
+  - `airk-cli --tests --all-features --profile ci`: 479 of 479, 6 skipped,
+    20 min 8 s (`nt-cli-final`).
+  - Stress `-p airk-cli --stress-count 20 -E '(binary(combined_reads) &
+    test(/answer/)) | binary(admin_plane)'`: 20 of 20 iterations, 20 tests
+    each, 11 min 53 s (`stress-final`).
+  - L2c's named tests: kernel `answer::admission::`, MCP and service
+    `answer_jobs::`, supervisor `answer_job_tests::` and `response_tests::`,
+    frontend `combined_frontend::answer`: 74 of 74 (`nt-l2c-lib-1`); the
+    three `combined_reads` job tests: 3 of 3 (`nt-l2c-cli-1`).
+  - `packages/vscode` `npm test` 1,023 of 1,025, 2 skipped
+    (`npm-vscode-final-2`); `packages/admin` 303 of 305, 2 skipped; shared UI
+    215 of 216, the one failure the shared-editor Service test part 3 and
+    part 5 already reported (`ui-final`); `contract_types.py i2|i3|arbiter
+    --check` clean; harness `unittest discover -s scripts/arbiter-answer-eval`
+    252 OK; `check-repo.ps1` and `git diff --check` clean.
+- **Not verified:** Linux and macOS, an installed service, and revoking a
+  selection end to end while a job's maker is gone (covered at the
+  supervisor level only, as entry 69 recorded for grants).
+- **Identities:** none moved; no wire shape, digest input or persisted format
+  changed.
