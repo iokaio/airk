@@ -181,6 +181,31 @@ fn ambiguous_or_corrupt_configuration_status_never_invents_a_legacy_digest_or_wr
     }
     Ok(())
 }
+#[cfg(feature = "local-inference")]
+#[test]
+fn legacy_status_still_routes_a_valid_current_device_configuration_to_device_status() -> Result<()>
+{
+    let (root, owner) = status_owner_fixture()?;
+    owner
+        .configuration
+        .device(device_management::binding()?)
+        .initialize_checked(None, || Ok(()))?;
+    let written = std::fs::read(root.path().join("arbiter-v3/configuration.json"))?;
+    let refused = owner
+        .status()
+        .expect_err("a current device configuration needs the typed device status");
+    assert!(
+        refused
+            .downcast_ref::<device_management::CurrentDeviceRequired>()
+            .is_some(),
+        "unexpected refusal: {refused:#}"
+    );
+    assert_eq!(
+        std::fs::read(root.path().join("arbiter-v3/configuration.json"))?,
+        written
+    );
+    Ok(())
+}
 #[test]
 fn answer_application_requires_joint_task_in_actual_enrollment_and_profile() {
     use std::collections::BTreeSet;

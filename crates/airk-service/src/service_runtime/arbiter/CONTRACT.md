@@ -513,7 +513,13 @@ to make the old guard pass. No native run is authorized by this proposal.
 Device management retains typed configuration4/status3 and authentic compiled
 catalog/source binding throughout migration, CAS, lifecycle, import, read
 admission and final delivery. Historical operations retain their typed legacy
-contract and refuse current device state. Migration preserves model, consent,
+contract and refuse current device state. The legacy status read refuses with
+`CurrentDeviceRequired` only on a positive observation of current device
+state; when the device configuration cannot be observed (unreadable or
+malformed bytes) it returns the nonwritable initialization marker with both
+stages failed, reports the failure in its reason and leaves the bytes
+untouched, as it does for an unreadable legacy configuration (gap closed on 23
+November 2026; it had failed since `c02643ad`). Migration preserves model, consent,
 index enrollment and unrelated state; only the Store owner publishes retained
 original bytes and CAS. Auto tries the candidates in the order that Core
 `attempt_order` returns: a qualified GPU route for the observed adapter, then
