@@ -9,45 +9,26 @@ Version 1.8.14 uses one native executable with embedded MiniLM and static CPU ON
 Recognized existing agent configurations can migrate only when their original saved authority and configuration preimage are verified. Ambiguous configurations require review; migration must not invent a grant or narrow a multi-project connection to the active folder. Restart external clients after their connection changes. Serialization tests are not installed-client qualification; retain actual editor and platform results separately.
 
 For this checkout's **scoped developer Codex setup**, `scripts/setup-local-test.py`
-accepts an explicitly approved modern runtime, its existing installation, a
-stable connection ID and the complete native-reviewed selection:
+accepts an explicitly approved runtime pair, the running service's control
+directory and an explicit read scope:
 
 ```console
-python scripts/setup-local-test.py --runtime-dir <verified-runtime> --approved-sha256 <inventory-sha256> --install-dir <owned-installation> --connection-id <stable-native-id> --selection-file <protected-native-selection.json> --report artifacts/local/<run>/agent-setup.json
+python scripts/setup-local-test.py --runtime-dir <verified-runtime> --approved-sha256 <inventory-sha256> --control-dir <service-control-dir> --index <index> [--index-set <set>] [--apply-config] [--report artifacts/local/<run>/agent-setup.json]
 ```
 
-It writes only this checkout's project configuration after a generic HTTPS
-smoke; it does not index, invent grants, configure the actual Codex host's trust
-or load credentials into existing processes. Owned stable/universal predecessor
-entries and pinned predecessor executables require native path/hash lineage from
-the approved installation and their exact original scope. An
-explicit Project or uniquely resolved root uses `--registration-file` instead;
-a frozen catalog/combined entry requires its complete matching selection file.
-An ambiguous root-only multi-index connection is preserved and blocked here,
-rather than narrowed. Use the installer migration with its original captured
-union receipts for that case. Arbitrary old executable paths are not adopted.
-Historical split `airk_explorer` declarations block this scoped helper before
-enrollment or cleanup because it cannot prove their private descriptor authority;
-use the installer migration for complete family consolidation. This is a format
-and ownership boundary, not a requirement to update through an intermediate
-release. One genuine predecessor regression does not qualify every old format.
-
-This developer helper owns one project Codex file and cannot prove that other
-client files migrated. Without explicit cleanup it reports
-`configuration_saved_cleanup_pending` and exits unsuccessfully. After checking
-all known client declarations, add `--retire-obsolete-executables` (the older
-`--retire-legacy-launchers` spelling remains an alias). After the verified save,
-the helper requests native `runtime retire-legacy-launchers` once, then only after
-its complete receipt requests `runtime retire-previous`, both bound by
-`--install-dir <owned-installation> --expected-active <inventory-sha256>`.
-The modern retirement contract removes all approved nonselected payload versions,
-including orphaned versions beyond the previous-runtime pointer. Both
-legacy-to-modern and modern-to-modern upgrades preserve the selected runtime,
-sources, indexes and settings. Complete native receipts or blocked/unknown
-outcomes remain in the report; cleanup failures are not retried as mutations.
-This explicit development-tool option is not a VSIX installation option:
-the actual installer must automatically migrate the complete known configuration
-set and retire ownership-proven old launchers, with incomplete cleanup surfaced.
+It verifies the approved inventory, then runs only the pair's `airkctl agents
+endpoint` and `agents manual --client codex --project <checkout>`, and smoke-tests
+the HTTPS endpoint with the named scope on every read (`--workspace-default`
+reads the checkout's existing workspace default instead; it creates none).
+Without `--apply-config` it prints the exact manual entry and changes nothing.
+With it, the script asks `airkctl agents connect --client codex --project
+<checkout>` to write the project entry (the endpoint URL and the response-mode
+header only), keeps the complete native outcome, and never retries an uncertain
+one. It creates no index, selection, registration, credential or enrollment,
+does not edit configuration itself, does not configure the actual Codex host's
+CA trust, and never touches user-level configuration or other clients' files.
+The earlier single-helper, connection-enrollment and launcher-cleanup forms
+were removed with the credential (local trust plan, phase B).
 
 Historical October 25 manual-test checkpoint: cleanup, help and live-status changes used 1.4.0. The later 1.4.1 installer candidate is also historical; follow [versioning](versioning.md) and [current candidate notes](releases/release-1.8.14.md). Those earlier Windows checks do not replace installed-editor acceptance or native macOS/Linux qualification. The unified source catalog now advertises 29 tools; see [the MCP catalog](unified-mcp.md).
 
