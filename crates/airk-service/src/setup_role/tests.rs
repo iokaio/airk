@@ -77,6 +77,7 @@ fn operation(kind: OperationKind) -> SetupOperation {
         payload_inventory_sha256: Sha256Digest::from_bytes([5; 32]),
         options: SetupOptions {
             login_startup: true,
+            trust: None,
             start: true,
             delete_indexes: IndexDeletion::Keep,
         },

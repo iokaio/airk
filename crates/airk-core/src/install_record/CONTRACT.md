@@ -262,3 +262,21 @@ This pending receipt grants no uninstall/adoption authority: R10 additionally
 requires authenticated settled original inventory history and successful closed
 main receipt. Normal/current startup requires actual matching EXE/DAT custody;
 the outer final --seal-inno remains a completed-original revalidation after PATH.
+
+## The trust option of an HTTPS build's records (24 November 2026, local trust plan C, change-log entry 71)
+
+Setup no longer offers certificate trust, and new operations carry no
+`trust` option. An HTTPS build's persisted records still name it: the
+settled `active-setup.json` beside the install pointer embeds that build's
+operation with `"trust":"ask"` or `"skip"`, and its digests bind those exact
+bytes. Every service start and setup run reads that file, so without the
+option a new build refused to start on an upgraded machine
+(`unknown field trust`). `SetupOptions.trust` is therefore an
+`Option<LegacyTrustChoice>`: decoded when present, re-encoded only when
+present (so canonical bytes and `operation_sha256` still verify), never
+written by this build, never read for any decision. The setup role refuses
+to run an operation that names it (`setup_operation_refused:
+install_file_malformed`). Test:
+`install_record::tests::an_https_builds_trust_option_is_read_from_persisted_records_with_exact_bytes`;
+end to end, `airk-cli` `trust_upgrade`.
+

@@ -146,6 +146,7 @@ fn operation(
         payload_inventory_sha256: inventory,
         options: SetupOptions {
             login_startup: false,
+            trust: None,
             start: false,
             delete_indexes: IndexDeletion::Keep,
         },

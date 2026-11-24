@@ -222,10 +222,28 @@ pub enum IndexDeletion {
     Purge,
 }
 
+/// Local trust plan C: the `trust` choice a setup operation of an HTTPS build
+/// recorded. Setup no longer offers trust; this exists only so that build's
+/// persisted records (the settled `active-setup.json` of the installation
+/// being upgraded, its publications and receipts) still decode and their
+/// canonical bytes and digests still verify (persisted records re-validate
+/// through `SetupOperation::decode`, so decoding accepts it). The setup role
+/// refuses to run an operation carrying it, and nothing reads its value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LegacyTrustChoice {
+    Ask,
+    Skip,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SetupOptions {
     pub login_startup: bool,
+    /// Present only in an HTTPS build's persisted records (see
+    /// `LegacyTrustChoice`); never written by this build.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trust: Option<LegacyTrustChoice>,
     pub start: bool,
     pub delete_indexes: IndexDeletion,
 }

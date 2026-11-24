@@ -222,3 +222,35 @@ fn setup_receipts_decode_as_reviewed() {
         );
     }
 }
+
+/// Local trust plan C: an HTTPS build's persisted operation (inside the
+/// settled `active-setup.json` of the installation being upgraded) still
+/// decodes and re-encodes to its exact canonical bytes, so its digests
+/// verify. The setup role refuses to run an operation naming it.
+#[test]
+fn an_https_builds_trust_option_is_read_from_persisted_records_with_exact_bytes() {
+    let fixture = fixture();
+    let mut text = cases(&fixture, "operations")
+        .iter()
+        .map(|case| case["text"].as_str().unwrap().to_owned())
+        .find(|text| text.contains("\"login_startup\":true,"))
+        .expect("an operation with login startup");
+    text = text.replacen(
+        "\"login_startup\":true,",
+        "\"login_startup\":true,\"trust\":\"ask\",",
+        1,
+    );
+    let persisted: SetupOperation = serde_json::from_str(&text).unwrap();
+    assert_eq!(persisted.options.trust, Some(LegacyTrustChoice::Ask));
+    assert_eq!(canonical(&persisted), text.as_bytes());
+    let decoded = SetupOperation::decode(text.as_bytes(), persisted.created_unix_ms).unwrap();
+    assert_eq!(canonical(&decoded), text.as_bytes());
+    let current = text.replacen("\"trust\":\"ask\",", "", 1);
+    let decoded = SetupOperation::decode(current.as_bytes(), persisted.created_unix_ms).unwrap();
+    assert_eq!(decoded.options.trust, None);
+    assert!(
+        !String::from_utf8(canonical(&decoded))
+            .unwrap()
+            .contains("trust")
+    );
+}

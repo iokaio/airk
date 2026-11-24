@@ -159,6 +159,12 @@ async fn run_with(request: SetupRequest, clock: Clock) -> Result<()> {
         .unwrap_or_else(clock);
     let operation = SetupOperation::decode(&bytes, admitted_at)
         .map_err(|refusal| anyhow::anyhow!("setup_operation_refused: {}", refusal.code()))?;
+    // Local trust plan C: the trust option is decoded only so an HTTPS build's
+    // persisted records verify; this build never runs an operation naming it.
+    ensure!(
+        operation.options.trust.is_none(),
+        "setup_operation_refused: install_file_malformed"
+    );
     if let Some(receipt) = &receipt {
         let mut observation = receipt.clone();
         if active_admission.is_some() && observation.failure.is_some() {

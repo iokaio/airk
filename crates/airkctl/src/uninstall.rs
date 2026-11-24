@@ -77,6 +77,7 @@ pub fn operation(
         payload_inventory_sha256,
         options: SetupOptions {
             login_startup: false,
+            trust: None,
             start: false,
             delete_indexes: if purge {
                 IndexDeletion::Purge
