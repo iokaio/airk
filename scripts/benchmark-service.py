@@ -56,8 +56,8 @@ def endpoint_context(fixture, name):
 
 
 class HttpSession:
-    """One real initialized HTTPS session; no frontend process or token artifact."""
-    # Native listener permits 32 concurrent TLS handshakes. Keep transport
+    """One real initialized loopback HTTP session; no frontend process or token artifact."""
+    # Native listener permits 32 concurrent connection setups. Keep transport
     # establishment bounded without serializing the 64 clients' actual reads.
     handshake_slots = threading.BoundedSemaphore(16)
     def __init__(self, connection, control, observer=None):
@@ -85,7 +85,7 @@ class HttpSession:
         # MCP sessions outlive individual TCP connections. Native HTTP stops
         # waiting for a new header after 15 s; source/vector jobs and sequential
         # cohort warmup can exceed that interval. Start each NEW exchange on
-        # fresh TCP, keeping the original MCP session and TLS checks.
+        # fresh TCP, keeping the original MCP session.
         # This is never an exception-triggered replay of a submitted request.
         fresh_tcp = self.sequence != 0
         self.sequence += 1
@@ -695,7 +695,7 @@ def campaign(runtime, project_count, client_count, rounds, semantic=False, evide
                                     "unrepresented_projects": [name for number, name in enumerate(names) if not any(project == number for _, project in sessions)] if fixture.single_image else names},
                 "all_owned_client_sessions_closed": all(session.closed for session, _ in sessions) if fixture.single_image else True,
                 "all_owned_client_sessions_deleted": all(session.delete_completed for session, _ in sessions) if fixture.single_image else None,
-                "tcp_policy": "New TCP before each new MCP request and DELETE; original MCP session retained; no exchange replay; TLS handshake cost included." if fixture.single_image else None,
+                "tcp_policy": "New TCP before each new MCP request and DELETE; original MCP session retained; no exchange replay; TCP connect cost included." if fixture.single_image else None,
                 "max_concurrent_handshakes": 16 if fixture.single_image else None,
                 "source_bytes_preserved": True,
                 **({"semantic": {"mode":"explicit_vector","setup":semantic_setup,"warmup":semantic_warmup,
@@ -721,7 +721,7 @@ def main():
               "logical_cpus": os.cpu_count(), "machine": platform.machine(),
               "runtime_manifest_sha256": hashlib.sha256((runtime / "airk-install.json").read_bytes()).hexdigest(),
               "limitations": "Single host; lexical original fixtures; uncontrolled OS caches (first query is not a cold filesystem or cold service); health includes CLI startup; typed read rejections counted separately without mutation retries; during-wave jobs may finish before all samples; native observed_rss_bytes is the native aggregate telemetry only, not measured private physical memory; CPU not measured; process scans cannot certify unobserved global processes; no commercial client UI qualification.",
-              "tcp_policy": "Fresh TCP before each new MCP request/DELETE; original MCP session retained; no submitted exchange replay; TLS handshake included in latency.",
+              "tcp_policy": "Fresh TCP before each new MCP request/DELETE; original MCP session retained; no submitted exchange replay; TCP connect included in latency.",
               "max_concurrent_handshakes": 16,
               "selection": {"client_counts": args.clients, "project_counts": args.projects,
                             "excluded_client_counts": [value for value in (1, 10, 64) if value not in args.clients],

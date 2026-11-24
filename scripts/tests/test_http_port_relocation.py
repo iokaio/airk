@@ -4,7 +4,6 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
-import ssl
 import tempfile
 import unittest
 from unittest.mock import patch, Mock
@@ -50,17 +49,17 @@ class PortRelocationContractTests(unittest.TestCase):
 
     def connections(self):
         before = {'installation':'33'*32, 'user':'fictional-user', 'namespace':'22'*16,
-            'ca_sha256':'44'*32, 'executable_sha256':'55'*32, 'generation':1,
-            'service_instance':'66'*16, 'url':'https://127.0.0.1:43111/mcp'}
+            'executable_sha256':'55'*32, 'generation':1,
+            'service_instance':'66'*16, 'url':'http://127.0.0.1:43111/mcp'}
         after = copy.deepcopy(before)
-        after.update(generation=2, service_instance='77'*16, url='https://127.0.0.1:43112/mcp')
+        after.update(generation=2, service_instance='77'*16, url='http://127.0.0.1:43112/mcp')
         old = {'instance':'66'*16,'runtime_sha256':'88'*32,'executable_sha256':'55'*32}
         new = {**old, 'instance':'77'*16}
         return before, after, old, new
 
     def test_relocation_preserves_complete_immutable_authority_and_approved_image(self):
         GATE.validate_relocation(*self.connections())
-        for key in ('installation','user','namespace','ca_sha256','executable_sha256','generation','url','service_instance'):
+        for key in ('installation','user','namespace','executable_sha256','generation','url','service_instance'):
             before, after, old, new = self.connections()
             after[key] = before[key] if key in ('generation','url','service_instance') else 'changed'
             with self.subTest(endpoint=key), self.assertRaises(AssertionError):
@@ -125,28 +124,35 @@ class PortRelocationContractTests(unittest.TestCase):
         finally:
             foreign.close()
 
-    def test_actual_stale_socket_refuses_tls_before_any_http_or_bearer_delivery(self):
-        roots = ssl.create_default_context().get_ca_certs(binary_form=True)
-        if not roots:
-            self.skipTest('A normal public trust anchor is needed for the real TLS client fixture')
+    def test_actual_stale_socket_stops_on_the_occupants_refusal_without_a_session_or_bearer(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
-            private = root / 'http-1'; private.mkdir()
-            ca = private / 'ca.pem'
-            ca.write_text(ssl.DER_cert_to_PEM_cert(roots[0]), encoding='ascii')
-            ca.chmod(0o600)
             foreign = GATE.ForeignListener(0)
             try:
                 connection = {'schema':1,'state':'ready','namespace':'33'*16,
-                    'url':f'https://127.0.0.1:{foreign.port}/mcp',
-                    'ca_sha256':hashlib.sha256(roots[0]).hexdigest(), 'certificate_sha256':'44'*32}
+                    'url':f'http://127.0.0.1:{foreign.port}/mcp'}
                 result = GATE.stale_probe(HTTP, connection, root, foreign)
-                self.assertTrue(result['tls_refused_before_client_construction'])
-                self.assertEqual(len(result['occupant_observations']), 1)
+                self.assertTrue(result['stale_url_refused_by_occupant'])
+                self.assertEqual(result['refusal']['status'], 400)
+                self.assertIsNone(result['refusal']['request']['session_sha256'])
+                self.assertEqual(result['refusal']['request']['jsonrpc_method'], 'initialize')
+                rows = result['occupant_observations']
+                self.assertEqual(len(rows), 1, 'One request, never replayed')
+                self.assertTrue(rows[0]['complete'] and rows[0]['http_request'])
+                self.assertFalse(rows[0]['authorization'])
                 self.assertNotIn('airk1.', json.dumps(result))
-                self.assertFalse(result['occupant_observations'][0]['application_data'])
+                self.assertEqual(list(root.iterdir()), [], 'No file below the control root is read or created')
             finally:
                 foreign.close()
+
+    def test_stale_probe_refuses_an_occupant_that_answers_as_mcp(self):
+        network = Mock()
+        transport = SimpleNamespace(McpClient=Mock(return_value=network), HttpResponseError=HTTP.HttpResponseError)
+        occupant = Mock()
+        occupant.observations.return_value = []
+        with self.assertRaisesRegex(AssertionError, 'answered as an MCP server'):
+            GATE.stale_probe(transport, self.connections()[0], Path('owned-control'), occupant)
+        network.close.assert_called_once_with(delete=False)
 
 
 if __name__ == '__main__':

@@ -35,7 +35,7 @@ SUPPORT_FILES = {
     "scripts/http_fixture.py": "tools/http_fixture.py",
     "scripts/owned-runtime-processes.py": "tools/owned-runtime-processes.py",
     "crates/airk-retrieval/src/model_catalog.json": "crates/airk-retrieval/src/model_catalog.json",
-    "examples/local_https_client.py": "examples/local_https_client.py",
+    "examples/local_http_client.py": "examples/local_http_client.py",
 }
 
 

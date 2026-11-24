@@ -67,20 +67,19 @@ coverage and failures. See the [CLI catalog](cli-reference.md),
 
 After applying the native search selection, **Connect Coding Agent** prepares an
 HTTP connection with the exact grant/namespace and protected credential
-references. Use the actual native `https://127.0.0.1:<bound-port>/mcp` URL; an
+references. Use the actual native `http://127.0.0.1:<bound-port>/mcp` URL; an
 occupied preferred port can cause a different persisted endpoint. VS Code uses
 `McpHttpServerDefinition`. Connections do not launch an MCP command or helper.
 
 Imported scopes retain their genuine prior configuration/provider receipt and
 native grant. Multi-root predecessors retain all original members, without an
 implicit default project. Missing lineage, revoked authority or unsupported
-client trust/auth formats remain review-required. Saving one client's setup
+client auth formats remain review-required. Saving one client's setup
 does not rewrite another running agent's authority.
 
-Provision the exact public issuer through a qualified additive CA bundle or
-**AIRK: Trust Local HTTPS Issuer**. Certificate verification remains enabled;
-credentials are protected host references, not copied tokens. New-terminal
-provisioning does not update running apps or remote/container hosts. Verify the
+The endpoint is plain loopback HTTP since local trust plan C (23 November
+2026), so no issuer or CA bundle is provisioned. Saving a configuration does not
+update running apps or remote/container hosts. Verify the
 actual client's initialization, tool list, status and cited read. See
 [agent integration](agent-integration.md) and [templates](../examples/mcp/README.md).
 

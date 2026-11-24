@@ -12,7 +12,7 @@ Start with [native installation](service-installation.md), [CLI-only onboarding]
 
 Optional Arbiter source follows the [approved final execution plan](arbiter/final-plan.md) and retained [P10 boundaries](split/codex-plan.md): off by default, explicit immutable-index enrollment, supported verified profiles and in-process native ownership. The [earlier concept](arbiter/concept.md) is historical design, including its superseded sidecar proposal. Use `airkctl arbiter status` and the actual generated schemas for current controls; implemented model paths do not establish independent task/device/platform qualification. The [Arbiter operator guide](arbiter/user-guide.md) explains the approved Focus/Context stages, model roles, requirements and recovery.
 
-**Agent access (U110, 15 November 2026).** Coding agents connect to `https://127.0.0.1:<port>/mcp` with no token: the endpoint strips and ignores `Authorization`, keeps its Host, `Origin` and admin-cookie checks and still requires TLS issuer trust; any local process that can reach 127.0.0.1 can read every index. `airkctl agents connect` and the Explorer/Admin snippets write only the URL and `X-AIRK-Response-Mode`. Each read names its scope (`index_ids`, `index_set_ids` or `workspace`); `list_scopes` (formerly `list_indexes`) lists indexes, index sets and the workspace defaults that Explorer windows store (`airkctl scope default|defaults`). The current native source also provides `airkctl --output json agents manual --client codex --project "<absolute project folder>"` for the exact target path, format and complete text; use `claude` or `vscode` for those clients. Merge the entry without replacing unrelated settings and regenerate it after a port change. Automatic editing keeps the existing whole-file and recovery safety policy; a refusal still leaves manual setup available. See [agent setup](agent-integration.md) and [MCP tools](mcp.md). Statements below about agent credentials, credential helpers, open connections and agent choice are dated history.
+**Agent access (U110, 15 November 2026).** Coding agents connect to `http://127.0.0.1:<port>/mcp` with no token: the endpoint strips and ignores `Authorization` and keeps its Host, `Origin` and admin-cookie checks. Since local trust plan C (23 November 2026) loopback is plain HTTP, with no AIRK CA or certificate trust step ([local HTTP API](local-http-api.md)); any local process that can reach 127.0.0.1 can read every index. `airkctl agents connect` and the Explorer/Admin snippets write only the URL and `X-AIRK-Response-Mode`. Each read names its scope (`index_ids`, `index_set_ids` or `workspace`); `list_scopes` (formerly `list_indexes`) lists indexes, index sets and the workspace defaults that Explorer windows store (`airkctl scope default|defaults`). The current native source also provides `airkctl --output json agents manual --client codex --project "<absolute project folder>"` for the exact target path, format and complete text; use `claude` or `vscode` for those clients. Merge the entry without replacing unrelated settings and regenerate it after a port change. Automatic editing keeps the existing whole-file and recovery safety policy; a refusal still leaves manual setup available. See [agent setup](agent-integration.md) and [MCP tools](mcp.md). Statements below about agent credentials, credential helpers, open connections and agent choice are dated history.
 
 <details>
 <summary>Historical development notices and earlier candidate checkpoints</summary>
@@ -98,7 +98,7 @@ installed acceptance. Merge and publication remain separate actions.
 - **Temporary processes.** These are one window helper per VS Code window
   (`airkctl session` after the split), CLI and installer one-shots, at most one PDF parser child and a
   user-opened `tools shell`.
-- **Agents.** They connect directly to `https://127.0.0.1:<port>/mcp`. Claude
+- **Agents.** They connect directly to `http://127.0.0.1:<port>/mcp`. Claude
   Code and Codex receive their token from the one-shot
   `airkctl agents credential` helper.
 - **Startup.** Login startup is registered on every install unless the user
@@ -160,9 +160,9 @@ retain their results; they do not define the current pre-baseline upgrade path.
 [Standalone CLI onboarding](agent-integration.md#standalone-onboarding-without-vs-code)
 is implemented on this branch. Scoped CLI tests pass; actual client launch and
 installed acceptance remain pending. The agent
-guide and [local HTTPS API](local-https-api.md#obtain-a-connection) distinguish
+guide and [local HTTP API](local-http-api.md#obtain-the-endpoint) distinguish
 reviewed scope/grant creation, native protected credentials, standalone process
-environment/trust and the separate VS Code credential resolver.
+environment and the separate VS Code credential resolver.
 Standalone Windows/macOS/Linux installer source installs only the CLI/native
 server, with no VSIX or Code actions. Signing and published-artifact verification
 remain pending; the extension is a separate optional distribution.
@@ -197,7 +197,7 @@ retains both original failures, the correction and unrun gates.
 [One AIRK implementation plan](one-airk.md) targets the **1.8.16+** development line with a single native
 executable, embedded MiniLM, authenticated loopback MCP, automatic alternate-port
 selection, compatible-line checkpointed upgrades and a clean break from older installations. It
-defines local certificate trust, macOS bootstrap/management, a documented HTTPS
+defined local certificate trust (superseded by plain loopback HTTP on 23 November 2026), macOS bootstrap/management, a documented local
 API for local tools and retained CLI/Workbench/MCP parity. The
 [implementation ledger](research/one-airk-implementation.md) records source
 integration, passed checks and outstanding native/platform gates separately.
@@ -211,7 +211,7 @@ observations, confirmed defects, intentional contracts and current qualification
 
 Opening a trusted folder does not register or index it. Use **Indexing > Index library** to create an index with reviewed sources, storage and watching. In **Search scope**, check the indexes or index sets to search and apply the selection. Evidence reads and source verification do not start indexing.
 
-Current [credential lifecycle corrections](local-https-api.md) reclaim bounded
+Current [credential lifecycle corrections](local-http-api.md) reclaim bounded
 active-ledger capacity after revocation and proven Explorer attachment retirement,
 preserving active manual credentials, immutable ownership and ID-reuse fences.
 The [all-fifteen client classification](agent-integration.md) separates implemented
@@ -233,7 +233,7 @@ record for current results and earlier failures.
 
 | Current guide | Scope |
 | --- | --- |
-| [Local HTTPS API](local-https-api.md) | Unpublished 1.8.14 developer contract: discovery, local CA trust, scoped credentials, canonical JSON and MCP routes, concurrency and recovery |
+| [Local HTTP API](local-http-api.md) | Developer contract: endpoint discovery, remaining guards, upgrade from HTTPS builds, canonical JSON and MCP routes, concurrency and recovery |
 | [Source verification and explicit reference refresh](source-verification.md) | Dated read-only verification; separately reviewed P12 refresh/requery and its limits |
 | [Retained indexing profiles](code-indexing-options.md) | Explicit Lean/Rich migration, legacy meanings and independent replies |
 | [Per-file family reporting](profile-family-reporting.md) | Actual applied profile and bounded availability observations |
@@ -294,7 +294,7 @@ See [process ownership](process-model.md) for the current one-resident-process m
 
 The [startup and tool optimization plan](history/optimizations.md) records the 1.7.6 status-timeout reproduction, cache/read inventories and return-preparation reviews of all 28 public MCP tools. Its phased execution ledger targets **1.8.0** on `feat/optimizations`, with local test/review/commit gates and AIRK/BigDotNetProject corpus comparisons. The target private-owner model moves deep integrity checks to publication and bounded maintenance; a final human-review section covers data reduction. Consult the ledger for implemented work; proposed targets are not performance guarantees.
 
-The historical 1.6.4 catalog exposed 27 tools; the current catalog has 29. In the unpublished 1.8.14 implementation, CLI `tools list/help/call/shell` and public HTTPS share this catalog. `status` is a lightweight readiness check; `diagnostics` provides detailed runtime, job and watcher observations. Cold MCP verification survives individual status timeouts, so later polls reuse the same authenticated setup. CLI request-epoch preparation uses a bounded wait for explicit busy/uncertain registry responses and retains failure codes. macOS inference shutdown releases the owned ONNX environment after sessions drain, before native library cleanup. Agent connections follow their configured source folders across index replacement. Explorer bounds status polling, keeps local log actions responsive and reconciles uncertain requests internally without replaying them. Installation migrates registered historical default index roots to `index-v1`, preserving publications and settings; custom roots stay in place. See the [1.6.4 release notes](releases/release-1.6.4.md).
+The historical 1.6.4 catalog exposed 27 tools; the current catalog has 29. In the unpublished 1.8.14 implementation, CLI `tools list/help/call/shell` and the local HTTP API share this catalog. `status` is a lightweight readiness check; `diagnostics` provides detailed runtime, job and watcher observations. Cold MCP verification survives individual status timeouts, so later polls reuse the same authenticated setup. CLI request-epoch preparation uses a bounded wait for explicit busy/uncertain registry responses and retains failure codes. macOS inference shutdown releases the owned ONNX environment after sessions drain, before native library cleanup. Agent connections follow their configured source folders across index replacement. Explorer bounds status polling, keeps local log actions responsive and reconciles uncertain requests internally without replaying them. Installation migrates registered historical default index roots to `index-v1`, preserving publications and settings; custom roots stay in place. See the [1.6.4 release notes](releases/release-1.6.4.md).
 
 The [1.6.0 implementation record](releases/release-1.6.0.md) replaces FP32 inference with two bundled offline INT8 models, selects a model for the CPU, and rebuilds semantic coverage while preserving text and facts. See the [optimization rationale and measurements](semantic-index-optimization.md) and [build inputs and inference contract](onnx-models.md).
 

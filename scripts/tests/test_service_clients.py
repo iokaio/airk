@@ -1458,7 +1458,7 @@ class TokenlessHttpsTests(unittest.TestCase):
                                                           "airk_answer", "--index", "idx_fixture"))
 
     def test_endpoint_discovery_needs_matching_cli_and_published_records(self):
-        endpoint = {"schema": 1, "url": "https://127.0.0.1:4433/mcp", "state": "ready"}
+        endpoint = {"schema": 1, "url": "http://127.0.0.1:4433/mcp", "state": "ready"}
         for split in (True, False):
             with self.subTest(split=split):
                 fixture = self.fixture(split=split)
@@ -1474,13 +1474,13 @@ class TokenlessHttpsTests(unittest.TestCase):
                         fixture.service_run.assert_not_called()
                     else:
                         self.assertEqual(fixture.service_run.call_args.args, ("runtime", "http-endpoint", "--install-dir", fixture.install))
-                    transport.read_endpoint.return_value = {**endpoint, "url": "https://127.0.0.1:4434/mcp"}
+                    transport.read_endpoint.return_value = {**endpoint, "url": "http://127.0.0.1:4434/mcp"}
                     with self.assertRaisesRegex(AssertionError, "differs"):
                         fixture.http_endpoint()
 
     def test_open_http_connects_tokenless_with_the_fixture_index_and_never_enrolls(self):
         fixture = self.fixture()
-        endpoint = {"schema": 1, "url": "https://127.0.0.1:4433/mcp"}
+        endpoint = {"schema": 1, "url": "http://127.0.0.1:4433/mcp"}
         fixture.http_endpoint = Mock(return_value=endpoint)
         fixture.managed_health = {"instance": "owned"}
         fixture.rpc = Mock(return_value={"observation": {"instance": "owned"}})

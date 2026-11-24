@@ -108,7 +108,7 @@ pub enum VerificationBasis {
 
 #[derive(Subcommand)]
 pub enum RuntimeCommand {
-    /// Read the owner-authenticated local HTTPS endpoint without enrolling a client.
+    /// Read the owner-authenticated local HTTP endpoint without enrolling a client.
     HttpEndpoint {
         #[arg(long)]
         install_dir: PathBuf,

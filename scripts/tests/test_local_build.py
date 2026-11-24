@@ -93,8 +93,8 @@ class LocalBuildTests(unittest.TestCase):
             for relative,row in recorded.items():
                 self.assertEqual(BUILD.digest(root/relative),row["sha256"])
             # -I removes checkout/PYTHONPATH help. These execute imports/help only;
-            # no AIRK, Cargo, TLS server or runtime installation is launched.
-            for relative in ("tools/check-service-clients.py","examples/local_https_client.py"):
+            # no AIRK, Cargo, HTTP server or runtime installation is launched.
+            for relative in ("tools/check-service-clients.py","examples/local_http_client.py"):
                 result = subprocess.run([sys.executable,"-I",str(root/relative),"--help"],cwd=root,capture_output=True,text=True,timeout=20)
                 self.assertEqual(result.returncode,0,result.stderr)
             for relative in ("tools/check-runtime-upgrade.py","tools/http_fixture.py","tools/owned-runtime-processes.py"):

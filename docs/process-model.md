@@ -52,7 +52,7 @@ The service no longer starts them, and project owners never start a Unix
 `process-guardian`.
 
 **Agents start no AIRK process.** They connect directly to the service at
-`https://127.0.0.1:<port>/mcp`. There is no launcher, stdio frontend or proxy
+`http://127.0.0.1:<port>/mcp`. There is no launcher, stdio frontend or proxy
 per agent. See [agent setup](agent-integration.md).
 
 ### The PDF parser

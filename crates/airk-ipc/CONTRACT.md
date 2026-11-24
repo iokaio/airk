@@ -40,8 +40,10 @@ The same-user local transport between `airk` and its clients:
   `require_regular_unlinked`, and an exclusive owner-private lock file
   (`lock`). Moved from `airk-cli` `http_endpoint` by
   `scripts/dev/split_u90b_cert_trust.py` so `airkctl`'s offline trust
-  (U75) reads and writes the HTTPS records with the service's checks; the
-  error messages and on-disk bytes are unchanged.
+  (U75) read and wrote the HTTPS records with the service's checks; the
+  error messages and on-disk bytes are unchanged. (Local trust plan C removed
+  that offline trust and loopback TLS; the records serve the plain-HTTP
+  endpoint and the legacy trust retirer.)
 - `endpoint::require_private_directory_handle`,
   `require_private_metadata_handle` and `require_protected_parent_handle`
   check the exact already-open object, without resolving a named path.

@@ -264,7 +264,7 @@ source/index state; blocked cleanup leaves a resumable incomplete transaction.
 
 | Family | Commands | Purpose |
 |---|---|---|
-| Service | `service start`, `stop`, `restart`, `status`, `health`, `shutdown`, `logs`, `trust`, `issuer-rotation`, `abandon-lifecycle`, `register`, `prepare-registration`, `prepare-configuration`, `prepare-storage`, `record-error`, `rpc`, `requests …` | Run and manage the service and its registry |
+| Service | `service start`, `stop`, `restart`, `status`, `health`, `shutdown`, `logs`, `abandon-lifecycle`, `register`, `prepare-registration`, `prepare-configuration`, `prepare-storage`, `record-error`, `rpc`, `requests …` | Run and manage the service and its registry |
 | Projects | `projects`, `init`, `index`, `inspect`, `pause`, `resume`, `watch`, `setup-model`, `settings`, `configure`, `status` | Register, index and configure projects |
 | Evidence | `search`, `files`, `read`, `info`, `outline`, `symbol`, `imports`, `facts`, `refs`, `context`, `changes`, `code-facts`, `relationships`, `parse` | Read-only, cited queries; `parse` plans or runs multi-step requests |
 | MCP tools | `tools list`, `tools help`, `tools call`, `tools shell` | Canonical tool discovery and reads from the terminal; current agent transport is native HTTPS |
@@ -273,7 +273,7 @@ source/index state; blocked cleanup leaves a resumable incomplete transaction.
 | Other | `version`, `model-catalog`, `session` | Version document, model catalog, and the per-window framed session |
 | Usage | `usage report`, `policy`, `configure`, `clear`, `feedback`, `import`, `calibrate` | Local usage reporting |
 
-The pre-split `runtime …`, `setup`, `uninstall`, `host` and `service legacy …` operations are not `airkctl` commands. Until the Phase 7 setup role and installer replace them (U93, a non-shippable interim), they are reachable only as `airk __airk_role setup-interim <arguments>`. Some were renamed: `runtime http-*` became `airkctl agents …` and `airkctl service trust|issuer-rotation`, `setup` enrollment became `agents connect`, `runtime lifecycle` became `service stop|restart`, and `runtime inspect|diagnose` became `service status`. `mcp`, `bridge`, `service session`, `service console`, `explorer-assistance` and `runtime launch` are retired.
+The pre-split `runtime …`, `setup`, `uninstall`, `host` and `service legacy …` operations are not `airkctl` commands. Until the Phase 7 setup role and installer replace them (U93, a non-shippable interim), they are reachable only as `airk __airk_role setup-interim <arguments>`. Some were renamed: `runtime http-*` became `airkctl agents …` (`runtime http-trust` and `http-issuer-rotation`, and their later `airkctl service trust|issuer-rotation`, were removed with loopback TLS by local trust plan C on 23 November 2026), `setup` enrollment became `agents connect`, `runtime lifecycle` became `service stop|restart`, and `runtime inspect|diagnose` became `service status`. `mcp`, `bridge`, `service session`, `service console`, `explorer-assistance` and `runtime launch` are retired.
 
 ## Explorer Assistance from the CLI
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 const test=require('node:test'),assert=require('node:assert/strict');
 const {connectionId,httpConfig}=require('../agent-install-contract.cjs');
-const id='ab'.repeat(16),url='https://127.0.0.1:57422/mcp';
+const id='ab'.repeat(16),url='http://127.0.0.1:57422/mcp';
 test('provider live credentials yield only their opaque identity',()=>{
     assert.equal(connectionId({headers:{Authorization:'Bearer airk1.'+id+'.'+'cd'.repeat(32)}}),id);
     for(const header of ['Bearer token','Bearer airk1.'+id+'.short','Bearer ${env:OTHER}','Basic secret'])assert.throws(()=>connectionId({headers:{Authorization:header}}));

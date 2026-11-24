@@ -20,6 +20,13 @@
 > [agent integration](agent-integration.md) and the
 > [split plan](split/split-plan.md) U110.
 
+> **Local trust plan C (23 November 2026; supersedes the TLS parts below).**
+> Loopback HTTPS was replaced by plain HTTP on `127.0.0.1` only
+> (`http://127.0.0.1:<port>/mcp`). There is no installation CA, leaf
+> certificate, issuer rotation or OS trust step; every TLS, CA, certificate
+> trust and rotation statement in this record is superseded by the
+> [local HTTP API](local-http-api.md).
+
 > **User decisions, 10 November 2026: one resident process.** These replace
 > §1's "one executable is not a promise of one total OS process" paragraph and
 > the worker processes in the §2 diagram.

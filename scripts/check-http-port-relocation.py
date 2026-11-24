@@ -11,7 +11,6 @@ from pathlib import Path
 import platform
 import re
 import socket
-import ssl
 import sys
 import threading
 import time
@@ -67,8 +66,7 @@ class ForeignListener:
                             stream.close()
                             self.error = 'owned listener contact bound exceeded'
                             return
-                        row = {'bytes': 0, 'tls_client_hello': False, 'application_data': False,
-                               'plaintext_authorization': False, 'complete': False}
+                        row = {'bytes': 0, 'http_request': False, 'authorization': False, 'complete': False}
                         self.contacts.append(row)
                 except socket.timeout:
                     self.closed.wait(.005)
@@ -79,9 +77,9 @@ class ForeignListener:
                     try:
                         initial = stream.recv(65536)
                         data += initial
-                        # Deliberately invalid TLS, not a replacement CA or an
-                        # imitation AIRK server. A validating client must stop.
-                        stream.sendall(b'HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n')
+                        # Deliberately not AIRK: one complete plain-HTTP refusal,
+                        # never an imitation MCP reply. The client must stop.
+                        stream.sendall(b'HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n')
                         while len(data) < 65536:
                             block = stream.recv(65536 - len(data))
                             if not block:
@@ -89,15 +87,9 @@ class ForeignListener:
                             data += block
                     except (ConnectionError, socket.timeout):
                         pass
-                    records, offset = [], 0
-                    while len(data) - offset >= 5:
-                        kind, size = data[offset], int.from_bytes(data[offset + 3:offset + 5], 'big')
-                        records.append(kind)
-                        offset += 5 + size
                     with self.lock:
-                        row.update(bytes=len(data), tls_client_hello=len(data) >= 6 and data[0] == 22 and data[5] == 1,
-                                   application_data=23 in records, plaintext_authorization=b'authorization:' in data.lower(),
-                                   complete=True)
+                        row.update(bytes=len(data), http_request=data.startswith((b'POST /mcp ', b'GET /mcp ')),
+                                   authorization=b'\r\nauthorization:' in data.lower(), complete=True)
         except OSError as error:
             if not self.closed.is_set():
                 self.error = str(error)
@@ -130,7 +122,7 @@ def immutable_scope(selection):
 
 def validate_relocation(before, after, old_health, new_health):
     a, b = before, after
-    for field in ('installation', 'user', 'namespace', 'ca_sha256', 'executable_sha256'):
+    for field in ('installation', 'user', 'namespace', 'executable_sha256'):
         if a[field] != b[field]:
             raise AssertionError('Relocation changed endpoint identity: ' + field)
     if a['url'] == b['url'] or b['generation'] <= a['generation']:
@@ -143,16 +135,25 @@ def validate_relocation(before, after, old_health, new_health):
 
 
 def stale_probe(transport, connection, control, occupant):
+    """A client of the stale URL reaches only the foreign occupant and stops on its refusal.
+
+    Plain loopback HTTP (local trust plan C) has no peer authentication: the
+    stale URL's first request reaches whatever owns the port. The occupant's
+    refusal must end the exchange without an MCP session or a retry."""
     occupant.require_uncontacted()
+    client = transport.McpClient(connection, control, timeout=3)
     try:
-        client = transport.McpClient(connection, control, timeout=3)
-    except ssl.SSLError:
-        # McpClient connects and validates TLS before any HTTP request
-        # bytes. Constructor refusal proves no HTTP request could be issued.
-        pass
+        client.send({'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {
+            'protocolVersion': '2025-11-25', 'capabilities': {},
+            'clientInfo': {'name': 'airk-owned-port-relocation', 'version': '1'}}})
+    except transport.HttpResponseError as error:
+        refused = error
     else:
+        raise AssertionError('Stale URL unexpectedly answered as an MCP server')
+    finally:
         client.close(delete=False)
-        raise AssertionError('Stale URL unexpectedly established validating TLS')
+    if refused.status != 400 or client.session is not None:
+        raise AssertionError('Stale URL refusal was not the owned occupant\'s complete 400')
     deadline = time.monotonic() + 4
     while time.monotonic() < deadline:
         rows = occupant.observations()
@@ -160,10 +161,10 @@ def stale_probe(transport, connection, control, occupant):
             break
         time.sleep(.01)
     rows = occupant.observations()
-    if len(rows) != 1 or not rows[0]['complete'] or not rows[0]['tls_client_hello'] or rows[0]['application_data'] or rows[0]['plaintext_authorization']:
-        raise AssertionError('Stale-URL TLS-only refusal was not completely observed')
-    return {'tls_refused_before_client_construction': True, 'occupant_observations': rows,
-            'scope': 'invalid TLS occupant; not an untrusted-CA or certificate-rotation campaign'}
+    if len(rows) != 1 or not rows[0]['complete'] or not rows[0]['http_request'] or rows[0]['authorization']:
+        raise AssertionError('Stale-URL refusal was not completely observed')
+    return {'stale_url_refused_by_occupant': True, 'refusal': refused.evidence(), 'occupant_observations': rows,
+            'scope': 'plain-HTTP foreign occupant; no MCP session created and no request replayed'}
 
 
 def read_marker(transport, connection, control, scope):
@@ -216,8 +217,8 @@ def qualify(runtime, approved, report):
                  'qualification_script_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                  'runtime_build': json.loads((runtime / 'airk-build.json').read_text()),
                  'limitations': ['One current OS principal; no two-user or cross-platform qualification.',
-                                 'Private fixture CA trust only; no user trust-store or installed editor changes.',
-                                 'Not a signed-distribution, minimum-OS, CA-rotation or real coding-client campaign.']}
+                                 'Plain loopback HTTP; no installed editor changes.',
+                                 'Not a signed-distribution, minimum-OS or real coding-client campaign.']}
         def retain():
             stream.seek(0); json.dump(proof, stream, indent=2); stream.write('\n'); stream.truncate(); stream.flush()
         retain()
@@ -266,7 +267,7 @@ def qualify(runtime, approved, report):
                     proof['phase'] = 'explicit_client_reconnect'; retain()
                     proof['after_result'] = read_marker(transport, after, fixture.control, scope)
                     preferred.require_uncontacted(); saved.require_uncontacted()
-                    proof['phase'] = 'stale_url_tls_refusal'; retain()
+                    proof['phase'] = 'stale_url_refusal'; retain()
                     proof['stale_probe'] = stale_probe(transport, before, fixture.control, saved)
                     proof['status'] = 'passed'
                 finally:
@@ -274,7 +275,7 @@ def qualify(runtime, approved, report):
                     proof['final_stop_receipt'] = fixture.managed_stop
                 preferred.require_uncontacted()
                 if len(saved.observations()) != 1:
-                    raise AssertionError('Unexpected foreign-port contact after the intentional TLS probe')
+                    raise AssertionError('Unexpected foreign-port contact after the intentional stale-URL probe')
                 proof['phase'] = 'completed'
         except BaseException as error:
             proof['status'] = 'unavailable' if isinstance(error, Unavailable) else 'failed'

@@ -1,7 +1,9 @@
 # Authenticated HTTP read sessions
 
 Owner: `airk-mcp::remote::http` (`HttpReadService`, `BoundedSessions`). The
-HTTPS gateway (`airk-https` `http_gateway.rs`) authenticates every request,
+loopback HTTP gateway (`airk-https` `http_gateway.rs`; plain TCP since local
+trust plan C, its only allowed browser origin `http://127.0.0.1:<port>`)
+admits every request,
 mints the transport read-attempt context and bounds each response stream with
 its `OutputBody` (32 MiB output budget, 120 s or, for a call marked an Answer,
 Answer's ceiling).
@@ -77,8 +79,9 @@ Answer's ceiling).
     (`Gateway::serve_accepted`), shared by the listener and the test.
   - Test builds of the gateway can turn rmcp's real-clock keep-alive off.
 - **Evidence:**
-  `http_gateway::tests::a_live_tls_connection_keeps_an_answer_open_past_120_seconds_to_its_result`
-  covers the real per-connection serve, TLS and HTTP/1.1 over an in-memory
+  `http_gateway::tests::a_live_http_connection_keeps_an_answer_open_past_120_seconds_to_its_result`
+  (renamed from `a_live_tls_connection_…` by local trust plan C, which removed
+  TLS) covers the real per-connection serve, HTTP/1.1 over an in-memory
   socket under paused time.
   - The response head arrives within 1 s, so the stream bound and the IO
     deadline are both set before the 120 s mark.

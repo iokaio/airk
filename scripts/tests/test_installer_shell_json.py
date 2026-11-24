@@ -36,7 +36,7 @@ class ShellCanonicalOperation(unittest.TestCase):
                 serializer = function(text, 'write_operation')
                 encoder = text[text.index('json_path() {'):text.index('\n', text.index('json_path() {'))]
                 assignments = '\n'.join('j_' + role + '=$(json_path "$(cat "' + (root / role).as_posix() + '")")' for role in locations)
-                script = 'set -eu\numask 077\nexport LC_ALL=C\n' + encoder + '\n' + assignments + '\n' + serializer + '\nsequence=0\nwork="$CASE_WORK"\ninventory_sha256=' + ('5' * 64) + '\nwrite_operation install false false skip false\n'
+                script = 'set -eu\numask 077\nexport LC_ALL=C\n' + encoder + '\n' + assignments + '\n' + serializer + '\nsequence=0\nwork="$CASE_WORK"\ninventory_sha256=' + ('5' * 64) + '\nwrite_operation install false false false\n'
                 (root / 'case.sh').write_text(script, encoding='utf-8', newline='')
                 result = subprocess.run([SHELL, (root / 'case.sh').as_posix()], cwd=root, env={**os.environ, 'CASE_WORK': (root / 'work').as_posix()}, capture_output=True, timeout=30)
                 self.assertEqual(result.returncode, 0, result.stderr.decode('utf-8', 'replace'))
@@ -46,7 +46,7 @@ class ShellCanonicalOperation(unittest.TestCase):
                 self.assertEqual(list(operation), FIELDS)
                 self.assertEqual(operation['locations'], locations)
                 self.assertEqual(operation['requested_by'], requested_by)
-                self.assertEqual(operation['options'], {'login_startup': False, 'trust': 'skip', 'start': False, 'delete_indexes': 'keep'})
+                self.assertEqual(operation['options'], {'login_startup': False, 'start': False, 'delete_indexes': 'keep'})
                 self.assertEqual((root / 'work/operation-1/operation-request.json').read_bytes(), raw)
 
 
@@ -126,7 +126,7 @@ class ShellOriginalRecovery(unittest.TestCase):
                     root = Path(directory)
                     original = b'original operation bytes remain opaque to the wrapper\n'
                     (root / 'operation-request.json').write_bytes(original)
-                    fields = {'requested-by': requested_by, 'kind': 'repair', 'inventory-sha256': '5' * 64, 'trust': 'skip',
+                    fields = {'requested-by': requested_by, 'kind': 'repair', 'inventory-sha256': '5' * 64,
                               'wrapper-lease-held':'true', 'completion-required':'false' if completed else 'true', 'placement-required': 'false' if completed else 'true', 'operation-id': '0e' * 16}
                     for role in ['program', 'data', 'state', 'cache', 'logs']:
                         fields[role] = '/Users/fixture-\u00e9-\u65e5\u672c\u8a9e-\U0001f642/' + role + ' \"quoted\"' + chr(92) + 'literal.\n\n'

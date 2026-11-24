@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Actual private TLS fixture: normal CA/IP checks precede any request; no credential is sent (U110)."""
+"""Actual loopback HTTP fixture (local trust plan C): no CA, no certificate pin, no credential (U110)."""
 from contextlib import contextmanager
 import base64
 import hashlib
@@ -7,11 +7,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib.util
 import json
 import os
-import re
 from pathlib import Path
-import shutil
-import ssl
-import subprocess
+import socket
 import tempfile
 import threading
 import unittest
@@ -20,7 +17,6 @@ from unittest.mock import patch
 SPEC = importlib.util.spec_from_file_location("http_fixture", Path(__file__).parents[1] / "http_fixture.py")
 HTTP = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(HTTP)
-OPENSSL = shutil.which("openssl") or ("C:/Program Files/Git/usr/bin/openssl.exe" if Path("C:/Program Files/Git/usr/bin/openssl.exe").is_file() else None)
 
 
 class ResponseEvidenceTests(unittest.TestCase):
@@ -28,14 +24,12 @@ class ResponseEvidenceTests(unittest.TestCase):
         from unittest.mock import Mock
         client = HTTP.McpClient.__new__(HTTP.McpClient)
         client.session, client.scope = "fictional-session", {}
-        client._certificate_sha256 = hashlib.sha256(b"leaf").hexdigest()
         client.protocol, client.initialized = "2025-11-25", True
         response = Mock(status=status)
         response.read.return_value = data
         response.getheaders.return_value = list(headers)
         response.getheader.side_effect = lambda key: dict(headers).get(key)
         client.connection = Mock()
-        client.connection.sock.getpeercert.return_value = b"leaf"
         client.connection.getresponse.return_value = response
         client.pending, client.unsolicited = {}, []
         return client
@@ -153,55 +147,30 @@ class ResponseEvidenceTests(unittest.TestCase):
         self.assertEqual(HTTP.error_outcome(ConnectionResetError()), "uncertain")
 
 
-def certificate_key_identifier(path, kind):
-    """Inspect actual generated extensions with OpenSSL/LibreSSL common flags."""
-    result = subprocess.run([OPENSSL, "x509", "-in", str(path), "-noout", "-text"],
-                            check=True, capture_output=True, text=True, timeout=30)
-    matched = re.search(r"X509v3 " + re.escape(kind) + r":[^\n]*\n\s*(?:keyid:)?([0-9a-f]{2}(?::[0-9a-f]{2})+)",
-                        result.stdout, re.IGNORECASE)
-    if not matched:
-        raise AssertionError("Generated certificate lacks explicit " + kind)
-    return bytes.fromhex(matched[1].replace(":", ""))
-
-
-@unittest.skipUnless(OPENSSL, "OpenSSL required for an isolated actual TLS fixture")
-class ActualHttpsFixtureTests(unittest.TestCase):
+class ActualHttpFixtureTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.temporary = tempfile.TemporaryDirectory()
         cls.root = Path(cls.temporary.name).resolve()
-        (cls.root / "ca.conf").write_text("[req]\nprompt=no\ndistinguished_name=dn\nx509_extensions=ca\n[dn]\nCN=AIRK fictional test issuer\n[ca]\nbasicConstraints=critical,CA:TRUE,pathlen:0\nkeyUsage=critical,keyCertSign,cRLSign\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid:always\n")
-        (cls.root / "leaf.conf").write_text("basicConstraints=critical,CA:FALSE\nsubjectAltName=IP:127.0.0.1\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid:always\n")
-        for command in (["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-sha256", "-days", "1", "-config", "ca.conf", "-keyout", "ca.key", "-out", "ca.pem"],
-                        ["req", "-new", "-newkey", "rsa:2048", "-nodes", "-sha256", "-subj", "/CN=AIRK fictional server", "-keyout", "leaf.key", "-out", "leaf.csr"],
-                        ["x509", "-req", "-in", "leaf.csr", "-CA", "ca.pem", "-CAkey", "ca.key", "-CAcreateserial", "-out", "leaf.pem", "-days", "1", "-sha256", "-extfile", "leaf.conf"]):
-            subprocess.run([OPENSSL, *command], cwd=cls.root, check=True, capture_output=True, timeout=30)
         cls.identity = "11" * 16
-        (cls.root / "credential.token").write_text("airk1." + cls.identity + "." + "22" * 32)
-        for name in ("ca.pem", "credential.token"):
-            (cls.root / name).chmod(0o600)
 
     @classmethod
     def tearDownClass(cls):
         cls.temporary.cleanup()
 
-    def test_generated_chain_identifies_exact_issuer_and_preserves_strict_verification(self):
-        issuer = certificate_key_identifier(self.root / "ca.pem", "Subject Key Identifier")
-        self.assertEqual(len(issuer), 20)
-        self.assertEqual(certificate_key_identifier(self.root / "ca.pem", "Authority Key Identifier"), issuer)
-        self.assertEqual(certificate_key_identifier(self.root / "leaf.pem", "Authority Key Identifier"), issuer)
-        self.assertEqual(len(certificate_key_identifier(self.root / "leaf.pem", "Subject Key Identifier")), 20)
-        # This real handshake still requires the normal CA/IP checks and strict
-        # RFC certificate validation, including on older Python defaults.
+    def test_plain_http_client_holds_no_tls_context_and_sends_nothing_on_construction(self):
         with self.server() as (connection, observed):
             client = HTTP.McpClient(connection, self.root)
             try:
-                self.assertTrue(client.connection._context.verify_flags & ssl.VERIFY_X509_STRICT)
-                self.assertTrue(client.connection._context.check_hostname)
-                self.assertEqual(client.connection._context.verify_mode, ssl.CERT_REQUIRED)
+                self.assertIsInstance(client.connection, HTTP.http.client.HTTPConnection)
+                self.assertNotIsInstance(client.connection, HTTP.http.client.HTTPSConnection)
+                self.assertEqual((client.connection.host, client.connection.port),
+                                 ("127.0.0.1", int(connection["endpoint"]["url"].split(":")[-1].split("/")[0])))
+                self.assertIsNotNone(client.connection.sock, "The endpoint is reached before any request")
                 self.assertEqual(observed, [])
             finally:
                 client.close()
+            self.assertEqual(observed, [], "No MCP session was created, so nothing is deleted")
 
     @contextmanager
     def server(self, wire=None, refusal_status=403, reflect_credential=False):
@@ -212,8 +181,8 @@ class ActualHttpsFixtureTests(unittest.TestCase):
                 try:
                     super().handle()
                 except ConnectionResetError:
-                    # A rejected leaf/IP pin closes TLS before authentication.
-                    # Clients still assert failure and zero observed requests.
+                    # A client that refuses an endpoint may drop the
+                    # connection; tests still assert zero observed requests.
                     pass
             def log_message(self, *_args):
                 pass
@@ -266,24 +235,19 @@ class ActualHttpsFixtureTests(unittest.TestCase):
                 observed.append(("DELETE", self.headers.get("Authorization")))
                 self.send_response(204); self.send_header("Content-Length", "0"); self.end_headers()
         server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        context.load_cert_chain(self.root / "leaf.pem", self.root / "leaf.key")
-        server.socket = context.wrap_socket(server.socket, server_side=True)
         thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True)
         thread.start()
         try:
-            digest = lambda name: hashlib.sha256(ssl.PEM_cert_to_DER_cert((self.root / name).read_text())).hexdigest()
             # The legacy (pre-U110) connection shape other suites still consume;
-            # McpClient reads only its endpoint and CA reference.
+            # McpClient reads only its embedded endpoint.
             yield {"schema": 1, "connection_id": self.identity, "selection": {"kind": "scoped", "selection": {"namespace": "33" * 16}},
-                   "endpoint": {"schema": 1, "url": "https://127.0.0.1:" + str(server.server_port) + "/mcp", "state": "ready", "namespace": "33" * 16,
-                                "ca_sha256": digest("ca.pem"), "certificate_sha256": digest("leaf.pem")},
-                   "ca_certificate_file": str(self.root / "ca.pem"), "credential_file": str(self.root / "credential.token")}, observed
+                   "endpoint": {"schema": 1, "url": "http://127.0.0.1:" + str(server.server_port) + "/mcp", "state": "ready",
+                                "namespace": "33" * 16}}, observed
         finally:
             server.shutdown(); server.server_close(); thread.join(timeout=5)
             self.assertFalse(thread.is_alive())
 
-    def test_actual_tls_jsonrpc_notification_session_delete_and_proxy_isolation(self):
+    def test_actual_http_jsonrpc_notification_session_delete_and_proxy_isolation(self):
         with self.server() as (connection, observed), patch.dict(os.environ, {"HTTP_PROXY": "http://127.0.0.1:1", "HTTPS_PROXY": "http://127.0.0.1:1", "ALL_PROXY": "http://127.0.0.1:1"}):
             client = HTTP.McpClient(connection, self.root)
             try:
@@ -298,14 +262,13 @@ class ActualHttpsFixtureTests(unittest.TestCase):
             # U110: no request carries Authorization.
             self.assertEqual([value for _, value in observed], [None] * 4)
 
-    def test_endpoint_record_and_control_ca_connect_tokenless_with_per_call_scope(self):
+    def test_endpoint_record_alone_connects_tokenless_with_per_call_scope(self):
         with self.server(wire := []) as (connection, observed), tempfile.TemporaryDirectory() as directory:
             control = Path(directory).resolve()
             (control / "http-1").mkdir()
-            shutil.copyfile(self.root / "ca.pem", control / "http-1" / "ca.pem")
             (control / "http-1" / "endpoint.json").write_text(json.dumps(connection["endpoint"]), encoding="utf-8")
-            for name in ("ca.pem", "endpoint.json"):
-                (control / "http-1" / name).chmod(0o600)
+            (control / "http-1" / "endpoint.json").chmod(0o600)
+            self.assertEqual([path.name for path in (control / "http-1").iterdir()], ["endpoint.json"])
             endpoint = HTTP.read_endpoint(control)
             self.assertEqual(endpoint, connection["endpoint"])
             client = HTTP.McpClient(endpoint, control, scope={"index_ids": ["idx_fixture"]})
@@ -332,22 +295,16 @@ class ActualHttpsFixtureTests(unittest.TestCase):
             self.assertEqual([call["params"]["arguments"] for call in calls], [{"query": "q", "index_ids": ["idx_fixture"]}, {}])
             self.assertTrue(all(value is None for _, value in observed))
 
-    def test_endpoint_without_control_ca_or_with_changed_ca_is_refused_before_tls(self):
-        with self.server() as (connection, observed), tempfile.TemporaryDirectory() as directory:
-            control = Path(directory).resolve()
-            (control / "http-1").mkdir()
-            with self.assertRaises(OSError):
-                HTTP.McpClient(connection["endpoint"], control)
-            (control / "http-1" / "ca.pem").write_text((self.root / "ca.pem").read_text())
-            changed = {**connection["endpoint"], "ca_sha256": "00" * 32}
-            with self.assertRaisesRegex(ValueError, "issuer differs"):
-                HTTP.McpClient(changed, control)
-            for invalid in ({**connection["endpoint"], "state": "stopped"}, {**connection["endpoint"], "url": "https://localhost:1/mcp"}):
+    def test_https_legacy_unready_or_named_host_endpoint_is_refused_before_connecting(self):
+        with self.server() as (connection, observed):
+            endpoint = connection["endpoint"]
+            for invalid in ({**endpoint, "state": "stopped"}, {**endpoint, "url": endpoint["url"].replace("127.0.0.1", "localhost")},
+                            {**endpoint, "url": endpoint["url"].replace("http://", "https://")}, {**endpoint, "schema": 2}):
                 with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, "invalid or unavailable"):
-                    HTTP.McpClient(invalid, control)
+                    HTTP.McpClient(invalid, self.root)
             self.assertEqual(observed, [])
 
-    def test_actual_tls_sse_preserves_unsolicited_messages_and_matching_reply(self):
+    def test_actual_http_sse_preserves_unsolicited_messages_and_matching_reply(self):
         with self.server() as (connection, _observed):
             client = HTTP.McpClient(connection, self.root)
             try:
@@ -367,7 +324,7 @@ class ActualHttpsFixtureTests(unittest.TestCase):
         self.assertEqual(HTTP.standard_headers({"method": "resources/read", "params": {"uri": "\u00e9"}}, "2026-07-28")["Mcp-Name"], "=?base64?w6k=?=")
         self.assertEqual(body, {"method": "tools/call", "params": {"name": "airk_search"}})
 
-    def test_actual_tls_headers_preserve_requested_and_negotiated_versions(self):
+    def test_actual_http_headers_preserve_requested_and_negotiated_versions(self):
         for requested, negotiated in [("2024-11-05", "2024-11-05"), ("2025-11-25", "2025-11-25"), ("2026-07-28", "2025-11-25")]:
             with self.subTest(requested=requested), self.server(wire := []) as (connection, _observed):
                 client = HTTP.McpClient(connection, self.root)
@@ -444,27 +401,21 @@ class ActualHttpsFixtureTests(unittest.TestCase):
             finally:
                 client.close()
 
-    def test_peer_mismatch_sends_no_request_and_root_escape_is_rejected(self):
-        with self.server() as (connection, observed):
-            connection["endpoint"]["certificate_sha256"] = "00" * 32
-            with self.assertRaisesRegex(ValueError, "peer differs"):
-                HTTP.McpClient(connection, self.root)
-            self.assertEqual(observed, [])
-            with tempfile.TemporaryDirectory() as outside:
-                with self.assertRaisesRegex(ValueError, "escaped"):
-                    HTTP.private_bytes(connection["ca_certificate_file"], outside, 8192)
+    def test_endpoint_root_escape_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside:
+            control = Path(directory).resolve()
+            (control / "http-1").mkdir()
+            (control / "http-1" / "endpoint.json").write_text("{}", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "escaped"):
+                HTTP.private_bytes(control / "http-1" / "endpoint.json", outside, 8192)
 
-    def test_wrong_ip_certificate_is_rejected_by_normal_hostname_validation(self):
-        # Use the actual issuer but a different literal IP as the TLS name. This
-        # directly exercises the context's required normal hostname validation.
-        with self.server() as (connection, observed):
-            context = ssl.create_default_context()
-            context.load_verify_locations(cafile=connection["ca_certificate_file"])
-            import socket
-            with socket.create_connection(("127.0.0.1", int(connection["endpoint"]["url"].split(":")[-1].split("/")[0])), timeout=5) as socket_:
-                with self.assertRaises(ssl.SSLCertVerificationError):
-                    context.wrap_socket(socket_, server_hostname="127.0.0.2")
-            self.assertEqual(observed, [])
+    def test_unreachable_endpoint_fails_on_construction(self):
+        with socket.socket() as reserved:
+            reserved.bind(("127.0.0.1", 0))
+            port = reserved.getsockname()[1]
+            endpoint = {"schema": 1, "url": "http://127.0.0.1:" + str(port) + "/mcp", "state": "ready"}
+            with self.assertRaises(OSError):
+                HTTP.McpClient(endpoint, self.root, timeout=3)
 
 
 class ResponseParserTests(unittest.TestCase):

@@ -11,12 +11,12 @@ import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
-SPEC = importlib.util.spec_from_file_location("raw_clients_campaign", ROOT / "scripts/check-raw-https-clients.py")
+SPEC = importlib.util.spec_from_file_location("raw_clients_campaign", ROOT / "scripts/check-raw-http-clients.py")
 CAMPAIGN = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CAMPAIGN)
 
 
-class RawHttpsClientContracts(unittest.TestCase):
+class RawHttpClientContracts(unittest.TestCase):
     def test_full_envelope_retains_future_fields_and_documented_timing_normalization(self):
         body = {"content": [{"type": "text", "text": '{"request_id":"old","future":{"kept":true}}'}],
                 "structuredContent": {"future": {"kept": True}}, "isError": False,
@@ -113,15 +113,15 @@ class RawHttpsClientContracts(unittest.TestCase):
         self.assertFalse(any(key in arguments for key in ("index_ids", "index_set_ids", "workspace")))
 
     def endpoint(self, **changes):
-        return {"schema": 1, "url": "https://127.0.0.1:1234/mcp", "service_instance": "before", "generation": 1,
+        return {"schema": 1, "url": "http://127.0.0.1:1234/mcp", "service_instance": "before", "generation": 1,
                 "installation": "install", "user": "owner", "namespace": "namespace",
-                "ca_sha256": "ca", "certificate_sha256": "leaf", "executable_sha256": "exe", **changes}
+                "executable_sha256": "exe", **changes}
 
-    def test_relocation_keeps_installation_authority_and_ca_and_changes_instance_and_url(self):
+    def test_relocation_keeps_installation_authority_and_changes_instance_and_url(self):
         previous = self.endpoint()
-        current = self.endpoint(url="https://127.0.0.1:4321/mcp", service_instance="after", generation=2, certificate_sha256="renewed")
+        current = self.endpoint(url="http://127.0.0.1:4321/mcp", service_instance="after", generation=2)
         CAMPAIGN.verify_relocated(previous, current)
-        for field in ("url", "service_instance", "schema", "installation", "user", "namespace", "ca_sha256", "executable_sha256"):
+        for field in ("url", "service_instance", "schema", "installation", "user", "namespace", "executable_sha256"):
             changed = copy.deepcopy(current)
             changed[field] = previous[field] if field in ("url", "service_instance") else "crossed"
             with self.subTest(field=field), self.assertRaises(AssertionError):
@@ -228,11 +228,11 @@ class RawHttpsClientContracts(unittest.TestCase):
                 raise AssertionError("U110: no credential enrollment")
 
             def http_endpoint(self):
-                return {"schema": 1, "url": "https://127.0.0.1:" + ("4321" if self.restarted else "1234") + "/mcp",
+                return {"schema": 1, "url": "http://127.0.0.1:" + ("4321" if self.restarted else "1234") + "/mcp",
                         "service_instance": "after" if self.restarted else "before",
                         "generation": 2 if self.restarted else 1,
                         "installation": "install", "user": "owner", "namespace": "namespace",
-                        "ca_sha256": "ca", "executable_sha256": "exe"}
+                        "executable_sha256": "exe"}
 
         clients_seen = []
 
@@ -342,7 +342,7 @@ class RawHttpsClientContracts(unittest.TestCase):
             self.assertEqual(len(receipt["endpoints"]), 2)
             self.assertEqual(receipt["read_scope"], {"index_ids": ["idx_fixture"]})
             self.assertEqual([sorted(row) for row in receipt["endpoints"]], [["endpoint", "phase"]] * 2)
-            self.assertEqual(clients_seen[:2], ["https://127.0.0.1:1234/mcp", "https://127.0.0.1:4321/mcp"])  # then the failed-start run
+            self.assertEqual(clients_seen[:2], ["http://127.0.0.1:1234/mcp", "http://127.0.0.1:4321/mcp"])  # then the failed-start run
             self.assertEqual(sum(row.get("kind") == "scope_required" for row in receipt["observations"]), 2)
             self.assertFalse(receipt["occupant_contacted"])
             failed = json.loads((base / "failed-report.json").read_text())

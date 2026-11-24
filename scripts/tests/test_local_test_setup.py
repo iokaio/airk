@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Contracts of scripts/setup-local-test.py: verified runtime pair, native endpoint and
-manual entry, HTTPS smoke, and `airkctl agents connect` only on request. Mocked; no service."""
+manual entry, loopback HTTP smoke, and `airkctl agents connect` only on request. Mocked; no service."""
 import contextlib
 import hashlib
 import importlib.util
@@ -8,7 +8,6 @@ import io
 import json
 import os
 import platform
-import ssl
 import subprocess
 import sys
 import tempfile
@@ -18,7 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
 
-import test_http_fixture as TLS
+import test_http_fixture as LOOPBACK
 
 SCRIPT = Path(__file__).parents[1] / 'setup-local-test.py'
 SPEC = importlib.util.spec_from_file_location('local_setup', SCRIPT)
@@ -166,17 +165,17 @@ class NativeCommandTests(unittest.TestCase):
                              {'exit_code': 4, 'result': refusal})
 
 
-class ActualHttpsSmokeTests(unittest.TestCase):
+class ActualHttpSmokeTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        TLS.ActualHttpsFixtureTests.setUpClass()
+        LOOPBACK.ActualHttpFixtureTests.setUpClass()
 
     @classmethod
     def tearDownClass(cls):
-        TLS.ActualHttpsFixtureTests.tearDownClass()
+        LOOPBACK.ActualHttpFixtureTests.tearDownClass()
 
-    def test_real_https_smoke_checks_version_revision_source_hash_and_closes_only_its_session(self):
-        fixture = TLS.ActualHttpsFixtureTests()
+    def test_real_http_smoke_checks_version_revision_source_hash_and_closes_only_its_session(self):
+        fixture = LOOPBACK.ActualHttpFixtureTests()
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder).resolve()
             content = b'# Original fixture\nVerificationMarker source evidence.\n'
@@ -196,7 +195,7 @@ class ActualHttpsSmokeTests(unittest.TestCase):
                     self.end_headers()
                     self.wfile.write(data)
                 def do_POST(self):
-                    # U110: the shared HTTPS client never sends a credential.
+                    # U110: the shared HTTP client never sends a credential.
                     if self.headers.get('Authorization') is not None:
                         self.respond(403); return
                     value = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
@@ -218,39 +217,32 @@ class ActualHttpsSmokeTests(unittest.TestCase):
                     calls.append({'method': 'DELETE'})
                     self.respond(204)
             server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
-            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-            context.load_cert_chain(fixture.root / 'leaf.pem', fixture.root / 'leaf.key')
-            server.socket = context.wrap_socket(server.socket, server_side=True)
             thread = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': .02}, daemon=True)
             thread.start()
-            def cert_hash(name):
-                return hashlib.sha256(ssl.PEM_cert_to_DER_cert((fixture.root / name).read_text())).hexdigest()
             info = {'schema': 1, 'connection_id': fixture.identity, 'selection': {'kind': 'scoped', 'selection': {'namespace': 'fixture'}},
-                    'endpoint': {'schema': 1, 'namespace': 'fixture', 'state': 'ready', 'url': f'https://127.0.0.1:{server.server_port}/mcp',
-                                 'ca_sha256': cert_hash('ca.pem'), 'certificate_sha256': cert_hash('leaf.pem')},
-                    'ca_certificate_file': str(fixture.root / 'ca.pem'), 'credential_file': str(fixture.root / 'credential.token')}
+                    'endpoint': {'schema': 1, 'namespace': 'fixture', 'state': 'ready', 'url': f'http://127.0.0.1:{server.server_port}/mcp'}}
             try:
-                with mock.patch.object(setup.subprocess, 'Popen', side_effect=AssertionError('No stdio/native process in generic TLS smoke')):
-                    result = setup.https_smoke(info, fixture.root, '1.8.14', root, 'original')
+                with mock.patch.object(setup.subprocess, 'Popen', side_effect=AssertionError('No stdio/native process in generic HTTP smoke')):
+                    result = setup.http_smoke(info, fixture.root, '1.8.14', root, 'original')
                 self.assertEqual(result['source_sha256'], source_hash)
                 self.assertEqual(result['codex_client_execution'], 'not_run')
+                self.assertEqual(result['transport'], 'http')
                 self.assertEqual(result['tool_count'], 3)
                 read = next(value for value in calls if value.get('params', {}).get('name') == 'read_file')
                 self.assertEqual(read['params']['arguments']['revision'], 'exact-saved-revision')
                 self.assertEqual(read['params']['arguments']['verification'], 'require')
                 self.assertEqual(calls[-1]['method'], 'DELETE')
                 self.assertEqual((root / 'README.md').read_bytes(), content)
-                # The current helper path uses the bare native endpoint + CA,
+                # The current helper path uses the bare native endpoint alone,
                 # with an explicit scope on every read and no credential file.
                 control = root / 'control'; (control / 'http-1').mkdir(parents=True)
-                (control / 'http-1' / 'ca.pem').write_bytes((fixture.root / 'ca.pem').read_bytes())
                 calls.clear()
-                result = setup.https_smoke(info['endpoint'], control, '1.8.14', root, 'original',
+                result = setup.http_smoke(info['endpoint'], control, '1.8.14', root, 'original',
                                            scope={'index_ids': ['idx_fixture']})
                 scoped = [call for call in calls if call.get('method') == 'tools/call']
                 self.assertEqual(len(scoped), 3)
                 self.assertTrue(all(call['params']['arguments']['index_ids'] == ['idx_fixture'] for call in scoped))
-                self.assertFalse(any('credential' in path.name for path in (control / 'http-1').iterdir()))
+                self.assertEqual(list((control / 'http-1').iterdir()), [], 'Nothing is read or written below the control directory')
                 self.assertEqual(result['status'], 'passed')
             finally:
                 server.shutdown(); server.server_close(); thread.join(timeout=5)
@@ -275,7 +267,7 @@ class SetupFlowTests(unittest.TestCase):
         self.cli.write_bytes(b'fictional matched CLI')
         self.identity = {'cli': self.cli, 'cli_sha256': hashlib.sha256(self.cli.read_bytes()).hexdigest(),
                          'version': '1.8.207', 'main_sha256': 'a' * 64}
-        self.endpoint = {'schema': 1, 'url': 'https://127.0.0.1:57422/mcp', 'executable_sha256': 'a' * 64}
+        self.endpoint = {'schema': 1, 'url': 'http://127.0.0.1:57422/mcp', 'executable_sha256': 'a' * 64}
         # Text is an opaque native fixture output, not a Python config builder.
         self.manual = {'client': 'codex', 'scope': 'project', 'file': str(self.config), 'format': 'toml',
                        'text': 'EXACT NATIVE MANUAL TEXT \" \\ \n'}
@@ -301,7 +293,7 @@ class SetupFlowTests(unittest.TestCase):
                 mock.patch.object(setup, 'native_json', side_effect=native), \
                 mock.patch.object(setup, 'native_outcome', return_value=outcome) as edit, \
                 mock.patch.object(setup.subprocess, 'Popen', side_effect=AssertionError('No process may be started directly')), \
-                mock.patch.object(setup, 'https_smoke', side_effect=smoke,
+                mock.patch.object(setup, 'http_smoke', side_effect=smoke,
                                   return_value={'status': 'passed', 'codex_client_execution': 'not_run'}) as probe:
             try:
                 result = setup.setup(Path('runtime'), 'f' * 64, self.control, root or self.root,
@@ -363,7 +355,7 @@ class SetupFlowTests(unittest.TestCase):
         self.assertEqual(self.run_setup(outcome=unknown, apply_config=True)[0]['status'], 'configuration_outcome_unknown')
 
     def test_endpoint_must_match_the_persisted_record_and_the_approved_running_image(self):
-        for persisted in ({**self.endpoint, 'url': 'https://127.0.0.1:60000/mcp'}, {**self.endpoint, 'schema': 2}):
+        for persisted in ({**self.endpoint, 'url': 'http://127.0.0.1:60000/mcp'}, {**self.endpoint, 'schema': 2}):
             with self.subTest(persisted=persisted), self.assertRaisesRegex(ValueError, 'Native endpoint differs'):
                 self.run_setup(persisted=persisted, outcome={'exit_code': 0, 'result': {}}, apply_config=True)
         self.identity['main_sha256'] = 'b' * 64

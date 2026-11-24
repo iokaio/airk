@@ -672,7 +672,7 @@ qualified separately.
 
 **Documents that change with O3:** the statements in
 [architecture](../architecture.md) and the
-[local HTTPS API](../local-https-api.md) that HTTP exposes no lifecycle or
+[local HTTPS API](../local-http-api.md) that HTTP exposes no lifecycle or
 index-management commands and that browser origins are refused.
 
 ### 7.3 Pages in the first release
@@ -1304,7 +1304,7 @@ packager being tested.
 
 Updated with the change that makes each statement true, not before:
 [architecture](../architecture.md), [process ownership](../process-model.md),
-[local HTTPS API](../local-https-api.md),
+[local HTTPS API](../local-http-api.md),
 [installation](../service-installation.md),
 [replacement policy](../upgrade-rebuild-fallback.md),
 [agent setup](../agent-integration.md), [headless use](../headless-cli.md),
@@ -1518,7 +1518,7 @@ plan JSON gains additive `takeover`/`set_aside` keys.
 |---|---|
 | Native CLI and roles | `crates/airk-cli/src/main.rs`, `tools.rs`, `process_roles.rs`, `session_commands.rs`, `session_protocol.rs` |
 | Local IPC and clients | `crates/airk-cli/src/local_ipc.rs`, `local_ipc_windows.rs`, `local_ipc_unix.rs`, `service_ipc.rs`, `project_client.rs`, `client_requests.rs`, `service_frontend.rs`; `crates/airk-core/src/service.rs` |
-| HTTPS | `crates/airk-cli/src/http_gateway.rs`, `http_endpoint.rs`, `service_runtime/http.rs`; `crates/airk-mcp/src/remote/http.rs`; [local HTTPS API](../local-https-api.md) |
+| HTTPS | `crates/airk-cli/src/http_gateway.rs`, `http_endpoint.rs`, `service_runtime/http.rs`; `crates/airk-mcp/src/remote/http.rs`; [local HTTPS API](../local-http-api.md) |
 | Installation | [Installation guide](../service-installation.md), [layout contract](../../crates/airk-host/src/install_layout/CONTRACT.md), [file contract](../../crates/airk-host/src/install_files/CONTRACT.md), `crates/airk-cli/src/runtime_install/replacement.rs`, `standalone_setup.rs`, `user_paths.rs`, `service_manager.rs` |
 | Packaging and signing | `installers/`, `scripts/package-standalone-*.py`, `standalone-installer-contract.py`, `build-service-runtime.py`, `sign-native.py`; [signing contract](../native-signing.md), [release verification](../release-verification.md) |
 | Extension | `packages/vscode/src/serviceExtension.ts`, `serviceBootstrap.ts`, `nativeSession.ts`, `serviceClient.ts`, `explorerEvidence.ts`, `explorerContracts.ts`, `agentConfigHealth.ts`, `agentMigration.ts`; `packages/vscode/scripts/build-explorer.cjs` |

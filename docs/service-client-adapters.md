@@ -88,7 +88,7 @@ retirement proof before compacting its full active record. Proven owned Explorer
 attachment retirement can release capacity; unavailable or malformed ownership
 evidence cannot. Active manual credentials retain their authority, old IDs cannot
 be reused, and historical proof storage grows with issuance. The
-[HTTPS lifecycle contract](local-https-api.md) describes these bounds and fences.
+[local HTTP API](local-http-api.md) describes these bounds and fences.
 Scoped regressions cover compaction; final installed capacity and resource
 acceptance remain required. This implemented correction does not qualify every
 client or platform.
@@ -111,5 +111,5 @@ retain this reason/provenance within **2 KiB**. Historical schema-1 proofs lacki
 those facts remain review-required. This metadata is private CLI/native control
 authority, not a new evidence-MCP management operation. Old IDs remain permanently
 retired; replacement retains the original reviewed scope and requires a new ID.
-See the [native proof contract](local-https-api.md) and the resumed implementation
+See the [native proof contract](local-http-api.md) and the resumed implementation
 checkpoint for validation and remaining installed-platform acceptance.

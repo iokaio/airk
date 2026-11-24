@@ -7,8 +7,11 @@
 > `airkctl` is the CLI. `airk` with no arguments, or `airkctl service start`,
 > starts the installed service; `airkctl service stop`, `restart` and `status`
 > replace `runtime lifecycle` and `runtime inspect|diagnose`. Agent connection
-> commands moved to `airkctl agents …`, and `runtime http-trust` to
-> `airkctl service trust`. The other pre-split `runtime …`, `setup`,
+> commands moved to `airkctl agents …`. Since local trust plan C (23 November
+> 2026) the service serves loopback over plain HTTP, so `runtime http-trust`,
+> `runtime http-issuer-rotation` and their `airkctl service trust` and
+> `service issuer-rotation` successors are removed; see the
+> [local HTTP API](local-http-api.md). The other pre-split `runtime …`, `setup`,
 > `uninstall`, `host` and `service legacy …` commands on this page are
 > reachable only as `airk __airk_role setup-interim <arguments>` until Phase 7.
 
@@ -27,9 +30,9 @@ records implementation and validation; the historical rebuild policy below does
 not authorize automatic indexing on a new installation.
 
 **Inherited source implementation; unpublished and not yet platform-qualified.**
-The current sources implement a shared localhost HTTPS service, one distributed
+The current sources implement a shared loopback HTTP service, one distributed
 native executable with embedded default inference, direct manager entries and
-guarded lifecycle operations. Final Windows installer, actual client/OS trust
+guarded lifecycle operations. Final Windows installer, actual client
 and Mac Neo acceptance are separate pending gates. Use the
 [1.8.23 candidate record](releases/release-1.8.23.md) and its linked task ledger
 for preparation and source validation; older release evidence is historical.
@@ -50,8 +53,12 @@ pre-split installer flow described in the rest of this page
   `payload-inventory.json`, writes the install record and then the install
   pointer, registers login startup (Windows Task Scheduler, Linux systemd user
   unit; macOS records `login_unsupported`), starts the service through the
-  installed `airkctl`, and applies certificate trust with consent. Uninstall
-  removes login startup, owned trust, the pointer and the record; index data
+  installed `airkctl`. On an upgrade from an HTTPS build its
+  `legacy_trust_retired` phase, run in the user's session, removes the AIRK CA
+  the old setup installed and the old TLS files
+  ([upgrading from an HTTPS build](local-http-api.md#upgrading-from-an-https-build));
+  setup installs no trust. Uninstall removes login startup, the pointer and the
+  record, and retires an old installation's CA the same way; index data
   is deleted only on an explicit purge. Details:
   [`setup_role/CONTRACT.md`](../crates/airk-service/src/setup_role/CONTRACT.md).
 - **Login startup** runs `airk __airk_role service-login --install-id <id>`,
@@ -70,7 +77,7 @@ pre-split installer flow described in the rest of this page
   the "AIRK Admin" Start-menu shortcut and `bin\` on the user `PATH` under its
   ownership receipt. Unattended: `/DIR=`, `/DATA=`, `/CACHE=`,
   `/ACKNOWLEDGE-RESET` (required when an earlier installation will be
-  removed) and `/TRUST` (otherwise trust is skipped). Locations must be
+  removed); silent installs need no trust consent. Locations must be
   printable ASCII.
 - **Recovering from a failed install (from 1.8.204).** A later installer no
   longer needs hand edits after an earlier setup failed or was interrupted.
@@ -227,7 +234,7 @@ reports `unavailable`.
 Core DTO with the full original snapshot. Ordinary modern lookup and enrollment
 remain separate. `runtime inspect-legacy-launchers --purpose predecessor-cleanup`
 allows an exact selected predecessor-pair ownership read for pre-reset client
-capture; ordinary HTTPS inspection keeps its existing gate. The journal retains
+capture; ordinary HTTP inspection keeps its existing gate. The journal retains
 verified predecessor main/stable/universal-launcher metadata, and explicit
 `command_images` excludes the staged candidate. The fresh service creates no
 credential ledger.
@@ -334,7 +341,7 @@ its receipt remain unchanged migration state until explicit owned retirement;
 an unresolved historical repair transaction must still be settled explicitly.
 
 A successful modern installer must then migrate recognized owned MCP
-configurations to HTTPS and remove the old launchers. After guarded
+configurations to the loopback HTTP endpoint and remove the old launchers. After guarded
 configuration saves and connection verification, it calls
 `airk runtime retire-legacy-launchers --install-dir PATH --expected-active SHA`.
 The native transaction verifies the selected schema-2 payload, the per-install
@@ -503,7 +510,7 @@ or omitted ambiguous selector cannot fall back to another imported grant.
 
 After immutable adoption and authority completion, exact predecessor images are
 restored only for the unfinished guarded configuration transition. Successful
-installation still requires all recognized configurations to use HTTPS, then
+installation still requires all recognized configurations to use HTTP, then
 `runtime retire-legacy-caches --install-dir PATH --expected-active SHA
 --expected-inspection-sha256 DIGEST`. Native retirement checks saved original
 configuration containers for remaining accepted stdio references, stops exact
@@ -544,7 +551,7 @@ temporary processes are:
 Stable, preview and custom installations are separate installations, each with
 its own service. See [process ownership](process-model.md).
 
-MCP clients connect directly to the saved native HTTPS URL. They do not spawn an
+MCP clients connect directly to the saved native HTTP URL. They do not spawn an
 AIRK process, Node proxy or launcher for each connection/request. Since U110
 the endpoint takes no token, so agent entries carry no credential helper.
 Verified setup,
@@ -587,13 +594,14 @@ pointers into an installer backup. Index-data privacy remains separate from
 control/credential privacy: inventory can report existing public storage and
 its limits without claiming that every ancestor or ACL was audited.
 
-## HTTPS connection and certificate trust
+## HTTP connection
 
-The service binds the saved IPv4 loopback port, preferring 57421 only for initial
-selection. If that port is occupied it holds a newly bound ephemeral listener
-and publishes the actual endpoint; clients must use the returned URL. The old
+The service listens on `http://127.0.0.1:<port>` only, binding the saved IPv4
+loopback port and preferring 57421 only for initial selection. If that port is
+occupied it holds a newly bound ephemeral listener and publishes the actual
+endpoint; clients must use the returned URL (`airkctl agents endpoint`). The old
 port is not assumed safe or available. Namespace, installation/user identity,
-service instance, generation and certificate fingerprints remain native-bound.
+service instance and generation remain native-bound.
 
 Enrollment uses an explicitly reviewed single/combined selector, or genuine
 owned predecessor configuration/provider lineage plus a live imported grant.
@@ -601,34 +609,27 @@ A multi-root predecessor retains all original members with no default project.
 Missing, revoked, authority-zero or ambiguous state requires review. Setup
 returns protected connection references, never a raw bearer or private key.
 
-TLS validates normally against the exact loopback IP. Install the reviewed public
-issuer through supported additive client trust or per-user OS trust; preserve
-existing enterprise/public roots. Do not disable TLS validation or replace the
-endpoint with plain HTTP. Normal CA validation is not a unique-issuer pin.
+Since local trust plan C (23 November 2026) there is no installation CA, leaf
+certificate, issuer rotation or OS trust step, and no client needs a CA bundle.
+The loopback-only listener, Host and `Origin` checks and the Admin browser guard
+remain; see [what still guards the API](local-http-api.md#what-still-guards-the-api).
 
-`runtime http-trust --install-dir <installation> --action inspect` observes the
-owned trust state. Install/remove require `--expected-ca-sha256 <reviewed-digest>`;
-mutation rechecks that fingerprint. Windows uses CurrentUser Root; macOS uses the
-native user's login keychain. The ownership receipt distinguishes preexisting
-issuers from AIRK additions. Interrupted or changed outcomes remain for review,
-not blind retry. Verified saved identity permits inspecting/removing owned trust
-after Stop without starting a service. Uninstall's guarded cleanup preserves
-preexisting or unproven trust and reports incomplete cleanup explicitly.
-
-Automatic per-user Linux OS-store enrollment is unsupported. Linux VS Code MCP
-needs explicit administrator provisioning in its distro system store and user
-NSS store; see [official VS Code certificate guidance](https://code.visualstudio.com/docs/setup/network#_ssl-certificates).
-An internal AIRK HTTPS check does not qualify that external host. Client formats,
-protected VS Code input resolution, remote/container limits and actual connection
-checks are documented in [agent integration](agent-integration.md).
+An installation from an HTTPS build keeps its port and publishes the next
+endpoint generation over `http://`. Setup's upgrade step, and uninstall of such
+an installation, run in the user's session: they remove exactly the AIRK CA the
+old setup installed (named by DER SHA-256 in the old `http-1/user-trust-1.json`
+receipt in phase `installed`; Windows CurrentUser Root, macOS login keychain,
+where macOS may ask; Linux never had OS trust), report an interrupted receipt
+(`prepared`, `remove_prepared`) as residue without acting on it (its files are
+kept), and otherwise delete the old TLS files by exact name. Agent configurations still naming `https://` are
+listed as `https_endpoint_mismatch` and rewritten by `airkctl agents repair`; see
+[upgrading from an HTTPS build](local-http-api.md#upgrading-from-an-https-build).
+Client formats, remote/container limits and actual connection checks are
+documented in [agent integration](agent-integration.md).
 
 The source owners are [HTTP setup](../crates/airk-https/src/runtime_http_commands.rs),
-[private identity/credential storage](../crates/airk-endpoint/src/http_endpoint.rs) and
-[owned trust](../crates/airk-endpoint/src/http_endpoint/trust.rs).
-Issuer replacement uses an explicit receipt-backed prepare/trust/commit/finalize
-transaction, with prepared-only abort and an ordinary 24-hour overlap. Expiry
-does not remove trust automatically. See [issuer rotation](local-https-api.md#explicit-issuer-rotation)
-for exact review inputs, owned client-bundle CAS and remaining host qualification.
+[endpoint storage](../crates/airk-endpoint/src/http_endpoint.rs) and
+[legacy trust retirement](../crates/airk-endpoint/src/http_endpoint/legacy_trust.rs).
 
 ## Selection and lifetime
 
@@ -686,7 +687,7 @@ workers/model semantics to reopen modern state.
 Managed installations pin an approved provider-owned payload and separate user
 metadata/state. `external` leaves service election to the organization;
 `user-on-demand` uses its explicitly allowed lifecycle. Unknown/changed payloads
-are refused. Modern clients use direct HTTPS enrollment and the sealed main;
+are refused. Modern clients use direct HTTP enrollment and the sealed main;
 `prepare-client` does not manufacture a modern launcher. User detach/uninstall
 preserves provider files and external ownership. Detachment requires the exact
 managed configuration's native catalog initialization to be settled; an
@@ -717,7 +718,7 @@ fresh installation.
   `airk-state/1` format. A replacement removes the old installation folder,
   so a replaced installation is registered again.
 - **No idle exit.** The registered entry runs `runtime managed-serve`. In
-  HTTPS mode no service exits while idle, whether it is managed or on demand.
+  HTTP mode no service exits while idle, whether it is managed or on demand.
   It keeps running after the editor closes and starts at the next sign-in.
 - **One service.** A second `serve`, `managed-serve`, `foreground` or `host`
   start is refused with a `service_already_running:` message. The JSON `code`
@@ -753,7 +754,7 @@ retains the failures and validation; 1.8.22 did not satisfy this policy.
 2. **Replacement lock.** A `.<leaf>.replace-1.lock` beside the installation
    refuses a concurrent replacement before any side effect.
 3. **Login registration.** The owned registration is removed.
-4. **User CA.** The owned user CA is retired through its trust receipt.
+4. **User CA.** A user CA owned by an HTTPS-build predecessor is retired through its trust receipt.
 5. **Folders.** Processes must be proven stopped before folders are moved aside and
    deleted. If a move fails partway, the installer attempts to restore moved
    directories, newest first. Executable names may already have been permanently

@@ -24,8 +24,10 @@ Interactive login startup uses AIRK.app's SMAppService agent. macOS may require
 approval in System Settings; setup reports login_consent_required and exits
 nonzero until approval is granted. Approve it, then resume the same retained
 request. --no-login-startup skips registration; "airkctl service start" starts
-AIRK manually after a later login. Certificate trust for the HTTPS
-admin pages is offered through the macOS consent dialog. When ~/.local/bin
+AIRK manually after a later login. The service and its admin pages use plain
+HTTP on 127.0.0.1, so there is no certificate to trust; an upgrade from an
+HTTPS build removes the AIRK certificate the old setup added to the login
+keychain, and macOS may ask you to allow that. When ~/.local/bin
 exists, setup adds an airkctl link there and records that it owns it;
 otherwise it prints the airkctl path. No shell startup file is edited.
 
@@ -35,14 +37,13 @@ place and keeps the indexes. To uninstall, run:
   airkctl service uninstall --yes                  # keeps index data
   airkctl service uninstall --yes --purge-indexes  # also deletes it
 
-Uninstall removes the install record and pointer, owned certificate trust,
-the placed files and the owned airkctl link. Eject this disk image after setup.
+Uninstall removes the install record and pointer (and an HTTPS build's owned
+certificate trust), the placed files and the owned airkctl link. Eject this disk image after setup.
 
 The disk image and AIRK.app use Ioka LLC's Developer ID Application signature
 and Apple notarization. This package contains no account credentials.
 
-Headless --silent never reads stdin or asks for certificate trust. Trust is
-skipped; request it later through the native interactive consent flow. A setup
+Headless --silent never reads stdin. A setup
 or PATH/link failure exits nonzero and prints a persistent private recovery
 folder containing the original request and verified setup image. Preserve it
 and check service status before attempting recovery. Resume with the exact same

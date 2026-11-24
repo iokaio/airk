@@ -81,6 +81,12 @@ function citations(value,result=[]){
     return result;
 }
 function assertEvidence(body,hash){assert(citations(body).some(row=>row.path==='fixture.ts'&&row.content_hash===hash),'MCP did not cite exact original source bytes');}
+/** The endpoint material of a validated native connection. Local trust plan C:
+ * plain loopback HTTP, so there is no CA to read or pin; only the URL is used. */
+function endpointMaterial(info){
+    const {validateHttpConnection}=require(path.join(root,'packages/vscode/out/serviceHttp.js'));
+    return {url:validateHttpConnection(info).endpoint.url};
+}
 /** A public snapshot never persists the native bearer. Material came from its
  * exact owner-private native references and is checked against the actual API. */
 function httpDefinitionSnapshot(definition,info,material){
@@ -90,10 +96,10 @@ function httpDefinitionSnapshot(definition,info,material){
     assert(identity.credentialId===connection.connection_id&&identity.url===connection.endpoint.url&&material.url===identity.url,'HTTP definition crossed native connection');
     const authorization=Object.entries(identity.headers).find(([name])=>name.toLowerCase()==='authorization')?.[1];
     assert(authorization==='Bearer '+material.credential,'Actual provider bearer differs from protected native credential');
-    return {transport:'https',uri:identity.url,version:definition.version,headers:Object.fromEntries(Object.entries(identity.headers).map(([name,value])=>[name,name.toLowerCase()==='authorization'?'Bearer [redacted]':value])),authorization_sha256:sha(Buffer.from(authorization)),nativeConnection:connection};
+    return {transport:'http',uri:identity.url,version:definition.version,headers:Object.fromEntries(Object.entries(identity.headers).map(([name,value])=>[name,name.toLowerCase()==='authorization'?'Bearer [redacted]':value])),authorization_sha256:sha(Buffer.from(authorization)),nativeConnection:connection};
 }
 async function restoreHttpDefinition(snapshot,material){
-    assert(snapshot?.transport==='https'&&typeof snapshot.uri==='string'&&snapshot.uri===material.url,'Current evidence requires exact HTTPS transport');
+    assert(snapshot?.transport==='http'&&typeof snapshot.uri==='string'&&snapshot.uri===material.url,'Current evidence requires exact HTTP transport');
     assert(sha(Buffer.from('Bearer '+material.credential))===snapshot.authorization_sha256,'Native credential changed since actual provider observation');
     assert(Object.entries(snapshot.headers).filter(([name])=>name.toLowerCase()==='authorization').length===1&&Object.entries(snapshot.headers).find(([name])=>name.toLowerCase()==='authorization')?.[1]==='Bearer [redacted]','Exactly one redacted native authorization');
     const headers=Object.fromEntries(Object.entries(snapshot.headers).map(([name,value])=>[name,name.toLowerCase()==='authorization'?'Bearer '+material.credential:value]));
@@ -131,11 +137,10 @@ async function privateDriver(){
             if(request.action==='definitions'){
                 value=[];for(const row of await api.getServerDefinitions()){
                     if(row.uri){
-                        const helpers=path.dirname(config.helper),{httpMaterial}=require(path.join(helpers,'serviceHttp.js'));
                         const {installedHttpIdentity}=require(config.httpHelper),identity=installedHttpIdentity(row),host=new (require(config.helper).RuntimeHost)(ext.extensionPath,config.version,require(path.join(ext.extensionPath,'out/serviceConsole.js')).serviceRuntimeOptions());
                         const observed=await host.discover();if(observed.installDir!==config.install||!observed.inspection)throw Error('HTTP discovery escaped actual installed fixture');
                         const info=await host.httpConnectionInfo(host.binding(observed.inspection,observed.installDir),identity.credentialId);
-                        value.push(require(config.contracts).httpDefinitionSnapshot(row,info,await httpMaterial(info)));
+                        const contracts=require(config.contracts);value.push(contracts.httpDefinitionSnapshot(row,info,contracts.endpointMaterial(info)));
                     }else value.push({command:row.command,args:row.args,env:row.env,cwd:row.cwd?.fsPath??row.cwd});
                 }
             }
@@ -240,10 +245,10 @@ with zipfile.ZipFile(sys.argv[1]) as z:
     }
     async function closePhase(phase){await save('ui-'+path.basename(phase.folder),{diagnostics:ui.diagnostics(),dispatches:ui.dispatchReceipts()});await phase.rpc('quit');assert((await phase.task.closed).code===0,'Private editor did not quit normally');editorCloseObserved=active.size===0;await ui.close();ui=undefined;}
     async function mcp(definition,check){
-        if(definition?.transport==='https'){
+        if(definition?.transport==='http'){
             assert(!uncertainMcp,'Previous owned transport close remains uncertain');
             const install=path.join(run,'native-service'),info=definition.nativeConnection;
-            const {validateHttpConnection,httpMaterial}=require(path.join(root,'packages/vscode/out/serviceHttp.js'));
+            const {validateHttpConnection}=require(path.join(root,'packages/vscode/out/serviceHttp.js'));
             validateHttpConnection(info);
             const metadata=await native(verificationBundle,['runtime','inspect','--install-dir',install]);
             const pair=JSON.parse(await fs.readFile(path.join(verificationBundle.source,'airk-runtime.json'),'utf8'));
@@ -254,19 +259,19 @@ with zipfile.ZipFile(sys.argv[1]) as z:
             const currentInfo=validateHttpConnection({...info,endpoint});
             assert(isDeepStrictEqual(currentInfo.endpoint,info.endpoint)&&currentInfo.endpoint.executable_sha256===pair.airk_sha256&&currentInfo.endpoint.namespace===metadata.registry_namespace,'Native HTTP endpoint changed since observation');
             const {InstalledHttpTransport}=require(path.join(root,'packages/vscode/out/test/installedEditorHttp.js'));
-            const material=await httpMaterial(currentInfo),actual=await restoreHttpDefinition(definition,material),transport=new InstalledHttpTransport(actual,material.ca);
+            const material=endpointMaterial(currentInfo),actual=await restoreHttpDefinition(definition,material),transport=new InstalledHttpTransport(actual);
             let primary;
             try{
                 const initialized=await transport.request('initialize',{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'airk-installed-upgrade-test',version:CURRENT_VERSION}},remaining(90000));
-                assert(!initialized.error,'Actual HTTPS initialize refused');await transport.notify('notifications/initialized',remaining());
+                assert(!initialized.error,'Actual HTTP initialize refused');await transport.notify('notifications/initialized',remaining());
                 const catalog=await transport.request('tools/list',{},remaining()),{UNIFIED_TOOLS}=require(path.join(root,'packages/vscode/out/model.js'));
-                assert(!catalog.error&&isDeepStrictEqual(catalog.result.tools.map(tool=>tool.name).sort(),[...UNIFIED_TOOLS].sort()),'Actual HTTPS tool catalog differs');
+                assert(!catalog.error&&isDeepStrictEqual(catalog.result.tools.map(tool=>tool.name).sort(),[...UNIFIED_TOOLS].sort()),'Actual HTTP tool catalog differs');
                 await save('https-catalog-'+info.connection_id,{definition,initialized,catalog});
                 return await check(async(name,args)=>{
                     assert(['status','symbols','search'].includes(name),'Only bounded native reads may retry');const {readRetryDelay}=require(path.join(root,'packages/vscode/out/readRetry.js'));
                     return toolBody(await boundedSafeRead({deadline,retryDelay:wire=>readRetryDelay(wire,info.selection.kind==='scoped'?info.selection.selection:undefined),request:async timeout=>{
                         assert(++mcpCount<=128,'128 MCP read budget exhausted');const id=mcpCount,wire=await transport.request('tools/call',{name,arguments:{...args,response_mode:'full'}},timeout);
-                        await save('mcp-read-'+id,{definition,name,args,wire});assert(!wire.error,'Actual HTTPS RPC refusal');return wire.result;
+                        await save('mcp-read-'+id,{definition,name,args,wire});assert(!wire.error,'Actual HTTP RPC refusal');return wire.result;
                     }}));
                 });
             }catch(error){primary=error;await save('https-failure-'+info.connection_id,{error:String(error),detail:error.detail,nativeResponse:error.nativeResponse});throw error;}finally{
@@ -372,8 +377,8 @@ with zipfile.ZipFile(sys.argv[1]) as z:
         await next.rpc('open',{route:'#indexing/window'});const selection=await boundedUi(()=>ui.indexing({action:'scopeSelect',setName,project}));assert(selection.outcome?.status==='search_scope_selected','Reviewed scope did not apply');await save('current-selection',selection);
         const definitions=await next.rpc('definitions');assert(definitions.length===1,'Current selected native definition must be unique');
         const {installedSelector,installedMember}=require(path.join(root,'packages/vscode/out/test/installedEditorContracts.js'));
-        const selected={index,project,grant:selection.outcome.activation.selection.session.grant_id,source_ids:sourceIds};assert(definitions[0].transport==='https','Current actual provider must advertise authenticated HTTPS');
-        const {httpMaterial}=require(path.join(root,'packages/vscode/out/serviceHttp.js')),actualDefinition=await restoreHttpDefinition(definitions[0],await httpMaterial(definitions[0].nativeConnection));selected.session=installedSelector(actualDefinition,selection,selected);
+        const selected={index,project,grant:selection.outcome.activation.selection.session.grant_id,source_ids:sourceIds};assert(definitions[0].transport==='http','Current actual provider must advertise loopback HTTP');
+        const actualDefinition=await restoreHttpDefinition(definitions[0],endpointMaterial(definitions[0].nativeConnection));selected.session=installedSelector(actualDefinition,selection,selected);
         await next.rpc('index');const reads=await mcp(definitions[0],async call=>{
             const end=Math.min(deadline,Date.now()+180000);let symbols;
             do{symbols=await call('symbols',{name:'UpgradeOriginalEvidence',compact:false});if(citations(installedMember(symbols,selected)).length)break;await delay(1000);}while(Date.now()<end);
@@ -382,7 +387,7 @@ with zipfile.ZipFile(sys.argv[1]) as z:
         await next.rpc('search');const rendered=await ui.until(async()=>(await ui.document("!!document.querySelector('.airk-explorer')","(()=>{const paths=[...document.querySelectorAll('.hit code.path')].map(n=>n.textContent);return paths.some(p=>p.startsWith('fixture.ts'))?{paths,text:document.body.innerText.slice(0,32768)}:undefined;})()"))?.value,'Current Explorer cited original fixture');await save('current-explorer',rendered);
         await next.rpc('open',{route:'#indexing/window'});assert((await next.rpc('tabs')).length===1,'Repeated navigation created duplicate Explorer');
         await next.rpc('open',{route:'#manage/service'});const beforeStop=await native(current,['runtime','inspect','--install-dir',installDir]);
-        assert(!uncertainMcp,'Native Stop cannot run before all owned stdio processes or HTTPS sockets have observed closure');
+        assert(!uncertainMcp,'Native Stop cannot run before all owned stdio processes or HTTP sockets have observed closure');
         const stop=await boundedUi(()=>ui.indexing({action:'serviceStop',installDir,runtimeSha256:current.digest,namespace:beforeStop.registry_namespace}));await save('native-stop',stop);
         stopProof=completeStop(stop,await native(current,['runtime','inspect','--install-dir',installDir]),current,installDir);await closePhase(next);
         assert(sha(await fs.readFile(path.join(source,'fixture.ts')))===sourceHash&&isDeepStrictEqual(await fs.readdir(source),['fixture.ts']),'Original source changed');
@@ -403,5 +408,5 @@ with zipfile.ZipFile(sys.argv[1]) as z:
     }
     return result;
 }
-module.exports={CURRENT_VERSION,httpDefinitionSnapshot,restoreHttpDefinition,OLD_SHA,LEAF_SHA,OLD_MAIN_SHA,inside,toolBody,citations,assertEvidence,completeStop,failedActivation,qualifyOldLauncherCopy,gatePrivateProfile,waitOwnedExit,boundedJsonProcess,boundedSafeRead,privateDriver,main};
+module.exports={CURRENT_VERSION,endpointMaterial,httpDefinitionSnapshot,restoreHttpDefinition,OLD_SHA,LEAF_SHA,OLD_MAIN_SHA,inside,toolBody,citations,assertEvidence,completeStop,failedActivation,qualifyOldLauncherCopy,gatePrivateProfile,waitOwnedExit,boundedJsonProcess,boundedSafeRead,privateDriver,main};
 if(require.main===module)main().catch(error=>{process.stderr.write(String(error)+'\n');process.exitCode=1;});

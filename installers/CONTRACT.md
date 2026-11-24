@@ -4,7 +4,7 @@ The native setup role owns I4 operations, ownership, placement admission, recove
 
 ## Headless and failure boundary
 
-All public wrappers accept exact `--silent`. This means no prompts or stdin reads; certificate trust defaults to skip. A required user-consent operation refuses with an actionable nonzero result. Existing platform silent aliases remain accepted. A failed post-placement setup or PATH update returns nonzero, even when the platform installer has placed files successfully. Windows reserves exit 11 for this finalization failure.
+All public wrappers accept exact `--silent`. This means no prompts or stdin reads; there is no certificate trust to consent to (local trust plan C: loopback is plain HTTP, and the Windows `/TRUST` switch, the shell wrappers' trust prompt and the operation's `trust` option are gone; setup only retires an HTTPS build's owned CA on upgrade). A required user-consent operation refuses with an actionable nonzero result. Existing platform silent aliases remain accepted. A failed post-placement setup or PATH update returns nonzero, even when the platform installer has placed files successfully. Windows reserves exit 11 for this finalization failure.
 
 Before native execution, wrappers create a fresh private persistent recovery directory outside installer temporary storage. The verified setup image, operation request and native diagnostic paths survive failure. An existing folder is never adopted or recursively deleted. Canonical I4 JSON uses UTF-8 without BOM, compact field order and one trailing LF; ordinary Unicode remains literal. Native Core remains the schema owner.
 
@@ -18,7 +18,7 @@ Each of the four supported native targets has a separate portable ZIP. Its `runt
 
 From 1.9.0, portable recovery is `airkctl service setup --resume <absolute retained operation-request.json> --portable`. It uses the original request, roots and ownership; users must not edit its JSON, add location overrides, use a PID as authority or replay private native roles. Recovery preserves the original receipt on an unknown outcome. Native NTFS admission refuses extra alternate streams; wrappers do not implicitly strip streams or unblock files.
 
-All wrappers require both empty native location-problem and blocker lists before preparation/placement. Headless macOS explicitly skips login startup as well as certificate trust; the service starts once, and startup after a later login remains an explicit supported/manual action. Windows and Linux retain user-level login startup defaults, which do not request OS consent. Optional native startup support is not inferred from a placed app bundle.
+All wrappers require both empty native location-problem and blocker lists before preparation/placement. Headless macOS explicitly skips login startup; the service starts once, and startup after a later login remains an explicit supported/manual action. Windows and Linux retain user-level login startup defaults, which do not request OS consent. Optional native startup support is not inferred from a placed app bundle.
 
 ## Original-operation wrapper recovery
 
@@ -58,7 +58,7 @@ owners. It exercises the actual current silent wrapper, native I4 discovery and
 setup receipts, original-operation reconciliation, service image/user/lifecycle
 observations and keep-data removal. Admission refuses occupied or unknown
 account state and unexpected predecessors; it supplies no reset acknowledgement,
-login/trust consent or alternate identity. The process census matches executable
+login consent or alternate identity. The process census matches executable
 basenames after parsing PID/UID/path and scopes blockers to the effective UID,
 matching native Mac `PROC_UID_ONLY`; other-user rows are preserved observations,
 not cleanup authority. Kernel events and reads check the same original deadline

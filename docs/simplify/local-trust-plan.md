@@ -9,7 +9,7 @@ owning `CONTRACT.md` files and in the ledger.
 ## Why
 
 AIRK's service listens on 127.0.0.1 only and exposes nothing publicly. Since
-U110 (15 November 2026, [local HTTPS API](../local-https-api.md)) the bearer
+U110 (15 November 2026, [local HTTP API](../local-http-api.md)) the bearer
 plane takes no credential: any local process can read every index. The
 layers kept after U110 protect very little and cost reliability. Scope and
 admission fences reported harmless races as permanent refusals

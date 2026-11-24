@@ -1,23 +1,26 @@
 # Coding-agent MCP setup
 
-Clients connect directly to the shared native HTTPS service on IPv4 loopback,
-at `https://127.0.0.1:<port>/mcp`. MCP connections and reads do not start an
+Clients connect directly to the shared native service over plain HTTP on IPv4
+loopback, at `http://127.0.0.1:<port>/mcp`. MCP connections and reads do not start an
 AIRK command, launcher, proxy, credential helper or Node bridge, and no process
 runs for each agent. Stdio MCP is retired. The listener URL comes from verified
 native discovery: an occupied preferred port can select another saved port, so
-copy the actual endpoint rather than assuming a machine-wide fixed port.
+copy the actual endpoint (`rk agents endpoint`) rather than assuming a
+machine-wide fixed port. Since local trust plan C (23 November 2026) there is no
+AIRK CA, certificate or client trust step; see the
+[local HTTP API](local-http-api.md#what-still-guards-the-api) for the guards
+that remain.
 
 **No token (U110, 15 November 2026).** `/mcp` takes no credential. The gateway
 strips and ignores any `Authorization` header; its Host, `Origin` and
 admin-cookie refusals remain. Every MCP session is the service's built-in local
 agent session. Accepted consequence: any local process, of any OS user, that can
-reach 127.0.0.1 can read every index of this installation. TLS issuer trust is
-still required.
+reach 127.0.0.1 can read every index of this installation.
 
 VS Code is an optional setup interface, not an MCP proxy: closing it does not
 put its extension between a standalone client and AIRK. Headless reads still
-require the native service to be running and the client process to trust the
-local CA. A saved configuration alone supplies neither.
+require the native service to be running; a saved configuration alone does not
+start it.
 
 ## Retrieval, ranking and contextual questions
 
@@ -142,11 +145,14 @@ ambient user cache discovery. Native OS installation identity determines this
 distinction; an editor path or test flag cannot promote it. Unknown cache
 ownership or incomplete retirement remains an explicit blocker.
 
-| Implemented adapter | Configuration | Host trust |
-| --- | --- | --- |
-| VS Code / Copilot Chat | `servers.airk` with `type: "http"`, literal actual `url` and the `X-AIRK-Response-Mode` header. The built-in provider returns an HTTP definition. | Review the native per-user issuer trust action. |
-| Codex | Literal `mcp_servers.airk.url` and nested `http_headers` with the mode header. URL interpolation is not invented. | Add the public issuer through `CODEX_CA_CERTIFICATE`, preserving an existing CA bundle/`SSL_CERT_FILE`. |
-| Claude Code | `mcpServers.airk` with `type: "http"`, literal actual `url` and the mode header. | Preserve `NODE_EXTRA_CA_CERTS` while adding the public native issuer. |
+| Implemented adapter | Configuration |
+| --- | --- |
+| VS Code / Copilot Chat | `servers.airk` with `type: "http"`, literal actual `url` and the `X-AIRK-Response-Mode` header. The built-in provider returns an HTTP definition. |
+| Codex | Literal `mcp_servers.airk.url` and nested `http_headers` with the mode header. URL interpolation is not invented. |
+| Claude Code | `mcpServers.airk` with `type: "http"`, literal actual `url` and the mode header. |
+
+No client needs a CA bundle, `NODE_EXTRA_CA_CERTS` or `CODEX_CA_CERTIFICATE`
+for AIRK.
 
 ### Long Answer calls and client timeouts
 
@@ -201,9 +207,11 @@ rewrites them to the URL-only form, removing the VS Code credential input that
 nothing references any more. The per-window session (`airkctl session`) never
 returns bearer tokens.
 
-Still unverified against the real clients:
-
-- whether Codex trusts the OS user certificate store outside VS Code.
+An entry that still names `https://127.0.0.1:<port>/mcp` from an HTTPS build is
+reported as `https_endpoint_mismatch`; `airkctl agents repair` (or Reconnect)
+rewrites it to the current `http://` URL and strips old `headersHelper` and
+bearer fields. Reconnect the external client afterwards; see
+[upgrading from an HTTPS build](local-http-api.md#upgrading-from-an-https-build).
 
 ### Reconnecting after a replacement
 
@@ -226,7 +234,7 @@ are not edited.
    appear in an Explorer banner, the status bar and Management → Agents.
    Classes are `stdio_retired`, `stdio_missing_command`,
    `https_unknown_connection`, `https_endpoint_mismatch`,
-   `https_trust_missing`, `https_helper_missing` and `ok`. Since U110 an
+   `https_helper_missing` and `ok` (the `https_` prefix is historical). Since U110 an
    entry still carrying credential fields is reported as needing repair, and
    repair rewrites it to the URL-only form.
 3. **Reconnect.** **Reconnect** (or **AIRK: Reconnect Coding Agents…**) shows
@@ -239,8 +247,7 @@ are not edited.
    - grants this window access. **This makes the index the window's search
      scope;**
    - rewrites each entry in place with the endpoint URL and mode header only,
-     keeping other servers, comments, disabled states and policies;
-   - provisions trust.
+     keeping other servers, comments, disabled states and policies.
 4. **Report.** Each entry reports one of these statuses:
    - `complete`;
    - `awaiting_host_reconnect`, with the host's action, such as Claude Code
@@ -306,23 +313,17 @@ dated Codex TLS spike and installed-extension evidence with their original
 artifact identities. Unsupported clients stay blocked; classification completes
 the inventory, not the remaining C2 acceptance.
 
-The failed Code host attempt prepared an additive child CA bundle whose issuer
-matched the native service. A separate read-only Code **1.145.2** extension-host
-probe confirmed that the environment value reached Node and the native issuer
-appeared in its extra/default CA sets. Installed source inspection identifies a
-separate MCP fetch path: its proxy dispatcher supplies bundled and system CAs,
-which omit that extra-only issuer in the tested configuration. This is not an
-environment-propagation failure. The tested default Code path still needs
-reviewed per-user native trust enrollment and actual acceptance afterward;
-neither investigation changed an OS trust store. Do not disable system CA
-support or certificate verification to make the test pass.
+The failed Code host attempt refused the then-current loopback HTTPS
+certificate. Since local trust plan C (23 November 2026) loopback is plain HTTP,
+so that failure class no longer applies; the Code host still needs its own
+acceptance run.
 
 The classification above is dated: since U110 the implemented adapters write
-only the URL and mode header, and the credential-related evidence columns
-describe the earlier configuration. AIRK can refresh its owned endpoint
-definition after native discovery; external clients may require their own
-reload or reconnect. Additive trust only works in a process which received it.
-Existing client processes do not acquire new environment values when a file is
+only the URL and mode header, and since local trust plan C that URL is
+`http://`; the credential- and trust-related evidence columns describe the
+earlier configuration. AIRK can refresh its owned endpoint definition after
+native discovery; external clients may require their own reload or reconnect.
+Existing client processes do not load a new configuration when a file is
 saved.
 
 Recognized owned-file migration preserves comments, other servers, disabled
@@ -332,11 +333,7 @@ user-wide/client-private state need review. No raw token, private key or
 `credential_file` contents belong in tracked files or copied snippets. See the
 [configuration templates](../examples/mcp/README.md).
 
-The extension can prepare additive CA references for **new terminals
-created by that VS Code window**. Existing terminals, separately launched apps,
-headless sessions, SSH/remote hosts and containers do not receive those values
-by saving a project file. Provision and qualify the process which will connect.
-A host cannot reach a container's private loopback merely by copying its URL.
+Qualify the process which will connect. A host cannot reach a container's private loopback merely by copying its URL.
 
 ## Native setup output
 
@@ -355,7 +352,7 @@ A host cannot reach a container's private loopback merely by copying its URL.
 > name clients, scopes, connections or launch are history.
 
 Standalone Windows, macOS and Linux installer support is implemented in source for the CLI and native
-MCP/HTTPS service only. They do not install a VSIX or VS Code extension, run Code
+MCP/HTTP service only. They do not install a VSIX or VS Code extension, run Code
 actions, or require VS Code. The extension remains a separate optional
 distribution. The intended path is native installation, then guided `setup`
 and reviewed client enrollment. Installer signing, native installed journeys and
@@ -383,8 +380,9 @@ app remains inside its signed bundle. Linux remains unsigned by an OS signing
 identity; its GitHub artifact-attestation integration verifies workflow provenance.
 Verify the exact downloaded artifact using the [release verification guide](release-verification.md)
 before running it. Actual signed/notarized installer and published-attestation
-verification remain pending. These installers do not enroll arbitrary OS trust
-or silently replace existing client configuration.
+verification remain pending. These installers install no OS trust and do not
+silently replace existing client configuration; an upgrade from an HTTPS build
+removes only the AIRK CA the old setup installed.
 
 Packaging contracts passed 77/77 and release/site contracts 51/51 with mocked
 platform tools. Those checks do not compile, sign or install an actual installer,
@@ -443,8 +441,7 @@ installer or ejecting its image is not uninstalling the service.
 The native credential owner creates the bearer secret in an owner-protected
 file. Setup returns complete native receipts and references without printing
 the secret. `--launch -- <client-arguments>` starts the selected installed client
-in the foreground with child-only credential variables and an additive CA bundle.
-It does not modify OS trust stores.
+in the foreground with child-only credential variables.
 Claude receives a private per-session MCP configuration; Codex receives a
 per-process AIRK override and `--no-daemon`, so an older shared daemon cannot miss
 the new environment. Existing project files and unrelated client settings remain
@@ -478,25 +475,15 @@ path. Pass `limit_per_index` in `--args`, for example
 writes the user-level file instead of the project's; `--project <folder>` names
 the project folder.
 
-## HTTPS trust and actual verification
+## Actual verification
 
-AI tools validate the certificate normally; they do not ignore a self-signed
-issuer. Native setup verifies the public CA and DER SHA256 fingerprint before
-using an additive client bundle or supported per-user trust store. Existing
-enterprise/public roots remain available. TLS bypass, plain HTTP and an arbitrary
-replacement CA are not supported shortcuts. Normal CA validation is the approved
-guarantee; it does not uniquely pin one issuer when another normally trusted CA
-signs the same endpoint name.
+The endpoint is plain HTTP on `127.0.0.1`: no client trusts a certificate for
+it and no OS trust store changes. The loopback listener, Host and `Origin`
+checks and the Admin browser guard remain; see
+[what still guards the API](local-http-api.md#what-still-guards-the-api).
 
-**AIRK: Trust Local HTTPS Issuer** displays the native fingerprint and store for
-review. The native command checks that digest again before changing Windows
-CurrentUser Root or the current native user's macOS login keychain. Interrupted
-outcomes remain unknown for review; preexisting issuers are never adopted.
-**Remove Owned Local HTTPS Trust** removes only the generated issuer backed by
-its native ownership receipt. Automatic per-user Linux OS-store enrollment is unsupported. For **Linux VS Code MCP**, an administrator must explicitly install the reviewed issuer in the distribution system trust store and the VS Code user's NSS store, following [official network guidance](https://code.visualstudio.com/docs/setup/network#_ssl-certificates). This prerequisite is not implemented automatically or qualified here. A client-specific additive bundle is an implemented path for Codex/Claude; internal AIRK HTTPS success does not qualify external VS Code.
-
-Retry the actual client's connection after provisioning. Hosts can cache trust
-or environment; use their actual result and refresh controls, without claiming a
+Retry the actual client's connection after connecting. Hosts can cache
+configuration or environment; use their actual result and refresh controls, without claiming a
 saved file applied it. Require initialization and `tools/list`, then `status`
 and a scoped read citing an original source path and indexed revision. Deferred
 discovery can delay visibility. A badge, valid config or extension-side probe

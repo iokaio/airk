@@ -300,7 +300,7 @@ class ContainerCheckTests(unittest.TestCase):
                 output = json.dumps({"schema": 3 if split else 2 if modern else 1})
             elif args[0] == "exec" and args[2:] == ("cat", "/data/state/control/http-1/endpoint.json"):
                 self.assertTrue(split)
-                output = json.dumps({"schema":1, "url":"https://127.0.0.1:57421/mcp",
+                output = json.dumps({"schema":1, "url":"http://127.0.0.1:57421/mcp",
                     "service_instance":"44"*16, "user":"10001", "executable_sha256":"55"*32,
                     "namespace":native.namespace})
             elif args[0] == "exec" and args[2] == "/data/install/airk-launcher":
@@ -324,9 +324,7 @@ class ContainerCheckTests(unittest.TestCase):
                     identifier = command[command.index("--connection-id")+1]
                     self.assertEqual(command[command.index("--client")+1], "unknown")
                     self.assertEqual(selection["kind"], "combined")
-                    private = path.rsplit("/",1)[0]
                     output = json.dumps({"schema":1,"connection_id":identifier,"selection":selection,
-                        "credential_file":private+"/credential-"+identifier+".token","ca_certificate_file":private+"/ca.pem",
                         "endpoint":{"service_instance":"44"*16,"user":"10001","executable_sha256":"55"*32,"namespace":native.namespace}})
                 elif command[:2] == ("service", "health"):
                     output = "{}"
@@ -407,11 +405,11 @@ class ContainerCheckTests(unittest.TestCase):
         def mcp(name,install,scope,cli_tool,catalog,records):
             observed_mcp.append(deepcopy(scope["selection"]))
             self.assertTrue(smoke.member_result(cli_tool("airk_symbols",{"response_mode":"full","verification":"off"}),scope))
-        def https(name, control, connection, scope, cli_tool, catalog, records):
+        def http_reads(name, control, connection, scope, cli_tool, catalog, records):
             self.assertTrue(modern)
             if split:
                 self.assertNotIn("selection", connection)
-                self.assertEqual(connection["url"], "https://127.0.0.1:57421/mcp")
+                self.assertEqual(connection["url"], "http://127.0.0.1:57421/mcp")
                 self.assertTrue(scope["open_read"])
             else:
                 self.assertEqual(connection["selection"], {"kind": "combined", "selection": scope["selection"]})
@@ -419,7 +417,7 @@ class ContainerCheckTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             report = Path(folder)/"report.json"
             with patch.object(smoke,"docker",side_effect=docker), patch.object(smoke.subprocess,"run",side_effect=metadata), \
-                 patch.object(smoke,"check_stdio",side_effect=mcp) as stdio, patch.object(smoke,"check_https",side_effect=https) as http, patch("sys.argv",["check-container.py","--report",str(report)]), \
+                 patch.object(smoke,"check_stdio",side_effect=mcp) as stdio, patch.object(smoke,"check_http",side_effect=http_reads) as http, patch("sys.argv",["check-container.py","--report",str(report)]), \
                  contextlib.redirect_stdout(io.StringIO()):
                 smoke.main()
                 if modern:

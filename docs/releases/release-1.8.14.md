@@ -69,7 +69,7 @@ implemented in the working tree to discover/start native service, select or crea
 with explicit source review, and obtain native grant/credential references plus
 client trust/provisioning instructions. Existing-selector setup alone does not
 provide this first-use flow. The [agent guide](../agent-integration.md#standalone-onboarding-without-vs-code)
-and [HTTPS API](../local-https-api.md#obtain-a-connection) distinguish standalone
+and [HTTPS API](../local-http-api.md#obtain-the-endpoint) distinguish standalone
 client environment provisioning from the VS Code resolver; bearer values remain
 in native owner-protected files and never project JSON. Headless use requires
 the native service, not a running VS Code proxy. Rebuilding into a successor
@@ -1118,7 +1118,7 @@ support must be explicit.
 
 ## Distribution status
 
-The [local HTTPS API guide](../local-https-api.md) documents the unpublished
+The [local HTTPS API guide](../local-http-api.md) documents the unpublished
 developer contract, including canonical tool discovery, full JSON results,
 scoped credentials, local CA validation, asynchronous admission and reconnect
 behavior. Native CLI setup returns a setup bundle with configuration and

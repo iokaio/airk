@@ -1,7 +1,7 @@
 # MCP setup templates
 
-MCP clients connect directly to the shared native HTTPS service at
-`https://127.0.0.1:<port>/mcp`. These are format templates, not ready-to-use
+MCP clients connect directly to the shared native service at
+`http://127.0.0.1:<port>/mcp` (plain HTTP on the loopback address). These are format templates, not ready-to-use
 connections. Obtain the actual entry from AIRK (Connect Coding Agent in the
 Explorer or Admin, or `airkctl agents connect`), or replace the URL with the
 live one from `airkctl agents endpoint --output json` (`url`). Never assume the
@@ -26,24 +26,17 @@ cookie on this plane.
   `[mcp_servers.airk.http_headers]`. Codex does not substitute environment
   variables into the URL.
 - `docker.json`: **historical predecessor stdio example only**. It is not a
-  supported shared HTTPS connection. A host cannot reach a container's private
+  supported shared HTTP connection. A host cannot reach a container's private
   loopback listener by reusing the same URL; container or remote deployment
-  needs a separately qualified endpoint and trust.
+  needs a separately qualified endpoint.
 
-## TLS trust is still required
+## No certificate to trust
 
-Removing the token does not relax HTTPS. Certificate validation stays enabled
-and the client must trust the installation's AIRK CA (`<control>/http-1/ca.pem`,
-whose SHA-256 is the endpoint's `ca_sha256`). Add it to the client's existing
-roots: an additive CA bundle such as `NODE_EXTRA_CA_CERTS` or Codex's
-`CODEX_CA_CERTIFICATE`, or per-user OS trust with
-`airkctl service trust inspect` then
-`airkctl service trust install --expected-ca-sha256 <reviewed digest>`.
-VS Code exposes **AIRK: Trust Local HTTPS Issuer** with the actual fingerprint
-for review. Linux has no automatic per-user trust-store path here: an
-administrator must install the exact reviewed issuer in the distribution's
-system store and the user's NSS store. A saved URL alone proves neither trust
-nor a working connection.
+The endpoint is plain HTTP and listens only on 127.0.0.1, so a client needs no
+CA bundle, certificate pin or OS trust-store entry. An older
+`https://127.0.0.1:<port>/mcp` entry is legacy: regenerate it with
+`airkctl agents connect` or replace its URL with the live one. A saved URL
+alone does not prove a working connection.
 
 ## Scope is a per-call parameter
 
@@ -63,8 +56,8 @@ Call `list_scopes` (formerly `list_indexes`) first: it lists the indexes,
 index sets and stored workspace defaults; pass `workspace` to also get the
 matching `workspace_default` (or null).
 
-The raw JSON examples (`../local_https_client.py`, `.cjs`, `.ps1`) follow the
-same rules: they read `<control>/http-1/endpoint.json` and `ca.pem`, send no
+The raw JSON examples (`../local_http_client.py`, `.cjs`, `.ps1`) follow the
+same rules: they read `<control>/http-1/endpoint.json`, send no
 `Authorization` header, and merge `--index` / `--set` / `--workspace` into the
 tool arguments.
 
@@ -73,6 +66,6 @@ qualification gates. Other client schemas remain compatibility blockers until
 verified; do not translate these formats by guessing.
 
 See [agent integration](../../docs/agent-integration.md),
-[local HTTPS API](../../docs/local-https-api.md),
+[local HTTP API](../../docs/local-http-api.md),
 [MCP tools](../../docs/mcp.md) and
 [service setup](../../docs/service-project-setup.md).

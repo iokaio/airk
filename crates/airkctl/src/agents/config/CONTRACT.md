@@ -265,3 +265,21 @@ include it; recognition and removal are unchanged.
 `default`, and `agents list --connection-id`, are removed; an old helper
 command that still names them fails, and `agents repair` (or the extension's
 Reconnect) rewrites the entry to the URL-only form.
+
+## Plain-HTTP endpoints (23 November 2026, local trust plan C, change-log entry 71)
+
+- `connect` and `repair` write only `http://127.0.0.1:<port>/mcp`
+  (`recognize::current_url`); `admin url` prints an `http://` launch URL.
+- `recognize::http_url` accepts that form and the `https://127.0.0.1:<port>/mcp`
+  form an HTTPS build wrote (`recognize::legacy_url`). A legacy entry is still
+  AIRK's by the same key/marker rules and is always `https_endpoint_mismatch`
+  (after stale credential fields, which still come first), whatever the live
+  endpoint is; `repair` rewrites it to the live endpoint. The class and
+  transport wire names (`https_*`, `"https"`) are unchanged identifiers.
+- `HttpsTrustMissing` (`https_trust_missing`) and the `trust_installed`
+  observation are removed; there is no trust to observe. The I2 schema and
+  TypeScript are regenerated.
+
+| Compatibility row | Owner | Test |
+|---|---|---|
+| Recognise an `https://127.0.0.1:<port>/mcp` entry as a legacy AIRK entry, classify it `https_endpoint_mismatch` and let `repair` rewrite it to the current `http://` endpoint | `recognize`, `classify`, `edit` | `agents::config::tests` (config cases "an https entry from an HTTPS build …"), `airk-cli` `tools` `airkctl_agents_connect_list_repair_remove_on_a_live_service` |

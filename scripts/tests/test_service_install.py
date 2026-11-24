@@ -242,7 +242,7 @@ class ServiceInstallCheckTests(unittest.TestCase):
                     if action == "start": return {**health,"instance":"f" * 32}
                     raise AssertionError(arguments)
                 reviewed = SimpleNamespace(reviewed_fixture=lambda rpc, *_args, **_kwargs:(project, selected))
-                endpoint = {"url": "https://127.0.0.1:57421/mcp", "service_instance": health["instance"]}
+                endpoint = {"url": "http://127.0.0.1:57421/mcp", "service_instance": health["instance"]}
                 def validate_endpoint(value, native):
                     if fault == "authority":
                         raise ValueError("endpoint identity changed")

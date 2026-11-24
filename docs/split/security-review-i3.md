@@ -7,7 +7,7 @@ Scope: [contracts](contracts.md) §4.1–§4.10 and [split plan](split-plan.md)
 existing HTTPS listener was read to ground each finding:
 `crates/airk-cli/src/http_gateway.rs`, `crates/airk-cli/src/http_endpoint*`,
 `crates/airk-cli/src/service_runtime/http.rs`,
-`crates/airk-mcp/src/remote/http.rs` and [local HTTPS API](../local-https-api.md).
+`crates/airk-mcp/src/remote/http.rs` and [local HTTPS API](../local-http-api.md).
 No build, test or browser was run. Browser behaviour cited below is the
 reviewer's understanding of current Chromium, Firefox and Safari releases and
 must be confirmed by the real-browser check that §4.10 already requires.

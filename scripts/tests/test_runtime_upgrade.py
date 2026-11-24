@@ -722,7 +722,7 @@ class UpgradeFixtureOwnershipTests(unittest.TestCase):
                 self.assertEqual(args[:2], ("service", "rpc"))
                 self.assertEqual(json.loads(input), "health")
                 return {"observation": {"instance": "same owned service"}}
-            endpoint = {"namespace": "a" * 32, "url": "https://127.0.0.1:57422/mcp"}
+            endpoint = {"namespace": "a" * 32, "url": "http://127.0.0.1:57422/mcp"}
             transport = SimpleNamespace(read_endpoint=mock.Mock(return_value=endpoint),
                 validate_native_identity=mock.Mock(side_effect=RuntimeError("stop after native endpoint boundary")))
             loader = SimpleNamespace(loader=SimpleNamespace(exec_module=lambda module: None))

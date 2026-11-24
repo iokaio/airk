@@ -264,7 +264,7 @@ class RetrievalQualityTests(unittest.TestCase):
         selected = {"namespace": "native", "expected_catalog_revision": 3, "grant_id": "exact", "index_id": "one"}
         health = {"instance": "owner"}
         service = SimpleNamespace(single_image=True, scopes={"fixture": selected}, control=Path("control"), managed_health=health)
-        endpoint = {"url": "https://127.0.0.1:57421/mcp"}
+        endpoint = {"url": "http://127.0.0.1:57421/mcp"}
         service.http_endpoint = Mock(return_value=endpoint)
         service.enroll_http = Mock(side_effect=AssertionError("No credential enrollment"))
         service.rpc = Mock(return_value={"observation": health})

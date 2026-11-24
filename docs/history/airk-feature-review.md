@@ -827,7 +827,7 @@ service, which is then recovered by its OS manager.
 
 **Status: implemented.** Actual client and platform qualification is incomplete
 ([§18](#18-qualification-state-and-known-gaps)). See the
-[local HTTPS API](../local-https-api.md).
+[local HTTPS API](../local-http-api.md).
 
 ### 12.1 Endpoint and relocation
 
@@ -856,7 +856,7 @@ service, which is then recovered by its OS manager.
 ### 12.2 TLS identity
 
 Each installation creates its own private CA
-([`http_endpoint_tls.rs`](../../crates/airk-endpoint/src/http_endpoint/tls.rs)):
+(`http_endpoint_tls.rs` (removed by local trust plan C)):
 
 | Certificate | Key and lifetime | Constraints |
 | --- | --- | --- |
@@ -874,7 +874,7 @@ roots stay in place**. Nothing ever disables validation.
 
 | Client | Mechanism | Evidence |
 | --- | --- | --- |
-| VS Code / Copilot | Per-user OS trust, installed by **AIRK: Trust Local HTTPS Issuer**: Windows `CurrentUser\Root` or the macOS login keychain ([`http_endpoint_trust.rs`](../../crates/airk-endpoint/src/http_endpoint/trust.rs)) | The r25 Code run failed TLS on the extra-CA path. The OS-trust path is approved for one owned Windows run but **not yet exercised** |
+| VS Code / Copilot | Per-user OS trust, installed by **AIRK: Trust Local HTTPS Issuer**: Windows `CurrentUser\Root` or the macOS login keychain (`http_endpoint_trust.rs` (removed by local trust plan C)) | The r25 Code run failed TLS on the extra-CA path. The OS-trust path is approved for one owned Windows run but **not yet exercised** |
 | Claude Code | Additive `NODE_EXTRA_CA_CERTS` bundle | Claude 2.1.118 passed scoped reads, reconnect, additive trust and wrong-issuer rejection on Windows debug |
 | Codex | `CODEX_CA_CERTIFICATE` bundle and `bearer_token_env_var` | A real Codex experiment confirmed the local CA is trusted and an untrusted issuer is rejected before HTTP |
 | Linux OS trust | Unsupported in 1.8.14; needs an administrator | Documented limitation |
@@ -943,7 +943,7 @@ mis-issues a certificate for `127.0.0.1` falls outside this guarantee.
 ### 12.7 Issuer rotation
 
 Rotation is a phased, receipt-backed migration
-([`http_endpoint_rotation.rs`](../../crates/airk-endpoint/src/http_endpoint/rotation.rs)):
+(`http_endpoint_rotation.rs` (removed by local trust plan C)):
 
 1. prepare, which starts a 24-hour overlap;
 2. publish bundles;

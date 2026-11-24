@@ -11,7 +11,7 @@ handler [`admin_plane`](../../../airk-https/src/admin_plane/CONTRACT.md).
 
 ## Interface
 
-- **Constants**: envelope schema `airk-admin/1`, cookie `__Host-airk_admin`,
+- **Constants**: envelope schema `airk-admin/1`, cookie `airk_admin` (`HttpOnly; SameSite=Strict; Path=/`; local trust plan C dropped the `__Host-` prefix and `Secure` for plain-HTTP loopback, since Safari keeps no `Secure` cookie on `http://127.0.0.1`; cookies are not port-scoped, so another local HTTP service on 127.0.0.1 could read or overwrite it, which `HttpOnly` and the server-side session binding limit), origin and launch URL `http://127.0.0.1:<port>`,
   header `x-airk-csrf`, 256-bit secrets as 43-character canonical base64url,
   code TTL 60 s, session idle 30 min / absolute 12 h / ≤ 16, bodies ≤ 1 KiB
   (exchange) and ≤ 64 KiB, responses ≤ 32 MiB, streams ≤ 2 per session and

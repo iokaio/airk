@@ -91,7 +91,7 @@ exports.activate=()=>{let reloading=false;void (async()=>{
  }
  await fs.writeFile(${JSON.stringify(path.join(run,'observed-binding.json'))},JSON.stringify({controlDir:binding.controlDir,executable:binding.executable}));
  async function diagnostics(){
-  const {session}=modern?await require(path.join(extension.extensionPath,'out/mcpHttpSession.js')).McpHttpSession.open({...await require(path.join(extension.extensionPath,'out/serviceHttp.js')).httpMaterial(spec.http),clientName:'installer-acceptance',clientVersion:extension.packageJSON.version},90000):await require(path.join(extension.extensionPath,'out/mcpStdioSession.js')).McpStdioSession.open({command:definition.command,args:definition.args,cwd:path.dirname(definition.command),clientName:'installer-acceptance',clientVersion:extension.packageJSON.version},90000);
+  const {session}=modern?await require(path.join(extension.extensionPath,'out/mcpHttpSession.js')).McpHttpSession.open({url:spec.http.endpoint.url,clientName:'installer-acceptance',clientVersion:extension.packageJSON.version},90000):await require(path.join(extension.extensionPath,'out/mcpStdioSession.js')).McpStdioSession.open({command:definition.command,args:definition.args,cwd:path.dirname(definition.command),clientName:'installer-acceptance',clientVersion:extension.packageJSON.version},90000);
   try{const result=await session.request('tools/call',{name:'diagnostics',arguments:{response_mode:'full'}},90000);assert.notEqual(result.isError,true);return JSON.parse(result.content.find(part=>part.type==='text').text);}finally{session.close();}
  }
  if(${JSON.stringify(previousVersion)}&&!await fs.access(${JSON.stringify(path.join(run,'baseline.json'))}).then(()=>true,()=>false)){

@@ -25,7 +25,7 @@ Release state and qualification evidence are in the
 | Crate | Responsibility | AIRK dependencies |
 |---|---|---|
 | airk-core | Artifact, query, fact and citation contracts; transport-neutral service, catalog and read contracts; storage and embedding traits | None |
-| airk-process | Native owned-process containment and confirmed descendant cleanup, bounded native commands, per-user folders, detached spawn and the OS certificate-trust adapter with its ownership receipt (U84, U90), so `airkctl` and the service share one implementation; no indexing or service policy | None |
+| airk-process | Native owned-process containment and confirmed descendant cleanup, bounded native commands, per-user folders, detached spawn and the remove-only OS certificate-trust adapter that retires the CA an HTTPS build installed (local trust plan C), so `airkctl` and the service share one implementation; no indexing or service policy | None |
 | airk-ingest | Ignore-aware discovery, hashing, native grammars, document extraction and chunking | core, process |
 | airk-store | Content-addressed sources and extractions; authenticated SQLite catalogs, FTS5, postings and graph records; the service registry and index catalog; usage ledgers, durable intents, locks, quotas, relocation and current-object cleanup; Windows optional-asset deletion reuses Process opened-object mutation and default-stream proof | core, process (Windows raw cleanup only) |
 | airk-retrieval | Local ONNX and word-vector inference, the embedded qualified model catalog, mutable DiskANN algorithms and retrieval primitives; process supplies the host's usable physical-core observation for explicit execution fits | core, process |
@@ -100,10 +100,10 @@ flowchart TD
     W -. one at a time .-> F[Short-lived PDF parser child]
 ~~~
 
-- **Ingress.** `airk-cli` owns the loopback listener, the installation-local
-  TLS identity, the protected credential ledger and native scope validation.
+- **Ingress.** `airk-cli` owns the plain-HTTP loopback listener (`127.0.0.1`
+  only; no TLS identity since local trust plan C) and native scope validation.
   `airk-mcp` owns the Streamable HTTP adapter and the canonical read handlers.
-  The [local HTTPS API](local-https-api.md) exposes those same handlers to
+  The [local HTTP API](local-http-api.md) exposes those same handlers to
   local programs. HTTP exposes no lifecycle or index-management commands.
 - **Management.** Bootstrap and management stay on owner-checked IPC. The
   metadata actor is metadata-only and never opens project indexes. Evidence

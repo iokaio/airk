@@ -544,7 +544,7 @@ class LinuxServiceInstaller(unittest.TestCase):
         self.assertEqual(operation["locations"], locations)
         self.assertEqual(operation["requested_by"], "install-sh")
         self.assertEqual(operation["acknowledgements"], {"predecessor_removal": True, "index_reset": True})
-        self.assertEqual(operation["options"], {"login_startup": True, "trust": "skip", "start": True,
+        self.assertEqual(operation["options"], {"login_startup": True, "start": True,
                                                 "delete_indexes": "keep"})
         self.assertEqual(operation["payload_inventory_sha256"], values["INVENTORY_SHA256"])
         self.assertEqual(operation["expires_unix_ms"] - operation["created_unix_ms"], 600000)

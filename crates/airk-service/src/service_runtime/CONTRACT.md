@@ -217,3 +217,17 @@ and `worker_start_during_a_census_fence_is_admission_pending`.
   Agent-plane leases keyed by the native caller, `lease_generation`, catalog
   fences, window and Admin selections, loopback and the Host and `Origin`
   checks.
+
+## Plain-HTTP loopback (23 November 2026, local trust plan C, change-log entry 71)
+
+- The HTTP owner (`service_runtime/http.rs`) binds the retained loopback
+  socket and publishes the endpoint descriptor with no TLS identity: no CA,
+  leaf, renewal or `ca_sha256`/`certificate_sha256`. `refresh` republishes only
+  a changed state. The admin trust inspection and M18 `HttpIssuerRotation` are
+  removed, and startup no longer refuses a pending issuer rotation.
+- Upgrade: `http_endpoint::load_saved` reads an HTTPS build's endpoint record
+  as `SavedEndpoint::Legacy`; the owner keeps its port, uses the next
+  generation and chains `predecessor_digest` to the legacy record's digest
+  (`publish_descriptor` accepts that predecessor). The old CA and TLS files
+  are not touched here: setup's `retire_legacy_trust` step owns them, in the
+  user's session.

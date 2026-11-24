@@ -212,9 +212,9 @@ Pure in `plan.rs`, tested against `fixtures/split/i4/interruptions.json`.
 
 Placing kinds (`install`, `repair`, `upgrade`): `lock` → `retire_predecessors`
 → `drain` → [`--prepare` stops] → `verify_placement` → `write_record` →
-`write_pointer` → `register_login`? → `start`? → `apply_trust` → `close`.
+`write_pointer` → `register_login`? → `retire_legacy_trust` → `start`? → `close`.
 
-Removing kinds: `lock` → `drain` → `unregister_login` → `remove_trust` →
+Removing kinds: `lock` → `drain` → `unregister_login` → `retire_legacy_trust` →
 `remove_pointer` → `remove_record` → `purge_data`? → `close`.
 
 Purge/reset removes contents while retaining the native directory identities
@@ -311,12 +311,28 @@ at the same path is never adopted as the original root.
 - `start`: the installed `airkctl --output json service start` (U94, one
   start implementation). A failure is recorded and reported when the receipt
   closes (`service_not_healthy`, non-zero exit), never hidden.
-- `apply_trust` after the start (the HTTPS issuer exists only after the
-  service's first start; a recorded deviation from the §5.6 table order):
-  `skip` → `trust_declined`; Linux → `trust_unsupported`; otherwise
-  `http_endpoint::trust::manage(Install)` with the OS consent dialog; no
-  issuer yet or a failure → `trust_declined` with the reason.
-- Removals: owned login registration, owned trust (its receipt) and the
+- `retire_legacy_trust` (local trust plan C, 23 November 2026; phase
+  `legacy_trust_retired`), before the start for placing kinds and in place of
+  the old trust removal for removing kinds: `http_endpoint::legacy_trust::retire`
+  over the state root. Setup no longer installs trust (loopback is plain HTTP;
+  `SetupOptions.trust`, `TrustChoice`, `apply_trust`/`remove_trust` and the
+  `trust_applied`/`trust_declined`/`trust_unsupported`/`trust_removed` phases
+  were dropped outright). The retirer removes only the CA an HTTPS build's
+  setup installed: the certificate named by `http-1/user-trust-1.json` in
+  phase `installed`, matched by DER SHA-256, from CurrentUser\Root (Windows)
+  or the login keychain (macOS, `delete-certificate -t -Z`; it may ask, which
+  is why this runs here in the user's session and never in the headless
+  service). Linux never had trust: only files are deleted. A receipt in phase
+  `prepared`/`remove_prepared`, of another user or unreadable is residue: it
+  and `ca.pem` are kept and reported as a leftover. Then `ca.pem`,
+  `tls-identity.json`, `retired-private-key.json`, `user-trust-1.json`,
+  `user-trust-1.lock`, `issuer-rotation.json`, `issuer-rotation.lock` and
+  `rotation-user-trust-preimage.json` are deleted by exact name (links and
+  directories stay; a pending rotation journal is discarded;
+  `issuer-rotations/` is reported, not deleted). A portable installation or no
+  installation records `absent`; a failed removal records `left` with the
+  reason as a leftover and keeps the CA and receipt; it never fails setup.
+- Removals: owned login registration, the legacy trust retirement above and the
   pointer (only when it names this installation) and the record. On macOS
   and Linux, where `airkctl service uninstall` is the uninstaller, the
   `record_removed` step also deletes the placed files: each inventory file
@@ -466,7 +482,8 @@ key/time and live roots, actual native image/inventory/C10 authorize projection.
 Fresh unadmitted valid-TTL requests are reviewable but still require Prepare's
 full preflight before placement; competing unsettled owners refuse. Selectors
 include requested-by, kind, operation-id, inventory-sha256, all five locations,
-login-startup, trust, start, placement-required and completion-required. Each
+login-startup, start, placement-required and completion-required (the `trust`
+selector was removed with the option, local trust plan C). Each
 returns one exact UTF-8 scalar (no BOM/newline/control) on stdout and atomically
 writes fixed owner-private recovery-<selector>.txt beside that same request.
 These derived files grant no independent authority; wrappers read only after

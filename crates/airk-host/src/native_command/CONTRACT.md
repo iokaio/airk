@@ -86,8 +86,9 @@ identities, and several test modules re-run the fixture by its exact name,
 ## Entry points
 
 - Source: `mod.rs`, beside this contract.
-- Callers: `service_manager` (OS lifecycle), `http_endpoint::trust` (user
-  trust store) and `runtime_install::macos_login` (signature and login job
+- Callers: `service_manager` (OS lifecycle), `http_endpoint::legacy_trust`
+  (the remove-only retirement of an HTTPS build's user trust, local trust
+  plan C) and `runtime_install::macos_login` (signature and login job
   observation).
 
 ## Moved (split U90)

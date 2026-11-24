@@ -28,7 +28,7 @@ class UsageHttpTransportTests(unittest.TestCase):
 
     def exercise(self, changed=False):
         selected = {"index_id": "idx_" + "a" * 32}
-        endpoint = {"url": "https://127.0.0.1:57421/mcp"}
+        endpoint = {"url": "http://127.0.0.1:57421/mcp"}
         fixture = SimpleNamespace(single_image=True, scopes={"p": selected}, control=Path("owned"),
             managed_health={"instance": "exact"}, assert_alive=Mock(), http_endpoint=Mock(return_value=endpoint),
             enroll_http=Mock(side_effect=AssertionError("No credential enrollment")),

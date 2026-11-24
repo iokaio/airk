@@ -2,7 +2,7 @@
 """Connect this checkout's Codex project file to the running AIRK service.
 
 Verify one explicitly approved runtime pair, read the service's endpoint and the
-exact manual entry through the pair's `airkctl`, smoke-test the HTTPS endpoint
+exact manual entry through the pair's `airkctl`, smoke-test the loopback HTTP endpoint
 with an explicit per-call read scope and, only with --apply-config, ask
 `airkctl agents connect` to write the project entry. The entry names the live
 endpoint URL only; configuration edits belong to airkctl's safe writer, never
@@ -143,8 +143,8 @@ def verify_runtime(runtime, approved):
             'version': pair['version'], 'main_sha256': pair['airk_sha256']}
 
 
-def https_smoke(connection, control, version, root, collection=None, *, scope=None):
-    """Generic real TLS/MCP verification; this does not execute the Codex client."""
+def http_smoke(connection, control, version, root, collection=None, *, scope=None):
+    """Generic real loopback HTTP/MCP verification; this does not execute the Codex client."""
     http = local_module('local_setup_http', 'http_fixture.py')
     client = http.McpClient(connection, control, 125, scope=scope)
     sequence = 0
@@ -153,21 +153,21 @@ def https_smoke(connection, control, version, root, collection=None, *, scope=No
         sequence += 1
         client.send({'jsonrpc': '2.0', 'id': sequence, 'method': method, 'params': params})
         reply = client.receive(sequence)
-        require('error' not in reply, 'HTTPS MCP protocol refused verification')
+        require('error' not in reply, 'HTTP MCP protocol refused verification')
         return reply['result']
     def call(name, arguments):
         result = request('tools/call', {'name': name, 'arguments': arguments})
-        require(result.get('isError') is not True, 'HTTPS evidence read refused; index/scope remains unchanged')
+        require(result.get('isError') is not True, 'HTTP evidence read refused; index/scope remains unchanged')
         text = next((block['text'] for block in result.get('content', []) if block.get('type') == 'text'), None)
-        require(isinstance(text, str), 'Missing complete HTTPS evidence result')
+        require(isinstance(text, str), 'Missing complete HTTP evidence result')
         return json.loads(text)
     try:
         initialized = request('initialize', {'protocolVersion': '2025-11-25', 'capabilities': {},
                                              'clientInfo': {'name': 'airk-local-build-check', 'version': '1'}})
-        require(initialized.get('serverInfo', {}).get('version') == version, 'HTTPS service version differs from the selected build')
+        require(initialized.get('serverInfo', {}).get('version') == version, 'HTTP service version differs from the selected build')
         client.send({'jsonrpc': '2.0', 'method': 'notifications/initialized'})
         tools = request('tools/list', {})['tools']
-        require({'status', 'search', 'read_file'} <= {tool['name'] for tool in tools}, 'Required HTTPS tools missing')
+        require({'status', 'search', 'read_file'} <= {tool['name'] for tool in tools}, 'Required HTTP tools missing')
         status = call('status', {'response_mode': 'full'})
         require(status.get('index_state') == 'available' and status.get('files', 0) > 0
                 and (collection is None or status.get('collection') == collection), 'Expected saved publication unavailable')
@@ -179,19 +179,19 @@ def https_smoke(connection, control, version, root, collection=None, *, scope=No
                                  'revision': status['publication']['token'], 'max_bytes': 4096,
                                  'verification': 'require', 'response_mode': 'full'})
         require(read.get('hits') and all(hit['citation']['path'] == 'README.md'
-                and hit['citation']['content_hash'] == digest for hit in read['hits']), 'HTTPS README differs from saved local evidence')
+                and hit['citation']['content_hash'] == digest for hit in read['hits']), 'HTTP README differs from saved local evidence')
         words = re.findall(r'[A-Za-z]{5,}', read['hits'][0]['text'])
         require(words, 'README evidence has no suitable lexical term')
         search = call('search', {'query': words[0], 'mode': 'lexical', 'path_prefix': 'README.md',
                                  'limit': 1, 'max_bytes': 2048, 'verification': 'require', 'response_mode': 'full'})
         require(any(hit.get('citation', {}).get('path') == 'README.md' and hit['citation'].get('content_hash') == digest
-                    for hit in search.get('hits', [])), 'HTTPS search did not retain the verified source identity')
-        require((root / 'README.md').read_bytes() == source, 'Source changed during HTTPS verification')
-        return {'transport': 'https', 'service_version': version, 'collection': status.get('collection'),
+                    for hit in search.get('hits', [])), 'HTTP search did not retain the verified source identity')
+        require((root / 'README.md').read_bytes() == source, 'Source changed during HTTP verification')
+        return {'transport': 'http', 'service_version': version, 'collection': status.get('collection'),
                 'publication': status['publication'], 'tool_count': len(tools), 'status': 'passed',
                 'tool_catalog': tools,
                 'read': 'passed', 'search': 'passed', 'source_sha256': digest,
-                'codex_client_execution': 'not_run', 'codex_trust_and_environment': 'not_configured_by_probe'}
+                'codex_client_execution': 'not_run', 'codex_environment': 'not_configured_by_probe'}
     finally:
         client.close()
 
@@ -229,7 +229,7 @@ def setup(runtime, approved, control, root, *, scope, apply_config=False, report
             and isinstance(manual.get('text'), str), 'Native manual entry target differs')
     config = root / '.codex' / 'config.toml'
     before = read_config(config)
-    verification = https_smoke(endpoint, control, version, root, scope=scope)
+    verification = http_smoke(endpoint, control, version, root, scope=scope)
     require(read_config(config) == before, 'Configuration changed during verification; no edit requested')
     outcome = None
     status = 'manual_configuration_ready'
@@ -249,7 +249,7 @@ def setup(runtime, approved, control, root, *, scope, apply_config=False, report
                'manual': manual, 'native_edit': outcome, 'status': status, 'indexed': False,
                'configuration_preimage_sha256': hashlib.sha256(before or b'').hexdigest(),
                'client_environment_loaded': False, 'verification': verification,
-               'limitations': ['The actual Codex client was not executed; AIRK CA trust must be configured in that client.',
+               'limitations': ['The actual Codex client was not executed.',
                                'Manual text uses the current port; regenerate after a service port change.',
                                'Other client configurations are neither inspected nor changed.']}
     if report is not None:

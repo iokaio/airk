@@ -64,7 +64,6 @@ class Stub {
    else if(field=="operation-id") projected=(string)value["operation_id"];
    else if(field=="requested-by") projected=(string)value["requested_by"];
    else if(field=="inventory-sha256") projected=(string)value["payload_inventory_sha256"];
-   else if(field=="trust") projected=(string)((Dictionary<string,object>)value["options"])["trust"];
    else if(field=="kind") projected=(string)value["kind"];
    else projected=(string)((Dictionary<string,object>)value["locations"])[field];
    File.WriteAllText(Path.Combine(folder,"recovery-"+field+".txt"),projected,new UTF8Encoding(false));
@@ -214,7 +213,7 @@ def scenario(root, name, native_exit, path_failure, source_path=None):
         request=json.loads(original.read_bytes())
         request["kind"]="uninstall"
         request["operation_id"]=uuid.uuid4().hex
-        request["options"]={"login_startup":False,"trust":"skip","start":False,"delete_indexes":"keep"}
+        request["options"]={"login_startup":False,"start":False,"delete_indexes":"keep"}
         operation=work / "private/handoff-operation.json"
         raw=(json.dumps(request,ensure_ascii=False,separators=(",",":"))+"\n").encode("utf-8")
         operation.write_bytes(raw)
@@ -254,7 +253,7 @@ def emit_utf8_fixture(root):
     source=source.replace('function NewOperationId: String;\nbegin',"function NewOperationId: String;\nbegin\n  if EmittingUtf8Fixture then begin Result := '"+'0e'*16+"'; Exit; end;")
     prefix='C:'+chr(92)+'Users'+chr(92)+'fixture-'+chr(0xe9)+'-'+''.join(map(chr,[0x65e5,0x672c,0x8a9e]))+'-'+chr(0x1f642)
     destination=str(root/'wrapper_utf8_operation.json').replace("'","''")
-    procedure="procedure EmitUtf8OperationFixture;\nvar\n  Operation: String;\nbegin\n  EmittingUtf8Fixture := True;\n  try\n    Operation := WriteOperation('install', LocationsJson('"+prefix+"\\Programs\\AIRK', '"+prefix+"\\AIRK', '"+prefix+"\\AIRKCache'), '"+'5'*64+"', 'keep', False, False, False, False);\n    if not FileCopy(Operation, '"+destination+"', True) then RaiseException('Cannot retain UTF8 fixture');\n  finally\n    EmittingUtf8Fixture := False;\n  end;\nend;\n\n"
+    procedure="procedure EmitUtf8OperationFixture;\nvar\n  Operation: String;\nbegin\n  EmittingUtf8Fixture := True;\n  try\n    Operation := WriteOperation('install', LocationsJson('"+prefix+"\\Programs\\AIRK', '"+prefix+"\\AIRK', '"+prefix+"\\AIRKCache'), '"+'5'*64+"', 'keep', False, False, False);\n    if not FileCopy(Operation, '"+destination+"', True) then RaiseException('Cannot retain UTF8 fixture');\n  finally\n    EmittingUtf8Fixture := False;\n  end;\nend;\n\n"
     source=source.replace('procedure InitializeWizard;\nbegin',procedure+'procedure InitializeWizard;\nbegin\n  EmitUtf8OperationFixture;')
     path=root/'utf8-source.iss';path.write_text(source,encoding='utf-8')
     result=scenario(root,'unicode-emission',0,False,path)

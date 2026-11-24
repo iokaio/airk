@@ -29,7 +29,10 @@ from `airk_core::service`, which stays the public path for other crates,
 tests and documentation. Inside Core, production code names
 `crate::service_records::<item>`.
 
-`LoopbackMcpUrl` has its original public path under `service_http`. The
+`LoopbackMcpUrl` has its original public path under `service_http`. Since
+local trust plan C it prints and parses `http://127.0.0.1:<port>/mcp` (and
+its `origin` is `http://`); `legacy_https_port` reads the old `https://` form
+for migration only, never as a current endpoint. The
 existing tool-call request byte limit is re-exported from `service`.
 `scope_records` owns the scoped read reference and selection identity
 records. The original `service` and `scoped_reads` paths re-export them.

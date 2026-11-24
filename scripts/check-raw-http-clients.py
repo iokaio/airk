@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Qualify the actual standard-runtime JSON examples against one sealed runtime.
 
-This is a T2 campaign. It starts only a private native fixture and performs no
-OS trust enrollment. MCP GET/SSE coverage remains in native transport tests;
-this receipt qualifies the two raw API routes and explicitly selected reads.
+This is a T2 campaign. It starts only a private native fixture; the endpoint is
+plain loopback HTTP (local trust plan C), so nothing is trusted or enrolled.
+MCP GET/SSE coverage remains in native transport tests; this receipt qualifies
+the two raw API routes and explicitly selected reads.
 
 U110 (split-plan §2.1, contracts §2.11): the endpoint takes no credential.
-The examples read `<control>/http-1/endpoint.json` and `ca.pem` themselves
+The examples read `<control>/http-1/endpoint.json` alone
 (`--control-dir`/`-ControlDir`) and name the fixture index per tool call
 (`--index`/`-Index`); raw, MCP and CLI (`tools call --index`) take the same open
 read path. The receipt keeps its schema; the credential fields of `endpoints`
@@ -59,9 +60,9 @@ def commands():
     if not node or not pwsh:
         raise RuntimeError("All three actual clients are required; Node or PowerShell is missing")
     return {
-        "python": ([sys.executable, str(ROOT / "examples/local_https_client.py")], ("--control-dir", "--tool", "--arguments", "--index", "--workspace")),
-        "node": ([node, str(ROOT / "examples/local_https_client.cjs")], ("--control-dir", "--tool", "--arguments", "--index", "--workspace")),
-        "powershell": ([pwsh, "-NoProfile", "-NonInteractive", "-File", str(ROOT / "examples/local_https_client.ps1")], ("-ControlDir", "-Tool", "-Arguments", "-Index", "-Workspace")),
+        "python": ([sys.executable, str(ROOT / "examples/local_http_client.py")], ("--control-dir", "--tool", "--arguments", "--index", "--workspace")),
+        "node": ([node, str(ROOT / "examples/local_http_client.cjs")], ("--control-dir", "--tool", "--arguments", "--index", "--workspace")),
+        "powershell": ([pwsh, "-NoProfile", "-NonInteractive", "-File", str(ROOT / "examples/local_http_client.ps1")], ("-ControlDir", "-Tool", "-Arguments", "-Index", "-Workspace")),
     }
 
 
@@ -234,20 +235,20 @@ def verify_http_refusal(status, body):
 
 
 def verify_relocated(previous, current):
-    """The endpoint moved and restarted under the same installation authority and CA."""
+    """The endpoint moved and restarted under the same installation authority."""
     before, after = previous, current
     if (type(before.get("generation")) is not int or type(after.get("generation")) is not int
             or before["generation"] <= 0 or after["generation"] <= before["generation"]):
         raise AssertionError("Endpoint generation did not advance across restart")
     if before["url"] == after["url"] or before["service_instance"] == after["service_instance"]:
         raise AssertionError("Endpoint relocation did not restart/relocate")
-    for field in ("schema", "installation", "user", "namespace", "ca_sha256", "executable_sha256"):
+    for field in ("schema", "installation", "user", "namespace", "executable_sha256"):
         if before[field] != after[field]:
-            raise AssertionError("Endpoint relocation changed the native authority or TLS issuer")
+            raise AssertionError("Endpoint relocation changed the native authority")
 
 
 def harness_identity():
-    paths = [ROOT / "examples" / ("local_https_client" + suffix) for suffix in (".py", ".cjs", ".ps1")]
+    paths = [ROOT / "examples" / ("local_http_client" + suffix) for suffix in (".py", ".cjs", ".ps1")]
     paths += [Path(__file__).resolve(), ROOT / "scripts/check-service-clients.py", ROOT / "scripts/http_fixture.py"]
     return {path.relative_to(ROOT).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
 
@@ -289,7 +290,7 @@ def qualify(runtime, report):
             outside = owner / "other"
             outside.mkdir()
             outside_file = outside / "secret.py"
-            secret = "outside_raw_https_scope_sentinel"
+            secret = "outside_raw_http_scope_sentinel"
             outside_file.write_text(secret + "\n", encoding="utf-8")
             outside_original = outside_file.read_bytes()
             fixture = clients.Fixture(runtime, owner)

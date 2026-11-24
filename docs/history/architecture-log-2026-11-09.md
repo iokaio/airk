@@ -20,7 +20,7 @@ records remain historical evidence, not qualification of the current source.
 The CLI crate owns the retained loopback socket, installation-local TLS identity,
 protected credential ledger and native scope validation. The MCP crate owns the
 Streamable HTTP adapter and canonical read handlers; Core owns transport-neutral
-contracts. The [local HTTPS API](../local-https-api.md) exposes those same read
+contracts. The [local HTTPS API](../local-http-api.md) exposes those same read
 handlers to ordinary local programs. CLI, Workbench and MCP preserve their full
 results and exact selected authority. HTTP does not expose private lifecycle or
 index-management commands.

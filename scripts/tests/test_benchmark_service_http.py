@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Owned producer/credential contracts and real isolated TLS; no AIRK execution."""
+"""Owned producer/credential contracts and real isolated loopback HTTP; no AIRK execution."""
 import copy
 from contextlib import ExitStack
 import hashlib
@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import unittest
 from unittest import mock
 
-import test_http_fixture as TLS
+import test_http_fixture as LOOPBACK
 
 
 def load(name, filename):
@@ -89,7 +89,7 @@ class ProducerTests(unittest.TestCase):
         network.close.assert_called_once_with(delete=False)
         self.assertFalse(session.delete_completed)
 
-    def test_tls_establishment_budget_is_released_before_sending_or_execution(self):
+    def test_connection_establishment_budget_is_released_before_sending_or_execution(self):
         network = mock.Mock(session="original-session")
         network.receive.return_value = {"result": {"fixture": True}}
         with mock.patch.object(SERVICE.http_fixture, "McpClient", return_value=network):
@@ -388,17 +388,17 @@ class ProducerTests(unittest.TestCase):
                 VERIFICATION.verify_payload(builder, binary, malformed, {"runtime": malformed})
 
 
-class ActualHttpsTests(unittest.TestCase):
+class ActualHttpTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        TLS.ActualHttpsFixtureTests.setUpClass()
+        LOOPBACK.ActualHttpFixtureTests.setUpClass()
 
     @classmethod
     def tearDownClass(cls):
-        TLS.ActualHttpsFixtureTests.tearDownClass()
+        LOOPBACK.ActualHttpFixtureTests.tearDownClass()
 
-    def test_initialized_real_tls_session_retains_only_hashed_session_identity_and_deletes(self):
-        fixture = TLS.ActualHttpsFixtureTests()
+    def test_initialized_real_http_session_retains_only_hashed_session_identity_and_deletes(self):
+        fixture = LOOPBACK.ActualHttpFixtureTests()
         with fixture.server() as (connection, observed):
             session = SERVICE.HttpSession(connection, fixture.root)
             try:
@@ -413,7 +413,7 @@ class ActualHttpsTests(unittest.TestCase):
             self.assertEqual(sum(method == "DELETE" for method, _ in observed), 1)
 
     def test_new_request_retires_stale_tcp_and_keeps_the_original_tokenless_mcp_session(self):
-        fixture = TLS.ActualHttpsFixtureTests()
+        fixture = LOOPBACK.ActualHttpFixtureTests()
         with fixture.server() as (connection, observed):
             session = SERVICE.HttpSession(connection, fixture.root)
             original_session = session.network.session

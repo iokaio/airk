@@ -11,7 +11,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-import test_http_fixture as TLS
+import test_http_fixture as LOOPBACK
 
 SPEC = importlib.util.spec_from_file_location("benchmark_https", Path(__file__).parents[1] / "benchmark-mcp-investigation.py")
 BENCH = importlib.util.module_from_spec(SPEC)
@@ -21,14 +21,14 @@ SPEC.loader.exec_module(BENCH)
 class BenchmarkHttpsTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        TLS.ActualHttpsFixtureTests.setUpClass()
+        LOOPBACK.ActualHttpFixtureTests.setUpClass()
 
     @classmethod
     def tearDownClass(cls):
-        TLS.ActualHttpsFixtureTests.tearDownClass()
+        LOOPBACK.ActualHttpFixtureTests.tearDownClass()
 
     def test_actual_tls_concurrent_requests_and_one_session_delete_without_frontend(self):
-        fixture = TLS.ActualHttpsFixtureTests()
+        fixture = LOOPBACK.ActualHttpFixtureTests()
         with fixture.server() as (connection, observed):
             config = {"transport":"https", "control":str(fixture.root), "expected_version":"1.8.14"}
             with patch.object(BENCH, "enroll_https", return_value=connection), patch.object(BENCH.subprocess,"Popen",side_effect=AssertionError("no frontend process")):
@@ -59,7 +59,7 @@ class BenchmarkHttpsTests(unittest.TestCase):
                 BENCH.configuration_for_case(config,case)
 
     def test_modern_configuration_rejects_embedded_secret_and_mixed_stdio(self):
-        fixture = TLS.ActualHttpsFixtureTests()
+        fixture = LOOPBACK.ActualHttpFixtureTests()
         config = {"schema":2,"transport":"https","args":[],"route":"isolated-approved-runtime",
                   "control":str(fixture.root),"selection":{"kind":"combined","selection":{"project_ids":["p"]}},
                   "connections_file": str(fixture.root / "frozen-connections.json")}

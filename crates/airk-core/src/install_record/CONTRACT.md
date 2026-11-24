@@ -48,7 +48,8 @@ installation:
   discriminator and `installed_by.installer: "portable"`. This additive
   installer value retains the existing I4 schemas, field order and all prior
   fixture bytes; older closed readers refuse the new value. Portable requests
-  place an installation with login startup disabled, trust skipped and no
+  place an installation with login startup disabled (no trust option since
+  local trust plan C) and no
   automatic start. Generic `airkctl` requests do not imply portable ownership.
   Adapters additionally prove the full approved payload inventory and reject
   every extra program file before adopting an already extracted portable

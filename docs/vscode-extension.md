@@ -106,7 +106,7 @@ publication or copied evidence. Source verification checks saved bytes, not
 unsaved buffers or complete language understanding. The extension never edits
 indexed sources as part of a read, refresh, model setup or upgrade.
 
-Native control, TLS keys and credentials use protected owner-private files.
+Native control and endpoint files use protected owner-private files.
 Index-data privacy is a separate concern: existing public storage/ancestor/ACL
 limits remain visible in native inventory rather than being described as
 private automatically. Copied result cards are a selected subset; complete
@@ -183,8 +183,8 @@ identity, coverage, readiness, continuations and typed retry/refusal details.
 Explicit cards/selections identify their subset. Reading a cached card does not
 establish current source freshness or replay an accepted query/mutation.
 
-Internal evidence sessions use the protected native HTTPS connection with
-explicit Full preparation and additive issuer trust. They do not spawn an AIRK
+Internal evidence sessions use the native loopback HTTP connection with
+explicit Full preparation. They do not spawn an AIRK
 stdio frontend. Explicit single/combined selections and genuine imported legacy
 Workbench scopes keep their exact native authority. Narrowed combined readers
 cannot inherit a wider credential. Administrative index setup/usage controls
@@ -205,7 +205,7 @@ of recognized existing owned files preserves comments, other servers, disabled
 settings, tool approval policies, unsaved edits and compare-before-save checks.
 
 Modern clients connect directly to the actual native
-`https://127.0.0.1:<bound-port>/mcp` URL. An occupied preferred port can cause a
+`http://127.0.0.1:<bound-port>/mcp` URL. An occupied preferred port can cause a
 new saved port. Connection/grant identity, native generation and the actual URL
 remain distinct; a stale endpoint is not assumed to be the same owner.
 
@@ -225,8 +225,8 @@ status bar and Management → Agents.
 
 **Reconnect** asks once, then creates or reuses the index for each recorded
 folder and grants this window access. That grant makes the index the window's
-search scope. It then enrolls HTTPS, rewrites each entry in place and
-provisions trust and the token helper. Each entry reports a typed status. The
+search scope. It then rewrites each entry in place with the endpoint URL and
+mode header. Each entry reports a typed status. The
 finding classes, the steps and the statuses are listed in
 [agent setup](agent-integration.md#reconnecting-after-a-replacement).
 
@@ -261,30 +261,14 @@ project file. See [agent setup](agent-integration.md) and [templates](../example
 Credential-bearing terminal environment collections are nonpersistent: Code must
 not cache the bearer values to disk, including after a later CLI repair.
 
-### Certificate trust
+### Loopback HTTP
 
-Management also exposes complete native HTTPS issuer rotation receipts and an
-explicit reviewed prepare/trust/activate/finalize/abort flow. This window's owned
-client bundles use old/new overlap and exact preimage checks; unrelated roots,
-config scope and original files remain intact. A finalized/aborted transaction
-can retry this window's cleanup without inventing a new operation. External
-hosts and other windows need their own reconnect/read observations. See
-[the rotation contract](local-https-api.md#explicit-issuer-rotation).
-
-HTTPS certificates validate normally; AIRK does not use an insecure-localhost
-flag, disabled certificate verification or plain HTTP. Normal CA validation
-preserves existing trusted roots and does not uniquely pin one issuer.
-**Trust Local HTTPS Issuer** reviews the native public CA fingerprint/store;
-install/remove recheck that digest. **Remove Owned Local HTTPS Trust** preserves
-preexisting or unproven issuers. Interrupted/changed outcomes remain explicit.
-
-Windows CurrentUser Root and macOS native-user login-keychain adapters exist in
-source. Actual cold/running Code trust-cache behavior still needs platform
-qualification: reconnecting or saving config alone does not prove cache refresh.
-Linux automatic per-user OS-store enrollment is unsupported; an administrator
-must provision the exact public issuer in the distro system and VS Code user's
-NSS stores. Internal AIRK HTTPS success is not Linux Code MCP qualification.
-See [official Code guidance](https://code.visualstudio.com/docs/setup/network#_ssl-certificates).
+Since local trust plan C (23 November 2026) the service serves loopback over
+plain HTTP, so the extension has no issuer trust or rotation commands and no
+client CA bundle. An entry left at an HTTPS build's `https://127.0.0.1:<port>/mcp`
+is reported as `https_endpoint_mismatch`; **Reconnect** rewrites it to the
+current `http://` URL and strips old `headersHelper` and bearer fields. See
+[upgrading from an HTTPS build](local-http-api.md#upgrading-from-an-https-build).
 
 ## CLI installation and PATH
 
@@ -322,7 +306,7 @@ terminals and separately launched applications can have different environments.
 it does not delete indexes or stop accepted native work. Extension uninstall
 uses the packaged bounded worker and recorded native ownership; it must retain
 unknown/custom configuration and cleanup uncertainty. Native removal treats
-manager ownership, old process exit, credentials/owned issuer trust and payload
+manager ownership, old process exit, an HTTPS build's owned issuer trust and payload
 cleanup as separate verified steps. Index data and sources are preserved unless
 their separate explicit deletion/purge contracts apply. Do not infer complete
 cleanup from the editor tab closing or an uninstall process starting.
@@ -403,7 +387,7 @@ See [service lifecycle](service-installation.md).
 Current source/TS contracts and dated predecessor results do not establish a
 qualified 1.8.14 release. Final gates include fresh native images/import/model
 checks, actual CLI/MCP/Workbench parity, isolated installed Code and external
-client auth/trust/scope, old-version many-process migration and interruption,
+client connection/scope, old-version many-process migration and interruption,
 Stop/uninstall ownership, final Windows VSIX and signed/notarized Mac Neo tests.
 Preserve actual failures, skips and missing observations in the
 [release record](releases/release-1.8.14.md).

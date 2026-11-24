@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
-"""A bounded actual HTTPS MCP test client, never a deployed proxy or config writer.
+"""A bounded actual HTTP MCP test client, never a deployed proxy or config writer.
 
-U110 (split-plan §2.1, contracts §2.11): the service's loopback HTTPS endpoint
-takes no credential. This client connects with the native endpoint record and
-the installation's AIRK CA only, keeps strict TLS and peer pinning, and never
-sends Authorization. Every session is the service's built-in local agent
+U110 (split-plan §2.1, contracts §2.11): the service's loopback endpoint takes
+no credential. Local trust plan C: it is plain HTTP on 127.0.0.1, so this client
+connects with the native endpoint record alone (no CA, no certificate pin) and
+never sends Authorization. Every session is the service's built-in local agent
 session, so read tools name their scope per call (index_ids, index_set_ids or
 workspace); McpClient can attach a fixed per-call scope for that.
 """
@@ -15,7 +15,6 @@ import json
 import os
 from pathlib import Path
 import re
-import ssl
 import stat
 import time
 import uuid
@@ -65,7 +64,7 @@ def endpoint_of(record):
     return record
 
 
-ENDPOINT_URL = r"https://127\.0\.0\.1:([1-9][0-9]{0,4})/mcp"
+ENDPOINT_URL = r"http://127\.0\.0\.1:([1-9][0-9]{0,4})/mcp"
 MAX_ENDPOINT_BYTES = 65_536
 
 
@@ -92,36 +91,6 @@ def validate_native_identity(connection, health):
             or endpoint["executable_sha256"] != health["executable_sha256"]
             or endpoint["namespace"] != health["catalog_clock"]["namespace"]):
         raise ValueError("HTTP fixture endpoint differs from the authenticated native service")
-
-
-def validate_enrollment(connection, control, selection, connection_id, *, reference_resolver=None):
-    """Legacy (pre-U110) enrollment metadata check, kept for callers that have
-    not moved to read_endpoint. McpClient never reads the credential it names."""
-    if connection.get("schema") != 1 or connection.get("connection_id") != connection_id:
-        raise ValueError("native HTTPS enrollment identity changed")
-    def same(wanted, actual):
-        if isinstance(wanted, dict):
-            return isinstance(actual, dict) and wanted.keys() == actual.keys() and all(
-                (type(wanted[key]) is int and type(actual[key]) is int and actual[key] >= wanted[key])
-                if key == "expected_catalog_revision" else same(wanted[key], actual[key]) for key in wanted)
-        if isinstance(wanted, list):
-            return isinstance(actual, list) and len(wanted) == len(actual) and all(same(a, b) for a, b in zip(wanted, actual))
-        return type(wanted) is type(actual) and wanted == actual
-    if not same(selection, connection.get("selection")):
-        raise ValueError("native HTTPS enrollment changed immutable selection")
-    resolve = reference_resolver or (lambda path: Path(path).resolve(strict=True))
-    private = resolve(control) / "http-1"
-    for field, name in (("credential_file", f"credential-{connection_id}.token"), ("ca_certificate_file", "ca.pem")):
-        if reference_resolver is None:
-            actual = contained_private_path(connection[field], control)
-            matches = actual.samefile(private / name)
-        else:
-            # Remote adapters separately verify filesystem identity in their
-            # container; a host path cannot authenticate that remote namespace.
-            matches = resolve(connection[field]) == resolve(private / name)
-        if not matches:
-            raise ValueError("native HTTPS enrollment reference changed")
-    return connection
 
 
 def contained_private_path(reference, root):
@@ -387,11 +356,12 @@ class McpClient:
     def __init__(self, endpoint, control_root, timeout=125, *, scope=None):
         """endpoint: the tokenless endpoint record (`<control>/http-1/endpoint.json`,
         `airkctl agents endpoint`), or a legacy connection record embedding one.
-        The CA is the record's ca_certificate_file when present, else
-        `<control>/http-1/ca.pem`; either must be an owner-private file under
-        control_root. No credential file is read. scope: optional per-call
-        scope (scope_value keywords) attached to evidence reads that name none;
-        a legacy scoped connection record defaults it to its enrolled index.
+        Its URL must be `http://127.0.0.1:<port>/mcp` (local trust plan C); an
+        old `https` record is refused. control_root is kept for existing
+        callers: plain HTTP reads no CA, certificate or credential file below
+        it. scope: optional per-call scope (scope_value keywords) attached to
+        evidence reads that name none; a legacy scoped connection record
+        defaults it to its enrolled index.
         The 125-second transport default permits the 120-second operation plus
         five seconds of transport overhead; it grants no new native work time.
         An explicit shorter timeout stays the caller's original deadline."""
@@ -402,29 +372,15 @@ class McpClient:
         if (isinstance(selection, dict) and isinstance(selection.get("selection"), dict)
                 and selection["selection"].get("namespace") != endpoint.get("namespace")):
             raise ValueError("HTTP fixture endpoint identity is invalid or unavailable")
-        reference = record.get("ca_certificate_file") if legacy else None
-        ca_file = reference if reference is not None else Path(control_root) / "http-1" / "ca.pem"
-        ca = private_bytes(ca_file, control_root, 8192).decode("ascii")
-        if ca.count("-----BEGIN CERTIFICATE-----") != 1 or ca.count("-----END CERTIFICATE-----") != 1:
-            raise ValueError("HTTP fixture needs exactly one reviewed issuer")
-        if hashlib.sha256(ssl.PEM_cert_to_DER_cert(ca)).hexdigest() != endpoint["ca_sha256"]:
-            raise ValueError("HTTP fixture issuer differs from native control")
         if scope is None and isinstance(selection, dict) and selection.get("kind") == "scoped" \
                 and isinstance(selection["selection"].get("index_id"), str):
             # Bridge for pre-U110 callers that still pass an enrolled
             # single-index connection: read the index it was enrolled for.
             scope = {"index_ids": [selection["selection"]["index_id"]]}
         self.scope = scope_value(**scope) if scope else {}
-        context = ssl.create_default_context()
-        # Exercise the strict checks even on Python releases where they are not the default.
-        context.verify_flags |= ssl.VERIFY_X509_STRICT
-        context.load_verify_locations(cadata=ca)  # Add the local issuer; preserve normal roots/hostname checks.
-        self.connection = http.client.HTTPSConnection("127.0.0.1", port, context=context, timeout=timeout)
-        self._certificate_sha256 = endpoint["certificate_sha256"]
-        self.connection.connect()  # Verify TLS and the native leaf before sending any request bytes.
-        if hashlib.sha256(self.connection.sock.getpeercert(binary_form=True)).hexdigest() != endpoint["certificate_sha256"]:
-            self.connection.close()
-            raise ValueError("HTTP fixture peer differs from native control")
+        # Plain HTTP to the literal loopback address; http.client uses no proxy.
+        self.connection = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
+        self.connection.connect()  # An unreachable endpoint fails before any request bytes.
         self.session = None
         self.initialized = False
         self.protocol = "2025-11-25"
@@ -448,9 +404,6 @@ class McpClient:
             headers["Mcp-Session-Id"] = self.session
         if self.connection.sock is None:
             self.connection.connect()
-        if hashlib.sha256(self.connection.sock.getpeercert(binary_form=True)).hexdigest() != self._certificate_sha256:
-            self.connection.close()
-            raise ValueError("HTTP fixture peer changed before the request")
         self.connection.request(method, path, encoded, headers)
         response = self.connection.getresponse()
         data = response.read(MAX_RESPONSE_BYTES + 1)

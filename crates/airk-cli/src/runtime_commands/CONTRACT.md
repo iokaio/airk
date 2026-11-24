@@ -15,8 +15,10 @@ Observed before repair: public run/run_with inline state was54,920/54,896 bytes,
 
 `airk runtime http-connection`, `http-connection-info`, `http-credential`,
 `http-revoke`, `http-legacy-connection` and `http-legacy-union-connection`
-are removed with enrollment. `http-endpoint`, `http-trust` and
-`http-issuer-rotation` are unchanged (TLS is phase C).
+are removed with enrollment. `http-endpoint` remains. Local trust plan C
+(23 November 2026) removed `http-trust` and `http-issuer-rotation` with
+loopback TLS, and with them every `require_issuer_rotation_settled` guard of
+the installer commands.
 `lookup-http-connection` now requires `--purpose predecessor-cleanup` and
 `--predecessor`: it is the installer's predecessor-cleanup compatibility row
 (`runtime_install::http_cleanup::lookup`); since part 4 it reads no ledger

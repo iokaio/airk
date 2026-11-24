@@ -22,7 +22,7 @@ CONTAINER = load("u110_container_harness", "check-container.py")
 
 class TokenlessHarnessTests(unittest.TestCase):
     def fixture(self):
-        endpoint = {"schema":1, "url":"https://127.0.0.1:57429/mcp", "service_instance":"owned",
+        endpoint = {"schema":1, "url":"http://127.0.0.1:57429/mcp", "service_instance":"owned",
                     "user":"human", "executable_sha256":"a"*64, "namespace":"b"*32}
         health = {"instance":"owned", "user":"human", "executable_sha256":"a"*64,
                   "catalog_clock":{"namespace":"b"*32}}
@@ -103,9 +103,9 @@ class TokenlessHarnessTests(unittest.TestCase):
         import json
         endpoint = self.fixture().http_endpoint.return_value
         manual = [
-            {"client":"claude","scope":"project","file":".mcp.json","format":"json","text":'{"mcpServers":{"airk":{"type":"http","url":"https://127.0.0.1:57429/mcp","headers":{"X-AIRK-Response-Mode":"terse"}}}}'},
-            {"client":"codex","scope":"project","file":".codex/config.toml","format":"toml","text":'[mcp_servers.airk]\nurl = "https://127.0.0.1:57429/mcp"\n[mcp_servers.airk.http_headers]\n"X-AIRK-Response-Mode" = "terse"\n'},
-            {"client":"vscode","scope":"project","file":".vscode/mcp.json","format":"json","text":'{"servers":{"airk":{"type":"http","url":"https://127.0.0.1:57429/mcp","headers":{"X-AIRK-Response-Mode":"terse"}}}}'},
+            {"client":"claude","scope":"project","file":".mcp.json","format":"json","text":'{"mcpServers":{"airk":{"type":"http","url":"http://127.0.0.1:57429/mcp","headers":{"X-AIRK-Response-Mode":"terse"}}}}'},
+            {"client":"codex","scope":"project","file":".codex/config.toml","format":"toml","text":'[mcp_servers.airk]\nurl = "http://127.0.0.1:57429/mcp"\n[mcp_servers.airk.http_headers]\n"X-AIRK-Response-Mode" = "terse"\n'},
+            {"client":"vscode","scope":"project","file":".vscode/mcp.json","format":"json","text":'{"servers":{"airk":{"type":"http","url":"http://127.0.0.1:57429/mcp","headers":{"X-AIRK-Response-Mode":"terse"}}}}'},
         ]
         projected = {**endpoint,"manual":manual}
         fixture = SimpleNamespace(cli=Path("verified-airkctl"), open_service=lambda:(),control=Path("owned"),

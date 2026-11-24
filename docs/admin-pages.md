@@ -1,7 +1,7 @@
 # AIRK admin pages
 
 The AIRK service serves a small management web interface at
-`https://127.0.0.1:<port>/admin/` on its local HTTPS listener (split plan §7,
+`http://127.0.0.1:<port>/admin/` on its loopback HTTP listener (split plan §7,
 contract I3). The listener runs when the service's catalog has been
 initialized; a control root that never completed catalog setup has no
 listener.
@@ -21,12 +21,15 @@ restart ends every session.
 ## How sign-in works
 
 `airkctl` asks the service, over its owner-only control pipe, for a single-use
-code. The page exchanges it once for a session cookie (`__Host-`, `Secure`,
-`HttpOnly`, `SameSite=Strict`) and an anti-forgery token that every call
-carries. Sessions end after 30 idle minutes or 12 hours, on sign-out, or when
+code. The page exchanges it once for the session cookie `airk_admin`
+(`HttpOnly; SameSite=Strict; Path=/`) and an anti-forgery token that every call
+carries. The cookie has no `__Host-` prefix and no `Secure` attribute, because
+Safari keeps no `Secure` cookie on `http://127.0.0.1`. Cookies are not
+port-scoped, so another local HTTP service on 127.0.0.1 could read or overwrite
+it; `HttpOnly` and the server-side session binding limit that. Sessions end after 30 idle minutes or 12 hours, on sign-out, or when
 the service restarts. Bearer tokens are refused on `/admin`, the admin cookie is
-refused on `/mcp` and `/api/v1`, and nothing that returns a credential is ever
-served over HTTP. Since U110 `/mcp` itself takes no token: it strips and ignores
+refused on `/mcp` and `/api/v1`, and every request must carry the exact `Host` and,
+from a browser, the page's own `Origin`. Since U110 `/mcp` itself takes no token: it strips and ignores
 any `Authorization` header, so any local process that can reach 127.0.0.1 can
 read every index.
 
@@ -58,7 +61,7 @@ recovery. Actual CLI/schema definitions remain authoritative for control inputs.
 
 Reads go through the same service handlers as `airkctl`: service health and
 resources, the index list, workers, events, requests, jobs, recovery plans,
-logs, HTTPS trust and rotation status, and agent connection details.
+logs and agent connection details.
 
 Ordinary changes run as `airkctl` runs them: indexing, configuration, retry,
 pause and resume, plan creation, policy resume, revoke, stop and restart. The
@@ -115,15 +118,15 @@ estimates labelled as estimates ("not available" when the service has none)
 and recording health. Changing the recording mode is an `airkctl` command,
 shown ready to copy.
 
-**Agents** shows your MCP endpoint (URL, state and whether Windows trusts the
-service's certificate, with the fix command when it does not), how to connect
+**Agents** shows your MCP endpoint (`http://127.0.0.1:<port>/mcp` and its
+state), how to connect
 an agent automatically (Explorer **Management → Agents** → **Connect**, or
 `airkctl agents connect`), how agents choose their scope (per call with
 `index_ids`, `index_set_ids` or `workspace`; `list_scopes`; the workspace
 default an Explorer window's applied search scope stores), and how to configure
 one by hand: ready-to-copy entries for Claude Code (`.mcp.json`), Codex
 (`config.toml`), VS Code / Copilot (`mcp.json`) and any other MCP client (URL,
-Streamable HTTP), each with its certificate trust step. The snippets contain
+Streamable HTTP); no certificate trust step is needed. The snippets contain
 only the endpoint URL and the `X-AIRK-Response-Mode` header, the same entries
 `airkctl agents connect` writes; no token, credential or connection id is
 involved (U110).

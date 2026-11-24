@@ -233,8 +233,9 @@ outer payload inventory, actual listed files and C10 before running native setup
 Unlisted program files are refused. Existing canonical I4 metadata can identify a
 damaged installation for repair without manufacturing a `Verified` discovery.
 The native owner admits the exact inventory/root proofs and publishes its copy of
-the inventory under the setup lock. The source is `airkctl-portable`; login,
-trust installation and automatic start are disabled. Predecessor removal and
+the inventory under the setup lock. The source is `airkctl-portable`; login
+startup and automatic start are disabled (there is no trust option since local
+trust plan C). Predecessor removal and
 index reset require their separate supported review flow. Success returns the
 existing generated `SetupReceiptObservation` for the exact operation after full
 I4 discovery and successful receipt observation. Failure retains and reports the

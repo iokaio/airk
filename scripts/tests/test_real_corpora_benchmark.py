@@ -797,19 +797,14 @@ for line in sys.stdin:
 
 
 
-    def test_current_session_uses_real_tls_native_identity_scope_and_owned_disconnect(self):
-        spec = importlib.util.spec_from_file_location('corpus_actual_tls_test', Path(__file__).with_name('test_http_fixture.py'))
+    def test_current_session_uses_real_http_native_identity_scope_and_owned_disconnect(self):
+        spec = importlib.util.spec_from_file_location('corpus_actual_http_test', Path(__file__).with_name('test_http_fixture.py'))
         helper = importlib.util.module_from_spec(spec); spec.loader.exec_module(helper)
-        if not helper.OPENSSL:
-            self.skipTest('OpenSSL required for actual private TLS')
-        actual = helper.ActualHttpsFixtureTests
+        actual = helper.ActualHttpFixtureTests
         actual.setUpClass()
         try:
             with actual().server() as (connection, observed):
-                # Tokenless native discovery uses the current fixed CA location.
-                private = actual.root / 'http-1'
-                private.mkdir()
-                (private / 'ca.pem').write_bytes(Path(connection['ca_certificate_file']).read_bytes())
+                # Tokenless native discovery reads the endpoint alone (local trust plan C: no CA).
                 health = {'instance':'service','user':'owned-user','runtime_sha256':'a'*64,
                           'executable_sha256':'b'*64,'catalog_clock':{'namespace':connection['endpoint']['namespace']}}
                 connection['endpoint'].update(service_instance=health['instance'],user=health['user'],executable_sha256=health['executable_sha256'])

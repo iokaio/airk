@@ -43,7 +43,8 @@ Each folder must belong to your account, must not be writable by others and
 must not be a link; setup refuses folders that hold other content.
 
 Login startup is one systemd user unit (skip it with --no-login-startup).
-Certificate trust for the HTTPS admin pages is not automatic on Linux. When
+The service and its admin pages use plain HTTP on 127.0.0.1; there is no
+certificate to trust. When
 ~/.local/bin exists, install.sh adds an airkctl link there and records that it
 owns it; otherwise it prints the airkctl path. No shell startup file is edited.
 
@@ -65,8 +66,7 @@ not uninstall AIRK Service.
 Requirements: Linux x86-64, a POSIX shell and GNU coreutils/findutils.
 No Python, jq, network download or editor is required by this installer.
 
-Headless --silent never reads stdin or asks for certificate trust. Trust is
-skipped; request it later through the native interactive consent flow. A setup
+Headless --silent never reads stdin. A setup
 or PATH/link failure exits nonzero and prints a persistent private recovery
 folder containing the original request and verified setup image. Preserve it
 and check service status before attempting recovery. Resume with the exact same

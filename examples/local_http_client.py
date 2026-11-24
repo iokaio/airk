@@ -1,17 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Read AIRK's local JSON API using the endpoint and CA the native service publishes.
+"""Read AIRK's local JSON API using the endpoint record the native service publishes.
 
-No token is needed (U110). TLS with the installation's AIRK CA is still required,
-and read tools need a scope per call: --index/--set or --workspace.
+The endpoint is plain HTTP on 127.0.0.1 and takes no token (U110). Read tools
+need a scope per call: --index/--set or --workspace.
 """
 import argparse
-import hashlib
 import http.client
 import json
 import os
 from pathlib import Path
 import re
-import ssl
 import stat
 
 MAX_REPLY = 1024 * 1024
@@ -63,17 +61,9 @@ def query(control_dir, tool=None, arguments=None):
     endpoint = json.loads(private_bytes(str(native / "endpoint.json"), 64 * 1024))
     if endpoint.get("schema") != 1 or endpoint.get("state") != "ready":
         raise ValueError("The native endpoint is not ready; start the AIRK service")
-    match = re.fullmatch(r"https://127\.0\.0\.1:([1-9][0-9]{0,4})/mcp", endpoint.get("url", ""))
+    match = re.fullmatch(r"http://127\.0\.0\.1:([1-9][0-9]{0,4})/mcp", endpoint.get("url", ""))
     if not match or not 1 <= int(match[1]) <= 65535:
         raise ValueError("Invalid loopback endpoint")
-    pem = private_bytes(str(native / "ca.pem"), 8192).decode("ascii")
-    if pem.count("-----BEGIN CERTIFICATE-----") != 1:
-        raise ValueError("Expected the native installation's single CA certificate")
-    der = ssl.PEM_cert_to_DER_cert(pem)
-    if hashlib.sha256(der).hexdigest() != endpoint.get("ca_sha256"):
-        raise ValueError("Native CA identity changed")
-    context = ssl.create_default_context()
-    context.load_verify_locations(cadata=pem)  # Add trust; preserve normal roots and IP verification.
     route, method, body = "/api/v1/tools", "GET", None
     headers = {}  # U110: no Authorization header.
     if tool is not None:
@@ -84,9 +74,9 @@ def query(control_dir, tool=None, arguments=None):
         if len(body) > 65536:
             raise ValueError("Request exceeds the transport budget")
         headers["Content-Type"] = "application/json"
-    client = http.client.HTTPSConnection("127.0.0.1", int(match[1]), context=context, timeout=125)
+    # Plain HTTP to the literal loopback address: no proxy, no redirects followed.
+    client = http.client.HTTPConnection("127.0.0.1", int(match[1]), timeout=125)
     try:
-        client.connect()  # Validate TLS before sending the request. No redirects are followed.
         client.request(method, route, body=body, headers=headers)
         response = client.getresponse()
         data = response.read(MAX_REPLY + 1)
@@ -100,7 +90,7 @@ def query(control_dir, tool=None, arguments=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--control-dir", required=True,
-                        help="Absolute AIRK service control directory (holds http-1/endpoint.json and http-1/ca.pem)")
+                        help="Absolute AIRK service control directory (holds http-1/endpoint.json)")
     parser.add_argument("--tool", help="Omit to list supported tools and complete schemas")
     parser.add_argument("--arguments", default="{}", help="JSON argument object")
     parser.add_argument("--index", action="append", default=[], help="Index id or name (repeatable); sent as index_ids")

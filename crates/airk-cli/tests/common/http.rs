@@ -139,7 +139,7 @@ pub struct HttpMcpSession {
     mode: Option<String>,
 }
 impl HttpMcpSession {
-    /// TLS only: no enrollment and no credential. The caller explicitly sends
+    /// Plain HTTP only: no enrollment and no credential. The caller explicitly sends
     /// initialize/initialized; its `clientInfo` names the client family.
     pub fn start(control: &Path, scope: Scope) -> Result<Self> {
         Self::start_with_mode(control, scope, Some("full"))
@@ -147,7 +147,7 @@ impl HttpMcpSession {
     pub fn start_with_mode(control: &Path, scope: Scope, mode: Option<&str>) -> Result<Self> {
         Self::start_inner(control, scope, mode, None)
     }
-    /// Explicit fresh TLS/MCP transport after an observed catalog boundary on
+    /// Explicit fresh HTTP/MCP transport after an observed catalog boundary on
     /// the same endpoint. Never replays a read.
     pub fn reconnect(&self, control: &Path) -> Result<Self> {
         let fresh = Self::start_inner(

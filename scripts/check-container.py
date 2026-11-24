@@ -287,10 +287,29 @@ def open_container_endpoint(name, control, records):
     return endpoint
 
 
+def validate_predecessor_enrollment(connection, selection, connection_id):
+    """The schema-2 predecessor enrollment names this exact connection and selection.
+
+    Local trust plan C retired its credential and CA files: nothing here or in
+    the test client reads them. A predecessor still publishes an `https`
+    endpoint, which the plain-HTTP client refuses (fail closed)."""
+    if connection.get("schema") != 1 or connection.get("connection_id") != connection_id:
+        raise ValueError("native HTTP enrollment identity changed")
+    def same(wanted, actual):
+        if isinstance(wanted, dict):
+            return isinstance(actual, dict) and wanted.keys() == actual.keys() and all(
+                (type(wanted[key]) is int and type(actual[key]) is int and actual[key] >= wanted[key])
+                if key == "expected_catalog_revision" else same(wanted[key], actual[key]) for key in wanted)
+        if isinstance(wanted, list):
+            return isinstance(actual, list) and len(wanted) == len(actual) and all(same(a, b) for a, b in zip(wanted, actual))
+        return type(wanted) is type(actual) and wanted == actual
+    if not same(selection, connection.get("selection")):
+        raise ValueError("native HTTP enrollment changed immutable selection")
+    return connection
+
+
 def enroll_container_http(name, install, control, selection, identifier, records, *, split=False):
     """One public installer submission using an owned in-container input file."""
-    spec = importlib.util.spec_from_file_location("container_native_setup", Path(__file__).with_name("http_fixture.py"))
-    helper = importlib.util.module_from_spec(spec); spec.loader.exec_module(helper)
     until = time.monotonic() + 60
     payload = json.dumps(selection, separators=(",", ":"))
     assert len(payload.encode()) <= 49152
@@ -311,10 +330,7 @@ def enroll_container_http(name, install, control, selection, identifier, records
         response = docker("exec", name, *native, timeout=clients.remaining(until,60))
         record["enrollment"] = {"exit_code":response.returncode,"stdout":response.stdout,"stderr":response.stderr}
         connection = json.loads(response.stdout)
-        # Filesystem/CA validation occurs inside the container in check_https;
-        # the host must not pretend Path.resolve authenticates container files.
-        return helper.validate_enrollment(connection, control, selection, identifier,
-                                          reference_resolver=PurePosixPath)
+        return validate_predecessor_enrollment(connection, selection, identifier)
     finally:
         cleanup = "import os,sys,hashlib; p=sys.argv[1]; f=os.open(p,os.O_RDONLY|os.O_NOFOLLOW); m=os.fstat(f); b=os.read(f,49153); n=os.stat(p,follow_symlinks=False); assert m.st_uid==os.getuid() and m.st_nlink==1 and (m.st_dev,m.st_ino)==(n.st_dev,n.st_ino) and hashlib.sha256(b).hexdigest()==sys.argv[2]; os.unlink(p); os.close(f)"
         docker("exec",name,"python3","-c",cleanup,path,hashlib.sha256(payload.encode()).hexdigest(),timeout=5)
@@ -414,7 +430,7 @@ def check_mcp(exchange, notify, scope, cli_tool, catalog, records):
     assert logical_result(actual_denial, scope, refused=True) == logical_result(expected_denial, scope, refused=True), "CLI/MCP refusal data differs"
 
 
-def check_https(name, control, connection, scope, cli_tool, catalog, records):
+def check_http(name, control, connection, scope, cli_tool, catalog, records):
     """Run the actual test client in the service's loopback namespace.
 
     Python exists only in Docker's explicit smoke stage. No AIRK frontend,
@@ -455,10 +471,10 @@ finally:
     def notify(message):
         process.stdin.write(json.dumps(message) + "\n"); process.stdin.flush()
     def raw(message, timeout=60):
-        record = {"transport": "https", "input": message}; records.append(record)
+        record = {"transport": "http", "input": message}; records.append(record)
         notify(message)
         line = responses.get(timeout=timeout)
-        assert line is not None, "Owned container HTTPS test client exited before its reply"
+        assert line is not None, "Owned container HTTP test client exited before its reply"
         reply = json.loads(line)
         record["output"] = reply
         return reply
@@ -491,10 +507,10 @@ finally:
             process.wait(timeout=15)
         except subprocess.TimeoutExpired:
             process.kill(); process.wait(timeout=10)
-            raise AssertionError("Owned container HTTPS test client failed to exit") from None
+            raise AssertionError("Owned container HTTP test client failed to exit") from None
         errors = process.stderr.read(65_537)
-        records.append({"transport": "https-client-exit", "exit_code": process.returncode, "stderr": errors})
-        assert len(errors) <= 65_536 and process.returncode == 0, "Owned container HTTPS test client failed"
+        records.append({"transport": "http-client-exit", "exit_code": process.returncode, "stderr": errors})
+        assert len(errors) <= 65_536 and process.returncode == 0, "Owned container HTTP test client failed"
 
 
 def evidence_requests(scope):
@@ -673,7 +689,7 @@ def main():
                 helper_spec = importlib.util.spec_from_file_location("container_http_identity", Path(__file__).with_name("http_fixture.py"))
                 helper = importlib.util.module_from_spec(helper_spec); helper_spec.loader.exec_module(helper)
                 helper.validate_native_identity(connection, rpc("health")["observation"])
-                check_https(name, control, connection, scope, cli_read, catalog, records)
+                check_http(name, control, connection, scope, cli_read, catalog, records)
             else:
                 check_stdio(name, install, scope, cli_read, catalog, records)
         assertions("project-a"); assertions("project-b")

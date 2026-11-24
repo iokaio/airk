@@ -11,7 +11,7 @@ Current command behavior after split Phase 4 ([split plan](split/split-plan.md) 
 ## Native and unified catalogs
 
 `airkctl tools list --json` describes the selected connection. CLI
-`tools list/help/call/shell` and public HTTPS share
+`tools list/help/call/shell` and the local HTTP API share
 the 29-tool unified catalog, public aliases and argument validation. Its 19 native
 evidence/help/plan/scope operations are a backend subset; `projects` and nine
 Assistance operations retain their distinct connection/proposal authority. A
@@ -141,7 +141,6 @@ For a relationship investigation, a returned type/impl ID may provide bounded as
 - [airkctl service](#airkctl-service)
 - [airkctl service abandon-lifecycle](#airkctl-service-abandon-lifecycle)
 - [airkctl service health](#airkctl-service-health)
-- [airkctl service issuer-rotation](#airkctl-service-issuer-rotation)
 - [airkctl service logs](#airkctl-service-logs)
 - [airkctl service prepare-configuration](#airkctl-service-prepare-configuration)
 - [airkctl service prepare-registration](#airkctl-service-prepare-registration)
@@ -160,7 +159,6 @@ For a relationship investigation, a returned type/impl ID may provide bounded as
 - [airkctl service start](#airkctl-service-start)
 - [airkctl service status](#airkctl-service-status)
 - [airkctl service stop](#airkctl-service-stop)
-- [airkctl service trust](#airkctl-service-trust)
 - [airkctl session](#airkctl-session)
 - [airkctl settings](#airkctl-settings)
 - [airkctl setup-model](#airkctl-setup-model)
@@ -221,7 +219,7 @@ Usage: airkctl agents connect [OPTIONS] --client <CLIENT>
 
 ## airkctl agents endpoint
 
-**Purpose:** Read the owner-authenticated local HTTPS endpoint without enrolling a client.
+**Purpose:** Print the loopback HTTP endpoint record (`url` is `http://127.0.0.1:<port>/mcp`) without enrolling a client.
 
 **Behavior and developer use:** Prints the document `runtime http-endpoint` printed. It issues no credential.
 
@@ -708,7 +706,7 @@ Usage: airkctl search [OPTIONS] <QUERY>
 
 ## airkctl service
 
-**Purpose:** The AIRK service: start, stop, restart, status, health, logs, trust, registration, saved requests and raw management requests
+**Purpose:** The AIRK service: start, stop, restart, status, health, logs, registration, saved requests and raw management requests
 
 **Behavior and developer use:** Command group: choose a child listed below or run --help. The group itself does not run all child operations.
 
@@ -741,18 +739,6 @@ Usage: airkctl service health [OPTIONS]
 ```
 
 **Implementation:** [service.rs](../crates/airkctl/src/service.rs). Full options: [parser reference](cli-reference.md#airkctl-service-health).
-
-## airkctl service issuer-rotation
-
-**Purpose:** The saved HTTPS issuer rotation and current endpoint (status only in this version).
-
-**Behavior and developer use:** `status` prints what the status action of `runtime http-issuer-rotation` printed, read from the running service. Other rotation actions are not served yet.
-
-```text
-Usage: airkctl service issuer-rotation [OPTIONS] <ACTION>
-```
-
-**Implementation:** [rotation.rs](../crates/airkctl/src/rotation.rs). Full options: [parser reference](cli-reference.md#airkctl-service-issuer-rotation).
 
 ## airkctl service logs
 
@@ -971,18 +957,6 @@ Usage: airkctl service stop [OPTIONS]
 ```
 
 **Implementation:** [lifecycle.rs](../crates/airkctl/src/lifecycle.rs). Full options: [parser reference](cli-reference.md#airkctl-service-stop).
-
-## airkctl service trust
-
-**Purpose:** This installation's HTTPS issuer in your OS trust store; works while the service is down.
-
-**Behavior and developer use:** `inspect` prints the reviewed issuer digest; `install` and `remove` need it as --expected-ca-sha256, and the OS may ask you to confirm. Replaces `runtime http-trust`.
-
-```text
-Usage: airkctl service trust [OPTIONS] <ACTION>
-```
-
-**Implementation:** [trust.rs](../crates/airkctl/src/trust.rs). Full options: [parser reference](cli-reference.md#airkctl-service-trust).
 
 ## airkctl session
 
@@ -1232,7 +1206,7 @@ Usage: airkctl watch [OPTIONS] <MODE>
 
 `airk serve --runtime-dir` became the private role `airk __airk_role service-foreground --runtime-dir <dir>`, for development, tests and external supervisors; it is not a user interface. As an interim state (U93, not shippable until Phase 7), the pre-split `runtime …`, `setup`, `uninstall`, `host` and `service legacy …` operations are reachable only as `airk __airk_role setup-interim <arguments>` until the Phase 7 setup role and installer replace them. Retired: `mcp`, `bridge`, `service session`, `service console`, `explorer-assistance`, `runtime launch` and the universal launcher.
 
-Renamed in `airkctl`: `runtime http-*` became `agents …` and `service trust`/`service issuer-rotation`; `setup` enrollment became `agents connect`; `runtime lifecycle` became `service stop`/`service restart`; `runtime inspect` and `runtime diagnose` became `service status`.
+Renamed in `airkctl`: `runtime http-*` became `agents …` (`runtime http-trust` and `http-issuer-rotation`, and their later `service trust`/`service issuer-rotation`, were removed with loopback TLS by local trust plan C on 23 November 2026); `setup` enrollment became `agents connect`; `runtime lifecycle` became `service stop`/`service restart`; `runtime inspect` and `runtime diagnose` became `service status`.
 
 ## Changing a command safely
 

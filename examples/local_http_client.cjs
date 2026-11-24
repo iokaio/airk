@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
-// Node 24+: read AIRK's local JSON API from the native endpoint and CA files.
-// No token (U110); TLS with the AIRK CA is required and reads need a scope:
+// Node 24+: read AIRK's local JSON API from the native endpoint record.
+// Plain HTTP on 127.0.0.1 with no token (U110); reads need a scope:
 // --index/--set (repeatable) or --workspace.
 'use strict';
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const https = require('node:https');
-const tls = require('node:tls');
-const { X509Certificate, createHash } = require('node:crypto');
+const http = require('node:http');
 const MAX_REPLY = 1024 * 1024;
 
 async function privateBytes(filename, maximum) {
@@ -50,12 +48,8 @@ async function query(controlDir, tool, arguments_ = {}) {
     const native = path.join(controlDir, 'http-1');
     const endpoint = JSON.parse((await privateBytes(path.join(native, 'endpoint.json'), 64 * 1024)).toString('utf8'));
     if (endpoint?.schema !== 1 || endpoint.state !== 'ready') throw new Error('The native endpoint is not ready; start the AIRK service');
-    const match = /^https:\/\/127\.0\.0\.1:([1-9][0-9]{0,4})\/mcp$/.exec(endpoint.url);
+    const match = /^http:\/\/127\.0\.0\.1:([1-9][0-9]{0,4})\/mcp$/.exec(endpoint.url);
     if (!match || Number(match[1]) > 65535) throw new Error('Invalid loopback endpoint');
-    const pem = await privateBytes(path.join(native, 'ca.pem'), 8192);
-    if ((pem.toString('ascii').match(/-----BEGIN CERTIFICATE-----/g) || []).length !== 1) throw new Error('Expected one native CA certificate');
-    const ca = new X509Certificate(pem);
-    if (!ca.ca || createHash('sha256').update(ca.raw).digest('hex') !== endpoint.ca_sha256) throw new Error('Native CA identity changed');
     let route = '/api/v1/tools', body;
     if (tool !== undefined) {
         if (!/^[A-Za-z0-9_]{1,64}$/.test(tool) || !arguments_ || typeof arguments_ !== 'object' || Array.isArray(arguments_)) throw new Error('Use an advertised tool and JSON argument object');
@@ -64,10 +58,10 @@ async function query(controlDir, tool, arguments_ = {}) {
         if (body.length > 65536) throw new Error('Request exceeds transport budget');
     }
     return new Promise((resolve, reject) => {
-        // Explicit CA is additive to Node's effective default roots, including
-        // configured enterprise roots. IP/name/validity checks remain enabled.
-        const request = https.request({ hostname: '127.0.0.1', port: Number(match[1]), path: route, method: body ? 'POST' : 'GET',
-            ca: [...tls.getCACertificates('default'), pem], rejectUnauthorized: true, agent: false, maxHeaderSize: 65536,
+        // Plain HTTP straight to the literal loopback address. agent:false
+        // keeps one owned connection and no environment proxy is consulted.
+        const request = http.request({ hostname: '127.0.0.1', port: Number(match[1]), path: route, method: body ? 'POST' : 'GET',
+            agent: false, maxHeaderSize: 65536,
             headers: body ? { 'Content-Type': 'application/json', 'Content-Length': body.length } : {} }); // U110: no Authorization header.
         const timer = setTimeout(() => request.destroy(new Error('Request deadline exhausted')), 125000);
         const done = (error, result) => { clearTimeout(timer); if (error) reject(error); else resolve(result); };
@@ -78,8 +72,7 @@ async function query(controlDir, tool, arguments_ = {}) {
             response.once('error', error => done(error));
             response.once('end', () => { try { done(undefined, { status: response.statusCode, result: JSON.parse(Buffer.concat(chunks).toString('utf8')) }); } catch (error) { done(error); } });
         });
-        // HTTPS waits for authenticated TLS before sending the request. No
-        // proxy, redirect following, automatic retry or MCP session is involved.
+        // No proxy, redirect following, automatic retry or MCP session is involved.
         request.end(body);
     });
 }
@@ -106,4 +99,4 @@ async function main(argv) {
     return status === 200 && !result?.isError ? 0 : 1;
 }
 module.exports = { query, scoped };
-if (require.main === module) main(process.argv.slice(2)).then(code => { process.exitCode = code; }, () => { process.stderr.write('AIRK local HTTPS read failed; check the service control directory, AIRK CA and native status.\n'); process.exitCode = 1; });
+if (require.main === module) main(process.argv.slice(2)).then(code => { process.exitCode = code; }, () => { process.stderr.write('AIRK local HTTP read failed; check the service control directory and native status.\n'); process.exitCode = 1; });

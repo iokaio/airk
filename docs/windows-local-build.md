@@ -4,7 +4,7 @@ The current local manual-test working version is **1.8.14**. Its [working-build 
 
 The [1.8.7 predecessor record](releases/release-1.8.7.md) consolidates the earlier unpublished 1.8.0-1.8.6 work and retains its dated preparation and publication evidence. At that preparation checkpoint, the stable version was [1.7.6](releases/release-1.7.6.md). These and the prior 1.4.x build records retain their original scope.
 
-Version 1.8.14 uses one native executable with embedded MiniLM and static CPU ONNX Runtime. MCP clients connect to the service's authenticated loopback HTTPS endpoint; there is no persistent launcher or semantic helper process. Native index/source workers still have their existing process isolation. The Windows service manager starts the approved main image directly. See [local HTTPS endpoints](local-https-api.md) for credentials, CA trust, discovery and port fallback.
+Version 1.8.14 uses one native executable with embedded MiniLM and static CPU ONNX Runtime. MCP clients connect to the service's loopback HTTP endpoint (`http://127.0.0.1:<port>/mcp`); there is no persistent launcher or semantic helper process. Native index/source workers still have their existing process isolation. The Windows service manager starts the approved main image directly. See the [local HTTP API](local-http-api.md) for discovery, port fallback and the guards that remain.
 
 Recognized existing agent configurations can migrate only when their original saved authority and configuration preimage are verified. Ambiguous configurations require review; migration must not invent a grant or narrow a multi-project connection to the active folder. Restart external clients after their connection changes. Serialization tests are not installed-client qualification; retain actual editor and platform results separately.
 
@@ -18,15 +18,14 @@ python scripts/setup-local-test.py --runtime-dir <verified-runtime> --approved-s
 
 It verifies the approved inventory, then runs only the pair's `airkctl agents
 endpoint` and `agents manual --client codex --project <checkout>`, and smoke-tests
-the HTTPS endpoint with the named scope on every read (`--workspace-default`
+the HTTP endpoint with the named scope on every read (`--workspace-default`
 reads the checkout's existing workspace default instead; it creates none).
 Without `--apply-config` it prints the exact manual entry and changes nothing.
 With it, the script asks `airkctl agents connect --client codex --project
 <checkout>` to write the project entry (the endpoint URL and the response-mode
 header only), keeps the complete native outcome, and never retries an uncertain
 one. It creates no index, selection, registration, credential or enrollment,
-does not edit configuration itself, does not configure the actual Codex host's
-CA trust, and never touches user-level configuration or other clients' files.
+does not edit configuration itself and never touches user-level configuration or other clients' files.
 The earlier single-helper, connection-enrollment and launcher-cleanup forms
 were removed with the credential (local trust plan, phase B).
 
@@ -97,7 +96,7 @@ For constrained-CPU checks against a newly built runtime, `scripts/ci-local.ps1`
 
 ## Connect this checkout for local agent testing
 
-Use **Connect Coding Agent** after explicitly reviewing index setup and search scope. The current setup publishes an HTTPS URL and a protected credential reference, preserves other server settings, and explains local CA trust. Do not create a new stdio launch entry for 1.8.14. The native CLI, Workbench and MCP share the same reviewed authority and complete read contracts. See [service project setup](service-project-setup.md) and [local HTTPS endpoints](local-https-api.md).
+Use **Connect Coding Agent** after explicitly reviewing index setup and search scope. The current setup writes the `http://127.0.0.1:<port>/mcp` URL and the response-mode header and preserves other server settings; no certificate trust step is needed. Do not create a new stdio launch entry for 1.8.14. The native CLI, Workbench and MCP share the same reviewed authority and complete read contracts. See [service project setup](service-project-setup.md) and the [local HTTP API](local-http-api.md).
 
 ## Review in an isolated editor
 
@@ -136,9 +135,9 @@ pwsh -NoProfile -File scripts/build-windows.ps1 -RunEditorTests
 The current test installs the verified VSIX into isolated profiles, using the
 installed editor and matching CLI. It reviews native index setup and a permanent
 exact `hidden.ts` exclusion, creates an index set with the current checkboxes,
-and explicitly applies a search choice before testing authenticated HTTPS MCP,
-citations and native isolation. The actual provider definition is checked against native connection information; its private CA is added only to the owned test client. Revocation requires the exact completed native index-set deletion and one retained-session call. A delivered typed refusal is retained in full; an empty TLS reset counts only when paired with that completed native fence, never by itself. Only generated fixtures and private profiles
-are used; the normal user's settings and trust are untouched.
+and explicitly applies a search choice before testing loopback HTTP MCP,
+citations and native isolation. The actual provider definition is checked against native connection information. Revocation requires the exact completed native index-set deletion and one retained-session call. A delivered typed refusal is retained in full; an empty connection reset counts only when paired with that completed native fence, never by itself. Only generated fixtures and private profiles
+are used; the normal user's settings are untouched.
 
 A passing run of a matching fixture is isolated installed-VSIX acceptance. Marketplace, remote-host, upgrade/rollback and clean-machine qualification remain separate. It does not exercise any paid coding model. VS Code startup may show a temporary test window even though the process is launched with its console hidden.
 
