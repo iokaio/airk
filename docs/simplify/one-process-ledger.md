@@ -17249,3 +17249,55 @@ installation. **Left:** `fixtures/cli-golden/windows/airk.json` (a capture
 of the old binary; recapture at the phase D build).
 
 **State.** D: free 358,530,031,616 bytes. No build running. Next: phase D.
+### 24 November 2026 at 15:30 UTC — Phase D: 1.8.208 signed installer and VSIX candidate built for the user's manual check
+
+**User's word:** "Yes, rebuild r6" (a fresh CPU static ONNX Runtime on the
+current compiler, its source download included).
+
+**Source.** `loop/release-208`, fast-forwarded into `feat/arbiter-final`:
+`558a41f9` (version 1.8.208 everywhere, regenerated help, UI fixtures,
+Explorer catalog, sealed Admin assets, `docs/releases/release-1.8.208.md`,
+version lines) and `7106c36b` (the VSIX module list gains
+`answerDeadline.js`, `answerPresentation.js` and `workbenchAnswerClient.js`,
+missed by L2 and L2c). `release-version.py check --expected 1.8.208` passes.
+
+**Static ONNX Runtime.** The r5 CPU runtime pins the pre-18-November
+`cl.exe` (`edfde238…`), so the build refused it. The agent built
+`advanced-split\ort130-x64-owned-r7` from the same lock (`d9deff07…`,
+upstream `f2c39fe2…`, ONNX Runtime 1.30.0) and options as r5; only `cl.exe`
+(`e87e78b3…`) differs. **No download happened:** the 16 archives were copied
+from r5 and accepted by the provisioner's hash and size check. r6 is kept as
+a failed attempt: Visual Studio's `vctip.exe` outlived its configure step
+(the 18 November problem). r7 ran with `VSCMD_SKIP_SENDTELEMETRY=1` (a
+per-process telemetry opt-out): configure 32 s, build 476 s, 4.68 GB.
+
+**Build.** `scripts/build-local-installers.ps1 -ForceBuild` from the
+short-path worktree `artifacts\r208` (detached `7106c36b`; the long worktree
+path hit Inno Setup's MAX_PATH limit), r7 environment, target
+`answer-loop\target-release` (5.2 GB), signed through the existing Azure CLI
+login. Final run 191.9 s. Earlier failed runs are kept as receipts.
+`scripts/license-notices.py` pins the CRLF bytes of
+`third_party/models/minilm-v2-provenance.json` while `.gitattributes`
+checks it out LF; the build worktree used the CRLF bytes (same blob), as
+earlier candidates did. **Open, for the user:** pin the LF hash or mark the
+file `-text`.
+
+**Outputs** (hashes and signature rechecked by the primary agent):
+- Installer `artifacts\r208\artifacts\local-service-installer\20261124-081306\airk-service-1.8.208-x86_64-pc-windows-msvc-installer.exe`,
+  74,693,784 bytes, SHA-256 `75339695d4ed0dc0c9eb274752ab4d5bdac87dd508a0886e5fa5b0d893ffe9b2`,
+  Authenticode Valid, `CN=Ioka LLC`.
+- VSIX `artifacts\r208\artifacts\local-vsix\20261124-081550\vsix\publish\airk-1.8.208.vsix`,
+  1,680,094 bytes, SHA-256 `ff71255f6d0415ea6c9cd6019f77217e7aad04991a3e5618f32ef98ade2a2533`
+  (unsigned, as before).
+- Payload: `service\airk.exe` and `bin\airkctl.exe` report 1.8.208, signed;
+  Admin assets bound; no `/TRUST`; VSIX `package.json` 1.8.208.
+
+`fixtures/cli-golden/windows/airk.json` stays as dated history: today's
+`airk` takes no commands, so a recapture would erase the pre-split
+baseline.
+
+**Not verified:** an install; Admin in Edge or Chrome without a certificate
+step; the migration of this machine's `https` installation and CA removal;
+macOS, Safari, Linux. **Stop for the user's manual check.** After it: fresh
+fixture bases, the live switch-sequence check on a CUDA lifetime, then L7.
+D: free 339,299,659,776 bytes. Nothing running.
