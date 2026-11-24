@@ -4,8 +4,12 @@
 import argparse
 import importlib.util
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
+import threading
 import unittest
 
 HERE = Path(__file__).resolve().parent
@@ -29,6 +33,140 @@ class DispatchCensus(unittest.TestCase):
         self.assertEqual(fixture.census_extras(False, None), {"AIRK_NATIVE_DISPATCH_OBSERVER": "false"})
         with self.assertRaises(Exception):
             fixture.census_extras(False, 38016)
+
+
+class Clock:
+    """An injected clock: it moves only when the test says so."""
+
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self):
+        return self.now
+
+
+class ReadyReceipt(unittest.TestCase):
+    """The service writes ready.json in place; a reader must wait for a complete, parseable file (LH, 23 Nov)."""
+
+    COMPLETE = {"health": {"process_id": 7}, "inputs_sha256": "ab" * 32, "profiles": []}
+
+    def test_partial_then_complete_file(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "ready.json"
+            observe = fixture.complete_json_observer(path, clock=Clock())
+            self.assertIsNone(observe())  # absent
+            whole = json.dumps(self.COMPLETE).encode()
+            path.write_bytes(whole[:25])  # half written: not parseable
+            self.assertIsNone(observe())
+            path.write_bytes(whole[:0])  # created, nothing written yet
+            self.assertIsNone(observe())
+            path.write_bytes(whole)
+            self.assertEqual(observe(), self.COMPLETE)
+
+    def test_a_multibyte_character_cut_in_two_is_not_ready(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "ready.json"
+            whole = json.dumps({"note": "café"}, ensure_ascii=False).encode("utf-8")
+            path.write_bytes(whole[:whole.index("é".encode("utf-8")) + 1])
+            observe = fixture.complete_json_observer(path, clock=Clock())
+            self.assertIsNone(observe())
+            path.write_bytes(whole)
+            self.assertEqual(observe(), {"note": "café"})
+
+    def test_a_file_held_by_its_writer_is_waited_for(self):
+        # errno 13 is what a Windows sharing violation raises.
+        held = [PermissionError(13, "Permission denied")] * 2
+        whole = json.dumps(self.COMPLETE).encode()
+
+        def read(path):
+            if held:
+                raise held.pop()
+            return whole
+
+        observe = fixture.complete_json_observer(Path("ready.json"), clock=Clock(), read=read)
+        self.assertIsNone(observe())
+        self.assertIsNone(observe())
+        self.assertEqual(observe(), self.COMPLETE)
+
+    def test_a_file_that_stays_unreadable_fails_after_the_grace_with_its_last_error(self):
+        clock = Clock()
+
+        def read(path):
+            raise PermissionError(13, "Permission denied")
+
+        observe = fixture.complete_json_observer(Path("ready.json"), clock=clock, grace=60, read=read)
+        self.assertIsNone(observe())  # first seen at t0
+        clock.now += 60
+        self.assertIsNone(observe())  # exactly the grace: still waiting
+        clock.now += 0.5
+        with self.assertRaises(ValueError) as caught:
+            observe()
+        self.assertIn("PermissionError", str(caught.exception))
+        self.assertIn("60 s", str(caught.exception))
+
+    def test_an_absent_file_never_counts_against_the_grace(self):
+        clock = Clock()
+        observe = fixture.complete_json_observer(Path("no-such-folder") / "ready.json", clock=clock, grace=1)
+        for _ in range(3):
+            clock.now += 3600
+            self.assertIsNone(observe())
+
+    def test_other_read_errors_are_not_swallowed(self):
+        def read(path):
+            raise IsADirectoryError(21, "is a directory")
+
+        with self.assertRaises(OSError):
+            fixture.complete_json_observer(Path("ready.json"), clock=Clock(), read=read)()
+
+    def test_worker_waits_through_the_observer_and_keeps_its_validations(self):
+        # The worker takes the parsed receipt from the wait (no second read) and checks it as before.
+        source = (HERE / "fixture.py").read_text(encoding="utf-8")
+        start = source.index("def worker(args):")
+        worker = source[start:source.index("\ndef ", start + 1)]
+        self.assertIn('complete_json_observer(work / "ready.json")', worker)
+        self.assertIn("file_changes=READY_CHANGES", worker)
+        self.assertNotIn('ready = read_json(work / "ready.json")', worker)
+        for check in ('ready["health"]["process_id"] == process.pid', 'ready["health"]["executable_sha256"]',
+                      'ready["inputs_sha256"] == inputs["sha256"]', 'control.samefile(ready["control_root"])',
+                      "ready receipt differs from the launched fixture"):
+            self.assertIn(check, worker)
+
+    @unittest.skipUnless(os.name == "nt", "the native directory-change wait is Windows only")
+    def test_native_wait_returns_the_completed_file_after_a_partial_write(self):
+        # The real wait, driven by events: the writer completes the file only after the observer has seen it
+        # half written, so there is no timing to guess.
+        nat = fixture.native()
+        whole = json.dumps(self.COMPLETE).encode()
+        with tempfile.TemporaryDirectory() as folder:
+            work = Path(folder)
+            path = work / "ready.json"
+            inner = fixture.complete_json_observer(path)
+            saw_partial = threading.Event()
+
+            def observe():
+                value = inner()
+                if value is None and path.is_file():
+                    saw_partial.set()
+                return value
+
+            def writer():
+                path.write_bytes(whole[:20])
+                saw_partial.wait(60)
+                with path.open("ab") as stream:
+                    stream.write(whole[20:])
+
+            child = subprocess.Popen([sys.executable, "-I", "-c", "import time; time.sleep(120)"],
+                                     stdin=subprocess.DEVNULL)
+            thread = threading.Thread(target=writer)
+            try:
+                thread.start()
+                result = nat["wait_observed"](work, observe, child, fixture.time.monotonic() + 60, "fixture readiness",
+                                              file_changes=fixture.READY_CHANGES)
+            finally:
+                thread.join(60)
+                child.kill()
+                child.wait()
+            self.assertEqual(result, self.COMPLETE)
 
 
 class Exclusions(unittest.TestCase):
