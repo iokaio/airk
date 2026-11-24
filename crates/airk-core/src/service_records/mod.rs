@@ -234,18 +234,39 @@ impl FromStr for LoopbackMcpUrl {
     type Err = anyhow::Error;
 
     fn from_str(value: &str) -> Result<Self> {
-        ensure!(value.len() <= 32, "loopback URL exceeds its bound");
-        let port = value
-            .strip_prefix("https://127.0.0.1:")
-            .and_then(|value| value.strip_suffix("/mcp"))
-            .ok_or_else(|| anyhow::anyhow!("expected a canonical loopback HTTPS MCP URL"))?;
-        ensure!(
-            !port.is_empty()
-                && !port.starts_with('0')
-                && port.bytes().all(|byte| byte.is_ascii_digit()),
-            "noncanonical loopback port"
-        );
-        Self::new(port.parse()?)
+        Self::new(canonical_port(value, "https://127.0.0.1:")?)
+    }
+}
+
+/// The port of `<prefix><port>/mcp` under the canonical rules: bounded, no
+/// leading zero, digits only, nonzero.
+fn canonical_port(value: &str, prefix: &str) -> Result<u16> {
+    ensure!(value.len() <= 32, "loopback URL exceeds its bound");
+    let port = value
+        .strip_prefix(prefix)
+        .and_then(|value| value.strip_suffix("/mcp"))
+        .ok_or_else(|| anyhow::anyhow!("expected a canonical loopback MCP URL"))?;
+    ensure!(
+        !port.is_empty()
+            && !port.starts_with('0')
+            && port.bytes().all(|byte| byte.is_ascii_digit()),
+        "noncanonical loopback port"
+    );
+    let port: u16 = port.parse()?;
+    ensure!(
+        port != 0,
+        "an endpoint needs an actually bound nonzero port"
+    );
+    Ok(port)
+}
+
+impl LoopbackMcpUrl {
+    /// Local trust plan C: the port of an `https://127.0.0.1:<port>/mcp` URL
+    /// that a build serving loopback over HTTPS wrote (its endpoint record,
+    /// agent configs). The same canonical rules; such a URL is never a
+    /// current endpoint, only a record to migrate.
+    pub fn legacy_https_port(value: &str) -> Option<u16> {
+        canonical_port(value, "https://127.0.0.1:").ok()
     }
 }
 

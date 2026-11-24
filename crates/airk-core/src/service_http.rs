@@ -72,6 +72,130 @@ impl EndpointDescriptor {
     }
 }
 
+/// Local trust plan C: the parts of an endpoint record that a build serving
+/// loopback over HTTPS wrote which an upgrade carries forward. The service
+/// keeps the port, publishes the next generation over plain HTTP and chains
+/// it to this record's digest. Nothing else of the old record (its CA and
+/// leaf digests) is read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LegacyEndpoint {
+    pub installation: Sha256Digest,
+    pub user: String,
+    pub namespace: Incarnation,
+    pub generation: u64,
+    pub port: u16,
+    /// The digest an HTTPS build gave the record: its framed bytes, which
+    /// that build wrote as the canonical encoding of the record.
+    pub digest: Sha256Digest,
+}
+
+impl LegacyEndpoint {
+    /// Decode an old record tolerantly: unknown fields (the CA and leaf
+    /// digests, the state) are ignored, but the schema, the binding fields,
+    /// a positive generation and a canonical `https://127.0.0.1:<port>/mcp`
+    /// URL are required.
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        #[derive(Deserialize)]
+        struct Record {
+            schema: u32,
+            installation: Sha256Digest,
+            user: String,
+            namespace: Incarnation,
+            generation: u64,
+            url: String,
+        }
+        ensure!(
+            bytes.len() <= MAX_ENDPOINT_BYTES,
+            "endpoint record exceeds bound"
+        );
+        let record: Record = serde_json::from_slice(bytes)?;
+        ensure!(
+            record.schema == HTTP_CONTRACT_VERSION,
+            "unsupported endpoint schema"
+        );
+        ensure!(record.generation > 0, "invalid endpoint generation");
+        ensure!(
+            !record.user.is_empty()
+                && record.user.len() <= 256
+                && record.user.bytes().all(|byte| byte.is_ascii_graphic()),
+            "invalid native user identity"
+        );
+        let port = LoopbackMcpUrl::legacy_https_port(&record.url)
+            .ok_or_else(|| anyhow::anyhow!("not a legacy HTTPS endpoint record"))?;
+        Ok(Self {
+            installation: record.installation,
+            user: record.user,
+            namespace: record.namespace,
+            generation: record.generation,
+            port,
+            digest: crate::identity::framed_digest(b"airk-http-endpoint/1", &[bytes]),
+        })
+    }
+}
+
+/// A saved endpoint record: the current shape, or one an HTTPS build wrote
+/// (local trust plan C), which only an upgrade reads.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SavedEndpoint {
+    Current(EndpointDescriptor),
+    Legacy(LegacyEndpoint),
+}
+
+impl SavedEndpoint {
+    /// The current shape first; an old HTTPS record only when that fails.
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        match EndpointDescriptor::decode(bytes) {
+            Ok(current) => Ok(Self::Current(current)),
+            Err(current) => LegacyEndpoint::decode(bytes)
+                .map(Self::Legacy)
+                .map_err(|_| current),
+        }
+    }
+
+    pub fn port(&self) -> u16 {
+        match self {
+            Self::Current(value) => value.url.port(),
+            Self::Legacy(value) => value.port,
+        }
+    }
+
+    pub fn generation(&self) -> u64 {
+        match self {
+            Self::Current(value) => value.generation,
+            Self::Legacy(value) => value.generation,
+        }
+    }
+
+    pub fn digest(&self) -> Result<Sha256Digest> {
+        match self {
+            Self::Current(value) => value.digest(),
+            Self::Legacy(value) => Ok(value.digest),
+        }
+    }
+
+    /// The installation, user and namespace the record names.
+    pub fn binding(&self) -> (Sha256Digest, &str, Incarnation) {
+        match self {
+            Self::Current(value) => (value.installation, &value.user, value.namespace),
+            Self::Legacy(value) => (value.installation, &value.user, value.namespace),
+        }
+    }
+
+    pub fn current(&self) -> Option<&EndpointDescriptor> {
+        match self {
+            Self::Current(value) => Some(value),
+            Self::Legacy(_) => None,
+        }
+    }
+
+    pub fn into_current(self) -> Option<EndpointDescriptor> {
+        match self {
+            Self::Current(value) => Some(value),
+            Self::Legacy(_) => None,
+        }
+    }
+}
+
 /// The local agent session's open selection, not a URL-derived or ambient
 /// workspace scope.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

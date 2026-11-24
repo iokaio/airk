@@ -64,3 +64,62 @@ fn descriptor_rejects_unknown_versions_fields_and_oversize_before_use() -> Resul
     assert!(relocated.validate().is_err());
     Ok(())
 }
+
+/// Local trust plan C: an endpoint record an HTTPS build wrote (fixed bytes,
+/// with the CA and leaf digests it carried) decodes as legacy: its port,
+/// generation and binding carry forward, its digest is that of its bytes.
+#[test]
+fn an_old_https_endpoint_record_decodes_as_legacy() -> Result<()> {
+    let old = format!(
+        concat!(
+            r#"{{"schema":1,"installation":"{a}","user":"501","namespace":"{n}","#,
+            r#""generation":7,"service_instance":"{n}","executable_sha256":"{a}","#,
+            r#""url":"https://127.0.0.1:57423/mcp","ca_sha256":"{c}","#,
+            r#""certificate_sha256":"{c}","state":"ready","predecessor_digest":null}}"#
+        ),
+        a = "01".repeat(32),
+        c = "05".repeat(32),
+        n = Incarnation::from_bytes([2; 16]),
+    );
+    let legacy = LegacyEndpoint::decode(old.as_bytes())?;
+    assert_eq!(legacy.port, 57423);
+    assert_eq!(legacy.generation, 7);
+    assert_eq!(legacy.user, "501");
+    assert_eq!(legacy.namespace, Incarnation::from_bytes([2; 16]));
+    assert_eq!(
+        legacy.digest,
+        crate::identity::framed_digest(b"airk-http-endpoint/1", &[old.as_bytes()])
+    );
+    let saved = SavedEndpoint::decode(old.as_bytes())?;
+    assert_eq!(saved.port(), 57423);
+    assert_eq!(saved.generation(), 7);
+    assert_eq!(saved.digest()?, legacy.digest);
+    // Not an HTTPS URL, a zero generation or another schema: not legacy.
+    for (from, to) in [
+        ("https://127.0.0.1:57423/mcp", "https://localhost:57423/mcp"),
+        (r#""generation":7"#, r#""generation":0"#),
+        (r#"{"schema":1"#, r#"{"schema":2"#),
+    ] {
+        assert!(
+            LegacyEndpoint::decode(old.replace(from, to).as_bytes()).is_err(),
+            "{to}"
+        );
+    }
+    assert_eq!(
+        LoopbackMcpUrl::legacy_https_port("https://127.0.0.1:443/mcp"),
+        Some(443)
+    );
+    for invalid in [
+        "https://127.0.0.1:0/mcp",
+        "https://127.0.0.1:0443/mcp",
+        "https://127.0.0.1:443/mcp?x",
+        "http://127.0.0.1:443/mcp",
+    ] {
+        assert_eq!(
+            LoopbackMcpUrl::legacy_https_port(invalid),
+            None,
+            "{invalid}"
+        );
+    }
+    Ok(())
+}

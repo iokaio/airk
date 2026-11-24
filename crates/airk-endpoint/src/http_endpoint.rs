@@ -13,6 +13,7 @@ use std::{
     path::Path,
 };
 
+pub mod legacy_trust;
 mod metadata;
 pub mod retired_credentials;
 mod tls;
