@@ -132,23 +132,29 @@ fn component_selector_keeps_complete_original_denominator_and_literal_widths() -
 #[test]
 fn context_8192_selector_requires_all_live_original_eight_option_row() -> Result<()> {
     let profiles = airk_retrieval::arbiter::runtime::catalog_profiles()?;
-    for model in [
-        ModelChoice::ContextQwenCompact,
-        ModelChoice::ContextQwenLarge,
-    ] {
-        let profile = profiles.iter().find(|p| p.model == model).unwrap();
-        let case = CaseKind::Context {
-            index: 2,
-            tokens: 8192,
-        };
-        let mut rows = fixture(profile, &[17, 128, 8192]);
-        assert!(selected_rows(case, profile, &rows).is_err());
-        rows.rows[2].input.candidate_positions = (32..40).collect();
-        rows.rows[2].input.option_mask = vec![true; 8];
-        assert_eq!(selected_rows(case, profile, &rows)?, [2]);
-        rows.rows[2].input.attention_mask[0] = 0;
-        assert!(selected_rows(case, profile, &rows).is_err());
-    }
+    // Step LH retired Large (change-log entries 56 and 62): the release
+    // catalog's one Context profile is the Arbiter, so the 8192-token row is
+    // checked for it alone. Large has no catalog profile to select rows for.
+    assert!(
+        profiles
+            .iter()
+            .all(|p| p.model != ModelChoice::ContextQwenLarge)
+    );
+    let profile = profiles
+        .iter()
+        .find(|p| p.model == ModelChoice::ContextQwenCompact)
+        .unwrap();
+    let case = CaseKind::Context {
+        index: 2,
+        tokens: 8192,
+    };
+    let mut rows = fixture(profile, &[17, 128, 8192]);
+    assert!(selected_rows(case, profile, &rows).is_err());
+    rows.rows[2].input.candidate_positions = (32..40).collect();
+    rows.rows[2].input.option_mask = vec![true; 8];
+    assert_eq!(selected_rows(case, profile, &rows)?, [2]);
+    rows.rows[2].input.attention_mask[0] = 0;
+    assert!(selected_rows(case, profile, &rows).is_err());
     Ok(())
 }
 
