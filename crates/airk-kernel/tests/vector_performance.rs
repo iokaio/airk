@@ -105,6 +105,13 @@ fn component_adapter() -> Result<()> {
         .map_err(|_| anyhow::anyhow!("component compute thread panicked"))??;
     // The synchronous native scope has returned and the actual thread joined.
     control.close()?;
+    // Measurement builds only: empty unless `airk-core/stage-timing` is enabled.
+    if let Some(path) = std::env::var_os("AIRK_STAGE_TIMING_RESULT") {
+        fs::write(
+            path,
+            serde_json::to_vec(&airk_core::stage_timing::snapshot())?,
+        )?;
+    }
     fs::write(
         std::env::var_os("AIRK_PERF_RESULT").context("component result missing")?,
         serde_json::to_vec(&value)?,

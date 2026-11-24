@@ -290,6 +290,7 @@ impl VectorPlan<'_> {
         stats: &mut airk_retrieval::model::EmbeddingCacheStats,
         ahead: LookAhead,
     ) -> Result<()> {
+        let _stage = airk_core::stage_timing::scope("publish.units.graph_insert");
         let SelectedBatch {
             units,
             keys,
@@ -437,6 +438,7 @@ fn pipeline_batch(
         let vectors = if texts.is_empty() {
             Ok(Vec::new())
         } else {
+            let _stage = airk_core::stage_timing::scope("publish.units.embed");
             semantic.model.embed_batch(&texts, &mut semantic.cache)
         };
         let inserted = match inserter {
@@ -542,6 +544,7 @@ impl CurrentUpdater<'_> {
         mut semantic_work: Option<&mut super::enrichment::SemanticWork>,
         observer: &mut dyn FnMut(CurrentUpdateStage),
     ) -> Result<CurrentUpdateResult> {
+        let _publish = airk_core::stage_timing::scope("publish");
         crate::service_execution::progress_phase(airk_core::service_progress::WorkPhase::Preparing);
         ensure!(
             (!changes.is_empty()
@@ -565,10 +568,12 @@ impl CurrentUpdater<'_> {
             "invalid current semantic-only input batch"
         );
         let capacity = self.store.current_database_capacity(self.scope)?;
-        let read = self
-            .store
-            .current_build_read(self.scope, self.writer)
-            .context("open current update read")?;
+        let read = {
+            let _stage = airk_core::stage_timing::scope("publish.open_read");
+            self.store
+                .current_build_read(self.scope, self.writer)
+                .context("open current update read")?
+        };
         let mut control_resources = resources.to_vec();
         let control_key = airk_core::source_control::CONTROL_BASELINE_RESOURCE;
         if !resources.iter().any(|resource| resource.key == control_key) {
@@ -707,16 +712,19 @@ impl CurrentUpdater<'_> {
         let configuration = self
             .configuration
             .or(applied.as_ref().map(|state| &state.configuration));
-        let metadata = super::metadata::prepare(
-            self.store,
-            self.writer,
-            &read,
-            changes,
-            configuration,
-            self.reservation,
-            moves,
-        )
-        .context("prepare current metadata")?;
+        let metadata = {
+            let _stage = airk_core::stage_timing::scope("publish.metadata");
+            super::metadata::prepare(
+                self.store,
+                self.writer,
+                &read,
+                changes,
+                configuration,
+                self.reservation,
+                moves,
+            )
+            .context("prepare current metadata")?
+        };
         if let (Some(configuration), Some(semantic)) = (configuration, semantic.as_ref()) {
             ensure!(
                 configuration.vector_selection.digest()? == semantic.selection.digest()?,
@@ -812,6 +820,7 @@ impl CurrentUpdater<'_> {
             ordinals: BTreeMap::new(),
         };
         if !replacing {
+            let _stage = airk_core::stage_timing::scope("publish.retire");
             plan.retire(changes)?;
             if let Some(inputs) = semantic_inputs {
                 plan.retire_paths(inputs.iter().map(|input| input.artifact.path.as_str()))?;
@@ -870,6 +879,7 @@ impl CurrentUpdater<'_> {
         let store = self.store;
         // The producer is part of this worker's job: keep its owner bindings.
         let inherited = crate::service_execution::Inherited::capture();
+        let units_stage = airk_core::stage_timing::scope("publish.units");
         std::thread::scope(|scope| -> Result<()> {
             let (sender, receiver) =
                 std::sync::mpsc::sync_channel::<Result<Planned>>(MAX_BATCH_CHUNKS * 2);
@@ -902,8 +912,15 @@ impl CurrentUpdater<'_> {
                             }
                             continue;
                         }
-                        let retained = store.load_retrieval_artifact(&input.artifact)?;
-                        store.verify_retained_source(&input.artifact)?;
+                        let retained = {
+                            let _stage = airk_core::stage_timing::scope("publish.units.load");
+                            store.load_retrieval_artifact(&input.artifact)?
+                        };
+                        {
+                            let _stage =
+                                airk_core::stage_timing::scope("publish.units.verify_source");
+                            store.verify_retained_source(&input.artifact)?;
+                        }
                         let Some((model, selection, defer)) = planning else {
                             continue;
                         };
@@ -927,6 +944,7 @@ impl CurrentUpdater<'_> {
                             continue;
                         }
                         let source_hash = input.artifact.content_hash.parse()?;
+                        let plan_stage = airk_core::stage_timing::scope("publish.units.plan");
                         let stats = visit_vector_units(&retained.payload, model, |unit| {
                             sender
                                 .send(Ok(Planned::Unit(PendingVectorUnit {
@@ -937,6 +955,7 @@ impl CurrentUpdater<'_> {
                                 })))
                                 .map_err(|_| anyhow::anyhow!("vector planning consumer stopped"))
                         })?;
+                        drop(plan_stage);
                         if sender.send(Ok(Planned::Stats(true, stats))).is_err() {
                             return Ok(());
                         }
@@ -1007,9 +1026,12 @@ impl CurrentUpdater<'_> {
                 .map_err(|_| anyhow::anyhow!("vector planning worker panicked"))?;
             result
         })?;
+        drop(units_stage);
+        let set_live_stage = airk_core::stage_timing::scope("publish.set_live");
         for membership in plan.memberships.values() {
             overlay.set_live(membership.id, membership.remaining != 0)?;
         }
+        drop(set_live_stage);
         drop(graph);
         if let Some(semantic) = semantic.as_mut() {
             semantic.cache.stats.vector_registry_rows = semantic
@@ -1104,10 +1126,12 @@ impl CurrentUpdater<'_> {
         }
         drop(semantic);
         drop(read);
+        let seal_stage = airk_core::stage_timing::scope("publish.seal");
         let sealed = Arc::try_unwrap(overlay)
             .map_err(|_| anyhow::anyhow!("current graph retained preparation reader"))?
             .seal()
             .context("seal current graph overlay")?;
+        drop(seal_stage);
         let sealed = if replacing {
             sealed.replacing(base.graph_head.clone())?
         } else {
@@ -1120,9 +1144,12 @@ impl CurrentUpdater<'_> {
             .context("current sequence overflow")?;
         target.lexical_sequence = target.sequence;
         target.graph_head = sealed.descriptor().target.clone();
-        let mut writer = self
-            .store
-            .current_write(self.writer, self.quota, self.scope, capacity)?;
+        let mut writer = {
+            let _stage = airk_core::stage_timing::scope("publish.open_write");
+            self.store
+                .current_write(self.writer, self.quota, self.scope, capacity)?
+        };
+        let prepare_stage = airk_core::stage_timing::scope("publish.journal_prepare");
         let (pending, lexical_work) = writer
             .prepare_artifacts_with_optional_projections(
                 &base.token()?,
@@ -1140,6 +1167,7 @@ impl CurrentUpdater<'_> {
                 &metadata.optional,
             )
             .context("prepare current journal")?;
+        drop(prepare_stage);
         crate::service_execution::progress_prepared(
             semantic_inputs.map_or(changes.len(), |inputs| inputs.len()) as u64,
         );
@@ -1147,19 +1175,28 @@ impl CurrentUpdater<'_> {
         crate::service_execution::progress_phase(
             airk_core::service_progress::WorkPhase::Publishing,
         );
-        writer
-            .mark_applying(&pending)
-            .context("mark current journal applying")?;
+        {
+            let _stage = airk_core::stage_timing::scope("publish.mark_applying");
+            writer
+                .mark_applying(&pending)
+                .context("mark current journal applying")?;
+        }
         observer(CurrentUpdateStage::Applying);
-        let mut committed = writer
-            .commit(&pending, pending.target.lexical_commit)
-            .context("commit current journal")?;
+        let mut committed = {
+            let _stage = airk_core::stage_timing::scope("publish.commit");
+            writer
+                .commit(&pending, pending.target.lexical_commit)
+                .context("commit current journal")?
+        };
         crate::service_execution::progress_committed(
             semantic_inputs.map_or(changes.len(), |inputs| inputs.len()) as u64,
         );
         observer(CurrentUpdateStage::Committed);
         drop(writer);
-        let cleanup = reclaim_current_objects(self.store, self.quota, self.scope, self.writer);
+        let cleanup = {
+            let _stage = airk_core::stage_timing::scope("publish.reclaim");
+            reclaim_current_objects(self.store, self.quota, self.scope, self.writer)
+        };
         if let Err(error) = cleanup {
             let message = format!("current object cleanup: {error:#}");
             committed.maintenance_error = Some(match committed.maintenance_error {

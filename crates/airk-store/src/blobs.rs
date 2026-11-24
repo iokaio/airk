@@ -829,12 +829,17 @@ fn put(
     digest: &str,
     reservation: Option<&crate::quota::Reservation>,
 ) -> Result<()> {
-    ensure!(
-        format!("{:x}", Sha256::digest(bytes)) == digest,
-        "source digest changed before retention"
-    );
+    let _stage = airk_core::stage_timing::scope("blob.put");
+    {
+        let _stage = airk_core::stage_timing::scope("blob.put.hash");
+        ensure!(
+            format!("{:x}", Sha256::digest(bytes)) == digest,
+            "source digest changed before retention"
+        );
+    }
     let path = object_path(base, kind, digest)?;
     if path.exists() {
+        let _stage = airk_core::stage_timing::scope("blob.put.existing");
         read_verified(&path, digest, bytes.len() as u64)?;
         return Ok(());
     }
@@ -852,11 +857,19 @@ fn put(
         .map(crate::quota::Reservation::staging_directory)
         .transpose()?;
     let temporary_parent = staging.as_deref().unwrap_or(&parent).canonicalize()?;
-    let mut file = tempfile::Builder::new()
-        .prefix("building-")
-        .tempfile_in(&temporary_parent)?;
-    file.write_all(bytes)?;
-    file.as_file().sync_all()?;
+    let file = {
+        let _stage = airk_core::stage_timing::scope("blob.put.create_write");
+        let mut file = tempfile::Builder::new()
+            .prefix("building-")
+            .tempfile_in(&temporary_parent)?;
+        file.write_all(bytes)?;
+        file
+    };
+    {
+        let _stage = airk_core::stage_timing::scope("blob.put.sync");
+        file.as_file().sync_all()?;
+    }
+    let _rename = airk_core::stage_timing::scope("blob.put.rename");
     file.persist_noclobber(destination)
         .context("publish retained object")?;
     Ok(())
@@ -870,7 +883,11 @@ fn put_encoded(
     reservation: Option<&crate::quota::Reservation>,
     mode: airk_core::compression::CompressionMode,
 ) -> Result<Option<airk_core::compression::EncodedObject>> {
-    if let Some((encoded, reference)) = crate::compression::encode(bytes, mode)? {
+    let encoded = {
+        let _stage = airk_core::stage_timing::scope("blob.compress");
+        crate::compression::encode(bytes, mode)?
+    };
+    if let Some((encoded, reference)) = encoded {
         put(base, kind, &encoded, &reference.stored_digest, reservation)?;
         Ok(Some(reference))
     } else {
@@ -886,6 +903,7 @@ fn read_object(
     encoding: Option<&airk_core::compression::EncodedObject>,
     maximum: u64,
 ) -> Result<Vec<u8>> {
+    let _stage = airk_core::stage_timing::scope("blob.read_object");
     let stored_digest = encoding.map_or(digest, |value| value.stored_digest.as_str());
     let path = object_path(base, kind, stored_digest)?;
     let result = if let Some(encoding) = encoding {
@@ -980,6 +998,8 @@ impl FileStore {
         reservation: Option<&crate::quota::Reservation>,
         mode: airk_core::compression::CompressionMode,
     ) -> Result<Artifact> {
+        let _stage = airk_core::stage_timing::scope("blob.retain");
+        let bind_stage = airk_core::stage_timing::scope("blob.retain.bind_check");
         payload.validate()?;
         profile.identity()?;
         let bound = airk_core::binding::bind_payload(
@@ -997,6 +1017,7 @@ impl FileStore {
             serde_json::to_vec(&bound)? == serde_json::to_vec(&expected)?,
             "path-free conversion changed artifact evidence"
         );
+        drop(bind_stage);
         let source_encoding = if let Some(source) = source {
             ensure!(
                 source.len() == artifact.bytes,
@@ -1016,12 +1037,18 @@ impl FileStore {
                 .as_ref()
                 .and_then(|r| r.source_encoding.clone())
         };
-        let bytes = serde_json::to_vec(payload)?;
+        let bytes = {
+            let _stage = airk_core::stage_timing::scope("blob.retain.serialize");
+            serde_json::to_vec(payload)?
+        };
         ensure!(
             bytes.len() as u64 <= MAX_ARTIFACT_BYTES,
             "path-free payload exceeds byte limit"
         );
-        let object = format!("{:x}", Sha256::digest(&bytes));
+        let object = {
+            let _stage = airk_core::stage_timing::scope("blob.retain.hash");
+            format!("{:x}", Sha256::digest(&bytes))
+        };
         let payload_encoding = put_encoded(
             self.directory(),
             "artifacts",
@@ -1187,6 +1214,7 @@ impl FileStore {
                 None,
             ));
         }
+        let _stage = airk_core::stage_timing::scope("blob.load");
         let bytes = read_object(
             self.directory(),
             "artifacts",
@@ -1200,7 +1228,11 @@ impl FileStore {
             "retained artifact length does not match pinned inventory"
         );
         let (artifact, payload): (Artifact, _) = if let Some(profile) = &reference.profile {
-            let payload: airk_core::extraction::ExtractionPayload = serde_json::from_slice(&bytes)?;
+            let payload: airk_core::extraction::ExtractionPayload = {
+                let _stage = airk_core::stage_timing::scope("blob.load.parse");
+                serde_json::from_slice(&bytes)?
+            };
+            let _stage = airk_core::stage_timing::scope("blob.load.bind");
             let artifact = airk_core::binding::bind_payload(
                 &payload,
                 profile,
@@ -1318,6 +1350,7 @@ impl FileStore {
         entry: &Artifact,
         mut observer: Option<SourceObserver<'_>>,
     ) -> Result<()> {
+        let _stage = airk_core::stage_timing::scope("blob.verify_source");
         ensure!(
             entry.bytes <= airk_core::extraction::MAX_SOURCE_BYTES
                 && entry.retained.as_ref().is_some_and(|r| r.raw_source),

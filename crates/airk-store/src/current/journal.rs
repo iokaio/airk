@@ -2009,6 +2009,7 @@ impl CurrentWriter<'_> {
         fts_updates: Option<&fts::Updates>,
         optional: &[super::native_projection::PreparedNativeProjection],
     ) -> Result<PendingTransaction> {
+        let _stage = airk_core::stage_timing::scope("journal.inner");
         let changes = update.artifacts;
         let vector_inputs = update.vector_inputs;
         let occurrences = update.occurrences;
@@ -2119,6 +2120,7 @@ impl CurrentWriter<'_> {
                     ArtifactChange::Delete(_) => true,
                 }),
         );
+        let catalog_stage = airk_core::stage_timing::scope("journal.inner.catalog");
         for change in changes {
             let key = map::key(
                 &self.scope,
@@ -2165,16 +2167,20 @@ impl CurrentWriter<'_> {
             };
             plan.put(key, value.as_deref())?;
         }
+        drop(catalog_stage);
         map_changes.extend(postings.finish(&mut plan, &self.scope)?);
         map_changes.extend(collection.finish(&mut plan, &self.scope)?);
-        map_changes.extend(super::metadata::prepare(
-            &self.store,
-            &self.scope,
-            &mut plan,
-            changes,
-            metadata,
-            target.sequence,
-        )?);
+        {
+            let _stage = airk_core::stage_timing::scope("journal.inner.metadata");
+            map_changes.extend(super::metadata::prepare(
+                &self.store,
+                &self.scope,
+                &mut plan,
+                changes,
+                metadata,
+                target.sequence,
+            )?);
+        }
         map_changes.extend(super::resources::prepare(
             &self.store,
             &self.scope,
@@ -2186,6 +2192,7 @@ impl CurrentWriter<'_> {
             .map(|item| item.pointer.embedding_key)
             .collect::<BTreeSet<_>>();
         {
+            let _stage = airk_core::stage_timing::scope("journal.inner.vector_map");
             let mut context = vector_map::VectorPlanContext {
                 plan: &mut plan,
                 connection: self.connection()?,
@@ -2317,6 +2324,7 @@ impl CurrentWriter<'_> {
             .and_then(|extra| needed.checked_add(extra))
             .context("projection map bound overflow")?;
         if optional_count > 0 && optional_growth <= self.capacity {
+            let _stage = airk_core::stage_timing::scope("journal.inner.optional");
             ensure!(
                 optional.is_empty() || optional.len() == metadata.len(),
                 "optional metadata batch mismatch"
@@ -2579,6 +2587,7 @@ impl CurrentWriter<'_> {
         model: Option<ModelObjectSet>,
         changes: ComponentChanges<'_>,
     ) -> Result<PendingTransaction> {
+        let _stage = airk_core::stage_timing::scope("journal.components");
         let (phase, head) = state(self.connection()?, &self.scope)?;
         ensure!(
             phase == TransactionPhase::Ready
@@ -2637,7 +2646,10 @@ impl CurrentWriter<'_> {
         };
         crate::capacity::require_growth(self.quota.root(), allowance)?;
         let transaction = connection.transaction()?;
-        let staged_graph = graph::stage(&transaction, graph_delta, id)?;
+        let staged_graph = {
+            let _stage = airk_core::stage_timing::scope("journal.components.graph_stage");
+            graph::stage(&transaction, graph_delta, id)?
+        };
         ensure!(
             staged_graph == graph_descriptor,
             "sealed graph descriptor changed during capture"
@@ -2646,13 +2658,17 @@ impl CurrentWriter<'_> {
         inputs.visit(&mut |input| {
             let bytes = input.bytes()?;
             digest.add(input, &bytes)?;
-            input.verify(&self.store)?;
+            {
+                let _stage = airk_core::stage_timing::scope("journal.components.verify_input");
+                input.verify(&self.store)?;
+            }
             transaction.execute(
                 "INSERT OR ROLLBACK INTO current_pending_inputs(path,metadata) VALUES(?1,?2)",
                 params![input.artifact.path, bytes],
             )?;
             Ok(())
         })?;
+        let replay_stage = airk_core::stage_timing::scope("journal.components.map_replay");
         let mut map_digest = MapDigest::new();
         let mut map_plan = map::MapPlan::new(&transaction, &self.scope, head.artifact_root)?;
         for change in changes.map {
@@ -2667,6 +2683,7 @@ impl CurrentWriter<'_> {
             map_plan.root()? == target.artifact_root,
             "planned current map root differs from captured target"
         );
+        drop(replay_stage);
         if let Some(bytes) = changes.lexical_manifest {
             transaction.execute(
                 "INSERT OR ROLLBACK INTO current_pending_lexical(id,content) VALUES(1,?1)",
@@ -2674,6 +2691,7 @@ impl CurrentWriter<'_> {
             )?;
         }
         if let Some(updates) = changes.fts {
+            let _stage = airk_core::stage_timing::scope("journal.components.fts_stage");
             fts::stage(&transaction, updates)?;
         }
         let pending = PendingTransaction {
@@ -2702,7 +2720,10 @@ impl CurrentWriter<'_> {
             "UPDATE OR ROLLBACK current_state SET phase='prepared' WHERE id=1",
             [],
         )?;
-        transaction.commit()?;
+        {
+            let _stage = airk_core::stage_timing::scope("journal.components.sql_commit");
+            transaction.commit()?;
+        }
         Ok(pending)
     }
 
@@ -2738,13 +2759,17 @@ impl CurrentWriter<'_> {
                 "captured input metadata binding mismatch"
             );
             digest.add(&input, &bytes)?;
-            let (verified, indexed_lines) = input.verify_owned(&self.store)?;
+            let (verified, indexed_lines) = {
+                let _stage = airk_core::stage_timing::scope("journal.applying.verify_input");
+                input.verify_owned(&self.store)?
+            };
             visitor(&input)?;
             let key = map::key(&self.scope, map::MapDomain::FileMetadata, path.as_bytes())?;
             let reference: Option<Vec<u8>> = connection.query_row(
                 "SELECT value FROM current_pending_map WHERE key=?1 AND value IS NOT NULL AND length(value)<=262144",
                 [key.as_bytes().as_slice()], |row| row.get(0)).optional()?;
             if let Some(bytes) = reference {
+                let _stage = airk_core::stage_timing::scope("journal.applying.verify_metadata");
                 let reference: super::metadata::FileMetadataRef = serde_json::from_slice(&bytes)?;
                 ensure!(reference.path == path, "pending metadata path mismatch");
                 let file = self.store.read_current_metadata(&reference)?;
@@ -2828,9 +2853,13 @@ impl CurrentWriter<'_> {
             self.pending()?.as_ref() == Some(pending),
             "pending transaction changed"
         );
+        let _stage = airk_core::stage_timing::scope("journal.applying");
         let already_applying = self.phase()? == TransactionPhase::Applying;
         self.visit_captured(pending, &mut |_| Ok(()))?;
-        visit_pending_map(self.connection()?, pending, &mut |_, _| Ok(()))?;
+        {
+            let _stage = airk_core::stage_timing::scope("journal.applying.visit_map");
+            visit_pending_map(self.connection()?, pending, &mut |_, _| Ok(()))?;
+        }
         if let Some(bytes) = pending_lexical(self.connection()?, pending)?
             && is_fts_manifest(&bytes)?
         {
@@ -2854,7 +2883,10 @@ impl CurrentWriter<'_> {
             "UPDATE OR ROLLBACK current_state SET phase='applying' WHERE id=1 AND phase='prepared'",
             [],
         )?;
-        transaction.commit()?;
+        {
+            let _stage = airk_core::stage_timing::scope("journal.applying.sql_commit");
+            transaction.commit()?;
+        }
         Ok(())
     }
 
@@ -2874,9 +2906,11 @@ impl CurrentWriter<'_> {
             lexical_commit == pending.target.lexical_commit,
             "external lexical commit does not match captured target"
         );
+        let _stage = airk_core::stage_timing::scope("journal.commit");
         let fts_base = if let Some(bytes) = self.pending_lexical_manifest(pending)?
             && is_fts_manifest(&bytes)?
         {
+            let _stage = airk_core::stage_timing::scope("journal.commit.fts_base");
             Some(self.lexical_snapshot()?)
         } else {
             None
@@ -2894,19 +2928,26 @@ impl CurrentWriter<'_> {
         let transaction = connection.transaction()?;
         let lexical_manifest = pending_lexical(&transaction, pending)?;
         let mut replayed_lexical = None;
-        graph::apply(&transaction, pending.id, &pending.graph)?;
+        {
+            let _stage = airk_core::stage_timing::scope("journal.commit.graph_apply");
+            graph::apply(&transaction, pending.id, &pending.graph)?;
+        }
         // Start from the authenticated committed base, not an empty map.
         let mut map_root = state(&transaction, &self.scope)?.1.artifact_root;
-        visit_pending_map(&transaction, pending, &mut |key, value| {
-            map_root = map::put(&transaction, &self.scope, map_root, key, value)?;
-            Ok(())
-        })?;
+        {
+            let _stage = airk_core::stage_timing::scope("journal.commit.map_put");
+            visit_pending_map(&transaction, pending, &mut |key, value| {
+                map_root = map::put(&transaction, &self.scope, map_root, key, value)?;
+                Ok(())
+            })?;
+        }
         ensure!(
             map_root == pending.target.artifact_root,
             "replayed current map root differs from prepared target"
         );
         if let Some(bytes) = lexical_manifest {
             if is_fts_manifest(&bytes)? {
+                let _stage = airk_core::stage_timing::scope("journal.commit.fts_replay");
                 replayed_lexical = Some(std::sync::Arc::new(fts::replay(
                     &transaction,
                     &self.store,
@@ -2932,7 +2973,10 @@ impl CurrentWriter<'_> {
             "UPDATE OR ROLLBACK current_state SET phase='ready',head=?1 WHERE id=1",
             [pending.target.canonical_bytes()?],
         )?;
-        transaction.commit()?;
+        {
+            let _stage = airk_core::stage_timing::scope("journal.commit.sql_commit");
+            transaction.commit()?;
+        }
         if let Some(snapshot) = replayed_lexical {
             self.lexical_committed = true;
             super::lexical::cache::remember(

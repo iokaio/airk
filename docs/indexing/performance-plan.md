@@ -1,9 +1,10 @@
 # Indexing performance plan
 
 **Status, 24 November 2026:** analysis complete, eight decisions recorded, design
-sketched, and all ten questions of section 6 answered by the user. Nothing in
-this plan is implemented. Implementation starts at step P0.2 on the user's
-word.
+sketched, and all ten questions of section 6 answered by the user. The user
+said "Start P0.2" the same day. Step P0 is closed (section 2.6). The user
+then directed: "Just move on and get the new implementation working and
+tested." The new store is not implemented yet; work continues at P1 and P3.
 
 This plan replaces the way AIRK stores and builds an index. It was written by
 the primary agent (Claude Code) on the user's direction of 24 November 2026:
@@ -151,8 +152,9 @@ Three readings of these figures:
 limit. Graph insertion at 52 a second is the next limit. The number of
 vectors for each file multiplies both.
 
-**Base pass (from reading the code, not profiled).** In my judgement the
-order is:
+**Base pass (from reading the code).** This was my ranking before step P0
+measured it. Section 2.6 corrects the order: the Merkle map is first, at
+three quarters of the time. In my judgement the order was:
 
 1. the repeated read-and-verify passes over stored payloads;
 2. one disk sync for each object on Windows;
@@ -160,7 +162,7 @@ order is:
 4. the double lexical application;
 5. the serial coordinator.
 
-Step P0 measures this before any design work depends on it. The October
+The October
 review considered and declined removing the sync for each object, the double
 application and the quota grants for each publication, each on integrity
 grounds. Decision D1 removes those grounds.
@@ -201,6 +203,72 @@ those two records.
   cost in depth.
 - The AIRK MCP `status` call timed out for both live indexes during the
   analysis, so the analysis used local source reading.
+
+### 2.6 Baseline measured for this plan (step P0, 24 November 2026)
+
+**How it was measured.** The kernel's component harness (the
+`vector_performance` test binary) was built from this branch with stage
+timers (`airk-core/stage-timing`), in the development profile at optimization
+level 2, as the evaluation images were. The sources are fresh `git archive`
+exports of munarium (`9948345d`) and bookbuilder (`238b22a7`), whose archive
+digests equal those of the earlier evaluation exports. The two
+credential-setting scripts that the evaluation indexes denied were removed
+from the private bookbuilder copy, unread. Each operation ran in its own
+process on the development machine through
+`scripts/indexing-plan/run-baseline.ps1`. Receipts are in the private folder
+`artifacts/indexing-plan/p0-baseline-r1`.
+
+The harness indexes through `Kernel::index`: one extraction worker, and one
+publication for the whole scan. The service publishes in several growing
+batches, so its times differ; it took 360 to 372 s for the same 1,023
+munarium files.
+
+| Operation | Source | Wall | Rate |
+|---|---|---:|---:|
+| Cold base pass | munarium: 1,023 files indexed, 5,380 chunks, 30 MB | 263.4 s | 3.9 files/s |
+| Rescan, nothing changed | munarium | 1.8 s | |
+| One edited file: index, then a lexical search | munarium | 2.8 s, then 0.06 s | |
+| Cold base pass | bookbuilder-v2: 8,116 files indexed, 65,236 chunks, 91 MB | 1,048.3 s | 7.7 files/s |
+| Rescan, nothing changed | bookbuilder-v2 | 14.3 s | |
+
+The bookbuilder pass has the same shape as the munarium pass below:
+publication is 83% of it and the Merkle map 64% (670 s), with 173 map keys
+written for each file. Its index occupies 1.6 GB for 91 MB of indexed
+source.
+
+**The vectors run was stopped.** It had run for 17 minutes when the user
+wrote, on 24 November 2026: "I know we're going to dramatically improve the
+performance. I don't really care about measuring it exactly." and "I know
+that indexing both of those repos took hours and hours last time. That's a
+good enough measurement. Just move on and get the new implementation working
+and tested." No vectors figure was taken in this step; the earlier receipts
+of section 2.1 stand. Step P7.2 is reduced accordingly.
+
+**Where the munarium cold base pass goes** (263.4 s; parts overlap slightly
+and do not sum to the total):
+
+| Part | Seconds | Share |
+|---|---:|---:|
+| Publication, all of it | 236.9 | 90% |
+| Merkle map: planning puts and gets, the replay, the read-back and the final apply | 199.6 | 76% |
+| Scan: reading sources, extraction and writing the two object files for each file | 26.2 | 10% |
+| Loading stored extractions back, 10 times for each file | 11.7 | 4% |
+| The metadata object for each file | 10.8 | 4% |
+| The lexical index, applied twice | 9.0 | 3% |
+
+Counts for each indexed file: 406 map keys written at commit, 818 planned
+puts, 10 loads of the stored extraction (I had counted about nine in the
+code), 5 verifications of the stored source, and 3 files written (source
+copy, extraction and metadata), each with its own sync. Extraction itself
+took 7.2 s for all 1,023 files on one thread. The index occupies 420 MB for
+30 MB of indexed source.
+
+**What this corrects.** Section 2.3 ranked the repeated read-and-verify
+passes first and the Merkle map third. The measurement puts the Merkle map
+first by a wide margin: three quarters of the cold base pass. The repeated
+loads, the object files and the double lexical application are each a few
+percent. Extraction is not a hidden cost. The decisions and the design
+stand; the map is the structure the plain store removes.
 
 ## 3. What agents and users need from an index
 
@@ -372,6 +440,19 @@ What these replace: the Merkle map and its fourteen key domains, postings,
 the native and query projections, text ranges, the vector map, the pending
 journal tables, and the pending-work list. Imported analysis (for example
 SCIP) gets its own two tables in the same style; P1 specifies them.
+
+**A simpler realization to settle in P1.2.** Today's read handlers take a
+file's whole extraction (text, chunks, facts, regions, relationships and
+continuity) as one typed value, which is an existing Core contract. The
+plain store can keep that value as one compressed row for each file and use
+`chunks`, `fts`, `facts` and `units` as thin lookup tables that point into
+it, with only the columns the queries filter on. Reads then load one row
+where they load one object file today, the handlers' inputs do not change,
+and step P5 shrinks to the lookups. For plain text the conversion already
+requires the extraction's text to equal the source bytes
+([legacy.rs](../../crates/airk-ingest/src/adapters/legacy.rs#L113)), so the
+text is still stored once. P1.2 chooses between this and the fully
+relational tables above.
 
 Open design checks, settled by a small measurement in P3 and not by the user:
 the FTS5 `detail` level, which must support BM25 ranking (Q4) at an
@@ -730,8 +811,9 @@ user has not confirmed that.
 ### 7.2 Targets
 
 These are my estimates of what the design should reach on the development
-machine. P0 measures "today" again under controlled conditions, and P7
-measures the result. A miss is reported and diagnosed, not explained away.
+machine. They are guides and not gates: on 24 November 2026 the user said an
+exact measurement is not wanted. P7 runs each source once on the new store
+to confirm it is far faster, and reports a result that is not.
 
 | Measure | Today | Target |
 |---|---|---|
@@ -759,14 +841,17 @@ estimate for the A6000 and is the least certain number in this table.
 | P0.3 | Index fresh read-only exports of munarium and bookbuilder-v2 into a scratch root on D:, with the disk budget recorded first. Record base-pass stage times, unchanged rescan, vectors rate, query latencies and index size. | Receipts in the private campaign folder; a "today" table added to this plan |
 | P0.4 | Read `scripts/benchmark-indexing.py` and extend it, or write a successor, so the same measures can be repeated in P7. | Script tests pass; the two runs of P0.3 are reproducible from it |
 
-P0.1 is done with the commit that adds this plan. If P0.3 shows a different
-ranking from section 2.3, the plan is corrected before P3 starts.
+P0 is closed. P0.1 is done with the commit that adds this plan. P0.2 and
+P0.4 are done: the timers are behind the `airk-core/stage-timing` feature and
+the scripts are in `scripts/indexing-plan`. P0.3 ran the base-pass
+operations of section 2.6, which corrected the ranking of section 2.3, and
+was stopped before its vectors and search samples on the user's word.
 
 **P1. Seam inventory and contract.** No behaviour changes.
 
 | Part | Work | Done when |
 |---|---|---|
-| P1.1 | List every Store function that Kernel, the Store service code and tests call on an index: about forty methods on the reader, the writer, and the object, metadata and resource functions. Classify each as kept (and which table serves it), retired, or rewritten. | The table is appended to this plan |
+| P1.1 | List every Store function that Kernel, the Store service code and tests call on an index, and classify each as kept (and which table serves it), retired, or rewritten. Section 9 holds the first cut from the census. | Every function of section 9 is confirmed against its callers |
 | P1.2 | Write the contract for the plain store: schema, files, transaction rules, revision identity, recovery, limits, Verify. Give it a format identifier distinct from `airk-state/1`. | `CONTRACT.md` beside the new module, reviewed |
 | P1.3 | Build the parity harness. It runs every canonical read handler on the same sources through the old store and the new, and compares full results. Only the differences listed in section 5.13 are normalized. Lexical and hybrid search are compared as complete result sets, because their order changes (Q4). | Harness runs old against old with zero differences |
 | P1.4 | Freeze expected results from the old store for the parity corpus, so they stay independent once the old code is gone. | Fixtures committed; they hold no private source |
@@ -785,6 +870,26 @@ the store. Nothing from P2 ships on the old store (Q1).
 | P2.7 | The graphics-card route: batched FP16 inference through the present CUDA runtime and device admission. Windows first, then Linux. | Vectors match the processor route within the tolerance; rate and memory held recorded; the card is released between jobs |
 | P2.8 | The new setting (Q10), allowed by default, added to the service configuration through the schema generation, with its Admin and extension surfaces. Route choice, fallback to the processor, and status that names the route used. | Decision tests for a card that is allowed, turned off, absent, refused by admission and failing; the generated contract check passes |
 | P2.9 | Compare retrieval between today's INT8 vectors and the FP16 vectors on the reviewed query set and the parity corpus. | Result recorded; any loss is reported to the user before P7 |
+
+Notes for P2.1, from reading on 24 November 2026:
+
+- In the service, embedding goes through `RemoteModel`, which sends each
+  batch of at most 32 texts with a worker count to the shared inference
+  owner. The ONNX model ignores the count and runs one session on one thread
+  ([onnx.rs](../../crates/airk-retrieval/src/onnx.rs#L413)).
+- A service work grant allows 1 to 4 extraction threads and 1 to 4 inference
+  threads, and the resource configuration accepts an inference override of
+  1 to 4
+  ([service_resources.rs](../../crates/airk-core/src/service_resources.rs#L194)).
+  The pool needs these limits raised.
+- Outside the service the kernel's own plan caps extraction at 4 workers and
+  inference at 8. Its memory rule reduced extraction to one worker in the
+  baseline run on this machine.
+- `ResourceConfiguration` in the same file holds `allow_gpu`. The embedding
+  setting of Q10 joins it there.
+- Still to read: the session host in `airk-inference`
+  (`inference_engine/pool`, `embedding_pool_client.rs`) and the supervisor's
+  sizing of grants.
 
 **P3. Store: schema, writer and vector file.**
 
@@ -832,7 +937,7 @@ the store. Nothing from P2 ships on the old store (Q1).
 | Part | Work | Done when |
 |---|---|---|
 | P7.1 | Full parity run on the corpus, munarium and bookbuilder-v2. | Zero unexplained differences |
-| P7.2 | The measures of P0.3 again. | A before-and-after table in this plan, against the targets of section 7.2 |
+| P7.2 | One cold base pass and one rescan of each source on the new store, and one vectors run of munarium. | The times recorded beside those of section 2.6; no exact comparison is required |
 | P7.3 | Make the plain store the only store. | Integration preflight passes on a matched pair |
 | P7.4 | Delete the code of section 5.12 with evidence. | Clean compile and Clippy with no caller left |
 | P7.5 | Update the architecture guide, the index runtime document, contracts, help content and release notes. Bump the version when an installer is built. | Final workspace gate, doctests and repository checks pass |
@@ -860,7 +965,7 @@ From the [validation matrix](../../CONTRIBUTING.md#agent-validation-matrix):
 | Extraction itself is slower than assumed, so the base pass misses its target | P0 measures it before design work depends on it |
 | The exact vector scan is too slow at a million rows | P3.4 measures it; follow-up F3 is the fallback |
 | A read behaviour of the old store is missed | The parity harness compares full results for every handler |
-| The work grows because the seam is wide (about forty reader methods, used across Kernel and the Store service code) | P1 sizes it before P3; the step list is revised then |
+| The work grows because the seam is wide: 122 Store functions have call sites outside Store, 117 of them in Kernel (section 9) | P1 sizes it before P3; the step list is revised then |
 | A second store lives beside the first for too long | P7.4 deletes the old one in the same campaign |
 | Disk use during the work | Each run records its budget first, under the standing disk rules |
 | The FP16 processor route is slower or heavier than the October figures suggest | P2.6 measures it before the INT8 files are retired |
@@ -880,9 +985,63 @@ P2 and P6 are medium; P3, P4 and P5 are large.
 | F4 | A substring index for code | Measurement after P7 |
 | F5 | A static embedding tier for instant vectors | A model decision |
 
-## 9. Document history
+## 9. Seam inventory (step P1.1, first cut)
+
+This is the list of Store functions the plain store must serve, replace or
+retire. It comes from `scripts/indexing-plan/seam_census.py`, which reads
+source text, and from my reading of the names. P1.1 confirms each row
+against its callers before P3 starts.
+
+**Census, 24 November 2026.** The reader, the writer and the file store have
+319 public functions between them: 102 on the reader, 37 on the writer, 178
+on the file store and 2 on both reader and writer. Of these, 122 have
+textual call sites outside Store: 45 on the reader, 19 on the writer and 59
+on the file store (one is counted for both reader and writer). Kernel calls
+117 of the 122. A textual count also matches a same-named function of
+another type; 29 of the 122 names are shared in that way.
+
+**Reader functions called outside Store (45).**
+
+| Family | Functions | In the plain store |
+|---|---|---|
+| Revision | `head`, `token`, `require_token`, `has_prepared_update` | The sequence in `meta`. There is no prepared state, so `has_prepared_update` is retired |
+| Configuration and source policy | `collection_state`, `source_policy_digest`, `attach_source_policy`, `attach_source_policy_fence` | `meta`; the policy fence is kept |
+| Read scope | `attach_read_scope_fence`, `require_path`, `restricts_paths`, `selected_scope_restricts_paths`, `scope_bound_cursor_identity`, `read_scope_fingerprint` | Kept as they are, as path filters over `files` |
+| Files | `artifact`, `captured_input`, `artifact_path`, `lookup_paths`, `lookup_paths_filtered_checked`, `file_metadata`, `file_metadata_bytes`, `file_scalars`, `unit_owner` | `files` and `continuity` |
+| Lexical | `lexical_search`, `lexical_search_paths`, `lexical_search_ranked_any`, `lexical_reference_page`, `verify_lexical`, `verify_lexical_integrity` | `fts` and `chunks`; the two verify functions move into Verify |
+| Facts and relationships | `native_facts_page_with_options`, `native_relationships`, `analysis` | `facts` and the imported tables |
+| Text | `native_line_projection`, `text_range_projection` | `file_text` and `chunks` |
+| Vectors | `vector_binding`, `path_occurrences`, `occurrence_hit`, `graph_candidate_pointers`, `map_get` | `units`, `vector_rows` and the vector file |
+| Changes | `recent_changes_since` | `changes` |
+| Resources | `resource`, `resource_reference` | Rows in `meta`; pending semantic work becomes `files.vector_state` |
+| Integrity mode and cleanup | `private_query_eligible`, `observe_private_integrity`, `reclamation_plan` | Retired |
+
+**Writer functions called outside Store (19).** `initialize`,
+`initialize_collection` and `install_initial_lexical_manifest` become
+creation of an empty index. `prepare_artifacts_with_optional_projections`,
+`prepare`, `mark_applying`, `commit`, `abort_prepared`, `pending`, `phase`,
+`has_object_captures`, `prepare_repack`, `verify_current_lexical` and
+`verify_pending_fts` are replaced by one batch transaction (section 5.4) and
+one vector commit (section 5.6). `reclaim_objects` is retired with the object
+files. `reconcile_operation_funding`,
+`reconcile_operation_funding_preserving` and `release_orphan_grants` are
+retired with the grants (D8). `head` is shared with the reader.
+
+**File-store functions called outside Store (59).**
+
+| Family | Functions | In the plain store |
+|---|---|---|
+| Stored objects | `check_retained_present`, `load_extraction_payload`, `load_retained`, `load_retained_bounded`, `load_retrieval_artifact`, `read_retained_source`, `verify_retained_source`, `retain_artifact_with_budget_owned`, `retain_payload_encoded_owned`, `retain_payload_with_budget_owned`, `load_legacy_saved_artifact` | Reads of `file_text`, `chunks` and `facts`; writes join the batch. Legacy saved evidence is retired (Q6) |
+| Metadata and resources | `prepare_current_metadata_input`, `retain_current_metadata_encoded_owned`, `retain_current_metadata_scalars_prepared_owned`, `prepare_native_fact_projection`, `read_current_resource`, `retain_current_resource_owned` | Retired; their content is rows written by the batch |
+| Open and lifecycle | `current_scope`, `current_read`, `current_build_read`, `current_write`, `current_database_capacity`, `runtime_bootstrap`, `write_runtime_bootstrap`, `finish_runtime_bootstrap`, `rebuild_obsolete_index`, `reclaim_current_objects`, `pin_service_objects` | Rewritten: open, create and old-format detection |
+| Funding | `close_abandoned_operation_reservations`, `takeover_operation_funding_for_cleanup`, `takeover_operation_funding_for_retry`, `with_operation_funding` | Retired with the grants (D8), after checking what else uses them |
+| Settings outside the index format | `compression_mode`, `configure_compression`, `extraction_policy_bytes`, `configure_extraction_policy_bytes`, `vector_policy_bytes`, `configure_vector_policy_bytes`, `shared_model_default`, `shared_model_runtime`, `shared_model_source`, `embedded_default_reference`, `embedded_model_binding`, `installed_model`, `validate_model_reference`, `with_embedded_service_models`, `with_service_models`, `service_incarnation`, `managed_collection_directory`, `invalidate_owned_state_before_mutation`, `with_split_access`, `directory`, `lock`, `new` | Kept |
+| Shared names to check | `catalog`, `facts`, `facts_page`, `relationships`, `receipt` | Older-format reads or other types of the same name; P1.1 settles each |
+
+## 10. Document history
 
 | Date | Change |
 |---|---|
 | 24 November 2026 | First version: analysis, decisions D1 to D8, design sketch, open questions Q1 to Q8, implementation plan |
+| 24 November 2026 | Step P0: baseline of the base pass measured and section 2.3's ranking corrected (section 2.6); the vectors measurement stopped on the user's word; targets made guides; seam inventory (section 9) and notes for P2.1 added |
 | 24 November 2026 | The user's answers to Q1 to Q10 recorded. Q2, Q4 and Q10 differ from my recommendations: embedding on the graphics card, BM25 ranking and a separate embedding setting join the plan. Steps P2.5 to P2.9 added; targets, risks and section 5.13 revised |

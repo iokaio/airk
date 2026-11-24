@@ -74,9 +74,11 @@ pub(super) fn prepare(
             prior_bytes <= airk_store::current::MAX_CURRENT_METADATA_READ_BYTES,
             "current prior metadata admission exceeded"
         );
-        let same = read
-            .file_metadata(store, path)?
-            .filter(|old| old.state.root == source.root);
+        let same = {
+            let _stage = airk_core::stage_timing::scope("publish.metadata.prior");
+            read.file_metadata(store, path)?
+                .filter(|old| old.state.root == source.root)
+        };
         let moved_path = moves.and_then(|moves| moves.get(path));
         let moved = moved_path
             .map(|old| read.file_metadata(store, old))
@@ -124,6 +126,7 @@ pub(super) fn prepare(
         let prepared = if retained.legacy_origin.is_some() {
             None
         } else {
+            let _stage = airk_core::stage_timing::scope("publish.metadata.load");
             Some(store.prepare_current_metadata_input(artifact)?)
         };
         let indexed_lines = if let Some(prepared) = &prepared {
@@ -162,6 +165,7 @@ pub(super) fn prepare(
             parse_status: artifact.parse_status.clone(),
         };
         if let Some(prepared) = &prepared {
+            let _stage = airk_core::stage_timing::scope("publish.metadata.continuity");
             crate::continuity::assign(prior, path, &mut file, prepared.payload(), sequence)?;
         } else {
             for family in [
@@ -185,6 +189,7 @@ pub(super) fn prepare(
             "current captured metadata admission exceeded"
         );
         let reference = if let Some(prepared) = &prepared {
+            let _stage = airk_core::stage_timing::scope("publish.metadata.retain");
             store.retain_current_metadata_scalars_prepared_owned(
                 writer,
                 path,
@@ -209,7 +214,11 @@ pub(super) fn prepare(
             use airk_store::current::native_projection::{
                 MAX_PREPARED_NATIVE_BYTES, ProjectionPreparationLimit,
             };
-            match store.prepare_native_fact_projection(prepared.artifact(), &file, compression) {
+            let projection = {
+                let _stage = airk_core::stage_timing::scope("publish.metadata.native_projection");
+                store.prepare_native_fact_projection(prepared.artifact(), &file, compression)
+            };
+            match projection {
                 Ok(plan)
                     if optional_memory.saturating_add(plan.memory_bytes())
                         <= MAX_PREPARED_NATIVE_BYTES =>

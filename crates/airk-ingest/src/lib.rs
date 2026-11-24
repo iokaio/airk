@@ -980,6 +980,7 @@ fn scan_observed_profiled_controlled(
             let bytes = if let Some(bytes) = captured_sources.get(&path) {
                 bytes.clone()
             } else {
+                let _stage = airk_core::stage_timing::scope("scan.read");
                 let bytes = read_source_with_budget(source, entry.path(), remaining)?;
                 read_bytes += bytes.len();
                 bytes
@@ -1002,15 +1003,21 @@ fn scan_observed_profiled_controlled(
                 });
                 continue;
             }
-            let content_hash = format!("{:x}", Sha256::digest(&bytes));
+            let content_hash = {
+                let _stage = airk_core::stage_timing::scope("scan.hash");
+                format!("{:x}", Sha256::digest(&bytes))
+            };
             let hash = content_hash.parse::<airk_core::identity::Sha256Digest>()?;
-            let selection = policy.select_in_root_captured(
-                &registry,
-                &path,
-                path.strip_prefix(prefix.as_str()).unwrap_or(&path),
-                &bytes,
-                &captured_context,
-            )?;
+            let selection = {
+                let _stage = airk_core::stage_timing::scope("scan.select");
+                policy.select_in_root_captured(
+                    &registry,
+                    &path,
+                    path.strip_prefix(prefix.as_str()).unwrap_or(&path),
+                    &bytes,
+                    &captured_context,
+                )?
+            };
             let mut profile = selection.profile;
             // A deliberate OCR operation is retained for unchanged source bytes.
             // Explicit policy overrides and full rebuilds select native extraction.
@@ -1080,6 +1087,7 @@ fn scan_observed_profiled_controlled(
             let cached = if full_reindex {
                 None
             } else {
+                let _stage = airk_core::stage_timing::scope("scan.lookup");
                 lookup(observations::ReuseRequest {
                     path: &path,
                     canonical_root: source.to_str().context("non-UTF-8 source root")?,

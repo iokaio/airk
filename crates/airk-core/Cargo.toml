@@ -9,6 +9,11 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+default = []
+# Measurement builds only: wall-clock stage accumulators in `stage_timing`.
+stage-timing = []
+
 [dependencies]
 anyhow.workspace = true
 serde.workspace = true

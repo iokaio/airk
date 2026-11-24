@@ -828,6 +828,7 @@ impl Kernel {
         current_work: Option<&mut airk_ingest::CurrentIndexWork>,
         admission: DrainAdmission<'_>,
     ) -> Result<Option<u64>> {
+        let _stage = airk_core::stage_timing::scope("index.drain");
         match self.drain_current_enrichment(
             model,
             selection,

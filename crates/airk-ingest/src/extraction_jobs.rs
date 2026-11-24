@@ -98,6 +98,7 @@ pub(crate) enum PreparedExtraction {
 }
 
 pub(crate) fn extract(captured: CapturedExtraction) -> FreshExtraction {
+    let _stage = airk_core::stage_timing::scope("scan.extract");
     let payload = prepare(&captured);
     FreshExtraction {
         captured,
@@ -249,7 +250,10 @@ where
             self.limits.files,
             input.path
         );
-        let retained = (self.emit)(&input.profile, artifact, &input.bytes, payload)?;
+        let retained = {
+            let _stage = airk_core::stage_timing::scope("scan.emit");
+            (self.emit)(&input.profile, artifact, &input.bytes, payload)?
+        };
         ensure!(
             retained.path == input.path && retained.content_hash == input.hash.to_string(),
             "retention changed artifact identity"
@@ -307,6 +311,7 @@ where
             }
         };
         let outcome = payload.and_then(|payload| {
+            let _stage = airk_core::stage_timing::scope("scan.bind");
             bind(&captured, &payload)
                 .map(|artifact| (payload, artifact))
                 .map_err(|error| {

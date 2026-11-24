@@ -99,6 +99,7 @@ fn selectors(
     compact: &Artifact,
     version: u32,
 ) -> Result<BTreeSet<Sha256Digest>> {
+    let _stage = airk_core::stage_timing::scope("postings.selectors");
     let artifact = store.load_retained(compact)?;
 
     let mut selectors = BTreeSet::from([
@@ -272,6 +273,7 @@ impl PostingChanges {
         previous: Option<&CapturedInput>,
         next: Option<&CapturedInput>,
     ) -> Result<()> {
+        let _stage = airk_core::stage_timing::scope("postings.update");
         if plan
             .get(map::key(scope, map::MapDomain::Metadata, TERMINAL_NAMES)?)?
             .is_some()
@@ -380,6 +382,7 @@ impl PostingChanges {
         plan: &mut map::MapPlan<'_>,
         scope: &CurrentScope,
     ) -> Result<impl Iterator<Item = map::MapChange>> {
+        let _stage = airk_core::stage_timing::scope("postings.finish");
         self.recover_missing(plan, scope)?;
         if self.complete {
             let change = map::MapChange::new(

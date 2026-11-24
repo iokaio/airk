@@ -156,6 +156,7 @@ impl ProgressiveBase<'_> {
         if self.batch.is_empty() {
             return Ok(());
         }
+        let _stage = airk_core::stage_timing::scope("index.flush");
         self.check_pause()?;
         let publication_started = std::time::Instant::now();
         // Each publication owns its temporary capacity. Completed transactions
@@ -707,10 +708,12 @@ impl Kernel {
         // Intermediate publications must not reclaim the scan's next retained
         // input or superseded objects still needed by prior-content reuse.
         let captured_objects = writer.capture_objects();
+        let load_stage = airk_core::stage_timing::scope("index.load_previous");
         let mut previous = self
             .load_optional()
             .context(Stage("read_snapshot"))?
             .unwrap_or_else(|| self.empty_snapshot());
+        drop(load_stage);
         let configured = self
             .rebuild_extraction_policy()
             .context(Stage("extraction_settings"))?;
@@ -996,6 +999,7 @@ impl Kernel {
                 {
                     artifact.clone()
                 } else {
+                    let _stage = airk_core::stage_timing::scope("index.retain");
                     self.store.retain_payload_encoded_owned(
                         &writer,
                         artifact,
@@ -1054,6 +1058,7 @@ impl Kernel {
         } else {
             previous.clone()
         };
+        let changes_stage = airk_core::stage_timing::scope("index.final_changes");
         let mut changes = std::collections::BTreeMap::new();
         for (path, artifact) in &snapshot.artifacts {
             let same = committed_previous
@@ -1076,6 +1081,7 @@ impl Kernel {
         {
             changes.insert(path.clone(), ArtifactChange::Delete(path.clone()));
         }
+        drop(changes_stage);
         if changes.is_empty()
             && progressive_current
                 .as_ref()
@@ -1108,6 +1114,7 @@ impl Kernel {
         let semantic_work = objects
             .as_ref()
             .map(|objects| {
+                let _stage = airk_core::stage_timing::scope("index.prepare_work");
                 enrichment::prepare_work(
                     &snapshot,
                     &changes,
@@ -1119,6 +1126,7 @@ impl Kernel {
             })
             .transpose()?;
         let moves = if observation.complete {
+            let _stage = airk_core::stage_timing::scope("index.moves");
             compatible_moves(&self.store, &previous, &snapshot, &observation)?
         } else {
             Default::default()
@@ -1200,6 +1208,7 @@ impl Kernel {
             if let Some(work) = &final_scan_work {
                 resources.push(work.resource_change(&self.store, &writer, &reservation)?);
             }
+            let apply_stage = airk_core::stage_timing::scope("index.final_apply");
             let result = CurrentUpdater {
                 store: &self.store,
                 quota: &quota,
@@ -1215,6 +1224,7 @@ impl Kernel {
                 &moves,
             )
             .context("publish final scanned current")?;
+            drop(apply_stage);
             report.generation = result.commit.token.sequence;
             report.maintenance_error = result.commit.maintenance_error;
             let mut work = progressive_current.unwrap_or_default();

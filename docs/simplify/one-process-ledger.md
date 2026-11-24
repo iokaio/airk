@@ -17601,3 +17601,47 @@ platforms for Q10 are read as Windows CUDA and Linux CUDA and are not
 confirmed by the user. `AGENTS.md` and `CLAUDE.md` received the same edit
 and stay byte-identical. Next action: step P0.2 of the plan, on the user's
 word.
+
+### 24 November 2026 — Indexing plan step P0: stage timers and base-pass baseline
+
+The user said "Start P0.2". Primary agent: Claude Code, as `TYAI\tdotn`
+(identity and every created output checked with the guard).
+
+**Changed.** A new `airk-core` module `stage_timing` with a `stage-timing`
+feature (off by default; without it the scopes are zero-sized and record
+nothing). Timer scopes in the scan (Ingest), publication (Kernel `current`
+update, indexing, metadata, enrichment) and Store (objects, journal, map,
+postings, FTS5). The kernel's `vector_performance` component adapter writes
+the totals when `AIRK_STAGE_TIMING_RESULT` is set. New
+`scripts/indexing-plan/` with `baseline.py`, `run-baseline.ps1`,
+`seam_census.py`, their tests and a README. No product behaviour, persisted
+format or wire shape changed.
+
+**Checks.** Scoped Clippy `-D warnings` for airk-core, airk-ingest,
+airk-store and airk-kernel, with the feature off (70.7 s) and on (67.5 s):
+both exit 0. The module's test: 1 selected, 1 passed, feature off and on.
+Script tests: 12 passed. Focused regressions with all features (airk-store
+`current::`, airk-ingest, airk-kernel current tests): 606 selected, 605
+passed, 1 failed. The failure,
+`current::lexical::cache::tests::release_drops_guards_under_the_released_collection_only`,
+is in a file this change does not touch; it fails with `TEMP` under
+`artifacts\indexing-plan\...\tmp` and passed once under the default user
+`TEMP`. That lexical cache is retired by the plan; the cause was not
+investigated further. Target `target\`, incremental on, development
+optimization level 2, 24 jobs; commands and times in the private
+`artifacts/indexing-plan/p0-baseline-r1/logs/cargo-commands.log`.
+
+**Measured** (plan section 2.6): munarium cold base pass 263.4 s for 1,023
+files, bookbuilder-v2 1,048.3 s for 8,116 files; rescans 1.8 s and 14.3 s;
+one munarium edit 2.8 s. The Merkle map took three quarters of the munarium
+pass, which corrects the plan's earlier ranking. Indexes owner-audited: 0
+foreign entries. The vectors run was stopped after 17 minutes at the user's
+direction ("Just move on and get the new implementation working and
+tested"); it left no receipt.
+
+**In progress, not part of this entry's commit.** The plain-store engine in
+`crates/airk-store/src/index/` (not yet declared or compiled). One agent
+builds the embedding session pool (plan P2) in its own worktree and Cargo
+target; one read-only agent maps the old store's callers. The user switched
+the session to Opus. Next action: review the two agents' reports, then
+finish and test the engine.

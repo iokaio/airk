@@ -379,6 +379,7 @@ pub(crate) fn put(
     key: Sha256Digest,
     value: Option<&[u8]>,
 ) -> Result<Sha256Digest> {
+    let _stage = airk_core::stage_timing::scope("map.put");
     if let Some(value) = value {
         ensure!(value.len() <= MAX_VALUE_BYTES, "map value limit exceeded");
     }
@@ -491,6 +492,7 @@ impl<'a> MapPlan<'a> {
     /// before their replacement is staged in the same transaction.
     pub fn get(&self, key: Sha256Digest) -> Result<Option<Vec<u8>>> {
         ensure!(!self.poisoned, "current map plan is poisoned");
+        let _stage = airk_core::stage_timing::scope("map.plan_get");
         let entries = self.proven(key)?;
         Ok(entries
             .binary_search_by_key(&key, |entry| entry.key)
@@ -544,6 +546,7 @@ impl<'a> MapPlan<'a> {
     }
 
     fn put_inner(&mut self, key: Sha256Digest, value: Option<&[u8]>) -> Result<()> {
+        let _stage = airk_core::stage_timing::scope("map.plan_put");
         if let Some(value) = value {
             ensure!(
                 value.len() <= MAX_VALUE_BYTES,

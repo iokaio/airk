@@ -33,16 +33,22 @@ fn apply(connection: &Connection, store: &FileStore, updates: &Updates) -> Resul
                     // projection. Keep the exact owned/source verification path.
                     input.verify_owned(store)?.0
                 } else {
-                    input.verify(store)?;
+                    {
+                        let _stage = airk_core::stage_timing::scope("fts.apply.verify");
+                        input.verify(store)?;
+                    }
+                    let _stage = airk_core::stage_timing::scope("fts.apply.load");
                     store.load_retrieval_artifact(&input.artifact)?.artifact
                 },
             )
         } else {
             None
         };
+        let _stage = airk_core::stage_timing::scope("fts.apply.replace");
         work.added_documents += lexical::replace(connection, path, artifact.as_ref())?;
     }
     if !updates.is_empty() {
+        let _stage = airk_core::stage_timing::scope("fts.apply.flush");
         lexical::flush(connection)?;
     }
     Ok(work)
@@ -99,6 +105,7 @@ pub(super) fn replay(
     let next = if updates.is_empty() {
         base.clone()
     } else {
+        let _stage = airk_core::stage_timing::scope("fts.replay.apply_tracked");
         base.apply_tracked(connection, || apply(connection, store, &updates))?
             .0
     };
@@ -170,7 +177,11 @@ impl CurrentWriter<'_> {
                 work: LexicalWork::default(),
             });
         }
-        let base = self.lexical_snapshot()?;
+        let _stage = airk_core::stage_timing::scope("fts.prepare");
+        let base = {
+            let _stage = airk_core::stage_timing::scope("fts.prepare.base");
+            self.lexical_snapshot()?
+        };
         let mut growth = 1u64 << 20;
         for change in changes {
             if let ArtifactChange::Upsert(input) = change {
@@ -218,9 +229,14 @@ impl CurrentWriter<'_> {
             .as_mut()
             .context("current database missing")?
             .transaction()?;
-        let (next, work) =
-            base.apply_tracked(&transaction, || apply(&transaction, &self.store, &updates))?;
-        let manifest = next.manifest(digest)?.canonical_bytes()?;
+        let (next, work) = {
+            let _stage = airk_core::stage_timing::scope("fts.prepare.apply_tracked");
+            base.apply_tracked(&transaction, || apply(&transaction, &self.store, &updates))?
+        };
+        let manifest = {
+            let _stage = airk_core::stage_timing::scope("fts.prepare.manifest");
+            next.manifest(digest)?.canonical_bytes()?
+        };
         // The base remains the only published lexical state. Replay applies the
         // same captured inputs in the atomic graph/map/head commit, then checks
         // the sealed shadow-row digest before committing. No index copy/history.
