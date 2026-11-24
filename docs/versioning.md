@@ -1,8 +1,8 @@
 # Versioning from local installation to publication
 
-**Current source candidate: 1.8.208 (24 November 2026).** Native and extension
+**Current source candidate: 1.8.209 (24 November 2026).** Native and extension
 manifests and lockfiles agree. The
-[1.8.208 record](releases/release-1.8.208.md) distinguishes implemented changes
+[1.8.209 record](releases/release-1.8.209.md) distinguishes implemented changes
 from pending artifact, installed, platform and model qualification. The
 [local trust plan](simplify/local-trust-plan.md) phase D governs this candidate, and the
 [execution ledger](simplify/one-process-ledger.md) retains exact outcomes.
@@ -11,13 +11,13 @@ Version 1.9.0 is reserved for final delivery after its applicable gates pass.
 Use one numeric `major.minor.patch` version for the Rust workspace, every local
 AIRK crate in `Cargo.lock`, `packages/vscode/package.json` and both root package
 entries in `packages/vscode/package-lock.json`. Compiled images, runtime metadata,
-native packages and VSIX must match that source version. The unused 1.8.208
+native packages and VSIX must match that source version. The unused 1.8.209
 increment has already been applied for this milestone; do not repeat it for the
 same candidate or rewrite an earlier binary, package or receipt to match it.
 A later changed installable candidate needs its own reviewed unused version.
 
 ```console
-python scripts/release-version.py check --expected 1.8.208
+python scripts/release-version.py check --expected 1.8.209
 ```
 
 After a version or interface change, regenerate native Help, the native-emitted
