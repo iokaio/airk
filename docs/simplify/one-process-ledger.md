@@ -17358,3 +17358,62 @@ unchanged from the frozen target. Active Help now names Focus and Arbiter,
 and the parity guide matches the current Answer schema. Remaining
 qualification limits are the separately gated captures and the full
 installed native and cross-platform journeys.
+
+### 24 November 2026 at 18:20 UTC — Review of the Codex UI merge, a dead-link fix, and the 1.8.209 installer and VSIX candidate
+
+**User's words:** review the UI changes Codex merged into `feat/arbiter-final`
+(`f8300a5f`, `d2b15aae`, `7a1bc1fe`: Explorer, Admin and Workbench ported
+onto loopback HTTP), fix problems, build, spot-check, and build the installer
+before going back to Focus and Arbiter qualification. Primary agent's own
+work (self-review); identity `TYAI\tdotn` verified.
+
+**Review** (82 files, mostly TypeScript, docs, Admin assets and scripts):
+standalone Admin opens only in the default browser (the Simple Browser path,
+which handled the single-use sign-in URL in the extension, and
+`airk.admin.openIn` are removed; the removed webview fields are no longer
+accepted); Focus and Arbiter controls stay reachable under Admin → Service →
+Models; the new Logs filter states how many loaded records it shows and
+keeps the full native outcome; `airk.serviceStart` and the routed
+`airk.explorer.open` are registered; no references to grants, reference
+refresh, trust or `https://127.0.0.1` in the changed UI files. **One problem,
+fixed in `08dffe00`:** the committed `docs/design/ui-review-unification-plan.md`
+linked to `packages/vscode/src/workbenchReferenceRefresh.ts`, deleted by the
+grant removal, so `check-repo.ps1` failed on the branch.
+
+**Checks on `7a1bc1fe`** (worktree `trust-b4\wt`, target `target-l2b-cli`,
+CPU r5 environment): Clippy `-D warnings`, workspace, all features clean
+(1 min 56 s, after one retry of a transient `LNK1104` on a new output file
+that no process held) and default features clean (1 min 6 s); Nextest spot
+checks (`airk-cli` `admin_plane`, `trust_upgrade`, `cli_commands`,
+`combined_reads` Answer; `airk-https` admin plane and gateway;
+`airk-endpoint` admin contract) **183 of 183**, 76 skipped (11 min 39 s);
+VS Code 1,020 of 1,022 (2 skipped); Admin 303 of 305 (2 skipped); shared UI
+**216 of 216** (the shared-editor Service test that failed before now
+passes); Admin bundle seal, `contract_types.py i2|i3|arbiter --check` clean.
+
+**1.8.209 candidate** (`loop/release-209`, fast-forwarded): `16aa576d` bumps
+1.8.208 → 1.8.209 (Cargo, lockfile, extension manifest and lock, version
+lines, new `docs/releases/release-1.8.209.md`) and regenerates help content,
+the Explorer catalog, the help manifest, the UI-pilot fixtures and the
+Admin bundle with their owning tools; a word diff shows only version strings
+changed. `release-version.py check --expected 1.8.209` passes;
+`check-repo.ps1` passes (10,678 files). Built from the short-path worktree
+`artifacts\r208` (detached `16aa576d`) with `scripts/build-local-installers.ps1
+-ForceBuild`, r7 static ONNX Runtime, `bundled-model-v3`, target
+`target-release`, `VSCMD_SKIP_SENDTELEMETRY=1`; release compile 9 min 55 s,
+whole run 14 min 46 s, exit 0.
+
+| | Path | Bytes | SHA-256 |
+| --- | --- | --- | --- |
+| Installer | `artifacts\r208\artifacts\local-service-installer\20261124-105415\airk-service-1.8.209-x86_64-pc-windows-msvc-installer.exe` | 74,665,320 | `7fbf55c763e98ccc3f3fa47904a228abe7e91ecda314fb66a49d62e61a35304b` |
+| VSIX | `artifacts\r208\artifacts\local-vsix\20261124-110834\vsix\publish\airk-1.8.209.vsix` | 1,670,410 | `10bf7bd1fb5ade8035dbc68c99398a90029c98749c2c083595dd6a9194493c42` |
+
+Installer Authenticode Valid (`CN=Ioka LLC`); receipt `result=built`,
+`signed=true`, `version=1.8.209`, `dirty=false`; payload `airkctl --version`
+prints 1.8.209; both files owned by `TYAI\tdotn`. An orphaned `VCTIP.EXE`
+(Visual Studio telemetry, ours, from the Clippy compiles) was stopped.
+
+**Not verified:** an install or the https→http upgrade of this machine's
+installation; macOS, Linux. **Next:** fresh fixture bases and the live
+switch-sequence check on a CUDA lifetime, then Focus and Arbiter
+qualification (L7). D: free 292,588,412,928 bytes. Nothing running.
