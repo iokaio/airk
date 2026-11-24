@@ -63,6 +63,72 @@ resource 64 MiB; path 8 KiB; 8,192 chunks, 65,536 selectors and the
 extraction chunk bound of units per file; 4,096 dimensions; 4,096 retained
 change sequences; pages of at most 4,096 paths; at most 10,000 lexical hits.
 
+## Mapping of the current index (integration contract, 24 November 2026)
+
+How the existing Store types map onto the engine. The reader side
+(`CurrentRead` and its callers) and the writer side (`CurrentUpdater`, the
+scan and enrichment) are built against this section; a change to it is made
+here first.
+
+- **Location.** `index.sqlite3` and the vector files live in the collection
+  directory (`FileStore::directory()`), beside the existing owner header and
+  gates, which stay. A directory with `current.sqlite3` and no
+  `index.sqlite3` holds an old index: it is not read and is rebuilt through
+  the existing full-rebuild owner (`rebuild_obsolete_index`).
+- **meta keys** (besides the engine's own):
+  - `scope`: canonical JSON of `CurrentScope` (root, collection, incarnation).
+  - `collection_state`: canonical JSON of `CollectionState`, rewritten by the
+    writer in the same transaction whenever configuration or counts change.
+    It must round-trip byte-exact (Kernel hashes the configuration).
+  - `lexical_commit`: 32 bytes, the `framed_digest(b"airk-index/lexical/1",
+    [incarnation, sequence])` of the publication that last changed lexical
+    rows. Readers report it as `CurrentHead::lexical_commit` and as every
+    lexical candidate's `manifest_digest`.
+- **Head.** A reader synthesizes `CurrentHead { version: 2, scope, sequence,
+  artifact_root: framed_digest(b"airk-index/root/1", [incarnation,
+  sequence]), lexical_sequence: sequence, lexical_commit, graph_head }`, where
+  `graph_head` is `GraphHead::empty` over a graph scope equal to the index
+  scope (graph instance = incarnation, specification = the model pipeline
+  digest or `current-lexical-only/1`, record bytes as today), with
+  `live_nodes` set to the committed vector rows still referenced by units.
+  `CurrentHead::validate` is relaxed so this passes; the token digest becomes
+  `framed_digest(b"current-index-head/3", [incarnation, sequence, format])`.
+- **files.**
+  - `record`: the exact bytes of today's `CapturedInput` (compact `Artifact`
+    with `retained` set and `postings_version`).
+  - `metadata`: `serde_json` bytes of the `InventoryFile`.
+  - `payload`: `retained.object` (the payload digest).
+  - `source_hash`: `content_hash`.
+  - `language`: `artifact.language`.
+- **payloads.** The JSON `ExtractionPayload` bytes that today form the
+  "artifacts" object, keyed by the same digest. No source copy is stored.
+  The source bytes of a file whose `extraction_method` is `utf8` are the
+  payload's `text`. For other files the source is not retained (Q5):
+  `read_retained_source` is unavailable, and `verify_retained_source`
+  checks only that the stored record's hash matches `files.source_hash`.
+- **chunks.** One row per chunk of the artifact rebuilt with
+  `airk_core::binding::bind_payload`, in order. `stable_id` is
+  `lexical::stable_id(path, ordinal)`. `citation` is the `serde_json` bytes
+  of the `Citation` that lexical search returns today. `terms` is today's
+  encoding: `airk_core::lexical::terms(format!("{path} {}", chunk.text))`
+  mapped through `lexical::token` and joined with spaces. A lexical query
+  maps its terms through the same `token`.
+- **selectors.** Exactly the posting selectors of `postings::selectors`
+  except `Files` and `Language` (which come from `files`): fact name, fact
+  kind, edge source and edge target, with the terminal-call rule for
+  `postings_version == 1`. `terminal_call_postings_complete` is true.
+- **handles.** `Artifact`: the 16 bytes of `InventoryFile.state.artifact_id`.
+  `Unit`: the canonical JSON of each continuity key in
+  `InventoryFile.continuity`.
+- **resources.** The same keys as today's resource map (`semantic-work`,
+  `semantic-policy`, `scan-work`, `analysis`, `legacy-adoption`,
+  `source-controls/1`, and so on), body = the bytes today's resource object
+  holds. `embedding-cache` is not written. A source measurement for usage
+  is the resource `source-measurement/<path>`.
+- **Accelerators and integrity.** `private_query_eligible` is false; every
+  projection is `None`; lexical seals, Merkle proofs, grants, the journal and
+  object reclamation have no counterpart.
+
 ## Not yet
 
 Compaction of dead vector rows; the free-space and size-cap check (D8) is
