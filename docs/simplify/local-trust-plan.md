@@ -74,6 +74,11 @@ chore.
      permanent `scoped_read_unavailable` or `scoped_connection_unavailable`.
    - Work that already spent model tokens is never replayed: its fence
      reports a typed, non-replayable "publication advanced" result.
+   - Unknown setup outcomes (`catalog_connection_outcome_unknown`,
+     `catalog_connection_owner_closed`, "catalog native outcome unknown")
+     stay permanent refusals (user, 23 November 2026): an unknown worker
+     outcome is never reported as pending, and retrying it could repeat
+     work.
 5. **Old installs migrate automatically.**
    - Saved `https://127.0.0.1` endpoints (the endpoint record, agent configs,
      VS Code settings) are recognised as "needs reconnect" and repaired by
