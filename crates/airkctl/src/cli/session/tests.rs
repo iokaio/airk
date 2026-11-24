@@ -1277,7 +1277,6 @@ fn the_control_relay_forwards_exactly_the_session_rows() {
     let expected: std::collections::BTreeSet<String> = [
         // U105: the Explorer's applied search scope sets an open
         // connection's defaults.
-        "AgentConnectionDefaults",
         "Cancel",
         "CatalogDetail",
         "CatalogPage",
@@ -1318,8 +1317,6 @@ fn the_control_relay_forwards_exactly_the_session_rows() {
         json!({"configure_watch": {"project": project, "enabled": false}}),
         json!({"logs": {"limit": 5}}),
         json!({"assistance_windows": {}}),
-        json!({"agent_connection_defaults": {"connection_id": "a".repeat(32),
-            "expected_defaults_revision": 1, "agent_choice": "on"}}),
     ] {
         assert!(
             matches!(relay_rule(&method(forwarded.clone())), Relay::Forward),

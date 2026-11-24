@@ -217,7 +217,6 @@ fn catalog(
     let method = ControlMethod::ToolsCatalog {
         detail,
         combined: console.combined.clone(),
-        connection_id: None,
     };
     let document = match crate::service::request(&console.control, method, VERSION) {
         Ok(ControlResponse::ToolsCatalog { document }) => document,

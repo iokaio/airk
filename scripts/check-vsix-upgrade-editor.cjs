@@ -243,13 +243,16 @@ with zipfile.ZipFile(sys.argv[1]) as z:
         if(definition?.transport==='https'){
             assert(!uncertainMcp,'Previous owned transport close remains uncertain');
             const install=path.join(run,'native-service'),info=definition.nativeConnection;
-            const {validateHttpConnection,httpMaterial,sameHttpAuthority}=require(path.join(root,'packages/vscode/out/serviceHttp.js'));
+            const {validateHttpConnection,httpMaterial}=require(path.join(root,'packages/vscode/out/serviceHttp.js'));
             validateHttpConnection(info);
             const metadata=await native(verificationBundle,['runtime','inspect','--install-dir',install]);
             const pair=JSON.parse(await fs.readFile(path.join(verificationBundle.source,'airk-runtime.json'),'utf8'));
             assert(pair.schema===2&&metadata.launcher===null&&metadata.payload_verified===true&&metadata.approval?.manifest_sha256===verificationBundle.digest,'Modern HTTP requires the exact verified main-only native payload');
-            const currentInfo=validateHttpConnection(await native(verificationBundle,['runtime','http-connection-info','--install-dir',install,'--connection-id',info.connection_id]));
-            assert(sameHttpAuthority(currentInfo.selection,info.selection)&&isDeepStrictEqual(currentInfo.endpoint,info.endpoint)&&currentInfo.endpoint.executable_sha256===pair.airk_sha256&&currentInfo.endpoint.namespace===metadata.registry_namespace,'Native HTTP authority/endpoint changed since observation');
+            // Local trust plan B removed connection reads: the retained connection's
+            // endpoint is checked against the native endpoint read instead.
+            const endpoint=await native(verificationBundle,['runtime','http-endpoint','--install-dir',install]);
+            const currentInfo=validateHttpConnection({...info,endpoint});
+            assert(isDeepStrictEqual(currentInfo.endpoint,info.endpoint)&&currentInfo.endpoint.executable_sha256===pair.airk_sha256&&currentInfo.endpoint.namespace===metadata.registry_namespace,'Native HTTP endpoint changed since observation');
             const {InstalledHttpTransport}=require(path.join(root,'packages/vscode/out/test/installedEditorHttp.js'));
             const material=await httpMaterial(currentInfo),actual=await restoreHttpDefinition(definition,material),transport=new InstalledHttpTransport(actual,material.ca);
             let primary;

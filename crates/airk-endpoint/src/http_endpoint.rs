@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Owner-private HTTPS identity and credentials; never a substitute for grant validation.
+//! Owner-private HTTPS identity, endpoint metadata and the read-only retained
+//! credential ledger of older installations (local trust plan B).
 use airk_core::{
     identity::{Incarnation, Sha256Digest},
     service_http::PREFERRED_HTTP_PORT,
@@ -13,18 +14,11 @@ use std::{
 };
 
 mod metadata;
-mod store;
+mod retained_ledger;
 mod tls;
 pub mod trust;
-pub use airk_core::service_http_credentials::same_authority;
-pub use metadata::{
-    load_descriptor, publish_descriptor, read_registration_file, read_registrations_file,
-    read_selection_file,
-};
-pub use store::{
-    AttachmentRetirementProof, AuthenticatedCredential, ConnectionOwnership, CredentialStore,
-    IssuedCredential, OpenDefaultsChange, OpenDefaultsRefused, authority_digest, read_client_token,
-};
+pub use metadata::{load_descriptor, publish_descriptor};
+pub use retained_ledger::{RetainedLedger, holds_no_credentials};
 pub use tls::{TlsBundleIdentity, TlsIdentity};
 pub mod rotation;
 

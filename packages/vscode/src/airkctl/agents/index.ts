@@ -8,32 +8,24 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { Airkctl } from '../index';
-import { AirkctlCommandError } from '../session';
 import type { Entry } from '../../generated/i2';
 import { PROJECT_FILES, removeAll, MAX_BYTES, type Agent, type Removal } from './recognizer';
 const INCARNATION = /^[0-9a-f]{32}$/;
 export type Client = 'claude' | 'codex' | 'vscode';
 
-/** The bearer header of one existing connection, from the one-shot helper
- * (`agents credential --format header-json`). The session refuses this command. */
-export async function credentialHeader(airkctl: Airkctl, connectionId: string): Promise<string> {
-    if (!INCARNATION.test(connectionId)) { throw new Error('invalid_connection_id'); }
-    const argv = ['agents', 'credential', '--connection-id', connectionId, '--format', 'header-json'];
-    const result = await airkctl.oneShot(argv, { timeoutMs: 15_000 });
-    if (result.class !== 'success') { throw new AirkctlCommandError(argv, result); }
-    let header: unknown;
-    try { header = JSON.parse(result.stdout); } catch { throw new Error('credential_helper_malformed'); }
-    const authorization = header && typeof header === 'object' ? (header as Record<string, unknown>).Authorization : undefined;
-    if (typeof authorization !== 'string' || !/^Bearer [\x21-\x7e]{16,4096}$/.test(authorization)) { throw new Error('credential_helper_malformed'); }
-    return authorization;
-}
-/** `airk.httpCredential`: the token VS Code substitutes into `Bearer ${input:airkToken_<id>}`. */
-export async function inputCredential(airkctl: Airkctl, input: unknown): Promise<string> {
+/** The value `airk.httpCredential` substitutes into a pre-U110 entry's
+ * `Bearer ${input:airkToken_<id>}`. Credentials no longer exist (local trust
+ * plan B) and the endpoint strips the header unread, so it is a fixed,
+ * non-secret placeholder that lets such an entry connect until it is repaired. */
+export const RETIRED_CREDENTIAL_PLACEHOLDER = 'airk-local-session';
+/** `airk.httpCredential` (compatibility only): validate the old input's
+ * arguments and answer the placeholder; nothing is read or issued. */
+export async function inputCredential(_airkctl: Airkctl, input: unknown): Promise<string> {
     const id = input && typeof input === 'object' ? (input as Record<string, unknown>).connection_id : undefined;
     if (typeof id !== 'string' || !INCARNATION.test(id) || Object.keys(input as object).some(key => key !== 'connection_id')) {
         throw new Error('invalid_http_credential_arguments');
     }
-    return (await credentialHeader(airkctl, id)).slice('Bearer '.length);
+    return RETIRED_CREDENTIAL_PLACEHOLDER;
 }
 
 const projectArgs = (projects: readonly string[]) => projects.flatMap(project => ['--project', project]);

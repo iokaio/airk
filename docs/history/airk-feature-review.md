@@ -887,7 +887,7 @@ mis-issues a certificate for `127.0.0.1` falls outside this guarantee.
 
 ### 12.4 Credentials
 
-[`http_endpoint_store.rs`](../../crates/airk-endpoint/src/http_endpoint/store.rs):
+`http_endpoint/store.rs` (removed by the local trust plan, phase B, 23 November 2026; predecessor cleanup now reads the retained ledger through [`retained_ledger.rs`](../../crates/airk-endpoint/src/http_endpoint/retained_ledger.rs)):
 
 - **One bearer credential per reviewed client connection.** It is random, at
   least 256 bits, in the form `airk1.<connection_id>.<64 hex>`, and can be revoked

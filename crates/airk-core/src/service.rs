@@ -243,21 +243,6 @@ pub enum ControlMethod {
     },
     /// Owner-authenticated local discovery; never an anonymous HTTP endpoint.
     HttpEndpoint,
-    /// Enroll an existing reviewed selection. No token appears in the response.
-    HttpEnroll {
-        connection_id: Incarnation,
-        selection: Box<crate::service_http::HttpSelection>,
-        client: crate::usage::ClientFamily,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        explorer_descriptor: Option<String>,
-        /// An original managed attachment proven retired by native ownership.
-        /// Checked again under the credential owner before replacement issuance.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        reattach_connection_id: Option<Incarnation>,
-    },
-    HttpRevoke {
-        connection_id: Incarnation,
-    },
     /// Validate a prepared combined reply against the live native admission
     /// gate. No source, worker election, grant issuance or query replay occurs.
     ValidateCombinedDelivery {
@@ -548,15 +533,6 @@ pub enum ControlMethod {
             deserialize_with = "combined_present"
         )]
         combined: Option<Box<CombinedConnectRequest>>,
-        /// U105: the open connection whose agent choice selects the open
-        /// catalog (`airkctl tools list --connection`). Absent for every
-        /// other catalog; never with `combined`.
-        #[serde(
-            default,
-            skip_serializing_if = "Option::is_none",
-            deserialize_with = "combined_present"
-        )]
-        connection_id: Option<Incarnation>,
     },
     /// M3: run one unified tool for a selected project and return its complete
     /// envelope. The service runs the pre-split CLI call path unchanged.
@@ -594,47 +570,6 @@ pub enum ControlMethod {
     /// checked against this installation's binding and health as `airk
     /// runtime http-endpoint` checked it.
     AgentEndpoint {},
-    /// M15 (`agents info`): an existing connection's verified references,
-    /// never its credential, as `airk runtime http-connection-info` read them.
-    AgentConnectionInfo {
-        connection_id: Incarnation,
-    },
-    /// M16 (split step 3e.4, `agents list`): whether this installation owns a
-    /// connection id, as `airk runtime lookup-http-connection` answered it,
-    /// without its selected-runtime and staged-selection checks.
-    AgentConnectionOwnership {
-        connection_id: Incarnation,
-    },
-    /// V1 (`agents verify`): probe this service's own `/mcp` over HTTPS with
-    /// the connection's stored credential; the token never leaves the service.
-    AgentConnectionVerify {
-        connection_id: Incarnation,
-    },
-    /// U105: set an open connection's default scope and agent choice. An absent field keeps
-    /// its value; `expected_defaults_revision` fences concurrent edits. The
-    /// credential generation never changes.
-    AgentConnectionDefaults {
-        connection_id: Incarnation,
-        expected_defaults_revision: u64,
-        #[serde(
-            default,
-            skip_serializing_if = "Option::is_none",
-            deserialize_with = "combined_present"
-        )]
-        index_ids: Option<Vec<crate::index_catalog::IndexId>>,
-        #[serde(
-            default,
-            skip_serializing_if = "Option::is_none",
-            deserialize_with = "combined_present"
-        )]
-        index_set_ids: Option<Vec<crate::index_catalog::QueryProjectId>>,
-        #[serde(
-            default,
-            skip_serializing_if = "Option::is_none",
-            deserialize_with = "combined_present"
-        )]
-        agent_choice: Option<crate::agent_connection::AgentChoice>,
-    },
     /// U110: set (or, with no indexes and no sets, clear) the default scope
     /// of each workspace folder. Answers [`ControlResponse::WorkspaceScopeDefaults`].
     WorkspaceScopeDefault {
@@ -861,8 +796,6 @@ impl ControlMethod {
             | Self::ObserveUpgradeCheckpoint { .. }
             | Self::UpgradeRecoveryProbe { .. }
             | Self::ReleaseUpgradeAdmission { .. }
-            | Self::HttpEnroll { .. }
-            | Self::HttpRevoke { .. }
             // A1 is owner pipe only (contracts §2.7, §3.8).
             | Self::AdminLaunchCode {} => {
                 return Some("console_private_setup_forbidden");
@@ -902,10 +835,6 @@ impl ControlMethod {
             | Self::LoginStartup { .. }
             | Self::FolderBrowse { .. }
             | Self::AgentEndpoint {}
-            | Self::AgentConnectionInfo { .. }
-            | Self::AgentConnectionOwnership { .. }
-            | Self::AgentConnectionVerify { .. }
-            | Self::AgentConnectionDefaults { .. }
             | Self::WorkspaceScopeDefault { .. }
             | Self::WorkspaceScopeDefaults {}
             | Self::HttpIssuerRotation { .. }
@@ -1192,17 +1121,10 @@ pub enum ToolSelection {
     },
     /// U105: an open agent read. `index_ids`/`index_set_ids` are ids or exact names
     /// (union, at most [`crate::index_catalog::MAX_SELECTION`] each); both
-    /// empty reads the connection's default scope. `connection_id` names the
-    /// open connection whose defaults and agent choice apply.
+    /// empty reads the workspace default.
     Open {
         index_ids: Vec<String>,
         index_set_ids: Vec<String>,
-        #[serde(
-            default,
-            skip_serializing_if = "Option::is_none",
-            deserialize_with = "combined_present"
-        )]
-        connection_id: Option<Incarnation>,
         /// U110: with no index or set named, the workspace default of the
         /// most specific stored folder containing this absolute path.
         #[serde(
@@ -1505,12 +1427,6 @@ pub enum ControlResponse {
     },
     HttpEndpoint {
         endpoint: Option<Box<crate::service_http::EndpointDescriptor>>,
-    },
-    HttpConnection {
-        connection: Box<crate::service_http::HttpConnectionInfo>,
-    },
-    HttpRevoked {
-        connection_id: Incarnation,
     },
     ReferenceRefreshReviewRequired {
         project: ProjectBinding,
@@ -1824,23 +1740,6 @@ pub enum ControlResponse {
         endpoint: Box<crate::service_http::EndpointDescriptor>,
         /// Inert generated setup entries; outside the persisted endpoint digest.
         manual: Vec<crate::agent_manual::AgentManualEntry>,
-    },
-    /// M15: the connection's references (no token).
-    AgentConnectionInfo {
-        connection: Box<crate::service_http::HttpConnectionInfo>,
-    },
-    /// M16: `{schema, connection_id, status: owned|not_owned|unavailable, …}`.
-    AgentConnectionOwnership {
-        result: serde_json::Value,
-    },
-    /// V1: `{schema, connection_id, url, verified, …}`.
-    AgentConnectionVerified {
-        result: serde_json::Value,
-    },
-    /// U105: the open connection's stored defaults after the change.
-    AgentConnectionDefaults {
-        connection_id: Incarnation,
-        open: crate::agent_connection::OpenConnectionState,
     },
     /// U110: every stored workspace default (after a change, when one was made).
     WorkspaceScopeDefaults {

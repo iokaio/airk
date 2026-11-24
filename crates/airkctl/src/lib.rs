@@ -11,7 +11,6 @@ pub mod cli;
 pub mod contract;
 pub mod install;
 pub mod journal;
-pub mod launch;
 pub mod lifecycle;
 pub mod logs;
 pub(crate) mod portable;

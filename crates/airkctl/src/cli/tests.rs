@@ -353,7 +353,7 @@ fn open_agent_arguments_are_checked_before_the_service() {
         (code, stderr.as_str()),
         (
             2,
-            "airkctl: --index, --set and --connection cannot be combined with a project or session selection\n"
+            "airkctl: --index, --set and --workspace cannot be combined with a project or session selection\n"
         )
     );
     let mut too_many = vec!["--service-runtime-dir", missing, "tools", "call", "search"];
@@ -374,23 +374,6 @@ fn open_agent_arguments_are_checked_before_the_service() {
             "--connection-id",
             &connection,
         ][..],
-        &[
-            "agents",
-            "default",
-            "--connection-id",
-            &connection,
-            "--clear",
-            "--index",
-            "docs",
-        ],
-        &[
-            "agents",
-            "default",
-            "--connection-id",
-            &connection,
-            "--agent-choice",
-            "maybe",
-        ],
         &["library", "describe", "--text", "x"],
         &[
             "library",
@@ -403,6 +386,52 @@ fn open_agent_arguments_are_checked_before_the_service() {
         ],
     ] {
         assert_eq!(run_line(invalid).0, 2, "{invalid:?}");
+    }
+    // Local trust plan B: the connection commands and `--connection` are gone.
+    // A removed subcommand is not served (exit 5); a removed argument of a
+    // served command is a usage error (exit 2). Neither reaches the service.
+    for removed in [
+        &[
+            "agents",
+            "default",
+            "--connection-id",
+            &connection,
+            "--clear",
+        ][..],
+        &["agents", "info", "--connection-id", &connection],
+        &[
+            "agents",
+            "credential",
+            "--connection-id",
+            &connection,
+            "--format",
+            "header-json",
+        ],
+        &["agents", "revoke", "--connection-id", &connection],
+        &["agents", "verify", "--connection-id", &connection],
+        &[
+            "agents",
+            "launch",
+            "--client",
+            "codex",
+            "--connection-id",
+            &connection,
+        ],
+        &["agents", "list", "--connection-id", &connection],
+        &[
+            "tools",
+            "call",
+            "search",
+            "--index",
+            "docs",
+            "--connection",
+            &connection,
+        ],
+        &["tools", "list", "--connection", &connection],
+    ] {
+        let (code, _, stderr) = run_line(removed);
+        assert!(matches!(code, 2 | 5), "{removed:?}: {code}");
+        assert!(!stderr.is_empty(), "{removed:?}");
     }
 }
 

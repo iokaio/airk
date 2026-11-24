@@ -244,7 +244,9 @@ through the API. Recognized manual configuration owns its policy and suppresses
 a duplicate provider definition.
 
 Since U110 this credential path is retired: `/mcp` takes no token, and
-Connect or `airkctl agents repair` rewrites entries to the URL-only form. The
+Connect or `airkctl agents repair` rewrites entries to the URL-only form. Since
+23 November 2026 (local trust plan B) the credential helpers are removed and
+`airk.httpCredential` answers a fixed placeholder for an old entry. The
 rest of this paragraph is historical. This credential path needs no Code environment reload. It requires the AIRK
 extension and a harness that supports command inputs. Portable/forwarded MCP
 harnesses which reject input variables remain unqualified. Since 1.8.22,

@@ -1184,8 +1184,6 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         | ControlMethod::UpgradeRecoveryProbe { .. }
         | ControlMethod::ReleaseUpgradeAdmission { .. }
         | ControlMethod::HttpEndpoint
-        | ControlMethod::HttpEnroll { .. }
-        | ControlMethod::HttpRevoke { .. }
         | ControlMethod::Connect { .. }
         | ControlMethod::ConnectScoped { .. }
         | ControlMethod::NativeRead { .. }
@@ -1262,10 +1260,6 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         | ControlMethod::LoginStartup { .. }
         | ControlMethod::FolderBrowse { .. }
         | ControlMethod::AgentEndpoint {}
-        | ControlMethod::AgentConnectionInfo { .. }
-        | ControlMethod::AgentConnectionOwnership { .. }
-        | ControlMethod::AgentConnectionVerify { .. }
-        | ControlMethod::AgentConnectionDefaults { .. }
         | ControlMethod::WorkspaceScopeDefault { .. }
         | ControlMethod::WorkspaceScopeDefaults {}
         | ControlMethod::HttpIssuerRotation { .. }

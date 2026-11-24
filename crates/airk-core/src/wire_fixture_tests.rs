@@ -668,7 +668,7 @@ fn open_selections_match_reviewed_fixture() {
         refused_at::<ToolSelection>(case, |value| value.validate());
         checked += 1;
     }
-    assert_eq!(checked, 14);
+    assert_eq!(checked, 15);
 }
 
 /// U106(d): an agent selection may observe a whole index without project

@@ -203,12 +203,6 @@ impl AgentPlane {
         self.drop_where(|key, _| key.catalog_revision != current)
     }
 
-    /// A connection's default scope or agent choice changed, or the
-    /// connection was revoked: every lease of it is dropped.
-    pub(super) fn revoke_connection(&mut self, connection: Incarnation) -> Dropped {
-        self.drop_where(|key, _| key.connection == connection)
-    }
-
     /// Service end: every lease.
     pub(super) fn close(&mut self) -> Dropped {
         self.drop_where(|_, _| true)
@@ -300,7 +294,7 @@ mod tests {
     }
 
     #[test]
-    fn idle_defaults_revocation_and_revision_moves_drop_nonces() {
+    fn idle_and_revision_moves_drop_nonces() {
         let mut h = harness(false);
         let a = h
             .plane
@@ -319,22 +313,20 @@ mod tests {
         assert_eq!(dropped, Dropped::default());
         h.now.fetch_add(1, Ordering::SeqCst);
         assert_eq!(h.plane.sweep().into_nonces(), vec![b.grant_nonce]);
-        // Defaults change or connection revocation: that connection only.
+        // Another caller's lease leaves the first one in place.
         let c = h
             .plane
             .lease(connection(2), scope(2), revision(3))
             .0
             .unwrap();
-        assert_eq!(
-            h.plane.revoke_connection(connection(1)).into_nonces(),
-            vec![a.grant_nonce]
-        );
-        assert_eq!(h.plane.len(), 1);
-        // Revision move: a lease at the new revision drops the old one, and
+        assert_eq!(h.plane.len(), 2);
+        // Revision move: a lease at the new revision drops every old one, and
         // an older revision is refused as stale afterwards.
         let (moved, dropped) = h.plane.lease(connection(2), scope(2), revision(4));
         assert_ne!(moved.unwrap().grant_nonce, c.grant_nonce);
-        assert_eq!(dropped.into_nonces(), vec![c.grant_nonce]);
+        let dropped = dropped.into_nonces();
+        assert_eq!(dropped.len(), 2);
+        assert!(dropped.contains(&a.grant_nonce) && dropped.contains(&c.grant_nonce));
         let (stale, dropped) = h.plane.lease(connection(1), scope(1), revision(3));
         assert_eq!(stale, Err(LeaseRefused::Stale));
         assert_eq!(dropped, Dropped::default());

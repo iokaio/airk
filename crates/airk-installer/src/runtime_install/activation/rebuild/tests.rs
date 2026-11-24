@@ -450,12 +450,67 @@ async fn clean_break_bootstrap_epoch_uses_exact_native_transport_before_selectio
     Ok(())
 }
 
-fn predecessor_http_fixture() -> Result<(tempfile::TempDir, PathBuf, Journal, Vec<Incarnation>)> {
-    use airk_core::{
-        index_catalog::{CatalogRevision, GrantId, IndexId, QueryProjectId},
-        service::ScopedConnectRequest,
-        service_http::{EndpointDescriptor, EndpointState, HttpSelection, LoopbackMcpUrl},
+/// One record of a credential ledger as an installation from before local
+/// trust plan B wrote it (hand-written, independent of the reader).
+fn retained_record(
+    id: Incarnation,
+    namespace: Incarnation,
+    expires: u64,
+    revoked: bool,
+    verifier: u8,
+) -> serde_json::Value {
+    let mut record = serde_json::json!({"client":"codex","id":id,"generation":1,
+        "selection":{"kind":"scoped","selection":{"schema":1,"context_key":"cd".repeat(32),
+            "namespace":namespace,"expected_catalog_revision":1,
+            "grant_id":format!("grt_{id}"),"expected_grant_revision":1,
+            "index_id":format!("idx_{id}"),"project_ids":[format!("prj_{id}")]}},
+        "explorer_descriptor":null,"expires_unix_ms":expires,
+        "verifier":format!("{verifier:02x}").repeat(32),"revoked":revoked});
+    if revoked {
+        record["revocation_reason"] = serde_json::json!("explicit");
+    }
+    record
+}
+
+/// Write an old installation's retained ledger, its 103-byte tokens and the
+/// retirement markers of revoked ids, owner-private.
+fn write_retained_ledger(
+    private: &Path,
+    binding: &airk_endpoint::http_endpoint::InstallationBinding,
+    records: &[serde_json::Value],
+    tokens: &[Incarnation],
+    retired: &[Incarnation],
+) -> Result<()> {
+    crate::local_ipc::prepare_root(private)?;
+    let write = |name: &str, bytes: &[u8]| -> Result<()> {
+        fs::write(private.join(name), bytes)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(private.join(name), fs::Permissions::from_mode(0o600))?;
+        }
+        Ok(())
     };
+    let ledger = serde_json::json!({"schema":1,"binding":binding,"records":records});
+    write("credentials.json", &serde_json::to_vec(&ledger)?)?;
+    for id in tokens {
+        write(
+            &format!("credential-{id}.token"),
+            format!("airk1.{id}.{}", "e".repeat(64)).as_bytes(),
+        )?;
+    }
+    for id in retired {
+        let marker = serde_json::json!({"schema":1,"binding":binding,"id":id,"revoked":true});
+        write(
+            &format!("credential-{id}.token"),
+            &serde_json::to_vec(&marker)?,
+        )?;
+    }
+    Ok(())
+}
+
+fn predecessor_http_fixture() -> Result<(tempfile::TempDir, PathBuf, Journal, Vec<Incarnation>)> {
+    use airk_core::service_http::{EndpointDescriptor, EndpointState, LoopbackMcpUrl};
     let (owner, root, mut journal) = fixture(false)?;
     drop(install_lock(&root)?);
     journal.prior.active = install_probe_fixture(&root, true)?;
@@ -486,32 +541,25 @@ fn predecessor_http_fixture() -> Result<(tempfile::TempDir, PathBuf, Journal, Ve
     let binding =
         airk_endpoint::http_endpoint::installation_binding(&journal.old_control, namespace)?;
     let private = journal.old_control.join("http-1");
-    let mut store = airk_endpoint::http_endpoint::CredentialStore::open(&private, binding.clone())?;
     let ids: Vec<_> = (201..205)
         .map(|byte| Incarnation::from_bytes([byte; 16]))
         .collect();
-    let selection = HttpSelection::Scoped {
-        selection: ScopedConnectRequest {
-            schema: 1,
-            context_key: Sha256Digest::from_bytes([205; 32]),
-            namespace,
-            expected_catalog_revision: CatalogRevision::INITIAL,
-            grant_id: GrantId::from_identity(ids[0]),
-            expected_grant_revision: CatalogRevision::INITIAL,
-            index_id: IndexId::from_identity(ids[0]),
-            project_ids: vec![QueryProjectId::from_identity(ids[0])],
-        },
-    };
     let now = unix_ms()?;
-    let issued = store.enroll(ids[0], selection.clone(), now + 3_600_000, now)?;
-    store.enroll(ids[1], selection.clone(), 2, 1)?;
-    store.enroll(ids[2], selection.clone(), now + 3_600_000, now)?;
-    store.revoke(ids[2])?;
-    store.compact_revoked()?;
-    store.enroll(ids[3], selection, now + 3_600_000, now)?;
-    store.revoke(ids[3])?;
-    // Native issuance metadata proves ownership even after a secret is removed.
-    fs::remove_file(issued.credential_file)?;
+    // The old installation's retained ledger: an active connection whose token
+    // was removed (the ledger record still proves ownership), an expired one,
+    // one revoked and compacted out of the ledger (only its retirement marker
+    // remains) and one revoked in place.
+    write_retained_ledger(
+        &private,
+        &binding,
+        &[
+            retained_record(ids[0], namespace, now + 3_600_000, false, 1),
+            retained_record(ids[1], namespace, 2, false, 2),
+            retained_record(ids[3], namespace, now + 3_600_000, true, 4),
+        ],
+        &[ids[1]],
+        &[ids[2], ids[3]],
+    )?;
     let (main, _) = verify_runtime(&root, &journal.prior.active)?;
     let endpoint = EndpointDescriptor {
         schema: 1,
@@ -531,13 +579,11 @@ fn predecessor_http_fixture() -> Result<(tempfile::TempDir, PathBuf, Journal, Ve
     Ok((owner, root, journal, ids))
 }
 
+/// A successor's HTTPS folder as a post-B service leaves it: no ledger and no
+/// credential file.
 fn initialize_fixture_http_owner(control: &Path) -> Result<()> {
-    let lease = ServiceLease::acquire(control)?;
-    let namespace = ServiceRegistry::open_saved(control)?.incarnation()?;
-    let binding = airk_endpoint::http_endpoint::installation_binding(control, namespace)?;
-    let mut store =
-        airk_endpoint::http_endpoint::CredentialStore::open(&control.join("http-1"), binding)?;
-    store.initialize_empty_owned(&lease)?;
+    let _lease = ServiceLease::acquire(control)?;
+    crate::local_ipc::prepare_root(&control.join("http-1"))?;
     Ok(())
 }
 
@@ -633,30 +679,19 @@ fn clean_break_http_snapshot_survives_headless_old_control_and_payload_retiremen
     let control = journal.control();
     let namespace = ServiceRegistry::open_saved(&control)?.incarnation()?;
     let binding = airk_endpoint::http_endpoint::installation_binding(&control, namespace)?;
-    let mut store = airk_endpoint::http_endpoint::CredentialStore::read_existing(
+    // A successor that was itself a pre-B build may have issued the same id.
+    write_retained_ledger(
         &control.join("http-1"),
-        binding,
-    )?;
-    use airk_core::{
-        index_catalog::{CatalogRevision, GrantId, IndexId, QueryProjectId},
-        service::ScopedConnectRequest,
-        service_http::HttpSelection,
-    };
-    store.enroll_default(
-        ids[2],
-        HttpSelection::Scoped {
-            selection: ScopedConnectRequest {
-                schema: 1,
-                context_key: Sha256Digest::from_bytes([212; 32]),
-                namespace,
-                expected_catalog_revision: CatalogRevision::INITIAL,
-                grant_id: GrantId::from_identity(ids[2]),
-                expected_grant_revision: CatalogRevision::INITIAL,
-                index_id: IndexId::from_identity(ids[2]),
-                project_ids: vec![QueryProjectId::from_identity(ids[2])],
-            },
-        },
-        unix_ms()?,
+        &binding,
+        &[retained_record(
+            ids[2],
+            namespace,
+            unix_ms()? + 3_600_000,
+            false,
+            3,
+        )],
+        &[ids[2]],
+        &[],
     )?;
     let collision: PredecessorHttpLookup = serde_json::from_value(http_cleanup::lookup(
         &root,
@@ -758,13 +793,14 @@ fn clean_break_http_disposal_cli_requires_explicit_purpose_and_predecessor() -> 
         "--connection-id",
         "01010101010101010101010101010101",
     ];
-    assert!(Arguments::try_parse_from(base).is_ok());
+    // Local trust plan B: the lookup serves predecessor cleanup only.
+    assert!(Arguments::try_parse_from(base).is_err());
     let mut args = base.to_vec();
     args.extend(["--purpose", "predecessor-cleanup"]);
     assert!(Arguments::try_parse_from(&args).is_err());
     args.extend(["--predecessor", "original"]);
     assert!(
-        matches!(Arguments::try_parse_from(args)?.runtime, RuntimeCommand::LookupHttpConnection { purpose:Some(purpose), predecessor:Some(predecessor), .. } if purpose == "predecessor-cleanup" && predecessor == "original")
+        matches!(Arguments::try_parse_from(args)?.runtime, RuntimeCommand::LookupHttpConnection { purpose, predecessor, .. } if purpose == "predecessor-cleanup" && predecessor == "original")
     );
     let mut args = base.to_vec();
     args.extend(["--predecessor", "original"]);

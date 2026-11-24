@@ -482,8 +482,6 @@ pub(super) fn outcome(response: &ControlResponse) -> NativeOutcome {
         | ControlResponse::UpgradeRecoveryReady { .. }
         | ControlResponse::UpgradeAdmissionReleased { .. }
         | ControlResponse::HttpEndpoint { .. }
-        | ControlResponse::HttpConnection { .. }
-        | ControlResponse::HttpRevoked { .. }
         | ControlResponse::ReferenceRefreshReviewRequired { .. }
         | ControlResponse::ReferenceRefreshReceipt { .. }
         | ControlResponse::CombinedDeliveryValidated { .. }
@@ -544,10 +542,6 @@ pub(super) fn outcome(response: &ControlResponse) -> NativeOutcome {
         | ControlResponse::ToolsCatalog { .. }
         | ControlResponse::ToolResult { .. }
         | ControlResponse::AgentEndpoint { .. }
-        | ControlResponse::AgentConnectionInfo { .. }
-        | ControlResponse::AgentConnectionOwnership { .. }
-        | ControlResponse::AgentConnectionVerified { .. }
-        | ControlResponse::AgentConnectionDefaults { .. }
         | ControlResponse::WorkspaceScopeDefaults { .. }
         | ControlResponse::HttpIssuerRotation { .. }
         | ControlResponse::LifecycleAbandoned { .. }

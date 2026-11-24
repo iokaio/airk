@@ -92,10 +92,6 @@ struct OwnedProcess {
     job: airk_process::ChildJob,
 }
 impl OwnedProcess {
-    fn start(command: Command) -> Result<Self> {
-        Self::start_with_process_limit(command, 32)
-    }
-
     fn start_with_process_limit(mut command: Command, process_limit: u32) -> Result<Self> {
         #[cfg(unix)]
         let _ = process_limit;
@@ -3126,219 +3122,6 @@ async fn one_two_four_and_thirty_two_member_scopes_share_one_count_budget() -> R
     Ok(())
 }
 
-#[tokio::test]
-#[ignore = "opt-in P7 measured replay: run after builds and competing tests finish"]
-async fn owned_combined_benchmark_replays_one_two_four_and_thirty_two_indexes() -> Result<()> {
-    let mut f = Fixture::with_indexes(true, 32)?;
-    f.session.project_ids = f.projects.clone();
-    let _service = f.start().await?;
-    let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .context("workspace crates parent missing")?
-        .parent()
-        .context("workspace root missing")?;
-    let output = match std::env::var_os("AIRK_COMBINED_BENCHMARK_OUTPUT") {
-        Some(path) => std::path::absolute(PathBuf::from(path))?,
-        None => repository.join("artifacts").join(format!(
-            "p7-combined-{}",
-            airk_kernel::service_broker::new_instance_id()?
-        )),
-    };
-    fs::create_dir_all(output.parent().context("benchmark output has no parent")?)?;
-    fs::create_dir(&output).context("benchmark output must be a new directory")?;
-    let candidate = f.candidate.canonicalize()?;
-    // This component fixture has no installed runtime. Only its native owner
-    // submits private enrollment; the Python console surface is read-only.
-    let enrollment_deadline = tokio::time::Instant::now() + Duration::from_secs(60);
-    let health = tokio::time::timeout_at(
-        enrollment_deadline,
-        airk_cli::service_runtime::request(&f.control, ControlMethod::Health),
-    )
-    .await??;
-    let ControlResponse::Health {
-        observation: health,
-    } = health
-    else {
-        anyhow::bail!("combined benchmark native health unavailable");
-    };
-    let mut enrolled = Vec::new();
-    let health_executable: airk_core::identity::Sha256Digest = health
-        .executable_sha256
-        .parse()
-        .context("combined benchmark native health executable digest invalid")?;
-    for count in [1, 2, 4, 32] {
-        let mut selection = f.session.clone();
-        selection.index_ids = Some(f.indexes[..count].to_vec());
-        let id = airk_kernel::service_broker::new_instance_id()?;
-        let response = tokio::time::timeout_at(
-            enrollment_deadline,
-            airk_cli::service_runtime::request(
-                &f.control,
-                ControlMethod::HttpEnroll {
-                    connection_id: id,
-                    client: airk_core::usage::ClientFamily::Unknown,
-                    selection: Box::new(airk_core::service_http::HttpSelection::Combined {
-                        selection: selection.clone(),
-                    }),
-                    explorer_descriptor: None,
-                    reattach_connection_id: None,
-                },
-            ),
-        )
-        .await??;
-        let ControlResponse::HttpConnection { connection } = response else {
-            anyhow::bail!("combined benchmark native enrollment refused");
-        };
-        connection.validate()?;
-        let airk_core::service_http::HttpSelection::Combined {
-            selection: observed,
-        } = &connection.selection
-        else {
-            anyhow::bail!("combined benchmark enrollment changed selection kind");
-        };
-        ensure!(
-            observed.expected_catalog_revision >= selection.expected_catalog_revision,
-            "combined benchmark enrollment moved catalog backwards"
-        );
-        selection.expected_catalog_revision = observed.expected_catalog_revision;
-        ensure!(
-            selection == *observed
-                && connection.connection_id == id
-                && connection.endpoint.service_instance == health.instance
-                && connection.endpoint.user == health.user
-                && health
-                    .catalog_clock
-                    .is_some_and(|clock| connection.endpoint.namespace == clock.namespace)
-                && connection.endpoint.executable_sha256 == health_executable,
-            "combined benchmark enrollment changed native authority or owner"
-        );
-        enrolled.push(connection);
-    }
-    let connections_file = f.control.join("http-1").join(format!(
-        "benchmark-connections-{}.json",
-        airk_kernel::service_broker::new_instance_id()?
-    ));
-    let mut options = fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    // Windows inherits the existing native control/http-1 owner-only ACL.
-    use std::io::Write;
-    options
-        .open(&connections_file)?
-        .write_all(&serde_json::to_vec(&json!({
-            "schema":1,"client":"unknown","connections":enrolled
-        }))?)?;
-    let configuration = json!({
-        "schema":2,"transport":"https","command":candidate,"args":[],
-        "control":f.control,"selection":{"kind":"combined","selection":f.session},
-        "connections_file":connections_file,
-        "launcher_sha256":airk_cli::runtime_pair::digest_file(&candidate)?,
-        "expected_version":env!("CARGO_PKG_VERSION"),"route":"isolated-approved-runtime",
-        "cwd":repository
-    });
-    let mut indexes = Vec::new();
-    for (n, registration) in f.registrations.iter().enumerate() {
-        let mut inventory = Vec::new();
-        // Match the existing runner's sorted Path inventory (path components,
-        // rather than slash-joined byte ordering).
-        for directory in ["api", "api-other", "impl", "private"] {
-            let relative = format!("{directory}/policy.md");
-            let path = Path::new(&registration.root).join(&relative);
-            inventory.push(json!({"path":relative,"bytes":fs::metadata(&path)?.len(),
-                "sha256":airk_cli::runtime_pair::digest_file(&path)?}));
-        }
-        indexes.push(
-            json!({"index_id":f.indexes[n],"source_root":registration.root,"inventory":inventory}),
-        );
-    }
-    let cases = [1, 2, 4, 32]
-        .into_iter()
-        .map(|count| {
-            let expected = (0..count).map(|n| json!({
-            "index_id":f.indexes[n],"path":"api/policy.md",
-            "source_root_id":SourceRootId::from_identity(Incarnation::from_bytes([50+n as u8;16])),
-            "project_ids":[if n==2 {f.projects[2]} else {f.projects[0]}]
-        })).collect::<Vec<_>>();
-            json!({"project_ids":f.projects,"index_ids":f.indexes[..count],
-            "arguments":{"query":"boundaryneedle","mode":"lexical","path_prefix":"api/",
-                "limit":count,"max_bytes":2048,"verification":"off"},"expected":expected})
-        })
-        .collect::<Vec<_>>();
-    let scenario =
-        json!({"schema":"airk.combined-investigation/1","indexes":indexes,"cases":cases});
-    let config_path = output.join("configuration.json");
-    let scenario_path = output.join("scenario.json");
-    fs::write(&config_path, serde_json::to_vec_pretty(&configuration)?)?;
-    fs::write(&scenario_path, serde_json::to_vec_pretty(&scenario)?)?;
-    let samples = std::env::var("AIRK_COMBINED_BENCHMARK_SAMPLES").unwrap_or_else(|_| "30".into());
-    let samples: usize = samples
-        .parse()
-        .context("benchmark samples must be an integer")?;
-    ensure!(
-        (1..=1000).contains(&samples),
-        "benchmark sample count outside existing runner bound"
-    );
-    let interpreter = std::env::var_os("PYTHON").unwrap_or_else(|| "python".into());
-    let mut runner = Command::new(interpreter);
-    runner
-        .current_dir(repository)
-        .arg(repository.join("scripts/benchmark-mcp-investigation.py"))
-        .arg("combined")
-        .arg("--configuration")
-        .arg(config_path)
-        .arg("--scenario")
-        .arg(scenario_path)
-        .arg("--output")
-        .arg(output.join("measurement"))
-        .arg("--samples")
-        .arg(samples.to_string())
-        .args(["--fanouts", "1", "2", "4", "32", "--timeout", "30"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(fs::File::create(
-            output.join("runner.stdout.log"),
-        )?))
-        .stderr(Stdio::from(fs::File::create(
-            output.join("runner.stderr.log"),
-        )?));
-    let mut runner = OwnedProcess::start(runner)?;
-    // Explicit finite campaign bound: at most four cases, each with the existing
-    // thirty-second request timeout, plus fixture/frontend shutdown allowance.
-    let deadline = Instant::now() + Duration::from_secs((samples as u64 * 4 + 4) * 30 + 120);
-    let status = loop {
-        if let Some(status) = runner.child.try_wait()? {
-            break status;
-        }
-        ensure!(
-            Instant::now() < deadline,
-            "benchmark runner exceeded its owned campaign deadline; logs: {}",
-            output.display()
-        );
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    };
-    drop(runner);
-    f.assert_sources_unchanged()?;
-    let report_path = output.join("measurement/report.json");
-    let report: Value =
-        serde_json::from_slice(&fs::read(&report_path).with_context(|| {
-            format!("benchmark did not retain its report: {}", output.display())
-        })?)?;
-    assert_eq!(
-        report["source_unchanged"], true,
-        "fixture changed during replay: {report}"
-    );
-    ensure!(
-        status.success() && report["passed"] == true,
-        "bounded combined campaign retained a failure; inspect {}",
-        report_path.display()
-    );
-    eprintln!("P7 combined measurement: {}", report_path.display());
-    Ok(())
-}
-
 #[cfg(feature = "local-inference")]
 async fn wait_fixture_job(f: &Fixture, id: Sha256Digest) -> Result<airk_core::service::JobRecord> {
     let deadline = Instant::now() + Duration::from_secs(90);
@@ -4554,7 +4337,6 @@ async fn airkctl_combined_reads_match_current_native_handlers() -> Result<()> {
         ControlMethod::ToolsCatalog {
             detail: airk_core::service::ToolsCatalogDetail::List { schemas: true },
             combined: Some(Box::new(f.session.clone())),
-            connection_id: None,
         },
     )
     .await?
@@ -4982,15 +4764,10 @@ async fn airkctl_full(f: &Fixture, line: &[&str]) -> Result<(u8, String, String)
     Ok((code, String::from_utf8(stdout)?, String::from_utf8(stderr)?))
 }
 
-fn open_selection(
-    indexes: &[&str],
-    sets: &[&str],
-    connection_id: Option<Incarnation>,
-) -> airk_core::service::ToolSelection {
+fn open_selection(indexes: &[&str], sets: &[&str]) -> airk_core::service::ToolSelection {
     airk_core::service::ToolSelection::Open {
         index_ids: indexes.iter().map(|name| (*name).to_owned()).collect(),
         index_set_ids: sets.iter().map(|name| (*name).to_owned()).collect(),
-        connection_id,
         workspace: None,
     }
 }
@@ -5010,14 +4787,9 @@ async fn open_reads_keep_cli_and_pipe_results_and_expand_sets() -> Result<()> {
     let f = Fixture::new(true)?;
     let _service = f.start().await?;
     // The list tool: the local owner may list; CLI and pipe answer the same.
-    let listed = pipe_read(
-        &f,
-        open_selection(&[], &[], None),
-        "list_scopes",
-        &json!({}),
-    )
-    .await?
-    .map_err(|refused| anyhow::anyhow!("list refused: {refused}"))?;
+    let listed = pipe_read(&f, open_selection(&[], &[]), "list_scopes", &json!({}))
+        .await?
+        .map_err(|refused| anyhow::anyhow!("list refused: {refused}"))?;
     let (code, stdout, stderr) = airkctl_full(&f, &["tools", "call", "list_scopes"]).await?;
     ensure!(code == 0, "airkctl list_scopes failed: {stderr}");
     let from_cli: Value = serde_json::from_str(&stdout)?;
@@ -5048,7 +4820,7 @@ async fn open_reads_keep_cli_and_pipe_results_and_expand_sets() -> Result<()> {
     let arguments = json!({"query":"boundaryneedle","mode":"lexical","limit":8,"max_bytes":8192,"verification":"off"});
     let piped = pipe_read(
         &f,
-        open_selection(&[&index_name], &[], None),
+        open_selection(&[&index_name], &[]),
         "airk_search",
         &arguments,
     )
@@ -5083,7 +4855,7 @@ async fn open_reads_keep_cli_and_pipe_results_and_expand_sets() -> Result<()> {
     // A set expands to its two member indexes, each read whole.
     let expanded = pipe_read(
         &f,
-        open_selection(&[], &[&set_name], None),
+        open_selection(&[], &[&set_name]),
         "airk_search",
         &arguments,
     )
@@ -5103,7 +4875,7 @@ async fn open_reads_keep_cli_and_pipe_results_and_expand_sets() -> Result<()> {
     // Refusals before any read: an unknown name, a local call naming nothing.
     let refused = pipe_read(
         &f,
-        open_selection(&["no such index"], &[], None),
+        open_selection(&["no such index"], &[]),
         "airk_search",
         &arguments,
     )
@@ -5113,14 +4885,9 @@ async fn open_reads_keep_cli_and_pipe_results_and_expand_sets() -> Result<()> {
     assert_eq!(refusal_code(&refused), "scope_name_unknown", "{refused}");
     // U110: a local call naming no scope and no workspace is the tool error
     // `scope_required`, as over MCP.
-    let unscoped = pipe_read(
-        &f,
-        open_selection(&[], &[], None),
-        "airk_search",
-        &arguments,
-    )
-    .await?
-    .map_err(|refused| anyhow::anyhow!("unscoped read not a tool error: {refused}"))?;
+    let unscoped = pipe_read(&f, open_selection(&[], &[]), "airk_search", &arguments)
+        .await?
+        .map_err(|refused| anyhow::anyhow!("unscoped read not a tool error: {refused}"))?;
     assert_eq!(
         unscoped["structuredContent"]["error"]["code"], "scope_required",
         "{unscoped}"
@@ -5188,7 +4955,7 @@ async fn tokenless_https_reads_name_their_scope_or_a_workspace_default() -> Resu
     assert_eq!(named_body["read_scope"]["source"], "named", "{named_body}");
     let piped = pipe_read(
         &f,
-        open_selection(&[index.as_str()], &[], None),
+        open_selection(&[index.as_str()], &[]),
         "search",
         &arguments,
     )
@@ -5301,11 +5068,7 @@ async fn per_index_counts_apply_to_catalog_and_open_reads_and_bind_cursors() -> 
         index_ids: None,
         member_availability: None,
     };
-    let open = open_selection(
-        &[&f.indexes[0].to_string(), &f.indexes[1].to_string()],
-        &[],
-        None,
-    );
+    let open = open_selection(&[&f.indexes[0].to_string(), &f.indexes[1].to_string()], &[]);
     // A cursor tool: the scoped members hold more than one file each.
     let arguments = json!({"limit_per_index":1,"max_bytes":8192,"verification":"off"});
     for (label, selection) in [("catalog", catalog.clone()), ("open", open.clone())] {
@@ -6013,7 +5776,7 @@ async fn current_answer_single_index_preserves_complete_pipe_cli_and_https_mcp_r
     // path; it compares with the same open read through the pipe.
     let open_reference = context_pipe_once(
         &f,
-        open_selection(&[&f.indexes[0].to_string()], &[], None),
+        open_selection(&[&f.indexes[0].to_string()], &[]),
         &arguments,
     )
     .await?;
@@ -6083,12 +5846,8 @@ async fn current_answer_many_and_open_keep_complete_cli_pipe_and_https_mcp_packe
     // CLI (`tools call --index`) and tokenless HTTPS MCP naming them per call.
     let first = f.indexes[0].to_string();
     let second = f.indexes[1].to_string();
-    let reference = context_pipe_once(
-        &f,
-        open_selection(&[&first, &second], &[], None),
-        &arguments,
-    )
-    .await?;
+    let reference =
+        context_pipe_once(&f, open_selection(&[&first, &second], &[]), &arguments).await?;
     let (code, stdout, stderr) = airkctl_full(
         &f,
         &[
@@ -6325,7 +6084,7 @@ async fn one_index_window_catalog_and_open_explicit_source_selectors_use_origina
             project_ids: f.projects[..2].to_vec(),
         },
     };
-    for selection in [window, catalog, open_selection(&[&index], &[], None)] {
+    for selection in [window, catalog, open_selection(&[&index], &[])] {
         let mut arguments = arguments.clone();
         if matches!(selection, airk_core::service::ToolSelection::Catalog { .. }) {
             let direct=once(&f,selection.clone(),"airk_search",json!({"query":"boundaryneedle","mode":"lexical","path_prefix":"api/","verification":"report","response_mode":"full"})).await?;

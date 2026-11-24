@@ -87,79 +87,23 @@ fn listing() -> CatalogListing {
         ],
     }
 }
-fn open(choice: AgentChoice, indexes: &[u8], sets: &[u8]) -> OpenConnectionState {
-    OpenConnectionState {
-        defaults_revision: 3,
-        default_index_ids: indexes.iter().map(|byte| index_id(*byte)).collect(),
-        default_index_set_ids: sets.iter().map(|byte| set_id(*byte)).collect(),
-        agent_choice: choice,
-    }
-}
 fn names(values: &[&str]) -> Vec<String> {
     values.iter().map(|value| (*value).to_owned()).collect()
 }
 
 #[test]
-fn choice_off_narrows_within_the_default_scope() {
-    let off = open(AgentChoice::Off, &[1], &[]);
-    let docs = names(&["docs"]);
-    // U109: names narrow the assigned set (checked when resolved).
-    assert_eq!(
-        requested(&docs, &[], Some(&off)),
-        Ok(Requested::Narrowed {
-            indexes: &docs,
-            sets: &[],
-            default_indexes: &[index_id(1)],
-            default_sets: &[],
-        })
-    );
-    assert!(matches!(
-        requested(&[], &docs, Some(&off)),
-        Ok(Requested::Narrowed { .. })
-    ));
-    assert_eq!(
-        requested(&[], &[], Some(&off)),
-        Ok(Requested::Defaults {
-            indexes: &[index_id(1)],
-            sets: &[]
-        })
-    );
-    let unset = open(AgentChoice::Off, &[], &[]);
-    assert_eq!(
-        requested(&[], &[], Some(&unset)),
-        Err("agent_default_scope_unset")
-    );
-    // An empty assigned set cannot be narrowed either.
-    assert_eq!(
-        requested(&docs, &[], Some(&unset)),
-        Err("agent_default_scope_unset")
-    );
-    assert_eq!(list_allowed(Some(&off)), Err("agent_scope_choice_disabled"));
-}
-
-#[test]
-fn choice_on_and_the_local_owner_may_name_a_scope() {
-    let on = open(AgentChoice::On, &[], &[]);
+fn a_call_names_its_scope_or_has_none() {
     let docs = names(&["docs"]);
     assert_eq!(
-        requested(&docs, &[], Some(&on)),
+        requested(&docs, &[]),
         Ok(Requested::Named {
             indexes: &docs,
             sets: &[]
         })
     );
-    assert_eq!(
-        requested(&[], &[], Some(&on)),
-        Err("agent_default_scope_unset")
-    );
-    // The local owner has no default: the call must name a scope.
-    assert!(matches!(
-        requested(&docs, &[], None),
-        Ok(Requested::Named { .. })
-    ));
-    assert_eq!(requested(&[], &[], None), Err("agent_default_scope_unset"));
-    assert_eq!(list_allowed(Some(&on)), Ok(()));
-    assert_eq!(list_allowed(None), Ok(()));
+    assert!(matches!(requested(&[], &docs), Ok(Requested::Named { .. })));
+    // Naming nothing has no scope of its own (the workspace default applies).
+    assert_eq!(requested(&[], &[]), Err("agent_default_scope_unset"));
 }
 
 #[test]
@@ -370,65 +314,6 @@ fn pages_stay_within_the_budget_and_cursors_are_revision_bound() {
     assert_eq!(
         list_page(&catalog, Some("garbage"), 48 * 1024),
         Err("list_cursor_expired")
-    );
-}
-
-/// U109: with choice off a call may name a non-empty subset of the assigned
-/// set (default sets expanded); anything outside it is refused and named.
-#[test]
-fn choice_off_names_must_stay_inside_the_assigned_set() {
-    let catalog = listing();
-    // Assigned: index 3 and set 10 (members 1 and 2).
-    let off = open(AgentChoice::Off, &[3], &[10]);
-    let ask = |indexes: &[&str], sets: &[&str]| {
-        let (indexes, sets) = (names(indexes), names(sets));
-        let requested = requested(&indexes, &sets, Some(&off)).unwrap();
-        (
-            resolve(&catalog, requested),
-            outside_assigned_set(&catalog, requested).unwrap_or_default(),
-        )
-    };
-    let docs = index_id(1).to_string();
-    let web = set_id(10).to_string();
-    // A subset is read alone; a named assigned set is inside too.
-    assert_eq!(ask(&[&docs], &[]), (Ok(vec![index_id(1)]), vec![]));
-    assert_eq!(
-        ask(&[], &[&web]),
-        (Ok(vec![index_id(1), index_id(2)]), vec![])
-    );
-    // Retired index 4 of set 10 is not a member read, so set 10 is inside.
-    // Set 12 is empty: nothing to read.
-    assert_eq!(
-        ask(&[], &[&set_id(12).to_string()]).0,
-        Err("scoped_read_unavailable")
-    );
-    // Outside: refused, and the outside indexes are named.
-    let mut assigned_one = open(AgentChoice::Off, &[1], &[]);
-    assigned_one.defaults_revision = 4;
-    let outside = names(&[&index_id(2).to_string()]);
-    let narrowed = requested(&outside, &[], Some(&assigned_one)).unwrap();
-    assert_eq!(
-        resolve(&catalog, narrowed),
-        Err("agent_scope_choice_disabled")
-    );
-    let named = outside_assigned_set(&catalog, narrowed).unwrap();
-    assert_eq!(named, vec![index_id(2)]);
-    let message = outside_message(&catalog, &named);
-    assert!(message.starts_with("code ("), "{message}");
-    assert!(
-        message.contains("outside this connection's assigned set"),
-        "{message}"
-    );
-    // A set only partly inside is refused.
-    let web_names = names(&[&web]);
-    let partly = requested(&[], &web_names, Some(&assigned_one)).unwrap();
-    assert_eq!(
-        resolve(&catalog, partly),
-        Err("agent_scope_choice_disabled")
-    );
-    assert_eq!(
-        outside_assigned_set(&catalog, partly).unwrap(),
-        vec![index_id(2)]
     );
 }
 

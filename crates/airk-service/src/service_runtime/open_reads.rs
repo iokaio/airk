@@ -1,29 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
-//! U105/U106 open agent reads (`docs/split/open-agent-access.md` step 5,
-//! contracts §2.9): M3 `ToolSelection::Open`, the `list_scopes` tool, the
-//! open connection catalog (M2 with `connection_id`) and
-//! `AgentConnectionDefaults`. `airkctl tools call --index/--set/--connection`
-//! reaches [`response`] over the pipe; the HTTPS open connection reaches the
-//! same function in process (step 6), so both read through one path.
+//! U105/U110 open agent reads (`docs/split/open-agent-access.md` step 5,
+//! contracts §2.9): M3 `ToolSelection::Open` and the `list_scopes` tool.
+//! `airkctl tools call --index/--set` reaches [`response`] over the pipe; the
+//! HTTPS local agent session reaches the same function in process (step 6),
+//! so both read through one path.
 //!
 //! The scope decision is `airk_core::agent_scope` over a catalog listing read
-//! here at one revision; the connection's defaults and choice are reread
-//! from the durable credential ledger on every call, so a defaults change
-//! takes effect on the next call. A resolved scope is leased through the
-//! agent plane, then read through `tools_call::open_single_backend` (one
-//! index) or `tools_call::open_combined_backend` (several).
-use super::{State, agent_plane, revoke_agent_connection, revoke_agent_dropped, tools_call};
+//! here at one revision: the call's named indexes and sets, or else the
+//! stored default of its workspace folder. A resolved scope is leased
+//! through the agent plane, then read through `tools_call::open_single_backend`
+//! (one index) or `tools_call::open_combined_backend` (several).
+use super::{State, agent_plane, revoke_agent_dropped, tools_call};
 use airk_core::{
     agent_scope::{self, CatalogListing},
     agent_workspace::{self, WorkspaceDefaults},
     catalog_management::{CatalogItem, CatalogKind, CatalogPageRequest, MAX_PAGE_BYTES},
     identity::Incarnation,
     index_catalog::MAX_SELECTION,
-    service::{ControlResponse, ToolResponseMode, ToolSelection, ToolsCatalogDetail},
-    service_http::open_refusal,
-    service_http_credentials::OpenConnectionState,
+    service::{ControlResponse, ToolResponseMode, ToolSelection},
 };
-use airk_endpoint::http_endpoint::{OpenDefaultsChange, OpenDefaultsRefused};
 use serde_json::{Map, Value, json};
 use std::{
     path::Path,
@@ -40,13 +35,10 @@ const AGENT_SELECTION_CAPACITY: &str = "agent_selection_capacity";
 
 /// One open read as M3 (or the HTTPS open backend) asked for it.
 pub(super) struct OpenCall {
-    /// The open connection whose defaults and choice apply; `None` is the
-    /// local owner, who must name a scope.
-    pub(super) connection_id: Option<Incarnation>,
     pub(super) index_names: Vec<String>,
     pub(super) set_names: Vec<String>,
     /// U110: the caller's workspace folder, whose stored default applies
-    /// when no index or set is named (local caller only).
+    /// when no index or set is named.
     pub(super) workspace: Option<String>,
     pub(super) tool: String,
     pub(super) arguments: Map<String, Value>,
@@ -56,23 +48,6 @@ pub(super) struct OpenCall {
 
 fn refused(code: &str) -> ControlResponse {
     ControlResponse::Failure { code: code.into() }
-}
-
-/// The connection's stored open state, reread from the ledger.
-async fn connection_state(
-    state: &State,
-    id: Incarnation,
-) -> Result<OpenConnectionState, Box<ControlResponse>> {
-    let Some(owner) = state.http.get() else {
-        return Err(Box::new(refused("http_catalog_not_ready")));
-    };
-    match owner.open_state(id).await {
-        Ok(Ok(open)) => Ok(open),
-        Ok(Err(OpenDefaultsRefused::NotOpen | OpenDefaultsRefused::Conflict)) => {
-            Err(Box::new(refused(open_refusal::AGENT_CONNECTION_NOT_OPEN)))
-        }
-        Err(error) => Err(Box::new(tools_call::failed(&error))),
-    }
 }
 
 /// The catalog at one revision: every index, index set and membership and,
@@ -208,27 +183,14 @@ async fn response_inner(
     let selection = ToolSelection::Open {
         index_ids: call.index_names.clone(),
         index_set_ids: call.set_names.clone(),
-        connection_id: call.connection_id,
         workspace: call.workspace.clone(),
     };
     if let Err(error) = selection.validate() {
         return tools_call::failed(&error);
     }
-    let connection = match call.connection_id {
-        Some(id) => match connection_state(state, id).await {
-            Ok(open) => Some(open),
-            Err(response) => return *response,
-        },
-        None => None,
-    };
-    // Help reads no index: answered in process against the open catalog this
-    // caller sees (the local caller sees the U110 local catalog).
+    // Help reads no index: answered in process against the U110 local catalog.
     if airk_frontend::tool_call::is_local_help(&call.tool) {
-        let catalog = connection
-            .as_ref()
-            .map_or_else(airk_mcp::open::local_catalog, |open| {
-                airk_mcp::open::catalog(open.agent_choice)
-            });
+        let catalog = airk_mcp::open::local_catalog();
         let answer = airk_mcp::help::call_with_catalog(Value::Object(call.arguments), catalog);
         return match serde_json::to_value(answer) {
             Ok(mut result) => {
@@ -239,7 +201,7 @@ async fn response_inner(
         };
     }
     if call.tool == airk_mcp::open::LIST_SCOPES {
-        return list(state, connection.as_ref(), &call).await;
+        return list(state, &call).await;
     }
     let listing = match listing(state, false).await {
         Ok(listing) => listing,
@@ -249,8 +211,8 @@ async fn response_inner(
     // U110: the local caller names its scope, or names a workspace whose
     // stored default applies; nothing else is ambient.
     let stored_default;
-    let mut scope = json!({"source": if named { "named" } else { "connection_default" }});
-    let requested = if connection.is_none() && !named {
+    let mut scope = json!({"source": "named"});
+    let requested = if !named {
         let Some(workspace) = call.workspace.as_deref() else {
             return scope_required(None);
         };
@@ -268,25 +230,13 @@ async fn response_inner(
             sets: &stored_default.index_set_ids,
         }
     } else {
-        match agent_scope::requested(&call.index_names, &call.set_names, connection.as_ref()) {
+        match agent_scope::requested(&call.index_names, &call.set_names) {
             Ok(requested) => requested,
             Err(code) => return refused(code),
         }
     };
     let index_ids = match agent_scope::resolve(&listing, requested) {
         Ok(ids) => ids,
-        // U109: a choice-off call outside the assigned set names what is
-        // outside it, in the tool error the CLI and MCP both receive.
-        Err(code) if code == open_refusal::AGENT_SCOPE_CHOICE_DISABLED => {
-            let outside =
-                agent_scope::outside_assigned_set(&listing, requested).unwrap_or_default();
-            return ControlResponse::ToolResult {
-                result: airk_mcp::unified::failure(
-                    code,
-                    &agent_scope::outside_message(&listing, &outside),
-                ),
-            };
-        }
         Err(code) => return refused(code),
     };
     let Some(revision) = listing.revision else {
@@ -297,7 +247,7 @@ async fn response_inner(
         Ok(identity) => identity,
         Err(error) => return tools_call::failed(&error),
     };
-    let caller = call.connection_id.unwrap_or(state.native_caller);
+    let caller = state.native_caller;
     let (leased, dropped) = match state.agents.lock() {
         Ok(mut agents) => agents.lease(caller, identity, revision),
         Err(_) => return refused(agent_scope::SCOPE_UNAVAILABLE),
@@ -373,16 +323,8 @@ async fn response_inner(
     }
 }
 
-/// `list_scopes`: refused for a connection with choice off; its only
-/// argument is `cursor` and it takes no scope.
-async fn list(
-    state: &State,
-    connection: Option<&OpenConnectionState>,
-    call: &OpenCall,
-) -> ControlResponse {
-    if let Err(code) = agent_scope::list_allowed(connection) {
-        return refused(code);
-    }
+/// `list_scopes`: its only argument is `cursor` and it takes no scope.
+async fn list(state: &State, call: &OpenCall) -> ControlResponse {
     if !call.index_names.is_empty() || !call.set_names.is_empty() {
         return ControlResponse::ToolResult {
             result: airk_mcp::unified::failure(
@@ -432,67 +374,6 @@ async fn list(
     }
     ControlResponse::ToolResult {
         result: airk_mcp::unified::success(body),
-    }
-}
-
-/// M2 for an open connection: the catalog of its current agent choice.
-pub(super) async fn catalog(
-    state: &State,
-    detail: &ToolsCatalogDetail,
-    connection_id: Incarnation,
-) -> ControlResponse {
-    let open = match connection_state(state, connection_id).await {
-        Ok(open) => open,
-        Err(response) => return *response,
-    };
-    match airk_frontend::tool_catalog::response_from(
-        detail,
-        airk_mcp::open::catalog(open.agent_choice),
-    ) {
-        Ok(response) => response,
-        Err(error) => tools_call::failed(&error),
-    }
-}
-
-/// `AgentConnectionDefaults`: check the named ids against the current
-/// catalog, compare-and-swap through the credential store (the credential
-/// generation never changes), then drop the connection's agent leases when
-/// the defaults changed.
-pub(super) async fn defaults(
-    state: &Arc<State>,
-    connection_id: Incarnation,
-    change: OpenDefaultsChange,
-) -> ControlResponse {
-    let Some(owner) = state.http.get() else {
-        return refused("http_catalog_not_ready");
-    };
-    if change.index_ids.is_some() || change.index_set_ids.is_some() {
-        let listing = match listing(state, false).await {
-            Ok(listing) => listing,
-            Err(code) => return refused(code),
-        };
-        if let Err(code) = agent_scope::validate_defaults(
-            &listing,
-            change.index_ids.as_deref().unwrap_or_default(),
-            change.index_set_ids.as_deref().unwrap_or_default(),
-        ) {
-            return refused(code);
-        }
-    }
-    let expected = change.expected_defaults_revision;
-    match owner.set_open_defaults(connection_id, change).await {
-        Ok(Ok(open)) => {
-            if open.defaults_revision != expected {
-                revoke_agent_connection(state, connection_id);
-            }
-            ControlResponse::AgentConnectionDefaults {
-                connection_id,
-                open,
-            }
-        }
-        Ok(Err(OpenDefaultsRefused::NotOpen)) => refused(open_refusal::AGENT_CONNECTION_NOT_OPEN),
-        Ok(Err(OpenDefaultsRefused::Conflict)) => refused(open_refusal::AGENT_DEFAULTS_CONFLICT),
-        Err(_) => refused("agent_defaults_unavailable"),
     }
 }
 
@@ -557,7 +438,10 @@ fn scope_required(workspace: Option<&str>) -> ControlResponse {
         None => "Name the indexes or index sets to read (index_ids, index_set_ids), or pass workspace (your working folder) to use the default scope applied for it in the AIRK Explorer. Call list_scopes to see indexes, index sets and workspace defaults.".to_owned(),
     };
     ControlResponse::ToolResult {
-        result: airk_mcp::unified::failure(open_refusal::SCOPE_REQUIRED, &message),
+        result: airk_mcp::unified::failure(
+            airk_core::service_http::open_refusal::SCOPE_REQUIRED,
+            &message,
+        ),
     }
 }
 

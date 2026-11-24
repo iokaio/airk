@@ -252,3 +252,16 @@ that field, and reports `"toolTimeoutSec": 605` on its action; entries that are
 healthy and already at 605 or more see no edit attempt. The shared
 `fixtures/split/agents/config_cases.json` connect and repair expectations
 include it; recognition and removal are unchanged.
+
+## Compatibility rows kept by local trust plan B (23 November 2026, change-log entry 68)
+
+| Duty | Surviving owner | Test |
+|---|---|---|
+| Recognise a pre-U110 entry carrying `Authorization: Bearer …`, `headersHelper`, `http_headers_helper` or `bearer_token_env_var` (including the retired `airkctl agents credential` and `airk runtime http-credential` helper forms) as `https_unknown_connection`, and let `repair` strip those fields | this module (`recognize`, `classify`, `edit`) | `agents::config::tests` (the config cases fixture) |
+| The same recognition in the extension's removal-only sweep | `packages/vscode/src/airkctl/agents/recognizer.ts` | `packages/vscode` `airkctlAgents` tests |
+| A pre-U110 VS Code entry whose `Bearer ${input:airkToken_<id>}` runs `airk.httpCredential` | `packages/vscode/src/airkctl/agents/index.ts` `inputCredential`: validates the old input and answers the fixed placeholder `airk-local-session`; nothing is read or issued and the endpoint strips the header | `airkctlAgents.test.ts` "credential input and the endpoint URL are strict" |
+
+`airkctl agents credential`, `info`, `verify`, `revoke`, `launch` and
+`default`, and `agents list --connection-id`, are removed; an old helper
+command that still names them fails, and `agents repair` (or the extension's
+Reconnect) rewrites the entry to the URL-only form.
