@@ -40,6 +40,13 @@ chore.
    - The grant tables in `service-1.4.sqlite3` and the credential ledger stay
      as retained data that nothing writes. That needs no `airk-state/1`
      schema change.
+   - Grant operation records are deleted on upgrade (user, 23 November
+     2026): `CreateGrant` and `RevokeGrant` are removed outright, and the
+     catalog registry deletes the `index_operation_receipts` rows that name
+     them before any stored intent is decoded. These are application records
+     of earlier operations, not index content, and this build was never
+     deployed beyond this machine, so no backward compatibility is owed for
+     them. The table schema and every other row are unchanged.
    - Kept, because live reads depend on it: per-call scope (`index_ids`,
      `index_set_ids`, `workspace`), Agent-plane leases, `lease_generation`,
      catalog fences, and the window and Admin in-memory selections.
