@@ -17097,3 +17097,47 @@ integration fixture rewrite onto open reads, the Admin and VS Code removal,
 and the ledger removal, landing together.
 
 **State.** D: free 664,937,668,608 bytes. No build running.
+### 24 November 2026 at 00:40 UTC — Side work while the grant removal runs: setup script, LH harness items, Arbiter status diagnosis, phase C map
+
+**User's words:** "Order the implementation and testing the way you
+recommend." Decisions the same evening, recorded in
+[the plan](local-trust-plan.md): prune operation records and drop the dead
+catalog tables (`0e0cf233`); keep unknown setup outcomes as refusals
+(`e2ca0e47`).
+
+- **`scripts/setup-local-test.py`** (Sonnet agent, `loop/setup-test`,
+  fast-forwarded as `4364ee4f`): rebuilt around `airkctl agents endpoint`,
+  `agents manual` and `agents connect`; no enrollment, selection files or
+  bearer entries; the pre-1.4 standalone mode is removed. 33 of 33 mocked
+  tests, rerun by the primary agent after the merge.
+- **LH harness items 3 and 4** (Sonnet agent, `loop/harness-lh`
+  `40940601`, merged as `30128ef0`): `fixture.py` waits for a complete,
+  parseable `ready.json` (PermissionError, partial JSON and a cut multi-byte
+  character mean "not ready", with a 60 s grace inside the 1,800 s
+  deadline); `make_loop_spec.py shakedown --arm` takes A and N, and the
+  rebuilt specs match LH's acceptance specs; `lh_*.py` moved into
+  `smoke_summary.py` and `lifetime_probe.py` with a README section. Harness
+  tests 252 OK (base 237); `scripts/tests` discovery unchanged against base.
+  Primary agent reran the harness discovery after the merge: OK. **Open:**
+  `scripts/arbiter/evaluation/run_compact_answer.py:421-424` reads its
+  receipt the same way; its hash is pinned in each handle, so it changes
+  only with the next series.
+- **LH open item 2, `airkctl arbiter status` refusing after a legacy
+  Configure** (read-only Sonnet diagnosis; the two key lines checked by the
+  primary agent): the fixture's `configure --legacy` writes a
+  configuration/3 naming an evaluation-only CUDA profile; `status` converts
+  it against the release catalog (`airk-core/src/arbiter/device.rs:462`,
+  "legacy selected profile unresolved"), and `failure()` reports the
+  catch-all `arbiter_unavailable` (`service_runtime/arbiter.rs:917`). The
+  refusal is kept, since it protects the saved configuration. Users
+  configuring through Admin or `airkctl arbiter configure` store
+  configuration/5 and are not affected (inference from source). **Next:**
+  a typed reason pointing to `status-legacy`, after the grant removal
+  lands.
+- **Phase C map** (read-only Sonnet agent), committed as
+  [local-trust-phase-c-map.md](local-trust-phase-c-map.md) (`92ec6ff1`).
+  The primary agent chose to drop the saved setup trust option and phases
+  rather than keep legacy variants, since no backward compatibility is owed.
+
+**Running:** the grant removal and record cleanup (`loop/trust-b2`, target
+`target-l2b`) and the L2c rebase (`loop/l2c`, new target `target-l2c`).
