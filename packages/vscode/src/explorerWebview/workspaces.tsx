@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { h, type ComponentChildren, type JSX } from 'preact';
-import {useRef} from 'preact/hooks';
+import {useRef,useState} from 'preact/hooks';
 import { ExplorerViewState } from '../explorerContracts';
 import type { SearchRecipe } from '../explorerStrategies';
 import type { NavigationFilters } from '../explorerDrafts';
@@ -9,7 +9,7 @@ import { OutlineScreen, ReferencesScreen, SymbolsScreen } from './code';
 import { DocumentFactsScreen } from './docs';
 import { ChangesScreen, CheckerScreen, InspectorScreen } from './evidence';
 import { HelpScreen } from './help';
-import { AdminHandoffScreen } from './adminLinks';
+import { ManagementUnavailable, MANAGEMENT_ROUTES, type AdminLink } from './adminLinks';
 import { RecipesScreen, SearchScreen } from './search';
 import { PlannerScreen } from './planner';
 import { ReviewChangesScreen, ReviewImpactScreen, ReviewTestsScreen } from './review';
@@ -21,7 +21,9 @@ import { editorDestination, MAIN_DESTINATIONS, evidenceToolsPresentation, isEvid
 import { SharedManagement } from './sharedManagement';
 
 export interface ScreenProps {
-    manageEmbedded?: boolean;
+    managementTarget?: { link: AdminLink; serial: number };
+    scopePrefill?: { id: string; serial: number };
+    openScope?(id: string): void;
     lastEvidenceRoute?: string;
     route: Route;
     state: ExplorerViewState;
@@ -42,18 +44,18 @@ export const SCREENS: Record<string, (props: ScreenProps) => JSX.Element> = {
     'indexing/window': IndexingScreen,
     'indexing/library': IndexingScreen,
     'indexing/projects': IndexingScreen,
-    'manage/overview': AdminHandoffScreen,
+    'manage/overview': ManagementUnavailable,
     'search/query': SearchScreen,
     'search/recipes': RecipesScreen,
     'search/tools': EvidenceToolsScreen,
-    // U103: activity and usage are read here; U104, U110: agents are connected here; the other Management tabs open AIRK Admin.
+    // Older runtimes can still render the supported read-only editor views.
     'manage/activity': ActivityScreen,
-    'manage/repair': AdminHandoffScreen,
-    'manage/storage': AdminHandoffScreen,
-    'manage/service': AdminHandoffScreen,
+    'manage/repair': ManagementUnavailable,
+    'manage/storage': ManagementUnavailable,
+    'manage/service': ManagementUnavailable,
     'manage/agents': AgentsScreen,
     'manage/usage': UsageScreen,
-    'manage/logs': AdminHandoffScreen,
+    'manage/logs': ManagementUnavailable,
     'code/symbols': SymbolsScreen,
     'code/references': ReferencesScreen,
     'code/outline': OutlineScreen,
@@ -79,6 +81,8 @@ function EvidenceToolsScreen(props:ScreenProps):JSX.Element {
 export function WorkspaceView(props: ScreenProps) {
     const workspace = WORKSPACES.find(entry => entry.id === props.route.workspace)!;
     const key = routeKey(props.route);
+    const [advancedTools, setAdvancedTools] = useState(false);
+    const queryPage = key === 'search/query';
     const activeEvidence=isEvidenceToolRoute(key),hub=key==='search/tools';
     const held=useRef<ScreenProps>();
     const sameOwner=(prior:ScreenProps)=>prior.state.selectedProject===props.state.selectedProject&&prior.state.selectionEpoch===props.state.selectionEpoch
@@ -88,22 +92,23 @@ export function WorkspaceView(props: ScreenProps) {
     const retained=activeEvidence?props:hub?held.current:undefined;
     const RetainedScreen=retained&&props.state.features[routeKey(retained.route)]==='implemented'?SCREENS[routeKey(retained.route)]:undefined;
     const Screen = props.state.features[key] === 'implemented' ? SCREENS[key] : undefined;
-    const management = workspace.id === 'manage';
+
     const tabs = workspace.tabs;
     const activeTab = props.route.tab;
     const destination = editorDestination(key);
     const title = activeEvidence?workspace.title:MAIN_DESTINATIONS.find(entry => entry.id === destination)?.title ?? workspace.title;
-    // Agents (U110) is the Explorer's own task-first screen; AIRK Admin › Agents keeps manual setup and trust.
-    const sharedPage = ({ 'manage/activity': 'activity', 'manage/repair': 'recovery', 'manage/storage': 'storage',
+    // Connect remains the primary Agents task. The shared view supplies manual setup.
+    const sharedPage = queryPage && advancedTools ? 'search' : ({ 'manage/overview': 'overview', 'manage/agents': 'agents', 'manage/activity': 'activity', 'manage/repair': 'recovery', 'manage/storage': 'storage',
         'manage/service': 'service', 'manage/usage': 'usage', 'manage/logs': 'logs',
         'indexing/library': 'index-library' } as const)[key as 'manage/activity'];
+    const target = props.managementTarget?.link.page === sharedPage ? props.managementTarget : undefined;
     return (
         <section class="workspace">
             <div class="workspace-heading"><div><p class="eyebrow">{activeEvidence?'Search → Evidence tools':'AIRK workspace'}</p><h1 tabIndex={-1}>{title}</h1></div>
                 {activeEvidence&&<button type="button" class="ghost" onClick={()=>props.go({workspace:'search',tab:'tools'})}>Back to Evidence tools</button>}
             </div>
             <div>
-            {tabs.length > 0 && !(management && sharedPage && props.state.adminManagement) && (
+            {tabs.length > 0 && (
                 <div class="tabs" role="tablist" aria-orientation="horizontal" aria-label={`${title} views`}>
                     {tabs.map(tab => {
                         const selected = tab.id === activeTab;
@@ -123,17 +128,19 @@ export function WorkspaceView(props: ScreenProps) {
                     })}
                 </div>
             )}
-            <div class="workspace-content" role={activeTab && !(management && sharedPage && props.state.adminManagement) ? "tabpanel" : undefined} id={`panel-${workspace.id}`} aria-labelledby={activeTab && !(management && sharedPage && props.state.adminManagement) ? `tab-${workspace.id}-${activeTab}` : undefined}>
-            {props.state.adminManagement ? <section hidden={!sharedPage}>
-                <SharedManagement state={props.state} page={sharedPage} active={!!sharedPage} onPageChange={page => {
-                    const routes = { overview: 'overview', 'index-library': 'indexing/library', activity: 'manage/activity', agents: 'manage/agents',
-                        storage: 'manage/storage', recovery: 'manage/repair', service: 'manage/service', logs: 'manage/logs', usage: 'manage/usage', search: 'search/query', help: 'help' } as const;
-                    const destination = parseRoute(routes[page]); if (destination) props.go(destination);
+            <div class="workspace-content" role={activeTab ? "tabpanel" : undefined} id={`panel-${workspace.id}`} aria-labelledby={activeTab ? `tab-${workspace.id}-${activeTab}` : undefined}>
+            {queryPage && Screen && <Screen key={`${key}:${props.state.selectedProject}:${props.state.selectionEpoch}:${props.navigation?.route === key ? props.navigation.serial : ''}`} {...props} />}
+            {queryPage && <button type="button" class="ghost" aria-expanded={advancedTools}
+                aria-controls="management-tasks" onClick={() => setAdvancedTools(open => !open)}>Advanced native tools</button>}
+            {props.state.adminManagement ? <section id="management-tasks" hidden={!sharedPage}>
+                {key === 'manage/agents' && props.state.adminManagement.available && <AgentsScreen {...props} />}
+                <SharedManagement state={props.state} page={sharedPage} target={target} active={!!sharedPage} onUseScope={props.openScope} onPageChange={page => {
+                    props.go(MANAGEMENT_ROUTES[page]);
                 }} />
-            </section> : null}
+            </section> : sharedPage ? <p id="management-tasks" role="status">These controls require a compatible local AIRK Service, a trusted workspace, and enabled native execution.</p> : null}
             {retained&&RetainedScreen?<section hidden={hub} data-retained-evidence-view={routeKey(retained.route)}><RetainedScreen key={`${routeKey(retained.route)}:${retained.state.selectedProject}:${retained.state.selectionEpoch}:${retained.navigation?.route===routeKey(retained.route)?retained.navigation.serial:''}`} {...retained}/></section>:null}
-            {!activeEvidence&&(sharedPage && props.state.adminManagement ? <details><summary>Retained editor workflows</summary>{Screen ? <Screen {...props} /> : null}</details>
-                : Screen ? <Screen key={workspace.id==='indexing'?'indexing':`${management ? 'manage' : key}:${props.state.selectedProject}:${props.state.selectionEpoch}:${!management && props.navigation?.route === key ? props.navigation.serial : ''}`} {...props} /> : <Planned routeKey={key} availability={props.state.features[key] ?? 'unsupported'} />)}</div>
+            {!activeEvidence&&!queryPage&&(sharedPage && props.state.adminManagement?.available ? null
+                : Screen ? <Screen key={workspace.id==='indexing'?'indexing':`${key}:${props.state.selectedProject}:${props.state.selectionEpoch}:${workspace.id !== 'manage' && props.navigation?.route === key ? props.navigation.serial : ''}`} {...props} /> : <Planned routeKey={key} availability={props.state.features[key] ?? 'unsupported'} />)}</div>
             </div>
         </section>
     );

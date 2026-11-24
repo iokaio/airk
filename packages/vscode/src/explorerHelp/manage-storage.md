@@ -8,14 +8,11 @@ related_airk_help: storage, maintenance
 ---
 # Storage and cleanup
 
-Index storage, quotas and cleanup are in AIRK Admin, Storage.
+Index storage, quotas and cleanup are in Management → Storage.
 
-Advanced management uses AIRK Admin. Explorer also keeps Agents, Activity, Usage and evidence reads inside this window; choose the corresponding main destination for those native service results.
 
-Choose Open AIRK Admin to open the admin pages. Choose where... picks In VS Code (the Simple Browser, with a single-use sign-in link kept only in memory) or In my browser; the choice is remembered in the airk.admin.openIn setting.
 
 ## Steps
 
-1. Choose **Open AIRK Admin**.
-2. In AIRK Admin, open **Storage** to see the service's locations.
-3. Change locations or clean up from the admin pages or with `airkctl service` commands.
+1. In Explorer Management, open **Storage** to see the service's locations.
+2. Review cleanup within Storage or with `airkctl service` commands.

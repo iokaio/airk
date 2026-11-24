@@ -375,7 +375,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
             case 'new':await this.newSession();break;
             case 'stop':this.stop();if(this.session){this.save(this.session);}break;
             case 'clear':await this.clear();break;
-            case 'manage':await vscode.commands.executeCommand('airk.explorer.open','manage/overview');break;
+            case 'manage':await vscode.commands.executeCommand('airk.explorer.open',this.session ? 'indexing/window?focus=workbench-return' : 'indexing/library?focus=workbench-return');break;
             case 'forms':{const generation=this.generation;const reply=await this.evidence().call('airk_capabilities',{});if(generation===this.generation&&this.permitted()){const catalog=object(reply.payload.workbench);this.operations=object(catalog.operations);this.combinedControls=catalog.combined_controls!==undefined?object(catalog.combined_controls):undefined;this.send();}break;}
             case 'openSelection':{
                 if(!this.nativeAllowed())throw new Error('Native execution is disabled.');

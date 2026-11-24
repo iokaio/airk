@@ -17,7 +17,7 @@ import { friendlyError } from '../explorerErrors';
 import { acceptSearchSession, selectSearchProject } from './searchStore';
 import { Notice, NoticeContext, noticeKey } from './notices';
 import { AgentConfigAlert } from './projectStatus';
-import { openAdmin } from './adminLinks';
+import { MANAGEMENT_ROUTES, ManagementNavigation, type AdminLink } from './adminLinks';
 import { editorDestination, MAIN_DESTINATIONS, isEvidenceToolRoute } from '../../../ui/src/navigation';
 
 interface Persisted { route?: string; lens?: string; themed?: boolean; lastEvidenceRoute?:string }
@@ -35,6 +35,8 @@ export function App() {
     const [incoming, setIncoming] = useState<{ query: string; serial: number; recipe?: SearchRecipe; run?: boolean }>();
     const [inbox, setInbox] = useState(false);
     const [navigation, setNavigation] = useState<{ route: string; filters: NavigationFilters; serial: number }>();
+    const [scopePrefill, setScopePrefill] = useState<{ id: string; serial: number }>();
+    const [managementTarget, setManagementTarget] = useState<{ link: AdminLink; serial: number }>();
     const [inspectRef, setInspectRef] = useState<string>();
     const [publications, setPublications] = useState<{ token: string; observedAt: number }[]>([]);
     const owner = useRef<string>();
@@ -43,7 +45,7 @@ export function App() {
         const stop = onHost(message => {
             if (message.type === 'state') {
                 const nextOwner = `${message.state.selectedProject}:${message.state.selectionEpoch}`;
-                if (owner.current !== undefined && owner.current !== nextOwner) { setInspectRef(undefined); setPublications([]); setIncoming(undefined); setNavigation(undefined); }
+                if (owner.current !== undefined && owner.current !== nextOwner) { setInspectRef(undefined); setPublications([]); setIncoming(undefined); setNavigation(undefined); setScopePrefill(undefined); }
                 owner.current = nextOwner;
                 selectDraftProject(message.state.selectedProject, message.state.selectionEpoch);
                 selectSearchProject(message.state.selectedProject, message.state.selectionEpoch);
@@ -110,6 +112,10 @@ export function App() {
     const status = state.extensionUpdate ? { word: 'Reload to finish update', severity: 'warn' }
         : managed && !specific && state.connection !== 'untrusted' && state.connection !== 'incompatible' ? { word: managed.health.title, severity: managed.health.severity } : fallback;
     return (
+        <ManagementNavigation.Provider value={link => {
+            setManagementTarget(prior => ({ link, serial: (prior?.serial ?? 0) + 1 }));
+            go(MANAGEMENT_ROUTES[link.page]);
+        }}>
         <NoticeContext.Provider value={{ dismissed: state.dismissedNotices ?? [], project: state.selectedProject }}>
         <div class={`airk-explorer${themed ? ' airk-themed' : ''}`}>
             <header class="topbar">
@@ -123,6 +129,8 @@ export function App() {
                 <button type="button" class={`workbench-toggle ghost${state.workbenchVisible ? ' active' : ''}`} aria-pressed={state.workbenchVisible ?? false}
                     title={state.workbenchVisible ? 'Hide Workbench' : 'Show Workbench'}
                     onClick={() => { void request('workbench.toggle', {}).catch(surface); }}>Workbench</button>
+                <button type="button" class="ghost" disabled={!state.trusted || state.nativeExecutionEnabled === false}
+                    onClick={() => { void request('admin.open', {}).catch(surface); }}>Open Admin Console</button>
                 <button type="button" class="ghost" aria-haspopup="listbox" onClick={() => void openHelp()}>Help <span aria-hidden="true">⌄</span></button>
                 <button type="button" class="ghost" onClick={() => go({ workspace: 'help', focus: 'about-airk' })}>About</button>
                 <button type="button" class={`theme-toggle ghost${themed ? ' active' : ''}`} aria-pressed={themed}
@@ -155,8 +163,10 @@ export function App() {
                     {route.workspace === 'overview' && <div class="project-context">
                         <ProjectPicker projects={state.projects} selected={state.selectedProject} loading={state.connection === 'connecting'} onError={surface} />
                     </div>}
+                    {route.focus === 'workbench-return' && <button type="button" class="ghost"
+                        onClick={() => { void request('workbench.focus', {}).catch(surface); }}>Return to Workbench</button>}
                     {state.startup&&!state.runtimeUpgrade&&!state.extensionUpdate&&<StartupProgress startup={state.startup} onError={surface} />}
-                    {state.agentConfigAlerts&&!state.extensionUpdate&&<AgentConfigAlert alerts={state.agentConfigAlerts} showDetails={() => { void openAdmin({ page: 'agents' }).catch(failure => setSourceError(failure instanceof Error ? failure.message : String(failure))); }} />}
+                    {state.agentConfigAlerts&&!state.extensionUpdate&&<AgentConfigAlert alerts={state.agentConfigAlerts} showDetails={() => go(MANAGEMENT_ROUTES.agents)} />}
                     {state.extensionUpdate && <Notice global noticeKey={noticeKey('extension-update', state.extensionUpdate.runningVersion, state.extensionUpdate.installedVersion)} class="card">
                         <h1>Reload to finish the AIRK update</h1>
                         <p>AIRK {state.extensionUpdate.installedVersion} is installed. This window is still running AIRK {state.extensionUpdate.runningVersion}.</p>
@@ -164,7 +174,11 @@ export function App() {
                         <button type="button" onClick={() => { void request('extension.reload', {}).catch(surface); }}>Reload to finish update</button>
                     </Notice>}
                     {route.workspace === 'overview' ? <Overview state={state} project={project} go={go} /> : null}
-                    <div hidden={route.workspace === 'overview'}><WorkspaceView lastEvidenceRoute={lastEvidenceRoute} route={route} state={state} go={go} incoming={incoming} navigation={navigation} inspectRef={inspectRef} publications={publications}
+                    <div hidden={route.workspace === 'overview'}><WorkspaceView managementTarget={managementTarget} scopePrefill={scopePrefill}
+                            openScope={id => {
+                                setScopePrefill(prior => ({ id, serial: (prior?.serial ?? 0) + 1 }));
+                                go({ workspace: 'indexing', tab: 'window' });
+                            }} lastEvidenceRoute={lastEvidenceRoute} route={route} state={state} go={go} incoming={incoming} navigation={navigation} inspectRef={inspectRef} publications={publications}
                             inspect={ref => { setInspectRef(ref); go({ workspace: 'evidence', tab: 'inspector' }); }}
                             runRecipe={recipe => { setIncoming(prior => ({ query: recipe.query, recipe, serial: (prior?.serial ?? 0) + 1 })); go({ workspace: 'search', tab: 'query' }); }} /></div>
                 </main>
@@ -172,6 +186,7 @@ export function App() {
             {palette && <Palette state={state} go={go} close={() => setPalette(false)} />}
         </div>
         </NoticeContext.Provider>
+        </ManagementNavigation.Provider>
     );
 }
 

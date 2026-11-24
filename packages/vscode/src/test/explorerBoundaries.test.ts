@@ -166,7 +166,7 @@ test('Explorer webview sources import only Preact, their own files and contracts
             // presentation and its credential-free native lifetime facade.
             // This exception belongs only to that named consumer, never to
             // arbitrary editor views or any Node/host implementation.
-            const management = path.basename(file) === 'sharedManagement.tsx' && (
+            const management = (path.basename(file) === 'adminLinks.tsx' && target(file, specifier) === '../../ui/src/management' && typeOnly(file, specifier)) || path.basename(file) === 'sharedManagement.tsx' && (
                 ['../../ui/src/management', '../../ui/src/nativeSessionLifetime', '../../admin/src/session', '../../admin/src/envelope'].includes(target(file, specifier))
                 || target(file, specifier) === '../../ui/src/apiPort' && typeOnly(file, specifier)
                 || specifier === 'airk-shared-admin-css');

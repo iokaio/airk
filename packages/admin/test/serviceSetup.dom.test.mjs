@@ -23,14 +23,18 @@ async function reset(){await browser.evaluate(`window.unmount?.();document.body.
 test('actual shell has twelve distinct accessible icons and opens current Service resources and Arbiter without a mutation',live,async()=>{
  await reset();await browser.evaluate('window.startSession();window.mountShell()');
  await browser.observed(`document.querySelectorAll('nav[aria-label="AIRK main navigation"] button').length===12`);
+ assert.equal(await browser.evaluate(`document.querySelector('nav').querySelectorAll('h2').length`),3);
  const labels=await browser.evaluate(`[...document.querySelectorAll('nav[aria-label="AIRK main navigation"] button')].map(button=>button.getAttribute('aria-label'))`);
- assert.deepEqual(labels,['Overview','Search','Indexes','Activity','Agents','Service','Code','Documents','Evidence','Review','Strategies','Help']);
+ assert.deepEqual(labels,['Overview','Indexes','Activity','Agents','Service','Search','Code','Documents','Evidence','Review','Strategies','Help']);
  assert.equal(await browser.evaluate(`new Set([...document.querySelectorAll('nav[aria-label="AIRK main navigation"] svg path')].map(path=>path.getAttribute('d'))).size`),12);
  await browser.evaluate(`document.querySelector('nav button[aria-label="Service"]').click()`);
  await browser.observed(`window.calls.some(row=>row.operation==='service.resources')&&window.calls.some(row=>row.operation==='arbiter.status')&&document.body.textContent.includes('Turned off')`);
+ await browser.evaluate(`[...document.querySelectorAll('[aria-label="Runtime and models"] button')].find(button=>button.textContent==='Models').click()`);
+ await browser.observed(`[...document.querySelectorAll('h2')].some(heading=>heading.textContent==='Optional local models for Answer'&&heading.getClientRects().length>0)`);
+ await browser.evaluate(`[...document.querySelectorAll('[aria-label="Runtime and models"] button')].find(button=>button.textContent==='Runtime').click()`);
  assert.equal(await browser.evaluate(`document.querySelector('main .panel details')?.open`),false,'complete resources stay collapsed while the summary is primary');assert.equal(await browser.evaluate(`document.body.textContent.includes('2.0 GiB')&&document.body.textContent.includes('8 logical CPUs')`),true);
  assert.equal(await browser.evaluate(`window.calls.some(row=>/arbiter\.(?:provision|configure|initialize|remove)/.test(row.operation))`),false);
- for(const width of [1280,800]){await browser.call('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});const states=await browser.evaluate(`(()=>{const buttons=[...document.querySelectorAll('nav[aria-label="AIRK main navigation"] button')];return buttons.map(button=>({title:button.title,label:button.getAttribute('aria-label'),display:getComputedStyle(button.querySelector('.nav-label')).display,icon:button.querySelector('svg').getBoundingClientRect().width}));})()`);assert.ok(states.every(row=>row.title===row.label&&row.icon>0));assert.ok(states.every(row=>width===800?row.display==='none':row.display!=='none'));assert.equal(await browser.evaluate(`(()=>{const help=document.querySelector('nav button[aria-label="Help"]'),box=help.getBoundingClientRect();return box.top>=0&&box.bottom<=innerHeight;})()`),true,'Help stays reachable in the viewport with long Service content');if(process.env.AIRK_UI_SCREENSHOT_DIR){const target=resolve(process.env.AIRK_UI_SCREENSHOT_DIR);assert.ok(target.startsWith(resolve(root,'../../artifacts/v190/final-plan')+sep));const capture=await browser.call('Page.captureScreenshot',{format:'png'});await writeFile(join(target,`service-${width}.png`),Buffer.from(capture.data,'base64'),{flag:'wx'});}}
+ for(const width of [1280,800]){await browser.call('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});const states=await browser.evaluate(`(()=>{const buttons=[...document.querySelectorAll('nav[aria-label="AIRK main navigation"] button')];return buttons.map(button=>({title:button.title,label:button.getAttribute('aria-label'),display:getComputedStyle(button.querySelector('.nav-label')).display,icon:button.querySelector('svg').getBoundingClientRect().width}));})()`);assert.ok(states.every(row=>row.title===row.label&&row.icon>0));assert.ok(states.every(row=>row.display!=='none'));assert.equal(await browser.evaluate(`(()=>{const help=document.querySelector('nav button[aria-label="Help"]'),box=help.getBoundingClientRect();return box.top>=0&&box.bottom<=innerHeight;})()`),true,'Help stays reachable in the viewport with long Service content');if(process.env.AIRK_UI_SCREENSHOT_DIR){const target=resolve(process.env.AIRK_UI_SCREENSHOT_DIR);assert.ok(target.startsWith(resolve(root,'../../artifacts/v190/final-plan')+sep));const capture=await browser.call('Page.captureScreenshot',{format:'png'});await writeFile(join(target,`service-${width}.png`),Buffer.from(capture.data,'base64'),{flag:'wx'});}}
 });
 test('service GPU permission requires confirmation and changes only the native boolean',live,async()=>{
  await reset();
@@ -114,4 +118,23 @@ test('a rejected clipboard write reports failure and preserves the native entry 
  await browser.observed(`document.querySelector('.au-copy [role="alert"]')?.textContent.includes('Copy failed')`);
  assert.equal(await browser.evaluate(`document.querySelector('.au-snippet button').textContent.trim()`),'Copy');
  assert.equal(await browser.evaluate(`document.querySelector('.au-snippet pre').textContent`),entry.text);
+});
+
+test('compact Admin menu opens a guided link and browser Back restores the prior view',live,async()=>{
+ await reset();
+ await browser.call('Emulation.setDeviceMetricsOverride',{width:390,height:780,deviceScaleFactor:1,mobile:false});
+ try {
+  await browser.evaluate('window.startSession();window.mountShell()');
+  await browser.observed(`document.querySelector('.console-menu')?.getAttribute('aria-expanded')==='false'`);
+  assert.equal(await browser.evaluate(`getComputedStyle(document.querySelector('#console-navigation')).display`),'none');
+  await browser.evaluate(`document.querySelector('.console-menu').click();document.querySelector('nav button[aria-label="Service"]').click()`);
+  await browser.observed(`location.hash==='#service'&&document.querySelector('main h1')?.textContent==='Service'`);
+  await browser.evaluate(`document.querySelector('.console-menu').click();document.querySelector('nav button[aria-label="Code"]').click()`);
+  await browser.observed(`location.hash==='#code/symbols'&&document.querySelector('main h1')?.textContent==='Code'`);
+  assert.equal(await browser.evaluate(`document.activeElement===document.querySelector('main')`),true);
+  await browser.evaluate('history.back()');
+  await browser.observed(`location.hash==='#service'&&document.querySelector('main h1')?.textContent==='Service'`);
+ } finally {
+  await browser.call('Emulation.clearDeviceMetricsOverride');
+ }
 });

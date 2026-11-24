@@ -13,7 +13,7 @@ export const bundle = await build({ absWorkingDir: root, entryPoints: ['src/expl
   alias: { preact: `${root}/node_modules/preact` }, plugins: [sharedAdminStylePlugin()] });
 test('actual shared management bundles the same presentation with exactly one consuming Preact owner', () => {
   const inputs = Object.keys(bundle.metafile.inputs).map(input => input.replaceAll('\\', '/'));
-  assert.ok(inputs.includes('../admin/src/app.tsx'));
+  assert.equal(inputs.includes('../admin/src/app.tsx'), false, 'the browser application shell stays outside Explorer');
   assert.ok(inputs.includes('../admin/src/indexLibrary.tsx'));
   assert.ok(inputs.includes('../admin/src/arbiter.tsx'));
   assert.ok(inputs.includes('../ui/src/management.ts'));

@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Status and guidance per state (plan §8.1 "Status and guidance", §8.3). The
-//! retained commands only guide: Open AIRK Admin runs `airkctl admin open`,
+//! retained commands only guide: Review Service opens Explorer.
 //! Start runs `airkctl service start`; Install offers explicit automatic/manual/defer
 //! choices, Installation instructions opens the official page and Check again re-runs
 //! discovery. This pure module performs no setup effects.
 import type { AirkctlState } from '../index';
 import { describe } from '../features/explorerHost';
 
-export type GuidanceAction = 'airk.openAdmin' | 'airk.serviceStart' | 'airk.downloadService' | 'airk.installationInstructions'
+export type GuidanceAction = 'airk.explorer.open' | 'airk.serviceStart' | 'airk.downloadService' | 'airk.installationInstructions'
     | 'airk.checkAgain' | 'airk.manageWorkspaceTrust' | 'airk.enableNativeExecution' | 'airk.showExtensionOutput';
 export const ACTION_LABELS: Readonly<Record<GuidanceAction, string>> = Object.freeze({
-    'airk.openAdmin': 'Open AIRK Admin',
+    'airk.explorer.open': 'Review Service',
     'airk.serviceStart': 'Start',
     'airk.downloadService': 'Install AIRK Service',
     'airk.installationInstructions': 'Installation instructions',
@@ -41,11 +41,11 @@ export function guidance(state: AirkctlState): Guidance {
         case 'unverified': return { severity: 'error', message, status: '$(error) AIRK Service unverified', actions: ['airk.downloadService', 'airk.checkAgain', 'airk.showExtensionOutput'] };
         case 'incompatible': return { severity: 'warning', message, status: '$(warning) AIRK incompatible', actions: ['airk.downloadService', 'airk.checkAgain'] };
         case 'stopped': return { severity: 'info', message, status: '$(debug-stop) AIRK Service stopped', actions: ['airk.serviceStart', 'airk.checkAgain'] };
-        case 'refused': return { severity: 'warning', message, status: '$(warning) AIRK refused', actions: ['airk.checkAgain', 'airk.openAdmin', 'airk.showExtensionOutput'] };
+        case 'refused': return { severity: 'warning', message, status: '$(warning) AIRK refused', actions: ['airk.checkAgain', 'airk.explorer.open', 'airk.showExtensionOutput'] };
         case 'ready': return {
             severity: 'none', message: state.disabled.length ? `${message} Not available with this service: ${state.disabled.map(item => item.feature).join(', ')}.` : message,
             status: state.signature === 'unsigned_development' ? '$(beaker) AIRK (unsigned development airkctl)' : '$(search) AIRK',
-            actions: ['airk.openAdmin'],
+            actions: ['airk.explorer.open'],
         };
     }
 }

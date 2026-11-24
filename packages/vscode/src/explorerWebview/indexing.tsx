@@ -51,7 +51,7 @@ export function scopeApplyState(input:{indexes:readonly string[];projects:readon
 /**
  * Indexing (U97): the window search scope and recommendations, and a read-only
  * index library. Native metadata is rendered as escaped Preact text. Indexes and
- * sources are changed in AIRK Admin; (U104) the search scope creates an index
+ * sources are changed in the Index library; (U104) the search scope creates an index
  * set for an index in none on Apply and saves the checked indexes as a new
  * named index set (`airkctl library set-create --index`).
  */
@@ -64,7 +64,7 @@ export function IndexingScreen(props: ScreenProps) {
     const [setName,setSetName]=useState('');
     /** (U105) The one description being edited. */
     const [editing,setEditing]=useState<{kind:'index'|'set';id:string;text:string}>();
-    const actionLabels:Record<string,string>={keep_layout:'Keep this layout',review_reuse:'Review reuse',use_query_scope:'Choose a query scope',review_split:'Review an independent split',split_pending:'Split unavailable on this connection',removal_pending:'Review permanent exclusions in AIRK Admin',manual_selection:'Choose manually while observations are unknown'};
+    const actionLabels:Record<string,string>={keep_layout:'Keep this layout',review_reuse:'Review reuse',use_query_scope:'Choose a query scope',review_split:'Review an independent split',split_pending:'Split unavailable on this connection',removal_pending:'Review permanent exclusions in the Index library',manual_selection:'Choose manually while observations are unknown'};
     const [situation,setSituation]=useState('keep');
     const scope=view.searchScope;
     const scopeSelection=JSON.stringify([scope?.selectedIndexIds,scope?.selectedProjectIds]);
@@ -86,13 +86,28 @@ export function IndexingScreen(props: ScreenProps) {
     const connectionPending=['connecting','disconnected','incompatible','untrusted'].includes(props.state.connection);
     const disabled=working||view.busy||!props.state.trusted||props.state.nativeExecutionEnabled===false||connectionPending;
     const tab=props.route.tab;
+    const prefilled=useRef<number>();
+    const refreshedForPrefill=useRef<number>();
+    const pendingPrefill=tab==='window'&&props.scopePrefill&&prefilled.current!==props.scopePrefill.serial ? props.scopePrefill : undefined;
+    useEffect(()=>{
+        if (!pendingPrefill || !scope?.indexes.some(item=>item.id===pendingPrefill.id && item.tombstone!==true)) return;
+        prefilled.current=pendingPrefill.serial;
+        setScopeIndexes([pendingPrefill.id]);
+        setScopeProjects([]);
+    },[pendingPrefill,scope]);
     const adviceSelection=view.recommendations?.schema==='airk.recommendations/1'?catalogObject(view.recommendations.selected):undefined;
     const readOwner=JSON.stringify([tab,props.state.selectedProject,props.state.selectionEpoch,props.state.trusted,props.state.nativeExecutionEnabled]);
     useEffect(()=>{
         if(connectionPending){automaticRead.current='';return;}
+        if(pendingPrefill && scope && refreshedForPrefill.current!==pendingPrefill.serial && !disabled && !workingNow.current
+            && !scope.indexes.some(item=>item.id===pendingPrefill.id && item.tombstone!==true)) {
+            refreshedForPrefill.current=pendingPrefill.serial;
+            void run(()=>request('indexing.scope.read',{}),true);
+            return;
+        }
         if(tab!=='window'||disabled||workingNow.current||automaticRead.current===readOwner)return;
         if(!scope){automaticRead.current=readOwner;void run(()=>request('indexing.scope.read',{}),true);}
-    },[readOwner,disabled,connectionPending,scope]);
+    },[readOwner,disabled,connectionPending,scope,pendingPrefill]);
     const describe=(kind:'index'|'set',id:string,text:string|undefined)=>void run(async()=>{
         await request('indexing.scope.describe',text===undefined?{kind,id}:{kind,id,text});setEditing(undefined);await request('indexing.scope.read',{});},true);
     const descriptionControls=(kind:'index'|'set',item:Record<string,unknown>)=>{
@@ -110,7 +125,8 @@ export function IndexingScreen(props: ScreenProps) {
     const shownError=error||(tab==='window'&&(scope?.outOfDate||props.state.searchScope?.outOfDate)?SCOPE_OUT_OF_DATE:'');
     const shownDetail=errorDetail;
     return <section class="indexing-screen">
-        <div class="section-head"><p class="indexing-intro">{tab==='window'?'Choose the indexes and index sets to search in this VS Code window.':tab==='projects'?'Index sets on this computer. Create and change them in AIRK Admin.':'Indexes on this computer. Create, change and delete them in AIRK Admin.'}</p>
+        {pendingPrefill && <p role="status">Waiting for the reviewed index to appear in the search scope choices.</p>}
+        <div class="section-head"><p class="indexing-intro">{tab==='window'?'Choose the indexes and index sets to search in this VS Code window.':tab==='projects'?'Index sets on this computer. Manage them in the Index library.':'Indexes on this computer. Manage them in the Index library.'}</p>
             {tab==='window'&&<span class="actions"><button type="button" class="ghost" onClick={()=>props.go({workspace:'manage',tab:'agents'})}>Connect an agent</button><AdminButton page="index-library" disabled={!props.state.trusted}/></span>}</div>
         {tab==='window'&&shownError&&<Notice noticeKey={noticeKey("indexing-error", shownError, shownDetail)} class="notice" role="alert"><p>{shownError}</p>{shownDetail&&<details><summary>Details</summary><code>{shownDetail}</code></details>}</Notice>}
         {!props.state.trusted&&<Notice global condition noticeKey="workspace-restricted" class="notice"><p>Trust this workspace to read indexes.</p></Notice>}
@@ -126,14 +142,14 @@ export function IndexingScreen(props: ScreenProps) {
             {scope&&<form onSubmit={event=>{event.preventDefault();void run(async()=>{await request('indexing.scope.apply',{generation:view.generation,selection:{index_ids:scopeIndexes,project_ids:scopeProjects}});await request('indexing.scope.read',{});},true);}}>
                 <fieldset disabled={disabled} class="indexing-scope-list"><legend>Indexes</legend>
                     {scope.indexes.filter(item=>item.tombstone!==true).map(item=><div class="scope-choice" key={String(item.id)}><label><input type="checkbox" checked={scopeIndexes.includes(String(item.id))} onChange={event=>setScopeIndexes(items=>toggle(items,String(item.id),event.currentTarget.checked))}/><span><strong>{String(item.name??item.id)}</strong>{descriptionOf(item)&&<small class="description">{descriptionOf(item)}</small>}{typeof catalogObject(item.backing??{}).root==='string'&&<small>{String(catalogObject(item.backing).root)}</small>}{scope.indexSetsComplete&&!scope.indexSets?.[String(item.id)]?.length&&<small>In no index set: Apply creates an index set named after it</small>}</span></label>{descriptionControls('index',item)}</div>)}
-                    {!scope.indexes.some(item=>item.tombstone!==true)&&<p>No indexes on this page. Create one in AIRK Admin.</p>}
+                    {!scope.indexes.some(item=>item.tombstone!==true)&&<p>No indexes on this page. Create one in the Index library.</p>}
                     {scope.indexContinuation&&<button type="button" disabled={disabled} onClick={()=>void run(()=>request('indexing.scope.read',{kind:'indexes',next:true}),true)}>More indexes</button>}
                 </fieldset>
                 <fieldset disabled={disabled} class="indexing-scope-list"><legend>Index sets</legend>
                     {scope.projects.map(item=><div class="scope-choice" key={String(item.id)}><label><input type="checkbox" checked={scopeProjects.includes(String(item.id))} onChange={event=>setScopeProjects(items=>toggle(items,String(item.id),event.currentTarget.checked))}/><span><strong>{String(item.name??item.id)}</strong>{descriptionOf(item)&&<small class="description">{descriptionOf(item)}</small>}</span></label>{descriptionControls('set',item)}</div>)}
-                    {!scope.projects.length&&<p>No index sets on this page. Create one in AIRK Admin.</p>}
+                    {!scope.projects.length&&<p>No index sets on this page. Create one in the Index library.</p>}
                     {scope.projectContinuation&&<button type="button" disabled={disabled} onClick={()=>void run(()=>request('indexing.scope.read',{kind:'projects',next:true}),true)}>More index sets</button>}
-                    <AdminButton page="index-library" label="Create or change index sets in AIRK Admin" ghost disabled={!props.state.trusted} choose={false}/>
+                    <AdminButton page="index-library" label="Manage index sets" ghost disabled={!props.state.trusted} choose={false}/>
                 </fieldset>
                 <p>{scopeIndexes.length} {scopeIndexes.length===1?'index':'indexes'} and {scopeProjects.length} {scopeProjects.length===1?'index set':'index sets'} selected. The search scope is everything in the checked index sets plus every checked index; each index is read through the index sets that hold it. Uncheck everything to stop searching indexes in this window.</p>
                 {apply.newSets.map(id=><p key={id} class="callout" role="status">{indexName(id)} is in no index set. Apply creates an index set named “{indexName(id)}” for it, then applies your selection.</p>)}
@@ -166,11 +182,11 @@ export function IndexingScreen(props: ScreenProps) {
                 <p>Available to this connection: {Array.isArray(view.recommendations.available)?view.recommendations.available.length:0} unique indexes. Selected for this query: {Array.isArray(catalogObject(view.recommendations.selected).index_ids)?(catalogObject(view.recommendations.selected).index_ids as unknown[]).length:0}.</p>
                 <p>Omitted indexes: {JSON.stringify(view.recommendations.omitted_index_ids)}. Observation: {String(catalogObject(view.recommendations.observation).source)} at {new Date(Number(view.recommendations.observed_unix_ms)).toLocaleString()}. Connection scope only; machine library coverage is incomplete.</p>
                 <details><summary>Available indexes, Index set names, selected source and prefix boundaries</summary><pre>{JSON.stringify({available:view.recommendations.available,projects:view.recommendations.projects,source_boundaries:view.recommendations.source_boundaries,selected_scope:view.recommendations.selected_scope},null,2)}</pre></details>
-                {Array.isArray(view.recommendations.cards)&&view.recommendations.cards.map((item,at)=>{const card=catalogObject(item);return <article key={at}><h3>{actionLabels[String(card.action)]??String(card.action)}</h3><p>{String(card.reason)}</p><p>{String(card.expected_benefit)}</p><p>{String(card.tradeoff)}</p>{card.action==='review_split'&&Array.isArray(adviceSelection?.index_ids)&&adviceSelection.index_ids.filter(id=>/^idx_[0-9a-f]{32}$/.test(String(id))).map(id=><AdminButton key={String(id)} page="index-library" index={String(id)} label={`Review a split of ${String(id)} in AIRK Admin`} disabled={disabled} choose={false}/>)}</article>;})}
+                {Array.isArray(view.recommendations.cards)&&view.recommendations.cards.map((item,at)=>{const card=catalogObject(item);return <article key={at}><h3>{actionLabels[String(card.action)]??String(card.action)}</h3><p>{String(card.reason)}</p><p>{String(card.expected_benefit)}</p><p>{String(card.tradeoff)}</p>{card.action==='review_split'&&Array.isArray(adviceSelection?.index_ids)&&adviceSelection.index_ids.filter(id=>/^idx_[0-9a-f]{32}$/.test(String(id))).map(id=><AdminButton key={String(id)} page="index-library" index={String(id)} label={`Review a split of ${String(id)}`} disabled={disabled} choose={false}/>)}</article>;})}
                 <button disabled={disabled} onClick={()=>void run(()=>request('indexing.recommendations.use',{}))}>Use this query scope</button>
                 <button disabled={disabled} onClick={()=>void run(()=>request('indexing.recommendations.copy',{}))}>Copy agent scope instructions</button>
                 <p>Use this query scope makes it this window's search scope and prefills a Workbench search form. Review it before running. It does not change an agent connection or an index set.</p>
-                <p>Reusable choices are saved as index sets, and splits are reviewed, in AIRK Admin.</p>
+                <p>Review splits and manage reusable index sets in the Index library.</p>
                 <button disabled={disabled} onClick={()=>props.go({workspace:'indexing',tab:'projects'})}>View index sets</button>
                 <details><summary>Complete Recommendations response</summary><pre>{JSON.stringify(view.recommendations,null,2)}</pre></details>
             </>:<p>Recommendations unavailable on this connection. Review the complete native response: <code>{JSON.stringify(view.recommendations)}</code></p>)}

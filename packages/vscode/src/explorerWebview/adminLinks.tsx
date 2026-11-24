@@ -1,35 +1,39 @@
 // SPDX-License-Identifier: Apache-2.0
-// Open AIRK Admin (U97). Management lives in the admin pages (U6); the
-// Explorer links there. U103: status, usage, recent activity and the everyday
-// index actions are in the Explorer itself. The host opens them where `airk.admin.openIn`
-// says (VS Code's Simple Browser or the default browser); no sign-in URL ever
-// reaches this webview.
-import { useState } from 'preact/hooks';
+// Explorer management navigation. Browser launch lives in the top bar.
+import { createContext } from 'preact';
+import { useContext } from 'preact/hooks';
+import type { Route } from '../explorerRoutes';
 import type { AdminPage } from '../explorerContracts';
+import type { LogTarget } from '../../../ui/src/management';
 import type { ScreenProps } from './workspaces';
-import { request } from './api';
 
-export interface AdminLink { page: AdminPage; folder?: string; index?: string; set?: string }
 
-export async function openAdmin(link: AdminLink, choose = false): Promise<void> {
-    await request('admin.open', { page: link.page, ...(link.folder !== undefined ? { folder: link.folder } : {}),
-        ...(link.index ? { index: link.index } : {}), ...(link.set ? { set: link.set } : {}), ...(choose ? { choose: true } : {}) });
-}
+export interface AdminLink { page: AdminPage; folder?: string; index?: string; set?: string; logTarget?: LogTarget }
 
-/** "Open AIRK Admin" plus "Choose where…" (In VS Code / In my browser, remembered). */
-export function AdminButton(props: AdminLink & { label?: string; ghost?: boolean; disabled?: boolean; choose?: boolean }) {
-    const [busy, setBusy] = useState(false), [error, setError] = useState('');
-    const run = async (choose: boolean) => {
-        setBusy(true); setError('');
-        try { await openAdmin(props, choose); }
-        catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
-        finally { setBusy(false); }
-    };
-    return <span class="admin-link">
-        <button type="button" class={props.ghost ? 'ghost' : ''} disabled={busy || props.disabled} onClick={() => { void run(false); }}>{props.label ?? 'Open AIRK Admin'}</button>
-        {props.choose !== false && <button type="button" class="ghost" disabled={busy || props.disabled} title="Open AIRK Admin in VS Code or in your browser; the choice is remembered" onClick={() => { void run(true); }}>Choose where…</button>}
-        {error && <span class="muted" role="alert"> {error}</span>}
-    </span>;
+export const ManagementNavigation = createContext<(link: AdminLink) => void>(() => {});
+export const MANAGEMENT_ROUTES: Readonly<Record<AdminPage, Route>> = {
+    overview: { workspace: 'manage', tab: 'overview' },
+    'index-library': { workspace: 'indexing', tab: 'library' },
+    activity: { workspace: 'manage', tab: 'activity' },
+    agents: { workspace: 'manage', tab: 'agents' },
+    storage: { workspace: 'manage', tab: 'storage' },
+    recovery: { workspace: 'manage', tab: 'repair' },
+    service: { workspace: 'manage', tab: 'service' },
+    logs: { workspace: 'manage', tab: 'logs' },
+    usage: { workspace: 'manage', tab: 'usage' },
+    search: { workspace: 'search', tab: 'query' },
+    help: { workspace: 'help' },
+};
+
+const labels: Record<AdminPage, string> = {
+    overview: 'Service overview', 'index-library': 'Index library', activity: 'Activity',
+    agents: 'Agent connections', storage: 'Storage', recovery: 'Recovery', service: 'Service',
+    logs: 'Logs', usage: 'Usage', search: 'Search', help: 'Help',
+};
+
+export function AdminButton({ label, ghost, disabled, choose: _choose, ...link }: AdminLink & { label?: string; ghost?: boolean; disabled?: boolean; choose?: boolean }) {
+    const navigate = useContext(ManagementNavigation);
+    return <button type="button" class={ghost ? 'ghost' : ''} disabled={disabled} onClick={() => navigate(link)}>{label ?? labels[link.page]}</button>;
 }
 
 /** No index yet: one "Create an index for this folder" per window folder (U97). */
@@ -37,29 +41,27 @@ export function CreateIndexForFolders(props: { folders?: readonly string[]; disa
     const folders = props.folders ?? [];
     return <article class="card create-index">
         <h2>No index yet</h2>
-        <p>AIRK has no index for this window. Create one in AIRK Admin; this page shows it once it exists. Indexing, sources and index sets are managed in AIRK Admin.</p>
+        <p>AIRK has no index for this window. Create one for a folder in this window, or open the Index library.</p>
         {folders.length
             ? <ul>{folders.map(folder => <li key={folder}><code class="path">{folder}</code> <AdminButton page="index-library" folder={folder} label="Create an index for this folder" disabled={props.disabled} choose={false} /></li>)}</ul>
-            : <p>Open a folder in VS Code to create an index for it, or <AdminButton page="index-library" label="open the AIRK Admin index library" ghost disabled={props.disabled} choose={false} />.</p>}
+            : <p>Open a folder in VS Code to create an index for it, or <AdminButton page="index-library" label="open the Index library" ghost disabled={props.disabled} choose={false} />.</p>}
     </article>;
 }
 
-/** Management tabs that open the matching admin page (Activity and Usage are read in the Explorer, U103;
- * Agents are connected in the Explorer, U104, and this entry stays for its Admin link);
- * routes stay valid for links, help and agent drafts. */
-const MANAGE_PAGES: Readonly<Record<string, { page: AdminPage; title: string; text: string }>> = {
-    overview: { page: 'overview', title: 'Overview', text: 'Service health, indexes and work in progress.' },
-    storage: { page: 'storage', title: 'Storage', text: 'Index storage, quotas and cleanup.' },
-    repair: { page: 'recovery', title: 'Recovery', text: 'Recovery plans for indexes that need repair.' },
-    service: { page: 'service', title: 'Service', text: 'Manage service-wide GPU use, review the runtime, and stop or restart the AIRK Service.' },
-    agents: { page: 'agents', title: 'Agents', text: 'Coding-agent connections and their access.' },
-    logs: { page: 'logs', title: 'Logs', text: 'Service and extension logs.' },
+/** Description shown when native management is unavailable. */
+const MANAGE_PAGES: Readonly<Record<string, { title: string; text: string }>> = {
+    overview: { title: 'Overview', text: 'Service health, indexes and work in progress.' },
+    storage: { title: 'Storage', text: 'Index storage, quotas and cleanup.' },
+    repair: { title: 'Recovery', text: 'Recovery plans for indexes that need repair.' },
+    service: { title: 'Service', text: 'Manage service-wide GPU use, review the runtime, and stop or restart the AIRK Service.' },
+    agents: { title: 'Agents', text: 'Coding-agent connections and their access.' },
+    logs: { title: 'Logs', text: 'Service and extension logs.' },
 };
-export function AdminHandoffScreen(props: ScreenProps) {
+export function ManagementUnavailable(props: ScreenProps) {
     const target = MANAGE_PAGES[props.route.tab ?? 'overview'] ?? MANAGE_PAGES.overview;
-    return <article class="card admin-handoff">
-        <h2>{target.title} is in AIRK Admin</h2>
-        <p>{target.text} This is managed in the AIRK admin pages. Index status, usage, recent activity and the everyday index actions (index now, pause, resume, watching, retry and cancel) are in this Explorer.</p>
-        <AdminButton page={target.page} label={`Open ${target.title} in AIRK Admin`} disabled={!props.state.trusted} />
+    return <article class="card">
+        <h2>{target.title}</h2>
+        <p>{target.text}</p>
+        <p>Management requires a trusted workspace, enabled native execution, and a compatible local AIRK Service.</p>
     </article>;
 }

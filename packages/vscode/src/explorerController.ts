@@ -114,8 +114,8 @@ export interface ExplorerHost {
     agentConfigAlerts?(): AgentConfigAlerts | undefined;
     /** Read-only index library (U97): one native catalog `ControlMethod` through the window's metadata relay. */
     catalogControl?(method: Record<string, unknown>): Promise<Record<string, unknown>>;
-    /** Open AIRK Admin on a page (U97); `choose` asks where and remembers it. */
-    openAdmin?(target: AdminTarget, choose: boolean): Promise<void>;
+    /** Open the standalone console in the default browser. */
+    openAdmin?(target: AdminTarget): Promise<void>;
 }
 
 /** Management › Agents (U104, U110, airkctl/features/windowAgents.ts). */
@@ -614,7 +614,7 @@ export class ExplorerController implements vscode.Disposable {
         this.requireAuthorization(true);
         const unreadable = this.notReadable();
         if (unreadable) { throw new EvidenceFailure(explorerError('index_read_unavailable', unreadable.message ?? (unreadable.state === 'not_readable'
-            ? 'This index is in no index set. Make it readable in AIRK Admin.' : 'The requested index scope is being checked or could not be resolved.'))); }
+            ? 'This index is in no index set. Make it readable in the Index library.' : 'The requested index scope is being checked or could not be resolved.'))); }
         const spec = this.host.specs().find(entry => entry.service?.project === this.selected);
         if (!spec) { throw new EvidenceFailure(explorerError('NO_PROJECT')); }
         if (!this.evidence) { this.evidence = new EvidenceClient(spec, this.host.version,{resolveConnection:this.host.prepareEvidenceConnection?.bind(this.host)}); }
@@ -722,7 +722,7 @@ export class ExplorerController implements vscode.Disposable {
             const catalogManagement=message.type.startsWith('indexing.')&&!message.type.startsWith('indexing.recommendations')||message.type==='library.read';
             // Using recommended advice and applying an agent search draft select the window search
             // scope themselves, which starts a new evidence epoch; their own committed outcome stands.
-            const managementOrLocal=['admin.session','admin.call','admin.close','pilot.read','admin.open','manage.command','work.action','work.usage','work.activity','agents.read','agents.connect','agents.disconnect','notice.dismiss','details.copy','workbench.toggle','extension.reload','indexing.recommendations.use','suggestions.resolve'].includes(message.type);
+            const managementOrLocal=['admin.session','admin.call','admin.close','pilot.read','admin.open','manage.command','work.action','work.usage','work.activity','agents.read','agents.connect','agents.disconnect','notice.dismiss','details.copy','workbench.toggle','workbench.focus','extension.reload','indexing.recommendations.use','suggestions.resolve'].includes(message.type);
             if (epoch !== this.selectionEpoch && !catalogManagement&&!managementOrLocal&&!['project.select', 'status.refresh', 'source.choose'].includes(message.type)) { throw new EvidenceFailure(explorerError('REQUEST_SUPERSEDED')); }
             if (message.type !== 'ready' && panelGeneration === this.panel.generation) { this.respond(message.requestId, { data: data ?? null }); }
         } catch (error) {
@@ -789,7 +789,7 @@ export class ExplorerController implements vscode.Disposable {
                 if(this.host.workspaceTrusted?.()!==false&&!this.host.trusted())throw new EvidenceFailure(explorerError('CLIENT_NOT_AUTHORIZED'));
                 await vscode.commands.executeCommand(MANAGE_WORKSPACE_TRUST_COMMAND);return;
             // The window search scope (U77): choices are read read-only through the session; Apply grants
-            // them with scope_select and nothing selected releases (scope_release). Index sets are created in AIRK Admin.
+            // them with scope_select and nothing selected releases (scope_release). Index sets are created in the Index library.
             case 'indexing.scope.read': {
                 const scope=this.scopeHost();
                 await this.scopeWork(()=>scope.readSearchScope(message.kind,message.next));
@@ -822,9 +822,7 @@ export class ExplorerController implements vscode.Disposable {
             case 'admin.open': {
                 this.requireAuthorization(true);
                 if(!this.host.openAdmin)throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED','AIRK Admin cannot be opened from this window.'));
-                // A prefilled folder must be one of this window's folders; the webview never names another path.
-                if(message.folder!==undefined&&!workspaceFolders().includes(message.folder))throw new EvidenceFailure(explorerError('INVALID_MESSAGE','Choose one of the folders open in this window.'));
-                await this.host.openAdmin({page:message.page,...(message.folder!==undefined?{forFolder:message.folder}:{}),...(message.index?{showIndex:message.index}:{}),...(message.set?{showSet:message.set}:{})},message.choose===true);
+                await this.host.openAdmin({ page: 'overview' });
                 return {requested:true};
             }
             case 'details.copy': {
@@ -833,6 +831,9 @@ export class ExplorerController implements vscode.Disposable {
                 const text=panelDetails(managementView(this.control.state),message.section,this.host.version,message.project,status);
                 await vscode.env.clipboard.writeText(text);return {copied:true};
             }
+            case 'workbench.focus':
+                await vscode.commands.executeCommand('airk.workbench.focus');
+                return { requested: true };
             case 'workbench.toggle':
                 await this.host.toggleWorkbench?.();
                 this.publish();return;

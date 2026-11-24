@@ -8,8 +8,6 @@ related_airk_help: indexing
 ---
 # Indexes — Index sets
 
-Index sets are reusable selections of indexes. This tab lists them read-only from the AIRK Service; create, rename, change and delete index sets in AIRK Admin.
+Index sets are reusable selections of indexes. Use Manage index sets to create, rename, change or delete an index set.
 
-Show index set details reads the set and the indexes it contains, with the complete native responses and Copy JSON. Open in AIRK Admin on a row opens that index set in AIRK Admin. Load more index sets continues a long list.
-
-Choose Open AIRK Admin to open the admin pages. Choose where... picks In VS Code (the Simple Browser, with a single-use sign-in link kept only in memory) or In my browser; the choice is remembered in the airk.admin.openIn setting.
+Show index set details reads the set and the indexes it contains, with the complete native responses and Copy JSON. Manage on a row opens that index set in the Index library. Load more index sets continues a long list.

@@ -110,7 +110,7 @@ export function describe(state: AirkctlState): string {
 
 export class AdminOnly extends Error {
     readonly code = 'admin_only';
-    constructor(action: string) { super(`"${action}" moved to the AIRK admin pages. Run "AIRK: Open AIRK Admin" (airkctl admin open).`); }
+    constructor(action: string) { super(`"${action}" is unavailable here. Open its task under Indexes or Management in AIRK Explorer.`); }
 }
 
 export class AirkctlExplorerHost implements ExplorerHost, vscode.Disposable {
@@ -250,10 +250,10 @@ export class AirkctlExplorerHost implements ExplorerHost, vscode.Disposable {
         if (state.kind !== 'ready') { throw new AirkctlUnavailable(state.kind); }
         return this.airkctl.session.control(method);
     }
-    /** Open AIRK Admin on a page (U97, `airk.admin.openIn`). */
-    async openAdmin(target: AdminTarget, choose: boolean): Promise<void> {
+    /** Launch standalone Admin in the default browser. */
+    async openAdmin(target: AdminTarget): Promise<void> {
         if (!this.admin) { throw new AdminOnly('Open AIRK Admin'); }
-        await this.admin.open(target, choose);
+        await this.admin.open(target);
     }
     log(line: string): void { this.output.appendLine(line); }
     setStatusBar(text: string, tooltip: string): void { this.status.text = text; this.status.tooltip = tooltip; }

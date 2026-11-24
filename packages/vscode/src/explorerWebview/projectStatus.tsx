@@ -2,7 +2,7 @@
 // Project status shared by Overview and the Explorer shell. The everyday index
 // actions (index now, pause/resume, watch on/off, retry and cancel a job) run
 // here as `airkctl` commands (U103); setup, sources, policy, sets, storage and
-// the service stay in AIRK Admin.
+// the service stay.
 import { useState } from 'preact/hooks';
 import { Notice, noticeKey } from './notices';
 import type { AgentConfigAlerts, AgentConfigFinding, FactRow, ManagedProject, ProjectSummary, StatusSummary, WorkAction } from '../explorerContracts';
@@ -14,7 +14,7 @@ import { AdminButton } from './adminLinks';
 
 function Rows(props: { rows: readonly FactRow[]; hideUnobserved?: boolean }) { return <Facts rows={props.rows.filter(([, value]) => !props.hideUnobserved || value.toLowerCase() !== 'not observed').map(([name, value]) => [name, value])} />; }
 
-/** Project health. Resume and Retry job run here (WorkActions); other repairs are in AIRK Admin (U6, U97, U103). */
+/** Project health. Resume and Retry job run here (WorkActions); other repairs are (U6, U97, U103). */
 export function ProjectHealth(props: { entry: ManagedProject; compact?: boolean }) {
     const { entry } = props, health = entry.health;
     // Ordinary live work is explained by the adjacent progress card. Keep failures,
@@ -26,7 +26,7 @@ export function ProjectHealth(props: { entry: ManagedProject; compact?: boolean 
         {local && <p class="muted">Use {health.action === 'resume' ? 'Resume' : 'Retry'} in Index actions below.</p>}
         {!local && (health.action || health.reviewTab || health.severity === 'error') && <div class="actions">
             <AdminButton page={health.reviewTab === 'repair' ? 'recovery' : health.reviewTab === 'logs' || !health.action ? 'logs' : 'activity'}
-                label={health.reviewTab === 'repair' ? 'Review recovery in AIRK Admin' : health.action && health.actionLabel ? `${health.actionLabel} in AIRK Admin` : 'Review logs in AIRK Admin'} choose={false} />
+                label={health.reviewTab === 'repair' ? 'Review recovery' : health.action && health.actionLabel ? `${health.actionLabel}` : 'Review logs'} choose={false} />
         </div>}
     </section>;
 }

@@ -102,8 +102,8 @@ export function takeLaunchCode(): string | null {
   return code.length > 0 ? code : null;
 }
 
-/** A page route such as `index-library?root=…`: a page id and an optional query. */
-const PAGE_ROUTE = /^[a-z][a-z-]{0,31}(\?[^#\s]*)?$/;
+/** A page or named workflow with an optional query. The shell validates the destination. */
+const PAGE_ROUTE = /^[a-z][a-z-]{0,31}(?:\/[a-z][a-z-]{0,31})?(\?[^#\s]*)?$/;
 let initialRoute: string | null = null;
 
 /** The page route the document was opened with (after any launch code), or null. */

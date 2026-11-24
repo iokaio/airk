@@ -39,7 +39,9 @@ function webview(name: string, state: any, renderWith: (exports: any) => any) {
     const events = new Map<string, (event: any) => void>();
     let cursor = 0, fail = false, failCode = 'HOST_UNAVAILABLE', failMessage = 'Native catalog unavailable';
     const hold=new Set<string>(),held:any[]=[];
+    const destinations: unknown[] = [];
     const hooks = {
+        useContext() { return (target: unknown) => destinations.push(target); },
         useState(initial: any) {
             const at = cursor++;
             if (!(at in slots)) { slots[at] = typeof initial === 'function' ? initial() : initial; }
@@ -66,7 +68,7 @@ function webview(name: string, state: any, renderWith: (exports: any) => any) {
         } }),
     });
     return {
-        sent, state, exports: module.exports, slots,
+        sent, destinations, state, exports: module.exports, slots,
         hold(type:string){hold.add(type);},
         release(type:string,data:any={}){const at=held.findIndex(message=>message.type===type);assert.ok(at>=0,`Held ${type} request required`);const message=held.splice(at,1)[0];events.get('message')?.({data:{v:1,type:'result',requestId:message.requestId,ok:true,data}});},
         failure(value: boolean, code = 'HOST_UNAVAILABLE', message = 'Native catalog unavailable') { fail = value; failCode = code; failMessage = message; },
@@ -116,7 +118,7 @@ const reply = (items: unknown[], continuation: unknown = null, extra: Record<str
     response: { status: 'catalog_page', page: { namespace, revision: 7, items, continuation }, capabilities: { future_native_capability: 'kept' }, ...extra },
 });
 
-test('every Indexing tab offers Open AIRK Admin and the library tabs render the read-only library', async () => {
+test('Indexing tabs reach native management while retaining the catalog read view', async () => {
     const window = screen('window', { searchScope: { indexes: [], projects: [], selectedIndexIds: [], selectedProjectIds: [] } });
     let tree = window.render(); await window.flush();
     assert.ok(component(tree, 'AdminButton').some(node => node.props.page === 'index-library'));
@@ -154,7 +156,7 @@ test('an out-of-date scope asks to reselect, and Clear releases it by applying n
     const clear = button(tree, /Clear search scope/); assert.ok(clear);
     clear.props.onClick(); await f.flush(); await f.flush(); tree = f.render();
     assert.deepEqual(JSON.parse(JSON.stringify(f.sent.map(fields))), [{ type: 'indexing.scope.apply', generation: 0, selection: { index_ids: [], project_ids: [] } }, { type: 'indexing.scope.read' }]);
-    assert.ok(component(tree, 'AdminButton').some(node => node.props.label === 'Create or change index sets in AIRK Admin' && node.props.page === 'index-library'), 'index sets are created in AIRK Admin');
+    assert.ok(component(tree, 'AdminButton').some(node => node.props.label === 'Manage index sets' && node.props.page === 'index-library'), 'index sets are managed in Explorer');
 });
 
 test('the Overview and Search headers show the active scope with Clear', async () => {
@@ -194,7 +196,7 @@ test('the read-only library reads pages through the session relay, continues wit
     assert.equal(component(tree, 'CreateIndexForFolders').length, 0);
 });
 
-test('index set rows link to AIRK Admin and opening a row reads detail, memberships, sources and policy only', async () => {
+test('index set rows link to Explorer management and opening a row reads detail, memberships, sources and policy only', async () => {
     const sets = library('projects'); sets.hold('library.read'); sets.render(); await sets.flush();
     assert.equal(sets.sent[0].kind, 'projects');
     sets.release('library.read', reply([{ kind: 'project', value: projectValue }])); await sets.flush();
@@ -248,11 +250,13 @@ test('with no index the library and its links offer Create an index for this fol
     const buttons = component(links.render(), 'AdminButton');
     assert.deepEqual(buttons.map(node => [node.props.page, node.props.folder, node.props.label]), folders.map(folder => ['index-library', folder, 'Create an index for this folder']));
     const opener = webview('adminLinks.tsx', {}, exports => exports.AdminButton({ page: 'index-library', folder: folders[0], label: 'Create an index for this folder' }));
-    button(opener.render(), /^Create an index for this folder$/).props.onClick(); await opener.flush();
-    button(opener.render(), /^Choose where/).props.onClick(); await opener.flush();
-    assert.deepEqual(opener.sent.map(fields), [{ type: 'admin.open', page: 'index-library', folder: folders[0] }, { type: 'admin.open', page: 'index-library', folder: folders[0], choose: true }]);
-    const handoff = webview('adminLinks.tsx', {}, exports => exports.AdminHandoffScreen({ route: { workspace: 'manage', tab: 'repair' }, state: { trusted: true } }));
-    assert.equal(component(handoff.render(), 'AdminButton')[0].props.page, 'recovery', 'Management routes open the matching admin page');
+    button(opener.render(), /^Create an index for this folder$/).props.onClick();
+    assert.equal(button(opener.render(), /^Choose where/), undefined);
+    assert.equal(JSON.stringify(opener.destinations), JSON.stringify([{ page: 'index-library', folder: folders[0] }]));
+    assert.deepEqual(opener.sent, [], 'setup navigation sends no browser launch or mutation');
+    const unavailable = webview('adminLinks.tsx', {}, exports => exports.ManagementUnavailable({ route: { workspace: 'manage', tab: 'repair' }, state: { trusted: true } }));
+    assert.match(text(unavailable.render()), /Management requires a trusted workspace/);
+    assert.equal(component(unavailable.render(), 'AdminButton').length, 0);
 });
 
 test('Search scope loads local index and set choices once without an association prerequisite', async () => {
@@ -398,7 +402,7 @@ test('U110 Management › Agents puts the task first: pick an agent, Connect, se
     const details=nodes(tree).find(node=>node.type==='details'&&nodes(node).some(child=>child.type==='summary'&&text(child)==='Details'));
     assert.ok(details&&!details.props.open,'Details is collapsed');
     assert.deepEqual(plain(component(details,'CompleteNativeResponse').map(node=>node.props.value)),[report,{url,state:'ready'},{schema:1,entries:[]}],'the complete native reports are kept');
-    assert.ok(component(details,'AdminButton').some(node=>node.props.page==='agents'),'AIRK Admin › Agents stays reachable for manual setup');
+    assert.equal(component(details,'AdminButton').length,0,'the editor agent task has no browser handoff');
     // Copy puts the URL on the clipboard.
     button(tree,/^Copy$/).props.onClick();await f.flush();
     assert.deepEqual(f.sent.map(fields).at(-1),{type:'clipboard.write',text:url});
@@ -503,10 +507,10 @@ test('Management › Usage reads the usage report of the selected index and rend
     assert.match(shown,/Read complete/);
     assert.deepEqual(plain(component(tree,'Facts')[0].props.rows),[['status','usage_document'],['document.days','7'],['document.requests','42'],['document.returned_bytes','9000'],['document.clients.explorer','30'],['document.clients.agents','12']]);
     const complete=component(tree,'CompleteNativeResponse');assert.equal(complete.length,1);assert.deepEqual(complete[0].props.value,report);
-    assert.equal(component(tree,'AdminHandoffScreen').length,0);
-    assert.ok(component(tree,'AdminButton').some(node=>node.props.page==='usage'),'usage settings stay in AIRK Admin');
+    assert.equal(component(tree,'ManagementUnavailable').length,0);
+    assert.ok(component(tree,'AdminButton').some(node=>node.props.page==='usage'),'usage settings open in Explorer');
     const workspace=webview('workspaces.tsx',{},exports=>exports).exports.SCREENS;
-    assert.equal(workspace['manage/usage'].name,'UsageScreen');assert.equal(workspace['manage/activity'].name,'ActivityScreen');assert.equal(workspace['manage/storage'].name,'AdminHandoffScreen');
+    assert.equal(workspace['manage/usage'].name,'UsageScreen');assert.equal(workspace['manage/activity'].name,'ActivityScreen');assert.equal(workspace['manage/storage'].name,'ManagementUnavailable');
 });
 
 test('U108 the search scope notes when the pending union exceeds the reported query concurrency; Apply and Save as index set still work', async () => {

@@ -110,7 +110,8 @@ test('Explorer commands are fixed AIRK commands and management actions are not E
     assert.equal(parseWebviewMessage({ v: 1, type: 'manage.command', requestId: 'c', command: 'workbench.action.reloadWindow' }), undefined);
     assert.equal(Object.hasOwn(WEBVIEW_MESSAGES, 'manage.action'), false);
     assert.equal(parseWebviewMessage({ v: 1, type: 'manage.action', requestId: 'a', action: 'retryJob', id: 'ab'.repeat(32) }), undefined);
-    for (const page of ADMIN_PAGES) { assert.ok(parseWebviewMessage({ v: 1, type: 'admin.open', requestId: 'o', page }), page); }
+    assert.ok(parseWebviewMessage({ v: 1, type: 'admin.open', requestId: 'o' }));
+    for (const page of ADMIN_PAGES) assert.equal(parseWebviewMessage({ v: 1, type: 'admin.open', requestId: 'o', page }), undefined);
     assert.equal(parseWebviewMessage({ v: 1, type: 'admin.open', requestId: 'o', page: 'index-library', set: 'idx_' + 'ab'.repeat(16) }), undefined);
     assert.equal(parseWebviewMessage({ v: 1, type: 'library.read', requestId: 'r', method: 'page', kind: 'indexes', after: [] }), undefined);
 });

@@ -64,7 +64,7 @@ resources, the index list, workers, events, requests, jobs, recovery plans,
 logs and agent connection details.
 
 Ordinary changes run as `airkctl` runs them: indexing, configuration, retry,
-pause and resume, plan creation, policy resume, revoke, stop and restart. The
+pause and resume, plan creation, policy resume, stop and restart. The
 service generates each request's identity (never the browser), journals it
 where `airkctl` journals it, and the reply carries `request: {nonce, state}`.
 If the service's answer is lost twice the page reports the outcome as unknown
@@ -75,7 +75,7 @@ A search scope can be chosen among existing indexes (`search.select_scope`);
 the grant lives only in the browser session.
 
 **Index library** (U6, U97, U98). The index library lists indexes, index
-sets and grants, with their sources, memberships, policy and split state.
+sets, with their sources, memberships, policy and split state.
 
 - **Set up an index:** fill in the name, folder, data location, collection,
   extra folders and watching. **Browse…** beside each path opens a folder
@@ -97,19 +97,16 @@ sets and grants, with their sources, memberships, policy and split state.
   complete result kept.
 - **Index sets:** create, rename, add or remove member indexes, delete.
 - **Index changes:** rename, source changes, policy resume, split and retire.
-- **Grants:** draft and revoke.
 
 Every change is drafted or previewed by the service and shown in full before
 it is applied. The request identity stays in the service session, so the
 page holds only a review token.
 
-Removing or retiring something asks you to type the target's name (the
-grant's id for a revoke; for a split, the original index's name). A wrong
+Removing or retiring something asks you to type the target's name (the original index's name for a split). A wrong
 name is refused and nothing is sent.
 
 The page can be opened on a route: `airkctl admin open --page index-library
---for-folder <folder>` prefills a new index for that folder. The VS Code
-Explorer's **Create an index for this folder** uses this route.
+--for-folder <folder>` prefills a new index for that folder. In VS Code, **Create an index for this folder** opens setup within Explorer. The **Open Admin Console** button in the Explorer header opens this standalone console in the default browser.
 
 **Usage** shows whether usage recording is on and what it keeps, then the
 report for a chosen index and period (1, 7, 14 or 30 days): calls and

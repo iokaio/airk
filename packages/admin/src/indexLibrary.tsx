@@ -10,7 +10,7 @@
 // never start a call that changes anything.
 import { createCatalogRequests, indexDetailValue, setDetailValue, itemOf, type Item, type CatalogHeader } from './catalogRequests';
 import type { ComponentChildren, JSX } from 'preact';
-import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { useContext, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { bindPreparationScope, isUnknownOutcome, onPreparationChange, preparationOf, recoverPreparedResult, receiptAcknowledges, recoveryOf, reviewedCall, reviewOf, type CallResult } from './api';
 import { currentSession } from './session';
 import {
@@ -29,6 +29,7 @@ import {
 import { browse, FolderPicker, joinPath } from './folderPicker';
 import { dataLocationOf, dataRootChoice } from './dataRootDefault';
 import { ProgressPanel } from './progress';
+import { PageVisible } from './pageVisibility';
 import { ConcurrencyNote, useQueryConcurrency } from './concurrencyNote';
 import { concurrencyNote, setSizeAfterAdd } from './scopeConcurrency';
 import { Confirm, Field, JsonBlock, Outcome, Panel, resultOf, Text, useCall, type CallState } from './render';
@@ -260,6 +261,13 @@ function CatalogList(props: {
   const catalogRequests = model.current;
   const context = catalogRequests.bind({ kind: props.kind, ...filter, reload: props.reload, session: currentSession() });
   const { items, cursor, header, problem, callCurrent } = catalogRequests.view(context);
+  const [query, setQuery] = useState('');
+  const searchable = props.kind === 'indexes' || props.kind === 'projects';
+  const needle = query.trim().toLowerCase();
+  const shown = !searchable || !needle ? items : items.filter(item => {
+    const { name, id } = describe(item);
+    return [name, id].some(value => value.toLowerCase().includes(needle));
+  });
   const visibleState: CallState = callCurrent ? state : { phase: 'idle' };
   const load = (after: unknown): Promise<void> => catalogRequests.load(after, props, context);
   useLayoutEffect(() => () => catalogRequests.dispose(), [catalogRequests]);
@@ -269,6 +277,9 @@ function CatalogList(props: {
   const failed = visibleState.phase === 'done' && visibleState.result.kind !== 'ok';
   return (
     <div class="catalog-list">
+      {searchable && <label class="row">Filter loaded {props.kind === 'indexes' ? 'indexes' : 'index sets'}
+        <input type="search" value={query} onInput={event => setQuery(event.currentTarget.value)} />
+      </label>}
       <div class="row">
         <button type="button" class="secondary" onClick={() => void load(null)}>
           Reload
@@ -277,26 +288,28 @@ function CatalogList(props: {
           Load more
         </button>
         <span class="muted">
-          {items.length} shown{cursor !== null ? ', more available' : ''}
+          {shown.length} shown{needle && searchable ? ` of ${items.length} loaded` : ''}{cursor !== null ? ', more available' : ''}
           {header !== null ? ` · catalog revision ${header.revision} · namespace ${header.namespace}` : ''}
         </span>
       </div>
       {problem !== null ? <p class="error" role="alert"><Text value={problem} /></p> : null}
       {items.length === 0 && visibleState.phase === 'done' && !failed && problem === null ? <p class="muted">{props.empty}</p> : null}
       <ul class="items">
-        {items.map((item) => (
+        {shown.map((item) => (
           <ItemView key={`${item.kind}:${describe(item).id}`} item={item}>
             {props.actions?.(item)}
           </ItemView>
         ))}
       </ul>
+      {needle && searchable && items.length > 0 && shown.length === 0
+        ? <p class="muted">No loaded entries match.{cursor !== null ? ' Load more to filter older entries.' : ''}</p> : null}
       <details open={failed}>
         <summary>Last page (complete result)</summary>
         <Outcome state={visibleState} />
       </details>
       {items.length > 0 ? (
         <details>
-          <summary>All shown rows (JSON)</summary>
+          <summary>All loaded rows (JSON)</summary>
           <JsonBlock name={`airk-catalog-${props.kind}.json`} value={items} />
         </details>
       ) : null}
@@ -675,6 +688,7 @@ function ApplySetup(props: {
   draft: Rec;
   onRefresh: () => void;
   onActivity: () => void;
+  onIndex: (id: string) => void;
   onReviewAgain: () => void;
 }): JSX.Element {
   const [apply, runApply] = useCall();
@@ -708,6 +722,7 @@ function ApplySetup(props: {
           <button type="button" class="secondary" onClick={props.onRefresh}>
             Refresh
           </button>
+          {indexId !== null && <button type="button" onClick={() => props.onIndex(indexId)}>View index details</button>}
           <button type="button" class="secondary" onClick={props.onActivity}>
             Open Activity
           </button>
@@ -731,6 +746,7 @@ function SetupIndex(props: {
   seq: number;
   onRefresh: () => void;
   onActivity: () => void;
+  onIndex: (id: string) => void;
 }): JSX.Element {
   const [name, setName] = useState('');
   const [primary, setPrimary] = useState('');
@@ -967,6 +983,7 @@ function SetupIndex(props: {
           draft={draftValue}
           onRefresh={props.onRefresh}
           onActivity={props.onActivity}
+          onIndex={props.onIndex}
           onReviewAgain={review}
         />
       ) : null}
@@ -2111,9 +2128,13 @@ function IndexDetail(props: {
   reload: number;
   onRevision: (revision: number, namespace?: string) => void;
   onChanged: () => void;
+  startAtProgress?: boolean;
+  onUseScope?(id: string): void;
 }): JSX.Element {
   const [detail, runDetail] = useCall();
   const [newName, setNewName] = useState('');
+  const pageVisible = useContext(PageVisible);
+  const [section, setSection] = useState<'overview' | 'sources' | 'access' | 'settings' | 'progress' | 'maintenance'>(props.startAtProgress ? 'progress' : 'overview');
   const [memberCount, setMemberCount] = useState<number | null>(null);
   const load = (): void => void runDetail(OPS.catalogDetail, body.catalogDetail({ kind: 'index', id: props.id }, null));
   useEffect(load, [props.id, props.reload]);
@@ -2132,13 +2153,22 @@ function IndexDetail(props: {
   const name = index !== null ? text(index.name) : null;
   return (
     <Panel title={`Index ${name ?? props.id}`}>
+      {props.onUseScope && index !== null && index.tombstone !== true && <button type="button" class="secondary"
+        onClick={() => props.onUseScope?.(props.id)}>Use in this window…</button>}
+      {index !== null && <div class="actions" aria-label="Index details views">
+        {([['overview', 'Overview'], ['sources', 'Sources'], ['access', 'Access'], ['settings', 'Settings'],
+          ['progress', 'Progress'], ['maintenance', 'Maintenance']] as const).map(([id, label]) =>
+          <button type="button" class={section === id ? '' : 'secondary'} aria-pressed={section === id}
+            disabled={index.tombstone === true && (id === 'settings' || id === 'progress' || id === 'maintenance')}
+            onClick={() => setSection(id)}>{label}</button>)}
+      </div>}
       <div class="row">
         <button type="button" class="secondary" onClick={load}>
           Reload details
         </button>
       </div>
       {d !== null && d.item === null ? <p class="error">This index does not exist at this revision.</p> : null}
-      {item !== null ? (
+      {item !== null && section === 'overview' ? (
         <ul class="items">
           <ItemView item={item} />
         </ul>
@@ -2146,62 +2176,78 @@ function IndexDetail(props: {
       <Outcome state={detail} />
       {index !== null && revision !== null ? (
         <>
-          <h3>Sources</h3>
-          <CatalogList
-            kind="sources"
-            indexId={props.id}
-            reload={props.reload}
-            onRevision={props.onRevision}
-            empty="No sources listed."
-          />
-          <h3>Index sets containing it</h3>
-          <CatalogList
-            kind="memberships"
-            indexId={props.id}
-            reload={props.reload}
-            onRevision={props.onRevision}
-            onItems={(items) => setMemberCount(items.length)}
-            empty="It is not a member of any index set."
-          />
+          <section hidden={section !== 'sources'}>
+            <h3>Sources</h3>
+            <CatalogList
+              kind="sources"
+              indexId={props.id}
+              reload={props.reload}
+              onRevision={props.onRevision}
+              empty="No sources listed."
+            />
+          </section>
+          <section hidden={section !== 'access'}>
+            <h3>Index sets containing it</h3>
+            <CatalogList
+              kind="memberships"
+              indexId={props.id}
+              reload={props.reload}
+              onRevision={props.onRevision}
+              onItems={(items) => setMemberCount(items.length)}
+              empty="It is not a member of any index set."
+            />
+          </section>
           {index.tombstone === true ? (
             <p class="muted">This index is retired; it can no longer be changed.</p>
           ) : (
             <>
-              <h3>Make readable</h3>
-              <MakeReadable index={index} memberCount={memberCount} onChanged={props.onChanged} />
-              <h3>Indexing progress</h3>
-              <ProgressPanel binding={text(rec(index.backing)?.binding)} />
-              <h3>Rename</h3>
-              <div class="row">
-                <Field label="New name" wide value={newName} onInput={setNewName} />
-              </div>
-              <ReviewedChange
-                reviewLabel="Review rename"
-                disabled={newName.trim() === ''}
-                draftOperation={OPS.catalogPreview}
-                makeDraft={() =>
-                  previewOf(revision, {
-                    operation: 'rename_index',
-                    id: props.id,
-                    expected_definition_revision: num(index.definition_revision),
-                    name: newName.trim(),
-                  })
-                }
-                extract={fromPreview}
-                confirm={null}
-                applyLabel="Rename index"
-                onApplied={props.onChanged}
-              />
-              <h3>Change sources</h3>
-              <SourceChange index={index} revision={revision} onApplied={props.onChanged} />
-              <h4>Pending source change</h4>
-              <PendingSource indexId={props.id} />
-              <h3>Source policy</h3>
-              <PolicyPanel indexId={props.id} />
-              <h3>Split</h3>
-              <SplitPanel index={index} revision={revision} onApplied={props.onChanged} />
-              <h3>Retire</h3>
-              <RetireIndex index={index} revision={revision} onApplied={props.onChanged} />
+              <section hidden={section !== 'overview'}>
+                <h3>Make readable</h3>
+                <MakeReadable index={index} memberCount={memberCount} onChanged={props.onChanged} />
+              </section>
+              <section hidden={section !== 'progress'}>
+                <h3>Indexing progress</h3>
+                <PageVisible.Provider value={pageVisible && section === 'progress'}>
+                  <ProgressPanel binding={text(rec(index.backing)?.binding)} />
+                </PageVisible.Provider>
+              </section>
+              <section hidden={section !== 'settings'}>
+                <h3>Rename</h3>
+                <div class="row">
+                  <Field label="New name" wide value={newName} onInput={setNewName} />
+                </div>
+                <ReviewedChange
+                  reviewLabel="Review rename"
+                  disabled={newName.trim() === ''}
+                  draftOperation={OPS.catalogPreview}
+                  makeDraft={() =>
+                    previewOf(revision, {
+                      operation: 'rename_index',
+                      id: props.id,
+                      expected_definition_revision: num(index.definition_revision),
+                      name: newName.trim(),
+                    })
+                  }
+                  extract={fromPreview}
+                  confirm={null}
+                  applyLabel="Rename index"
+                  onApplied={props.onChanged}
+                />
+              </section>
+              <section hidden={section !== 'sources'}>
+                <h3>Change sources</h3>
+                <SourceChange index={index} revision={revision} onApplied={props.onChanged} />
+                <h4>Pending source change</h4>
+                <PendingSource indexId={props.id} />
+                <h3>Source policy</h3>
+                <PolicyPanel indexId={props.id} />
+              </section>
+              <section hidden={section !== 'maintenance'}>
+                <h3>Split</h3>
+                <SplitPanel index={index} revision={revision} onApplied={props.onChanged} />
+                <h3>Retire</h3>
+                <RetireIndex index={index} revision={revision} onApplied={props.onChanged} />
+              </section>
             </>
           )}
         </>
@@ -2213,7 +2259,7 @@ function IndexDetail(props: {
 // ---------------------------------------------------------------------------
 // The page.
 
-export function IndexLibrary(props: { params: URLSearchParams; seq: number; onActivity: () => void }): JSX.Element {
+export function IndexLibrary(props: { params: URLSearchParams; seq: number; onActivity: () => void; onOpenItem?(selection?: { index?: string; set?: string }): void; onUseScope?(id: string): void }): JSX.Element {
   const session = currentSession();
   const sessionScope = useRef({ session, generation: 0 });
   if (sessionScope.current.session !== session) sessionScope.current = { session, generation: sessionScope.current.generation + 1 };
@@ -2224,6 +2270,7 @@ export function IndexLibrary(props: { params: URLSearchParams; seq: number; onAc
   const [indexRows, setIndexRows] = useState<{ session: unknown; namespace: string | null; items: Item[] } | null>(null);
   const indexItems = indexRows?.session === session && indexRows.namespace === namespace ? indexRows.items : [];
   const [openIndex, setOpenIndex] = useState<string | null>(null);
+  const [progressIndex, setProgressIndex] = useState<string | null>(null);
   const [openSet, setOpenSet] = useState<string | null>(null);
   const [view, setView] = useState<'indexes' | 'create' | 'sets'>(() => props.params.has('root') ? 'create' : props.params.has('set') ? 'sets' : 'indexes');
   const concurrency = useQueryConcurrency();
@@ -2232,12 +2279,20 @@ export function IndexLibrary(props: { params: URLSearchParams; seq: number; onAc
     const index = props.params.get('index');
     const set = props.params.get('set');
     if (index !== null && isCatalogId('idx_', index)) setOpenIndex(index);
+    else if (props.onOpenItem) setOpenIndex(null);
     if (set !== null && isCatalogId('prj_', set)) setOpenSet(set);
+    else if (props.onOpenItem) setOpenSet(null);
     if (props.params.has('root')) setView('create');
     else if (set !== null) setView('sets');
     else if (index !== null) setView('indexes');
   }, [props.seq]);
 
+  const openItem = (kind: 'index' | 'set', id: string | null) => {
+    setProgressIndex(null);
+    if (kind === 'index') setOpenIndex(id);
+    else setOpenSet(id);
+    props.onOpenItem?.(id === null ? undefined : { [kind]: id });
+  };
   const refresh = (): void => setReload((n) => n + 1);
   // The revision of the latest catalog read; drafts and previews are reviewed against it.
   const onRevision = (next: number, named?: string): void => {
@@ -2264,7 +2319,7 @@ export function IndexLibrary(props: { params: URLSearchParams; seq: number; onAc
           onItems={(items, _complete, header) => setIndexRows({ session, namespace: header?.namespace ?? null, items })}
           empty="No indexes yet. Set one up below."
           actions={(item) => (
-            <button type="button" class="small" onClick={() => setOpenIndex(text(item.value.id))}>
+            <button type="button" class="small" onClick={() => openItem('index', text(item.value.id))}>
               Open
             </button>
           )}
@@ -2273,12 +2328,12 @@ export function IndexLibrary(props: { params: URLSearchParams; seq: number; onAc
       {openIndex !== null ? (
         <>
           <div class="row">
-            <button type="button" class="small secondary" onClick={() => setOpenIndex(null)}>
+            <button type="button" class="small secondary" onClick={() => openItem('index', null)}>
               Close index details
             </button>
           </div>
           <IndexDetail key={`${sessionScope.current.generation}:${openIndex}`} id={openIndex} namespace={namespace}
-            reload={reload} onRevision={onRevision} onChanged={refresh} />
+            startAtProgress={openIndex === progressIndex} onUseScope={props.onUseScope} reload={reload} onRevision={onRevision} onChanged={refresh} />
         </>
       ) : null}
       </div>
@@ -2290,6 +2345,7 @@ export function IndexLibrary(props: { params: URLSearchParams; seq: number; onAc
           seq={props.seq}
           onRefresh={refresh}
           onActivity={props.onActivity}
+          onIndex={id => { openItem('index', id); setProgressIndex(id); setView('indexes'); refresh(); }}
         />
       </Panel>
       </div>
@@ -2301,7 +2357,7 @@ export function IndexLibrary(props: { params: URLSearchParams; seq: number; onAc
           onRevision={onRevision}
           empty="No index sets yet."
           actions={(item) => (
-            <button type="button" class="small" onClick={() => setOpenSet(text(item.value.id))}>
+            <button type="button" class="small" onClick={() => openItem('set', text(item.value.id))}>
               Open
             </button>
           )}
@@ -2312,7 +2368,7 @@ export function IndexLibrary(props: { params: URLSearchParams; seq: number; onAc
       {openSet !== null ? (
         <>
           <div class="row">
-            <button type="button" class="small secondary" onClick={() => setOpenSet(null)}>
+            <button type="button" class="small secondary" onClick={() => openItem('set', null)}>
               Close index set details
             </button>
           </div>

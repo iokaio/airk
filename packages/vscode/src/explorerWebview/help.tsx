@@ -51,11 +51,14 @@ export function HelpScreen(props: ScreenProps) {
     const [linkError, setLinkError] = useState<string>();
     const [selected, setSelected] = useState<(typeof catalog.topics)[number]>(catalog.topics.find(topic => topic.id.replaceAll('.', '-') === props.route.focus) ?? catalog.topics.find(topic => topic.route === 'help') ?? catalog.topics[0]);
     const search = useRef<HTMLInputElement>(null), article = useRef<HTMLElement>(null), previousTopic = useRef(selected.id);
+    const [taskSelection, setTaskSelection] = useState(0);
+    const previousTaskSelection = useRef(0);
     useLayoutEffect(() => {
-        if (previousTopic.current === selected.id) return;
+        if (previousTopic.current === selected.id && previousTaskSelection.current === taskSelection) return;
         previousTopic.current = selected.id;
+        previousTaskSelection.current = taskSelection;
         article.current?.focus(); article.current?.scrollIntoView({ block: 'start' });
-    }, [selected.id]);
+    }, [selected.id, taskSelection]);
     const [engine, setEngine] = useState<{ value?: EngineHelpView; error?: string; busy: boolean }>({ busy: false });
     const [showEngine, setShowEngine] = useState(false);
     const referenceEpoch = useRef(0);
@@ -87,7 +90,7 @@ export function HelpScreen(props: ScreenProps) {
                 <p>Bundled guidance for index setup, agent connections and missing results. Available without a service connection.</p>
                 <div class="chips" aria-label="Help starting tasks">{HELP_STARTING_TASKS.map(([id,label])=>{
                     const topic=helpStartingTopic(catalog.topics,id);
-                    return <button type="button" class="chip" disabled={!topic} key={id} onClick={()=>{if(topic){setSelected(topic);setQuery('');setArea('');closeReference();}}}>{label}</button>;
+                    return <button type="button" class="chip" disabled={!topic} key={id} onClick={()=>{if(topic){setTaskSelection(count=>count+1);setSelected(topic);setQuery('');setArea('');closeReference();}}}>{label}</button>;
                 })}</div>
                 <input ref={search} value={query} maxLength={256} aria-label="Search help" placeholder="Search Explorer and engine help (e.g. tester PDF)" onInput={event => setQuery((event.target as HTMLInputElement).value)} />
                 <label>Area <select value={area} onChange={event => setArea((event.target as HTMLSelectElement).value)}><option value="">All topics</option>

@@ -31,9 +31,9 @@ const bundle = await build({ stdin: { contents: `export {Service} from './pages'
 const actual = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
 const nodes = value => value == null || typeof value !== 'object' ? [] : Array.isArray(value) ? value.flatMap(nodes) : [value, ...nodes(value.props?.children)];
 const text = value => value == null ? '' : Array.isArray(value) ? value.map(text).join('') : typeof value === 'object' ? text(value.props?.children) : String(value);
-function host() {
+function host(editor = false) {
   const hooks = { cursor: 0, slots: [], effects: [] };
-  return { hooks, render() { globalThis.__lifecycleHooks = hooks; hooks.cursor = 0; const tree = actual.Service({ onLifecycle() {} });
+  return { hooks, render() { globalThis.__lifecycleHooks = hooks; hooks.cursor = 0; const tree = actual.Service({ editor, onLifecycle() {} });
     for (const effect of hooks.effects.splice(0)) effect(); return tree; }, close() { for (const slot of hooks.slots) slot?.cleanup?.(); } };
 }
 const confirm = (tree, action = 'Stop') => nodes(tree).find(node => node.props?.phrase === `${action.toLowerCase()} service`).props.onConfirm;
@@ -44,13 +44,15 @@ async function settle(hooks) {
 }
 test('restart guidance explains the local start before confirmation and after native acceptance',()=>{
   globalThis.__lifecycleSession={csrf:'private-fixture',serviceInstance:'fixture'};
-  const mounted=host();
+  const mounted=host(),editor=host(true);
   try {
     const tree=mounted.render(),guidance=text(tree).replace(/\s+/g,' ');
     assert.match(guidance,/Both actions stop the service and end this management session/);
-    assert.match(guidance,/this page does not start a replacement service/);
+    assert.match(guidance,/this page does not start a replacement service/i);
     assert.match(guidance,/airkctl service start.*airkctl admin open/);
-    assert.match(guidance,/reopen management in the editor after verifying the service connection/);
+    const editorGuidance=text(editor.render()).replace(/\s+/g,' ');
+    assert.match(editorGuidance,/Start AIRK Service in Explorer and reconnect to management/);
+    assert.doesNotMatch(editorGuidance,/airkctl admin open/);
     const control=nodes(tree).find(node=>node.props?.phrase==='restart service');
     assert.equal(control.props.action,'Stop for restart');
     const after=text(actual.Signed({gate:{kind:'restarted'}})).replace(/\s+/g,' ');
@@ -58,7 +60,7 @@ test('restart guidance explains the local start before confirmation and after na
     assert.match(after,/airkctl service start.*airkctl admin open/);
     assert.match(after,/does not start a replacement service/);
     assert.doesNotMatch(after,/When it is back|service is restarting/);
-  }finally{mounted.close();}
+  }finally{mounted.close();editor.close();}
 });
 
 test('R20 lifecycle body-loss unknown blocks fresh Stop and Restart keys', async () => {

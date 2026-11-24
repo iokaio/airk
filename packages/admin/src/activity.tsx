@@ -249,7 +249,9 @@ type Timeline = {
   events: Rec[]; // newest first
 };
 
-export function Activity(): JSX.Element {
+export type LogTarget = { job?: string; project?: string };
+
+export function Activity(props: { onLogs?(target: LogTarget): void } = {}): JSX.Element {
   const names = useIndexes();
   // Only registered, live indexes can filter events or be paused.
   const usable = names.indexes.filter((index) => index.registered && !index.retired);
@@ -390,6 +392,7 @@ export function Activity(): JSX.Element {
 
       {jobId !== '' ? (
         <Panel title="Job">
+          {props.onLogs && <button type="button" class="secondary" onClick={() => props.onLogs?.({ job: jobId })}>View job logs</button>}
           <JobDetail
             key={`${jobContext.current.generation}:${jobSelection.token}:${jobId}`}
             id={jobId}
@@ -422,7 +425,7 @@ export function Activity(): JSX.Element {
           </button>
         </div>
         <ProblemLine state={requests} />
-        <RequestTable state={requests} nameOf={names.nameOf} />
+        <RequestTable state={requests} nameOf={names.nameOf} onLogs={props.onLogs} />
         <Complete state={requests} />
       </Panel>
 
@@ -525,6 +528,13 @@ function JobLink(props: { id: string; onJob: (id: string) => void }): JSX.Elemen
 
 function EventTable(props: { timeline: Timeline; nameOf: (binding: string) => string; onJob: (id: string) => void }) {
   const t = props.timeline;
+  const [query, setQuery] = useState('');
+  const needle = query.trim().toLowerCase();
+  const shown = needle ? t.events.filter(event => {
+    const project = str(event.project);
+    return [eventPhrase(event).text, str(event.job), str(event.code), project && props.nameOf(project)]
+      .some(value => value?.toLowerCase().includes(needle));
+  }) : t.events;
   if (t.events.length === 0) {
     return (
       <p class="muted">
@@ -534,6 +544,10 @@ function EventTable(props: { timeline: Timeline; nameOf: (binding: string) => st
   }
   return (
     <div class="table-wrap">
+      <label class="row">Filter loaded events
+        <input type="search" value={query} onInput={event => setQuery(event.currentTarget.value)} />
+      </label>
+      {needle && <p class="muted" role="status">{shown.length} of {t.events.length} loaded events match.</p>}
       <table class="data">
         <thead>
           <tr>
@@ -544,7 +558,7 @@ function EventTable(props: { timeline: Timeline; nameOf: (binding: string) => st
           </tr>
         </thead>
         <tbody>
-          {t.events.map((event) => {
+          {shown.map((event) => {
             const phrase = eventPhrase(event);
             const jobId = str(event.job);
             const attempts = num(event.attempts);
@@ -580,7 +594,7 @@ function EventTable(props: { timeline: Timeline; nameOf: (binding: string) => st
   );
 }
 
-function RequestTable(props: { state: CallState; nameOf: (binding: string) => string }): JSX.Element | null {
+function RequestTable(props: { state: CallState; nameOf: (binding: string) => string; onLogs?(target: LogTarget): void }): JSX.Element | null {
   const value = resultOk(props.state);
   if (value === null) return props.state.phase === 'pending' ? <p class="muted">Loading saved requests…</p> : null;
   const pending = arr(value.pending).map(rec).filter((r): r is Rec => r !== null);
@@ -617,6 +631,7 @@ function RequestTable(props: { state: CallState; nameOf: (binding: string) => st
                     </td>
                     <td>
                       <Badge tone="warn">saved, not finished</Badge>
+                      {props.onLogs && isDigest(project) && <button type="button" class="secondary" onClick={() => props.onLogs?.({ project })}>View index logs</button>}
                     </td>
                   </tr>
                 );

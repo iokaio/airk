@@ -603,7 +603,7 @@ export const MANAGE_ACTIONS = [
 ] as const;
 /** Existing AIRK commands that Management may open; each keeps its own dialogs and confirmations. */
 /** Only commands the extension registers and contributes (serviceExtension.ts, package.json). */
-export const MANAGE_COMMANDS = ['airk.setupAgent', 'airk.reconnectAgents', 'airk.manageVscodeMcp', 'airk.showExtensionOutput'] as const;
+export const MANAGE_COMMANDS = ['airk.setupAgent', 'airk.reconnectAgents', 'airk.manageVscodeMcp', 'airk.showExtensionOutput', 'airk.serviceStart'] as const;
 /** Everyday index actions the Explorer offers (U103), each one `airkctl` command through the window session. */
 export const WORK_ACTIONS = ['index', 'pause', 'resume', 'watch_on', 'watch_off', 'retry', 'cancel'] as const;
 export type WorkAction = typeof WORK_ACTIONS[number];
@@ -773,6 +773,7 @@ export const WEBVIEW_MESSAGES = {
     'notice.dismiss': { key: { kind: 'string', min: 1, max: 8192, maxBytes: 8192 } },
     'workspace.manageTrust': {},
     'workbench.toggle': {},
+    'workbench.focus': {},
     'details.copy': { section: { kind: 'enum', values: ['index', 'health', 'progress', 'activity', 'semantic', 'service', 'storage', 'recovery'] }, project: { kind: 'string', min: 64, max: 64, pattern: /^[a-f0-9]{64}$/, optional: true } },
     'search.page': { project: PROJECT, selectionEpoch: { kind: 'int', min: 0, max: Number.MAX_SAFE_INTEGER }, page: { kind: 'int', min: 0, max: 4 } },
     'search.form': {
@@ -846,14 +847,8 @@ export const WEBVIEW_MESSAGES = {
         revision: { kind: 'int', min: 0, max: Number.MAX_SAFE_INTEGER, optional: true },
         operation: { kind: 'string', min: 32, max: 32, pattern: /^[0-9a-f]{32}$/, optional: true },
     },
-    /** Open AIRK Admin (U97) on a page, optionally prefilled; the host checks a folder against this window's folders. */
-    'admin.open': {
-        page: { kind: 'enum', values: ADMIN_PAGES },
-        folder: { kind: 'string', min: 1, max: 4096, optional: true },
-        index: { kind: 'string', min: 36, max: 36, pattern: /^idx_[0-9a-f]{32}$/, optional: true },
-        set: { kind: 'string', min: 36, max: 36, pattern: /^prj_[0-9a-f]{32}$/, optional: true },
-        choose: { kind: 'bool', optional: true },
-    },
+    /** Launch the standalone console in the default browser. */
+    'admin.open': {},
     'strategy.run': { strategy: { kind: 'json', max: 32768 }, params: { kind: 'json', max: 8192 }, scope: { kind: 'json', max: 2048 } },
     'strategy.run.export':{runId:{kind:'string',min:32,max:32,pattern:/^[0-9a-f]{32}$/},digest:{kind:'string',min:64,max:64,pattern:/^[0-9a-f]{64}$/},format:{kind:'enum',values:['copy','json']}},
     'strategy.export': { strategy: { kind: 'json', max: 32768 } },

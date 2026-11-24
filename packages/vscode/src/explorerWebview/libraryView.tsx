@@ -4,7 +4,7 @@
 // session (native catalog_page|catalog_detail|catalog_policy_status|
 // catalog_split_status). Every native response is kept complete for display
 // and Copy JSON; a failed read shows its native code and is never shown as an
-// empty library. Changes are made in AIRK Admin.
+// empty library. Changes are made in the Index library.
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { ExplorerViewState } from '../explorerContracts';
 import { request } from './api';
@@ -106,7 +106,7 @@ export function LibraryView(props: { tab: 'library' | 'projects'; state: Explore
         <article class="card">
             <div class="section-head"><h2>{kind === 'projects' ? 'Index sets' : 'Index library'}</h2>
                 <AdminButton page="index-library" disabled={!state.trusted} /></div>
-            <p>{kind === 'projects' ? 'Reusable selections of indexes, read from the AIRK Service. Create and change index sets in AIRK Admin.' : 'Indexes on this computer, read from the AIRK Service. Create, change, split or delete indexes in AIRK Admin.'}</p>
+            <p>{kind === 'projects' ? 'Reusable selections of indexes, read from the AIRK Service. Create and change index sets in the Index library.' : 'Indexes on this computer, read from the AIRK Service. Create, change, split or delete indexes in the Index library.'}</p>
             {!state.trusted && <p class="callout">Trust this workspace to read the index library.</p>}
             {state.trusted && state.nativeExecutionEnabled === false && <p class="callout">Native execution is turned off; the index library is not read.</p>}
             {state.trusted && state.nativeExecutionEnabled !== false && state.connection !== 'ready' && <p role="status">The AIRK Service is not ready. The library loads when it is.</p>}
@@ -121,7 +121,7 @@ export function LibraryView(props: { tab: 'library' | 'projects'; state: Explore
                     <p><code>{id}</code>{isIndex && typeof obj(item.value.backing).root === 'string' && <> · <code class="path">{String(obj(item.value.backing).root)}</code></>}</p>
                     <div class="actions">
                         <button type="button" disabled={busy} onClick={() => { void open(item); }}>{isIndex ? 'Show index details' : 'Show index set details'}</button>
-                        <AdminButton page="index-library" {...(isIndex ? { index: id } : { set: id })} label="Open in AIRK Admin" ghost choose={false} />
+                        <AdminButton page="index-library" {...(isIndex ? { index: id } : { set: id })} label="Manage" ghost choose={false} />
                     </div>
                 </article>;
             })}
@@ -132,7 +132,7 @@ export function LibraryView(props: { tab: 'library' | 'projects'; state: Explore
         {noIndex && <CreateIndexForFolders folders={state.workspaceFolders} disabled={!state.trusted} />}
         {selected && <article class="card indexing-detail">
             <div class="section-head"><h2>{selected.kind === 'index' ? 'Index' : 'Index set'}: {selected.name}</h2>
-                <AdminButton page="index-library" {...(selected.kind === 'index' ? { index: selected.id } : { set: selected.id })} label="Open in AIRK Admin" choose={false} /></div>
+                <AdminButton page="index-library" {...(selected.kind === 'index' ? { index: selected.id } : { set: selected.id })} label="Manage" choose={false} /></div>
             <ErrorLine error={replyError(selected.detail)} />
             {selected.detail?.response && <Complete title="Complete native detail" value={selected.detail} />}
             {selected.sources && <section><h3>Sources</h3><ErrorLine error={selected.sources.error} />
@@ -149,7 +149,7 @@ export function LibraryView(props: { tab: 'library' | 'projects'; state: Explore
                 {selected.policy.response && <p>{obj(selected.policy.response).snapshot ? 'Policy recorded for this index.' : 'No policy recorded for this index.'}{obj(selected.policy.response).job ? ` Cleanup job: ${String(obj(obj(selected.policy.response).job).state ?? 'unknown')}.` : ''}</p>}
                 <Complete title="Complete native policy status" value={selected.policy} /></section>}
             {selected.kind === 'index' && <section><h3>Split status</h3>
-                <p>Read a split by its operation ID. Splits are started and recovered in AIRK Admin.</p>
+                <p>Read a split by its operation ID. Splits are started and recovered in the Index library.</p>
                 <form onSubmit={event => { event.preventDefault(); void run(async () => { const split = await request<LibraryReplyView>('library.read', { method: 'split', operation }); setSelected(current => current ? { ...current, split } : current); }); }}>
                     <label>Split operation ID<input required pattern="[0-9a-f]{32}" value={operation} onInput={event => setOperation(event.currentTarget.value)} /></label>
                     <button disabled={busy || !/^[0-9a-f]{32}$/.test(operation)}>Read split status</button>

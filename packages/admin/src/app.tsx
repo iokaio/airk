@@ -3,11 +3,12 @@
 import { h, type ComponentChildren, type JSX } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import type { ParsedResponse } from './envelope';
+import { isDigest } from './operations';
 import { IndexLibrary } from './indexLibrary';
-import { Activity } from './activity';
+import { Activity, type LogTarget } from './activity';
 import { Agents } from './agents';
 import { Help } from './help';
-import { Logs, Overview, Recovery, Search, Service, Storage } from './pages';
+import { Logs, Overview, Recovery, Search, ServiceWorkspace, Storage } from './pages';
 import { Text } from './render';
 import { currentSession, logout, onSessionChange, takeInitialRoute, type Session } from './session';
 import { Usage } from './usage';
@@ -15,7 +16,6 @@ import { BundledHelp } from './bundledHelp';
 import { browserDestination, editorDestination, DESTINATION_ICONS, MAIN_DESTINATIONS, evidenceToolsPresentation, type EvidenceToolsNode } from '../../ui/src/navigation';
 import {BROWSER_EVIDENCE_ROUTES,isBrowserEvidenceRoute} from './browserEvidenceRoutes';
 import { PreparedActions } from './preparedActions';
-import { Arbiter } from './arbiter';
 import { onPreparationChange } from './api';
 import { PageVisible } from './pageVisibility';
 
@@ -59,6 +59,7 @@ function parseRoute(text: string, seq: number): Route | null {
   const fragment = text.startsWith('#') ? text.slice(1) : text;
   const mark = fragment.indexOf('?');
   const id = mark < 0 ? fragment : fragment.slice(0, mark);
+  if (isBrowserEvidenceRoute(id)) return { page: 'search', params: new URLSearchParams({ view: 'tools', tool: id }), seq };
   const entry = PAGES.find(([page]) => page === id);
   if (entry === undefined) return null;
   return { page: entry[0], params: new URLSearchParams(mark < 0 ? '' : fragment.slice(mark + 1)), seq };
@@ -153,55 +154,62 @@ function Signed(props: { gate: Gate }): JSX.Element {
   }
 }
 
-export function App(props: { initialGate: Gate; embedded?: boolean; active?: boolean; initialPage?: PageId; onPageChange?: (page: PageId) => void }): JSX.Element {
+export function App(props: { initialGate: Gate }): JSX.Element {
   const [session, setSession] = useState<Session | null>(currentSession());
   const sessionOwner = useRef({ session, generation: 0 });
   if (sessionOwner.current.session !== session) sessionOwner.current = { session, generation: sessionOwner.current.generation + 1 };
   const [, refreshPrepared] = useState(0);
   useEffect(() => onPreparationChange(() => refreshPrepared(value => value + 1)), [session]);
   const [gate, setGate] = useState<Gate>(props.initialGate);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const content = useRef<HTMLElement>(null);
   const [route, setRoute] = useState<Route>(() => {
-    if (props.embedded) return { page: props.initialPage ?? 'overview', params: new URLSearchParams(), seq: 0 };
     const initial = takeInitialRoute();
     return (initial === null ? null : parseRoute(initial, 1)) ?? { page: 'overview', params: new URLSearchParams(), seq: 0 };
   });
   const page = route.page;
-  const pageTitle = page === 'search' || page === 'index-library' ? null
-    : MAIN_DESTINATIONS.find(entry => entry.id === browserDestination(page))?.title;
+  const pageTitle = page === 'search' ? null : PAGES.find(([id]) => id === page)?.[1];
   const retained = useRef({ generation: sessionOwner.current.generation, routes: new Map<PageId, Route>() });
   if (retained.current.generation !== sessionOwner.current.generation) retained.current = { generation: sessionOwner.current.generation, routes: new Map() };
-  if (session !== null && props.embedded) retained.current.routes.set(page, route);
+  if (session !== null) retained.current.routes.set(page, route);
   const pageRoute = (id: PageId): Route => retained.current.routes.get(id) ?? route;
-  const view = (id: PageId, children: ComponentChildren): ComponentChildren => page === id || (props.embedded && retained.current.routes.has(id))
-    ? <section hidden={page !== id}><PageVisible.Provider value={page === id && props.active !== false}>{children}</PageVisible.Provider></section> : null;
-  // The Explorer owns navigation in the embedded host. Synchronize without
-  // remounting the exact-session draft/result owners or sending navigation back.
-  useLayoutEffect(() => {
-    if (props.embedded && props.initialPage !== undefined) setRoute(current => current.page === props.initialPage ? current
-      : { page: props.initialPage!, params: new URLSearchParams(), seq: current.seq + 1 });
-  }, [props.embedded, props.initialPage]);
+  const logId = (key: 'job' | 'project'): string | undefined => {
+    const value = pageRoute('logs').params.get(key);
+    return value !== null && isDigest(value) ? value : undefined;
+  };
+  const view = (id: PageId, children: ComponentChildren): ComponentChildren => retained.current.routes.has(id)
+    ? <section hidden={page !== id}><PageVisible.Provider value={page === id}>{children}</PageVisible.Provider></section> : null;
   const setPage = (id: PageId): void => {
     setRoute((current) => ({ page: id, params: new URLSearchParams(), seq: current.seq + 1 }));
-    props.onPageChange?.(id);
-    // Keeps a same-tab reload on this page; replaceState fires no hashchange.
-    if (!props.embedded) window.history.replaceState(null, '', `#${id}`);
+    if (id !== page) window.history.pushState(null, '', `#${id}`);
   };
   const navigateSearch = (tools:boolean,tool?:string):void => {
     const params=new URLSearchParams(tools?{view:'tools',...(isBrowserEvidenceRoute(tool)?{tool}:{})}:{});
     setRoute(current=>({page:'search',params,seq:current.seq+1}));
-    if(!props.embedded)window.history.pushState(null,'',`#search${params.size?'?'+params.toString():''}`);
+    const destination = isBrowserEvidenceRoute(tool) && tools ? `#${tool}` : `#search${params.size ? '?' + params : ''}`;
+    if (window.location.hash !== destination) window.history.pushState(null, '', destination);
+  };
+  const navigateLogs = (target: LogTarget): void => {
+    const params = new URLSearchParams();
+    if (target.job) params.set('job', target.job);
+    if (target.project) params.set('project', target.project);
+    setRoute(current => ({ page: 'logs', params, seq: current.seq + 1 }));
+    window.history.pushState(null, '', `#logs?${params}`);
+  };
+  const navigateCatalogItem = (selection?: { index?: string; set?: string }): void => {
+    const params = new URLSearchParams(selection?.index ? { index: selection.index } : selection?.set ? { set: selection.set } : {});
+    setRoute(current => ({ page: 'index-library', params, seq: current.seq + 1 }));
+    const destination = `#index-library${params.size ? '?' + params : ''}`;
+    if (window.location.hash !== destination) window.history.pushState(null, '', destination);
   };
   const navigateHelp = (params: URLSearchParams, replace: boolean): void => {
     setRoute(current => ({ page: 'help', params, seq: current.seq + 1 }));
     const destination = `#help${params.size ? `?${params}` : ''}`;
-    if (!props.embedded) {
-      if (replace) window.history.replaceState(null, '', destination);
-      else window.history.pushState(null, '', destination);
-    }
+    if (replace) window.history.replaceState(null, '', destination);
+    else window.history.pushState(null, '', destination);
   };
 
   useEffect(() => {
-    if (props.embedded) return;
     const onHash = (): void => {
       const hash = window.location.hash;
       // A launch code never stays in the address bar (review M1); it is used once, on load.
@@ -213,7 +221,7 @@ export function App(props: { initialGate: Gate; embedded?: boolean; active?: boo
     };
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
-  }, [props.embedded]);
+  }, []);
 
   // Observe session revocation before mounted controls can issue a request.
   // A passive listener can miss an immediate native auth-ended notification.
@@ -236,7 +244,7 @@ export function App(props: { initialGate: Gate; embedded?: boolean; active?: boo
     return (
       <div class="gate">
         <h1>AIRK Admin</h1>
-        {props.embedded ? <p>The captured native management session ended. Reopen management after verifying the service connection. No original action will be replayed.</p> : <Signed gate={gate} />}
+        <Signed gate={gate} />
         {page === 'help' ? <BundledHelp params={route.params} seq={route.seq} onNavigate={navigateHelp} />
           : <button type="button" class="secondary" onClick={() => setPage('help')}>Read offline Help</button>}
       </div>
@@ -244,31 +252,42 @@ export function App(props: { initialGate: Gate; embedded?: boolean; active?: boo
   }
 
   return (
-    <div class="layout">
-      {!props.embedded ? <>
+    <div class="layout admin-console">
       <header>
         <span class="brand">AIRK Admin</span>
-        <span class="muted instance">Local service</span>
+        <span class="muted instance">Local service · Signed in</span>
+        <button class="secondary console-menu" type="button" aria-controls="console-navigation" aria-expanded={menuOpen} onClick={() => setMenuOpen(open => !open)}>Menu</button>
         <button type="button" class="small secondary" onClick={() => endWith({ kind: 'logged_out' })}>
           Sign out
         </button>
       </header>
-      <nav aria-label="AIRK main navigation">
-        {MAIN_DESTINATIONS.map(({ id, title, browser: target }) => (
+      <nav id="console-navigation" class={menuOpen ? 'menu-open' : ''} aria-label="AIRK main navigation">
+        {[
+          { title: 'Manage', destinations: ['overview', 'indexes', 'activity', 'agents', 'service'] },
+          { title: 'Investigate', destinations: ['search', 'code', 'docs', 'evidence', 'review', 'strategies'] },
+          { title: 'Help', destinations: ['help'] },
+        ].map(group => <section class="console-nav-group" key={group.title} aria-label={group.title}>
+          <h2>{group.title}</h2>
+          {MAIN_DESTINATIONS.filter(entry => group.destinations.includes(entry.id)).map(({ id, title, browser: target }) => (
           <button
             key={id}
             type="button"
             title={title} aria-label={title}
             class={`nav${id === (page === 'search' && route.params.get('tool') ? editorDestination(route.params.get('tool')!) : browserDestination(page)) ? ' current' : ''}${id === 'code' ? ' nav-divider' : id === 'help' ? ' nav-help' : ''}`}
             aria-current={id === (page === 'search' && route.params.get('tool') ? editorDestination(route.params.get('tool')!) : browserDestination(page)) ? 'page' : undefined}
-            onClick={() => ['code', 'docs', 'evidence', 'review', 'strategies'].includes(id) ? navigateSearch(true, MAIN_DESTINATIONS.find(entry => entry.id === id)!.editor) : setPage(target)}
+            onClick={() => {
+              if (['code', 'docs', 'evidence', 'review', 'strategies'].includes(id)) navigateSearch(true, MAIN_DESTINATIONS.find(entry => entry.id === id)!.editor);
+              else setPage(target);
+              setMenuOpen(false);
+              content.current?.focus();
+            }}
           >
             <svg class="destination-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d={DESTINATION_ICONS[id]} /></svg><span class="nav-label">{title}</span>
           </button>
-        ))}
+          ))}
+        </section>)}
       </nav>
-      </> : null}
-      <main key={sessionOwner.current.generation}>
+      <main ref={content} tabIndex={-1} aria-label="Admin workspace" key={sessionOwner.current.generation}>
         {pageTitle ? <h1>{pageTitle}</h1> : null}
         <PreparedActions />
         {browserDestination(page) === 'activity' ? <div class="actions" aria-label="Activity views">{(['activity', 'logs', 'usage'] as const).map(id =>
@@ -276,15 +295,14 @@ export function App(props: { initialGate: Gate; embedded?: boolean; active?: boo
         {browserDestination(page) === 'service' ? <div class="actions" aria-label="Service views">{(['service', 'storage', 'recovery'] as const).map(id =>
           <button type="button" class={page === id ? '' : 'secondary'} aria-current={page === id ? 'page' : undefined} onClick={() => setPage(id)}>{PAGES.find(entry => entry[0] === id)![1]}</button>)}</div> : null}
         {view('overview', <Overview />)}
-        {view('index-library', <IndexLibrary params={pageRoute('index-library').params} seq={pageRoute('index-library').seq} onActivity={() => setPage('activity')} />)}
-        {view('activity', <Activity />)}
+        {view('index-library', <IndexLibrary params={pageRoute('index-library').params} seq={pageRoute('index-library').seq}
+          onActivity={() => setPage('activity')} onOpenItem={navigateCatalogItem} />)}
+        {view('activity', <Activity onLogs={navigateLogs} />)}
         {view('agents', <Agents />)}
         {view('storage', <Storage />)}
         {view('recovery', <Recovery />)}
-        {view('service',
-          <><Service onLifecycle={(action) => endWith({ kind: action === 'stop' ? 'stopped' : 'restarted' })} />
-            <Arbiter /></>)}
-        {view('logs', <Logs />)}
+        {view('service', <ServiceWorkspace onLifecycle={action => endWith({ kind: action === 'stop' ? 'stopped' : 'restarted' })} />)}
+        {view('logs', <Logs target={{ job: logId('job'), project: logId('project') }} />)}
         {view('usage', <Usage />)}
         {view('search', <SearchWorkspace route={pageRoute('search')} onView={navigateSearch} />)}
         {view('help', <Help params={pageRoute('help').params} seq={pageRoute('help').seq} onNavigate={navigateHelp} />)}

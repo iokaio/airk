@@ -1,20 +1,20 @@
 {
   "files": {
-    "app.8d971183.css": {
-      "content_type": "text/css; charset=utf-8",
-      "sha256": "8d971183ee7d23acdbfc8d87c73a7527c4f26b64ed536327d065788d191654f5"
-    },
-    "app.de0e7832.js": {
+    "app.c50e6cc2.js": {
       "content_type": "text/javascript; charset=utf-8",
-      "sha256": "de0e783268aee7dcd274c7d3b31b0fda9976c219bd5fbd09de52af92a37d3d76"
+      "sha256": "c50e6cc2eca8138632f31faa6ae27ca6e6664cc3bc1051edb75ea9ad3c1e3e3d"
+    },
+    "app.f31a017b.css": {
+      "content_type": "text/css; charset=utf-8",
+      "sha256": "f31a017bfca5173eec72c0a1b30e5bd517b4841a58665d142eb15c159b94943d"
     },
     "index.html": {
       "content_type": "text/html; charset=utf-8",
-      "sha256": "74c8587e455b3c6a5dd47a669a4515c5d60f0faa16028a9a04bcfb9d870852ca"
+      "sha256": "99e0c50123f08a112f3527ba66b9c27e060a5a5c429ae2b3d9f59a7d60bfe063"
     },
     "launch.html": {
       "content_type": "text/html; charset=utf-8",
-      "sha256": "74c8587e455b3c6a5dd47a669a4515c5d60f0faa16028a9a04bcfb9d870852ca"
+      "sha256": "99e0c50123f08a112f3527ba66b9c27e060a5a5c429ae2b3d9f59a7d60bfe063"
     }
   },
   "schema": "airk-admin-assets/1"

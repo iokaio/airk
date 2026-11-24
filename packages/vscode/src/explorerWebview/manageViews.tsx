@@ -3,7 +3,7 @@
 // through the window's airkctl session. Usage is `airkctl usage report` for the
 // selected index; Activity is this window's session status and job events and
 // the service's recent log records (`airkctl service logs`). Each shows its
-// complete native outcome; usage settings and full logs stay in AIRK Admin.
+// complete native outcome; full activity and usage are in the native Management views.
 import { useEffect, useState } from 'preact/hooks';
 import type { ScreenProps } from './workspaces';
 import { request } from './api';
@@ -50,7 +50,7 @@ export function UsageScreen(props: ScreenProps) {
         <SharedPilotPane state={props.state} read={{ kind: 'usage-json', binding: props.state.selectedProject ?? '', days }} />
         <article class="card">
             <div class="section-head"><h2>Usage{project ? ` · ${project.name}` : ''}</h2>
-                <AdminButton page="usage" label="Usage settings in AIRK Admin" ghost disabled={!props.state.trusted} choose={false} /></div>
+                <AdminButton page="usage" label="Usage settings" ghost disabled={!props.state.trusted} choose={false} /></div>
             <p>Local usage recorded for the selected index (<code>airkctl usage report</code>). Estimates are local and never leave this computer.</p>
             {!project && <p>Select an index of this window in Overview to read its usage.</p>}
             <div class="actions">
@@ -89,7 +89,7 @@ export function ActivityScreen(props: ScreenProps) {
     return <section class="manage-activity">
         <article class="card">
             <div class="section-head"><h2>Recent activity</h2>
-                <AdminButton page="activity" label="Full activity in AIRK Admin" ghost disabled={!props.state.trusted} choose={false} /></div>
+                <AdminButton page="activity" label="Full activity" ghost disabled={!props.state.trusted} choose={false} /></div>
             <p>Status and job events this window received from AIRK, and the service's recent log records. Index actions are on the Overview.</p>
             <button type="button" disabled={disabled} onClick={() => { void read(); }}>Refresh activity</button>
             {busy && <p role="status">Reading activity…</p>}

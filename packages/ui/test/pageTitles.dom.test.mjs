@@ -32,7 +32,7 @@ test('all twelve Admin destinations expose their exact independent rail label as
    assert.equal(headings.filter(text=>text===title).length,1,title+' must have one matching visible heading');
   }
   // Grouped service/activity routes retain the main destination title.
-  for(const [route,title]of [['storage','Service'],['recovery','Service'],['logs','Activity'],['usage','Activity']]){
+  for(const [route,title]of [['storage','Storage'],['recovery','Recovery'],['logs','Logs'],['usage','Usage']]){
    await browser.evaluate(`location.hash=${JSON.stringify(route)}`);
    await browser.observed(`document.querySelector('main > h1')?.textContent===${JSON.stringify(title)}`);
    assert.equal(await browser.evaluate(`document.querySelectorAll('main > h1').length`),1);

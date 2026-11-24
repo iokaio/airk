@@ -16,7 +16,7 @@ import { Airkctl, AirkctlCommandError, DOWNLOAD_URL, errorOf, type AirkctlState 
 import { systemVerifyHost } from './airkctl/verify';
 import { AirkctlToolSession, evidenceSelection } from './airkctl/tools';
 import { AirkctlExplorerHost, describe, projectRows } from './airkctl/features/explorerHost';
-import { ADMIN_OPEN_IN_SETTING, AdminOpener, type AdminOpenIn, type AdminTarget } from './airkctl/features/adminOpener';
+import { AdminOpener, type AdminTarget } from './airkctl/features/adminOpener';
 import { ADMIN_PAGES, type AdminPage } from './explorerContracts';
 import { ACTION_LABELS, guidance, type GuidanceAction } from './airkctl/status/guidance';
 import {
@@ -118,15 +118,6 @@ class SplitExtension implements vscode.Disposable {
         });
         this.admin = new AdminOpener({
             open: async args => { await this.airkctl.check(); return this.airkctl.openAdmin(args); },
-            url: async args => { await this.airkctl.check(); return this.airkctl.adminUrl(args); },
-            setting: () => vscode.workspace.getConfiguration('airk').get<string>(ADMIN_OPEN_IN_SETTING, 'external') === 'vscode' ? 'vscode' : 'external',
-            remember: choice => Promise.resolve(vscode.workspace.getConfiguration('airk').update(ADMIN_OPEN_IN_SETTING, choice, vscode.ConfigurationTarget.Global)),
-            choose: async current => (await vscode.window.showQuickPick([
-                { label: 'In my browser', description: current === 'external' ? 'current' : undefined, value: 'external' as AdminOpenIn },
-                { label: 'In VS Code', description: current === 'vscode' ? 'current' : 'Simple Browser', value: 'vscode' as AdminOpenIn },
-            ], { title: 'AIRK: Open AIRK Admin', placeHolder: 'Where should AIRK Admin open? (remembered in airk.admin.openIn)' }))?.value,
-            showInVsCode: async url => { await vscode.commands.executeCommand('simpleBrowser.show', url); },
-            offerBrowser: async message => (await vscode.window.showInformationMessage(`AIRK: ${message}`, 'Open in my browser')) === 'Open in my browser',
             // Never receives the sign-in URL: the opener logs page and outcome only.
             log: line => this.output.appendLine(line),
         });
@@ -165,6 +156,7 @@ class SplitExtension implements vscode.Disposable {
         const show = severity === 'error' ? vscode.window.showErrorMessage : severity === 'warning' ? vscode.window.showWarningMessage : vscode.window.showInformationMessage;
         void Promise.resolve(show(`AIRK: ${message}`, ...actions.map(action => ACTION_LABELS[action]))).then(choice => {
             const action = actions.find(item => ACTION_LABELS[item] === choice);
+            if (action === 'airk.explorer.open') { return vscode.commands.executeCommand(action, 'manage/service'); }
             if (action) { return vscode.commands.executeCommand(action); }
         }).then(undefined, error => this.output.appendLine(String(error)));
     }
@@ -227,7 +219,7 @@ class SplitExtension implements vscode.Disposable {
             const previous = this.context.workspaceState.get<RemovedEntry[]>(REMOVED_ENTRIES_KEY, []);
             await this.context.workspaceState.update(REMOVED_ENTRIES_KEY, [...previous, ...removed].slice(-256));
             for (const entry of removed) { this.output.appendLine(`AIRK: removed ${entry.agent} entry "${entry.serverKey}" from ${entry.file}: ${entry.reason}`); }
-            this.notify('info', `Removed ${removed.length} retired AIRK agent ${removed.length === 1 ? 'entry' : 'entries'} (stdio; the AIRK Service serves HTTP only; see Output). Once this folder has an index, create a connection in AIRK Admin and use Connect Coding Agent.`, ['airk.showExtensionOutput']);
+            this.notify('info', `Removed ${removed.length} retired AIRK agent ${removed.length === 1 ? 'entry' : 'entries'} (stdio; the AIRK Service serves HTTP only; see Output). Once this folder has an index, open Agents in Explorer and choose Connect.`, ['airk.showExtensionOutput']);
         })().catch(error => {
             // A failed attempt (service not answering yet) may run again on the next ready state.
             this.stdioRetired = undefined;
@@ -327,9 +319,9 @@ class SplitExtension implements vscode.Disposable {
             throw new Error(describe(state));
         }
     }
-    /** Open AIRK Admin where `airk.admin.openIn` says; `choose` asks and remembers. */
-    async openAdmin(target: AdminTarget = { page: 'overview' }, choose = false): Promise<void> {
-        await this.admin.open(target, choose);
+    /** Open standalone AIRK Admin in the default browser. */
+    async openAdmin(target: AdminTarget = { page: 'overview' }): Promise<void> {
+        await this.admin.open(target);
     }
     async startService(): Promise<void> {
         await this.airkctl.check();

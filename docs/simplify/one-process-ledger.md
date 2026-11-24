@@ -17315,3 +17315,18 @@ moves from `c01b711a…` to `5c6d7df6…`. Historical copies under
 base (which failed 5 and errored 6 with this working copy); the 9 others are
 fixed. The 1.8.208 candidate was built before this change from the same
 bytes through the overlay, so its payload is unaffected.
+### UI integration on the frozen Arbiter target
+
+Ported the UI changes from `f450b128` onto `5167dd12`. Explorer uses inline
+management and one default-browser Admin launcher. Standalone Admin gets
+grouped navigation and focused views. Workbench keeps the target's Answer job
+and selection authority and gains compact scope and return controls. The port
+preserves plain loopback HTTP, the owner pipe, upgrade cleanup, the target's
+VSIX module closure and its LF research pin. The retired Grants tab stays
+removed. Help and Admin asset manifests were regenerated from the combined
+source.
+
+The restored 1.8.208 runtime from the earlier release worktree was refused
+before execution by the frozen target's changed research provenance hash.
+Use a newly sealed pair for live validation. The original design proposal
+remains in its own UI worktree and in the user's untracked checkout file.

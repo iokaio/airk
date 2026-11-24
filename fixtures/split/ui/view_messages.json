@@ -4,7 +4,7 @@
   "note": "Reviewed classification of every WEBVIEW_MESSAGES type: ui = shared view event (packages/ui, both shells), editor = VS Code shell only, admin = admin pages only (management leaves the extension, U6). capability names the flag a shell must provide; a UI control without its capability is hidden. U97: the read-only index library read (library.read) and the AIRK Admin opener (admin.open) are editor-only; the Explorer's management messages were removed with their UI. U103: the Explorer's index status actions, usage and activity (work.action, work.usage, work.activity) run through the editor's airkctl session and are editor-only; manage.* stays admin. U104: the search scope's Save as index set (indexing.scope.saveSet) and Management › Agents (agents.read, agents.connect, agents.disconnect) run through the editor's airkctl session and are editor-only. U105: description editing in the search scope (indexing.scope.describe) runs through the editor's airkctl session and is editor-only; U110 removed the Agents screen's choice switch and follow setting (agents.choice, agents.follow). Current shared-presentation adapters: admin.session/admin.call/admin.close are editor-only native management bridge messages owned by adminUiContract and ExplorerController; browser management uses I3 directly. pilot.read is the editor-only postMessage read-pilot bridge owned by uiPilotContract; browser pilot uses its own adapter. These transports grant no authority and retain native admission.",
   "counts": {
     "ui": 25,
-    "editor": 46,
+    "editor": 47,
     "admin": 6
   },
   "messages": [
@@ -47,6 +47,11 @@
       "type": "workspace.manageTrust",
       "side": "editor",
       "capability": "workspaceTrust"
+    },
+    {
+      "type": "workbench.focus",
+      "side": "editor",
+      "capability": null
     },
     {
       "type": "workbench.toggle",

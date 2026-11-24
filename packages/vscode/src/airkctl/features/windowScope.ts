@@ -462,7 +462,7 @@ export class WindowScope {
             if (missing.length) {
                 const one = missing.length === 1;
                 throw new WindowScopeError('window_scope_index_not_readable',
-                    `${missing.map(id => this.names('indexes', [id])).join(', ')} ${one ? 'is' : 'are'} in no index set, so ${one ? 'it is' : 'they are'} not readable yet. Apply ${one ? 'it' : 'them'} in Indexing › Search scope to create an index set named after ${one ? 'it' : 'each'}, or make ${one ? 'it' : 'them'} readable in AIRK Admin (Index library).`,
+                    `${missing.map(id => this.names('indexes', [id])).join(', ')} ${one ? 'is' : 'are'} in no index set, so ${one ? 'it is' : 'they are'} not readable yet. Apply ${one ? 'it' : 'them'} in Indexing › Search scope to create an index set named after ${one ? 'it' : 'each'}, or make ${one ? 'it' : 'them'} readable in Explorer’s Index library.`,
                     { status: 'refused', code: 'window_scope_index_not_readable', index_ids: missing });
             }
             for (const id of extra) { for (const set of map.get(id)!) { if (!project_ids.includes(set) && !added.includes(set)) { added.push(set); } } }
@@ -548,7 +548,7 @@ export class WindowScope {
                 if (this.current?.auto) { await this.clearSearchScope(false, check); }
                 check();
                 this.setRoute({ state: 'not_readable', indexId, indexName, code: 'index_read_unavailable',
-                    message: `${indexName} is in no index set, so it is not readable yet. Check it in Indexing › Search scope and apply to create an index set named after it, or make it readable in AIRK Admin (Index library).` });
+                    message: `${indexName} is in no index set, so it is not readable yet. Check it in Indexing › Search scope and apply to create an index set named after it, or make it readable in Explorer’s Index library.` });
                 return;
             }
             const current = this.current;
@@ -668,7 +668,7 @@ export class WindowScope {
 
     /** Send one `scope_select` for exactly `project_ids`/`index_ids`; only a user's choice is remembered. */
     private async grant(namespace: string, revision: number, project_ids: string[], index_ids: string[], options: GrantOptions): Promise<Record<string, unknown>> {
-        if (!index_ids.length) { throw new WindowScopeError('window_scope_empty', 'The chosen index sets contain no index. Add indexes to them in AIRK Admin.'); }
+        if (!index_ids.length) { throw new WindowScopeError('window_scope_empty', 'The chosen index sets contain no index. Add indexes to them in the Index library.'); }
         if (index_ids.length > SCOPE_MAX_SELECTION) { throw new WindowScopeError('window_scope_selection_invalid', `A search scope holds at most ${SCOPE_MAX_SELECTION} indexes; this selection has ${index_ids.length}.`); }
         const selection: WindowSelection = { namespace, expected_catalog_revision: revision, index_ids, project_ids };
         options.check?.();

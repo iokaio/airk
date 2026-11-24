@@ -193,11 +193,11 @@ test('a changed window search scope resets evidence, status and search state',()
     }finally{explorer.dispose();f.explorer.dispose();}
 });
 
-test('read-only library and AIRK Admin requests relay complete native data and accept only this window folders',async()=>{
+test('library reads retain native data and standalone Admin only launches from its fixed endpoint',async()=>{
     const f=controller(),instance=f.explorer as any,methods:unknown[]=[],opened:unknown[]=[],index='idx_'+'12'.repeat(16);
     const response={status:'catalog_page',page:{namespace:'aa'.repeat(16),revision:3,items:[],continuation:null},capabilities:{future_native_capability:true}};
     (f.host as any).catalogControl=async(method:unknown)=>{methods.push(method);return response;};
-    (f.host as any).openAdmin=async(target:unknown,choose:boolean)=>{opened.push([target,choose]);};
+    (f.host as any).openAdmin=async(target:unknown)=>{opened.push(target);};
     (vscodeStub.workspace as any).workspaceFolders=[{uri:{scheme:'file',fsPath:'/src/demo'}},{uri:{scheme:'untitled',fsPath:'/virtual'}}];
     try{
         const reply=await instance.dispatch({type:'library.read',method:'page',kind:'indexes'});
@@ -207,11 +207,11 @@ test('read-only library and AIRK Admin requests relay complete native data and a
         const failed=await instance.dispatch({type:'library.read',method:'detail',id:index});
         assert.deepEqual(failed.error,{code:'scoped_read_unavailable',message:'scope gone',retryable:true});assert.equal(failed.response,undefined,'a failed read is not an empty library');
         assert.deepEqual(f.explorer.snapshot().workspaceFolders,['/src/demo']);
-        await instance.dispatch({type:'admin.open',page:'index-library',folder:'/src/demo'});
-        await assert.rejects(instance.dispatch({type:'admin.open',page:'index-library',folder:'/elsewhere'}),/folders open in this window/);
-        await assert.rejects(instance.dispatch({type:'admin.open',page:'index-library',folder:'/virtual'}),/folders open in this window/);
-        await instance.dispatch({type:'admin.open',page:'index-library',index,choose:true});
-        assert.deepEqual(opened,[[{page:'index-library',forFolder:'/src/demo'},false],[{page:'index-library',showIndex:index},true]]);
+        await instance.dispatch({type:'admin.open'});
+        assert.deepEqual(opened,[{page:'overview'}]);
+        for (const fields of [{ page:'index-library' }, { folder:'/src/demo' }, { index }, { choose:true }]) {
+            assert.equal(parseWebviewMessage({v:1,type:'admin.open',requestId:'a',...fields}),undefined);
+        }
         assert.equal(parseWebviewMessage({v:1,type:'admin.open',requestId:'a',page:'index-library',url:'https://127.0.0.1/'}),undefined,'the webview cannot name a URL');
         assert.equal(parseWebviewMessage({v:1,type:'library.read',requestId:'a',method:'page',kind:'grants'}),undefined,'grants and contexts are not part of the library');
         delete (f.host as any).catalogControl;

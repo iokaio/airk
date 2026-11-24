@@ -14,7 +14,7 @@ import type { AgentManualEntry, AgentConfigRefusal } from '../generated/i2';
 import type { ScreenProps } from './workspaces';
 import { request } from './api';
 import { CompleteNativeResponse } from './components';
-import { AdminButton } from './adminLinks';
+
 import { Notice, noticeKey } from './notices';
 
 /** The agents Connect offers and how each loads a new entry. */
@@ -142,12 +142,13 @@ export function AgentsScreen(props: ScreenProps) {
             <summary>Details</summary>
             <div class="section-head"><h3>Agent entries{view?.folder ? <> in <code class="path">{view.folder}</code></> : ''}</h3>
                 <span class="actions"><button type="button" class="ghost" disabled={disabled} onClick={() => { void read(); }}>Refresh</button>
-                    <AdminButton page="agents" label="Open AIRK Admin" ghost disabled={!props.state.trusted} choose={false} /></span></div>
+
+                </span></div>
             {view && (entries.length
                 ? <ul class="agent-entries">{entries.map((entry, at) => <li key={`${entry.file}:${entry.serverKey}:${at}`}>
                     <strong>{label(entry.client)}</strong> · <code class="path">{entry.file}</code> · {entry.serverKey} · {statusText(entry.status)}</li>)}</ul>
                 : <p class="muted">No AIRK agent entries in this folder.</p>)}
-            <p class="muted">AIRK writes only its own entry (the endpoint URL and the response-mode header) and keeps your other servers. The endpoint is local HTTP on 127.0.0.1; AIRK Admin › Agents shows manual setup.</p>
+            <p class="muted">AIRK writes only its own entry (the endpoint URL and the response-mode header) and keeps your other servers. The endpoint is local HTTP on 127.0.0.1.</p>
             {view?.report !== undefined && <CompleteNativeResponse value={view.report as Record<string, unknown>} />}
             {view?.endpointReport !== undefined && <CompleteNativeResponse value={view.endpointReport as Record<string, unknown>} />}
             {view?.defaultsReport !== undefined && <CompleteNativeResponse value={view.defaultsReport as Record<string, unknown>} />}

@@ -52,7 +52,7 @@ test('the split command set: guidance, agent connections, Explorer and Workbench
 
 test('every command the Explorer may open is one the extension contributes and registers', () => {
     // Reviewed list: Management's command buttons (explorerContracts MANAGE_COMMANDS).
-    assert.deepEqual([...MANAGE_COMMANDS], ['airk.setupAgent', 'airk.reconnectAgents', 'airk.manageVscodeMcp', 'airk.showExtensionOutput']);
+    assert.deepEqual([...MANAGE_COMMANDS], ['airk.setupAgent', 'airk.reconnectAgents', 'airk.manageVscodeMcp', 'airk.showExtensionOutput', 'airk.serviceStart']);
     const registrations = source('serviceExtension.ts');
     for (const command of MANAGE_COMMANDS) {
         assert.ok(contributed.has(command), `${command} is contributed`);

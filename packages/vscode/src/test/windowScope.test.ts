@@ -93,7 +93,7 @@ test('apply sends exactly one scope_select frame with the set members at the rea
     // set-create command, is refused before any frame with the way to give it a set.
     await assert.rejects(scope.applySearchScope({ index_ids: [idx(9)], project_ids: [prj(1)] }), (error: any) => error.code === 'window_scope_index_not_readable');
     await assert.rejects(scope.applySearchScope({ index_ids: [idx(9)], project_ids: [] }), (error: any) => error.code === 'window_scope_index_not_readable'
-        && /create an index set named after it, or make it readable in AIRK Admin/.test(error.message) && error.nativeResponse.index_ids[0] === idx(9));
+        && /create an index set named after it, or make it readable in Explorer’s Index library/.test(error.message) && error.nativeResponse.index_ids[0] === idx(9));
     assert.equal(s.selects.length, 1);
     await scope.applySearchScope({ index_ids: [], project_ids: [] });
     assert.deepEqual(s.releases, [1]); assert.equal(scope.active, false);

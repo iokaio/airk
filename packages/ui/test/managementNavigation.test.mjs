@@ -31,7 +31,7 @@ test('actual shared native page changes preserve existing inert editor routes an
     assert.deepEqual(await browser.evaluate('window.routes'),[{workspace:'manage',tab:'activity'},{workspace:'manage',tab:'usage'},{workspace:'manage',tab:'agents'},
       {workspace:'manage',tab:'storage'},{workspace:'manage',tab:'repair'},{workspace:'manage',tab:'logs'},
       {workspace:'indexing',tab:'library'},{workspace:'search',tab:'query'},{workspace:'help'}]);
-    assert.equal(await browser.evaluate(`document.querySelectorAll('[role="tablist"]').length`),0,'shared page does not duplicate the legacy Management tab strip');
-    assert.equal(await browser.evaluate(`document.querySelector('details')!==null`),true,'prior editor workflows remain available');
+    assert.equal(await browser.evaluate(`document.querySelectorAll('[role="tablist"]').length`),1,'Explorer owns the Management tab strip');
+    assert.equal(await browser.evaluate(`document.querySelectorAll('iframe').length`),0);
   }finally{await browser.close();}
 });

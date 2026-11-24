@@ -3,7 +3,7 @@
 // shows complete native results as text.
 import type { JSX } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
-import { IndexSelect, useIndexes } from './activity';
+import { IndexSelect, useIndexes, type LogTarget } from './activity';
 import { isUnknownOutcome, reviewedCall } from './api';
 import { body, isDigest, MAX_INDEX_LIST_LIMIT, MAX_PAGE_LIMIT, OPS } from './operations';
 import {
@@ -15,11 +15,13 @@ import {
   NumberField,
   Outcome,
   Panel,
+  Text,
   resultOf,
   useCall,
   type CallState,
 } from './render';
 import { ProgressPanel } from './progress';
+import { Arbiter } from './arbiter';
 import { generatedAction } from './generatedActions';
 import { currentSession } from './session';
 import { useContext } from 'preact/hooks';
@@ -322,7 +324,7 @@ function ResourceSummary(props: { state: CallState }): JSX.Element {
     <p class="muted">Reservations are service policy limits. They do not establish a model's measured memory use or qualification.</p></>;
 }
 
-export function Service(props: { onLifecycle: (action: 'stop' | 'restart') => void }): JSX.Element {
+export function Service(props: { onLifecycle: (action: 'stop' | 'restart') => void; editor?: boolean }): JSX.Element {
   const visible = useContext(PageVisible);
   const [resources, runResources] = useCall();
   const [gpuOutcome, runGpu] = useCall();
@@ -424,9 +426,9 @@ export function Service(props: { onLifecycle: (action: 'stop' | 'restart') => vo
       <Panel title="Stop or prepare to restart">
         <p>
           Both actions stop the service and end this management session. Stop for restart records the restart
-          request; this page does not start a replacement service. After it stops, run{' '}
-          <code>airkctl service start</code> locally. Then run <code>airkctl admin open</code> for a new browser
-          session, or reopen management in the editor after verifying the service connection.
+          request. This page does not start a replacement service. After the service stops, {props.editor
+            ? <>use <strong>Start AIRK Service</strong> in Explorer and reconnect to management.</>
+            : <>run <code>airkctl service start</code>, then <code>airkctl admin open</code> for a fresh browser session.</>}
         </p>
         <div class="actions">
           <Confirm phrase="restart service" action="Stop for restart" danger disabled={blocked} onConfirm={() => void lifecycleCall('restart')} />
@@ -441,17 +443,52 @@ export function Service(props: { onLifecycle: (action: 'stop' | 'restart') => vo
   );
 }
 
-export function Logs(): JSX.Element {
+export function ServiceWorkspace(props: { onLifecycle(action: 'stop' | 'restart'): void; editor?: boolean }): JSX.Element {
+  const [showModels, setShowModels] = useState(false);
+  return <>
+    <div class="actions" aria-label="Runtime and models">
+      <button type="button" class={showModels ? 'secondary' : ''} aria-pressed={!showModels} onClick={() => setShowModels(false)}>Runtime</button>
+      <button type="button" class={showModels ? '' : 'secondary'} aria-pressed={showModels} onClick={() => setShowModels(true)}>Models</button>
+    </div>
+    <section hidden={showModels}><Service onLifecycle={props.onLifecycle} editor={props.editor} /></section>
+    <section hidden={!showModels}><Arbiter /></section>
+  </>;
+}
+
+export function Logs(props: { target?: LogTarget } = {}): JSX.Element {
   const [logs, runLogs] = useCall();
   const [limit, setLimit] = useState(200);
+  const [filter, setFilter] = useState(props.target);
+  const job = props.target?.job, project = props.target?.project;
+  useEffect(() => { setFilter(job || project ? { job, project } : undefined); }, [job, project]);
+  const result = resultOf(logs) as { page?: { records?: unknown; tail_truncated?: boolean; malformed_records?: number } } | null;
+  const page = result?.page;
+  const records = Array.isArray(page?.records) ? page.records.filter((entry): entry is Record<string, unknown> =>
+    entry !== null && typeof entry === 'object' && !Array.isArray(entry)) : [];
+  const matches = records.filter(entry => (!filter?.job || entry.job === filter.job) && (!filter?.project || entry.project === filter.project));
   return (
     <Panel title="Recent service logs">
       <div class="row">
         <NumberField label="Limit" value={limit} min={1} max={MAX_PAGE_LIMIT} onInput={setLimit} />
         <button type="button" onClick={() => void runLogs(OPS.logsRecent, body.logsRecent(limit))}>
-          Load
+          Load recent logs
         </button>
       </div>
+      {filter && <p>Filter loaded records for <code>{filter.job ?? filter.project}</code>{' '}
+        <button type="button" class="secondary" onClick={() => setFilter(undefined)}>Clear log filter</button></p>}
+      {page && <>
+        <p role="status">{matches.length} of {records.length} loaded records shown.
+          {page.tail_truncated ? ' This is a bounded log tail.' : ''}
+          {page.malformed_records ? ` ${page.malformed_records} malformed records were skipped by the service.` : ''}</p>
+        {matches.length > 0 ? <div class="table-wrap"><table class="data">
+          <thead><tr><th scope="col">Time</th><th scope="col">Event</th><th scope="col">Code</th></tr></thead>
+          <tbody>{matches.map((entry, index) => <tr key={index}>
+            <td><Text value={typeof entry.observed_unix_ms === 'number' ? new Date(entry.observed_unix_ms).toLocaleString() : 'Unavailable'} /></td>
+            <td><Text value={typeof entry.kind === 'string' ? entry.kind.replaceAll('_', ' ') : 'Unknown event'} /></td>
+            <td><Text value={typeof entry.code === 'string' ? entry.code : '—'} /></td>
+          </tr>)}</tbody>
+        </table></div> : <p class="muted">No loaded log records match.</p>}
+      </>}
       <Outcome state={logs} />
       <p>Complete and raw logs are local reads:</p>
       <Command text="airkctl service logs --all" />

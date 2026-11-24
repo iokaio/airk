@@ -238,7 +238,7 @@ textarea { min-height: 4rem; }
 .help-index button.link { display: block; width: 100%; text-align: left; background: transparent; color: var(--vscode-foreground); border: 0; padding: 0.25rem 0.4rem; }
 button.link.current { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); }
 .markdown h2 { font-size: 1.15rem; } .markdown h3 { font-size: 1rem; margin-top: 0.8rem; }
-@media (max-width: 1100px) { .help { grid-template-columns: 1fr; } .help-index ul { max-height: 15rem; } }
+@media (max-width: 1100px) { .help { grid-template-columns: 1fr; } .help-index ul { max-height: 15rem; } .help-topic { min-height: 100vh; } }
 
 .manage .card { margin-bottom: var(--airk-gap); }
 .storage-location code { display: block; margin: 0.35rem 0 0.8rem; }
