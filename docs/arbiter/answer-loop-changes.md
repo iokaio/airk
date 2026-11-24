@@ -3453,7 +3453,10 @@ Numbered 65 because the unmerged `loop/lh` already holds entries 57 to 64.
     fails with `Option::unwrap()` on `None` at `tests.rs:139` (no catalog
     profile for `ContextQwenLarge`, which LH dropped). Not caused by grant
     removal: this part and part 3 do not touch `airk-inference` or the model
-    catalog; the check on `feat/arbiter-final` at `1a657010` follows below.
+    catalog. **Pre-existing:** it fails the same way on `feat/arbiter-final`
+    at `1a657010` (checked out in this worktree, same target; `nextest -p
+    airk-inference --lib --all-features --profile ci`, same panic at
+    `tests.rs:139:66`; `logs/base-inference-1.log`). Not fixed here.
   - **The two `http_gateway` tests:** `catalog_close_stops_actual_partial_socket_writes_and_buffered_flush` and
     `tls_read_driven_alert_cannot_flush_ciphertext_after_native_fence` pass in
     the workspace run below (`logs/nt-ws-1.log`); no change.
