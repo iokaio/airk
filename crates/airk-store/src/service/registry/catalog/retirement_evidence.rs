@@ -10,6 +10,7 @@ use airk_core::{
     service::CatalogClock,
 };
 use anyhow::{Result, ensure};
+use rusqlite::Connection;
 use rusqlite::{OptionalExtension, params};
 
 impl ServiceRegistry {
@@ -144,4 +145,154 @@ impl ServiceRegistry {
         );
         Ok(Some(evidence))
     }
+}
+
+/// Delete the tombstoned definitions whose retirement cleanup is
+/// acknowledged (the user's record cleanups of 23 November 2026, item 3).
+/// A retired definition goes only when all of these hold: its complete
+/// `RetireIndex` fence is applied, no fence is pending, the physical cleanup
+/// committed (its registration is gone, or kept unregistered with its cleanup
+/// guard cleared) and `service_removed_projects` holds its exact cleanup
+/// identity. It keeps any definition still named by a membership, a context
+/// default, a source policy, an active split participant or an enabled
+/// source. Its sources, aliases and description go with it, and so does a
+/// retained registration that nothing else refers to. Returns how many were
+/// deleted.
+pub(super) fn delete_retired_definitions(db: &Connection) -> Result<usize> {
+    let pending: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM index_operation_receipts WHERE kind='catalog_management_fenced' AND stage<>'metadata_applied')",
+        [],
+        |row| row.get(0),
+    )?;
+    let removal_history: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='service_removed_projects')",
+        [],
+        |row| row.get(0),
+    )?;
+    if pending || !removal_history {
+        return Ok(0);
+    }
+    let optional = |table: &str| -> Result<bool> {
+        Ok(db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?1)",
+            [table],
+            |row| row.get(0),
+        )?)
+    };
+    let (policies, splits, descriptions) = (
+        optional("index_source_policies")?,
+        optional("index_split_participants")?,
+        optional("catalog_descriptions")?,
+    );
+    let mut statement =
+        db.prepare("SELECT id FROM index_definitions WHERE tombstone=1 ORDER BY id LIMIT 1025")?;
+    let ids = statement
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    drop(statement);
+    ensure!(ids.len() <= 1024, "retired index roster exceeds capacity");
+    let mut deleted = 0;
+    for id in ids {
+        let index_id: IndexId = id.parse()?;
+        let referenced: bool = db.query_row(
+            &format!(
+                "SELECT EXISTS(SELECT 1 FROM project_index_memberships WHERE index_id=?1) \
+                 OR EXISTS(SELECT 1 FROM context_default_indexes WHERE index_id=?1) \
+                 OR EXISTS(SELECT 1 FROM index_sources WHERE index_id=?1 AND enabled<>0){}{}",
+                if policies {
+                    " OR EXISTS(SELECT 1 FROM index_source_policies WHERE index_id=?1)"
+                } else {
+                    ""
+                },
+                if splits {
+                    " OR EXISTS(SELECT 1 FROM index_split_participants WHERE index_id=?1 AND active=1)"
+                } else {
+                    ""
+                }
+            ),
+            [&id],
+            |row| row.get(0),
+        )?;
+        if referenced {
+            continue;
+        }
+        let index = index_record(db, index_id)?;
+        let binding = index.backing.binding.to_string();
+        let identity =
+            super::super::project_removal::removed_root_identity(&index.backing.root).to_string();
+        let acknowledged: bool = db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM service_removed_projects WHERE binding=?1 AND root_identity=?2) \
+             AND NOT EXISTS(SELECT 1 FROM projects WHERE binding=?1 AND (registered<>0 OR cleanup_guard IS NOT NULL))",
+            params![binding, identity],
+            |row| row.get(0),
+        )?;
+        if !acknowledged || !retirement_fence_applied(db, index_id)? {
+            continue;
+        }
+        db.execute_batch("SAVEPOINT retired_definition")?;
+        let removed = (|| -> rusqlite::Result<()> {
+            db.execute("DELETE FROM index_source_aliases WHERE index_id=?1", [&id])?;
+            db.execute("DELETE FROM index_sources WHERE index_id=?1", [&id])?;
+            if descriptions {
+                db.execute(
+                    "DELETE FROM catalog_descriptions WHERE kind='index' AND id=?1",
+                    [&id],
+                )?;
+            }
+            db.execute("DELETE FROM index_definitions WHERE id=?1", [&id])?;
+            // The registration was kept only as this definition's backing
+            // identity; anything that still refers to it keeps both.
+            db.execute(
+                "DELETE FROM projects WHERE binding=?1 AND registered=0 AND cleanup_guard IS NULL",
+                [&binding],
+            )?;
+            Ok(())
+        })();
+        match removed {
+            Ok(()) => {
+                db.execute_batch("RELEASE retired_definition")?;
+                deleted += 1;
+            }
+            Err(rusqlite::Error::SqliteFailure(error, _))
+                if error.code == rusqlite::ErrorCode::ConstraintViolation =>
+            {
+                db.execute_batch("ROLLBACK TO retired_definition; RELEASE retired_definition")?;
+            }
+            Err(error) => {
+                db.execute_batch("ROLLBACK TO retired_definition; RELEASE retired_definition")?;
+                return Err(error.into());
+            }
+        }
+    }
+    Ok(deleted)
+}
+
+/// Whether the applied `RetireIndex` fence of `index_id` is retained, as the
+/// retirement evidence requires it.
+fn retirement_fence_applied(db: &Connection, index_id: IndexId) -> Result<bool> {
+    let mut statement = db.prepare(
+        "SELECT id,revision,substr(payload,1,16385) FROM index_operation_receipts WHERE kind='catalog_management_fenced' AND stage='metadata_applied' AND json_extract(payload,'$.request.operation.operation')='retire_index' AND json_extract(payload,'$.request.operation.id')=?1 LIMIT 2",
+    )?;
+    let rows = statement
+        .query_map([index_id.to_string()], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, Vec<u8>>(2)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    if rows.len() != 1 {
+        return Ok(false);
+    }
+    let (operation, revision, bytes) = &rows[0];
+    ensure!(
+        bytes.len() <= MAX_RECEIPT_BYTES,
+        "native retirement receipt exceeds bound"
+    );
+    let receipt: FencedReceipt = serde_json::from_slice(bytes)?;
+    receipt.validate()?;
+    Ok(receipt.metadata.operation_id.to_string() == *operation
+        && i64::try_from(receipt.metadata.catalog_revision.get())? == *revision
+        && matches!(&receipt.request.operation, CatalogOperation::RetireIndex { id, .. } if *id == index_id))
 }

@@ -232,7 +232,6 @@ COPY fixtures/split/agents/config_edits/marker-windows.json ./fixtures/split/age
 COPY fixtures/split/agents/config_edits/windows-error-1177.json ./fixtures/split/agents/config_edits/windows-error-1177.json
 COPY fixtures/split/agents/config_edits/windows-published.json ./fixtures/split/agents/config_edits/windows-published.json
 COPY fixtures/split/agents/entry_remove_cases.json ./fixtures/split/agents/entry_remove_cases.json
-COPY fixtures/split/agents/credentials_ledger_v1.json ./fixtures/split/agents/credentials_ledger_v1.json
 COPY fixtures/split/agents/open_access.json ./fixtures/split/agents/open_access.json
 COPY fixtures/split/agents/registry-policy3-descriptions.objects.json ./fixtures/split/agents/registry-policy3-descriptions.objects.json
 COPY fixtures/split/agents/registry-policy3-descriptions.meta.json ./fixtures/split/agents/registry-policy3-descriptions.meta.json

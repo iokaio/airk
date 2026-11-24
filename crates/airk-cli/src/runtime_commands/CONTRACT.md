@@ -19,9 +19,8 @@ are removed with enrollment. `http-endpoint`, `http-trust` and
 `http-issuer-rotation` are unchanged (TLS is phase C).
 `lookup-http-connection` now requires `--purpose predecessor-cleanup` and
 `--predecessor`: it is the installer's predecessor-cleanup compatibility row
-(`runtime_install::http_cleanup::lookup`), which reads the retained
-credential ledger read-only and never treats a revoked or unavailable id as
-foreign. Tests: installer
+(`runtime_install::http_cleanup::lookup`); since part 4 it reads no ledger
+(see below). Tests: installer
 `clean_break_http_disposal_cli_requires_explicit_purpose_and_predecessor`
 and airk-cli `native_http_endpoint_remains_and_connection_commands_are_removed`.
 
@@ -30,24 +29,36 @@ and airk-cli `native_http_endpoint_remains_and_connection_commands_are_removed`.
 as the next step. Its client, connection, scope, session and launch inputs
 no longer parse (`setup_no_longer_accepts_enrollment_scope_session_or_launch_inputs`).
 
-### Retained-ledger reader (B4)
+### Ledger removed; ownership by shape (B, part 4)
 
-Predecessor cleanup now reads the retained ledger through
-`airk_endpoint::http_endpoint::RetainedLedger`, a lenient, read-only reader.
-It parses `credentials.json` as untyped JSON and reads only `schema`,
-`binding` and each record's `id`, `revoked`, `expires_unix_ms` and
-`verifier`. It ignores every other field, so any record shape a pre-B
-installation wrote is still recognised. Retirement markers are checked for
-binding, id, `revoked: true` and schema 1 or 2. It never creates, repairs or
-writes the ledger or a token file, and it refuses when the bytes change
-during capture. A current installation with no ledger and no credential file
-(every installation since B) owns no connection (`holds_no_credentials`).
-Anything else is read as a retained ledger, and an unreadable one stays
-`unavailable`.
+The user decided on 23 November 2026 that the credential ledger is removed on
+upgrade, not kept: the service deletes `http-1/credentials.json`, the
+`credential-<id>.token` files and the folder if it is then empty
+(`airk_endpoint::http_endpoint::retired_credentials::remove`, exact names in
+its own state root, links never followed). `RetainedLedger`,
+`holds_no_credentials` and the captured ledger fixture are removed.
 
-The strict ledger types, `CredentialStore`, `AuthenticatedCredential`, the
-token helpers, `OpenConnectionState` and `AgentChoice` are removed. Tests:
-`retained_ledger::tests` (a hand-written old-install ledger with scoped and
-open records, expiry, revocation, compaction and an orphan, left
-byte-identical; the captured v1 ledger fixture) and the installer
-`clean_break_*` lookups over hand-written retained ledgers.
+Predecessor cleanup therefore reads no ledger. A predecessor's agent-config
+entries are recognised by their known shapes: the `Bearer`, `headersHelper`,
+`http_headers_helper` and `bearer_token_env_var` forms, which name the
+connection id (`airkctl` `agents::config::recognize`, and the extension's
+removal-only recognizer). The lookup answers, for the connection id such an
+entry names, whether the predecessor is identified: `owned` when its endpoint
+metadata is complete and no newer installation can claim it, otherwise
+`unavailable`. A newer installation in its own namespace issues no connection,
+but if it serves the predecessor's exact endpoint URL an entry there may be its
+own, so the lookup is `unavailable` (`current_namespace_ownership`). The Core
+DTO (`service_http_cleanup`) drops the ledger-derived fields: the snapshot's
+`owners`, and the lookup's `ownership`, `credential_file`, `credential_sha256`
+and `credential_digest_algorithm`; `not_owned` is no longer a lookup status.
+A consumer still removes only an AIRK-shaped entry whose URL is the
+predecessor's `endpoint.url`, and never one it does not recognise.
+
+Tests: installer
+`clean_break_native_http_lookup_identifies_the_predecessor_without_a_ledger`
+(with and without a retained ledger, left byte-identical),
+`clean_break_http_snapshot_survives_headless_old_control_and_payload_retirement`
+(a newer installation on the same URL is `unavailable`, on another port
+`owned`), `clean_break_native_http_lookup_refuses_missing_or_foreign_metadata`;
+`airkctl` `agents::config::tests` `legacy_*` (each old shape repaired, foreign
+servers byte-identical); endpoint `retired_credentials::tests`.

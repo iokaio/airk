@@ -195,10 +195,13 @@ and `worker_start_during_a_census_fence_is_admission_pending`.
 
 ## The local agent session only (23 November 2026, local trust plan B, change-log entry 68)
 
-- Startup no longer opens or creates the credential ledger
+- Startup never opens or creates the credential ledger
   (`http-1/credentials.json`); the HTTPS owner holds no credential store.
-  An existing ledger and token files stay on disk as retained data that
-  nothing writes; installer predecessor cleanup still reads them.
+  On upgrade, before the folder is prepared, it deletes a retired ledger and
+  its `credential-<id>.token` files, exact names inside `http-1` only, never
+  following links, and the folder itself if it is then empty
+  (`airk_endpoint::http_endpoint::retired_credentials::remove`, entry 68
+  part 4; tests `retired_credentials::tests`).
 - Every `/mcp` and JSON API request is the built-in local agent session: the
   gateway validates only that the endpoint's catalog is ready in its
   namespace (`http_backend::validate` of the open selection) and reads

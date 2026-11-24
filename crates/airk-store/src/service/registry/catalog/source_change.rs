@@ -82,7 +82,7 @@ fn completion_key(request: &CatalogRequest) -> Result<RequestKey> {
         nonce: digest[..32].parse()?,
     })
 }
-fn completion_id(request: &CatalogRequest) -> Result<Incarnation> {
+pub(super) fn completion_id(request: &CatalogRequest) -> Result<Incarnation> {
     catalog_operation_id(request.caller, &completion_key(request)?)
 }
 

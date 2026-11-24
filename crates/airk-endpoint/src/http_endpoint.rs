@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Owner-private HTTPS identity, endpoint metadata and the read-only retained
-//! credential ledger of older installations (local trust plan B).
+//! Owner-private HTTPS identity and endpoint metadata, and the removal of the
+//! credential ledger older installations left (local trust plan B).
 use airk_core::{
     identity::{Incarnation, Sha256Digest},
     service_http::PREFERRED_HTTP_PORT,
@@ -14,11 +14,10 @@ use std::{
 };
 
 mod metadata;
-mod retained_ledger;
+pub mod retired_credentials;
 mod tls;
 pub mod trust;
 pub use metadata::{load_descriptor, publish_descriptor};
-pub use retained_ledger::{RetainedLedger, holds_no_credentials};
 pub use tls::{TlsBundleIdentity, TlsIdentity};
 pub mod rotation;
 
@@ -67,7 +66,7 @@ impl BoundEndpoint {
 
 /// Moved to `airk-ipc` (U90) so `airkctl` keeps the same owner-private records.
 pub use airk_ipc::private_record::read_private;
-use airk_ipc::private_record::{private_file, write_private};
+use airk_ipc::private_record::write_private;
 
 fn digest(bytes: &[u8]) -> Sha256Digest {
     use sha2::{Digest, Sha256};

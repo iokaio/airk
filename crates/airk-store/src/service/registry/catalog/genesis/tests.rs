@@ -84,16 +84,24 @@ fn competing_intents_unexplained_fences_and_missing_owned_database_refuse() -> R
     let existing = super::super::super::ServiceRegistry::open(root.path(), identity().1)?;
     drop(existing);
     let upgrade = root.path().join("index-catalog-upgrade.json");
+    // A leftover in-place upgrade journal no longer refuses: with no owner
+    // fence nothing admitted it, and the read-write open deletes it (record
+    // cleanups of 23 November 2026, item 5).
     fs::write(&upgrade, b"unclaimed upgrade marker")?;
-    assert!(begin(root.path()).is_err());
-    assert_eq!(fs::read(&upgrade)?, b"unclaimed upgrade marker");
-    fs::remove_file(upgrade)?;
+    drop(super::super::super::ServiceRegistry::open(
+        root.path(),
+        identity().1,
+    )?);
+    assert!(!upgrade.exists());
     let canonical = root.path().canonicalize()?;
     let mut owner = super::super::super::owner_record(&canonical, true, identity().1)?;
     owner.catalog_upgrade = Some(Incarnation::from_bytes([119; 16]));
     owner.complete(&canonical)?;
+    // Under an unexplained fence the fence refuses, and the journal stays.
+    fs::write(&upgrade, b"fenced upgrade marker")?;
     assert!(begin(root.path()).is_err());
     assert!(pending(root.path())?.is_none());
+    assert_eq!(fs::read(&upgrade)?, b"fenced upgrade marker");
 
     let missing = tempfile::tempdir()?;
     drop(super::super::super::ServiceRegistry::open(

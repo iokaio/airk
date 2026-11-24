@@ -418,6 +418,51 @@ fn clean_break_cleanup_receipts_remain_bound_to_each_predecessor_control() {
     assert!(!journal_name(first).contains("first-state"));
 }
 
+/// Record cleanups of 23 November 2026, item 5: once complete, the cleanup
+/// journal is deleted; an unfinished, foreign, damaged or non-file journal
+/// stays for review, and other predecessors' journals are untouched.
+#[test]
+fn clean_break_finished_cleanup_journal_is_retired_and_others_stay() -> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let root = owner.path().join("install");
+    local_ipc::prepare_root(&root)?;
+    let successor = owner.path().join("successor");
+    layout::initialize(&root, Some(&successor), RuntimeChannel::Stable)?;
+    let canonical = root.canonicalize()?;
+    let first = canonical.join("first-state/control");
+    let second = canonical.join("second-state/control");
+    // Unfinished: kept, and cleanup can still resume from it.
+    let mut plan = cleanup_scope_fixture(&root, first.clone())?;
+    save(&root, &plan)?;
+    assert!(!retire_journal(&root, &first)?);
+    assert!(root.join(journal_name(&first)).is_file());
+    // Another predecessor's complete journal is not this one's.
+    let mut other = cleanup_scope_fixture(&root, second.clone())?;
+    other.phase = Phase::Complete;
+    save(&root, &other)?;
+    let other_bytes = fs::read(root.join(journal_name(&second)))?;
+    // Complete: deleted, and a second call finds nothing.
+    plan.phase = Phase::Complete;
+    save(&root, &plan)?;
+    assert!(retire_journal(&root, &first)?);
+    assert!(!root.join(journal_name(&first)).exists());
+    assert!(!retire_journal(&root, &first)?);
+    assert_eq!(fs::read(root.join(journal_name(&second)))?, other_bytes);
+    // A damaged complete journal is not proof of completion: it stays.
+    let mut damaged = fs::read(root.join(journal_name(&second)))?;
+    let text = String::from_utf8(damaged.clone())?.replace("\"complete\"", "\"state\"");
+    damaged = text.into_bytes();
+    fs::write(root.join(journal_name(&second)), &damaged)?;
+    assert!(!retire_journal(&root, &second)?);
+    assert_eq!(fs::read(root.join(journal_name(&second)))?, damaged);
+    // A directory under the journal name is not a journal.
+    let third = canonical.join("third-state/control");
+    fs::create_dir(root.join(journal_name(&third)))?;
+    assert!(!retire_journal(&root, &third)?);
+    assert!(root.join(journal_name(&third)).is_dir());
+    Ok(())
+}
+
 #[cfg(unix)]
 #[test]
 fn clean_break_private_cleanup_never_follows_source_links() -> Result<()> {

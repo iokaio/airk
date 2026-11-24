@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The native service owns the retained HTTPS socket and identity. Every
-//! request is the built-in local agent session (U110); the service neither
-//! opens nor creates the retained credential ledger (local trust plan B).
+//! request is the built-in local agent session (U110); the service never
+//! opens or creates a credential ledger, and deletes a retired one on
+//! upgrade (local trust plan B).
 use super::*;
 use airk_core::service_http::{
     EndpointDescriptor, EndpointState, HTTP_CONTRACT_VERSION, LoopbackMcpUrl,
@@ -67,13 +68,17 @@ impl Owner {
         state: &Arc<State>,
         ownership: Arc<airk_store::service::ServiceLease>,
     ) -> Result<Option<StartedOwner>> {
+        let root = state.control_root.join("http-1");
+        // Upgrade (local trust plan B): delete the credential ledger and token
+        // files a pre-B installation left, exact names only, before the
+        // folder is prepared for the endpoint records.
+        http_endpoint::retired_credentials::remove(&root)?;
         let Some(gate) = state.catalog_gate.clone() else {
             return Ok(None);
         };
         let clock = gate
             .catalog_clock()
             .ok_or_else(|| anyhow::anyhow!("HTTP catalog clock unavailable"))?;
-        let root = state.control_root.join("http-1");
         local_ipc::prepare_root(&root)?;
         // This is the stable protected installation/control root, never a versioned payload path.
         let binding = http_endpoint::installation_binding(&state.control_root, clock.namespace)?;

@@ -190,12 +190,36 @@ fn persist(receipt: &GenesisReceipt, initial: bool) -> Result<()> {
     }
 }
 
+/// The in-place catalog upgrade journal of a predecessor. AIRK no longer
+/// upgrades a registry in place, and nothing writes or reads this file.
+const DEAD_UPGRADE_JOURNAL: &str = "index-catalog-upgrade.json";
+
 fn no_competing_upgrade(root: &Path) -> Result<()> {
-    ensure!(
-        !exists(&root.join("index-catalog-upgrade.json"))?,
-        "catalog_upgrade_unsupported: an in-place catalog upgrade journal exists; AIRK no longer upgrades a registry in place; run the clean break"
-    );
     super::super::data_relocation::require_settled(root)
+}
+
+/// Delete a leftover in-place upgrade journal (the user's record cleanups of
+/// 23 November 2026, item 5). It is evidence of nothing once no owner fence
+/// names an upgrade: only the owner receipt's `catalog_upgrade` fence ever
+/// admitted one, and that fence still refuses on its own. A journal under a
+/// fence, or an entry that is not a regular file, is left in place. Run by the
+/// read-write registry open and by Genesis admission; a concurrent removal is
+/// not an error.
+pub(in crate::service::registry) fn retire_dead_upgrade_journal(root: &Path) -> Result<()> {
+    let path = root.join(DEAD_UPGRADE_JOURNAL);
+    let metadata = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    if !metadata.file_type().is_file() || super::super::owner_catalog_fence(root)?.is_some() {
+        return Ok(());
+    }
+    match fs::remove_file(&path) {
+        Ok(()) => crate::store_fs::sync_parent(root),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -393,6 +417,7 @@ impl CatalogGenesis {
             root.canonicalize()? == root,
             "redirected genesis control root"
         );
+        retire_dead_upgrade_journal(&root)?;
         no_competing_upgrade(&root)?;
         let embedding = EmbeddingLease::acquire(&root)?;
         let watcher = SourceWatchLease::acquire(&root)?;

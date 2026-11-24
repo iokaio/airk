@@ -162,6 +162,19 @@ fn owner(root: &Path, existed: bool, incarnation: Incarnation) -> Result<Owner> 
     Ok(receipt)
 }
 
+/// The catalog admission fence of an existing owner receipt, if any. A missing
+/// receipt has no fence; this never creates one.
+pub(in crate::service::registry) fn owner_catalog_fence(
+    root: &Path,
+) -> Result<Option<Incarnation>> {
+    if !root.join("service-1.4.owner.json").try_exists()? {
+        return Ok(None);
+    }
+    // An existing receipt is read as is; the identity argument only names a
+    // receipt that would be created.
+    Ok(owner_record(root, true, Incarnation::from_bytes([0; 16]))?.catalog_upgrade)
+}
+
 fn owner_record(root: &Path, existed: bool, incarnation: Incarnation) -> Result<Owner> {
     let path = root.join("service-1.4.owner.json");
     let root_text = root
@@ -759,6 +772,9 @@ impl ServiceRegistry {
             catalog::grant_removal::upgrade(&mut registry.connection)?;
             catalog::validate_existing(&registry.connection)?;
         }
+        // No owner fence admitted this open, so a leftover in-place catalog
+        // upgrade journal is dead: delete it (record cleanups, item 5).
+        catalog::genesis::retire_dead_upgrade_journal(&registry.root)?;
         for schema in schemas {
             registry.connection.execute_batch(schema)?;
         }
