@@ -220,6 +220,7 @@ pub fn project_worker_hooks() -> crate::project_worker::Hooks {
         runtime_work: observe_runtime_work,
         rebuild_observation: airk_installer::runtime_install::rebuild_observation_for_control,
         arbiter_controller: arbiter::controller,
+        answer_jobs: |_| None,
     }
 }
 

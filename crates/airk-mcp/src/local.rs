@@ -141,6 +141,25 @@ impl LocalTools {
         self.kernel.clone()
     }
 
+    /// The service's Answer job table for this session's Answers, with the
+    /// owner's job authority for this session's grant (final plan sections
+    /// 12.4.1 and 12.4.2). Set once, by an owner that runs in the service;
+    /// every other session keeps Answer on its direct path.
+    pub fn set_answer_jobs(
+        &self,
+        jobs: std::sync::Arc<dyn crate::answer_jobs::AnswerJobs>,
+        authority: std::sync::Arc<dyn crate::answer_jobs::AnswerJobAuthority>,
+    ) {
+        let _ = self.direct_server.answer_jobs.set((jobs, authority));
+    }
+
+    /// Service-owned Answer jobs queued or running under this owner's
+    /// admission, over all of its sessions. A job outlives the connection of
+    /// the call that made it, so an owner with one is not idle.
+    pub fn answer_jobs_in_flight(&self) -> u64 {
+        self.admission.jobs_in_flight()
+    }
+
     pub fn set_runtime(&self, value: serde_json::Value) {
         if let Ok(mut runtime) = self.runtime.write() {
             *runtime = Some(value);

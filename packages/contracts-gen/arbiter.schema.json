@@ -59,6 +59,77 @@
       ],
       "type": "object"
     },
+    "AnswerDeliveryRecord": {
+      "additionalProperties": false,
+      "description": "What one delivery of a service-owned Answer job was: beside the reply,\nnever inside it.",
+      "properties": {
+        "job": {
+          "$ref": "#/$defs/Sha256Digest",
+          "description": "The job's handle; it grants nothing."
+        },
+        "queue_ms": {
+          "description": "Submission to dispatch.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reused": {
+          "description": "This call did not make the work it received.",
+          "type": "boolean"
+        },
+        "run_ms": {
+          "description": "Dispatch to finish, or to now while the job runs.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "wait_ms": {
+          "description": "This call's own wait; equal to the reply's `elapsed_ms`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "job",
+        "queue_ms",
+        "run_ms",
+        "wait_ms",
+        "reused"
+      ],
+      "type": "object"
+    },
+    "AnswerJobOptions": {
+      "additionalProperties": false,
+      "description": "Job options beside an Answer /3 request, never inside it, so the request\ndigest is unchanged (CONTRACT \"Answer job options and delivery record\").",
+      "properties": {
+        "fresh": {
+          "description": "Start an independent run; never reuse a job by digest.",
+          "type": "boolean"
+        },
+        "interactive": {
+          "description": "The job may run to completion with no caller waiting. It never ranks\na job ahead of an attended one.",
+          "type": "boolean"
+        },
+        "invocation_key": {
+          "description": "Exact retry recovery within the caller's own scope.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "wait_ms": {
+          "description": "How long this call waits; never shortens the job.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "AnswerPart": {
       "additionalProperties": false,
       "properties": {
@@ -6575,6 +6646,8 @@
     "ContextActionRoster",
     "ContextRequestV3",
     "ContextResponseV3",
+    "AnswerJobOptions",
+    "AnswerDeliveryRecord",
     "DecisionLog",
     "FocusBatchReceipt",
     "LoopCalibration",

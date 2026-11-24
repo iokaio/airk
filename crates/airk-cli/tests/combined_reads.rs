@@ -503,8 +503,17 @@ impl Fixture {
     }
 
     async fn start(&self) -> Result<OwnedProcess> {
+        self.start_with_env(&[]).await
+    }
+
+    /// `start` with extra environment for the service process only (the
+    /// test-support Answer job gate).
+    async fn start_with_env(&self, env: &[(&str, String)]) -> Result<OwnedProcess> {
         let log = self.owner.path().join("service.log");
         let mut command = Command::new(&self.candidate);
+        for (key, value) in env {
+            command.env(key, value);
+        }
         // The private foreground service role (split Phase 4; was `airk serve`).
         command
             .args(["__airk_role", "service-foreground", "--runtime-dir"])
@@ -5738,6 +5747,343 @@ async fn current_answer_single_index_preserves_complete_pipe_cli_and_https_mcp_r
     f.assert_sources_unchanged()
 }
 
+/// In a running service an Answer is a job of the service's Answer job table
+/// (plan section 12.4.1, L2b): the service gives its table to the project
+/// owner, and the owner's Answer handler goes through it. So the same request
+/// in the same scope, sent again within one service lifetime, is answered by
+/// the reply the table kept and not by a second run. Each call is still its
+/// own request. A second run would measure its own elapsed time and stage
+/// timings, which is how the two are told apart.
+#[tokio::test]
+async fn a_repeated_answer_in_one_service_is_the_reply_its_job_table_kept() -> Result<()> {
+    let f = Fixture::new(true)?;
+    let _service = f.start().await?;
+    // One index through a W4 window selection: the read authority a job's
+    // caller holds since grant removal (change-log entry 70).
+    let window = f
+        .window_for(&SessionScope {
+            project_ids: vec![f.projects[0]],
+            index_ids: Some(vec![f.indexes[0]]),
+        })
+        .await?;
+    let (budget, arguments) = current_answer_request()?;
+    let body = |result: &Value| -> Result<Value> {
+        match result
+            .get("structuredContent")
+            .filter(|body| body.is_object())
+        {
+            Some(body) => Ok(body.clone()),
+            None => Ok(serde_json::from_str(
+                result
+                    .pointer("/content/0/text")
+                    .and_then(Value::as_str)
+                    .context("Answer reply text")?,
+            )?),
+        }
+    };
+    let mut replies = Vec::new();
+    for _ in 0..3 {
+        let result = context_pipe_once(&f, window.tool_selection(), &arguments).await?;
+        replies.push(body(&result)?);
+    }
+    // The typed reply, without what each call's own rendering adds: its own
+    // wait (`elapsed_ms`) and its delivery record.
+    let typed = |reply: &Value| -> Result<Value> {
+        let mut value = serde_json::to_value(
+            airk_core::arbiter::answer_loop::ContextResponseV3::from_canonical(reply, &budget)?,
+        )?;
+        value["elapsed_ms"] = Value::Null;
+        Ok(value)
+    };
+    let first = typed(&replies[0])?;
+    ensure!(
+        first["ticket"].is_null() && first["parts"].as_array().is_some_and(|parts| !parts.is_empty()),
+        "the first call is a complete answer: {first}"
+    );
+    ensure!(
+        replies[0]["delivery"]["reused"] == false,
+        "the first call made its job: {}",
+        replies[0]
+    );
+    for later in &replies[1..] {
+        ensure!(
+            typed(later)? == first,
+            "a repeated Answer ran again instead of attaching to its kept job: {} then {later}",
+            replies[0]
+        );
+        ensure!(
+            later["delivery"]["reused"] == true
+                && later["delivery"]["job"] == replies[0]["delivery"]["job"]
+                && later["delivery"]["wait_ms"] == later["elapsed_ms"],
+            "a reused reply says so, for its own call: {later}"
+        );
+        ensure!(
+            later["request_id"].is_null() || later["request_id"] != replies[0]["request_id"],
+            "each call is its own request: {later}"
+        );
+    }
+    f.assert_sources_unchanged()
+}
+
+/// The test side of the service's test-support Answer job gate
+/// (`answer_jobs::wiring::test_gate`): each job connects here before its work
+/// starts and waits for commands.
+struct JobGate {
+    listener: tokio::net::TcpListener,
+}
+struct HeldJob {
+    stream: tokio::io::BufReader<tokio::net::TcpStream>,
+    job: String,
+}
+const GATE_WAIT: Duration = Duration::from_secs(120);
+impl JobGate {
+    async fn bind() -> Result<(Self, String)> {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?.to_string();
+        Ok((Self { listener }, address))
+    }
+    /// The next job that starts.
+    async fn next(&self) -> Result<HeldJob> {
+        use tokio::io::AsyncBufReadExt;
+        let (stream, _) = tokio::time::timeout(GATE_WAIT, self.listener.accept())
+            .await
+            .context("no Answer job started under the deadline")??;
+        let mut stream = tokio::io::BufReader::new(stream);
+        let mut line = String::new();
+        tokio::time::timeout(GATE_WAIT, stream.read_line(&mut line)).await??;
+        let job = line
+            .trim()
+            .strip_prefix("started ")
+            .context("the gate's first line names the job")?
+            .to_owned();
+        Ok(HeldJob { stream, job })
+    }
+    /// No other job has started (checked without waiting).
+    fn none_pending(&self) -> Result<()> {
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        ensure!(
+            self.listener.poll_accept(&mut context).is_pending(),
+            "a further Answer execution started"
+        );
+        Ok(())
+    }
+}
+impl HeldJob {
+    /// Wait until the maker's session has ended in the service.
+    async fn maker_closed(&mut self) -> Result<()> {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+        self.stream.get_mut().write_all(b"m").await?;
+        let mut line = String::new();
+        tokio::time::timeout(GATE_WAIT, self.stream.read_line(&mut line))
+            .await
+            .context("the maker's session did not end under the deadline")??;
+        ensure!(line.trim() == "maker-closed", "unexpected gate line {line:?}");
+        Ok(())
+    }
+    async fn release(mut self) -> Result<()> {
+        use tokio::io::AsyncWriteExt;
+        self.stream.get_mut().write_all(b"r").await?;
+        Ok(())
+    }
+}
+
+/// The decisive L2c test (final plan section 12.4.2; review H1), through the
+/// real service, supervisor `query()` path, owner and handler. The submitting
+/// client's call returns after a short wait and its connection closes; the
+/// supervisor tears its session down; only then is the job let run. Its
+/// scoped reads still succeed and it finishes; a reconnecting client
+/// recovers the result by the job's handle, and the receipt shows one
+/// execution. Repeated for a queued job whose maker is gone before it ever
+/// starts, with no client polling it.
+#[tokio::test]
+async fn answer_jobs_outlive_their_makers_session_and_are_recovered_by_their_handle() -> Result<()>
+{
+    let (gate, address) = JobGate::bind().await?;
+    let f = Fixture::new(true)?;
+    let _service = f
+        .start_with_env(&[("AIRK_TEST_ANSWER_JOB_GATE", address)])
+        .await?;
+    // The makers and the recovering callers read one index through the same
+    // W4 window selection; the jobs hold that selection's authority, never
+    // their makers' sessions (change-log entry 70).
+    let window = f
+        .window_for(&SessionScope {
+            project_ids: vec![f.projects[0]],
+            index_ids: Some(vec![f.indexes[0]]),
+        })
+        .await?;
+    let selection = || window.tool_selection();
+    let (budget, base) = current_answer_request()?;
+    let with = |question: &str, extra: Value| -> Value {
+        let mut arguments = base.clone();
+        arguments["question"] = json!(question);
+        for (key, value) in extra.as_object().into_iter().flatten() {
+            arguments[key] = value.clone();
+        }
+        arguments
+    };
+    let body = |result: &Value| -> Result<Value> {
+        match result
+            .get("structuredContent")
+            .filter(|body| body.is_object())
+        {
+            Some(body) => Ok(body.clone()),
+            None => Ok(serde_json::from_str(
+                result
+                    .pointer("/content/0/text")
+                    .and_then(Value::as_str)
+                    .context("Answer reply text")?,
+            )?),
+        }
+    };
+    let complete = |reply: &Value| -> Result<()> {
+        let typed =
+            airk_core::arbiter::answer_loop::ContextResponseV3::from_canonical(reply, &budget)?;
+        ensure!(
+            typed.ticket.is_none() && !typed.parts.is_empty() && !typed.records.is_empty(),
+            "a complete answer with evidence: {reply}"
+        );
+        Ok(())
+    };
+
+    // 1. A running job whose maker leaves.
+    let question = "boundaryneedle";
+    let maker = {
+        let arguments = with(question, json!({"fresh":true,"wait_ms":3_000}));
+        let f = &f;
+        let selection = selection();
+        async move { context_pipe_once(f, selection, &arguments).await }
+    };
+    let (held, ticket) = tokio::join!(gate.next(), maker);
+    let mut held = held?;
+    let ticket = body(&ticket?)?;
+    ensure!(
+        ticket["ticket"]["id"].as_str() == Some(held.job.as_str())
+            && ticket["delivery"]["job"].as_str() == Some(held.job.as_str())
+            && ticket["delivery"]["reused"] == false,
+        "the maker's short wait ends with its job's ticket: {ticket}"
+    );
+    // The maker's connection is gone; the supervisor ends its session.
+    held.maker_closed().await?;
+    let job = held.job.clone();
+    held.release().await?;
+    // A new connection recovers the result by the handle alone.
+    let recovered = body(
+        &context_pipe_once(&f, selection(), &with(question, json!({"continuation":job}))).await?,
+    )?;
+    complete(&recovered)?;
+    ensure!(
+        recovered["delivery"]["job"].as_str() == Some(job.as_str())
+            && recovered["delivery"]["reused"] == true,
+        "the recovered result is the job's own, delivered again: {recovered}"
+    );
+    gate.none_pending()?;
+
+    // 2. A queued job: two held jobs fill the gathering limit of two, a third
+    // is queued, its maker leaves, and nothing polls it.
+    let mut fillers = Vec::new();
+    for filler in ["boundaryneedle filler one", "boundaryneedle filler two"] {
+        let arguments = with(filler, json!({"fresh":true,"wait_ms":3_000}));
+        let call = context_pipe_once(&f, selection(), &arguments);
+        let (held, reply) = tokio::join!(gate.next(), call);
+        reply?;
+        fillers.push(held?);
+    }
+    let queued = body(
+        &context_pipe_once(
+            &f,
+            selection(),
+            &with("boundaryneedle queued", json!({"fresh":true,"wait_ms":3_000})),
+        )
+        .await?,
+    )?;
+    let queued_job = queued["delivery"]["job"]
+        .as_str()
+        .context("a queued job's handle")?
+        .to_owned();
+    ensure!(
+        queued["ticket"]["id"].as_str() == Some(queued_job.as_str()),
+        "the queued maker gets its ticket: {queued}"
+    );
+    gate.none_pending()?;
+    for filler in fillers {
+        filler.release().await?;
+    }
+    let mut started = gate.next().await?;
+    ensure!(started.job == queued_job, "the queued job starts next");
+    started.maker_closed().await?;
+    started.release().await?;
+    let recovered = body(
+        &context_pipe_once(
+            &f,
+            selection(),
+            &with("boundaryneedle queued", json!({"continuation":queued_job})),
+        )
+        .await?,
+    )?;
+    complete(&recovered)?;
+    ensure!(
+        recovered["delivery"]["job"].as_str() == Some(queued_job.as_str())
+            && recovered["delivery"]["reused"] == true,
+        "the queued job's result is recovered by its handle: {recovered}"
+    );
+    gate.none_pending()?;
+    f.assert_sources_unchanged()
+}
+
+/// A combined Answer is never a job of the service's table. Its job options
+/// are bounded as on the single-index path, and an option it cannot honour
+/// (`invocation_key`, `wait_ms`, `interactive`) is refused with the typed
+/// argument error before any member is queried, never silently ignored.
+/// `fresh`, which a combined Answer always is, still answers.
+#[tokio::test]
+async fn a_combined_answer_refuses_job_options_it_cannot_honour() -> Result<()> {
+    let f = Fixture::new(true)?;
+    let _service = f.start().await?;
+    let (_budget, base) = current_answer_request()?;
+    // Both indexes through one W4 window: a combined read.
+    let window = f.window_for(&f.session).await?;
+    let combined = || window.tool_selection();
+    for extra in [
+        json!({"invocation_key":"turn-1"}),
+        json!({"wait_ms":3_000}),
+        json!({"interactive":true}),
+        json!({"invocation_key":"bad key"}),
+        json!({"wait_ms":0}),
+    ] {
+        let mut arguments = base.clone();
+        for (key, value) in extra.as_object().into_iter().flatten() {
+            arguments[key] = value.clone();
+        }
+        let response = airk_cli::service_runtime::request(
+            &f.control,
+            ControlMethod::ToolsCall {
+                tool: "airk_answer".into(),
+                arguments: arguments.as_object().context("Answer arguments")?.clone(),
+                selection: combined(),
+                response_mode: airk_core::service::ToolResponseMode::Full,
+                usage_client: airk_core::usage::ClientFamily::Unknown,
+                read_attempt: None,
+            },
+        )
+        .await?;
+        let ControlResponse::ToolResult { result } = response else {
+            anyhow::bail!("{extra}: not a tool result: {}", serde_json::to_string(&response)?)
+        };
+        ensure!(result["isError"] == true, "{extra}: answered: {result}");
+        let body = &result["structuredContent"];
+        ensure!(
+            body["error"]["code"] == "invalid_native_arguments"
+                && body["error"]["query_submitted"] == false,
+            "{extra}: not the typed argument refusal: {result}"
+        );
+    }
+    let mut fresh = base.clone();
+    fresh["fresh"] = json!(true);
+    let answered = context_pipe_once(&f, combined(), &fresh).await?;
+    ensure!(answered["isError"] != true, "a fresh combined Answer answers: {answered}");
+    f.assert_sources_unchanged()
+}
 #[tokio::test]
 async fn current_answer_many_and_open_keep_complete_cli_pipe_and_https_mcp_packets() -> Result<()> {
     let f = Fixture::new(true)?;

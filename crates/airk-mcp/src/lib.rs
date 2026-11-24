@@ -12,6 +12,7 @@ use rmcp::{
 };
 use serde::{Deserialize, Serialize};
 
+pub mod answer_jobs;
 mod execution;
 mod lifecycle;
 pub mod read_attempt;
@@ -27,6 +28,9 @@ pub struct AnswerArgs {
     pub verification: response::VerificationArgs,
     #[serde(flatten)]
     pub request: airk_core::arbiter::answer_loop::ContextRequestV3,
+    /// Beside the request, never inside it: the request digest is unchanged.
+    #[serde(flatten)]
+    pub job: airk_core::arbiter::answer_loop::AnswerJobOptions,
     #[serde(flatten, skip_serializing)]
     pub response: ResponseArgs,
 }
@@ -352,6 +356,25 @@ pub struct ListArgs {
     #[serde(default = "default_budget")]
     #[schemars(range(min = 1, max = 65536))]
     pub max_bytes: usize,
+}
+
+/// The bytes an Answer reply keeps back from Union for what the handler adds
+/// after it. The receipt takes (frame - reply - 2048) / 2 of the escaped
+/// reply (`receipt_budget_within`): twice its floor plus 2048 leaves the
+/// floor, and another 2048 holds the annotations the handler adds after
+/// Union, as the 4,096 reserve does without verification (change-log entry
+/// 53). A job reply's delivery record is one of those annotations.
+pub(crate) fn answer_reply_reserve(
+    controls: airk_core::verification::VerificationControls,
+) -> anyhow::Result<usize> {
+    Ok(controls
+        .resolve()?
+        .map(|budget| {
+            airk_kernel::verification::verification_reply_metadata_floor(budget)
+                .map(|floor| floor.saturating_mul(2).saturating_add(4096))
+        })
+        .transpose()?
+        .unwrap_or(4096))
 }
 
 fn default_limit() -> usize {
@@ -689,6 +712,8 @@ pub struct AirkServer {
     plan_read: bool,
     answer_read: bool,
     read_attempt: Option<read_attempt::ReadAttemptContext>,
+    // The service's Answer job table; empty outside an owner in the service.
+    answer_jobs: answer_jobs::Slot,
 }
 
 #[tool_router]
@@ -717,6 +742,7 @@ impl AirkServer {
             plan_read: false,
             answer_read: false,
             read_attempt: None,
+            answer_jobs: Default::default(),
         }
     }
 
@@ -791,31 +817,38 @@ impl AirkServer {
             .read_attempt
             .as_ref()
             .map_or(deadline, |context| deadline.min(context.deadline()));
+        let jobs = answer_jobs::for_call(self);
+        let include_status = args.response.include_status;
         let answered = self.execute_verified_response(
             UsageOperation::Answer,
             args.response,
             args.verification.controls(),
             move |kernel| {
-                let reserve = args
-                    .verification
-                    .controls()
-                    .resolve()?
-                    // The receipt takes (frame - reply - 2048) / 2 of the
-                    // escaped reply (`receipt_budget_within`): twice its
-                    // floor plus 2048 leaves the floor, and another 2048
-                    // holds the annotations the handler adds after Union, as
-                    // the 4,096 reserve does without verification
-                    // (change-log entry 53).
-                    .map(|budget| {
-                        airk_kernel::verification::verification_reply_metadata_floor(budget)
-                            .map(|floor| floor.saturating_mul(2).saturating_add(4096))
-                    })
-                    .transpose()?
-                    .unwrap_or(4096);
+                // Job options are bounded caller input on every path.
+                args.job.validate(&args.request.budget)?;
+                let reserve = answer_reply_reserve(args.verification.controls())?;
                 let kernel = kernel
                     .with_context_reply_reserve(reserve)?
                     .with_fresh_answer_accounting()?;
                 reader.kernel = kernel.clone();
+                // In the service, an admitted Answer is a job of its job
+                // table (plan sections 12.4.1 and 12.4.2); this call waits
+                // for it.
+                if let Some((jobs, authority)) = jobs {
+                    return answer_jobs::run(answer_jobs::Caller {
+                        jobs,
+                        authority,
+                        reader,
+                        kernel,
+                        request: args.request,
+                        options: args.job,
+                        reply_reserve: reserve,
+                        include_status,
+                        deadline,
+                        handle,
+                        sink,
+                    });
+                }
                 // Custody is dropped after delivery until the service job
                 // table keeps it (change log entry 21); the reply keeps the
                 // decision log digest.
@@ -837,7 +870,10 @@ impl AirkServer {
                             progress: &|item| sink(answer_progress(item)),
                         },
                     )
-                    .map(|outcome| outcome.response)
+                    .map(|outcome| answer_jobs::Answered {
+                        response: outcome.response,
+                        delivery: None,
+                    })
             },
         );
         match &reporter {

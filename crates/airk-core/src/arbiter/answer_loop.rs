@@ -232,6 +232,76 @@ impl ContextRequestV3 {
         Ok(())
     }
 }
+/// The longest Answer invocation key.
+pub const MAX_INVOCATION_KEY_BYTES: usize = 128;
+
+/// Job options beside an Answer /3 request, never inside it, so the request
+/// digest is unchanged (CONTRACT "Answer job options and delivery record").
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AnswerJobOptions {
+    /// Start an independent run; never reuse a job by digest.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub fresh: bool,
+    /// Exact retry recovery within the caller's own scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invocation_key: Option<String>,
+    /// How long this call waits; never shortens the job.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait_ms: Option<u64>,
+    /// The job may run to completion with no caller waiting. It never ranks
+    /// a job ahead of an attended one.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub interactive: bool,
+}
+impl AnswerJobOptions {
+    pub fn validate(&self, budget: &BudgetV3) -> Result<()> {
+        if let Some(key) = &self.invocation_key {
+            ensure!(
+                (1..=MAX_INVOCATION_KEY_BYTES).contains(&key.len())
+                    && key
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || b"._:-".contains(&byte)),
+                "invalid Answer invocation key"
+            );
+        }
+        if let Some(wait) = self.wait_ms {
+            ensure!(
+                (1..=budget.deadline_ms).contains(&wait),
+                "invalid Answer wait"
+            );
+        }
+        Ok(())
+    }
+}
+
+/// What one delivery of a service-owned Answer job was: beside the reply,
+/// never inside it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AnswerDeliveryRecord {
+    /// The job's handle; it grants nothing.
+    pub job: Sha256Digest,
+    /// Submission to dispatch.
+    pub queue_ms: u64,
+    /// Dispatch to finish, or to now while the job runs.
+    pub run_ms: u64,
+    /// This call's own wait; equal to the reply's `elapsed_ms`.
+    pub wait_ms: u64,
+    /// This call did not make the work it received.
+    pub reused: bool,
+}
+impl AnswerDeliveryRecord {
+    pub fn validate(&self) -> Result<()> {
+        let window = MAX_DEADLINE_MS.saturating_add(DEADLINE_TOLERANCE_MS);
+        ensure!(
+            self.queue_ms <= MAX_ESTIMATE_MS && self.run_ms <= window && self.wait_ms <= window,
+            "invalid Answer delivery record"
+        );
+        Ok(())
+    }
+}
+
 pub(crate) fn validate_question(question: &str) -> Result<()> {
     ensure!(
         !question.trim().is_empty() && question.len() <= MAX_QUESTION_BYTES,

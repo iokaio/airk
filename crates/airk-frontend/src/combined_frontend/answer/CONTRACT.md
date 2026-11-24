@@ -4,6 +4,14 @@ The existing combined frontend owns the complete selected Answer. Core owns
 VerificationControls, VerificationBudget, VerificationAllocation and receipts;
 this module introduces no native wire shape, state format or authority.
 
+A combined Answer is never a job of the service's Answer job table. Its job
+options beside the request are bounded as on the single-index path
+(`AnswerJobOptions::validate`). `fresh` holds, since a combined Answer always
+runs afresh. `invocation_key`, `wait_ms` and `interactive` cannot be honoured
+here, so a call that names one is refused with the typed, non-submitted
+`invalid_native_arguments` before any member is queried; no option is
+silently ignored.
+
 Parse the actual AnswerArgs once and preserve its requested Report, Require or
 Off semantics. Native Answer children and their canonical inner reads perform
 no independent saved-source checks. A private Answer-reader marker covers

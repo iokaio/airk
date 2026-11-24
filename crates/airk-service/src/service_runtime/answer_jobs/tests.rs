@@ -4,7 +4,7 @@
 //! releases through events, waiting on them under deadlines, never sleeping.
 use super::estimate::{Shape, StageCosts};
 use super::schedule::{
-    ENTRY_OVERHEAD_BYTES, EntryState, JobView, Schedule, Submitted, gathering_limit,
+    ENTRY_OVERHEAD_BYTES, EntryState, JobOptions, JobView, Schedule, Submitted, gathering_limit,
     publication_digest, request_digest,
 };
 use super::*;
@@ -118,6 +118,7 @@ fn done_on(value: &'static str, bytes: usize, generation: u8) -> JobOutcome<&'st
         value,
         publication: publication(generation),
         retained_bytes: bytes,
+        cut: false,
     }
 }
 fn done(value: &'static str, bytes: usize) -> JobOutcome<&'static str> {
@@ -250,9 +251,10 @@ fn an_unavailable_rung_is_disclosed_as_model_unavailable() {
 fn the_same_request_in_the_same_scope_attaches_and_never_across_scopes() {
     let mut table = schedule(JobTableConfig::default());
     let id = submit(&mut table, request("where is admission", 300_000), 0);
-    // A retry with a shorter deadline is the same request and loses nothing.
+    // A retry with the same deadline is the same request and loses nothing
+    // (a call with another deadline runs on its own: CONTRACT "Reuse").
     assert!(matches!(
-        table.submit(scope(4), request("where is admission", 120_000), None, None, 10),
+        table.submit(scope(4), request("where is admission", 300_000), None, None, 10),
         Ok(Submitted::Attached(attached)) if attached == id
     ));
     // Another caller's authority never attaches, even to the same question.
@@ -380,7 +382,7 @@ fn dispatch_takes_the_earliest_deadline_within_the_gathering_limit() {
     let started: Vec<_> = table.dispatch(0).into_iter().map(|job| job.id).collect();
     assert_eq!(started, vec![early, middle]);
     assert!(
-        matches!(table.view(&scope(4), &late, 0), Some(JobView::Queued(ticket)) if ticket.queue_position == 1)
+        matches!(table.view(&scope(4), &late, 0), Some(JobView::Queued(ticket, _)) if ticket.queue_position == 1)
     );
     table.finish(&early, done("early", 10), 10 * SECOND);
     let started: Vec<_> = table
@@ -560,6 +562,47 @@ fn results_are_kept_ten_minutes_then_dropped() {
     );
 }
 
+/// An invocation key recovers its own job only on the publication that job
+/// ran on: after a new publication the same key and request run again, as a
+/// call by digest or by continuation would (plan 12.4.2, "invalidated by a
+/// new publication").
+#[test]
+fn an_invocation_key_never_recovers_a_result_of_an_older_publication() {
+    let mut table = schedule(JobTableConfig::default());
+    let keyed = JobOptions {
+        key: Some("turn-1".into()),
+        ..JobOptions::default()
+    };
+    let submit_keyed = |table: &mut Schedule<&'static str>, generation: u8, now: u64| {
+        table
+            .submit_with(
+                scope(4),
+                small("kept", 300_000),
+                None,
+                Some(publication(generation)),
+                now,
+                &keyed,
+            )
+            .unwrap()
+    };
+    let id = admitted(submit_keyed(&mut table, 1, 0));
+    table.dispatch(0);
+    table.finish(&id, done_on("kept", 100, 1), 5 * SECOND);
+    // Same publication: the key recovers the job.
+    assert!(matches!(
+        submit_keyed(&mut table, 1, 6 * SECOND),
+        Submitted::Attached(attached) if attached == id
+    ));
+    // A newer publication: the key runs the request again.
+    let again = admitted(submit_keyed(&mut table, 2, 7 * SECOND));
+    assert_ne!(again, id);
+    // And from then on the key names the new job.
+    assert!(matches!(
+        submit_keyed(&mut table, 2, 8 * SECOND),
+        Submitted::Attached(attached) if attached == again
+    ));
+}
+
 /// Review C1 and S4: results, failures and running jobs of an older
 /// publication are never attached once a newer one is observed, and an
 /// out-of-order older notification changes nothing.
@@ -664,9 +707,16 @@ fn retention_charges_every_entry_and_caps_the_count() {
     assert!(table.view(&scope(4), &ids[0], 3).is_none());
     assert!(is_finished(table.view(&scope(4), &ids[1], 3)));
     assert_eq!(table.status(3).retained_bytes, 2 * entry);
-    // A failed job is not replayed: the retry attaches to the failure.
+    // A failure belongs to its own invocation (review M5): a call by digest
+    // runs a new job, and the failed job's own continuation still reaches it.
     assert!(matches!(
         table.submit(scope(4), small("two", 300_000), None, None, 5),
+        Ok(Submitted::Admitted(id)) if id != ids[1]
+    ));
+    let mut own = small("two", 300_000);
+    own.continuation = Some(ids[1]);
+    assert!(matches!(
+        table.submit(scope(4), own, None, None, 5),
         Ok(Submitted::Attached(attached)) if attached == ids[1]
     ));
 
@@ -814,6 +864,7 @@ fn harness(config: JobTableConfig) -> Harness {
                     value,
                     publication: publication(1),
                     retained_bytes: 64,
+                    cut: false,
                 })
             })
         })
@@ -872,6 +923,7 @@ async fn a_retry_after_a_client_timeout_attaches_to_the_job() {
         running,
         ticket,
         degradations,
+        ..
     } = first.await.unwrap().unwrap()
     else {
         panic!("the client timed out first");
@@ -886,8 +938,9 @@ async fn a_retry_after_a_client_timeout_attaches_to_the_job() {
     harness.waiting(2).await;
     dropped.abort();
     assert!(dropped.await.unwrap_err().is_cancelled());
-    // The retry attaches to the running job and is notified when it ends.
-    let retry = call(120_000, STEP * 10);
+    // The retry (the same arguments, so the same deadline) attaches to the
+    // running job and is notified when it ends.
+    let retry = call(300_000, STEP * 10);
     harness.waiting(3).await;
     assert_eq!(harness.table.status().unwrap().running, 1);
     release.send(Ok("answer")).unwrap();
@@ -1283,4 +1336,273 @@ async fn a_full_scope_is_told_when_to_retry_and_makes_no_job() {
         CallReply::Finished { .. }
     ));
     assert_eq!(harness.runs.load(Ordering::SeqCst), 1);
+}
+
+// --- Replies the table produces, and delivery (wiring preparation). ---
+
+fn ticket_for(id: Sha256Digest, running: bool) -> AnswerTicket {
+    AnswerTicket {
+        id,
+        queue_position: if running { 1 } else { 3 },
+        estimated_start_ms: if running { 0 } else { 40_000 },
+        estimated_finish_ms: 90_000,
+        retry_after_ms: 90_000,
+    }
+}
+
+#[test]
+fn a_queued_or_running_job_has_a_valid_ticket_shaped_reply() {
+    let request = request("where is admission", 300_000);
+    let degradations = vec![Degradation::Rounds {
+        requested: 3,
+        applied: 2,
+        reason: DegradationReason::QueueWait,
+    }];
+    for (running, degradations) in [(false, vec![]), (true, degradations)] {
+        let reply = reply::pending_reply(
+            &request,
+            binding(4, 1),
+            ticket_for(Sha256Digest::from_bytes([7; 32]), running),
+            degradations.clone(),
+            12,
+        )
+        .unwrap();
+        // Validated on build; serialized, it still parses and validates.
+        let bytes = serde_json::to_vec(&reply).unwrap();
+        let parsed: airk_core::arbiter::answer_loop::ContextResponseV3 =
+            serde_json::from_slice(&bytes).unwrap();
+        parsed.validate(&request.budget).unwrap();
+        assert!(parsed.parts.is_empty() && parsed.records.is_empty());
+        assert_eq!(parsed.degradations.len(), degradations.len());
+        assert_eq!(parsed.ticket.unwrap().id, Sha256Digest::from_bytes([7; 32]));
+    }
+    // A ticket outside the Core bounds is refused, never delivered.
+    let mut bad = ticket_for(Sha256Digest::from_bytes([7; 32]), true);
+    bad.retry_after_ms = 0;
+    assert!(reply::pending_reply(&request, binding(4, 1), bad, vec![], 1).is_err());
+}
+
+#[test]
+fn a_finished_reply_is_retained_on_its_own_publication_and_size() {
+    let request = request("q", 300_000);
+    let response = reply::pending_reply(
+        &request,
+        binding(4, 1),
+        ticket_for(Sha256Digest::from_bytes([7; 32]), true),
+        vec![],
+        1,
+    )
+    .unwrap();
+    let size = serde_json::to_vec(&response).unwrap().len();
+    let finished = reply::finished(response).unwrap();
+    assert_eq!(finished.publication, publication(1));
+    assert_eq!(finished.retained_bytes, size);
+}
+
+/// Through the real table: a call that times out is delivered a ticket
+/// reply naming its job, the retry by continuation is delivered the
+/// finished reply, a reply naming another authority is refused, and Busy
+/// and failures map through unchanged.
+#[tokio::test(start_paused = true)]
+async fn delivery_maps_every_table_reply_and_checks_the_scope() {
+    let request = request("delivered", 300_000);
+    let answer = reply::pending_reply(
+        &request,
+        binding(4, 1),
+        ticket_for(Sha256Digest::from_bytes([9; 32]), true),
+        vec![],
+        1,
+    )
+    .unwrap();
+    let (release, released) = oneshot::channel::<()>();
+    let released = Arc::new(std::sync::Mutex::new(Some(released)));
+    let runner: Runner<airk_core::arbiter::answer_loop::ContextResponseV3> = {
+        let answer = answer.clone();
+        Arc::new(
+            move |_job| -> RunFuture<airk_core::arbiter::answer_loop::ContextResponseV3> {
+                let answer = answer.clone();
+                let released = released.lock().unwrap().take();
+                Box::pin(async move {
+                    if let Some(released) = released {
+                        released.await.ok();
+                    }
+                    reply::finished(answer)
+                })
+            },
+        )
+    };
+    let table = AnswerJobTable::with_salt(
+        JobTableConfig::default(),
+        Arc::new(TokioClock::new()),
+        runner,
+        [5; 32],
+    )
+    .unwrap();
+    let pending = table
+        .call(scope(4), request.clone(), None, None, deadline_in(STEP))
+        .await
+        .unwrap();
+    let reply::Delivered::Reply { response, record } =
+        reply::deliver(pending, &request, &binding(4, 1), 5_000).unwrap()
+    else {
+        panic!("a timed-out call is delivered a reply");
+    };
+    assert!(!record.reused);
+    assert_eq!((record.job, record.wait_ms), (response.ticket.as_ref().unwrap().id, 5_000));
+    let ticket = response.ticket.clone().expect("a ticket-shaped reply");
+    response.validate(&request.budget).unwrap();
+    release.send(()).unwrap();
+    let finished = table
+        .call(
+            scope(4),
+            continued(request.clone(), ticket.id),
+            None,
+            None,
+            deadline_in(STEP),
+        )
+        .await
+        .unwrap();
+    // The finished reply ran under authority 4; a caller bound to another
+    // authority is refused even if a table reply reached it.
+    let other = reply::deliver(
+        table
+            .call(
+                scope(4),
+                continued(request.clone(), ticket.id),
+                None,
+                None,
+                deadline_in(STEP),
+            )
+            .await
+            .unwrap(),
+        &request,
+        &binding(5, 1),
+        1,
+    );
+    assert!(other.is_err());
+    let reply::Delivered::Reply { response, record } =
+        reply::deliver(finished, &request, &binding(4, 1), 1).unwrap()
+    else {
+        panic!("the finished reply is delivered");
+    };
+    assert!(record.reused);
+    // Rendered for this call: its own wait is the reply's elapsed time.
+    let mut expected = answer.clone();
+    expected.elapsed_ms = 1;
+    assert_eq!(
+        serde_json::to_value(&*response).unwrap(),
+        serde_json::to_value(&expected).unwrap()
+    );
+    assert!(matches!(
+        reply::deliver(
+            CallReply::Busy { retry_after_ms: 7 },
+            &request,
+            &binding(4, 1),
+            1
+        )
+        .unwrap(),
+        reply::Delivered::Busy { retry_after_ms: 7 }
+    ));
+    assert!(matches!(
+        reply::deliver(
+            CallReply::Finished {
+                id: ticket.id,
+                attached: true,
+                degradations: vec![],
+                outcome: Arc::new(JobOutcome::Failed("worker gone".into())),
+                timing: Default::default(),
+            },
+            &request,
+            &binding(4, 1),
+            1
+        )
+        .unwrap(),
+        reply::Delivered::Failed(message) if message == "worker gone"
+    ));
+}
+
+/// Each caller's own work runs its job; an attaching call's work is dropped
+/// unused, so the work runs once whatever the number of callers.
+#[tokio::test(start_paused = true)]
+async fn the_work_of_the_call_that_made_the_job_runs_it_once() {
+    fn fail() -> Finished<&'static str> {
+        panic!("the table runner must not run a job that has its own work")
+    }
+    let runner: Runner<&'static str> =
+        Arc::new(|_job| -> RunFuture<&'static str> { Box::pin(async { Ok(fail()) }) });
+    let table = AnswerJobTable::with_salt(
+        JobTableConfig::default(),
+        Arc::new(TokioClock::new()),
+        runner,
+        [6; 32],
+    )
+    .unwrap();
+    let ran = Arc::new(AtomicUsize::new(0));
+    let (release, released) = oneshot::channel::<()>();
+    let work =
+        |label: &'static str, gate: Option<oneshot::Receiver<()>>| -> JobWork<&'static str> {
+            let ran = ran.clone();
+            Box::new(move |job: StartedJob| -> RunFuture<&'static str> {
+                Box::pin(async move {
+                    ran.fetch_add(1, Ordering::SeqCst);
+                    if let Some(gate) = gate {
+                        gate.await.ok();
+                    }
+                    assert!(job.run_ms > 0);
+                    Ok(Finished {
+                        value: label,
+                        publication: publication(1),
+                        retained_bytes: 1,
+                        cut: false,
+                    })
+                })
+            })
+        };
+    let first = tokio::spawn({
+        let table = table.clone();
+        let work = work("first", Some(released));
+        async move {
+            table
+                .call_with_work(
+                    scope(4),
+                    small("q", 60_000),
+                    None,
+                    None,
+                    deadline_in(STEP * 10),
+                    Some(work),
+                )
+                .await
+        }
+    });
+    tokio::time::timeout(Duration::from_secs(60), table.waiting_at_least(1))
+        .await
+        .unwrap();
+    let second = tokio::spawn({
+        let table = table.clone();
+        let work = work("second", None);
+        async move {
+            table
+                .call_with_work(
+                    scope(4),
+                    small("q", 60_000),
+                    None,
+                    None,
+                    deadline_in(STEP * 10),
+                    Some(work),
+                )
+                .await
+        }
+    });
+    tokio::time::timeout(Duration::from_secs(60), table.waiting_at_least(2))
+        .await
+        .unwrap();
+    release.send(()).unwrap();
+    for call in [first, second] {
+        assert!(matches!(
+            call.await.unwrap().unwrap(),
+            CallReply::Finished { outcome, .. }
+                if matches!(outcome.as_ref(), JobOutcome::Done { value: "first", .. })
+        ));
+    }
+    assert_eq!(ran.load(Ordering::SeqCst), 1);
 }

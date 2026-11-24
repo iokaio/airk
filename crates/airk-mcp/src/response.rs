@@ -84,6 +84,16 @@ impl PreservedReadFailure {
     pub fn from_error(error: &anyhow::Error) -> Option<Self> {
         typed_error_result(error).map(Self)
     }
+    /// The receipt, for the service's Answer job table to hold in memory
+    /// between a job and the calls it answers (`answer_jobs`). It is never
+    /// read from a request, a file or a wire.
+    pub(crate) fn receipt(&self) -> Option<Value> {
+        serde_json::to_value(&self.0).ok()
+    }
+    /// Only for a receipt this process made with [`Self::receipt`].
+    pub(crate) fn from_receipt(receipt: Value) -> Option<Self> {
+        serde_json::from_value(receipt).ok().map(Self)
+    }
 }
 impl std::fmt::Display for PreservedReadFailure {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -222,6 +232,16 @@ fn typed_bare_error_result(error: &anyhow::Error) -> Option<rmcp::model::CallToo
     if let Some(advanced) = error.downcast_ref::<airk_core::scoped_reads::PublicationAdvanced>() {
         return Some(rmcp::model::CallToolResult::error(vec![
             rmcp::model::ContentBlock::text(advanced.receipt().to_string()),
+        ]));
+    }
+    if let Some(busy) = error.downcast_ref::<crate::answer_jobs::AnswerQueueBusy>() {
+        return Some(rmcp::model::CallToolResult::error(vec![
+            rmcp::model::ContentBlock::text(busy.receipt().to_string()),
+        ]));
+    }
+    if let Some(refusal) = error.downcast_ref::<crate::answer_jobs::AnswerJobRefusal>() {
+        return Some(rmcp::model::CallToolResult::error(vec![
+            rmcp::model::ContentBlock::text(refusal.receipt().to_string()),
         ]));
     }
     if let Some(invalid) = error.downcast_ref::<airk_core::read_arguments::ReadArgumentError>() {

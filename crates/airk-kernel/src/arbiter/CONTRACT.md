@@ -294,6 +294,67 @@ repeat the same layers. Without a binding, and always in a product build,
 `evaluation_layers()` is `Layers::default()`: every layer off and every value
 unset, so the product's gathering, roster and Focus shape are unchanged.
 
+## Answer /3 admission plan (`answer/admission.rs`, L2b)
+
+The service's Answer job table decides how much of a request fits its
+deadline (final plan section 12.4.1). The kernel runs the loop under that
+decision and says so in the reply.
+
+- **`Kernel::answer_admitted(request, env, plan)`** runs the loop of
+  `answer_with` under an `AdmissionPlan`. `answer_with` and `AnswerEnv` are
+  unchanged, and a call without a plan behaves as before.
+- **The plan bounds, it never widens.** It limits the request's parts,
+  sub-needs and rounds, and a plan without the Context model runs the
+  no-model loop. A limit the budget already keeps (a combined member's
+  allowance, say) is not the plan's reduction.
+- **The reply discloses the plan.** It carries the plan's reductions
+  (`parts`, `sub_needs`, `rounds`, `model`) beside the loop's own
+  degradations, and it is validated against the budget as asked, as the Core
+  reply contract expects.
+- **Refused before the loop starts:** a reduction the plan does not disclose,
+  a change of Context rung (the loop cannot change rung per Answer; it can
+  only drop to no model), and a disclosure that is the loop's own.
+- **`Kernel::answer_scope`** returns the binding the loop would check before
+  it runs, from the same owner observation and with the same checks. The
+  service keys its job table on it, never on client input. It refuses a
+  combined member, which is not a job of its own.
+- **`Kernel::answer_context_model`** names the Context model the card calls
+  would run on, for the admission estimate only.
+
+Evidence: `arbiter::answer::admission::tests` (the plan), and the wired path
+in `airk-mcp` `answer_jobs::tests` and `airk-service`
+`answer_jobs::wiring::tests`.
+
+## Answer job kernel (`answer/admission.rs`, L2c, decided 23 November 2026)
+
+Recorded contract decision (final plan section 12.4.2; the service half is
+`airk-service` `answer_jobs/CONTRACT.md`, "Service-owned jobs"). A
+service-owned Answer job needs read authority and a native attempt of its own,
+so that its maker's session teardown does not end it (review H1).
+
+- **`Kernel::answer_job_kernel()`** derives the job's kernel from a live
+  caller kernel:
+  - the same frozen scoped-read authority, fingerprint, observation, selected
+    read snapshot and native owner, and a **revocation flag of its own**.
+    `revoke_scoped_reads` on the maker's kernel no longer reaches it; on the
+    job kernel it ends the job's reads. The owner revokes it with the
+    selection or open read the maker redeemed.
+  - **no native attempt.** The job mints its own at dispatch and binds it
+    with the existing `with_optional_read_attempt_for("airk_answer", ..)`,
+    which refuses a second attempt. The attempt carries the job's own request
+    id and expiry; the maker's attempt is not replaced, it is simply not used.
+  - fresh Focus and loop accounting.
+- **Refused:** a caller kernel whose scope is already revoked, and a
+  combined member (a partition allowance: it runs under its parent and is
+  never a job). A kernel without an Arbiter owner is allowed and keeps the
+  no-model loop.
+- It widens nothing: the job kernel reads exactly what the maker could, in
+  the same root, collection and index, on the same publication.
+
+Evidence: `arbiter::answer::admission::tests` (the derivation) and
+`airk-supervisor` `project_worker::scopes::answer_job_tests` (a job kernel
+outlives its maker's session and ends with its selection).
+
 ## Answer /3 loop (`answer/`), what holds and what does not
 
 `Kernel::answer_with` runs the section 12 loop: Split, per-part Plan,

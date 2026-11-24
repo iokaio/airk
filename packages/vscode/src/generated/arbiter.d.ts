@@ -18,6 +18,57 @@ export type Advice = {
     work: Work;
 };
 
+/**
+ * What one delivery of a service-owned Answer job was: beside the reply,
+ * never inside it.
+ */
+export type AnswerDeliveryRecord = {
+    /**
+     * The job's handle; it grants nothing.
+     */
+    job: Sha256Digest;
+    /**
+     * Submission to dispatch.
+     */
+    queue_ms: number;
+    /**
+     * This call did not make the work it received.
+     */
+    reused: boolean;
+    /**
+     * Dispatch to finish, or to now while the job runs.
+     */
+    run_ms: number;
+    /**
+     * This call's own wait; equal to the reply's `elapsed_ms`.
+     */
+    wait_ms: number;
+};
+
+/**
+ * Job options beside an Answer /3 request, never inside it, so the request
+ * digest is unchanged (CONTRACT "Answer job options and delivery record").
+ */
+export type AnswerJobOptions = {
+    /**
+     * Start an independent run; never reuse a job by digest.
+     */
+    fresh?: boolean;
+    /**
+     * The job may run to completion with no caller waiting. It never ranks
+     * a job ahead of an attended one.
+     */
+    interactive?: boolean;
+    /**
+     * Exact retry recovery within the caller's own scope.
+     */
+    invocation_key?: string | null;
+    /**
+     * How long this call waits; never shortens the job.
+     */
+    wait_ms?: number | null;
+};
+
 export type AnswerPart = {
     /**
      * This part's share of the deadline, after any early finisher's return.

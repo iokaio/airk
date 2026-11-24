@@ -130,6 +130,18 @@ pub struct Hooks {
         airk_core::service::ProjectBinding,
     )
         -> Result<Option<airk_core::rebuild::RebuildObservation>>,
+    /// The service's Answer job table, for an owner that runs in the service
+    /// (final plan section 12.4.1). `None` keeps Answer on its direct path.
+    pub(crate) answer_jobs: AnswerJobsLookup,
+}
+/// By control root, as every other service function here is found.
+pub type AnswerJobsLookup = fn(&Path) -> Option<Arc<dyn airk_mcp::answer_jobs::AnswerJobs>>;
+impl Hooks {
+    /// The service composition root supplies its Answer job table.
+    pub fn with_answer_jobs(mut self, lookup: AnswerJobsLookup) -> Self {
+        self.answer_jobs = lookup;
+        self
+    }
 }
 type ArbiterControllerFactory =
     fn(&Path) -> Result<Option<Arc<dyn airk_kernel::arbiter::NativeController>>>;
@@ -328,16 +340,29 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
             return Err(error);
         }
     };
+    let session_closed = tokio_util::sync::CancellationToken::new();
     let _session_fence = scopes::SessionFence {
         scopes: state.scopes.clone(),
         reference: grant.scope,
         session,
+        closed: session_closed.clone(),
     };
     let response_kernel = tools.scoped_read_revocation_handle();
     let result = async {
         if let Some(authority) = grant.scope
             && let Some(owner) = (state.hooks.arbiter_controller)(&state.control)? {
             tools = tools.native_arbiter_session(state.identity,authority,owner).await?;
+        }
+        // The table comes only with this session's job authority: each job's
+        // own kernel is fenced with the selection or open read this session
+        // redeemed and its lease, not with this session.
+        if let Some(jobs) = (state.hooks.answer_jobs)(&state.control) {
+            tools.set_answer_jobs(jobs, Arc::new(scopes::SessionJobAuthority {
+                scopes: state.scopes.clone(),
+                reference: grant.scope,
+                closed: session_closed.clone(),
+                execution: state.execution.clone(),
+            }));
         }
         if let Some(scope) = grant.scope {
             state.scopes.lock().map_err(|_| anyhow::anyhow!("scope policy unavailable"))?
@@ -2037,7 +2062,8 @@ pub(crate) async fn serve(
                     }
                 }
                 if jobs.is_finished(){break;}
-                if busy.load(Ordering::Acquire)||maintenance_waiting.load(Ordering::Acquire){idle=Instant::now();}
+                // A service-owned Answer job may run on after its caller's connection closed.
+                if busy.load(Ordering::Acquire)||maintenance_waiting.load(Ordering::Acquire)||state.tools.answer_jobs_in_flight()>0{idle=Instant::now();}
                 if connections.is_empty()&&idle.elapsed()>Duration::from_secs(15){break;}
                 // A generation has a bounded lifetime; replacement requires fresh brokerage.
                 if state.broker.lock().map_err(|_|anyhow::anyhow!("query policy unavailable"))?.status(Instant::now()).draining_projects>0 {break;}

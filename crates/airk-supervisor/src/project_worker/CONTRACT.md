@@ -87,3 +87,73 @@ expiry while a new one is refused. These establish clock ownership and no-replay
 behavior; they do not qualify a model, live service or real R154 outcome.
 
 Before acknowledging activation, the project worker asks the registry whether its own project already has a terminal canceled job. That receipt vetoes semantic setup, so the worker can return from setup reconciliation without inspecting the complete publication. All other projects retain the existing semantic inspection and transactional enrollment checks.
+
+## Answer job table hook (final plan section 12.4.1, L2b)
+
+`Hooks::answer_jobs` is a lookup by control root, supplied by the service
+composition root (`Hooks::with_answer_jobs`). The default finds nothing. After
+a query connection has built its session tools, and after its native Arbiter
+session when it has one, the worker asks the lookup once and, when it returns a
+table, gives it to that session (`LocalTools::set_answer_jobs`). The session's
+`airk_answer` calls then go through the service's Answer job table; every
+other tool, and every session without a table, is unchanged. The worker does
+not own the table, its queue or its results: the service does
+(`airk-service` `service_runtime/answer_jobs/CONTRACT.md`). A child-process
+owner has no table in its process, so its Answers keep the direct path.
+
+A job of that table outlives the connection of the call that made it. While
+one is queued or runs under this owner (`LocalTools::answer_jobs_in_flight`),
+the owner is not idle, so the 15-second idle exit does not end it. Every other exit (a
+drain, a quarantine, the bounded generation lifetime) is unchanged: the job
+then stops at its next fence and the table keeps no failure for it.
+
+## Answer job authority (L2c, decided 23 November 2026)
+
+Recorded contract decision (final plan section 12.4.2; review of `24184339`,
+H1; rebuilt on selections after grant removal, change-log entry 70). The
+owner gives a session the table only together with an `AnswerJobAuthority`
+for the read authority that session redeemed (`LocalTools::set_answer_jobs(jobs,
+authority)`). Since the local trust plan's phase B removed reviewed grants,
+that authority is a W4 window or A2 Admin selection
+(`SelectionReadAuthority`) or a U105 open agent read (`OpenReadAuthority`),
+both installed in the selection ledger. A job holds exactly its caller's
+authority: its kernel is a copy of the maker's frozen scope with its own
+revocation flag, never a wider one.
+
+- **`bind(job kernel)`**, at the job's submission: the installed
+  selection-ledger entry of the session's selection or open read must be
+  live. The job kernel
+  (`Kernel::answer_job_kernel`, its own revocation flag) is registered on
+  that entry beside the sessions, at most 64 a lease. The returned guard
+  removes and revokes it when the job's work is dropped.
+- **What reaches a job's kernel:** what fences the selection or open read.
+  That is its `RevokeScope` (the host sends it when the window, Admin or
+  agent selection that owns it ends, so the job's authority ends with that
+  session, and the job's refusal `answer_authority_ended` reports
+  `query_submitted`), lease expiry (`expire`), lease renewal (the superseded
+  lease's readers are fenced) and the owner's close. A new catalog revision
+  is a new selection with its own nonce, so the old one ends by its own
+  `RevokeScope`; there is no grant revision any more. These revoke registered jobs
+  exactly as they revoke sessions.
+- **What does not:** `SessionFence::drop` (`detach`) removes and revokes the
+  session's own kernel only. The session's 60 s authorization window, its
+  30 s read timeout and its stream ending end its own admission and wait,
+  not its jobs.
+- **`stuck()`**, when a job passes its deadline and grace: an in-process
+  owner quarantines itself (`StuckReason::QueryDeadline`), as a stuck direct
+  query does. A child-process owner has no table.
+- **The maker's session end is observable:** the guard carries a
+  cancellation that `SessionFence::drop` cancels. It is a diagnostic seam
+  for the delivery record and the tests, never authority.
+- An unscoped (legacy) session's authority binds nothing: its kernel has no
+  scoped reads to revoke, and its job is bounded by its own deadline and its
+  owner.
+- A job counts as running for the idle exit only until its deadline and
+  grace (`answer_jobs_in_flight`), so a stuck job cannot keep its owner
+  alive for ever; the quarantine then lets it leave.
+
+Evidence: `project_worker::scopes::answer_job_tests` (a job kernel outlives
+its maker's session teardown, for a selection and an open read, and ends
+with its selection, its lease and the owner's close; one selection's
+revocation leaves another's jobs alone), and through the real `query()` path in `airk-cli`
+`tests/combined_reads.rs` (`answer_jobs_*`).

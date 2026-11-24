@@ -1252,8 +1252,8 @@ mod focus;
 mod joint;
 pub mod software;
 pub use answer::{
-    AnswerCustody, AnswerEnv, AnswerOutcome, AnswerPostExecutionStale, AnswerProgress,
-    CanonicalReadFn, CustodyRecord,
+    AdmissionPlan, AnswerCustody, AnswerEnv, AnswerOutcome, AnswerPostExecutionStale,
+    AnswerProgress, CanonicalReadFn, CustodyRecord,
 };
 pub use focus::FocusPostExecutionStale;
 pub use joint::JointPostExecutionStale;

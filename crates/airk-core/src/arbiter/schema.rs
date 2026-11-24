@@ -58,6 +58,8 @@ pub fn document() -> serde_json::Value {
     root::<context_action::ContextActionRoster>(&mut generator, &mut roots);
     root::<answer_loop::ContextRequestV3>(&mut generator, &mut roots);
     root::<answer_loop::ContextResponseV3>(&mut generator, &mut roots);
+    root::<answer_loop::AnswerJobOptions>(&mut generator, &mut roots);
+    root::<answer_loop::AnswerDeliveryRecord>(&mut generator, &mut roots);
     root::<answer_loop::DecisionLog>(&mut generator, &mut roots);
     root::<answer_loop::FocusBatchReceipt>(&mut generator, &mut roots);
     root::<answer_loop::LoopCalibration>(&mut generator, &mut roots);
