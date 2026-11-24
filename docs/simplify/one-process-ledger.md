@@ -17301,3 +17301,17 @@ step; the migration of this machine's `https` installation and CA removal;
 macOS, Safari, Linux. **Stop for the user's manual check.** After it: fresh
 fixture bases, the live switch-sequence check on a CUDA lifetime, then L7.
 D: free 339,299,659,776 bytes. Nothing running.
+### 24 November 2026 at 16:10 UTC — LF hash pinned for `minilm-v2-provenance.json` (`d754d8c9`)
+
+**User's word:** "Pin the LF hash". `.gitattributes` checks the file out
+with LF (`eol=lf`; the blob is LF), while `scripts/license-notices.py`
+pinned its CRLF bytes (`6f6a29bf…`), so fresh checkouts failed the notice
+check and candidate builds overlaid CRLF bytes. Now pinned at `47d48230…` in
+`scripts/license-notices.py`, `scripts/tests/test_research_notices.py` and
+`third_party/research/provenance.json`; the provenance record's own pin
+moves from `c01b711a…` to `5c6d7df6…`. Historical copies under
+`scripts/arbiter/` are left as history. `test_research_notices` and
+`test_model_legal_payloads`: 13 run, 2 failures, both also failing on the
+base (which failed 5 and errored 6 with this working copy); the 9 others are
+fixed. The 1.8.208 candidate was built before this change from the same
+bytes through the overlay, so its payload is unaffected.
