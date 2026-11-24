@@ -65,7 +65,9 @@ Python 3.13, standard library only. Run every script as
 | `loop_reply.py` | Answer /3 (the loop) replies: decisions keyed by stage, part, sub-need and round, sub-needs and their coverage, records, tickets, the reply summary, and the gate arms' identity check |
 | `gate.py` | The LG gate tests (plan 12.7): first-reply replays per arm (tests 1 and 2), decision agreement, judged outcomes between two arms (test 3), concurrency and performance (test 4), and the FP32 against FP16 precision check with its escalation rule |
 | `gate_report.py` | The gate report for the user's personal review: bars and recommendations, agreement, evidence, outcomes, a per-scenario side by side, precision, performance and receipts |
-| `make_loop_spec.py` | The LG series spec and run plan (arms F, C, L and the precision arms), the L7 baseline spec and plan, and `l7_plan_template.json` |
+| `make_loop_spec.py` | The LG series spec and run plan (arms F, C, L and the precision arms), the L7 baseline spec and plan, `l7_plan_template.json`, and shakedown specs for the four switch combinations (arms N, F, A, C; L for LG history) |
+| `smoke_summary.py` | One summary row per Answer of `gate.py smoke` receipts (decision sources, Focus and card calls, records and failures, degradations, model work) |
+| `lifetime_probe.py` | Read-only probes of a ready lifetime: `airk_help` for a topic, `arbiter status-legacy` and `arbiter status`, and `airk_status` for every index |
 
 ## Paths and tools
 
@@ -390,6 +392,49 @@ python -I -B scripts/arbiter-answer-eval/run_plan.py --plan R/passes/<NN>-gate-l
 python -I -B scripts/arbiter-answer-eval/gate_report.py --inputs R/passes/<NN>-gate-lg/gate-report-inputs.json --out docs/arbiter/answer-evaluation/<NN>-gate-lg-detail.md
 ```
 
+### The four switch combinations on one lifetime (LH acceptance)
+
+**Purpose.** The LH acceptance run (23 November 2026) switched one CUDA lifetime
+through neither switch, Focus only, Arbiter only and both, and ran a smoke
+Answer on a real service after each. These tools are its harness, moved here
+from a one-off folder. They are evaluation tooling, never product, and a
+shakedown's results are a pipeline test, never a result.
+
+**Inputs.** A ready lifetime's `handle.json` (and its fixture root), the
+private root R with the frozen scenarios, and the shakedown's own output root
+(nothing of a shakedown lands in `R/passes`).
+
+**Outputs.** One spec per arm under `<out-root>/passes/<series>/` (`spec.json`
+and `gate-report-inputs.json`), `gate.py smoke` receipts, the summary rows of
+`smoke_summary.py` on stdout, and the probes' receipts in `--out`. Receipts stay
+in the private root; none is committed.
+
+**Use.**
+
+```text
+# one spec per combination: N neither, F Focus only, A Arbiter only, C both
+python -I -B scripts/arbiter-answer-eval/make_loop_spec.py --r-root R shakedown --series lh-accept-N --out-root <shakedown root> --handle <lifetime>/handle.json --scenarios munarium-A1,bookbuilder-A1 --arm N
+# switch the lifetime to the arm's stages (gpu_fixture.py ensure/stage), then:
+python -I -B scripts/arbiter-answer-eval/gate.py --r-root <shakedown root> smoke --spec <shakedown root>/passes/lh-accept-N/spec.json --arm N --out <dir>
+python -I -B scripts/arbiter-answer-eval/smoke_summary.py <dir>/smoke.json [<dir2>/smoke.json ...]
+python -I -B scripts/arbiter-answer-eval/lifetime_probe.py --fixtures <fixture root> --lifetime <name> --out <dir> help
+python -I -B scripts/arbiter-answer-eval/lifetime_probe.py --fixtures <fixture root> --lifetime <name> --out <dir> arbiter-status --label after-switch
+python -I -B scripts/arbiter-answer-eval/lifetime_probe.py --fixtures <fixture root> --lifetime <name> --out <dir> index-status
+```
+
+`--arm` takes `F`, `C`, `L`, `A` and `N`. `N` (neither: no Focus, no Context
+model; path `noModel`) and `A` (Arbiter only) are shakedown arms: the LG
+series still builds exactly F, C and L, and the L7 plan runs F, C and A. `L`
+stays because the LG series, `gate_report.py` and the `lg_*.py` tools still
+build and read it.
+
+`fixture.py` waits for the service's `ready.json` to be a complete, parseable
+file (`complete_json_observer`): while the service is still writing it, a
+sharing violation (`PermissionError`) or a JSON parse error means "not ready
+yet", not a failure. A file that stays unreadable for 60 s after it appears
+(checked at each directory change) fails with its last error, and the
+readiness deadline still bounds the wait.
+
 ### How Claude Code is started
 
 The harness uses the newest installed VS Code extension binary
@@ -562,5 +607,8 @@ with `"repos": ["airk"]`. `test_pair.py` covers the loop pair: the defaults,
 the munarium scenarios in the loaders, the per-repository win count, the
 gate report's privacy for munarium, the generic leak check (a repository with
 an empty exclusion list is still probed and records it) and the no-airk check.
-`test_fixture.py` belongs to `fixture.py`, `test_lg_lifetimes.py` to
+`test_lh_tools.py` covers `smoke_summary.py` and `lifetime_probe.py` over
+canned replies and a stub command runner. `test_fixture.py` belongs to `fixture.py`
+(including the `ready.json` wait, with an injected clock and reader and one
+real directory-change wait), `test_lg_lifetimes.py` to
 `lg_lifetimes.py` and `test_lg_bases.py` to `lg_bases.py`.

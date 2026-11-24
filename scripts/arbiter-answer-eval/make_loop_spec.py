@@ -17,6 +17,7 @@ index):
 | C32 | ``compactFp32`` | compact | the gate's Focus route | Compact FP32 CUDA | 12.7.3, replays only |
 | L32 | ``largeFp32`` | large | the gate's Focus route | Large FP32 CUDA | 12.7.3, replays only |
 | A | ``arbiter`` | arbiter | none (Focus off) | Compact FP16 CUDA (Arbiter) | LH and L7: Arbiter only |
+| N | ``neither`` | noModel | none (Focus off) | none | LH shakedown only: the deterministic loop |
 | CF16 | ``compactFocusFp16`` | compact | Focus FP16 CUDA | Compact FP16 CUDA | 12.7.3, replays only |
 | CF32 | ``compactFocusFp32`` | compact | Focus FP32 CUDA | Compact FP16 CUDA | 12.7.3, replays only |
 
@@ -28,7 +29,12 @@ it; its entry is then run with ``run_pass.py --only <name>``.
 Arm A (Arbiter only, added in LH after Large was dropped) is not a gate arm: the
 LG series (``gate``) still builds exactly F, C and L, so it stays reproducible.
 L7 runs Search, Parse, F (Focus only), C (Arbiter with Focus) and A (Arbiter
-only); Large is out of the L7 plan and its template.
+only); Large is out of the L7 plan and its template. Arm L stays in the table
+and the shakedown choices because the LG series, its report (``gate_report.py``)
+and the LG tooling (``lg_*.py``) still build and read it; only the L7 plan has
+dropped it. Arm N (neither switch: no Focus, no Context model) is neither a gate
+nor an L7 arm: it exists for ``shakedown`` (``SHAKEDOWN_ARMS``), so the four
+combinations of the two switches (N, F, A, C) each get a spec.
 
 Arm identity: an entry's ``arm_check`` is checked on every replay and on the
 digest call before any agent session (``run_pass``), from the reply's own
@@ -81,6 +87,8 @@ PROFILES = {
     "large_fp32": "context-large-cuda",
 }
 JUDGED_ARMS = ("F", "C", "L")
+# The arms a shakedown may run: the judged arms, Arbiter only (A) and neither switch (N).
+SHAKEDOWN_ARMS = JUDGED_ARMS + ("A", "N")
 # The L7 loop arms (plan section 2, "after LG"): Focus only, Arbiter with Focus, Arbiter only.
 L7_ARMS = ("F", "C", "A")
 PRECISION_ARMS = ("C32", "L32", "CF16", "CF32")
@@ -125,6 +133,8 @@ def gate_arms(profiles: dict, context_value: str = "context_compact") -> list[di
              replay_only=True, precision_stage="focus"),
         # Arbiter only (LH): the remaining Context model with Focus switched off.
         _arm("A", "arbiter", "arbiter", None, p["compact"], compact16),
+        # Neither (LH shakedown): both switches off, the deterministic order throughout.
+        _arm("N", "neither", "noModel", None, None, {"context": None}),
     ]
 
 
@@ -422,7 +432,7 @@ def l7_plan(spec_path: Path, spec: dict, r_root: Path) -> list[dict]:
 def shakedown_spec(series: str, r_root: Path, out_root: Path, handle: str, scenario_ids: list[str],
                    profiles: dict, budget: dict, arm: str = "C") -> dict:
     """A pipeline test before the gate (GPU_FIXTURE.md, "Before the gate"): arm C alone, on one non-gate
-    lifetime (or ``arm``, such as F), a few scenarios. Scenarios and the scenario freeze are R's own; the prompts freeze and every
+    lifetime (or ``arm``: F, A, N or the dropped L; see ``SHAKEDOWN_ARMS``), a few scenarios. Scenarios and the scenario freeze are R's own; the prompts freeze and every
     output live under ``out_root``, so nothing of a shakedown lands in ``R/passes``. Its verdicts mean nothing."""
     repos = sorted({s.split("-", 1)[0] for s in scenario_ids})
     common.require(repos and all(r in common.REPOS for r in repos), f"unknown repositories in {scenario_ids}")
@@ -430,6 +440,7 @@ def shakedown_spec(series: str, r_root: Path, out_root: Path, handle: str, scena
     spec["scenario_ids"] = list(scenario_ids)
     spec["prompts_freeze"] = str(out_root / "design" / "prompts-freeze.json")
     spec["settle_repos"] = repos
+    common.require(arm in SHAKEDOWN_ARMS, f"unknown shakedown arm {arm!r}; the arms are {', '.join(SHAKEDOWN_ARMS)}")
     entry = {e["arm"]: e for e in gate_arms(profiles, "arbiter")}[arm]
     spec["gate"] = {"pairs": [], "precision_pairs": [], "profiles": dict(profiles), "lifetimes": {},
                     "precision": {"run": False, "reason": "a shakedown runs no precision check"},
@@ -490,7 +501,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_argument("--out-root", type=Path, required=True, help="the shakedown's own r-root for run_pass and gate")
     sub.add_argument("--handle", required=True, help="the shakedown lifetime's handle.json")
     sub.add_argument("--scenarios", required=True, help="comma-separated scenario ids, e.g. munarium-A1")
-    sub.add_argument("--arm", default="C", choices=JUDGED_ARMS)
+    sub.add_argument("--arm", default="C", choices=SHAKEDOWN_ARMS,
+                     help="N neither, F Focus only, A Arbiter only, C both (L is the dropped Large arm of LG)")
     sub.add_argument("--budget", default="{}")
     args = parser.parse_args(argv)
     if args.command == "template":

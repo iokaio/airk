@@ -1107,6 +1107,7 @@ class Specs(TempDir):
         self.assertEqual(len(spec["scenario_ids"]), 20)
         self.assertEqual(arms["F"]["arm_check"], {"context": None, "focus": True})
         self.assertNotIn("A", arms)  # the LG series stays as it ran: arm A is an L7 arm
+        self.assertNotIn("N", arms)  # and arm N is a shakedown arm only
         self.assertTrue(all(e["arm_check"]["focus"] for e in arms.values()))  # every gate arm stages Focus
         self.assertEqual(arms["L"]["arm_check"]["context"], "context_large")
         self.assertEqual(arms["L32"]["arm_check"]["precision"], "float32")
@@ -1175,6 +1176,73 @@ class Specs(TempDir):
         self.assertEqual(make_loop_spec.gate_report_inputs(spec, out)["arms"], {"C": str(out / "passes" / "s" / "gate" / "C")})
         with self.assertRaises(common.HarnessError):
             make_loop_spec.shakedown_spec("s", self.tmp, out, "h", ["nowhere-A1"], make_loop_spec.PROFILES, {})
+
+    def shakedown_results(self, arm, handle=None):
+        handle = handle or str(self.tmp / "fx" / "life" / "handle.json")
+        spec = make_loop_spec.shakedown_spec("s", self.tmp / "R", self.tmp / "o", handle,
+                                             ["munarium-A1", "bookbuilder-A1"], make_loop_spec.PROFILES, {}, arm)
+        return spec, handle
+
+    def test_shakedown_arms_cover_the_four_switch_combinations(self):
+        # LH acceptance (23 November 2026): neither (N), Focus only (F), Arbiter only (A) and both (C) each get a
+        # shakedown spec. The expected entries are written out here, not built from the arm catalog.
+        handle = str(self.tmp / "fx" / "life" / "handle.json")
+
+        def guard(profiles):
+            return [sys.executable, "-I", "-B", str(Path(make_loop_spec.__file__).resolve().parent / "gpu_fixture.py"),
+                    "--fixtures", str(self.tmp / "fx"), "ensure", "--lifetime", "life", "--profiles", profiles]
+
+        common_fields = {"device": "gpu", "reuse": False, "call_timeout": 900, "session_timeout": 3600,
+                         "handle": handle, "concurrency": 1}
+        arbiter = {"context": "arbiter", "device": "cuda", "precision": "float16", "mode": "top_score"}
+        expected = {
+            "N": {"arm": "N", "configuration": "neither", "path": "noModel",
+                  "arm_stages": {"focus": None, "context": None}, "arm_check": {"context": None, "focus": False},
+                  "stage_guard": None, **common_fields},
+            "F": {"arm": "F", "configuration": "focus", "path": "focus",
+                  "arm_stages": {"focus": "focus-1024-cuda", "context": None},
+                  "arm_check": {"context": None, "focus": True},
+                  "stage_guard": guard("focus-1024-cuda"), **common_fields},
+            "A": {"arm": "A", "configuration": "arbiter", "path": "arbiter",
+                  "arm_stages": {"focus": None, "context": "context-compact-fp16-cuda"},
+                  "arm_check": dict(arbiter, focus=False),
+                  "stage_guard": guard("context-compact-fp16-cuda"), **common_fields},
+            "C": {"arm": "C", "configuration": "compact", "path": "compact",
+                  "arm_stages": {"focus": "focus-1024-cuda", "context": "context-compact-fp16-cuda"},
+                  "arm_check": dict(arbiter, focus=True),
+                  "stage_guard": guard("focus-1024-cuda,context-compact-fp16-cuda"), **common_fields},
+        }
+        for arm, entry in expected.items():
+            spec, _ = self.shakedown_results(arm, handle)
+            self.assertEqual(spec["results"], [entry], arm)
+            self.assertEqual(spec["scenario_ids"], ["munarium-A1", "bookbuilder-A1"])
+            self.assertEqual(spec["repos"], ["bookbuilder", "munarium"])
+            self.assertEqual(spec["concurrency"], 1)
+            self.assertEqual(spec["gate"]["lifetimes"], {})
+            self.assertEqual(spec["answer_defaults"]["budget"], common.ANSWER_BUDGET_DEFAULT)
+            self.assertEqual(make_loop_spec.gate_report_inputs(spec, self.tmp / "o")["arms"],
+                             {arm: str(self.tmp / "o" / "passes" / "s" / "gate" / arm)})
+        # The four result names differ, so the four specs name four distinct arms.
+        self.assertEqual(len({run_pass.Pass.result_name(e) for e in expected.values()}), 4)
+        with self.assertRaises(common.HarnessError):
+            self.shakedown_results("X")
+
+    def test_shakedown_command_takes_every_arm_and_writes_the_spec(self):
+        # The CLI accepts N and A (it took only F, C and L), and L stays for the LG series' tooling.
+        self.assertEqual(make_loop_spec.SHAKEDOWN_ARMS, ("F", "C", "L", "A", "N"))
+        out = self.tmp / "out"
+        for arm in ("N", "A"):
+            with contextlib.redirect_stdout(io.StringIO()):
+                code = make_loop_spec.main(["--r-root", str(self.tmp / "R"), "shakedown", "--series", f"s-{arm}",
+                                            "--out-root", str(out), "--handle", str(self.tmp / "fx" / "life" / "handle.json"),
+                                            "--scenarios", "munarium-A1", "--arm", arm])
+            self.assertEqual(code, 0)
+            written = common.read_json(out / "passes" / f"s-{arm}" / "spec.json")
+            self.assertEqual([e["arm"] for e in written["results"]], [arm])
+            self.assertTrue((out / "passes" / f"s-{arm}" / "gate-report-inputs.json").is_file())
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            make_loop_spec.main(["--r-root", str(self.tmp / "R"), "shakedown", "--series", "s-X", "--out-root", str(out),
+                                 "--handle", "h", "--scenarios", "munarium-A1", "--arm", "X"])
 
     def test_gate_plan_switches_before_each_arm(self):
         # The LG plan: one launch of the judged arms, no precision phase, and the concurrency test after

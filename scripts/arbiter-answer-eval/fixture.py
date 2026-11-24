@@ -261,6 +261,54 @@ def read_json(path):
     return json.loads(Path(path).read_bytes())
 
 
+# The service writes ready.json in place, so a reader that opens it as soon as it exists can meet it half
+# written or still held by the writer: ``PermissionError`` (errno 13, a sharing violation) or a JSON parse
+# error (23 November 2026: that spent a whole gate root). Such a file is not ready yet. The worker waits for a
+# complete, parseable file, bounded by the readiness deadline and, at each directory change once the file is seen
+# but unreadable, by READY_WRITE_SECONDS; a file still unreadable past that is a real fault and is raised with
+# its last error.
+READY_WRITE_SECONDS = 60
+# Directory-change classes the readiness wait wakes on: file and directory names (the file appears) and size and
+# last write (the writer finishes).
+READY_CHANGES = 0x1 | 0x2 | 0x8 | 0x10
+
+
+def read_complete_json(path, read=lambda path: Path(path).read_bytes()):
+    """``(value, None)`` for a complete JSON file, else ``(None, error)``: the file is absent, held by its writer
+    (a Windows sharing or lock violation surfaces as ``PermissionError``) or only partly written (a parse error,
+    including a cut multi-byte character). Any other error propagates."""
+    try:
+        data = read(path)
+    except (FileNotFoundError, PermissionError) as error:
+        return None, error
+    try:
+        return json.loads(data), None
+    except ValueError as error:
+        return None, error
+
+
+def complete_json_observer(path, *, clock=time.monotonic, grace=READY_WRITE_SECONDS,
+                           read=lambda path: Path(path).read_bytes()):
+    """An observer for the native ``wait_observed``: ``None`` until ``path`` holds a complete JSON document, then
+    the parsed value. ``clock`` and ``read`` are injected so a test needs no real time or file locks."""
+    first_seen = []
+
+    def observe():
+        value, error = read_complete_json(path, read)
+        if error is None:
+            return value
+        if isinstance(error, FileNotFoundError):
+            return None
+        now = clock()
+        if not first_seen:
+            first_seen.append(now)
+        require(now - first_seen[0] <= grace,
+                f"{path} stayed unreadable for {grace} s after it appeared: {type(error).__name__}: {error}")
+        return None
+
+    return observe
+
+
 def write_json(path, value, *, replace=False):
     """Write UTF-8 LF JSON; fresh files only unless the caller owns a replaceable record."""
     data = (json.dumps(value, indent=2, sort_keys=True) + "\n").encode()
@@ -1392,9 +1440,9 @@ def worker(args):
         process = subprocess.Popen(command, cwd=ROOT, env=env, stdout=log, stderr=log, stdin=subprocess.DEVNULL,
                                    creationflags=subprocess.CREATE_NO_WINDOW)
         try:
-            nat["wait_observed"](life, lambda: True if (work / "ready.json").is_file() else None, process,
-                                 min(deadline, time.monotonic() + 1800), "fixture readiness")
-            ready = read_json(work / "ready.json")
+            ready = nat["wait_observed"](life, complete_json_observer(work / "ready.json"), process,
+                                         min(deadline, time.monotonic() + 1800), "fixture readiness",
+                                         file_changes=READY_CHANGES)
             require(ready["health"]["process_id"] == process.pid
                     and ready["health"]["executable_sha256"] == images["service"]["sha256"]
                     and ready["inputs_sha256"] == inputs["sha256"] and control.samefile(ready["control_root"]),
