@@ -52,6 +52,19 @@ chore.
    - Kept, because live reads depend on it: per-call scope (`index_ids`,
      `index_set_ids`, `workspace`), Agent-plane leases, `lease_generation`,
      catalog fences, and the window and Admin in-memory selections.
+   - Operation records (user, 23 November 2026), in the same catalog
+     layout and upgrade step:
+     - prune `index_operation_receipts` to the unfinished receipts plus a
+       recent window, rotating the request epoch; terminal receipts were
+       never evicted and the 1,024-row cap refused every catalog change
+       after about 1,024 changes;
+     - prune finished splits (capped at 64, never deleted);
+     - delete retired `index_definitions` rows once their cleanup is
+       acknowledged;
+     - drop `index_context_imports`, `legacy_index_projects` and, if only
+       pre-service adoption uses them, the adopted-authority tables;
+     - remove the dead `index-catalog-upgrade.json` startup check and
+       delete finished `rebuild.json` and clean-break cleanup journals.
 4. **Fences are consistency checks.**
    - A changed authority is still a refusal.
    - A publication that moved under the same authority is read again, or
@@ -61,6 +74,11 @@ chore.
      permanent `scoped_read_unavailable` or `scoped_connection_unavailable`.
    - Work that already spent model tokens is never replayed: its fence
      reports a typed, non-replayable "publication advanced" result.
+   - Unknown setup outcomes (`catalog_connection_outcome_unknown`,
+     `catalog_connection_owner_closed`, "catalog native outcome unknown")
+     stay permanent refusals (user, 23 November 2026): an unknown worker
+     outcome is never reported as pending, and retrying it could repeat
+     work.
 5. **Old installs migrate automatically.**
    - Saved `https://127.0.0.1` endpoints (the endpoint record, agent configs,
      VS Code settings) are recognised as "needs reconnect" and repaired by

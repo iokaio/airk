@@ -1093,11 +1093,11 @@ optional-retention mode or extra confirmation. Retain old owned files only for
 an unfinished transaction, unknown ownership or blocked cleanup, with an explicit
 incomplete result and resumable evidence. Preserve unknown/unrelated files and
 original scopes; never call their preservation clean migration success.
-The scoped developer `setup-local-test.py` helper controls only one Codex file
-and uses an explicit retirement option after the operator checks other known
-declarations. Without that option, unrequested obsolete-executable cleanup produces an incomplete
-status and nonzero exit. That development-tool limitation is not the installer
-flow and does not weaken its required cleanup.
+The scoped developer `setup-local-test.py` helper controls only one Codex file:
+it verifies the approved runtime pair, reads the endpoint and manual entry
+through `airkctl agents`, and with `--apply-config` asks `airkctl agents connect`
+to write the project entry. It enrolls nothing and performs no launcher or
+runtime cleanup; that is the installer flow above.
 
 For remote SSH, WSL, dev containers and headless installations, localhost means the
 host/network namespace where the MCP client actually executes. Install and own the

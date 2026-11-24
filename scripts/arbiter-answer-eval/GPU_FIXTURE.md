@@ -626,6 +626,8 @@ replay or session. In a shakedown, run it first: `gate.py --r-root <shakedown r>
 --handle <lifetime handle> --scenarios munarium-A1,...` and a prompts freeze written under that root
 (`prompts_freeze.py --write <shakedown r>\design\prompts-freeze.json`). A manual lifetime also needs its
 tools catalog (`common.write_tools_catalog`), which `run_plan.py` writes for the gate.
+`--arm` also takes `A` (Arbiter only) and `N` (neither switch), for the four combinations of LH (README, "The four
+switch combinations on one lifetime").
 
 Two bases started at the same moment both lost their first vectors job (`project_operation_failed`, 1.2 s
 after it started; s6 and s7, 23 November). A restart of the base (`fixture.py start --lifetime <name>-base2

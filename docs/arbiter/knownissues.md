@@ -351,10 +351,12 @@ problem, where Explorer snippets carried a `<connection-id>` placeholder.
   `check-issuer-rotation.py`, `benchmark-service.py`,
   `benchmark-real-corpora.py`, `benchmark-mcp-investigation.py`,
   `check-retrieval-quality.py`, `check-usage-inputs.py`,
-  `check-runtime-upgrade.py`, `check-service-install.py`, `check-container.py`
-  and `setup-local-test.py` still enroll a connection. The shared HTTPS client
+  `check-runtime-upgrade.py`, `check-service-install.py` and
+  `check-container.py` still enroll a connection. The shared HTTPS client
   ignores the token and fills in the enrolled index as scope, so they still
   run, but they should move to the tokenless endpoint read.
+  `setup-local-test.py` no longer enrolls: it runs `airkctl agents
+  endpoint|manual|connect` only (redesigned after local trust plan phase B).
 - **Terse status elision on the open path:** terse MCP sessions used to omit
   an unchanged `freshness` on repeated status calls. Open reads build a fresh
   backend per call and repeat it. Pre-U110 open connections behaved the same;
