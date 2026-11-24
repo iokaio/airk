@@ -110,7 +110,6 @@ fn run_empty_native_split(
     for project in &mut fixture.selection.projects {
         project.membership = SplitMembershipSelection::PreserveReviewedScope;
     }
-    let grants_before = page(&mut fixture.registry, CatalogKind::Grants)?;
     let contexts_before = page(&mut fixture.registry, CatalogKind::Contexts)?;
     let projects_before = page(&mut fixture.registry, CatalogKind::Projects)?;
     let original_definition = fixture.registry.catalog_detail(
@@ -747,10 +746,6 @@ fn run_empty_native_split(
             "split invented default selection"
         );
     }
-    ensure!(
-        page(&mut fixture.registry, CatalogKind::Grants)? == grants_before,
-        "split invented or rewrote a grant"
-    );
     ensure!(
         page(&mut fixture.registry, CatalogKind::Contexts)? == contexts_before,
         "split invented context selection"

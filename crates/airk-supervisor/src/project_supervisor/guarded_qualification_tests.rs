@@ -4,7 +4,7 @@
 use super::*;
 use crate::{
     catalog_admission::{FencePlan, FenceTicket, NativeCatalogAdmission},
-    catalog_authority::NativeCatalogAuthoritySelection,
+    catalog_authority::OpenConnectRequest,
     catalog_coordinator::CatalogControl,
 };
 use airk_core::catalog_fences::{FenceTarget, FencedReceipt};
@@ -254,32 +254,23 @@ impl CatalogControl for NativeControl {
     }
 }
 
-/// Read brokerage crosses the actual guarded byte delivery boundary before this
-/// test client can receive or redeem the native bearer. Nothing logs it.
+/// Read brokerage of one whole index under a registered agent selection
+/// (U105) hands the native bearer over in process, as the service does.
+/// Nothing logs it.
 async fn connect_scope(
     owner: &Rc<RefCell<NativeOwner>>,
-    selection: NativeCatalogAuthoritySelection,
+    selection: OpenConnectRequest,
 ) -> Result<local_ipc::Stream> {
     let catalog::Response::Connection(delivery) =
         owner.borrow_mut().execute(catalog::Operation::Connect {
-            selection: catalog::ConnectionSelection::Reviewed(selection),
+            selection: catalog::ConnectionSelection::Open(Box::new(selection)),
             lifetime: Duration::from_secs(120),
         })?
     else {
         anyhow::bail!("native scope brokerage response missing")
     };
-    let (mut writer, mut reader) = tokio::io::duplex(MAX_FRAME_BYTES + 4);
-    (*delivery)
-        .deliver(&mut writer, Duration::from_secs(5))
-        .await?;
-    drop(writer);
-    let mut bytes = Vec::new();
-    tokio::io::AsyncReadExt::read_to_end(&mut reader, &mut bytes).await?;
-    let Some(ControlResponse::Connection { role, grant }) =
-        service_ipc::read_frame(&mut bytes.as_slice())?
-    else {
-        anyhow::bail!("guarded native brokerage bytes missing")
-    };
+    let grant = (*delivery).take_in_process()?;
+    let role = protocol::role(grant.identity.worker);
     ensure!(
         grant.scope.is_some(),
         "authority-one read expanded to unscoped"
@@ -399,7 +390,6 @@ mod restart;
 
 struct NativeIndex {
     definition: airk_core::index_catalog::IndexId,
-    project: airk_core::index_catalog::QueryProjectId,
     registration: airk_core::service::ProjectRegistration,
     original: Vec<u8>,
 }
@@ -411,7 +401,6 @@ struct NativeFixture {
     registry: ServiceRegistry,
     indices: Vec<NativeIndex>,
     main: PathBuf,
-    grant: Option<airk_core::index_catalog::GrantId>,
     _directory: tempfile::TempDir,
 }
 
@@ -565,7 +554,6 @@ impl NativeFixture {
         )?;
         self.indices.push(NativeIndex {
             definition: receipt.index_id,
-            project,
             registration,
             original,
         });
@@ -645,60 +633,29 @@ impl NativeFixture {
         Ok(())
     }
 
-    fn review_grant(&mut self) -> Result<()> {
-        let projects = self.indices.iter().map(|index| index.project).collect();
-        let selection = airk_core::catalog_host::GrantDraftSelection {
-            key: self.key()?,
-            expected_catalog_revision: self
-                .registry
-                .catalog_state()?
-                .context("native catalog absent")?
-                .revision,
-            project_ids: projects,
-            index_ids: None,
-        };
-        let context = airk_catalog_control::catalog_host_context::NativeHostContext::load(
-            &mut self.registry,
-            airk_core::identity::Sha256Digest::from_bytes([71; 32]),
-            Some(selection.expected_catalog_revision),
-        )?
-        .for_review(&selection)?;
-        let draft = airk_catalog_control::catalog_grant_draft::build_reviewed_grant_draft(
-            &mut self.registry,
-            &context,
-            &selection,
-        )?;
-        let airk_core::catalog_management::CatalogOperation::CreateGrant { grant } =
-            &draft.request.operation
-        else {
-            anyhow::bail!("native review returned a different operation")
-        };
-        let id = grant.id;
-        self.registry
-            .catalog_apply(&draft.request, draft.preview_digest)?;
-        airk_catalog_control::catalog_coordinator::refresh_catalog_clock(
-            &self.control.gate,
-            &self.registry,
-        )?;
-        self.grant = Some(id);
-        Ok(())
-    }
-
-    fn selection(&self, index: usize) -> Result<NativeCatalogAuthoritySelection> {
+    /// An open agent read of one whole index under a fresh agent nonce the
+    /// native gate registers, as the service's agent plane does.
+    fn selection(&self, index: usize) -> Result<OpenConnectRequest> {
+        static NONCE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(1);
         let state = self
             .registry
             .catalog_state()?
             .context("native catalog absent")?;
         let index = &self.indices[index];
-        Ok(NativeCatalogAuthoritySelection {
-            namespace: state.namespace,
-            host: airk_catalog_control::catalog_host_context::current_native_host(state.namespace)?,
+        let selection_ref = airk_core::scoped_reads::SelectionScopeRef {
+            owner: airk_core::scoped_reads::SelectionOwnerKind::Agent,
+            grant_nonce: Incarnation::from_bytes(
+                [NONCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed); 16],
+            ),
+            service_instance: self.control.owner.borrow().instance,
+            scope_identity: airk_core::identity::Sha256Digest::from_bytes([71; 32]),
             catalog_revision: state.revision,
-            grant_id: self.grant.context("native reviewed grant missing")?,
-            grant_revision: airk_core::index_catalog::CatalogRevision::INITIAL,
+        };
+        self.control.gate.register_selection(&selection_ref)?;
+        Ok(OpenConnectRequest {
+            selection_ref,
+            namespace: state.namespace,
             index_id: index.definition,
-            project_ids: vec![index.project],
-            backing: index.registration.binding,
         })
     }
 
@@ -835,7 +792,6 @@ impl NativeFixture {
             registry,
             indices: vec![],
             main,
-            grant: None,
             _directory: directory,
         };
         fixture.setup_index(&base, "a")?;
@@ -860,7 +816,6 @@ impl NativeFixture {
                 .spawn_image(fixture.indices[index].registration.clone(), &fixture.main)?;
             fixture.configure_model_and_publish(index, &model)?;
         }
-        fixture.review_grant()?;
         Ok(fixture)
     }
 }
@@ -1031,7 +986,7 @@ fn ordinary_exit_keeps_real_provider_work_and_sibling_ownership_until_engine_rel
         assert_eq!(fixture.control.owner.borrow().charges()?, before, "child reap released provider-owned charges");
         ensure!(!fixture.control.owner.borrow().workers.contains_key(&a_identity.project), "native A child not reaped");
         let refused = fixture.control.owner.borrow_mut().execute(catalog::Operation::Connect {
-            selection: catalog::ConnectionSelection::Reviewed(fixture.selection(0)?), lifetime: Duration::from_secs(120),
+            selection: catalog::ConnectionSelection::Open(Box::new(fixture.selection(0)?)), lifetime: Duration::from_secs(120),
         });
         ensure!(refused.is_err(), "draining worker accepted fresh brokerage");
         search_scope(&mut b, "lexical", "cobalt harbor").await?;

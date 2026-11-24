@@ -331,7 +331,6 @@ fn public_keys(response: &ControlResponse) -> Vec<Value> {
     }
     let mut keys = Keys::default();
     match response {
-        ControlResponse::ReferenceRefreshReviewRequired { key, .. } => keys.add(key),
         ControlResponse::CatalogOutcomeUnknown {
             key, observation, ..
         } => {
@@ -340,7 +339,6 @@ fn public_keys(response: &ControlResponse) -> Vec<Value> {
                 keys.observation(observation);
             }
         }
-        ControlResponse::CatalogGrantDraft { draft } => keys.catalog(&draft.request),
         ControlResponse::CatalogSourceMutationDraft { draft } => keys.catalog(&draft.request),
         ControlResponse::CatalogReceiptUnprepared { request, .. } => keys.catalog(request),
         ControlResponse::CatalogSourceChangeObservation { observation }
@@ -482,15 +480,11 @@ pub(super) fn outcome(response: &ControlResponse) -> NativeOutcome {
         | ControlResponse::UpgradeRecoveryReady { .. }
         | ControlResponse::UpgradeAdmissionReleased { .. }
         | ControlResponse::HttpEndpoint { .. }
-        | ControlResponse::ReferenceRefreshReviewRequired { .. }
-        | ControlResponse::ReferenceRefreshReceipt { .. }
-        | ControlResponse::CombinedDeliveryValidated { .. }
         | ControlResponse::NativeRead { .. }
         | ControlResponse::CatalogPage { .. }
         | ControlResponse::CatalogDetail { .. }
         | ControlResponse::CatalogHostContext { .. }
         | ControlResponse::CatalogLegacyBinding { .. }
-        | ControlResponse::CatalogGrantDraft { .. }
         | ControlResponse::CatalogSourceMutationDraft { .. }
         | ControlResponse::CatalogSourceChangeObservation { .. }
         | ControlResponse::CatalogPendingSourceChange { .. }

@@ -5,11 +5,8 @@ use anyhow::Context;
 
 #[test]
 fn natural_reap_during_preparation_does_not_become_a_catalog_issued_effect() -> Result<()> {
-    use airk_core::{
-        grant_provenance::GrantProvenance, index_catalog::*, scoped_reads::SourceDescriptor,
-        service::ProjectBinding,
-    };
-    use airk_kernel::scoped_reads::ScopedReadAuthority;
+    use airk_core::{index_catalog::*, scoped_reads::SourceDescriptor, service::ProjectBinding};
+    use airk_kernel::scoped_reads::SelectionReadAuthority;
     let (root, mut registry, request, preview, gate) = fixture()?;
     let CatalogOperation::DeleteProject { id: project_id, .. } = request.operation else {
         anyhow::bail!("fixture Project changed")
@@ -24,41 +21,39 @@ fn natural_reap_during_preparation_does_not_become_a_catalog_issued_effect() -> 
     let source_id = SourceRootId::from_identity(Incarnation::from_bytes([73; 16]));
     // A native authority/reap boundary fixture, not an OS worker or grant-
     // issuance qualification. The Store rejection and absence read are real.
-    let authority = ScopedReadAuthority {
+    let authority = SelectionReadAuthority {
         schema: 1,
-        provenance: GrantProvenance::UserReviewedProjectGrant,
         backing: worker.project,
         index_id,
         project_ids: vec![project_id],
-        grant: ReviewedGrant {
-            id: GrantId::from_identity(Incarnation::from_bytes([74; 16])),
-            host: Sha256Digest::from_bytes([75; 32]),
-            revision: CatalogRevision::INITIAL,
-            revoked: false,
-            memberships: vec![GrantedMembership {
-                membership: Membership {
-                    project_id,
-                    index_id,
-                    revision: CatalogRevision::INITIAL,
-                    scope: vec![ScopeAtom {
-                        source_root_id: source_id,
-                        kind: PathScope::Subtree,
-                        path: String::new(),
-                    }],
-                },
-                source_revision: CatalogRevision::INITIAL,
-                policy_epoch: 0,
-                policy_digest: None,
-            }],
+        selection: airk_core::scoped_reads::SelectionScopeRef {
+            owner: airk_core::scoped_reads::SelectionOwnerKind::Window,
+            grant_nonce: Incarnation::from_bytes([74; 16]),
+            service_instance: worker.service,
+            scope_identity: Sha256Digest::from_bytes([74; 32]),
+            catalog_revision: request.expected_catalog_revision,
         },
+        atoms: vec![(
+            project_id,
+            ScopeAtom {
+                source_root_id: source_id,
+                kind: PathScope::Subtree,
+                path: String::new(),
+            },
+        )],
         sources: vec![SourceDescriptor {
             source_root_id: source_id,
             original_root: root.path().to_str().unwrap().into(),
         }],
+        membership_revisions: vec![(project_id, CatalogRevision::INITIAL)],
+        source_revision: CatalogRevision::INITIAL,
+        policy_epoch: 0,
+        policy_digest: None,
     };
+    gate.register_selection(&authority.selection)?;
     gate.register_worker(worker)?;
     let old_issue = gate.begin_issue(request.key.namespace, request.expected_catalog_revision)?;
-    let install = gate.reserve_install(
+    let install = gate.reserve_selection_scope(
         old_issue,
         worker,
         &authority,

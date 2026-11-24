@@ -1,17 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Native, transactional physical adoption-authority promotion. Reads only recognize it.
+//! Recognition of the frozen schema-13 standalone-adoption layouts that
+//! releases before change-log entry 68 part 3 produced. Nothing creates them
+//! any more (standalone adoption is refused, `standalone_adoption_unsupported`);
+//! the upgrade step recognizes them and removes their tables.
 use super::*;
 const SCHEMA: &str = include_str!("../../../service_catalog_adopted_authority.sql");
-const LAYOUTS: [CatalogLayout; 4] = [
-    CatalogLayout::Schema12Authority1,
-    CatalogLayout::Schema12Authority1Policy1,
-    CatalogLayout::Schema12Authority1Policy2,
-    CatalogLayout::Schema12Authority1Policy3,
+const LAYOUTS: [PredecessorLayout; 4] = [
+    PredecessorLayout::Authority1,
+    PredecessorLayout::Policy1,
+    PredecessorLayout::Policy2,
+    PredecessorLayout::Policy3,
 ];
-fn apply_raw(db: &Connection, layout: CatalogLayout) -> Result<()> {
+fn apply_raw(db: &Connection, layout: PredecessorLayout) -> Result<()> {
     // Restore only compiled triggers lost with the rebuilt tables. Never execute
     // schema text supplied by a database, even after a shape check.
-    let compiled = expected_layout(layout)?;
+    let compiled = expected_predecessor(layout)?;
     db.execute_batch(SCHEMA)?;
     for object in compiled.iter().filter(|o| {
         o.kind == "trigger"
@@ -41,7 +44,7 @@ fn apply_raw(db: &Connection, layout: CatalogLayout) -> Result<()> {
     }
     Ok(())
 }
-fn expected_adopted(layout: CatalogLayout) -> Result<&'static Vec<SchemaObject>> {
+fn expected_adopted(layout: PredecessorLayout) -> Result<&'static Vec<SchemaObject>> {
     static SLOTS: [OnceLock<Result<Vec<SchemaObject>, String>>; 4] = [const { OnceLock::new() }; 4];
     let n = LAYOUTS
         .iter()
@@ -52,19 +55,11 @@ fn expected_adopted(layout: CatalogLayout) -> Result<&'static Vec<SchemaObject>>
             (|| -> Result<_> {
                 let db = Connection::open_in_memory()?;
                 db.execute_batch(LEGACY_SCHEMA)?;
-                db.execute_batch(super::SCHEMA)?;
-                capacity_triggers(&db)?;
+                db.execute_batch(V12_SCHEMA)?;
+                predecessor_capacity_triggers(&db)?;
                 write_barriers(&db)?;
                 db.execute_batch(AUTHORITY_V1_SCHEMA)?;
-                if n >= 1 {
-                    db.execute_batch(POLICY_V1_SCHEMA)?;
-                }
-                if n >= 2 {
-                    db.execute_batch(SPLIT_V2_SCHEMA)?;
-                }
-                if n >= 3 {
-                    db.execute_batch(SPLIT_V3_SCHEMA)?;
-                }
+                policy_layers(&db, u8::try_from(n)?)?;
                 apply_raw(&db, layout)?;
                 schema_objects(&db)
             })()
@@ -73,7 +68,7 @@ fn expected_adopted(layout: CatalogLayout) -> Result<&'static Vec<SchemaObject>>
         .as_ref()
         .map_err(|e| anyhow::anyhow!("compiled adopted schema is invalid: {e}"))
 }
-pub(super) fn recognize(objects: &[SchemaObject]) -> Result<Option<CatalogLayout>> {
+pub(super) fn recognize(objects: &[SchemaObject]) -> Result<Option<PredecessorLayout>> {
     if !objects
         .iter()
         .any(|o| o.kind == "table" && o.name == "index_adopted_authorities")

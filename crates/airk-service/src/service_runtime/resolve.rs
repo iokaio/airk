@@ -2,8 +2,6 @@
 //! M1 `ResolveProject` (split step 3c.1): the registered project a binding,
 //! or a root, data root and collection, name. The read-only `saved` lookup of
 //! `service_frontend`, unchanged; nothing is registered, started or elected.
-//! A catalog session (step 3c.4c) resolves through `resolve_scoped`, as the
-//! CLI resolved it before connecting.
 use airk_core::service::{ControlResponse, ResolveTarget};
 use std::path::Path;
 
@@ -12,22 +10,6 @@ const NOT_REGISTERED: &str = "project is not registered with this service";
 
 pub(super) async fn response(control: &Path, target: ResolveTarget) -> ControlResponse {
     let resolved = match &target {
-        ResolveTarget::Catalog { request } => {
-            return match airk_frontend::service_frontend::resolve_scoped(
-                None,
-                Some(control),
-                request,
-            )
-            .await
-            {
-                Ok(selected) => ControlResponse::Resolved {
-                    registration: selected.project.registration,
-                },
-                Err(error) => ControlResponse::RegistrationRefused {
-                    message: super::tools_call::failure_message(&error),
-                },
-            };
-        }
         ResolveTarget::Binding { project } => airk_frontend::service_frontend::saved(
             control,
             Some(*project),

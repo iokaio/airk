@@ -901,7 +901,7 @@ fn service_watcher_owns_nested_changes_pause_and_restart_without_editor_events()
     fs::write(&file, b"Initial native watcher fixture.\n")?;
     let project = airk_kernel::service_projects::registration(&source, &data, "watch-fixture")?;
     let service = qualified_process_fixture(&source, &data, "watch-fixture")?;
-    let selection = selected_scope(service.http_selection())?;
+    let selection = service.reviewed_scope();
     let root = service.control.clone();
     let mut children = Children(vec![start_qualified(&service)?]);
     wait_ready(&root)?;
@@ -1085,14 +1085,14 @@ fn over_budget_document_stays_bounded_across_service_restart() -> Result<()> {
     fs::write(&notes, "# Zircon harbor\nZircon harbor notes.\n")?;
     let project = airk_kernel::service_projects::registration(&source, &data, "budget-fixture")?;
     let service = qualified_process_fixture(&source, &data, "budget-fixture")?;
-    let selection = selected_scope(service.http_selection())?;
+    let selection = service.reviewed_scope();
     let root = service.control.clone();
     // Settled automatic work must find `term` while the unchanged over-budget file
     // remains, and no job may stall or rely on the watchdog.
     async fn settle(
         root: &Path,
         project: &airk_core::service::ProjectRegistration,
-        selection: &airk_core::service::ScopedConnectRequest,
+        selection: &common::ReviewedScope,
         term: &str,
     ) -> Result<()> {
         let until = tokio::time::Instant::now() + Duration::from_secs(90);
@@ -1438,40 +1438,15 @@ fn qualified_process_fixture(
     Ok(service)
 }
 
-fn selected_scope(
-    selection: airk_core::service_http::HttpSelection,
-) -> Result<airk_core::service::ScopedConnectRequest> {
-    let airk_core::service_http::HttpSelection::Scoped { selection } = selection else {
-        anyhow::bail!("process fixture requires its exact reviewed grant");
-    };
-    Ok(selection)
-}
-
-async fn refreshed_scope(
-    root: &Path,
-    project: airk_core::service::ProjectBinding,
-    selection: &airk_core::service::ScopedConnectRequest,
-) -> Result<airk_core::service::ScopedConnectRequest> {
-    let refreshed = airk_cli::service_frontend::resolve_scoped(None, Some(root), selection).await?;
-    ensure!(
-        refreshed.project.registration.binding == project,
-        "process fixture scoped backing changed"
-    );
-    Ok(refreshed.selection)
-}
-
+/// U105: an open read of the fixture's Index through the service pipe (the
+/// path `airkctl tools call --index` and HTTPS MCP take). Direct worker
+/// connections are not a client entry point under an activated catalog.
 async fn connect_qualified(
     root: &Path,
-    project: airk_core::service::ProjectBinding,
-    selection: &airk_core::service::ScopedConnectRequest,
-) -> Result<airk_cli::project_client::Connection> {
-    airk_cli::project_client::Connection::connect_scoped(
-        root,
-        project,
-        &refreshed_scope(root, project, selection).await?,
-        airk_core::usage::ClientFamily::Unknown,
-    )
-    .await
+    _project: airk_core::service::ProjectBinding,
+    selection: &common::ReviewedScope,
+) -> Result<std::sync::Arc<common::pipe::PipeTools>> {
+    Ok(common::pipe::PipeTools::open(root, &[selection.index_id]))
 }
 
 fn stop_qualified_bootstrap(service: &common::Service) -> Result<()> {
@@ -2518,10 +2493,10 @@ fn racing_launchers_elect_one_service_and_restart_changes_instance_without_proje
 
 #[test]
 fn supervised_jobs_and_direct_queries_preserve_grants_and_stop_on_service_loss() -> Result<()> {
-    use airk_cli::{local_ipc, project_protocol};
     use airk_core::service::{
         ControlMethod as Method, ControlResponse as Response, JobKind, JobState, RequestKey,
     };
+    use airk_mcp::remote::RemoteTools;
     let owner = tempfile::tempdir()?;
     let source = owner.path().join("source");
     let data = owner.path().join("state");
@@ -2533,7 +2508,7 @@ fn supervised_jobs_and_direct_queries_preserve_grants_and_stop_on_service_loss()
         b"Qualified canonical setup seed.\n",
     )?;
     let service = qualified_process_fixture(&source, &data, "fixture")?;
-    let selection = selected_scope(service.http_selection())?;
+    let selection = service.reviewed_scope();
     let root = service.control.clone();
     let project = airk_kernel::service_projects::registration(&source, &data, "fixture")?;
     let mut children = Children(vec![start_qualified(&service)?]);
@@ -2628,41 +2603,6 @@ fn supervised_jobs_and_direct_queries_preserve_grants_and_stop_on_service_loss()
             );
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
-        let Response::Connection { role, grant } = request(Method::ConnectScoped {
-            request: refreshed_scope(&root, project.binding, &selection).await?,
-        })
-        .await?
-        else {
-            anyhow::bail!("broker did not return grant")
-        };
-        let address = local_ipc::endpoint(&root, &role)?;
-        let mut first = local_ipc::connect(&address).await?;
-        local_ipc::write_message(&mut first, &grant, Duration::from_secs(5)).await?;
-        let accepted: Option<project_protocol::Accepted> =
-            local_ipc::read_message(&mut first, Duration::from_secs(5)).await?;
-        ensure!(
-            accepted.is_some_and(|accepted| accepted.identity == grant.identity),
-            "direct grant failed"
-        );
-        let mut replay = local_ipc::connect(&address).await?;
-        local_ipc::write_message(&mut replay, &grant, Duration::from_secs(5)).await?;
-        ensure!(
-            local_ipc::read_message::<_, project_protocol::Accepted>(
-                &mut replay,
-                Duration::from_secs(5)
-            )
-            .await
-            .ok()
-            .flatten()
-            .is_none(),
-            "replayed grant admitted"
-        );
-        drop(first);
-        drop(replay);
-        ensure!(
-            airk_store::service::ProjectLease::acquire(&root, project.binding).is_err(),
-            "worker lost its ownership lock"
-        );
         let mut connection = connect_qualified(&root, project.binding, &selection).await?;
         let arguments =
             serde_json::json!({"query":"cobalt harbor","mode":"lexical","max_bytes":4096})
@@ -2680,6 +2620,10 @@ fn supervised_jobs_and_direct_queries_preserve_grants_and_stop_on_service_loss()
             result.to_string().contains("original.txt")
                 && result.to_string().contains("cobalt harbor"),
             "direct response lost original citation"
+        );
+        ensure!(
+            airk_store::service::ProjectLease::acquire(&root, project.binding).is_err(),
+            "worker lost its ownership lock"
         );
         let pinned = airk_cli::bundled_assets::bind_service_models(
             airk_kernel::Kernel::open_service_collection_for_diagnostics(
@@ -2775,14 +2719,18 @@ fn supervised_jobs_and_direct_queries_preserve_grants_and_stop_on_service_loss()
             );
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        // Retrieval-only connections expose neither management nor mutation tools.
-        let result = connection
+        // Agent reads expose neither management nor mutation tools: the call is
+        // refused before a result or answered as a tool error.
+        match connection
             .call("service_shutdown".into(), Default::default())
-            .await?;
-        ensure!(
-            result.get("isError").and_then(Value::as_bool) == Some(true),
-            "worker exposed management"
-        );
+            .await
+        {
+            Ok(result) => ensure!(
+                result.get("isError").and_then(Value::as_bool) == Some(true),
+                "agent read exposed management: {result}"
+            ),
+            Err(error) => eprintln!("management tool refused before a result: {error:#}"),
+        }
         ensure!(
             matches!(request(Method::Health).await?, Response::Health { .. }),
             "unauthorized tool stopped service"
@@ -4195,8 +4143,8 @@ fn identity_bound_project_restart_preserves_other_workers_and_unavailable_source
         "second canonical setup changed project identity"
     );
     let selections = [
-        selected_scope(service.http_selection())?,
-        selected_scope(common::reviewed_http_selection(&service.control, &second))?,
+        service.reviewed_scope(),
+        common::reviewed_project_scope(&service.control, &second),
     ];
     service.settle_reviewed_index(
         Path::new(&projects[0].root),
@@ -4261,11 +4209,17 @@ fn identity_bound_project_restart_preserves_other_workers_and_unavailable_source
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
         }
+        // An open read of each Index starts its worker; the service reports
+        // the resident worker's identity.
         let mut identities = Vec::new();
+        let started = serde_json::json!({"query":"copper beacon","mode":"lexical"}).as_object().unwrap().clone();
         for (project,selection) in projects.iter().zip(&selections) {
-            let response = request(Method::ConnectScoped { request:refreshed_scope(&runtime,project.binding,selection).await? }).await?;
-            let Response::Connection { grant, .. } = response else { anyhow::bail!("worker not connected: {}", serde_json::to_string(&response)?) };
-            identities.push(grant.identity);
+            let mut reader = connect_qualified(&runtime,project.binding,selection).await?;
+            let result = reader.read_retry("airk_search".into(),started.clone()).await?;
+            ensure!(result.get("isError").and_then(Value::as_bool)!=Some(true),"worker read failed: {result}");
+            let response = request(Method::Worker { project: project.binding }).await?;
+            let Response::Worker { identity: Some(identity), .. } = response else { anyhow::bail!("worker not resident: {}", serde_json::to_string(&response)?) };
+            identities.push(identity);
         }
         let mut unaffected = connect_qualified(&runtime,projects[1].binding,&selections[1]).await?;
         let moved = owner.path().join("offline-source");

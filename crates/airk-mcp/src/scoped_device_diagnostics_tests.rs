@@ -104,17 +104,19 @@ fn fixture(owner: Arc<dyn NativeController>) -> Result<(tempfile::TempDir, Kerne
     base.configure_vectors(false)?;
     base.index()?;
     let mut authority = crate::scoped_observation_tests::authority(&base)?;
-    authority.grant.memberships[0].membership.scope[0]
-        .path
-        .clear();
-    let kernel = base.with_scoped_reads(authority.clone())?;
+    authority.atoms[0].1.path.clear();
+    let kernel = base.with_selection_reads(authority.clone())?;
     let reference = ScopedReadRef {
         schema: 1,
         lease_generation: 1,
         index_id: authority.index_id,
-        grant_id: Some(authority.grant.id),
-        grant_revision: Some(authority.grant.revision),
-        selection: None,
+        selection: airk_core::scoped_reads::SelectionScopeRef {
+            owner: airk_core::scoped_reads::SelectionOwnerKind::Window,
+            grant_nonce: airk_core::identity::Incarnation::from_bytes([10; 16]),
+            service_instance: airk_core::identity::Incarnation::from_bytes([11; 16]),
+            scope_identity: airk_core::identity::Sha256Digest::from_bytes([12; 32]),
+            catalog_revision: airk_core::index_catalog::CatalogRevision::try_from(5_u64).unwrap(),
+        },
         fingerprint: kernel.scoped_read_fingerprint()?.context("scope absent")?,
     };
     let worker = WorkerIdentity {

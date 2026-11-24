@@ -256,7 +256,7 @@ test('fragment results retain qualified unit and partial coverage without invent
 
 test('selected exports retain only their source uncertainty and omit unrelated metadata and counts',()=>{
     for(const queryTotal of [null,77]){
-        const scopeObservation={schema:1,qualifier:'selected_subset',fingerprint:'ab'.repeat(32),grant:{id:'grt_'+'12'.repeat(16),revision:3},members:[{
+        const scopeObservation={schema:1,qualifier:'selected_subset',fingerprint:'ab'.repeat(32),selection:{owner:'window',scope_identity:'12'.repeat(32),catalog_revision:3},members:[{
             index_id:'idx_'+'34'.repeat(16),memberships:[{project_id:'prj_'+'56'.repeat(16),membership_revision:4}],
             source_root_ids:['src_'+'78'.repeat(16)],source_revision:5,policy_epoch:6,policy_digest:null,future_member_field:{retained:true},
         }],future_scope_field:{preserve:['unknown','native','fields']}};
@@ -311,7 +311,7 @@ test('selected exports retain only their source uncertainty and omit unrelated m
 });
 
 test('scope observations survive selected copy when only the native root envelope carries them',()=>{
-    const observation={schema:1,qualifier:'selected_subset',fingerprint:'91'.repeat(32),grant:{id:'grt_'+'12'.repeat(16),revision:1},members:[],future_scope_field:'keep-root-only'};
+    const observation={schema:1,qualifier:'selected_subset',fingerprint:'91'.repeat(32),selection:{owner:'window',scope_identity:'12'.repeat(32),catalog_revision:1},members:[],future_scope_field:'keep-root-only'};
     const turn:WorkbenchTurn={id:'root-scope',at:1,input:'Read selected file',format:'structured',envelope:{scope_observation:observation,status:'partial',steps:[{id:'read',tool:'read_file',result:{}}],evidence:[{
         step:'read',text:'Selected text',citation:{path:'file.ts',start_line:1,end_line:1,content_hash:'ab'.repeat(32)},
     }]}};

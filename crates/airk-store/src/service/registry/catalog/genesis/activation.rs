@@ -521,8 +521,8 @@ impl CatalogGenesis {
         );
         qualified_backup(&receipt)?;
         let read = registry(&self.root, false)?;
-        let layout = super::super::validate_catalog_layout(&read)?;
-        if layout == super::super::CatalogLayout::Schema12Authority1 {
+        super::super::validate_catalog_layout(&read)?;
+        if super::super::markers(&read)?.0 == 1 {
             verify_fresh_inactive(&read, &receipt, 1)?;
             receipt.stage = GenesisStage::Promoted;
             persist(&receipt, false)?;

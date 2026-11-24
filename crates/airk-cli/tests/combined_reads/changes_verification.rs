@@ -72,7 +72,7 @@ async fn current_changes_source_receipts_preserve_attribution_through_native_cli
 -> Result<()> {
     let f = Fixture::new(false)?;
     let _service = f.start().await?;
-    let backend = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
+    let backend = f.resolve(&f.session).await?;
     let mut mcp = McpSession::start(&f)?;
     let arguments = json!({"project_ids":[f.projects[0]],"index_ids":[f.indexes[0]],
         "selectors":[{"kind":"path","path":"api/policy.md"}],"limit":4,"max_bytes":8192,

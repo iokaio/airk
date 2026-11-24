@@ -229,7 +229,7 @@ Injected-dispatch handler evidence does not establish live-listener qualificatio
       - `delete_project`, `remove_membership`: the index set's name;
       - `retire_index`, `change_index_policy`, `begin_index_source_change`:
         the index name;
-      - `revoke_grant`, `delete_context`: the id;
+      - `delete_context`: the id;
       - every other catalog operation needs no text.
     - `catalog.split_apply`: the original index's name.
     - `recovery.plan_execute`: the first 12 hex characters of the plan id.

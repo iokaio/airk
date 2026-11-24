@@ -44,11 +44,6 @@ fn ui_pilot_cli_semantic_cases() {
                 let selection = Selection {
                     control: Some(PathBuf::from("fixture-control")),
                     project: None,
-                    catalog: None,
-                    combined: None,
-                    project_ids: None,
-                    index_ids: None,
-                    member_availability: None,
                     root: PathBuf::from("."),
                     data_dir: None,
                     collection: "fixture".into(),

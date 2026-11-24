@@ -19,16 +19,15 @@ fn session(kernel: &Kernel) -> Result<Kernel> {
             kernel.root().to_str().unwrap().into(), kernel.data_dir().to_str().unwrap().into(),
             kernel.collection().into())?.binding,
         "index_id":index,"project_ids":[project],
-        "provenance":airk_core::grant_provenance::GrantProvenance::UserReviewedProjectGrant,
-        "grant":ReviewedGrant { id:GrantId::from_identity(Incarnation::from_bytes([4;16])),
-            host:Sha256Digest::from_bytes([5;32]),revision:CatalogRevision::INITIAL,revoked:false,
-            memberships:vec![GrantedMembership { membership:Membership { project_id:project,index_id:index,
-                revision:CatalogRevision::INITIAL,scope:vec![ScopeAtom {source_root_id:source,
-                    kind:PathScope::Subtree,path:"public".into()}]},source_revision:CatalogRevision::INITIAL,
-                policy_epoch:0,policy_digest:None }] },
+        "selection":{"owner":"window","grant_nonce":Incarnation::from_bytes([4;16]),
+            "service_instance":Incarnation::from_bytes([6;16]),"scope_identity":Sha256Digest::from_bytes([5;32]),
+            "catalog_revision":CatalogRevision::INITIAL},
+        "atoms":[[project,ScopeAtom {source_root_id:source,kind:PathScope::Subtree,path:"public".into()}]],
+        "membership_revisions":[[project,CatalogRevision::INITIAL]],
+        "source_revision":CatalogRevision::INITIAL,"policy_epoch":0,"policy_digest":null,
         "sources":[{"source_root_id":source,"original_root":kernel.root().to_str().unwrap()}]
     }))?;
-    kernel.with_scoped_reads(authority)
+    kernel.with_selection_reads(authority)
 }
 fn body(reply: &Value) -> Value {
     serde_json::from_str(reply["content"][0]["text"].as_str().unwrap()).unwrap()
@@ -154,7 +153,10 @@ fn an_answer_reply_has_the_answer_frame_and_an_oversized_one_is_refused_typed() 
     let mut frame = Vec::new();
     assert!(service_ipc::write_frame_limited(&mut frame, &reply, MAX_FRAME_BYTES).is_err());
     assert_eq!(airk_core::service::query_reply_frame("airk_search"), 65_536);
-    assert_eq!(airk_core::service::query_reply_frame("airk_answer"), 147_456);
+    assert_eq!(
+        airk_core::service::query_reply_frame("airk_answer"),
+        147_456
+    );
     frame.clear();
     service_ipc::write_frame_limited(
         &mut frame,
@@ -165,7 +167,13 @@ fn an_answer_reply_has_the_answer_frame_and_an_oversized_one_is_refused_typed() 
     frame.clear();
     service_ipc::write_frame_limited(&mut frame, &refused, MAX_FRAME_BYTES)?;
     assert_eq!(refused.result["isError"], true);
-    assert_eq!(body(&refused.result)["error"]["code"], "reply_frame_exceeded");
-    assert_eq!(refused.result["structuredContent"]["error"]["maximum_bytes"], 65_536);
+    assert_eq!(
+        body(&refused.result)["error"]["code"],
+        "reply_frame_exceeded"
+    );
+    assert_eq!(
+        refused.result["structuredContent"]["error"]["maximum_bytes"],
+        65_536
+    );
     Ok(())
 }

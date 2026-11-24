@@ -6,6 +6,7 @@
 pub mod ctl;
 pub mod http;
 pub mod parity;
+pub mod pipe;
 pub mod read_retry;
 mod reviewed;
 use airk_core::service::{
@@ -13,6 +14,7 @@ use airk_core::service::{
     ProjectRegistration, RequestKey,
 };
 use anyhow::Context;
+pub use reviewed::ReviewedScope;
 use std::{
     collections::HashMap,
     io::{BufRead, BufReader},
@@ -115,9 +117,29 @@ fn diagnostic(stage: &str) {
 pub struct Service {
     child: Mutex<Option<Child>>,
     reviewed: Option<reviewed::ReviewedService>,
+    /// The reviewed fixture's cached window (see [`Service::window`]).
+    window: Mutex<Option<pipe::Window>>,
     owner: tempfile::TempDir,
     pub control: PathBuf,
     pub project: ProjectRegistration,
+}
+
+/// Run `future` on its own current-thread runtime on its own thread, so a
+/// caller inside an async runtime does not nest runtimes.
+pub fn block_on<T: Send>(
+    future: impl std::future::Future<Output = anyhow::Result<T>> + Send,
+) -> anyhow::Result<T> {
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()?
+                    .block_on(future)
+            })
+            .join()
+            .map_err(|_| anyhow::anyhow!("fixture runtime thread panicked"))?
+    })
 }
 
 pub fn rpc(control: &Path, method: Method) -> Response {
@@ -305,6 +327,7 @@ impl Service {
             control: managed.control.clone(),
             project: managed.project.clone(),
             reviewed: Some(managed),
+            window: Mutex::new(None),
             owner,
         });
         let mut fixtures = FIXTURES.get_or_init(Default::default).lock().unwrap();
@@ -332,21 +355,53 @@ impl Service {
         )
     }
 
-    pub fn http_selection(&self) -> airk_core::service_http::HttpSelection {
+    /// The reviewed fixture's Index and the Project (index set) holding it
+    /// whole.
+    pub fn reviewed_scope(&self) -> ReviewedScope {
         self.reviewed
             .as_ref()
-            .expect("HTTP evidence requires an explicit reviewed fixture")
-            .selection
-            .clone()
+            .expect("scoped evidence requires an explicit reviewed fixture")
+            .scope
     }
     /// U110: the per-call HTTPS MCP scope naming this fixture's one index,
-    /// the same index its reviewed scoped selection reads whole.
+    /// read whole.
     pub fn open_scope(&self) -> http::Scope {
-        let airk_core::service_http::HttpSelection::Scoped { selection } = self.http_selection()
-        else {
-            panic!("fresh fixture selection is not scoped")
-        };
-        http::Scope::indexes([selection.index_id])
+        http::Scope::indexes([self.reviewed_scope().index_id])
+    }
+    /// The open read (U105) of this fixture's one index through the pipe.
+    pub fn open_tools(&self) -> Arc<pipe::PipeTools> {
+        pipe::PipeTools::open(&self.control, &[self.reviewed_scope().index_id])
+    }
+    /// This fixture's window (W1/W4 over its Index and Project), renewed and
+    /// granted at the current catalog revision. One window is kept per
+    /// fixture and reopened when the service no longer knows it (restart or
+    /// expiry). When the service refuses a new grant (for example after the
+    /// Index was retired) the live window keeps its previous grant, so a read
+    /// observes how the service treats that earlier authority.
+    pub fn window(&self) -> anyhow::Result<pipe::Window> {
+        let scope = self.reviewed_scope();
+        let control = self.control.clone();
+        let mut cached = self.window.lock().unwrap();
+        let previous = cached.clone();
+        let window = block_on(async move {
+            if let Some(mut window) = previous
+                && pipe::renew(&control, &window).await.is_ok()
+            {
+                if let Err(error) = pipe::regrant(&control, &mut window).await {
+                    eprintln!("reviewed fixture window keeps its previous grant: {error:#}");
+                }
+                return Ok(window);
+            }
+            pipe::open_window(
+                &control,
+                "reviewed fixture",
+                vec![scope.index_id],
+                vec![scope.project_id],
+            )
+            .await
+        })?;
+        *cached = Some(window.clone());
+        Ok(window)
     }
     pub fn install_dir(&self) -> &Path {
         &self
@@ -452,6 +507,7 @@ impl Service {
         let service = Arc::new(Self {
             child: Mutex::new(Some(child)),
             reviewed: None,
+            window: Mutex::new(None),
             owner,
             control,
             project,
@@ -913,27 +969,9 @@ impl Service {
             .enable_all()
             .build()?
             .block_on(async {
-                let connection = if let Some(managed) = &self.reviewed {
-                    let airk_core::service_http::HttpSelection::Scoped { selection } =
-                        &managed.selection
-                    else {
-                        anyhow::bail!("fresh semantic fixture requires its exact scoped selection");
-                    };
-                    let refreshed = airk_cli::service_frontend::resolve_scoped(
-                        None,
-                        Some(&self.control),
-                        selection,
-                    )
-                    .await?;
-                    anyhow::ensure!(
-                        refreshed.project.registration == self.project,
-                        "semantic fixture scope crossed native backing"
-                    );
-                    airk_cli::project_client::scoped_tools(
-                        self.control.clone(),
-                        self.project.binding,
-                        refreshed.selection,
-                    )?
+                let connection: Arc<dyn airk_mcp::remote::RemoteTools> = if self.reviewed.is_some()
+                {
+                    self.open_tools()
                 } else {
                     airk_cli::project_client::tools(self.control.clone(), self.project.binding)
                 };
@@ -1271,42 +1309,37 @@ pub fn command(root: &Path, data: &Path, collection: &str) -> ctl::Ctl {
     command
 }
 
-pub fn http_selection(
-    root: &Path,
-    data: &Path,
-    collection: &str,
-) -> anyhow::Result<airk_core::service_http::HttpSelection> {
-    let service = fixture(root, data, collection).context("HTTP fixture binding missing")?;
-    let managed = service
-        .reviewed
-        .as_ref()
-        .context("HTTP read requires an explicit reviewed fixture")?;
-    Ok(managed.selection.clone())
+pub fn reviewed_scope(root: &Path, data: &Path, collection: &str) -> anyhow::Result<ReviewedScope> {
+    let service = fixture(root, data, collection).context("reviewed fixture binding missing")?;
+    anyhow::ensure!(
+        service.reviewed.is_some(),
+        "scoped read requires an explicit reviewed fixture"
+    );
+    Ok(service.reviewed_scope())
 }
 
-pub fn reviewed_http_selection(
-    control: &Path,
-    project: &ProjectRegistration,
-) -> airk_core::service_http::HttpSelection {
-    reviewed::reviewed_http_selection(control, project)
-        .expect("canonical reviewed HTTP selection failed")
+/// A further reviewed Index set up on the same service (`additional_project`)
+/// gets its own Project holding it whole, as the fixture's first one does.
+pub fn reviewed_project_scope(control: &Path, project: &ProjectRegistration) -> ReviewedScope {
+    reviewed::reviewed_scope(control, project).expect("canonical reviewed scope failed")
 }
 
 pub fn scoped_command(root: &Path, data: &Path, collection: &str) -> ctl::Ctl {
     let service = fixture(root, data, collection).expect("scoped read has no owned fixture");
-    let managed = service
+    service
         .reviewed
         .as_ref()
         .expect("scoped read requires explicit reviewed fixture");
-    let airk_core::service_http::HttpSelection::Scoped { selection } = &managed.selection else {
-        panic!("fresh fixture selection is not scoped")
-    };
+    // The reviewed scope is read through this fixture's window selection over
+    // its Index and Project, the `airkctl session` route.
+    let window = service
+        .window()
+        .expect("reviewed fixture window selection failed");
     let mut command = ctl::Ctl::new();
     command
+        .window(window)
         .arg("--service-runtime-dir")
         .arg(&service.control)
-        .arg("--catalog-session")
-        .arg(serde_json::to_string(selection).unwrap())
         .env("AIRK_MCP_RESPONSE_MODE", "full")
         .env("AIRK_USAGE_MODE", "disabled");
     command
@@ -1367,43 +1400,7 @@ pub fn legacy_airk_command(root: &Path, data: &Path, collection: &str) -> Comman
     command
 }
 
-/// The pre-split `airk` scoped-read command line; Phase 3 parity tests only
-/// (see `legacy_airk_command`).
-pub fn legacy_airk_scoped_command(root: &Path, data: &Path, collection: &str) -> Command {
-    let service = fixture(root, data, collection).expect("scoped read has no owned fixture");
-    let managed = service
-        .reviewed
-        .as_ref()
-        .expect("scoped read requires explicit reviewed fixture");
-    let airk_core::service_http::HttpSelection::Scoped { selection } = &managed.selection else {
-        panic!("fresh fixture selection is not scoped")
-    };
-    let mut command = Command::new(&managed.executable);
-    reviewed::git_environment(
-        &mut command,
-        managed
-            .install
-            .parent()
-            .expect("reviewed fixture owner missing"),
-    );
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x08000000);
-    }
-    // U93: interim selector first (see `installed_command`).
-    command.args(["__airk_role", "setup-interim"]);
-    command
-        .arg("--service-runtime-dir")
-        .arg(&service.control)
-        .arg("--catalog-session")
-        .arg(serde_json::to_string(selection).unwrap())
-        .env("AIRK_MCP_RESPONSE_MODE", "full")
-        .env("AIRK_USAGE_MODE", "disabled");
-    command
-}
-
-/// Evidence reads use the exact reviewed grant; owner mutations retain their
+/// Evidence reads use the reviewed window selection; owner mutations retain their
 /// independent native control arguments. Legacy fixtures remain explicit.
 pub fn evidence_command(root: &Path, data: &Path, collection: &str) -> ctl::Ctl {
     if fixture(root, data, collection).is_some_and(|service| service.reviewed.is_some()) {

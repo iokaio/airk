@@ -15,7 +15,6 @@ import { renderExport } from '../workbenchRender';
 import { EvidenceClient, EvidenceFailure } from '../explorerEvidence';
 import { openSelectionSpec } from '../airkctl/features/windowScope';
 import { explorerError } from '../explorerErrors';
-import { combinedScopeSelectionIdentity, scopeSelectionIdentity, type CatalogSessionSelector, type CombinedCatalogSessionSelector } from '../scopeSelection';
 import { sharedCapabilityDigest } from '../sharedCapabilityFields';
 
 function deferred<T>() { let resolve!: (value:T)=>void,reject!: (error:Error)=>void; const promise=new Promise<T>((done,fail)=>{resolve=done;reject=fail;}); return {promise,resolve,reject}; }
@@ -656,45 +655,6 @@ test('error-only turns retain canonical native refusals in full copies and actua
     }finally{f.provider.dispose();}
 });
 
-const scopedSelector=(project:string):CatalogSessionSelector=>({schema:1,context_key:'12'.repeat(32),namespace:'34'.repeat(16),expected_catalog_revision:8,grant_id:'grt_'+ '11'.repeat(16),expected_grant_revision:7,index_id:'idx_'+ '22'.repeat(16),project_ids:['prj_'+project.repeat(16)]});
-const combinedSelector=():CombinedCatalogSessionSelector=>({schema:1,context_key:'12'.repeat(32),namespace:'34'.repeat(16),expected_catalog_revision:8,grant_id:'grt_'+'11'.repeat(16),expected_grant_revision:7,project_ids:['prj_'+'44'.repeat(16)],index_ids:['idx_'+'22'.repeat(16),'idx_'+'33'.repeat(16)]});
-
-test('explicit recommended subset only prefills the matching Workbench form and cannot widen its connection',async()=>{
-    const f=fixture(),selected={...spec(A),combinedSession:combinedSelector()};
-    const draft={query:'',mode:'lexical' as const,limit:12,maxBytes:8192,fullChunks:false,project_ids:selected.combinedSession.project_ids,index_ids:[selected.combinedSession.index_ids![0]],member_availability:'report' as const};
-    try{
-        f.replace([selected]);
-        await f.provider.prefillSearchForm(selected,{...draft,query:'Keep this task',mode:'hybrid',limit:9,maxBytes:4096,pathPrefix:'docs/',fullChunks:true,index_ids:selected.combinedSession.index_ids,member_availability:'require'});
-        await f.provider.prefillSearchForm(selected,draft,true);await f.state.saveQueue;
-        assert.equal(f.created.length,0,'prefilling starts no native client');
-        assert.equal(f.state.session!.formDraft?.values.search.index_ids,JSON.stringify(draft.index_ids));
-        const values=f.state.session!.formDraft!.values.search;
-        assert.equal(values.query,'Keep this task');assert.equal(values.mode,'hybrid');assert.equal(values.path_prefix,'docs/');
-        assert.equal(values.limit,'9');assert.equal(values.max_bytes,'4096');assert.equal(values.full_chunks,'true');assert.equal(values.member_availability,'require');
-        assert.deepEqual(selected.combinedSession.index_ids,combinedSelector().index_ids,'the frozen connection is unchanged');
-        await assert.rejects(f.provider.prefillSearchForm(selected,{...draft,index_ids:['idx_'+'99'.repeat(16)]},true),/outside/);
-        await assert.rejects(f.provider.prefillSearchForm(selected,draft),/does not match/,'ordinary Inbox drafts still require an exact session match');
-    }finally{f.provider.dispose();}
-});
-
-test('combined search Apply stores exact editable inputs and launches no evidence process',async()=>{
-    const f=fixture(),selected={...spec(A),combinedSession:combinedSelector()};
-    try{
-        f.replace([selected]);
-        await f.provider.prefillSearchForm(selected,{query:'review retry',mode:'lexical',limit:8,maxBytes:4096,fullChunks:false,pathPrefix:'src/',
-            project_ids:selected.combinedSession.project_ids,index_ids:selected.combinedSession.index_ids,member_availability:'require'});
-        await f.state.saveQueue;
-        assert.equal(f.created.length,0,'Apply never opens an MCP session, reads readiness, prepares a plan or runs evidence');
-        assert.equal(f.state.session!.project,combinedScopeSelectionIdentity(selected.combinedSession));
-        assert.deepEqual(f.state.session!.formDraft!.values.search,{query:'review retry',mode:'lexical',limit:'8',max_bytes:'4096',full_chunks:'false',path_prefix:'src/',
-            project_ids:JSON.stringify(selected.combinedSession.project_ids),index_ids:JSON.stringify(selected.combinedSession.index_ids),member_availability:'require'});
-        assert.equal(f.state.session!.turns.length,0);
-        await assert.rejects(f.provider.prefillSearchForm({...selected,combinedSession:{...selected.combinedSession,project_ids:['prj_'+'55'.repeat(16)]}},
-            {query:'changed',mode:'policy',limit:8,maxBytes:4096,fullChunks:false}),/scope changed/);
-        assert.equal(f.created.length,0);
-    }finally{f.provider.dispose();}
-});
-
 test('actual Workbench host verifies shared capability display while durable/native copies retain exact references',async()=>{
     const f=fixture(),fields={adapters:[{id:'original'}],workbench:{operations:{search:{type:'object'}}}},id=sharedCapabilityDigest(fields),stepId='__proto__';
     const member={request_admission:{limit:16},$airk_shared_capability_fields:id},combined={schema:'airk.combined-read/1',shared_values:{schema:'airk.shared-capability-fields/1',values:{[id]:fields}},
@@ -714,92 +674,6 @@ test('actual Workbench host verifies shared capability display while durable/nat
         const calls=f.created[0].calls.length;assert.equal(snapshot().capabilityDetails![turn.id][stepId].state,'unavailable');assert.equal(f.created[0].calls.length,calls,'invalid saved capability data never starts native work');
     }finally{f.provider.dispose();}
 });
-
-test('combined card context retains originating index, Projects and member publication through the real host run path',async()=>{
-    const f=fixture(),selected={...spec(A),combinedSession:combinedSelector()},originIndex=selected.combinedSession.index_ids![1],projects=selected.combinedSession.project_ids;
-    try{
-        f.replace([selected]);await f.provider.prefillSearchForm(selected,{query:'search',mode:'lexical',limit:8,maxBytes:4096,fullChunks:false,project_ids:projects,index_ids:selected.combinedSession.index_ids});
-        f.state.session!.turns.push({id:'qualified',at:1,input:'search',format:'structured',envelope:{evidence:[{step:'search',text:'original',publication:publicationToken(4),
-            citation:{path:'same.rs',content_hash:'66'.repeat(32),start_line:1,end_line:1,location:{Lines:{start:1,end:1}}},
-            origin:{index_id:originIndex,project_ids:projects,source_root_id:'src_'+'77'.repeat(16),source_relative_path:'same.rs',publication:{token:publicationToken(4)}}}]}});
-        await f.state.message({type:'context',turn:'qualified',card:'record-0'});
-        const request=f.created[0].requests.find(value=>value.tool==='airk_parse')!.args,plan=object(request.plan),step=object((plan.steps as unknown[])[0]),args=object(step.args);
-        assert.deepEqual(request.project_ids,projects);assert.deepEqual(request.index_ids,[originIndex]);assert.deepEqual(plan.query_scope,{project_ids:projects,index_ids:[originIndex]});
-        assert.equal(plan.publication,undefined,'a combined plan has no invented scalar publication');assert.equal(args.revision,publicationToken(4));assert.equal(args.known_hash,'66'.repeat(32));
-        assert.equal(args.before,undefined,'context actions use the canonical native radius default');assert.equal(args.after,undefined);
-        assert.equal(args.path,'same.rs');assert.equal(f.created[0].spec.combinedSession?.index_ids!.length,2,'the temporary follow-up never changes the frozen window session');
-    }finally{f.provider.dispose();}
-});
-
-test('combined host publication observations compare member vectors and preserve captured result identity',async()=>{
-    const f=fixture(),selected={...spec(A),combinedSession:combinedSelector()};let generations=[2,2];
-    const vector=()=>({authority:'88'.repeat(32),members:selected.combinedSession.index_ids!.map((index_id,i)=>({index_id,publication:{collection:'fixture',token:publicationToken(generations[i])}}))});
-    f.respond(async tool=>({payload:tool==='airk_parse'?{executed:true,status:'complete',steps:[{id:'search',tool:'search',status:'complete',result:{schema:'airk.combined-read/1',publication_vector:vector(),members:[],ranking:[]}}]}:{schema:'airk.combined-read/1',publication_vector:vector(),members:[],ranking:[]}}));
-    const snapshot=()=> (f.provider as unknown as {state():WorkbenchState}).state();
-    try{
-        f.replace([selected]);await f.provider.useScope(selected);await tick();await f.state.run('/status');
-        const turn=f.state.session!.turns[0];assert.equal(snapshot().publicationRelations?.[turn.id],'equal');
-        const original=structuredClone(turn.envelope);generations=[3,1];await f.state.message({type:'refresh'});assert.equal(snapshot().publicationRelations?.[turn.id],'mixed');
-        assert.deepEqual(turn.envelope,original);generations=[3,3];await f.state.message({type:'refresh'});assert.equal(snapshot().publicationRelations?.[turn.id],'older');
-        const current=f.state.session;const refreshed={...selected,combinedSession:{...selected.combinedSession,expected_catalog_revision:9}};f.replace([refreshed]);await f.provider.useScope(refreshed);await f.state.message({type:'refresh'});
-        assert.equal(f.state.session,current);assert.equal(snapshot().publicationRelations?.[turn.id],'older','a metadata clock refresh does not change causal query authority');
-    }finally{f.provider.dispose();}
-});
-
-test('combined source Open checks the held canonical root and relative path against native metadata ranking',async()=>{
-    const f=fixture(),selected={...spec(A),combinedSession:combinedSelector()},indexId=selected.combinedSession.index_ids![0],projects=selected.combinedSession.project_ids,rootId='src_'+'77'.repeat(16);let returnedRoot=rootId;
-    try{
-        f.replace([selected]);await f.provider.prefillSearchForm(selected,{query:'search',mode:'lexical',limit:8,maxBytes:4096,fullChunks:false,project_ids:projects,index_ids:selected.combinedSession.index_ids});
-        const origin={index_id:indexId,project_ids:projects,source_root_id:rootId,source_relative_path:'same.rs',publication:{token:publicationToken(4)}};
-        f.state.session!.turns.push({id:'qualified-open',at:1,input:'search',format:'structured',envelope:{evidence:[{step:'search',text:'original',publication:publicationToken(4),
-            citation:{path:'same.rs',content_hash:'66'.repeat(32),start_line:1,end_line:1,location:{Lines:{start:1,end:1}}},origin}]}});
-        f.respond(async tool=>({payload:tool==='airk_file_info'?{schema:'airk.combined-read/1',members:[{index_id:indexId,outcome:'complete',result:{content:[],structuredContent:{path:'same.rs',content_hash:'66'.repeat(32),source:{root:'/native/original',relative_path:'same.rs'},line_basis:'source'}}}],
-            ranking:[{index_id:indexId,result_pointer:'/members/0/result/structuredContent',origin:{...origin,source_root_id:returnedRoot}}]}:{}}));
-        await f.state.message({type:'open',turn:'qualified-open',card:'record-0'});assert.equal(f.opened.length,1);assert.equal(f.opened[0].root,'/native/original');
-        returnedRoot='src_'+'88'.repeat(16);
-        await assert.rejects(f.state.message({type:'open',turn:'qualified-open',card:'record-0'}),/source identity changed/);assert.equal(f.opened.length,1,'changed canonical root cannot open a same-named file');
-    }finally{f.provider.dispose();}
-});
-test('scoped histories separate same backing subsets, preserve old turns, and fence late replies',async()=>{
-    const f=fixture(),one={...spec(A),catalogSession:scopedSelector('44')},two={...spec(A),catalogSession:scopedSelector('55')};
-    const keyOne=scopeSelectionIdentity(one.catalogSession),keyTwo=scopeSelectionIdentity(two.catalogSession);
-    const pending=deferred<{payload:Value}>(),entered=deferred<void>();
-    try{
-        f.replace([one,two]);await f.state.select(keyOne);await tick();
-        f.respond(async()=>({payload:{status:'complete',captured:'old',scope_observation:{fingerprint:'old'}}}));
-        await f.state.run('/status');await f.state.saveQueue;
-        const oldSession=f.state.session!,oldTurn=structuredClone(oldSession.turns[0]);
-        f.respond(async tool=>{if(tool==='airk_parse'){entered.resolve();return pending.promise;}return {payload:{}};});
-        const running=f.state.run('/status');await entered.promise;const oldClient=f.created.at(-1)!;
-        await f.provider.useScope(two);assert.equal(f.state.session!.project,keyTwo);assert.ok(oldClient.disposed>0);
-        pending.resolve({payload:{captured:'late'}});await running;
-        assert.deepEqual(oldSession.turns[0],oldTurn);assert.equal(oldSession.turns.at(-1)!.envelope,undefined);
-        assert.equal(f.state.session!.turns.length,0);assert.equal(f.removed.length,0);
-        const same=f.state.session!;const refreshed={...two,catalogSession:{...two.catalogSession,expected_catalog_revision:9}};
-        f.replace([one,refreshed]);await f.provider.useScope(refreshed);
-        assert.equal(f.state.session,same,'catalog clock reconnects without renaming or deleting transcript');
-        assert.notEqual(keyOne,keyTwo);assert.equal(f.created[0].spec.service!.project,A,'native backing remains unchanged');
-    }finally{pending.resolve({payload:{}});f.provider.dispose();}
-});
-
-
-test('scoped freshness comparisons require matching native scope observations and fingerprint',async()=>{
-    const f=fixture(),selected={...spec(A),catalogSession:scopedSelector('44')};let fingerprint='66'.repeat(32),include=true;
-    const observation=()=>({schema:1,qualifier:'selected_subset',provenance:'user_reviewed_project_grant',fingerprint,
-        grant:{id:selected.catalogSession.grant_id,revision:selected.catalogSession.expected_grant_revision},
-        members:[{index_id:selected.catalogSession.index_id,memberships:selected.catalogSession.project_ids.map(project_id=>({project_id}))}]});
-    f.respond(async()=>({payload:{collection:'fixture',publication:{token:publicationToken(1)},...(include?{scope_observation:observation()}:{})}}));
-    const snapshot=()=> (f.provider as unknown as {state():WorkbenchState}).state();
-    try{
-        f.replace([selected]);await f.provider.useScope(selected);await tick();await f.state.run('/status');
-        const turn=f.state.session!.turns[0];assert.equal(snapshot().publicationRelations?.[turn.id],'equal');
-        fingerprint='77'.repeat(32);await f.state.message({type:'refresh'});
-        assert.equal(snapshot().publicationRelations?.[turn.id],'different','same token under a different native scope has no freshness order');
-        include=false;await f.state.message({type:'refresh'});assert.equal(snapshot().publicationRelations?.[turn.id],'unknown');
-        assert.equal((turn.envelope!.scope_observation as Value).fingerprint,'66'.repeat(32),'captured scope remains immutable');
-    }finally{f.provider.dispose();}
-});
-
 
 test('actual evidence failure through Workbench and durable privacy paths never saves native details as guidance',async()=>{
     const root=await fs.mkdtemp(path.join(os.tmpdir(),'airk-native-refusal-privacy-'));

@@ -767,7 +767,7 @@ fn method_name(method: &ControlMethod) -> Option<String> {
 fn relay_rule(method: &ControlMethod) -> Relay {
     use ControlMethod as M;
     match method {
-        M::Connect { .. } | M::ConnectScoped { .. } => Relay::Brokerage,
+        M::Connect { .. } => Relay::Brokerage,
         M::PrepareUpgradeCheckpoint { .. }
         | M::AdminNativeOpen { .. }
         | M::AdminNativeCall { .. }

@@ -78,14 +78,18 @@ fn scoped_kernel(
     base.configure_vectors(false)?;
     base.index()?;
     let authority = crate::scoped_observation_tests::authority(&base)?;
-    let kernel = base.with_scoped_reads(authority.clone())?;
+    let kernel = base.with_selection_reads(authority.clone())?;
     let reference = ScopedReadRef {
         schema: 1,
         lease_generation: 1,
         index_id: authority.index_id,
-        grant_id: Some(authority.grant.id),
-        grant_revision: Some(authority.grant.revision),
-        selection: None,
+        selection: airk_core::scoped_reads::SelectionScopeRef {
+            owner: airk_core::scoped_reads::SelectionOwnerKind::Window,
+            grant_nonce: airk_core::identity::Incarnation::from_bytes([10; 16]),
+            service_instance: airk_core::identity::Incarnation::from_bytes([11; 16]),
+            scope_identity: airk_core::identity::Sha256Digest::from_bytes([12; 32]),
+            catalog_revision: airk_core::index_catalog::CatalogRevision::try_from(5_u64).unwrap(),
+        },
         fingerprint: kernel.scoped_read_fingerprint()?.unwrap(),
     };
     let worker = WorkerIdentity {
@@ -237,11 +241,7 @@ async fn disabled_native_answer_expands_real_scoped_evidence_and_preserves_full_
     assert_eq!(packet["applications"][0]["availability"], "disabled");
     assert!(packet["work"]["calls"].as_u64().unwrap() >= 2, "{packet}");
     let records = packet["records"].as_array().unwrap();
-    assert!(
-        records
-            .iter()
-            .any(|record| record["operation"] == "search")
-    );
+    assert!(records.iter().any(|record| record["operation"] == "search"));
     assert!(packet.to_string().contains("amber_marker owns"), "{packet}");
     assert!(!packet.to_string().contains("SECRET_PRIVATE_ARCHIVE"));
     assert!(!packet.to_string().contains("private/secret.txt"));
@@ -460,7 +460,11 @@ async fn optional_callback_failure_keeps_canonical_evidence_but_typed_scope_refu
         let files: Vec<_> = (0..3)
             .map(|i| {
                 (
-                    ["public/policy-0.txt", "public/policy-1.txt", "public/policy-2.txt"][i],
+                    [
+                        "public/policy-0.txt",
+                        "public/policy-1.txt",
+                        "public/policy-2.txt",
+                    ][i],
                     format!("amber_callback owns indexed policy {i}.\n"),
                 )
             })
@@ -709,7 +713,8 @@ async fn revoking_answer(revoke_after: usize) -> Result<(CallToolResult, Arc<Rev
         Instant::now() + Duration::from_secs(60),
         Default::default(),
     )
-    .with_wire_attempt(wire_attempt(32, 60_000_000_000))?.capture_transport_attempt(wire_attempt(32, 60_000_000_000))?;
+    .with_wire_attempt(wire_attempt(32, 60_000_000_000))?
+    .capture_transport_attempt(wire_attempt(32, 60_000_000_000))?;
     let reply = tools
         .call_with_read_context(
             "airk_answer".into(),
@@ -920,9 +925,18 @@ async fn answer_reads_vary_only_in_classified_status_fields() -> Result<()> {
     let mut tools = local::LocalTools::new(fixture.kernel.clone()).await?;
     let mut observed = 0;
     for (tool, arguments) in [
-        ("airk_search", json!({"query":"amber_marker","limit":8,"max_bytes":6144,"full_chunks":false})),
-        ("airk_context", json!({"path":"public/policy.md","line":1,"before":0,"after":40,"max_bytes":3072})),
-        ("airk_outline", json!({"path":"public/policy.md","limit":40,"max_bytes":4096,"compact":false})),
+        (
+            "airk_search",
+            json!({"query":"amber_marker","limit":8,"max_bytes":6144,"full_chunks":false}),
+        ),
+        (
+            "airk_context",
+            json!({"path":"public/policy.md","line":1,"before":0,"after":40,"max_bytes":3072}),
+        ),
+        (
+            "airk_outline",
+            json!({"path":"public/policy.md","limit":40,"max_bytes":4096,"compact":false}),
+        ),
     ] {
         // The arguments `workbench_read` adds for an Answer's inner read.
         let mut arguments = arguments;
@@ -934,9 +948,16 @@ async fn answer_reads_vary_only_in_classified_status_fields() -> Result<()> {
         let second = body(&tools.call(tool.into(), arguments).await?)?;
         let mut changed = Vec::new();
         differing(&first, &second, String::new(), &mut changed);
-        assert!(changed.iter().any(|field| field == "/request_id"), "{tool}: {changed:?}");
+        assert!(
+            changed.iter().any(|field| field == "/request_id"),
+            "{tool}: {changed:?}"
+        );
         for field in &changed {
-            let top = field.trim_start_matches('/').split('/').next().unwrap_or_default();
+            let top = field
+                .trim_start_matches('/')
+                .split('/')
+                .next()
+                .unwrap_or_default();
             assert!(
                 v3::VOLATILE_READ_FIELDS.contains(&top),
                 "{tool}: unclassified per-read field {field}: classify it in Core VOLATILE_READ_FIELDS"
@@ -994,10 +1015,9 @@ fn without_timing(mut packet: Value) -> Value {
     // The receipt's selection digest covers the reply, timing included;
     // recompute it over the normalized reply.
     if packet.get("source_verification").is_some() {
-        packet["source_verification"]["selection_digest"] = serde_json::to_value(
-            airk_kernel::verification::selection_digest(&packet).unwrap(),
-        )
-        .unwrap();
+        packet["source_verification"]["selection_digest"] =
+            serde_json::to_value(airk_kernel::verification::selection_digest(&packet).unwrap())
+                .unwrap();
     }
     packet
 }
@@ -1029,14 +1049,23 @@ async fn one_answer_twice_on_one_session_gives_byte_equal_records_and_decisions(
     let first = body(&tools.call("airk_answer".into(), ask.clone()).await?)?;
     let second = body(&tools.call("airk_answer".into(), ask.clone()).await?)?;
     assert!(
-        first["records"].as_array().unwrap().iter().any(|r| r["operation"] != "search"),
+        first["records"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["operation"] != "search"),
         "the Answer reads structurally: {first}"
     );
-    let status = first["read_status"].as_object().context("full reply carries read_status")?;
+    let status = first["read_status"]
+        .as_object()
+        .context("full reply carries read_status")?;
     assert!(status.contains_key("freshness"), "{first}");
     let records = first["records"].to_string();
     for field in v3::VOLATILE_READ_FIELDS {
-        assert!(!records.contains(&format!("\"{field}\"")), "{field} in records");
+        assert!(
+            !records.contains(&format!("\"{field}\"")),
+            "{field} in records"
+        );
     }
     let (left, right) = (without_timing(first), without_timing(second));
     let mut changed = Vec::new();

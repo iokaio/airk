@@ -20,18 +20,11 @@ use tokio::sync::oneshot;
 
 enum ManagementReply {
     Control(oneshot::Sender<ControlResponse>),
-    Scoped(oneshot::Sender<Result<airk_supervisor::project_supervisor::ScopedConnectionDelivery>>),
 }
 impl ManagementReply {
     fn send(self, response: ControlResponse) -> std::result::Result<(), Box<ControlResponse>> {
         match self {
             Self::Control(sender) => sender.send(response).map_err(Box::new),
-            Self::Scoped(sender) => {
-                let _ = sender.send(Err(anyhow::anyhow!(
-                    "scoped connection requires direct delivery"
-                )));
-                Err(Box::new(response))
-            }
         }
     }
 }
@@ -348,24 +341,6 @@ impl CatalogRuntime {
         self.policy_completions_pending = completed.len() == 16;
         Ok(!completed.is_empty())
     }
-    fn connect(
-        &self,
-        registry: &mut ServiceRegistry,
-        request: &airk_core::service::ScopedConnectRequest,
-    ) -> Result<airk_supervisor::project_supervisor::ScopedConnectionDelivery> {
-        self.reconcile(registry)?;
-        anyhow::ensure!(
-            self.gate
-                .catalog_clock()
-                .is_some_and(|clock| clock.namespace == request.namespace
-                    && clock.revision == request.expected_catalog_revision),
-            airk_catalog_control::catalog_coordinator::CatalogRevisionChanged
-        );
-        let selection =
-            airk_catalog_control::catalog_coordinator::native_scoped_selection(registry, request)?;
-        self.control
-            .issue_scoped(selection, Duration::from_secs(300))
-    }
     /// Admit one index of an in-memory selection grant (§3.2 step 4). The
     /// gate's clock must equal the grant's revision exactly; a newer clock
     /// refuses (`CatalogRevisionChanged`) and is never rolled forward.
@@ -404,40 +379,6 @@ impl CatalogRuntime {
             airk_catalog_control::catalog_coordinator::CatalogRevisionChanged
         );
         self.control.issue_open(request, Duration::from_secs(300))
-    }
-    fn connect_legacy(
-        &self,
-        registry: &mut ServiceRegistry,
-        binding: airk_core::service::ProjectBinding,
-    ) -> Result<airk_supervisor::project_supervisor::ScopedConnectionDelivery> {
-        self.reconcile(registry)?;
-        let state = registry
-            .catalog_state()?
-            .ok_or_else(|| anyhow::anyhow!("native catalog unavailable"))?;
-        let key = airk_core::identity::framed_digest(
-            b"airk/native-legacy-connection-context/1",
-            &[binding.as_bytes()],
-        );
-        let context = airk_catalog_control::catalog_host_context::NativeHostContext::load(
-            registry,
-            key,
-            Some(state.revision),
-        )?;
-        let descriptor = context.descriptor();
-        anyhow::ensure!(
-            descriptor.namespace == state.namespace
-                && descriptor.catalog_revision == state.revision,
-            "native compatibility context changed"
-        );
-        self.control.issue_legacy(
-            airk_supervisor::project_supervisor::NativeLegacyAuthoritySelection {
-                namespace: descriptor.namespace,
-                host: descriptor.host,
-                catalog_revision: descriptor.catalog_revision,
-                binding,
-            },
-            Duration::from_secs(300),
-        )
     }
     fn reconcile(&self, registry: &ServiceRegistry) -> Result<()> {
         let state = registry
@@ -496,7 +437,6 @@ fn request_is_read_only(method: &ControlMethod) -> bool {
             | ControlMethod::CatalogContext { .. }
             | ControlMethod::CatalogHostContext { .. }
             | ControlMethod::CatalogLegacyBinding { .. }
-            | ControlMethod::CatalogGrantDraft { .. }
             | ControlMethod::CatalogSourceMutationDraft { .. }
             | ControlMethod::CatalogSourceChangeObservation { .. }
             | ControlMethod::CatalogPendingSourceChange { .. }
@@ -514,7 +454,6 @@ fn request_is_read_only(method: &ControlMethod) -> bool {
             | ControlMethod::Job { .. }
             | ControlMethod::RequestReceipt { .. }
             | ControlMethod::ConfigurationResult { .. }
-            | ControlMethod::ReferenceRefreshReceipt { .. }
             | ControlMethod::Plan { .. }
             | ControlMethod::PlanItems { .. }
             | ControlMethod::Projects { .. }
@@ -838,9 +777,6 @@ fn catalog_request(
                 key,
             )?,
         )),
-        ControlMethod::ConnectScoped { .. } => Ok(Some(ControlResponse::Failure {
-            code: "scoped_connection_requires_direct_delivery".into(),
-        })),
         _ => Ok(None),
     }
 }
@@ -857,11 +793,6 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         | ControlMethod::AdminNativeCancel { .. }
         | ControlMethod::AdminNativeClose { .. } => ControlResponse::Failure {
             code: "native_admin_owner_required".into(),
-        },
-        // Only the native Runtime's actual guarded socket writer can make a
-        // final combined delivery observation; the metadata actor cannot.
-        ControlMethod::ValidateCombinedDelivery { .. } => ControlResponse::Failure {
-            code: "combined_delivery_native_owner_required".into(),
         },
         ControlMethod::CatalogPage { request } => ControlResponse::CatalogPage {
             page: registry.catalog_page(&request)?,
@@ -908,23 +839,6 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
             .clone(),
             capabilities: airk_store::service::registry::catalog::capabilities(),
         },
-        ControlMethod::CatalogGrantDraft {
-            context_key,
-            selection,
-        } => {
-            selection.validate()?;
-            let context = airk_catalog_control::catalog_host_context::NativeHostContext::load(
-                registry,
-                context_key,
-                Some(selection.expected_catalog_revision),
-            )?
-            .for_review(&selection)?;
-            ControlResponse::CatalogGrantDraft {
-                draft: airk_catalog_control::catalog_grant_draft::build_reviewed_grant_draft(
-                    registry, &context, &selection,
-                )?,
-            }
-        }
         ControlMethod::CatalogPreview { request } => {
             let preview = registry.catalog_preview(&request)?;
             let preview_digest = preview.identity()?;
@@ -1118,9 +1032,6 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         } => ControlResponse::Events {
             page: registry.events(project, cursor.as_ref(), limit)?,
         },
-        ControlMethod::ReferenceRefreshReceipt { caller, key } => {
-            airk_catalog_control::reference_refresh_control::receipt(registry, caller, &key)?
-        }
         ControlMethod::ConfigurationResult { id } => ControlResponse::Configuration {
             job: registry.job(id)?,
             result: registry.configuration_result(id)?,
@@ -1130,26 +1041,15 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
             caller,
             key,
             request,
-        } => {
-            if matches!(
-                request.configuration,
-                airk_core::service_configuration::ProjectConfiguration::RefreshReferences { .. }
-            ) {
-                airk_catalog_control::reference_refresh_control::admit_response(
-                    registry, project, caller, &key, &request,
-                )?
-            } else {
-                ControlResponse::Job {
-                    job: registry.enqueue_configuration(
-                        project,
-                        caller,
-                        &key,
-                        &request,
-                        airk_host::runtime_pair::engine_identity()?,
-                    )?,
-                }
-            }
-        }
+        } => ControlResponse::Job {
+            job: registry.enqueue_configuration(
+                project,
+                caller,
+                &key,
+                &request,
+                airk_host::runtime_pair::engine_identity()?,
+            )?,
+        },
         ControlMethod::Enqueue {
             project,
             caller,
@@ -1185,7 +1085,6 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         | ControlMethod::ReleaseUpgradeAdmission { .. }
         | ControlMethod::HttpEndpoint
         | ControlMethod::Connect { .. }
-        | ControlMethod::ConnectScoped { .. }
         | ControlMethod::NativeRead { .. }
         | ControlMethod::CatalogIndexSetupDraft { .. }
         | ControlMethod::CatalogSourceMutationDraft { .. }
@@ -1500,28 +1399,6 @@ impl Management {
                         let _ = reply.send(refusal);
                         continue;
                     }
-                    if let ManagementReply::Scoped(sender) = reply {
-                        let result = match (registry.as_mut(), catalog.as_ref()) {
-                            (Ok(registry), Some(native)) => match method {
-                                ControlMethod::ConnectScoped { request } => {
-                                    native.connect(registry, &request)
-                                }
-                                ControlMethod::Connect { project } => {
-                                    native.connect_legacy(registry, project)
-                                }
-                                _ => Err(anyhow::anyhow!("invalid scoped connection route")),
-                            },
-                            _ => Err(anyhow::anyhow!("catalog_authority_unavailable")),
-                        };
-                        active.fetch_sub(1, Ordering::AcqRel);
-                        match result {
-                            Ok(delivery) => delivery.handoff_native(sender),
-                            Err(error) => {
-                                let _ = sender.send(Err(error));
-                            }
-                        }
-                        continue;
-                    }
                     let source_changed = matches!(
                         method,
                         ControlMethod::ConfigureWatch { .. }
@@ -1648,13 +1525,6 @@ impl Management {
             },
         }
     }
-    pub(crate) async fn request_scoped(
-        &self,
-        request: airk_core::service::ScopedConnectRequest,
-    ) -> Result<airk_supervisor::project_supervisor::ScopedConnectionDelivery> {
-        self.request_connection(ControlMethod::ConnectScoped { request })
-            .await
-    }
     pub(crate) async fn request_administrative_read(
         &self,
         project: ProjectBinding,
@@ -1704,44 +1574,6 @@ impl Management {
             .sender
             .as_ref()
             .map(|queue| queue.try_send(envelope(sender)));
-        match sent {
-            Some(Ok(())) => {}
-            Some(Err(std::sync::mpsc::TrySendError::Full(_))) => {
-                self.pending.fetch_sub(1, Ordering::AcqRel);
-                return Err(
-                    airk_supervisor::project_supervisor::ConnectionSetupPending::Queue.into(),
-                );
-            }
-            _ => {
-                self.pending.fetch_sub(1, Ordering::AcqRel);
-                anyhow::bail!("catalog_connection_owner_closed");
-            }
-        }
-        tokio::time::timeout(Duration::from_secs(15), receiver)
-            .await
-            .map_err(|_| anyhow::anyhow!("catalog_connection_outcome_unknown"))?
-            .map_err(|_| anyhow::anyhow!("catalog_connection_owner_closed"))?
-    }
-    pub(crate) async fn request_legacy(
-        &self,
-        project: airk_core::service::ProjectBinding,
-    ) -> Result<airk_supervisor::project_supervisor::ScopedConnectionDelivery> {
-        self.request_connection(ControlMethod::Connect { project })
-            .await
-    }
-    async fn request_connection(
-        &self,
-        method: ControlMethod,
-    ) -> Result<airk_supervisor::project_supervisor::ScopedConnectionDelivery> {
-        let (sender, receiver) = oneshot::channel();
-        self.pending.fetch_add(1, Ordering::AcqRel);
-        let sent = self.sender.as_ref().map(|queue| {
-            queue.try_send(Envelope::Request(
-                Box::new(method),
-                ManagementReply::Scoped(sender),
-                None,
-            ))
-        });
         match sent {
             Some(Ok(())) => {}
             Some(Err(std::sync::mpsc::TrySendError::Full(_))) => {
@@ -1842,39 +1674,6 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn actual_connection_queue_distinguishes_full_from_closed_before_acceptance() -> Result<()>
-    {
-        let (sender, receiver) = sync_channel(0);
-        let owner = Management {
-            checkpoint_pause: Arc::new(AtomicBool::new(false)),
-            checkpoint_observed: Arc::new(AtomicBool::new(false)),
-            sender: Some(Arc::new(sender)),
-            thread: None,
-            pending: Arc::new(AtomicUsize::new(0)),
-            plans: Arc::new(AtomicBool::new(false)),
-            missing: Arc::new(AtomicUsize::new(0)),
-        };
-        let request = || ControlMethod::Connect {
-            project: airk_core::identity::Sha256Digest::from_bytes([3; 32]),
-        };
-        let full = owner
-            .request_connection(request())
-            .await
-            .err()
-            .expect("full queue must reject");
-        assert!(full.is::<airk_supervisor::project_supervisor::ConnectionSetupPending>());
-        assert_eq!(owner.pending.load(Ordering::Acquire), 0);
-        drop(receiver);
-        let closed = owner
-            .request_connection(request())
-            .await
-            .err()
-            .expect("closed queue must reject");
-        assert!(!closed.is::<airk_supervisor::project_supervisor::ConnectionSetupPending>());
-        assert_eq!(owner.pending.load(Ordering::Acquire), 0);
-        Ok(())
-    }
     #[test]
     fn catalog_reads_do_not_activate_legacy_registry() -> Result<()> {
         use airk_core::catalog_management::{CatalogKind, CatalogPageRequest, MAX_PAGE_BYTES};

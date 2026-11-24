@@ -40,14 +40,8 @@ struct BoundNative {
     limit: usize,
 }
 impl RemoteTools for BoundNative {
-    fn scoped_selection(&self) -> Option<&airk_core::service::ScopedConnectRequest> {
-        self.backend.scoped_selection()
-    }
     fn scoped_scope(&self) -> Option<crate::remote::ScopedScope> {
         self.backend.scoped_scope()
-    }
-    fn combined_selection(&self) -> Option<&airk_core::service::CombinedConnectRequest> {
-        self.backend.combined_selection()
     }
     fn combined_scope(&self) -> Option<crate::remote::CombinedScope> {
         self.backend.combined_scope()

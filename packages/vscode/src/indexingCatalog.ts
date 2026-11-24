@@ -2,7 +2,7 @@
 /** Administrative metadata only. These IDs and preferences confer no evidence access. */
 export type CatalogObject = Record<string, unknown>;
 export interface SplitReview { response:CatalogObject; draft:CatalogObject; selection:CatalogObject }
-export type CatalogKind = 'projects' | 'indexes' | 'memberships' | 'contexts' | 'grants' | 'sources';
+export type CatalogKind = 'projects' | 'indexes' | 'memberships' | 'contexts' | 'sources';
 export interface CatalogKey { namespace: string; epoch: number; nonce: string }
 export interface CatalogRequest { caller: string; key: CatalogKey; expected_catalog_revision: number; operation: CatalogObject }
 /** request_digest is local journal metadata; only catalog_apply is sent on the native transport. */
@@ -39,16 +39,15 @@ export interface CatalogView {
     submittedReview?: CatalogReview;
     windowDescriptor?: WindowContextDescriptor; context?: CatalogObject;
     hostContext?: CatalogObject; canReadWindowContext?: boolean;
-    canReviewGrant?: boolean; pendingDetails?: readonly CatalogObject[];
+    pendingDetails?: readonly CatalogObject[];
     canReviewSetup?: boolean; setupReview?: IndexSetupReview; submittedSetupReview?: IndexSetupReview;
-    grants?: CatalogObject; grantDetail?: CatalogObject; canUseGrant?: boolean;
     canReviewSource?:boolean; canReadPendingSource?:boolean; sourceObservation?:CatalogObject;
     retirementReview?:CatalogRetirementReview; canReviewRetirement?:boolean;
     policyStatus?:CatalogObject; canReadPolicy?:boolean; canResumePolicy?:boolean;
 }
 export const CATALOG_PAGE_BYTES = 48 * 1024;
 export const CATALOG_RECEIPT_BYTES = 16 * 1024;
-export const CATALOG_UI_OPERATIONS = ['create_project', 'rename_project', 'delete_project', 'rename_index', 'set_membership', 'remove_membership', 'set_project_defaults', 'set_context', 'delete_context', 'create_grant', 'revoke_grant', 'begin_index_source_change', 'retire_index', 'change_index_policy'] as const;
+export const CATALOG_UI_OPERATIONS = ['create_project', 'rename_project', 'delete_project', 'rename_index', 'set_membership', 'remove_membership', 'set_project_defaults', 'set_context', 'delete_context', 'begin_index_source_change', 'retire_index', 'change_index_policy'] as const;
 export function catalogObject(value: unknown): CatalogObject {
     if (!value || typeof value !== 'object' || Array.isArray(value)) { throw new Error('invalid_catalog_object'); }
     return value as CatalogObject;
@@ -189,29 +188,8 @@ function validateStandaloneAdoption(input:unknown):void{
     const token=typeof publication.current==='string'?/^airk-r1:([a-f0-9]{32}):([1-9][0-9]{0,19}):([a-f0-9]{64})$/.exec(publication.current):null;
     if(publication.schema!==1||!token||BigInt(token[2])>18446744073709551615n||publication.archive_inventory_sha256!==plan.archive_inventory_sha256||publication.original_publication_sha256!==plan.original_publication_sha256)throw new Error('crossed_standalone_adoption_publication');
 }
-function validateReviewedGrant(input: unknown): void {
-    const grant=catalogObject(input);exact(grant,'id,host,revision,memberships,revoked');catalogId(grant.id,'grt_');catalogHex(grant.host,64);
-    if(grant.revision!==1||grant.revoked!==false||!Array.isArray(grant.memberships)||grant.memberships.length>1024||parseInt(String(grant.id).slice(4,6),16)>=128)throw new Error('invalid_native_reviewed_grant');
-    const pairs=new Set<string>(),projects=new Set<string>(),members=new Set<string>();
-    for(const input of grant.memberships){
-        const frozen=catalogObject(input);exact(frozen,'membership,source_revision,policy_epoch,policy_digest');
-        const member=catalogObject(frozen.membership);exact(member,'project_id,index_id,revision,scope');
-        catalogId(member.project_id,'prj_');catalogId(member.index_id,'idx_');catalogRevision(member.revision);validateCatalogScope(member.scope);catalogRevision(frozen.source_revision);
-        if(typeof frozen.policy_epoch!=='number'||!Number.isSafeInteger(frozen.policy_epoch)||frozen.policy_epoch<0||(frozen.policy_epoch===0)!==(frozen.policy_digest===null))throw new Error('invalid_native_grant_policy');
-        if(frozen.policy_digest!==null)catalogHex(frozen.policy_digest,64);
-        const pair=JSON.stringify([member.project_id,member.index_id]);if(pairs.has(pair))throw new Error('duplicate_native_grant_membership');pairs.add(pair);projects.add(String(member.project_id));members.add(String(member.index_id));
-    }
-    if(projects.size>32||members.size>32)throw new Error('invalid_native_grant_selection');
-}
-export function validateGrantSelection(input: unknown): {project_ids: string[];index_ids: string[] | null} {
-    const selection=catalogObject(input);exact(selection,'project_ids,index_ids');
-    if(!Array.isArray(selection.project_ids)||!selection.project_ids.length||selection.project_ids.length>32||new Set(selection.project_ids).size!==selection.project_ids.length)throw new Error('invalid_grant_projects');
-    selection.project_ids.forEach(id=>catalogId(id,'prj_'));
-    if(selection.index_ids!==null){indexes(selection.index_ids);if(!(selection.index_ids as unknown[]).length)throw new Error('invalid_grant_indexes');}
-    return {project_ids:[...selection.project_ids],index_ids:selection.index_ids===null?null:[...selection.index_ids as string[]]};
-}
 export function catalogReviewPreview(review: CatalogReview): CatalogObject {
-    return catalogObject(['catalog_grant_draft','catalog_source_mutation_draft'].includes(String(review.response.status))?catalogObject(review.response.draft).preview:review.response.preview);
+    return catalogObject(review.response.status==='catalog_source_mutation_draft'?catalogObject(review.response.draft).preview:review.response.preview);
 }
 /** Return the original nested enum; never normalize or replace the complete native reply. */
 export function catalogFenceObservation(response: CatalogObject): CatalogObject | undefined {
@@ -219,21 +197,7 @@ export function catalogFenceObservation(response: CatalogObject): CatalogObject 
     const fence=response.fence??(observation?.kind==='authority_fence'?observation.fence:undefined);
     return fence==null?undefined:catalogObject(fence);
 }
-export function validateNativeGrantDraft(input: unknown, selection: CatalogObject): CatalogReview {
-    const response=catalogObject(input);if(response.status!=='catalog_grant_draft')throw new Error('invalid_native_grant_draft_status');
-    const draft=catalogObject(response.draft),preview=catalogObject(draft.preview);catalogBound(draft);
-    const prepared=validateCatalogApply({catalog_apply:{request:draft.request,preview_digest:draft.preview_digest},request_digest:preview.request_digest});
-    const request=prepared.catalog_apply.request;
-    if(request.operation.operation!=='create_grant'||!sameCatalogValue(request.key,selection.key)||request.expected_catalog_revision!==selection.expected_catalog_revision
-        ||preview.catalog_revision!==request.expected_catalog_revision||preview.next_revision!==request.expected_catalog_revision+1||!sameCatalogValue(preview.operation,request.operation)
-        ||typeof preview.authority_fence_required!=='boolean'||typeof preview.file_data_changes!=='boolean')throw new Error('crossed_native_grant_draft');
-    const chosen=validateGrantSelection({project_ids:selection.project_ids,index_ids:selection.index_ids});
-    const grants=catalogObject(request.operation.grant).memberships as CatalogObject[];
-    const projects=new Set(grants.map(value=>String(catalogObject(value.membership).project_id))),indexes=new Set(grants.map(value=>String(catalogObject(value.membership).index_id)));
-    if(projects.size!==chosen.project_ids.length||chosen.project_ids.some(id=>!projects.has(id))||chosen.index_ids!==null&&(indexes.size!==chosen.index_ids.length||chosen.index_ids.some(id=>!indexes.has(id))))throw new Error('crossed_native_grant_selection');
-    return {request,response,previewDigest:prepared.catalog_apply.preview_digest,requestDigest:prepared.request_digest};
-}
-/** The UI exposes reviewed metadata operations; native grant preparation has a separate owner. */
+/** The UI exposes reviewed metadata operations. */
 export function validateCatalogOperation(input: unknown): CatalogObject {
     const op = catalogObject(input);
     switch (op.operation) {
@@ -265,8 +229,6 @@ export function validateCatalogOperation(input: unknown): CatalogObject {
             break;
         }
         case 'delete_context': exact(op,'operation,id,expected_revision');catalogId(op.id,'ctx_');catalogRevision(op.expected_revision);break;
-        case 'create_grant': exact(op,'operation,grant');validateReviewedGrant(op.grant);break;
-        case 'revoke_grant':exact(op,'operation,id,expected_revision');catalogId(op.id,'grt_');catalogRevision(op.expected_revision);break;
         case 'begin_index_source_change':exact(op,'operation,id,expected_source_revision,plan');catalogId(op.id,'idx_');catalogRevision(op.expected_source_revision);validateSourceChangePlan(op.plan);break;
         case 'change_index_policy':{
             exact(op,'operation,id,expected_source_revision,expected_policy_epoch,expected_policy_digest,change,configuration,engine_identity');catalogId(op.id,'idx_');catalogRevision(op.expected_source_revision);
@@ -327,7 +289,6 @@ export function catalogItems(response?: CatalogObject, field = 'page'): { kind: 
             catalogId(value.id, 'src_'); catalogId(value.index_id, 'idx_');
             if (typeof value.canonical_path !== 'string' || typeof value.owner !== 'boolean' || typeof value.enabled !== 'boolean' || !Array.isArray(value.aliases)) { throw new Error('invalid_catalog_source'); }
         } else if (kind === 'context') { validateContextChoices(value,false); }
-        else if (kind === 'grant') { validatePersistedGrant(value); }
         else { throw new Error('invalid_catalog_item_kind'); }
         return { kind, value };
     });

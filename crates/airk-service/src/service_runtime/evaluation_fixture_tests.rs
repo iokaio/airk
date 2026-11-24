@@ -21,7 +21,6 @@ mod acquisition;
 #[cfg(all(windows, target_arch = "x86_64", feature = "gpu-cuda"))]
 mod cuda_answer;
 mod execution_observer;
-mod readable_selection;
 mod restart;
 mod warm_journal;
 
@@ -373,7 +372,10 @@ fn contract_loop_request() -> Result<serde_json::Value> {
         .as_object()
         .context("loop cases carry no default budget")?;
     ensure!(
-        !budget.is_empty() && budget.values().all(|value| value.as_u64().is_some_and(|v| v > 0)),
+        !budget.is_empty()
+            && budget
+                .values()
+                .all(|value| value.as_u64().is_some_and(|v| v > 0)),
         "loop cases carry no whole default budget"
     );
     Ok(serde_json::json!({
@@ -720,7 +722,8 @@ async fn run_actual_private_arbiter_fixture(
         _ => bail!("private CAL observer mode must be explicit true/false"),
     };
     let decision_mode = decision_mode_from(std::env::var("AIRK_ARBITER_EVALUATION_DECISION_MODE"))?;
-    let idle_unload = idle_unload_from(std::env::var("AIRK_ARBITER_EVALUATION_IDLE_UNLOAD_SECONDS"))?;
+    let idle_unload =
+        idle_unload_from(std::env::var("AIRK_ARBITER_EVALUATION_IDLE_UNLOAD_SECONDS"))?;
     let mut execution_recorder = execution_observer::Recorder::from_env(&work)?;
     let execution_observer = execution_recorder
         .as_ref()
@@ -1717,26 +1720,13 @@ async fn emit_private_arbiter_configuration() -> Result<()> {
         _ => bail!("private membership page contains a foreign entity"),
     })
     .collect::<Result<Vec<_>>>()?;
-    let reviewed_selections = if let Some(raw) = value.get("reviewed_selections") {
-        let selections: Vec<airk_core::service::ScopedConnectRequest> =
-            serde_json::from_value(raw.clone())?;
-        ensure!(
-            selections.len() == expected_roots.len(),
-            "explicit private selection/source roster differs"
-        );
-        let mut selected = BTreeMap::new();
-        for request in selections {
-            request.validate()?;
-            ensure!(
-                selected.insert(request.index_id, request).is_none(),
-                "duplicate explicit private index selection"
-            );
-        }
-        Some(selected)
-    } else {
-        None
-    };
-    let mut reviewed_authorities = Vec::new();
+    // The optional `reviewed_selections` input named reviewed catalog grants,
+    // which were removed (change-log entry 68 part 3); an input carrying it
+    // is refused rather than read some other way.
+    ensure!(
+        value.get("reviewed_selections").is_none(),
+        "reviewed selections were removed; supply source_roots only"
+    );
     let census = registry.catalog_clean_break_sources(catalog.revision)?;
     let mut bindings = BTreeMap::new();
     let mut ids = BTreeSet::new();
@@ -1750,30 +1740,12 @@ async fn emit_private_arbiter_configuration() -> Result<()> {
                 Path::new(&definition.backing.root).canonicalize()? == canonical,
                 "private index has a foreign backing root"
             );
-            let readable_project = if let Some(selections) = &reviewed_selections {
-                let request = selections
-                    .get(&definition.id)
-                    .context("explicit private selection is missing this immutable index")?;
-                let (project, authority) = readable_selection::qualify(
-                    &mut registry,
-                    request,
-                    &catalog,
-                    &definition,
-                    &roots,
-                    &projects,
-                    &memberships,
-                )?;
-                reviewed_authorities
-                    .push(serde_json::json!({"selection":request,"authority":authority}));
-                project
-            } else {
-                readable_fixture_project(
-                    definition.id,
-                    &roots.iter().map(|root| root.id).collect::<Vec<_>>(),
-                    &projects,
-                    &memberships,
-                )?
-            };
+            let readable_project = readable_fixture_project(
+                definition.id,
+                &roots.iter().map(|root| root.id).collect::<Vec<_>>(),
+                &projects,
+                &memberships,
+            )?;
             ensure!(
                 bindings
                     .insert(
@@ -1813,13 +1785,6 @@ async fn emit_private_arbiter_configuration() -> Result<()> {
                 .all(|value| value.is_ascii_alphanumeric() || matches!(value, b'-' | b'_')),
         "private control output prefix invalid"
     );
-    if reviewed_selections.is_some() {
-        write(
-            &work,
-            &format!("{prefix}.reviewed-authorities.private.json"),
-            &reviewed_authorities,
-        )?;
-    }
     for (ordinal, binding) in bindings.values_mut().enumerate() {
         let result = crate::ipc::control::request_once(
             &ready.control_root,

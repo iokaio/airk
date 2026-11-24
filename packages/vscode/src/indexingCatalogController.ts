@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { CatalogKind, CatalogObject, CatalogReview, CatalogView, IndexSetupReview, WindowContextDescriptor, catalogBound, catalogHex, catalogId, catalogItems, catalogObject, catalogRevision, catalogWindowAssociation, CATALOG_PAGE_BYTES, validateCatalogOperation, validateGrantSelection, validateNativeHostContext, validateWindowContext, validateIndexSetupSelection, validateSourceMutationSelection, sourceChangeObservation } from './indexingCatalog';
+import { CatalogKind, CatalogObject, CatalogReview, CatalogView, IndexSetupReview, WindowContextDescriptor, catalogBound, catalogHex, catalogId, catalogItems, catalogObject, catalogRevision, catalogWindowAssociation, CATALOG_PAGE_BYTES, validateCatalogOperation, validateNativeHostContext, validateWindowContext, validateIndexSetupSelection, validateSourceMutationSelection, sourceChangeObservation } from './indexingCatalog';
 import { randomUUID } from 'node:crypto';
 import { canReviewPolicyUnblock, CatalogRetirementReview } from './indexingCatalog';
 import { SplitReview, hasSplitCapability, validateSplitSelection, validateSplitSnapshot, validateSplitSourceState } from './indexingSplit';
@@ -16,7 +16,6 @@ export interface CatalogControl {
     catalogReconcile(): Promise<CatalogObject[]>;
     catalogPending(): readonly string[];
     catalogPendingDetails?(): readonly CatalogObject[];
-    catalogGrantDraft?(contextKey:string,selection:CatalogObject,revision:number):Promise<CatalogReview>;
     catalogIndexSetupDraft?(selection:CatalogObject,revision:number):Promise<IndexSetupReview>;
     catalogIndexSetupApply?(review:IndexSetupReview,valid:()=>boolean):Promise<CatalogObject>;
     catalogSetupResume?(id:string,valid:()=>boolean):Promise<CatalogObject>;
@@ -30,7 +29,7 @@ export interface CatalogControl {
     catalogRetirementReview?(id:string):Promise<CatalogRetirementReview>;
     catalogStopTracking?(review:CatalogRetirementReview,valid:()=>boolean):Promise<CatalogObject>;
 }
-export interface CatalogHost { control?: CatalogControl; identity(): string; authorized(): boolean; changed(): void; evidenceEpoch?():number; windowContext?(): WindowContextDescriptor | undefined; windowContextObservation?(): CatalogObject | undefined; canReadWindowContext?(): boolean; useGrant?(choice:CatalogObject,namespace:string,revision:number,valid:()=>boolean):Promise<CatalogObject>;searchScopeSelection?():{index_ids:string[];project_ids:string[];managedProjectIds?:string[];active:boolean};applySearchScope?(selection:CatalogObject):Promise<CatalogObject>;saveIndexSet?(selection:CatalogObject):Promise<CatalogObject> }
+export interface CatalogHost { control?: CatalogControl; identity(): string; authorized(): boolean; changed(): void; evidenceEpoch?():number; windowContext?(): WindowContextDescriptor | undefined; windowContextObservation?(): CatalogObject | undefined; canReadWindowContext?(): boolean;searchScopeSelection?():{index_ids:string[];project_ids:string[];managedProjectIds?:string[];active:boolean};applySearchScope?(selection:CatalogObject):Promise<CatalogObject>;saveIndexSet?(selection:CatalogObject):Promise<CatalogObject> }
 /** Window memory only; the shared native console owns durable intents and transport. No polling or source scanning. */
 export class IndexingCatalogController {
     private owner?: string;
@@ -45,12 +44,11 @@ export class IndexingCatalogController {
     private pageRequest?: CatalogObject;
     private membershipRequest?: CatalogObject;
     private sourceRequest?: CatalogObject;
-    private grantRequest?: CatalogObject;
     private scopeApplying=false;
     constructor(private readonly host: CatalogHost) {}
     snapshot(): CatalogView {
         this.sync();
-        return this.host.authorized() ? { ...this.view, adviceGeneration:this.adviceSequence, busy:this.view.busy||this.scopeApplying, canReviewSplit:hasSplitCapability(this.view.capabilities)&&!!this.host.control?.catalogSplitDraft&&!!this.host.control?.catalogSplitApply&&!!this.host.control?.catalogSplitSourceState, canReadPolicy:!!this.host.control?.catalogPolicyStatus,canResumePolicy:!!this.host.control?.catalogPolicyResume,canReviewRetirement:!!this.host.control?.catalogRetirementReview&&!!this.host.control?.catalogStopTracking,windowDescriptor:this.descriptor(),canReadWindowContext:this.host.canReadWindowContext?.(),canReviewGrant:!!this.host.control?.catalogGrantDraft,canUseGrant:!!this.host.useGrant,canReviewSource:!!this.host.control?.catalogSourceDraft,canReadPendingSource:!!this.host.control?.catalogPendingSource,canReviewSetup:!!this.host.control?.catalogIndexSetupDraft&&!!this.host.control?.catalogIndexSetupApply,pending: this.host.control?.catalogPending() ?? [],pendingDetails:this.host.control?.catalogPendingDetails?.() } : { generation: this.view.generation, busy: false, error: 'Workspace trust or client authority is unavailable.' };
+        return this.host.authorized() ? { ...this.view, adviceGeneration:this.adviceSequence, busy:this.view.busy||this.scopeApplying, canReviewSplit:hasSplitCapability(this.view.capabilities)&&!!this.host.control?.catalogSplitDraft&&!!this.host.control?.catalogSplitApply&&!!this.host.control?.catalogSplitSourceState, canReadPolicy:!!this.host.control?.catalogPolicyStatus,canResumePolicy:!!this.host.control?.catalogPolicyResume,canReviewRetirement:!!this.host.control?.catalogRetirementReview&&!!this.host.control?.catalogStopTracking,windowDescriptor:this.descriptor(),canReadWindowContext:this.host.canReadWindowContext?.(),canReviewSource:!!this.host.control?.catalogSourceDraft,canReadPendingSource:!!this.host.control?.catalogPendingSource,canReviewSetup:!!this.host.control?.catalogIndexSetupDraft&&!!this.host.control?.catalogIndexSetupApply,pending: this.host.control?.catalogPending() ?? [],pendingDetails:this.host.control?.catalogPendingDetails?.() } : { generation: this.view.generation, busy: false, error: 'Workspace trust or client authority is unavailable.' };
     }
     /** Advice belongs to the evidence selection and native owner, independently
      * of management's sequence, reviews and busy state. */
@@ -81,7 +79,6 @@ export class IndexingCatalogController {
         if(!retainScope)this.scopeSequence++;
         this.sequence++; this.adviceSequence++; this.view = { generation: this.view.generation + 1, busy: false };
         this.pageRequest = this.membershipRequest = this.sourceRequest = undefined;
-        this.grantRequest=undefined;
     }
     private sync(): void {
         let native:unknown[]|undefined,capabilities:CatalogObject|undefined;
@@ -135,8 +132,8 @@ export class IndexingCatalogController {
     }
     page(kind: CatalogKind, next = false, index?: string, project?: string): Promise<CatalogView> {
         return this.run(async (control, current) => {
-            const field = kind === 'grants'?'grants':kind === 'sources' ? 'sources' : kind === 'memberships' ? 'memberships' : 'page';
-            const previous = field === 'grants'?this.grantRequest:field === 'sources' ? this.sourceRequest : field === 'memberships' ? this.membershipRequest : this.pageRequest;
+            const field = kind === 'sources' ? 'sources' : kind === 'memberships' ? 'memberships' : 'page';
+            const previous = field === 'sources' ? this.sourceRequest : field === 'memberships' ? this.membershipRequest : this.pageRequest;
             const retained = this.view[field];
             const cursor = next && retained ? catalogObject(retained.page).continuation : null;
             if (next && (!cursor || !previous || previous.kind !== kind || previous.index_id !== (index ?? null) || previous.project_id !== (project ?? null))) { throw new Error('catalog_continuation_unavailable'); }
@@ -151,7 +148,7 @@ export class IndexingCatalogController {
                 if(cursor.namespace!==body.namespace||cursor.revision!==body.revision||cursor.kind!==kind||cursor.index_id!==request.index_id||cursor.project_id!==request.project_id)throw new Error('crossed_catalog_continuation');
             }
             this.view = { ...this.view, [field]: response, review: undefined,setupReview:undefined, ...(field === 'page' ? { pageKind:kind, detail: undefined, sources: undefined, memberships: undefined,policyStatus:undefined,splitFormOpen:undefined,splitSourceState:undefined,splitReview:undefined } : {}) };
-            if (field === 'page') { this.pageRequest = request; } else if (field === 'sources') { this.sourceRequest = request; } else if(field==='grants'){this.grantRequest=request;}else { this.membershipRequest = request; }
+            if (field === 'page') { this.pageRequest = request; } else if (field === 'sources') { this.sourceRequest = request; } else { this.membershipRequest = request; }
             this.view.generation++;
         });
     }
@@ -214,26 +211,24 @@ export class IndexingCatalogController {
             throw new Error('index_set_membership_limit');
         });
     }
-    detail(kind: 'project' | 'index' | 'grant', id: string): Promise<CatalogView> {
+    detail(kind: 'project' | 'index', id: string): Promise<CatalogView> {
         return this.run(async (control, current) => {
-            catalogId(id, kind === 'grant'?'grt_':kind === 'index' ? 'idx_' : 'prj_');
+            catalogId(id, kind === 'index' ? 'idx_' : 'prj_');
             const expected = this.view.revision;
             const response = await control.catalogRead({ catalog_detail: { entity: { kind, id }, expected_catalog_revision: expected ?? null } });
             current(); this.accept(response, 'detail', expected);
-            const item=catalogItems(response,'detail')[0];if(item&&(item.kind!==kind||(kind==='grant'?catalogObject(item.value.grant).id:item.value.id)!==id))throw new Error('crossed_catalog_detail');
-            this.view = { ...this.view, ...(kind==='grant'?{grantDetail:response}:{detail:response,sources:undefined,memberships:undefined,policyStatus:undefined,splitFormOpen:undefined,splitSourceState:undefined,splitReview:undefined}), review: undefined,setupReview:undefined, generation: this.view.generation + 1 };
+            const item=catalogItems(response,'detail')[0];if(item&&(item.kind!==kind||item.value.id!==id))throw new Error('crossed_catalog_detail');
+            this.view = { ...this.view, detail:response,sources:undefined,memberships:undefined,policyStatus:undefined,splitFormOpen:undefined,splitSourceState:undefined,splitReview:undefined, review: undefined,setupReview:undefined, generation: this.view.generation + 1 };
         });
     }
     preview(operation: CatalogObject, generation: number): Promise<CatalogView> {
         return this.preparePreview(operation,generation,false);
     }
-    private preparePreview(operation: CatalogObject, generation: number, contextReview: boolean,grantRevoke=false): Promise<CatalogView> {
+    private preparePreview(operation: CatalogObject, generation: number, contextReview: boolean): Promise<CatalogView> {
         return this.run(async (control, current) => {
             if (generation !== this.view.generation || !this.view.revision) { throw new Error('stale_catalog_view'); }
             validateCatalogOperation(operation);
-            if(operation.operation==='create_grant')throw new Error('native_grant_draft_required');
             if(['begin_index_source_change','retire_index','change_index_policy'].includes(String(operation.operation)))throw new Error('native_source_draft_required');
-            if(operation.operation==='revoke_grant'&&!grantRevoke)throw new Error('inspect_native_grant_before_revocation');
             if(['set_context','delete_context'].includes(String(operation.operation))&&!contextReview)throw new Error('window_context_requires_host_review');
             if ((this.host.control?.catalogPending().length ?? 0) > 0) { throw new Error('catalog_outcome_unconfirmed_reconcile_first'); }
             const review = await control.catalogPrepare(operation, this.view.revision); current();
@@ -280,19 +275,6 @@ export class IndexingCatalogController {
             revision:prior?catalogRevision(prior.revision)+1:1,project_ids:selection.project_ids,index_ids:selection.index_ids,
         }},generation,true);
     }
-    grantDraft(selection:CatalogObject,generation:number):Promise<CatalogView>{
-        return this.run(async(control,current)=>{
-            const descriptor=this.descriptor(),observation=this.view.hostContext;
-            if(!descriptor||!observation||!control.catalogGrantDraft)throw new Error('read_native_window_context_before_grant_review');
-            if(generation!==this.view.generation||!this.view.revision)throw new Error('stale_catalog_view');
-            if(control.catalogPending().length)throw new Error('catalog_outcome_unconfirmed_reconcile_first');
-            const native=validateNativeHostContext(observation.descriptor),chosen=validateGrantSelection(selection),revision=this.view.revision;
-            if(native.namespace!==this.view.namespace||native.catalog_revision!==revision||native.key!==descriptor.key||native.host!==descriptor.host)throw new Error('read_current_window_context_before_grant_review');
-            const review=await control.catalogGrantDraft(descriptor.key,chosen,revision);current();
-            if(review.contextKey!==descriptor.key||review.request.key.namespace!==native.namespace||review.request.expected_catalog_revision!==revision||review.request.operation.operation!=='create_grant'||catalogObject(review.request.operation.grant).host!==native.host)throw new Error('crossed_native_grant_review');
-            this.view={...this.view,review,setupReview:undefined,outcome:undefined,submittedReview:undefined};
-        });
-    }
     apply(generation: number): Promise<CatalogView> {
         return this.run(async (control, current) => {
             const review = this.view.review;
@@ -323,26 +305,6 @@ export class IndexingCatalogController {
             const outcome=await control.catalogIndexSetupApply(review,()=>{try{current();return generation===this.view.generation;}catch{return false;}});current();
             this.view={generation:this.view.generation+1,busy:true,outcome,submittedSetupReview:review};
         });
-    }
-    async useGrant(choice:CatalogObject,generation:number):Promise<CatalogObject>{
-        this.sync();const owner=this.owner,sequence=++this.sequence,namespace=this.view.namespace,revision=this.view.revision;
-        if(!this.host.authorized()||!this.host.useGrant)throw new Error('native_scope_selection_unavailable');
-        if(this.view.busy||generation!==this.view.generation||!namespace||!revision)throw new Error('stale_catalog_view');
-        if(this.host.control?.catalogPending().length)throw new Error('catalog_outcome_unconfirmed_reconcile_first');
-        catalogBound(choice,4096);this.view={...this.view,busy:true,review:undefined,setupReview:undefined,error:undefined};this.host.changed();
-        const valid=()=>{this.sync();return this.host.authorized()&&owner===this.owner&&sequence===this.sequence&&generation===this.view.generation;};
-        try{
-            // The host validates through the last await, then publishes a deliberate authority change.
-            const outcome=await this.host.useGrant(structuredClone(choice),namespace,revision,valid);this.sync();
-            if(!this.host.authorized())throw new Error('runtime_client_no_longer_authorized');
-            this.view={...this.view,busy:false,outcome,generation:this.view.generation+1};this.host.changed();return outcome;
-        }catch(error){if(owner===this.owner&&sequence===this.sequence){this.view={...this.view,busy:false,error:error instanceof Error?error.message:'scope_selection_failed'};this.host.changed();}throw error;}
-    }
-    revokeGrant(generation:number):Promise<CatalogView>{
-        this.sync();const detail=this.view.grantDetail,item=catalogItems(detail,'detail')[0];
-        if(!detail||!item||item.kind!=='grant'||catalogObject(detail.detail).revision!==this.view.revision)return Promise.reject(new Error('inspect_current_native_grant_before_revocation'));
-        const grant=catalogObject(item.value.grant);if(grant.revoked!==false)return Promise.reject(new Error('grant_already_revoked'));
-        return this.preparePreview({operation:'revoke_grant',id:grant.id,expected_revision:grant.revision},generation,false,true);
     }
     sourceDraft(change:CatalogObject,generation:number):Promise<CatalogView>{
         return this.run(async(control,current)=>{

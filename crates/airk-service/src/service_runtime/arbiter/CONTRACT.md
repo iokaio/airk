@@ -475,31 +475,16 @@ emitter cannot require global membership uniqueness when canonical setup already
 returned an exact native-reviewed grant selection. It must neither delete valid
 Projects nor choose by name, row order, or first matching membership.
 
-An additive OPTIONAL reviewed_selections array in the existing private source
-input carries unchanged canonical Core ScopedConnectRequest values returned by
-reviewed_fixture. The old source_roots-only input retains its original strict
-unselected ambiguity refusal and historical tests. When the field is present,
-there must be exactly one explicit selection for every expected source/index,
-with no duplicate/extra indexes. All namespace/catalog revisions stay exact;
-caller-side revision rolling or authority fabrication is forbidden.
-
-The native emitter resolves each actual selection through existing
-catalog_coordinator::native_scoped_selection and
-catalog_authority::build_catalog_read_authority. These owners authenticate the
-host/context, current persisted grant/provenance/revocation/revision, backing,
-index/source policy and live/frozen membership permissions. A missing, revoked,
-stale or foreign selection refuses. The private owner then requires exactly one
-selected Project and one exact current whole-source membership, covering all
-original source IDs with empty subtree paths. The selected Project may not merge
-other indexes or defaults. The frozen granted scope must also cover exactly
-those whole roots, with current source/policy identities and descriptors. Other
-legitimate Projects containing the same index are left intact and unselected.
+The optional `reviewed_selections` input named reviewed catalog grants. Those
+grants were removed (change-log entry 68 part 3, the user's decision of 23
+November 2026), and with them this input and its native resolver. An input that
+still carries `reviewed_selections` is refused; the source_roots-only input keeps
+its original strict unselected ambiguity refusal and historical tests.
 
 Only existing native WindowScopeSelection is emitted; no new Core DTO, wire,
 persistence, source corpus, request budget or read authority is introduced.
-Native resolved selections/authorities are retained in a separate private audit
-file; the existing bindings shape is unchanged. Actual catalog namespace/revision
-are rechecked before output. Later W4 admission/delivery retain ordinary exact
+The bindings shape is unchanged. Actual catalog namespace/revision are rechecked
+before output. Later W4 admission/delivery retain ordinary exact
 catalog/selection gates. This is not a bearer issuance or qualification grant.
 
 The driver may forward its actual canonical registration selection as opaque

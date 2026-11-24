@@ -4,8 +4,8 @@ use crate::{
     evidence::RevisionEnvelope,
     identity::{Sha256Digest, framed_digest},
     index_catalog::{
-        CatalogRevision, GrantId, GrantedMembership, IndexId, MAX_SELECTION, QueryProjectId,
-        ReviewedGrant, ScopeAtom, SourceRootId, encoded_size, relative_path, unique_bounded,
+        GrantedMembership, IndexId, MAX_SELECTION, QueryProjectId, ScopeAtom, SourceRootId,
+        encoded_size, relative_path, unique_bounded,
     },
 };
 use anyhow::{Result, ensure};
@@ -109,32 +109,11 @@ impl QuerySelection {
         Ok(())
     }
 
-    /// Resolve only the frozen grant. The native owner must separately check
-    /// host, namespace, current membership/source/policy revisions and delivery.
-    /// Defaults and memberships outside the selected Projects never add scope.
-    pub fn resolve(&self, grant: &ReviewedGrant) -> Result<ResolvedSelection> {
-        self.validate()?;
-        grant.validate()?;
-        // A persisted catalog itself is bounded to 32 MiB. Check before
-        // cloning selected memberships, including for direct native callers.
-        encoded_size(grant, 32 * 1024 * 1024)?;
-        ensure!(!grant.revoked, "reviewed grant is revoked");
-        let (project_ids, members) = self.resolve_memberships(&grant.memberships)?;
-        Ok(ResolvedSelection {
-            project_ids,
-            members,
-            grant_id: Some(grant.id),
-            grant_revision: Some(grant.revision),
-            selection: None,
-            member_availability: self.member_availability,
-        })
-    }
-
     /// Resolve against an in-memory window/admin selection grant (selection
     /// authority spec §3.6): `memberships` are the current non-empty
     /// memberships of the selection's projects and indexes, read by the native
     /// owner at exactly the selection's catalog revision. The same rules as
-    /// [`Self::resolve`] apply; no grant identity is created.
+    /// membership rules apply to every selected Project; no identity is created.
     /// U105/U106(d): an open agent read names indexes only and reads each
     /// whole. It has no Project, so it never passes [`Self::validate`].
     pub fn validate_open(&self) -> Result<()> {
@@ -196,9 +175,7 @@ impl QuerySelection {
         let resolved = ResolvedSelection {
             project_ids: Vec::new(),
             members: resolved,
-            grant_id: None,
-            grant_revision: None,
-            selection: Some(selection),
+            selection,
             member_availability: self.member_availability,
         };
         resolved.validate()?;
@@ -219,9 +196,7 @@ impl QuerySelection {
         let resolved = ResolvedSelection {
             project_ids,
             members,
-            grant_id: None,
-            grant_revision: None,
-            selection: Some(selection),
+            selection,
             member_availability: self.member_availability,
         };
         resolved.validate()?;
@@ -289,73 +264,39 @@ pub struct ResolvedSelection {
     pub project_ids: Vec<QueryProjectId>,
     /// Sorted by unique index ID, independently of caller or Project order.
     pub members: Vec<ResolvedMember>,
-    /// Exactly one authority source: a catalog grant (`grant_id` and
-    /// `grant_revision`) or an in-memory selection. A `Some` field
-    /// serializes as the bare value did, so catalog-grant bytes and the
-    /// selection identity of a catalog grant are unchanged.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub grant_id: Option<GrantId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub grant_revision: Option<CatalogRevision>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub selection: Option<crate::scoped_reads::ScopeSelectionObservation>,
+    /// The one authority source: the in-memory selection this read was
+    /// admitted under. It serializes as the former optional field did.
+    pub selection: crate::scoped_reads::ScopeSelectionObservation,
     pub member_availability: MemberAvailability,
 }
 
 /// Canonical public selection observation. The native owner retains the full
 /// frozen memberships and union predicates; their digest binds every scope and
 /// revision without serializing those predicates repeatedly in each read.
-/// Exactly one source: a catalog grant (`grant_id` and `grant_revision`) or an
-/// in-memory selection; catalog-grant bytes are unchanged.
+/// Its one source is the in-memory selection the read was admitted under.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SelectedScopeObservation {
     pub project_ids: Vec<QueryProjectId>,
     pub index_ids: Vec<IndexId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub grant_id: Option<GrantId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub grant_revision: Option<CatalogRevision>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub selection: Option<crate::scoped_reads::ScopeSelectionObservation>,
+    pub selection: crate::scoped_reads::ScopeSelectionObservation,
     pub member_availability: MemberAvailability,
     pub identity: Sha256Digest,
 }
-impl SelectedScopeObservation {
-    /// True only for exactly one authority source (grant pair xor selection).
-    pub fn has_one_source(&self) -> bool {
-        matches!(
-            (self.grant_id, self.grant_revision, self.selection),
-            (Some(_), Some(_), None) | (None, None, Some(_))
-        )
-    }
-}
-
 impl ResolvedSelection {
     pub fn observation(&self) -> Result<SelectedScopeObservation> {
         Ok(SelectedScopeObservation {
             project_ids: self.project_ids.clone(),
             index_ids: self.members.iter().map(|member| member.index_id).collect(),
-            grant_id: self.grant_id,
-            grant_revision: self.grant_revision,
             selection: self.selection,
             member_availability: self.member_availability,
             identity: self.identity()?,
         })
     }
     pub fn validate(&self) -> Result<()> {
-        ensure!(
-            matches!(
-                (self.grant_id, self.grant_revision, self.selection),
-                (Some(_), Some(_), None) | (None, None, Some(_))
-            ),
-            "selected scope requires exactly one authority source"
-        );
         unique_bounded(&self.project_ids, MAX_SELECTION)?;
         // U106(d): only an agent selection is an open read, with no Project.
-        let open = self.selection.is_some_and(|selection| {
-            selection.owner == crate::scoped_reads::SelectionOwnerKind::Agent
-        });
+        let open = self.selection.owner == crate::scoped_reads::SelectionOwnerKind::Agent;
         ensure!(
             if open {
                 self.project_ids.is_empty()

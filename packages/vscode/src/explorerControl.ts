@@ -4,7 +4,6 @@ import type { ConnectionState, ProjectSummary, SemanticState } from './explorerC
 import type { RecordValue } from './serviceClient';
 import type { ServiceConsoleState } from './serviceConsoleView';
 import { displayPath } from './explorerSource';
-import type {ReferenceRefreshControl} from './workbenchReferenceRefresh';
 import type { CatalogControl } from './indexingCatalogController';
 
 /**
@@ -13,7 +12,7 @@ import type { CatalogControl } from './indexingCatalogController';
  * retries, confirmations and page-scoped validation behave exactly as they do today.
  */
 export interface ControlSource {
-    readonly controller: { readonly state: ServiceConsoleState; readonly observationIdentity?: string } & Partial<CatalogControl> & Partial<ReferenceRefreshControl>;
+    readonly controller: { readonly state: ServiceConsoleState; readonly observationIdentity?: string } & Partial<CatalogControl>;
     run(action: string, fields?: Record<string, unknown>): Promise<void>;
     retain(): { dispose(): void };
     onDidChangeState(listener: (state: ServiceConsoleState) => void): { dispose(): void };
@@ -96,7 +95,7 @@ export class ExplorerControl {
             ...(controller.catalogCanRetire?{catalogCanRetire:controller.catalogCanRetire.bind(controller)}:{}),
             ...(controller.catalogRetirementReview?{catalogRetirementReview:controller.catalogRetirementReview.bind(controller)}:{}),
             ...(controller.catalogStopTracking?{catalogStopTracking:controller.catalogStopTracking.bind(controller)}:{}),
-            ...(controller.catalogGrantDraft?{catalogGrantDraft:controller.catalogGrantDraft.bind(controller)}:{}),...(controller.catalogPendingDetails?{catalogPendingDetails:controller.catalogPendingDetails.bind(controller)}:{})};
+            ...(controller.catalogPendingDetails?{catalogPendingDetails:controller.catalogPendingDetails.bind(controller)}:{})};
     }
     projects(): ProjectSummary[] { return projectSummaries(this.state); }
     connection(): ConnectionState { return connectionOf(this.state, this.extensionVersion); }

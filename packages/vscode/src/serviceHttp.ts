@@ -3,7 +3,6 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { X509Certificate, createHash, randomBytes } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { validateCatalogSession, validateCombinedCatalogSession, CatalogSessionSelector, CombinedCatalogSessionSelector } from './catalogSession';
 import { validateNativeLegacyBinding } from './indexingCatalog';
 
 type InputStamp={dev:number;ino:number;birthtimeMs:number;mode:number;uid:number};
@@ -64,7 +63,7 @@ export async function publishNativeInput(control:string,content:string,check:()=
 }
 
 export interface ImportedHttpSelection {namespace:string;expected_catalog_revision:number;registration:{binding:string;root:string;data_root:string;collection:string};grant:Record<string,any>;configuration_receipt:string}
-export type HttpSelection={kind:'scoped';selection:CatalogSessionSelector}|{kind:'combined';selection:CombinedCatalogSessionSelector}|{kind:'imported_legacy';selection:ImportedHttpSelection}|{kind:'imported_legacy_union';selection:{namespace:string;selections:ImportedHttpSelection[];no_default_project:true}}|{kind:'open';selection:{namespace:string}};
+export type HttpSelection={kind:'imported_legacy';selection:ImportedHttpSelection}|{kind:'imported_legacy_union';selection:{namespace:string;selections:ImportedHttpSelection[];no_default_project:true}}|{kind:'open';selection:{namespace:string}};
 export interface EndpointDescriptor {
     schema:1;installation:string;user:string;namespace:string;generation:number;service_instance:string;
     executable_sha256:string;url:string;ca_sha256:string;certificate_sha256:string;
@@ -85,8 +84,6 @@ export function httpUrl(value:unknown):string{
 }
 export function validateHttpSelection(input:unknown):HttpSelection{
     const value=object(input);keys(value,['kind','selection']);
-    if(value.kind==='scoped')return {kind:'scoped',selection:validateCatalogSession(value.selection)};
-    if(value.kind==='combined')return {kind:'combined',selection:validateCombinedCatalogSession(value.selection)};
     if(value.kind==='imported_legacy'){
         const selection=object(value.selection);keys(selection,['namespace','expected_catalog_revision','registration','grant','configuration_receipt']);hex(selection.configuration_receipt);
         const registration=object(selection.registration);keys(registration,['binding','root','data_root','collection']);

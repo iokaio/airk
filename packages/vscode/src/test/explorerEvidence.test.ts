@@ -295,22 +295,6 @@ test('selection retry retains the original arguments when a caller edits its inp
 });
 
 
-test('a retained combined catalog opener binds its original known scope before retry',async()=>{
-    const bound=JSON.parse(fs.readFileSync(path.resolve(__dirname,'../../../../fixtures/wire/read_retry_decisions.json'),'utf8')).binding_cases
-        .find((row:{name:string})=>row.name==='catalog_combined_active');
-    assert.ok(bound);let calls=0;
-    const client=new EvidenceClient({...spec,combinedSession:bound.expected_scope},'1.8.35',{timeout:2000,open:async()=>({session:{
-        closed:false,close(){},async request(){
-            calls++;
-            return calls===1?{isError:true,content:[{type:'text',text:JSON.stringify(bound.input)}],structuredContent:bound.input}:text({hits:[1]});
-        },
-    } as never})});
-    try{
-        assert.deepEqual((await client.call('airk_search',bound.arguments)).payload,{hits:[1]});
-        assert.equal(calls,2,'the known original combined catalog source participates in caller binding');
-    }finally{client.dispose();}
-});
-
 test('the default evidence deadline admits a full 120-second operation plus delivery without resetting it', async () => {
     let observed = 0;
     const f = harness(async (_tool, _args, timeout) => { observed = timeout; return text({ hits: [] }); });

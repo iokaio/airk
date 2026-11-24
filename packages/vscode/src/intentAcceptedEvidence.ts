@@ -5,14 +5,12 @@ import {isDeepStrictEqual} from 'node:util';
 import type {SavedIntent,ConsoleIntent} from './serviceIntents';
 import {catalogFenceObservation,indexSetupObservation,sourceChangeObservation,validatePolicyStatus} from './indexingCatalog';
 import {SPLIT_STAGES,SPLIT_JOURNAL_BYTES,validateSplitSnapshot,validateSplitContinuity,validateSplitRecoveryReceipt} from './indexingSplit';
-import {validateRefreshJob,validateRefreshReceipt,validateRefreshRefusal} from './referenceRefresh';
 import {intentObservationValidators,ServiceError,record} from './serviceClient';
 
 export interface AcceptedIntentEvidence {slot:string;value:unknown}
 const fenceSlots=['fence_pending','fence_applied','catalog_metadata_applied'] as const;
 const setupSlots=['setup_reserved','setup_prepared','setup_ready'] as const;
 const sourceSlots=['source_begin','source_completed'] as const;
-const refreshSlots=['refresh_refusal','refresh_admitted','refresh_configured','refresh_result','refresh_terminal'] as const;
 const splitSlots=[...SPLIT_STAGES.map(stage=>'split_'+stage),'split_canceled_pending','split_canceled_complete',
     'split_finalization_prepared','split_finalization_publishing','split_finalization_acknowledging','split_finalization_complete'] as const;
 export const MAX_ACCEPTED_INTENT_SLOTS=16;
@@ -20,7 +18,7 @@ export const MAX_UNRESERVED_ACCEPTED_INTENT_SLOTS=3;
 export const MIN_RESERVED_ACCEPTED_INTENT_BYTES=SPLIT_JOURNAL_BYTES;
 /** Existing sticky fields only; latest lookups and dispatch state stay mutable. */
 export const ACCEPTED_INTENT_FIELDS=['nativeFenceObservation','nativeSetupObservation','nativeSourceObservation',
-    'nativeSplitSnapshot','nativeSplitReceipt','nativeRefreshReceipt','nativeRefreshTerminalReceipt','nativePolicyObservation','nativeCatalogObservation'] as const;
+    'nativeSplitSnapshot','nativeSplitReceipt','nativePolicyObservation','nativeCatalogObservation'] as const;
 // The canonical facade neither constructs a transport nor dispatches requests.
 const canonical=intentObservationValidators;
 const clone=<T>(value:T):T=>structuredClone(value);
@@ -32,7 +30,6 @@ export function acceptedIntentSlots(intent:ConsoleIntent):readonly string[]{
     if('catalog_index_setup_apply'in intent)return setupSlots;
     if('catalog_source_change_resolve'in intent)return sourceSlots;
     if('catalog_policy_resume'in intent)return ['policy_resume'];
-    if('reference_refresh'in intent)return refreshSlots;
     if('catalog_split_apply'in intent)return splitSlots;
     if('catalog_split_recover'in intent)return [...splitSlots,'split_recovery_receipt'];
     return [];
@@ -102,24 +99,6 @@ function select(saved:SavedIntent):AcceptedIntentEvidence[]{
         };
         if(saved.nativePolicyObservation)classify(saved.nativePolicyObservation);
         current(saved.nativeObservation,classify);
-    }else if('reference_refresh'in intent){
-        const classify=(value:Record<string,unknown>)=>{
-            if(value.status==='reference_refresh_review_required'){
-                validateRefreshRefusal(value,intent);result.push({slot:'refresh_refusal',value});
-            }else{
-                if(value.status==='job')validateRefreshJob(value.job,intent);else validateRefreshReceipt(value,intent);
-                if(value.job==null)failure();
-                if(value.configuration!=null)result.push({slot:value.result!=null?'refresh_result':'refresh_configured',value});
-                else result.push({slot:'refresh_admitted',value});
-                if(terminal(value.job))result.push({slot:'refresh_terminal',value});
-            }
-        };
-        if(saved.nativeRefreshReceipt)classify(saved.nativeRefreshReceipt);
-        if(saved.nativeRefreshTerminalReceipt){
-            classify(saved.nativeRefreshTerminalReceipt);
-            if(!terminal(saved.nativeRefreshTerminalReceipt.job))failure();
-        }
-        if(!saved.nativeRefreshValidationError)current(saved.nativeRefreshLookup,classify);
     }else if('catalog_split_apply'in intent||'catalog_split_recover'in intent){
         const classify=(input:unknown)=>{
             const value=validateSplitSnapshot(input,'catalog_split_apply'in intent?intent.catalog_split_apply.draft:undefined);
@@ -159,25 +138,11 @@ function asSaved(saved:SavedIntent,item:AcceptedIntentEvidence):SavedIntent{
     else if(item.slot.startsWith('setup_'))value.nativeSetupObservation=body;
     else if(item.slot.startsWith('source_')){delete value.nativeObservation;value.nativeSourceObservation=body;}
     else if(item.slot==='policy_resume'){delete value.nativeObservation;value.nativePolicyObservation=body;}
-    else if(item.slot.startsWith('refresh_'))value.nativeRefreshReceipt=body;
     else if(item.slot==='split_recovery_receipt')value.nativeSplitReceipt=body;
     else value.nativeSplitSnapshot=body;
     const selected=select(value);
     if(!selected.some(candidate=>candidate.slot===item.slot&&isDeepStrictEqual(candidate.value,item.value)))failure();
     return value;
-}
-function refreshCompatible(saved:SavedIntent,before:unknown,after:unknown):void{
-    if(!('reference_refresh'in saved.intent))failure();
-    const old=record(before),next=record(after);
-    // A pre-admission refusal can precede an admission observed by another
-    // window. It is a weaker historical review result, never evidence against
-    // an accepted job and never allowed to supersede that job.
-    if(old.status==='reference_refresh_review_required'||next.status==='reference_refresh_review_required')return;
-    for(const field of ['configuration','result'])if(old[field]!=null&&next[field]!=null&&!isDeepStrictEqual(old[field],next[field]))failure();
-    if(old.job!=null&&next.job!=null){
-        validateRefreshJob(old.job,saved.intent);validateRefreshJob(next.job,saved.intent);
-        if(terminal(old.job)&&terminal(next.job)&&!isDeepStrictEqual(old.job,next.job))failure();
-    }
 }
 /** Compatibility is symmetric: a stale weaker frame is not a contradiction. */
 function compatible(saved:SavedIntent,left:AcceptedIntentEvidence,right:AcceptedIntentEvidence):void{
@@ -195,7 +160,6 @@ function compatible(saved:SavedIntent,left:AcceptedIntentEvidence,right:Accepted
         const [old,next]=left.slot==='source_completed'&&right.slot!=='source_completed'?[b,a]:[a,b];
         canonical.source(next,intent.catalog_source_change_resolve.begin_operation,intent.namespace,old);return;
     }
-    if(left.slot.startsWith('refresh_')&&right.slot.startsWith('refresh_')){refreshCompatible(saved,a,b);return;}
     if(left.slot==='catalog_metadata_applied'&&right.slot==='catalog_metadata_applied'){
         if(!isDeepStrictEqual(a.receipt,b.receipt))failure();return;
     }
@@ -240,14 +204,6 @@ export function acceptedIntentEvidenceDominates(saved:SavedIntent,stronger:Accep
     if(stronger.slot.startsWith('fence_'))return stronger.slot==='fence_applied';
     if(stronger.slot.startsWith('setup_'))return setupSlots.indexOf(stronger.slot as typeof setupSlots[number])>setupSlots.indexOf(weaker.slot as typeof setupSlots[number]);
     if(stronger.slot.startsWith('source_'))return stronger.slot==='source_completed';
-    if(stronger.slot.startsWith('refresh_')){
-        const a=record(stronger.value),b=record(weaker.value);
-        if(weaker.slot==='refresh_refusal')return stronger.slot!=='refresh_refusal';
-        if(stronger.slot==='refresh_refusal')return false;
-        if(weaker.slot==='refresh_terminal'&&!terminal(a.job))return false;
-        return (b.configuration==null||a.configuration!=null)&&(b.result==null||a.result!=null)
-            &&(b.job==null||a.job!=null)&&(!terminal(b.job)||terminal(a.job));
-    }
     if(stronger.slot==='split_recovery_receipt'||weaker.slot==='split_recovery_receipt')return false;
     const a=record(stronger.value),b=record(weaker.value);
     return Number(record(a.receipt).revision)>Number(record(b.receipt).revision)
@@ -263,19 +219,12 @@ export function withoutAcceptedIntentEvidence(saved:SavedIntent):SavedIntent{
         'catalog_index_setup_apply'in intent?['nativeSetupObservation']:
         'catalog_source_change_resolve'in intent?['nativeSourceObservation']:
         'catalog_policy_resume'in intent?['nativePolicyObservation']:
-        'reference_refresh'in intent?['nativeRefreshReceipt','nativeRefreshTerminalReceipt']:
         'catalog_split_apply'in intent||'catalog_split_recover'in intent?['nativeSplitSnapshot','nativeSplitReceipt']:[];
     const result=clone(saved);for(const field of fields)delete result[field];return result;
 }
 function preferred(saved:SavedIntent,old:AcceptedIntentEvidence|undefined,item:AcceptedIntentEvidence):AcceptedIntentEvidence{
     if(!old)return item;
     if(old.slot!==item.slot){
-        if(old.slot.startsWith('refresh_')&&item.slot.startsWith('refresh_')){
-            const score=(value:AcceptedIntentEvidence):number=>{
-                const body=record(value.value);return body.result!=null?5:body.configuration!=null?4:terminal(body.job??{})?3:body.job!=null?2:1;
-            };
-            if(score(old)!==score(item))return score(item)>score(old)?item:old;
-        }
         return acceptedIntentEvidenceDominates(saved,item,old)?item:old;
     }
     const a=record(old.value),b=record(item.value);
@@ -284,11 +233,6 @@ function preferred(saved:SavedIntent,old:AcceptedIntentEvidence|undefined,item:A
         if(ar!==br)return br>ar?item:old;
         const af=Number(record(a.finalization??{}).revision??0),bf=Number(record(b.finalization??{}).revision??0);
         if(af!==bf)return bf>af?item:old;
-    }
-    if(item.slot.startsWith('refresh_')){
-        const job=(value:Record<string,unknown>)=>value.job;
-        const rank=(value:unknown)=>terminal(value??{})?2:record(value??{}).state==='running'?1:0;
-        if(rank(job(a))!==rank(job(b)))return rank(job(b))>rank(job(a))?item:old;
     }
     if(item.slot==='fence_pending'){
         const rank=(value:Record<string,unknown>)=>{
@@ -314,7 +258,7 @@ export function mergeAcceptedIntentEvidence(saved:SavedIntent,evidence:readonly 
     const candidates=[...anchors,...selectAcceptedIntentEvidence(saved)];
     const best=(prefix:string):AcceptedIntentEvidence|undefined=>candidates.filter(item=>item.slot.startsWith(prefix))
         .reduce<AcceptedIntentEvidence|undefined>((old,item)=>preferred(saved,old,item),undefined);
-    const fence=best('fence_'),setup=best('setup_'),source=best('source_'),refresh=best('refresh_'),policy=best('policy_'),metadata=best('catalog_');
+    const fence=best('fence_'),setup=best('setup_'),source=best('source_'),policy=best('policy_'),metadata=best('catalog_');
     if(fence)result.nativeFenceObservation=clone(record(fence.value));
     if(setup)result.nativeSetupObservation=clone(record(setup.value));
     const current=selectAcceptedIntentEvidence({...saved,...Object.fromEntries(ACCEPTED_INTENT_FIELDS.map(field=>[field,undefined]))} as SavedIntent);
@@ -332,15 +276,6 @@ export function mergeAcceptedIntentEvidence(saved:SavedIntent,evidence:readonly 
             // of duplicating two native-size accepted frames during recovery.
             result.nativeObservation=clone(record(source.value));
         }else result.nativeSourceObservation=clone(record(source.value));
-    }
-    if(refresh)result.nativeRefreshReceipt=clone(record(refresh.value));
-    const refreshTerminal=candidates.filter(item=>item.slot==='refresh_terminal')
-        .reduce<AcceptedIntentEvidence|undefined>((old,item)=>preferred(saved,old,item),undefined);
-    if(refreshTerminal){
-        const job=record(refreshTerminal.value).job;
-        const carries=(body:Record<string,unknown>|undefined):boolean=>!!body&&terminal(body.job??{})&&isDeepStrictEqual(body.job,job);
-        const currentTerminal=current.some(item=>item.slot==='refresh_terminal'&&isDeepStrictEqual(record(item.value).job,job));
-        if(!carries(result.nativeRefreshReceipt)&&!currentTerminal)result.nativeRefreshTerminalReceipt=clone(record(refreshTerminal.value));
     }
     if(policy&&!contains(policy))result.nativePolicyObservation=clone(record(policy.value));
     if(metadata&&!contains(metadata))result.nativeCatalogObservation=clone(record(metadata.value));

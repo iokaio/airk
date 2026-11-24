@@ -4,9 +4,7 @@
 use super::*;
 use crate::{
     catalog_admission::{FenceTicket, InstallTicket, IssueTicket, NativeCatalogAdmission},
-    catalog_authority::{
-        NativeCatalogAuthoritySelection, OpenConnectRequest, SelectionConnectRequest,
-    },
+    catalog_authority::{OpenConnectRequest, SelectionConnectRequest},
     catalog_coordinator::CatalogControl,
 };
 use airk_core::catalog_management::CatalogOperation;
@@ -70,15 +68,7 @@ pub(super) enum Operation {
         receipt: Box<airk_core::catalog_fences::FencedReceipt>,
     },
 }
-pub struct NativeLegacyAuthoritySelection {
-    pub namespace: Incarnation,
-    pub host: airk_core::identity::Sha256Digest,
-    pub catalog_revision: airk_core::index_catalog::CatalogRevision,
-    pub binding: ProjectBinding,
-}
 pub(super) enum ConnectionSelection {
-    Reviewed(NativeCatalogAuthoritySelection),
-    Legacy(NativeLegacyAuthoritySelection),
     /// An in-memory W4/A2 selection grant (§3.2 step 4): in process only.
     Selection(Box<SelectionConnectRequest>),
     /// U105: one whole index of an open agent read: in process only.
@@ -86,14 +76,12 @@ pub(super) enum ConnectionSelection {
 }
 /// The authority one connection installs.
 enum BuiltAuthority {
-    Catalog(airk_kernel::scoped_reads::ScopedReadAuthority),
     Selection(airk_kernel::scoped_reads::SelectionReadAuthority),
     Open(airk_kernel::scoped_reads::OpenReadAuthority),
 }
 impl BuiltAuthority {
     fn backing(&self) -> ProjectBinding {
         match self {
-            Self::Catalog(authority) => authority.backing,
             Self::Selection(authority) => authority.backing,
             Self::Open(authority) => authority.backing,
         }
@@ -336,60 +324,12 @@ impl ScopedConnectionDelivery {
             let _ = reply.try_send(Err(error));
         }
     }
-    /// Runtime must consume this object directly at its final IPC write. It
-    /// must close a partial exchange on error, without a legacy response fallback.
-    pub async fn deliver<S: tokio::io::AsyncWrite + Unpin>(
-        self,
-        stream: &mut S,
-        budget: Duration,
-    ) -> Result<()> {
-        // A selection grant's bearer never leaves the service (F4, N2).
-        ensure!(
-            self.scope.selection.is_none(),
-            "a selection scope connection is delivered in process only"
-        );
-        let deadline = Instant::now()
-            .checked_add(budget)
-            .context("native scoped delivery deadline overflow")?;
-        let mut frame = Vec::new();
-        service_ipc::write_frame_limited(&mut frame, &self.response, MAX_FRAME_BYTES)?;
-        tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), async {
-            let mut offset = 0;
-            while offset < frame.len() {
-                let count = std::future::poll_fn(|cx| {
-                    self.poll_guarded(deadline, || {
-                        tokio::io::AsyncWrite::poll_write(
-                            std::pin::Pin::new(&mut *stream),
-                            cx,
-                            &frame[offset..],
-                        )
-                    })
-                })
-                .await?;
-                ensure!(count > 0, "native scoped delivery writer closed");
-                offset += count;
-            }
-            std::future::poll_fn(|cx| {
-                self.poll_guarded(deadline, || {
-                    tokio::io::AsyncWrite::poll_flush(std::pin::Pin::new(&mut *stream), cx)
-                })
-            })
-            .await?;
-            Ok::<_, anyhow::Error>(())
-        })
-        .await
-        .context("native scoped delivery deadline exceeded")??;
-        Ok(())
-    }
     /// Hand a selection connection's grant to the service's own M3 handler
-    /// (N2). The issue check and the live-nonce check guard the hand-over
-    /// exactly as they guard a pipe write. A catalog delivery is refused: it
-    /// keeps the pipe-only path.
+    /// (N2). The issue check and the live-nonce check guard the hand-over.
+    /// Every connection is a selection
+    /// or open connection since reviewed grants were removed (entry 68
+    /// part 3), so none is written to a pipe.
     pub fn take_in_process(self) -> Result<ConnectionGrant> {
-        ensure!(
-            self.scope.selection.is_some(),
-            "a catalog scope connection is delivered over its pipe only"
-        );
         let Self {
             gate,
             issue,
@@ -403,36 +343,6 @@ impl ScopedConnectionDelivery {
                 "native selection connection payload differs"
             )),
         })?
-    }
-    fn poll_guarded<T>(
-        &self,
-        deadline: Instant,
-        poll: impl FnOnce() -> std::task::Poll<std::io::Result<T>>,
-    ) -> std::task::Poll<std::io::Result<T>> {
-        if Instant::now() >= deadline {
-            return std::task::Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "native scoped delivery deadline exceeded",
-            )));
-        }
-        match self
-            .gate
-            .with_scope_issue(self.issue, self.worker, self.scope, || {
-                if Instant::now() >= deadline {
-                    std::task::Poll::Ready(Err(std::io::Error::new(
-                        std::io::ErrorKind::TimedOut,
-                        "native scoped delivery deadline exceeded",
-                    )))
-                } else {
-                    poll()
-                }
-            }) {
-            Ok(result) => result,
-            Err(error) => std::task::Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::PermissionDenied,
-                error,
-            ))),
-        }
     }
 }
 
@@ -546,29 +456,6 @@ impl CatalogControlHandle {
             .recv_timeout(budget)
             .context("catalog native outcome unknown")?
     }
-    pub fn issue_scoped(
-        &self,
-        selection: NativeCatalogAuthoritySelection,
-        lifetime: Duration,
-    ) -> Result<super::ScopedConnectionDelivery> {
-        airk_core::index_catalog::unique_bounded(
-            &selection.project_ids,
-            airk_core::index_catalog::MAX_SELECTION,
-        )?;
-        ensure!(
-            !selection.project_ids.is_empty()
-                && !lifetime.is_zero()
-                && lifetime <= Duration::from_secs(300),
-            "invalid native scoped connection budget"
-        );
-        match self.call(Operation::Connect {
-            selection: ConnectionSelection::Reviewed(selection),
-            lifetime,
-        })? {
-            Response::Connection(value) => Ok(*value),
-            _ => anyhow::bail!("unexpected catalog connection response"),
-        }
-    }
     /// In-process admission of one index of an in-memory selection grant
     /// (§3.2 step 4). The caller consumes the result only through
     /// `ScopedConnectionDelivery::take_in_process`.
@@ -633,23 +520,6 @@ impl CatalogControlHandle {
             "unexpected native selection revocation response"
         );
         Ok(())
-    }
-    pub fn issue_legacy(
-        &self,
-        selection: super::NativeLegacyAuthoritySelection,
-        lifetime: Duration,
-    ) -> Result<super::ScopedConnectionDelivery> {
-        ensure!(
-            !lifetime.is_zero() && lifetime <= Duration::from_secs(300),
-            "invalid native compatibility lease budget"
-        );
-        match self.call(Operation::Connect {
-            selection: ConnectionSelection::Legacy(selection),
-            lifetime,
-        })? {
-            Response::Connection(delivery) => Ok(*delivery),
-            _ => anyhow::bail!("unexpected native compatibility response"),
-        }
     }
 }
 impl CatalogControl for CatalogControlHandle {
@@ -885,16 +755,6 @@ impl Pending {
                     "foreign native administrative grant payload"
                 );
                 Ok(Ok(Exchange::AdminGrant(grant)))
-            }
-            (Expected::Install(ticket), Reply::ScopeInstalled { identity, scope }) => {
-                ensure!(
-                    identity == ticket.worker() && scope == ticket.scope(),
-                    "foreign native scope installation reply"
-                );
-                self.gate
-                    .acknowledge_install(ticket, identity, scope)
-                    .context("native scope installation acknowledgement could not settle; worker retirement required")?;
-                Ok(Ok(Exchange::Installed))
             }
             (Expected::Install(ticket), Reply::SelectionScopeInstalled { identity, lease }) => {
                 ensure!(
@@ -1438,12 +1298,6 @@ pub(super) fn execute(
             );
             ensure!(may_allocate, ConnectionSetupPending::Draining);
             let (namespace, catalog_revision) = match &selection {
-                ConnectionSelection::Reviewed(selected) => {
-                    (selected.namespace, selected.catalog_revision)
-                }
-                ConnectionSelection::Legacy(selected) => {
-                    (selected.namespace, selected.catalog_revision)
-                }
                 // Exactly the grant's revision: never rolled forward (§3.2).
                 ConnectionSelection::Selection(request) => (
                     request.window_selection.namespace,
@@ -1456,20 +1310,6 @@ pub(super) fn execute(
             let issue = gate.begin_issue(namespace, catalog_revision)?;
             let registry = registry.as_mut().context("catalog registry unavailable")?;
             let authority = match selection {
-                ConnectionSelection::Reviewed(selected) => BuiltAuthority::Catalog(
-                    airk_catalog_control::catalog_authority::build_catalog_read_authority(
-                        registry, &selected,
-                    )?,
-                ),
-                ConnectionSelection::Legacy(selected) => BuiltAuthority::Catalog(
-                    airk_catalog_control::catalog_authority::build_legacy_catalog_read_authority(
-                        registry,
-                        selected.namespace,
-                        selected.host,
-                        selected.catalog_revision,
-                        selected.binding,
-                    )?,
-                ),
                 ConnectionSelection::Selection(request) => BuiltAuthority::Selection(
                     airk_catalog_control::catalog_authority::build_selection_read_authority(
                         registry, &request,
@@ -1481,8 +1321,7 @@ pub(super) fn execute(
                     )?,
                 ),
             };
-            // The built authority's backing: the selected (or legacy) binding
-            // for a catalog grant, the index's backing for a selection.
+            // The built authority's backing: the selected index's backing.
             let backing = authority.backing();
             let registration = registry.get(backing)?.registration;
             start_worker(
@@ -1511,9 +1350,6 @@ pub(super) fn execute(
             // Reservation and actual private sends share this one actor turn.
             let expires = Instant::now() + lifetime;
             let ticket = match &authority {
-                BuiltAuthority::Catalog(authority) => {
-                    gate.reserve_validated_scope(issue, identity, authority, expires)?
-                }
                 BuiltAuthority::Selection(authority) => {
                     gate.reserve_selection_scope(issue, identity, authority, expires)?
                 }
@@ -1523,21 +1359,6 @@ pub(super) fn execute(
             };
             if ticket.requires_install() {
                 let command = match (authority, ticket.previous()) {
-                    (BuiltAuthority::Catalog(authority), Some(previous)) => {
-                        WorkerCommand::RenewScopeLease {
-                            identity,
-                            authority: Box::new(authority),
-                            previous,
-                            lease_generation: ticket.scope().lease_generation,
-                            expires_unix_ms: expires_unix_ms(ticket.expires())?,
-                        }
-                    }
-                    (BuiltAuthority::Catalog(authority), None) => WorkerCommand::InstallScope {
-                        identity,
-                        authority: Box::new(authority),
-                        lease_generation: ticket.scope().lease_generation,
-                        expires_unix_ms: expires_unix_ms(ticket.expires())?,
-                    },
                     (BuiltAuthority::Selection(authority), previous) => {
                         WorkerCommand::InstallSelectionScope {
                             identity,
@@ -1692,41 +1513,40 @@ mod tests {
         let index_id = IndexId::from_identity(Incarnation::from_bytes([5; 16]));
         let project_id = QueryProjectId::from_identity(Incarnation::from_bytes([10; 16]));
         let source = SourceRootId::from_identity(Incarnation::from_bytes([11; 16]));
-        let authority = airk_kernel::scoped_reads::ScopedReadAuthority {
+        let selection = airk_core::scoped_reads::SelectionScopeRef {
+            owner: airk_core::scoped_reads::SelectionOwnerKind::Window,
+            grant_nonce: Incarnation::from_bytes([6; 16]),
+            service_instance: worker.service,
+            scope_identity: airk_core::identity::Sha256Digest::from_bytes([7; 32]),
+            catalog_revision: CatalogRevision::INITIAL,
+        };
+        let authority = airk_kernel::scoped_reads::SelectionReadAuthority {
             schema: 1,
             backing: worker.project,
             index_id,
             project_ids: vec![project_id],
-            provenance: airk_core::grant_provenance::GrantProvenance::UserReviewedProjectGrant,
-            grant: ReviewedGrant {
-                id: GrantId::from_identity(Incarnation::from_bytes([6; 16])),
-                host: airk_core::identity::Sha256Digest::from_bytes([7; 32]),
-                revision: CatalogRevision::INITIAL,
-                revoked: false,
-                memberships: vec![GrantedMembership {
-                    membership: Membership {
-                        project_id,
-                        index_id,
-                        revision: CatalogRevision::INITIAL,
-                        scope: vec![ScopeAtom {
-                            source_root_id: source,
-                            kind: PathScope::Subtree,
-                            path: String::new(),
-                        }],
-                    },
-                    source_revision: CatalogRevision::INITIAL,
-                    policy_epoch: 0,
-                    policy_digest: None,
-                }],
-            },
+            selection,
+            atoms: vec![(
+                project_id,
+                ScopeAtom {
+                    source_root_id: source,
+                    kind: PathScope::Subtree,
+                    path: String::new(),
+                },
+            )],
             sources: vec![SourceDescriptor {
                 source_root_id: source,
                 original_root: std::env::temp_dir().to_string_lossy().into_owned(),
             }],
+            membership_revisions: vec![(project_id, CatalogRevision::INITIAL)],
+            source_revision: CatalogRevision::INITIAL,
+            policy_epoch: 0,
+            policy_digest: None,
         };
+        gate.register_selection(&selection)?;
         gate.register_worker(worker)?;
         let issue = gate.begin_issue(Incarnation::from_bytes([4; 16]), CatalogRevision::INITIAL)?;
-        let installed = gate.reserve_install(
+        let installed = gate.reserve_selection_scope(
             issue,
             worker,
             &authority,
@@ -1768,7 +1588,7 @@ mod tests {
             },
         })
     }
-    fn close(gate: &NativeCatalogAdmission, scope: ScopedReadRef) -> Result<()> {
+    fn close(gate: &NativeCatalogAdmission, _scope: ScopedReadRef) -> Result<()> {
         let request = airk_core::catalog_management::CatalogRequest {
             caller: Incarnation::from_bytes([8; 16]),
             key: airk_core::service::RequestKey {
@@ -1777,9 +1597,13 @@ mod tests {
                 nonce: Incarnation::from_bytes([12; 16]),
             },
             expected_catalog_revision: airk_core::index_catalog::CatalogRevision::INITIAL,
-            operation: airk_core::catalog_management::CatalogOperation::RevokeGrant {
-                id: scope.grant_id.unwrap(),
-                expected_revision: scope.grant_revision.unwrap(),
+            operation: airk_core::catalog_management::CatalogOperation::DeleteProject {
+                id: airk_core::index_catalog::QueryProjectId::from_identity(
+                    Incarnation::from_bytes([10; 16]),
+                ),
+                expected_definition_revision: airk_core::index_catalog::CatalogRevision::INITIAL,
+                expected_scope_revision: airk_core::index_catalog::CatalogRevision::INITIAL,
+                expected_defaults_revision: airk_core::index_catalog::CatalogRevision::INITIAL,
             },
         };
         gate.close_request_admission(&request)?;
@@ -1787,7 +1611,7 @@ mod tests {
     }
     #[test]
     fn actual_connection_queue_refusal_is_retryable_only_before_acceptance() -> Result<()> {
-        let (gate, worker, _, _) = fixture()?;
+        let (gate, _, _, _) = fixture()?;
         let (sender, receiver) = mpsc::sync_channel(0);
         let owner = Arc::new(sender);
         let handle = CatalogControlHandle {
@@ -1796,12 +1620,19 @@ mod tests {
             source: None,
         };
         let connect = || Operation::Connect {
-            selection: ConnectionSelection::Legacy(NativeLegacyAuthoritySelection {
+            selection: ConnectionSelection::Open(Box::new(OpenConnectRequest {
+                selection_ref: airk_core::scoped_reads::SelectionScopeRef {
+                    owner: airk_core::scoped_reads::SelectionOwnerKind::Agent,
+                    grant_nonce: Incarnation::from_bytes([13; 16]),
+                    service_instance: Incarnation::from_bytes([1; 16]),
+                    scope_identity: airk_core::identity::Sha256Digest::from_bytes([7; 32]),
+                    catalog_revision: airk_core::index_catalog::CatalogRevision::INITIAL,
+                },
                 namespace: Incarnation::from_bytes([4; 16]),
-                host: airk_core::identity::Sha256Digest::from_bytes([7; 32]),
-                catalog_revision: airk_core::index_catalog::CatalogRevision::INITIAL,
-                binding: worker.project,
-            }),
+                index_id: airk_core::index_catalog::IndexId::from_identity(
+                    Incarnation::from_bytes([5; 16]),
+                ),
+            })),
             lifetime: Duration::from_secs(300),
         };
         let rejected = handle
@@ -1928,53 +1759,6 @@ mod tests {
         drop(receive);
         built.handoff_native(send);
         gate.check_scope_issue(issue, worker, scope)?;
-        Ok(())
-    }
-    #[tokio::test]
-    async fn final_delivery_rechecks_after_successful_handoff_and_backpressure() -> Result<()> {
-        use std::future::Future;
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let (gate, worker, scope, caller) = fixture()?;
-        let (send, receive) = mpsc::sync_channel(1);
-        send_reply(
-            &send,
-            Ok(Response::Connection(Box::new(delivery(
-                &gate, worker, scope, caller,
-            )?))),
-        );
-        let Response::Connection(built) = receive.recv()?? else {
-            anyhow::bail!("connection delivery missing")
-        };
-        let (mut writer, mut reader) = tokio::io::duplex(1);
-        writer.write_all(b"x").await?;
-        let mut pending = Box::pin((*built).deliver(&mut writer, Duration::from_secs(5)));
-        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
-        assert!(pending.as_mut().poll(&mut cx).is_pending());
-        close(&gate, scope)?;
-        let mut preexisting = [0];
-        reader.read_exact(&mut preexisting).await?;
-        assert_eq!(&preexisting, b"x");
-        assert!(pending.await.is_err());
-        drop(writer);
-        let mut bytes = Vec::new();
-        reader.read_to_end(&mut bytes).await?;
-        assert!(bytes.is_empty(), "queued bearer escaped after scope close");
-        Ok(())
-    }
-    #[tokio::test]
-    async fn blocked_final_delivery_has_one_deadline_and_never_writes_after_expiry() -> Result<()> {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let (gate, worker, scope, caller) = fixture()?;
-        let (mut writer, mut reader) = tokio::io::duplex(1);
-        writer.write_all(b"x").await?;
-        let result = delivery(&gate, worker, scope, caller)?
-            .deliver(&mut writer, Duration::from_millis(10))
-            .await;
-        assert!(result.is_err());
-        drop(writer);
-        let mut bytes = Vec::new();
-        reader.read_to_end(&mut bytes).await?;
-        assert_eq!(bytes, b"x");
         Ok(())
     }
     #[test]

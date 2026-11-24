@@ -3,15 +3,14 @@
 //! admission, revision, retry and delivery checks. This owner never indexes.
 //!
 //! One implementation serves every authority source (selection authority
-//! spec §3.6): a persisted reviewed catalog grant (`CombinedConnectRequest`),
-//! an in-memory window/admin selection grant ([`SelectionScope`]) and a U105
-//! open agent read of whole indexes ([`OpenScope`]). Only the [`Session`]
+//! spec §3.6): an in-memory window/admin selection grant ([`SelectionScope`])
+//! and a U105 open agent read of whole indexes ([`OpenScope`]). Reviewed
+//! catalog grants were removed (change-log entry 68 part 3). Only the [`Session`]
 //! steps differ; fan-out, budgets, composition, continuations, verification
 //! and failure shapes are shared.
 use airk_core::{
     catalog_management::{CatalogEntity, CatalogItem, CatalogSource},
     combined_reads::{MemberAvailability, QuerySelection, ResolvedSelection, SharedBudgets},
-    grant_provenance::GrantProvenanceKind,
     identity::{Incarnation, Sha256Digest, framed_digest},
     index_catalog::{
         CatalogRevision, GrantedMembership, IndexDefinition, IndexId, Membership, QueryProject,
@@ -20,11 +19,9 @@ use airk_core::{
     scoped_reads::{
         ScopeReadRefused, ScopeSelectionObservation, SelectionScopeRef, SourceDescriptor,
     },
-    service::{
-        CombinedConnectRequest, CombinedDeliveryReceipt, ScopedConnectRequest, WindowScopeSelection,
-    },
+    service::{CombinedDeliveryReceipt, WindowScopeSelection},
 };
-use airk_kernel::scoped_reads::{OpenReadAuthority, ScopedReadAuthority, SelectionReadAuthority};
+use airk_kernel::scoped_reads::{OpenReadAuthority, SelectionReadAuthority};
 use airk_mcp::remote::{CombinedScope, RemoteFuture, RemoteTools};
 use airk_store::service::registry::ServiceRegistry;
 use anyhow::{Context, Result, ensure};
@@ -106,9 +103,9 @@ fn check_public_reply_budget(result: &Value, budget: ReplyBudget) -> Result<()> 
 }
 
 /// One selected index: its read authority and the request its child
-/// connection is admitted with (`A`/`C` are the catalog grant's by default).
+/// connection is admitted with.
 #[derive(Clone)]
-struct Member<A = ScopedReadAuthority, C = ScopedConnectRequest> {
+struct Member<A, C> {
     index: IndexDefinition,
     authority: A,
     sources: Vec<CatalogSource>,
@@ -116,7 +113,7 @@ struct Member<A = ScopedReadAuthority, C = ScopedConnectRequest> {
 }
 
 #[derive(Clone)]
-struct Snapshot<A = ScopedReadAuthority, C = ScopedConnectRequest> {
+struct Snapshot<A, C> {
     revision: CatalogRevision,
     resolved: ResolvedSelection,
     projects: Vec<QueryProject>,
@@ -132,11 +129,6 @@ type OpenRequest = airk_catalog_control::catalog_authority::OpenConnectRequest;
 /// combined identity and the member's source projection.
 trait MemberAuthority: Clone + Send + Sync + 'static {
     fn member_fingerprint(&self) -> Result<Sha256Digest>;
-}
-impl MemberAuthority for ScopedReadAuthority {
-    fn member_fingerprint(&self) -> Result<Sha256Digest> {
-        self.fingerprint()
-    }
 }
 impl MemberAuthority for SelectionReadAuthority {
     fn member_fingerprint(&self) -> Result<Sha256Digest> {
@@ -177,7 +169,6 @@ trait Session: Send + Sync + 'static {
         selection.validate()
     }
     fn scope(&self) -> CombinedScope;
-    fn catalog_request(&self) -> Option<&CombinedConnectRequest>;
     /// The query-scope page's `mode` and `grant`.
     fn discovery_grant(&self) -> (&'static str, Value);
     /// The current snapshot, refused unless it is still authorized.
@@ -199,118 +190,6 @@ trait Session: Send + Sync + 'static {
         instance: &'a tokio::sync::OnceCell<Incarnation>,
         delivery: Delivery<'a>,
     ) -> Pending<'a, CombinedDeliveryReceipt>;
-}
-
-impl Session for CombinedConnectRequest {
-    type Authority = ScopedReadAuthority;
-    type Child = ScopedConnectRequest;
-    fn requested(&self) -> Value {
-        json!(self)
-    }
-    fn defaults(&self) -> (&[QueryProjectId], Option<&[IndexId]>) {
-        (&self.project_ids, self.index_ids.as_deref())
-    }
-    fn scope(&self) -> CombinedScope {
-        CombinedScope::catalog(self)
-    }
-    fn catalog_request(&self) -> Option<&CombinedConnectRequest> {
-        Some(self)
-    }
-    fn discovery_grant(&self) -> (&'static str, Value) {
-        (
-            "reviewed_grant",
-            json!({"id":self.grant_id,"revision":self.expected_grant_revision}),
-        )
-    }
-    fn snapshot<'a>(
-        &'a self,
-        control: &'a Path,
-        selected: &'a QuerySelection,
-    ) -> Pending<'a, Snapshot> {
-        Box::pin(snapshot(control, self, selected))
-    }
-    fn connect(
-        &self,
-        control: &Path,
-        member: &Member,
-    ) -> Result<Arc<crate::project_client::Backend>> {
-        crate::project_client::scoped_backend(
-            control.to_path_buf(),
-            member.index.backing.binding,
-            member.selection.clone(),
-        )
-    }
-    fn deliver<'a>(
-        &'a self,
-        control: &'a Path,
-        instance: &'a tokio::sync::OnceCell<Incarnation>,
-        delivery: Delivery<'a>,
-    ) -> Pending<'a, CombinedDeliveryReceipt> {
-        use airk_core::service::{ControlMethod, ControlResponse};
-        Box::pin(async move {
-            let Delivery {
-                selected,
-                scope_identity,
-                result_digest,
-                deadline,
-                context_bindings,
-                context,
-            } = delivery;
-            let instance = *tokio::time::timeout_at(
-                tokio::time::Instant::from_std(deadline),
-                instance.get_or_try_init(|| async {
-                    let health =
-                        airk_installer::control_client::request(control, ControlMethod::Health)
-                            .await?;
-                    let ControlResponse::Health { observation } = health else {
-                        return Err(anyhow::Error::from(ScopeReadRefused));
-                    };
-                    Ok(observation.instance)
-                }),
-            )
-            .await
-            .map_err(|_| ScopeReadRefused)??;
-            let response = tokio::time::timeout_at(
-                tokio::time::Instant::from_std(deadline),
-                airk_installer::control_client::request_for_instance(
-                    control,
-                    ControlMethod::ValidateCombinedDelivery {
-                        selection: self.clone(),
-                        query_selection: selected.clone(),
-                        scope_identity,
-                        result_digest,
-                        context_bindings: context_bindings.to_vec(),
-                        read_attempt: if context_bindings.is_empty() {
-                            None
-                        } else {
-                            let context =
-                                context.context("model delivery requires original read context")?;
-                            let id = context
-                                .request_id()
-                                .context("model delivery original identity missing")?;
-                            Some(airk_host::read_attempt::encode(context, id)?)
-                        },
-                    },
-                    instance,
-                ),
-            )
-            .await
-            .map_err(|_| ScopeReadRefused)??;
-            let ControlResponse::CombinedDeliveryValidated { receipt } = response else {
-                return Err(ScopeReadRefused.into());
-            };
-            ensure!(
-                receipt.schema == 1
-                    && receipt.service_instance == instance
-                    && receipt.namespace == self.namespace
-                    && receipt.catalog_revision >= self.expected_catalog_revision
-                    && receipt.scope_identity == scope_identity
-                    && receipt.result_digest == result_digest,
-                ScopeReadRefused
-            );
-            Ok(receipt)
-        })
-    }
 }
 
 /// Admits one selection member's child connection in process: the service's
@@ -366,9 +245,6 @@ impl Session for SelectionScope {
             index_ids: Some(self.window_selection.index_ids.clone()),
             requested: self.requested(),
         }
-    }
-    fn catalog_request(&self) -> Option<&CombinedConnectRequest> {
-        None
     }
     fn discovery_grant(&self) -> (&'static str, Value) {
         ("selected_scope", Value::Null)
@@ -525,9 +401,6 @@ impl Session for OpenScope {
             index_ids: Some(self.index_ids.clone()),
             requested: self.requested(),
         }
-    }
-    fn catalog_request(&self) -> Option<&CombinedConnectRequest> {
-        None
     }
     fn discovery_grant(&self) -> (&'static str, Value) {
         ("open_scope", Value::Null)
@@ -909,184 +782,6 @@ fn now_ms() -> u64 {
         .map_or(0, |time| time.as_millis().min(u64::MAX as u128) as u64)
 }
 
-fn read_snapshot(
-    root: &Path,
-    session: &CombinedConnectRequest,
-    selection: &QuerySelection,
-) -> Result<Snapshot> {
-    session.validate()?;
-    selection.validate()?;
-    ensure!(
-        selection
-            .project_ids
-            .iter()
-            .all(|id| session.project_ids.contains(id)),
-        ScopeReadRefused
-    );
-    let mut registry =
-        ServiceRegistry::open_saved_before(root, Some(Instant::now() + Duration::from_secs(2)))?;
-    ensure!(
-        registry.catalog_pending_fence()?.is_none(),
-        ScopeReadRefused
-    );
-    let state = registry.catalog_state()?.ok_or(ScopeReadRefused)?;
-    ensure!(
-        state.activated
-            && state.authority_contract == 1
-            && state.policy_contract
-                <= airk_store::service::registry::catalog::SUPPORTED_POLICY_CONTRACT
-            && state.namespace == session.namespace
-            && state.revision >= session.expected_catalog_revision,
-        ScopeReadRefused
-    );
-    let context = airk_catalog_control::catalog_host_context::NativeHostContext::load(
-        &mut registry,
-        session.context_key,
-        Some(state.revision),
-    )?;
-    let host = context.descriptor().host;
-    ensure!(
-        context.descriptor().namespace == session.namespace,
-        ScopeReadRefused
-    );
-    let detail = registry.catalog_detail(
-        &CatalogEntity::Grant {
-            id: session.grant_id,
-        },
-        Some(state.revision),
-    )?;
-    let Some(CatalogItem::Grant(persisted)) = detail.item else {
-        return Err(ScopeReadRefused.into());
-    };
-    persisted.validate()?;
-    // An imported legacy snapshot never silently acquires the new Project API.
-    ensure!(
-        persisted.provenance.kind() == GrantProvenanceKind::UserReviewedProjectGrant
-            && persisted.grant.host == host
-            && persisted.grant.id == session.grant_id
-            && persisted.grant.revision == session.expected_grant_revision
-            && !persisted.grant.revoked,
-        ScopeReadRefused
-    );
-    let frozen = session.selection().resolve(&persisted.grant)?;
-    let resolved = selection.resolve(&persisted.grant)?;
-    ensure!(
-        resolved
-            .members
-            .iter()
-            .all(|member| frozen.member(member.index_id).is_some()),
-        ScopeReadRefused
-    );
-    let projects = project_details(&mut registry, state.revision, &resolved)?;
-    let mut members = Vec::new();
-    for member in &resolved.members {
-        let child = ScopedConnectRequest {
-            schema: 1,
-            context_key: session.context_key,
-            namespace: session.namespace,
-            expected_catalog_revision: state.revision,
-            grant_id: session.grant_id,
-            expected_grant_revision: session.expected_grant_revision,
-            index_id: member.index_id,
-            project_ids: member.project_ids(),
-        };
-        let native = airk_catalog_control::catalog_coordinator::native_scoped_selection(
-            &mut registry,
-            &child,
-        )?;
-        let authority = airk_catalog_control::catalog_authority::build_catalog_read_authority(
-            &mut registry,
-            &native,
-        )?;
-        let (index, sources) = member_detail(
-            &mut registry,
-            state.revision,
-            member.index_id,
-            &authority.sources,
-        )?;
-        members.push(Member {
-            index,
-            authority,
-            sources,
-            selection: child,
-        });
-    }
-    ensure!(
-        registry.catalog_state()?.as_ref() == Some(&state)
-            && registry.catalog_pending_fence()?.is_none(),
-        ScopeReadRefused
-    );
-    let fingerprints = members
-        .iter()
-        .map(|member| Ok((member.index.id, member.authority.fingerprint()?)))
-        .collect::<Result<Vec<_>>>()?;
-    let identity = framed_digest(
-        b"airk/combined-native-authority/1",
-        &[
-            &serde_json::to_vec(&(
-                session.namespace,
-                session.context_key,
-                session.grant_id,
-                session.expected_grant_revision,
-            ))?,
-            &serde_json::to_vec(&fingerprints)?,
-            &serde_json::to_vec(&resolved)?,
-        ],
-    );
-    Ok(Snapshot {
-        revision: state.revision,
-        resolved,
-        projects,
-        members,
-        identity,
-    })
-}
-
-async fn snapshot(
-    root: &Path,
-    session: &CombinedConnectRequest,
-    selection: &QuerySelection,
-) -> Result<Snapshot> {
-    let (root, session, selection) = (root.to_path_buf(), session.clone(), selection.clone());
-    tokio::task::spawn_blocking(move || read_snapshot(&root, &session, &selection)).await?
-}
-
-/// Native final-delivery metadata proof. The authenticated service must hold
-/// its in-memory admission ticket separately while validating and issuing it.
-pub fn validate_delivery(
-    root: &Path,
-    session: &CombinedConnectRequest,
-    selected: &QuerySelection,
-    expected_scope: Sha256Digest,
-    expected_catalog_revision: CatalogRevision,
-) -> Result<()> {
-    validate_delivery_with_context(
-        root,
-        session,
-        selected,
-        expected_scope,
-        expected_catalog_revision,
-        &[],
-    )
-}
-
-pub fn validate_delivery_with_context(
-    root: &Path,
-    session: &CombinedConnectRequest,
-    selected: &QuerySelection,
-    expected_scope: Sha256Digest,
-    expected_catalog_revision: CatalogRevision,
-    bindings: &[airk_core::combined_context::ContextDeliveryBinding],
-) -> Result<()> {
-    let snapshot = read_snapshot(root, session, selected)?;
-    ensure!(
-        snapshot.identity == expected_scope && snapshot.revision == expected_catalog_revision,
-        ScopeReadRefused
-    );
-    validate_context_members(&snapshot, session.namespace, bindings)?;
-    Ok(())
-}
-
 fn validate_context_members<A: MemberAuthority, C>(
     snapshot: &Snapshot<A, C>,
     namespace: Incarnation,
@@ -1110,54 +805,9 @@ fn validate_context_members<A: MemberAuthority, C>(
     Ok(())
 }
 
-/// Resolve metadata only. Frozen selectors confer no authority; every read
-/// validates the current reviewed snapshot before any selected worker is used.
-pub fn validate_http_selection(
-    control: &Path,
-    selection: &CombinedConnectRequest,
-) -> Result<CombinedConnectRequest> {
-    let snapshot = read_snapshot(control, selection, &selection.selection())?;
-    let mut refreshed = selection.clone();
-    refreshed.expected_catalog_revision = snapshot.revision;
-    Ok(refreshed)
-}
-
-pub async fn resolve(
-    install: Option<&Path>,
-    control: Option<&Path>,
-    selection: &CombinedConnectRequest,
-) -> Result<Arc<dyn RemoteTools>> {
-    selection.validate()?;
-    let (install, control) = if let Some(control) = control {
-        let control = control.canonicalize()?;
-        airk_host::install_layout::validate_control_root(&control)?;
-        (None, control)
-    } else {
-        let install = install
-            .map(Path::to_path_buf)
-            .map(Ok)
-            .unwrap_or_else(airk_installer::runtime_install::caller_install_root)?;
-        let control = airk_installer::runtime_install::installed_control(&install).await?;
-        (Some(install), control)
-    };
-    snapshot(&control, selection, &selection.selection()).await?;
-    let backend: Arc<dyn RemoteTools> = Arc::new(Backend {
-        control: control.clone(),
-        selection: selection.clone(),
-        children: Mutex::new(BTreeMap::new()),
-        closed: std::sync::atomic::AtomicBool::new(false),
-        client: Mutex::new(airk_core::usage::ClientFamily::Cli),
-        service_instance: tokio::sync::OnceCell::new(),
-    });
-    Ok(crate::unified_mcp::with_runtime_readiness(
-        install, control, backend,
-    ))
-}
-
 /// The combined facade of an in-memory window/admin selection of more than
 /// one index (selection authority spec §3.6), for the service's own M3
-/// handler. The selection's current snapshot is checked first, as `resolve`
-/// checks a catalog session's; every member connects through
+/// handler. The selection's current snapshot is checked first; every member connects through
 /// `scope.connect` and every result is delivered through `scope.issue`.
 pub async fn resolve_selection(
     control: PathBuf,
@@ -1202,9 +852,8 @@ pub async fn resolve_open(control: PathBuf, scope: OpenScope) -> Result<Arc<dyn 
     ))
 }
 
-/// The combined facade over one session (`S` is a reviewed catalog grant by
-/// default).
-struct Backend<S = CombinedConnectRequest> {
+/// The combined facade over one session.
+struct Backend<S> {
     control: PathBuf,
     selection: S,
     children: Mutex<BTreeMap<Sha256Digest, Arc<crate::project_client::Backend>>>,
@@ -2764,9 +2413,6 @@ fn source_projection_failure(result: &Value, observation: Option<Value>) -> Valu
 }
 
 impl<S: Session> RemoteTools for Backend<S> {
-    fn combined_selection(&self) -> Option<&CombinedConnectRequest> {
-        self.selection.catalog_request()
-    }
     fn combined_scope(&self) -> Option<CombinedScope> {
         Some(self.selection.scope())
     }

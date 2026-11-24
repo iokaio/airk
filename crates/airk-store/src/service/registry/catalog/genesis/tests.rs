@@ -452,7 +452,46 @@ const S3_REGISTRY_FIXTURES: &[(&str, &str, &str)] = &[
     ),
 ];
 
-fn s3_fixture(
+/// Terminal layouts (change-log entry 68 part 3), derived from the retained
+/// captures above by `scripts/dev/derive_terminal_registry_schema.py`,
+/// independently of the Rust upgrade step.
+macro_rules! terminal_fixture {
+    ($name:literal) => {
+        (
+            $name,
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../fixtures/schema/airk-state-1-terminal/",
+                $name,
+                ".objects.json"
+            )),
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../fixtures/schema/airk-state-1-terminal/",
+                $name,
+                ".meta.json"
+            )),
+        )
+    };
+}
+pub(in crate::service::registry::catalog) const TERMINAL_REGISTRY_FIXTURES: &[(
+    &str,
+    &str,
+    &str,
+)] = &[
+    terminal_fixture!("service-1.4.terminal-authority0"),
+    terminal_fixture!("service-1.4.terminal-authority1"),
+    terminal_fixture!("service-1.4.terminal-policy1"),
+    terminal_fixture!("service-1.4.terminal-policy2"),
+    terminal_fixture!("service-1.4.terminal-policy3"),
+    terminal_fixture!("service-1.4.terminal-authority1-schema13"),
+    terminal_fixture!("service-1.4.terminal-policy1-schema13"),
+    terminal_fixture!("service-1.4.terminal-policy2-schema13"),
+    terminal_fixture!("service-1.4.terminal-policy3-schema13"),
+    terminal_fixture!("service-1.4.terminal-policy3-descriptions"),
+];
+
+pub(in crate::service::registry::catalog) fn s3_fixture(
     table: &[(&str, &str, &str)],
     label: &str,
 ) -> anyhow::Result<(serde_json::Value, serde_json::Value)> {
@@ -466,7 +505,7 @@ fn s3_fixture(
 
 /// Same rendering as scripts/dev/s3_capture_schema.py: rows sorted by
 /// (type, name, tbl_name), CRLF -> LF in sql only, rootpage omitted.
-fn s3_observed(
+pub(in crate::service::registry::catalog) fn s3_observed(
     connection: &rusqlite::Connection,
 ) -> anyhow::Result<(serde_json::Value, serde_json::Value)> {
     let mut statement = connection.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master")?;
@@ -499,7 +538,7 @@ fn s3_observed(
     Ok((serde_json::Value::Array(objects), meta))
 }
 
-fn s3_assert(
+pub(in crate::service::registry::catalog) fn s3_assert(
     table: &[(&str, &str, &str)],
     connection: &rusqlite::Connection,
     label: &str,
@@ -508,11 +547,11 @@ fn s3_assert(
     let observed = s3_observed(connection)?;
     assert_eq!(
         observed.0, objects,
-        "{label}: sqlite_master differs from the retained 1.8.16 fixture"
+        "{label}: sqlite_master differs from the retained fixture"
     );
     assert_eq!(
         observed.1, meta,
-        "{label}: user_version/application_id differ from the retained 1.8.16 fixture"
+        "{label}: user_version/application_id differ from the retained fixture"
     );
     Ok(())
 }
@@ -539,7 +578,10 @@ impl activation::AuthorityV1ReadinessProducer for S3Producer {
 
 /// Current Genesis through settlement, asserting each intermediate stage when
 /// `check_stages`. Mirrors the capture driver's sequence exactly.
-fn s3_settled(root: &Path, check_stages: bool) -> Result<super::super::super::ServiceRegistry> {
+pub(in crate::service::registry::catalog) fn s3_settled(
+    root: &Path,
+    check_stages: bool,
+) -> Result<super::super::super::ServiceRegistry> {
     let mut genesis = begin(root)?;
     let receipt = genesis.receipt()?;
     if check_stages {
@@ -562,10 +604,11 @@ fn s3_settled(root: &Path, check_stages: bool) -> Result<super::super::super::Se
     }
     genesis.migrate()?;
     if check_stages {
+        // Fresh genesis installs the terminal layout directly.
         s3_assert(
-            S3_REGISTRY_FIXTURES,
+            TERMINAL_REGISTRY_FIXTURES,
             &registry(&receipt.root, false)?,
-            "service-1.4.authority0",
+            "service-1.4.terminal-authority0",
         )?;
     }
     genesis.promote_authority_v1()?;
@@ -583,8 +626,10 @@ fn s3_settled(root: &Path, check_stages: bool) -> Result<super::super::super::Se
 
 type S3Layer = (&'static str, fn(&Connection) -> Result<()>);
 
+/// Current genesis and every promotion produce exactly the terminal layouts
+/// (change-log entry 68 part 3) derived from the retained captures.
 #[test]
-fn current_genesis_and_layers_reproduce_retained_airk_state_1_registry_schema() -> Result<()> {
+fn current_genesis_and_layers_reproduce_terminal_airk_state_1_registry_schema() -> Result<()> {
     let layers: [S3Layer; 3] = [
         ("policy1", super::super::apply_policy_v1_layout),
         ("policy2", super::super::apply_split_v2_layout),
@@ -593,110 +638,149 @@ fn current_genesis_and_layers_reproduce_retained_airk_state_1_registry_schema() 
     for armed in [false, true] {
         let temp = tempfile::tempdir()?;
         let mut saved = s3_settled(temp.path(), !armed)?;
-        let suffix = if armed { "-armed" } else { "" };
+        let suffix = if armed { "-schema13" } else { "" };
         if armed {
             let tx = saved.connection.transaction()?;
             crate::service::registry::runtime_contract::arm_in_transaction(&tx)?;
             tx.commit()?;
         }
         s3_assert(
-            S3_REGISTRY_FIXTURES,
+            TERMINAL_REGISTRY_FIXTURES,
             &saved.connection,
-            &format!("service-1.4.authority1{suffix}"),
+            &format!("service-1.4.terminal-authority1{suffix}"),
         )?;
         for (name, apply) in layers {
             let tx = saved.connection.transaction()?;
             apply(&tx)?;
             tx.commit()?;
             s3_assert(
-                S3_REGISTRY_FIXTURES,
+                TERMINAL_REGISTRY_FIXTURES,
                 &saved.connection,
-                &format!("service-1.4.{name}{suffix}"),
+                &format!("service-1.4.terminal-{name}{suffix}"),
             )?;
         }
     }
     Ok(())
 }
 
-/// Reader acceptance: the current compiled layout recognizer accepts every
-/// retained 1.8.16 registry shape, including adopted (schema 13) layouts that
-/// current code no longer produces. The layout/version pairs are reviewed
+pub(in crate::service::registry::catalog) fn fixture_objects(
+    table: &[(&str, &str, &str)],
+    label: &str,
+) -> Result<(Vec<super::super::SchemaObject>, serde_json::Value)> {
+    let (objects, meta) = s3_fixture(table, label)?;
+    let text = |object: &serde_json::Value, field: &str| -> Result<String> {
+        Ok(object[field]
+            .as_str()
+            .with_context(|| format!("{label}: {field} is not text"))?
+            .to_owned())
+    };
+    let objects = objects
+        .as_array()
+        .context("fixture objects must be an array")?
+        .iter()
+        .map(|object| {
+            Ok(super::super::SchemaObject {
+                kind: text(object, "type")?,
+                name: text(object, "name")?,
+                table: text(object, "tbl_name")?,
+                // schema_objects() reads NULL sql as an empty string.
+                sql: object["sql"].as_str().unwrap_or_default().to_owned(),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok((objects, meta))
+}
+
+/// Reader acceptance: the current recognizer knows every retained 1.8.16
+/// registry shape, including adopted (schema 13) layouts that current code no
+/// longer produces. Since change-log entry 68 part 3 an ordinary read refuses
+/// each catalog one as `CatalogUpgradeRequired`, and only the upgrade step's
+/// predecessor recognizer accepts it. The layout/version pairs are reviewed
 /// values, not derived from the code under test.
 #[test]
 fn current_reader_recognizes_every_retained_airk_state_1_registry_layout() -> Result<()> {
-    use super::super::CatalogLayout::*;
+    use super::super::PredecessorLayout::*;
     let cases = [
         ("service-1.4.schema11", None, 11),
         ("catalog-schema11-backup", None, 11),
-        ("service-1.4.authority0", Some(Schema12Authority0), 12),
-        ("service-1.4.authority1", Some(Schema12Authority1), 12),
-        ("service-1.4.policy1", Some(Schema12Authority1Policy1), 12),
-        ("service-1.4.policy2", Some(Schema12Authority1Policy2), 12),
-        ("service-1.4.policy3", Some(Schema12Authority1Policy3), 12),
-        ("service-1.4.authority1-armed", Some(Schema12Authority1), 13),
-        (
-            "service-1.4.policy1-armed",
-            Some(Schema12Authority1Policy1),
-            13,
-        ),
-        (
-            "service-1.4.policy2-armed",
-            Some(Schema12Authority1Policy2),
-            13,
-        ),
-        (
-            "service-1.4.policy3-armed",
-            Some(Schema12Authority1Policy3),
-            13,
-        ),
-        ("service-1.4.adopted-policy0", Some(Schema12Authority1), 13),
-        (
-            "service-1.4.adopted-policy1",
-            Some(Schema12Authority1Policy1),
-            13,
-        ),
-        (
-            "service-1.4.adopted-policy2",
-            Some(Schema12Authority1Policy2),
-            13,
-        ),
-        (
-            "service-1.4.adopted-policy3",
-            Some(Schema12Authority1Policy3),
-            13,
-        ),
+        ("service-1.4.authority0", Some(Authority0), 12),
+        ("service-1.4.authority1", Some(Authority1), 12),
+        ("service-1.4.policy1", Some(Policy1), 12),
+        ("service-1.4.policy2", Some(Policy2), 12),
+        ("service-1.4.policy3", Some(Policy3), 12),
+        ("service-1.4.authority1-armed", Some(Authority1), 13),
+        ("service-1.4.policy1-armed", Some(Policy1), 13),
+        ("service-1.4.policy2-armed", Some(Policy2), 13),
+        ("service-1.4.policy3-armed", Some(Policy3), 13),
+        ("service-1.4.adopted-policy0", Some(Authority1), 13),
+        ("service-1.4.adopted-policy1", Some(Policy1), 13),
+        ("service-1.4.adopted-policy2", Some(Policy2), 13),
+        ("service-1.4.adopted-policy3", Some(Policy3), 13),
     ];
     assert_eq!(cases.len(), S3_REGISTRY_FIXTURES.len());
     for (label, layout, version) in cases {
-        let (objects, meta) = s3_fixture(S3_REGISTRY_FIXTURES, label)?;
-        let text = |object: &serde_json::Value, field: &str| -> Result<String> {
-            Ok(object[field]
-                .as_str()
-                .with_context(|| format!("{label}: {field} is not text"))?
-                .to_owned())
-        };
-        let objects = objects
-            .as_array()
-            .context("fixture objects must be an array")?
-            .iter()
-            .map(|object| {
-                Ok(super::super::SchemaObject {
-                    kind: text(object, "type")?,
-                    name: text(object, "name")?,
-                    table: text(object, "tbl_name")?,
-                    // schema_objects() reads NULL sql as an empty string.
-                    sql: object["sql"].as_str().unwrap_or_default().to_owned(),
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
+        let (objects, meta) = fixture_objects(S3_REGISTRY_FIXTURES, label)?;
         match layout {
             None => assert_eq!(&objects, super::super::expected(11)?, "{label}"),
-            Some(layout) => assert_eq!(
-                super::super::physical_catalog_layout(&objects)?,
-                layout,
-                "{label}"
-            ),
+            Some(layout) => {
+                assert_eq!(
+                    super::super::grant_removal::predecessor_layout(&objects)?,
+                    Some(layout),
+                    "{label}"
+                );
+                assert!(
+                    super::super::physical_catalog_layout(&objects)
+                        .unwrap_err()
+                        .is::<super::super::CatalogUpgradeRequired>(),
+                    "{label}"
+                );
+            }
         }
+        assert_eq!(
+            meta,
+            serde_json::json!({
+                "user_version": version,
+                "application_id": super::super::super::APPLICATION,
+            }),
+            "{label}"
+        );
+    }
+    Ok(())
+}
+
+/// The terminal layouts are recognized, and none is a predecessor.
+#[test]
+fn current_reader_recognizes_every_terminal_registry_layout() -> Result<()> {
+    use super::super::CatalogLayout::*;
+    let cases = [
+        ("service-1.4.terminal-authority0", Schema12, 12),
+        ("service-1.4.terminal-authority1", Schema12, 12),
+        ("service-1.4.terminal-policy1", Schema12Policy1, 12),
+        ("service-1.4.terminal-policy2", Schema12Policy2, 12),
+        ("service-1.4.terminal-policy3", Schema12Policy3, 12),
+        ("service-1.4.terminal-authority1-schema13", Schema12, 13),
+        ("service-1.4.terminal-policy1-schema13", Schema12Policy1, 13),
+        ("service-1.4.terminal-policy2-schema13", Schema12Policy2, 13),
+        ("service-1.4.terminal-policy3-schema13", Schema12Policy3, 13),
+        (
+            "service-1.4.terminal-policy3-descriptions",
+            Schema12Policy3,
+            12,
+        ),
+    ];
+    assert_eq!(cases.len(), TERMINAL_REGISTRY_FIXTURES.len());
+    for (label, layout, version) in cases {
+        let (objects, meta) = fixture_objects(TERMINAL_REGISTRY_FIXTURES, label)?;
+        assert_eq!(
+            super::super::physical_catalog_layout(&objects)?,
+            layout,
+            "{label}"
+        );
+        assert_eq!(
+            super::super::grant_removal::predecessor_layout(&objects)?,
+            None,
+            "{label}"
+        );
         assert_eq!(
             meta,
             serde_json::json!({
@@ -713,17 +797,7 @@ fn current_reader_recognizes_every_retained_airk_state_1_registry_layout() -> Re
 // Fixture: fixtures/split/agents/registry-policy3-descriptions.*, the retained
 // policy3 objects plus the layer DDL rendered by Python sqlite3 (independent
 // of this Rust path). Retained fixtures above never carry the layer.
-const U105_DESCRIPTION_FIXTURE: &[(&str, &str, &str)] = &[(
-    "registry-policy3-descriptions",
-    include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../fixtures/split/agents/registry-policy3-descriptions.objects.json"
-    )),
-    include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../fixtures/split/agents/registry-policy3-descriptions.meta.json"
-    )),
-)];
+// The terminal fixture is that reviewed fixture without the removed tables.
 
 #[test]
 fn description_layer_over_policy3_reproduces_its_reviewed_fixture() -> Result<()> {
@@ -745,9 +819,9 @@ fn description_layer_over_policy3_reproduces_its_reviewed_fixture() -> Result<()
         tx.commit()?;
     }
     s3_assert(
-        S3_REGISTRY_FIXTURES,
+        TERMINAL_REGISTRY_FIXTURES,
         &saved.connection,
-        "service-1.4.policy3",
+        "service-1.4.terminal-policy3",
     )?;
     let tx = saved.connection.transaction()?;
     super::super::descriptions::apply_layout(&tx)?;
@@ -755,13 +829,13 @@ fn description_layer_over_policy3_reproduces_its_reviewed_fixture() -> Result<()
     super::super::descriptions::apply_layout(&tx)?;
     tx.commit()?;
     s3_assert(
-        U105_DESCRIPTION_FIXTURE,
+        TERMINAL_REGISTRY_FIXTURES,
         &saved.connection,
-        "registry-policy3-descriptions",
+        "service-1.4.terminal-policy3-descriptions",
     )?;
     assert_eq!(
         super::super::validate_catalog_layout(&saved.connection)?,
-        super::super::CatalogLayout::Schema12Authority1Policy3
+        super::super::CatalogLayout::Schema12Policy3
     );
     super::super::validate_existing(&saved.connection)?;
     Ok(())

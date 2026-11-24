@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Optional ordering of complete canonical search results. No source authority.
 use super::*;
-use std::collections::BTreeMap;
 use airk_core::{
     SearchQuery, SearchResponse,
     arbiter::focus::{FocusObservation, focus_token_allowance, ordinary_search_allocation},
     native_focus::{FocusSourceWindow, NativeFocusCandidate, NativeFocusRequest},
     search_execution::ServedMode,
 };
+use std::collections::BTreeMap;
 
 #[derive(Default)]
 pub(super) struct Attempt {
@@ -408,7 +408,18 @@ impl crate::Kernel {
             .limits
             .as_ref()
             .context("ready Focus limits absent")?;
-        let (parent, local, deadline, available, ordinal, retained, mandatory, nested, pair_cap, bounded) = {
+        let (
+            parent,
+            local,
+            deadline,
+            available,
+            ordinal,
+            retained,
+            mandatory,
+            nested,
+            pair_cap,
+            bounded,
+        ) = {
             let mut held = state(context)?;
             let Some(deadline) = held.deadline else {
                 drop(held);
@@ -433,7 +444,9 @@ impl crate::Kernel {
             if held.parent.is_none() {
                 // A combined ordinary read without a Host work partition cannot
                 // create a new 2048-token allowance for each selected index.
-                if context.authority.selection.is_some() && context.partition.is_none() {
+                // Every installed read is a selection read since reviewed
+                // grants were removed (change-log entry 68 part 3).
+                if context.partition.is_none() {
                     drop(held);
                     return notice(
                         response,
@@ -916,9 +929,11 @@ impl crate::Kernel {
         {
             return Ok(None);
         }
-        let (Some(limits), Some(identity), Some(attempt)) =
-            (observed.limits.as_ref(), observed.identity.clone(), context.attempt)
-        else {
+        let (Some(limits), Some(identity), Some(attempt)) = (
+            observed.limits.as_ref(),
+            observed.identity.clone(),
+            context.attempt,
+        ) else {
             return Ok(None);
         };
         let Ok(Some((clock, now_ns))) = context.owner.focus_clock() else {
@@ -931,7 +946,11 @@ impl crate::Kernel {
         }
         let attribution: Vec<TokenAttribution> = charges
             .into_iter()
-            .map(|((part, round), tokens)| TokenAttribution { part, round, tokens })
+            .map(|((part, round), tokens)| TokenAttribution {
+                part,
+                round,
+                tokens,
+            })
             .collect();
         let reservation: usize = attribution.iter().map(|charge| charge.tokens).sum();
         for charge in &attribution {
@@ -958,7 +977,10 @@ impl crate::Kernel {
                 .context("Focus span names an unknown question")?;
             let (utf8_start, utf8_end) =
                 software::focus_window(&span.hit.text, question, pair_tokens);
-            let window = FocusSourceWindow { utf8_start, utf8_end };
+            let window = FocusSourceWindow {
+                utf8_start,
+                utf8_end,
+            };
             match NativeFocusCandidateV3::new(
                 &application.scope,
                 &batch.questions,
@@ -1091,8 +1113,11 @@ impl crate::Kernel {
         if Instant::now() >= deadline && receipt.applied {
             receipt.applied = false;
             receipt.availability = Availability::Failed;
-            receipt.reason = "Focus completed after its original deadline; canonical order is unchanged.".into();
-            receipt.ranked = (0..receipt.candidate_count).map(|index| index as u16).collect();
+            receipt.reason =
+                "Focus completed after its original deadline; canonical order is unchanged.".into();
+            receipt.ranked = (0..receipt.candidate_count)
+                .map(|index| index as u16)
+                .collect();
         }
         let mut relevance = vec![None; batch.spans.len()];
         if receipt.applied {

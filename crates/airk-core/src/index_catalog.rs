@@ -114,7 +114,6 @@ catalog_id!(QueryProjectId, "prj_");
 catalog_id!(IndexId, "idx_");
 catalog_id!(SourceRootId, "src_");
 catalog_id!(ContextId, "ctx_");
-catalog_id!(GrantId, "grt_");
 catalog_id!(DenyId, "deny_");
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -406,47 +405,4 @@ pub struct GrantedMembership {
     /// Bind the frozen policy directly, avoiding history walks or expansion
     /// through later relaxation of the current index policy.
     pub policy_digest: Option<Sha256Digest>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ReviewedGrant {
-    pub id: GrantId,
-    pub host: Sha256Digest,
-    pub revision: CatalogRevision,
-    pub memberships: Vec<GrantedMembership>,
-    pub revoked: bool,
-}
-impl ReviewedGrant {
-    pub fn validate(&self) -> Result<()> {
-        ensure!(
-            self.memberships.len() <= MAX_SELECTION * MAX_SELECTION,
-            "grant membership capacity exceeded"
-        );
-        let mut pairs = BTreeSet::new();
-        let mut projects = BTreeSet::new();
-        let mut indexes = BTreeSet::new();
-        for grant in &self.memberships {
-            grant.membership.validate()?;
-            ensure!(
-                grant.policy_epoch <= i64::MAX as u64,
-                "invalid grant policy epoch"
-            );
-            ensure!(
-                (grant.policy_epoch == 0) == grant.policy_digest.is_none(),
-                "grant policy epoch and digest must agree"
-            );
-            ensure!(
-                pairs.insert((grant.membership.project_id, grant.membership.index_id)),
-                "duplicate grant membership"
-            );
-            projects.insert(grant.membership.project_id);
-            indexes.insert(grant.membership.index_id);
-        }
-        ensure!(
-            projects.len() <= MAX_SELECTION && indexes.len() <= MAX_SELECTION,
-            "grant selection capacity exceeded"
-        );
-        Ok(())
-    }
 }

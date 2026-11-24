@@ -448,7 +448,7 @@ impl Parity {
 
     /// A fixture service's run-specific values: its owner, control root,
     /// project paths and binding, and, when reviewed, its installation,
-    /// executable and scoped selection identifiers.
+    /// executable and its Index and Project identifiers.
     pub fn service(&mut self, service: &super::Service) {
         self.substitute_path(service.owner.path(), "<OWNER>");
         self.substitute_path(&service.control, "<CONTROL>");
@@ -458,7 +458,17 @@ impl Parity {
         if let Some(managed) = &service.reviewed {
             self.substitute_path(&managed.install, "<INSTALL>");
             self.substitute_path(&managed.executable, "<EXECUTABLE>");
-            self.substitute_identifiers(&managed.selection, "SELECTION");
+            // The recorded parity fixtures name the service's catalog
+            // namespace by the placeholder of the former reviewed selection,
+            // which carried it; the namespace itself is unchanged.
+            self.substitute(managed.namespace, "<SELECTION.selection.namespace>");
+            self.substitute_identifiers(
+                &serde_json::json!({
+                    "index_id": managed.scope.index_id,
+                    "project_id": managed.scope.project_id,
+                }),
+                "SCOPE",
+            );
         }
     }
 

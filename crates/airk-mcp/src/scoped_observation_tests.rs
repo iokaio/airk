@@ -10,11 +10,13 @@ use airk_core::{
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
 
-pub(super) fn authority(kernel: &Kernel) -> Result<airk_kernel::scoped_reads::ScopedReadAuthority> {
+pub(super) fn authority(
+    kernel: &Kernel,
+) -> Result<airk_kernel::scoped_reads::SelectionReadAuthority> {
     let project = QueryProjectId::from_identity(Incarnation::from_bytes([1; 16]));
     let index = IndexId::from_identity(Incarnation::from_bytes([2; 16]));
     let source = SourceRootId::from_identity(Incarnation::from_bytes([3; 16]));
-    Ok(airk_kernel::scoped_reads::ScopedReadAuthority {
+    Ok(airk_kernel::scoped_reads::SelectionReadAuthority {
         schema: 1,
         backing: airk_core::service::ProjectRegistration::new(
             kernel.root().to_str().unwrap().into(),
@@ -24,32 +26,29 @@ pub(super) fn authority(kernel: &Kernel) -> Result<airk_kernel::scoped_reads::Sc
         .binding,
         index_id: index,
         project_ids: vec![project],
-        provenance: airk_core::grant_provenance::GrantProvenance::UserReviewedProjectGrant,
-        grant: ReviewedGrant {
-            id: GrantId::from_identity(Incarnation::from_bytes([4; 16])),
-            host: Sha256Digest::from_bytes([5; 32]),
-            revision: CatalogRevision::INITIAL,
-            revoked: false,
-            memberships: vec![GrantedMembership {
-                membership: Membership {
-                    project_id: project,
-                    index_id: index,
-                    revision: CatalogRevision::INITIAL,
-                    scope: vec![ScopeAtom {
-                        source_root_id: source,
-                        kind: PathScope::Subtree,
-                        path: "public".into(),
-                    }],
-                },
-                source_revision: CatalogRevision::INITIAL,
-                policy_epoch: 0,
-                policy_digest: None,
-            }],
+        selection: airk_core::scoped_reads::SelectionScopeRef {
+            owner: airk_core::scoped_reads::SelectionOwnerKind::Window,
+            grant_nonce: airk_core::identity::Incarnation::from_bytes([10; 16]),
+            service_instance: airk_core::identity::Incarnation::from_bytes([11; 16]),
+            scope_identity: airk_core::identity::Sha256Digest::from_bytes([12; 32]),
+            catalog_revision: airk_core::index_catalog::CatalogRevision::try_from(5_u64).unwrap(),
         },
+        atoms: vec![ScopeAtom {
+            source_root_id: source,
+            kind: PathScope::Subtree,
+            path: "public".into(),
+        }]
+        .into_iter()
+        .map(|atom| (project, atom))
+        .collect(),
         sources: vec![SourceDescriptor {
             source_root_id: source,
             original_root: kernel.root().to_str().unwrap().into(),
         }],
+        membership_revisions: vec![(project, airk_core::index_catalog::CatalogRevision::INITIAL)],
+        source_revision: airk_core::index_catalog::CatalogRevision::INITIAL,
+        policy_epoch: 0,
+        policy_digest: None,
     })
 }
 fn payload(reply: &CallToolResult) -> Result<Value> {
@@ -77,11 +76,11 @@ async fn scope_observation_survives_actual_sessions_terse_errors_and_workbench_c
     kernel.configure_vectors(false)?;
     kernel.index()?;
     let authority = authority(&kernel)?;
-    let native = kernel.with_scoped_reads(authority.clone())?;
+    let native = kernel.with_selection_reads(authority.clone())?;
     let expected = serde_json::to_value(native.scope_observation())?;
     let mut owner = local::LocalTools::new(kernel.clone()).await?;
     let mut scoped = owner
-        .scoped_session_with_client(authority, ClientFamily::Cli)
+        .selection_session_with_client(authority, ClientFamily::Cli)
         .await?;
     let fence = scoped.scoped_read_revocation_handle();
     for mode in ["full", "terse", "terse"] {
@@ -259,7 +258,7 @@ async fn preserved_read_failure_retains_current_scope_fence_and_rejects_foreign_
     kernel.configure_vectors(false)?;
     kernel.index()?;
     let frozen = authority(&kernel)?;
-    let native = kernel.with_scoped_reads(frozen)?;
+    let native = kernel.with_selection_reads(frozen)?;
     let first = native.scope_observation().unwrap().clone();
     let typed = anyhow::anyhow!("native publication admission")
         .context(airk_kernel::CurrentGateContention::Applying)
@@ -275,7 +274,7 @@ async fn preserved_read_failure_retains_current_scope_fence_and_rejects_foreign_
     );
     let mut current = first.clone();
     current.fingerprint = Sha256Digest::from_bytes([98; 32]);
-    current.grant.as_mut().unwrap().revision = CatalogRevision::INITIAL.next()?;
+    current.selection.catalog_revision = CatalogRevision::INITIAL.next()?;
     let changed = same.context(airk_core::scoped_reads::ScopeErrorObservation {
         observation: current.clone(),
         message: "replacement native owner".into(),

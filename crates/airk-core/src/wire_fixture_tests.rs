@@ -476,9 +476,9 @@ fn selection_cases<'a>(fixture: &'a Value, group: &str, kind: &str) -> &'a Vec<V
     cases
 }
 
-/// Selection authority Step C (U99): each source round-trips byte-exactly,
-/// the frozen catalog-grant bytes carry no selection field, and refusals
-/// happen at the reviewed stage (serde decode or the xor `validate`).
+/// Selection authority Step C (U99, amended by change-log entry 68 part 3):
+/// each selection round-trips byte-exactly, the removed catalog-grant bytes
+/// never decode, and refusals happen at the reviewed stage.
 #[test]
 fn selection_authority_scoped_read_refs_match_reviewed_fixture() {
     use crate::service::ScopedReadRef;
@@ -488,17 +488,8 @@ fn selection_authority_scoped_read_refs_match_reviewed_fixture() {
         let scope: ScopedReadRef = serde_json::from_str(text).unwrap();
         scope.validate().unwrap();
         assert_eq!(bytes(&scope), text, "{}", case["name"]);
-        match case["source"].as_str().unwrap() {
-            "catalog" => {
-                assert!(scope.catalog_grant().is_some() && scope.selection.is_none());
-                assert!(!text.contains("selection"), "{}", case["name"]);
-            }
-            "selection" => {
-                assert!(scope.catalog_grant().is_none() && scope.selection.is_some());
-                assert!(!text.contains("grant_id") && !text.contains("grant_revision"));
-            }
-            source => panic!("unknown source {source}"),
-        }
+        assert_eq!(case["source"], "selection", "{}", case["name"]);
+        assert!(!text.contains("grant_id") && !text.contains("grant_revision"));
     }
     for case in selection_cases(&fixture, "scoped_read_refs", "rejected") {
         let decoded = serde_json::from_str::<ScopedReadRef>(case["bytes"].as_str().unwrap());
@@ -519,15 +510,7 @@ fn selection_authority_scope_observations_match_reviewed_fixture() {
         let observation: ScopeObservation = serde_json::from_str(text).unwrap();
         observation.validate().unwrap();
         assert_eq!(bytes(&observation), text, "{}", case["name"]);
-        let catalog = case["source"] == "catalog";
-        assert_eq!(observation.grant.is_some(), catalog, "{}", case["name"]);
-        assert_eq!(
-            observation.provenance.is_some(),
-            catalog,
-            "{}",
-            case["name"]
-        );
-        assert_eq!(observation.selection.is_none(), catalog, "{}", case["name"]);
+        assert_eq!(case["source"], "selection", "{}", case["name"]);
         assert!(!text.contains("grant_nonce") && !text.contains("service_instance"));
     }
     for case in selection_cases(&fixture, "scope_observations", "rejected") {
@@ -541,19 +524,17 @@ fn selection_authority_scope_observations_match_reviewed_fixture() {
     for case in selection_cases(&fixture, "selected_scope_observations", "accepted") {
         let text = case["bytes"].as_str().unwrap();
         let selected: SelectedScopeObservation = serde_json::from_str(text).unwrap();
-        assert!(selected.has_one_source(), "{}", case["name"]);
         assert_eq!(bytes(&selected), text, "{}", case["name"]);
-        assert_eq!(
-            selected.grant_id.is_some(),
-            case["source"] == "catalog",
+        assert_eq!(case["source"], "selection", "{}", case["name"]);
+    }
+    for case in selection_cases(&fixture, "selected_scope_observations", "rejected") {
+        assert_eq!(case["stage"], "serde", "{}", case["name"]);
+        assert!(
+            serde_json::from_str::<SelectedScopeObservation>(case["bytes"].as_str().unwrap())
+                .is_err(),
             "{}",
             case["name"]
         );
-    }
-    for case in selection_cases(&fixture, "selected_scope_observations", "no_single_source") {
-        let selected: SelectedScopeObservation =
-            serde_json::from_str(case["bytes"].as_str().unwrap()).unwrap();
-        assert!(!selected.has_one_source(), "{}", case["name"]);
     }
 }
 
@@ -590,7 +571,7 @@ fn selection_scope_ref_debug_redacts_the_nonce() {
     );
 }
 
-/// A selection scope never becomes a durable fence target; a catalog ref does.
+/// A selection scope never becomes a durable fence target.
 #[test]
 fn fence_plans_refuse_selection_scope_targets() {
     use crate::{
@@ -610,13 +591,11 @@ fn fence_plans_refuse_selection_scope_targets() {
     for case in selection_cases(&fixture, "scoped_read_refs", "accepted") {
         let scope: ScopedReadRef = serde_json::from_str(case["bytes"].as_str().unwrap()).unwrap();
         let plan = FencePlan::new(service, 1, vec![FenceTarget { worker, scope }]);
-        match case["source"].as_str().unwrap() {
-            "catalog" => assert!(plan.is_ok(), "{}", case["name"]),
-            _ => assert!(plan.is_err(), "{}", case["name"]),
-        }
+        assert!(plan.is_err(), "{}", case["name"]);
         checked += 1;
     }
-    assert!(checked >= 3);
+    assert!(checked >= 2);
+    FencePlan::new(service, 1, Vec::new()).unwrap();
 }
 
 const OPEN_ACCESS: &str = include_str!("../../../fixtures/split/agents/open_access.json");

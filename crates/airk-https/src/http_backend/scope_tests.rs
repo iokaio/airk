@@ -1,29 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Capacity decoration preserves authority descriptors without inventing one.
 use super::*;
-use airk_core::{
-    identity::Sha256Digest,
-    service::{ScopedConnectRequest, WindowScopeSelection},
-};
+use airk_core::{identity::Sha256Digest, service::WindowScopeSelection};
 use airk_mcp::remote::{CombinedScope, ScopedScope};
 use serde_json::json;
 
 enum Source {
-    Catalog(ScopedConnectRequest),
     Selection(WindowScopeSelection),
     Combined(CombinedScope),
     Unscoped,
 }
 impl RemoteTools for Source {
-    fn scoped_selection(&self) -> Option<&ScopedConnectRequest> {
-        match self {
-            Self::Catalog(selection) => Some(selection),
-            _ => None,
-        }
-    }
     fn scoped_scope(&self) -> Option<ScopedScope> {
         match self {
-            Self::Catalog(selection) => Some(ScopedScope::Catalog(selection.clone())),
             Self::Selection(selection) => Some(ScopedScope::Selection {
                 window_scope_selection: selection.clone(),
                 scope_identity: Sha256Digest::from_bytes([0x5c; 32]),
@@ -43,10 +32,7 @@ impl RemoteTools for Source {
 }
 
 #[test]
-fn capacity_wrapper_keeps_catalog_selection_combined_and_unscoped_descriptors() -> Result<()> {
-    let catalog = json!({"schema":1,"context_key":"01".repeat(32),"namespace":"02".repeat(16),
-        "expected_catalog_revision":7,"grant_id":format!("grt_{}","03".repeat(16)),"expected_grant_revision":1,
-        "index_id":format!("idx_{}","04".repeat(16)),"project_ids":[format!("prj_{}","05".repeat(16))]});
+fn capacity_wrapper_keeps_selection_combined_and_unscoped_descriptors() -> Result<()> {
     let selection = json!({"namespace":"02".repeat(16),"expected_catalog_revision":7,
         "index_ids":[format!("idx_{}","04".repeat(16))],"project_ids":[format!("prj_{}","05".repeat(16))]});
     let requested = json!({"window_scope_selection":selection,"scope_identity":"5c".repeat(32)});
@@ -57,11 +43,6 @@ fn capacity_wrapper_keeps_catalog_selection_combined_and_unscoped_descriptors() 
         requested: requested.clone(),
     };
     for (source, single, union) in [
-        (
-            Source::Catalog(serde_json::from_value(catalog.clone())?),
-            Some(catalog),
-            false,
-        ),
         (Source::Selection(window), Some(requested.clone()), false),
         (Source::Combined(combined), None, true),
         (Source::Unscoped, None, false),

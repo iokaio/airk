@@ -158,7 +158,7 @@ fn first_write_installs_the_layer_and_null_clears() -> Result<()> {
     assert_eq!(strip(&installed)?.as_ref(), Some(&base));
     assert_eq!(
         validate_catalog_layout(&registry.connection)?,
-        CatalogLayout::Schema12Authority1
+        CatalogLayout::Schema12
     );
     validate_existing(&registry.connection)?;
     run(&mut registry, 8, set_project(1, Some("Set notes"))?)?;

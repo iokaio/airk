@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import {ReferenceRefreshIntent,refreshConfiguration,refreshDigest,validateRefreshIntent,validateRefreshJob,validateRefreshReceipt,validateRefreshRefusal} from './referenceRefresh';
 import * as path from 'node:path';
 import { requireNativeExecution } from './nativeGate';
 import {ServiceError,validateNativeReply,retainUnvalidatedNativeReply} from './nativeOutcome';
 export {ServiceError} from './nativeOutcome';
-import { CatalogApplyIntent, CatalogObject, CatalogRequest, CatalogReview, IndexSetupApplyIntent, IndexSetupReview, catalogBound, catalogFenceObservation, catalogHex, catalogObject, catalogRevision, sameCatalogValue, CATALOG_RECEIPT_BYTES, validateCatalogApply, validateGrantSelection, validateNativeGrantDraft, validateNativeHostContext, validateIndexSetupSelection, validateIndexSetupApply, validateNativeIndexSetupDraft, validateIndexSetupReceipt, indexSetupObservation, validateNativeLegacyBinding } from './indexingCatalog';
+import { CatalogApplyIntent, CatalogObject, CatalogRequest, CatalogReview, IndexSetupApplyIntent, IndexSetupReview, catalogBound, catalogFenceObservation, catalogHex, catalogObject, catalogRevision, sameCatalogValue, CATALOG_RECEIPT_BYTES, validateCatalogApply,  validateNativeHostContext, validateIndexSetupSelection, validateIndexSetupApply, validateNativeIndexSetupDraft, validateIndexSetupReceipt, indexSetupObservation, validateNativeLegacyBinding } from './indexingCatalog';
 import { SourceResolveIntent, PolicyResumeIntent, validatePolicyResumeIntent, validateNativeSourceDraft, validateSourceMutationSelection, validateSourceResolveIntent, sourceChangeObservation, validateNativeRetirementRequest } from './indexingCatalog';
 import { validatePolicyStatus, validateNativePolicyConfiguration } from './indexingCatalog';
 import { SplitApplyIntent, SplitRecoverIntent, SplitReview, SPLIT_RESPONSE_BYTES, validateSplitApply, validateSplitContinuity, validateSplitDraft, validateSplitRecover, validateSplitRecoveryReceipt, validateSplitSelection, validateSplitSnapshot, validateSplitSourceState } from './indexingSplit';
@@ -120,10 +119,9 @@ export function validateConfigurationRequest(input:unknown):ProjectConfiguration
     const names:Record<string,string[]>={unregister:[],prepare_derived_cleanup:[],delete_derived:['preview'],bundled_model:[],vectors:['enabled'],detail:['level'],retained_profile:['review'],vector_selection:['policy'],
         add_root:['alias','path'],remove_root:['alias'],install_model:['directory','manifest_sha256'],usage:['mode'],
         clear_usage:[],reset_scan_limits:[],usage_feedback:['request_id','usefulness'],import_usage:['input'],extraction_policy:['input'],scan_limits:['input'],quota_policy:['input','expected_policy_digest'],
-        calibrate:['tokenizer','baseline','returned','generation','content_kind','record'],refresh_references:['selection']};
+        calibrate:['tokenizer','baseline','returned','generation','content_kind','record']};
     if(typeof operation!=='string'||!Object.hasOwn(names,operation)||Object.keys(configuration).sort().join(',')!==['operation',...names[operation]].sort().join(','))throw new ServiceError('invalid_project_configuration');
     const filePath=(input:unknown)=>{if(typeof input!=='string'||!path.isAbsolute(input)||input.length>4096||/[\u0000-\u001f\u007f]/.test(input))throw new ServiceError('invalid_configuration_path');};
-    if(operation==='refresh_references')refreshConfiguration(input);
     if(operation==='vectors'&&typeof configuration.enabled!=='boolean')throw new ServiceError('invalid_project_configuration');
     if(operation==='detail'&&!['essential','agent_lean','balanced','detailed'].includes(String(configuration.level)))throw new ServiceError('invalid_project_configuration');
     if(operation==='retained_profile'){
@@ -288,14 +286,6 @@ export class ServiceClient {
     async catalogLegacyBinding(project:string,expectedCatalogRevision:number|null=null):Promise<RecordValue>{
         catalogHex(project,64);if(expectedCatalogRevision!==null)catalogRevision(expectedCatalogRevision);
         return validateNativeLegacyBinding(await this.rpc({catalog_legacy_binding:{project,expected_catalog_revision:expectedCatalogRevision}},'catalog_legacy_binding'),project,expectedCatalogRevision);
-    }
-    async catalogGrantDraft(contextKey:string,selection:CatalogObject):Promise<CatalogReview>{
-        selection=structuredClone(selection);
-        catalogHex(contextKey,64);catalogRevision(selection.expected_catalog_revision);validateGrantSelection({project_ids:selection.project_ids,index_ids:selection.index_ids});
-        const key=record(selection.key);identifier(key.namespace,16);identifier(key.nonce,16);count(key.epoch);
-        if(Object.keys(selection).sort().join(',')!=='expected_catalog_revision,index_ids,key,project_ids'||Object.keys(key).sort().join(',')!=='epoch,namespace,nonce')throw new ServiceError('invalid_grant_draft_selection');
-        const response=await this.rpc({catalog_grant_draft:{context_key:contextKey,selection}},'catalog_grant_draft');
-        return {...validateNativeGrantDraft(response,selection),contextKey};
     }
     async submitCatalog(intent: CatalogApplyIntent): Promise<RecordValue> {
         validateCatalogApply(intent);
@@ -501,7 +491,7 @@ export class ServiceClient {
             || receipt.schema !== 1 || !Number.isSafeInteger(receipt.catalog_revision) || receipt.catalog_revision !== request.expected_catalog_revision+1 || receipt.request_digest!==requestDigest||typeof receipt.authority_fence_required!=='boolean') {
             throw new ServiceError('crossed_catalog_receipt', true);
         }
-        if(['delete_project','set_membership','remove_membership','revoke_grant','begin_index_source_change','retire_index','change_index_policy'].includes(String(request.operation.operation))&&receipt.authority_fence_required!==true)throw new ServiceError('complete_catalog_fence_required',true);
+        if(['delete_project','set_membership','remove_membership','begin_index_source_change','retire_index','change_index_policy'].includes(String(request.operation.operation))&&receipt.authority_fence_required!==true)throw new ServiceError('complete_catalog_fence_required',true);
         return receipt;
     }
     private validateFencedReceipt(input:unknown,receipt:RecordValue,request:CatalogRequest,previewDigest:string):void{
@@ -624,24 +614,7 @@ export class ServiceClient {
     async prepareRetry(id: string): Promise<MutationIntent> {
         return { retry: { id: identifier(id,32), caller: this.caller, key: await this.key() } };
     }
-    async prepareReferenceRefresh(project:string,draft:ProjectConfigurationRequest,originalQuery:RecordValue,originalResult:RecordValue,persistEvidence=false):Promise<ReferenceRefreshIntent>{
-        const key=await this.key(),selection=structuredClone(record(draft.configuration.selection));
-        selection.caller=this.caller;selection.key=key;selection.original_query_digest=refreshDigest(originalQuery);selection.original_result_digest=refreshDigest(originalResult);selection.original_evidence_selection_digest=refreshDigest(selection.members);
-        const request={...structuredClone(draft),configuration:{operation:'refresh_references',selection}},intent={reference_refresh:{configure_project:{project:identifier(project,32),caller:this.caller,key,request},original_query:structuredClone(originalQuery),original_result:structuredClone(originalResult),evidence_retention:persistEvidence?'local_approved':'memory_only'}};
-        delete (request as ProjectConfigurationRequest).prepare;
-        return validateRefreshIntent(intent);
-    }
-    async submitReferenceRefresh(input:ReferenceRefreshIntent):Promise<RecordValue>{
-        const intent=validateRefreshIntent(input),response=await this.mutationReply({configure_project:intent.reference_refresh.configure_project});
-        try{if(response.status==='reference_refresh_review_required')validateRefreshRefusal(response,intent);else {if(response.status!=='job')throw new Error('invalid_refresh_ack_status');validateRefreshJob(response.job,intent);}return response;}catch(cause){const failure=new ServiceError('crossed_reference_refresh_acknowledgment',true,response);failure.cause=cause;throw retainUnvalidatedNativeReply(failure,response);}
-    }
-    async referenceRefreshReceipt(input:ReferenceRefreshIntent):Promise<RecordValue>{
-        const intent=validateRefreshIntent(input),request=intent.reference_refresh.configure_project;
-        const response=await this.rpc({reference_refresh_receipt:{caller:request.caller,key:request.key}},'reference_refresh_receipt');
-        try{validateRefreshReceipt(response,intent);return response;}catch(cause){const failure=new ServiceError('unqualified_reference_refresh_receipt',true,response);failure.cause=cause;throw retainUnvalidatedNativeReply(failure,response);}
-    }
     async prepareConfiguration(project:string,request:ProjectConfigurationRequest):Promise<MutationIntent>{
-        if(request.configuration.operation==='refresh_references')throw new ServiceError('refresh_requires_original_evidence_review');
         validateConfigurationRequest(request);
         return {configure_project:{project:identifier(project,32),caller:this.caller,key:await this.key(),request:structuredClone(request)}};
     }
@@ -660,7 +633,6 @@ export class ServiceClient {
     }
     async submitMutation(intent: MutationIntent): Promise<RecordValue> {
         validateMutationIntent(intent);
-        if('configure_project'in intent&&intent.configure_project.request.configuration.operation==='refresh_references')throw new ServiceError('refresh_requires_exact_receipt_tracking');
         // The host persists the complete prepared intent before this call and
         // retires it only after receiving a complete, matching native result.
         const response = await this.mutationReply(intent, 'plan_create' in intent ? 'plan' : 'job');

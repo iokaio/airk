@@ -140,10 +140,7 @@ pub(super) fn validate_context_partition(
         // The selected-scope digest is inert frontend-owned identity. The
         // installed lease, not that digest, grants this exact local index.
         let selection = if partition.is_ordinary_focus() {
-            authority
-                .selection
-                .context("singleton Focus requires actual installed selection authority")?
-                .scope_identity
+            authority.selection.scope_identity
         } else {
             partition.selection
         };

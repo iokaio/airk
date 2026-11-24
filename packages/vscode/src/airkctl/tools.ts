@@ -34,14 +34,10 @@ export interface ToolSelection {
     readonly open?: { readonly indexes: readonly string[]; readonly sets: readonly string[] };
     readonly window?: boolean;
     readonly project?: string;
-    readonly catalogSession?: unknown;
-    readonly combinedSession?: unknown;
 }
 export function selectionArguments(selection: ToolSelection): string[] {
     if (selection.open) { return [...selection.open.indexes.flatMap(name => ['--index', name]), ...selection.open.sets.flatMap(name => ['--set', name])]; }
     if (selection.window) { return []; }
-    if (selection.combinedSession) { return ['--combined-session', JSON.stringify(selection.combinedSession)]; }
-    if (selection.catalogSession) { return ['--catalog-session', JSON.stringify(selection.catalogSession)]; }
     if (selection.project) { return ['--service-project', selection.project]; }
     return [];
 }
@@ -49,18 +45,14 @@ export function selectionArguments(selection: ToolSelection): string[] {
 /** The selection one evidence read names for its launch spec. A Workbench entry naming indexes and
  * index sets reads them explicitly (U105, `--index`/`--set`); the Workbench's window-scope entry always
  * reads under the window scope; ordinary Explorer and Workbench project entries read under it while granted, and otherwise name
- * its selected project or reviewed session (U77, §3.7). */
+ * its selected project (U77, §3.7). */
 export function evidenceSelection(spec: LaunchSpec, client: 'airk-explorer' | 'airk-workbench', windowActive: boolean, route?: ReadRouteView): ToolSelection {
     if (spec.openSelection) { return { open: { indexes: [...spec.openSelection.indexes], sets: [...spec.openSelection.sets] } }; }
-    if ((spec.windowScope || client === 'airk-explorer' || client === 'airk-workbench' && !spec.catalogSession && !spec.combinedSession) && route && ['checking', 'failed', 'not_readable'].includes(route.state)) {
+    if (route && ['checking', 'failed', 'not_readable'].includes(route.state)) {
         throw new ToolCallError('unavailable', route.message ?? 'The requested index scope is being checked or could not be resolved.');
     }
-    if (spec.windowScope || (windowActive && (client === 'airk-explorer' || !spec.catalogSession && !spec.combinedSession))) { return { window: true }; }
-    return {
-        ...(spec.service?.project ? { project: spec.service.project } : {}),
-        ...(spec.catalogSession ? { catalogSession: spec.catalogSession } : {}),
-        ...(spec.combinedSession ? { combinedSession: spec.combinedSession } : {}),
-    };
+    if (spec.windowScope || windowActive) { return { window: true }; }
+    return spec.service?.project ? { project: spec.service.project } : {};
 }
 
 const object = (value: unknown): Record<string, unknown> | undefined => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
@@ -92,7 +84,7 @@ export class AirkctlToolSession implements ToolTransport {
     readScope(): unknown {
         try {
             const selected=typeof this.selection==='function'?this.selection():this.selection;
-            return selected.window?this.hooks.windowReadScope?.():selected.combinedSession??selected.catalogSession;
+            return selected.window?this.hooks.windowReadScope?.():undefined;
         } catch { return undefined; } // Admission still reports its exact refusal in request().
     }
     close(): void { this.stopped = true; for (const abort of this.aborts) { abort.abort(); } this.aborts.clear(); }

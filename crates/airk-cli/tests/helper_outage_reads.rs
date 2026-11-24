@@ -407,40 +407,6 @@ fn output_value(command: &mut common::ctl::Ctl) -> Result<(bool, Value)> {
     Ok((output.status.success(), payload(&value)?))
 }
 
-fn shell_value(fixture: &Fixture, args: &Value) -> Result<Value> {
-    let input = format!("call airk_search {args}\nexit\n");
-    ensure!(
-        input.len() < 4096,
-        "fixture input must fit the bounded pipe write"
-    );
-    let deadline = Instant::now() + Duration::from_secs(60);
-    let output = fixture
-        .command()
-        .args(["tools", "shell"])
-        .input(input)
-        .output_until(deadline)
-        .context("owned shell read deadline expired")?;
-    ensure!(
-        output.status.success() && output.stdout.len() <= 1_048_576,
-        "{output:?}"
-    );
-    let text = std::str::from_utf8(&output.stdout)?;
-    let marker = if text.contains("MCP error:\n") {
-        "MCP error:\n"
-    } else {
-        "Result:\n"
-    };
-    let body = text
-        .split_once(marker)
-        .context("shell did not render the complete result")?
-        .1;
-    serde_json::Deserializer::from_str(body)
-        .into_iter::<Value>()
-        .next()
-        .context("shell JSON missing")?
-        .map_err(Into::into)
-}
-
 #[test]
 fn helper_outage_policy_results_and_receipts_match_actual_read_transports() -> Result<()> {
     for policy in [
@@ -488,9 +454,9 @@ fn helper_outage_policy_results_and_receipts_match_actual_read_transports() -> R
             ensure!(success == allowed, "{tools}");
             // U110: the scoped CLI transports agree with each other; the HTTPS
             // MCP read agrees with the open CLI read of the same index.
-            for actual in [convenience, shell_value(&fixture, &args)?] {
-                assert_eq!(comparable(actual)?, comparable(tools.clone())?);
-            }
+            // `tools shell` has only its project form now; the session
+            // (window) route serves the convenience form and `tools call`.
+            assert_eq!(comparable(convenience)?, comparable(tools.clone())?);
             let (success, open) = open_value(&fixture, "airk_search", &args)?;
             ensure!(success == allowed, "{open}");
             assert_eq!(comparable(open)?, comparable(expected.clone())?);
@@ -654,9 +620,7 @@ fn helper_outage_policy_results_and_receipts_match_actual_read_transports() -> R
                 &["search", "authenticate", "--verification", "require"],
             )?;
             ensure!(!success, "{convenience}");
-            for actual in [convenience, shell_value(&fixture, &required)?] {
-                assert_eq!(comparable(actual)?, comparable(tools.clone())?);
-            }
+            assert_eq!(comparable(convenience)?, comparable(tools.clone())?);
             let (success, open) = open_value(&fixture, "airk_search", &required)?;
             ensure!(!success, "{open}");
             assert_eq!(comparable(open)?, comparable(failed)?);

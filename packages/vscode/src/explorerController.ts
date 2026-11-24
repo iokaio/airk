@@ -70,7 +70,6 @@ export interface ExplorerHost {
     /** Stable window/workspace producer generation, independent of observed metadata. */
     windowContextIdentity?(): string;
     prepareWindowContext?(): Promise<void>;
-    useGrant?(choice:CatalogObject,namespace:string,revision:number,valid:()=>boolean):Promise<CatalogObject>;
     readonly onDidChangeWindowContext?: vscode.Event<void>;
     /** U103: `airkctl usage report` for one index of this window (complete native outcome). */
     usage?(project: string, days: number): Promise<CommandOutcome>;
@@ -221,7 +220,7 @@ export class ExplorerController implements vscode.Disposable {
         this.control = new ExplorerControl(host.control, host.version);
         const control=this.control;
         this.indexing = new IndexingCatalogController({ get control(){return control.catalog;}, identity: () => JSON.stringify([this.control.observationIdentity,this.host.windowContextIdentity?.()]),
-            authorized: () => !this.disposed && this.host.trusted() && !this.host.extensionUpdate?.(), evidenceEpoch:()=>this.selectionEpoch, windowContext:()=>this.host.windowContext?.(),windowContextObservation:()=>this.host.windowContextObservation?.(),canReadWindowContext:()=>!!this.host.prepareWindowContext&&this.host.nativeExecutionEnabled?.()!==false,...(host.useGrant?{useGrant:host.useGrant.bind(host)}:{}),changed: () => this.publish() });
+            authorized: () => !this.disposed && this.host.trusted() && !this.host.extensionUpdate?.(), evidenceEpoch:()=>this.selectionEpoch, windowContext:()=>this.host.windowContext?.(),windowContextObservation:()=>this.host.windowContextObservation?.(),canReadWindowContext:()=>!!this.host.prepareWindowContext&&this.host.nativeExecutionEnabled?.()!==false,changed: () => this.publish() });
         this.panel = new ExplorerPanel(host.extensionUri, {
             message: message => { void this.handle(message); },
             visible: visible => this.visibility(visible),
@@ -472,7 +471,7 @@ export class ExplorerController implements vscode.Disposable {
         return this.disposed || !this.host.trusted() || this.host.extensionUpdate?.() || this.host.nativeExecutionEnabled?.() === false
             || !this.control.state.connected || !identity || !this.host.prepareWindowContext
             // Native window ownership is independent of the selected evidence
-            // view. Use Grant can change that view without replacing its host.
+            // view. A scope change can change that view without replacing its host.
             ? undefined : JSON.stringify([identity, this.host.windowContextIdentity?.() ?? this.selectionEpoch]);
     }
     private completeWindowContextObservation():boolean {
@@ -1233,7 +1232,6 @@ export class ExplorerController implements vscode.Disposable {
     private reviewContext(): ReviewContext {
         const project = this.requireProject();
         const spec = this.host.specs().find(entry => entry.service?.project === project)!;
-        if (spec.combinedSession) { throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED', 'Git Review needs one explicit source/index context. Use qualified combined evidence in Workbench for member reads.')); }
         return { session: this.session(), handles: this.facts, project, root: displayPath(spec.root) };
     }
 

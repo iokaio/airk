@@ -3251,3 +3251,119 @@ Numbered 65 because the unmerged `loop/lh` already holds entries 57 to 64.
       (`test_package_extension...test_actual_compiled_runtime_imports_are_all_staged`)
       fails on `mcpStdioSession.js -> ./answerDeadline`, which phase B did
       not touch.
+- **Part 3: reviewed grants removed (B5, B6; branch `loop/trust-b2`).**
+  - **Why:** the user's decisions of 23 November 2026: reviewed catalog
+    grants go entirely, and because the build that wrote them was never
+    deployed beyond its author's machine, their records are deleted on
+    upgrade rather than kept readable.
+  - **Authority now:** a read is authorized only by an in-memory selection:
+    a window's W4 grant or the Admin session's A2 grant
+    (`SelectionReadAuthority`), or a U105 open agent read of whole indexes
+    (`OpenReadAuthority`). Both live in the service process only, are
+    registered by nonce in the native gate, are never durable fence targets
+    (`FencePlan` targets are now always empty) and never leave the private
+    host/worker path. There is no persisted bearer to review, revoke or
+    import, so nothing durable grants read authority any more.
+    `ScopedReadRef.selection` is required; its bytes equal the former
+    optional field.
+  - **Store upgrade step:** `catalog::grant_removal::upgrade` in the
+    read-write `ServiceRegistry::open`, described in the registry
+    `CONTRACT.md`. Regressions in `grant_removal/tests.rs`: an old database
+    with grant tables, fenced grant receipts, a completed grant-scoped fence
+    and a reference refresh job upgrades in one open, the second open does
+    nothing, other rows are unchanged; an unfinished grant-scoped fence
+    refuses with `CatalogUpgradeBlocked` and leaves the file unchanged; a
+    read-only open refuses typed; every predecessor maps to its terminal
+    layout. Terminal schemas: `fixtures/schema/airk-state-1-terminal/`.
+  - **Removed:**
+
+| Item | Evidence |
+|---|---|
+| Core `GrantId`, `ReviewedGrant`, `GrantProvenance` (module), `catalog_legacy_authority`, `catalog_refresh`, `CatalogOperation::CreateGrant/RevokeGrant`, `CatalogKind::Grants`, `CatalogEntity/CatalogItem::Grant`, `ScopeGrantObservation`, the grant halves of `ScopedReadRef`, `ScopeObservation`, `ResolvedSelection`, `QuerySelection::resolve(grant)` | B5/B6; no caller after the removals below (Clippy `-D warnings`) |
+| Control methods `ConnectScoped`, `CatalogGrantDraft`, `ValidateCombinedDelivery`, `ReferenceRefreshReceipt`; replies `CatalogGrantDraft`, `ReferenceRefreshReviewRequired`, `ReferenceRefreshReceipt`, `CombinedDeliveryValidated`; `ScopedConnectRequest`, `CombinedConnectRequest`; `ResolveTarget::Catalog`; `ToolSelection::Catalog/Combined`; `ToolsCatalog.combined`; `UsageDocument.catalog`; `HttpSelection::Scoped`; `ProjectConfiguration::RefreshReferences` | B5; I1 fixtures hold the old bytes as rejected cases |
+| Kernel `Authority::Catalog`, `ScopedReadAuthority`, `with_scoped_reads`, `service_reference_refresh` and the reviewed-refresh indexing plumbing | B6 |
+| Catalog control `catalog_grant_draft`, `reference_refresh_control`, the catalog reserve and renew paths of `catalog_admission`, `build_catalog_read_authority`, `build_legacy_catalog_read_authority`, `native_scoped_selection`, legacy binding review; the module-level `#![allow(dead_code)]` of `catalog_admission`, `catalog_authority` and `catalog_coordinator` lifted | B6; what became dead after the lift was deleted |
+| Store grant tables and code, `legacy_index_projects`, `index_context_imports`, the adopted-authority tables and `adopted_authority.rs` (adoption already refused: `STANDALONE_ADOPTION_UNSUPPORTED`, no inserts), `historical_inactive_retirement`, refresh admission and jobs | the user's record cleanups of 23 November 2026, item 4 |
+| Supervisor `ConnectionSelection::Reviewed/Legacy`, `NativeLegacyAuthoritySelection`, `issue_scoped`, `issue_legacy`, the pipe `ScopedConnectionDelivery::deliver`, worker `InstallScope`/`RenewScopeLease` and `Reply::ScopeInstalled`, the catalog ledger of `project_worker::scopes`, the `refresh_references` hook | B6; selections and open reads are handed over in process (`take_in_process`) |
+| Frontend `combined_frontend::resolve`, `validate_delivery*`, `validate_http_selection`, the catalog `Session` impl; `project_client::scoped_tools`, `Connection::connect_scoped`; `service_frontend::resolve_scoped`; `unified_mcp::serve_scoped/serve_combined`; the `*_selected` usage readers; `RemoteTools::scoped_selection/combined_selection` | B5 |
+| Service connect/legacy/grant-draft/refresh/combined-delivery routes; `ControlMethod::Connect{project}` under an activated catalog now refuses `scoped_read_unavailable` (its only authority was an imported legacy grant, which nothing writes) | B5/B6 |
+| `airkctl --catalog-session`, `--combined-session` and their `--project-ids/--index-ids/--member-availability`; `library show --grant`; `agents connect --connection-id/--open/--selection-file` (no reviewed test or contract needed a compatibility refusal: they are now unknown-argument usage errors) | B5; CLI help and reference regenerated |
+| Admin Grants tab and grant operations; VS Code grant UI, `catalogSession`, `scopeSelection`, `referenceRefresh`, `workbenchReferenceRefresh` (and their tests), removed from `scripts/package-extension.py` | B5 |
+| Evaluation fixture `readable_selection.rs` and the optional `reviewed_selections` input (refused if present); no live script supplied it | B5 |
+| `airk-cli` test `combined_reads/reference_refresh.rs` | reference refresh removed |
+
+  - **Integration fixtures rewritten** onto window selections (where
+    membership scopes matter) and open reads: `tests/common/{mod,reviewed,
+    read_retry,ctl,parity,pipe}.rs` (new `pipe.rs`: W1/W4 window helpers and a
+    `PipeTools` adapter over M3 `ToolsCall`), `combined_reads` and its
+    submodules, `tools`, `mcp`, `service_runtime`, `native_read_retry`,
+    `admin_plane`, `cli_commands`, `helper_outage_reads`. Removed grant-only
+    tests: the two window-versus-catalog parity tests, the three reference
+    refresh tests, the catalog setup-retry and JSON-selector capture tests of
+    `native_read_retry`, and `catalog_session_bodies_keep_their_request_and_grant`
+    (frontend). Grant-only unit tests removed from `catalog_admission`
+    (14, built on catalog installs and durable targets),
+    `project_worker::scopes` (6; the redemption test was converted), the
+    supervisor's pipe-delivery tests (2), and `combined_defaults`.
+  - **`airkctl tools shell`** now reads through a session-routed window, as
+    `tools call` does; an explicit project selection keeps precedence.
+  - **Wire fixtures regenerated by their owners:**
+    `fixtures/wire/read_retry_decisions.json` and `read_retry_envelopes.json`
+    (`read_retry_*.py`; the catalog cases removed, the removed grant fields
+    kept as refusals), `fixtures/split/i1/selection_authority.json`.
+  - **Validated** (Windows, target `target-l2b`; integration tests in
+    `target-l2b-cli`; the integration environment of part 2):
+    - Clippy `-D warnings`, workspace, `--all-targets`, all features and
+      default features: clean (`logs/ws-all2`, `ws-all3-default`, `ws-all4`).
+    - Nextest `--workspace --lib --bins --all-features --profile ci`: 4,725
+      run, 4,694 passed, 31 failed (`logs/nt-ws-lib1`). 22 of the 31 were
+      stale fixtures or expectations, fixed above and rerun green
+      (`nt-fail2`, `nt-fail3`). Nine remain, listed under "Left".
+    - `airk-cli` integration, all features: 476 run, 467 passed
+      (`logs-cli/nt-09-full`). Fixed since: `native_read_retry` (all pass,
+      `nt-p-cli1`), the `tools shell` and help-text tests (`nt-p-cli2`).
+      The rest are listed under "Left". The full suite was not rerun after
+      those fixes, and the 20-run stress of `combined_reads` Answer and
+      `admin_plane` was not run.
+    - `packages/vscode` 1,024 of 1,026 (2 skipped); `packages/admin` 303 of
+      305 (2 skipped; the four R22 picker tests failed once on `EBUSY` from
+      Edge under load and pass rerun alone); shared UI 215 of 216 (the one
+      failure is the shared-editor Service test reported before this part).
+    - Python `pytest scripts/tests`: 2,298 passed, 28 failed, 4 collection
+      errors (missing `pyarrow`), all in packaging, research-notice, supply
+      chain and runtime-upgrade modules this part does not touch; the VSIX
+      staging failure is the `mcpStdioSession.js -> ./answerDeadline` one of
+      part 2. Not compared against a base run.
+    - `contract_types.py i2|i3|arbiter --check`, `check-repo.ps1`,
+      `git diff --check`: clean.
+  - **Left, with reasons:**
+    - **Eight Focus tests** (`airk-kernel` `arbiter::focus::tests` six,
+      `airk-mcp` `focus_handler_tests` two) exercised Focus on an ordinary
+      unpartitioned single-index catalog-scoped read. Every installed read is
+      now a selection, and an unpartitioned selection read never Focuses
+      (the existing rule); production single-index reads Focus through the
+      singleton partition of `tools_call::singleton_focus`. The tests need
+      rewriting onto that partition; not done.
+    - **A pipe float defect**, found by the rewritten
+      `permanent_trim_keeps_allowed_occurrences_of_a_shared_native_vector`:
+      across the service pipe a structured float can change by one ULP
+      (the workspace `serde_json` lacks `float_roundtrip`), so the delivery
+      digest refuses. Enabling the feature changes every crate's parsing and
+      rebuilds everything; it is left for a decision.
+    - `combined_reads` `deleted_source_recovery` (three tests): the first
+      native read of a missing-storage member is `retryable: false`, the CLI
+      read right after it `retryable: true` with fresh brokerage; order
+      dependent setup state in `project_client::setup_retryable`. Not
+      diagnosed further.
+    - `tools` `airkctl_registration_matches_airk`: `fencing_generation` 0
+      against 1, passed in one run and failed in two; worker-start timing,
+      unrelated to grants.
+    - `airk-inference` `context_8192_selector_requires_all_live_original_eight_option_row`
+      fails on a missing catalog profile; this part does not touch
+      `airk-inference` or the model catalog. Not checked on base.
+    - **Not done in this part:** the `RetainedLedger` removal and credential
+      file deletion with installer and agent-config cleanup (piece 5), and
+      the user's record cleanups of 23 November 2026 items 1 (operation
+      receipt pruning), 2 (finished split pruning), 3 (tombstoned index
+      definitions) and 5 (`index-catalog-upgrade.json`, `rebuild.json`,
+      clean-break journal). Item 4 (dead tables) is done above.

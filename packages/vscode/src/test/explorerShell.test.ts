@@ -522,7 +522,7 @@ test('registered spec-change listener fences same-backing scoped identity even b
     const f=controller(),before=f.explorer.snapshot().selectionEpoch,base=f.host.specs()[0];
     assert.ok(before!==undefined,'the registered controller has an initial selected-project epoch');
     try{
-        f.host.specs=()=>[{...base,catalogSession:{schema:1,context_key:'11'.repeat(32),namespace:'22'.repeat(16),expected_catalog_revision:1,grant_id:'grt_'+'33'.repeat(16),expected_grant_revision:1,index_id:'idx_'+'44'.repeat(16),project_ids:['prj_'+'55'.repeat(16)]}}];
+        f.host.specs=()=>[{...base,openSelection:{key:'11'.repeat(32),label:'Fixture selection',indexes:['idx_'+'44'.repeat(16)],sets:['prj_'+'55'.repeat(16)]}}];
         f.fireSpecs();assert.equal(f.explorer.snapshot().selectionEpoch,before+1);assert.equal(f.explorer.snapshot().selectedProject,project);
         f.fireSpecs();assert.equal(f.explorer.snapshot().selectionEpoch,before+1,'identical scoped specs do not repeatedly reset the session');
     }finally{f.explorer.dispose();}

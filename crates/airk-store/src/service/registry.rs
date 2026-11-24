@@ -624,7 +624,9 @@ impl ServiceRegistry {
                     "unsupported service registry format"
                 );
                 if matches!(version, 12 | 13) {
-                    catalog::validate_existing(&connection)?;
+                    // A predecessor layout passes here only to reach the
+                    // upgrade step below (change-log entry 68 part 3).
+                    catalog::validate_existing_or_predecessor(&connection)?;
                     ensure!(
                         catalog::state(&connection)?.activated,
                         catalog::AdmissionPending
@@ -750,6 +752,13 @@ impl ServiceRegistry {
             registry.incarnation()? == owner.incarnation,
             "service registry identity disagrees with owner"
         );
+        if matches!(schema_version, 12 | 13) {
+            // Before any stored record is decoded: remove reviewed grants and
+            // their records (change-log entry 68 part 3), then hold the
+            // terminal layout to the ordinary check.
+            catalog::grant_removal::upgrade(&mut registry.connection)?;
+            catalog::validate_existing(&registry.connection)?;
+        }
         for schema in schemas {
             registry.connection.execute_batch(schema)?;
         }

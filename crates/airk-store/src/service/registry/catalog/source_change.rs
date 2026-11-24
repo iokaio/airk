@@ -824,7 +824,7 @@ pub(in crate::service::registry) fn require_ready_registration(
     Ok(())
 }
 /// A retired index has no current Project/default/context selection references.
-/// Historical frozen grants, migration mappings and receipts remain immutable.
+/// Migration mappings and receipts remain immutable.
 pub(in crate::service::registry::catalog) fn require_no_retired_references(
     db: &Connection,
     index: IndexId,
@@ -1164,97 +1164,6 @@ impl ServiceRegistry {
     }
 }
 
-fn historical_inactive_retirement(
-    db: &Connection,
-    id: IndexId,
-    saved: &ProjectRegistration,
-    source: CatalogRevision,
-) -> Result<bool> {
-    if source != CatalogRevision::INITIAL {
-        return Ok(false);
-    }
-    type HistoricalRegistrationRow = (Vec<u8>, i64, bool, bool, Option<String>);
-    let row:Option<HistoricalRegistrationRow>=db.query_row("SELECT substr(payload,1,20481),epoch,paused,registered,cleanup_guard FROM projects WHERE binding=?1",[saved.binding.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?;
-    let Some((payload, epoch, paused, registered, cleanup)) = row else {
-        return Ok(false);
-    };
-    if registered || !paused {
-        return Ok(false);
-    }
-    let retained = super::super::decode(&payload, epoch, paused)?;
-    ensure!(
-        retained.registration == *saved,
-        "historical inactive retained identity differs"
-    );
-    if let Some(guard) = cleanup {
-        let _: Sha256Digest = guard.parse()?;
-    }
-    let imported: bool = db.query_row(
-        "SELECT EXISTS(SELECT 1 FROM legacy_index_projects WHERE legacy_binding=?1)",
-        [saved.binding.to_string()],
-        |r| r.get(0),
-    )?;
-    if !imported {
-        return Ok(false);
-    }
-    let active: Option<String> = db.query_row(
-        "SELECT active_registration FROM index_definitions WHERE id=?1",
-        [id.to_string()],
-        |r| r.get(0),
-    )?;
-    ensure!(
-        active.as_deref() == Some(saved.binding.to_string().as_str()),
-        "historical inactive backing pointer differs"
-    );
-    let mut statement=db.prepare("SELECT id,canonical_path,owner,enabled FROM index_sources WHERE index_id=?1 ORDER BY id LIMIT 18")?;
-    let rows = statement
-        .query_map([id.to_string()], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, bool>(2)?,
-                r.get::<_, bool>(3)?,
-            ))
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    if rows.is_empty() || rows.len() > 17 || rows.iter().any(|r| !r.3) {
-        return Ok(false);
-    }
-    let mut owners = 0;
-    let mut aliases_total = 0;
-    for (source, path, owner, _) in rows {
-        let mut aliases=db.prepare("SELECT alias FROM index_source_aliases WHERE index_id=?1 AND source_id=?2 ORDER BY alias LIMIT 17")?;
-        let aliases = aliases
-            .query_map(params![id.to_string(), source], |r| r.get::<_, String>(0))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        aliases_total += aliases.len();
-        let root = airk_core::source_policy::SourceRoot {
-            id: source.parse()?,
-            canonical_path: path,
-            aliases,
-            owner,
-        };
-        root.validate()?;
-        if owner {
-            owners += 1;
-            ensure!(
-                root.canonical_path == saved.root,
-                "historical inactive primary root differs"
-            );
-        }
-    }
-    let total: i64 = db.query_row(
-        "SELECT count(*) FROM index_source_aliases WHERE index_id=?1",
-        [id.to_string()],
-        |r| r.get(0),
-    )?;
-    ensure!(
-        owners == 1 && usize::try_from(total)? == aliases_total,
-        "historical inactive source roster differs"
-    );
-    Ok(true)
-}
-
 pub(in crate::service::registry) fn mutate(
     db: &Connection,
     request: &CatalogRequest,
@@ -1389,13 +1298,11 @@ pub(in crate::service::registry) fn mutate(
                 definition == *expected_definition_revision && source == *expected_source_revision,
                 "index retirement review stale"
             );
-            let historical = if tombstone {
-                historical_inactive_retirement(db, *id, &saved, source)?
-            } else {
-                false
-            };
+            // The historical inactive backfill path needed an imported
+            // pre-catalog project identity; that table was removed (change-log
+            // entry 68 part 3), so a retired index is always refused here.
             ensure!(
-                !tombstone || historical,
+                !tombstone,
                 "index already retired or inactive backfill is not intact"
             );
             if let IndexRetirementReason::ConfirmedMissingSource {
@@ -1411,15 +1318,10 @@ pub(in crate::service::registry) fn mutate(
                 "UPDATE index_sources SET enabled=0 WHERE index_id=?1",
                 [id.to_string()],
             )?;
-            if !historical {
-                super::super::unregistration::retire(db, saved.binding, None)?;
-            }
+            super::super::unregistration::retire(db, saved.binding, None)?;
             // Current selection references must not keep a retired index in a
-            // fresh default Project review. Old grant snapshots remain historical.
+            // fresh default Project review.
             super::operations::detach_retired_index_references(db, *id)?;
-            // The validated P5 inactive case preserves its legacy registration,
-            // watcher/cleanup state and accepted jobs byte-for-byte. Only the
-            // canonical source authority is finalized after the native fence.
         }
         _ => anyhow::bail!("source mutation operation required"),
     }

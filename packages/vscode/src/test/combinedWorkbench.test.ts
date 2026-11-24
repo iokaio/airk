@@ -2,9 +2,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import * as path from 'node:path';
-import { validateCombinedCatalogSession } from '../catalogSession';
-import { combinedScopeSelectionIdentity, reviewCombinedScopeSelection, scopeSelectionPreference, WindowScopeSelection } from '../scopeSelection';
-import { launchArgs, unifiedEntry } from '../model';
 import { comparePublicationVector } from '../publications';
 import { combinedReadDetails, discoveryDetails, discoveryFollowupPlan, evidenceCards, evidenceRows, renderExport, workbenchStepReportOmissions } from '../workbenchRender';
 import { object, type Value, type WorkbenchTurn } from '../workbenchContracts';
@@ -21,55 +18,17 @@ test('advisory details and complete exports preserve the entire canonical recomm
 });
 const index=(n:number)=>'idx_'+n.toString(16).padStart(2,'0').repeat(16);
 const source=(n:number)=>'src_'+n.toString(16).padStart(2,'0').repeat(16);
-const hash='11'.repeat(32),grantId='grt_'+'04'.repeat(16),namespace='01'.repeat(16),host='02'.repeat(32),contextKey='03'.repeat(32);
+const hash='11'.repeat(32),origin={owner:'window',scope_identity:'04'.repeat(32),catalog_revision:7};
 const publication=(n:number)=>({collection:'fixture',incarnation:'12'.repeat(16),generation:n,revision:hash,token:`airk-r1:${'12'.repeat(16)}:${n}:${hash}`});
-const context={schema:1,namespace,host,key:contextKey,catalog_revision:7,context:null};
-const session=()=>({schema:1 as const,context_key:contextKey,namespace,expected_catalog_revision:7,grant_id:grantId,expected_grant_revision:2,project_ids:[project(1),project(2)]});
-function fixture(){
-    const memberships=[[1,1,'api'],[2,1,'impl'],[2,2,''],[3,1,'private']].map(([p,i,prefix])=>({membership:{
-        project_id:project(Number(p)),index_id:index(Number(i)),revision:1,scope:[{source_root_id:source(Number(i)),kind:'subtree',path:prefix}]},source_revision:3,policy_epoch:0,policy_digest:null}));
-    const grant={namespace,revision:7,item:{kind:'grant',value:{provenance:{kind:'user_reviewed_project_grant'},grant:{id:grantId,host,revision:2,revoked:false,memberships}}}};
-    const indexes=[1,2].map(n=>({namespace,revision:7,item:{kind:'index',value:{id:index(n),name:'Native '+n,definition_revision:1,source_revision:3,policy:null,tombstone:false,source_import:'complete',
-        backing:{binding:n.toString(16).padStart(2,'0').repeat(32),root:path.resolve('source'+n),data_root:path.resolve('data'+n),collection:'fixture'}}}}));
-    const choice={grant_id:grantId,expected_grant_revision:2,project_ids:[project(2),project(1)]};
-    return {grant,indexes,choice};
-}
 function combined():Value {
     const hit={citation:{path:'same.md',content_hash:hash,start_line:1,end_line:1,location:{Lines:{start:1,end:1}}},text:'original excerpt',truncated:false};
     const native={publication:publication(1),hits:[hit],execution:{version:1,requested_mode:'default',served_mode:'lexical',incomplete:true,incomplete_reason:'helper_unavailable'},future_observation:{retained:true}};
     const members=[1,2].map(n=>({index_id:index(n),allocation:{limit:1,max_bytes:1024},outcome:'complete',result:{content:[{type:'text',text:JSON.stringify(native)}],structuredContent:structuredClone(native),isError:false}}));
-    return {schema:'airk.combined-read/1',selection:{project_ids:[project(1),project(2)],index_ids:[index(1),index(2)],grant_id:grantId,grant_revision:2,member_availability:'report',identity:'23'.repeat(32)},rank_policy:'airk.rank-fusion.rrf-equal/1',members,
+    return {schema:'airk.combined-read/1',selection:{project_ids:[project(1),project(2)],index_ids:[index(1),index(2)],selection:structuredClone(origin),member_availability:'report',identity:'23'.repeat(32)},rank_policy:'airk.rank-fusion.rrf-equal/1',members,
         publication_vector:{authority:hash,observed_from_unix_ms:1,observed_to_unix_ms:2,members:[1,2].map(n=>({index_id:index(n),publication:publication(1)}))},
         ranking:[1,2].map((n,i)=>({result_pointer:`/members/${i}/result/structuredContent/hits/0`,index_id:index(n),local_rank:0,rank_contribution:1/61,
             origin:{index_id:index(n),source_root_id:source(n),source_relative_path:'same.md',project_ids:[project(n)],publication:publication(1)}})),partial:false,truncated:false};
 }
-
-test('combined wire choice is explicit, canonical, bounded and separate from the legacy selector',()=>{
-    assert.deepEqual(validateCombinedCatalogSession({...session(),project_ids:[project(2),project(1)],index_ids:[index(2),index(1)]}).index_ids,[index(1),index(2)]);
-    assert.ok(!Object.hasOwn(validateCombinedCatalogSession(session()),'index_ids'));
-    for(const change of [{index_id:index(1)},{project:'10'.repeat(32)},{project_ids:[]},{project_ids:[project(1),project(1)]},{index_ids:[]},{index_ids:null},{index_ids:Array(33).fill(index(1))},{schema:2},{grant_id:'grt_bad'}])assert.throws(()=>validateCombinedCatalogSession({...session(),...change}));
-});
-
-test('combined review deduplicates shared indexes and never adds an unselected Project or index',()=>{
-    const f=fixture(),selection=reviewCombinedScopeSelection(f.choice,context,f.grant,f.indexes);
-    assert.deepEqual(selection.indexes.map(row=>row.id),[index(1),index(2)]);
-    assert.deepEqual(selection.session.project_ids,[project(1),project(2)]);
-    assert.ok(!selection.session.project_ids.includes(project(3)));
-    assert.equal(selection.label,'2 selected index sets · 2 indexes');
-    assert.throws(()=>reviewCombinedScopeSelection({...f.choice,index_ids:[index(3)]},context,f.grant,[]),/outside_reviewed_grant/);
-    assert.throws(()=>reviewCombinedScopeSelection({...f.choice,project_ids:[project(4)]},context,f.grant,f.indexes),/outside_reviewed_grant/);
-    assert.throws(()=>reviewCombinedScopeSelection({...f.choice,context_key:'09'.repeat(32)},context,f.grant,f.indexes),/choice_fields/);
-    assert.throws(()=>reviewCombinedScopeSelection(f.choice,context,f.grant,[f.indexes[0],f.indexes[0]]),/crossed_scope_selection_metadata/);
-    const stale=structuredClone(f);stale.indexes[1].revision=8;assert.throws(()=>reviewCombinedScopeSelection(stale.choice,context,stale.grant,stale.indexes));
-    const revoked=structuredClone(f);revoked.grant.item.value.grant.revoked=true;assert.throws(()=>reviewCombinedScopeSelection(revoked.choice,context,revoked.grant,revoked.indexes));
-});
-
-test('combined identity changes on scope changes but preserves a mere catalog clock refresh',()=>{
-    const selected=session(),identity=combinedScopeSelectionIdentity(selected);
-    assert.equal(identity,combinedScopeSelectionIdentity({...selected,expected_catalog_revision:8}));
-    for(const change of [{index_ids:[index(1)]},{project_ids:[project(1)]},{expected_grant_revision:3},{context_key:'09'.repeat(32)}])assert.notEqual(identity,combinedScopeSelectionIdentity({...selected,...change}));
-    assert.notEqual(identity,combinedScopeSelectionIdentity({...selected,index_ids:[index(1),index(2)]}),'omission and an explicit subset remain distinct frozen choices');
-});
 
 test('publication vectors compare only the same authority and member set and disclose mixed order',()=>{
     const observation=(a:number,b:number)=>({authority:'trusted-host',vector:{authority:hash,members:[{index_id:index(1),publication:publication(a)},{index_id:index(2),publication:publication(b)}]}});
@@ -116,7 +75,7 @@ test('member verification never crosses identical paths from separate originatin
 test('combined definition followups keep one explicit originating index and exact member publication',()=>{
     const result=combined();
     for(const [i,member] of (result.members as Value[]).entries()){const body=readResultBody(member.result);body.definitions=[{name:'Widget',matches:[{symbol_id:'syntax:same.md:0:10:definition',citation:{path:'same.md'}}]}];
-        body.scope_observation={schema:1,qualifier:'selected_subset',grant:{id:grantId,revision:2},members:[{index_id:member.index_id,memberships:[{project_id:project(i+1),membership_revision:1}]}]};}
+        body.scope_observation={schema:1,qualifier:'selected_subset',selection:structuredClone(origin),members:[{index_id:member.index_id,memberships:[{project_id:project(i+1),membership_revision:1}]}]};}
     const envelope={status:'complete',executed:true,plan:{path_prefix:''},steps:[{id:'search',tool:'search',status:'complete',arguments:{query:'Widget'},result}]};
     const details=discoveryDetails(envelope);assert.equal(details.length,2);assert.equal(details[0].indexId,index(1));assert.equal(details[1].indexId,index(2));assert.ok(details.every(detail=>detail.canFollow));
     const plan=discoveryFollowupPlan(envelope,details[1].id,'Widget','same.md');
@@ -130,13 +89,13 @@ test('combined definition followups keep one explicit originating index and exac
     assert.equal(discoveryDetails(envelope)[1].projectIds,undefined,'unobserved attribution is disclosed as unknown');
 });
 
-test('selected combined copies preserve canonical scope observation and exact grant identity',()=>{
+test('selected combined copies preserve canonical scope observation and exact selection identity',()=>{
     const envelope=combined(),sessionValue={schema:1 as const,id:'session',project:hash,title:'Combined',createdAt:1,updatedAt:1,revision:1,omitted:0,
         turns:[{id:'turn',at:1,input:'search',format:'structured' as const,envelope}]};
     const selected=JSON.parse(renderExport(sessionValue,'json','turn',['record-0'])).turns[0].envelope;
     assert.deepEqual(selected.selection,envelope.selection);assert.equal(selected.selected_subset,true);
-    assert.equal(selected.selection.grant_id,grantId);assert.equal(selected.selection.grant_revision,2);assert.equal(selected.selection.identity,'23'.repeat(32));
-    const markdown=renderExport(sessionValue,'markdown','turn',['record-0']);assert.ok(markdown.includes(grantId));assert.ok(markdown.includes('23'.repeat(32)));
+    assert.deepEqual(selected.selection.selection,origin);assert.equal(selected.selection.identity,'23'.repeat(32));
+    const markdown=renderExport(sessionValue,'markdown','turn',['record-0']);assert.ok(markdown.includes(origin.scope_identity));assert.ok(markdown.includes('23'.repeat(32)));
 });
 
 test('selected source coverage keeps each member index name and elapsed time (U108)',()=>{

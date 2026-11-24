@@ -56,7 +56,6 @@ export function checkRequest(request: RunRequest): void {
 
 export async function runStrategy(request: RunRequest, deps: RunDependencies): Promise<RunResult> {
     checkRequest(request);
-    if(deps.session.spec?.combinedSession)throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED','Strategies require one explicit originating index; combined paths cannot authorize saved-source checks.'));
     const current=()=>{try{deps.checkCurrent?.();}catch(error){throw new OwnerChanged('The original strategy scope changed; no further read was sent.',{cause:error});}};
     current();
     const { strategy } = request, budgets = strategy.budgets, now = deps.now ?? Date.now, clock=deps.monotonic??now;

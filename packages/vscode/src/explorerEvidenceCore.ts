@@ -62,6 +62,5 @@ export function publicationOf(payload: Record<string, unknown>): string | undefi
 }
 
 export interface EvidenceReadPort {
-    readonly spec?: {readonly combinedSession?: unknown};
     call(tool: EvidenceTool, args: Record<string,unknown>, options?: CallOptions): Promise<ToolResult>;
 }

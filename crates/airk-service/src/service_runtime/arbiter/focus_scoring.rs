@@ -413,13 +413,13 @@ fn focus_response(
 // This follows Core native-request validation; it grants no source authority.
 fn validate_partition_selection(
     partition: Option<&airk_core::combined_context::PartitionAllowance>,
-    selection: Option<airk_core::scoped_reads::SelectionScopeRef>,
+    selection: airk_core::scoped_reads::SelectionScopeRef,
 ) -> Result<()> {
     if let Some(partition) = partition {
         partition.validate()?;
         if partition.is_ordinary_focus() {
             ensure!(
-                selection.is_some_and(|selection| partition.selection == selection.scope_identity),
+                partition.selection == selection.scope_identity,
                 "Focus partition differs from the actual installed selection"
             );
         }

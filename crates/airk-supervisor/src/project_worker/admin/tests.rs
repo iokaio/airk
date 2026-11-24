@@ -108,7 +108,7 @@ fn combined_context_partition_admission_binds_attempt_index_and_actual_nested_bu
     use airk_core::{
         arbiter::answer_loop::{BudgetV3, ContextRequestV3, REQUEST_SCHEMA_V3},
         combined_context::initial_allocations_v3,
-        index_catalog::{CatalogRevision, GrantId, IndexId},
+        index_catalog::{CatalogRevision, IndexId},
         read_attempt::{ReadAttemptBudget, ReadClock},
         service::ScopedReadRef,
     };
@@ -145,9 +145,13 @@ fn combined_context_partition_admission_binds_attempt_index_and_actual_nested_bu
         schema: 1,
         lease_generation: 1,
         index_id: index,
-        grant_id: Some(GrantId::from_identity(Incarnation::from_bytes([4; 16]))),
-        grant_revision: Some(CatalogRevision::INITIAL),
-        selection: None,
+        selection: airk_core::scoped_reads::SelectionScopeRef {
+            owner: airk_core::scoped_reads::SelectionOwnerKind::Agent,
+            grant_nonce: Incarnation::from_bytes([4; 16]),
+            service_instance: Incarnation::from_bytes([1; 16]),
+            scope_identity: Sha256Digest::from_bytes([6; 32]),
+            catalog_revision: CatalogRevision::INITIAL,
+        },
         fingerprint: Sha256Digest::from_bytes([5; 32]),
     };
     validate_request(SessionPurpose::Evidence, &request)?;
@@ -419,9 +423,7 @@ fn focus_query() -> Result<(protocol::Query, airk_core::service::ScopedReadRef)>
         schema: 1,
         lease_generation: 1,
         index_id: index,
-        grant_id: None,
-        grant_revision: None,
-        selection: Some(selection),
+        selection,
         fingerprint: Sha256Digest::from_bytes([95; 32]),
     };
     Ok((request, authority))
@@ -456,7 +458,7 @@ fn actual_singleton_focus_worker_admission_binds_installed_selection_index_and_l
 {
     let (request, authority) = focus_query()?;
     assert!(validate_context_partition(&request, None).is_err());
-    for change in 0..5 {
+    for change in 0..4 {
         let mut bad = authority;
         match change {
             0 => {
@@ -464,18 +466,9 @@ fn actual_singleton_focus_worker_admission_binds_installed_selection_index_and_l
                     Incarnation::from_bytes([96; 16]),
                 )
             }
-            1 => {
-                bad.selection.as_mut().unwrap().scope_identity = Sha256Digest::from_bytes([96; 32])
-            }
+            1 => bad.selection.scope_identity = Sha256Digest::from_bytes([96; 32]),
             2 => bad.lease_generation = 0,
-            3 => bad.schema = 2,
-            _ => {
-                bad.selection = None;
-                bad.grant_id = Some(airk_core::index_catalog::GrantId::from_identity(
-                    Incarnation::from_bytes([96; 16]),
-                ));
-                bad.grant_revision = Some(airk_core::index_catalog::CatalogRevision::INITIAL);
-            }
+            _ => bad.schema = 2,
         }
         assert!(
             validate_context_partition(&request, Some(bad)).is_err(),
@@ -555,7 +548,7 @@ fn actual_rust_emitted_focus_and_context_allowances_cannot_cross_native_worker_t
             serde_json::from_value(fixture[case]["allowance"].clone())?;
         allocation.attempt = request.read_attempt.unwrap().request_id;
         authority.index_id = allocation.index_id;
-        authority.selection.as_mut().unwrap().scope_identity = allocation.selection;
+        authority.selection.scope_identity = allocation.selection;
         request.context_partition = Some(allocation);
         request.tool = tool.into();
         assert_eq!(

@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: Apache-2.0
-import {ReferenceRefreshIntent,REFRESH_JOURNAL_BYTES,refreshIntentKey,validateRefreshIntent,validateRefreshJob,validateRefreshReceipt,validateRefreshRefusal} from './referenceRefresh';
 import { SplitIntent, SPLIT_JOURNAL_BYTES, splitIntentKey, validateSplitApply, validateSplitRecover, validateSplitRecoveryReceipt, validateSplitSnapshot } from './indexingSplit';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
@@ -18,18 +17,17 @@ export interface IntentStorage {
     retire?(key:string):Promise<void>;
 }
 export interface LifecycleIntent { lifecycle:{caller:string;key:RequestKey;action:'stop'|'restart';expected_instance:string;runtime:string} }
-export type ConsoleIntent=MutationIntent|LifecycleIntent|CatalogApplyIntent|IndexSetupApplyIntent|SourceResolveIntent|PolicyResumeIntent|SplitIntent|ReferenceRefreshIntent;
-export interface SavedIntent { nativeRefreshReceipt?:Record<string,unknown>;nativeRefreshTerminalReceipt?:Record<string,unknown>;nativeRefreshLookup?:Record<string,unknown>;nativeRefreshValidationError?:string; schema: 1; scope: string; title: string; intent: ConsoleIntent; nativeObservation?:Record<string,unknown>; nativeCatalogObservation?:Record<string,unknown>; nativePolicyObservation?:Record<string,unknown>; nativeFenceObservation?:Record<string,unknown>; nativeSetupObservation?:Record<string,unknown>; nativeSourceObservation?:Record<string,unknown>; localDispatchState?:'submitted'|'known_receipt'; reservedObservationBytes?:number; nativeSplitReceipt?:Record<string,unknown>; nativeSplitSnapshot?:Record<string,unknown> }
+export type ConsoleIntent=MutationIntent|LifecycleIntent|CatalogApplyIntent|IndexSetupApplyIntent|SourceResolveIntent|PolicyResumeIntent|SplitIntent;
+export interface SavedIntent { schema: 1; scope: string; title: string; intent: ConsoleIntent; nativeObservation?:Record<string,unknown>; nativeCatalogObservation?:Record<string,unknown>; nativePolicyObservation?:Record<string,unknown>; nativeFenceObservation?:Record<string,unknown>; nativeSetupObservation?:Record<string,unknown>; nativeSourceObservation?:Record<string,unknown>; localDispatchState?:'submitted'|'known_receipt'; reservedObservationBytes?:number; nativeSplitReceipt?:Record<string,unknown>; nativeSplitSnapshot?:Record<string,unknown> }
 function validate(input:unknown):ConsoleIntent {
     const object=record(input);
-    if('reference_refresh'in object)return validateRefreshIntent(input);
     if('catalog_split_apply' in object)return validateSplitApply(input);
     if('catalog_split_recover' in object)return validateSplitRecover(input);
     if('catalog_policy_resume' in object)return validatePolicyResumeIntent(input);
     if('catalog_source_change_resolve' in object)return validateSourceResolveIntent(input);
     if('catalog_index_setup_apply' in object)return validateIndexSetupApply(input);
     if('catalog_apply' in object)return validateCatalogApply(input);
-    if(!('lifecycle' in object)){const intent=validateMutationIntent(input);if('configure_project'in intent&&intent.configure_project.request.configuration.operation==='refresh_references')throw new ServiceError('refresh_requires_original_evidence_review');return intent;}
+    if(!('lifecycle' in object))return validateMutationIntent(input);
     if(Object.keys(object).join(',')!=='lifecycle')throw new ServiceError('invalid_lifecycle_intent');
     const value=record(object.lifecycle),key=record(value.key);
     if(Object.keys(value).sort().join(',')!=='action,caller,expected_instance,key,runtime'
@@ -39,7 +37,6 @@ function validate(input:unknown):ConsoleIntent {
     return input as LifecycleIntent;
 }
 function identity(intent:ConsoleIntent):{namespace:string;id:string}{
-    if('reference_refresh'in intent){const key=refreshIntentKey(intent);return {namespace:key.namespace,id:key.nonce};}
     if('catalog_split_apply' in intent||'catalog_split_recover' in intent){const key=splitIntentKey(intent);return {namespace:key.namespace,id:key.nonce};}
     if('catalog_policy_resume' in intent)return {namespace:intent.catalog_policy_resume.key.namespace,id:intent.catalog_policy_resume.key.nonce};
     if('catalog_source_change_resolve' in intent)return {namespace:intent.namespace,id:intent.catalog_source_change_resolve.begin_operation};
@@ -55,9 +52,9 @@ const LIMIT = INTENT_LIMIT;
 const MAX_BYTES = 65536;
 const MAX_TOTAL_BYTES = INTENT_MAX_TOTAL_BYTES;
 function splitIntent(value:unknown):boolean {const intent=record(value);return 'catalog_split_apply' in intent||'catalog_split_recover' in intent;}
-function reservedBytes(intent:unknown):number|undefined {const value=record(intent);return 'reference_refresh'in value?REFRESH_JOURNAL_BYTES:splitIntent(value)?SPLIT_JOURNAL_BYTES:undefined;}
+function reservedBytes(intent:unknown):number|undefined {const value=record(intent);return splitIntent(value)?SPLIT_JOURNAL_BYTES:undefined;}
 export function maximumRecordBytes(intent:unknown):number{return reservedBytes(intent)??MAX_BYTES;}
-export function chargedRecordBytes(value:unknown):number {const saved=record(value),bytes=Buffer.byteLength(JSON.stringify(saved));return [SPLIT_JOURNAL_BYTES,REFRESH_JOURNAL_BYTES].includes(Number(saved.reservedObservationBytes))?Math.max(bytes,Number(saved.reservedObservationBytes)):bytes;}
+export function chargedRecordBytes(value:unknown):number {const saved=record(value),bytes=Buffer.byteLength(JSON.stringify(saved));return Number(saved.reservedObservationBytes)===SPLIT_JOURNAL_BYTES?Math.max(bytes,Number(saved.reservedObservationBytes)):bytes;}
 export function validateStoredIntent(key:string,input:unknown,namespace?:string):SavedIntent {
     const match=/^airk\.service\.intent\.1\.([0-9a-f]{64})\.([0-9a-f]{32})$/.exec(key),value=record(input);
     if(!match||Buffer.byteLength(JSON.stringify(value))>maximumRecordBytes(value.intent)||value.schema!==1||value.scope!==match[1]
@@ -113,11 +110,6 @@ export class IntentJournal {
     prepare(title:string,intent:ConsoleIntent,nativeObservation?:Record<string,unknown>):Promise<string> {
         // Copy before any asynchronous work; the exact persisted bytes are submitted.
         const copied=validate(JSON.parse(JSON.stringify(intent)));
-        // Native intent/keys/digests are always durable. Query/snippet text is
-        // retained only under an explicit existing persistence approval.
-        if('reference_refresh'in copied&&copied.reference_refresh.evidence_retention==='memory_only'){
-            copied.reference_refresh.original_query=null;copied.reference_refresh.original_result=null;
-        }
         const key=identity(copied);
         const id=identifier(key.id,16);
         if(key.namespace!==this.namespace)throw new ServiceError('local_intent_scope_mismatch');
@@ -149,35 +141,6 @@ export class IntentJournal {
             await this.save(this.key(id),value,true);
             return id;
         });
-    }
-    /** Full bounded current lookup and last accepted historical proof stay separate. */
-    observeRefresh(id:string,response:Record<string,unknown>):Promise<void>{
-        const copied=structuredClone(response);
-        return this.serialize(async()=>{
-            const saved=this.list().find(value=>value.id===id);if(!saved||!('reference_refresh'in saved.value.intent))throw new ServiceError('local_refresh_intent_not_found',true);
-            const intent=saved.value.intent;let known=saved.value.nativeRefreshReceipt,error:string|undefined,validationFailure:unknown;
-            try{
-                if(copied.status==='reference_refresh_review_required')validateRefreshRefusal(copied,intent);
-                else if(copied.status==='job')validateRefreshJob(copied.job,intent);
-                else validateRefreshReceipt(copied,intent);
-                if(copied.status==='reference_refresh_review_required'){if(known?.job!=null)throw new Error('accepted_refresh_cannot_become_unaccepted_refusal');known=copied;}
-                else if(copied.job!==null&&(copied.status==='job'||copied.configuration!==null)){
-                    const prior=known?.status==='reference_refresh_receipt'?known:undefined;
-                    if(prior?.result!=null&&copied.result!=null&&!isDeepStrictEqual(prior.result,copied.result))throw new Error('historical_refresh_result_changed');
-                    if(prior?.configuration!=null&&copied.configuration!=null&&!isDeepStrictEqual(prior.configuration,copied.configuration))throw new Error('historical_refresh_work_changed');
-                    const previous=prior&&record(prior.job),next=record(copied.job);
-                    if(previous&&['succeeded','failed','canceled'].includes(String(previous.state))&&!isDeepStrictEqual(previous,next))throw new Error('historical_refresh_terminal_job_changed');
-                    if(!prior||copied.status==='reference_refresh_receipt'&&(prior.result==null||copied.result!=null))known=copied;
-                }
-            }catch(failure){validationFailure=failure;error=failure instanceof Error?failure.message:'invalid_refresh_receipt';}
-            const value:SavedIntent={...saved.value,nativeRefreshLookup:copied,...(known?{nativeRefreshReceipt:structuredClone(known),localDispatchState:'known_receipt' as const}:{}),...(error?{nativeRefreshValidationError:error}:{})};
-            if(!error)delete value.nativeRefreshValidationError;
-            if(Buffer.byteLength(JSON.stringify(value))>REFRESH_JOURNAL_BYTES)throw new ServiceError('local_intent_record_oversize',true);
-            const total=this.storage.keys().filter(key=>key.startsWith(PREFIX)&&key!==this.key(id)).reduce((sum,key)=>{const other=this.storage.get(key);return sum+(other===undefined?0:chargedRecordBytes(other));},chargedRecordBytes(value));
-            if(total>MAX_TOTAL_BYTES)throw new ServiceError('local_intent_byte_capacity_exceeded',true);
-            await this.save(this.key(id),value);
-            if(error){const reported=new ServiceError(error,true,copied);reported.cause=validationFailure;throw retainUnvalidatedNativeReply(reported,copied);}
-        }).catch(error=>{throw retainNativeOutcome(error,copied);});
     }
     /** Preserve the full authenticated native outcome without changing the immutable request. */
     observeCatalog(id:string,response:Record<string,unknown>):Promise<void>{
@@ -214,7 +177,7 @@ export class IntentJournal {
         });
     }
     async reconcile(client:ServiceClient,onReceipt:(response:Record<string,unknown>)=>Promise<void>,onRemoved?:(project:string)=>Promise<void>,onFailure?:(id:string,error:unknown)=>void):Promise<void>{
-        const candidates=this.list().filter(saved=>!('lifecycle' in saved.value.intent)&&!('plan_create' in saved.value.intent)&&!('catalog_apply' in saved.value.intent)&&!('catalog_index_setup_apply' in saved.value.intent)&&!('catalog_source_change_resolve' in saved.value.intent)&&!('catalog_policy_resume' in saved.value.intent)&&!('catalog_split_apply' in saved.value.intent)&&!('catalog_split_recover' in saved.value.intent)&&!('reference_refresh'in saved.value.intent));
+        const candidates=this.list().filter(saved=>!('lifecycle' in saved.value.intent)&&!('plan_create' in saved.value.intent)&&!('catalog_apply' in saved.value.intent)&&!('catalog_index_setup_apply' in saved.value.intent)&&!('catalog_source_change_resolve' in saved.value.intent)&&!('catalog_policy_resume' in saved.value.intent)&&!('catalog_split_apply' in saved.value.intent)&&!('catalog_split_recover' in saved.value.intent));
         const after=this.reconcileAfter??'';
         const batch=[...candidates.filter(saved=>saved.id>after),...candidates.filter(saved=>saved.id<=after)].slice(0,8);
         for(const saved of batch){
@@ -222,7 +185,7 @@ export class IntentJournal {
             let nativeReply:Record<string,unknown>|undefined,validated=false;
             try{
                 const intent=saved.value.intent;
-                if('lifecycle' in intent||'plan_create' in intent||'catalog_index_setup_apply' in intent||'catalog_source_change_resolve' in intent||'catalog_policy_resume' in intent||'catalog_split_apply' in intent||'catalog_split_recover' in intent||'reference_refresh'in intent)continue;
+                if('lifecycle' in intent||'plan_create' in intent||'catalog_index_setup_apply' in intent||'catalog_source_change_resolve' in intent||'catalog_policy_resume' in intent||'catalog_split_apply' in intent||'catalog_split_recover' in intent)continue;
                 if('catalog_apply' in intent){
                     const request=intent.catalog_apply.request;
                     const result=nativeReply=await client.rpc({catalog_receipt:{caller:request.caller,key:request.key}},'catalog_receipt');
@@ -254,7 +217,6 @@ export class IntentJournal {
         if(!saved)throw new ServiceError('local_intent_not_found');
         // Errors, including a lost acknowledgement, preserve the immutable record.
         const intent=saved.value.intent;
-        if('reference_refresh'in intent)throw new ServiceError('refresh_requires_exact_native_receipt_reconciliation');
         // Catalog applies are never replayed from a saved journal entry. Only receipt reads may settle them.
         if('catalog_split_apply' in intent||'catalog_split_recover' in intent)throw new ServiceError('split_requires_exact_native_receipt_reconciliation');
         if('catalog_apply' in intent)throw new ServiceError('catalog_apply_requires_receipt_reconciliation');

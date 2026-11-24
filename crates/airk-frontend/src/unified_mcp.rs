@@ -724,14 +724,8 @@ impl RemoteTools for Native {
     fn local_help(&self) -> bool {
         self.backend.local_help()
     }
-    fn scoped_selection(&self) -> Option<&airk_core::service::ScopedConnectRequest> {
-        self.backend.scoped_selection()
-    }
     fn scoped_scope(&self) -> Option<airk_mcp::remote::ScopedScope> {
         self.backend.scoped_scope()
-    }
-    fn combined_selection(&self) -> Option<&airk_core::service::CombinedConnectRequest> {
-        self.backend.combined_selection()
     }
     fn combined_scope(&self) -> Option<airk_mcp::remote::CombinedScope> {
         self.backend.combined_scope()
@@ -914,7 +908,7 @@ pub fn http_attachment(
             control,
         }) as Arc<dyn ExplorerTools>
     });
-    if backend.combined_selection().is_some() {
+    if backend.combined_scope().is_some() {
         return Ok(Arc::new(Unified::combined(backend, explorer)?));
     }
     let registration = registration.context("HTTP native registration unavailable")?;
@@ -975,39 +969,6 @@ pub fn http_project_attachments(
     Ok(Arc::new(Unified::new(projects, default, explorer)?))
 }
 
-pub async fn serve_combined(
-    backend: Arc<dyn RemoteTools>,
-    descriptor: Option<PathBuf>,
-) -> Result<()> {
-    ensure!(
-        backend.combined_selection().is_some(),
-        "combined native selection required"
-    );
-    let explorer = descriptor.map(|descriptor| {
-        Arc::new(Explorer {
-            descriptor,
-            roots: BTreeMap::new(),
-            scopes: BTreeMap::new(),
-            control: PathBuf::new(),
-        }) as Arc<dyn ExplorerTools>
-    });
-    let backend = Arc::new(Unified::combined(backend, explorer)?);
-    airk_process::client_owner::watch()?;
-    let close = backend.clone();
-    let result = airk_mcp::remote::serve_with_input_lifecycle(
-        backend.clone(),
-        Arc::new(move || close.close()),
-    )
-    .await;
-    let cleanup = backend.shutdown().await;
-    match (result, cleanup) {
-        (Err(error), Err(cleanup)) => {
-            Err(error.context(format!("combined native cleanup also failed: {cleanup:#}")))
-        }
-        (Err(error), _) => Err(error),
-        (Ok(()), cleanup) => cleanup,
-    }
-}
 impl ExplorerTools for Explorer {
     fn call(
         &self,
@@ -1133,27 +1094,6 @@ pub async fn serve(
         additional,
         no_default,
         descriptor,
-        None,
-    )
-    .await
-}
-
-pub async fn serve_scoped(
-    control: PathBuf,
-    install: Option<PathBuf>,
-    registration: ProjectRegistration,
-    selection: airk_core::service::ScopedConnectRequest,
-    descriptor: Option<PathBuf>,
-) -> Result<()> {
-    selection.validate()?;
-    serve_selected(
-        control,
-        install,
-        registration,
-        vec![],
-        false,
-        descriptor,
-        Some(selection),
     )
     .await
 }
@@ -1165,7 +1105,6 @@ async fn serve_selected(
     additional: Vec<ProjectBinding>,
     no_default: bool,
     descriptor: Option<PathBuf>,
-    selection: Option<airk_core::service::ScopedConnectRequest>,
 ) -> Result<()> {
     ensure!(additional.len() < 32, "too many configured projects");
     let primary = registration.binding.to_string();
@@ -1197,14 +1136,7 @@ async fn serve_selected(
                     control: control.clone(),
                     ready: ready.clone(),
                     owns_readiness: false,
-                    backend: match &selection {
-                        Some(selection) => crate::project_client::scoped_tools(
-                            control.clone(),
-                            p.binding,
-                            selection.clone(),
-                        )?,
-                        None => crate::project_client::tools(control.clone(), p.binding),
-                    },
+                    backend: crate::project_client::tools(control.clone(), p.binding),
                 }),
             })
         })

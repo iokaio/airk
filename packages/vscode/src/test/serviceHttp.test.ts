@@ -5,7 +5,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import {X509Certificate,createHash} from 'node:crypto';
-import {validateHttpConnection,httpUrl,httpMaterial,HttpConnectionInfo,HttpSelection,credentialEnvironment,validateHttpSelection,sameHttpAuthority,httpAuthorityDigest,validateAttachmentRetirement,publishNativeInput,removeNativeInput} from '../serviceHttp';
+import {validateHttpConnection,httpUrl,httpMaterial,HttpConnectionInfo,HttpSelection,ImportedHttpSelection,credentialEnvironment,validateHttpSelection,sameHttpAuthority,httpAuthorityDigest,validateAttachmentRetirement,publishNativeInput,removeNativeInput} from '../serviceHttp';
 import {serializeServers,LaunchSpec} from '../model';
 import {migrateAgentConfig} from '../agentMigration';
 import {ca} from './fixtures/httpTlsFixture';
@@ -48,7 +48,10 @@ test('native setup input refuses a redirected HTTP directory without changing it
         await assert.rejects(publishNativeInput(control,'{}'),/unsafe_native_input_directory/);assert.deepEqual(await fs.readdir(target),[]);
     }finally{await fs.rm(owner,{recursive:true,force:true});}
 });
-function selection():HttpSelection{return {kind:'scoped',selection:{schema:1,context_key:'a'.repeat(64),namespace:'b'.repeat(32),expected_catalog_revision:7,grant_id:'grt_'+'c'.repeat(32),expected_grant_revision:1,index_id:'idx_'+'d'.repeat(32),project_ids:['prj_'+'e'.repeat(32)]}};}
+function legacyMember(index:number):ImportedHttpSelection{
+        const binding=index.toString(16).padStart(64,'0');return {namespace:'b'.repeat(32),expected_catalog_revision:7,registration:{binding,root:path.resolve('source-'+index),data_root:path.resolve('data-'+index),collection:'source-'+index},grant:{grant:{id:'grt_'+'91'.repeat(16),host:'a'.repeat(64),revision:1,revoked:false,memberships:[{membership:{project_id:'prj_'+'11'.repeat(16),index_id:'idx_'+'22'.repeat(16),revision:1,scope:[{source_root_id:'src_'+'33'.repeat(16),kind:'subtree',path:''}]},source_revision:1,policy_epoch:0,policy_digest:null}]},provenance:{kind:'imported_legacy_snapshot',upgrade_id:'c'.repeat(32),plan_digest:'d'.repeat(64),legacy_binding:binding,configuration_digest:'e'.repeat(64)}},configuration_receipt:'f'.repeat(64)};
+}
+function selection():HttpSelection{return {kind:'imported_legacy',selection:legacyMember(0)};}
 function info(directory:string):HttpConnectionInfo{return {schema:1,connection_id:'f'.repeat(32),endpoint:{schema:1,installation:'1'.repeat(64),user:'fixture',namespace:'b'.repeat(32),generation:1,service_instance:'2'.repeat(32),executable_sha256:'3'.repeat(64),url:'https://127.0.0.1:57421/mcp',ca_sha256:digest(new X509Certificate(ca).raw),certificate_sha256:'4'.repeat(64),state:'ready',predecessor_digest:null},selection:selection(),ca_certificate_file:path.join(directory,'ca.pem'),credential_file:path.join(directory,'credential-'+ 'f'.repeat(32)+'.token')};}
 
 test('native authority digest uses shared frozen vectors and normalizes only the catalog minimum',async()=>{
@@ -78,7 +81,7 @@ test('(U105) an open connection carries exactly its open state; other connection
 test('HTTP DTO preserves exact authority and permits only a monotonic catalog clock refresh',()=>{
     const value=info(path.resolve('fixture'));assert.deepEqual(validateHttpConnection(value,selection()),value);
     const next=structuredClone(value);(next.selection.selection as any).expected_catalog_revision++;assert.equal((validateHttpConnection(next,selection()).selection.selection as any).expected_catalog_revision,8);
-    for(const change of [(v:any)=>v.selection.selection.grant_id='grt_'+'0'.repeat(32),(v:any)=>v.selection.selection.expected_grant_revision++,(v:any)=>v.endpoint.namespace='0'.repeat(32),(v:any)=>v.selection.selection.expected_catalog_revision--,(v:any)=>v.credential_file=path.join(path.dirname(v.credential_file),'foreign.token'),(v:any)=>v.endpoint.extra='hidden']){const candidate=structuredClone(value);change(candidate);assert.throws(()=>validateHttpConnection(candidate,selection()));}
+    for(const change of [(v:any)=>v.selection.selection.grant.grant.id='grt_'+'0'.repeat(32),(v:any)=>v.selection.selection.grant.grant.revision++,(v:any)=>v.endpoint.namespace='0'.repeat(32),(v:any)=>v.selection.selection.expected_catalog_revision--,(v:any)=>v.credential_file=path.join(path.dirname(v.credential_file),'foreign.token'),(v:any)=>v.endpoint.extra='hidden']){const candidate=structuredClone(value);change(candidate);assert.throws(()=>validateHttpConnection(candidate,selection()));}
     for(const url of ['http://127.0.0.1:57421/mcp','https://localhost:57421/mcp','https://127.0.0.1:057421/mcp','https://127.0.0.1:65536/mcp','https://127.0.0.1:57421/mcp?token=x','https://user@127.0.0.1:57421/mcp'])assert.throws(()=>httpUrl(url));
 });
 test('owner-private HTTP material binds DER issuer and exact native credential identity',async()=>{
@@ -93,7 +96,7 @@ test('owner-private HTTP material binds DER issuer and exact native credential i
     }finally{assert.equal(path.dirname(path.resolve(directory)),path.resolve(os.tmpdir()));assert.match(path.basename(directory),/^airk-http-material-/);await fs.rm(directory,{recursive:true});}
 });
 test('HTTP serializers use references, preserve policies and never emit executable launches or tokens',()=>{
-    const value=info(path.resolve('fixture')),spec:LaunchSpec={command:path.resolve('native/airk'),root:path.resolve('source'),dataDir:path.resolve('data'),collection:'fixture',name:'Fixture',catalogSession:(selection() as Extract<HttpSelection,{kind:'scoped'}>).selection,service:{installDir:path.resolve('native'),project:'1'.repeat(64)},http:value};
+    const value=info(path.resolve('fixture')),spec:LaunchSpec={command:path.resolve('native/airk'),root:path.resolve('source'),dataDir:path.resolve('data'),collection:'fixture',name:'Fixture',service:{installDir:path.resolve('native'),project:'1'.repeat(64)},http:value};
     const tokenName=credentialEnvironment(value);
     for(const client of ['codex','claude','vscode'] as const){const source=serializeServers(client,[{key:'airk',command:spec.command,args:[],label:'AIRK',http:value}]);assert.ok(source.includes(value.endpoint.url));assert.ok(source.includes(client==='vscode'?'airkToken_'+value.connection_id:tokenName));assert.ok(!source.includes('credential-'));assert.ok(!source.includes(spec.command));assert.ok(!source.includes('airk1.'));}
     const source=JSON.stringify({mcpServers:{airk:{type:'http',url:value.endpoint.url,headers:{Authorization:'Bearer ${'+tokenName+'}','X-AIRK-Response-Mode':'full'},disabled:true},other:{command:'preserve'}},policy:'keep'});
@@ -103,9 +106,7 @@ test('HTTP serializers use references, preserve policies and never emit executab
 });
 
 test('imported legacy unions retain every original authority through the native frame budgets',()=>{
-    const members=Array.from({length:32},(_,index)=>{
-        const binding=index.toString(16).padStart(64,'0');return {namespace:'b'.repeat(32),expected_catalog_revision:7,registration:{binding,root:path.resolve('source-'+index),data_root:path.resolve('data-'+index),collection:'source-'+index},grant:{grant:{id:'grt_'+'91'.repeat(16),host:'a'.repeat(64),revision:1,revoked:false,memberships:[{membership:{project_id:'prj_'+'11'.repeat(16),index_id:'idx_'+'22'.repeat(16),revision:1,scope:[{source_root_id:'src_'+'33'.repeat(16),kind:'subtree',path:''}]},source_revision:1,policy_epoch:0,policy_digest:null}]},provenance:{kind:'imported_legacy_snapshot',upgrade_id:'c'.repeat(32),plan_digest:'d'.repeat(64),legacy_binding:binding,configuration_digest:'e'.repeat(64)}},configuration_receipt:'f'.repeat(64)};
-    });
+    const members=Array.from({length:32},(_,index)=>legacyMember(index));
     const value=info(path.resolve('fixture'));value.selection={kind:'imported_legacy_union',selection:{namespace:'b'.repeat(32),selections:members,no_default_project:true}};
     assert.ok(Buffer.byteLength(JSON.stringify(value))>16384);assert.deepEqual(validateHttpConnection(value),value);
     const digest=httpAuthorityDigest(value.selection),single:HttpSelection={kind:'imported_legacy',selection:structuredClone(members[0])},singleDigest=httpAuthorityDigest(single);

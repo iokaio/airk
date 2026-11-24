@@ -101,20 +101,15 @@ impl ScopedSourceProjection {
 
 /// Installed authorization identity only. This is not a freshness observation,
 /// a publication selector, a live grant check, or permission to widen a read.
-/// Exactly one source is present: a catalog grant (`provenance` and `grant`)
-/// or an in-memory selection (`selection`). Catalog-grant bytes are unchanged.
+/// Its one source is the in-memory selection (`selection`) the read was
+/// admitted under; it serializes exactly as the former optional field did.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScopeObservation {
     pub schema: u32,
     pub qualifier: ScopeQualifier,
     pub fingerprint: Sha256Digest,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provenance: Option<crate::grant_provenance::GrantProvenanceKind>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub grant: Option<ScopeGrantObservation>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub selection: Option<ScopeSelectionObservation>,
+    pub selection: ScopeSelectionObservation,
     /// P6f contains one member; the same contract admits up to 32 in P7.
     pub members: Vec<ScopeMemberObservation>,
 }
@@ -122,12 +117,6 @@ pub struct ScopeObservation {
 #[serde(rename_all = "snake_case")]
 pub enum ScopeQualifier {
     SelectedSubset,
-}
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ScopeGrantObservation {
-    pub id: crate::index_catalog::GrantId,
-    pub revision: crate::index_catalog::CatalogRevision,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -152,13 +141,6 @@ impl ScopeObservation {
             self.schema == 1 && !self.members.is_empty(),
             ScopeReadRefused
         );
-        ensure!(
-            matches!(
-                (&self.provenance, &self.grant, &self.selection),
-                (Some(_), Some(_), None) | (None, None, Some(_))
-            ),
-            ScopeReadRefused
-        );
         unique_bounded(
             &self
                 .members
@@ -168,9 +150,7 @@ impl ScopeObservation {
             MAX_SELECTION,
         )?;
         // U106(d): only an open agent read has no project memberships.
-        let agent = self
-            .selection
-            .is_some_and(|selection| selection.owner == SelectionOwnerKind::Agent);
+        let agent = self.selection.owner == SelectionOwnerKind::Agent;
         for member in &self.members {
             ensure!(
                 (agent || !member.memberships.is_empty())

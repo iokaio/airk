@@ -501,121 +501,6 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
         }
     } else {
         match request.method {
-            ControlMethod::ValidateCombinedDelivery {
-                selection,
-                query_selection,
-                scope_identity,
-                result_digest,
-                context_bindings,
-                read_attempt,
-            } => {
-                ensure!(
-                    context_bindings.is_empty() || read_attempt.is_some(),
-                    "context delivery requires original native attempt"
-                );
-                // A delivery check inside a read, not an entry point: it accepts
-                // the read's attempt up to Answer's ceiling (context bindings are
-                // Answer's), and the read's own entry already applied its tool's.
-                let policy_context = read_attempt
-                    .map(|attempt| tools_call::read_context("airk_answer", Some(attempt)))
-                    .transpose()?;
-                let policy_guard = match policy_context.as_ref() {
-                    Some(context) => Some(arbiter::policy_delivery::factory(&state)(
-                        &context_bindings,
-                        context,
-                    )?),
-                    None => None,
-                };
-                let Some(gate) = state.catalog_gate.as_ref() else {
-                    return local_ipc::write_message(
-                        &mut stream,
-                        &ControlResponse::Failure {
-                            code: "combined_delivery_scope_unavailable".into(),
-                        },
-                        Duration::from_secs(5),
-                    )
-                    .await;
-                };
-                let Some(clock) = gate.catalog_clock() else {
-                    return local_ipc::write_message(
-                        &mut stream,
-                        &ControlResponse::Failure {
-                            code: "combined_delivery_scope_unavailable".into(),
-                        },
-                        Duration::from_secs(5),
-                    )
-                    .await;
-                };
-                let control = state.control_root.clone();
-                let expected_revision = clock.revision;
-                let expected_context = context_bindings.clone();
-                let observed = tokio::task::spawn_blocking(move || {
-                    airk_frontend::combined_frontend::validate_delivery_with_context(
-                        &control,
-                        &selection,
-                        &query_selection,
-                        scope_identity,
-                        expected_revision,
-                        &expected_context,
-                    )
-                })
-                .await;
-                let admitted = match observed {
-                    Ok(Ok(())) => gate.begin_issue(clock.namespace, clock.revision),
-                    _ => Err(airk_core::scoped_reads::ScopeReadRefused.into()),
-                };
-                match admitted {
-                    Ok(ticket) => {
-                        let response = ControlResponse::CombinedDeliveryValidated {
-                            receipt: airk_core::service::CombinedDeliveryReceipt {
-                                schema: 1,
-                                service_instance: state.instance,
-                                namespace: clock.namespace,
-                                catalog_revision: clock.revision,
-                                scope_identity,
-                                result_digest,
-                            },
-                        };
-                        // A partial refused write closes this exchange. Never
-                        // append an unguarded fallback after protected bytes.
-                        if let Some(guard) = policy_guard {
-                            let context = policy_context
-                                .as_ref()
-                                .context("context delivery original attempt missing")?;
-                            tools_call::require_live(context)?;
-                            return tokio::time::timeout_at(
-                                tokio::time::Instant::from_std(context.deadline()),
-                                gate.deliver_issue_guarded(
-                                    ticket,
-                                    &mut stream,
-                                    &response,
-                                    Duration::from_secs(5),
-                                    |effect| guard.poll(effect),
-                                ),
-                            )
-                            .await
-                            .context("original context delivery deadline exhausted")?;
-                        }
-                        return gate
-                            .deliver_issue(ticket, &mut stream, &response, Duration::from_secs(5))
-                            .await;
-                    }
-                    Err(_) => ControlResponse::Failure {
-                        code: "combined_delivery_scope_expired".into(),
-                    },
-                }
-            }
-            ControlMethod::ConnectScoped { request } => {
-                match state.management.request_scoped(request).await {
-                    Ok(delivery) => {
-                        return delivery.deliver(&mut stream, Duration::from_secs(5)).await;
-                    }
-                    Err(error) => ControlResponse::Failure {
-                        code: connection_failure_code(&error, "scoped_connection_unavailable")
-                            .into(),
-                    },
-                }
-            }
             ControlMethod::NativeRead { .. }
                 if state.catalog_gate.is_none() && state.legacy_connections =>
             {
@@ -653,14 +538,12 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
             },
             ControlMethod::Connect { project } => {
                 if state.catalog_gate.is_some() {
-                    match state.management.request_legacy(project).await {
-                        Ok(delivery) => {
-                            return delivery.deliver(&mut stream, Duration::from_secs(5)).await;
-                        }
-                        Err(error) => ControlResponse::Failure {
-                            code: connection_failure_code(&error, "project_unavailable_or_busy")
-                                .into(),
-                        },
+                    // A per-project connection under an active catalog relied on
+                    // an imported reviewed grant; reviewed grants were removed
+                    // (change-log entry 68 part 3), so it reads through an open
+                    // agent read or a window selection instead.
+                    ControlResponse::Failure {
+                        code: "scoped_read_unavailable".into(),
                     }
                 } else if state.legacy_connections {
                     state.supervisor.connect(project).await
@@ -802,9 +685,6 @@ fn canonical_control(
                     observation: Box::new(state.checkpoint.observe(&state, operation_id).await?),
                 }
             }
-            ControlMethod::ValidateCombinedDelivery { .. } => ControlResponse::Failure {
-                code: "native_pipe_delivery_required".into(),
-            },
             ControlMethod::Health => {
                 let now = Instant::now();
                 let policy = state
@@ -835,11 +715,11 @@ fn canonical_control(
                 }
             }
             ControlMethod::Shutdown => ControlResponse::Stopping,
-            ControlMethod::ConnectScoped { .. }
-            | ControlMethod::NativeRead { .. }
-            | ControlMethod::Connect { .. } => ControlResponse::Failure {
-                code: "native_pipe_delivery_required".into(),
-            },
+            ControlMethod::NativeRead { .. } | ControlMethod::Connect { .. } => {
+                ControlResponse::Failure {
+                    code: "native_pipe_delivery_required".into(),
+                }
+            }
             ControlMethod::Workers { projects } => state.supervisor.workers_status(&projects),
             ControlMethod::Worker { project } => state.supervisor.worker_status(project),
             ControlMethod::RestartProject { project, expected } => {
@@ -1039,14 +919,9 @@ fn canonical_control(
                 )
                 .await
             }
-            ControlMethod::ToolsCatalog {
-                detail,
-                combined: None,
-            } => airk_frontend::tool_catalog::response(&detail)?,
-            ControlMethod::ToolsCatalog {
-                detail,
-                combined: Some(request),
-            } => tools_call::combined_catalog(&state.control_root, &detail, &request).await,
+            ControlMethod::ToolsCatalog { detail } => {
+                airk_frontend::tool_catalog::response(&detail)?
+            }
             ControlMethod::ClientRequestPrepare {
                 caller,
                 key,
@@ -1136,11 +1011,9 @@ fn canonical_control(
                 document,
                 project,
             } => explorer::run(operation, arguments, document, project),
-            ControlMethod::UsageDocument {
-                project,
-                catalog,
-                read,
-            } => usage::document(&state.control_root, project, catalog, read).await,
+            ControlMethod::UsageDocument { project, read } => {
+                usage::document(&state.control_root, project, read).await
+            }
             ControlMethod::PrepareConfiguration { project, draft } => {
                 configuration::prepare(&state.control_root, project, draft).await
             }
@@ -1975,7 +1848,7 @@ mod connection_failure_tests {
     use airk_core::{
         catalog_management::{CatalogOperation, CatalogRequest},
         identity::Incarnation,
-        index_catalog::{CatalogRevision, GrantId},
+        index_catalog::{CatalogRevision, QueryProjectId},
         service::RequestKey,
     };
     use tokio::io::AsyncReadExt;
@@ -2008,9 +1881,11 @@ mod connection_failure_tests {
                 nonce: Incarnation::from_bytes([64; 16]),
             },
             expected_catalog_revision: CatalogRevision::INITIAL,
-            operation: CatalogOperation::RevokeGrant {
-                id: GrantId::from_identity(Incarnation::from_bytes([65; 16])),
-                expected_revision: CatalogRevision::INITIAL,
+            operation: CatalogOperation::DeleteProject {
+                id: QueryProjectId::from_identity(Incarnation::from_bytes([65; 16])),
+                expected_definition_revision: CatalogRevision::INITIAL,
+                expected_scope_revision: CatalogRevision::INITIAL,
+                expected_defaults_revision: CatalogRevision::INITIAL,
             },
         })?;
         Ok(())

@@ -45,11 +45,13 @@ fn request() -> Result<NativeContextActionRequest> {
         schema: 1,
         lease_generation: 1,
         index_id: response.assessment.scope.index_id,
-        grant_id: Some(crate::index_catalog::GrantId::from_identity(
-            Incarnation::from_bytes([21; 16]),
-        )),
-        grant_revision: Some(crate::index_catalog::CatalogRevision::INITIAL),
-        selection: None,
+        selection: crate::scope_records::SelectionScopeRef {
+            owner: crate::scope_records::SelectionOwnerKind::Agent,
+            grant_nonce: Incarnation::from_bytes([21; 16]),
+            service_instance: Incarnation::from_bytes([23; 16]),
+            scope_identity: Sha256Digest::from_bytes([24; 32]),
+            catalog_revision: crate::index_catalog::CatalogRevision::INITIAL,
+        },
         fingerprint: response.assessment.scope.authorization,
     };
     Ok(NativeContextActionRequest {

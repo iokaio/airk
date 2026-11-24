@@ -10,7 +10,7 @@ import {build as bundle} from 'esbuild';
 // test reads the TypeScript sources directly (out/test → ../../src).
 const source = path.resolve(__dirname, '..', '..', 'src');
 const compiled = path.resolve(__dirname, '..');
-const CONTRACTS = new Set(['adminUiContract', 'explorerContracts', 'uiPilotContract', 'explorerRoutes', 'explorerFeatures', 'explorerErrors', 'explorerStatus', 'explorerStrategies', 'explorerStrategyDrafts', 'explorerStrategyPlanner', 'explorerDrafts', 'indexingCatalog', 'indexingSplit', 'catalogSession', 'publications']);
+const CONTRACTS = new Set(['adminUiContract', 'explorerContracts', 'uiPilotContract', 'explorerRoutes', 'explorerFeatures', 'explorerErrors', 'explorerStatus', 'explorerStrategies', 'explorerStrategyDrafts', 'explorerStrategyPlanner', 'explorerDrafts', 'indexingCatalog', 'indexingSplit', 'publications']);
 const WEBVIEW_PACKAGES = new Set(['preact', 'preact/hooks', 'preact/jsx-runtime', 'airk-explorer-help']);
 const ASSISTANCE_BUILTINS = new Set(['node:crypto', 'node:fs', 'node:fs/promises', 'node:net', 'node:os', 'node:path', 'node:process', 'node:readline']);
 const HOST_MARKERS = ['class ServiceClient', 'class NativeControlTransport', 'class NativeSession', 'class IntentJournal', 'class PrivateIntentStore', 'function probeMcp', 'class ServiceConsoleController', 'class RuntimeHost'];
@@ -132,25 +132,12 @@ test('the standalone uninstall bundle retains no Indexing controller, Preact or 
 test('native read retry validators retain a pure shared dependency boundary',()=>{
     const file=path.join(source,'readRetry.ts');
     // Rust I2 owns caller binding/selection types; this import emits no runtime dependency.
-    assert.deepEqual(imports(file),['./generated/arbiterBudget','node:util','./generated/i2','./catalogSession']);
+    assert.deepEqual(imports(file),['./generated/arbiterBudget','node:util','./generated/i2']);
     assert.equal(typeOnly(file,'./generated/i2'),true);
     assert.ok(imports(path.join(source,'explorerEvidence.ts')).includes('./readRetry'));
     const tree=ts.createSourceFile(file,fs.readFileSync(file,'utf8'),ts.ScriptTarget.Latest,true);
     for(const statement of tree.statements)assert.ok(ts.isImportDeclaration(statement)||ts.isFunctionDeclaration(statement),
         'shared retry validators perform no startup work');
-});
-
-test('catalog launch model imports only the pure selector contract and keeps host selection out of uninstall',()=>{
-    const model=path.join(source,'model.ts'),selector=path.join(source,'catalogSession.ts');
-    assert.ok(imports(model).includes('./catalogSession'));
-    assert.ok(!imports(model).includes('./scopeSelection'));
-    assert.deepEqual(imports(selector),['./indexingCatalog']);
-    const tree=ts.createSourceFile(selector,fs.readFileSync(selector,'utf8'),ts.ScriptTarget.Latest,true);
-    for(const statement of tree.statements)assert.ok(ts.isImportDeclaration(statement)||ts.isInterfaceDeclaration(statement)||ts.isFunctionDeclaration(statement),
-        'selector contract contains only imports, DTO declarations and inert validator functions');
-    const build=fs.readFileSync(path.resolve(source,'..','scripts','build-explorer.cjs'),'utf8');
-    assert.ok(build.includes("'src/catalogSession.ts'"));
-    assert.ok(!build.includes("'src/scopeSelection.ts'"),'host selection controller must never be allowlisted in bundles');
 });
 
 /** The approved manual setup DTO import carries no runtime code or write authority. */

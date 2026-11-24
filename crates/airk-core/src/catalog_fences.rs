@@ -183,26 +183,12 @@ impl FencePlan {
             self.gate_generation > 0 && self.targets.len() <= MAX_TARGETS,
             "invalid catalog fence plan bound"
         );
-        let mut keys = Vec::new();
-        for target in &self.targets {
-            target.scope.validate()?;
-            // Selection scopes are revoked in memory and never persisted.
-            ensure!(
-                target.scope.catalog_grant().is_some(),
-                "a selection scope is never a durable catalog fence target"
-            );
-            ensure!(
-                target.worker.service == self.service && target.worker.fencing_generation > 0,
-                "catalog fence worker identity mismatch"
-            );
-            // The complete ref includes the selected-subset fingerprint AND its
-            // native lease generation. Distinct subsets/leases for the same
-            // grant/index must each remain captured and acknowledged.
-            keys.push(target_key(target)?);
-        }
+        // Every installed scope is a selection scope, revoked in memory and
+        // never persisted. Reviewed catalog grants were removed (change-log
+        // entry 68 part 3), so a durable plan names no scope target.
         ensure!(
-            keys.windows(2).all(|pair| pair[0] < pair[1]),
-            "catalog fence targets must be unique and canonical"
+            self.targets.is_empty(),
+            "a selection scope is never a durable catalog fence target"
         );
         if let Some(obligation) = &self.worker_obligation {
             ensure!(

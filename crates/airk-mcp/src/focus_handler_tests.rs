@@ -232,14 +232,18 @@ async fn focus_actual_search_handler_preserves_full_scoped_results_with_context_
     let base = Kernel::open(&source, Some(data))?;
     base.index()?;
     let authority = crate::scoped_observation_tests::authority(&base)?;
-    let scoped = base.with_scoped_reads(authority.clone())?;
+    let scoped = base.with_selection_reads(authority.clone())?;
     let reference = ScopedReadRef {
         schema: 1,
         lease_generation: 1,
         index_id: authority.index_id,
-        grant_id: Some(authority.grant.id),
-        grant_revision: Some(authority.grant.revision),
-        selection: None,
+        selection: airk_core::scoped_reads::SelectionScopeRef {
+            owner: airk_core::scoped_reads::SelectionOwnerKind::Window,
+            grant_nonce: airk_core::identity::Incarnation::from_bytes([10; 16]),
+            service_instance: airk_core::identity::Incarnation::from_bytes([11; 16]),
+            scope_identity: airk_core::identity::Sha256Digest::from_bytes([12; 32]),
+            catalog_revision: airk_core::index_catalog::CatalogRevision::try_from(5_u64).unwrap(),
+        },
         fingerprint: scoped.scoped_read_fingerprint()?.unwrap(),
     };
     let worker = WorkerIdentity {
@@ -385,14 +389,18 @@ async fn focus_policy_change_after_native_work_renders_typed_stale_refusal() -> 
     let base = Kernel::open(&source, Some(data))?;
     base.index()?;
     let authority = crate::scoped_observation_tests::authority(&base)?;
-    let scoped = base.with_scoped_reads(authority.clone())?;
+    let scoped = base.with_selection_reads(authority.clone())?;
     let reference = ScopedReadRef {
         schema: 1,
         lease_generation: 1,
         index_id: authority.index_id,
-        grant_id: Some(authority.grant.id),
-        grant_revision: Some(authority.grant.revision),
-        selection: None,
+        selection: airk_core::scoped_reads::SelectionScopeRef {
+            owner: airk_core::scoped_reads::SelectionOwnerKind::Window,
+            grant_nonce: airk_core::identity::Incarnation::from_bytes([10; 16]),
+            service_instance: airk_core::identity::Incarnation::from_bytes([11; 16]),
+            scope_identity: airk_core::identity::Sha256Digest::from_bytes([12; 32]),
+            catalog_revision: airk_core::index_catalog::CatalogRevision::try_from(5_u64).unwrap(),
+        },
         fingerprint: scoped.scoped_read_fingerprint()?.unwrap(),
     };
     let worker = WorkerIdentity {
@@ -502,7 +510,6 @@ async fn focus_selection_requires_actual_singleton_allowance_and_retains_direct_
     let base = Kernel::open(&source, Some(data))?;
     base.index()?;
     let reviewed = crate::scoped_observation_tests::authority(&base)?;
-    let member = &reviewed.grant.memberships[0].membership;
     let selection = SelectionScopeRef {
         owner: SelectionOwnerKind::Window,
         grant_nonce: Incarnation::from_bytes([60; 16]),
@@ -517,14 +524,9 @@ async fn focus_selection_requires_actual_singleton_allowance_and_retains_direct_
             index_id: reviewed.index_id,
             project_ids: reviewed.project_ids.clone(),
             selection,
-            atoms: member
-                .scope
-                .iter()
-                .cloned()
-                .map(|atom| (member.project_id, atom))
-                .collect(),
+            atoms: reviewed.atoms.clone(),
             sources: reviewed.sources.clone(),
-            membership_revisions: vec![(member.project_id, CatalogRevision::INITIAL)],
+            membership_revisions: reviewed.membership_revisions.clone(),
             source_revision: CatalogRevision::INITIAL,
             policy_epoch: 0,
             policy_digest: None,
@@ -533,9 +535,7 @@ async fn focus_selection_requires_actual_singleton_allowance_and_retains_direct_
         schema: 1,
         lease_generation: 1,
         index_id: reviewed.index_id,
-        grant_id: None,
-        grant_revision: None,
-        selection: Some(selection),
+        selection,
         fingerprint: selected.scoped_read_fingerprint()?.unwrap(),
     };
     let worker = WorkerIdentity {
@@ -668,14 +668,18 @@ async fn local_sdk_refuses_partition_on_other_canonical_tools_before_dispatch() 
     base.configure_vectors(false)?;
     base.index()?;
     let reviewed = crate::scoped_observation_tests::authority(&base)?;
-    let scoped = base.with_scoped_reads(reviewed.clone())?;
+    let scoped = base.with_selection_reads(reviewed.clone())?;
     let authority = ScopedReadRef {
         schema: 1,
         lease_generation: 1,
         index_id: reviewed.index_id,
-        grant_id: Some(reviewed.grant.id),
-        grant_revision: Some(reviewed.grant.revision),
-        selection: None,
+        selection: airk_core::scoped_reads::SelectionScopeRef {
+            owner: airk_core::scoped_reads::SelectionOwnerKind::Window,
+            grant_nonce: airk_core::identity::Incarnation::from_bytes([10; 16]),
+            service_instance: airk_core::identity::Incarnation::from_bytes([11; 16]),
+            scope_identity: airk_core::identity::Sha256Digest::from_bytes([12; 32]),
+            catalog_revision: airk_core::index_catalog::CatalogRevision::try_from(5_u64).unwrap(),
+        },
         fingerprint: scoped.scoped_read_fingerprint()?.unwrap(),
     };
     let owner = Arc::new(FocusOwner {

@@ -296,11 +296,6 @@ fn online_window_admission_preserves_original_bound_selection() {
         let selection = Selection {
             control: Some(control.clone()),
             project: None,
-            catalog: None,
-            combined: None,
-            project_ids: None,
-            index_ids: None,
-            member_availability: None,
             root: PathBuf::from("."),
             data_dir: None,
             collection: "fixture".into(),

@@ -639,20 +639,8 @@ fn saved_source_verification_preserves_complete_results_through_cli_and_public_m
             None => scoped_failure = Some(actual),
         }
     }
-    let shell = common::scoped_command(root.path(), state.path(), "project-a")
-        .args(["tools", "shell"])
-        .input(format!(
-            "call airk_file_info {}\nquit\n",
-            serde_json::to_string(&require)?
-        ))
-        .output()?;
-    assert!(shell.status.success());
-    let shell_text = String::from_utf8(shell.stdout)?;
-    assert!(
-        shell_text.contains("verification_required_unmet")
-            && shell_text.contains("source_verification")
-            && shell_text.contains("mismatch")
-    );
+    // `tools shell` has only its project form now; the reviewed scope's
+    // session (window) route serves `tools call`, not the console.
     let off = cli_call(
         root.path(),
         state.path(),
@@ -2167,16 +2155,9 @@ fn held_quota_ledger_preserves_same_read_hint_through_native_cli_and_mcp() -> an
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    let airk_core::service_http::HttpSelection::Scoped { selection } =
-        common::http_selection(root.path(), data.path(), "project-a")?
-    else {
-        anyhow::bail!("expected exact reviewed scope")
-    };
-    let direct = airk_cli::project_client::scoped_tools(
-        service.control.clone(),
-        service.project.binding,
-        selection,
-    )?;
+    // The reviewed fixture's window selection, read in process through the
+    // pipe and through the session-routed CLI (`scoped_command`).
+    let direct = common::pipe::PipeTools::window(&service.control, service.window()?);
     let args = json!({"response_mode":"full"});
     let baseline = runtime.block_on(airk_mcp::remote::call_observed(
         direct.as_ref(),

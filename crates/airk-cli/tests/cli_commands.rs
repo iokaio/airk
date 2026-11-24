@@ -577,27 +577,8 @@ fn installed_query_scope_calls_and_shell_retain_canonical_authority() -> Result<
             assert_eq!(&body, expected);
         }
         expected = Some(body.clone());
-        let shell = common::scoped_command(source.path(), data.path(), "scope-cli")
-            .args(["tools", "shell"])
-            .input(format!("call {alias} {{\"view\":\"projects\"}}\nexit\n"))
-            .output()?;
-        ensure!(
-            shell.status.success() && shell.stderr.is_empty(),
-            "scope shell failed: {}",
-            String::from_utf8_lossy(&shell.stderr)
-        );
-        let text = std::str::from_utf8(&shell.stdout)?;
-        let text = text.split_once("airk> ").context("shell prompt")?.1;
-        let text = text
-            .strip_prefix("Result:")
-            .context("shell success label")?
-            .trim_start();
-        let rendered = serde_json::Deserializer::from_str(text)
-            .into_iter::<Value>()
-            .next()
-            .context("shell body missing")?
-            .with_context(|| diagnostic("shell body", alias, &shell))?;
-        assert_eq!(rendered, body);
+        // `tools shell` has only its project form now: the reviewed scope's
+        // session (window) route serves `tools call`, not the console.
         let invalid = common::scoped_command(source.path(), data.path(), "scope-cli")
             .args([
                 "tools",
@@ -831,13 +812,24 @@ fn headless_workflow_exercises_query_and_management_commands() -> Result<()> {
         &["changes", "--path", "notes.md"],
         &["code-facts"],
         &["relationships", "record_tide"],
-        &["settings", "scan_limits"],
         &["parse", "find copper harbor"],
         &["tools", "list", "--json"],
         &["tools", "call", "airk_status", "--args", "{}"],
     ] {
         headless_read(&source, &data, args).with_context(|| format!("airk {}", args.join(" ")))?;
     }
+    // Settings are a per-project Usage document, read through the project
+    // binding (the session route has no project to name).
+    let output = common::read_retry::output(
+        common::command(&source, &data, "demo").args(["settings", "scan_limits"]),
+    )?;
+    ensure!(
+        output.status.success(),
+        "airk settings scan_limits failed: {}{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    serde_json::from_slice::<Value>(&output.stdout).context("settings scan_limits document")?;
     for args in [
         &["usage", "policy"][..],
         &["usage", "report"],
@@ -969,12 +961,12 @@ fn headless_workflow_exercises_query_and_management_commands() -> Result<()> {
         !retired.status.success(),
         "retired Index still admitted its old scoped reader"
     );
-    // The CLI resolves catalog metadata before constructing the query handler.
-    // A completed retirement can therefore refuse before any MCP envelope exists.
+    // The window read is refused before any MCP envelope exists: the
+    // retired Index no longer backs the window's scope.
     if retired.stdout.is_empty() {
         assert_eq!(
             String::from_utf8_lossy(&retired.stderr).trim(),
-            "airkctl: selected catalog index metadata is not ready"
+            "airkctl: scoped_read_unavailable"
         );
     } else {
         let retired_reply: Value = serde_json::from_slice(&retired.stdout)?;

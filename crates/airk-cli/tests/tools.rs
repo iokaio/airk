@@ -131,7 +131,7 @@ fn tools_help_works_without_a_workspace_and_exposes_live_schemas() {
         help["content"]
             .as_str()
             .unwrap()
-            .contains("--selection-file")
+            .contains("--client <CLIENT>")
     );
     assert!(!root.exists() && !state.exists());
     let status = tools.iter().find(|tool| tool["name"] == "status").unwrap();
@@ -403,10 +403,11 @@ fn interactive_tools_show_help_and_recover_from_invalid_requests() {
     let _service = common::Service::reviewed(root.path(), state.path(), "tools-test");
     let query = root.path().join("arguments with spaces.json");
     fs::write(&query, r#"{"reply_detail":"rich","adapter":"text"}"#).unwrap();
-    // Interactive failure must not end the session.
+    // Interactive failure must not end the session. A window-routed shell
+    // has no project folder, so `--args-file` names the file absolutely.
     let output = command(root.path(), state.path())
         .args(["tools", "shell"])
-        .input(format!("help\nhelp airk_search\ncall not_a_tool\ncall airk_search []\ncall airk_capabilities --args-file {}\nexit\n", query.file_name().unwrap().to_str().unwrap()))
+        .input(format!("help\nhelp airk_search\ncall not_a_tool\ncall airk_search []\ncall airk_capabilities --args-file {}\nexit\n", query.to_str().unwrap()))
         .output()
         .unwrap();
     assert!(
@@ -417,7 +418,7 @@ fn interactive_tools_show_help_and_recover_from_invalid_requests() {
     let text = String::from_utf8(output.stdout).unwrap();
     assert!(
         text.contains("AIRK Tools")
-            && text.contains("tools-test")
+            && text.contains("Window selection")
             && text.contains("Explicit vector search")
     );
     assert!(text.contains("Result:") && text.contains("\"search_modes\": ["));
@@ -759,7 +760,22 @@ fn current_tool(
 }
 
 fn current_ctl(control: &Path, selection: &[&str], arguments: &[&str]) -> anyhow::Result<Output> {
-    Ok(common::ctl::Ctl::new()
+    current_ctl_routed(control, None, selection, arguments)
+}
+
+/// As `current_ctl`, with reads that name no selection routed through a
+/// window as an `airkctl session` routes them.
+fn current_ctl_routed(
+    control: &Path,
+    window: Option<&common::pipe::Window>,
+    selection: &[&str],
+    arguments: &[&str],
+) -> anyhow::Result<Output> {
+    let mut command = common::ctl::Ctl::new();
+    if let Some(window) = window {
+        command.window(window.clone());
+    }
+    Ok(command
         .arg("--service-runtime-dir")
         .arg(control)
         .args(["--output", "json"])
@@ -865,13 +881,9 @@ fn control_tool_calls_answer_what_the_cli_printed() -> anyhow::Result<()> {
         state.path(),
         std::time::Instant::now() + std::time::Duration::from_secs(90),
     )?;
-    let airk_core::service_http::HttpSelection::Scoped { selection } = service.http_selection()
-    else {
-        panic!("reviewed scoped fixture");
-    };
-    let catalog = serde_json::to_string(&selection)?;
+    let window = service.window()?;
     let binding = service.project.binding.to_string();
-    let set = selection.project_ids[0].to_string();
+    let set = service.reviewed_scope().project_id.to_string();
     let calls = [
         (
             "airk_read_file",
@@ -894,13 +906,9 @@ fn control_tool_calls_answer_what_the_cli_printed() -> anyhow::Result<()> {
     ];
     let mut positive = 0;
     for (name, native, flags) in [
-        (
-            "catalog",
-            ToolSelection::Catalog {
-                request: selection.clone(),
-            },
-            vec!["--catalog-session", catalog.as_str()],
-        ),
+        // The `airkctl session` route: reads name no selection and go through
+        // the window's W4 grant over the fixture's Index and Project.
+        ("window", window.tool_selection(), vec![]),
         (
             "project",
             ToolSelection::Project {
@@ -919,16 +927,25 @@ fn control_tool_calls_answer_what_the_cli_printed() -> anyhow::Result<()> {
         ),
     ] {
         for (tool, arguments) in &calls {
-            let expected = current_tool(&service.control, native.clone(), tool, arguments.clone())?;
+            let help = matches!(*tool, "help" | "airk_help");
+            // airkctl answers help in process for an unselected call; a
+            // session-routed help names no selection.
+            let selected = if name == "window" && help {
+                ToolSelection::Unselected
+            } else {
+                native.clone()
+            };
+            let expected = current_tool(&service.control, selected, tool, arguments.clone())?;
             let text = arguments.to_string();
             let mut line = vec!["tools", "call", *tool, "--args", text.as_str()];
             if name == "open index set" {
                 line.extend(["--set", set.as_str()]);
             }
+            let routed = (name == "window").then_some(&window);
             let accepted = current_assert_tool(
                 expected,
-                current_ctl(&service.control, &flags, &line)?,
-                name != "catalog" && matches!(*tool, "help" | "airk_help"),
+                current_ctl_routed(&service.control, routed, &flags, &line)?,
+                help,
                 &format!("{name} {tool}"),
             )?;
             if name != "project" && *tool != "help" {
@@ -938,7 +955,7 @@ fn control_tool_calls_answer_what_the_cli_printed() -> anyhow::Result<()> {
     }
     assert!(
         positive >= 8,
-        "catalog and readable index-set authority must return real indexed evidence"
+        "window and readable index-set authority must return real indexed evidence"
     );
     for arguments in [
         json!({"query":"workbench"}),
@@ -986,10 +1003,7 @@ fn airkctl_reads_print_what_airk_printed() -> anyhow::Result<()> {
         state.path(),
         std::time::Instant::now() + std::time::Duration::from_secs(90),
     )?;
-    let airk_core::service_http::HttpSelection::Scoped { selection } = service.http_selection()
-    else {
-        panic!("reviewed scoped fixture");
-    };
+    let window = service.window()?;
     let arguments_file = state.path().join("ctl-args.json");
     fs::write(
         &arguments_file,
@@ -1129,19 +1143,16 @@ fn airkctl_reads_print_what_airk_printed() -> anyhow::Result<()> {
             json!({"query":"workbench"}),
         ),
     ];
-    let catalog = serde_json::to_string(&selection)?;
     let binding = service.project.binding.to_string();
     let mut compared = 0;
     let mut accepted = 0;
-    for (native, flags) in [
-        (
-            ToolSelection::Catalog { request: selection },
-            vec!["--catalog-session", catalog.as_str()],
-        ),
+    for (native, routed, flags) in [
+        (window.tool_selection(), Some(&window), vec![]),
         (
             ToolSelection::Project {
                 binding: service.project.binding,
             },
+            None,
             vec!["--service-project", binding.as_str()],
         ),
     ] {
@@ -1170,12 +1181,24 @@ fn airkctl_reads_print_what_airk_printed() -> anyhow::Result<()> {
                     .clone(),
                 );
             }
+            let help = matches!(*tool, "help" | "airk_help");
+            // airkctl answers help in process for an unselected call; a
+            // session-routed help names no selection.
+            let selected = if routed.is_some() && help {
+                ToolSelection::Unselected
+            } else {
+                native.clone()
+            };
+            let label = if routed.is_some() {
+                "window"
+            } else {
+                "project"
+            };
             accepted += usize::from(current_assert_tool(
-                current_tool(&service.control, native.clone(), tool, arguments)?,
-                current_ctl(&service.control, &flags, &line)?,
-                matches!(native, ToolSelection::Project { .. })
-                    && matches!(*tool, "help" | "airk_help"),
-                &format!("{native:?} {line:?}"),
+                current_tool(&service.control, selected, tool, arguments)?,
+                current_ctl_routed(&service.control, routed, &flags, &line)?,
+                help,
+                &format!("{label} {line:?}"),
             )?);
             compared += 1;
         }
@@ -1926,7 +1949,7 @@ fn airkctl_registration_matches_airk() -> anyhow::Result<()> {
 }
 
 /// `tools shell` (split step 3c.4c): the same console input through `airk`
-/// and `airkctl`, by project binding and by catalog session, prints the same
+/// and `airkctl`, by project binding, prints the same
 /// banner, help, prompts, results and `Error:` lines.
 #[test]
 fn airkctl_tools_shell_matches_airk() -> anyhow::Result<()> {
@@ -1975,17 +1998,13 @@ fn airkctl_tools_shell_matches_airk() -> anyhow::Result<()> {
         arguments_file.display(),
         calls[4].1
     );
-    let airk_core::service_http::HttpSelection::Scoped { selection } = service.http_selection()
-    else {
-        panic!("reviewed scoped fixture");
-    };
-    let catalog = serde_json::to_string(&selection)?;
+    // `tools shell` has only its project form now; the window (session)
+    // route serves `tools call`, not the console.
     let binding = service.project.binding.to_string();
     let ControlResponse::ToolsCatalog { document } = current_native(
         &service.control,
         ControlMethod::ToolsCatalog {
             detail: ToolsCatalogDetail::List { schemas: true },
-            combined: None,
         },
     )?
     else {
@@ -1998,20 +2017,13 @@ fn airkctl_tools_shell_matches_airk() -> anyhow::Result<()> {
         .iter()
         .find(|tool| tool["name"] == "airk_search" || tool["name"] == "search")
         .unwrap();
-    for (name, native, flags) in [
-        (
-            "project",
-            ToolSelection::Project {
-                binding: service.project.binding,
-            },
-            vec!["--service-project", binding.as_str()],
-        ),
-        (
-            "catalog",
-            ToolSelection::Catalog { request: selection },
-            vec!["--catalog-session", catalog.as_str()],
-        ),
-    ] {
+    for (name, native, flags) in [(
+        "project",
+        ToolSelection::Project {
+            binding: service.project.binding,
+        },
+        vec!["--service-project", binding.as_str()],
+    )] {
         let started = current_unix_ms()?;
         let mut expected = Vec::new();
         let mut errors = String::new();
@@ -2341,7 +2353,7 @@ fn regex_free_configuration_nonce(stderr: &str) -> Vec<String> {
 }
 
 /// `settings` and `usage report|policy` (split step 3c.5c): the document
-/// `airk` printed, by project binding and by catalog session (N1). JSON
+/// `airk` printed, by project binding (N1). JSON
 /// documents compare after `stable`; text reports compare as printed.
 #[test]
 fn airkctl_usage_documents_match_airk() -> anyhow::Result<()> {
@@ -2369,11 +2381,6 @@ fn airkctl_usage_documents_match_airk() -> anyhow::Result<()> {
             String::from_utf8_lossy(&output.stderr)
         );
     }
-    let airk_core::service_http::HttpSelection::Scoped { selection } = service.http_selection()
-    else {
-        panic!("reviewed scoped fixture");
-    };
-    let catalog = serde_json::to_string(&selection)?;
     let binding = service.project.binding.to_string();
     let reads = [
         (
@@ -2399,17 +2406,14 @@ fn airkctl_usage_documents_match_airk() -> anyhow::Result<()> {
         ),
     ];
     let mut compared = 0;
-    for (request, flags) in [
-        (None, vec!["--service-project", binding.as_str()]),
-        (Some(selection), vec!["--catalog-session", catalog.as_str()]),
-    ] {
+    {
+        let flags = ["--service-project", binding.as_str()];
         for (line, read) in &reads {
             let read: UsageDocumentRead = serde_json::from_value(read.clone())?;
             let expected = current_native(
                 &service.control,
                 ControlMethod::UsageDocument {
                     project: service.project.binding,
-                    catalog: request.clone(),
                     read,
                 },
             )?;
@@ -2459,7 +2463,7 @@ fn airkctl_usage_documents_match_airk() -> anyhow::Result<()> {
             compared += 1;
         }
     }
-    assert_eq!(compared, 12, "complete usage selections/input catalog");
+    assert_eq!(compared, 6, "complete usage input catalog");
     Ok(())
 }
 
@@ -2974,17 +2978,10 @@ fn airkctl_agents_connect_list_repair_remove_on_a_live_service() -> anyhow::Resu
         let output = ctl(&arguments)?;
         assert!(!output.status.success());
         assert!(output.stdout.is_empty());
+        // The retired selectors are no longer arguments: a usage error.
         let refusal: Value = serde_json::from_slice(&output.stderr)?;
-        assert_eq!(refusal["class"], "refused");
-        assert_eq!(refusal["code"], "operation_failed");
-        assert_eq!(refusal["retryable"], false);
-        assert!(
-            refusal["message"]
-                .as_str()
-                .unwrap()
-                .contains("no longer exist"),
-            "{refusal}"
-        );
+        assert_eq!(refusal["class"], "usage", "{refusal}");
+        assert_eq!(refusal["retryable"], false, "{refusal}");
         for (_, file, bytes) in &connected_files {
             assert_eq!(fs::read_to_string(file)?, *bytes);
         }

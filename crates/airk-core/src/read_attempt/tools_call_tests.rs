@@ -49,7 +49,7 @@ fn typed_budget(raw: &str) -> Result<ReadAttemptBudget> {
 }
 
 #[test]
-fn tools_call_attempt_none_retains_all_seven_literal_m3_messages() -> Result<()> {
+fn tools_call_attempt_none_retains_all_four_literal_m3_messages() -> Result<()> {
     let retained: Value = serde_json::from_str(RETAINED)?;
     let group = retained["variants"]
         .as_array()
@@ -58,7 +58,9 @@ fn tools_call_attempt_none_retains_all_seven_literal_m3_messages() -> Result<()>
         .find(|row| row["variant"] == "tools_call")
         .unwrap();
     let rows = group["methods"].as_array().unwrap();
-    assert_eq!(rows.len(), 7);
+    // Seven until the catalog and combined selections were removed with
+    // reviewed grants (change-log entry 68 part 3); their bytes are rejected.
+    assert_eq!(rows.len(), 4);
     for row in rows {
         let raw = row["bytes"].as_str().unwrap();
         let method: ControlMethod = serde_json::from_str(raw)?;

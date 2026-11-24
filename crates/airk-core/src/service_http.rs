@@ -1,10 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Inert loopback connection descriptions, never proof of native authority.
+use crate::identity::{Incarnation, Sha256Digest};
 pub use crate::service_records::LoopbackMcpUrl;
-use crate::{
-    identity::{Incarnation, Sha256Digest},
-    service::{CombinedConnectRequest, ScopedConnectRequest},
-};
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 
@@ -75,20 +72,13 @@ impl EndpointDescriptor {
     }
 }
 
-/// Existing reviewed grant selection, not a URL-derived or ambient workspace scope.
+/// The local agent session's open selection, not a URL-derived or ambient
+/// workspace scope.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum HttpSelection {
-    Scoped {
-        selection: ScopedConnectRequest,
-    },
-    Combined {
-        selection: CombinedConnectRequest,
-    },
     /// U105/U110: the open selection of the built-in local agent session.
-    Open {
-        selection: OpenHttpSelection,
-    },
+    Open { selection: OpenHttpSelection },
 }
 
 /// Open-read refusal codes (U105). Stable machine codes, no detail.
@@ -109,7 +99,7 @@ pub mod open_refusal {
 }
 
 /// U105: the open connection's namespace only. It names no index, grant or
-/// project; the service-stored default scope lives in the credential ledger.
+/// project.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OpenHttpSelection {
@@ -119,16 +109,12 @@ pub struct OpenHttpSelection {
 impl HttpSelection {
     pub fn validate(&self) -> Result<()> {
         match self {
-            Self::Scoped { selection } => selection.validate(),
-            Self::Combined { selection } => selection.validate(),
             Self::Open { .. } => Ok(()),
         }
     }
 
     pub fn namespace(&self) -> Incarnation {
         match self {
-            Self::Scoped { selection } => selection.namespace,
-            Self::Combined { selection } => selection.namespace,
             Self::Open { selection } => selection.namespace,
         }
     }

@@ -172,11 +172,6 @@ test('a deadline answers at once, sends cancel and keeps no reply for the caller
 
 test('evidence reads become `tools call` with the reviewed selection named explicitly', async () => {
     assert.deepEqual(selectionArguments({ project: 'ab'.repeat(32) }), ['--service-project', 'ab'.repeat(32)]);
-    assert.deepEqual(selectionArguments({ project: 'p', catalogSession: { kind: 'scoped' } }), ['--catalog-session', '{"kind":"scoped"}']);
-    const catalogue={kind:'catalog'},combined={kind:'combined'};
-    const binding=new AirkctlToolSession({closed:false} as never,{project:'p',catalogSession:catalogue,combinedSession:combined});
-    assert.deepEqual(binding.readScope(),combined,'retry capture follows the same combined-before-catalog selection precedence as dispatch');
-    assert.deepEqual(selectionArguments({catalogSession:catalogue,combinedSession:combined}),['--combined-session',JSON.stringify(combined)]);
 
     const seen: string[][] = [];
     const fakeSession = { closed: false, invoke: async (argv: string[]) => { seen.push(argv); return { exitCode: 0, class: 'success' as const, stdout: '{"content":[{"type":"text","text":"{}"}]}', stderr: '' }; } };

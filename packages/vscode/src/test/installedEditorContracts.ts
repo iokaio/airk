@@ -1,45 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /** External qualification driver only. Raw native replies remain authoritative. */
 import {strict as assert} from 'node:assert';
-import {validateCombinedCatalogSession} from '../catalogSession';
 import {materializeNativeMetadata} from '../nativeMetadata';
 import {readResultBody} from '../sourceVerification';
-import {sameHttpAuthority, validateHttpConnection} from '../serviceHttp';
-import {installedHttpIdentity,InstalledHttpFailure} from './installedEditorHttp';
+import {InstalledHttpFailure} from './installedEditorHttp';
 import {combinedRows} from '../explorerSearch';
-import {reviewCombinedScopeSelection} from '../scopeSelection';
 export class InstalledNativeReplyError extends Error {
     readonly code?:string;
     constructor(readonly reply:unknown,body?:any){super('Native MCP refused: '+JSON.stringify(reply));const code=body?.error?.code??body?.code??(reply as any)?.error?.data?.code;this.code=typeof code==='string'?code:undefined;}
-}
-/** Observe restoration only; this helper has no selection or mutation callback. */
-export async function installedRestoredDefinition(read:()=>Promise<any[]>,expected:any,retain:(observations:any[])=>Promise<unknown>,deadline:number,options:{now?:()=>number;pause?:(ms:number)=>Promise<void>}={}):Promise<any>{
-    const now=options.now??Date.now,pause=options.pause??(ms=>new Promise(resolve=>setTimeout(resolve,ms))),observations:any[]=[];
-    const until=Math.min(deadline,now()+90000),remaining=()=>{const left=until-now();assert.ok(Number.isSafeInteger(deadline)&&left>0,'Original restored definition deadline exhausted');return left;};
-    const bounded=async<T>(action:()=>Promise<T>):Promise<T>=>{
-        const timeout=remaining();let timer:ReturnType<typeof setTimeout>|undefined;
-        try{return await Promise.race([action(),new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(new Error('Original restored definition deadline exhausted')),timeout);})]);}
-        finally{if(timer!==undefined)clearTimeout(timer);}
-    };
-    try{
-        remaining();const original=validateCombinedCatalogSession(expected);
-        for(let attempt=1;attempt<=128;attempt++){
-            remaining();const definitions=await bounded(read);
-            const observed:any={observed_unix_ms:now(),count:Array.isArray(definitions)?definitions.length:null};observations.push(observed);remaining();
-            await retain(structuredClone(observations));remaining();assert.ok(Array.isArray(definitions),'Actual restored definitions array required');
-            assert.ok(definitions.length<=1,'Restored definition crossed the exact singleton');
-            if(definitions.length===1){
-                const definition=definitions[0],connection=validateHttpConnection(definition.nativeConnection);
-                assert.equal(connection.selection.kind,'combined');const selector=validateCombinedCatalogSession(connection.selection.selection);
-                observed.selector=structuredClone(selector);await retain(structuredClone(observations));remaining();
-                assert.ok(sameHttpAuthority({kind:'combined',selection:selector},{kind:'combined',selection:original}),'Restoration crossed the original immutable authority');
-                assert.ok(selector.expected_catalog_revision>=original.expected_catalog_revision,'Restored catalog clock cannot move backward');
-                return definition;
-            }
-            assert.ok(attempt<128,'Restored definition observation budget exhausted');
-            assert.ok(remaining()>250,'Original restored definition deadline exhausted');await pause(250);remaining();
-        }
-    }catch(error){try{await retain(structuredClone(observations));}catch(retention){if(error instanceof Error)error.cause??=retention;}throw error;}
 }
 /** Observe the accepted policy job; never replay Apply or grant preparation. */
 export async function installedPolicyReady(index:string,operation:any,read:()=>Promise<{policyStatus:any,indexDetail:any}>,retain:(observations:any[])=>Promise<unknown>,deadline:number):Promise<void>{
@@ -138,37 +106,6 @@ export async function installedSourceReview(index:string,review:()=>Promise<any>
         throw error;
     }
 }
-export function installedSelector(definition:any,result:any,selection:any):any{
-    const identity=installedHttpIdentity(definition),connection=validateHttpConnection(definition.nativeConnection);
-    assert.equal(identity.credentialId,connection.connection_id);assert.equal(identity.url,connection.endpoint.url);
-    assert.equal(connection.selection.kind,'combined');
-    const selector=validateCombinedCatalogSession(connection.selection.selection);
-    assert.equal(result.outcome.status,'search_scope_selected');
-    assert.deepEqual(result.outcome.selected,{index_ids:[],project_ids:[selection.project]},'Exact visible checkbox selection');
-    assert.equal(result.outcome.activation.selected_subset,true);
-    assert.ok(sameHttpAuthority({kind:'combined',selection:selector},{kind:'combined',selection:result.outcome.activation.selection.session}),'Complete native reviewed selection; only catalog clock may advance');
-    assert.deepEqual(selector.project_ids,[selection.project]);assert.equal(selector.grant_id,selection.grant);
-    if(selector.index_ids!==undefined)assert.deepEqual(selector.index_ids,[selection.index]);
-    // A whole index-set selector intentionally omits an index restriction.
-    // Prove its exact effective union using the complete native activation,
-    // rather than adding a restriction to the captured immutable selector.
-    const activation=result.outcome.activation,session=validateCombinedCatalogSession(activation.selection.session);
-    const choice={grant_id:session.grant_id,expected_grant_revision:session.expected_grant_revision,project_ids:session.project_ids,...(session.index_ids===undefined?{}:{index_ids:session.index_ids})};
-    assert.equal(activation.host_context?.status,'catalog_host_context');assert.equal(activation.grant_detail?.status,'catalog_detail');
-    assert.ok(Array.isArray(activation.index_details)&&activation.index_details.length===1);
-    for(const detail of activation.index_details)assert.equal(detail.status,'catalog_detail');
-    const reviewed=reviewCombinedScopeSelection(choice,activation.host_context.descriptor,activation.grant_detail.detail,activation.index_details.map((detail:any)=>detail.detail));
-    assert.deepEqual(reviewed.session,session);assert.deepEqual(reviewed.indexes,activation.selection.indexes);
-    assert.equal(reviewed.host,activation.selection.host);assert.equal(reviewed.semanticIdentity,activation.selection.semanticIdentity);
-    assert.deepEqual(reviewed.indexes.map(index=>index.id),[selection.index]);
-    assert.deepEqual(reviewed.indexes[0].backing,selection.backing,'Exact original fixture backing');
-    const frozen=activation.grant_detail.detail.item.value.grant.memberships;
-    assert.ok(Array.isArray(frozen)&&frozen.length===1,'Exact frozen fixture membership');
-    assert.equal(frozen[0].membership.project_id,selection.project);assert.equal(frozen[0].membership.index_id,selection.index);
-    assert.deepEqual(frozen[0].membership.scope.map((atom:any)=>({source_root_id:atom.source_root_id,kind:atom.kind,path:atom.path})).sort((a:any,b:any)=>a.source_root_id.localeCompare(b.source_root_id)),
-        selection.source_ids.map((source_root_id:string)=>({source_root_id,kind:'subtree',path:''})).sort((a:any,b:any)=>a.source_root_id.localeCompare(b.source_root_id)),'Original complete source-root scope');
-    return selector;
-}
 export function installedToolBody(wire:any,owner?:{tool:'airk_parse';request:any}):any{
     let bodyBytes=65536;
     if(owner!==undefined){
@@ -233,7 +170,7 @@ export function installedMember(raw:any,selection:any,denied=false):any{
     // cryptographic authentication. Untouched raw delivery stays in transport evidence.
     const value=materializeNativeMetadata(raw),scope:any=value.selection;
     assert.deepEqual(scope.project_ids,[selection.project]);assert.deepEqual(scope.index_ids,[selection.index]);
-    assert.equal(scope.grant_id,selection.grant);assert.equal(scope.grant_revision,selection.session.expected_grant_revision);
+    assert.deepEqual(scope.selection,selection.source,'Exact selection authority source');
     assert.equal(scope.member_availability,'report');assert.match(scope.identity,/^[a-f0-9]{64}$/);
     assert.ok(Array.isArray(value.members)&&value.members.length===1);
     const member:any=value.members[0];assert.equal(member.index_id,selection.index);assert.equal(member.allocation?.index_id,selection.index);
@@ -249,8 +186,7 @@ export function installedMember(raw:any,selection:any,denied=false):any{
     assert.equal(delivery.scope_identity,vector.authority,'Native delivery/vector domain');
     assert.ok(delivery.catalog_revision>=selection.session.expected_catalog_revision,'Delivery may advance catalog revision');
     const body:any=readResultBody(member.result),observed=body.scope_observation;
-    assert.equal(observed?.qualifier,'selected_subset');assert.equal(observed.provenance,'user_reviewed_project_grant');
-    assert.equal(observed.grant.id,selection.grant);assert.equal(observed.grant.revision,selection.session.expected_grant_revision);assert.match(observed.fingerprint,/^[a-f0-9]{64}$/);
+    assert.equal(observed?.qualifier,'selected_subset');assert.deepEqual(observed.selection,scope.selection,'Observation agrees with the selection source');assert.match(observed.fingerprint,/^[a-f0-9]{64}$/);
     assert.equal(observed.members.length,1);assert.equal(observed.members[0].index_id,selection.index);
     assert.deepEqual(observed.members[0].memberships.map((row:any)=>row.project_id),[selection.project]);
     if(denied){
@@ -278,19 +214,6 @@ export function installedRevocation(body:any,selector:any):void{
     assert.equal(body.error.retryable,false);assert.equal(body.error.query_replay_safe,false);
     assert.equal(body.requested_scope.confirmed,false);assert.deepEqual(body.requested_scope.selection,selector);
     for(const field of ['items','hits','evidence','result','members'])assert.equal(body[field],undefined);
-}
-/** Storage preferences may advance only the observed catalog clock. */
-export function installedDefinitionContinuity(beforeSafe:any,afterSafe:any):void{
-    const before=validateHttpConnection(beforeSafe.nativeConnection);
-    assert.equal(before.selection.kind,'combined');
-    const after=validateHttpConnection(afterSafe.nativeConnection,before.selection);
-    assert.equal(after.selection.kind,'combined');
-    const previousSelector=validateCombinedCatalogSession(before.selection.selection),currentSelector=validateCombinedCatalogSession(after.selection.selection);
-    assert.ok(currentSelector.expected_catalog_revision>=previousSelector.expected_catalog_revision,'Definition catalog clock cannot move backward');
-    const previous=structuredClone(beforeSafe),current=structuredClone(afterSafe);
-    delete previous.nativeConnection.selection.selection.expected_catalog_revision;
-    delete current.nativeConnection.selection.selection.expected_catalog_revision;
-    assert.deepEqual(current,previous,'Storage preference preserves the complete definition except its forward catalog clock');
 }
 export async function finishInstalledClient(client:{observations:unknown[];close():Promise<unknown>},evidence:any,persist:(name:string,value:unknown)=>Promise<unknown>):Promise<void>{
     const cohort:{transport:unknown[];cleanup?:unknown;cleanup_failure?:string}={transport:client.observations};evidence.native.push(cohort);let cleanup:unknown;

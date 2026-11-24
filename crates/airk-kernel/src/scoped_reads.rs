@@ -2,11 +2,10 @@
 //! Inert session authority; normal Kernel construction retains legacy reads.
 use crate::Kernel;
 use airk_core::{
-    grant_provenance::{GrantProvenance, PersistedGrant},
     identity::{Sha256Digest, framed_digest},
     index_catalog::{
-        CatalogRevision, IndexId, MAX_SELECTION, MAX_SOURCE_ROOTS, QueryProjectId, ReviewedGrant,
-        ScopeAtom, unique_bounded,
+        CatalogRevision, IndexId, MAX_SELECTION, MAX_SOURCE_ROOTS, QueryProjectId, ScopeAtom,
+        unique_bounded,
     },
     scoped_reads::{
         CompiledPathAtom, CompiledReadScope, CompiledSourceAtom, ScopeReadRefused,
@@ -53,169 +52,7 @@ fn full_index_metadata_allowed(
         && scope.covers_sources(primary, aliases)
 }
 
-/// Validated by the native host against live catalog/policy before admission.
-/// This frozen payload alone is neither a bearer credential nor live authority.
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ScopedReadAuthority {
-    pub schema: u32,
-    pub backing: airk_core::service::ProjectBinding,
-    pub index_id: IndexId,
-    pub project_ids: Vec<QueryProjectId>,
-    pub grant: ReviewedGrant,
-    pub provenance: GrantProvenance,
-    pub sources: Vec<SourceDescriptor>,
-}
-impl ScopedReadAuthority {
-    fn observation(
-        &self,
-        fingerprint: Sha256Digest,
-    ) -> Result<airk_core::scoped_reads::ScopeObservation> {
-        use airk_core::scoped_reads::*;
-        let selected = self
-            .grant
-            .memberships
-            .iter()
-            .filter(|member| {
-                member.membership.index_id == self.index_id
-                    && self.project_ids.contains(&member.membership.project_id)
-            })
-            .collect::<Vec<_>>();
-        let first = selected.first().ok_or(ScopeReadRefused)?;
-        let mut memberships = selected
-            .iter()
-            .map(|member| ScopeMembershipObservation {
-                project_id: member.membership.project_id,
-                membership_revision: member.membership.revision,
-            })
-            .collect::<Vec<_>>();
-        memberships.sort_by_key(|member| member.project_id);
-        let mut source_root_ids = self
-            .sources
-            .iter()
-            .map(|source| source.source_root_id)
-            .collect::<Vec<_>>();
-        source_root_ids.sort();
-        let observation = ScopeObservation {
-            schema: 1,
-            qualifier: ScopeQualifier::SelectedSubset,
-            fingerprint,
-            provenance: Some(self.provenance.kind()),
-            grant: Some(ScopeGrantObservation {
-                id: self.grant.id,
-                revision: self.grant.revision,
-            }),
-            selection: None,
-            members: vec![ScopeMemberObservation {
-                index_id: self.index_id,
-                memberships,
-                source_root_ids,
-                source_revision: first.source_revision,
-                policy_epoch: first.policy_epoch,
-                policy_digest: first.policy_digest,
-            }],
-        };
-        observation.validate()?;
-        Ok(observation)
-    }
-    pub fn validate(&self) -> Result<()> {
-        ensure!(self.schema == 1 && !self.grant.revoked, ScopeReadRefused);
-        PersistedGrant {
-            grant: self.grant.clone(),
-            provenance: self.provenance.clone(),
-        }
-        .validate()?;
-        unique_bounded(&self.project_ids, MAX_SELECTION)?;
-        ensure!(
-            !self.project_ids.is_empty() && self.sources.len() <= MAX_SOURCE_ROOTS,
-            ScopeReadRefused
-        );
-        let mut ids = BTreeSet::new();
-        let mut roots = BTreeSet::new();
-        for source in &self.sources {
-            ensure!(
-                ids.insert(source.source_root_id)
-                    && roots.insert(&source.original_root)
-                    && source.original_root.len() <= 4096
-                    && std::path::Path::new(&source.original_root).is_absolute(),
-                ScopeReadRefused
-            );
-        }
-        let mut selected = Vec::new();
-        let mut used_sources = BTreeSet::new();
-        for project in &self.project_ids {
-            let member = self
-                .grant
-                .memberships
-                .iter()
-                .find(|m| {
-                    m.membership.index_id == self.index_id && m.membership.project_id == *project
-                })
-                .ok_or(ScopeReadRefused)?;
-            ensure!(
-                member
-                    .membership
-                    .scope
-                    .iter()
-                    .all(|a| ids.contains(&a.source_root_id)),
-                ScopeReadRefused
-            );
-            used_sources.extend(
-                member
-                    .membership
-                    .scope
-                    .iter()
-                    .map(|atom| atom.source_root_id),
-            );
-            selected.push(member);
-        }
-        ensure!(ids == used_sources, ScopeReadRefused);
-        if let Some(first) = selected.first() {
-            ensure!(
-                selected
-                    .iter()
-                    .all(|m| m.source_revision == first.source_revision
-                        && m.policy_epoch == first.policy_epoch
-                        && m.policy_digest == first.policy_digest),
-                ScopeReadRefused
-            );
-        }
-        airk_core::index_catalog::encoded_size(self, MAX_SCOPED_AUTHORITY_BYTES)?;
-        Ok(())
-    }
-    pub fn fingerprint(&self) -> Result<Sha256Digest> {
-        self.validate()?;
-        Ok(framed_digest(
-            b"airk/scoped-read-authority/1",
-            &[&serde_json::to_vec(self)?],
-        ))
-    }
-    fn compile(
-        &self,
-        primary: &str,
-        aliases: &BTreeMap<String, String>,
-    ) -> Result<CompiledReadScope> {
-        let fingerprint = self.fingerprint()?;
-        compile_atoms(
-            fingerprint,
-            &self.sources,
-            self.selected_memberships()
-                .flat_map(|member| member.membership.scope.iter()),
-            primary,
-            aliases,
-        )
-    }
-    fn selected_memberships(
-        &self,
-    ) -> impl Iterator<Item = &airk_core::index_catalog::GrantedMembership> {
-        self.grant.memberships.iter().filter(|member| {
-            member.membership.index_id == self.index_id
-                && self.project_ids.contains(&member.membership.project_id)
-        })
-    }
-}
-
-/// One compiler for both authority sources: the same atoms give the same
+/// One compiler for every authority source: the same atoms give the same
 /// path, source and alias predicates; only the fingerprint differs.
 fn compile_atoms<'a>(
     fingerprint: Sha256Digest,
@@ -387,8 +224,7 @@ impl SelectionReadAuthority {
         self.validate()?;
         self.digest()
     }
-    /// The domain differs from the catalog authority's, so a selection
-    /// fingerprint never equals a catalog one for the same bytes.
+    /// Its own domain: never equal to an open read's fingerprint.
     fn digest(&self) -> Result<Sha256Digest> {
         Ok(framed_digest(
             b"airk/scoped-read-authority/selection/1",
@@ -435,9 +271,7 @@ impl SelectionReadAuthority {
             schema: 1,
             qualifier: ScopeQualifier::SelectedSubset,
             fingerprint,
-            provenance: None,
-            grant: None,
-            selection: Some(self.selection.observation()),
+            selection: self.selection.observation(),
             members: vec![ScopeMemberObservation {
                 index_id: self.index_id,
                 memberships,
@@ -501,7 +335,7 @@ impl OpenReadAuthority {
         self.validate()?;
         self.digest()
     }
-    /// Its own domain: never equal to a catalog or selection fingerprint.
+    /// Its own domain: never equal to a selection fingerprint.
     fn digest(&self) -> Result<Sha256Digest> {
         Ok(framed_digest(
             b"airk/scoped-read-authority/open/1",
@@ -542,9 +376,7 @@ impl OpenReadAuthority {
             schema: 1,
             qualifier: ScopeQualifier::SelectedSubset,
             fingerprint,
-            provenance: None,
-            grant: None,
-            selection: Some(self.selection.observation()),
+            selection: self.selection.observation(),
             members: vec![ScopeMemberObservation {
                 index_id: self.index_id,
                 memberships: Vec::new(),
@@ -562,35 +394,30 @@ impl OpenReadAuthority {
 /// The installed authority source. Every reader goes through these accessors,
 /// so path, source and alias checks, fences and annotation are shared code.
 enum Authority {
-    Catalog(ScopedReadAuthority),
     Selection(SelectionReadAuthority),
     Open(OpenReadAuthority),
 }
 impl Authority {
     fn backing(&self) -> airk_core::service::ProjectBinding {
         match self {
-            Self::Catalog(authority) => authority.backing,
             Self::Selection(authority) => authority.backing,
             Self::Open(authority) => authority.backing,
         }
     }
     fn index_id(&self) -> IndexId {
         match self {
-            Self::Catalog(authority) => authority.index_id,
             Self::Selection(authority) => authority.index_id,
             Self::Open(authority) => authority.index_id,
         }
     }
     fn sources(&self) -> &[SourceDescriptor] {
         match self {
-            Self::Catalog(authority) => &authority.sources,
             Self::Selection(authority) => &authority.sources,
             Self::Open(authority) => &authority.sources,
         }
     }
     fn fingerprint(&self) -> Result<Sha256Digest> {
         match self {
-            Self::Catalog(authority) => authority.fingerprint(),
             Self::Selection(authority) => authority.fingerprint(),
             Self::Open(authority) => authority.fingerprint(),
         }
@@ -600,7 +427,6 @@ impl Authority {
         fingerprint: Sha256Digest,
     ) -> Result<airk_core::scoped_reads::ScopeObservation> {
         match self {
-            Self::Catalog(authority) => authority.observation(fingerprint),
             Self::Selection(authority) => authority.observation(fingerprint),
             Self::Open(authority) => authority.observation(fingerprint),
         }
@@ -611,7 +437,6 @@ impl Authority {
         aliases: &BTreeMap<String, String>,
     ) -> Result<CompiledReadScope> {
         match self {
-            Self::Catalog(authority) => authority.compile(primary, aliases),
             Self::Selection(authority) => authority.compile(primary, aliases),
             Self::Open(authority) => authority.compile(primary, aliases),
         }
@@ -619,9 +444,6 @@ impl Authority {
     /// Every selected membership is bound to exactly this source policy.
     fn policy_matches(&self, epoch: u64, digest: Option<Sha256Digest>) -> bool {
         match self {
-            Self::Catalog(authority) => authority
-                .selected_memberships()
-                .all(|member| member.policy_epoch == epoch && member.policy_digest == digest),
             Self::Selection(authority) => {
                 authority.policy_epoch == epoch && authority.policy_digest == digest
             }
@@ -637,17 +459,6 @@ impl Authority {
         path: &str,
     ) -> Vec<QueryProjectId> {
         let mut projects = match self {
-            Self::Catalog(authority) => authority
-                .selected_memberships()
-                .filter(|member| {
-                    member
-                        .membership
-                        .scope
-                        .iter()
-                        .any(|atom| atom.matches_canonical(source, path))
-                })
-                .map(|member| member.membership.project_id)
-                .collect::<Vec<_>>(),
             Self::Selection(authority) => authority
                 .atoms
                 .iter()
@@ -1047,14 +858,10 @@ impl Kernel {
             publication,
         })
     }
-    /// Constructs a separate immutable session; the administrative Kernel is untouched.
-    /// Activation and live grant checks remain the native host's responsibility.
-    pub fn with_scoped_reads(&self, authority: ScopedReadAuthority) -> Result<Self> {
-        self.with_authority(Authority::Catalog(authority))
-    }
-    /// The same separate immutable session for an in-memory W4/A2 selection
-    /// grant. The owning plane's re-check and native admission remain the
-    /// host's responsibility; this frozen payload grants nothing by itself.
+    /// Constructs a separate immutable session for an in-memory W4/A2
+    /// selection; the administrative Kernel is untouched. The owning plane's
+    /// re-check and native admission remain the host's responsibility; this
+    /// frozen payload grants nothing by itself.
     pub fn with_selection_reads(&self, authority: SelectionReadAuthority) -> Result<Self> {
         self.with_authority(Authority::Selection(authority))
     }
@@ -1287,7 +1094,7 @@ mod tests {
             kernel.collection.clone(),
         )?
         .binding;
-        let scoped = kernel.with_scoped_reads(authority)?;
+        let scoped = kernel.with_selection_reads(authority)?;
         let before = serde_json::json!({"publication":{"token":"original-token"},"read":{"validator":"original-validator"},"paths":["public/a.rs"]});
         let mut legacy = before.clone();
         kernel.annotate_scoped_read(&mut legacy)?;
@@ -1367,7 +1174,7 @@ mod tests {
             kernel.collection.clone(),
         )?
         .binding;
-        let scoped = kernel.with_scoped_reads(authority)?;
+        let scoped = kernel.with_selection_reads(authority)?;
         kernel.add_root("pending", &pending)?;
         std::fs::remove_dir(&pending)?;
         assert!(
@@ -1482,7 +1289,7 @@ mod tests {
             admin.collection.clone(),
         )?
         .binding;
-        let full = admin.with_scoped_reads(authority.clone())?;
+        let full = admin.with_selection_reads(authority.clone())?;
         assert!(!full.current_reader()?.restricts_paths());
         assert_eq!(full.status_summary()?["files"], 1);
         assert_eq!(full.status()?.files, 1);
@@ -1515,8 +1322,8 @@ mod tests {
             result.semantic_readiness.is_some() && result.discovery_readiness.is_some(),
             "full search carries exact-reader metadata, so rendering needs no observation reader"
         );
-        authority.grant.memberships[0].membership.scope[0].path = "public".into();
-        let subset = admin.with_scoped_reads(authority)?;
+        authority.atoms[0].1.path = "public".into();
+        let subset = admin.with_selection_reads(authority)?;
         assert!(subset.current_reader()?.restricts_paths());
         let result = subset.search(&query)?;
         assert!(result.semantic_readiness.is_none() && result.discovery_readiness.is_none());
@@ -1618,9 +1425,9 @@ mod tests {
         let application = bound.apply_source_policy(&policy, Incarnation::from_bytes([92; 16]))?;
         assert_eq!(application.removed_artifacts, 1);
         assert!(application.removal_publication.is_some());
-        authority.grant.memberships[0].policy_epoch = policy.epoch.get();
-        authority.grant.memberships[0].policy_digest = Some(policy.identity()?);
-        let full = bound.with_scoped_reads(authority.clone())?;
+        authority.policy_epoch = policy.epoch.get();
+        authority.policy_digest = Some(policy.identity()?);
+        let full = bound.with_selection_reads(authority.clone())?;
         let read = full.current_reader()?;
         assert!(
             read.restricts_paths(),
@@ -1666,8 +1473,8 @@ mod tests {
                 .any(|path| path.starts_with("private/"))
         );
         let mut subset_authority = authority.clone();
-        subset_authority.grant.memberships[0].membership.scope[0].path = "public".into();
-        let subset = bound.with_scoped_reads(subset_authority)?;
+        subset_authority.atoms[0].1.path = "public".into();
+        let subset = bound.with_selection_reads(subset_authority)?;
         assert!(subset.current_reader()?.selected_scope_restricts_paths());
         assert!(
             subset
@@ -1680,11 +1487,11 @@ mod tests {
         assert!(result.semantic_readiness.is_none() && result.discovery_readiness.is_none());
         assert!(subset.readiness_observation(token)?.is_none());
         let mut stale = authority;
-        stale.grant.memberships[0].policy_epoch = 0;
-        stale.grant.memberships[0].policy_digest = None;
+        stale.policy_epoch = 0;
+        stale.policy_digest = None;
         assert!(
             bound
-                .with_scoped_reads(stale)?
+                .with_selection_reads(stale)?
                 .status_summary()
                 .unwrap_err()
                 .is::<ScopeReadRefused>()
@@ -1727,15 +1534,15 @@ mod tests {
             source_root_id: source,
             original_root: original_roots["old"].clone(),
         });
-        authority.grant.memberships[0]
-            .membership
-            .scope
-            .push(ScopeAtom {
+        authority.atoms.push((
+            authority.project_ids[0],
+            ScopeAtom {
                 source_root_id: source,
                 kind: PathScope::Exact,
                 path: "allowed.rs".into(),
-            });
-        let scoped = admin.with_scoped_reads(authority)?;
+            },
+        ));
+        let scoped = admin.with_selection_reads(authority)?;
         let token = crate::current::runtime::revision(admin.current_reader()?.token()?);
         let initial = scoped.scoped_source_projection(backing, token)?;
         assert_eq!(initial.sources.len(), 2);
@@ -1788,41 +1595,39 @@ mod tests {
         );
         Ok(())
     }
-    fn fixture(root: &str) -> ScopedReadAuthority {
+    /// A window selection of one project over the whole of one source.
+    fn fixture(root: &str) -> SelectionReadAuthority {
         let project = QueryProjectId::from_identity(Incarnation::from_bytes([1; 16]));
         let index = IndexId::from_identity(Incarnation::from_bytes([2; 16]));
         let source = SourceRootId::from_identity(Incarnation::from_bytes([3; 16]));
-        ScopedReadAuthority {
+        SelectionReadAuthority {
             schema: 1,
             backing: Sha256Digest::from_bytes([6; 32]),
             index_id: index,
             project_ids: vec![project],
-            provenance: GrantProvenance::UserReviewedProjectGrant,
-            grant: ReviewedGrant {
-                id: GrantId::from_identity(Incarnation::from_bytes([4; 16])),
-                host: Sha256Digest::from_bytes([5; 32]),
-                revision: CatalogRevision::INITIAL,
-                revoked: false,
-                memberships: vec![GrantedMembership {
-                    membership: Membership {
-                        project_id: project,
-                        index_id: index,
-                        revision: CatalogRevision::INITIAL,
-                        scope: vec![ScopeAtom {
-                            source_root_id: source,
-                            kind: PathScope::Subtree,
-                            path: String::new(),
-                        }],
-                    },
-                    source_revision: CatalogRevision::INITIAL,
-                    policy_epoch: 0,
-                    policy_digest: None,
-                }],
+            selection: SelectionScopeRef {
+                owner: airk_core::scoped_reads::SelectionOwnerKind::Window,
+                grant_nonce: Incarnation::from_bytes([10; 16]),
+                service_instance: Incarnation::from_bytes([11; 16]),
+                scope_identity: Sha256Digest::from_bytes([12; 32]),
+                catalog_revision: CatalogRevision::try_from(5_u64).unwrap(),
             },
+            atoms: vec![(
+                project,
+                ScopeAtom {
+                    source_root_id: source,
+                    kind: PathScope::Subtree,
+                    path: String::new(),
+                },
+            )],
             sources: vec![SourceDescriptor {
                 source_root_id: source,
                 original_root: root.into(),
             }],
+            membership_revisions: vec![(project, CatalogRevision::INITIAL)],
+            source_revision: CatalogRevision::INITIAL,
+            policy_epoch: 0,
+            policy_digest: None,
         }
     }
     #[test]
@@ -1839,11 +1644,9 @@ mod tests {
         let published = BTreeMap::from([("external".into(), "other-root".into())]);
         let primary = authority.compile(original, &published)?;
         assert!(!primary.allows_path("@external/private.rs"));
-        authority.grant.memberships[0].membership.scope[0].path = "@external/private.rs".into();
+        authority.atoms[0].1.path = "@external/private.rs".into();
         assert!(authority.compile(original, &published).is_err());
-        authority.grant.memberships[0].membership.scope[0]
-            .path
-            .clear();
+        authority.atoms[0].1.path.clear();
         let aliases = BTreeMap::from([("docs".into(), original.into())]);
         let aliased = authority.compile("different-primary", &aliases)?;
         assert!(aliased.allows_path("@docs/lib.rs"));
@@ -1853,76 +1656,28 @@ mod tests {
                 .compile("different-primary", &BTreeMap::new())
                 .is_err()
         );
-        authority.grant.memberships[0].membership.scope[0].kind = PathScope::Exact;
-        authority.grant.memberships[0].membership.scope[0].path = "one.rs".into();
+        authority.atoms[0].1.kind = PathScope::Exact;
+        authority.atoms[0].1.path = "one.rs".into();
         let exact = authority.compile(original, &BTreeMap::new())?;
         assert!(exact.allows_path("one.rs"));
         assert!(!exact.allows_path("one.rs/child"));
         let before = authority.fingerprint()?;
-        authority.grant.revision = authority.grant.revision.next()?;
+        authority.selection.catalog_revision = CatalogRevision::try_from(6_u64)?;
         assert_ne!(before, authority.fingerprint()?);
         let before = authority.fingerprint()?;
-        authority.grant.memberships[0].membership.revision = CatalogRevision::INITIAL.next()?;
+        authority.membership_revisions[0].1 = CatalogRevision::INITIAL.next()?;
         assert_ne!(before, authority.fingerprint()?);
         let before = authority.fingerprint()?;
-        authority.grant.memberships[0].source_revision = CatalogRevision::INITIAL.next()?;
+        authority.source_revision = CatalogRevision::INITIAL.next()?;
         assert_ne!(before, authority.fingerprint()?);
         let before = authority.fingerprint()?;
-        authority.grant.memberships[0].policy_epoch = 1;
-        authority.grant.memberships[0].policy_digest = Some(Sha256Digest::from_bytes([7; 32]));
+        authority.policy_epoch = 1;
+        authority.policy_digest = Some(Sha256Digest::from_bytes([7; 32]));
         assert_ne!(before, authority.fingerprint()?);
-        authority.grant.memberships[0].membership.scope.clear();
+        // A read project without atoms is never a selection read.
+        authority.atoms.clear();
         authority.sources.clear();
-        assert!(
-            !authority
-                .compile(original, &BTreeMap::new())?
-                .allows_path("one.rs")
-        );
-        Ok(())
-    }
-    #[test]
-    fn authority_provenance_is_validated_fingerprinted_and_compactly_observed() -> Result<()> {
-        use airk_core::grant_provenance::{GrantProvenanceKind, native_imported_grant_id};
-        let dir = tempfile::tempdir()?;
-        let mut authority = fixture(dir.path().to_str().unwrap());
-        let reviewed = authority.fingerprint()?;
-        assert_eq!(
-            authority.observation(reviewed)?.provenance,
-            Some(GrantProvenanceKind::UserReviewedProjectGrant)
-        );
-        authority.provenance = GrantProvenance::ImportedLegacySnapshot {
-            upgrade_id: Incarnation::from_bytes([8; 16]),
-            plan_digest: Sha256Digest::from_bytes([9; 32]),
-            legacy_binding: authority.backing,
-            configuration_digest: Sha256Digest::from_bytes([10; 32]),
-        };
-        assert!(authority.validate().is_err());
-        authority.grant.id = native_imported_grant_id(
-            Incarnation::from_bytes([11; 16]),
-            authority.grant.host,
-            &authority.provenance,
-        )?;
-        let imported = authority.fingerprint()?;
-        assert_ne!(reviewed, imported);
-        let observation = authority.observation(imported)?;
-        assert_eq!(
-            observation.provenance,
-            Some(GrantProvenanceKind::ImportedLegacySnapshot)
-        );
-        let value = serde_json::to_value(observation)?;
-        assert_eq!(value["provenance"], "imported_legacy_snapshot");
-        assert!(!serde_json::to_string(&value)?.contains("configuration_digest"));
-        if let GrantProvenance::ImportedLegacySnapshot {
-            configuration_digest,
-            ..
-        } = &mut authority.provenance
-        {
-            *configuration_digest = Sha256Digest::from_bytes([12; 32]);
-        }
-        assert_ne!(imported, authority.fingerprint()?);
-        authority.grant.memberships[0].policy_epoch = 1;
-        authority.grant.memberships[0].policy_digest = Some(Sha256Digest::from_bytes([7; 32]));
-        assert!(authority.validate().is_err());
+        assert!(authority.compile(original, &BTreeMap::new()).is_err());
         Ok(())
     }
     #[test]
@@ -1930,11 +1685,17 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let mut authority = fixture(dir.path().to_str().unwrap());
         let source = authority.sources[0].source_root_id;
-        authority.grant.memberships[0].membership.scope = (0..32)
-            .map(|index| ScopeAtom {
-                source_root_id: source,
-                kind: PathScope::Exact,
-                path: format!("{index}/{}", "x".repeat(2000)),
+        let project = authority.project_ids[0];
+        authority.atoms = (0..32)
+            .map(|index| {
+                (
+                    project,
+                    ScopeAtom {
+                        source_root_id: source,
+                        kind: PathScope::Exact,
+                        path: format!("{index}/{}", "x".repeat(2000)),
+                    },
+                )
             })
             .collect();
         assert!(authority.validate().is_err());
@@ -1947,14 +1708,14 @@ mod tests {
         std::fs::create_dir(&root)?;
         let admin = Kernel::open(&root, Some(dir.path().join("data")))?;
         let mut authority = fixture(root.to_str().unwrap());
-        assert!(admin.with_scoped_reads(authority.clone()).is_err());
+        assert!(admin.with_selection_reads(authority.clone()).is_err());
         authority.backing = airk_core::service::ProjectRegistration::new(
             admin.root_id(),
             admin.data_root.to_str().unwrap().into(),
             admin.collection.clone(),
         )?
         .binding;
-        let session = admin.with_scoped_reads(authority)?;
+        let session = admin.with_selection_reads(authority)?;
         assert!(admin.require_unrestricted_read().is_ok());
         assert!(
             session
@@ -1964,7 +1725,7 @@ mod tests {
         );
         assert!(
             session
-                .with_scoped_reads(fixture(root.to_str().unwrap()))
+                .with_selection_reads(fixture(root.to_str().unwrap()))
                 .is_err()
         );
         let clone = session.clone();
@@ -1978,35 +1739,8 @@ mod tests {
         assert_eq!(admin.scoped_read_fingerprint()?, None);
         Ok(())
     }
-    fn selection_from(catalog: &ScopedReadAuthority) -> SelectionReadAuthority {
-        let member = &catalog.grant.memberships[0];
-        SelectionReadAuthority {
-            schema: 1,
-            backing: catalog.backing,
-            index_id: catalog.index_id,
-            project_ids: catalog.project_ids.clone(),
-            selection: SelectionScopeRef {
-                owner: airk_core::scoped_reads::SelectionOwnerKind::Window,
-                grant_nonce: Incarnation::from_bytes([10; 16]),
-                service_instance: Incarnation::from_bytes([11; 16]),
-                scope_identity: Sha256Digest::from_bytes([12; 32]),
-                catalog_revision: CatalogRevision::try_from(5_u64).unwrap(),
-            },
-            atoms: member
-                .membership
-                .scope
-                .iter()
-                .map(|atom| (member.membership.project_id, atom.clone()))
-                .collect(),
-            sources: catalog.sources.clone(),
-            membership_revisions: vec![(member.membership.project_id, member.membership.revision)],
-            source_revision: member.source_revision,
-            policy_epoch: member.policy_epoch,
-            policy_digest: member.policy_digest,
-        }
-    }
     fn selection_fixture(root: &str) -> SelectionReadAuthority {
-        selection_from(&fixture(root))
+        fixture(root)
     }
     #[test]
     fn selection_authority_validation_mirrors_the_catalog_rules() -> Result<()> {
@@ -2170,6 +1904,7 @@ mod tests {
         assert_eq!(serde_json::to_string(&authority)?, bytes);
         let expected: Sha256Digest = case["fingerprint"].as_str().unwrap().parse()?;
         assert_eq!(authority.digest()?, expected);
+        // The removed catalog-grant domain never collides with it.
         let catalog_domain: Sha256Digest =
             case["catalog_domain_digest"].as_str().unwrap().parse()?;
         assert_eq!(
@@ -2182,38 +1917,36 @@ mod tests {
         assert_eq!(live.fingerprint()?, live.digest()?);
         Ok(())
     }
+    /// A selection and an open read over the same whole-source atoms compile
+    /// to the same predicates; only the fingerprint differs.
     #[test]
-    fn selection_compile_equals_catalog_compile_for_the_same_atoms() -> Result<()> {
+    fn selection_compile_equals_open_compile_for_the_same_atoms() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let original = dir.path().to_str().unwrap();
-        let mut catalog = fixture(original);
-        let source = catalog.sources[0].source_root_id;
-        catalog.grant.memberships[0].membership.scope = vec![
-            ScopeAtom {
-                source_root_id: source,
-                kind: PathScope::Exact,
-                path: "one.rs".into(),
+        let selection = fixture(original);
+        let open = OpenReadAuthority {
+            schema: 1,
+            backing: selection.backing,
+            index_id: selection.index_id,
+            selection: SelectionScopeRef {
+                owner: airk_core::scoped_reads::SelectionOwnerKind::Agent,
+                ..selection.selection
             },
-            ScopeAtom {
-                source_root_id: source,
-                kind: PathScope::Subtree,
-                path: "public".into(),
-            },
-        ];
-        let selection = selection_from(&catalog);
+            sources: selection.sources.clone(),
+            source_revision: selection.source_revision,
+            policy_epoch: selection.policy_epoch,
+            policy_digest: selection.policy_digest,
+        };
         let aliased = BTreeMap::from([("docs".to_string(), original.to_string())]);
         for (primary, aliases) in [(original, BTreeMap::new()), ("different-primary", aliased)] {
-            let from_catalog = catalog.compile(primary, &aliases)?;
+            let from_open = open.compile(primary, &aliases)?;
             let from_selection = selection.compile(primary, &aliases)?;
-            assert_eq!(from_selection.atoms, from_catalog.atoms);
-            assert_eq!(from_selection.source_atoms, from_catalog.source_atoms);
-            assert_eq!(
-                from_selection.external_aliases,
-                from_catalog.external_aliases
-            );
-            assert_eq!(from_catalog.fingerprint, catalog.fingerprint()?);
+            assert_eq!(from_selection.atoms, from_open.atoms);
+            assert_eq!(from_selection.source_atoms, from_open.source_atoms);
+            assert_eq!(from_selection.external_aliases, from_open.external_aliases);
+            assert_eq!(from_open.fingerprint, open.fingerprint()?);
             assert_eq!(from_selection.fingerprint, selection.fingerprint()?);
-            assert_ne!(from_selection.fingerprint, from_catalog.fingerprint);
+            assert_ne!(from_selection.fingerprint, from_open.fingerprint);
         }
         assert!(
             selection
@@ -2228,12 +1961,7 @@ mod tests {
         let root = dir.path().to_str().unwrap();
         let authority = selection_fixture(root);
         let observation = authority.observation(authority.fingerprint()?)?;
-        assert_eq!(observation.provenance, None);
-        assert_eq!(observation.grant, None);
-        assert_eq!(
-            observation.selection,
-            Some(authority.selection.observation())
-        );
+        assert_eq!(observation.selection, authority.selection.observation());
         assert_eq!(observation.members.len(), 1);
         assert_eq!(observation.members[0].index_id, authority.index_id);
         assert_eq!(
@@ -2252,10 +1980,6 @@ mod tests {
             "the nonce never leaves the service"
         );
         assert!(!text.contains(&"0b".repeat(16)));
-        let catalog = fixture(root);
-        let catalog_value = serde_json::to_value(catalog.observation(catalog.fingerprint()?)?)?;
-        assert!(catalog_value.get("selection").is_none());
-        assert_eq!(catalog_value["provenance"], "user_reviewed_project_grant");
         Ok(())
     }
     #[test]
@@ -2558,9 +2282,9 @@ mod tests {
             admin.collection.clone(),
         )?
         .binding;
-        partial.grant.memberships[0].membership.scope[0].path = "partial".into();
+        partial.atoms[0].1.path = "partial".into();
         let error = admin
-            .with_scoped_reads(partial)?
+            .with_selection_reads(partial)?
             .status_summary()
             .unwrap_err();
         assert!(error.is::<ScopeReadRefused>());
@@ -2594,7 +2318,7 @@ mod tests {
         })
     }
     /// The whole primary plus `allowed.rs` of the root at `original_root`.
-    fn with_external(admin: &Kernel, original_root: String) -> Result<ScopedReadAuthority> {
+    fn with_external(admin: &Kernel, original_root: String) -> Result<SelectionReadAuthority> {
         let mut authority = fixture(&admin.root_id());
         authority.backing = airk_core::service::ProjectRegistration::new(
             admin.root_id(),
@@ -2607,24 +2331,23 @@ mod tests {
             source_root_id: source,
             original_root,
         });
-        authority.grant.memberships[0]
-            .membership
-            .scope
-            .push(ScopeAtom {
+        authority.atoms.push((
+            authority.project_ids[0],
+            ScopeAtom {
                 source_root_id: source,
                 kind: PathScope::Exact,
                 path: "allowed.rs".into(),
-            });
+            },
+        ));
         Ok(authority)
     }
     /// The whole primary and the whole root at `original_root`.
-    fn with_whole_external(admin: &Kernel, original_root: String) -> Result<ScopedReadAuthority> {
+    fn with_whole_external(
+        admin: &Kernel,
+        original_root: String,
+    ) -> Result<SelectionReadAuthority> {
         let mut authority = with_external(admin, original_root)?;
-        let atom = authority.grant.memberships[0]
-            .membership
-            .scope
-            .last_mut()
-            .expect("the external atom");
+        let (_, atom) = authority.atoms.last_mut().expect("the external atom");
         atom.kind = PathScope::Subtree;
         atom.path = String::new();
         Ok(authority)
@@ -2643,13 +2366,13 @@ mod tests {
         admin.index()?;
         admin.add_root("docs", &roots.external)?;
         let configured = admin.configured_roots()?["docs"].clone();
-        let scoped = admin.with_scoped_reads(with_external(admin, configured)?)?;
+        let scoped = admin.with_selection_reads(with_external(admin, configured)?)?;
         let error = scoped.status_summary().unwrap_err();
         assert!(!error.is::<ScopeReadRefused>(), "{error:#}");
         assert_eq!(hint_code(&error), Some("scope_reconcile_pending"));
         let hint = crate::retrieval_retry::read_retry_hint(&error).unwrap();
         assert!(hint.retryable && hint.action == "repeat_same_request");
-        let foreign = admin.with_scoped_reads(with_external(
+        let foreign = admin.with_selection_reads(with_external(
             admin,
             roots
                 ._directory
@@ -2678,7 +2401,7 @@ mod tests {
         admin.index()?;
         admin.add_root("docs", &roots.external)?;
         let configured = admin.configured_roots()?["docs"].clone();
-        let whole = admin.with_scoped_reads(with_whole_external(admin, configured)?)?;
+        let whole = admin.with_selection_reads(with_whole_external(admin, configured)?)?;
         let backing = whole.read_scope.as_ref().unwrap().authority.backing();
         for view in [
             ScopedIndexMetadataView::VectorStatus,
@@ -2709,7 +2432,7 @@ mod tests {
         )?
         .binding;
         let backing = authority.backing;
-        let scoped = admin.with_scoped_reads(authority)?;
+        let scoped = admin.with_selection_reads(authority)?;
         scoped.scoped_index_metadata(backing, ScopedIndexMetadataView::VectorStatus)?;
         admin.add_root("docs", &roots.external)?;
         for published in [false, true] {
@@ -2742,7 +2465,7 @@ mod tests {
             )?
             .binding;
             let backing = authority.backing;
-            let scoped = admin.with_scoped_reads(authority)?;
+            let scoped = admin.with_selection_reads(authority)?;
             let observed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
             let counter = observed.clone();
             let primary = roots._directory.path().join("primary");
@@ -2798,7 +2521,7 @@ mod tests {
         )?
         .binding;
         let backing = authority.backing;
-        let scoped = admin.with_scoped_reads(authority)?;
+        let scoped = admin.with_selection_reads(authority)?;
         let token = crate::current::runtime::revision(admin.current_reader()?.token()?);
         scoped.scoped_source_projection(backing, token)?;
         std::fs::write(
@@ -2856,11 +2579,11 @@ mod tests {
                 .install_initial_lexical_manifest(&head.token()?, &lexical.canonical_bytes()?)?;
         }
         let configured = admin.configured_roots()?["docs"].clone();
-        let multi = admin.with_scoped_reads(with_external(admin, configured)?)?;
+        let multi = admin.with_selection_reads(with_external(admin, configured)?)?;
         let error = multi.status_summary().unwrap_err();
         assert!(!error.is::<ScopeReadRefused>(), "{error:#}");
         assert_eq!(hint_code(&error), Some("publication_busy"));
-        let foreign = admin.with_scoped_reads(with_external(
+        let foreign = admin.with_selection_reads(with_external(
             admin,
             roots
                 ._directory

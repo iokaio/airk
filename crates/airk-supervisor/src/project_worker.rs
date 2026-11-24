@@ -130,13 +130,6 @@ pub struct Hooks {
         airk_core::service::ProjectBinding,
     )
         -> Result<Option<airk_core::rebuild::RebuildObservation>>,
-    /// Executes an accepted reference-refresh configuration job.
-    pub(crate) refresh_references: fn(
-        &Kernel,
-        &mut ServiceRegistry,
-        &ProjectLease,
-        airk_core::identity::Sha256Digest,
-    ) -> Result<JobOutcome>,
 }
 type ArbiterControllerFactory =
     fn(&Path) -> Result<Option<Arc<dyn airk_kernel::arbiter::NativeController>>>;
@@ -310,12 +303,6 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
     );
     let (session, purpose, authority) = admin::redeem(&state, &grant)?;
     let session_tools = match authority {
-        Some(scopes::WorkerAuthority::Catalog(authority)) => {
-            state
-                .tools
-                .scoped_session_with_client(authority, grant.client)
-                .await
-        }
         Some(scopes::WorkerAuthority::Selection(authority)) => {
             state
                 .tools
@@ -555,7 +542,11 @@ async fn deliver(
         // refusal, never a dropped stream the caller can only read as an
         // unknown observation (change-log entry 53).
         frame.clear();
-        service_ipc::write_frame_limited(&mut frame, &frame_exceeded(reply, limit), MAX_FRAME_BYTES)?;
+        service_ipc::write_frame_limited(
+            &mut frame,
+            &frame_exceeded(reply, limit),
+            MAX_FRAME_BYTES,
+        )?;
     }
     deliver_frame(stream, &frame, || {
         let guard = state
@@ -905,7 +896,6 @@ pub(crate) async fn serve(
     }
     // A staged participant starts as an unprivileged metadata observer. Only
     // its actually claimed native job can attach a private split permit later.
-    let refresh_pending = registry.pending_reference_refresh(init.project)?;
     let split_observer = registry
         .catalog_active_split_for_binding(init.project)?
         .map(|_| Kernel::open_existing_service_observer(&registration))
@@ -919,8 +909,6 @@ pub(crate) async fn serve(
             .is_some_and(|observer| observer.require_unrestricted_read().is_err());
     let kernel = if split_write_fenced {
         split_observer.context("staged participant observer missing")?
-    } else if refresh_pending {
-        Kernel::open_existing_service_observer(&registration)?
     } else {
         Kernel::open_service_collection_for_diagnostics(
             Path::new(&registration.root),
@@ -963,7 +951,7 @@ pub(crate) async fn serve(
         kernel.service_rebuild_receipt()?
     };
     registry.recover_jobs_with_rebuild_receipt(&lease, receipt.as_ref())?;
-    if !split_write_fenced && !refresh_pending {
+    if !split_write_fenced {
         source_configuration::recover(&kernel, &mut registry, &lease, init.engine)?;
     }
     // A crash after the accepted Configure result settles but before catalog
@@ -1008,7 +996,6 @@ pub(crate) async fn serve(
     // Recovery is durable desired work, admitted by the service rather than an
     // unaccounted startup replay. Failed recovery leaves the owner reachable.
     if !split_write_fenced
-        && !refresh_pending
         && kernel.service_recovery_required().unwrap_or(false)
         && !registry.source_failure_blocked(init.project)?
     {
@@ -1146,7 +1133,6 @@ pub(crate) async fn serve(
                             .iter()
                             .any(|reference| reference.job == job.id)
                     });
-                let refresh_job=registry.configuration_work(job.id)?.is_some_and(|work|matches!(work.request.configuration,airk_core::service_configuration::ProjectConfiguration::RefreshReferences {..}));
                 let mut automatic_settled = false;
                 let mut verify_admission = None;
                 let mut completed_maintenance = None;
@@ -1209,9 +1195,6 @@ pub(crate) async fn serve(
                                     .record_configuration_result(&job_lease, job.id, &result)?;
                                 source_completion = Some(prepared);
                                 return Ok(JobOutcome::Succeeded { revision: None });
-                            }
-                            if matches!(work.request.configuration,airk_core::service_configuration::ProjectConfiguration::RefreshReferences {..}) {
-                                return (hooks.refresh_references)(&kernel,&mut registry,&job_lease,job.id);
                             }
                             if work.request.prepare {
                                 work.request.validate()?;
@@ -1814,7 +1797,7 @@ pub(crate) async fn serve(
                         {
                             registry.catalog_record_policy_job(policy.index_id, operation_id)?;
                         }
-                        if !split_job && !refresh_job {
+                        if !split_job {
                             let _ = reconcile_semantic_setup(
                                 &kernel,
                                 &mut registry,
@@ -1939,18 +1922,6 @@ pub(crate) async fn serve(
                         state.admission.completed();
                         replies.send(Reply::SourceChangeResolution {identity,nonce,observation})?;
                         idle=Instant::now();
-                    },
-                    Some(Command::InstallScope { identity: expected, authority, lease_generation, expires_unix_ms }) => {
-                        let installed = state.scopes.lock().map_err(|_| anyhow::anyhow!("scope policy unavailable"))?
-                            .install(expected, *authority, lease_generation, expires_unix_ms);
-                        let reply = match installed { Ok(scope) => Reply::ScopeInstalled { identity, scope }, Err(_) => Reply::Failed };
-                        replies.send(reply)?;
-                    },
-                    Some(Command::RenewScopeLease { identity: expected, authority, previous, lease_generation, expires_unix_ms }) => {
-                        let installed = state.scopes.lock().map_err(|_| anyhow::anyhow!("scope policy unavailable"))?
-                            .renew_scope_lease(expected, *authority, previous, lease_generation, expires_unix_ms);
-                        let reply = match installed { Ok(scope) => Reply::ScopeInstalled { identity, scope }, Err(_) => Reply::Failed };
-                        replies.send(reply)?;
                     },
                     Some(Command::InstallSelectionScope { identity: expected, authority, previous, lease_generation, expires_unix_ms }) => {
                         let installed = state.scopes.lock().map_err(|_| anyhow::anyhow!("scope policy unavailable"))?

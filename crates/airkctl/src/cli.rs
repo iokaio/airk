@@ -12,11 +12,9 @@ use crate::contract::{
     PRODUCT, VERSION_SCHEMA, VersionDocument,
 };
 use crate::evidence::EvidenceCommand;
-use airk_core::combined_reads::MemberAvailability;
-use airk_core::index_catalog::{IndexId, QueryProjectId};
 use airk_core::service::{
-    CombinedConnectRequest, ControlMethod, ControlResponse, ProjectBinding, ScopedConnectRequest,
-    ToolResponseMode, ToolSelection, ToolsCatalogDetail,
+    ControlMethod, ControlResponse, ProjectBinding, ToolResponseMode, ToolSelection,
+    ToolsCatalogDetail,
 };
 use clap::{Parser, Subcommand};
 use serde_json::{Map, Value};
@@ -106,29 +104,6 @@ struct Cli {
     /// A registered project binding.
     #[arg(long, global = true)]
     service_project: Option<ProjectBinding>,
-    /// Explicit reviewed single-index session JSON; preferences alone grant no access.
-    #[arg(long, global = true, value_parser = parse_catalog_session,
-        conflicts_with_all = ["service_project", "root", "data_dir", "collection"])]
-    catalog_session: Option<ScopedConnectRequest>,
-    /// Frozen reviewed multi-Project session JSON; indexes are executed once each.
-    #[arg(long, global = true, value_parser = parse_combined_session,
-        conflicts_with_all = ["catalog_session", "service_project", "root", "data_dir", "collection"])]
-    combined_session: Option<CombinedConnectRequest>,
-    /// Narrow a combined read to explicit Projects from its reviewed session.
-    #[arg(
-        long,
-        global = true,
-        value_delimiter = ',',
-        num_args = 1,
-        requires = "combined_session"
-    )]
-    project_ids: Option<Vec<QueryProjectId>>,
-    /// Narrow a combined read to member indexes; requires explicit Project scope.
-    #[arg(long, global = true, value_delimiter = ',', num_args = 1, requires_all = ["combined_session", "project_ids"])]
-    index_ids: Option<Vec<IndexId>>,
-    /// Report member failures or require every selected member to answer.
-    #[arg(long, global = true, value_parser = ["report", "require"], requires_all = ["combined_session", "project_ids"])]
-    member_availability: Option<String>,
     /// The project folder (default: the current folder).
     #[arg(long, global = true, default_value = ".")]
     root: PathBuf,
@@ -374,23 +349,13 @@ enum AgentsCommand {
     /// and the X-AIRK-Response-Mode header only, no credential (U110).
     ///
     /// Agents read with the scope a call names (index_ids, index_set_ids) or the workspace
-    /// default of the folder it passes (`scope default`). Connections no longer exist, so
-    /// --connection-id and --selection-file are refused.
+    /// default of the folder it passes (`scope default`). Connections no longer exist.
     Connect {
         /// The service's control directory (default: --service-runtime-dir, else the installation's).
         #[arg(long)]
         runtime_dir: Option<PathBuf>,
         #[arg(long, value_enum)]
         client: crate::agents::Client,
-        /// Refused since U110: agent connections no longer exist.
-        #[arg(long)]
-        connection_id: Option<airk_core::identity::Incarnation>,
-        /// The default since U110; kept so earlier invocations still parse.
-        #[arg(long, conflicts_with_all = ["connection_id", "selection_file"])]
-        open: bool,
-        /// Refused since U110: agent connections no longer exist.
-        #[arg(long)]
-        selection_file: Option<PathBuf>,
         /// Write the user-level file instead of the project's.
         #[arg(long)]
         user: bool,
@@ -901,30 +866,6 @@ enum ToolsCommand {
     Shell,
 }
 
-fn parse_catalog_session(value: &str) -> Result<ScopedConnectRequest, String> {
-    if value.len() > 4096 {
-        return Err("catalog session exceeds its byte allowance".into());
-    }
-    let selection: ScopedConnectRequest =
-        serde_json::from_str(value).map_err(|_| "invalid catalog session JSON".to_owned())?;
-    selection
-        .validate()
-        .map_err(|_| "invalid reviewed catalog session".to_owned())?;
-    Ok(selection)
-}
-
-fn parse_combined_session(value: &str) -> Result<CombinedConnectRequest, String> {
-    if value.len() > 8192 {
-        return Err("combined session exceeds its byte allowance".into());
-    }
-    let selection: CombinedConnectRequest =
-        serde_json::from_str(value).map_err(|_| "invalid combined session JSON".to_owned())?;
-    selection
-        .validate()
-        .map_err(|_| "invalid reviewed combined session".to_owned())?;
-    Ok(selection)
-}
-
 fn own_digest() -> Option<String> {
     let bytes = std::fs::read(std::env::current_exe().ok()?).ok()?;
     let digest = Sha256::digest(bytes);
@@ -1045,11 +986,6 @@ fn print_json(cx: &mut Context, value: &Value) -> u8 {
 struct Selection {
     control: Option<PathBuf>,
     project: Option<ProjectBinding>,
-    catalog: Option<ScopedConnectRequest>,
-    combined: Option<CombinedConnectRequest>,
-    project_ids: Option<Vec<QueryProjectId>>,
-    index_ids: Option<Vec<IndexId>>,
-    member_availability: Option<MemberAvailability>,
     /// `--root`, `--data-dir` and `--collection` for a project named by its folder.
     root: PathBuf,
     data_dir: Option<PathBuf>,
@@ -1057,23 +993,11 @@ struct Selection {
 }
 
 impl Selection {
-    /// The M3 selection, in the CLI's precedence: a combined or catalog
-    /// session, then a project binding.
+    /// The M3 selection: a project binding, if one is named.
     fn tool_selection(&self) -> ToolSelection {
-        if let Some(request) = &self.combined {
-            return ToolSelection::Combined {
-                request: request.clone(),
-                project_ids: self.project_ids.clone(),
-                index_ids: self.index_ids.clone(),
-                member_availability: self.member_availability,
-            };
-        }
-        match (&self.catalog, self.project) {
-            (Some(request), _) => ToolSelection::Catalog {
-                request: request.clone(),
-            },
-            (None, Some(binding)) => ToolSelection::Project { binding },
-            (None, None) => ToolSelection::Unselected,
+        match self.project {
+            Some(binding) => ToolSelection::Project { binding },
+            None => ToolSelection::Unselected,
         }
     }
 }
@@ -1146,17 +1070,11 @@ fn catalog(cx: &mut Context, selection: &Selection, action: ToolsCommand) -> u8 
         ToolsCatalogDetail::Help { tool } => Some(tool.clone()),
         ToolsCatalogDetail::List { .. } => None,
     };
-    let response = match crate::service::request(
-        &control,
-        ControlMethod::ToolsCatalog {
-            detail,
-            combined: selection.combined.clone().map(Box::new),
-        },
-        VERSION,
-    ) {
-        Ok(response) => response,
-        Err(line) => return fail(cx, &line),
-    };
+    let response =
+        match crate::service::request(&control, ControlMethod::ToolsCatalog { detail }, VERSION) {
+            Ok(response) => response,
+            Err(line) => return fail(cx, &line),
+        };
     let document = match response {
         ControlResponse::ToolsCatalog { document } => document,
         ControlResponse::Failure { code } if code == "unknown_tool" => {
@@ -1385,9 +1303,6 @@ fn running(
 /// by default (U39), the service started automatically, then M4a,
 /// `ReserveProject` and M4b; prints the acknowledged project.
 fn init(cx: &mut Context, selection: Selection) -> u8 {
-    if let Err(code) = administrative(cx, &selection) {
-        return code;
-    }
     if selection.control.is_some() {
         return fail(
             cx,
@@ -1531,23 +1446,6 @@ fn registration_command(cx: &mut Context, selection: Selection, action: ServiceC
     }
 }
 
-/// An administrative command refuses the read-only sessions, as `airk` did.
-fn administrative(cx: &mut Context, selection: &Selection) -> Result<(), u8> {
-    if selection.catalog.is_some() {
-        return Err(usage(
-            cx,
-            "catalog sessions are read-only; administrative commands require an explicit administrative invocation",
-        ));
-    }
-    if selection.combined.is_some() {
-        return Err(usage(
-            cx,
-            "combined sessions are read-only; settings and administrative commands require an explicit index or administrative invocation",
-        ));
-    }
-    Ok(())
-}
-
 /// The compact control response `airk` printed, then its refusal, if any.
 fn print_control(cx: &mut Context, response: &ControlResponse) -> u8 {
     let printed = print_compact(cx, response);
@@ -1591,9 +1489,6 @@ fn project_control(
     selection: Selection,
     method: impl FnOnce(airk_core::service::ProjectBinding) -> ControlMethod,
 ) -> u8 {
-    if let Err(code) = administrative(cx, &selection) {
-        return code;
-    }
     let (control, registration) = match project_for(cx, &selection) {
         Ok(found) => found,
         Err(code) => return code,
@@ -1612,9 +1507,6 @@ fn project_control(
 
 /// U103: `jobs get|retry|cancel ID` on the selected service.
 fn jobs_command(cx: &mut Context, selection: Selection, action: JobsCommand) -> u8 {
-    if let Err(code) = administrative(cx, &selection) {
-        return code;
-    }
     let raw = match &action {
         JobsCommand::Get { id } | JobsCommand::Retry { id } | JobsCommand::Cancel { id } => id,
     };
@@ -1650,9 +1542,6 @@ fn jobs_command(cx: &mut Context, selection: Selection, action: JobsCommand) -> 
 /// `airk` ran it: journal the keyed request, name it on stderr, submit it,
 /// print the job and forget the record.
 fn job(cx: &mut Context, selection: Selection, kind: airk_core::service::JobKind) -> u8 {
-    if let Err(code) = administrative(cx, &selection) {
-        return code;
-    }
     let (control, registration) = match project_for(cx, &selection) {
         Ok(found) => found,
         Err(code) => return code,
@@ -1775,9 +1664,6 @@ fn configure(
 
 /// `configure --file|--stdin` (step 3c.5b).
 fn configure_command(cx: &mut Context, selection: Selection, file: Option<PathBuf>) -> u8 {
-    if let Err(code) = administrative(cx, &selection) {
-        return code;
-    }
     let (control, registration) = match project_for(cx, &selection) {
         Ok(found) => found,
         Err(code) => return code,
@@ -1824,9 +1710,6 @@ fn usage_command(cx: &mut Context, selection: Selection, action: UsageCommand) -
             return usage_document(cx, &selection, UsageDocumentRead::Policy);
         }
         _ => {}
-    }
-    if let Err(code) = administrative(cx, &selection) {
-        return code;
     }
     let (control, registration) = match project_for(cx, &selection) {
         Ok(found) => found,
@@ -2097,20 +1980,6 @@ fn parse_agent_entry(value: &str) -> Result<crate::agents::config::Entry, String
 /// `agents …` (split 3e).
 fn agents_command(cx: &mut Context, selection: Selection, action: AgentsCommand) -> u8 {
     use crate::agents::manage;
-    if let AgentsCommand::Connect {
-        connection_id: None,
-        selection_file: Some(file),
-        ..
-    } = &action
-    {
-        return fail(
-            cx,
-            &crate::registration::failed(&format!(
-                "AIRK agent connections no longer exist; agents connect writes the endpoint URL only (U110); --selection-file {} was not used.",
-                file.display()
-            )),
-        );
-    }
     let control = match action.runtime_dir().or(selection.control.clone()) {
         Some(control) => control,
         None => match installed(cx) {
@@ -2193,9 +2062,6 @@ fn agents_command(cx: &mut Context, selection: Selection, action: AgentsCommand)
         },
         AgentsCommand::Connect {
             client,
-            connection_id,
-            open,
-            selection_file,
             user,
             project,
             server_key,
@@ -2210,22 +2076,12 @@ fn agents_command(cx: &mut Context, selection: Selection, action: AgentsCommand)
                     projects,
                     user: *user,
                 };
-                let source = match (*open, connection_id, selection_file) {
-                    (true, _, _) => manage::Source::Open,
-                    (false, Some(id), Some(file)) => manage::Source::Enroll {
-                        id: *id,
-                        selection_file: file.clone(),
-                    },
-                    (false, Some(id), None) => manage::Source::Existing(*id),
-                    // U110: no connection: the entry names the endpoint URL only.
-                    (false, None, _) => manage::Source::Open,
-                };
                 let scope = if *user {
                     crate::agents::config::Scope::User
                 } else {
                     crate::agents::config::Scope::Project
                 };
-                manage::connect(&inputs, *client, source, scope, server_key)
+                manage::connect(&inputs, *client, scope, server_key)
             }
         },
     };
@@ -2319,41 +2175,18 @@ fn settings_command(
     usage_document(cx, &selection, read)
 }
 
-/// N1 for the project or the catalog session (combined sessions refused, as
-/// `airk` refused them), printed as `airk` printed it: a text report as is,
+/// N1 for the project, printed as `airk` printed it: a text report as is,
 /// any other document as one JSON line.
 fn usage_document(
     cx: &mut Context,
     selection: &Selection,
     read: airk_core::service::UsageDocumentRead,
 ) -> u8 {
-    if selection.combined.is_some() {
-        return usage(
-            cx,
-            "combined sessions are read-only; settings and administrative commands require an explicit index or administrative invocation",
-        );
-    }
-    let (control, project) = match &selection.catalog {
-        Some(request) => {
-            let control = match control(cx, selection) {
-                Ok(control) => control,
-                Err(code) => return code,
-            };
-            match resolve_catalog(cx, &control, request) {
-                Ok(registration) => (control, registration.binding),
-                Err(code) => return code,
-            }
-        }
-        None => match project_for(cx, selection) {
-            Ok((control, registration)) => (control, registration.binding),
-            Err(code) => return code,
-        },
+    let (control, project) = match project_for(cx, selection) {
+        Ok((control, registration)) => (control, registration.binding),
+        Err(code) => return code,
     };
-    let method = ControlMethod::UsageDocument {
-        project,
-        catalog: selection.catalog.clone(),
-        read,
-    };
+    let method = ControlMethod::UsageDocument { project, read };
     let response = match crate::service::request(&control, method, VERSION) {
         Ok(response) => response,
         Err(line) => return fail(cx, &line),
@@ -2379,25 +2212,6 @@ fn usage_document_response(cx: &mut Context, response: ControlResponse) -> u8 {
             fail(cx, &crate::registration::failed(&message))
         }
         other => fail(cx, &crate::service::refusal(&other)),
-    }
-}
-
-/// The project a catalog session reads (M1 `Catalog`), as `airk` resolved it.
-fn resolve_catalog(
-    cx: &mut Context,
-    control: &Path,
-    request: &ScopedConnectRequest,
-) -> Result<airk_core::service::ProjectRegistration, u8> {
-    let target = airk_core::service::ResolveTarget::Catalog {
-        request: request.clone(),
-    };
-    match crate::service::request(control, ControlMethod::ResolveProject { target }, VERSION) {
-        Ok(ControlResponse::Resolved { registration }) => Ok(registration),
-        Ok(ControlResponse::RegistrationRefused { message }) => {
-            Err(fail(cx, &crate::registration::failed(&message)))
-        }
-        Ok(other) => Err(fail(cx, &crate::service::refusal(&other))),
-        Err(line) => Err(fail(cx, &line)),
     }
 }
 
@@ -2576,10 +2390,10 @@ fn open_call(
     arguments: Map<String, Value>,
     open: ToolSelection,
 ) -> u8 {
-    if selection.project.is_some() || selection.catalog.is_some() || selection.combined.is_some() {
+    if selection.project.is_some() {
         return usage(
             cx,
-            "--index, --set and --workspace cannot be combined with a project or session selection",
+            "--index, --set and --workspace cannot be combined with a project selection",
         );
     }
     if let Err(error) = open.validate() {
@@ -2684,18 +2498,6 @@ fn evidence(cx: &mut Context, mut selection: Selection, command: EvidenceCommand
         ..
     } = &command
     {
-        if selection.catalog.is_some() {
-            return usage(
-                cx,
-                "catalog sessions are read-only; administrative commands require an explicit administrative invocation",
-            );
-        }
-        if selection.combined.is_some() {
-            return usage(
-                cx,
-                "combined sessions are read-only; settings and administrative commands require an explicit index or administrative invocation",
-            );
-        }
         if selection
             .project
             .is_some_and(|selected| selected != *project)
@@ -2749,10 +2551,7 @@ fn rpc_service(
         Ok(method) => method,
         Err(error) => return fail(cx, &crate::registration::failed(&error.to_string())),
     };
-    if matches!(
-        method,
-        ControlMethod::Connect { .. } | ControlMethod::ConnectScoped { .. }
-    ) {
+    if matches!(method, ControlMethod::Connect { .. }) {
         return fail(
             cx,
             &crate::registration::failed(
@@ -3703,20 +3502,9 @@ pub fn run(arguments: Vec<OsString>, io: &mut Io) -> u8 {
     let selection = Selection {
         control: cli.service_runtime_dir,
         project: cli.service_project,
-        catalog: cli.catalog_session,
-        combined: cli.combined_session,
-        project_ids: cli.project_ids,
-        index_ids: cli.index_ids,
         root: cli.root,
         data_dir: cli.data_dir,
         collection: cli.collection,
-        member_availability: cli.member_availability.map(|policy| {
-            if policy == "require" {
-                MemberAvailability::Require
-            } else {
-                MemberAvailability::Report
-            }
-        }),
     };
     dispatch(&mut cx, cli.command, selection)
 }

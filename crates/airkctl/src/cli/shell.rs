@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 //! `tools shell` (split step 3c.4c-2): `airk`'s connection-bound tools
-//! console. The project or session is resolved once, before the banner, as
-//! `airk` connected once (M1 for a binding, a folder or a catalog session);
+//! console. The project is resolved once, before the banner, as `airk`
+//! connected once (M1 for a binding or a folder);
 //! `list` and `help` read M2 and `call` runs M3 with that one selection. The
 //! banner, help, prompt, result layout and `Error:` lines are `airk`'s.
 use super::{Context, ErrorLine, ExitClass, Selection, VERSION, fail};
 use airk_core::service::{
-    CombinedConnectRequest, ControlMethod, ControlResponse, MAX_TOOL_ARGUMENT_BYTES,
-    ProjectRegistration, ToolResponseMode, ToolSelection, ToolsCatalogDetail,
+    ControlMethod, ControlResponse, MAX_TOOL_ARGUMENT_BYTES, ProjectRegistration, ToolResponseMode,
+    ToolSelection, ToolsCatalogDetail,
 };
 use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
@@ -18,9 +18,8 @@ const HELP: &str = "Commands:\n  list                         List MCP tools\n  
 struct Console {
     control: PathBuf,
     selection: ToolSelection,
-    combined: Option<Box<CombinedConnectRequest>>,
-    /// `--args-file` paths are relative to the workspace (`.` for a
-    /// combined session), as they were.
+    /// `--args-file` paths are relative to the project folder (`.` for a
+    /// window selection).
     root: PathBuf,
 }
 
@@ -43,7 +42,9 @@ pub(super) fn run(cx: &mut Context, selection: &Selection) -> u8 {
             Path::new(&registration.root),
             Path::new(&registration.data_root)
         ),
-        None => "AIRK Tools\nExplicit reviewed combined session. Use query_scope to inspect permitted members.\n".into(),
+        None => {
+            "AIRK Tools\nWindow selection. Use query_scope to inspect permitted members.\n".into()
+        }
     };
     let _ = writeln!(cx.io.stdout, "{banner}");
     let _ = writeln!(cx.io.stdout, "{HELP}");
@@ -104,39 +105,32 @@ fn open(
     cx: &mut Context,
     selection: &Selection,
 ) -> Result<(Console, Option<ProjectRegistration>), u8> {
-    if let Some(combined) = &selection.combined {
+    // A session-routed window reads its W4 selection, as `tools call` does
+    // (`resolve_call`); an explicit project selection takes precedence.
+    if matches!(selection.tool_selection(), ToolSelection::Unselected)
+        && let Some(route) = cx.io.window.as_deref()
+    {
+        let tool_selection = ToolSelection::Window {
+            window_id: route.window_id,
+            lease: route.lease.clone(),
+        };
         return Ok((
             Console {
                 control: super::control(cx, selection)?,
-                selection: selection.tool_selection(),
-                combined: Some(Box::new(combined.clone())),
+                selection: tool_selection,
                 root: PathBuf::from("."),
             },
             None,
         ));
     }
-    let (control, registration, tool_selection) = match &selection.catalog {
-        Some(request) => {
-            let control = super::control(cx, selection)?;
-            let registration = super::resolve_catalog(cx, &control, request)?;
-            let tool_selection = ToolSelection::Catalog {
-                request: request.clone(),
-            };
-            (control, registration, tool_selection)
-        }
-        None => {
-            let (control, registration) = super::project_for(cx, selection)?;
-            let tool_selection = ToolSelection::Project {
-                binding: registration.binding,
-            };
-            (control, registration, tool_selection)
-        }
+    let (control, registration) = super::project_for(cx, selection)?;
+    let tool_selection = ToolSelection::Project {
+        binding: registration.binding,
     };
     Ok((
         Console {
             control,
             selection: tool_selection,
-            combined: None,
             root: PathBuf::from(&registration.root),
         },
         Some(registration),
@@ -214,10 +208,7 @@ fn catalog(
     detail: ToolsCatalogDetail,
     help: Option<&str>,
 ) -> Result<(), String> {
-    let method = ControlMethod::ToolsCatalog {
-        detail,
-        combined: console.combined.clone(),
-    };
+    let method = ControlMethod::ToolsCatalog { detail };
     let document = match crate::service::request(&console.control, method, VERSION) {
         Ok(ControlResponse::ToolsCatalog { document }) => document,
         Ok(ControlResponse::Failure { code }) if code == "unknown_tool" => {

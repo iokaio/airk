@@ -36,7 +36,6 @@ fn layer() -> Result<&'static Vec<SchemaObject>> {
                 db.execute_batch(super::SCHEMA)?;
                 capacity_triggers(&db)?;
                 write_barriers(&db)?;
-                db.execute_batch(AUTHORITY_V1_SCHEMA)?;
                 let before = schema_objects(&db)?;
                 db.execute_batch(SCHEMA)?;
                 Ok(schema_objects(&db)?
@@ -90,7 +89,7 @@ pub(super) fn apply_layout(db: &Connection) -> Result<()> {
     );
     let layout = validate_catalog_layout(db)?;
     ensure!(
-        layout != CatalogLayout::Schema12Authority0,
+        markers(db)?.0 == 1,
         "catalog descriptions require index authority one"
     );
     if !installed(db)? {

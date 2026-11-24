@@ -593,31 +593,6 @@
    ]
   },
   {
-   "operation": "catalog.grant_draft",
-   "method": "CatalogGrantDraft",
-   "plane": "management",
-   "surfaces": [
-    "pipe",
-    "airkctl",
-    "admin"
-   ],
-   "authorization": [
-    "owner_pipe",
-    "admin_session_csrf"
-   ],
-   "effect": "read",
-   "idempotency": "read",
-   "conformance": [
-    "P3",
-    "P5",
-    "P8"
-   ],
-   "request_key": {
-    "mode": "generate",
-    "key": "selection.key"
-   }
-  },
-  {
    "operation": "catalog.split_source_state",
    "method": "CatalogSplitSourceState",
    "plane": "management",

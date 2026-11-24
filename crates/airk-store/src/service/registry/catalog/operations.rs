@@ -3,9 +3,6 @@
 use super::{ServiceRegistry, state, validate_existing};
 use airk_core::{
     catalog_management::*,
-    grant_provenance::{
-        GrantProvenance, PersistedGrant, is_imported_grant_id, native_imported_grant_id,
-    },
     identity::{Incarnation, Sha256Digest},
     index_catalog::*,
     service::{ProjectRegistration, RequestKey},
@@ -107,34 +104,16 @@ fn strings(db: &Connection, sql: &str, id: &str) -> Result<Vec<String>> {
         .query_map([id], |r| r.get(0))?
         .collect::<rusqlite::Result<Vec<_>>>()?)
 }
-fn scopes(
-    db: &Connection,
-    project: &str,
-    index: &str,
-    grant: Option<&str>,
-) -> Result<Vec<ScopeAtom>> {
-    let bound: i64 = if let Some(g) = grant {
-        db.query_row("SELECT coalesce(sum(length(CAST(path AS BLOB))*6+160),0) FROM index_access_scopes WHERE project_id=?1 AND index_id=?2 AND grant_id=?3",params![project,index,g],|r|r.get(0))?
-    } else {
-        db.query_row("SELECT coalesce(sum(length(CAST(path AS BLOB))*6+160),0) FROM project_index_scopes WHERE project_id=?1 AND index_id=?2",params![project,index],|r|r.get(0))?
-    };
+fn scopes(db: &Connection, project: &str, index: &str) -> Result<Vec<ScopeAtom>> {
+    let bound: i64 = db.query_row("SELECT coalesce(sum(length(CAST(path AS BLOB))*6+160),0) FROM project_index_scopes WHERE project_id=?1 AND index_id=?2",params![project,index],|r|r.get(0))?;
     ensure!(
         bound <= i64::try_from(MAX_PAGE_BYTES)?,
         "catalog scope exceeds conservative encoded record budget"
     );
-    let (sql, args) = if let Some(g) = grant {
-        (
-            "SELECT source_id,kind,path FROM index_access_scopes WHERE project_id=?1 AND index_id=?2 AND grant_id=?3 ORDER BY source_id,kind,path",
-            vec![project, index, g],
-        )
-    } else {
-        (
-            "SELECT source_id,kind,path FROM project_index_scopes WHERE project_id=?1 AND index_id=?2 ORDER BY source_id,kind,path",
-            vec![project, index],
-        )
-    };
-    let mut stmt = db.prepare(sql)?;
-    let rows = stmt.query_map(rusqlite::params_from_iter(args), |r| {
+    let mut stmt = db.prepare(
+        "SELECT source_id,kind,path FROM project_index_scopes WHERE project_id=?1 AND index_id=?2 ORDER BY source_id,kind,path",
+    )?;
+    let rows = stmt.query_map(params![project, index], |r| {
         Ok((
             r.get::<_, String>(0)?,
             r.get::<_, String>(1)?,
@@ -165,7 +144,7 @@ pub(super) fn membership(db: &Connection, p: &str, i: &str) -> Result<Membership
         project_id: p.parse()?,
         index_id: i.parse()?,
         revision: revision(rev)?,
-        scope: scopes(db, p, i, None)?,
+        scope: scopes(db, p, i)?,
     };
     value.validate()?;
     Ok(value)
@@ -224,110 +203,6 @@ fn item(db: &Connection, kind: CatalogKind, id: &str) -> Result<CatalogItem> {
             value.validate()?;
             CatalogItem::Context(value)
         }
-        CatalogKind::Grants => {
-            let bound:i64=db.query_row("SELECT (SELECT count(*)*400 FROM index_access_memberships WHERE grant_id=?1)+(SELECT coalesce(sum(length(CAST(path AS BLOB))*6+160),0) FROM index_access_scopes WHERE grant_id=?1)",[id],|r|r.get(0))?;
-            ensure!(
-                bound <= i64::try_from(MAX_PAGE_BYTES)?,
-                "catalog grant exceeds conservative encoded record budget"
-            );
-            let (host, rev, revoked): (String, i64, bool) = db.query_row(
-                "SELECT host,revision,revoked FROM index_access_grants WHERE id=?1",
-                [id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-            )?;
-            let mut stmt=db.prepare("SELECT project_id,index_id,membership_revision,source_revision,policy_epoch,policy_digest FROM index_access_memberships WHERE grant_id=?1 ORDER BY project_id,index_id")?;
-            let mut memberships = Vec::new();
-            for row in stmt.query_map([id], |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, i64>(2)?,
-                    r.get::<_, i64>(3)?,
-                    r.get::<_, i64>(4)?,
-                    r.get::<_, Option<String>>(5)?,
-                ))
-            })? {
-                let (p, i, m, s, epoch, digest) = row?;
-                memberships.push(GrantedMembership {
-                    membership: Membership {
-                        project_id: p.parse()?,
-                        index_id: i.parse()?,
-                        revision: revision(m)?,
-                        scope: scopes(db, &p, &i, Some(id))?,
-                    },
-                    source_revision: revision(s)?,
-                    policy_epoch: u64::try_from(epoch)?,
-                    policy_digest: digest.map(|s| s.parse()).transpose()?,
-                });
-            }
-            let value = ReviewedGrant {
-                id: id.parse()?,
-                host: host.parse()?,
-                revision: revision(rev)?,
-                memberships,
-                revoked,
-            };
-            value.validate()?;
-            let authority: u32 = db.query_row(
-                "SELECT authority_contract FROM index_catalog_meta WHERE id=1",
-                [],
-                |r| r.get(0),
-            )?;
-            let provenance = if authority == 0 {
-                GrantProvenance::UserReviewedProjectGrant
-            } else {
-                let raw: (String, Option<String>, Option<String>, Option<String>, Option<String>) = db.query_row(
-                    "SELECT provenance_kind,import_upgrade_id,import_plan_digest,import_legacy_binding,import_configuration_digest FROM index_access_grants WHERE id=?1",
-                    [id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?)))?;
-                match raw {
-                    (kind, None, None, None, None) if kind == "reviewed" => {
-                        GrantProvenance::UserReviewedProjectGrant
-                    }
-                    (kind, Some(upgrade), Some(plan), Some(binding), Some(config))
-                        if kind == "imported_legacy" =>
-                    {
-                        let provenance = GrantProvenance::ImportedLegacySnapshot {
-                            upgrade_id: upgrade.parse()?,
-                            plan_digest: plan.parse()?,
-                            legacy_binding: binding.parse()?,
-                            configuration_digest: config.parse()?,
-                        };
-                        let namespace: String = db.query_row(
-                            "SELECT incarnation FROM service_meta WHERE id=1",
-                            [],
-                            |r| r.get(0),
-                        )?;
-                        ensure!(
-                            native_imported_grant_id(namespace.parse()?, value.host, &provenance)?
-                                == value.id,
-                            "imported grant identity does not match sealed lineage"
-                        );
-                        provenance
-                    }
-                    (kind, None, None, None, None) if kind == "imported_standalone_adoption" => {
-                        let provenance = super::adopted_authority::read_provenance(db, value.id)?;
-                        let namespace: String = db.query_row(
-                            "SELECT incarnation FROM service_meta WHERE id=1",
-                            [],
-                            |r| r.get(0),
-                        )?;
-                        ensure!(
-                            native_imported_grant_id(namespace.parse()?, value.host, &provenance)?
-                                == value.id,
-                            "standalone grant identity does not match sealed lineage"
-                        );
-                        provenance
-                    }
-                    _ => anyhow::bail!("invalid persisted grant provenance"),
-                }
-            };
-            let persisted = PersistedGrant {
-                grant: value,
-                provenance,
-            };
-            persisted.validate()?;
-            CatalogItem::Grant(persisted)
-        }
         CatalogKind::Sources => {
             let (index, path, owner, enabled): (String, String, bool, bool) = db.query_row(
                 "SELECT index_id,canonical_path,owner,enabled FROM index_sources WHERE id=?1",
@@ -357,13 +232,6 @@ fn item(db: &Connection, kind: CatalogKind, id: &str) -> Result<CatalogItem> {
         }
     })
 }
-pub(super) fn read_persisted_grant(db: &Connection, id: GrantId) -> Result<PersistedGrant> {
-    super::validate_catalog_layout(db)?;
-    let CatalogItem::Grant(grant) = item(db, CatalogKind::Grants, &id.to_string())? else {
-        anyhow::bail!("expected persisted grant");
-    };
-    Ok(grant)
-}
 fn target(op: &CatalogOperation) -> (CatalogKind, String) {
     match op {
         CatalogOperation::CreateProject { id, .. }
@@ -392,8 +260,6 @@ fn target(op: &CatalogOperation) -> (CatalogKind, String) {
             (CatalogKind::Contexts, context.id.to_string())
         }
         CatalogOperation::DeleteContext { id, .. } => (CatalogKind::Contexts, id.to_string()),
-        CatalogOperation::CreateGrant { grant } => (CatalogKind::Grants, grant.id.to_string()),
-        CatalogOperation::RevokeGrant { id, .. } => (CatalogKind::Grants, id.to_string()),
     }
 }
 fn optional_item(db: &Connection, kind: CatalogKind, id: &str) -> Result<Vec<CatalogItem>> {
@@ -441,40 +307,26 @@ fn roots_ready(db: &Connection, m: &Membership) -> Result<()> {
     }
     Ok(())
 }
-fn put_scopes(db: &Connection, m: &Membership, grant: Option<GrantId>) -> Result<()> {
+fn put_scopes(db: &Connection, m: &Membership) -> Result<()> {
     for atom in &m.scope {
         let kind = match atom.kind {
             PathScope::Exact => "exact",
             PathScope::Subtree => "subtree",
         };
-        if let Some(g) = grant {
-            db.execute(
-                "INSERT INTO index_access_scopes VALUES(?1,?2,?3,?4,?5,?6)",
-                params![
-                    g.to_string(),
-                    m.project_id.to_string(),
-                    m.index_id.to_string(),
-                    atom.source_root_id.to_string(),
-                    kind,
-                    atom.path
-                ],
-            )?;
-        } else {
-            db.execute(
-                "INSERT INTO project_index_scopes VALUES(?1,?2,?3,?4,?5)",
-                params![
-                    m.project_id.to_string(),
-                    m.index_id.to_string(),
-                    atom.source_root_id.to_string(),
-                    kind,
-                    atom.path
-                ],
-            )?;
-        }
+        db.execute(
+            "INSERT INTO project_index_scopes VALUES(?1,?2,?3,?4,?5)",
+            params![
+                m.project_id.to_string(),
+                m.index_id.to_string(),
+                atom.source_root_id.to_string(),
+                kind,
+                atom.path
+            ],
+        )?;
     }
     Ok(())
 }
-/// Canonical current-reference removal; frozen grant snapshots are never rewritten.
+/// Canonical current-reference removal.
 pub(super) fn remove_membership_references(
     db: &Connection,
     p: &QueryProjectId,
@@ -631,23 +483,6 @@ fn mutate_with_context(
             }
         }
         CatalogOperation::DeleteContext{id,expected_revision}=>changed(db.execute("DELETE FROM index_contexts WHERE id=?1 AND revision=?2",params![id.to_string(),number(*expected_revision)])?)?,
-        CatalogOperation::CreateGrant{grant:g}=>{
-            ensure!(!is_imported_grant_id(g.id),"imported compatibility IDs are reserved for native cutover");
-            // Validate the complete frozen review before inserting any grant row.
-            for frozen in &g.memberships {
-                let m=&frozen.membership;roots_ready(db,m)?;
-                let current=membership(db,&m.project_id.to_string(),&m.index_id.to_string())?;
-                ensure!(current.revision==m.revision && m.scope_is_subset_of(&current),"grant membership review stale or scope widened");
-                let index=index_ready(db,m.index_id)?;
-                ensure!(index.source_revision==frozen.source_revision && index.policy.as_ref().map_or(0,|p|p.epoch.get())==frozen.policy_epoch && index.policy.as_ref().map(|p|p.digest)==frozen.policy_digest,"grant source or policy review stale");
-                if index.policy.is_some() {
-                    ensure!(super::policy::snapshot(db,m.index_id)?.is_some_and(|policy|policy.application.is_some()),"grant awaits the admitted source policy removal publication");
-                }
-            }
-            db.execute("INSERT INTO index_access_grants(id,host,revision,revoked) VALUES(?1,?2,1,0)",params![g.id.to_string(),g.host.to_string()])?;
-            for f in &g.memberships {let m=&f.membership;db.execute("INSERT INTO index_access_memberships VALUES(?1,?2,?3,?4,?5,?6,?7)",params![g.id.to_string(),m.project_id.to_string(),m.index_id.to_string(),number(m.revision),number(f.source_revision),i64::try_from(f.policy_epoch)?,f.policy_digest.map(|d|d.to_string())])?;put_scopes(db,m,Some(g.id))?;}
-        }
-        CatalogOperation::RevokeGrant{id,expected_revision}=>changed(db.execute("UPDATE index_access_grants SET revoked=1,revision=?1 WHERE id=?2 AND revision=?3 AND revoked=0",params![number(expected_revision.next()?),id.to_string(),number(*expected_revision)])?)?,
     }
     Ok(())
 }
@@ -690,7 +525,7 @@ fn set_membership(
             ],
         )?;
     }
-    put_scopes(db, m, None)
+    put_scopes(db, m)
 }
 
 /// U103: the index set ordinary setup creates with its index, in the
@@ -955,7 +790,6 @@ impl ServiceRegistry {
                 index_id,
             } => Some((CatalogKind::Memberships, format!("{project_id}/{index_id}"))),
             CatalogEntity::Context { id } => Some((CatalogKind::Contexts, id.to_string())),
-            CatalogEntity::Grant { id } => Some((CatalogKind::Grants, id.to_string())),
             CatalogEntity::Source { id } => Some((CatalogKind::Sources, id.to_string())),
             CatalogEntity::ContextKey { host, key } => {
                 let id: Option<String> = tx
@@ -1009,9 +843,6 @@ impl ServiceRegistry {
             }
             CatalogKind::Contexts => {
                 "SELECT id FROM index_contexts WHERE id>?1 ORDER BY id LIMIT ?2"
-            }
-            CatalogKind::Grants => {
-                "SELECT id FROM index_access_grants WHERE id>?1 ORDER BY id LIMIT ?2"
             }
             CatalogKind::Memberships => match (request.index_id, request.project_id) {
                 (Some(_), Some(_)) => {
@@ -1506,99 +1337,6 @@ mod tests {
                     .get::<_, i64>(0))?,
             3
         );
-        Ok(())
-    }
-    #[test]
-    fn frozen_grants_allow_narrowing_and_refuse_sibling_widening() -> Result<()> {
-        let (_root, mut registry) = setup()?;
-        let (index, source) = seed_index(&registry, 20)?;
-        registry.connection.execute(
-            "INSERT INTO query_projects VALUES(?1,'Fixture',1,1,1)",
-            [project().to_string()],
-        )?;
-        let base = Membership {
-            project_id: project(),
-            index_id: index,
-            revision: CatalogRevision::INITIAL,
-            scope: vec![ScopeAtom {
-                source_root_id: source,
-                kind: PathScope::Subtree,
-                path: "src".into(),
-            }],
-        };
-        let r = request(
-            &registry,
-            35,
-            CatalogOperation::SetMembership {
-                membership: base.clone(),
-                expected_scope_revision: CatalogRevision::INITIAL,
-                expected_membership_revision: None,
-            },
-        )?;
-        apply(&mut registry, &r)?;
-        let mut narrowed = base;
-        narrowed.scope[0].path = "src/only".into();
-        let grant = ReviewedGrant {
-            id: GrantId::from_identity(Incarnation::from_bytes([40; 16])),
-            host: Sha256Digest::from_bytes([41; 32]),
-            revision: CatalogRevision::INITIAL,
-            memberships: vec![GrantedMembership {
-                membership: narrowed,
-                source_revision: CatalogRevision::INITIAL,
-                policy_epoch: 0,
-                policy_digest: None,
-            }],
-            revoked: false,
-        };
-        let r = request(
-            &registry,
-            42,
-            CatalogOperation::CreateGrant {
-                grant: grant.clone(),
-            },
-        )?;
-        apply(&mut registry, &r)?;
-        let mut widened = grant.clone();
-        widened.id = GrantId::from_identity(Incarnation::from_bytes([43; 16]));
-        widened.memberships[0].membership.scope[0].path = "src-other".into();
-        let r = request(
-            &registry,
-            44,
-            CatalogOperation::CreateGrant { grant: widened },
-        )?;
-        assert!(registry.catalog_preview(&r).is_err());
-        assert!(registry.catalog_receipt(r.caller, &r.key)?.is_none());
-        let mut exact = grant.clone();
-        exact.id = GrantId::from_identity(Incarnation::from_bytes([45; 16]));
-        exact.memberships[0].membership.scope[0].kind = PathScope::Exact;
-        let r = request(
-            &registry,
-            46,
-            CatalogOperation::CreateGrant {
-                grant: exact.clone(),
-            },
-        )?;
-        apply(&mut registry, &r)?;
-        let mut wrong = exact.clone();
-        wrong.id = GrantId::from_identity(Incarnation::from_bytes([47; 16]));
-        wrong.memberships[0].membership.scope[0].source_root_id =
-            SourceRootId::from_identity(Incarnation::from_bytes([48; 16]));
-        let r = request(
-            &registry,
-            49,
-            CatalogOperation::CreateGrant { grant: wrong },
-        )?;
-        assert!(registry.catalog_preview(&r).is_err());
-        registry.connection.execute("UPDATE project_index_scopes SET kind='exact',path='src/only' WHERE project_id=?1 AND index_id=?2",params![project().to_string(),index.to_string()])?;
-        let mut descendants = exact;
-        descendants.id = GrantId::from_identity(Incarnation::from_bytes([50; 16]));
-        descendants.memberships[0].membership.scope[0].kind = PathScope::Subtree;
-        let r = request(
-            &registry,
-            51,
-            CatalogOperation::CreateGrant { grant: descendants },
-        )?;
-        assert!(registry.catalog_preview(&r).is_err());
         Ok(())
     }
     fn setup() -> Result<(tempfile::TempDir, ServiceRegistry)> {

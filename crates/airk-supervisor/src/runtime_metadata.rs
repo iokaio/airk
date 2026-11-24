@@ -213,13 +213,12 @@ pub fn observe_process() -> RuntimeProcess {
 }
 
 /// The service functions a project owner calls (split plan G5); the owner
-/// itself does not depend on this module, installation or reference refresh.
+/// itself does not depend on this module or installation.
 pub fn project_worker_hooks() -> crate::project_worker::Hooks {
     crate::project_worker::Hooks {
         runtime_bundle: observe_runtime_bundle,
         runtime_work: observe_runtime_work,
         rebuild_observation: airk_installer::runtime_install::rebuild_observation_for_control,
-        refresh_references: airk_catalog_control::reference_refresh_control::execute,
         arbiter_controller: arbiter::controller,
     }
 }

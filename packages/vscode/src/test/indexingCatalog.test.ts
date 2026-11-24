@@ -3,7 +3,7 @@ import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { CatalogApplyIntent, CatalogObject, CatalogRequest, CatalogReview, WindowContextDescriptor, CATALOG_UI_OPERATIONS, catalogExport, catalogItems, catalogMembershipDraft, validateCatalogScope, validateCatalogApply, validateCatalogOperation, validateGrantSelection, validateNativeGrantDraft, validateNativeHostContext } from '../indexingCatalog';
+import { CatalogApplyIntent, CatalogObject, CatalogRequest, CatalogReview, WindowContextDescriptor, CATALOG_UI_OPERATIONS, catalogExport, catalogItems, catalogMembershipDraft, validateCatalogScope, validateCatalogApply, validateCatalogOperation, validateNativeHostContext } from '../indexingCatalog';
 import { CatalogControl, IndexingCatalogController } from '../indexingCatalogController';
 import { IntentJournal, IntentStorage } from '../serviceIntents';
 import { ServiceClient, ServiceError } from '../serviceClient';
@@ -142,7 +142,7 @@ test('standalone adopted native authority retains original provenance and reject
     assert.equal(validateNativeLegacyBinding(response,adopted.binding,2),response);
     const selection={kind:'imported_legacy',selection:{namespace,expected_catalog_revision:2,registration:adopted,grant:wrapped,configuration_receipt:requestDigest}};
     assert.deepEqual(validateHttpSelection(selection),selection);
-    const json=catalogExport({generation:1,busy:false,grants:response}),markdown=catalogExport({generation:1,busy:false,grants:response},true);
+    const json=catalogExport({generation:1,busy:false,detail:response}),markdown=catalogExport({generation:1,busy:false,detail:response},true);
     for(const text of [json,markdown])for(const expected of ['imported_standalone_adoption','/original/standalone-index','saved_alias','future_native_field','original_publication_sha256'])assert.ok(text.includes(expected));
     const mutations=[
         (v:any)=>v.observation.eligibility.registration={...v.observation.eligibility.registration,data_root:'/crossed'},
@@ -214,10 +214,6 @@ function nativeGrantOperation(host='22'.repeat(32)){
     return {operation:'create_grant',grant:{id:'grt_'+'11'.repeat(16),host,revision:1,revoked:false,memberships:[{
         membership:{project_id:project,index_id:index,revision:1,scope:[{source_root_id:source,kind:'subtree',path:''}]},source_revision:1,policy_epoch:0,policy_digest:null,
     }]}};
-}
-function nativeGrantResponse(key=request.key,host='22'.repeat(32)){
-    const operation=nativeGrantOperation(host),nativeRequest={...request,caller:'9a'.repeat(16),key,operation};
-    return {status:'catalog_grant_draft',draft:{request:nativeRequest,preview:{request_digest:requestDigest,catalog_revision:1,next_revision:2,operation,before:[],after:[{kind:'grant',value:{grant:operation.grant,provenance:{kind:'user_reviewed_project_grant'}}}],authority_fence_required:false,file_data_changes:false,future_preview_field:{retained:true}},preview_digest:digest,future_draft_field:{retained:true}},future_response_field:{retained:true}};
 }
 function nativeSourceOperation(){
     return {operation:'begin_index_source_change',id:index,expected_source_revision:1,plan:{registration:{binding:digest,root:'/source',data_root:'/data',collection:'fixture'},engine_identity:'21'.repeat(32),job:'22'.repeat(32),
@@ -595,8 +591,6 @@ test('UI operation subset and serialized field catalogs agree with native Core c
         {operation:'set_project_defaults',project_id:project,expected_defaults_revision:1,index_ids:[index]},
         {operation:'set_context',expected_revision:null,context:{id:'ctx_'+'11'.repeat(16),host:'22'.repeat(32),key:'33'.repeat(32),kind:'empty',name:'Empty window',revision:1,project_ids:[],index_ids:[]}},
         {operation:'delete_context',id:'ctx_'+'11'.repeat(16),expected_revision:1},
-        nativeGrantOperation(),
-        {operation:'revoke_grant',id:'grt_'+'11'.repeat(16),expected_revision:1},
         nativeSourceOperation(),
         {operation:'retire_index',id:index,expected_definition_revision:1,expected_source_revision:1,reason:{reason:'explicit'}},
         nativePolicyOperation(),
@@ -626,17 +620,6 @@ test('UI operation subset and serialized field catalogs agree with native Core c
         assert.doesNotThrow(()=>validateCatalogOperation({operation:'set_context',expected_revision:null,context:{id:'ctx_'+'11'.repeat(16),host:'22'.repeat(32),key:'33'.repeat(32),kind,name:'Context',revision:1,project_ids:[],index_ids:[]}}));
     }
     assert.throws(()=>validateCatalogOperation({operation:'set_context',expected_revision:null,context:{id:'ctx_'+'11'.repeat(16),host:'22'.repeat(32),key:'33'.repeat(32),kind:'empty',name:'Context',revision:2,project_ids:[],index_ids:[]}}),/next_context_revision/);
-});
-
-test('bounded grant browse/detail retains provenance and derives revocation only from current native detail',async()=>{
-    const f=controller(),operation=nativeGrantOperation(),grant=operation.grant,wrapper={grant,provenance:{kind:'user_reviewed_project_grant'},future_native_wrapper:{retained:true}};let previews=0;
-    f.control.catalogRead=async method=>'catalog_detail' in method?{status:'catalog_detail',detail:{namespace,revision:1,item:{kind:'grant',value:wrapper},future_detail:'retained'}}:{status:'catalog_page',page:{namespace,revision:1,items:[{kind:'grant',value:wrapper}],continuation:null,future_page:'retained'}};
-    f.control.catalogPrepare=async op=>{previews++;assert.deepEqual(op,{operation:'revoke_grant',id:grant.id,expected_revision:1});return {...review,request:{...request,operation:op}};};
-    await f.value.page('grants');assert.deepEqual(catalogItems(f.value.snapshot().grants)[0].value,wrapper);assert.equal(previews,0);
-    await assert.rejects(f.value.revokeGrant(f.value.snapshot().generation),/inspect_current/);
-    await f.value.detail('grant',grant.id);assert.match(catalogExport(f.value.snapshot()),/future_native_wrapper/);assert.equal(previews,0);
-    await assert.rejects(f.value.preview({operation:'revoke_grant',id:grant.id,expected_revision:1},f.value.snapshot().generation),/inspect_native_grant/);
-    await f.value.revokeGrant(f.value.snapshot().generation);assert.equal(previews,1);assert.equal(f.value.snapshot().review?.request.operation.operation,'revoke_grant');
 });
 
 test('window associations use only the injected host identity, explicit reads and reviewed zero-Project CRUD',async()=>{
@@ -719,73 +702,6 @@ test('Indexing adopts the exact host observation without a second RPC and review
     let operation:CatalogObject|undefined;f.control.catalogPrepare=async op=>{operation=op;return {...review,request:{...request,expected_catalog_revision:3,operation:op}};};
     await value.previewContext({project_ids:[],index_ids:[]},value.snapshot().generation);
     assert.deepEqual(operation,{operation:'set_context',expected_revision:2,context:{id:context.id,host:descriptor.host,key:descriptor.key,kind:descriptor.kind,name:descriptor.name,revision:3,project_ids:[],index_ids:[]}});
-});
-
-test('grant page/detail copies preserve the native persisted wrapper and provenance without creating grants',()=>{
-    for(const imported of [false,true]){
-        const grant={id:'grt_'+(imported?'f1':'01').repeat(16),host:'22'.repeat(32),revision:1,revoked:false,memberships:[{
-            membership:{project_id:project,index_id:index,revision:1,scope:[{source_root_id:source,kind:'subtree',path:''}]},source_revision:1,policy_epoch:0,policy_digest:null,
-        }],future_grant_field:{retained:true}};
-        const provenance=imported?{kind:'imported_legacy_snapshot',upgrade_id:'11'.repeat(16),plan_digest:'22'.repeat(32),legacy_binding:'33'.repeat(32),configuration_digest:'44'.repeat(32),future_provenance_field:{retained:true}}
-            :{kind:'user_reviewed_project_grant',future_provenance_field:{retained:true}};
-        const value={grant,provenance,future_wrapper_field:{retained:true}},item={kind:'grant',value};
-        const nativePage={status:'catalog_page',page:{namespace,revision:1,items:[item],continuation:null}};
-        const detail={status:'catalog_detail',detail:{namespace,revision:1,item}};
-        assert.equal(catalogItems(nativePage)[0].value,value);assert.equal(catalogItems(detail,'detail')[0].value,value);
-        const copied=JSON.parse(catalogExport({generation:1,busy:false,page:nativePage,detail}));
-        assert.deepEqual(copied.page,nativePage);assert.deepEqual(copied.detail,detail);
-        assert.throws(()=>validateCatalogOperation({operation:'create_grant',grant}),'admin wrappers and future read-only fields cannot become frontend grant inputs');
-    }
-});
-
-test('native grant drafts preserve exact native callers, previews and unknown fields without issuing access',async()=>{
-    const selection={key:request.key,expected_catalog_revision:1,project_ids:[project],index_ids:[index]},response=nativeGrantResponse(),methods:unknown[]=[];
-    const client=new ServiceClient({dispose(){},async request(method){methods.push(method);return response;}});
-    const reviewed=await client.catalogGrantDraft('33'.repeat(32),selection);
-    assert.equal(reviewed.request.caller,'9a'.repeat(16));assert.deepEqual(reviewed.response,response);assert.equal(reviewed.requestDigest,requestDigest);assert.equal(reviewed.previewDigest,digest);
-    assert.deepEqual(methods,[{catalog_grant_draft:{context_key:'33'.repeat(32),selection}}]);
-    for(const change of ['key','revision','operation','digest','subset'] as const){
-        const changed=structuredClone(response);
-        if(change==='key')changed.draft.request.key.nonce='99'.repeat(16);
-        else if(change==='revision')changed.draft.request.expected_catalog_revision=2;
-        else if(change==='operation')changed.draft.preview.operation={...nativeGrantOperation(),grant:{...nativeGrantOperation().grant,id:'grt_'+'22'.repeat(16)}};
-        else if(change==='digest')changed.draft.preview.request_digest='bad';
-        else changed.draft.request.operation.grant.memberships[0].membership.project_id='prj_'+'99'.repeat(16);
-        assert.throws(()=>validateNativeGrantDraft(changed,selection),change);
-    }
-    for(const invalid of [{project_ids:[],index_ids:null},{project_ids:[project,project],index_ids:null},{project_ids:[project],index_ids:[]},{project_ids:[project],index_ids:[index,index]},
-        {project_ids:Array.from({length:33},(_,i)=>`prj_${i.toString(16).padStart(32,'0')}`),index_ids:null},{project_ids:[project],index_ids:null,host:'invented'}])assert.throws(()=>validateGrantSelection(invalid));
-    assert.deepEqual(validateGrantSelection({project_ids:[project],index_ids:null}),{project_ids:[project],index_ids:null});
-});
-
-test('Indexing grant review consumes only native drafts, preserves the submitted draft and never applies on read',async()=>{
-    const descriptor:WindowContextDescriptor={host:'22'.repeat(32),key:'33'.repeat(32),kind:'empty',name:'Empty window'},f=controller();let drafts=0,applies=0;
-    const response=nativeGrantResponse();
-    f.control.catalogGrantDraft=async(key,selection,revision)=>{drafts++;assert.equal(key,descriptor.key);assert.equal(revision,1);return {...validateNativeGrantDraft(response,{key:request.key,expected_catalog_revision:1,...selection}),contextKey:key};};
-    const uncertain={status:'catalog_outcome_unknown',code:'catalog_apply_outcome_unknown',caller:response.draft.request.caller,key:request.key,request_digest:requestDigest,future_unknown_field:{retained:true}};
-    f.control.catalogApply=async()=>{applies++;throw new ServiceError('catalog_apply_outcome_unknown',true,uncertain);};
-    const value=new IndexingCatalogController({control:f.control,identity:()=> 'current',authorized:()=>true,changed(){},windowContext:()=>descriptor,windowContextObservation:()=>({status:'catalog_host_context',descriptor:{schema:1,namespace,host:descriptor.host,key:descriptor.key,catalog_revision:1,context:null}})});
-    await value.adoptHostContext();assert.equal(drafts,0);assert.equal(applies,0);
-    const generation=value.snapshot().generation;await value.grantDraft({project_ids:[project],index_ids:[index]},generation);
-    assert.deepEqual(value.snapshot().review?.response,response);assert.equal(drafts,1);assert.equal(applies,0);
-    await assert.rejects(value.apply(generation),/catalog_apply_outcome_unknown/);assert.equal(applies,1);
-    assert.deepEqual(JSON.parse(catalogExport(value.snapshot())).submittedReview.response,response);
-    assert.deepEqual(value.snapshot().outcome,uncertain);
-    await assert.rejects(value.apply(generation),/stale_catalog_review/);assert.equal(applies,1);
-    await assert.rejects(value.preview(nativeGrantOperation(),generation),/native_grant_draft_required/);
-});
-
-test('late grant drafts are rejected after trust, caller ownership or context identity replacement',async()=>{
-    for(const fence of ['trust','caller','context'] as const){
-        let trusted=true,owner='one';let descriptor:WindowContextDescriptor={host:'22'.repeat(32),key:'33'.repeat(32),kind:'empty',name:'Empty window'};
-        const f=controller();let finish!:(review:CatalogReview)=>void;
-        f.control.catalogGrantDraft=()=>new Promise(resolve=>{finish=resolve;});
-        const value=new IndexingCatalogController({control:f.control,identity:()=>owner,authorized:()=>trusted,changed(){},windowContext:()=>descriptor,windowContextObservation:()=>({status:'catalog_host_context',descriptor:{schema:1,namespace,host:descriptor.host,key:descriptor.key,catalog_revision:1,context:null}})});
-        await value.adoptHostContext();const pending=value.grantDraft({project_ids:[project],index_ids:null},value.snapshot().generation);
-        if(fence==='trust')trusted=false;else if(fence==='caller')owner='replaced';else descriptor={...descriptor,key:'44'.repeat(32)};
-        const native=nativeGrantResponse();finish({...validateNativeGrantDraft(native,{key:request.key,expected_catalog_revision:1,project_ids:[project],index_ids:null}),contextKey:'33'.repeat(32)});
-        await assert.rejects(pending,/stale_catalog_view/);assert.equal(value.snapshot().review,undefined);
-    }
 });
 
 test('catalog fence wrappers bind exact requests and preserve complete native proof through journal restore',async()=>{

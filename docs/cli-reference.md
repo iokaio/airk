@@ -193,23 +193,6 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
@@ -251,23 +234,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -317,36 +283,19 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --show-index <SHOW_INDEX>
-          Index library: show this index (`idx_…`)
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --show-set <SHOW_SET>
-          Index library: show this index set (`prj_…`)
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
           [default: .]
 
+      --show-index <SHOW_INDEX>
+          Index library: show this index (`idx_…`)
+
       --data-dir <DATA_DIR>
           The project's data folder (default: the installation's data location)
+
+      --show-set <SHOW_SET>
+          Index library: show this index set (`prj_…`)
 
       --collection <COLLECTION>
           [default: default]
@@ -388,36 +337,19 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --show-index <SHOW_INDEX>
-          Index library: show this index (`idx_…`)
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --show-set <SHOW_SET>
-          Index library: show this index set (`prj_…`)
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
           [default: .]
 
+      --show-index <SHOW_INDEX>
+          Index library: show this index (`idx_…`)
+
       --data-dir <DATA_DIR>
           The project's data folder (default: the installation's data location)
+
+      --show-set <SHOW_SET>
+          Index library: show this index set (`prj_…`)
 
       --collection <COLLECTION>
           [default: default]
@@ -454,23 +386,6 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
@@ -491,7 +406,7 @@ Options:
 ```text
 Write the AIRK entry for Claude Code, Codex or VS Code: the live loopback endpoint URL and the X-AIRK-Response-Mode header only, no credential (U110).
 
-Agents read with the scope a call names (index_ids, index_set_ids) or the workspace default of the folder it passes (`scope default`). Connections no longer exist, so --connection-id and --selection-file are refused.
+Agents read with the scope a call names (index_ids, index_set_ids) or the workspace default of the folder it passes (`scope default`). Connections no longer exist.
 
 Usage: airkctl agents connect [OPTIONS] --client <CLIENT>
 
@@ -511,46 +426,14 @@ Options:
       --service-runtime-dir <SERVICE_RUNTIME_DIR>
           The AIRK service's control directory
 
-      --connection-id <CONNECTION_ID>
-          Refused since U110: agent connections no longer exist
-
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --open
-          The default since U110; kept so earlier invocations still parse
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --selection-file <SELECTION_FILE>
-          Refused since U110: agent connections no longer exist
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
 
       --user
           Write the user-level file instead of the project's
 
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
       --project <PROJECT>
           The project folder (default: the current directory)
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
-      --server-key <SERVER_KEY>
-          [default: airk]
-
-      --airkctl <AIRKCTL>
-          Unused since U110 (no credential helper is written)
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -559,6 +442,12 @@ Options:
 
       --data-dir <DATA_DIR>
           The project's data folder (default: the installation's data location)
+
+      --server-key <SERVER_KEY>
+          [default: airk]
+
+      --airkctl <AIRKCTL>
+          Unused since U110 (no credential helper is written)
 
       --collection <COLLECTION>
           [default: default]
@@ -589,23 +478,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -651,23 +523,6 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
@@ -712,28 +567,8 @@ Options:
       --user
           Use this user's configuration file instead of the project file
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
       --project <PROJECT>
           The project folder (default: the current directory)
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --server-key <SERVER_KEY>
-          [default: airk]
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -742,6 +577,9 @@ Options:
 
       --data-dir <DATA_DIR>
           The project's data folder (default: the installation's data location)
+
+      --server-key <SERVER_KEY>
+          [default: airk]
 
       --collection <COLLECTION>
           [default: default]
@@ -779,28 +617,8 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
       --project <PROJECTS>
           A project folder to check (repeatable; default: the current directory)
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --no-user
-          Leave this user's agent configuration files out
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -809,6 +627,9 @@ Options:
 
       --data-dir <DATA_DIR>
           The project's data folder (default: the installation's data location)
+
+      --no-user
+          Leave this user's agent configuration files out
 
       --collection <COLLECTION>
           [default: default]
@@ -846,33 +667,16 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
       --no-user
           Leave this user's agent configuration files out
-
-      --airkctl <AIRKCTL>
-          Unused since U110 (no credential helper is written)
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
 
           [default: .]
+
+      --airkctl <AIRKCTL>
+          Unused since U110 (no credential helper is written)
 
       --data-dir <DATA_DIR>
           The project's data folder (default: the installation's data location)
@@ -915,23 +719,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -977,23 +764,6 @@ Options:
       --stage <STAGE>
 
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
@@ -1034,23 +804,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -1096,25 +849,8 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
       --directory <DIRECTORY>
 
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -1157,23 +893,6 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
@@ -1214,23 +933,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -1276,23 +978,6 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
@@ -1336,23 +1021,6 @@ Options:
 
       --stage <STAGE>
 
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -1398,23 +1066,6 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
@@ -1450,23 +1101,6 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
@@ -1501,23 +1135,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -1565,36 +1182,30 @@ Options:
       --verification-max-bytes <VERIFICATION_MAX_BYTES>
 
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
 
       --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
 
 
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
 
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
           [possible values: lean, rich]
 
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
+      --collection <COLLECTION>
+          [default: default]
 
       --since <SINCE>
 
 
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
       --selector <SELECTORS>
           Repeatable tagged JSON selector, e.g. {"kind":"path","path":"one.rs"}
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --path <PATHS>
           Remember an exact collection-relative indexed path
@@ -1602,19 +1213,8 @@ Options:
       --path-prefix <PATH_PREFIX>
           [default: ""]
 
-      --root <ROOT>
-          The project folder (default: the current folder)
-
-          [default: .]
-
-      --data-dir <DATA_DIR>
-          The project's data folder (default: the installation's data location)
-
       --include-symbols
 
-
-      --collection <COLLECTION>
-          [default: default]
 
       --include-documents
 
@@ -1666,60 +1266,43 @@ Options:
       --verification-max-bytes <VERIFICATION_MAX_BYTES>
 
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
 
       --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
 
 
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
 
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
           [possible values: lean, rich]
 
+      --collection <COLLECTION>
+          [default: default]
+
       --name-match <NAME_MATCH>
           Default exact lookup; suffix/contains match simple or qualified names case-sensitively
 
           [possible values: exact, suffix, contains]
 
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
       --include-count
           Request qualified match counts; a bounded partial scan can report an unknown total
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
 
       --compact [<COMPACT>]
           False includes rich facts and durable IDs; independent of response mode
 
           [possible values: true, false]
 
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --cursor <CURSOR>
           Continue the same revision-bound discovery with unchanged filters
 
-      --root <ROOT>
-          The project folder (default: the current folder)
-
-          [default: .]
-
-      --data-dir <DATA_DIR>
-          The project's data folder (default: the installation's data location)
-
       --symbol-key <SYMBOL_KEY>
           Durable symbol key from indexed continuity evidence; excludes textual filters
-
-      --collection <COLLECTION>
-          [default: default]
 
       --name <NAME>
 
@@ -1768,23 +1351,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -1839,22 +1405,24 @@ Options:
       --verification-max-bytes <VERIFICATION_MAX_BYTES>
 
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
 
       --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
 
 
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
 
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
           [possible values: lean, rich]
 
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
+      --collection <COLLECTION>
+          [default: default]
 
       --revision <REVISION>
 
@@ -1862,36 +1430,17 @@ Options:
       --if-evidence <IF_EVIDENCE>
 
 
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
       --follow-moves
 
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --known-hash <KNOWN_HASH>
 
 
-      --root <ROOT>
-          The project folder (default: the current folder)
-
-          [default: .]
-
       --artifact-id <ARTIFACT_ID>
 
 
-      --data-dir <DATA_DIR>
-          The project's data folder (default: the installation's data location)
-
       --before <BEFORE>
           [default: 5]
-
-      --collection <COLLECTION>
-          [default: default]
 
       --after <AFTER>
           [default: 5]
@@ -1933,23 +1482,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -1994,23 +1526,6 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
@@ -2053,23 +1568,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -2114,23 +1612,6 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
@@ -2171,23 +1652,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -2232,23 +1696,6 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
@@ -2292,23 +1739,6 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
@@ -2349,23 +1779,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -2410,23 +1823,6 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
@@ -2469,23 +1865,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -2537,58 +1916,41 @@ Options:
       --verification-max-bytes <VERIFICATION_MAX_BYTES>
 
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
 
       --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
 
 
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
 
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
           [possible values: lean, rich]
 
+      --collection <COLLECTION>
+          [default: default]
+
       --compact [<COMPACT>]
           False includes rich facts and durable IDs; independent of response mode
 
           [possible values: true, false]
 
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
       --cursor <CURSOR>
           Continue the same revision-bound discovery with unchanged filters
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
 
       --document-key <DOCUMENT_KEY>
           Durable document key; excludes textual filters
 
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --name <NAME>
 
 
-      --root <ROOT>
-          The project folder (default: the current folder)
-
-          [default: .]
-
-      --data-dir <DATA_DIR>
-          The project's data folder (default: the installation's data location)
-
       --kind <KIND>
           Exact document fact category, such as requirement, date, architecture or feature
-
-      --collection <COLLECTION>
-          [default: default]
 
       --limit <LIMIT>
           [default: 50]
@@ -2635,50 +1997,33 @@ Options:
       --verification-max-bytes <VERIFICATION_MAX_BYTES>
 
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
 
       --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
 
 
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
 
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
           [possible values: lean, rich]
 
+      --collection <COLLECTION>
+          [default: default]
+
       --cursor <CURSOR>
           Continue the same revision-bound discovery with unchanged filters
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
 
       --limit <LIMIT>
           [default: 10]
 
       --max-bytes <MAX_BYTES>
           [default: 8192]
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
-      --root <ROOT>
-          The project folder (default: the current folder)
-
-          [default: .]
-
-      --data-dir <DATA_DIR>
-          The project's data folder (default: the installation's data location)
-
-      --collection <COLLECTION>
-          [default: default]
 
   -h, --help
           Print help
@@ -2716,23 +2061,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -2784,49 +2112,32 @@ Options:
       --verification-max-bytes <VERIFICATION_MAX_BYTES>
 
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
 
       --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
 
 
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
 
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
           [possible values: lean, rich]
 
+      --collection <COLLECTION>
+          [default: default]
+
       --compact [<COMPACT>]
           False includes rich facts and durable IDs; independent of response mode
 
           [possible values: true, false]
 
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
       --cursor <CURSOR>
           Continue the same revision-bound discovery with unchanged filters
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
-      --root <ROOT>
-          The project folder (default: the current folder)
-
-          [default: .]
-
-      --data-dir <DATA_DIR>
-          The project's data folder (default: the installation's data location)
-
-      --collection <COLLECTION>
-          [default: default]
 
   -h, --help
           Print help
@@ -2854,23 +2165,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -2922,28 +2216,27 @@ Options:
       --verification-max-sources <VERIFICATION_MAX_SOURCES>
 
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
 
       --verification-max-bytes <VERIFICATION_MAX_BYTES>
 
 
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
 
       --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
 
 
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
+      --collection <COLLECTION>
+          [default: default]
 
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
           [possible values: lean, rich]
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
 
       --revision <REVISION>
 
@@ -2951,30 +2244,14 @@ Options:
       --if-evidence <IF_EVIDENCE>
 
 
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --follow-moves
 
-
-      --root <ROOT>
-          The project folder (default: the current folder)
-
-          [default: .]
-
-      --data-dir <DATA_DIR>
-          The project's data folder (default: the installation's data location)
 
       --known-hash <KNOWN_HASH>
 
 
       --artifact-id <ARTIFACT_ID>
 
-
-      --collection <COLLECTION>
-          [default: default]
 
   -h, --help
           Print help
@@ -3001,23 +2278,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -3053,23 +2313,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -3111,23 +2354,6 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
@@ -3166,23 +2392,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -3223,23 +2432,6 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
@@ -3279,23 +2471,6 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
@@ -3320,7 +2495,7 @@ Usage: airkctl library [OPTIONS] <COMMAND>
 
 Commands:
   list         One catalog page (or every page with --all): indexes, index sets (projects), memberships, sources, grants or contexts
-  show         One catalog entity: an index, an index set or a grant
+  show         One catalog entity: an index or an index set
   setup        Draft a new index for --root (and --data-dir) and print the service's review; --apply also creates it
   setup-apply  Apply a draft `setup` printed (the whole `catalog_index_setup_draft` line or its `draft`)
   change       Preview any catalog operation (JSON, as the admin pages send it); --yes applies the preview
@@ -3343,23 +2518,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -3400,35 +2558,18 @@ Options:
           Apply the previewed change
 
       --confirm <CONFIRM>
-          The target's current name (or a grant's or context's id), typed to confirm a delete, removal or retirement (U98)
+          The target's current name (or a context's id), typed to confirm a delete, removal or retirement (U98)
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --runtime-dir <RUNTIME_DIR>
-
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
 
           [default: .]
+
+      --runtime-dir <RUNTIME_DIR>
+
 
       --data-dir <DATA_DIR>
           The project's data folder (default: the installation's data location)
@@ -3469,34 +2610,8 @@ Options:
       --text <TEXT>
           The description: at most 1 KiB, newlines allowed, no other control characters
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
       --clear
           Remove the stored description
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --yes
-          Apply the previewed change
-
-      --confirm <CONFIRM>
-          The target's current name (or a grant's or context's id), typed to confirm a delete, removal or retirement (U98)
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --runtime-dir <RUNTIME_DIR>
-
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -3506,8 +2621,17 @@ Options:
       --data-dir <DATA_DIR>
           The project's data folder (default: the installation's data location)
 
+      --yes
+          Apply the previewed change
+
       --collection <COLLECTION>
           [default: default]
+
+      --confirm <CONFIRM>
+          The target's current name (or a context's id), typed to confirm a delete, removal or retirement (U98)
+
+      --runtime-dir <RUNTIME_DIR>
+
 
   -h, --help
           Print help
@@ -3546,39 +2670,22 @@ Options:
       --after <AFTER>
           A continuation cursor a previous page printed (JSON)
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --all
-          Follow every continuation at the first page's revision
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --runtime-dir <RUNTIME_DIR>
-          The service's control directory (default: --service-runtime-dir, else the installation's)
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
           [default: .]
+
+      --all
+          Follow every continuation at the first page's revision
 
       --data-dir <DATA_DIR>
           The project's data folder (default: the installation's data location)
 
       --collection <COLLECTION>
           [default: default]
+
+      --runtime-dir <RUNTIME_DIR>
+          The service's control directory (default: --service-runtime-dir, else the installation's)
 
   -h, --help
           Print help
@@ -3613,28 +2720,8 @@ Options:
       --yes
           Apply the previewed change
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
       --confirm <CONFIRM>
-          The target's current name (or a grant's or context's id), typed to confirm a delete, removal or retirement (U98)
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --runtime-dir <RUNTIME_DIR>
-
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
+          The target's current name (or a context's id), typed to confirm a delete, removal or retirement (U98)
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -3643,6 +2730,9 @@ Options:
 
       --data-dir <DATA_DIR>
           The project's data folder (default: the installation's data location)
+
+      --runtime-dir <RUNTIME_DIR>
+
 
       --collection <COLLECTION>
           [default: default]
@@ -3675,35 +2765,18 @@ Options:
           Apply the previewed change
 
       --confirm <CONFIRM>
-          The target's current name (or a grant's or context's id), typed to confirm a delete, removal or retirement (U98)
+          The target's current name (or a context's id), typed to confirm a delete, removal or retirement (U98)
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --runtime-dir <RUNTIME_DIR>
-
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
 
           [default: .]
+
+      --runtime-dir <RUNTIME_DIR>
+
 
       --data-dir <DATA_DIR>
           The project's data folder (default: the installation's data location)
@@ -3744,28 +2817,8 @@ Options:
       --yes
           Apply the previewed change
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
       --confirm <CONFIRM>
-          The target's current name (or a grant's or context's id), typed to confirm a delete, removal or retirement (U98)
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --runtime-dir <RUNTIME_DIR>
-
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
+          The target's current name (or a context's id), typed to confirm a delete, removal or retirement (U98)
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -3774,6 +2827,9 @@ Options:
 
       --data-dir <DATA_DIR>
           The project's data folder (default: the installation's data location)
+
+      --runtime-dir <RUNTIME_DIR>
+
 
       --collection <COLLECTION>
           [default: default]
@@ -3806,35 +2862,18 @@ Options:
           Apply the previewed change
 
       --confirm <CONFIRM>
-          The target's current name (or a grant's or context's id), typed to confirm a delete, removal or retirement (U98)
+          The target's current name (or a context's id), typed to confirm a delete, removal or retirement (U98)
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --runtime-dir <RUNTIME_DIR>
-
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
 
           [default: .]
+
+      --runtime-dir <RUNTIME_DIR>
+
 
       --data-dir <DATA_DIR>
           The project's data folder (default: the installation's data location)
@@ -3875,28 +2914,8 @@ Options:
       --yes
           Apply the previewed change
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
       --confirm <CONFIRM>
-          The target's current name (or a grant's or context's id), typed to confirm a delete, removal or retirement (U98)
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --runtime-dir <RUNTIME_DIR>
-
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
+          The target's current name (or a context's id), typed to confirm a delete, removal or retirement (U98)
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -3905,6 +2924,9 @@ Options:
 
       --data-dir <DATA_DIR>
           The project's data folder (default: the installation's data location)
+
+      --runtime-dir <RUNTIME_DIR>
+
 
       --collection <COLLECTION>
           [default: default]
@@ -3942,8 +2964,10 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
 
       --watch <WATCH>
           Keep the index current after edits (native source watching)
@@ -3951,8 +2975,8 @@ Options:
           [default: on]
           [possible values: on, off]
 
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
 
       --revision <REVISION>
           Draft against this catalog revision (default: the current one)
@@ -3960,30 +2984,11 @@ Options:
       --apply
           Apply the draft right after printing it
 
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
+      --collection <COLLECTION>
+          [default: default]
 
       --runtime-dir <RUNTIME_DIR>
 
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
-      --root <ROOT>
-          The project folder (default: the current folder)
-
-          [default: .]
-
-      --data-dir <DATA_DIR>
-          The project's data folder (default: the installation's data location)
-
-      --collection <COLLECTION>
-          [default: default]
 
   -h, --help
           Print help
@@ -4015,23 +3020,6 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
@@ -4050,7 +3038,7 @@ Options:
 ## airkctl library show
 
 ```text
-One catalog entity: an index, an index set or a grant
+One catalog entity: an index or an index set
 
 Usage: airkctl library show [OPTIONS]
 
@@ -4070,39 +3058,19 @@ Options:
       --set <SET>
 
 
-      --grant <GRANT>
-
-
-      --service-project <SERVICE_PROJECT>
-          A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
       --revision <REVISION>
           Refuse unless the catalog is at this revision
 
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --runtime-dir <RUNTIME_DIR>
-
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
+      --service-project <SERVICE_PROJECT>
+          A registered project binding
 
       --root <ROOT>
           The project folder (default: the current folder)
 
           [default: .]
+
+      --runtime-dir <RUNTIME_DIR>
+
 
       --data-dir <DATA_DIR>
           The project's data folder (default: the installation's data location)
@@ -4133,23 +3101,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -4201,38 +3152,32 @@ Options:
       --verification-max-bytes <VERIFICATION_MAX_BYTES>
 
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
 
       --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
 
 
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
 
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
           [possible values: lean, rich]
 
+      --collection <COLLECTION>
+          [default: default]
+
       --cursor <CURSOR>
           Continue the same revision-bound discovery with unchanged filters
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
 
       --compact [<COMPACT>]
           Return minimal names/kinds/lines/signatures with shared original file/provenance bindings
 
           [possible values: true, false]
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --revision <REVISION>
 
@@ -4240,19 +3185,8 @@ Options:
       --if-evidence <IF_EVIDENCE>
 
 
-      --root <ROOT>
-          The project folder (default: the current folder)
-
-          [default: .]
-
-      --data-dir <DATA_DIR>
-          The project's data folder (default: the installation's data location)
-
       --follow-moves
 
-
-      --collection <COLLECTION>
-          [default: default]
 
       --known-hash <KNOWN_HASH>
 
@@ -4307,53 +3241,36 @@ Options:
       --verification-max-bytes <VERIFICATION_MAX_BYTES>
 
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
 
       --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
 
 
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
 
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
           [possible values: lean, rich]
 
+      --collection <COLLECTION>
+          [default: default]
+
       --project <PROJECT>
           Configured native project binding (alias for global --service-project)
 
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
       --execute
 
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --request <REQUEST>
           Structured request file; '-' reads bounded JSON from stdin
 
       --path-prefix <PATH_PREFIX>
           [default: ""]
-
-      --root <ROOT>
-          The project folder (default: the current folder)
-
-          [default: .]
-
-      --data-dir <DATA_DIR>
-          The project's data folder (default: the installation's data location)
-
-      --collection <COLLECTION>
-          [default: default]
 
   -h, --help
           Print help (see a summary with '-h')
@@ -4378,23 +3295,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -4430,23 +3330,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -4485,23 +3368,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -4553,22 +3419,24 @@ Options:
       --verification-max-bytes <VERIFICATION_MAX_BYTES>
 
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
 
       --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
 
 
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
 
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
           [possible values: lean, rich]
 
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
+      --collection <COLLECTION>
+          [default: default]
 
       --revision <REVISION>
 
@@ -4576,33 +3444,14 @@ Options:
       --if-evidence <IF_EVIDENCE>
 
 
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
       --follow-moves
 
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --known-hash <KNOWN_HASH>
 
 
-      --root <ROOT>
-          The project folder (default: the current folder)
-
-          [default: .]
-
       --artifact-id <ARTIFACT_ID>
 
-
-      --data-dir <DATA_DIR>
-          The project's data folder (default: the installation's data location)
-
-      --collection <COLLECTION>
-          [default: default]
 
       --start-line <START_LINE>
 
@@ -4652,60 +3501,43 @@ Options:
       --verification-max-bytes <VERIFICATION_MAX_BYTES>
 
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
 
       --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
 
 
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
 
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
           [possible values: lean, rich]
 
+      --collection <COLLECTION>
+          [default: default]
+
       --language <LANGUAGE>
           Exact indexed extraction-language label; not a filename-extension filter
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
 
       --evidence-kind <EVIDENCE_KIND>
           Indexed evidence classification; unknown includes unclassified extraction
 
           [possible values: code, document, configuration, unknown]
 
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
       --exclude-path-prefix <EXCLUDE_PATH_PREFIX>
           Exclude one literal collection-relative prefix from this query only
 
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --cursor <CURSOR>
           Continue one exact publication with identical identifier, filters and ordering
-
-      --root <ROOT>
-          The project folder (default: the current folder)
-
-          [default: .]
-
-      --data-dir <DATA_DIR>
-          The project's data folder (default: the installation's data location)
 
       --order <ORDER>
           Omit for the legacy response; paged index order uses stable IDs, with path/code_first alternatives
 
           [possible values: index, path, code_first]
-
-      --collection <COLLECTION>
-          [default: default]
 
       --include-files
           Summarize returned page records by file; bounded metadata is additional to the text-byte budget
@@ -4761,36 +3593,30 @@ Options:
       --verification-max-bytes <VERIFICATION_MAX_BYTES>
 
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
 
       --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
 
 
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
 
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
           [possible values: lean, rich]
 
+      --collection <COLLECTION>
+          [default: default]
+
       --direction <DIRECTION>
           [default: incoming]
 
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
       --kind <KIND>
 
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --path-prefix <PATH_PREFIX>
           [default: ""]
@@ -4798,19 +3624,8 @@ Options:
       --hops <HOPS>
           [default: 1]
 
-      --root <ROOT>
-          The project folder (default: the current folder)
-
-          [default: .]
-
-      --data-dir <DATA_DIR>
-          The project's data folder (default: the installation's data location)
-
       --limit <LIMIT>
           [default: 10]
-
-      --collection <COLLECTION>
-          [default: default]
 
       --max-bytes <MAX_BYTES>
           [default: 8192]
@@ -4838,23 +3653,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -4894,23 +3692,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -4958,30 +3739,13 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --set <SETS>
-          An index set (`prj_...`, exact name or unique case-insensitive name) (repeatable)
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
           [default: .]
+
+      --set <SETS>
+          An index set (`prj_...`, exact name or unique case-insensitive name) (repeatable)
 
       --data-dir <DATA_DIR>
           The project's data folder (default: the installation's data location)
@@ -5015,23 +3779,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -5085,58 +3832,41 @@ Options:
       --verification-max-bytes <VERIFICATION_MAX_BYTES>
 
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
 
       --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
 
 
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
 
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
           [possible values: lean, rich]
 
+      --collection <COLLECTION>
+          [default: default]
+
       --language <LANGUAGE>
           Exact indexed extraction-language label; not a filename-extension filter
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
 
       --evidence-kind <EVIDENCE_KIND>
           Indexed evidence classification; unknown includes unclassified extraction
 
           [possible values: code, document, configuration, unknown]
 
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
       --exclude-path-prefix <EXCLUDE_PATH_PREFIX>
           Exclude one literal collection-relative prefix from this query only
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --mode <MODE>
           [possible values: lexical, vector, hybrid]
 
-      --root <ROOT>
-          The project folder (default: the current folder)
-
-          [default: .]
-
-      --data-dir <DATA_DIR>
-          The project's data folder (default: the installation's data location)
-
       --semantic
           Use the configured local embedding model and disk-backed vector graph
-
-      --collection <COLLECTION>
-          [default: default]
 
       --path-prefix <PATH_PREFIX>
 
@@ -5197,23 +3927,6 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
@@ -5255,23 +3968,6 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
@@ -5310,23 +4006,6 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
@@ -5364,23 +4043,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -5424,23 +4086,6 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
@@ -5482,23 +4127,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -5544,32 +4172,8 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
       --raw
           Open the separate local raw job-error ring (may contain paths/error values)
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --output-file <OUTPUT_FILE>
-          Capture raw retained diagnostics into a new local file without buffering stdout (U79)
-
-      --format <FORMAT>
-          [default: json]
-          [possible values: json, text]
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -5579,8 +4183,15 @@ Options:
       --data-dir <DATA_DIR>
           The project's data folder (default: the installation's data location)
 
+      --output-file <OUTPUT_FILE>
+          Capture raw retained diagnostics into a new local file without buffering stdout (U79)
+
       --collection <COLLECTION>
           [default: default]
+
+      --format <FORMAT>
+          [default: json]
+          [possible values: json, text]
 
   -h, --help
           Print help
@@ -5611,23 +4222,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -5663,23 +4257,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -5721,23 +4298,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -5783,30 +4343,13 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --runtime-dir <RUNTIME_DIR>
-
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
           [default: .]
+
+      --runtime-dir <RUNTIME_DIR>
+
 
       --data-dir <DATA_DIR>
           The project's data folder (default: the installation's data location)
@@ -5843,23 +4386,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -5902,23 +4428,6 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
@@ -5956,23 +4465,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -6019,23 +4511,6 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
@@ -6075,23 +4550,6 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
@@ -6126,23 +4584,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -6186,23 +4627,6 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
@@ -6244,23 +4668,6 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
@@ -6300,23 +4707,6 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
@@ -6354,23 +4744,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -6418,23 +4791,6 @@ Options:
       --stdin
           Read bounded management JSON from stdin instead of a request file
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
@@ -6479,34 +4835,8 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
       --data <DATA>
 
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --state <STATE>
-
-
-      --cache <CACHE>
-
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --logs <LOGS>
-
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -6516,8 +4846,17 @@ Options:
       --data-dir <DATA_DIR>
           The project's data folder (default: the installation's data location)
 
+      --state <STATE>
+
+
+      --cache <CACHE>
+
+
       --collection <COLLECTION>
           [default: default]
+
+      --logs <LOGS>
+
 
   -h, --help
           Print help
@@ -6542,23 +4881,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -6598,23 +4920,6 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
@@ -6652,23 +4957,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -6708,23 +4996,6 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
@@ -6762,23 +5033,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -6827,23 +5081,6 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
@@ -6887,23 +5124,6 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
@@ -6944,23 +5164,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -7004,23 +5207,6 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
@@ -7055,23 +5241,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -7112,23 +5281,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -7180,60 +5332,43 @@ Options:
       --verification-max-bytes <VERIFICATION_MAX_BYTES>
 
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
+      --root <ROOT>
+          The project folder (default: the current folder)
+
+          [default: .]
 
       --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
 
 
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
+      --data-dir <DATA_DIR>
+          The project's data folder (default: the installation's data location)
 
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
           [possible values: lean, rich]
 
+      --collection <COLLECTION>
+          [default: default]
+
       --name-match <NAME_MATCH>
           Default exact lookup; suffix/contains match simple or qualified names case-sensitively
 
           [possible values: exact, suffix, contains]
 
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
       --include-count
           Request qualified match counts; a bounded partial scan can report an unknown total
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
 
       --compact [<COMPACT>]
           False includes rich facts and durable IDs; independent of response mode
 
           [possible values: true, false]
 
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --cursor <CURSOR>
           Continue the same revision-bound discovery with unchanged filters
 
-      --root <ROOT>
-          The project folder (default: the current folder)
-
-          [default: .]
-
-      --data-dir <DATA_DIR>
-          The project's data folder (default: the installation's data location)
-
       --language <LANGUAGE>
 
-
-      --collection <COLLECTION>
-          [default: default]
 
       --path-prefix <PATH_PREFIX>
           [default: ""]
@@ -7273,23 +5408,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -7341,36 +5459,19 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --set <SETS>
-          An index set to read as its member indexes: `prj_…`, exact name or unique case-insensitive name (repeatable)
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --workspace <WORKSPACE>
-          An absolute workspace folder: with no --index/--set, its stored default scope applies (U110), as for an agent's MCP call
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
           [default: .]
 
+      --set <SETS>
+          An index set to read as its member indexes: `prj_…`, exact name or unique case-insensitive name (repeatable)
+
       --data-dir <DATA_DIR>
           The project's data folder (default: the installation's data location)
+
+      --workspace <WORKSPACE>
+          An absolute workspace folder: with no --index/--set, its stored default scope applies (U110), as for an agent's MCP call
 
       --collection <COLLECTION>
           [default: default]
@@ -7405,23 +5506,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -7463,23 +5547,6 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
@@ -7514,23 +5581,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -7576,23 +5626,6 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
@@ -7637,42 +5670,25 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
       --generation <GENERATION>
 
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --content-kind <CONTENT_KIND>
-
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --record
-
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
 
           [default: .]
 
+      --content-kind <CONTENT_KIND>
+
+
       --data-dir <DATA_DIR>
           The project's data folder (default: the installation's data location)
 
       --collection <COLLECTION>
           [default: default]
+
+      --record
+
 
   -h, --help
           Print help
@@ -7697,23 +5713,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -7752,23 +5751,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -7811,23 +5793,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -7874,23 +5839,6 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
@@ -7925,23 +5873,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -7988,23 +5919,6 @@ Options:
       --service-project <SERVICE_PROJECT>
           A registered project binding
 
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
-
       --root <ROOT>
           The project folder (default: the current folder)
 
@@ -8039,23 +5953,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)
@@ -8095,23 +5992,6 @@ Options:
 
       --service-project <SERVICE_PROJECT>
           A registered project binding
-
-      --catalog-session <CATALOG_SESSION>
-          Explicit reviewed single-index session JSON; preferences alone grant no access
-
-      --combined-session <COMBINED_SESSION>
-          Frozen reviewed multi-Project session JSON; indexes are executed once each
-
-      --project-ids <PROJECT_IDS>
-          Narrow a combined read to explicit Projects from its reviewed session
-
-      --index-ids <INDEX_IDS>
-          Narrow a combined read to member indexes; requires explicit Project scope
-
-      --member-availability <MEMBER_AVAILABILITY>
-          Report member failures or require every selected member to answer
-
-          [possible values: report, require]
 
       --root <ROOT>
           The project folder (default: the current folder)

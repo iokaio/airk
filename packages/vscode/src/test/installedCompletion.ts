@@ -18,7 +18,6 @@ export function assertOwnedConfigurationRefresh(agent:InstalledAgent,before:stri
     assert.equal(current.connection_id,original.connection_id,'Owned configuration credential identity');
     assert.ok(sameHttpAuthority(current.selection,original.selection),'Owned configuration authority/scope');
     assert.equal(current.ca_certificate_file,original.ca_certificate_file);assert.equal(current.credential_file,original.credential_file);
-    if(current.selection.kind==='combined'&&original.selection.kind==='combined')assert.ok(current.selection.selection.expected_catalog_revision>=original.selection.selection.expected_catalog_revision,'Owned configuration clock cannot regress');
     for(const field of ['installation','user','namespace','ca_sha256','executable_sha256'] as const)assert.equal(current.endpoint[field],original.endpoint[field]);
     assert.ok(current.endpoint.generation>original.endpoint.generation);assert.notEqual(current.endpoint.service_instance,original.endpoint.service_instance);assert.notEqual(current.endpoint.url,original.endpoint.url);
     const expected=refreshHttpAgentConfig(agent as LocalAgent,before,current,original.endpoint.url);

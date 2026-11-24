@@ -382,9 +382,7 @@ impl crate::Kernel {
         ensure!(
             context.authority.index_id == allowance.index_id
                 && (!allowance.is_ordinary_focus()
-                    || context.authority.selection.is_some_and(|selection| {
-                        selection.scope_identity == allowance.selection
-                    }))
+                    || context.authority.selection.scope_identity == allowance.selection)
                 && self.scoped_read_fingerprint()? == Some(context.authority.fingerprint),
             "context partition differs from installed authority"
         );
@@ -462,13 +460,8 @@ impl crate::Kernel {
         let scope = application.scope.clone();
         let layers = software::evaluation_layers();
         self.bind_focus_shape(layers)?;
-        let mut gathering = Gathering::with_layers(
-            request.clone(),
-            scope.clone(),
-            application,
-            started,
-            layers,
-        )?;
+        let mut gathering =
+            Gathering::with_layers(request.clone(), scope.clone(), application, started, layers)?;
         loop {
             require_live()?;
             ensure!(

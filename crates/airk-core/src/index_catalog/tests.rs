@@ -106,36 +106,3 @@ fn context_preferences_cannot_infer_pending_authority_and_selections_are_bounded
     assert!(label(&"é".repeat(129)).is_err());
     Ok(())
 }
-
-#[test]
-fn frozen_grants_bind_a_policy_digest_and_cannot_mix_empty_and_active_epochs() -> Result<()> {
-    let membership = Membership {
-        project_id: QueryProjectId::from_identity(Incarnation::from_bytes([1; 16])),
-        index_id: IndexId::from_identity(Incarnation::from_bytes([2; 16])),
-        revision: CatalogRevision::INITIAL,
-        scope: vec![],
-    };
-    let mut grant = ReviewedGrant {
-        id: GrantId::from_identity(Incarnation::from_bytes([3; 16])),
-        host: Sha256Digest::from_bytes([4; 32]),
-        revision: CatalogRevision::INITIAL,
-        memberships: vec![GrantedMembership {
-            membership,
-            source_revision: CatalogRevision::INITIAL,
-            policy_epoch: 0,
-            policy_digest: None,
-        }],
-        revoked: false,
-    };
-    grant.validate()?;
-    grant.memberships[0].policy_epoch = 1;
-    assert!(grant.validate().is_err());
-    grant.memberships[0].policy_digest = Some(Sha256Digest::from_bytes([5; 32]));
-    grant.validate()?;
-    grant.memberships[0].policy_epoch = 0;
-    assert!(grant.validate().is_err());
-    grant.memberships[0].policy_epoch = 1;
-    grant.memberships.push(grant.memberships[0].clone());
-    assert!(grant.validate().is_err());
-    Ok(())
-}

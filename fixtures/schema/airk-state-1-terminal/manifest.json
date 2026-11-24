@@ -1,0 +1,50 @@
+{
+  "schema": "airk.terminal-registry-schema/1",
+  "state_contract": "airk-state/1",
+  "derived_by": "python scripts/dev/derive_terminal_registry_schema.py",
+  "removed_tables": [
+    "index_access_grants",
+    "index_access_memberships",
+    "index_access_scopes",
+    "index_adopted_authorities",
+    "index_adopted_configuration_claims",
+    "index_context_imports",
+    "legacy_index_projects"
+  ],
+  "layouts": {
+    "service-1.4.terminal-authority0": [
+      "service-1.4.authority0"
+    ],
+    "service-1.4.terminal-authority1": [
+      "service-1.4.authority1"
+    ],
+    "service-1.4.terminal-policy1": [
+      "service-1.4.policy1"
+    ],
+    "service-1.4.terminal-policy2": [
+      "service-1.4.policy2"
+    ],
+    "service-1.4.terminal-policy3": [
+      "service-1.4.policy3"
+    ],
+    "service-1.4.terminal-authority1-schema13": [
+      "service-1.4.adopted-policy0",
+      "service-1.4.authority1-armed"
+    ],
+    "service-1.4.terminal-policy1-schema13": [
+      "service-1.4.adopted-policy1",
+      "service-1.4.policy1-armed"
+    ],
+    "service-1.4.terminal-policy2-schema13": [
+      "service-1.4.adopted-policy2",
+      "service-1.4.policy2-armed"
+    ],
+    "service-1.4.terminal-policy3-schema13": [
+      "service-1.4.adopted-policy3",
+      "service-1.4.policy3-armed"
+    ],
+    "service-1.4.terminal-policy3-descriptions": [
+      "../../split/agents/registry-policy3-descriptions"
+    ]
+  }
+}

@@ -27,6 +27,7 @@ pub struct Ctl {
     envs: Vec<(OsString, Option<OsString>)>,
     input: Vec<u8>,
     no_installation: bool,
+    window: Option<super::pipe::Window>,
 }
 
 fn exit_status(code: u8) -> ExitStatus {
@@ -74,6 +75,12 @@ impl Ctl {
         self.envs.push((key.as_ref().to_owned(), None));
         self
     }
+    /// Route reads that name no explicit selection through this window, as
+    /// an `airkctl session` does (`Io::window`).
+    pub fn window(&mut self, window: super::pipe::Window) -> &mut Self {
+        self.window = Some(window);
+        self
+    }
     /// The run's standard input (`Command::stdin` with piped bytes).
     pub fn input(&mut self, bytes: impl Into<Vec<u8>>) -> &mut Self {
         self.input = bytes.into();
@@ -106,9 +113,10 @@ impl Ctl {
     pub fn output(&mut self) -> io::Result<Output> {
         let (line, full, input) = (self.command_line(), self.full_responses(), &self.input);
         let no_installation = self.no_installation;
+        let window = self.window.clone();
         std::thread::scope(|scope| {
             scope
-                .spawn(move || run(line, full, input, no_installation))
+                .spawn(move || run(line, full, input, no_installation, window))
                 .join()
                 .map_err(|_| io::Error::other("airkctl run panicked"))
         })
@@ -132,8 +140,9 @@ impl Ctl {
         );
         let (sender, receiver) = std::sync::mpsc::channel();
         let no_installation = self.no_installation;
+        let window = self.window.clone();
         std::thread::spawn(move || {
-            let _ = sender.send(run(line, full, &input, no_installation));
+            let _ = sender.send(run(line, full, &input, no_installation, window));
         });
         let wait = deadline.saturating_duration_since(Instant::now());
         receiver
@@ -149,10 +158,27 @@ impl super::read_retry::Invocation for Ctl {
     fn run_until(&self, deadline: Instant) -> io::Result<Output> {
         self.output_until(deadline)
     }
+    fn window_scope(
+        &self,
+    ) -> Option<(
+        airk_core::service::WindowScopeSelection,
+        airk_core::scoped_reads::ScopeSelectionObservation,
+    )> {
+        self.window
+            .as_ref()
+            .map(|window| (window.selection.clone(), window.source()))
+    }
 }
 
-fn run(line: Vec<OsString>, full_responses: bool, input: &[u8], no_installation: bool) -> Output {
+fn run(
+    line: Vec<OsString>,
+    full_responses: bool,
+    input: &[u8],
+    no_installation: bool,
+    window: Option<super::pipe::Window>,
+) -> Output {
     let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+    let mut route = window.as_ref().map(super::pipe::Window::route);
     let code = {
         let mut stdin = input;
         let mut io = airkctl::cli::Io {
@@ -161,7 +187,7 @@ fn run(line: Vec<OsString>, full_responses: bool, input: &[u8], no_installation:
             stdout: &mut stdout,
             stderr: &mut stderr,
             full_responses,
-            window: None,
+            window: route.as_mut(),
         };
         if no_installation {
             airkctl::install::with_fixture_discovery(

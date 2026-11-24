@@ -65,8 +65,8 @@ async fn actual_combined_capabilities_and_parse_fit_their_public_body_budgets() 
         combined_reads::{MemberAvailability, QuerySelection, SharedBudgets},
         identity::{Incarnation, Sha256Digest},
         index_catalog::{
-            CatalogRevision, GrantId, GrantedMembership, IndexId, Membership, PathScope,
-            QueryProjectId, ReviewedGrant, ScopeAtom, SourceRootId,
+            CatalogRevision, GrantedMembership, IndexId, Membership, PathScope, QueryProjectId,
+            ScopeAtom, SourceRootId,
         },
     };
     use airk_kernel::combined_reads::{CompositionRequest, MemberInput, compose_capabilities};
@@ -76,35 +76,34 @@ async fn actual_combined_capabilities_and_parse_fit_their_public_body_budgets() 
     let project = QueryProjectId::from_identity(Incarnation::from_bytes([1; 16]));
     let second_project = QueryProjectId::from_identity(Incarnation::from_bytes([2; 16]));
     let indexes = [1_u8, 2].map(|n| IndexId::from_identity(Incarnation::from_bytes([n; 16])));
-    let grant = ReviewedGrant {
-        id: GrantId::from_identity(Incarnation::from_bytes([1; 16])),
-        host: identity,
-        revision: CatalogRevision::INITIAL,
-        revoked: false,
-        memberships: [
-            (project, 0, "api"),
-            (second_project, 0, "impl"),
-            (project, 1, "api"),
-        ]
-        .into_iter()
-        .map(|(project_id, position, path)| GrantedMembership {
-            membership: Membership {
-                project_id,
-                index_id: indexes[position],
-                revision: CatalogRevision::INITIAL,
-                scope: vec![ScopeAtom {
-                    source_root_id: SourceRootId::from_identity(Incarnation::from_bytes(
-                        [position as u8 + 1; 16],
-                    )),
-                    kind: PathScope::Subtree,
-                    path: path.into(),
-                }],
-            },
-            source_revision: CatalogRevision::INITIAL,
-            policy_epoch: 0,
-            policy_digest: None,
-        })
-        .collect(),
+    let memberships: Vec<GrantedMembership> = [
+        (project, 0, "api"),
+        (second_project, 0, "impl"),
+        (project, 1, "api"),
+    ]
+    .into_iter()
+    .map(|(project_id, position, path)| GrantedMembership {
+        membership: Membership {
+            project_id,
+            index_id: indexes[position],
+            revision: CatalogRevision::INITIAL,
+            scope: vec![ScopeAtom {
+                source_root_id: SourceRootId::from_identity(Incarnation::from_bytes(
+                    [position as u8 + 1; 16],
+                )),
+                kind: PathScope::Subtree,
+                path: path.into(),
+            }],
+        },
+        source_revision: CatalogRevision::INITIAL,
+        policy_epoch: 0,
+        policy_digest: None,
+    })
+    .collect();
+    let observed = airk_core::scoped_reads::ScopeSelectionObservation {
+        owner: airk_core::scoped_reads::SelectionOwnerKind::Window,
+        scope_identity: identity,
+        catalog_revision: CatalogRevision::INITIAL,
     };
     let mut fixtures = Vec::new();
     for member in 1..=2 {
@@ -138,7 +137,7 @@ async fn actual_combined_capabilities_and_parse_fit_their_public_body_budgets() 
             kernel.collection().into(),
         )?
         .binding;
-        let authority = airk_kernel::scoped_reads::ScopedReadAuthority {
+        let authority = airk_kernel::scoped_reads::SelectionReadAuthority {
             schema: 1,
             backing,
             index_id: indexes[position],
@@ -147,8 +146,32 @@ async fn actual_combined_capabilities_and_parse_fit_their_public_body_budgets() 
             } else {
                 vec![project]
             },
-            provenance: airk_core::grant_provenance::GrantProvenance::UserReviewedProjectGrant,
-            grant: grant.clone(),
+            selection: airk_core::scoped_reads::SelectionScopeRef {
+                owner: observed.owner,
+                grant_nonce: Incarnation::from_bytes([10; 16]),
+                service_instance: Incarnation::from_bytes([11; 16]),
+                scope_identity: observed.scope_identity,
+                catalog_revision: observed.catalog_revision,
+            },
+            atoms: memberships
+                .iter()
+                .filter(|granted| granted.membership.index_id == indexes[position])
+                .flat_map(|granted| {
+                    granted
+                        .membership
+                        .scope
+                        .iter()
+                        .map(|atom| (granted.membership.project_id, atom.clone()))
+                })
+                .collect(),
+            membership_revisions: memberships
+                .iter()
+                .filter(|granted| granted.membership.index_id == indexes[position])
+                .map(|granted| (granted.membership.project_id, granted.membership.revision))
+                .collect(),
+            source_revision: CatalogRevision::INITIAL,
+            policy_epoch: 0,
+            policy_digest: None,
             sources: vec![airk_core::scoped_reads::SourceDescriptor {
                 source_root_id: SourceRootId::from_identity(Incarnation::from_bytes(
                     [position as u8 + 1; 16],
@@ -160,7 +183,7 @@ async fn actual_combined_capabilities_and_parse_fit_their_public_body_budgets() 
                     .into(),
             }],
         };
-        let server = AirkServer::new(kernel.with_scoped_reads(authority)?);
+        let server = AirkServer::new(kernel.with_selection_reads(authority)?);
         // The installed combined adapter requests full child status. Actual
         // independent publications must not be hidden by cloning one member.
         let reply = server
@@ -207,7 +230,7 @@ async fn actual_combined_capabilities_and_parse_fit_their_public_body_budgets() 
             member_availability: MemberAvailability::Report,
         };
         let request = CompositionRequest {
-            selection: selection.resolve(&grant)?,
+            selection: selection.resolve_selection(&memberships, observed)?,
             budgets: SharedBudgets {
                 limit: usize::from(count),
                 max_bytes: airk_core::MAX_RESPONSE_BYTES,
@@ -814,14 +837,18 @@ async fn answer_verification_controls_reach_the_saved_source_owner_through_actua
     base.configure_vectors(false)?;
     base.index()?;
     let authority = super::scoped_observation_tests::authority(&base)?;
-    let kernel = base.with_scoped_reads(authority.clone())?;
+    let kernel = base.with_selection_reads(authority.clone())?;
     let reference = ScopedReadRef {
         schema: 1,
         lease_generation: 1,
         index_id: authority.index_id,
-        grant_id: Some(authority.grant.id),
-        grant_revision: Some(authority.grant.revision),
-        selection: None,
+        selection: airk_core::scoped_reads::SelectionScopeRef {
+            owner: airk_core::scoped_reads::SelectionOwnerKind::Window,
+            grant_nonce: airk_core::identity::Incarnation::from_bytes([10; 16]),
+            service_instance: airk_core::identity::Incarnation::from_bytes([11; 16]),
+            scope_identity: airk_core::identity::Sha256Digest::from_bytes([12; 32]),
+            catalog_revision: airk_core::index_catalog::CatalogRevision::try_from(5_u64).unwrap(),
+        },
         fingerprint: kernel.scoped_read_fingerprint()?.unwrap(),
     };
     let worker = WorkerIdentity {
@@ -847,8 +874,7 @@ async fn answer_verification_controls_reach_the_saved_source_owner_through_actua
     ensure!(verified.is_error != Some(true), "{verified:?}");
     let verified = body(&verified)?;
     assert_eq!(
-        verified["source_verification"]["status"],
-        "verified",
+        verified["source_verification"]["status"], "verified",
         "{verified}"
     );
     assert!(

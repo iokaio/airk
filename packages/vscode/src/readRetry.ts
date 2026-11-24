@@ -4,7 +4,6 @@
 import { READ_OPERATION_DEADLINE_MS } from './generated/arbiterBudget';
 import { isDeepStrictEqual } from 'node:util';
 import type { WindowSelection } from './generated/i2';
-import { validateCatalogSession, validateCombinedCatalogSession } from './catalogSession';
 
 /** Parse native retry JSON text, refusing any number literal that is not an
  * integer. Every numeric field in native retry metadata is integer-typed, and
@@ -56,7 +55,7 @@ export function singleRequiredMemberRetry(combined: Record<string, any>): Record
             ||combined.partial!==true||combined.truncated!==false||!Array.isArray(combined.ranking)||combined.ranking.length!==0
             ||combined.shared_values!==undefined&&combined.shared_values!==null)return;
         const selected=combined.selection;
-        if(!object(selected)||!fields(selected,['project_ids','index_ids','grant_id','grant_revision','selection','member_availability','identity'])
+        if(!object(selected)||!fields(selected,['project_ids','index_ids','selection','member_availability','identity'])
             ||selected.member_availability!=='require'||!Array.isArray(selected.index_ids)||selected.index_ids.length!==1||!id(selected.index_ids[0],'idx')
             ||!Array.isArray(selected.project_ids)||selected.project_ids.length<1||selected.project_ids.length>32
             ||!selected.project_ids.every((value:unknown)=>id(value,'prj'))||new Set(selected.project_ids).size!==selected.project_ids.length
@@ -65,9 +64,7 @@ export function singleRequiredMemberRetry(combined: Record<string, any>): Record
         const selectionSource=(value:unknown):value is Record<string,unknown>=>object(value)
             &&fields(value,['owner','scope_identity','catalog_revision'])&&Object.keys(value).length===3
             &&['window','admin','agent'].includes(value.owner)&&digest(value.scope_identity)&&integer(value.catalog_revision,1);
-        const grantSource=id(selected.grant_id,'grt')&&integer(selected.grant_revision,1)&&observedSelection==null;
-        const windowSource=selected.grant_id==null&&selected.grant_revision==null&&selectionSource(observedSelection);
-        if(!grantSource&&!windowSource)return;
+        if(!selectionSource(observedSelection))return;
         const index=selected.index_ids[0];
         if(!Array.isArray(combined.members)||combined.members.length!==1)return;
         const member=combined.members[0];
@@ -102,13 +99,10 @@ export function singleRequiredMemberRetry(combined: Record<string, any>): Record
         if(Object.hasOwn(body,'request_id')&&(typeof body.request_id!=='string'||body.request_id.length===0||Buffer.byteLength(body.request_id,'utf8')>128))return;
         if(Object.hasOwn(body,'scope_observation')){
             const scope=body.scope_observation;
-            if(!object(scope)||!fields(scope,['schema','qualifier','fingerprint','provenance','grant','selection','members'])||scope.schema!==1
+            if(!object(scope)||!fields(scope,['schema','qualifier','fingerprint','selection','members'])||scope.schema!==1
                 ||scope.qualifier!=='selected_subset'||!digest(scope.fingerprint)
                 ||!Array.isArray(scope.members)||scope.members.length!==1||Buffer.byteLength(JSON.stringify(scope),'utf8')>16384)return;
-            if(grantSource?(!['user_reviewed_project_grant','imported_legacy_snapshot','imported_standalone_adoption'].includes(scope.provenance)
-                ||scope.selection!=null||!object(scope.grant)||!fields(scope.grant,['id','revision'])
-                ||scope.grant.id!==selected.grant_id||scope.grant.revision!==selected.grant_revision)
-                :(scope.provenance!=null||scope.grant!=null||!selectionSource(scope.selection)||!isDeepStrictEqual(scope.selection,observedSelection)))return;
+            if(!selectionSource(scope.selection)||!isDeepStrictEqual(scope.selection,observedSelection))return;
             const scoped=scope.members[0];
             if(!object(scoped)||!fields(scoped,['index_id','memberships','source_root_ids','source_revision','policy_epoch','policy_digest'])
                 ||scoped.index_id!==index||!integer(scoped.source_revision,1)||!integer(scoped.policy_epoch,0)
@@ -153,22 +147,13 @@ function activeCombinedRetry(combined:Record<string,any>,expectedScope:unknown,a
     try{
         if(!object(arguments_)||Buffer.byteLength(JSON.stringify(arguments_),'utf8')>65536||Object.hasOwn(arguments_,'project'))return false;
         const selected=combined.selection;
-        let projects:string[],indexes:string[];
         const window=selectionRetryScope(expectedScope);
-        if(window){
-            const source=expectedSelection===undefined?{owner:'window',scope_identity:window.scope_identity,
-                catalog_revision:window.window_scope_selection.expected_catalog_revision}:expectedSelection;
-            if(!object(source)||selected.grant_id!=null||selected.grant_revision!=null
-                ||!isDeepStrictEqual(selected.selection,source)||source.scope_identity!==window.scope_identity
-                ||source.catalog_revision!==window.window_scope_selection.expected_catalog_revision)return false;
-            projects=window.window_scope_selection.project_ids;indexes=window.window_scope_selection.index_ids;
-        }else{
-            let catalog;
-            try{catalog=validateCatalogSession(expectedScope);}catch{catalog=validateCombinedCatalogSession(expectedScope);}
-            if(selected.selection!=null||selected.grant_id!==catalog.grant_id||selected.grant_revision!==catalog.expected_grant_revision)return false;
-            projects=catalog.project_ids;
-            indexes='index_id' in catalog?[catalog.index_id]:catalog.index_ids??[];
-        }
+        if(!window)return false;
+        const source=expectedSelection===undefined?{owner:'window',scope_identity:window.scope_identity,
+            catalog_revision:window.window_scope_selection.expected_catalog_revision}:expectedSelection;
+        if(!object(source)||!isDeepStrictEqual(selected.selection,source)||source.scope_identity!==window.scope_identity
+            ||source.catalog_revision!==window.window_scope_selection.expected_catalog_revision)return false;
+        const projects=window.window_scope_selection.project_ids,indexes=window.window_scope_selection.index_ids;
         if(!ids(projects,'prj')||!ids(indexes,'idx'))return false;
         const explicitProjects=Object.hasOwn(arguments_,'project_ids');
         if(!explicitProjects&&(Object.hasOwn(arguments_,'index_ids')||Object.hasOwn(arguments_,'member_availability')))return false;
@@ -208,28 +193,11 @@ export function readRetryDelay(envelope: unknown, expectedScope?: unknown, origi
             ||Object.hasOwn(error,'query_replay_safe')&&error.query_replay_safe!==true
             ||!fields(scope,['confirmed','selection'])||scope.confirmed!==false||expectedScope===undefined
             ||!isDeepStrictEqual(value.structuredContent,hint))return;
-        let windowSelection=false;
         try {
             const observedSelection=selectionRetryScope(scope.selection),expectedSelection=selectionRetryScope(expectedScope);
-            if(observedSelection||expectedSelection){
-                if(!observedSelection||!expectedSelection||!isDeepStrictEqual(observedSelection,expectedSelection))return;
-                windowSelection=true;
-            }else{
-            const observed=validateCatalogSession(scope.selection),expected=validateCatalogSession(expectedScope);
-            // The native resolver refreshes only the metadata clock before
-            // admission. The original grant, scope and launch arguments remain
-            // fixed; a backwards clock or changed authority never permits replay.
-            if(observed.expected_catalog_revision<expected.expected_catalog_revision
-                ||!isDeepStrictEqual({...observed,expected_catalog_revision:expected.expected_catalog_revision},expected))return;
-            }
+            if(!observedSelection||!expectedSelection||!isDeepStrictEqual(observedSelection,expectedSelection))return;
         }catch{return;}
-        if(windowSelection){if(error.native_control_response!==undefined)return;}
-        else if(error.code==='scoped_connection_unavailable'){
-            const native=error.native_control_response;
-            if(!fields(native,['status','code'])||native.status!=='failure'||!['broker_busy','project_starting_or_unavailable',
-                'project_unavailable_or_busy','previous_workers_draining','catalog_revision_changed','catalog_clock_pending',
-                'catalog_connection_busy','project_capacity_busy','project_restart_backoff'].includes(native.code))return;
-        }else if(error.native_control_response!==undefined)return;
+        if(error.native_control_response!==undefined)return;
         return Number.isInteger(error.retry_after_ms)&&error.retry_after_ms>=1&&error.retry_after_ms<=1000?error.retry_after_ms:undefined;
     }
     if (hint.status === 'retry') {

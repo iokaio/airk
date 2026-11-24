@@ -588,7 +588,7 @@ fn independent_pending_setup_does_not_wedge_unaffected_issuance_after_prepare_re
         scoped_reads::SourceDescriptor,
         service::ProjectRegistration,
     };
-    use airk_kernel::scoped_reads::ScopedReadAuthority;
+    use airk_kernel::scoped_reads::SelectionReadAuthority;
     let (control, mut registry, mut request, _old_preview, gate) = fixture()?;
     let sources = tempfile::tempdir()?;
     let base = sources.path().canonicalize()?;
@@ -639,41 +639,39 @@ fn independent_pending_setup_does_not_wedge_unaffected_issuance_after_prepare_re
     let index = IndexId::from_identity(Incarnation::from_bytes([51; 16]));
     let project = QueryProjectId::from_identity(Incarnation::from_bytes([52; 16]));
     let source_id = SourceRootId::from_identity(Incarnation::from_bytes([53; 16]));
-    let authority = ScopedReadAuthority {
+    let authority = SelectionReadAuthority {
         schema: 1,
         backing: backing.binding,
         index_id: index,
         project_ids: vec![project],
-        provenance: airk_core::grant_provenance::GrantProvenance::UserReviewedProjectGrant,
-        grant: ReviewedGrant {
-            id: GrantId::from_identity(Incarnation::from_bytes([54; 16])),
-            host: Sha256Digest::from_bytes([55; 32]),
-            revision: CatalogRevision::INITIAL,
-            revoked: false,
-            memberships: vec![GrantedMembership {
-                membership: Membership {
-                    project_id: project,
-                    index_id: index,
-                    revision: CatalogRevision::INITIAL,
-                    scope: vec![ScopeAtom {
-                        source_root_id: source_id,
-                        kind: PathScope::Subtree,
-                        path: String::new(),
-                    }],
-                },
-                source_revision: CatalogRevision::INITIAL,
-                policy_epoch: 0,
-                policy_digest: None,
-            }],
+        selection: airk_core::scoped_reads::SelectionScopeRef {
+            owner: airk_core::scoped_reads::SelectionOwnerKind::Window,
+            grant_nonce: Incarnation::from_bytes([54; 16]),
+            service_instance: worker.service,
+            scope_identity: Sha256Digest::from_bytes([54; 32]),
+            catalog_revision: request.expected_catalog_revision,
         },
+        atoms: vec![(
+            project,
+            ScopeAtom {
+                source_root_id: source_id,
+                kind: PathScope::Subtree,
+                path: String::new(),
+            },
+        )],
         sources: vec![SourceDescriptor {
             source_root_id: source_id,
             original_root: available_root,
         }],
+        membership_revisions: vec![(project, CatalogRevision::INITIAL)],
+        source_revision: CatalogRevision::INITIAL,
+        policy_epoch: 0,
+        policy_digest: None,
     };
+    gate.register_selection(&authority.selection)?;
     gate.register_worker(worker)?;
     let issue = gate.begin_issue(request.key.namespace, request.expected_catalog_revision)?;
-    let install = gate.reserve_install(
+    let install = gate.reserve_selection_scope(
         issue,
         worker,
         &authority,

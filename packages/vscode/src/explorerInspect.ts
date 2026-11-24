@@ -57,7 +57,6 @@ async function liveOf(info: Value, contentHash: string, dirty: DirtyCheck): Prom
 /** Evidence › Inspector: the full indexed record for one cited file, compared with its saved bytes. */
 export async function inspect(session: EvidenceClient, refs: RefRegistry, project: string, id: string | undefined, dirty: DirtyCheck, selectedPath?: string): Promise<InspectView> {
     let ref = id ? refs.get(id, project) : undefined;
-    if (session.spec?.combinedSession && !ref?.origin) { throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED', 'Choose qualified evidence with one originating index before inspecting a combined source.')); }
     const path = ref?.path ?? selectedPath;
     if (!path) { throw new EvidenceFailure(explorerError('NO_SOURCE_FILE')); }
     let nativeFailure: Value | undefined;
@@ -117,7 +116,6 @@ const STATUS_MESSAGE: Record<CitationResult['status'], string> = {
  * unsupported, never as a pass. Each distinct path costs one airk_file_info call.
  */
 export async function checkCitations(session: EvidenceClient, refs: RefRegistry, project: string, input: string, dirty: DirtyCheck): Promise<CitationCheckView> {
-    if (session.spec?.combinedSession) { throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED', 'Pasted paths have no originating index. Choose qualified evidence in Workbench to check a combined result.')); }
     const parsed = parseCitations(input);
     const paths = [...new Set(parsed.citations.filter(entry => !entry.absolute).map(entry => entry.path))].slice(0, 25);
     const records = new Map<string, { info?: Value; live?: LiveCheck; publication?: string; receipt?: Value; message?: string }>();
@@ -158,7 +156,6 @@ export async function checkCitations(session: EvidenceClient, refs: RefRegistry,
 
 /** Evidence › Changes: bounded observed changes since an earlier publication token. */
 export async function changesSince(session: EvidenceClient, since: string, limit: number, handles?: FactHandles, project?: string, more?: string): Promise<ChangesView> {
-    if (session.spec?.combinedSession) { throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED', 'Choose one originating index and its member publication in Workbench to compare changes.')); }
     const handle = more && handles ? handles.cursors.get(more, project) : undefined;
     const args = handle ? { ...handle.args, cursor: handle.cursor } : { since, limit, max_bytes: 32768 };
     const result = await session.call('airk_changes', args, { timeout: READ_TRANSPORT_DEADLINE_MS });

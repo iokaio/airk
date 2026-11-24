@@ -133,7 +133,7 @@ export class EvidenceClient {
         let expectedScope:unknown,scopeCaptured=false,previous:any,retries=0;
         while (true) {
             const session = await this.connect();
-            const activeScope=()=>('readScope' in session&&typeof session.readScope==='function')?session.readScope():this.spec.combinedSession??this.spec.catalogSession;
+            const activeScope=()=>('readScope' in session&&typeof session.readScope==='function')?session.readScope():undefined;
             if(!scopeCaptured){expectedScope=structuredClone(activeScope());scopeCaptured=true;}
             else if(Date.now()>=Math.min(deadline,requestDeadline)||!isDeepStrictEqual(activeScope(),expectedScope)){
                 const text=previous?.content?.find((part:any)=>part?.type==='text')?.text;
@@ -197,7 +197,7 @@ export class EvidenceClient {
                 : (this.options.resolveConnection ? this.options.resolveConnection(this.spec, client) : Promise.resolve(this.spec)).then(spec => {
                     if (!transport) { throw new Error('evidence_transport_unavailable'); }
                     // A read always names its reviewed selection; nothing is read without one.
-                    if (!spec.service?.project && !spec.catalogSession && !spec.combinedSession) { throw new Error('evidence_selection_required'); }
+                    if (!spec.service?.project) { throw new Error('evidence_selection_required'); }
                     return { session: transport(spec, client) };
                 });
             this.opening = connected

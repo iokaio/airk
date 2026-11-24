@@ -214,44 +214,14 @@ fn target_file(agent: Agent, scope: Scope, project: &Path) -> Result<PathBuf, Er
     }
 }
 
-/// How the caller asked `connect` to obtain a connection. U110: connections
-/// no longer exist; `Open` (or no source) writes the endpoint URL and the
-/// other forms are refused.
-pub enum Source {
-    Existing(Incarnation),
-    Enroll {
-        id: Incarnation,
-        selection_file: PathBuf,
-    },
-    Open,
-}
-
-const NO_CONNECTIONS: &str =
-    "AIRK agent connections no longer exist; agents connect writes the endpoint URL only (U110)";
-
 /// `agents connect` (U110): write the entry naming the live endpoint URL
 /// with only the `X-AIRK-Response-Mode` header. Nothing is enrolled.
 pub fn connect(
     inputs: &Inputs<'_>,
     client: super::Client,
-    source: Source,
     scope: Scope,
     server_key: &str,
 ) -> Result<Value, ErrorLine> {
-    match source {
-        Source::Open => {}
-        Source::Existing(id) => {
-            return Err(refused(format!(
-                "{NO_CONNECTIONS}; --connection-id {id} was not used."
-            )));
-        }
-        Source::Enroll { id, selection_file } => {
-            return Err(refused(format!(
-                "{NO_CONNECTIONS}; --connection-id {id} and --selection-file {} were not used.",
-                selection_file.display()
-            )));
-        }
-    }
     let agent = agent(client);
     let project = inputs
         .projects

@@ -1,14 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Bounded administrative context identity, separate from evidence permission.
 use crate::{
-    catalog_management::{CatalogOperation, CatalogPreview, CatalogRequest, MAX_PAGE_BYTES},
+    catalog_management::MAX_PAGE_BYTES,
     identity::{Incarnation, Sha256Digest},
-    index_catalog::{
-        CatalogRevision, ContextChoices, IndexId, MAX_SELECTION, QueryProjectId, encoded_size,
-        unique_bounded,
-    },
-    scoped_reads::ScopeReadRefused,
-    service_records::RequestKey,
+    index_catalog::{CatalogRevision, ContextChoices, encoded_size},
 };
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
@@ -30,10 +25,6 @@ pub enum NativeLegacyBindingEligibility {
     AuthorityZero {
         registration: crate::service_records::ProjectRegistration,
     },
-    ImportedSnapshot {
-        registration: crate::service_records::ProjectRegistration,
-        grant: Box<crate::grant_provenance::PersistedGrant>,
-    },
     Unavailable,
 }
 impl NativeLegacyBindingObservation {
@@ -41,21 +32,6 @@ impl NativeLegacyBindingObservation {
         ensure!(self.schema == 1, "unsupported native legacy observation");
         let registration = match &self.eligibility {
             NativeLegacyBindingEligibility::AuthorityZero { registration } => Some(registration),
-            NativeLegacyBindingEligibility::ImportedSnapshot {
-                registration,
-                grant,
-            } => {
-                grant.validate()?;
-                ensure!(
-                    self.catalog_revision.is_some() && !grant.grant.revoked,
-                    "invalid native imported observation"
-                );
-                ensure!(
-                    grant.provenance.imported_binding() == Some(self.project),
-                    "native imported observation binding changed"
-                );
-                Some(registration)
-            }
             NativeLegacyBindingEligibility::Unavailable => None,
         };
         if let Some(registration) = registration {
@@ -97,60 +73,6 @@ impl NativeHostContextDescriptor {
         }
         encoded_size(self, 16 * 1024)?;
         Ok(())
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct GrantDraftSelection {
-    pub key: RequestKey,
-    pub expected_catalog_revision: CatalogRevision,
-    pub project_ids: Vec<QueryProjectId>,
-    pub index_ids: Option<Vec<IndexId>>,
-}
-impl GrantDraftSelection {
-    pub fn validate(&self) -> Result<()> {
-        unique_bounded(&self.project_ids, MAX_SELECTION)?;
-        ensure!(!self.project_ids.is_empty(), ScopeReadRefused);
-        if let Some(indexes) = &self.index_ids {
-            unique_bounded(indexes, MAX_SELECTION)?;
-            ensure!(!indexes.is_empty(), ScopeReadRefused);
-        }
-        ensure!(self.key.epoch <= i64::MAX as u64, ScopeReadRefused);
-        Ok(())
-    }
-}
-
-/// Journal this complete native request before submitting it to the existing
-/// CatalogApply lane. Recovery reuses these exact bytes and preview digest.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ReviewedGrantDraft {
-    pub request: CatalogRequest,
-    pub preview: CatalogPreview,
-    pub preview_digest: Sha256Digest,
-}
-impl ReviewedGrantDraft {
-    pub fn new(request: CatalogRequest, preview: CatalogPreview) -> Result<Self> {
-        request.validate()?;
-        ensure!(
-            matches!(request.operation, CatalogOperation::CreateGrant { .. }),
-            ScopeReadRefused
-        );
-        ensure!(
-            preview.catalog_revision == request.expected_catalog_revision
-                && preview.request_digest == request.identity()?
-                && preview.operation == request.operation,
-            ScopeReadRefused
-        );
-        let preview_digest = preview.identity()?;
-        let draft = Self {
-            request,
-            preview,
-            preview_digest,
-        };
-        encoded_size(&draft, MAX_PAGE_BYTES)?;
-        Ok(draft)
     }
 }
 

@@ -1,14 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Canonical Focus owner tests with an injected scorer; no model-quality claim.
 use super::*;
-use std::collections::BTreeMap;
 use airk_core::{
     Citation, DocumentLocation,
     arbiter::{
         FocusApplication, FocusApplicationReceipt, FocusIdentity, FocusPresentation,
         FocusProfileLimits, FocusScore,
     },
-    grant_provenance::GrantProvenance,
     identity::Incarnation,
     index_catalog::*,
     read_attempt::{ReadAttemptBudget, ReadClock},
@@ -16,6 +14,7 @@ use airk_core::{
     search_execution::{RequestedMode, SearchExecution},
     service::{ScopedReadRef, WorkerIdentity},
 };
+use std::collections::BTreeMap;
 use std::sync::{
     Mutex,
     atomic::{AtomicU64, Ordering},
@@ -61,7 +60,12 @@ impl NativeController for Controller {
         _: Instant,
     ) -> Result<Option<airk_core::native_loop::NativeFocusResponseV3>> {
         use airk_core::arbiter::answer_loop::*;
-        request.validate(request.worker, request.authority, ReadClock::UnixMonotonic, 1000)?;
+        request.validate(
+            request.worker,
+            request.authority,
+            ReadClock::UnixMonotonic,
+            1000,
+        )?;
         self.batches.lock().unwrap().push(request.clone());
         if matches!(self.mode, Mode::Unknown) {
             anyhow::bail!("synthetic lost native outcome");
@@ -300,7 +304,7 @@ fn fixture(
     let project = QueryProjectId::from_identity(Incarnation::from_bytes([1; 16]));
     let index = IndexId::from_identity(Incarnation::from_bytes([2; 16]));
     let source_id = SourceRootId::from_identity(Incarnation::from_bytes([3; 16]));
-    let authority = crate::scoped_reads::ScopedReadAuthority {
+    let authority = crate::scoped_reads::SelectionReadAuthority {
         schema: 1,
         backing: airk_core::service::ProjectRegistration::new(
             kernel.root().to_str().unwrap().into(),
@@ -310,41 +314,42 @@ fn fixture(
         .binding,
         index_id: index,
         project_ids: vec![project],
-        provenance: GrantProvenance::UserReviewedProjectGrant,
-        grant: ReviewedGrant {
-            id: GrantId::from_identity(Incarnation::from_bytes([4; 16])),
-            host: digest(5),
-            revision: CatalogRevision::INITIAL,
-            revoked: false,
-            memberships: vec![GrantedMembership {
-                membership: Membership {
-                    project_id: project,
-                    index_id: index,
-                    revision: CatalogRevision::INITIAL,
-                    scope: vec![ScopeAtom {
-                        source_root_id: source_id,
-                        kind: PathScope::Subtree,
-                        path: "public".into(),
-                    }],
-                },
-                source_revision: CatalogRevision::INITIAL,
-                policy_epoch: 0,
-                policy_digest: None,
-            }],
+        selection: airk_core::scoped_reads::SelectionScopeRef {
+            owner: airk_core::scoped_reads::SelectionOwnerKind::Window,
+            grant_nonce: airk_core::identity::Incarnation::from_bytes([10; 16]),
+            service_instance: airk_core::identity::Incarnation::from_bytes([11; 16]),
+            scope_identity: airk_core::identity::Sha256Digest::from_bytes([12; 32]),
+            catalog_revision: airk_core::index_catalog::CatalogRevision::try_from(5_u64).unwrap(),
         },
+        atoms: vec![ScopeAtom {
+            source_root_id: source_id,
+            kind: PathScope::Subtree,
+            path: "public".into(),
+        }]
+        .into_iter()
+        .map(|atom| (project, atom))
+        .collect(),
         sources: vec![SourceDescriptor {
             source_root_id: source_id,
             original_root: kernel.root().to_str().unwrap().into(),
         }],
+        membership_revisions: vec![(project, airk_core::index_catalog::CatalogRevision::INITIAL)],
+        source_revision: airk_core::index_catalog::CatalogRevision::INITIAL,
+        policy_epoch: 0,
+        policy_digest: None,
     };
-    let scoped = kernel.with_scoped_reads(authority.clone())?;
+    let scoped = kernel.with_selection_reads(authority.clone())?;
     let reference = ScopedReadRef {
         schema: 1,
         lease_generation: 1,
         index_id: index,
-        grant_id: Some(authority.grant.id),
-        grant_revision: Some(authority.grant.revision),
-        selection: None,
+        selection: airk_core::scoped_reads::SelectionScopeRef {
+            owner: airk_core::scoped_reads::SelectionOwnerKind::Window,
+            grant_nonce: airk_core::identity::Incarnation::from_bytes([10; 16]),
+            service_instance: airk_core::identity::Incarnation::from_bytes([11; 16]),
+            scope_identity: airk_core::identity::Sha256Digest::from_bytes([12; 32]),
+            catalog_revision: airk_core::index_catalog::CatalogRevision::try_from(5_u64).unwrap(),
+        },
         fingerprint: scoped.scoped_read_fingerprint()?.unwrap(),
     };
     let worker = WorkerIdentity {
@@ -889,9 +894,7 @@ fn native_context_partition_keeps_snapshot_digest_separate_from_installed_select
             schema: 1,
             lease_generation: 1,
             index_id: current.authority.index_id,
-            grant_id: None,
-            grant_revision: None,
-            selection: Some(selection),
+            selection,
             fingerprint: scoped.scoped_read_fingerprint()?.unwrap(),
         };
         let native = scoped.with_native_arbiter(worker, authority, owner.clone())?;
@@ -993,10 +996,19 @@ fn loop_search_defers_in_search_focus() -> Result<()> {
     let (_temp, kernel, owner, original) = fixture(Mode::Ranked)?;
     kernel.bind_answer_loop(Instant::now() + Duration::from_secs(30))?;
     let result = kernel.focus_search(&query(), original.clone())?;
-    assert!(result.focus.is_none(), "no in-search Focus receipt or notice");
-    assert_eq!(serde_json::to_value(&result)?, serde_json::to_value(&original)?);
+    assert!(
+        result.focus.is_none(),
+        "no in-search Focus receipt or notice"
+    );
+    assert_eq!(
+        serde_json::to_value(&result)?,
+        serde_json::to_value(&original)?
+    );
     assert!(owner.requests.lock().unwrap().is_empty());
-    assert!(kernel.bind_answer_loop(Instant::now()).is_err(), "bound once");
+    assert!(
+        kernel.bind_answer_loop(Instant::now()).is_err(),
+        "bound once"
+    );
     Ok(())
 }
 
@@ -1004,25 +1016,33 @@ fn loop_search_defers_in_search_focus() -> Result<()> {
 fn one_focus_call_spans_all_ready_parts_with_per_candidate_questions() -> Result<()> {
     let (_temp, kernel, owner, original) = fixture(Mode::Ranked)?;
     kernel.bind_answer_loop(Instant::now() + Duration::from_secs(30))?;
-    let ranking = kernel
-        .rank_spans(batch(&original))?
-        .context("Focus ran")?;
+    let ranking = kernel.rank_spans(batch(&original))?.context("Focus ran")?;
     let batches = owner.batches.lock().unwrap();
     assert_eq!(batches.len(), 1);
-    let questions: Vec<u8> = batches[0].candidates.iter().map(|candidate| candidate.question).collect();
+    let questions: Vec<u8> = batches[0]
+        .candidates
+        .iter()
+        .map(|candidate| candidate.question)
+        .collect();
     assert_eq!(questions, [0, 0, 1]);
     let charged: Vec<_> = batches[0]
         .attribution
         .iter()
         .map(|charge| (charge.part, charge.round, charge.tokens))
         .collect();
-    assert_eq!(charged, [(1, 1, 64), (2, 1, 32)], "pairs times pair tokens per part");
+    assert_eq!(
+        charged,
+        [(1, 1, 64), (2, 1, 32)],
+        "pairs times pair tokens per part"
+    );
     assert!(ranking.receipt.applied && !ranking.unknown);
     assert!(ranking.relevance[1].unwrap() > ranking.relevance[0].unwrap());
     assert!(owner.requests.lock().unwrap().is_empty());
     assert_eq!((ranking.ordinal, batches[0].ordinal), (1, 1));
     drop(batches);
-    let second = kernel.rank_spans(batch(&original))?.context("second batch")?;
+    let second = kernel
+        .rank_spans(batch(&original))?
+        .context("second batch")?;
     assert_eq!(second.ordinal, 2, "each batch gets the next ordinal");
     Ok(())
 }
@@ -1036,9 +1056,16 @@ fn a_released_ordinal_is_returned_only_when_nothing_followed_it() {
         ..Attempt::default()
     };
     rollback(&mut held, 1, 3, 48);
-    assert_eq!((held.loop_ordinal, held.loop_pairs, held.loop_tokens), (2, 3, 48), "a used hole");
+    assert_eq!(
+        (held.loop_ordinal, held.loop_pairs, held.loop_tokens),
+        (2, 3, 48),
+        "a used hole"
+    );
     rollback(&mut held, 2, 3, 48);
-    assert_eq!((held.loop_ordinal, held.loop_pairs, held.loop_tokens), (1, 0, 0));
+    assert_eq!(
+        (held.loop_ordinal, held.loop_pairs, held.loop_tokens),
+        (1, 0, 0)
+    );
 }
 
 #[test]
@@ -1052,13 +1079,22 @@ fn batched_focus_keeps_the_whole_answer_and_per_part_budgets() -> Result<()> {
     let mut over = batch(&original);
     over.budget.focus_pairs = 4;
     over.budget.focus_calls = 2;
-    assert!(kernel.rank_spans(over)?.is_none(), "cumulative pairs exceed the budget");
+    assert!(
+        kernel.rank_spans(over)?.is_none(),
+        "cumulative pairs exceed the budget"
+    );
     let mut tight = batch(&original);
     tight.round_left.insert((1, 1), 40);
-    let error = kernel.rank_spans(tight).err().context("over a part's allowance")?;
+    let error = kernel
+        .rank_spans(tight)
+        .err()
+        .context("over a part's allowance")?;
     assert!(error.to_string().contains("part 1 round 1"), "{error}");
     let requests = owner.batches.lock().unwrap();
-    assert!(requests[0].remaining_ms <= 5_000, "clipped to the original deadline");
+    assert!(
+        requests[0].remaining_ms <= 5_000,
+        "clipped to the original deadline"
+    );
     Ok(())
 }
 
@@ -1071,6 +1107,9 @@ fn unknown_batched_focus_outcome_keeps_its_reservation_and_blocks_more() -> Resu
     assert_eq!(ranking.receipt.observed_input_tokens, None);
     assert_eq!(ranking.receipt.reserved_input_tokens, 96);
     assert!(ranking.relevance.iter().all(Option::is_none));
-    assert!(kernel.rank_spans(batch(&original))?.is_none(), "no replay after unknown work");
+    assert!(
+        kernel.rank_spans(batch(&original))?.is_none(),
+        "no replay after unknown work"
+    );
     Ok(())
 }

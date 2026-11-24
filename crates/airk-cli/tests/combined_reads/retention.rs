@@ -358,8 +358,7 @@ async fn actual_helper_retention_migration_rebinds_evidence_without_new_embeddin
             "migration did not demonstrate actual graph-input reuse"
         );
         before = usage;
-        let backend =
-            airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
+        let backend = f.resolve(&f.session).await?;
         let args = json!({"query":"boundaryneedle","mode":"vector","limit":8,"max_bytes":8192,"verification":"off","response_mode":"full"});
         let native = native_read(backend.as_ref(), "airk_search", &args).await?;
         retained_body(&native, f.indexes[2], "retention native vector")?;

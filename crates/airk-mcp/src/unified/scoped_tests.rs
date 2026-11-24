@@ -5,20 +5,18 @@ use super::*;
 use airk_core::{
     identity::{Incarnation, Sha256Digest},
     index_catalog::*,
-    scoped_reads::SourceDescriptor,
-    service::ScopedConnectRequest,
+    scoped_reads::{SelectionOwnerKind, SourceDescriptor},
 };
-use airk_kernel::{Kernel, scoped_reads::ScopedReadAuthority};
+use airk_kernel::Kernel;
 use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
 struct Native {
     kernel: Kernel,
-    selection: ScopedConnectRequest,
     mode: AtomicU8,
     calls: AtomicUsize,
     retained: std::sync::Mutex<Option<Value>>,
     contexts: std::sync::Mutex<Vec<crate::read_attempt::ReadAttemptContext>>,
-    selected_scope: Option<crate::remote::ScopedScope>,
+    selected_scope: crate::remote::ScopedScope,
 }
 impl RemoteTools for Native {
     fn call_with_read_context(
@@ -31,13 +29,8 @@ impl RemoteTools for Native {
         self.contexts.lock().unwrap().push(context);
         self.call(tool, args)
     }
-    fn scoped_selection(&self) -> Option<&ScopedConnectRequest> {
-        self.selected_scope.is_none().then_some(&self.selection)
-    }
     fn scoped_scope(&self) -> Option<crate::remote::ScopedScope> {
-        self.selected_scope
-            .clone()
-            .or_else(|| Some(crate::remote::ScopedScope::Catalog(self.selection.clone())))
+        Some(self.selected_scope.clone())
     }
     // Deliberately keep default local_help=true: a selected transport must still
     // reach the native handler rather than the bridge's static help shortcut.
@@ -99,118 +92,73 @@ impl ExplorerTools for Ui {
     }
 }
 fn fixture() -> Result<(tempfile::TempDir, Unified, Arc<Native>, Arc<Ui>)> {
-    fixture_for(None)
+    fixture_for(SelectionOwnerKind::Window)
 }
 fn fixture_for(
-    owner: Option<airk_core::scoped_reads::SelectionOwnerKind>,
+    owner: SelectionOwnerKind,
 ) -> Result<(tempfile::TempDir, Unified, Arc<Native>, Arc<Ui>)> {
     let dir = tempfile::tempdir()?;
     let root = dir.path().join("source");
     std::fs::create_dir(&root)?;
-    std::fs::write(root.join("a.rs"), "pub struct Fixture;\n")?;
+    std::fs::write(
+        root.join("a.rs"),
+        "pub struct Fixture;
+",
+    )?;
     let kernel = Kernel::open(&root, Some(dir.path().join("data")))?;
     kernel.configure_vectors(false)?;
     kernel.index()?;
     let project = QueryProjectId::from_identity(Incarnation::from_bytes([1; 16]));
     let index = IndexId::from_identity(Incarnation::from_bytes([2; 16]));
     let source = SourceRootId::from_identity(Incarnation::from_bytes([3; 16]));
-    let grant = GrantId::from_identity(Incarnation::from_bytes([4; 16]));
     let backing = airk_core::service::ProjectRegistration::new(
         kernel.root().to_str().unwrap().into(),
         kernel.data_dir().to_str().unwrap().into(),
         kernel.collection().into(),
     )?
     .binding;
-    let authority = ScopedReadAuthority {
-        schema: 1,
-        backing,
-        index_id: index,
-        project_ids: vec![project],
-        provenance: airk_core::grant_provenance::GrantProvenance::UserReviewedProjectGrant,
-        grant: ReviewedGrant {
-            id: grant,
-            host: Sha256Digest::from_bytes([5; 32]),
-            revision: CatalogRevision::INITIAL,
-            revoked: false,
-            memberships: vec![GrantedMembership {
-                membership: Membership {
-                    project_id: project,
-                    index_id: index,
-                    revision: CatalogRevision::INITIAL,
-                    scope: vec![ScopeAtom {
-                        source_root_id: source,
-                        kind: PathScope::Subtree,
-                        path: String::new(),
-                    }],
+    let scope_identity = Sha256Digest::from_bytes([0x5c; 32]);
+    let read_kernel =
+        kernel.with_selection_reads(airk_kernel::scoped_reads::SelectionReadAuthority {
+            schema: 1,
+            backing,
+            index_id: index,
+            project_ids: vec![project],
+            selection: airk_core::scoped_reads::SelectionScopeRef {
+                owner,
+                grant_nonce: Incarnation::from_bytes([0x91; 16]),
+                service_instance: Incarnation::from_bytes([0xe1; 16]),
+                scope_identity,
+                catalog_revision: CatalogRevision::INITIAL,
+            },
+            atoms: vec![(
+                project,
+                ScopeAtom {
+                    source_root_id: source,
+                    kind: PathScope::Subtree,
+                    path: String::new(),
                 },
-                source_revision: CatalogRevision::INITIAL,
-                policy_epoch: 0,
-                policy_digest: None,
+            )],
+            sources: vec![SourceDescriptor {
+                source_root_id: source,
+                original_root: kernel.root().to_str().unwrap().into(),
             }],
+            membership_revisions: vec![(project, CatalogRevision::INITIAL)],
+            source_revision: CatalogRevision::INITIAL,
+            policy_epoch: 0,
+            policy_digest: None,
+        })?;
+    let selected_scope = crate::remote::ScopedScope::Selection {
+        window_scope_selection: airk_core::service::WindowScopeSelection {
+            namespace: Incarnation::from_bytes([7; 16]),
+            expected_catalog_revision: CatalogRevision::INITIAL,
+            index_ids: vec![index],
+            project_ids: vec![project],
         },
-        sources: vec![SourceDescriptor {
-            source_root_id: source,
-            original_root: kernel.root().to_str().unwrap().into(),
-        }],
-    };
-    let selection = ScopedConnectRequest {
-        schema: 1,
-        context_key: Sha256Digest::from_bytes([6; 32]),
-        namespace: Incarnation::from_bytes([7; 16]),
-        expected_catalog_revision: CatalogRevision::INITIAL,
-        grant_id: grant,
-        expected_grant_revision: CatalogRevision::INITIAL,
-        index_id: index,
-        project_ids: vec![project],
-    };
-    let (read_kernel, selected_scope) = match owner {
-        None => (kernel.with_scoped_reads(authority)?, None),
-        Some(owner) => {
-            let scope_identity = Sha256Digest::from_bytes([0x5c; 32]);
-            let read_kernel =
-                kernel.with_selection_reads(airk_kernel::scoped_reads::SelectionReadAuthority {
-                    schema: 1,
-                    backing,
-                    index_id: index,
-                    project_ids: vec![project],
-                    selection: airk_core::scoped_reads::SelectionScopeRef {
-                        owner,
-                        grant_nonce: Incarnation::from_bytes([0x91; 16]),
-                        service_instance: Incarnation::from_bytes([0xe1; 16]),
-                        scope_identity,
-                        catalog_revision: CatalogRevision::INITIAL,
-                    },
-                    atoms: vec![(
-                        project,
-                        ScopeAtom {
-                            source_root_id: source,
-                            kind: PathScope::Subtree,
-                            path: String::new(),
-                        },
-                    )],
-                    sources: authority.sources,
-                    membership_revisions: vec![(project, CatalogRevision::INITIAL)],
-                    source_revision: CatalogRevision::INITIAL,
-                    policy_epoch: 0,
-                    policy_digest: None,
-                })?;
-            (
-                read_kernel,
-                Some(crate::remote::ScopedScope::Selection {
-                    window_scope_selection: airk_core::service::WindowScopeSelection {
-                        namespace: selection.namespace,
-                        expected_catalog_revision: selection.expected_catalog_revision,
-                        index_ids: vec![index],
-                        project_ids: vec![project],
-                    },
-                    scope_identity,
-                }),
-            )
-        }
+        scope_identity,
     };
     let native = Arc::new(Native {
         kernel: read_kernel,
-        selection,
         mode: AtomicU8::new(0),
         calls: AtomicUsize::new(0),
         retained: std::sync::Mutex::new(None),
@@ -240,7 +188,7 @@ async fn call(unified: &Unified, name: &str, args: Value) -> Result<Value> {
 async fn selection_native_window_and_admin_routes_keep_complete_handler_results() -> Result<()> {
     use airk_core::scoped_reads::SelectionOwnerKind;
     for owner in [SelectionOwnerKind::Window, SelectionOwnerKind::Admin] {
-        let (_dir, unified, native, ui) = fixture_for(Some(owner))?;
+        let (_dir, unified, native, ui) = fixture_for(owner)?;
         for (name, native_name, args) in [
             (
                 "help",
@@ -304,7 +252,7 @@ async fn selection_native_window_and_admin_failures_keep_selector_and_submission
 -> Result<()> {
     use airk_core::scoped_reads::SelectionOwnerKind;
     for owner in [SelectionOwnerKind::Window, SelectionOwnerKind::Admin] {
-        let (_dir, unified, native, ui) = fixture_for(Some(owner))?;
+        let (_dir, unified, native, ui) = fixture_for(owner)?;
         for (mode, code, submitted) in [
             (1, "scoped_status_prepare_unavailable", json!(false)),
             (5, "scoped_status_prepare_timeout", json!(false)),
@@ -423,8 +371,8 @@ async fn selected_public_help_and_native_alias_preserve_typed_scope_receipts_wit
         assert_eq!(body["code"], "publication_busy");
         assert_eq!(body["action"], "repeat_same_request");
         assert_eq!(
-            body["scope_observation"]["grant"]["id"],
-            json!(native.selection.grant_id)
+            body["scope_observation"]["selection"]["scope_identity"],
+            "5c".repeat(32)
         );
     }
     native.mode.store(2, Ordering::SeqCst);
@@ -512,7 +460,15 @@ async fn selected_status_setup_observation_failures_and_native_refusals_stay_dis
         assert_eq!(value["requested_scope"]["confirmed"], false);
         assert_eq!(
             value["requested_scope"]["selection"],
-            serde_json::to_value(&native.selection)?
+            match &native.selected_scope {
+                crate::remote::ScopedScope::Selection {
+                    window_scope_selection,
+                    scope_identity,
+                } => json!({
+                    "window_scope_selection": window_scope_selection,
+                    "scope_identity": scope_identity,
+                }),
+            }
         );
         for field in ["scope_observation", "publication", "files", "index_state"] {
             assert!(value.get(field).is_none());
@@ -533,7 +489,7 @@ async fn selected_unified_query_scope_reaches_native_installed_authority() -> Re
     let result = call(&unified, "query_scope", json!({"view":"projects"})).await?;
     assert_ne!(result["isError"], true, "{result}");
     let body: Value = serde_json::from_str(result["content"][0]["text"].as_str().unwrap())?;
-    assert_eq!(body["grant"], observed["grant"]);
+    assert!(body.get("grant").is_none());
     assert_eq!(body["scope_observation"], observed);
     assert_eq!(body["mode"], "frozen_single_index");
     assert_eq!(native.calls.load(Ordering::SeqCst), 1);
@@ -670,12 +626,12 @@ async fn selected_public_routes_preserve_original_attempt_and_lifetime() -> Resu
 #[tokio::test]
 async fn combined_public_routes_keep_exact_selector_capacity_and_attempt() -> Result<()> {
     struct Combined {
-        selection: airk_core::service::CombinedConnectRequest,
+        selection: crate::remote::CombinedScope,
         observed: std::sync::Mutex<Option<(usize, crate::read_attempt::ReadAttemptContext)>>,
     }
     impl RemoteTools for Combined {
-        fn combined_selection(&self) -> Option<&airk_core::service::CombinedConnectRequest> {
-            Some(&self.selection)
+        fn combined_scope(&self) -> Option<crate::remote::CombinedScope> {
+            Some(self.selection.clone())
         }
         fn call(&self, _: String, _: Map<String, Value>) -> RemoteFuture<'_> {
             panic!("context discarded")
@@ -691,24 +647,24 @@ async fn combined_public_routes_keep_exact_selector_capacity_and_attempt() -> Re
             Box::pin(async { Ok(success(json!({"complete":true}))) })
         }
     }
-    let (_dir, _, native, _) = fixture()?;
-    let s = &native.selection;
-    let selection = airk_core::service::CombinedConnectRequest {
-        schema: s.schema,
-        context_key: s.context_key,
-        namespace: s.namespace,
-        expected_catalog_revision: s.expected_catalog_revision,
-        grant_id: s.grant_id,
-        expected_grant_revision: s.expected_grant_revision,
-        project_ids: s.project_ids.clone(),
-        index_ids: Some(vec![s.index_id]),
+    let selection = crate::remote::CombinedScope {
+        project_ids: vec![QueryProjectId::from_identity(Incarnation::from_bytes(
+            [1; 16],
+        ))],
+        index_ids: Some(vec![IndexId::from_identity(Incarnation::from_bytes(
+            [2; 16],
+        ))]),
+        requested: json!({"scope_identity":"5c".repeat(32)}),
     };
     let backend = Arc::new(Combined {
         selection: selection.clone(),
         observed: Default::default(),
     });
     let unified = Unified::combined(backend.clone(), None)?;
-    assert_eq!(unified.combined_selection(), Some(&selection));
+    assert_eq!(
+        unified.combined_scope().map(|scope| scope.requested),
+        Some(selection.requested.clone())
+    );
     for name in ["search", "airk_search", "help", "airk_help", "query_scope"] {
         let context = crate::read_attempt::ReadAttemptContext::new(
             std::time::Instant::now() + std::time::Duration::from_secs(1),

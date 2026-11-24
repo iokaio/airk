@@ -265,16 +265,20 @@ fn first_settled_new_or_legacy_write_records_the_no_restore_barrier() -> Result<
     Ok(())
 }
 
+/// Authority 1 adds no physical object since the grant tables were removed
+/// (change-log entry 68 part 3), so only an uninstalled policy layer refuses.
 #[test]
-fn uninstalled_authority_or_policy_layout_is_not_treated_as_compatible_schema_12() -> Result<()> {
-    for column in ["authority_contract", "policy_contract"] {
-        let (_root, mut registry) = registry()?;
-        install(&mut registry)?;
-        registry.connection.execute_batch(&format!(
-            "UPDATE index_catalog_meta SET {column}=1 WHERE id=1"
-        ))?;
-        assert!(validate_existing(&registry.connection).is_err());
-    }
+fn uninstalled_policy_layout_is_not_treated_as_compatible_schema_12() -> Result<()> {
+    let (_root, mut registry) = registry()?;
+    install(&mut registry)?;
+    registry
+        .connection
+        .execute_batch("UPDATE index_catalog_meta SET policy_contract=1 WHERE id=1")?;
+    assert!(validate_existing(&registry.connection).is_err());
+    registry.connection.execute_batch(
+        "UPDATE index_catalog_meta SET policy_contract=0,authority_contract=1 WHERE id=1",
+    )?;
+    validate_existing(&registry.connection)?;
     Ok(())
 }
 

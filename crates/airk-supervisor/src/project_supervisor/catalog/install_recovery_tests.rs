@@ -7,54 +7,59 @@ use airk_core::{
     index_catalog::*,
     scoped_reads::{ScopeReadRefused, SourceDescriptor},
 };
-use airk_kernel::scoped_reads::ScopedReadAuthority;
+use airk_kernel::scoped_reads::SelectionReadAuthority;
 
 struct Fixture {
     gate: NativeCatalogAdmission,
     namespace: Incarnation,
     affected: WorkerIdentity,
-    authority: ScopedReadAuthority,
+    authority: SelectionReadAuthority,
     healthy: WorkerIdentity,
     healthy_scope: ScopedReadRef,
     issue: IssueTicket,
 }
 
-fn authority(worker: WorkerIdentity, seed: u8) -> ScopedReadAuthority {
+/// A window selection of one whole index, registered live in the gate.
+fn authority(worker: WorkerIdentity, seed: u8) -> SelectionReadAuthority {
     let index_id = IndexId::from_identity(Incarnation::from_bytes([seed; 16]));
     let project_id = QueryProjectId::from_identity(Incarnation::from_bytes([seed + 1; 16]));
     let source = SourceRootId::from_identity(Incarnation::from_bytes([seed + 2; 16]));
-    ScopedReadAuthority {
+    SelectionReadAuthority {
         schema: 1,
         backing: worker.project,
         index_id,
         project_ids: vec![project_id],
-        provenance: airk_core::grant_provenance::GrantProvenance::UserReviewedProjectGrant,
-        grant: ReviewedGrant {
-            id: GrantId::from_identity(Incarnation::from_bytes([seed + 3; 16])),
-            host: Sha256Digest::from_bytes([seed + 4; 32]),
-            revision: CatalogRevision::INITIAL,
-            revoked: false,
-            memberships: vec![GrantedMembership {
-                membership: Membership {
-                    project_id,
-                    index_id,
-                    revision: CatalogRevision::INITIAL,
-                    scope: vec![ScopeAtom {
-                        source_root_id: source,
-                        kind: PathScope::Subtree,
-                        path: String::new(),
-                    }],
-                },
-                source_revision: CatalogRevision::INITIAL,
-                policy_epoch: 0,
-                policy_digest: None,
-            }],
+        selection: airk_core::scoped_reads::SelectionScopeRef {
+            owner: airk_core::scoped_reads::SelectionOwnerKind::Window,
+            grant_nonce: Incarnation::from_bytes([seed + 3; 16]),
+            service_instance: worker.service,
+            scope_identity: Sha256Digest::from_bytes([seed + 4; 32]),
+            catalog_revision: CatalogRevision::INITIAL,
         },
+        atoms: vec![(
+            project_id,
+            ScopeAtom {
+                source_root_id: source,
+                kind: PathScope::Subtree,
+                path: String::new(),
+            },
+        )],
         sources: vec![SourceDescriptor {
             source_root_id: source,
             original_root: std::env::temp_dir().to_string_lossy().into_owned(),
         }],
+        membership_revisions: vec![(project_id, CatalogRevision::INITIAL)],
+        source_revision: CatalogRevision::INITIAL,
+        policy_epoch: 0,
+        policy_digest: None,
     }
+}
+
+fn installed(identity: WorkerIdentity, scope: ScopedReadRef) -> Result<Reply> {
+    Ok(Reply::SelectionScopeInstalled {
+        identity,
+        lease: protocol::SelectionLease::of(&scope).context("selection lease")?,
+    })
 }
 
 impl Fixture {
@@ -76,10 +81,14 @@ impl Fixture {
         gate.register_worker(affected)?;
         gate.register_worker(healthy)?;
         let issue = gate.begin_issue(namespace, CatalogRevision::INITIAL)?;
-        let installed = gate.reserve_install(
+        let healthy_authority = authority(healthy, 30);
+        gate.register_selection(&healthy_authority.selection)?;
+        let affected_authority = authority(affected, 10);
+        gate.register_selection(&affected_authority.selection)?;
+        let installed = gate.reserve_selection_scope(
             issue,
             healthy,
-            &authority(healthy, 30),
+            &healthy_authority,
             Instant::now() + Duration::from_secs(60),
         )?;
         let healthy_scope = installed.scope();
@@ -88,7 +97,7 @@ impl Fixture {
             gate,
             namespace,
             affected,
-            authority: authority(affected, 10),
+            authority: affected_authority,
             healthy,
             healthy_scope,
             issue,
@@ -96,7 +105,7 @@ impl Fixture {
     }
 
     fn reserve(&self, lifetime: Duration) -> Result<InstallTicket> {
-        self.gate.reserve_validated_scope(
+        self.gate.reserve_selection_scope(
             self.issue,
             self.affected,
             &self.authority,
@@ -144,7 +153,7 @@ impl Fixture {
         let issue = self
             .gate
             .begin_issue(self.namespace, CatalogRevision::INITIAL)?;
-        let install = self.gate.reserve_validated_scope(
+        let install = self.gate.reserve_selection_scope(
             issue,
             replacement,
             &self.authority,
@@ -153,10 +162,8 @@ impl Fixture {
         assert!(install.previous().is_none());
         let scope = install.scope();
         assert!(matches!(
-            self.pending(install).accept(Reply::ScopeInstalled {
-                identity: replacement,
-                scope,
-            })??,
+            self.pending(install)
+                .accept(installed(replacement, scope)?)??,
             Exchange::Installed
         ));
         self.gate.check_scope_issue(issue, replacement, scope)?;
@@ -196,10 +203,7 @@ fn expired_first_install_ack_requires_worker_retirement_without_issuing_a_grant(
     expire(&f.gate, ticket)?;
     let error = f
         .pending(ticket)
-        .accept(Reply::ScopeInstalled {
-            identity: f.affected,
-            scope: ticket.scope(),
-        })
+        .accept(installed(f.affected, ticket.scope())?)
         .err()
         .expect("expired installation ACK must quarantine");
     assert!(error.is::<ScopeReadRefused>());
@@ -227,10 +231,7 @@ fn expired_uncertain_renewal_requires_reap_before_a_new_worker_can_install() -> 
     );
     let error = f
         .pending(renewal)
-        .accept(Reply::ScopeInstalled {
-            identity: f.affected,
-            scope: renewal.scope(),
-        })
+        .accept(installed(f.affected, renewal.scope())?)
         .err()
         .expect("expired renewal ACK must quarantine");
     assert!(error.is::<ScopeReadRefused>());
@@ -272,7 +273,6 @@ fn selection_uncertain_renewal_fence_settles_both_actual_private_acks() -> Resul
         };
         f.gate.register_worker(worker)?;
         let catalog = authority(worker, 60);
-        let member = &catalog.grant.memberships[0].membership;
         let selection = SelectionScopeRef {
             owner: SelectionOwnerKind::Window,
             grant_nonce: Incarnation::from_bytes([71; 16]),
@@ -286,16 +286,12 @@ fn selection_uncertain_renewal_fence_settles_both_actual_private_acks() -> Resul
             index_id: catalog.index_id,
             project_ids: catalog.project_ids.clone(),
             selection,
-            atoms: member
-                .scope
-                .iter()
-                .map(|atom| (member.project_id, atom.clone()))
-                .collect(),
+            atoms: catalog.atoms.clone(),
             sources: vec![SourceDescriptor {
                 source_root_id: catalog.sources[0].source_root_id,
                 original_root: root.clone(),
             }],
-            membership_revisions: vec![(member.project_id, member.revision)],
+            membership_revisions: catalog.membership_revisions.clone(),
             source_revision: CatalogRevision::INITIAL,
             policy_epoch: 0,
             policy_digest: None,

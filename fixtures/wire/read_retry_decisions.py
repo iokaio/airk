@@ -70,8 +70,9 @@ def retry(code="selection_busy", delay=25, fresh=False, pointer="/members/0/resu
 def combined(result, declared):
     value = {
         "schema": "airk.combined-read/1",
-        "selection": {"project_ids": [PROJECT], "index_ids": [INDEX], "grant_id": GRANT,
-                      "grant_revision": 1, "member_availability": "require", "identity": IDENTITY},
+        "selection": {"project_ids": [PROJECT], "index_ids": [INDEX],
+                      "selection": {"owner": "window", "scope_identity": "0c" * 32, "catalog_revision": 5},
+                      "member_availability": "require", "identity": IDENTITY},
         "publication_vector": {"authority": AUTHORITY, "observed_from_unix_ms": 1, "observed_to_unix_ms": 2,
                                "members": [{"index_id": INDEX, "publication": None}]},
         "members": [{"index_id": INDEX, "is_error": True, "outcome": "failed",
@@ -172,12 +173,6 @@ def cases():
                mutate=set_path("selection", "index_ids", [INDEX, "idx_" + "0b" * 16]))
     yield case("optional_members", "member_availability must be require", canonical, None,
                mutate=set_path("selection", "member_availability", "best_effort"))
-    yield case("grant_revision_above_safe_integer",
-               "catalog revisions are 1..=i64::MAX; the value does not enter the retry record",
-               canonical, retry(), mutate=set_path("selection", "grant_revision", ABOVE_SAFE_INTEGER),
-               expected_ts=None,
-               divergence="TypeScript parses JSON numbers as doubles and refuses non-safe integers; "
-                          "native accepts revisions up to i64::MAX. Conservative refusal (no replay).")
     # Formerly divergence W3: the TypeScript mirror now refuses non-integer
     # number literals in the native text (JSON.parse source-text access).
     yield case("integral_float_delay", "retry_after_ms must be a JSON integer",
@@ -200,8 +195,6 @@ def selection_cases():
                              "policy_epoch": 0, "policy_digest": None}],
             }
         value = combined(structured(hint), expected if expected is not None else retry())
-        del value["selection"]["grant_id"]
-        del value["selection"]["grant_revision"]
         value["selection"]["selection"] = source
         if mutate:
             mutate(value)
@@ -215,7 +208,7 @@ def selection_cases():
     for field, replacement in [("owner", "admin"), ("scope_identity", "0d" * 32), ("catalog_revision", 6)]:
         yield selected(f"selection_member_changed_{field}", "member selection owner, identity and revision must all match", None,
                        mutate=set_path("members", 0, "result", "structuredContent", "scope_observation", "selection", field, replacement))
-    yield selected("selection_with_catalog_grant", "catalog and selection sources are mutually exclusive", None,
+    yield selected("selection_with_catalog_grant", "removed catalog-grant fields never decode (change-log entry 68 part 3)", None,
                    mutate=lambda value: value["selection"].update(grant_id=GRANT, grant_revision=1))
     yield selected("selection_without_source", "neither authority source is invalid", None,
                    mutate=lambda value: value["selection"].pop("selection"))
@@ -233,9 +226,6 @@ def binding_cases():
     source = {"owner": "window", "scope_identity": "0c" * 32, "catalog_revision": 5}
     window = {"namespace": "09" * 16, "expected_catalog_revision": 5,
               "index_ids": [INDEX], "project_ids": [PROJECT]}
-    catalog = {"schema": 1, "context_key": "0a" * 32, "namespace": "09" * 16,
-               "expected_catalog_revision": 5, "grant_id": GRANT, "expected_grant_revision": 1,
-               "index_id": INDEX, "project_ids": [PROJECT]}
     arguments = {"project_ids": [PROJECT], "index_ids": [INDEX], "member_availability": "require"}
     observation = {"schema": 1, "qualifier": "selected_subset", "fingerprint": "07" * 32,
                    "members": [{"index_id": INDEX,
@@ -246,23 +236,13 @@ def binding_cases():
     def bound(name, rule, expected, kind="selection", mutate=None):
         member = copy.deepcopy(observation)
         selected = combined(structured(storage_hint()), retry())
-        if kind == "selection":
-            member["selection"] = copy.deepcopy(source)
-            del selected["selection"]["grant_id"]
-            del selected["selection"]["grant_revision"]
-            selected["selection"]["selection"] = copy.deepcopy(source)
-            expected_scope = copy.deepcopy(window)
-        else:
-            member.update(grant={"id": GRANT, "revision": 1}, provenance="user_reviewed_project_grant")
-            expected_scope = copy.deepcopy(catalog)
-            if kind == "catalog_combined":
-                del expected_scope["index_id"]
-                expected_scope["index_ids"] = [INDEX]
+        member["selection"] = copy.deepcopy(source)
+        selected["selection"]["selection"] = copy.deepcopy(source)
+        expected_scope = copy.deepcopy(window)
         selected["members"][0]["result"]["structuredContent"]["scope_observation"] = member
         entry = {"name": name, "rule": rule, "kind": kind, "input": selected,
                  "expected_scope": expected_scope, "arguments": copy.deepcopy(arguments), "expected": expected}
-        if kind == "selection":
-            entry["expected_selection"] = copy.deepcopy(source)
+        entry["expected_selection"] = copy.deepcopy(source)
         if mutate:
             mutate(entry)
         result = entry["input"]["members"][0]["result"]
@@ -325,25 +305,16 @@ def binding_cases():
         ("original_unknown_project", set_path("arguments", "project_ids", [SECOND_PROJECT])),
     ]:
         yield bound(name, "invalid, widened or non-required original selectors never authorize replay", None, mutate=change)
-    for kind in ["catalog_single", "catalog_combined"]:
-        yield bound(f"{kind}_active", "the exact original grant/revision and known index selection permit replay", retry(), kind=kind)
-        yield bound(f"{kind}_grant_changed", "an older or foreign grant cannot replace the captured grant", None, kind=kind,
-                    mutate=set_path("expected_scope", "grant_id", "grt_" + "0e" * 16))
-        yield bound(f"{kind}_grant_revision_changed", "grant revision remains exact", None, kind=kind,
-                    mutate=set_path("expected_scope", "expected_grant_revision", 2))
-        yield bound(f"{kind}_metadata_clock_forward", "catalog metadata clock changes do not invent a different grant revision", retry(), kind=kind,
-                    mutate=set_path("expected_scope", "expected_catalog_revision", 12))
-        yield bound(f"{kind}_other_index", "a coherent other index cannot replace the captured selection", None, kind=kind, mutate=coherent_index)
-        yield bound(f"{kind}_pruned_projects", "catalog callers retain safe membership pruning", retry(), kind=kind, mutate=pruned)
-    yield bound("catalog_combined_unknown_expansion", "absent captured index membership is not fabricated from a receipt", None, kind="catalog_combined",
-                mutate=lambda entry: entry["expected_scope"].pop("index_ids"))
-    yield bound("window_reply_to_catalog_caller", "authority source kinds never substitute for one another", None,
-                mutate=lambda entry: entry.update(kind="catalog_single", expected_scope=copy.deepcopy(catalog)))
-    def catalog_to_window(entry):
-        entry.update(kind="selection", expected_scope=copy.deepcopy(window), expected_selection=copy.deepcopy(source))
-    yield bound("catalog_reply_to_window_caller", "a catalog grant cannot substitute for an active window source", None,
-                kind="catalog_single", mutate=catalog_to_window)
-
+    def catalog_reply(entry):
+        value = entry["input"]
+        value["selection"].pop("selection")
+        value["selection"].update(grant_id=GRANT, grant_revision=1)
+        member = value["members"][0]["result"]["structuredContent"]["scope_observation"]
+        member.pop("selection")
+        member.update(grant={"id": GRANT, "revision": 1}, provenance="user_reviewed_project_grant")
+    yield bound("catalog_reply_to_window_caller",
+                "a removed catalog-grant reply never substitutes for an active window source (change-log entry 68 part 3)",
+                None, mutate=catalog_reply)
 
 def render():
     document = {
@@ -353,7 +324,7 @@ def render():
         "generator": "fixtures/wire/read_retry_decisions.py",
         "cases": list(cases()),
         "binding_cases": list(binding_cases()),
-        "rust_binding": "airk_core::combined_reads::read_retry validated_retry_for_selection, validated_retry_for_catalog, validated_retry_for_combined_catalog",
+        "rust_binding": "airk_core::combined_reads::read_retry validated_retry_for_selection",
     }
     return json.dumps(document, indent=1, ensure_ascii=True) + "\n"
 

@@ -5,8 +5,8 @@ use airk_core::{
     catalog_fences::FencedReceipt,
     catalog_management::{CatalogReceipt, CatalogRequest},
     catalog_setup::{IndexSetupDraft, IndexSetupReceipt, SetupStage},
+    index_catalog::{IndexId, QueryProjectId},
     service::{ControlMethod, ControlResponse, ProjectRegistration},
-    service_http::HttpSelection,
 };
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
@@ -25,10 +25,19 @@ pub(super) struct ReviewedService {
     pub control: PathBuf,
     pub executable: PathBuf,
     pub project: ProjectRegistration,
-    pub selection: HttpSelection,
-    namespace: airk_core::identity::Incarnation,
+    /// The fixture's one Index and the Project (index set) whose membership
+    /// reads it whole. Reads name them through window selections or open reads.
+    pub scope: ReviewedScope,
+    pub namespace: airk_core::identity::Incarnation,
     runtime_digest: airk_core::identity::Sha256Digest,
     stopped: Mutex<bool>,
+}
+
+/// The catalog identities a reviewed fixture created for one setup receipt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReviewedScope {
+    pub index_id: IndexId,
+    pub project_id: QueryProjectId,
 }
 
 fn nonce() -> Result<String> {
@@ -546,7 +555,7 @@ fn selection(
     rpc: &mut Rpc,
     registration: &ProjectRegistration,
     setup: Option<IndexSetupReceipt>,
-) -> Result<HttpSelection> {
+) -> Result<ReviewedScope> {
     let context_key = format!("{}{}", nonce()?, nonce()?);
     let descriptor = rpc.call(
         json!({"catalog_host_context":{"key":context_key,"expected_catalog_revision":null}}),
@@ -581,21 +590,15 @@ fn selection(
         descriptor_now["descriptor"]["namespace"] == descriptor["descriptor"]["namespace"],
         "fixture namespace changed"
     );
-    let key = rpc.key()?;
-    let grant = rpc.call(json!({"catalog_grant_draft":{"context_key":context_key,"selection":{"key":key,"expected_catalog_revision":revision,"project_ids":[project],"index_ids":[index]}}}))?;
-    let draft = &grant["draft"];
-    let revision = apply(
-        rpc,
-        draft["request"].clone(),
-        draft["preview_digest"].clone(),
-    )?;
-    let selection = json!({"kind":"scoped","selection":{"schema":1,"context_key":context_key,"namespace":descriptor_now["descriptor"]["namespace"],"expected_catalog_revision":revision,"grant_id":draft["request"]["operation"]["grant"]["id"],"expected_grant_revision":1,"index_id":index,"project_ids":[project]}});
     let detail = rpc.call(json!({"catalog_detail":{"entity":{"kind":"index","id":index},"expected_catalog_revision":revision}}))?;
     ensure!(
         detail["detail"]["item"]["value"]["backing"] == serde_json::to_value(registration)?,
         "fixture backing changed"
     );
-    Ok(serde_json::from_value(selection)?)
+    Ok(ReviewedScope {
+        index_id: serde_json::from_value(index)?,
+        project_id: project.parse()?,
+    })
 }
 
 fn installed_paths(
@@ -719,13 +722,13 @@ pub(super) fn start(
             serde_json::to_vec(&setup)?,
         )?;
         let namespace = setup.request.key.namespace;
-        let selection = selection(&mut rpc, &project, Some(setup))?;
+        let scope = selection(&mut rpc, &project, Some(setup))?;
         Ok(ReviewedService {
             install: install.clone(),
             control,
             executable,
             project,
-            selection,
+            scope,
             namespace,
             runtime_digest: digest.parse()?,
             stopped: Mutex::new(false),
@@ -1316,9 +1319,7 @@ pub(super) fn setup_project(
 /// receipt. This is not a separate qualification of CLI JSON-stream framing.
 pub(super) fn retire_index(service: &ReviewedService) -> Result<Value> {
     let owner = service.install.parent().context("reviewed owner missing")?;
-    let HttpSelection::Scoped { selection } = &service.selection else {
-        bail!("retirement fixture requires its exact scoped Index");
-    };
+    let selection = &service.scope;
     let mut rpc = Rpc::new(&service.control, owner)?;
     let descriptor = rpc.call(json!({"catalog_host_context":{
         "key":format!("{}{}",nonce()?,nonce()?),"expected_catalog_revision":null
@@ -1348,10 +1349,10 @@ pub(super) fn retire_index(service: &ReviewedService) -> Result<Value> {
     )
 }
 
-pub(super) fn reviewed_http_selection(
+pub(super) fn reviewed_scope(
     control: &Path,
     registration: &ProjectRegistration,
-) -> Result<HttpSelection> {
+) -> Result<ReviewedScope> {
     let control = control.canonicalize()?;
     let owner = control
         .parent()

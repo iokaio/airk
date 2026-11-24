@@ -257,11 +257,8 @@ impl Unified {
             backend.combined_scope().is_some(),
             "combined session selection required"
         );
-        // An in-memory window/admin selection has no catalog request; its
-        // native owner validated it before this facade was built.
-        if let Some(selection) = backend.combined_selection() {
-            selection.validate()?;
-        }
+        // Its native owner validated the in-memory selection before this
+        // facade was built.
         Ok(Self {
             projects: BTreeMap::from([(
                 "combined".into(),
@@ -566,10 +563,6 @@ impl RemoteTools for Unified {
             return backend.call_with_capacity(native.name.to_string(), args, limit);
         }
         self.call(tool, args)
-    }
-    fn combined_selection(&self) -> Option<&airk_core::service::CombinedConnectRequest> {
-        self.combined_backend()
-            .and_then(|backend| backend.combined_selection())
     }
     fn combined_scope(&self) -> Option<crate::remote::CombinedScope> {
         self.combined_backend()

@@ -29,15 +29,6 @@ fn cli_json(label: &str, output: std::process::Output) -> Result<Value> {
     serde_json::from_slice(&output.stdout).with_context(diagnostics)
 }
 
-fn console_output(stdout: &Path, stderr: &Path) -> Result<(String, String)> {
-    ensure!(
-        fs::metadata(stdout)?.len() <= MAX_HELPER_OUTPUT_BYTES as u64
-            && fs::metadata(stderr)?.len() <= MAX_HELPER_OUTPUT_BYTES as u64,
-        "console output exceeds fixture bound"
-    );
-    Ok((fs::read_to_string(stdout)?, fs::read_to_string(stderr)?))
-}
-
 fn rpc_result<'a>(wire: &'a Value, label: &str) -> Result<&'a Value> {
     airk_core::index_catalog::encoded_size(wire, 3 * airk_core::MAX_RESPONSE_BYTES + 8192)?;
     ensure!(
@@ -128,102 +119,13 @@ fn assert_family_report(result: &Value, label: &str) -> Result<()> {
 async fn cli_catalog(f: &Fixture) -> Result<Value> {
     let mut command = Ctl::new();
     command
-        .arg("--combined-session")
-        .arg(serde_json::to_string(&f.session)?)
+        .window(f.session_window().await?)
         .arg("--service-runtime-dir")
         .arg(&f.control)
         .args(["tools", "list", "--json"]);
     let output = tokio::task::spawn_blocking(move || read_retry::output(&mut command)).await??;
     cli_json("native CLI catalog", output)
 }
-async fn console(f: &Fixture, args: &Value) -> Result<Value> {
-    let input = f.owner.path().join("profile-families-console.in");
-    let stdout = f.owner.path().join("profile-families-console.out");
-    let stderr = f.owner.path().join("profile-families-console.err");
-    fs::write(&input, format!("call airk_file_info {args}\nexit\n"))?;
-    let mut command = Ctl::new();
-    command
-        .arg("--combined-session")
-        .arg(serde_json::to_string(&f.session)?)
-        .arg("--service-runtime-dir")
-        .arg(&f.control)
-        .args(["tools", "shell"])
-        .input(fs::read(&input)?);
-    let deadline = Instant::now() + Duration::from_secs(60);
-    let Ok(output) = tokio::task::spawn_blocking(move || command.output_until(deadline)).await?
-    else {
-        anyhow::bail!("native console timeout; no output before the deadline");
-    };
-    // Keep the established bounded file parser for the console's streams.
-    for (path, bytes) in [(&stdout, &output.stdout), (&stderr, &output.stderr)] {
-        std::io::Write::write_all(
-            &mut fs::OpenOptions::new()
-                .create_new(true)
-                .write(true)
-                .open(path)?,
-            bytes,
-        )?;
-    }
-    let status = output.status;
-    let (text, errors) = console_output(&stdout, &stderr)?;
-    let diagnostics = || {
-        format!(
-            "native console: status={status}; complete bounded stdout: {text}; complete bounded stderr: {errors}"
-        )
-    };
-    ensure!(status.success() && errors.is_empty(), "{}", diagnostics());
-    // tools::call(raw=false) prints a Result marker before the complete JSON
-    // text block, while shell prints a separate prompt before and after it.
-    // Match the established helper_outage_reads parser, then also reject extra
-    // response blocks instead of quietly discarding them.
-    let normalized = text.replace("\r\n", "\n");
-    let (banner, rendered) = normalized
-        .split_once("Result:\n")
-        .with_context(diagnostics)?;
-    ensure!(
-        banner.trim_end().ends_with("airk>") && !banner.contains("MCP error:"),
-        "{}",
-        diagnostics()
-    );
-    let mut values = serde_json::Deserializer::from_str(rendered).into_iter::<Value>();
-    let value = values
-        .next()
-        .with_context(diagnostics)?
-        .with_context(diagnostics)?;
-    ensure!(
-        rendered[values.byte_offset()..].trim() == "airk>",
-        "{}",
-        diagnostics()
-    );
-    Ok(value)
-}
-async fn convenience(f: &Fixture) -> Result<Value> {
-    let mut command = Ctl::new();
-    command
-        .arg("--combined-session")
-        .arg(serde_json::to_string(&f.session)?)
-        .arg("--service-runtime-dir")
-        .arg(&f.control)
-        .arg("--project-ids")
-        .arg(f.projects[0].to_string())
-        .arg("--index-ids")
-        .arg(f.indexes[0].to_string())
-        .args([
-            "--member-availability",
-            "require",
-            "info",
-            "api/policy.md",
-            "--include-profile-families",
-            "--verification",
-            "off",
-            "--reply-detail",
-            "rich",
-        ])
-        .env("AIRK_MCP_RESPONSE_MODE", "full");
-    let output = tokio::task::spawn_blocking(move || read_retry::output(&mut command)).await??;
-    cli_json("native convenience info", output)
-}
-
 #[tokio::test]
 async fn opted_file_family_report_keeps_full_native_cli_console_mcp_and_input_catalog_parity()
 -> Result<()> {
@@ -251,8 +153,7 @@ async fn opted_file_family_report_keeps_full_native_cli_console_mcp_and_input_ca
         for detail in [None, Some("lean"), Some("rich")] {
             // Fresh response sessions avoid sharing omission observations across
             // transports; actual payload/provenance/scope fields remain intact.
-            let backend =
-                airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
+            let backend = f.resolve(&f.session).await?;
             let mut mcp = McpSession::start(&f)?;
             let catalog = mcp.request(2, "tools/list", json!({}))?;
             let catalog = rpc_result(&catalog, "MCP tool catalog")?;
@@ -275,22 +176,16 @@ async fn opted_file_family_report_keeps_full_native_cli_console_mcp_and_input_ca
                 public, &canonical,
                 "actual MCP must retain the complete local-session FileInfo definition"
             );
-            let native = serde_json::to_value(
-                backend
-                    .catalog()
-                    .into_iter()
-                    .find(|tool| tool.name == "airk_file_info")
-                    .context("native FileInfo absent")?,
-            )?;
+            // The CLI lists the service's tool catalog (the window route
+            // reads through the same service catalog owner).
             assert_eq!(
                 public["inputSchema"]["properties"]["include_profile_families"],
                 expected_schema
             );
             assert_eq!(
-                native["inputSchema"]["properties"]["include_profile_families"],
+                cli_info["inputSchema"]["properties"]["include_profile_families"],
                 expected_schema
             );
-            assert_eq!(cli_info["inputSchema"], native["inputSchema"]);
             let mut arguments = json!({"path":"api/policy.md","include_profile_families":true,"project_ids":[f.projects[0]],"index_ids":[f.indexes[0]],"member_availability":"require","verification":"off","response_mode":mode});
             if let Some(detail) = detail {
                 arguments["reply_detail"] = json!(detail);
@@ -353,26 +248,17 @@ async fn opted_file_family_report_keeps_full_native_cli_console_mcp_and_input_ca
             } else {
                 report_identity = Some(report.clone());
             }
-            if mode == "full" && detail == Some("rich") {
-                let console = console(&f, &arguments).await?;
-                assert_parity(
-                    "complete actual tools console file-info",
-                    &native,
-                    &positive_body(&console, f.indexes[0], "canonical tools console")?,
-                )?;
-                assert_parity(
-                    "complete convenience info family report",
-                    &native,
-                    &positive_body(&convenience(&f).await?, f.indexes[0], "convenience info")?,
-                )?;
-            }
+            // The tools console and narrowed convenience `info` rows went with
+            // the removed `--combined-session` CLI selector: `tools shell` has
+            // only its project form and the convenience commands no
+            // `--project-ids/--index-ids` narrowing.
             drop(mcp);
             backend.close();
             backend.shutdown().await?;
         }
     }
     // Absent/false preserves the exact legacy conditional representation key.
-    let backend = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
+    let backend = f.resolve(&f.session).await?;
     let base_args = json!({"path":"api/policy.md","project_ids":[f.projects[0]],"index_ids":[f.indexes[0]],"member_availability":"require","verification":"off","response_mode":"full"});
     let legacy = positive_body(
         &native_read(backend.as_ref(), "airk_file_info", &base_args).await?,
@@ -482,7 +368,7 @@ async fn opted_file_family_report_keeps_full_native_cli_console_mcp_and_input_ca
     // The full-root participant transports the known configured/published
     // policy observations as well; selected-scope unknowns must not become a
     // permanently reduced response contract for every native caller.
-    let backend = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
+    let backend = f.resolve(&f.session).await?;
     let mut mcp = McpSession::start(&f)?;
     let full_args = json!({"path":"api/policy.md","include_profile_families":true,"project_ids":[f.projects[2]],"index_ids":[f.indexes[2]],"member_availability":"require","verification":"off","response_mode":"full","reply_detail":"rich"});
     let native = positive_body(

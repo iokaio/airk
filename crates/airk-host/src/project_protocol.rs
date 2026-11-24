@@ -30,28 +30,13 @@ pub enum Command {
         nonce: Incarnation,
         begin_operation: Incarnation,
     },
-    /// Private host-only installation after live catalog validation.
-    InstallScope {
-        identity: WorkerIdentity,
-        authority: Box<airk_kernel::scoped_reads::ScopedReadAuthority>,
-        lease_generation: u64,
-        expires_unix_ms: u64,
-    },
-    RenewScopeLease {
-        identity: WorkerIdentity,
-        authority: Box<airk_kernel::scoped_reads::ScopedReadAuthority>,
-        previous: airk_core::service::ScopedReadRef,
-        lease_generation: u64,
-        expires_unix_ms: u64,
-    },
     RevokeScope {
         identity: WorkerIdentity,
         scope: airk_core::service::ScopedReadRef,
     },
     /// Private host-only installation of an in-memory W4/A2 selection grant's
     /// authority, built at its exact catalog revision. `previous` names the
-    /// expired lease of the same live selection being renewed. A separate
-    /// command keeps every catalog-grant frame unchanged.
+    /// expired lease of the same live selection being renewed.
     InstallSelectionScope {
         identity: WorkerIdentity,
         authority: Box<airk_kernel::scoped_reads::SelectionReadAuthority>,
@@ -133,10 +118,6 @@ pub enum Reply {
         nonce: Incarnation,
         grant: Option<ConnectionGrant>,
     },
-    ScopeInstalled {
-        identity: WorkerIdentity,
-        scope: airk_core::service::ScopedReadRef,
-    },
     ScopeRevoked {
         identity: WorkerIdentity,
         scope: airk_core::service::ScopedReadRef,
@@ -179,9 +160,10 @@ pub struct SelectionLease {
     pub fingerprint: airk_core::identity::Sha256Digest,
 }
 impl SelectionLease {
-    /// `None` for a catalog-grant ref, which keeps its existing replies.
+    /// Every installed ref is a selection ref since reviewed catalog grants
+    /// were removed (change-log entry 68 part 3), so this is always `Some`.
     pub fn of(scope: &airk_core::service::ScopedReadRef) -> Option<Self> {
-        scope.selection.map(|_| Self {
+        Some(Self {
             index_id: scope.index_id,
             lease_generation: scope.lease_generation,
             fingerprint: scope.fingerprint,
@@ -189,12 +171,13 @@ impl SelectionLease {
     }
 }
 
-/// The scope a worker reply may echo: catalog-grant refs only. A selection
-/// ref never leaves the private command direction (N3).
+/// The scope a worker reply may echo. A selection ref never leaves the
+/// private command direction (N3), and every ref is a selection ref, so a
+/// reply echoes none.
 pub fn reply_scope(
-    scope: Option<airk_core::service::ScopedReadRef>,
+    _scope: Option<airk_core::service::ScopedReadRef>,
 ) -> Option<airk_core::service::ScopedReadRef> {
-    scope.filter(|scope| scope.selection.is_none())
+    None
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -354,15 +337,13 @@ mod helper_admission_tests {
             schema: 1,
             lease_generation: 7,
             index_id: IndexId::from_identity(Incarnation::from_bytes([4; 16])),
-            grant_id: None,
-            grant_revision: None,
-            selection: Some(SelectionScopeRef {
+            selection: SelectionScopeRef {
                 owner: SelectionOwnerKind::Window,
                 grant_nonce: nonce,
                 service_instance: identity.service,
                 scope_identity: Sha256Digest::from_bytes([5; 32]),
                 catalog_revision: CatalogRevision::INITIAL,
-            }),
+            },
             fingerprint: Sha256Digest::from_bytes([6; 32]),
         };
         let lease = SelectionLease::of(&scope).expect("a selection lease");
@@ -384,17 +365,6 @@ mod helper_admission_tests {
         };
         assert!(proof.scope.is_none());
         assert!(!serde_json::to_string(&proof)?.contains(nonce_text));
-        // A catalog-grant ref keeps its existing echo unchanged.
-        let catalog = ScopedReadRef {
-            grant_id: Some(airk_core::index_catalog::GrantId::from_identity(
-                Incarnation::from_bytes([8; 16]),
-            )),
-            grant_revision: Some(CatalogRevision::INITIAL),
-            selection: None,
-            ..scope
-        };
-        assert_eq!(reply_scope(Some(catalog)), Some(catalog));
-        assert_eq!(SelectionLease::of(&catalog), None);
         Ok(())
     }
 

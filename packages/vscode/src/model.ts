@@ -2,15 +2,11 @@
 import { createHash } from 'node:crypto';
 import * as path from 'node:path';
 import type { VectorStatus } from './vectorModel';
-import { validateCatalogSession, validateCombinedCatalogSession, type CatalogSessionSelector, type CombinedCatalogSessionSelector } from './catalogSession';
 import { HttpConnectionInfo, credentialEnvironment, validateHttpConnection, vscodeCredentialInput, vscodeCredentialInputId } from './serviceHttp';
 
 export interface LaunchSpec { command: string; root: string; dataDir: string; collection: string; name: string;
     /** Protected native enrollment; command remains the interactive CLI image only. */
     http?:HttpConnectionInfo;
-    /** Explicit native-reviewed selection; display origins remain native Index metadata. */
-    catalogSession?: CatalogSessionSelector;
-    combinedSession?: CombinedCatalogSessionSelector;
     /** The window's granted search scope (W4): reads name no selection and run
      * under the window scope (contracts §3.7). `key` is a stable 64-hex key of
      * the selection (Workbench history); `service.project` carries the same key. */
@@ -40,17 +36,6 @@ export function collectionId(canonicalRoot: string, platform = process.platform)
 }
 
 export function launchArgs(spec: LaunchSpec, command = 'mcp', pinProject = false): string[] {
-    if(spec.combinedSession!==undefined){
-        if(spec.catalogSession!==undefined)throw new Error('Cannot mix catalog session selectors.');
-        if(!spec.service||!path.isAbsolute(spec.service.installDir))throw new Error('Invalid trusted combined catalog launch binding.');
-        const selected=['--combined-session',JSON.stringify(validateCombinedCatalogSession(spec.combinedSession)),command];
-        return spec.service.direct&&command!=='mcp'?['--service-install-dir',spec.service.installDir,...selected]:spec.service.universal?selected:['runtime','launch','--install-dir',spec.service.installDir,'--',...selected];
-    }
-    if(spec.catalogSession!==undefined){
-        if(!spec.service||!path.isAbsolute(spec.service.installDir)||!/^[a-f0-9]{64}$/.test(spec.service.project))throw new Error('Invalid trusted catalog launch binding.');
-        const selected=['--catalog-session',JSON.stringify(validateCatalogSession(spec.catalogSession)),command];
-        return spec.service.direct&&command!=='mcp'?['--service-install-dir',spec.service.installDir,...selected]:spec.service.universal?selected:['runtime','launch','--install-dir',spec.service.installDir,'--',...selected];
-    }
     if(spec.service){
         if(!path.isAbsolute(spec.service.installDir)||!/^[a-f0-9]{64}$/.test(spec.service.project))throw new Error('Invalid trusted service launch binding.');
         const scoped=command==='mcp'&&!pinProject?['--root',spec.root,'mcp']
@@ -91,7 +76,6 @@ export const EXPLORER_TOOL_RENAMES: Readonly<Record<string,string>> = {
 /** One public endpoint; editor attachment never chooses the retrieval binding. */
 export function unifiedEntry(spec: LaunchSpec, descriptor?: string, additional: readonly LaunchSpec[] = []): ServerEntry {
     if(spec.http){if(additional.length)throw new Error('Explicit combined HTTP selection required.');return {key:'airk',command:spec.command,args:[],label:'AIRK',http:validateHttpConnection(spec.http)};}
-    if(additional.length&&(spec.catalogSession!==undefined||spec.combinedSession!==undefined||additional.some(value=>value.catalogSession!==undefined||value.combinedSession!==undefined)))throw new Error('Catalog sessions support one explicit native selection; a legacy catalog session supports one selected Index.');
     const args = launchArgs(spec);
     if (descriptor) {
         if (!path.isAbsolute(descriptor)) { throw new Error('Invalid Explorer descriptor.'); }

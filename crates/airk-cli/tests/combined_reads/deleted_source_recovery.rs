@@ -4,56 +4,19 @@
 //! assert that production currently poisons unrelated indexes.
 use super::*;
 
+/// The dedicated deletion read: one Project and one of its Indexes. Reads go
+/// through a window over exactly these atoms, granted at the service's current
+/// catalog revision when the read starts.
 async fn deletion_read_grant(
     f: &Fixture,
     project: usize,
     index: usize,
-    nonce: u8,
-) -> Result<CombinedConnectRequest> {
-    let response = airk_cli::service_runtime::request(
-        &f.control,
-        ControlMethod::CatalogGrantDraft {
-            context_key: f.session.context_key,
-            selection: GrantDraftSelection {
-                key: policy_key(f, nonce).await?,
-                expected_catalog_revision: policy_revision(f)?,
-                project_ids: vec![f.projects[project]],
-                index_ids: Some(vec![f.indexes[index]]),
-            },
-        },
-    )
-    .await?;
-    let ControlResponse::CatalogGrantDraft { draft } = response else {
-        anyhow::bail!(
-            "dedicated deletion grant review refused: {}",
-            serde_json::to_string(&response)?
-        );
-    };
-    let CatalogOperation::CreateGrant { grant } = &draft.request.operation else {
-        anyhow::bail!("native grant operation missing");
-    };
-    let grant = grant.clone();
-    let response = airk_cli::service_runtime::request(
-        &f.control,
-        ControlMethod::CatalogApply {
-            request: draft.request,
-            preview_digest: draft.preview_digest,
-        },
-    )
-    .await?;
-    let ControlResponse::CatalogApplied { receipt, .. } = response else {
-        anyhow::bail!(
-            "dedicated deletion grant admission refused: {}",
-            serde_json::to_string(&response)?
-        );
-    };
-    let mut selected = f.session.clone();
-    selected.project_ids = vec![f.projects[project]];
-    selected.index_ids = Some(vec![f.indexes[index]]);
-    selected.grant_id = grant.id;
-    selected.expected_grant_revision = grant.revision;
-    selected.expected_catalog_revision = receipt.catalog_revision;
-    Ok(selected)
+    _nonce: u8,
+) -> Result<SessionScope> {
+    Ok(SessionScope {
+        project_ids: vec![f.projects[project]],
+        index_ids: Some(vec![f.indexes[index]]),
+    })
 }
 
 fn deletion_query() -> Value {
@@ -273,8 +236,7 @@ async fn missing_storage_reads(f: &Fixture, mcp: &mut McpSession, first_id: u64)
         let mut args = deletion_query();
         args["project_ids"] = json!(f.session.project_ids);
         args["member_availability"] = json!(if required { "require" } else { "report" });
-        let backend =
-            airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
+        let backend = f.resolve(&f.session).await?;
         let native = native_read(backend.as_ref(), "airk_search", &args).await;
         backend.close();
         backend.shutdown().await?;
@@ -1226,7 +1188,7 @@ async fn deletion_default_union(f: &mut Fixture) -> Result<()> {
     };
     drop(registry);
     membership.project_id = f.projects[2];
-    membership.revision = CatalogRevision::INITIAL;
+    membership.revision = airk_core::index_catalog::CatalogRevision::INITIAL;
     union_apply(
         f,
         220,
@@ -1247,57 +1209,16 @@ async fn deletion_default_union(f: &mut Fixture) -> Result<()> {
         },
     )
     .await?;
-    let response = airk_cli::service_runtime::request(
-        &f.control,
-        ControlMethod::CatalogGrantDraft {
-            context_key: f.session.context_key,
-            selection: GrantDraftSelection {
-                key: policy_key(f, 222).await?,
-                expected_catalog_revision: policy_revision(f)?,
-                project_ids: vec![project.id],
-                index_ids: None,
-            },
-        },
-    )
-    .await?;
-    let ControlResponse::CatalogGrantDraft { draft } = response else {
-        anyhow::bail!(
-            "default union grant review refused: {}",
-            serde_json::to_string(&response)?
-        );
-    };
-    let CatalogOperation::CreateGrant { grant } = &draft.request.operation else {
-        anyhow::bail!("default union grant review changed operation");
-    };
-    let grant = grant.clone();
-    let selected: std::collections::BTreeSet<_> = grant
-        .memberships
-        .iter()
-        .map(|member| member.membership.index_id)
-        .collect();
+    // The default union: every Index the Project now holds (B and A), read
+    // through a window over the Project's current memberships.
+    let selected: std::collections::BTreeSet<_> =
+        f.member_indexes(&[project.id]).await?.into_iter().collect();
     ensure!(
         selected == [f.indexes[1], f.indexes[2]].into_iter().collect(),
-        "default grant broadened or omitted a member: {grant:?}"
+        "default union broadened or omitted a member: {selected:?}"
     );
-    let response = airk_cli::service_runtime::request(
-        &f.control,
-        ControlMethod::CatalogApply {
-            request: draft.request,
-            preview_digest: draft.preview_digest,
-        },
-    )
-    .await?;
-    let ControlResponse::CatalogApplied { receipt, .. } = response else {
-        anyhow::bail!(
-            "default union grant apply refused: {}",
-            serde_json::to_string(&response)?
-        );
-    };
     f.session.project_ids = vec![project.id];
     f.session.index_ids = None;
-    f.session.grant_id = grant.id;
-    f.session.expected_grant_revision = grant.revision;
-    f.session.expected_catalog_revision = receipt.catalog_revision;
     Ok(())
 }
 
@@ -1362,7 +1283,7 @@ async fn union_read(
     // This selector enables the public availability input. The combined session
     // still freezes precisely this one Project and leaves index_ids absent.
     args["project_ids"] = json!(f.session.project_ids);
-    let backend = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
+    let backend = f.resolve(&f.session).await?;
     let native = native_read(backend.as_ref(), "airk_search", &args).await;
     backend.close();
     backend.shutdown().await?;
@@ -1490,7 +1411,8 @@ async fn deleted_default_union_case(data_lost: bool) -> Result<()> {
     let mut f = Fixture::with_runtime_layout(true, 3, false, Some(data_lost))?;
     let mut service = Some(f.start().await?);
     deletion_default_union(&mut f).await?;
-    let frozen_session = serde_json::to_value(&f.session)?;
+    let frozen_session = f.session.clone();
+    let frozen_revision = policy_revision(&f)?;
     let b_source = Path::new(&f.registrations[1].root).join("api/policy.md");
     let b_bytes = fs::read(&b_source)?;
     // U110: the default union's two indexes, named on every MCP read.
@@ -1520,11 +1442,11 @@ async fn deleted_default_union_case(data_lost: bool) -> Result<()> {
     let mut mcp = McpSession::start_scope(&f, union_scope)?;
     union_loss_observations(&f, &mut mcp, &expected_b, data_lost, 220).await?;
     ensure!(
-        serde_json::to_value(&f.session)? == frozen_session && f.session.index_ids.is_none(),
+        f.session == frozen_session && f.session.index_ids.is_none(),
         "deletion test changed or narrowed the reviewed default union"
     );
     ensure!(
-        policy_revision(&f)? == f.session.expected_catalog_revision,
+        policy_revision(&f)? == frozen_revision,
         "deletion changed catalog authority without explicit review"
     );
     ensure!(
@@ -1553,7 +1475,7 @@ async fn post_p14_default_project_union_preserves_healthy_member_after_source_an
     deleted_default_union_case(true).await
 }
 
-fn retired_union_refusal(reply: &Value, session: &CombinedConnectRequest) -> Result<()> {
+fn retired_union_refusal(reply: &Value, window: &pipe::Window) -> Result<()> {
     ensure!(
         reply["isError"] == true,
         "old default union unexpectedly succeeded: {reply}"
@@ -1566,7 +1488,9 @@ fn retired_union_refusal(reply: &Value, session: &CombinedConnectRequest) -> Res
         ) && value["error"]["retryable"] == false
             && value["error"]["query_replay_safe"] == false
             && value["requested_scope"]["confirmed"] == false
-            && value["requested_scope"]["selection"] == serde_json::to_value(session)?,
+            && value["requested_scope"]["selection"]
+                == json!({"window_scope_selection":window.selection,
+                    "scope_identity":window.scope_identity}),
         "old default union failed for an unexpected reason: {value}"
     );
     Ok(())
@@ -1578,18 +1502,9 @@ async fn retire_default_union_and_review_same_project(
 ) -> Result<()> {
     use airk_core::catalog_management::{CatalogEntity, CatalogItem};
     let old_session = f.session.clone();
-    let old_native =
-        airk_cli::combined_frontend::resolve(None, Some(&f.control), &old_session).await?;
+    let old_native = f.resolve(&old_session).await?;
+    let old_window = f.session_window().await?;
     let mut registry = ServiceRegistry::open_saved(&f.control)?;
-    let frozen = registry
-        .catalog_detail(
-            &CatalogEntity::Grant {
-                id: old_session.grant_id,
-            },
-            Some(policy_revision(f)?),
-        )?
-        .item
-        .context("original grant history absent")?;
     let project_before = registry
         .catalog_detail(
             &CatalogEntity::Project { id: f.projects[2] },
@@ -1633,21 +1548,19 @@ async fn retire_default_union_and_review_same_project(
         drop(registry);
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    // A restrictive catalog change expires the OLD exact grant/selection. Do not
-    // silently shrink it, reuse its transport, or convert this into a healthy read.
+    // A restrictive catalog change expires the OLD exact window selection. Do
+    // not silently shrink it, reuse its transport, or convert this into a
+    // healthy read.
     let args = deletion_query();
-    let native = old_native
-        .call("airk_search".into(), args.as_object().unwrap().clone())
-        .await?;
-    retired_union_refusal(&native, &old_session)?;
-    old_native.close();
-    old_native.shutdown().await?;
-    // A fresh CLI cannot even construct the old scoped backend. Its documented
-    // setup refusal is a terminal code on stderr, not a reduced evidence reply.
+    if let Some(native) = old_authority_reply(old_native.as_ref(), "airk_search", &args).await? {
+        retired_union_refusal(&native, &old_window)?;
+    }
+    // The CLI session route under the old window cannot construct the old
+    // scoped backend either. Its documented setup refusal is a terminal code
+    // on stderr, not a reduced evidence reply.
     let mut command = Ctl::new();
     command
-        .arg("--combined-session")
-        .arg(serde_json::to_string(&old_session)?)
+        .window(old_window.clone())
         .arg("--service-runtime-dir")
         .arg(&f.control)
         .args(["tools", "call", "airk_search", "--args"])
@@ -1659,25 +1572,13 @@ async fn retire_default_union_and_review_same_project(
     ensure!(
         output.status.code() == Some(1)
             && output.stdout.is_empty()
-            && String::from_utf8_lossy(&output.stderr).contains("scoped_read_unavailable:"),
+            && String::from_utf8_lossy(&output.stderr).contains("scoped_read_unavailable"),
         "old CLI scope failed unexpectedly: exit={:?};stdout={};stderr={}",
         output.status.code(),
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
     let mut registry = ServiceRegistry::open_saved(&f.control)?;
-    ensure!(
-        registry
-            .catalog_detail(
-                &CatalogEntity::Grant {
-                    id: old_session.grant_id
-                },
-                None
-            )?
-            .item
-            == Some(frozen),
-        "Retire/physical cleanup rewrote immutable old grant history"
-    );
     let detail = registry.catalog_detail(&CatalogEntity::Project { id: f.projects[2] }, None)?;
     ensure!(
         matches!(detail.item,Some(CatalogItem::Project(value)) if value.default_indexes==vec![f.indexes[1]]),
@@ -1697,59 +1598,18 @@ async fn retire_default_union_and_review_same_project(
         "A survived in current Project membership after cleanup"
     );
     drop(registry);
-    // Explicitly review a NEW grant using the SAME default Project selector.
-    // No index_ids=B convenience subset or implicit grant rewrite is permitted.
-    let response = airk_cli::service_runtime::request(
-        &f.control,
-        ControlMethod::CatalogGrantDraft {
-            context_key: old_session.context_key,
-            selection: GrantDraftSelection {
-                key: policy_key(f, 224).await?,
-                expected_catalog_revision: policy_revision(f)?,
-                project_ids: old_session.project_ids.clone(),
-                index_ids: None,
-            },
-        },
-    )
-    .await?;
-    let ControlResponse::CatalogGrantDraft { draft } = response else {
-        anyhow::bail!(
-            "fresh same-default Project review refused: {}",
-            serde_json::to_string(&response)?
-        );
-    };
-    let CatalogOperation::CreateGrant { grant } = &draft.request.operation else {
-        anyhow::bail!("fresh default grant operation changed");
-    };
-    let grant = grant.clone();
+    // A NEW window over the SAME default Project selector (fresh W4 at the
+    // current revision). No index_ids=B convenience subset is named.
+    let current = f.member_indexes(&old_session.project_ids).await?;
     ensure!(
-        grant.memberships.len() == 1
-            && grant.memberships[0].membership.index_id == f.indexes[1]
-            && grant.memberships[0].membership.project_id == f.projects[2],
-        "fresh default review retained A or lost B: {grant:?}"
+        current == vec![f.indexes[1]],
+        "fresh default selection retained A or lost B: {current:?}"
     );
-    let response = airk_cli::service_runtime::request(
-        &f.control,
-        ControlMethod::CatalogApply {
-            request: draft.request,
-            preview_digest: draft.preview_digest,
-        },
-    )
-    .await?;
-    let ControlResponse::CatalogApplied { receipt, .. } = response else {
-        anyhow::bail!(
-            "fresh same-default grant apply refused: {}",
-            serde_json::to_string(&response)?
-        );
-    };
-    f.session.grant_id = grant.id;
-    f.session.expected_grant_revision = grant.revision;
-    f.session.expected_catalog_revision = receipt.catalog_revision;
     ensure!(
         f.session.project_ids == old_session.project_ids && f.session.index_ids.is_none(),
         "cleanup test narrowed the default Project selection"
     );
-    let backend = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
+    let backend = f.resolve(&f.session).await?;
     let native = native_read(backend.as_ref(), "airk_search", &args).await;
     backend.close();
     backend.shutdown().await?;

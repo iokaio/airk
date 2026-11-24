@@ -46,7 +46,7 @@ export function newProjectId(): string {
 }
 
 /** CatalogKind (catalog_management.rs). */
-export type CatalogKind = 'projects' | 'indexes' | 'memberships' | 'contexts' | 'grants' | 'sources';
+export type CatalogKind = 'projects' | 'indexes' | 'memberships' | 'contexts' | 'sources';
 
 /** CatalogPageRequest budgets: limit ≤ MAX_SELECTION (32), max_bytes ≤ MAX_PAGE_BYTES. */
 export const CATALOG_PAGE_LIMIT = 32;
@@ -57,7 +57,6 @@ export type CatalogEntity =
   | { kind: 'project'; id: string }
   | { kind: 'index'; id: string }
   | { kind: 'membership'; project_id: string; index_id: string }
-  | { kind: 'grant'; id: string }
   | { kind: 'source'; id: string };
 
 /** CatalogRequest without `caller`/`key` (the catalog.preview/apply rule paths). */
@@ -209,12 +208,6 @@ export const body = {
     catalog_policy_resume_receipt: { index_id: indexId, operation_id: operationId },
   }),
   retirementEvidence: (indexId: string) => ({ catalog_index_retirement_evidence: { index_id: indexId } }),
-  grantDraft: (contextKey: string, expectedRevision: number, projectIds: string[], indexIds: string[] | null) => ({
-    catalog_grant_draft: {
-      context_key: contextKey,
-      selection: { expected_catalog_revision: expectedRevision, project_ids: projectIds, index_ids: indexIds },
-    },
-  }),
   usageDocument: (project: string, read: UsageRead) => ({ usage_document: { project, read } }),
   eventsPage: (project: string | null, cursor: unknown, limit: number) => ({
     events: { project, cursor: cursor ?? null, limit },

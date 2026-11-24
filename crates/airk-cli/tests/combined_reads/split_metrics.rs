@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Opt-in observations over the existing real split fixture, never another fixture.
 use super::*;
-use airk_core::{catalog_host::GrantDraftSelection, catalog_management::CatalogOperation};
+use airk_core::index_catalog::CatalogRevision;
 use std::io::Write;
 
 pub(super) struct Capture {
@@ -11,7 +11,9 @@ pub(super) struct Capture {
     next_sample: Instant,
     source_before: Value,
     clients: Vec<McpSession>,
-    selection: CombinedConnectRequest,
+    selection: SessionScope,
+    /// The catalog revision the measured selection was last confirmed at.
+    confirmed_revision: CatalogRevision,
     reconfirm_required: bool,
     authority_baseline: Value,
     publication_baseline: Option<Value>,
@@ -123,13 +125,11 @@ async fn running(f: &Fixture, snapshot: &SplitSnapshot) -> Result<bool> {
 }
 
 // Compare complete native authority items, excluding only enclosing observation
-// revision. A changed/revoked grant, membership or source definition refuses.
-async fn identity(f: &Fixture, selected: &CombinedConnectRequest) -> Result<(Value, Value)> {
+// revision. A changed membership, Project or Index definition refuses.
+async fn identity(f: &Fixture, revision: CatalogRevision) -> Result<(Value, Value)> {
     use airk_core::catalog_management::CatalogEntity;
+    let namespace = ServiceRegistry::open_saved(&f.control)?.incarnation()?;
     let entities = [
-        CatalogEntity::Grant {
-            id: selected.grant_id,
-        },
         CatalogEntity::Project { id: f.projects[0] },
         CatalogEntity::Index { id: f.indexes[0] },
         CatalogEntity::Membership {
@@ -144,7 +144,7 @@ async fn identity(f: &Fixture, selected: &CombinedConnectRequest) -> Result<(Val
             &f.control,
             ControlMethod::CatalogDetail {
                 entity,
-                expected_catalog_revision: Some(selected.expected_catalog_revision),
+                expected_catalog_revision: Some(revision),
             },
         )
         .await?;
@@ -155,9 +155,7 @@ async fn identity(f: &Fixture, selected: &CombinedConnectRequest) -> Result<(Val
             );
         };
         ensure!(
-            detail.namespace == selected.namespace
-                && detail.revision == selected.expected_catalog_revision
-                && detail.item.is_some(),
+            detail.namespace == namespace && detail.revision == revision && detail.item.is_some(),
             "native independent identity absent or stale"
         );
         items.push(serde_json::to_value(&detail.item)?);
@@ -203,81 +201,17 @@ impl Capture {
         let ControlResponse::Resources { .. } = &native else {
             anyhow::bail!("baseline resource response unavailable")
         };
-        let metric_context = airk_core::identity::framed_digest(
-            b"airk/p10-metric-context/1",
-            &[f.session.context_key.as_bytes(), case.as_bytes()],
-        );
-        let context_response = airk_cli::service_runtime::request(
-            &f.control,
-            ControlMethod::CatalogHostContext {
-                key: metric_context,
-                expected_catalog_revision: Some(revision(f)?),
-            },
-        )
-        .await?;
-        let ControlResponse::CatalogHostContext {
-            descriptor: context_descriptor,
-            ..
-        } = context_response
-        else {
-            anyhow::bail!("native metric context descriptor unavailable")
+        // The measured reads: Project 0 and Index 0, unrelated to the split
+        // Index, named per call by tokenless open MCP sessions.
+        let selected = SessionScope {
+            project_ids: vec![f.projects[0]],
+            index_ids: Some(vec![f.indexes[0]]),
         };
-        ensure!(
-            context_descriptor.key == metric_context && context_descriptor.context.is_none(),
-            "fixture metric context is not a distinct authenticated virtual context"
-        );
-        let response = airk_cli::service_runtime::request(
-            &f.control,
-            ControlMethod::CatalogGrantDraft {
-                context_key: metric_context,
-                selection: GrantDraftSelection {
-                    key: key(f, 201).await?,
-                    expected_catalog_revision: revision(f)?,
-                    project_ids: vec![f.projects[0]],
-                    index_ids: Some(vec![f.indexes[0]]),
-                },
-            },
-        )
-        .await?;
-        let ControlResponse::CatalogGrantDraft { draft } = response else {
-            anyhow::bail!("unrelated measurement grant draft refused")
-        };
-        let CatalogOperation::CreateGrant { grant } = &draft.request.operation else {
-            anyhow::bail!("unexpected metric grant draft")
-        };
-        let grant = grant.clone();
-        ensure!(
-            grant.id != f.session.grant_id
-                && grant.host == context_descriptor.host
-                && grant.memberships.len() == 1
-                && grant.memberships[0].membership.project_id == f.projects[0]
-                && grant.memberships[0].membership.index_id == f.indexes[0],
-            "metric grant must be independent of the affected grant/index"
-        );
-        let response = airk_cli::service_runtime::request(
-            &f.control,
-            ControlMethod::CatalogApply {
-                request: draft.request,
-                preview_digest: draft.preview_digest,
-            },
-        )
-        .await?;
-        let ControlResponse::CatalogApplied { receipt, .. } = response else {
-            anyhow::bail!("unrelated measurement grant refused")
-        };
-        f.session.expected_catalog_revision = receipt.catalog_revision;
-        let original = f.session.clone();
-        let mut selected = original.clone();
-        selected.project_ids = vec![f.projects[0]];
-        selected.index_ids = Some(vec![f.indexes[0]]);
-        selected.context_key = metric_context;
-        selected.grant_id = grant.id;
-        selected.expected_grant_revision = grant.revision;
-        let (authority_baseline, authority_reads) = identity(f, &selected).await?;
+        let confirmed_revision = revision(f)?;
+        let (authority_baseline, authority_reads) = identity(f, confirmed_revision).await?;
         let clients = (0..4)
             .map(|_| McpSession::start_selected(f, &selected))
             .collect::<Result<Vec<_>>>()?;
-        f.session = original;
         ensure!(
             service.child.try_wait()?.is_none(),
             "owned service exited before measurement"
@@ -289,8 +223,8 @@ impl Capture {
             "candidate":f.candidate,"service_pid":service.child.id(),"service_handle_retained_by_fixture":true,
             "source_inventory":source_before,"resources_native":native,
             "source_identity_basis":"externally selected matched native pair; consult campaign build receipt for source and profile",
-            "query_grant_id":grant.id,"query_context_descriptor":context_descriptor,
-            "query_context_basis":"authenticated native virtual context; no saved context preference created",
+            "query_selection":{"project_ids":selected.project_ids,"index_ids":selected.index_ids},
+            "query_selection_basis":"tokenless open MCP reads naming the one unrelated Index; no catalog state created",
             "limits":{"clients":4,"source_shape":"existing four files per source","baseline_waves":2,"during_max_waves":30,"settled_waves":2,
                 "observation_interval_ms":250,"maximum_events":4096,"maximum_entries_per_disk_sample":20000},
             "cpu_scope":"native Index spans and separately observed owned launcher/service only; total split CPU unknown"}))?,
@@ -306,6 +240,7 @@ impl Capture {
             source_before,
             clients,
             selection: selected,
+            confirmed_revision,
             reconfirm_required: false,
             authority_baseline,
             publication_baseline: None,
@@ -331,7 +266,8 @@ impl Capture {
         };
         capture.event(
             json!({"phase":"initial_confirmation","native_reads":authority_reads,
-            "selection":capture.selection}),
+            "selection":{"project_ids":capture.selection.project_ids,"index_ids":capture.selection.index_ids},
+            "catalog_revision":capture.confirmed_revision}),
         )?;
         let mut baseline_successes = 0;
         for _ in 0..2 {
@@ -376,27 +312,23 @@ impl Capture {
 
     async fn reconfirm(&mut self, f: &Fixture, force: bool) -> Result<bool> {
         let observed = revision(f)?;
-        if !force
-            && !self.reconfirm_required
-            && observed == self.selection.expected_catalog_revision
-        {
+        if !force && !self.reconfirm_required && observed == self.confirmed_revision {
             return Ok(true);
         }
         let started = Instant::now();
-        let mut selected = self.selection.clone();
-        selected.expected_catalog_revision = observed;
+        let selected = self.selection.clone();
         let outcome: Result<(Vec<McpSession>, Value)> = async {
-            let (identity, reads) = identity(f, &selected).await?;
+            let (identity, reads) = identity(f, observed).await?;
             ensure!(
                 identity == self.authority_baseline,
-                "independent native grant/Project/Index authority changed; reconfirmation refused"
+                "independent native Project/Index/membership authority changed; reconfirmation refused"
             );
             ensure!(
                 source_inventory(f)? == self.source_before,
                 "source bytes changed before reconfirmation"
             );
             let backend =
-                airk_cli::combined_frontend::resolve(None, Some(&f.control), &selected).await?;
+                f.resolve(&selected).await?;
             backend.close();
             backend.shutdown().await?;
             let clients = (0..4)
@@ -407,14 +339,15 @@ impl Capture {
         .await;
         match outcome {
             Ok((clients, reads)) => {
-                // Exactly the same grant/key/projects/index; only observed
-                // catalog revision changes, without writing any native state.
+                // Exactly the same projects/index; only observed catalog
+                // revision changes, without writing any native state.
                 self.clients = clients;
-                self.selection = selected;
+                self.confirmed_revision = observed;
                 self.reconfirm_required = false;
                 self.event(json!({"phase":"reconfirmation","outcome":"confirmed",
                     "elapsed_us_separate_from_query":started.elapsed().as_micros(),
-                    "selection":self.selection,"native_reads":reads,"query_replayed":false}))?;
+                    "selection":{"project_ids":self.selection.project_ids,"index_ids":self.selection.index_ids},
+                    "catalog_revision":observed,"native_reads":reads,"query_replayed":false}))?;
                 Ok(true)
             }
             Err(error) => {
@@ -425,7 +358,8 @@ impl Capture {
                 );
                 self.event(json!({"phase":"reconfirmation","outcome":"refused",
                     "elapsed_us_separate_from_query":started.elapsed().as_micros(),
-                    "proposed_selection":selected,"error":text,"query_replayed":false}))?;
+                    "proposed_selection":{"project_ids":selected.project_ids,"index_ids":selected.index_ids},
+                    "proposed_revision":observed,"error":text,"query_replayed":false}))?;
                 // Keep the old session. The next planned wave records its
                 // actual refusals; failure is never a successful sample.
                 Ok(false)
@@ -472,11 +406,11 @@ impl Capture {
             // later wave explicitly confirms the same independent authority.
             let outcome = if result["isError"] == true {
                 let refusal = body(result)?;
+                // An open read's refusal echoes its own requested open scope.
                 let exact_nonreplayable = refusal["error"]["retryable"] == false
                     && refusal["error"]["query_replay_safe"] == false
                     && refusal["requested_scope"]["confirmed"] == false
-                    && refusal["requested_scope"]["selection"]
-                        == serde_json::to_value(&self.selection)?;
+                    && refusal["requested_scope"]["selection"].is_object();
                 let scope_refused = exact_nonreplayable
                     && matches!(
                         refusal["error"]["code"].as_str(),

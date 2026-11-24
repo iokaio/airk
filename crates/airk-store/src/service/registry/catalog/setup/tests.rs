@@ -289,10 +289,11 @@ fn reservation_and_native_preparation_remain_pending_until_exact_once_ready() ->
         0
     );
     assert_eq!(
-        registry
-            .connection
-            .query_row("SELECT count(*) FROM index_access_grants", [], |row| row
-                .get::<_, i64>(0))?,
+        registry.connection.query_row(
+            "SELECT count(*) FROM sqlite_schema WHERE name='index_access_grants'",
+            [],
+            |row| row.get::<_, i64>(0)
+        )?,
         0
     );
     Ok(())
@@ -989,10 +990,11 @@ fn setup_with_index_set_creates_one_whole_source_set_exactly_once() -> Result<()
     );
     assert_eq!(projects(&registry)?.len(), 1);
     assert_eq!(
-        registry
-            .connection
-            .query_row("SELECT count(*) FROM index_access_grants", [], |row| row
-                .get::<_, i64>(0))?,
+        registry.connection.query_row(
+            "SELECT count(*) FROM sqlite_schema WHERE name='index_access_grants'",
+            [],
+            |row| row.get::<_, i64>(0)
+        )?,
         0,
         "the set grants nothing by itself"
     );

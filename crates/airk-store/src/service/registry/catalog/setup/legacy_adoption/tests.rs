@@ -59,7 +59,7 @@ fn fixture() -> Result<(tempfile::TempDir, ServiceRegistry, LegacyAdoptionPlan)>
     Ok((temp, registry, plan))
 }
 fn no_background_or_authority(registry: &ServiceRegistry) -> Result<()> {
-    let counts:(i64,i64,i64,i64,i64,i64)=registry.connection.query_row("SELECT (SELECT count(*) FROM service_watch),(SELECT count(*) FROM service_background),(SELECT count(*) FROM service_setup_pending),(SELECT count(*) FROM service_jobs),(SELECT count(*) FROM query_projects),(SELECT count(*) FROM index_access_grants)",[],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?)))?;
+    let counts:(i64,i64,i64,i64,i64,i64)=registry.connection.query_row("SELECT (SELECT count(*) FROM service_watch),(SELECT count(*) FROM service_background),(SELECT count(*) FROM service_setup_pending),(SELECT count(*) FROM service_jobs),(SELECT count(*) FROM query_projects),(SELECT count(*) FROM sqlite_schema WHERE name='index_access_grants')",[],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?)))?;
     assert_eq!(counts, (0, 0, 0, 0, 0, 0));
     Ok(())
 }

@@ -101,35 +101,6 @@ fn bound_retry(retry: airk_core::combined_reads::read_retry::SingleRequiredMembe
     }
 }
 
-pub fn classify_for_scope_with_arguments(
-    envelope: &Value,
-    expected: &airk_core::service::ScopedConnectRequest,
-    arguments: &Map<String, Value>,
-) -> Option<Retry> {
-    if let Some(body) = combined_body(envelope) {
-        return airk_core::combined_reads::read_retry::validated_retry_for_catalog(
-            &body, expected, arguments,
-        )
-        .map(bound_retry);
-    }
-    classify_for_scope(envelope, expected)
-}
-
-pub fn classify_for_combined_scope(
-    envelope: &Value,
-    expected: &airk_core::service::CombinedConnectRequest,
-    arguments: &Map<String, Value>,
-) -> Option<Retry> {
-    expected.validate().ok()?;
-    if let Some(body) = combined_body(envelope) {
-        return airk_core::combined_reads::read_retry::validated_retry_for_combined_catalog(
-            &body, expected, arguments,
-        )
-        .map(bound_retry);
-    }
-    classify(envelope)
-}
-
 pub fn classify_for_selection_with_arguments(
     envelope: &Value,
     expected: &airk_core::service::WindowScopeSelection,
@@ -146,6 +117,15 @@ pub fn classify_for_selection_with_arguments(
         return None;
     }
     classify_for_selection(envelope, expected, source.scope_identity)
+}
+
+/// A read under a test window's current W4 grant.
+pub fn classify_for_window(
+    envelope: &Value,
+    window: &super::pipe::Window,
+    arguments: &Map<String, Value>,
+) -> Option<Retry> {
+    classify_for_selection_with_arguments(envelope, &window.selection, &window.source(), arguments)
 }
 
 fn evidence_read_tool(name: &str) -> bool {
@@ -173,131 +153,7 @@ fn evidence_read_tool(name: &str) -> bool {
     )
 }
 
-/// A known setup refusal is safe only when tied to the caller's original,
-/// validated frozen selection. Generic callers do not infer this selection.
-pub fn classify_for_scope(
-    envelope: &Value,
-    expected: &airk_core::service::ScopedConnectRequest,
-) -> Option<Retry> {
-    expected.validate().ok()?;
-    if combined_body(envelope).is_some() {
-        return None;
-    }
-    if let Some(retry) = classify(envelope) {
-        return Some(retry);
-    }
-    if !envelope.get("isError")?.as_bool()? {
-        return None;
-    }
-    let content = envelope.get("content")?.as_array()?;
-    if content.len() != 1 || content[0].get("type")?.as_str()? != "text" {
-        return None;
-    }
-    let body: Value = serde_json::from_str(content[0].get("text")?.as_str()?).ok()?;
-    if envelope.get("structuredContent")? != &body {
-        return None;
-    }
-    let fields = body.as_object()?;
-    if fields
-        .keys()
-        .any(|key| !matches!(key.as_str(), "error" | "requested_scope"))
-    {
-        return None;
-    }
-    let requested = body.get("requested_scope")?;
-    if requested
-        .as_object()?
-        .keys()
-        .any(|key| !matches!(key.as_str(), "confirmed" | "selection"))
-        || requested.get("confirmed")?.as_bool()?
-    {
-        return None;
-    }
-    let mut observed: airk_core::service::ScopedConnectRequest =
-        serde_json::from_value(requested.get("selection")?.clone()).ok()?;
-    observed.validate().ok()?;
-    let mut expected = expected.clone();
-    // Native resolve_scoped may advance this metadata clock; every authority
-    // field and the caller's original command remain unchanged.
-    if observed.expected_catalog_revision < expected.expected_catalog_revision {
-        return None;
-    }
-    observed.expected_catalog_revision = expected.expected_catalog_revision;
-    expected.project_ids.sort();
-    observed.project_ids.sort();
-    if observed != expected {
-        return None;
-    }
-    let error = body.get("error")?;
-    if error.as_object()?.keys().any(|key| {
-        !matches!(
-            key.as_str(),
-            "code"
-                | "retryable"
-                | "query_submitted"
-                | "retry_after_ms"
-                | "fresh_brokerage_required"
-                | "query_replay_safe"
-                | "native_control_response"
-        )
-    }) || error.get("query_submitted")?.as_bool()?
-        || !error.get("retryable")?.as_bool()?
-        || !error.get("fresh_brokerage_required")?.as_bool()?
-        || error
-            .get("query_replay_safe")
-            .is_some_and(|value| value != true)
-    {
-        return None;
-    }
-    match error.get("code")?.as_str()? {
-        "scoped_status_prepare_timeout" => {
-            if error.get("native_control_response").is_some() {
-                return None;
-            }
-        }
-        "scoped_connection_unavailable" => {
-            let native = error.get("native_control_response")?;
-            if native
-                .as_object()?
-                .keys()
-                .any(|key| !matches!(key.as_str(), "status" | "code"))
-                || native.get("status")?.as_str()? != "failure"
-                || !matches!(
-                    native.get("code")?.as_str()?,
-                    "broker_busy"
-                        | "project_starting_or_unavailable"
-                        | "project_unavailable_or_busy"
-                        | "previous_workers_draining"
-                        | "catalog_revision_changed"
-                        | "catalog_clock_pending"
-                        | "catalog_connection_busy"
-                        | "project_capacity_busy"
-                        | "project_restart_backoff"
-                )
-            {
-                return None;
-            }
-        }
-        _ => return None,
-    }
-    let delay = error.get("retry_after_ms")?.as_u64()?;
-    (1..=1000).contains(&delay).then_some(Retry {
-        delay: Duration::from_millis(delay),
-        fresh_brokerage: true,
-        publication: false,
-    })
-}
-
-pub fn within_for_scope(
-    envelope: &Value,
-    expected: &airk_core::service::ScopedConnectRequest,
-    deadline: Instant,
-) -> Option<Retry> {
-    classify_for_scope(envelope, expected).filter(|retry| Instant::now() + retry.delay < deadline)
-}
-
-/// Selection sessions bind setup retries to the exact active epoch. They do
-/// not inherit a catalog grant's monotonic metadata-clock exception.
+/// Selection sessions bind setup retries to the exact active epoch.
 pub fn classify_for_selection(
     envelope: &Value,
     expected: &airk_core::service::WindowScopeSelection,
@@ -394,26 +250,6 @@ pub fn classify_for_selection(
     })
 }
 
-/// Only the test-owned `tools call` evidence-read form supplies an implicit
-/// expected scope. Mutation commands, mixed selectors and duplicate flags do not.
-pub fn original_cli_scope<C: Invocation + ?Sized>(
-    command: &C,
-) -> Option<airk_core::service::ScopedConnectRequest> {
-    let selection: airk_core::service::ScopedConnectRequest =
-        original_cli_selector(command, "--catalog-session")?;
-    selection.validate().ok()?;
-    Some(selection)
-}
-
-pub fn original_cli_combined_scope<C: Invocation + ?Sized>(
-    command: &C,
-) -> Option<airk_core::service::CombinedConnectRequest> {
-    let selection: airk_core::service::CombinedConnectRequest =
-        original_cli_selector(command, "--combined-session")?;
-    selection.validate().ok()?;
-    Some(selection)
-}
-
 pub fn original_cli_arguments<C: Invocation + ?Sized>(command: &C) -> Option<Map<String, Value>> {
     let values = command.invocation_args();
     match values
@@ -425,59 +261,42 @@ pub fn original_cli_arguments<C: Invocation + ?Sized>(command: &C) -> Option<Map
     }
 }
 
-fn original_cli_selector<C: Invocation + ?Sized, T: serde::de::DeserializeOwned>(
-    command: &C,
-    flag: &str,
-) -> Option<T> {
-    let assigned = format!("{flag}=");
-    let arguments = command
+/// A window-routed `tools call` evidence read (the session route of
+/// `common::ctl::Ctl::window`) with no explicit selector of its own.
+fn window_evidence_read<C: Invocation + ?Sized>(command: &C) -> bool {
+    let Some(arguments) = command
         .invocation_args()
         .into_iter()
         .map(|value| value.to_str())
-        .collect::<Option<Vec<_>>>()?;
+        .collect::<Option<Vec<_>>>()
+    else {
+        return false;
+    };
     let mut offset = 0;
-    let mut selection = None;
     let mut runtime = false;
     while offset < arguments.len() && arguments[offset] != "tools" {
-        let value = arguments[offset];
-        if value == flag {
-            if selection.is_some() {
-                return None;
-            }
-            offset += 1;
-            selection = Some(serde_json::from_str::<T>(arguments.get(offset)?).ok()?);
-        } else if let Some(value) = value.strip_prefix(assigned.as_str()) {
-            if selection.is_some() {
-                return None;
-            }
-            selection = Some(serde_json::from_str::<T>(value).ok()?);
-        } else if value == "--service-runtime-dir" {
-            if runtime {
-                return None;
-            }
-            runtime = true;
-            offset += 1;
-            if arguments.get(offset)?.is_empty() {
-                return None;
-            }
-        } else {
-            return None;
+        if arguments[offset] != "--service-runtime-dir" || runtime {
+            return false;
+        }
+        runtime = true;
+        offset += 1;
+        if arguments.get(offset).is_none_or(|value| value.is_empty()) {
+            return false;
         }
         offset += 1;
     }
-    let suffix = arguments.get(offset..)?;
+    let Some(suffix) = arguments.get(offset..) else {
+        return false;
+    };
     if suffix.len() != 3 && suffix.len() != 5 {
-        return None;
+        return false;
     }
     if suffix[0] != "tools" || suffix[1] != "call" || !evidence_read_tool(suffix[2]) {
-        return None;
+        return false;
     }
-    if suffix.len() == 5
-        && (suffix[3] != "--args" || !serde_json::from_str::<Value>(suffix[4]).ok()?.is_object())
-    {
-        return None;
-    }
-    selection
+    suffix.len() == 3
+        || (suffix[3] == "--args"
+            && serde_json::from_str::<Value>(suffix[4]).is_ok_and(|value| value.is_object()))
 }
 
 pub fn from_output(output: &std::process::Output, deadline: Instant) -> Option<Retry> {
@@ -504,6 +323,16 @@ pub trait Invocation {
     fn invocation_args(&self) -> Vec<&std::ffi::OsStr>;
     /// One run that gives up at `deadline` (`ErrorKind::TimedOut`).
     fn run_until(&self, deadline: Instant) -> std::io::Result<std::process::Output>;
+    /// The public selection and grant observation of the window a
+    /// session-routed read uses (in-process `airkctl` only).
+    fn window_scope(
+        &self,
+    ) -> Option<(
+        airk_core::service::WindowScopeSelection,
+        airk_core::scoped_reads::ScopeSelectionObservation,
+    )> {
+        None
+    }
 }
 
 impl Invocation for std::process::Command {
@@ -524,28 +353,25 @@ pub fn output_until<C: Invocation + ?Sized>(
     command: &mut C,
     deadline: Instant,
 ) -> std::io::Result<std::process::Output> {
-    let expected = original_cli_scope(&*command);
-    let combined = original_cli_combined_scope(&*command);
+    let window = command
+        .window_scope()
+        .filter(|_| window_evidence_read(&*command));
     let arguments = original_cli_arguments(&*command);
     loop {
         let output = once_until(&*command, deadline)?;
-        let retry = if expected.is_some() || combined.is_some() {
+        let retry = if let Some((selection, source)) = &window {
             (|| {
                 if !output.status.success() && output.status.code() != Some(1) {
                     return None;
                 }
                 let envelope: Value = serde_json::from_slice(&output.stdout).ok()?;
-                let arguments = arguments.as_ref()?;
-                let decision = match (&expected, &combined) {
-                    (Some(expected), None) => {
-                        classify_for_scope_with_arguments(&envelope, expected, arguments)
-                    }
-                    (None, Some(expected)) => {
-                        classify_for_combined_scope(&envelope, expected, arguments)
-                    }
-                    _ => None,
-                };
-                decision.filter(|retry| Instant::now() + retry.delay < deadline)
+                classify_for_selection_with_arguments(
+                    &envelope,
+                    selection,
+                    source,
+                    arguments.as_ref()?,
+                )
+                .filter(|retry| Instant::now() + retry.delay < deadline)
             })()
         } else {
             from_output(&output, deadline)
@@ -840,6 +666,19 @@ impl ReadRetry for airk_cli::project_client::Connection {
     }
 }
 
+impl ReadRetry for std::sync::Arc<super::pipe::PipeTools> {
+    async fn read_retry(&mut self, name: String, arguments: Map<String, Value>) -> Result<Value> {
+        backend(
+            self.as_ref(),
+            &name,
+            &arguments,
+            Instant::now() + Duration::from_secs(5),
+            |_| {},
+        )
+        .await
+    }
+}
+
 pub async fn direct(
     connection: &mut airk_cli::project_client::Connection,
     name: &str,
@@ -884,14 +723,9 @@ pub async fn backend(
         let retry = if !evidence_read_tool(name) {
             None
         } else if combined_body(&reply).is_some() {
-            match (backend.scoped_selection(), backend.combined_selection()) {
-                (Some(expected), None) => {
-                    classify_for_scope_with_arguments(&reply, expected, arguments)
-                }
-                (None, Some(expected)) => classify_for_combined_scope(&reply, expected, arguments),
-                _ => None,
-            }
-            .filter(|retry| Instant::now() + retry.delay < deadline)
+            // A combined retry binds to its original authority; a generic
+            // backend supplies none (see `backend_for_selection`).
+            None
         } else {
             within(&reply, deadline)
         };
@@ -903,21 +737,22 @@ pub async fn backend(
     }
 }
 
-/// Explicit scope-bearing callers may repeat a known pre-query setup refusal;
-/// an uncertain exchange or a crossed/revoked scope remains terminal.
-pub async fn backend_for_scope(
+/// Window-selection callers may repeat a known pre-query setup refusal bound
+/// to the window's current grant; an uncertain exchange or a crossed or
+/// released scope remains terminal.
+pub async fn backend_for_selection(
     backend: &dyn airk_mcp::remote::RemoteTools,
     name: &str,
     arguments: &Map<String, Value>,
-    expected: &airk_core::service::ScopedConnectRequest,
+    expected: &airk_core::service::WindowScopeSelection,
+    source: &airk_core::scoped_reads::ScopeSelectionObservation,
     deadline: Instant,
     mut rejected: impl FnMut(&Value),
 ) -> Result<Value> {
-    expected.validate()?;
     loop {
         anyhow::ensure!(
             Instant::now() < deadline,
-            "scoped read retry deadline exhausted"
+            "window read retry deadline exhausted"
         );
         let reply = tokio::time::timeout_at(
             deadline.into(),
@@ -926,7 +761,7 @@ pub async fn backend_for_scope(
         .await??;
         let retry = evidence_read_tool(name)
             .then(|| {
-                classify_for_scope_with_arguments(&reply, expected, arguments)
+                classify_for_selection_with_arguments(&reply, expected, source, arguments)
                     .filter(|retry| Instant::now() + retry.delay < deadline)
             })
             .flatten();

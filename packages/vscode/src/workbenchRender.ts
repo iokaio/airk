@@ -75,12 +75,12 @@ function discoveryReports(envelope:Value):Value[] {
         const selected=object(combined.selection),selections=Array.isArray(selected.members)?selected.members.slice(0,32).map(object):[];
         const publications=Array.isArray(object(combined.publication_vector).members)?(object(combined.publication_vector).members as unknown[]).map(object):[];
         return (Array.isArray(combined.members)?combined.members.slice(0,32):[]).map((raw,j)=>{
-            const member=object(raw),body=readResultBody(member.result),observation=object(body.scope_observation??object(member.result).scope_observation),grant=object(observation.grant);
+            const member=object(raw),body=readResultBody(member.result),observation=object(body.scope_observation??object(member.result).scope_observation);
             let projects:string[]=[];
             if(Array.isArray(selected.index_ids)){
                 const matching=Array.isArray(observation.members)?observation.members.slice(0,32).map(object).filter(row=>row.index_id===member.index_id):[];
                 if(selected.index_ids.includes(member.index_id)&&observation.schema===1&&observation.qualifier==='selected_subset'
-                    &&grant.id===selected.grant_id&&grant.revision===selected.grant_revision&&matching.length===1&&Array.isArray(matching[0].memberships)&&matching[0].memberships.length<=32){
+                    &&matching.length===1&&Array.isArray(matching[0].memberships)&&matching[0].memberships.length<=32){
                     const ids=matching[0].memberships.map(raw=>object(raw).project_id);
                     if(ids.length>0&&new Set(ids).size===ids.length&&ids.every(id=>typeof id==='string'&&/^prj_[0-9a-f]{32}$/.test(id)&&Array.isArray(selected.project_ids)&&selected.project_ids.includes(id)))projects=(ids as string[]).sort();
                 }

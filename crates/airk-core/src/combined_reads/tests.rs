@@ -2,7 +2,7 @@
 use super::*;
 use crate::{
     identity::{Incarnation, RevisionToken},
-    index_catalog::{Membership, PathScope},
+    index_catalog::{CatalogRevision, Membership, PathScope},
 };
 use serde_json::json;
 
@@ -35,13 +35,24 @@ fn member(p: u8, i: u8, path: &str) -> GrantedMembership {
         policy_digest: None,
     }
 }
-fn grant(memberships: Vec<GrantedMembership>) -> ReviewedGrant {
-    ReviewedGrant {
-        id: GrantId::from_identity(Incarnation::from_bytes([1; 16])),
-        host: Sha256Digest::from_bytes([2; 32]),
-        revision: CatalogRevision::INITIAL,
-        memberships,
-        revoked: false,
+/// The current memberships a window selection resolves against.
+fn frozen(memberships: Vec<GrantedMembership>) -> Vec<GrantedMembership> {
+    memberships
+}
+fn window() -> crate::scoped_reads::ScopeSelectionObservation {
+    crate::scoped_reads::ScopeSelectionObservation {
+        owner: crate::scoped_reads::SelectionOwnerKind::Window,
+        scope_identity: Sha256Digest::from_bytes([0x0c; 32]),
+        catalog_revision: CatalogRevision::try_from(5_u64).unwrap(),
+    }
+}
+/// Test shorthand: resolve against `memberships` under the window selection.
+trait ResolveWindow {
+    fn resolve(&self, memberships: &[GrantedMembership]) -> Result<ResolvedSelection>;
+}
+impl ResolveWindow for QuerySelection {
+    fn resolve(&self, memberships: &[GrantedMembership]) -> Result<ResolvedSelection> {
+        self.resolve_selection(memberships, window())
     }
 }
 fn selection(project_ids: Vec<QueryProjectId>, index_ids: Option<Vec<IndexId>>) -> QuerySelection {
@@ -55,7 +66,7 @@ fn selection(project_ids: Vec<QueryProjectId>, index_ids: Option<Vec<IndexId>>) 
 #[test]
 fn recommendations_narrow_disjoint_prefixes_and_cover_all_decision_rows() -> Result<()> {
     use recommendations::{Situation, project as advise, select};
-    let available = selection(vec![project(1), project(2)], None).resolve(&grant(vec![
+    let available = selection(vec![project(1), project(2)], None).resolve(&frozen(vec![
         member(1, 1, "app"),
         member(2, 1, "shared"),
         member(2, 2, "specs"),
@@ -130,7 +141,7 @@ fn recommendations_narrow_disjoint_prefixes_and_cover_all_decision_rows() -> Res
 
 #[test]
 fn recommendations_match_query_selection_with_unused_selected_projects() -> Result<()> {
-    let frozen = grant(vec![member(1, 1, "app"), member(2, 2, "specs")]);
+    let frozen = frozen(vec![member(1, 1, "app"), member(2, 2, "specs")]);
     let available = selection(vec![project(1), project(2)], None).resolve(&frozen)?;
     let choice = selection(vec![project(1), project(2)], Some(vec![index(1)]));
     let expected = choice.resolve(&frozen)?;
@@ -195,7 +206,7 @@ fn closed_selectors_reject_mixed_legacy_null_empty_duplicates_and_unknowns() -> 
     ] {
         assert!(invalid.validate().is_err());
     }
-    let snapshot = grant(vec![member(1, 1, "src"), member(2, 2, "docs")]);
+    let snapshot = frozen(vec![member(1, 1, "src"), member(2, 2, "docs")]);
     assert!(
         selection(vec![project(3)], None)
             .resolve(&snapshot)
@@ -206,15 +217,12 @@ fn closed_selectors_reject_mixed_legacy_null_empty_duplicates_and_unknowns() -> 
             .resolve(&snapshot)
             .is_err()
     );
-    let mut revoked = snapshot;
-    revoked.revoked = true;
-    assert!(selection(vec![project(1)], None).resolve(&revoked).is_err());
     Ok(())
 }
 
 #[test]
 fn shared_index_is_executed_once_with_precise_selected_membership_attribution() -> Result<()> {
-    let snapshot = grant(vec![
+    let snapshot = frozen(vec![
         member(1, 1, "shared/api"),
         member(2, 1, "shared/impl"),
         member(3, 1, ""),
@@ -258,7 +266,7 @@ fn shared_index_is_executed_once_with_precise_selected_membership_attribution() 
 
 #[test]
 fn explicit_subset_does_not_import_project_defaults_or_unselected_members() -> Result<()> {
-    let snapshot = grant(vec![
+    let snapshot = frozen(vec![
         member(1, 1, "one"),
         member(1, 2, "two"),
         member(2, 1, "private"),
@@ -279,13 +287,13 @@ fn explicit_subset_does_not_import_project_defaults_or_unselected_members() -> R
 fn public_selection_observation_binds_full_authority_without_repeating_scope_predicates()
 -> Result<()> {
     let mut resolved = selection(vec![project(1)], None)
-        .resolve(&grant(vec![member(1, 1, "one"), member(1, 2, "two")]))?;
+        .resolve(&frozen(vec![member(1, 1, "one"), member(1, 2, "two")]))?;
     let observation = resolved.observation()?;
     assert_eq!(observation.project_ids, vec![project(1)]);
     assert_eq!(observation.index_ids, vec![index(1), index(2)]);
     assert_eq!(observation.identity, resolved.identity()?);
     let encoded = serde_json::to_value(&observation)?;
-    assert_eq!(encoded.as_object().unwrap().len(), 6);
+    assert_eq!(encoded.as_object().unwrap().len(), 5);
     assert!(encoded.get("members").is_none());
     assert!(!encoded.to_string().contains("source_root_id"));
     resolved.members[0].memberships[0].membership.revision = CatalogRevision::INITIAL.next()?;
@@ -364,7 +372,7 @@ fn generated_utf8_unions_match_exactly_the_input_positive_predicate() -> Result<
 #[test]
 fn all_shared_allocations_sum_to_one_total_in_canonical_index_order() -> Result<()> {
     for count in 1..=32_u8 {
-        let snapshot = grant((1..=count).rev().map(|n| member(1, n, "src")).collect());
+        let snapshot = frozen((1..=count).rev().map(|n| member(1, n, "src")).collect());
         let resolved = selection(vec![project(1)], None).resolve(&snapshot)?;
         for limit in [1, 2, 31, 32, 33, 100] {
             let budgets = SharedBudgets {
@@ -444,7 +452,7 @@ fn publication_vectors_compare_only_the_same_authority_and_selected_set() {
 fn cursor_identity_binds_publications_scope_controls_positions_but_not_observation_dates()
 -> Result<()> {
     let resolved = selection(vec![project(1)], None)
-        .resolve(&grant(vec![member(1, 1, "one"), member(1, 2, "two")]))?;
+        .resolve(&frozen(vec![member(1, 1, "one"), member(1, 2, "two")]))?;
     let base = vector([1, 2]);
     let controls = json!({"mode":"lexical","limit":8,"reply_detail":"lean"});
     let positions = BTreeMap::from([(index(1), 3), (index(2), 4)]);
@@ -489,7 +497,7 @@ fn cursor_identity_binds_publications_scope_controls_positions_but_not_observati
 }
 
 #[test]
-fn selection_resolution_keeps_the_grant_rules_and_changes_only_its_source() -> Result<()> {
+fn selection_resolution_keeps_the_membership_rules_and_names_its_source() -> Result<()> {
     use crate::scoped_reads::{ScopeSelectionObservation, SelectionOwnerKind};
     let memberships = vec![
         member(1, 1, "app"),
@@ -497,40 +505,31 @@ fn selection_resolution_keeps_the_grant_rules_and_changes_only_its_source() -> R
         member(1, 2, "docs"),
     ];
     let query = selection(vec![project(1), project(2)], None);
-    let catalog = query.resolve(&grant(memberships.clone()))?;
     let source = ScopeSelectionObservation {
         owner: SelectionOwnerKind::Window,
         scope_identity: Sha256Digest::from_bytes([0x0c; 32]),
         catalog_revision: CatalogRevision::try_from(5_u64)?,
     };
     let selected = query.resolve_selection(&memberships, source)?;
-    assert_eq!(selected.project_ids, catalog.project_ids);
-    assert_eq!(selected.members, catalog.members);
-    assert_eq!(
-        (
-            selected.grant_id,
-            selected.grant_revision,
-            selected.selection
-        ),
-        (None, None, Some(source))
-    );
-    assert_ne!(selected.identity()?, catalog.identity()?);
-    // A catalog grant's bytes keep exactly their former keys.
-    let encoded = serde_json::to_value(&catalog)?;
-    assert_eq!(
-        encoded["grant_id"],
-        json!(GrantId::from_identity(Incarnation::from_bytes([1; 16])))
-    );
-    assert_eq!(encoded["grant_revision"], json!(1));
-    assert!(encoded.get("selection").is_none());
+    assert_eq!(selected.project_ids, vec![project(1), project(2)]);
+    assert_eq!(selected.selection, source);
+    let mut admin = query.resolve_selection(
+        &memberships,
+        ScopeSelectionObservation {
+            owner: SelectionOwnerKind::Admin,
+            ..source
+        },
+    )?;
+    assert_eq!(admin.members, selected.members);
+    assert_ne!(admin.identity()?, selected.identity()?);
     let observed = serde_json::to_value(selected.observation()?)?;
-    assert!(observed.get("grant_id").is_none());
+    assert!(observed.get("grant_id").is_none() && observed.get("grant_revision").is_none());
     assert_eq!(
         observed["selection"],
         json!({"owner":"window","scope_identity":"0c".repeat(32),"catalog_revision":5})
     );
-    // The resolver's refusals are the grant's: an unknown project, an index
-    // outside the project union.
+    // The resolver refuses an unknown project and an index outside the
+    // project union.
     assert!(
         selection(vec![project(3)], None)
             .resolve_selection(&memberships, source)
@@ -541,14 +540,15 @@ fn selection_resolution_keeps_the_grant_rules_and_changes_only_its_source() -> R
             .resolve_selection(&memberships, source)
             .is_err()
     );
-    // Exactly one source.
-    let mut both = selected.clone();
-    both.grant_id = catalog.grant_id;
-    both.grant_revision = catalog.grant_revision;
-    assert!(both.validate().is_err());
-    let mut neither = selected;
-    neither.selection = None;
-    assert!(neither.validate().is_err());
+    // A removed catalog-grant field never decodes.
+    let mut encoded = serde_json::to_value(&selected)?;
+    encoded["grant_id"] = json!(format!("grt_{}", "01".repeat(16)));
+    assert!(serde_json::from_value::<ResolvedSelection>(encoded).is_err());
+    admin.selection.owner = SelectionOwnerKind::Agent;
+    assert!(
+        admin.validate().is_err(),
+        "an agent selection has no Project"
+    );
     Ok(())
 }
 
@@ -612,10 +612,10 @@ fn open_resolution_reads_named_indexes_whole_and_shares_budgets() -> Result<()> 
     assert_eq!(observation["selection"]["owner"], "agent");
     // Its identity is never a window selection's over the same members.
     let mut window = resolved.clone();
-    window.selection = Some(crate::scoped_reads::ScopeSelectionObservation {
+    window.selection = crate::scoped_reads::ScopeSelectionObservation {
         owner: crate::scoped_reads::SelectionOwnerKind::Window,
         ..agent_observation()
-    });
+    };
     assert!(
         window.validate().is_err(),
         "a window selection needs a Project"

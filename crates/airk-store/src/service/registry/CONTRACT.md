@@ -35,3 +35,36 @@ original recovery under the still-held ServiceLease. Preview scratch is owned
 by the private native control root and is never persisted as registry authority.
 
 A retained canceled job vetoes automatic semantic setup for its own project. The registry checks the worker lease and project epoch before exposing that veto. Its immediate enqueue transaction checks cancellation again alongside the watch, active job and engine/settings signature gates.
+
+## Reviewed-grant removal upgrade (change-log entry 68 part 3)
+
+The user decided on 23 November 2026 to remove reviewed catalog grants
+entirely. The build that wrote them was never deployed beyond its author's
+machine, so their application records are deleted on upgrade rather than kept
+readable. The terminal catalog layout has no grant tables
+(`index_access_grants`, `index_access_memberships`, `index_access_scopes`),
+no `legacy_index_projects`, no `index_context_imports` and no
+standalone-adoption tables (`index_adopted_authorities`,
+`index_adopted_configuration_claims`); fresh registries never create them.
+It is identified physically, as the description layer was: the authority and
+policy markers are unchanged, and every predecessor layout (authority 0 or 1,
+policy 1 to 4, with or without descriptions, and the recognized adopted
+layout) is recognized from its frozen DDL (`service_catalog_schema_v12.sql`
+and the authority and adopted SQL) and refused by ordinary readers with the
+typed `CatalogUpgradeRequired`.
+
+`ServiceRegistry::open` (read-write) runs `catalog::grant_removal::upgrade`
+after the incarnation check and before any stored record is decoded, in one
+immediate transaction: it deletes the saved records only a grant-bearing build
+decodes (`RECORD_REMOVALS`: fenced `create_grant`/`revoke_grant` receipts,
+completed authority fences whose proof names a grant-scoped ref, and reference
+refresh jobs with their cascaded rows), drops `REMOVED_TABLES` children first,
+and requires the result to equal the terminal layout of the same policy level.
+An unfinished fence that still waits on a grant-scoped ref refuses with
+`CatalogUpgradeBlocked` and changes nothing. A second open finds the terminal
+layout and does nothing. Read-only opens never upgrade. Another removal is one
+more entry in either list plus its regression in `grant_removal/tests.rs`. The
+schema-identity check is extended to the terminal layout, never relaxed;
+`fixtures/schema/airk-state-1-terminal/` (derived by
+`scripts/dev/derive_terminal_registry_schema.py`) retains the terminal
+schemas.

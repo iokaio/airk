@@ -238,7 +238,6 @@ mod tests {
     }
     fn partial_scope_report(target: Option<airk_core::retention::RetainedProfile>) -> Result<()> {
         use airk_core::{
-            grant_provenance::GrantProvenance,
             identity::{Incarnation, Sha256Digest},
             index_catalog::*,
             scoped_reads::{ScopeReadRefused, SourceDescriptor},
@@ -274,7 +273,7 @@ mod tests {
         let project = QueryProjectId::from_identity(Incarnation::from_bytes([1; 16]));
         let index = IndexId::from_identity(Incarnation::from_bytes([2; 16]));
         let source = SourceRootId::from_identity(Incarnation::from_bytes([3; 16]));
-        let authority = crate::scoped_reads::ScopedReadAuthority {
+        let authority = crate::scoped_reads::SelectionReadAuthority {
             schema: 1,
             backing: airk_core::service::ProjectRegistration::new(
                 kernel.root_id(),
@@ -284,34 +283,35 @@ mod tests {
             .binding,
             index_id: index,
             project_ids: vec![project],
-            provenance: GrantProvenance::UserReviewedProjectGrant,
-            grant: ReviewedGrant {
-                id: GrantId::from_identity(Incarnation::from_bytes([4; 16])),
-                host: Sha256Digest::from_bytes([5; 32]),
-                revision: CatalogRevision::INITIAL,
-                revoked: false,
-                memberships: vec![GrantedMembership {
-                    membership: Membership {
-                        project_id: project,
-                        index_id: index,
-                        revision: CatalogRevision::INITIAL,
-                        scope: vec![ScopeAtom {
-                            source_root_id: source,
-                            kind: PathScope::Exact,
-                            path: "public/one.rs".into(),
-                        }],
-                    },
-                    source_revision: CatalogRevision::INITIAL,
-                    policy_epoch: 0,
-                    policy_digest: None,
-                }],
+            selection: airk_core::scoped_reads::SelectionScopeRef {
+                owner: airk_core::scoped_reads::SelectionOwnerKind::Window,
+                grant_nonce: airk_core::identity::Incarnation::from_bytes([10; 16]),
+                service_instance: airk_core::identity::Incarnation::from_bytes([11; 16]),
+                scope_identity: airk_core::identity::Sha256Digest::from_bytes([12; 32]),
+                catalog_revision: airk_core::index_catalog::CatalogRevision::try_from(5_u64)
+                    .unwrap(),
             },
+            atoms: vec![ScopeAtom {
+                source_root_id: source,
+                kind: PathScope::Exact,
+                path: "public/one.rs".into(),
+            }]
+            .into_iter()
+            .map(|atom| (project, atom))
+            .collect(),
             sources: vec![SourceDescriptor {
                 source_root_id: source,
                 original_root: kernel.root_id(),
             }],
+            membership_revisions: vec![(
+                project,
+                airk_core::index_catalog::CatalogRevision::INITIAL,
+            )],
+            source_revision: airk_core::index_catalog::CatalogRevision::INITIAL,
+            policy_epoch: 0,
+            policy_digest: None,
         };
-        let scoped = kernel.with_scoped_reads(authority)?;
+        let scoped = kernel.with_selection_reads(authority)?;
         // Any attempt to read private collection settings now fails, rather
         // than returning plausible metadata. The permitted per-file path must
         // never enter that branch under a partial Project grant.

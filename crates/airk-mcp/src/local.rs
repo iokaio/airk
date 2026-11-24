@@ -94,25 +94,15 @@ impl LocalTools {
         Self::with_admission(self.kernel.clone(), client, self.admission.clone(), false).await
     }
 
-    /// Separate native session with frozen read authority; shares only admission.
-    pub async fn scoped_session(
+    /// Separate native session under an in-memory W4/A2 selection's frozen
+    /// read authority; shares only admission.
+    pub async fn selection_session(
         &self,
-        authority: airk_kernel::scoped_reads::ScopedReadAuthority,
+        authority: airk_kernel::scoped_reads::SelectionReadAuthority,
     ) -> anyhow::Result<Self> {
-        self.scoped_session_with_client(authority, self.family)
+        self.selection_session_with_client(authority, self.family)
             .await
     }
-    pub async fn scoped_session_with_client(
-        &self,
-        authority: airk_kernel::scoped_reads::ScopedReadAuthority,
-        client: ClientFamily,
-    ) -> anyhow::Result<Self> {
-        let kernel = self.kernel.with_scoped_reads(authority)?;
-        Self::with_admission(kernel, client, self.admission.clone(), false).await
-    }
-    /// The same restricted session under an in-memory W4/A2 selection grant's
-    /// authority: the same compiled scope and handlers; only the observation
-    /// names the selection instead of a reviewed grant.
     pub async fn selection_session_with_client(
         &self,
         authority: airk_kernel::scoped_reads::SelectionReadAuthority,
@@ -203,7 +193,8 @@ impl LocalTools {
             "native partition purpose differs from the canonical operation"
         );
         anyhow::ensure!(
-            context.answer_partition().is_none() || matches!(name.as_str(), "airk_answer" | "answer"),
+            context.answer_partition().is_none()
+                || matches!(name.as_str(), "airk_answer" | "answer"),
             "an Answer /3 partition serves only Answer"
         );
         if let Some(attempt) = context.captured_transport_attempt()

@@ -38,31 +38,19 @@ impl std::fmt::Display for PreparationExpired {
 }
 impl std::error::Error for PreparationExpired {}
 /// A combined session's frozen selectors and the `requested_scope.selection`
-/// its failure bodies echo. A catalog session's is derived from its
-/// `CombinedConnectRequest` (unchanged bytes); an in-memory window or admin
-/// selection supplies its own, which never names its nonce or service
-/// instance (selection authority spec §3.2 step 5, §3.6).
+/// its failure bodies echo. An in-memory window, admin or agent selection
+/// supplies its own, which never names its nonce or service instance
+/// (selection authority spec §3.2 step 5, §3.6).
 #[derive(Clone, Debug)]
 pub struct CombinedScope {
     pub project_ids: Vec<airk_core::index_catalog::QueryProjectId>,
     pub index_ids: Option<Vec<airk_core::index_catalog::IndexId>>,
     pub requested: serde_json::Value,
 }
-impl CombinedScope {
-    pub fn catalog(selection: &airk_core::service::CombinedConnectRequest) -> Self {
-        Self {
-            project_ids: selection.project_ids.clone(),
-            index_ids: selection.index_ids.clone(),
-            requested: serde_json::json!(selection),
-        }
-    }
-}
-
 /// Public selector projection for one native index session. This descriptor is
 /// not authority: it never carries a selection nonce, lease or service instance.
 #[derive(Clone, Debug)]
 pub enum ScopedScope {
-    Catalog(airk_core::service::ScopedConnectRequest),
     Selection {
         window_scope_selection: airk_core::service::WindowScopeSelection,
         scope_identity: airk_core::identity::Sha256Digest,
@@ -71,7 +59,6 @@ pub enum ScopedScope {
 impl ScopedScope {
     fn requested(&self) -> serde_json::Value {
         match self {
-            Self::Catalog(selection) => serde_json::json!(selection),
             Self::Selection {
                 window_scope_selection,
                 scope_identity,
@@ -83,24 +70,15 @@ impl ScopedScope {
 }
 
 pub trait RemoteTools: Send + Sync + 'static {
-    /// Frozen explicit selection only; live grant admission remains native.
-    fn combined_selection(&self) -> Option<&airk_core::service::CombinedConnectRequest> {
-        None
-    }
-    /// Whether this is a combined session, for a catalog grant or an
-    /// in-memory selection. Wrappers that forward `combined_selection` must
-    /// forward this too.
+    /// Whether this is a combined session over an in-memory selection.
+    /// Wrappers must forward it.
     fn combined_scope(&self) -> Option<CombinedScope> {
-        self.combined_selection().map(CombinedScope::catalog)
-    }
-    /// Requested native selector only; this is not installed read authority.
-    fn scoped_selection(&self) -> Option<&airk_core::service::ScopedConnectRequest> {
         None
     }
-    /// Both catalog and in-memory selection sessions use canonical scoped
-    /// handling. Wrappers must forward this alongside `scoped_selection`.
+    /// An in-memory selection session uses canonical scoped handling.
+    /// Wrappers must forward it.
     fn scoped_scope(&self) -> Option<ScopedScope> {
-        self.scoped_selection().cloned().map(ScopedScope::Catalog)
+        None
     }
     fn query_concurrency(&self) -> usize {
         airk_core::service_resources::DEFAULT_QUERY_CONCURRENCY
@@ -161,20 +139,6 @@ pub trait RemoteTools: Send + Sync + 'static {
 
 /// A known pre-query setup refusal. The requested selector is explicitly
 /// unconfirmed; neither authorization observation nor publication is invented.
-pub fn scoped_setup_failure(
-    selection: &airk_core::service::ScopedConnectRequest,
-    code: &str,
-    retryable: bool,
-    native_control_response: Option<serde_json::Value>,
-) -> serde_json::Value {
-    scoped_scope_setup_failure(
-        &ScopedScope::Catalog(selection.clone()),
-        code,
-        retryable,
-        native_control_response,
-    )
-}
-
 pub fn scoped_scope_setup_failure(
     scope: &ScopedScope,
     code: &str,
@@ -194,14 +158,6 @@ pub fn scoped_scope_setup_failure(
 }
 /// Transport loss or a deadline after dispatch cannot prove whether a query
 /// was submitted. Preserve that uncertainty without replaying the read.
-pub fn scoped_observation_failure(
-    selection: &airk_core::service::ScopedConnectRequest,
-    code: &str,
-    retryable: bool,
-) -> serde_json::Value {
-    scoped_scope_observation_failure(&ScopedScope::Catalog(selection.clone()), code, retryable)
-}
-
 pub fn scoped_scope_observation_failure(
     scope: &ScopedScope,
     code: &str,
@@ -229,15 +185,6 @@ pub fn direct_observation_failure(code: &str) -> serde_json::Value {
 }
 
 /// A lost outer composite exchange is uncertain; never replay its child reads.
-pub fn combined_observation_failure(
-    selection: &airk_core::service::CombinedConnectRequest,
-    code: &str,
-) -> serde_json::Value {
-    combined_scope_failure(&CombinedScope::catalog(selection), code)
-}
-
-/// [`combined_observation_failure`] for any combined session; a catalog
-/// session's body is byte-identical to it.
 pub fn combined_scope_failure(scope: &CombinedScope, code: &str) -> serde_json::Value {
     scoped_failure_envelope(serde_json::json!({
         "error":{"code":code,"retryable":true,"query_submitted":null,

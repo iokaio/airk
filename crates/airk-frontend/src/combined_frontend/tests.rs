@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
-use airk_core::{
-    identity::Incarnation,
-    index_catalog::{GrantId, QueryProjectId},
-};
+use airk_core::{identity::Incarnation, index_catalog::QueryProjectId};
 
 fn exact_body_bytes(bytes: usize) -> Value {
     let mut value = json!({"data":""});
@@ -87,25 +84,8 @@ fn escaped_plan_transport_preserves_the_existing_public_envelope_hard_cap() -> R
     Ok(())
 }
 
-fn fixture() -> Backend {
-    let identity = Incarnation::from_bytes([1; 16]);
-    Backend {
-        control: PathBuf::new(),
-        selection: CombinedConnectRequest {
-            schema: 1,
-            context_key: Sha256Digest::from_bytes([2; 32]),
-            namespace: identity,
-            expected_catalog_revision: CatalogRevision::INITIAL,
-            grant_id: GrantId::from_identity(identity),
-            expected_grant_revision: CatalogRevision::INITIAL,
-            project_ids: vec![QueryProjectId::from_identity(identity)],
-            index_ids: Some(vec![IndexId::from_identity(identity)]),
-        },
-        children: Mutex::new(BTreeMap::new()),
-        closed: std::sync::atomic::AtomicBool::new(false),
-        client: Mutex::new(airk_core::usage::ClientFamily::Cli),
-        service_instance: tokio::sync::OnceCell::new(),
-    }
+fn fixture() -> Backend<SelectionScope> {
+    selection_fixture()
 }
 
 #[test]
@@ -113,8 +93,11 @@ fn omitted_controls_keep_frozen_selection_but_explicit_projects_do_not_inherit_s
 {
     let backend = fixture();
     let default = backend.request_selection(&mut Map::new())?;
-    assert_eq!(default.index_ids, backend.selection.index_ids);
-    let mut explicit = json!({"project_ids":backend.selection.project_ids})
+    assert_eq!(
+        default.index_ids,
+        Some(backend.selection.window_selection.index_ids.clone())
+    );
+    let mut explicit = json!({"project_ids":backend.selection.window_selection.project_ids})
         .as_object()
         .unwrap()
         .clone();
@@ -135,9 +118,9 @@ fn mixed_null_and_index_only_selectors_are_rejected_before_native_work() {
         json!({"project":"a".repeat(64)}),
         json!({"project_ids":null}),
         json!({"project_ids":[]}),
-        json!({"project_ids":backend.selection.project_ids,"index_ids":null}),
-        json!({"project_ids":backend.selection.project_ids,"index_ids":[]}),
-        json!({"index_ids":backend.selection.index_ids}),
+        json!({"project_ids":backend.selection.window_selection.project_ids,"index_ids":null}),
+        json!({"project_ids":backend.selection.window_selection.project_ids,"index_ids":[]}),
+        json!({"index_ids":backend.selection.window_selection.index_ids}),
         json!({"member_availability":"require"}),
     ] {
         assert!(
@@ -172,7 +155,7 @@ async fn internal_projection_callback_is_not_a_public_tool() -> Result<()> {
 async fn public_discovery_rejects_plural_controls_before_metadata_or_worker_access() -> Result<()> {
     let backend = fixture();
     for args in [
-        json!({"view":"projects","project_ids":backend.selection.project_ids}),
+        json!({"view":"projects","project_ids":backend.selection.window_selection.project_ids}),
         json!({"view":"projects","member_availability":"require"}),
         json!({"view":"projects","origin_publication":"invalid"}),
     ] {
@@ -218,12 +201,12 @@ fn public_transport_duplication_does_not_reduce_the_canonical_body_budget() -> R
 async fn combined_status_observation_has_one_two_second_window_and_unknown_evidence() -> Result<()>
 {
     struct SlowStatus {
-        selection: CombinedConnectRequest,
+        selection: airk_mcp::remote::CombinedScope,
         calls: std::sync::atomic::AtomicUsize,
     }
     impl RemoteTools for SlowStatus {
-        fn combined_selection(&self) -> Option<&CombinedConnectRequest> {
-            Some(&self.selection)
+        fn combined_scope(&self) -> Option<airk_mcp::remote::CombinedScope> {
+            Some(self.selection.clone())
         }
         fn call(&self, _: String, _: Map<String, Value>) -> RemoteFuture<'_> {
             Box::pin(async move {
@@ -234,7 +217,7 @@ async fn combined_status_observation_has_one_two_second_window_and_unknown_evide
         }
     }
     let owner = Arc::new(SlowStatus {
-        selection: fixture().selection,
+        selection: fixture().combined_scope().expect("a combined session"),
         calls: std::sync::atomic::AtomicUsize::new(0),
     });
     let backend = crate::unified_mcp::with_runtime_readiness(None, PathBuf::new(), owner.clone());
@@ -301,48 +284,55 @@ fn verification_windows_never_replace_zero_or_elapsed_allowances() {
     )));
 }
 
-fn expired_projection_fixture() -> Result<(Backend, QuerySelection, Snapshot, Value)> {
+type SelectionSnapshot = Snapshot<SelectionReadAuthority, SelectionRequest>;
+fn expired_projection_fixture() -> Result<(
+    Backend<SelectionScope>,
+    QuerySelection,
+    SelectionSnapshot,
+    Value,
+)> {
     use airk_core::{
-        grant_provenance::GrantProvenance,
         identity::RevisionToken,
         index_catalog::{
-            GrantedMembership, Membership, PathScope, ReviewedGrant, ScopeAtom, SourceImportState,
-            SourceRootId,
+            GrantedMembership, Membership, PathScope, ScopeAtom, SourceImportState, SourceRootId,
         },
         scoped_reads::SourceDescriptor,
         service::ProjectRegistration,
     };
-    let mut backend = fixture();
-    backend.selection.index_ids = None;
-    let selected = backend.selection.selection();
+    let backend = fixture();
+    let selected = QuerySelection {
+        project_ids: backend.selection.window_selection.project_ids.clone(),
+        index_ids: None,
+        member_availability: MemberAvailability::Report,
+    };
     let project_id = selected.project_ids[0];
     let root = std::env::current_dir()?.to_string_lossy().into_owned();
-    let grant = ReviewedGrant {
-        id: backend.selection.grant_id,
-        host: Sha256Digest::from_bytes([9; 32]),
-        revision: CatalogRevision::INITIAL,
-        revoked: false,
-        memberships: (1..=32)
-            .map(|n| GrantedMembership {
-                membership: Membership {
-                    project_id,
-                    index_id: IndexId::from_identity(Incarnation::from_bytes([n; 16])),
-                    revision: CatalogRevision::INITIAL,
-                    scope: vec![ScopeAtom {
-                        source_root_id: SourceRootId::from_identity(Incarnation::from_bytes(
-                            [n; 16],
-                        )),
-                        kind: PathScope::Subtree,
-                        path: String::new(),
-                    }],
-                },
-                source_revision: CatalogRevision::INITIAL,
-                policy_epoch: 0,
-                policy_digest: None,
-            })
-            .collect(),
-    };
-    let resolved = selected.resolve(&grant)?;
+    let memberships = (1..=32)
+        .map(|n| GrantedMembership {
+            membership: Membership {
+                project_id,
+                index_id: IndexId::from_identity(Incarnation::from_bytes([n; 16])),
+                revision: CatalogRevision::INITIAL,
+                scope: vec![ScopeAtom {
+                    source_root_id: SourceRootId::from_identity(Incarnation::from_bytes([n; 16])),
+                    kind: PathScope::Subtree,
+                    path: String::new(),
+                }],
+            },
+            source_revision: CatalogRevision::INITIAL,
+            policy_epoch: 0,
+            policy_digest: None,
+        })
+        .collect::<Vec<_>>();
+    let selection_ref = backend.selection.selection_ref;
+    let resolved = selected.resolve_selection(
+        &memberships,
+        airk_core::scoped_reads::ScopeSelectionObservation {
+            owner: selection_ref.owner,
+            scope_identity: selection_ref.scope_identity,
+            catalog_revision: selection_ref.catalog_revision,
+        },
+    )?;
     let mut members = Vec::new();
     let mut bodies = Vec::new();
     for member in &resolved.members {
@@ -351,17 +341,25 @@ fn expired_projection_fixture() -> Result<(Backend, QuerySelection, Snapshot, Va
             root.clone(),
             format!("fixture_{}", members.len()),
         )?;
-        let authority = ScopedReadAuthority {
+        let authority = SelectionReadAuthority {
             schema: 1,
             backing: backing.binding,
             index_id: member.index_id,
             project_ids: vec![project_id],
-            grant: grant.clone(),
-            provenance: GrantProvenance::UserReviewedProjectGrant,
+            selection: selection_ref,
+            atoms: member
+                .scope
+                .iter()
+                .map(|atom| (project_id, atom.clone()))
+                .collect(),
             sources: vec![SourceDescriptor {
                 source_root_id: member.scope[0].source_root_id,
                 original_root: root.clone(),
             }],
+            membership_revisions: vec![(project_id, CatalogRevision::INITIAL)],
+            source_revision: CatalogRevision::INITIAL,
+            policy_epoch: 0,
+            policy_digest: None,
         };
         authority.validate()?;
         members.push(Member {
@@ -378,15 +376,10 @@ fn expired_projection_fixture() -> Result<(Backend, QuerySelection, Snapshot, Va
             },
             authority,
             sources: vec![],
-            selection: ScopedConnectRequest {
-                schema: 1,
-                context_key: backend.selection.context_key,
-                namespace: backend.selection.namespace,
-                expected_catalog_revision: CatalogRevision::INITIAL,
-                grant_id: grant.id,
-                expected_grant_revision: grant.revision,
+            selection: SelectionRequest {
+                selection_ref,
+                window_selection: backend.selection.window_selection.clone(),
                 index_id: member.index_id,
-                project_ids: vec![project_id],
             },
         });
         let token = RevisionToken {
@@ -548,9 +541,8 @@ async fn selection_combined_refusals_echo_only_the_selection_and_its_identity() 
         assert_eq!(body["requested_scope"], expected_scope);
         assert_eq!(reply["isError"], true);
     }
-    // The facade recognizes the selection as a combined session without a
-    // catalog request; its public scope names no nonce either.
-    assert!(backend.combined_selection().is_none());
+    // The facade recognizes the selection as a combined session; its public
+    // scope names no nonce.
     let scope = backend.combined_scope().expect("a combined session");
     assert_eq!(
         scope.project_ids,
@@ -568,8 +560,7 @@ async fn selection_combined_refusals_echo_only_the_selection_and_its_identity() 
         &airk_mcp::remote::combined_scope_failure(&scope, "combined_observation_unavailable")
             .to_string(),
     );
-    // An unnarrowed call reads the whole selection, as a catalog session
-    // reads its frozen selection.
+    // An unnarrowed call reads the whole selection.
     let defaults = backend.request_selection(&mut Map::new())?;
     assert_eq!(
         defaults.project_ids,
@@ -585,33 +576,6 @@ async fn selection_combined_refusals_echo_only_the_selection_and_its_identity() 
         ("selected_scope", Value::Null)
     );
     Ok(())
-}
-
-/// Catalog-grant bodies are unchanged by the shared session seam: the
-/// requested scope is the whole `CombinedConnectRequest`, discovery keeps its
-/// reviewed grant, and the generic scope equals the catalog one.
-#[test]
-fn catalog_session_bodies_keep_their_request_and_grant() {
-    let backend = fixture();
-    let request = &backend.selection;
-    assert_eq!(
-        failure("combined_scope_expired", None, &request.requested()),
-        json!({"content":[{"type":"text","text":json!({"error":{"code":"combined_scope_expired","retryable":false,"query_submitted":null,"query_replay_safe":false},"requested_scope":{"confirmed":false,"selection":request}}).to_string()}],
-            "structuredContent":{"error":{"code":"combined_scope_expired","retryable":false,"query_submitted":null,"query_replay_safe":false},"requested_scope":{"confirmed":false,"selection":request}},
-            "isError":true})
-    );
-    assert_eq!(
-        request.discovery_grant(),
-        (
-            "reviewed_grant",
-            json!({"id": request.grant_id, "revision": request.expected_grant_revision})
-        )
-    );
-    assert!(backend.combined_selection().is_some());
-    assert_eq!(
-        backend.combined_scope().unwrap().requested,
-        serde_json::to_value(request).unwrap()
-    );
 }
 
 fn agent_ref(revision: CatalogRevision) -> SelectionScopeRef {
@@ -700,7 +664,6 @@ async fn open_combined_session_has_no_project_and_echoes_only_its_scope() -> Res
     assert_eq!(canonical_body(&reply)["requested_scope"], expected);
     let scope = backend.combined_scope().expect("a combined session");
     assert!(scope.project_ids.is_empty());
-    assert!(backend.combined_selection().is_none());
     assert_eq!(
         backend.selection.discovery_grant(),
         ("open_scope", Value::Null)

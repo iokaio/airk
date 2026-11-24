@@ -2,7 +2,7 @@
 use super::*;
 use airk_core::{
     identity::Sha256Digest,
-    index_catalog::{CatalogRevision, GrantId},
+    index_catalog::{CatalogRevision, QueryProjectId},
     service_http::{EndpointState, LoopbackMcpUrl},
 };
 use airk_endpoint::http_endpoint::{InstallationBinding, TlsIdentity};
@@ -933,9 +933,11 @@ fn close_native(gate: &NativeCatalogAdmission, namespace: Incarnation) -> anyhow
             nonce: Incarnation::from_bytes([13; 16]),
         },
         expected_catalog_revision: CatalogRevision::INITIAL,
-        operation: CatalogOperation::RevokeGrant {
-            id: GrantId::from_identity(Incarnation::from_bytes([5; 16])),
-            expected_revision: CatalogRevision::INITIAL,
+        operation: CatalogOperation::DeleteProject {
+            id: QueryProjectId::from_identity(Incarnation::from_bytes([5; 16])),
+            expected_definition_revision: CatalogRevision::INITIAL,
+            expected_scope_revision: CatalogRevision::INITIAL,
+            expected_defaults_revision: CatalogRevision::INITIAL,
         },
     })?;
     Ok(())

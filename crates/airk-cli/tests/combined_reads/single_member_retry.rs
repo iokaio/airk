@@ -21,7 +21,7 @@ async fn single_required_member_busy_read_keeps_exact_retry_basis_through_native
 -> Result<()> {
     let f = Fixture::new(false)?;
     let _service = f.start().await?;
-    let backend = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
+    let backend = f.resolve(&f.session).await?;
     let mut mcp = McpSession::start(&f)?;
     let arguments = json!({"project_ids":[f.projects[0]],"index_ids":[f.indexes[0]],"member_availability":"require",
         "path":"api/policy.md","start_line":1,"end_line":1,"max_bytes":4096,
@@ -56,8 +56,7 @@ async fn single_required_member_busy_read_keeps_exact_retry_basis_through_native
     .await??;
     let mut command = Ctl::new();
     command
-        .arg("--combined-session")
-        .arg(serde_json::to_string(&f.session)?)
+        .window(f.session_window().await?)
         .arg("--service-runtime-dir")
         .arg(&f.control)
         .args(["tools", "call", "airk_read_file", "--args"])

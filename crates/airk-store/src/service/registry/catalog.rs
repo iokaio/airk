@@ -12,6 +12,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 
 pub(super) const SCHEMA: &str = include_str!("../../service_catalog_schema.sql");
+/// Frozen predecessor DDL, executed only in memory to recognize a layout the
+/// upgrade step moves to the terminal one (change-log entry 68 part 3).
+const V12_SCHEMA: &str = include_str!("../../service_catalog_schema_v12.sql");
 const AUTHORITY_V1_SCHEMA: &str = include_str!("../../service_catalog_authority_v1.sql");
 const SPLIT_V3_SCHEMA: &str = include_str!("../../service_catalog_split_extraction_v3.sql");
 const SPLIT_V2_SCHEMA: &str = include_str!("../../service_catalog_split_v2.sql");
@@ -21,7 +24,7 @@ const MAX_SCHEMA_OBJECTS: usize = 512;
 const MAX_SCHEMA_BYTES: usize = 512 * 1024;
 const MAX_OBJECT_SQL: usize = 16384;
 // P6 and P9 must explicitly advance their own required contracts. Older schema-12
-// readers must refuse them rather than silently ignore grants or source policy.
+// readers must refuse them rather than silently ignore source policy.
 pub const SUPPORTED_AUTHORITY_CONTRACT: u32 = 1;
 pub const SUPPORTED_POLICY_CONTRACT: u32 = 4;
 
@@ -57,9 +60,9 @@ pub mod policy;
 
 pub mod split;
 
-pub mod adopted_authority;
 mod adopted_layout;
 mod descriptions;
+pub(super) mod grant_removal;
 
 pub mod operations;
 
@@ -121,17 +124,25 @@ fn schema_objects(connection: &Connection) -> Result<Vec<SchemaObject>> {
 
 /// All interpolated names/conditions below are compiled constants, never input.
 fn capacity_triggers(connection: &Connection) -> Result<()> {
-    for table in [
-        "index_definitions",
-        "query_projects",
-        "index_contexts",
-        "index_access_grants",
-        "index_context_imports",
-        "index_operation_receipts",
-    ] {
+    capacity_triggers_for(connection, false)
+}
+
+/// The capacity triggers of the frozen predecessor layouts: the current set
+/// plus those of the reviewed-grant and context-import tables.
+fn predecessor_capacity_triggers(connection: &Connection) -> Result<()> {
+    capacity_triggers_for(connection, true)
+}
+
+fn capacity_triggers_for(connection: &Connection, predecessor: bool) -> Result<()> {
+    let mut tables = vec!["index_definitions", "query_projects", "index_contexts"];
+    if predecessor {
+        tables.extend(["index_access_grants", "index_context_imports"]);
+    }
+    tables.push("index_operation_receipts");
+    for table in tables {
         connection.execute_batch(&format!("CREATE TRIGGER {table}_capacity BEFORE INSERT ON {table} WHEN (SELECT count(*) FROM {table})>=1024 BEGIN SELECT RAISE(ABORT,'index catalog capacity exceeded'); END;"))?;
     }
-    for (table, condition, maximum) in [
+    let mut groups = vec![
         ("index_sources", "index_id=NEW.index_id", 17),
         ("index_source_aliases", "source_id=NEW.source_id", 16),
         ("project_index_memberships", "project_id=NEW.project_id", 32),
@@ -142,17 +153,24 @@ fn capacity_triggers(connection: &Connection) -> Result<()> {
         ),
         ("context_projects", "context_id=NEW.context_id", 32),
         ("context_default_indexes", "context_id=NEW.context_id", 32),
-        ("index_access_memberships", "grant_id=NEW.grant_id", 1024),
-        (
-            "index_access_scopes",
-            "grant_id=NEW.grant_id AND project_id=NEW.project_id AND index_id=NEW.index_id",
-            128,
-        ),
-    ] {
+    ];
+    if predecessor {
+        groups.extend([
+            ("index_access_memberships", "grant_id=NEW.grant_id", 1024),
+            (
+                "index_access_scopes",
+                "grant_id=NEW.grant_id AND project_id=NEW.project_id AND index_id=NEW.index_id",
+                128,
+            ),
+        ]);
+    }
+    for (table, condition, maximum) in groups {
         connection.execute_batch(&format!("CREATE TRIGGER {table}_capacity BEFORE INSERT ON {table} WHEN (SELECT count(*) FROM {table} WHERE {condition})>={maximum} BEGIN SELECT RAISE(ABORT,'index catalog group capacity exceeded'); END;"))?;
     }
-    for column in ["project_id", "index_id"] {
-        connection.execute_batch(&format!("CREATE TRIGGER index_access_{column}_capacity BEFORE INSERT ON index_access_memberships WHEN NOT EXISTS(SELECT 1 FROM index_access_memberships WHERE grant_id=NEW.grant_id AND {column}=NEW.{column}) AND (SELECT count(DISTINCT {column}) FROM index_access_memberships WHERE grant_id=NEW.grant_id)>=32 BEGIN SELECT RAISE(ABORT,'grant selection capacity exceeded'); END;"))?;
+    if predecessor {
+        for column in ["project_id", "index_id"] {
+            connection.execute_batch(&format!("CREATE TRIGGER index_access_{column}_capacity BEFORE INSERT ON index_access_memberships WHEN NOT EXISTS(SELECT 1 FROM index_access_memberships WHERE grant_id=NEW.grant_id AND {column}=NEW.{column}) AND (SELECT count(DISTINCT {column}) FROM index_access_memberships WHERE grant_id=NEW.grant_id)>=32 BEGIN SELECT RAISE(ABORT,'grant selection capacity exceeded'); END;"))?;
+        }
     }
     Ok(())
 }
@@ -182,6 +200,8 @@ fn write_barriers(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Installs the terminal layout directly: a fresh catalog never creates the
+/// tables change-log entry 68 part 3 removed.
 pub(super) fn install_schema(connection: &Connection) -> Result<()> {
     validate_shape(connection, 11)?;
     connection.execute_batch(SCHEMA)?;
@@ -191,18 +211,90 @@ pub(super) fn install_schema(connection: &Connection) -> Result<()> {
 
 fn expected(version: u32) -> Result<&'static Vec<SchemaObject>> {
     static LEGACY: OnceLock<Result<Vec<SchemaObject>, String>> = OnceLock::new();
-    static CATALOG: OnceLock<Result<Vec<SchemaObject>, String>> = OnceLock::new();
     ensure!(matches!(version, 11..=13), "unsupported catalog schema");
-    let slot = if version == 11 { &LEGACY } else { &CATALOG };
+    if version == 11 {
+        return LEGACY
+            .get_or_init(|| {
+                (|| -> Result<_> {
+                    let connection = Connection::open_in_memory()?;
+                    connection.execute_batch(LEGACY_SCHEMA)?;
+                    schema_objects(&connection)
+                })()
+                .map_err(|error| format!("{error:#}"))
+            })
+            .as_ref()
+            .map_err(|error| anyhow::anyhow!("compiled registry schema is invalid: {error}"));
+    }
+    expected_layout(CatalogLayout::Schema12)
+}
+
+/// The physical catalog layout. Registry version and the authority and
+/// policy markers jointly identify the complete format; authority 0 and 1
+/// share one physical shape since the grant tables were removed (change-log
+/// entry 68 part 3), so the marker alone distinguishes them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CatalogLayout {
+    Schema11,
+    /// No source-policy layer: authority 0 (genesis) or authority 1.
+    Schema12,
+    Schema12Policy1,
+    Schema12Policy2,
+    Schema12Policy3,
+}
+
+/// The frozen layouts before change-log entry 68 part 3, recognized only so
+/// that the upgrade step can move them to the terminal layout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::service::registry) enum PredecessorLayout {
+    Authority0,
+    Authority1,
+    Policy1,
+    Policy2,
+    Policy3,
+}
+impl PredecessorLayout {
+    pub(super) const ALL: [Self; 5] = [
+        Self::Authority0,
+        Self::Authority1,
+        Self::Policy1,
+        Self::Policy2,
+        Self::Policy3,
+    ];
+    /// The terminal layout the upgrade step produces from this one.
+    pub(super) const fn terminal(self) -> CatalogLayout {
+        match self {
+            Self::Authority0 | Self::Authority1 => CatalogLayout::Schema12,
+            Self::Policy1 => CatalogLayout::Schema12Policy1,
+            Self::Policy2 => CatalogLayout::Schema12Policy2,
+            Self::Policy3 => CatalogLayout::Schema12Policy3,
+        }
+    }
+}
+
+/// An existing catalog still in a layout before change-log entry 68 part 3.
+/// Only the read-write `ServiceRegistry::open` upgrade step moves it to the
+/// terminal layout; every other reader refuses it with this typed error and
+/// never decodes its records.
+#[derive(Clone, Copy, Debug)]
+pub struct CatalogUpgradeRequired;
+impl std::fmt::Display for CatalogUpgradeRequired {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(
+            "index catalog upgrade required: open the registry read-write once to remove reviewed grants",
+        )
+    }
+}
+impl std::error::Error for CatalogUpgradeRequired {}
+
+fn compiled(
+    slot: &'static OnceLock<Result<Vec<SchemaObject>, String>>,
+    build: impl FnOnce(&Connection) -> Result<()>,
+) -> Result<&'static Vec<SchemaObject>> {
     slot.get_or_init(|| {
         (|| -> Result<_> {
             let connection = Connection::open_in_memory()?;
             connection.execute_batch(LEGACY_SCHEMA)?;
-            if matches!(version, 12 | 13) {
-                connection.execute_batch(SCHEMA)?;
-                capacity_triggers(&connection)?;
-                write_barriers(&connection)?;
-            }
+            build(&connection)?;
             schema_objects(&connection)
         })()
         .map_err(|error| format!("{error:#}"))
@@ -211,105 +303,85 @@ fn expected(version: u32) -> Result<&'static Vec<SchemaObject>> {
     .map_err(|error| anyhow::anyhow!("compiled registry schema is invalid: {error}"))
 }
 
-/// Registry version and authority format jointly identify the complete physical
-/// catalog layout. Authority 0 remains the exact P5 schema, not a loose subset.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CatalogLayout {
-    Schema11,
-    Schema12Authority0,
-    Schema12Authority1,
-    Schema12Authority1Policy1,
-    Schema12Authority1Policy2,
-    Schema12Authority1Policy3,
+/// The policy and split layers shared by the terminal and predecessor chains.
+fn policy_layers(connection: &Connection, level: u8) -> Result<()> {
+    if level >= 1 {
+        connection.execute_batch(POLICY_V1_SCHEMA)?;
+    }
+    if level >= 2 {
+        connection.execute_batch(SPLIT_V2_SCHEMA)?;
+    }
+    if level >= 3 {
+        connection.execute_batch(SPLIT_V3_SCHEMA)?;
+    }
+    Ok(())
 }
 
 fn expected_layout(layout: CatalogLayout) -> Result<&'static Vec<SchemaObject>> {
-    static AUTHORITY_V1: OnceLock<Result<Vec<SchemaObject>, String>> = OnceLock::new();
-    static POLICY_V1: OnceLock<Result<Vec<SchemaObject>, String>> = OnceLock::new();
-    static SPLIT_V2: OnceLock<Result<Vec<SchemaObject>, String>> = OnceLock::new();
-    static SPLIT_V3: OnceLock<Result<Vec<SchemaObject>, String>> = OnceLock::new();
-    match layout {
-        CatalogLayout::Schema11 => expected(11),
-        CatalogLayout::Schema12Authority0 => expected(12),
-        CatalogLayout::Schema12Authority1
-        | CatalogLayout::Schema12Authority1Policy1
-        | CatalogLayout::Schema12Authority1Policy2
-        | CatalogLayout::Schema12Authority1Policy3 => {
-            (if layout == CatalogLayout::Schema12Authority1 {
-                &AUTHORITY_V1
-            } else if layout == CatalogLayout::Schema12Authority1Policy1 {
-                &POLICY_V1
-            } else if layout == CatalogLayout::Schema12Authority1Policy2 {
-                &SPLIT_V2
-            } else {
-                &SPLIT_V3
-            })
-            .get_or_init(|| {
-                (|| -> Result<_> {
-                    let connection = Connection::open_in_memory()?;
-                    connection.execute_batch(LEGACY_SCHEMA)?;
-                    connection.execute_batch(SCHEMA)?;
-                    capacity_triggers(&connection)?;
-                    write_barriers(&connection)?;
-                    // Exactly the DDL used by owned promotion; no alternative
-                    // permissive schema or hand-maintained object roster.
-                    connection.execute_batch(AUTHORITY_V1_SCHEMA)?;
-                    if layout != CatalogLayout::Schema12Authority1 {
-                        connection.execute_batch(POLICY_V1_SCHEMA)?;
-                    }
-                    if matches!(
-                        layout,
-                        CatalogLayout::Schema12Authority1Policy2
-                            | CatalogLayout::Schema12Authority1Policy3
-                    ) {
-                        connection.execute_batch(SPLIT_V2_SCHEMA)?;
-                    }
-                    if layout == CatalogLayout::Schema12Authority1Policy3 {
-                        connection.execute_batch(SPLIT_V3_SCHEMA)?;
-                    }
-                    schema_objects(&connection)
-                })()
-                .map_err(|error| format!("{error:#}"))
-            })
-            .as_ref()
-            .map_err(|error| anyhow::anyhow!("compiled registry schema is invalid: {error}"))
+    static SLOTS: [OnceLock<Result<Vec<SchemaObject>, String>>; 4] = [const { OnceLock::new() }; 4];
+    let level = match layout {
+        CatalogLayout::Schema11 => return expected(11),
+        CatalogLayout::Schema12 => 0,
+        CatalogLayout::Schema12Policy1 => 1,
+        CatalogLayout::Schema12Policy2 => 2,
+        CatalogLayout::Schema12Policy3 => 3,
+    };
+    // Exactly the DDL used by install and owned promotion; no alternative
+    // permissive schema or hand-maintained object roster.
+    compiled(&SLOTS[usize::from(level)], |connection| {
+        connection.execute_batch(SCHEMA)?;
+        capacity_triggers(connection)?;
+        write_barriers(connection)?;
+        policy_layers(connection, level)
+    })
+}
+
+fn expected_predecessor(layout: PredecessorLayout) -> Result<&'static Vec<SchemaObject>> {
+    static SLOTS: [OnceLock<Result<Vec<SchemaObject>, String>>; 5] = [const { OnceLock::new() }; 5];
+    let (slot, level) = match layout {
+        PredecessorLayout::Authority0 => (0, None),
+        PredecessorLayout::Authority1 => (1, Some(0)),
+        PredecessorLayout::Policy1 => (2, Some(1)),
+        PredecessorLayout::Policy2 => (3, Some(2)),
+        PredecessorLayout::Policy3 => (4, Some(3)),
+    };
+    compiled(&SLOTS[slot], |connection| {
+        connection.execute_batch(V12_SCHEMA)?;
+        predecessor_capacity_triggers(connection)?;
+        write_barriers(connection)?;
+        if let Some(level) = level {
+            connection.execute_batch(AUTHORITY_V1_SCHEMA)?;
+            policy_layers(connection, level)?;
         }
-    }
+        Ok(())
+    })
 }
 
 /// U105: the description layer sits over any authority-1 layout without a
 /// marker change. Its exact compiled objects are removed before the base
 /// layout is matched, so every base layout keeps one compiled identity.
 fn physical_catalog_layout(objects: &[SchemaObject]) -> Result<CatalogLayout> {
-    if let Some(base) = descriptions::strip(objects)? {
-        let layout = base_catalog_layout(&base)?;
-        ensure!(
-            layout != CatalogLayout::Schema12Authority0,
-            "catalog descriptions require index authority one"
-        );
-        return Ok(layout);
+    match descriptions::strip(objects)? {
+        Some(base) => base_catalog_layout(&base),
+        None => base_catalog_layout(objects),
     }
-    base_catalog_layout(objects)
 }
 
 fn base_catalog_layout(objects: &[SchemaObject]) -> Result<CatalogLayout> {
-    if objects == expected_layout(CatalogLayout::Schema12Authority0)?.as_slice() {
-        // Preserve the existing authority-0 path: do not build or inspect the
-        // authority-1 expected shape until it is actually needed.
-        Ok(CatalogLayout::Schema12Authority0)
-    } else if objects == expected_layout(CatalogLayout::Schema12Authority1)?.as_slice() {
-        Ok(CatalogLayout::Schema12Authority1)
-    } else if objects == expected_layout(CatalogLayout::Schema12Authority1Policy1)?.as_slice() {
-        Ok(CatalogLayout::Schema12Authority1Policy1)
-    } else if objects == expected_layout(CatalogLayout::Schema12Authority1Policy2)?.as_slice() {
-        Ok(CatalogLayout::Schema12Authority1Policy2)
-    } else if objects == expected_layout(CatalogLayout::Schema12Authority1Policy3)?.as_slice() {
-        Ok(CatalogLayout::Schema12Authority1Policy3)
-    } else if let Some(layout) = adopted_layout::recognize(objects)? {
-        Ok(layout)
-    } else {
-        anyhow::bail!("unsupported registry table, index, foreign-key or trigger shape")
+    for layout in [
+        CatalogLayout::Schema12,
+        CatalogLayout::Schema12Policy1,
+        CatalogLayout::Schema12Policy2,
+        CatalogLayout::Schema12Policy3,
+    ] {
+        if objects == expected_layout(layout)?.as_slice() {
+            return Ok(layout);
+        }
     }
+    if grant_removal::predecessor_layout(objects)?.is_some() {
+        return Err(CatalogUpgradeRequired.into());
+    }
+    anyhow::bail!("unsupported registry table, index, foreign-key or trigger shape")
 }
 
 /// Match an entire compiled physical layout before trusting its authority
@@ -317,21 +389,7 @@ fn base_catalog_layout(objects: &[SchemaObject]) -> Result<CatalogLayout> {
 pub(super) fn validate_catalog_layout(connection: &Connection) -> Result<CatalogLayout> {
     let objects = schema_objects(connection)?;
     let layout = physical_catalog_layout(&objects)?;
-    if objects
-        .iter()
-        .any(|o| o.kind == "table" && o.name == "index_adopted_authorities")
-    {
-        let version: u32 = connection.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        ensure!(
-            version == 13,
-            "adopted authority requires registry schema 13"
-        );
-    }
-    let (authority, policy): (i64, i64) = connection.query_row(
-        "SELECT authority_contract,policy_contract FROM index_catalog_meta WHERE id=1",
-        [],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    )?;
+    let (authority, policy) = markers(connection)?;
     ensure!(
         authority <= i64::from(SUPPORTED_AUTHORITY_CONTRACT)
             && policy <= i64::from(SUPPORTED_POLICY_CONTRACT),
@@ -340,16 +398,30 @@ pub(super) fn validate_catalog_layout(connection: &Connection) -> Result<Catalog
     ensure!(
         matches!(
             (layout, authority, policy),
-            (CatalogLayout::Schema12Authority0, 0, 0)
-                | (CatalogLayout::Schema12Authority1, 1, 0)
-                | (CatalogLayout::Schema12Authority1Policy1, 1, 1)
-                | (CatalogLayout::Schema12Authority1Policy2, 1, 2)
-                | (CatalogLayout::Schema12Authority1Policy3, 1, 3)
-                | (CatalogLayout::Schema12Authority1Policy3, 1, 4)
+            (CatalogLayout::Schema12, 0 | 1, 0)
+                | (CatalogLayout::Schema12Policy1, 1, 1)
+                | (CatalogLayout::Schema12Policy2, 1, 2)
+                | (CatalogLayout::Schema12Policy3, 1, 3 | 4)
         ),
         "index authority marker does not match the compiled registry layout"
     );
+    // The description layer requires authority one (U105).
+    ensure!(
+        authority == 1
+            || !objects
+                .iter()
+                .any(|object| object.kind == "table" && object.name == "catalog_descriptions"),
+        "catalog descriptions require index authority one"
+    );
     Ok(layout)
+}
+
+fn markers(connection: &Connection) -> Result<(i64, i64)> {
+    Ok(connection.query_row(
+        "SELECT authority_contract,policy_contract FROM index_catalog_meta WHERE id=1",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?)
 }
 
 /// Policy installation is part of the already fenced catalog transaction. A
@@ -360,17 +432,23 @@ pub(super) fn apply_policy_v1_layout(connection: &Connection) -> Result<()> {
         "policy layout requires an explicit transaction"
     );
     match validate_catalog_layout(connection)? {
-        CatalogLayout::Schema12Authority1 => {
+        CatalogLayout::Schema12 => {
+            ensure!(
+                markers(connection)?.0 == 1,
+                "policy installation requires qualified authority 1"
+            );
             connection.execute_batch(POLICY_V1_SCHEMA)?;
             connection.execute(
                 "UPDATE index_catalog_meta SET policy_contract=1,accepted_new_writes=1 WHERE id=1",
                 [],
             )?;
         }
-        CatalogLayout::Schema12Authority1Policy1
-        | CatalogLayout::Schema12Authority1Policy2
-        | CatalogLayout::Schema12Authority1Policy3 => {}
-        _ => anyhow::bail!("policy installation requires qualified authority 1"),
+        CatalogLayout::Schema12Policy1
+        | CatalogLayout::Schema12Policy2
+        | CatalogLayout::Schema12Policy3 => {}
+        CatalogLayout::Schema11 => {
+            anyhow::bail!("policy installation requires qualified authority 1")
+        }
     }
     validate_catalog_layout(connection)?;
     Ok(())
@@ -386,7 +464,7 @@ pub(super) fn apply_split_v2_layout(connection: &Connection) -> Result<()> {
         "split layout requires explicit transaction"
     );
     apply_policy_v1_layout(connection)?;
-    if validate_catalog_layout(connection)? == CatalogLayout::Schema12Authority1Policy1 {
+    if validate_catalog_layout(connection)? == CatalogLayout::Schema12Policy1 {
         connection.execute_batch(SPLIT_V2_SCHEMA)?;
         connection.execute(
             "UPDATE index_catalog_meta SET policy_contract=2,accepted_new_writes=1 WHERE id=1",
@@ -396,7 +474,7 @@ pub(super) fn apply_split_v2_layout(connection: &Connection) -> Result<()> {
     ensure!(
         matches!(
             validate_catalog_layout(connection)?,
-            CatalogLayout::Schema12Authority1Policy2 | CatalogLayout::Schema12Authority1Policy3
+            CatalogLayout::Schema12Policy2 | CatalogLayout::Schema12Policy3
         ),
         "split capability layout differs"
     );
@@ -410,7 +488,7 @@ pub(super) fn apply_split_extraction_v3_layout(connection: &Connection) -> Resul
         "split policy inheritance requires owning transaction"
     );
     apply_split_v2_layout(connection)?;
-    if validate_catalog_layout(connection)? == CatalogLayout::Schema12Authority1Policy2 {
+    if validate_catalog_layout(connection)? == CatalogLayout::Schema12Policy2 {
         connection.execute_batch(SPLIT_V3_SCHEMA)?;
         connection.execute(
             "UPDATE index_catalog_meta SET policy_contract=3,accepted_new_writes=1 WHERE id=1",
@@ -418,11 +496,16 @@ pub(super) fn apply_split_extraction_v3_layout(connection: &Connection) -> Resul
         )?;
     }
     ensure!(
-        validate_catalog_layout(connection)? == CatalogLayout::Schema12Authority1Policy3,
+        validate_catalog_layout(connection)? == CatalogLayout::Schema12Policy3,
         "split extraction capability layout differs"
     );
     Ok(())
 }
+
+/// Authority 1 adds no physical object since the grant tables were removed
+/// (change-log entry 68 part 3): its promotion is the marker update the
+/// caller makes in the same transaction. This checks the exact authority-0
+/// shape it starts from.
 pub(super) fn apply_authority_v1_layout(connection: &Connection) -> Result<()> {
     ensure!(
         !connection.is_autocommit(),
@@ -430,13 +513,10 @@ pub(super) fn apply_authority_v1_layout(connection: &Connection) -> Result<()> {
     );
     let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
     ensure!(
-        version == 12 && validate_catalog_layout(connection)? == CatalogLayout::Schema12Authority0,
+        version == 12
+            && validate_catalog_layout(connection)? == CatalogLayout::Schema12
+            && markers(connection)?.0 == 0,
         "index authority layout promotion requires exact schema-12 authority 0"
-    );
-    connection.execute_batch(AUTHORITY_V1_SCHEMA)?;
-    ensure!(
-        schema_objects(connection)? == *expected_layout(CatalogLayout::Schema12Authority1)?,
-        "unsupported registry table, index, foreign-key or trigger shape"
     );
     Ok(())
 }
@@ -508,6 +588,18 @@ pub(super) fn state(connection: &Connection) -> Result<CatalogState> {
     })
 }
 
+/// [`validate_existing`], except that a predecessor layout the upgrade step
+/// moves to the terminal one is accepted. Only `ServiceRegistry::open` uses it.
+pub(super) fn validate_existing_or_predecessor(connection: &Connection) -> Result<()> {
+    match validate_existing(connection) {
+        Err(error) if error.is::<CatalogUpgradeRequired>() => {
+            state(connection)?;
+            Ok(())
+        }
+        result => result,
+    }
+}
+
 pub(super) fn validate_existing(connection: &Connection) -> Result<()> {
     let application: i64 =
         connection.pragma_query_value(None, "application_id", |row| row.get(0))?;
@@ -524,79 +616,6 @@ pub(super) fn validate_existing(connection: &Connection) -> Result<()> {
     );
     validate_catalog_layout(connection)?;
     state(connection)?;
-    Ok(())
-}
-
-/// Atomic counterpart of the native adapter's OS-host/full-scope review.
-/// No source I/O and no authority is minted. The native adapter separately
-/// authenticates the host; this binds its grant/backing/revision to insertion.
-pub(super) fn require_refresh_admission(
-    db: &Connection,
-    project: airk_core::identity::Sha256Digest,
-    selection: &airk_core::catalog_refresh::RefreshSelection,
-) -> Result<()> {
-    selection.validate()?;
-    let current = state(db)?;
-    ensure!(
-        current.activated
-            && current.authority_contract == 1
-            && current.namespace == selection.selection.namespace
-            && current.revision == selection.selection.expected_catalog_revision,
-        "refresh catalog changed before admission"
-    );
-    ensure!(
-        selection.members.len() == 1,
-        "refresh requires one exact member"
-    );
-    let index = operations::index_record(db, selection.members[0].index_id)?;
-    ensure!(
-        !index.tombstone
-            && index.backing.binding == project
-            && index.source_import == airk_core::index_catalog::SourceImportState::Complete,
-        "refresh index backing is not active and complete"
-    );
-    let grant = operations::read_persisted_grant(db, selection.selection.grant_id)?;
-    grant.validate()?;
-    ensure!(
-        !grant.grant.revoked
-            && grant.grant.revision == selection.selection.expected_grant_revision
-            && grant.provenance.kind()
-                == airk_core::grant_provenance::GrantProvenanceKind::UserReviewedProjectGrant,
-        "refresh reviewed grant changed"
-    );
-    let resolved = selection.selection.selection().resolve(&grant.grant)?;
-    let member = resolved
-        .member(index.id)
-        .ok_or_else(|| anyhow::anyhow!("refresh member not in current grant"))?;
-    ensure!(
-        member
-            .memberships
-            .iter()
-            .all(|frozen| frozen.source_revision == index.source_revision
-                && frozen.policy_epoch
-                    == index.policy.as_ref().map_or(0, |policy| policy.epoch.get())
-                && frozen.policy_digest == index.policy.as_ref().map(|policy| policy.digest)),
-        "refresh source/policy binding changed"
-    );
-    let mut statement = db.prepare(
-        "SELECT id FROM index_sources WHERE index_id=?1 AND enabled=1 ORDER BY id LIMIT 18",
-    )?;
-    let roots = statement
-        .query_map([index.id.to_string()], |row| row.get::<_, String>(0))?
-        .collect::<Result<Vec<_>, _>>()?;
-    ensure!(
-        !roots.is_empty() && roots.len() <= 17,
-        "refresh source inventory unavailable"
-    );
-    for root in roots {
-        let root: airk_core::index_catalog::SourceRootId = root.parse()?;
-        ensure!(
-            member.scope.iter().any(|atom| atom.source_root_id == root
-                && atom.kind == airk_core::index_catalog::PathScope::Subtree
-                && atom.path.is_empty()),
-            "explicit full refresh requires whole-index authority; partial scope cannot widen"
-        );
-    }
     Ok(())
 }
 

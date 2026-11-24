@@ -59,7 +59,6 @@ test('Inspector uses one explicit originating index and retains its full combine
     assert.deepEqual(calls, [['airk_file_info', { path: 'same.rs', response_mode: 'full', ...originArgs(origin(1)) }]]);
     assert.equal(view.publication, token(1));
     assert.deepEqual(view.nativeResult, payload);
-    await assert.rejects(checkCitations({ spec: { combinedSession: {} }, call: async () => { assert.fail('ambiguous pasted paths must not dispatch'); } } as any, refs, project, 'same.rs:1', () => false), /originating index/);
 });
 
 test('failed combined native facts and Inspector retain the complete attempted response', async () => {

@@ -2,12 +2,11 @@
 //! Exercise the actual NativeRead handler, including its canonical page bodies.
 use super::*;
 use airk_core::{
-    grant_provenance::{GrantProvenance, native_imported_grant_id},
     identity::{Incarnation, Sha256Digest},
     index_catalog::*,
     scoped_reads::{ScopeErrorObservation, ScopeReadRefused, SourceDescriptor},
 };
-use airk_kernel::{scoped_reads::ScopedReadAuthority, usage_page};
+use airk_kernel::{scoped_reads::SelectionReadAuthority, usage_page};
 use anyhow::Result;
 use serde_json::{Value, json};
 
@@ -19,7 +18,8 @@ const SAFE: [SettingsView; 5] = [
     SettingsView::ScanLimits,
 ];
 
-fn authority(kernel: &Kernel, imported: bool, prefix: &str) -> Result<ScopedReadAuthority> {
+/// A window selection of one project over `prefix` of the primary source.
+fn authority(kernel: &Kernel, prefix: &str) -> Result<SelectionReadAuthority> {
     let project = QueryProjectId::from_identity(Incarnation::from_bytes([1; 16]));
     let index = IndexId::from_identity(Incarnation::from_bytes([2; 16]));
     let source = SourceRootId::from_identity(Incarnation::from_bytes([3; 16]));
@@ -29,53 +29,34 @@ fn authority(kernel: &Kernel, imported: bool, prefix: &str) -> Result<ScopedRead
         kernel.collection().into(),
     )?
     .binding;
-    let host = Sha256Digest::from_bytes([5; 32]);
-    let provenance = if imported {
-        GrantProvenance::ImportedLegacySnapshot {
-            upgrade_id: Incarnation::from_bytes([8; 16]),
-            plan_digest: Sha256Digest::from_bytes([9; 32]),
-            legacy_binding: backing,
-            configuration_digest: Sha256Digest::from_bytes([10; 32]),
-        }
-    } else {
-        GrantProvenance::UserReviewedProjectGrant
-    };
-    let id = if imported {
-        native_imported_grant_id(Incarnation::from_bytes([11; 16]), host, &provenance)?
-    } else {
-        GrantId::from_identity(Incarnation::from_bytes([4; 16]))
-    };
-    Ok(ScopedReadAuthority {
+    Ok(SelectionReadAuthority {
         schema: 1,
         backing,
         index_id: index,
         project_ids: vec![project],
-        provenance,
-        grant: ReviewedGrant {
-            id,
-            host,
-            revision: CatalogRevision::INITIAL,
-            revoked: false,
-            memberships: vec![GrantedMembership {
-                membership: Membership {
-                    project_id: project,
-                    index_id: index,
-                    revision: CatalogRevision::INITIAL,
-                    scope: vec![ScopeAtom {
-                        source_root_id: source,
-                        kind: PathScope::Subtree,
-                        path: prefix.into(),
-                    }],
-                },
-                source_revision: CatalogRevision::INITIAL,
-                policy_epoch: 0,
-                policy_digest: None,
-            }],
+        selection: airk_core::scoped_reads::SelectionScopeRef {
+            owner: airk_core::scoped_reads::SelectionOwnerKind::Window,
+            grant_nonce: airk_core::identity::Incarnation::from_bytes([10; 16]),
+            service_instance: airk_core::identity::Incarnation::from_bytes([11; 16]),
+            scope_identity: airk_core::identity::Sha256Digest::from_bytes([12; 32]),
+            catalog_revision: airk_core::index_catalog::CatalogRevision::try_from(5_u64).unwrap(),
         },
+        atoms: vec![ScopeAtom {
+            source_root_id: source,
+            kind: PathScope::Subtree,
+            path: prefix.into(),
+        }]
+        .into_iter()
+        .map(|atom| (project, atom))
+        .collect(),
         sources: vec![SourceDescriptor {
             source_root_id: source,
             original_root: kernel.root().to_str().unwrap().into(),
         }],
+        membership_revisions: vec![(project, airk_core::index_catalog::CatalogRevision::INITIAL)],
+        source_revision: airk_core::index_catalog::CatalogRevision::INITIAL,
+        policy_epoch: 0,
+        policy_digest: None,
     })
 }
 
@@ -157,8 +138,10 @@ async fn recovery_details_outside_frozen_project_scope_are_explicitly_unavailabl
 -> Result<()> {
     use airk_core::{rebuild::*, service::ProjectRegistration};
     let (temporary, kernel) = fixture()?;
-    let grant = authority(&kernel, false, "")?;
-    let baseline = kernel.with_scoped_reads(grant.clone())?.status_summary()?;
+    let grant = authority(&kernel, "")?;
+    let baseline = kernel
+        .with_selection_reads(grant.clone())?
+        .status_summary()?;
     let replacement = ProjectRegistration::new(
         kernel.root().to_str().unwrap().into(),
         kernel.data_dir().to_str().unwrap().into(),
@@ -216,7 +199,7 @@ async fn recovery_details_outside_frozen_project_scope_are_explicitly_unavailabl
     let operation = observation.operation_id;
     let kernel = kernel.with_rebuild_observer(grant.backing, move || Ok(Some(observation.clone())));
     let mut owner = LocalTools::new(kernel).await?;
-    let mut selected = owner.scoped_session(grant.clone()).await?;
+    let mut selected = owner.selection_session(grant.clone()).await?;
     let response = selected
         .call(
             "airk_status".into(),
@@ -280,9 +263,9 @@ async fn native_final_projection_verification_uses_only_its_installed_owner() ->
     };
     let (_temporary, kernel) = fixture()?;
     let mut owner = LocalTools::new(kernel.clone()).await?;
-    let authority = authority(&kernel, false, "public")?;
+    let authority = authority(&kernel, "public")?;
     let binding = authority.backing;
-    let mut scoped = owner.scoped_session(authority).await?;
+    let mut scoped = owner.selection_session(authority).await?;
     let query = SearchQuery {
         text: "Public".into(),
         path_prefix: None,
@@ -415,14 +398,13 @@ async fn native_final_projection_verification_uses_only_its_installed_owner() ->
 }
 
 #[tokio::test]
-async fn full_reviewed_and_imported_native_settings_preserve_complete_canonical_bodies()
--> Result<()> {
+async fn full_selection_native_settings_preserve_complete_canonical_bodies() -> Result<()> {
     let (_temporary, kernel) = fixture()?;
     let mut owner = LocalTools::new(kernel.clone()).await?;
-    for imported in [false, true] {
-        let grant = authority(&kernel, imported, "")?;
+    {
+        let grant = authority(&kernel, "")?;
         let binding = grant.backing;
-        let mut scoped = owner.scoped_session(grant).await?;
+        let mut scoped = owner.selection_session(grant).await?;
         for view in SAFE {
             let (expected, _) = settings(&owner, binding, view, false).await?;
             let (mut actual, pages) = settings(&scoped, binding, view, true).await?;
@@ -444,10 +426,10 @@ async fn native_settings_refuse_prefix_pending_sources_revocation_and_arbitrary_
 -> Result<()> {
     let (temporary, kernel) = fixture()?;
     let mut owner = LocalTools::new(kernel.clone()).await?;
-    let full = authority(&kernel, true, "")?;
+    let full = authority(&kernel, "")?;
     let binding = full.backing;
     let mut prefix = owner
-        .scoped_session(authority(&kernel, false, "public")?)
+        .selection_session(authority(&kernel, "public")?)
         .await?;
     for view in SAFE {
         let error = prefix
@@ -464,8 +446,8 @@ async fn native_settings_refuse_prefix_pending_sources_revocation_and_arbitrary_
         assert!(error.is::<ScopeReadRefused>() && error.is::<ScopeErrorObservation>());
     }
     prefix.close().await?;
-    let mut scoped = owner.scoped_session(full).await?;
-    let native = kernel.with_scoped_reads(authority(&kernel, true, "")?)?;
+    let mut scoped = owner.selection_session(full).await?;
+    let native = kernel.with_selection_reads(authority(&kernel, "")?)?;
     for request in [
         NativeRead::ValidateSettingsFile {
             view: SettingsView::ScanLimits,
@@ -625,7 +607,7 @@ async fn native_settings_refuse_prefix_pending_sources_revocation_and_arbitrary_
 async fn administrative_input_pins_are_bounded_native_results_without_source_contents() -> Result<()>
 {
     let (temporary, kernel) = fixture()?;
-    let binding = authority(&kernel, false, "")?.backing;
+    let binding = authority(&kernel, "")?.backing;
     let path = temporary.path().join("explicit-native-input.txt");
     std::fs::write(&path, b"abc")?;
     let mut owner = LocalTools::new(kernel).await?;
@@ -676,7 +658,7 @@ async fn administrative_input_pins_are_bounded_native_results_without_source_con
 #[tokio::test]
 async fn native_file_intents_share_original_pinned_validation_and_report_bodies() -> Result<()> {
     let (temporary, kernel) = fixture()?;
-    let binding = authority(&kernel, false, "")?.backing;
+    let binding = authority(&kernel, "")?.backing;
     let mut owner = LocalTools::new(kernel.clone()).await?;
     let path = temporary.path().join("scan-limits.json");
     std::fs::write(&path, serde_json::to_vec(&kernel.scan_limits()?)?)?;
@@ -752,9 +734,9 @@ async fn native_settings_continuations_bind_authority_publication_and_all_publis
 -> Result<()> {
     let (temporary, kernel) = fixture()?;
     let mut owner = LocalTools::new(kernel.clone()).await?;
-    let grant = authority(&kernel, false, "")?;
+    let grant = authority(&kernel, "")?;
     let binding = grant.backing;
-    let mut first = owner.scoped_session(grant.clone()).await?;
+    let mut first = owner.selection_session(grant.clone()).await?;
     let page = first
         .read_native(
             NativeRead::Settings {
@@ -767,8 +749,8 @@ async fn native_settings_continuations_bind_authority_publication_and_all_publis
         .await?;
     let cursor = page["cursor"].as_str().unwrap().to_owned();
     let mut changed = grant.clone();
-    changed.grant.id = GrantId::from_identity(Incarnation::from_bytes([12; 16]));
-    let mut second = owner.scoped_session(changed).await?;
+    changed.selection.grant_nonce = Incarnation::from_bytes([12; 16]);
+    let mut second = owner.selection_session(changed).await?;
     let error = second
         .read_native(
             NativeRead::Settings {
@@ -826,15 +808,15 @@ async fn native_settings_continuations_bind_authority_publication_and_all_publis
         source_root_id: source,
         original_root: external.to_str().unwrap().into(),
     });
-    complete.grant.memberships[0]
-        .membership
-        .scope
-        .push(ScopeAtom {
+    complete.atoms.push((
+        complete.project_ids[0],
+        ScopeAtom {
             source_root_id: source,
             kind: PathScope::Subtree,
             path: String::new(),
-        });
-    let mut complete = owner.scoped_session(complete).await?;
+        },
+    ));
+    let mut complete = owner.selection_session(complete).await?;
     std::fs::remove_file(external.join("b.rs"))?;
     std::fs::remove_dir(&external)?;
     // Selected-index metadata observes the retained publication/configuration;

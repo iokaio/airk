@@ -637,7 +637,7 @@ impl Branch<'_> {
 fn grant(
     kernel: &Kernel,
     index: &IndexEntry,
-) -> Result<airk_kernel::scoped_reads::ScopedReadAuthority> {
+) -> Result<airk_kernel::scoped_reads::SelectionReadAuthority> {
     use airk_core::index_catalog::*;
     let project = QueryProjectId::from_identity(Incarnation::from_bytes([1; 16]));
     let index_id: IndexId = serde_json::from_value(json!(index.index_id))?;
@@ -645,7 +645,7 @@ fn grant(
         Some(id) => serde_json::from_value(json!(id))?,
         None => SourceRootId::from_identity(Incarnation::from_bytes([3; 16])),
     };
-    Ok(airk_kernel::scoped_reads::ScopedReadAuthority {
+    Ok(airk_kernel::scoped_reads::SelectionReadAuthority {
         schema: 1,
         backing: airk_core::service::ProjectRegistration::new(
             kernel.root().to_str().context("non-UTF-8 root")?.into(),
@@ -659,32 +659,29 @@ fn grant(
         .binding,
         index_id,
         project_ids: vec![project],
-        provenance: airk_core::grant_provenance::GrantProvenance::UserReviewedProjectGrant,
-        grant: ReviewedGrant {
-            id: GrantId::from_identity(Incarnation::from_bytes([4; 16])),
-            host: Sha256Digest::from_bytes([5; 32]),
-            revision: CatalogRevision::INITIAL,
-            revoked: false,
-            memberships: vec![GrantedMembership {
-                membership: Membership {
-                    project_id: project,
-                    index_id,
-                    revision: CatalogRevision::INITIAL,
-                    scope: vec![ScopeAtom {
-                        source_root_id: source,
-                        kind: PathScope::Subtree,
-                        path: String::new(),
-                    }],
-                },
-                source_revision: CatalogRevision::INITIAL,
-                policy_epoch: 0,
-                policy_digest: None,
-            }],
+        selection: airk_core::scoped_reads::SelectionScopeRef {
+            owner: airk_core::scoped_reads::SelectionOwnerKind::Window,
+            grant_nonce: airk_core::identity::Incarnation::from_bytes([10; 16]),
+            service_instance: airk_core::identity::Incarnation::from_bytes([11; 16]),
+            scope_identity: airk_core::identity::Sha256Digest::from_bytes([12; 32]),
+            catalog_revision: airk_core::index_catalog::CatalogRevision::try_from(5_u64).unwrap(),
         },
+        atoms: vec![ScopeAtom {
+            source_root_id: source,
+            kind: PathScope::Subtree,
+            path: String::new(),
+        }]
+        .into_iter()
+        .map(|atom| (project, atom))
+        .collect(),
         sources: vec![airk_core::scoped_reads::SourceDescriptor {
             source_root_id: source,
             original_root: kernel.root().to_str().context("non-UTF-8 root")?.into(),
         }],
+        membership_revisions: vec![(project, airk_core::index_catalog::CatalogRevision::INITIAL)],
+        source_revision: airk_core::index_catalog::CatalogRevision::INITIAL,
+        policy_epoch: 0,
+        policy_digest: None,
     })
 }
 
@@ -789,22 +786,26 @@ fn collect_context_action_oracle_forks() -> Result<()> {
             // The grant names the collection's own permanent source policy, as
             // the service's grant does; reads are refused under any other.
             if let Some(policy) = base.source_policy_observation()? {
-                let membership = &mut authority.grant.memberships[0];
-                membership.policy_epoch = serde_json::from_value(policy["policy_epoch"].clone())
+                authority.policy_epoch = serde_json::from_value(policy["policy_epoch"].clone())
                     .context("source policy epoch")?;
-                membership.policy_digest = Some(
+                authority.policy_digest = Some(
                     serde_json::from_value(policy["policy_digest"].clone())
                         .context("source policy digest")?,
                 );
             }
-            let scoped = base.with_scoped_reads(authority.clone())?;
+            let scoped = base.with_selection_reads(authority.clone())?;
             let reference = ScopedReadRef {
                 schema: 1,
                 lease_generation: 1,
                 index_id: authority.index_id,
-                grant_id: Some(authority.grant.id),
-                grant_revision: Some(authority.grant.revision),
-                selection: None,
+                selection: airk_core::scoped_reads::SelectionScopeRef {
+                    owner: airk_core::scoped_reads::SelectionOwnerKind::Window,
+                    grant_nonce: airk_core::identity::Incarnation::from_bytes([10; 16]),
+                    service_instance: airk_core::identity::Incarnation::from_bytes([11; 16]),
+                    scope_identity: airk_core::identity::Sha256Digest::from_bytes([12; 32]),
+                    catalog_revision: airk_core::index_catalog::CatalogRevision::try_from(5_u64)
+                        .unwrap(),
+                },
                 fingerprint: scoped
                     .scoped_read_fingerprint()?
                     .context("missing scoped collector source")?,
@@ -917,14 +918,18 @@ fn forced_offered_read_is_accepted_and_runs_next() -> Result<()> {
     base.configure_vectors(false)?;
     base.index()?;
     let authority = crate::scoped_observation_tests::authority(&base)?;
-    let scoped = base.with_scoped_reads(authority.clone())?;
+    let scoped = base.with_selection_reads(authority.clone())?;
     let reference = ScopedReadRef {
         schema: 1,
         lease_generation: 1,
         index_id: authority.index_id,
-        grant_id: Some(authority.grant.id),
-        grant_revision: Some(authority.grant.revision),
-        selection: None,
+        selection: airk_core::scoped_reads::SelectionScopeRef {
+            owner: airk_core::scoped_reads::SelectionOwnerKind::Window,
+            grant_nonce: airk_core::identity::Incarnation::from_bytes([10; 16]),
+            service_instance: airk_core::identity::Incarnation::from_bytes([11; 16]),
+            scope_identity: airk_core::identity::Sha256Digest::from_bytes([12; 32]),
+            catalog_revision: airk_core::index_catalog::CatalogRevision::try_from(5_u64).unwrap(),
+        },
         fingerprint: scoped.scoped_read_fingerprint()?.context("scoped source")?,
     };
     let worker = WorkerIdentity {

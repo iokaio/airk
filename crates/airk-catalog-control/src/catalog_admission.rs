@@ -2,8 +2,6 @@
 //! Inert native admission ledger. The existing actors own durable intent and IPC.
 //! Every method is synchronous; no registry, source, transport or worker wait is
 //! performed while the private mutex is held. Tickets are metadata, not bearers.
-// Remove this inert-only allowance when the native coordinator is wired.
-#![allow(dead_code)]
 use airk_core::catalog_fences::{
     WorkerDrainObligation, WorkerFenceConfirmation, WorkerFenceConfirmationMethod,
     WorkerProviderHistory, WorkerProviderObligation,
@@ -11,13 +9,11 @@ use airk_core::catalog_fences::{
 use airk_core::{
     catalog_management::{CatalogOperation, CatalogRequest},
     identity::{Incarnation, Sha256Digest},
-    index_catalog::{
-        CatalogRevision, GrantId, IndexId, MAX_SELECTION, QueryProjectId, encoded_size,
-    },
+    index_catalog::{CatalogRevision, IndexId, MAX_SELECTION, QueryProjectId, encoded_size},
     scoped_reads::{ScopeReadRefused, SelectionOwnerKind, SelectionScopeRef},
     service::{ProjectBinding, RequestKey, ScopedReadRef, WorkerIdentity},
 };
-use airk_kernel::scoped_reads::{OpenReadAuthority, ScopedReadAuthority, SelectionReadAuthority};
+use airk_kernel::scoped_reads::{OpenReadAuthority, SelectionReadAuthority};
 pub(crate) use airk_store::service::registry::catalog::operations::FenceTarget;
 use airk_store::service::registry::catalog::operations::{
     FenceConfirmation, FenceConfirmationMethod, FenceIntent, FencePlan as StoreFencePlan,
@@ -31,7 +27,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-const MAX_SCOPES: usize = 128;
 const MAX_WORKERS: usize = 128;
 const MAX_PLAN_BYTES: usize = 16 * 1024;
 const MAX_UNPREPARED: usize = 32;
@@ -55,37 +50,25 @@ pub const MAX_AGENT_SELECTIONS: usize = 32;
 /// Gate installations of agent selections (each names up to 32 indexes).
 const MAX_AGENT_SELECTION_SCOPES: usize = MAX_AGENT_SELECTIONS * MAX_SELECTION;
 
-/// In-memory admission key: a persisted catalog grant or an in-memory
-/// selection grant's nonce. Never persisted (§3.4).
+/// In-memory admission key: an in-memory selection's nonce. Never persisted
+/// (§3.4). Reviewed catalog grants were removed (change-log entry 68 part 3).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum AuthorityKey {
-    Grant(GrantId),
     Selection(Incarnation),
 }
 impl AuthorityKey {
-    /// The key and its high-water revision: the grant revision, or the
-    /// selection's catalog revision (one value per nonce).
+    /// The key and its high-water revision: the selection's catalog revision
+    /// (one value per nonce).
     fn of(scope: &ScopedReadRef) -> Result<(Self, CatalogRevision)> {
-        if let Some((id, revision)) = scope.catalog_grant() {
-            return Ok((Self::Grant(id), revision));
-        }
-        match (scope.grant_id, scope.grant_revision, scope.selection) {
-            (None, None, Some(selection)) => Ok((
-                Self::Selection(selection.grant_nonce),
-                selection.catalog_revision,
-            )),
-            _ => Err(ScopeReadRefused.into()),
-        }
-    }
-    fn is_selection(self) -> bool {
-        matches!(self, Self::Selection(_))
+        Ok((
+            Self::Selection(scope.selection.grant_nonce),
+            scope.selection.catalog_revision,
+        ))
     }
 }
 /// The capacity class of a selection: an open agent read or a W4/A2 owner.
 fn is_agent(scope: &ScopedReadRef) -> bool {
-    scope
-        .selection
-        .is_some_and(|selection| selection.owner == SelectionOwnerKind::Agent)
+    scope.selection.owner == SelectionOwnerKind::Agent
 }
 /// One validated, measured authority payload ready for the ledger.
 struct Candidate {
@@ -96,24 +79,6 @@ struct Candidate {
     projects: Vec<QueryProjectId>,
 }
 impl Candidate {
-    fn catalog(authority: &ScopedReadAuthority) -> Result<Self> {
-        let (grant_id, grant_revision) = (authority.grant.id, authority.grant.revision);
-        Ok(Self {
-            scope: ScopedReadRef {
-                schema: 1,
-                lease_generation: 0,
-                index_id: authority.index_id,
-                grant_id: Some(grant_id),
-                grant_revision: Some(grant_revision),
-                selection: None,
-                fingerprint: authority.fingerprint()?,
-            },
-            key: AuthorityKey::Grant(grant_id),
-            revision: grant_revision,
-            backing: authority.backing,
-            projects: authority.project_ids.clone(),
-        })
-    }
     fn selection(authority: &SelectionReadAuthority) -> Result<Self> {
         let selection = authority.selection;
         Ok(Self {
@@ -121,9 +86,7 @@ impl Candidate {
                 schema: 1,
                 lease_generation: 0,
                 index_id: authority.index_id,
-                grant_id: None,
-                grant_revision: None,
-                selection: Some(selection),
+                selection,
                 fingerprint: authority.fingerprint()?,
             },
             key: AuthorityKey::Selection(selection.grant_nonce),
@@ -145,9 +108,7 @@ impl Candidate {
                 schema: 1,
                 lease_generation: 0,
                 index_id: authority.index_id,
-                grant_id: None,
-                grant_revision: None,
-                selection: Some(selection),
+                selection,
                 fingerprint: authority.fingerprint()?,
             },
             key: AuthorityKey::Selection(selection.grant_nonce),
@@ -295,7 +256,6 @@ impl InstallTicket {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ScopeTarget {
     Index(IndexId),
-    Grant(GrantId),
     Membership {
         project_id: QueryProjectId,
         index_id: IndexId,
@@ -324,7 +284,6 @@ impl ScopeTarget {
                 project_id: *project_id,
                 index_id: *index_id,
             },
-            CatalogOperation::RevokeGrant { id, .. } => Self::Grant(*id),
             _ => return Err(ScopeReadRefused.into()),
         })
     }
@@ -360,7 +319,6 @@ impl Installed {
     fn matches(&self, target: ScopeTarget) -> bool {
         match target {
             ScopeTarget::Index(id) => self.scope.index_id == id,
-            ScopeTarget::Grant(id) => self.scope.grant_id == Some(id),
             ScopeTarget::Membership {
                 project_id,
                 index_id,
@@ -523,35 +481,24 @@ impl State {
         );
         Ok(pending)
     }
-    /// A selection key requires its nonce to be live for this service; a
-    /// catalog key is unaffected.
+    /// A selection key requires its nonce to be live for this service.
     fn require_live(&self, scope: &ScopedReadRef) -> Result<()> {
-        if let Some(selection) = scope.selection {
-            ensure!(
-                selection.service_instance == self.service
-                    && self.live_selections.get(&selection.grant_nonce) == Some(&selection.owner),
-                ScopeReadRefused
-            );
-        }
+        let selection = scope.selection;
+        ensure!(
+            selection.service_instance == self.service
+                && self.live_selections.get(&selection.grant_nonce) == Some(&selection.owner),
+            ScopeReadRefused
+        );
         Ok(())
     }
-    /// Catalog and selection installations are bounded separately, so
-    /// neither can exhaust the other (§3.4, N6). The catalog bound is the
-    /// unchanged `MAX_SCOPES` over catalog entries.
-    fn has_capacity(&self, worker: WorkerIdentity, key: AuthorityKey, agent: bool) -> bool {
-        if !key.is_selection() {
-            return self
-                .installed
-                .keys()
-                .filter(|(_, key, _, _)| !key.is_selection())
-                .count()
-                < MAX_SCOPES;
-        }
-        // U105: agent and W4/A2 selections are counted apart.
+    /// Agent and W4/A2 selection installations are bounded separately, so
+    /// neither can exhaust the other (§3.4, N6, U105).
+    fn has_capacity(&self, worker: WorkerIdentity, agent: bool) -> bool {
         let selections = || {
-            self.installed.iter().filter(|((_, key, _, _), entry)| {
-                key.is_selection() && is_agent(&entry.scope) == agent
-            })
+            self.installed
+                .values()
+                .filter(|entry| is_agent(&entry.scope) == agent)
+                .map(|entry| ((), entry))
         };
         if agent {
             let (mut live, mut revoked) = (0, 0);
@@ -843,75 +790,6 @@ impl NativeCatalogAdmission {
         );
         Ok(())
     }
-    pub fn reserve_install(
-        &self,
-        issue: IssueTicket,
-        worker: WorkerIdentity,
-        authority: &ScopedReadAuthority,
-        expires: Instant,
-    ) -> Result<InstallTicket> {
-        self.reserve_lease(issue, worker, Candidate::catalog(authority)?, expires, None)
-    }
-    /// Native-only decision after the actor freshly ran the canonical builder.
-    /// An uncertain renewal is replayed with its original exact previous lease.
-    pub fn reserve_validated_scope(
-        &self,
-        issue: IssueTicket,
-        worker: WorkerIdentity,
-        authority: &ScopedReadAuthority,
-        expires: Instant,
-    ) -> Result<InstallTicket> {
-        let fingerprint = authority.fingerprint()?;
-        let previous = {
-            let state = self.0.lock().map_err(|_| ScopeReadRefused)?;
-            state.check_issue(issue)?;
-            state.worker(worker)?;
-            state
-                .installed
-                .get(&(
-                    worker.worker,
-                    AuthorityKey::Grant(authority.grant.id),
-                    authority.index_id,
-                    fingerprint,
-                ))
-                .and_then(|entry| {
-                    if entry.phase == Phase::Installing {
-                        entry.pending_previous
-                    } else if matches!(entry.phase, Phase::Installed | Phase::Expired)
-                        && entry.expires <= Instant::now()
-                    {
-                        Some(entry.scope)
-                    } else {
-                        None
-                    }
-                })
-        };
-        self.reserve_lease(
-            issue,
-            worker,
-            Candidate::catalog(authority)?,
-            expires,
-            previous,
-        )
-    }
-    /// Caller has freshly revalidated this immutable payload against the native
-    /// catalog. Expiry alone never authorizes renewal or clears logical revoke.
-    pub fn renew_expired_lease(
-        &self,
-        issue: IssueTicket,
-        worker: WorkerIdentity,
-        authority: &ScopedReadAuthority,
-        previous: ScopedReadRef,
-        expires: Instant,
-    ) -> Result<InstallTicket> {
-        self.reserve_lease(
-            issue,
-            worker,
-            Candidate::catalog(authority)?,
-            expires,
-            Some(previous),
-        )
-    }
     /// Native-only decision after the actor freshly built the selection
     /// authority at the selection's exact catalog revision (§3.2 step 4). An
     /// expired lease of the same live selection is renewed only here, after
@@ -1018,7 +896,6 @@ impl NativeCatalogAdmission {
         if let Some(existing) = state.installed.get(&key).cloned() {
             ensure!(
                 existing.worker == worker
-                    && existing.scope.grant_revision == scope.grant_revision
                     && existing.scope.selection == scope.selection
                     && existing.phase != Phase::Revoked,
                 ScopeReadRefused
@@ -1074,7 +951,7 @@ impl NativeCatalogAdmission {
             });
         }
         ensure!(
-            previous.is_none() && state.has_capacity(worker, authority_key, is_agent(&scope)),
+            previous.is_none() && state.has_capacity(worker, is_agent(&scope)),
             ScopeReadRefused
         );
         if state
@@ -1280,8 +1157,10 @@ impl NativeCatalogAdmission {
                     .chain(entry.pending_previous)
                     .map(move |scope| (*key, entry.worker, scope))
             })
-            .partition(|(_, _, scope)| scope.selection.is_some());
-        let targets: Vec<_> = targets
+            .partition(|_| true);
+        // Every installed scope is a selection scope (change-log entry 68
+        // part 3), so a durable plan names no scope target.
+        let targets: Vec<FenceTarget> = targets
             .into_iter()
             .map(|(_, worker, scope)| FenceTarget { worker, scope })
             .collect();
@@ -1330,9 +1209,8 @@ impl NativeCatalogAdmission {
         // scopes in memory now. Nothing here is persisted.
         let mut local_selection_revocations = Vec::new();
         for (entry_key, worker, scope) in selection_keys {
-            if let AuthorityKey::Selection(nonce) = entry_key.1 {
-                state.live_selections.remove(&nonce);
-            }
+            let AuthorityKey::Selection(nonce) = entry_key.1;
+            state.live_selections.remove(&nonce);
             if let Some(entry) = state.installed.get_mut(&entry_key) {
                 entry.phase = Phase::Revoked;
             }
@@ -2035,15 +1913,10 @@ impl NativeCatalogAdmission {
             return Ok(());
         }
         state.worker(worker)?;
-        let (grant_id, _) = scope.catalog_grant().ok_or(ScopeReadRefused)?;
+        let (key, _) = AuthorityKey::of(&scope)?;
         let entry = state
             .installed
-            .get_mut(&(
-                worker.worker,
-                AuthorityKey::Grant(grant_id),
-                scope.index_id,
-                scope.fingerprint,
-            ))
+            .get_mut(&(worker.worker, key, scope.index_id, scope.fingerprint))
             .ok_or(ScopeReadRefused)?;
         ensure!(
             entry.worker == worker
@@ -2160,7 +2033,6 @@ impl NativeCatalogAdmission {
     ) -> Result<bool> {
         let state = self.0.lock().map_err(|_| ScopeReadRefused)?;
         let (key, _) = AuthorityKey::of(&scope)?;
-        ensure!(key.is_selection(), ScopeReadRefused);
         match state
             .installed
             .get(&(worker.worker, key, scope.index_id, scope.fingerprint))
@@ -2187,7 +2059,6 @@ impl NativeCatalogAdmission {
     ) -> Result<()> {
         let mut state = self.0.lock().map_err(|_| ScopeReadRefused)?;
         let (key, _) = AuthorityKey::of(&scope)?;
-        ensure!(key.is_selection(), ScopeReadRefused);
         let entry_key = (worker.worker, key, scope.index_id, scope.fingerprint);
         if let Some(entry) = state.installed.get_mut(&entry_key) {
             ensure!(
@@ -2235,9 +2106,7 @@ impl NativeCatalogAdmission {
     /// Whether the selection of this installation was revoked while the
     /// installation was in flight: the exchange settled, but authority is gone.
     pub fn selection_install_revoked(&self, ticket: &InstallTicket) -> bool {
-        let Some(selection) = ticket.scope.selection else {
-            return false;
-        };
+        let selection = ticket.scope.selection;
         self.0.lock().is_ok_and(|state| {
             !state.live_selections.contains_key(&selection.grant_nonce)
                 && state
@@ -2473,8 +2342,8 @@ impl NativeCatalogAdmission {
         let mut workers = BTreeMap::new();
         let mut installed: BTreeMap<(Incarnation, AuthorityKey, IndexId, Sha256Digest), Installed> =
             BTreeMap::new();
-        let mut highwater = BTreeMap::new();
-        let mut lease_highwater = BTreeMap::new();
+        let highwater = BTreeMap::new();
+        let lease_highwater = BTreeMap::new();
         let mut provider_history = BTreeMap::new();
         let mut provider_in_process = BTreeMap::new();
         let mut provider_completed_authorizations = BTreeMap::new();
@@ -2506,62 +2375,8 @@ impl NativeCatalogAdmission {
                 }
             }
         }
-        for target in &intent.plan.targets {
-            if let Some(previous) = workers.insert(target.worker.worker, target.worker) {
-                ensure!(previous == target.worker, ScopeReadRefused);
-            }
-            // Persisted targets are catalog grants only; a `None` is refused.
-            let (grant_id, grant_revision) =
-                target.scope.catalog_grant().ok_or(ScopeReadRefused)?;
-            let grant_key = AuthorityKey::Grant(grant_id);
-            let family = (target.worker.worker, grant_key, target.scope.index_id);
-            highwater
-                .entry(family)
-                .and_modify(|revision: &mut CatalogRevision| {
-                    *revision = (*revision).max(grant_revision)
-                })
-                .or_insert(grant_revision);
-            lease_highwater
-                .entry(target.worker.worker)
-                .and_modify(|generation: &mut u64| {
-                    *generation = (*generation).max(target.scope.lease_generation)
-                })
-                .or_insert(target.scope.lease_generation);
-            let key = (
-                target.worker.worker,
-                grant_key,
-                target.scope.index_id,
-                target.scope.fingerprint,
-            );
-            if let Some(entry) = installed.get_mut(&key) {
-                ensure!(
-                    entry.worker == target.worker
-                        && entry.pending_previous.is_none()
-                        && entry.scope.grant_revision == target.scope.grant_revision,
-                    ScopeReadRefused
-                );
-                if target.scope.lease_generation > entry.scope.lease_generation {
-                    entry.pending_previous = Some(entry.scope);
-                    entry.scope = target.scope;
-                } else {
-                    entry.pending_previous = Some(target.scope);
-                }
-            } else {
-                installed.insert(
-                    key,
-                    Installed {
-                        worker: target.worker,
-                        scope: target.scope,
-                        projects: Vec::new(),
-                        expires: Instant::now(),
-                        nonce: 0,
-                        phase: Phase::Expired,
-                        pending_previous: None,
-                        current_revocation_acknowledged: false,
-                    },
-                );
-            }
-        }
+        // A durable plan names no scope target (change-log entry 68 part 3).
+        ensure!(intent.plan.targets.is_empty(), ScopeReadRefused);
         for entry in installed.values_mut() {
             if intent.confirmations.iter().any(|confirmation| {
                 confirmation.target

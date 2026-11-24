@@ -58,7 +58,7 @@ mod provider_restart_tests;
 mod worker_exit_capacity_tests;
 pub use catalog::{
     AdministrativeKey, CatalogControlHandle, NativeAdministrativeConnection,
-    NativeAdministrativeRead, NativeLegacyAuthoritySelection, ScopedConnectionDelivery,
+    NativeAdministrativeRead, ScopedConnectionDelivery,
 };
 pub type NativeCatalogCoordinator =
     airk_catalog_control::catalog_coordinator::CatalogCoordinator<CatalogControlHandle>;

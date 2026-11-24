@@ -715,7 +715,7 @@ impl CatalogGenesis {
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;
 
 #[cfg(test)]
 mod managed_tests;

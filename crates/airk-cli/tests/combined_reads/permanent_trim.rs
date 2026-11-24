@@ -3,12 +3,11 @@
 //! enclosing isolated process owner; no installed runtime or source is modified.
 use super::*;
 use airk_core::{
-    catalog_host::GrantDraftSelection,
     catalog_management::CatalogOperation,
     catalog_source_draft::{
         SourceMutationDraft, SourceMutationDraftSelection, SourceMutationSelection,
     },
-    index_catalog::PathScope,
+    index_catalog::{CatalogRevision, PathScope},
     service::{JobOutcome, RequestKey},
 };
 
@@ -189,7 +188,7 @@ fn policy_parity(label: &str, left: &Value, right: &Value) -> Result<()> {
 }
 
 /// U110: an MCP read names its indexes per call and no Project. Drop the
-/// combined-session selectors so the session's named scope applies.
+/// window-session selectors so the session's named scope applies.
 fn open_arguments(args: &Value) -> Value {
     let mut args = args.clone();
     if let Some(fields) = args.as_object_mut() {
@@ -268,54 +267,14 @@ async fn wait_policy(f: &Fixture) -> Result<airk_core::catalog_policy::PolicySna
     }
 }
 
-async fn renew_policy_grant(f: &mut Fixture, nonce: u8) -> Result<()> {
-    let response = airk_cli::service_runtime::request(
-        &f.control,
-        ControlMethod::CatalogGrantDraft {
-            context_key: f.session.context_key,
-            selection: GrantDraftSelection {
-                key: policy_key(f, nonce).await?,
-                expected_catalog_revision: policy_revision(f)?,
-                project_ids: vec![f.projects[2]],
-                index_ids: Some(vec![f.indexes[2]]),
-            },
-        },
-    )
-    .await?;
-    let ControlResponse::CatalogGrantDraft { draft } = response else {
-        anyhow::bail!(
-            "policy-qualified grant review refused: {}",
-            serde_json::to_string(&response)?
-        );
+/// Read the policy Index (Project 2, Index 2) after a policy change. Reads go
+/// through a window granted at the service's current catalog revision, so the
+/// session names only the membership atoms.
+fn select_policy_index(f: &mut Fixture) {
+    f.session = SessionScope {
+        project_ids: vec![f.projects[2]],
+        index_ids: Some(vec![f.indexes[2]]),
     };
-    let CatalogOperation::CreateGrant { grant } = &draft.request.operation else {
-        anyhow::bail!("native grant review omitted its operation");
-    };
-    let grant = grant.clone();
-    assert!(
-        grant
-            .memberships
-            .iter()
-            .all(|member| member.policy_epoch > 0 && member.policy_digest.is_some())
-    );
-    let response = airk_cli::service_runtime::request(
-        &f.control,
-        ControlMethod::CatalogApply {
-            request: draft.request,
-            preview_digest: draft.preview_digest,
-        },
-    )
-    .await?;
-    let ControlResponse::CatalogApplied { receipt, .. } = response else {
-        anyhow::bail!(
-            "policy-qualified grant apply refused: {}",
-            serde_json::to_string(&response)?
-        );
-    };
-    f.session.grant_id = grant.id;
-    f.session.expected_grant_revision = grant.revision;
-    f.session.expected_catalog_revision = receipt.catalog_revision;
-    Ok(())
 }
 
 fn trim_selector() -> SourceMutationSelection {
@@ -561,7 +520,7 @@ async fn permanent_trim_fences_retained_grants_and_preserves_native_cli_mcp_resu
     )?
     .index()?;
     let service = f.start().await?;
-    let backend = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
+    let backend = f.resolve(&f.session).await?;
     let mut old_mcp = McpSession::start(&f)?;
     let query = json!({"query":"hiddenneedle","mode":"lexical","limit":16,"max_bytes":8192,"verification":"off","response_mode":"full"});
     let before = native_read(backend.as_ref(), "airk_search", &query).await?;
@@ -642,14 +601,10 @@ async fn permanent_trim_fences_retained_grants_and_preserves_native_cli_mcp_resu
     backend.close();
     backend.shutdown().await?;
     drop(old_mcp);
-    assert!(
-        airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session)
-            .await
-            .is_err(),
-        "unchanged epoch-zero grant was silently renewed"
-    );
-    renew_policy_grant(&mut f, 82).await?;
-    let backend = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
+    // A new read takes a new window grant at the current revision (there is
+    // no retained catalog grant to renew).
+    select_policy_index(&mut f);
+    let backend = f.resolve(&f.session).await?;
     let mut mcp = McpSession::start(&f)?;
     let allowed_args = json!({"path":"api/types.rs","start_line":1,"end_line":2,"max_bytes":4096,"verification":"off","response_mode":"full"});
     let native = native_read(backend.as_ref(), "airk_read_file", &allowed_args).await?;
@@ -846,7 +801,7 @@ async fn permanent_trim_fences_retained_grants_and_preserves_native_cli_mcp_resu
     );
     drop(kernel);
     let restarted = f.start().await?;
-    let backend = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
+    let backend = f.resolve(&f.session).await?;
     let result = native_read(
         backend.as_ref(),
         "airk_list_files",
@@ -868,8 +823,8 @@ async fn permanent_trim_fences_retained_grants_and_preserves_native_cli_mcp_resu
     let unblocked = wait_policy(&f).await?;
     assert!(unblocked.policy.denies.is_empty());
     assert!(unblocked.policy.epoch > snapshot.policy.epoch);
-    renew_policy_grant(&mut f, 84).await?;
-    let backend = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
+    select_policy_index(&mut f);
+    let backend = f.resolve(&f.session).await?;
     let before_reindex = native_read(
         backend.as_ref(),
         "airk_list_files",
@@ -923,7 +878,7 @@ async fn permanent_trim_fences_retained_grants_and_preserves_native_cli_mcp_resu
     );
     drop(kernel);
     let _reopened = f.start().await?;
-    let backend = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
+    let backend = f.resolve(&f.session).await?;
     let restored = native_read(backend.as_ref(), "airk_search", &query).await?;
     assert!(
         serde_json::to_string(&restored)?.contains("P9_BLOCKED_SENTINEL"),
@@ -1056,9 +1011,8 @@ async fn permanent_trim_quota_failure_supports_exact_resume_or_retirement() -> R
                     .state,
                 airk_core::service::JobState::Failed
             );
-            renew_policy_grant(&mut f, 95).await?;
-            let backend =
-                airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
+            select_policy_index(&mut f);
+            let backend = f.resolve(&f.session).await?;
             let allowed=native_read(backend.as_ref(),"airk_read_file",&json!({"path":"api/policy.md","start_line":1,"end_line":2,"max_bytes":8192,"verification":"off"})).await?;
             assert!(
                 serde_json::to_string(&allowed)?.contains("Original isolated source."),
@@ -1197,14 +1151,21 @@ async fn permanent_trim_keeps_allowed_occurrences_of_a_shared_native_vector() ->
     fixture_install_model(&f, 2, &model).await?;
     fixture_job(&f, 2, JobKind::Index).await?;
     fixture_job(&f, 2, JobKind::Vectors).await?;
-    let backend = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
+    let backend = f.resolve(&f.session).await?;
     let query = json!({"query":"sharedtrimneedle","mode":"vector","project_ids":[f.projects[2]],"index_ids":[f.indexes[2]],"limit":16,"max_bytes":16384,"verification":"off","response_mode":"full","member_availability":"require"});
     let before = native_read(backend.as_ref(), "airk_search", &query).await?;
     ensure!(
         before["isError"] != true,
         "native shared vector setup failed: {before}"
     );
-    let before = body(&before)?;
+    let before = body(&before).with_context(|| {
+        format!(
+            "pre-trim shared vector read; complete reply: {}",
+            save_replies("pre-trim shared vector", &before)
+                .map(|path| path.display().to_string())
+                .unwrap_or_default()
+        )
+    })?;
     let member = member_body(&before, &before["members"][0])?;
     let paths = |member: &Value| -> Result<Vec<String>> {
         Ok(member["hits"]
@@ -1228,14 +1189,14 @@ async fn permanent_trim_keeps_allowed_occurrences_of_a_shared_native_vector() ->
     wait_policy(&f).await?;
     backend.close();
     backend.shutdown().await?;
-    renew_policy_grant(&mut f, 92).await?;
-    let backend = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
+    select_policy_index(&mut f);
+    let backend = f.resolve(&f.session).await?;
     let after = native_read(backend.as_ref(), "airk_search", &query).await?;
     ensure!(
         after["isError"] != true,
         "trim lost shared native vector: {after}"
     );
-    let logical = body(&after)?;
+    let logical = body(&after).context("post-trim shared vector read")?;
     let member = member_body(&logical, &logical["members"][0])?;
     let after_paths = paths(&member)?;
     assert!(

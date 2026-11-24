@@ -5,8 +5,7 @@ use airk_core::{
     combined_reads::{MemberAvailability, QuerySelection},
     identity::Incarnation,
     index_catalog::{
-        CatalogRevision, GrantId, GrantedMembership, Membership, PathScope, QueryProjectId,
-        ReviewedGrant, ScopeAtom,
+        CatalogRevision, GrantedMembership, Membership, PathScope, QueryProjectId, ScopeAtom,
     },
 };
 
@@ -212,38 +211,40 @@ fn revision(n: u64) -> RevisionEnvelope {
         },
     )
 }
+/// The window selection a composed read was admitted under.
+fn window() -> airk_core::scoped_reads::ScopeSelectionObservation {
+    airk_core::scoped_reads::ScopeSelectionObservation {
+        owner: airk_core::scoped_reads::SelectionOwnerKind::Window,
+        scope_identity: Sha256Digest::from_bytes([0x0c; 32]),
+        catalog_revision: CatalogRevision::try_from(5_u64).unwrap(),
+    }
+}
 fn request() -> Result<CompositionRequest> {
-    let grant = ReviewedGrant {
-        id: GrantId::from_identity(Incarnation::from_bytes([1; 16])),
-        host: Sha256Digest::from_bytes([1; 32]),
-        revision: CatalogRevision::INITIAL,
-        revoked: false,
-        memberships: [(1, 1, "api"), (2, 1, "impl"), (1, 2, "api")]
-            .into_iter()
-            .map(|(p, i, path)| GrantedMembership {
-                membership: Membership {
-                    project_id: project(p),
-                    index_id: index(i),
-                    revision: CatalogRevision::INITIAL,
-                    scope: vec![ScopeAtom {
-                        source_root_id: root(1),
-                        kind: PathScope::Subtree,
-                        path: path.into(),
-                    }],
-                },
-                source_revision: CatalogRevision::INITIAL,
-                policy_epoch: 0,
-                policy_digest: None,
-            })
-            .collect(),
-    };
+    let grant: Vec<GrantedMembership> = [(1, 1, "api"), (2, 1, "impl"), (1, 2, "api")]
+        .into_iter()
+        .map(|(p, i, path)| GrantedMembership {
+            membership: Membership {
+                project_id: project(p),
+                index_id: index(i),
+                revision: CatalogRevision::INITIAL,
+                scope: vec![ScopeAtom {
+                    source_root_id: root(1),
+                    kind: PathScope::Subtree,
+                    path: path.into(),
+                }],
+            },
+            source_revision: CatalogRevision::INITIAL,
+            policy_epoch: 0,
+            policy_digest: None,
+        })
+        .collect();
     Ok(CompositionRequest {
         selection: QuerySelection {
             project_ids: vec![project(1), project(2)],
             index_ids: None,
             member_availability: MemberAvailability::Report,
         }
-        .resolve(&grant)?,
+        .resolve_selection(&grant, window())?,
         budgets: SharedBudgets {
             limit: 4,
             max_bytes: 8192,
@@ -651,28 +652,19 @@ fn exhausted_cursor_members_retain_exact_native_observations_without_false_parti
 fn thirty_two_selected_indexes_with_one_result_fit_the_unchanged_native_frame() -> Result<()> {
     let mut request = request()?;
     let first = request.selection.members[0].memberships[0].clone();
-    let grant = ReviewedGrant {
-        id: request.selection.grant_id.expect("catalog-grant fixture"),
-        host: Sha256Digest::from_bytes([1; 32]),
-        revision: request
-            .selection
-            .grant_revision
-            .expect("catalog-grant fixture"),
-        revoked: false,
-        memberships: (1..=32)
-            .map(|n| {
-                let mut member = first.clone();
-                member.membership.index_id = index(n);
-                member
-            })
-            .collect(),
-    };
+    let grant: Vec<GrantedMembership> = (1..=32)
+        .map(|n| {
+            let mut member = first.clone();
+            member.membership.index_id = index(n);
+            member
+        })
+        .collect();
     request.selection = QuerySelection {
         project_ids: vec![project(1)],
         index_ids: None,
         member_availability: MemberAvailability::Report,
     }
-    .resolve(&grant)?;
+    .resolve_selection(&grant, window())?;
     request.budgets.limit = 1;
     let original = input(1, vec![hit("api/one.rs", "one")])?;
     let body = original.result.clone();
@@ -764,28 +756,19 @@ fn capability_common_fields_roundtrip_one_two_and_thirty_two_complete_members() 
     for count in [1_u8, 2, 32] {
         let mut request = request()?;
         let first = request.selection.members[0].memberships[0].clone();
-        let grant = ReviewedGrant {
-            id: request.selection.grant_id.expect("catalog-grant fixture"),
-            host: Sha256Digest::from_bytes([1; 32]),
-            revision: request
-                .selection
-                .grant_revision
-                .expect("catalog-grant fixture"),
-            revoked: false,
-            memberships: (1..=count)
-                .map(|n| {
-                    let mut member = first.clone();
-                    member.membership.index_id = index(n);
-                    member
-                })
-                .collect(),
-        };
+        let grant: Vec<GrantedMembership> = (1..=count)
+            .map(|n| {
+                let mut member = first.clone();
+                member.membership.index_id = index(n);
+                member
+            })
+            .collect();
         request.selection = QuerySelection {
             project_ids: vec![project(1)],
             index_ids: None,
             member_availability: MemberAvailability::Report,
         }
-        .resolve(&grant)?;
+        .resolve_selection(&grant, window())?;
         request.budgets.limit = count as usize;
         let bodies=(1..=count).map(|n|json!({"workbench":{"operations":["search","symbols"],"documentation":"x".repeat(3000)},
             "adapters":[{"id":"rust"}],"history":{"supported":false},"request_admission":{"limit":16},
@@ -892,22 +875,13 @@ fn thirty_two_full_native_shaped_search_members_fit_and_materialize_without_drop
         member.membership.project_id = project(2);
         memberships.push(member);
     }
-    let grant = ReviewedGrant {
-        id: request.selection.grant_id.expect("catalog-grant fixture"),
-        host: Sha256Digest::from_bytes([1; 32]),
-        revision: request
-            .selection
-            .grant_revision
-            .expect("catalog-grant fixture"),
-        revoked: false,
-        memberships,
-    };
+    let grant = memberships;
     request.selection = QuerySelection {
         project_ids: vec![project(1), project(2)],
         index_ids: None,
         member_availability: MemberAvailability::Report,
     }
-    .resolve(&grant)?;
+    .resolve_selection(&grant, window())?;
     request.budgets.limit = 32;
     request.budgets.max_bytes = 2048;
     let mut originals = Vec::new();
@@ -920,8 +894,8 @@ fn thirty_two_full_native_shaped_search_members_fit_and_materialize_without_drop
             "request_id":format!("{n:032x}"),"execution":{"version":1,"requested_mode":"lexical","served_mode":"lexical","incomplete":false},
             "freshness":{"completed_watermark":null,"error":"scoped_freshness_unavailable","last_success_unix_ms":null,"live_source_verified":false,
                 "observed_unix_ms":1793838000000_u64+u64::from(n),"requested_watermark":null,"running_watermark":null,"state":"unavailable"},
-            "scope_observation":{"schema":1,"qualifier":"selected_subset","fingerprint":format!("{n:064x}"),"provenance":"user_reviewed_project_grant",
-                "grant":{"id":grant.id,"revision":grant.revision},"members":[{"index_id":index(n),
+            "scope_observation":{"schema":1,"qualifier":"selected_subset","fingerprint":format!("{n:064x}"),"selection":window(),
+                "members":[{"index_id":index(n),
                     "memberships":selected.memberships.iter().map(|member|json!({"membership_revision":member.membership.revision,"project_id":member.membership.project_id})).collect::<Vec<_>>(),
                     "policy_digest":null,"policy_epoch":0,"source_revision":1,"source_root_ids":[root(1)]}]},
             "hits":[hit("api/policy.md","# Original boundary\nKeep the saved source scope.\n")],"truncated":false});

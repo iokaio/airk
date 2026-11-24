@@ -31,7 +31,7 @@ import { dataLocationOf, dataRootChoice } from './dataRootDefault';
 import { ProgressPanel } from './progress';
 import { ConcurrencyNote, useQueryConcurrency } from './concurrencyNote';
 import { concurrencyNote, setSizeAfterAdd } from './scopeConcurrency';
-import { Confirm, Field, JsonBlock, list, Outcome, Panel, resultOf, Text, useCall, type CallState } from './render';
+import { Confirm, Field, JsonBlock, Outcome, Panel, resultOf, Text, useCall, type CallState } from './render';
 
 // ---------------------------------------------------------------------------
 // Result helpers. Native results are read defensively and always also shown
@@ -203,21 +203,6 @@ function describe(item: Item): Described {
           `index ${text(v.index_id)}`,
         ],
       };
-    case 'grant': {
-      const grant = rec(v.grant);
-      return {
-        id: text(grant?.id),
-        name: '',
-        retired: grant?.revoked === true,
-        facts: [
-          grant?.revoked === true ? 'revoked' : 'active',
-          `revision ${text(grant?.revision)}`,
-          `host ${text(grant?.host)}`,
-          `${arr(grant?.memberships).length} memberships`,
-          `provenance ${text(v.provenance)}`,
-        ],
-      };
-    }
     default:
       return { id: text(v.id), name: text(v.name ?? ''), retired: false, facts: [text(v)] };
   }
@@ -528,7 +513,7 @@ function ApplyCatalog(props: {
 
 /**
  * One reviewed catalog change. `makeDraft` returns the generate-row method body
- * (catalog.preview, catalog.source_draft or catalog.grant_draft), or null when
+ * (catalog.preview or catalog.source_draft), or null when
  * the form is incomplete; `extract` finds the request and preview digest the
  * apply must repeat.
  */
@@ -589,7 +574,7 @@ function fromPreview(result: Rec, sent: unknown): Staged | null {
   return request !== undefined && digest !== null ? { request, previewDigest: digest } : null;
 }
 
-/** catalog.source_draft / catalog.grant_draft: the draft's request (identity removed) and digest. */
+/** catalog.source_draft: the draft's request (identity removed) and digest. */
 function fromDraft(result: Rec): Staged | null {
   const draft = rec(result.draft);
   const digest = str(draft?.preview_digest);
@@ -1752,7 +1737,7 @@ function RetireIndex(props: { index: Rec; revision: number; onApplied: () => voi
   return (
     <>
       <p>
-        Retiring keeps the index's history as a tombstone and removes it from every index set and grant. Read the
+        Retiring keeps the index's history as a tombstone and removes it from every index set. Read the
         retirement evidence first.
       </p>
       <div class="row">
@@ -2226,85 +2211,6 @@ function IndexDetail(props: {
 }
 
 // ---------------------------------------------------------------------------
-// Grants.
-
-function Grants(props: { revision: number | null; reload: number; onRevision: (r: number) => void; onChanged: () => void }): JSX.Element {
-  const [contextKey, setContextKey] = useState('');
-  const [projectIds, setProjectIds] = useState('');
-  const [indexIds, setIndexIds] = useState('');
-  const projects = list(projectIds);
-  const indexes = list(indexIds);
-  const valid =
-    isDigest(contextKey) &&
-    projects.length > 0 &&
-    projects.every((id) => isCatalogId('prj_', id)) &&
-    indexes.every((id) => isCatalogId('idx_', id));
-  return (
-    <>
-      <CatalogList
-        kind="grants"
-        reload={props.reload}
-        onRevision={props.onRevision}
-        empty="No grants."
-        actions={(item) => {
-          const grant = rec(item.value.grant);
-          const id = text(grant?.id);
-          if (grant === null || grant.revoked === true) return null;
-          return (
-            <details>
-              <summary>Revoke</summary>
-              <ReviewedChange
-                reviewLabel="Review revocation"
-                draftOperation={OPS.catalogPreview}
-                makeDraft={() =>
-                  previewOf(props.revision, { operation: 'revoke_grant', id, expected_revision: num(grant.revision) })
-                }
-                extract={fromPreview}
-                confirm={id}
-                applyLabel="Revoke grant"
-                onApplied={props.onChanged}
-              />
-            </details>
-          );
-        }}
-      />
-      <h3>Draft a grant</h3>
-      <p class="muted">
-        A grant lets one agent context read the chosen index sets. The service builds the complete grant; nothing
-        is issued until you apply it.
-      </p>
-      <div class="row">
-        <Field
-          label="Context key (64 hex)"
-          wide
-          value={contextKey}
-          invalid={contextKey !== '' && !isDigest(contextKey)}
-          onInput={setContextKey}
-        />
-      </div>
-      <div class="row">
-        <Field label="Index set ids" wide value={projectIds} placeholder="prj_…" onInput={setProjectIds} />
-        <Field label="Index ids (optional)" wide value={indexIds} placeholder="idx_…" onInput={setIndexIds} />
-      </div>
-      <ReviewedChange
-        reviewLabel="Review grant"
-        disabled={!valid || props.revision === null}
-        draftOperation={OPS.catalogGrantDraft}
-        makeDraft={() =>
-          props.revision === null
-            ? null
-            : body.grantDraft(contextKey, props.revision, projects, indexes.length > 0 ? indexes : null)
-        }
-        extract={(result) => fromDraft(result)}
-        confirm={null}
-        applyLabel="Create grant"
-        onApplied={props.onChanged}
-      />
-    </>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // The page.
 
 export function IndexLibrary(props: { params: URLSearchParams; seq: number; onActivity: () => void }): JSX.Element {
@@ -2319,7 +2225,7 @@ export function IndexLibrary(props: { params: URLSearchParams; seq: number; onAc
   const indexItems = indexRows?.session === session && indexRows.namespace === namespace ? indexRows.items : [];
   const [openIndex, setOpenIndex] = useState<string | null>(null);
   const [openSet, setOpenSet] = useState<string | null>(null);
-  const [view, setView] = useState<'indexes' | 'create' | 'sets' | 'grants'>(() => props.params.has('root') ? 'create' : props.params.has('set') ? 'sets' : 'indexes');
+  const [view, setView] = useState<'indexes' | 'create' | 'sets'>(() => props.params.has('root') ? 'create' : props.params.has('set') ? 'sets' : 'indexes');
   const concurrency = useQueryConcurrency();
 
   useEffect(() => {
@@ -2346,7 +2252,7 @@ export function IndexLibrary(props: { params: URLSearchParams; seq: number; onAc
   return (
     <>
       <div class="actions" aria-label="Index library views">
-        {([['indexes', 'Indexes'], ['create', 'Create an index'], ['sets', 'Index sets'], ['grants', 'Access grants']] as const).map(([id, label]) =>
+        {([['indexes', 'Indexes'], ['create', 'Create an index'], ['sets', 'Index sets']] as const).map(([id, label]) =>
           <button type="button" class={view === id ? '' : 'secondary'} aria-pressed={view === id} onClick={() => setView(id)}>{label}</button>)}
       </div>
       <div hidden={view !== 'indexes'}>
@@ -2424,11 +2330,6 @@ export function IndexLibrary(props: { params: URLSearchParams; seq: number; onAc
           />
         </>
       ) : null}
-      </div>
-      <div hidden={view !== 'grants'}>
-      <Panel title="Grants">
-        <Grants revision={revision} reload={reload} onRevision={onRevision} onChanged={refresh} />
-      </Panel>
       </div>
     </>
   );

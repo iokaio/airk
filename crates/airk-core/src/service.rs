@@ -66,79 +66,12 @@ pub enum CatalogOutcomeObservation {
     },
 }
 
-/// An explicit selection within a persisted native-reviewed grant. Host/caller
-/// identity and backing registration are derived by the native owner.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ScopedConnectRequest {
-    pub schema: u32,
-    pub context_key: Sha256Digest,
-    pub namespace: Incarnation,
-    pub expected_catalog_revision: crate::index_catalog::CatalogRevision,
-    pub grant_id: crate::index_catalog::GrantId,
-    pub expected_grant_revision: crate::index_catalog::CatalogRevision,
-    pub index_id: crate::index_catalog::IndexId,
-    pub project_ids: Vec<crate::index_catalog::QueryProjectId>,
-}
-impl ScopedConnectRequest {
-    pub fn validate(&self) -> Result<()> {
-        ensure!(
-            self.schema == 1 && !self.project_ids.is_empty(),
-            crate::scoped_reads::ScopeReadRefused
-        );
-        crate::index_catalog::unique_bounded(
-            &self.project_ids,
-            crate::index_catalog::MAX_SELECTION,
-        )?;
-        crate::index_catalog::encoded_size(self, 4096)?;
-        Ok(())
-    }
-}
-
-/// Frozen Project selection inside one native-reviewed grant. This is inert
-/// connection configuration, not a credential and not a new IPC grant shape.
-/// Every selected index still uses the protected scoped connection protocol.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CombinedConnectRequest {
-    pub schema: u32,
-    pub context_key: Sha256Digest,
-    pub namespace: Incarnation,
-    pub expected_catalog_revision: crate::index_catalog::CatalogRevision,
-    pub grant_id: crate::index_catalog::GrantId,
-    pub expected_grant_revision: crate::index_catalog::CatalogRevision,
-    pub project_ids: Vec<crate::index_catalog::QueryProjectId>,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "combined_present"
-    )]
-    pub index_ids: Option<Vec<crate::index_catalog::IndexId>>,
-}
-
 fn combined_present<'de, D, T>(deserializer: D) -> std::result::Result<Option<T>, D::Error>
 where
     D: serde::Deserializer<'de>,
     T: Deserialize<'de>,
 {
     T::deserialize(deserializer).map(Some)
-}
-
-impl CombinedConnectRequest {
-    pub fn selection(&self) -> crate::combined_reads::QuerySelection {
-        crate::combined_reads::QuerySelection {
-            project_ids: self.project_ids.clone(),
-            index_ids: self.index_ids.clone(),
-            member_availability: crate::combined_reads::MemberAvailability::Report,
-        }
-    }
-
-    pub fn validate(&self) -> Result<()> {
-        ensure!(self.schema == 1, crate::scoped_reads::ScopeReadRefused);
-        self.selection().validate()?;
-        crate::index_catalog::encoded_size(self, 4096)?;
-        Ok(())
-    }
 }
 
 /// One authenticated native delivery observation for a prepared combined reply.
@@ -243,18 +176,6 @@ pub enum ControlMethod {
     },
     /// Owner-authenticated local discovery; never an anonymous HTTP endpoint.
     HttpEndpoint,
-    /// Validate a prepared combined reply against the live native admission
-    /// gate. No source, worker election, grant issuance or query replay occurs.
-    ValidateCombinedDelivery {
-        selection: CombinedConnectRequest,
-        query_selection: crate::combined_reads::QuerySelection,
-        scope_identity: Sha256Digest,
-        result_digest: Sha256Digest,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        context_bindings: Vec<crate::context_records::ContextDeliveryBinding>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        read_attempt: Option<crate::read_attempt::ReadAttemptBudget>,
-    },
     /// Native administrative read. Runtime consumes its worker credential;
     /// this route never returns a reusable evidence connection.
     NativeRead {
@@ -262,9 +183,6 @@ pub enum ControlMethod {
         request: crate::native_reads::NativeRead,
         #[serde(default = "unknown_client")]
         usage_client: crate::usage::ClientFamily,
-    },
-    ConnectScoped {
-        request: ScopedConnectRequest,
     },
     /// Administrative metadata only; no evidence admission or implicit activation.
     CatalogPage {
@@ -287,11 +205,6 @@ pub enum ControlMethod {
     CatalogLegacyBinding {
         project: ProjectBinding,
         expected_catalog_revision: Option<crate::index_catalog::CatalogRevision>,
-    },
-    /// Prepare an inert, complete reviewed grant; never installs or issues it.
-    CatalogGrantDraft {
-        context_key: Sha256Digest,
-        selection: crate::catalog_host::GrantDraftSelection,
     },
     CatalogSourceMutationDraft {
         selection: crate::catalog_source_draft::SourceMutationDraftSelection,
@@ -456,11 +369,6 @@ pub enum ControlMethod {
     ConfigurationResult {
         id: Sha256Digest,
     },
-    /// Complete exact-key historical refresh proof; never starts or retries work.
-    ReferenceRefreshReceipt {
-        caller: Incarnation,
-        key: RequestKey,
-    },
     Enqueue {
         project: ProjectBinding,
         caller: Incarnation,
@@ -525,14 +433,6 @@ pub enum ControlMethod {
     /// read without a project. Response budget [`MAX_TOOLS_CATALOG_RESPONSE_BYTES`].
     ToolsCatalog {
         detail: ToolsCatalogDetail,
-        /// `--combined-session`: the catalog of that reviewed session, served
-        /// after the session resolves. Absent for the unified catalog.
-        #[serde(
-            default,
-            skip_serializing_if = "Option::is_none",
-            deserialize_with = "combined_present"
-        )]
-        combined: Option<Box<CombinedConnectRequest>>,
     },
     /// M3: run one unified tool for a selected project and return its complete
     /// envelope. The service runs the pre-split CLI call path unchanged.
@@ -677,11 +577,9 @@ pub enum ControlMethod {
     },
     /// N1 (split step 3c.5c; amended from per-page reads): one complete
     /// settings or usage document, paged and reassembled in the service by
-    /// the CLI's own reader, for the project or a reviewed catalog session.
+    /// the CLI's own reader, for the project.
     UsageDocument {
         project: ProjectBinding,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        catalog: Option<ScopedConnectRequest>,
         read: UsageDocumentRead,
     },
     /// M10 (split step 3c.5d): the model catalog report `model-catalog`
@@ -778,13 +676,10 @@ impl ControlMethod {
         // The console never receives an evidence bearer credential. Evidence
         // brokerage remains on the dedicated scoped read transports.
         match method {
-            Self::ValidateCombinedDelivery {context_bindings,..} if !context_bindings.is_empty()=> {
-                return Some("console_private_setup_forbidden");
-            }
             Self::Arbiter { .. } | Self::ArbiterDeviceRead { .. } | Self::ArbiterApplication { .. } | Self::ArbiterNextRead { .. } | Self::ArbiterContextAction { .. } | Self::ArbiterFocusApplication { .. } | Self::ArbiterFocusRank { .. } | Self::ArbiterCardModel { .. } | Self::ArbiterScoreCards { .. } | Self::ArbiterFocusBatch { .. } | Self::ArbiterImport { .. } | Self::ArbiterImportDevice { .. } => {
                 return Some("console_private_setup_forbidden");
             }
-            Self::Connect { .. } | Self::ConnectScoped { .. } => {
+            Self::Connect { .. } => {
                 return Some("console_brokerage_forbidden");
             }
             Self::AdminNativeOpen { .. }
@@ -844,14 +739,12 @@ impl ControlMethod {
             // Exhaustive review: a new service method must be considered here before
             // a trusted console can expose it. No default credential-bearing path.
             Self::HttpEndpoint
-            | Self::ValidateCombinedDelivery { .. }
             | Self::NativeRead { .. }
             | Self::CatalogPage { .. }
             | Self::CatalogDetail { .. }
             | Self::CatalogContext { .. }
             | Self::CatalogHostContext { .. }
             | Self::CatalogLegacyBinding { .. }
-            | Self::CatalogGrantDraft { .. }
             | Self::CatalogSourceMutationDraft { .. }
             | Self::CatalogSourceChangeObservation { .. }
             | Self::CatalogPendingSourceChange { .. }
@@ -895,7 +788,6 @@ impl ControlMethod {
             | Self::ConfigureWatch { .. }
             | Self::ConfigureProject { .. }
             | Self::ConfigurationResult { .. }
-            | Self::ReferenceRefreshReceipt { .. }
             | Self::Enqueue { .. }
             | Self::Job { .. }
             | Self::Retry { .. }
@@ -1065,11 +957,6 @@ pub enum ResolveTarget {
         data_root: String,
         collection: String,
     },
-    /// The ready index a reviewed catalog session names (split step 3c.4c),
-    /// as the CLI resolved it before connecting: the index's backing project.
-    Catalog {
-        request: ScopedConnectRequest,
-    },
 }
 
 /// The project an M3 call reads, as the pre-split CLI selected it.
@@ -1082,8 +969,6 @@ pub enum ToolSelection {
     Unselected,
     /// `--service-project <binding>`: a registered project.
     Project { binding: ProjectBinding },
-    /// `--catalog-session <request>`: an exact reviewed catalog grant.
-    Catalog { request: ScopedConnectRequest },
     /// The window's W4 scope grant (split step 3f), named by the session.
     Window {
         window_id: Incarnation,
@@ -1093,32 +978,6 @@ pub enum ToolSelection {
     /// resolves it, from the session the request was admitted under; on the
     /// pipe there is no admin session (`admin_scope_not_granted`).
     Admin,
-    /// `--combined-session <request>` with its narrowing defaults, which the
-    /// service adds to the arguments (a conflicting argument is refused).
-    Combined {
-        request: CombinedConnectRequest,
-        /// `--project-ids`.
-        #[serde(
-            default,
-            skip_serializing_if = "Option::is_none",
-            deserialize_with = "combined_present"
-        )]
-        project_ids: Option<Vec<crate::index_catalog::QueryProjectId>>,
-        /// `--index-ids`; requires `project_ids`.
-        #[serde(
-            default,
-            skip_serializing_if = "Option::is_none",
-            deserialize_with = "combined_present"
-        )]
-        index_ids: Option<Vec<crate::index_catalog::IndexId>>,
-        /// `--member-availability`; requires `project_ids`.
-        #[serde(
-            default,
-            skip_serializing_if = "Option::is_none",
-            deserialize_with = "combined_present"
-        )]
-        member_availability: Option<crate::combined_reads::MemberAvailability>,
-    },
     /// U105: an open agent read. `index_ids`/`index_set_ids` are ids or exact names
     /// (union, at most [`crate::index_catalog::MAX_SELECTION`] each); both
     /// empty reads the workspace default.
@@ -1169,12 +1028,7 @@ impl ToolSelection {
                 crate::index_catalog::encoded_size(self, MAX_OPEN_SELECTION_BYTES)?;
                 Ok(())
             }
-            Self::Unselected
-            | Self::Project { .. }
-            | Self::Catalog { .. }
-            | Self::Window { .. }
-            | Self::Admin
-            | Self::Combined { .. } => Ok(()),
+            Self::Unselected | Self::Project { .. } | Self::Window { .. } | Self::Admin => Ok(()),
         }
     }
 }
@@ -1428,22 +1282,6 @@ pub enum ControlResponse {
     HttpEndpoint {
         endpoint: Option<Box<crate::service_http::EndpointDescriptor>>,
     },
-    ReferenceRefreshReviewRequired {
-        project: ProjectBinding,
-        caller: Incarnation,
-        key: RequestKey,
-        request: Box<crate::service_configuration::ConfigurationRequest>,
-        review: crate::catalog_refresh::RefreshReviewRequired,
-    },
-    ReferenceRefreshReceipt {
-        job: Option<JobRecord>,
-        configuration: Option<crate::service_configuration::ConfigurationWork>,
-        result: Option<serde_json::Value>,
-        expired: bool,
-    },
-    CombinedDeliveryValidated {
-        receipt: CombinedDeliveryReceipt,
-    },
     SourceChangeBusy {
         code: String,
         busy: crate::catalog_source_change::SourceChangeBusy,
@@ -1473,9 +1311,6 @@ pub enum ControlResponse {
     },
     CatalogLegacyBinding {
         observation: crate::catalog_host::NativeLegacyBindingObservation,
-    },
-    CatalogGrantDraft {
-        draft: crate::catalog_host::ReviewedGrantDraft,
     },
     CatalogSourceMutationDraft {
         draft: crate::catalog_source_draft::SourceMutationDraft,

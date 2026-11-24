@@ -13,10 +13,6 @@ mod permanent_trim;
 mod changes_verification;
 
 #[cfg(feature = "local-inference")]
-#[path = "combined_reads/reference_refresh.rs"]
-mod reference_refresh;
-
-#[cfg(feature = "local-inference")]
 #[path = "combined_reads/retention.rs"]
 mod retention;
 #[path = "combined_reads/split.rs"]
@@ -24,14 +20,12 @@ mod split;
 
 use airk_core::{
     identity::{Incarnation, Sha256Digest, framed_digest},
-    index_catalog::{CatalogRevision, GrantId, IndexId, QueryProjectId, SourceRootId},
-    service::{
-        CombinedConnectRequest, ControlMethod, ControlResponse, ProjectRegistration,
-        ScopedConnectRequest,
-    },
+    index_catalog::{IndexId, QueryProjectId, SourceRootId},
+    service::{ControlMethod, ControlResponse, ProjectRegistration},
 };
 use airk_store::service::{ProjectLease, registry::ServiceRegistry};
 use anyhow::{Context, Result, ensure};
+use common::pipe;
 use rusqlite::{Connection, params};
 use serde_json::{Value, json};
 use std::{
@@ -136,11 +130,142 @@ impl Drop for OwnedProcess {
     }
 }
 
+/// The membership atoms a fixture session reads: its Projects and, when
+/// named, an explicit subset of their Indexes (else every Index those
+/// Projects hold). Reads under it go through a window selection (W1/W4) over
+/// exactly these atoms, granted at the service's current catalog revision.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SessionScope {
+    project_ids: Vec<QueryProjectId>,
+    index_ids: Option<Vec<IndexId>>,
+}
+
+/// A catalog session always read through its combined owner: its selectors
+/// were the session's defaults. A window read of one Index that names no
+/// selector is the native singleton, so a session whose window selects one
+/// Index names its own Projects (and its explicit Index subset, when it has
+/// one) on every read that names neither (the window's explicit-selector
+/// combined path).
+fn session_defaults(
+    scope: &SessionScope,
+    window: &pipe::Window,
+) -> Option<serde_json::Map<String, Value>> {
+    if window.selection.index_ids.len() != 1 {
+        return None;
+    }
+    let mut defaults = serde_json::Map::new();
+    defaults.insert("project_ids".into(), json!(scope.project_ids));
+    if let Some(indexes) = &scope.index_ids {
+        defaults.insert("index_ids".into(), json!(indexes));
+    }
+    Some(defaults)
+}
+
+fn with_session_defaults(
+    arguments: &mut serde_json::Map<String, Value>,
+    defaults: &serde_json::Map<String, Value>,
+) {
+    if !arguments.contains_key("project_ids") && !arguments.contains_key("index_ids") {
+        for (key, value) in defaults {
+            arguments.insert(key.clone(), value.clone());
+        }
+    }
+}
+
+/// One read under an earlier session's window after a restrictive catalog
+/// change: the refused envelope, or `None` when the service refused the
+/// window read before any result (`scoped_read_unavailable`). Any other
+/// transport failure is an error.
+async fn old_authority_reply(
+    backend: &dyn airk_mcp::remote::RemoteTools,
+    tool: &str,
+    arguments: &Value,
+) -> Result<Option<Value>> {
+    match backend
+        .call(
+            tool.into(),
+            arguments
+                .as_object()
+                .context("object arguments required")?
+                .clone(),
+        )
+        .await
+    {
+        Ok(reply) => Ok(Some(reply)),
+        Err(error) => {
+            let text = format!("{error:#}");
+            ensure!(
+                text.contains(r#""status":"failure","code":"scoped_read_unavailable""#),
+                "old window read failed unexpectedly instead of a scoped refusal: {text}"
+            );
+            Ok(None)
+        }
+    }
+}
+
+/// A copy without the selection-dependent scope observation fields
+/// (selection authority spec §2.1, §3.6): each window grant reports its own
+/// selection source and scope fingerprint, so a member read through a
+/// one-Index window and the same member inside a wider window's combined
+/// read differ only there. Every other field stays literal.
+fn without_window_scope(mut value: Value) -> Value {
+    fn walk(value: &mut Value) {
+        match value {
+            Value::Object(fields) => {
+                if let Some(observation) = fields
+                    .get_mut("scope_observation")
+                    .and_then(Value::as_object_mut)
+                {
+                    for key in ["fingerprint", "selection"] {
+                        observation.remove(key);
+                    }
+                }
+                fields.values_mut().for_each(walk);
+            }
+            Value::Array(values) => values.iter_mut().for_each(walk),
+            _ => {}
+        }
+    }
+    walk(&mut value);
+    value
+}
+
+/// Pipe reads of one fixture session (see `session_defaults`).
+struct SessionReads {
+    inner: std::sync::Arc<pipe::PipeTools>,
+    defaults: Option<serde_json::Map<String, Value>>,
+}
+
+impl SessionReads {
+    fn arguments(
+        &self,
+        mut arguments: serde_json::Map<String, Value>,
+    ) -> serde_json::Map<String, Value> {
+        if let Some(defaults) = &self.defaults {
+            with_session_defaults(&mut arguments, defaults);
+        }
+        arguments
+    }
+}
+
+impl airk_mcp::remote::RemoteTools for SessionReads {
+    fn call(
+        &self,
+        tool: String,
+        arguments: serde_json::Map<String, Value>,
+    ) -> airk_mcp::remote::RemoteFuture<'_> {
+        self.inner.call(tool, self.arguments(arguments))
+    }
+}
+
 struct Fixture {
     owner: tempfile::TempDir,
     candidate: PathBuf,
     control: PathBuf,
-    session: CombinedConnectRequest,
+    session: SessionScope,
+    /// The CLI's session-routed window, reused while it lives and its scope
+    /// is unchanged (see `Fixture::session_window`).
+    cli_window: std::sync::Mutex<Option<(SessionScope, pipe::Window)>>,
     registrations: Vec<ProjectRegistration>,
     indexes: Vec<IndexId>,
     projects: Vec<QueryProjectId>,
@@ -246,7 +371,7 @@ impl Fixture {
         let namespace = Incarnation::from_bytes([110; 16]);
         drop(ServiceRegistry::open(&control, namespace)?);
         // Empty authority-1 catalog through the real owned Genesis adapter.
-        // Projects, indexes and grants below are physical-format fixtures.
+        // Projects, indexes and memberships below are physical-format fixtures.
         settle_genesis(
             &control,
             airk_cli::runtime_pair::engine_identity_at(&candidate)?,
@@ -309,12 +434,6 @@ impl Fixture {
                 &collection,
             )?);
         }
-        let caller = airk_cli::local_ipc::caller_identity()?;
-        let host = framed_digest(
-            b"airk/native-catalog-host/1",
-            &[&serde_json::to_vec(&(namespace, caller))?],
-        );
-        let grant = GrantId::from_identity(Incarnation::from_bytes([60; 16]));
         let sql = Connection::open(control.join("service-1.4.sqlite3"))?;
         let tx = sql.unchecked_transaction()?;
         for (n, registration) in registrations.iter().enumerate() {
@@ -341,10 +460,6 @@ impl Fixture {
                 params![project.to_string(), format!("Fictional Project {n}")],
             )?;
         }
-        tx.execute(
-            "INSERT INTO index_access_grants(id,host,revision,revoked) VALUES(?1,?2,1,0)",
-            params![grant.to_string(), host.to_string()],
-        )?;
         let mut memberships = vec![(0, 0, "api"), (1, 0, "impl"), (0, 1, "api"), (2, 2, "")];
         memberships.extend((3..count).map(|index| (0, index, "api")));
         for (project, index, prefix) in memberships {
@@ -366,45 +481,21 @@ impl Fixture {
                     prefix
                 ],
             )?;
-            tx.execute(
-                "INSERT INTO index_access_memberships VALUES(?1,?2,?3,1,1,0,NULL)",
-                params![
-                    grant.to_string(),
-                    projects[project].to_string(),
-                    indexes[index].to_string()
-                ],
-            )?;
-            tx.execute(
-                "INSERT INTO index_access_scopes VALUES(?1,?2,?3,?4,'subtree',?5)",
-                params![
-                    grant.to_string(),
-                    projects[project].to_string(),
-                    indexes[index].to_string(),
-                    sources[index].to_string(),
-                    prefix
-                ],
-            )?;
         }
         tx.commit()?;
         drop(sql);
         let registry = ServiceRegistry::open_saved(&control)?;
-        let state = registry.catalog_state()?.context("catalog missing")?;
-        let session = CombinedConnectRequest {
-            schema: 1,
-            context_key: Sha256Digest::from_bytes([70; 32]),
-            namespace,
-            expected_catalog_revision: state.revision,
-            grant_id: grant,
-            expected_grant_revision: CatalogRevision::INITIAL,
+        registry.catalog_state()?.context("catalog missing")?;
+        let session = SessionScope {
             project_ids: projects[..2].to_vec(),
             index_ids: None,
         };
-        session.validate()?;
         Ok(Self {
             owner,
             candidate,
             control,
             session,
+            cli_window: std::sync::Mutex::new(None),
             registrations,
             indexes,
             projects,
@@ -488,11 +579,140 @@ impl Fixture {
         }
     }
 
+    /// The Indexes a window over `scope` selects: its explicit subset, else
+    /// every Index its Projects hold in the current catalog.
+    async fn scope_indexes(&self, scope: &SessionScope) -> Result<Vec<IndexId>> {
+        match &scope.index_ids {
+            Some(ids) => Ok(ids.clone()),
+            None => self.member_indexes(&scope.project_ids).await,
+        }
+    }
+
+    /// A fresh window over `scope` (W1/W4 at the current catalog revision).
+    async fn window_for(&self, scope: &SessionScope) -> Result<pipe::Window> {
+        let index_ids = self.scope_indexes(scope).await?;
+        pipe::open_window(
+            &self.control,
+            "combined fixture session",
+            index_ids,
+            scope.project_ids.clone(),
+        )
+        .await
+    }
+
+    /// The Indexes `projects` hold in the service's current catalog, in
+    /// fixture order, read through the canonical catalog pages.
+    async fn member_indexes(&self, projects: &[QueryProjectId]) -> Result<Vec<IndexId>> {
+        use airk_core::catalog_management::{CatalogItem, CatalogKind, CatalogPageRequest};
+        let mut held = std::collections::BTreeSet::new();
+        for project in projects {
+            let mut after = None;
+            loop {
+                let request = CatalogPageRequest {
+                    kind: CatalogKind::Memberships,
+                    index_id: None,
+                    project_id: Some(*project),
+                    after: after.take(),
+                    expected_catalog_revision: None,
+                    limit: 32,
+                    max_bytes: 48 * 1024,
+                };
+                request.validate()?;
+                let response = airk_cli::service_runtime::request(
+                    &self.control,
+                    ControlMethod::CatalogPage { request },
+                )
+                .await?;
+                let ControlResponse::CatalogPage { page, .. } = response else {
+                    anyhow::bail!(
+                        "membership page refused: {}",
+                        serde_json::to_string(&response)?
+                    );
+                };
+                for item in page.items {
+                    let CatalogItem::Membership(membership) = item else {
+                        anyhow::bail!("membership page returned another kind");
+                    };
+                    ensure!(
+                        membership.project_id == *project,
+                        "membership page crossed its Project"
+                    );
+                    held.insert(membership.index_id);
+                }
+                match page.continuation {
+                    Some(next) => after = Some(next),
+                    None => break,
+                }
+            }
+        }
+        let ordered: Vec<IndexId> = self
+            .indexes
+            .iter()
+            .filter(|id| held.contains(id))
+            .copied()
+            .collect();
+        ensure!(
+            ordered.len() == held.len(),
+            "catalog membership names an Index outside the fixture"
+        );
+        Ok(ordered)
+    }
+
+    /// The in-process reader of `scope`: pipe reads under a window over its
+    /// atoms. The fixture's current session shares the CLI's window, so the
+    /// native and CLI reads of one session report one selection observation,
+    /// as the catalog session's single grant did.
+    async fn resolve(
+        &self,
+        scope: &SessionScope,
+    ) -> Result<std::sync::Arc<dyn airk_mcp::remote::RemoteTools>> {
+        let window = if *scope == self.session {
+            self.session_window().await?
+        } else {
+            self.window_for(scope).await?
+        };
+        Ok(std::sync::Arc::new(SessionReads {
+            defaults: session_defaults(scope, &window),
+            inner: pipe::PipeTools::window(&self.control, window),
+        }))
+    }
+
+    /// The window the CLI session route reads through: the cached one while
+    /// the service still knows it and the session and the Indexes it selects
+    /// are unchanged (renewed and granted again at the current revision; a
+    /// refused grant keeps the previous one), else a new one.
+    async fn session_window(&self) -> Result<pipe::Window> {
+        let cached = self.cli_window.lock().unwrap().clone();
+        let indexes = self.scope_indexes(&self.session).await?;
+        if let Some((scope, mut window)) = cached
+            && scope == self.session
+            && window.selection.index_ids == indexes
+            && pipe::renew(&self.control, &window).await.is_ok()
+        {
+            if let Err(error) = pipe::regrant(&self.control, &mut window).await {
+                eprintln!("fixture CLI window keeps its previous grant: {error:#}");
+            }
+            *self.cli_window.lock().unwrap() = Some((scope, window.clone()));
+            return Ok(window);
+        }
+        let window = self.window_for(&self.session).await?;
+        *self.cli_window.lock().unwrap() = Some((self.session.clone(), window.clone()));
+        Ok(window)
+    }
+
     async fn cli(&self, tool: &str, arguments: &Value) -> Result<Value> {
+        let window = self.session_window().await?;
+        let mut arguments = arguments.clone();
+        if let (Some(defaults), Some(fields)) = (
+            session_defaults(&self.session, &window),
+            arguments.as_object_mut(),
+        ) {
+            with_session_defaults(fields, &defaults);
+        }
+        let arguments = &arguments;
         let mut command = Ctl::new();
         command
-            .arg("--combined-session")
-            .arg(serde_json::to_string(&self.session)?)
+            .window(window)
             .arg("--service-runtime-dir")
             .arg(&self.control)
             .args(["tools", "call", tool, "--args"])
@@ -530,8 +750,7 @@ impl Fixture {
     async fn cli_search(&self) -> Result<Value> {
         let mut command = Ctl::new();
         command
-            .arg("--combined-session")
-            .arg(serde_json::to_string(&self.session)?)
+            .window(self.session_window().await?)
             .arg("--service-runtime-dir")
             .arg(&self.control)
             .args([
@@ -1683,11 +1902,11 @@ struct McpSession {
     transport: http::HttpMcpSession,
     negotiated_protocol: String,
 }
-/// U110: the indexes a combined catalog request reaches: its explicit
-/// `index_ids`, else every index a selected project has a membership in
-/// (the fixture's memberships: project 0 holds index 0, 1 and 3.., project 1
-/// holds index 0, project 2 holds index 2), in fixture order.
-fn indexes_of(f: &Fixture, selected: &CombinedConnectRequest) -> Vec<IndexId> {
+/// The indexes a session scope reaches: its explicit `index_ids`, else every
+/// index a selected project has a membership in (the fixture's memberships:
+/// project 0 holds index 0, 1 and 3.., project 1 holds index 0, project 2
+/// holds index 2), in fixture order.
+fn indexes_of(f: &Fixture, selected: &SessionScope) -> Vec<IndexId> {
     if let Some(ids) = &selected.index_ids {
         return ids.clone();
     }
@@ -1710,15 +1929,12 @@ fn indexes_of(f: &Fixture, selected: &CombinedConnectRequest) -> Vec<IndexId> {
 
 impl McpSession {
     /// The tokenless local agent session naming, on every read, the indexes
-    /// the fixture's combined catalog session reaches (read whole).
+    /// the fixture's session reaches (read whole).
     fn start(f: &Fixture) -> Result<Self> {
         Self::start_selected(f, &f.session)
     }
-    fn start_selected(f: &Fixture, selected: &CombinedConnectRequest) -> Result<Self> {
+    fn start_selected(f: &Fixture, selected: &SessionScope) -> Result<Self> {
         Self::start_scope(f, http::Scope::indexes(indexes_of(f, selected)))
-    }
-    fn start_scoped(f: &Fixture, selected: &ScopedConnectRequest) -> Result<Self> {
-        Self::start_scope(f, http::Scope::indexes([selected.index_id]))
     }
     fn start_scope(f: &Fixture, scope: http::Scope) -> Result<Self> {
         let mut session = Self {
@@ -1763,10 +1979,10 @@ impl McpSession {
         }
     }
     /// U110: one read through tokenless HTTPS MCP and the same open read
-    /// through the pipe, with their complete results compared. A catalog
-    /// session's `index_ids` argument becomes the call's named scope (read
-    /// whole); `project_ids`/`member_availability` belong to grant-bound
-    /// sessions and are not sent. Returns (MCP JSON-RPC reply, pipe result).
+    /// through the pipe, with their complete results compared. A session
+    /// read's `index_ids` argument becomes the call's named scope (read
+    /// whole); `project_ids`/`member_availability` belong to membership
+    /// (window) sessions and are not sent. Returns (MCP JSON-RPC reply, pipe result).
     async fn open_parity(
         &mut self,
         f: &Fixture,
@@ -1831,7 +2047,7 @@ async fn actual_native_cli_and_mcp_preserve_shared_index_scope_and_complete_resu
 {
     let f = Fixture::new(true)?;
     let _service = f.start().await?;
-    let backend = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
+    let backend = f.resolve(&f.session).await?;
     let arguments = json!({"query":"boundaryneedle","mode":"lexical","limit":12,"max_bytes":8192,"verification":"off","response_mode":"full"});
     let native = native_read(backend.as_ref(), "airk_search", &arguments).await?;
     ensure!(
@@ -2061,10 +2277,10 @@ async fn actual_native_cli_and_mcp_preserve_shared_index_scope_and_complete_resu
 }
 
 #[tokio::test]
-async fn combined_subset_refuses_ambiguous_followup_and_stale_or_revoked_grants() -> Result<()> {
+async fn combined_subset_refuses_ambiguous_followup_and_routes_one_index() -> Result<()> {
     let f = Fixture::new(true)?;
     let _service = f.start().await?;
-    let backend = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
+    let backend = f.resolve(&f.session).await?;
     // native read: deliberate ambiguity and invalid selectors run exactly once.
     for arguments in [
         json!({"path":"api/policy.md"}),
@@ -2092,20 +2308,16 @@ async fn combined_subset_refuses_ambiguous_followup_and_stale_or_revoked_grants(
         value["members"].as_array().context("members absent")?.len(),
         1
     );
-    let direct = airk_cli::project_client::scoped_tools(
-        f.control.clone(),
-        f.registrations[0].binding,
-        ScopedConnectRequest {
-            schema: 1,
-            context_key: f.session.context_key,
-            namespace: f.session.namespace,
-            expected_catalog_revision: f.session.expected_catalog_revision,
-            grant_id: f.session.grant_id,
-            expected_grant_revision: f.session.expected_grant_revision,
-            index_id: f.indexes[0],
+    // The one-index window over the same membership atoms is the singleton
+    // native read of that member.
+    let direct: std::sync::Arc<dyn airk_mcp::remote::RemoteTools> = pipe::PipeTools::window(
+        &f.control,
+        f.window_for(&SessionScope {
             project_ids: vec![f.projects[0]],
-        },
-    )?;
+            index_ids: Some(vec![f.indexes[0]]),
+        })
+        .await?,
+    );
     let mut direct_arguments = narrowed.clone();
     direct_arguments
         .as_object_mut()
@@ -2118,38 +2330,15 @@ async fn combined_subset_refuses_ambiguous_followup_and_stale_or_revoked_grants(
     let direct_result = native_read(direct.as_ref(), "airk_search", &direct_arguments).await?;
     assert_parity(
         "one-index routing",
-        &member_body(&value, &value["members"][0])?,
-        &body(&direct_result)?,
+        &without_window_scope(member_body(&value, &value["members"][0])?),
+        &without_window_scope(body(&direct_result)?),
     )?;
     direct.close();
     direct.shutdown().await?;
     let untouched = ProjectLease::acquire(&f.control, f.registrations[1].binding)?;
     drop(untouched);
-    let mut stale = f.session.clone();
-    stale.expected_grant_revision = stale.expected_grant_revision.next()?;
-    assert!(
-        airk_cli::combined_frontend::resolve(None, Some(&f.control), &stale)
-            .await
-            .is_err(),
-        "stale grant accepted"
-    );
     backend.close();
     backend.shutdown().await?;
-    drop(_service);
-    // This isolated component-format mutation models a persisted revocation.
-    // There are no in-flight reads: native delivery-race qualification belongs
-    // to the owning supervisor tests, not this offline metadata alteration.
-    let sql = Connection::open(f.control.join("service-1.4.sqlite3"))?;
-    sql.execute(
-        "UPDATE index_access_grants SET revoked=1,revision=revision+1 WHERE id=?1",
-        [f.session.grant_id.to_string()],
-    )?;
-    assert!(
-        airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session)
-            .await
-            .is_err(),
-        "revoked grant accepted"
-    );
     f.assert_sources_unchanged()?;
     Ok(())
 }
@@ -2169,7 +2358,7 @@ async fn all_native_read_families_keep_complete_results_through_cli_and_mcp() ->
         .index()?;
     }
     let _service = f.start().await?;
-    let backend = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
+    let backend = f.resolve(&f.session).await?;
     let mut mcp = McpSession::start(&f)?;
     let cases = [
         (
@@ -2375,25 +2564,20 @@ async fn all_native_read_families_keep_complete_results_through_cli_and_mcp() ->
                         f.indexes[member],
                     )
                     .with_context(|| format!("capabilities: materialize member {member}"))?;
-                let direct = airk_cli::project_client::scoped_tools(
-                    f.control.clone(),
-                    f.registrations[member].binding,
-                    ScopedConnectRequest {
-                        schema: 1,
-                        context_key: f.session.context_key,
-                        namespace: f.session.namespace,
-                        expected_catalog_revision: f.session.expected_catalog_revision,
-                        grant_id: f.session.grant_id,
-                        expected_grant_revision: f.session.expected_grant_revision,
-                        index_id: f.indexes[member],
-                        project_ids: if member == 0 {
-                            f.projects[..2].to_vec()
-                        } else {
-                            vec![f.projects[0]]
-                        },
-                    },
-                )
-                .with_context(|| format!("capabilities: construct scoped member {member}"))?;
+                let direct: std::sync::Arc<dyn airk_mcp::remote::RemoteTools> =
+                    pipe::PipeTools::window(
+                        &f.control,
+                        f.window_for(&SessionScope {
+                            project_ids: if member == 0 {
+                                f.projects[..2].to_vec()
+                            } else {
+                                vec![f.projects[0]]
+                            },
+                            index_ids: Some(vec![f.indexes[member]]),
+                        })
+                        .await
+                        .with_context(|| format!("capabilities: one-index window {member}"))?,
+                    );
                 let canonical = native_read(
                     direct.as_ref(),
                     tool,
@@ -2402,10 +2586,10 @@ async fn all_native_read_families_keep_complete_results_through_cli_and_mcp() ->
                 .await?;
                 if let Some(difference) = parity_difference(
                     &format!("materialized capabilities member {member}"),
-                    &materialized,
-                    &body(&canonical).with_context(|| {
-                        format!("capabilities member {member}: legacy scoped observation")
-                    })?,
+                    &without_window_scope(materialized),
+                    &without_window_scope(body(&canonical).with_context(|| {
+                        format!("capabilities member {member}: one-index window observation")
+                    })?),
                 )? {
                     failures.push(difference);
                 }
@@ -2510,7 +2694,7 @@ async fn capabilities_plans_keep_complete_native_cli_and_mcp_results_above_read_
     const OUTPUT_BYTES: usize = 262144;
     let f = Fixture::new(true)?;
     let _service = f.start().await?;
-    let backend = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
+    let backend = f.resolve(&f.session).await?;
     let mut mcp = McpSession::start(&f)?;
     for count in [1usize, 2] {
         let selection = json!({
@@ -2650,7 +2834,7 @@ async fn actual_query_scope_discovery_keeps_three_views_and_continuations_in_par
 {
     let f = Fixture::new(true)?;
     let _service = f.start().await?;
-    let backend = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
+    let backend = f.resolve(&f.session).await?;
     let mut mcp = McpSession::start(&f)?;
     let mut id = 1000;
     for (view, mut arguments, expected_total) in [
@@ -2772,7 +2956,7 @@ async fn actual_query_scope_discovery_keeps_three_views_and_continuations_in_par
 async fn recommendations_keep_native_cli_mcp_parity_and_execute_copied_examples() -> Result<()> {
     let f = Fixture::new(true)?;
     let _service = f.start().await?;
-    let backend = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
+    let backend = f.resolve(&f.session).await?;
     let mut mcp = McpSession::start(&f)?;
     let mut id = 4000;
     let mut subset_observations = Vec::new();
@@ -2992,7 +3176,7 @@ async fn recommendations_keep_native_cli_mcp_parity_and_execute_copied_examples(
 async fn report_keeps_successful_members_and_require_preserves_complete_failure() -> Result<()> {
     let f = Fixture::new(false)?;
     let _service = f.start().await?;
-    let backend = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
+    let backend = f.resolve(&f.session).await?;
     let arguments = json!({"query":"boundaryneedle","mode":"lexical","project_ids":f.session.project_ids,"limit":8,"max_bytes":4096,"verification":"off","response_mode":"full","member_availability":"report"});
     let report = native_read(backend.as_ref(), "airk_search", &arguments).await?;
     let report_body = body(&report)?;
@@ -3040,7 +3224,7 @@ async fn one_two_four_and_thirty_two_member_scopes_share_one_count_budget() -> R
     let mut f = Fixture::with_indexes(true, 32)?;
     f.session.project_ids = f.projects.clone();
     let _service = f.start().await?;
-    let backend = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
+    let backend = f.resolve(&f.session).await?;
     // Warm the one actually admitted worker through the same supported route.
     // The larger selections then measure budget/scope correctness, not a claim
     // of successful execution or latency for thirty-two dispatched children.
@@ -3310,7 +3494,7 @@ async fn actual_helper_outage_keeps_fresh_selected_source_publications_under_fan
         fixture_job(&f, index, JobKind::Vectors).await?;
         fixture_pause(&f, index, true).await?;
     }
-    let backend = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
+    let backend = f.resolve(&f.session).await?;
     let vector_args = json!({"query":"boundaryneedle","mode":"vector","project_ids":f.session.project_ids,"limit":4,"max_bytes":2048,
         "verification":"off","response_mode":"full","member_availability":"require"});
     let warm = native_read(backend.as_ref(), "airk_search", &vector_args).await?;
@@ -3667,22 +3851,13 @@ async fn installed_single_index_scope_disclosure_matches_native_cli_mcp_and_work
 {
     let f = Fixture::new(true)?;
     let _service = f.start().await?;
-    let selected = ScopedConnectRequest {
-        schema: 1,
-        context_key: f.session.context_key,
-        namespace: f.session.namespace,
-        expected_catalog_revision: f.session.expected_catalog_revision,
-        grant_id: f.session.grant_id,
-        expected_grant_revision: f.session.expected_grant_revision,
-        index_id: f.indexes[0],
+    let selected = SessionScope {
         project_ids: vec![f.projects[0]],
+        index_ids: Some(vec![f.indexes[0]]),
     };
-    let backend = airk_cli::project_client::scoped_tools(
-        f.control.clone(),
-        f.registrations[0].binding,
-        selected.clone(),
-    )?;
-    let mut mcp = McpSession::start_scoped(&f, &selected)?;
+    let window = f.window_for(&selected).await?;
+    let backend = pipe::PipeTools::window(&f.control, window.clone());
+    let mut mcp = McpSession::start_scope(&f, http::Scope::indexes([f.indexes[0]]))?;
     for (id, args) in (2200..).zip([
         json!({"view":"projects"}),
         json!({"view":"indexes","project_id":f.projects[0]}),
@@ -3691,11 +3866,10 @@ async fn installed_single_index_scope_disclosure_matches_native_cli_mcp_and_work
     ]) {
         let direct = native_read(backend.as_ref(), "airk_query_scope", &args).await?;
         let canonical = body(&direct)?;
-        assert_eq!(canonical["grant"]["id"], json!(selected.grant_id));
         assert_eq!(canonical["mode"], "frozen_single_index");
         assert_eq!(
             canonical["observed_selection"],
-            json!({"project_ids":selected.project_ids,"index_ids":[selected.index_id]})
+            json!({"project_ids":selected.project_ids,"index_ids":[f.indexes[0]]})
         );
         // U110: MCP names the one index per call on the open path (no grant
         // to disclose); it compares with the same open read through the pipe.
@@ -3711,8 +3885,7 @@ async fn installed_single_index_scope_disclosure_matches_native_cli_mcp_and_work
         ] {
             let mut command = Ctl::new();
             command
-                .arg("--catalog-session")
-                .arg(serde_json::to_string(&selected)?)
+                .window(window.clone())
                 .arg("--service-runtime-dir")
                 .arg(&f.control)
                 .args(["tools", "call", tool, "--args"])
@@ -4261,25 +4434,19 @@ fn ctl_outcome(
     Ok(json!({"exit":code,"stdout":stdout,"message":message}))
 }
 
-/// Complete CURRENT CLI results equal the actual service's canonical handlers.
-/// All twelve original command/scope/refusal cases survive; the old U95 fixture
-/// stays historical and is neither replayed, recaptured nor normalized here.
+/// Complete CURRENT CLI results equal the actual service's canonical handlers,
+/// with reads routed through the session's window (the `airkctl session`
+/// route). The nine command and refusal cases of the combined session
+/// survive; its three `--project-ids/--index-ids` narrowing rows went with the
+/// removed `--combined-session` selector. The old U95 fixture stays
+/// historical and is neither replayed, recaptured nor normalized here.
 #[tokio::test]
 async fn airkctl_combined_reads_match_current_native_handlers() -> Result<()> {
     let f = Fixture::new(true)?;
     let _service = f.start().await?;
-    let session = serde_json::to_string(&f.session)?;
+    let window = f.window_for(&f.session).await?;
     let control = f.control.to_str().context("control path")?.to_owned();
-    let project = serde_json::to_value(f.projects[0])?
-        .as_str()
-        .context("project id")?
-        .to_owned();
-    let index = serde_json::to_value(f.indexes[0])?
-        .as_str()
-        .context("index id")?
-        .to_owned();
     let lexical = json!({"query":"boundaryneedle","mode":"lexical","limit":4,"max_bytes":4096,"verification":"off"}).to_string();
-    let conflicting = json!({"query":"boundaryneedle","project_ids":[project]}).to_string();
     let search = [
         "search",
         "boundaryneedle",
@@ -4308,35 +4475,12 @@ async fn airkctl_combined_reads_match_current_native_handlers() -> Result<()> {
         vec!["files"],
         vec!["status"],
         vec!["info", "api/policy.md"],
-        [&["--project-ids", &project][..], &search].concat(),
-        [
-            &[
-                "--project-ids",
-                &project,
-                "--index-ids",
-                &index,
-                "--member-availability",
-                "require",
-            ][..],
-            &search,
-        ]
-        .concat(),
-        vec![
-            "--project-ids",
-            &project,
-            "tools",
-            "call",
-            "airk_search",
-            "--args",
-            &conflicting,
-        ],
     ];
     // Prove the complete CURRENT service catalog before any historical replay.
     let current_catalog = match airk_cli::service_runtime::request(
         &f.control,
         ControlMethod::ToolsCatalog {
             detail: airk_core::service::ToolsCatalogDetail::List { schemas: true },
-            combined: Some(Box::new(f.session.clone())),
         },
     )
     .await?
@@ -4344,10 +4488,6 @@ async fn airkctl_combined_reads_match_current_native_handlers() -> Result<()> {
         ControlResponse::ToolsCatalog { document } => serde_json::from_str::<Value>(&document)?,
         _ => anyhow::bail!("current catalog request returned a non-catalog control response"),
     };
-    validate_current_catalog(
-        &current_catalog,
-        &json!({"tools":airk_mcp::combined::public_catalog()}),
-    )?;
     let canonical_help = current_catalog["tools"]
         .as_array()
         .unwrap()
@@ -4357,19 +4497,14 @@ async fn airkctl_combined_reads_match_current_native_handlers() -> Result<()> {
     let mut failures = Vec::new();
     assert_eq!(
         lines.len(),
-        12,
-        "all original command/scope cases must survive"
+        9,
+        "all remaining command/scope cases must survive"
     );
     for (case, line) in lines.iter().enumerate() {
-        let full: Vec<&str> = [
-            "--combined-session",
-            &session,
-            "--service-runtime-dir",
-            &control,
-        ]
-        .into_iter()
-        .chain(line.iter().copied())
-        .collect();
+        let full: Vec<&str> = ["--service-runtime-dir", &control]
+            .into_iter()
+            .chain(line.iter().copied())
+            .collect();
         // Explicit independent input rows: shorthand commands must preserve the
         // same arguments and narrowing, not merely return plausible output.
         let expected = if case == 0 {
@@ -4382,7 +4517,7 @@ async fn airkctl_combined_reads_match_current_native_handlers() -> Result<()> {
             let (tool, arguments) = match case {
                 3 => ("airk_search", serde_json::from_str::<Value>(&lexical)?),
                 4 => ("help", json!({"topic":"workbench"})),
-                5 | 9 | 10 => (
+                5 => (
                     "airk_search",
                     json!({"query":"boundaryneedle","mode":"lexical","path_prefix":null,"limit":12,"max_bytes":8192,"verification":"off"}),
                 ),
@@ -4395,21 +4530,21 @@ async fn airkctl_combined_reads_match_current_native_handlers() -> Result<()> {
                     "airk_file_info",
                     json!({"path":"api/policy.md","revision":null,"if_evidence":null,"follow_moves":false,"known_hash":null,"artifact_id":null}),
                 ),
-                11 => ("airk_search", serde_json::from_str::<Value>(&conflicting)?),
-                _ => unreachable!("independent twelve-case input table"),
+                _ => unreachable!("independent nine-case input table"),
+            };
+            // airkctl answers help in process for an unselected call; a
+            // session-routed help names no selection.
+            let selection = if tool == "help" {
+                airk_core::service::ToolSelection::Unselected
+            } else {
+                window.tool_selection()
             };
             let response = airk_cli::service_runtime::request(
                 &f.control,
                 ControlMethod::ToolsCall {
                     tool: tool.into(),
                     arguments: arguments.as_object().context("native arguments")?.clone(),
-                    selection: airk_core::service::ToolSelection::Combined {
-                        request: f.session.clone(),
-                        project_ids: matches!(case, 9..=11).then(|| vec![f.projects[0]]),
-                        index_ids: (case == 10).then(|| vec![f.indexes[0]]),
-                        member_availability: (case == 10)
-                            .then_some(airk_core::combined_reads::MemberAvailability::Require),
-                    },
+                    selection,
                     response_mode: airk_core::service::ToolResponseMode::Full,
                     usage_client: airk_core::usage::ClientFamily::Cli,
                     read_attempt: None,
@@ -4441,6 +4576,7 @@ async fn airkctl_combined_reads_match_current_native_handlers() -> Result<()> {
             .chain(full.iter().copied())
             .map(Into::into)
             .collect();
+        let mut route = window.route();
         let new = tokio::task::spawn_blocking(move || {
             let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
             let mut io = airkctl::cli::Io {
@@ -4449,7 +4585,7 @@ async fn airkctl_combined_reads_match_current_native_handlers() -> Result<()> {
                 stdout: &mut stdout,
                 stderr: &mut stderr,
                 full_responses: true,
-                window: None,
+                window: Some(&mut route),
             };
             let code = airkctl::cli::run(arguments, &mut io);
             (code, stdout, stderr)
@@ -4485,7 +4621,10 @@ async fn airkctl_combined_reads_match_current_native_handlers() -> Result<()> {
                 &current_catalog,
             )?;
         } else if case == 1 {
-            validate_current_catalog(&current["stdout"], &current_catalog)?;
+            ensure!(
+                current["stdout"] == current_catalog,
+                "complete current catalog differs from native owner"
+            );
         }
         assert!(
             current == expected,
@@ -4497,19 +4636,14 @@ async fn airkctl_combined_reads_match_current_native_handlers() -> Result<()> {
         }
     }
     // Current canonical refusals: a listing across the combined session
-    // and an ambiguous origin (tool errors), and an argument that conflicts
-    // with a narrowing default.
-    assert_eq!(failures.len(), 3, "{failures:#?}");
+    // and an ambiguous origin (tool errors).
+    assert_eq!(failures.len(), 2, "{failures:#?}");
     assert!(
         failures[0].starts_with("files \"MCP tool failed"),
         "{failures:#?}"
     );
     assert!(
         failures[1].starts_with("info api/policy.md \"MCP tool failed"),
-        "{failures:#?}"
-    );
-    assert!(
-        failures[2].ends_with("\"conflicting project_ids selections\""),
         "{failures:#?}"
     );
     f.assert_sources_unchanged()
@@ -4550,197 +4684,20 @@ async fn pipe_read(
     }
 }
 
-/// W1 then W4 over the fixture session's projects and both of its member
-/// indexes, at the service's current catalog revision.
-async fn window_selecting_the_session(f: &Fixture) -> Result<airk_core::service::ToolSelection> {
-    let ControlResponse::Health { observation } =
-        airk_cli::service_runtime::request(&f.control, ControlMethod::Health).await?
-    else {
-        anyhow::bail!("service health unavailable");
-    };
-    let clock = observation.catalog_clock.context("catalog clock")?;
-    let ControlResponse::WindowOpened {
-        window_id, lease, ..
-    } = airk_cli::service_runtime::request(
-        &f.control,
-        ControlMethod::WindowOpen {
-            label: "selection parity".into(),
-            owner_pid: std::process::id(),
-        },
-    )
-    .await?
-    else {
-        anyhow::bail!("window did not open");
-    };
-    let granted = airk_cli::service_runtime::request(
-        &f.control,
-        ControlMethod::WindowScopeGrant {
-            window_id,
-            lease: lease.clone(),
-            selection: airk_core::service::WindowScopeSelection {
-                namespace: clock.namespace,
-                expected_catalog_revision: clock.revision,
-                index_ids: vec![f.indexes[0], f.indexes[1]],
-                project_ids: f.session.project_ids.clone(),
-            },
-        },
-    )
-    .await?;
-    ensure!(
-        matches!(granted, ControlResponse::WindowScopeGranted { .. }),
-        "window scope was not granted: {}",
-        serde_json::to_string(&granted)?
-    );
-    Ok(airk_core::service::ToolSelection::Window { window_id, lease })
-}
-
-/// The documented selection-dependent fields (selection authority spec §2.1,
-/// §3.6): the selection observation's authority source and identity, the
-/// combined authority identity it binds (publication vector, delivery
-/// receipt), each member's scope-observation source and fingerprint, the
-/// requested-scope echo of a failure and the scope-bound cursors. Every
-/// other field stays literal.
-fn without_selection_source(mut value: Value) -> Value {
-    fn walk(value: &mut Value) {
-        match value {
-            Value::Object(fields) => {
-                if let Some(observation) = fields
-                    .get_mut("scope_observation")
-                    .and_then(Value::as_object_mut)
-                {
-                    for key in ["fingerprint", "provenance", "grant", "selection"] {
-                        observation.remove(key);
-                    }
-                }
-                if let Some(requested) = fields
-                    .get_mut("requested_scope")
-                    .and_then(Value::as_object_mut)
-                {
-                    requested.insert("selection".into(), json!("<requested selection>"));
-                }
-                if fields.get("cursor").is_some_and(Value::is_string) {
-                    fields.insert("cursor".into(), json!("<scope-bound cursor>"));
-                }
-                for entry in fields.values_mut() {
-                    walk(entry);
-                }
-            }
-            Value::Array(values) => values.iter_mut().for_each(walk),
-            _ => {}
-        }
-    }
-    if let Some(selection) = value.get_mut("selection").and_then(Value::as_object_mut) {
-        for key in ["grant_id", "grant_revision", "selection", "identity"] {
-            selection.remove(key);
-        }
-    }
-    if let Some(vector) = value
-        .get_mut("publication_vector")
-        .and_then(Value::as_object_mut)
-    {
-        vector.insert("authority".into(), json!("<combined authority>"));
-    }
-    if let Some(receipt) = value
-        .pointer_mut("/delivery_observation/receipt")
-        .and_then(Value::as_object_mut)
-    {
-        receipt.insert("scope_identity".into(), json!("<combined authority>"));
-    }
-    walk(&mut value);
-    value
-}
-
-/// Spec §5 parity: a window selection of two indexes reads through the same
-/// combined fan-out, budgets, member reports and delivery proof as the
-/// reviewed catalog grant over the same membership atoms. Only the
-/// documented selection fields differ, and no body names a nonce (N3).
-async fn assert_window_matches_catalog(f: &Fixture, label: &str) -> Result<Value> {
-    let window = window_selecting_the_session(f).await?;
-    let catalog = airk_core::service::ToolSelection::Combined {
-        request: f.session.clone(),
-        project_ids: None,
-        index_ids: None,
-        member_availability: None,
-    };
-    let arguments = json!({"query":"boundaryneedle","mode":"lexical","limit":12,"max_bytes":8192,"verification":"off"});
-    let from_catalog = pipe_read(f, catalog, "airk_search", &arguments)
-        .await?
-        .map_err(|refused| anyhow::anyhow!("catalog read refused: {refused}"))?;
-    let from_window = pipe_read(f, window, "airk_search", &arguments)
-        .await?
-        .map_err(|refused| anyhow::anyhow!("window read refused: {refused}"))?;
-    let raw = from_window.to_string();
-    ensure!(!raw.contains("grant_nonce"), "N3: {raw}");
-    let (catalog_body, window_body) = (body(&from_catalog)?, body(&from_window)?);
-    ensure!(
-        window_body["selection"]["selection"]["owner"] == "window"
-            && window_body["selection"].get("grant_id").is_none()
-            && catalog_body["selection"]["grant_id"] == json!(f.session.grant_id),
-        "selection sources: {window_body} / {catalog_body}"
-    );
-    assert_eq!(from_window["isError"], from_catalog["isError"]);
-    // `assert_parity` reconstructs its inputs itself; the selection-source
-    // normalization applies only after that reconstruction, so compare the
-    // normalized logical copies directly.
-    let catalog_copy = without_selection_source(stable(logical_comparison_copy(&catalog_body)?)?);
-    let window_copy = without_selection_source(stable(logical_comparison_copy(&window_body)?)?);
-    if let Some(difference) = first_difference(&catalog_copy, &window_copy, "") {
-        let path = save_replies(label, &json!({"left": catalog_body, "right": window_body}))?;
-        anyhow::bail!(
-            "{label}: {difference}; complete replies: {}",
-            path.display()
-        );
-    }
-    Ok(window_body)
-}
-
-#[tokio::test]
-async fn window_selection_of_two_indexes_reads_what_the_catalog_grant_reads() -> Result<()> {
-    let f = Fixture::new(true)?;
-    let _service = f.start().await?;
-    let window_body = assert_window_matches_catalog(&f, "window selection parity").await?;
-    assert_eq!(
-        window_body["members"]
-            .as_array()
-            .context("members absent")?
-            .len(),
-        2,
-        "{window_body}"
-    );
-    assert!(
-        !window_body["ranking"]
-            .as_array()
-            .context("ranking absent")?
-            .is_empty(),
-        "{window_body}"
-    );
-    f.assert_sources_unchanged()?;
-    Ok(())
-}
-
-#[tokio::test]
-async fn window_selection_reports_a_failed_member_as_the_catalog_grant_does() -> Result<()> {
-    let f = Fixture::new(false)?;
-    let _service = f.start().await?;
-    let window_body = assert_window_matches_catalog(&f, "window selection partial").await?;
-    assert_eq!(window_body["partial"], true, "{window_body}");
-    // The failed member's own report names no nonce either (N3).
-    for member in window_body["members"]
-        .as_array()
-        .context("members absent")?
-    {
-        ensure!(
-            !member.to_string().contains("grant_nonce"),
-            "N3 member report: {member}"
-        );
-    }
-    f.assert_sources_unchanged()?;
-    Ok(())
-}
-
 /// One in-process `airkctl` run on the fixture's control root with full
 /// responses: (exit code, stdout, stderr).
 async fn airkctl_full(f: &Fixture, line: &[&str]) -> Result<(u8, String, String)> {
+    airkctl_routed(f, None, line).await
+}
+
+/// As `airkctl_full`, with reads that name no selection routed through
+/// `window` as an `airkctl session` routes them.
+async fn airkctl_routed(
+    f: &Fixture,
+    window: Option<&pipe::Window>,
+    line: &[&str],
+) -> Result<(u8, String, String)> {
+    let mut route = window.map(pipe::Window::route);
     let control = f.control.to_str().context("control root is not UTF-8")?;
     let arguments: Vec<std::ffi::OsString> = ["airkctl", "--service-runtime-dir", control]
         .into_iter()
@@ -4755,7 +4712,7 @@ async fn airkctl_full(f: &Fixture, line: &[&str]) -> Result<(u8, String, String)
             stdout: &mut stdout,
             stderr: &mut stderr,
             full_responses: true,
-            window: None,
+            window: route.as_mut(),
         };
         let code = airkctl::cli::run(arguments, &mut io);
         (code, stdout, stderr)
@@ -5055,23 +5012,18 @@ async fn tokenless_https_reads_name_their_scope_or_a_workspace_default() -> Resu
 }
 
 /// U107/U108 (behaviour): `limit_per_index` gives each selected index exactly
-/// that many results under the overall cap, for a catalog session and an open
-/// read alike; it binds the continuation; an oversized request is refused;
+/// that many results under the overall cap, for a window selection and an
+/// open read alike; it binds the continuation; an oversized request is refused;
 /// each read member reports its elapsed time and index name.
 #[tokio::test]
-async fn per_index_counts_apply_to_catalog_and_open_reads_and_bind_cursors() -> Result<()> {
+async fn per_index_counts_apply_to_window_and_open_reads_and_bind_cursors() -> Result<()> {
     let f = Fixture::new(true)?;
     let _service = f.start().await?;
-    let catalog = airk_core::service::ToolSelection::Combined {
-        request: f.session.clone(),
-        project_ids: None,
-        index_ids: None,
-        member_availability: None,
-    };
+    let window = f.window_for(&f.session).await?.tool_selection();
     let open = open_selection(&[&f.indexes[0].to_string(), &f.indexes[1].to_string()], &[]);
     // A cursor tool: the scoped members hold more than one file each.
     let arguments = json!({"limit_per_index":1,"max_bytes":8192,"verification":"off"});
-    for (label, selection) in [("catalog", catalog.clone()), ("open", open.clone())] {
+    for (label, selection) in [("window", window.clone()), ("open", open.clone())] {
         let read = pipe_read(&f, selection.clone(), "airk_list_files", &arguments)
             .await?
             .map_err(|refused| anyhow::anyhow!("{label} read refused: {refused}"))?;
@@ -5191,8 +5143,7 @@ fn observed_answer_reply(
 }
 
 #[test]
-fn answer_reply_comparison_normalizes_only_transport_identities_custody_and_timing() -> Result<()>
-{
+fn answer_reply_comparison_normalizes_only_transport_identities_custody_and_timing() -> Result<()> {
     let (budget, raw) = observed_answer_reply(1, None)?;
     let (_, later) = observed_answer_reply(2, None)?;
     let (left, right) = common::parity::context::pair(&raw, &later, &budget)?;
@@ -5253,7 +5204,10 @@ fn answer_reply_comparison_normalizes_only_transport_identities_custody_and_timi
         changed["records"][0]["canonical_result"]["full_digest"].clone();
     let (left, right) = common::parity::context::pair(&raw, &changed, &budget)?;
     assert_ne!(left, right, "two different read bodies cannot become one");
-    for (field, value) in [("full_digest", json!("ab".repeat(32))), ("full_bytes", json!(1))] {
+    for (field, value) in [
+        ("full_digest", json!("ab".repeat(32))),
+        ("full_bytes", json!(1)),
+    ] {
         let mut changed = later.clone();
         changed["records"][0]["canonical_result"][field] = value;
         let (left, right) = common::parity::context::pair(&raw, &changed, &budget)?;
@@ -5273,7 +5227,10 @@ fn answer_reply_comparison_normalizes_only_transport_identities_custody_and_timi
     }
     // A record renamed everywhere it is cited is a different reply.
     let mut renamed = later.clone();
-    let old = renamed["records"][0]["id"].as_str().context("id")?.to_owned();
+    let old = renamed["records"][0]["id"]
+        .as_str()
+        .context("id")?
+        .to_owned();
     let text = renamed.to_string().replace(&old, &"0f".repeat(32));
     renamed = serde_json::from_str(&text)?;
     if let Ok((left, right)) = common::parity::context::pair(&raw, &renamed, &budget) {
@@ -5726,38 +5683,19 @@ async fn current_answer_single_index_preserves_complete_pipe_cli_and_https_mcp_r
 -> Result<()> {
     let f = Fixture::new(true)?;
     let _service = f.start().await?;
-    let selected = ScopedConnectRequest {
-        schema: 1,
-        context_key: f.session.context_key,
-        namespace: f.session.namespace,
-        expected_catalog_revision: f.session.expected_catalog_revision,
-        grant_id: f.session.grant_id,
-        expected_grant_revision: f.session.expected_grant_revision,
-        index_id: f.indexes[0],
-        project_ids: vec![f.projects[0]],
-    };
+    let window = f
+        .window_for(&SessionScope {
+            project_ids: vec![f.projects[0]],
+            index_ids: Some(vec![f.indexes[0]]),
+        })
+        .await?;
     let (_budget, arguments) = current_answer_request()?;
-    let reference = context_pipe_once(
-        &f,
-        airk_core::service::ToolSelection::Catalog {
-            request: selected.clone(),
-        },
-        &arguments,
-    )
-    .await?;
-    let session = serde_json::to_string(&selected)?;
+    let reference = context_pipe_once(&f, window.tool_selection(), &arguments).await?;
     let text = arguments.to_string();
-    let (code, stdout, stderr) = airkctl_full(
+    let (code, stdout, stderr) = airkctl_routed(
         &f,
-        &[
-            "--catalog-session",
-            &session,
-            "tools",
-            "call",
-            "airk_answer",
-            "--args",
-            &text,
-        ],
+        Some(&window),
+        &["tools", "call", "airk_answer", "--args", &text],
     )
     .await?;
     ensure!(
@@ -5780,7 +5718,7 @@ async fn current_answer_single_index_preserves_complete_pipe_cli_and_https_mcp_r
         &arguments,
     )
     .await?;
-    let mut mcp = McpSession::start_scoped(&f, &selected)?;
+    let mut mcp = McpSession::start_scope(&f, http::Scope::indexes([f.indexes[0]]))?;
     let reply = mcp.request(
         2,
         "tools/call",
@@ -5805,30 +5743,13 @@ async fn current_answer_many_and_open_keep_complete_cli_pipe_and_https_mcp_packe
     let f = Fixture::new(true)?;
     let _service = f.start().await?;
     let (_budget, arguments) = current_answer_request()?;
-    let reference = context_pipe_once(
-        &f,
-        airk_core::service::ToolSelection::Combined {
-            request: f.session.clone(),
-            project_ids: None,
-            index_ids: None,
-            member_availability: None,
-        },
-        &arguments,
-    )
-    .await?;
-    let session = serde_json::to_string(&f.session)?;
+    let window = f.window_for(&f.session).await?;
+    let reference = context_pipe_once(&f, window.tool_selection(), &arguments).await?;
     let text = arguments.to_string();
-    let (code, stdout, stderr) = airkctl_full(
+    let (code, stdout, stderr) = airkctl_routed(
         &f,
-        &[
-            "--combined-session",
-            &session,
-            "tools",
-            "call",
-            "airk_answer",
-            "--args",
-            &text,
-        ],
+        Some(&window),
+        &["tools", "call", "airk_answer", "--args", &text],
     )
     .await?;
     ensure!(
@@ -5973,7 +5894,7 @@ fn retained_current_answer_pair_validates_full_transport_results() -> Result<()>
 }
 
 #[tokio::test]
-async fn one_index_window_catalog_and_open_explicit_source_selectors_use_original_authorized_combined_owner()
+async fn one_index_window_and_open_explicit_source_selectors_use_original_authorized_combined_owner()
 -> Result<()> {
     let f = Fixture::with_runtime_topology(true, 3, false, None, false, true)?;
     let _service = f.start().await?;
@@ -6072,28 +5993,8 @@ async fn one_index_window_catalog_and_open_explicit_source_selectors_use_origina
     );
     let arguments = json!({"path":hit["citation"]["path"],"project_ids":origin["project_ids"],"index_ids":[f.indexes[0]],"revision":origin["publication"],"known_hash":hit["citation"]["content_hash"],"response_mode":"full"});
     let index = f.indexes[0].to_string();
-    let catalog = airk_core::service::ToolSelection::Catalog {
-        request: ScopedConnectRequest {
-            schema: f.session.schema,
-            context_key: f.session.context_key,
-            namespace: f.session.namespace,
-            expected_catalog_revision: f.session.expected_catalog_revision,
-            grant_id: f.session.grant_id,
-            expected_grant_revision: f.session.expected_grant_revision,
-            index_id: f.indexes[0],
-            project_ids: f.projects[..2].to_vec(),
-        },
-    };
-    for selection in [window, catalog, open_selection(&[&index], &[])] {
+    for selection in [window, open_selection(&[&index], &[])] {
         let mut arguments = arguments.clone();
-        if matches!(selection, airk_core::service::ToolSelection::Catalog { .. }) {
-            let direct=once(&f,selection.clone(),"airk_search",json!({"query":"boundaryneedle","mode":"lexical","path_prefix":"api/","verification":"report","response_mode":"full"})).await?;
-            assert_ne!(
-                body(&direct)?["schema"],
-                "airk.combined-read/1",
-                "no-selector Catalog remains singleton"
-            );
-        }
         if matches!(selection, airk_core::service::ToolSelection::Open { .. }) {
             let ordinary_open=once(&f,selection.clone(),"airk_search",json!({"query":"boundaryneedle","mode":"lexical","path_prefix":"api/","verification":"report","response_mode":"full"})).await?;
             let open_body = body(&ordinary_open)?;

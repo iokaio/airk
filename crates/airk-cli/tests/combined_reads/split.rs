@@ -5,8 +5,6 @@ use super::permanent_trim::{
     policy_key as key, policy_revision as revision, policy_rpc_cli as rpc_cli,
 };
 use super::*;
-#[cfg(feature = "local-inference")]
-use airk_core::{catalog_host::GrantDraftSelection, catalog_management::CatalogOperation};
 use airk_core::{
     catalog_split::{
         SplitFinalizationProgress, SplitRecoveryAction, SplitRecoveryOutcome, SplitRecoveryRequest,
@@ -23,7 +21,7 @@ use airk_core::{
 mod metrics;
 
 #[cfg(feature = "local-inference")]
-fn scope_refusal(reply: &Value, session: &CombinedConnectRequest) -> Result<()> {
+fn scope_refusal(reply: &Value, window: &pipe::Window) -> Result<()> {
     ensure!(
         reply["isError"] == true,
         "old authority delivered successful evidence: {reply}"
@@ -36,7 +34,9 @@ fn scope_refusal(reply: &Value, session: &CombinedConnectRequest) -> Result<()> 
         ) && refused["error"]["retryable"] == false
             && refused["error"]["query_replay_safe"] == false
             && refused["requested_scope"]["confirmed"] == false
-            && refused["requested_scope"]["selection"] == serde_json::to_value(session)?,
+            && refused["requested_scope"]["selection"]
+                == json!({"window_scope_selection":window.selection,
+                    "scope_identity":window.scope_identity}),
         "old authority failed for an unexpected reason: {refused}"
     );
     Ok(())
@@ -647,47 +647,12 @@ async fn terminal(
     }
 }
 
+/// Read the original and the split destination after cutover: a fresh window
+/// over Project 2 and both Indexes, granted at the current revision when the
+/// read starts.
 #[cfg(feature = "local-inference")]
-async fn fresh_grant(f: &mut Fixture, snapshot: &SplitSnapshot, nonce: u8) -> Result<()> {
-    let response = airk_cli::service_runtime::request(
-        &f.control,
-        ControlMethod::CatalogGrantDraft {
-            context_key: f.session.context_key,
-            selection: GrantDraftSelection {
-                key: key(f, nonce).await?,
-                expected_catalog_revision: revision(f)?,
-                project_ids: vec![f.projects[2]],
-                index_ids: Some(vec![f.indexes[2], snapshot.request.destination.index_id]),
-            },
-        },
-    )
-    .await?;
-    let ControlResponse::CatalogGrantDraft { draft } = response else {
-        anyhow::bail!(
-            "fresh explicit grant refused: {}",
-            serde_json::to_string(&response)?
-        );
-    };
-    let CatalogOperation::CreateGrant { grant } = &draft.request.operation else {
-        anyhow::bail!("grant review operation changed");
-    };
-    let grant = grant.clone();
-    let response = airk_cli::service_runtime::request(
-        &f.control,
-        ControlMethod::CatalogApply {
-            request: draft.request,
-            preview_digest: draft.preview_digest,
-        },
-    )
-    .await?;
-    let ControlResponse::CatalogApplied { receipt, .. } = response else {
-        anyhow::bail!("grant apply refused: {}", serde_json::to_string(&response)?);
-    };
-    f.session.grant_id = grant.id;
-    f.session.expected_grant_revision = grant.revision;
-    f.session.expected_catalog_revision = receipt.catalog_revision;
+fn fresh_grant(f: &mut Fixture, snapshot: &SplitSnapshot) {
     f.session.index_ids = Some(vec![f.indexes[2], snapshot.request.destination.index_id]);
-    Ok(())
 }
 
 #[cfg(feature = "local-inference")]
@@ -845,7 +810,8 @@ async fn provider_cutover_with_retirement(
     } else {
         metrics::Capture::start(&mut f, &mut _service, "complete").await?
     };
-    let old = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
+    let old = f.resolve(&f.session).await?;
+    let old_window = f.session_window().await?;
     let mut old_mcp = McpSession::start(&f)?;
     let vector = json!({"query":"boundaryneedle","mode":"vector","limit":8,"max_bytes":8192,"verification":"off","response_mode":"full"});
     let warm = native_read(old.as_ref(), "airk_search", &vector).await?;
@@ -1097,11 +1063,9 @@ async fn provider_cutover_with_retirement(
         "actual native roots were not acknowledged"
     );
     // Old client authority is never renewed across restrictive original cutover.
-    let old_reply = old
-        .call("airk_search".into(), vector.as_object().unwrap().clone())
-        .await
-        .context("old native transport failed unexpectedly instead of returning scoped refusal")?;
-    scope_refusal(&old_reply, &f.session)?;
+    if let Some(old_reply) = old_authority_reply(old.as_ref(), "airk_search", &vector).await? {
+        scope_refusal(&old_reply, &old_window)?;
+    }
     old.close();
     old.shutdown().await?;
     drop(old_mcp);
@@ -1125,8 +1089,8 @@ async fn provider_cutover_with_retirement(
             "actual CLI management result lost fields"
         );
     }
-    fresh_grant(&mut f, &complete, 133).await?;
-    let backend = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
+    fresh_grant(&mut f, &complete);
+    let backend = f.resolve(&f.session).await?;
     let mut mcp = McpSession::start(&f)?;
     if require_semantic_ready {
         let destination = complete.request.destination.index_id;
@@ -1473,7 +1437,7 @@ async fn split_actual_service_cancel_has_exact_receipt_without_affecting_healthy
         matches!(response, ControlResponse::CatalogSplitRecoveryReceipt { receipt: Some(ref saved), .. } if **saved == *receipt),
         "native immutable cancellation acknowledgment changed during cleanup"
     );
-    let backend = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
+    let backend = f.resolve(&f.session).await?;
     let healthy = native_read(backend.as_ref(),"airk_search",&json!({"query":"boundaryneedle","mode":"lexical","limit":8,"max_bytes":8192,"verification":"off"})).await?;
     ensure!(
         healthy["isError"] != true,

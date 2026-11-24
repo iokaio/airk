@@ -1086,11 +1086,7 @@ mod tests {
 
     #[test]
     fn scoped_read_recording_honors_enabled_and_disabled_policies() -> Result<()> {
-        use airk_core::{
-            identity::{Incarnation, Sha256Digest},
-            index_catalog::*,
-            scoped_reads::SourceDescriptor,
-        };
+        use airk_core::{identity::Incarnation, index_catalog::*, scoped_reads::SourceDescriptor};
         let root = tempfile::tempdir()?;
         let kernel = crate::Kernel::open(root.path(), None)?;
         kernel.configure_vectors(false)?;
@@ -1098,7 +1094,7 @@ mod tests {
         let project = QueryProjectId::from_identity(Incarnation::from_bytes([1; 16]));
         let index = IndexId::from_identity(Incarnation::from_bytes([2; 16]));
         let source = SourceRootId::from_identity(Incarnation::from_bytes([3; 16]));
-        let scoped = kernel.with_scoped_reads(crate::scoped_reads::ScopedReadAuthority {
+        let scoped = kernel.with_selection_reads(crate::scoped_reads::SelectionReadAuthority {
             schema: 1,
             backing: airk_core::service::ProjectRegistration::new(
                 kernel.root_id(),
@@ -1108,32 +1104,33 @@ mod tests {
             .binding,
             index_id: index,
             project_ids: vec![project],
-            provenance: airk_core::grant_provenance::GrantProvenance::UserReviewedProjectGrant,
-            grant: ReviewedGrant {
-                id: GrantId::from_identity(Incarnation::from_bytes([4; 16])),
-                host: Sha256Digest::from_bytes([5; 32]),
-                revision: CatalogRevision::INITIAL,
-                revoked: false,
-                memberships: vec![GrantedMembership {
-                    membership: Membership {
-                        project_id: project,
-                        index_id: index,
-                        revision: CatalogRevision::INITIAL,
-                        scope: vec![ScopeAtom {
-                            source_root_id: source,
-                            kind: PathScope::Subtree,
-                            path: "public".into(),
-                        }],
-                    },
-                    source_revision: CatalogRevision::INITIAL,
-                    policy_epoch: 0,
-                    policy_digest: None,
-                }],
+            selection: airk_core::scoped_reads::SelectionScopeRef {
+                owner: airk_core::scoped_reads::SelectionOwnerKind::Window,
+                grant_nonce: airk_core::identity::Incarnation::from_bytes([10; 16]),
+                service_instance: airk_core::identity::Incarnation::from_bytes([11; 16]),
+                scope_identity: airk_core::identity::Sha256Digest::from_bytes([12; 32]),
+                catalog_revision: airk_core::index_catalog::CatalogRevision::try_from(5_u64)
+                    .unwrap(),
             },
+            atoms: vec![ScopeAtom {
+                source_root_id: source,
+                kind: PathScope::Subtree,
+                path: "public".into(),
+            }]
+            .into_iter()
+            .map(|atom| (project, atom))
+            .collect(),
             sources: vec![SourceDescriptor {
                 source_root_id: source,
                 original_root: kernel.root_id(),
             }],
+            membership_revisions: vec![(
+                project,
+                airk_core::index_catalog::CatalogRevision::INITIAL,
+            )],
+            source_revision: airk_core::index_catalog::CatalogRevision::INITIAL,
+            policy_epoch: 0,
+            policy_digest: None,
         })?;
         let environment_disabled =
             std::env::var_os("AIRK_USAGE_MODE").is_some_and(|mode| mode == "disabled");

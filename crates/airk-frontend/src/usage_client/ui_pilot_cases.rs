@@ -84,12 +84,11 @@ fn report_document(populated: bool, project: ProjectBinding) -> Result<Value> {
 #[tokio::test]
 async fn ui_pilot_usage_native_cases() -> Result<()> {
     let project: ProjectBinding = "4b".repeat(32).parse()?;
-    let error = render_selected(
+    let error = render(
         Path::new("unused-before-validation"),
         project,
         31,
         airk_mcp::local::ReportFormat::Json,
-        None,
         None,
     )
     .await
@@ -137,7 +136,7 @@ async fn ui_pilot_usage_native_cases() -> Result<()> {
         ),
     ];
     let cases = responses.into_iter().map(|(name,days,response)| {
-        let method = ControlMethod::UsageDocument{project,catalog:None,read:UsageDocumentRead::Report{days,format:airk_core::native_reads::ReportFormat::Json}};
+        let method = ControlMethod::UsageDocument{project,read:UsageDocumentRead::Report{days,format:airk_core::native_reads::ReportFormat::Json}};
         json!({"name":name,"surface":"usage","request":{"cli_args":["usage","report","--days",days.to_string(),"--format","json","--service-project",project.to_string(),"--output","json"],"admin_operation":"usage.document","admin_body":method},"native_response":response})
     }).collect::<Vec<_>>();
     assert_eq!(cases.len(), 5);

@@ -3,11 +3,16 @@
   "original": {
     "authority": {
       "fingerprint": "0606060606060606060606060606060606060606060606060606060606060606",
-      "grant_id": "grt_15151515151515151515151515151515",
-      "grant_revision": 1,
       "index_id": "idx_05050505050505050505050505050505",
       "lease_generation": 1,
-      "schema": 1
+      "schema": 1,
+      "selection": {
+        "catalog_revision": 1,
+        "grant_nonce": "15151515151515151515151515151515",
+        "owner": "agent",
+        "scope_identity": "1818181818181818181818181818181818181818181818181818181818181818",
+        "service_instance": "17171717171717171717171717171717"
+      }
     },
     "candidates": [
       {
@@ -80,15 +85,20 @@
   },
   "qualification": false,
   "schema": "airk.native-focus-input-digest-cases/2",
-  "semantic_digest": "2424ca7e7c0f36b69f79f8191d2572bb86a8567f15a3dcee7ca27c1f5fc1e0f0",
+  "semantic_digest": "f06d32985a2577fb8f530bc92f65fb905ab6e44966afbcc4d6bb21f3070ce6d3",
   "shortened": {
     "authority": {
       "fingerprint": "0606060606060606060606060606060606060606060606060606060606060606",
-      "grant_id": "grt_15151515151515151515151515151515",
-      "grant_revision": 1,
       "index_id": "idx_05050505050505050505050505050505",
       "lease_generation": 1,
-      "schema": 1
+      "schema": 1,
+      "selection": {
+        "catalog_revision": 1,
+        "grant_nonce": "15151515151515151515151515151515",
+        "owner": "agent",
+        "scope_identity": "1818181818181818181818181818181818181818181818181818181818181818",
+        "service_instance": "17171717171717171717171717171717"
+      }
     },
     "candidates": [
       {
@@ -159,5 +169,5 @@
       "worker": "18181818181818181818181818181818"
     }
   },
-  "shortened_semantic_digest": "2424ca7e7c0f36b69f79f8191d2572bb86a8567f15a3dcee7ca27c1f5fc1e0f0"
+  "shortened_semantic_digest": "f06d32985a2577fb8f530bc92f65fb905ab6e44966afbcc4d6bb21f3070ce6d3"
 }

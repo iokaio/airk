@@ -89,7 +89,6 @@ interface Declaration { name: string; kind: string; path: string; line?: number 
 
 /** Restart the whole read-only report once; never combine results from attempts. */
 async function consistentReview<T extends { notes: readonly string[] }>(context: ReviewContext, read: (context: ReviewContext) => Promise<T>, restart = true): Promise<T> {
-    if (context.session.spec?.combinedSession) { throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED', source('Git Review requires one explicit source/index context; combined paths need an originating index. Use qualified evidence in Workbench.','Review requires one explicit originating index; narrow the supplied named scope before reading.'))); }
     const deadline = performance.now() + 90000;
     const verificationBudget={bytes:512*1024*1024,reportBytes:8*1024*1024,deadline};
     for (let attempt = 0; ; attempt++) {

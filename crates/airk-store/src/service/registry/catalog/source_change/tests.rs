@@ -907,9 +907,8 @@ fn retirement_reference_fixture(
 ) -> Result<(
     Vec<airk_core::index_catalog::QueryProjectId>,
     airk_core::index_catalog::ContextId,
-    airk_core::index_catalog::GrantId,
 )> {
-    use airk_core::index_catalog::{ContextId, GrantId, QueryProjectId};
+    use airk_core::index_catalog::{ContextId, QueryProjectId};
     let plan = source_plan(request);
     let index = plan.sources[0].id;
     let id = match &request.operation {
@@ -921,14 +920,6 @@ fn retirement_reference_fixture(
         QueryProjectId::from_identity(Incarnation::from_bytes([22; 16])),
     ];
     let context = ContextId::from_identity(Incarnation::from_bytes([23; 16]));
-    let grant = GrantId::from_identity(Incarnation::from_bytes([24; 16]));
-    registry.connection.execute(
-        "INSERT INTO index_access_grants(id,host,revision,revoked) VALUES(?1,?2,1,0)",
-        params![
-            grant.to_string(),
-            Sha256Digest::from_bytes([25; 32]).to_string()
-        ],
-    )?;
     for project in &projects {
         registry.connection.execute(
             "INSERT INTO query_projects VALUES(?1,'Reviewed Project',1,1,1)",
@@ -945,19 +936,6 @@ fn retirement_reference_fixture(
         registry.connection.execute(
             "INSERT INTO project_default_indexes VALUES(?1,?2)",
             params![project.to_string(), id.to_string()],
-        )?;
-        registry.connection.execute(
-            "INSERT INTO index_access_memberships VALUES(?1,?2,?3,1,1,0,NULL)",
-            params![grant.to_string(), project.to_string(), id.to_string()],
-        )?;
-        registry.connection.execute(
-            "INSERT INTO index_access_scopes VALUES(?1,?2,?3,?4,'subtree','')",
-            params![
-                grant.to_string(),
-                project.to_string(),
-                id.to_string(),
-                index.to_string()
-            ],
         )?;
     }
     registry.connection.execute(
@@ -978,16 +956,14 @@ fn retirement_reference_fixture(
         "INSERT INTO context_default_indexes VALUES(?1,?2)",
         params![context.to_string(), id.to_string()],
     )?;
-    Ok((projects, context, grant))
+    Ok((projects, context))
 }
 
 #[test]
-fn retirement_discloses_and_removes_current_references_without_rewriting_frozen_grants()
--> Result<()> {
+fn retirement_discloses_and_removes_current_references() -> Result<()> {
     use airk_core::catalog_management::{CatalogEntity, CatalogItem};
     let (_owner, mut registry, begin) = fixture()?;
-    let (projects, context, grant) = retirement_reference_fixture(&registry, &begin)?;
-    let frozen = super::super::operations::read_persisted_grant(&registry.connection, grant)?;
+    let (projects, context) = retirement_reference_fixture(&registry, &begin)?;
     let mut request = begin.clone();
     let id = match &begin.operation {
         CatalogOperation::BeginIndexSourceChange { id, .. } => *id,
@@ -1022,10 +998,6 @@ fn retirement_discloses_and_removes_current_references_without_rewriting_frozen_
     apply(&mut registry, &request)?;
     require_no_retired_references(&registry.connection, id)?;
     assert_eq!(
-        super::super::operations::read_persisted_grant(&registry.connection, grant)?,
-        frozen
-    );
-    assert_eq!(
         registry.catalog_state()?.unwrap().revision,
         request.expected_catalog_revision.next()?
     );
@@ -1042,12 +1014,11 @@ fn retirement_discloses_and_removes_current_references_without_rewriting_frozen_
 fn retirement_reference_revision_exhaustion_refuses_complete_preview_without_effects() -> Result<()>
 {
     let (_owner, mut registry, begin) = fixture()?;
-    let (projects, _, grant) = retirement_reference_fixture(&registry, &begin)?;
+    let (projects, _) = retirement_reference_fixture(&registry, &begin)?;
     registry.connection.execute(
         "UPDATE query_projects SET scope_revision=9223372036854775807 WHERE id=?1",
         [projects[1].to_string()],
     )?;
-    let frozen = super::super::operations::read_persisted_grant(&registry.connection, grant)?;
     let id = match &begin.operation {
         CatalogOperation::BeginIndexSourceChange { id, .. } => *id,
         _ => unreachable!(),
@@ -1082,10 +1053,6 @@ fn retirement_reference_revision_exhaustion_refuses_complete_preview_without_eff
             |row| row.get::<_, i64>(0)
         )?,
         1
-    );
-    assert_eq!(
-        super::super::operations::read_persisted_grant(&registry.connection, grant)?,
-        frozen
     );
     assert_eq!(
         registry.catalog_state()?.unwrap().revision,

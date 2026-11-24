@@ -1035,10 +1035,7 @@ mod tests {
     use serde_json::json;
 
     fn scoped_fixture(kernel: &Kernel) -> Result<Kernel> {
-        use airk_core::{
-            grant_provenance::GrantProvenance, identity::Incarnation, index_catalog::*,
-            scoped_reads::SourceDescriptor,
-        };
+        use airk_core::{identity::Incarnation, index_catalog::*, scoped_reads::SourceDescriptor};
         let index = IndexId::from_identity(Incarnation::from_bytes([1; 16]));
         let root = SourceRootId::from_identity(Incarnation::from_bytes([2; 16]));
         let projects =
@@ -1049,41 +1046,49 @@ mod tests {
             kernel.collection.clone(),
         )?
         .binding;
-        kernel.with_scoped_reads(crate::scoped_reads::ScopedReadAuthority {
+        kernel.with_selection_reads(crate::scoped_reads::SelectionReadAuthority {
             schema: 1,
             backing,
             index_id: index,
             project_ids: projects.to_vec(),
-            provenance: GrantProvenance::UserReviewedProjectGrant,
+            selection: airk_core::scoped_reads::SelectionScopeRef {
+                owner: airk_core::scoped_reads::SelectionOwnerKind::Window,
+                grant_nonce: airk_core::identity::Incarnation::from_bytes([10; 16]),
+                service_instance: airk_core::identity::Incarnation::from_bytes([11; 16]),
+                scope_identity: airk_core::identity::Sha256Digest::from_bytes([12; 32]),
+                catalog_revision: airk_core::index_catalog::CatalogRevision::try_from(5_u64)
+                    .unwrap(),
+            },
+            atoms: projects
+                .into_iter()
+                .zip(["shared/a.rs", "shared/b.rs"])
+                .map(|(project_id, path)| {
+                    (
+                        project_id,
+                        ScopeAtom {
+                            source_root_id: root,
+                            kind: PathScope::Exact,
+                            path: path.into(),
+                        },
+                    )
+                })
+                .collect(),
             sources: vec![SourceDescriptor {
                 source_root_id: root,
                 original_root: kernel.root_id(),
             }],
-            grant: ReviewedGrant {
-                id: GrantId::from_identity(Incarnation::from_bytes([5; 16])),
-                host: Sha256Digest::from_bytes([6; 32]),
-                revision: CatalogRevision::INITIAL,
-                revoked: false,
-                memberships: projects
-                    .into_iter()
-                    .zip(["shared/a.rs", "shared/b.rs"])
-                    .map(|(project_id, path)| GrantedMembership {
-                        membership: Membership {
-                            project_id,
-                            index_id: index,
-                            revision: CatalogRevision::INITIAL,
-                            scope: vec![ScopeAtom {
-                                source_root_id: root,
-                                kind: PathScope::Exact,
-                                path: path.into(),
-                            }],
-                        },
-                        source_revision: CatalogRevision::INITIAL,
-                        policy_epoch: 0,
-                        policy_digest: None,
-                    })
-                    .collect(),
-            },
+            membership_revisions: projects
+                .into_iter()
+                .map(|project_id| {
+                    (
+                        project_id,
+                        airk_core::index_catalog::CatalogRevision::INITIAL,
+                    )
+                })
+                .collect(),
+            source_revision: airk_core::index_catalog::CatalogRevision::INITIAL,
+            policy_epoch: 0,
+            policy_digest: None,
         })
     }
 

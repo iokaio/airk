@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Inert, bounded administrative catalog contracts. Preferences confer no authority.
 use crate::{
-    grant_provenance::{PersistedGrant, is_imported_grant_id},
     identity::{Incarnation, Sha256Digest, framed_digest},
     index_catalog::*,
     service_records::RequestKey,
@@ -192,13 +191,6 @@ pub enum CatalogOperation {
         id: ContextId,
         expected_revision: CatalogRevision,
     },
-    CreateGrant {
-        grant: ReviewedGrant,
-    },
-    RevokeGrant {
-        id: GrantId,
-        expected_revision: CatalogRevision,
-    },
     /// U105: set (`Some`) or clear (`None`) an index's description. The
     /// field is always encoded (`null` clears).
     SetIndexDescription {
@@ -230,7 +222,6 @@ impl CatalogOperation {
             Self::DeleteProject { .. }
                 | Self::SetMembership { .. }
                 | Self::RemoveMembership { .. }
-                | Self::RevokeGrant { .. }
                 | Self::BeginIndexSourceChange { .. }
                 | Self::RetireIndex { .. }
                 | Self::ChangeIndexPolicy { .. }
@@ -250,7 +241,6 @@ impl CatalogOperation {
             Self::RetireIndex { id, .. }
             | Self::ChangeIndexPolicy { id, .. }
             | Self::BeginIndexSourceChange { id, .. } => Some(ConfirmationTarget::IndexName(*id)),
-            Self::RevokeGrant { id, .. } => Some(ConfirmationTarget::Id(id.to_string())),
             Self::DeleteContext { id, .. } => Some(ConfirmationTarget::Id(id.to_string())),
             Self::CreateProject { .. }
             | Self::RenameProject { .. }
@@ -259,7 +249,6 @@ impl CatalogOperation {
             | Self::SetMembership { .. }
             | Self::SetProjectDefaults { .. }
             | Self::SetContext { .. }
-            | Self::CreateGrant { .. }
             | Self::SetIndexDescription { .. }
             | Self::SetProjectDescription { .. } => None,
         }
@@ -366,17 +355,6 @@ impl CatalogRequest {
                     "invalid next context revision"
                 );
             }
-            CatalogOperation::CreateGrant { grant } => {
-                grant.validate()?;
-                ensure!(
-                    !is_imported_grant_id(grant.id),
-                    "imported compatibility IDs are reserved for native cutover"
-                );
-                ensure!(
-                    grant.revision == CatalogRevision::INITIAL && !grant.revoked,
-                    "new grant must be unrevoked at initial revision"
-                );
-            }
             CatalogOperation::BeginIndexSourceChange { plan, .. } => {
                 plan.validate()?;
                 ensure!(
@@ -460,7 +438,6 @@ pub enum CatalogKind {
     Indexes,
     Memberships,
     Contexts,
-    Grants,
     Sources,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -503,9 +480,6 @@ pub enum CatalogEntity {
         host: Sha256Digest,
         key: Sha256Digest,
     },
-    Grant {
-        id: GrantId,
-    },
     Source {
         id: SourceRootId,
     },
@@ -529,7 +503,6 @@ pub enum CatalogItem {
     Index(IndexDefinition),
     Membership(Membership),
     Context(ContextChoices),
-    Grant(PersistedGrant),
     Source(CatalogSource),
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -575,9 +548,6 @@ impl CatalogPageRequest {
                 }
                 CatalogKind::Contexts => {
                     c.after.parse::<ContextId>()?;
-                }
-                CatalogKind::Grants => {
-                    c.after.parse::<GrantId>()?;
                 }
                 CatalogKind::Sources => {
                     c.after.parse::<SourceRootId>()?;

@@ -23,18 +23,12 @@ brokerage. Stated rule:
     `direct_query_setup`): `reason` is `busy`, `query_submitted` is false,
     `retryable` is true, and `fresh_brokerage_required` is true exactly for
     `direct_query_setup`.
+  * The delay is a JSON integer in 1..=1000.
   * Scoped setup refusal (`error.code` `scoped_status_prepare_timeout` or
     `scoped_connection_unavailable`) is retryable only for a caller that
-    supplies its original frozen selection (`expected_scope`), with
-    `structuredContent` present, only the fields `error` and
-    `requested_scope`, closed error fields, `query_submitted` false,
-    `retryable` true, `fresh_brokerage_required` true, `query_replay_safe`
-    absent or true, `requested_scope.confirmed` false, and a selection equal to
-    the original except that `expected_catalog_revision` may only move forward
-    (project order is not significant). `scoped_connection_unavailable`
-    requires `native_control_response` = `{status: "failure", code}` with one
-    of the nine pre-query busy codes below; the timeout code carries none.
-  * The delay is a JSON integer in 1..=1000.
+    supplies its original live selection (`expected_scope`). The catalog
+    session form, with its native-control response and catalog clock-forward
+    rule, was removed with reviewed grants (change-log entry 68 part 3).
   * In-memory selection setup echoes `window_scope_selection` and
     `scope_identity`, with no native-control response. The original public
     identity, namespace, revision and ID sets must match exactly; this source
@@ -65,9 +59,6 @@ NATIVE_BUSY_CODES = [
 ]
 PROJECT = "prj_" + "05" * 16
 SECOND_PROJECT = "prj_" + "06" * 16
-SELECTION = {"schema": 1, "context_key": "01" * 32, "namespace": "02" * 16, "expected_catalog_revision": 7,
-             "grant_id": "grt_" + "03" * 16, "expected_grant_revision": 1, "index_id": "idx_" + "04" * 16,
-             "project_ids": [PROJECT]}
 
 
 def sorted_text(value):
@@ -170,101 +161,17 @@ def direct_cases():
                envelope(direct(delay=25.0)), None)
 
 
-def scoped(code="scoped_status_prepare_timeout", native=None, delay=100, selection=None, **changes):
+def scoped(selection, code="scoped_status_prepare_timeout", native=None, delay=100, **changes):
     error = {"code": code, "retryable": True, "query_submitted": False, "retry_after_ms": delay,
              "fresh_brokerage_required": True}
     if native is not None:
         error["native_control_response"] = native
     error.update(changes)
-    return {"error": error, "requested_scope": {"confirmed": False, "selection": selection or SELECTION}}
-
-
-def selection(**changes):
-    value = copy.deepcopy(SELECTION)
-    value.update(changes)
-    return value
+    return {"error": error, "requested_scope": {"confirmed": False, "selection": selection}}
 
 
 def native(code):
     return {"status": "failure", "code": code}
-
-
-def scoped_cases():
-    scope = SELECTION
-
-    def emitter(code, retryable=True, native_response=None):
-        return {"function": "airk_mcp::remote::scoped_setup_failure", "code": code, "retryable": retryable,
-                "native_control_response": native_response}
-
-    yield case("scoped_prepare_timeout", "a prepare timeout before submission is retried with fresh brokerage",
-               envelope(scoped(), structured=True), accepted(100, True), scope, emitter("scoped_status_prepare_timeout"))
-    for code in NATIVE_BUSY_CODES:
-        yield case(f"scoped_unavailable_{code}", f"{code} is a pre-query native busy refusal",
-                   envelope(scoped("scoped_connection_unavailable", native(code)), structured=True), accepted(100, True),
-                   scope, emitter("scoped_connection_unavailable", native_response=native(code)))
-    yield case("scoped_unavailable_grant_revoked", "a tenth native code is not a busy refusal",
-               envelope(scoped("scoped_connection_unavailable", native("grant_revoked")), structured=True), None, scope,
-               emitter("scoped_connection_unavailable", native_response=native("grant_revoked")))
-    yield case("scoped_unavailable_without_native_response", "the unavailable code needs its native response",
-               envelope(scoped("scoped_connection_unavailable"), structured=True), None, scope,
-               emitter("scoped_connection_unavailable"))
-    yield case("scoped_unavailable_native_not_failure", "the native response is a failure",
-               envelope(scoped("scoped_connection_unavailable", {"status": "ok", "code": "broker_busy"}), structured=True),
-               None, scope)
-    yield case("scoped_unavailable_native_extra_field", "the native response has only status and code",
-               envelope(scoped("scoped_connection_unavailable", dict(native("broker_busy"), detail="x")), structured=True),
-               None, scope)
-    yield case("scoped_timeout_with_native_response", "the timeout code carries no native response",
-               envelope(scoped(native=native("broker_busy")), structured=True), None, scope,
-               emitter("scoped_status_prepare_timeout", native_response=native("broker_busy")))
-    yield case("scoped_not_retryable", "a non-retryable setup failure is final",
-               envelope({"error": {"code": "scoped_status_prepare_unavailable", "retryable": False, "query_submitted": False},
-                         "requested_scope": {"confirmed": False, "selection": SELECTION}}, structured=True), None, scope,
-               emitter("scoped_status_prepare_unavailable", retryable=False))
-    yield case("scoped_without_expected_scope", "a caller without its original selection cannot retry",
-               envelope(scoped(), structured=True), None, None)
-    yield case("scoped_without_structured_content", "the scoped envelope carries equal structured content",
-               envelope(scoped()), None, scope)
-    disagreeing = envelope(scoped(), structured=True)
-    disagreeing["structuredContent"] = scoped(delay=200)
-    yield case("scoped_structured_disagrees", "structured content must equal the text", disagreeing, None, scope)
-    yield case("scoped_clock_backwards", "the catalog clock never moves backwards",
-               envelope(scoped(selection=selection(expected_catalog_revision=6)), structured=True), None, scope)
-    yield case("scoped_clock_forward", "native admission may refresh the catalog clock forward",
-               envelope(scoped(selection=selection(expected_catalog_revision=12)), structured=True), accepted(100, True), scope)
-    yield case("scoped_changed_grant", "a different grant is a different authority",
-               envelope(scoped(selection=selection(grant_id="grt_" + "09" * 16)), structured=True), None, scope)
-    yield case("scoped_changed_grant_revision", "a changed grant revision is a different authority",
-               envelope(scoped(selection=selection(expected_grant_revision=2)), structured=True), None, scope)
-    yield case("scoped_changed_index", "a different index is a different read",
-               envelope(scoped(selection=selection(index_id="idx_" + "09" * 16)), structured=True), None, scope)
-    two = selection(project_ids=[PROJECT, SECOND_PROJECT])
-    yield case("scoped_project_order", "project order is not significant",
-               envelope(scoped(selection=selection(project_ids=[SECOND_PROJECT, PROJECT])), structured=True),
-               accepted(100, True), two)
-    yield case("scoped_selection_unknown_field", "the selection has a closed field set",
-               envelope(scoped(selection=selection(note="x")), structured=True), None, scope)
-    confirmed = scoped()
-    confirmed["requested_scope"]["confirmed"] = True
-    yield case("scoped_confirmed", "a confirmed scope is not a pre-query refusal", envelope(confirmed, structured=True), None, scope)
-    yield case("scoped_submitted", "a submitted query is never replayed",
-               envelope(scoped(query_submitted=True), structured=True), None, scope)
-    yield case("scoped_replay_safe_true", "query_replay_safe may be stated as true",
-               envelope(scoped(query_replay_safe=True), structured=True), accepted(100, True), scope)
-    yield case("scoped_replay_unsafe", "query_replay_safe false is never replayed",
-               envelope(scoped(query_replay_safe=False), structured=True), None, scope)
-    yield case("scoped_unknown_error_field", "the error has a closed field set",
-               envelope(scoped(unexpected=True), structured=True), None, scope)
-    extra = scoped()
-    extra["hits"] = []
-    yield case("scoped_extra_body_field", "the body has only error and requested_scope", envelope(extra, structured=True), None, scope)
-    yield case("scoped_without_fresh_brokerage", "a scoped retry always needs fresh brokerage",
-               envelope(scoped(fresh_brokerage_required=False), structured=True), None, scope)
-    for delay, expected in [(0, None), (1, accepted(1, True)), (1000, accepted(1000, True)), (1001, None)]:
-        yield case(f"scoped_delay_{delay}", "delay must be 1..=1000 ms",
-                   envelope(scoped(delay=delay), structured=True), expected, scope)
-    yield case("scoped_integral_float_delay", "the delay is a JSON integer literal; 25.0 is refused",
-               envelope(scoped(delay=25.0), structured=True), None, scope)
 
 
 def selection_cases():
@@ -275,7 +182,7 @@ def selection_cases():
     }, "scope_identity": "08" * 32}
 
     def body(code="scoped_connection_unavailable", **changes):
-        return scoped(code=code, selection=copy.deepcopy(selected), **changes)
+        return scoped(copy.deepcopy(selected), code=code, **changes)
 
     def entry(name, rule, native_body, expected, expected_scope=selected, emitter=None):
         return case(name, rule, envelope(native_body, structured=True), expected, expected_scope, emitter)
@@ -296,7 +203,6 @@ def selection_cases():
         changed["requested_scope"]["selection"]["window_scope_selection"][field] = value
         suffix = str(value) if isinstance(value, int) else "empty" if value == [] else "other"
         yield entry(f"selection_changed_{field}_{suffix}", "namespace, revision and nonempty ID sets must equal the original selection epoch", changed, None)
-    yield entry("selection_catalog_expected", "a selection response never agrees with a catalog grant", body(), None, SELECTION)
     yield entry("selection_no_expected", "a caller must capture its original live selection", body(), None, None)
     for field, value in [("query_submitted", True), ("query_submitted", None), ("query_replay_safe", False),
                          ("retryable", False), ("fresh_brokerage_required", False), ("unexpected", True)]:
@@ -323,11 +229,11 @@ def selection_cases():
 def render():
     document = {
         "schema": SCHEMA,
-        "rust": "crates/airk-cli/tests/common/read_retry.rs classify, classify_for_scope, classify_for_selection",
+        "rust": "crates/airk-cli/tests/common/read_retry.rs classify, classify_for_selection",
         "typescript": "packages/vscode/src/readRetry.ts readRetryDelay",
         "generator": "fixtures/wire/read_retry_envelopes.py",
         "native_busy_codes": NATIVE_BUSY_CODES,
-        "cases": [*storage_cases(), *direct_cases(), *scoped_cases(), *selection_cases()],
+        "cases": [*storage_cases(), *direct_cases(), *selection_cases()],
     }
     return json.dumps(document, indent=1, ensure_ascii=True, sort_keys=True) + "\n"
 

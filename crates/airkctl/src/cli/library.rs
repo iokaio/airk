@@ -59,14 +59,12 @@ pub(super) enum LibraryCommand {
         #[arg(long)]
         runtime_dir: Option<PathBuf>,
     },
-    /// One catalog entity: an index, an index set or a grant.
+    /// One catalog entity: an index or an index set.
     Show {
-        #[arg(long, conflicts_with_all = ["set", "grant"], required_unless_present_any = ["set", "grant"])]
+        #[arg(long, conflicts_with = "set", required_unless_present = "set")]
         index: Option<String>,
-        #[arg(long, conflicts_with = "grant")]
-        set: Option<String>,
         #[arg(long)]
-        grant: Option<String>,
+        set: Option<String>,
         /// Refuse unless the catalog is at this revision.
         #[arg(long)]
         revision: Option<u64>,
@@ -182,7 +180,7 @@ pub(super) struct ApplyArgs {
     /// Apply the previewed change.
     #[arg(long)]
     yes: bool,
-    /// The target's current name (or a grant's or context's id), typed to
+    /// The target's current name (or a context's id), typed to
     /// confirm a delete, removal or retirement (U98).
     #[arg(long)]
     confirm: Option<String>,
@@ -247,10 +245,9 @@ pub(super) fn run(cx: &mut Context, selection: Selection, command: LibraryComman
         LibraryCommand::Show {
             index,
             set,
-            grant,
             revision,
             runtime_dir,
-        } => show(cx, &selection, index, set, grant, revision, runtime_dir),
+        } => show(cx, &selection, index, set, revision, runtime_dir),
         LibraryCommand::Setup {
             name,
             index_collection,
@@ -419,20 +416,14 @@ fn show(
     selection: &Selection,
     index: Option<String>,
     set: Option<String>,
-    grant: Option<String>,
     expected: Option<u64>,
     runtime_dir: Option<PathBuf>,
 ) -> Result<u8, u8> {
     let control = control(cx, selection, runtime_dir)?;
-    let entity = match (
-        parse(cx, "--index", index)?,
-        parse(cx, "--set", set)?,
-        parse(cx, "--grant", grant)?,
-    ) {
-        (Some(id), None, None) => CatalogEntity::Index { id },
-        (None, Some(id), None) => CatalogEntity::Project { id },
-        (None, None, Some(id)) => CatalogEntity::Grant { id },
-        _ => return Err(usage(cx, "name exactly one of --index, --set or --grant")),
+    let entity = match (parse(cx, "--index", index)?, parse(cx, "--set", set)?) {
+        (Some(id), None) => CatalogEntity::Index { id },
+        (None, Some(id)) => CatalogEntity::Project { id },
+        _ => return Err(usage(cx, "name exactly one of --index or --set")),
     };
     let expected_catalog_revision = revision(cx, expected)?;
     let response = request(

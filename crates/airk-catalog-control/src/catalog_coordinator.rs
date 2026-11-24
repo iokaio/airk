@@ -2,7 +2,6 @@
 //! Inert native coordinator, called synchronously by the accepted metadata actor.
 //! Caller cancellation drops only its waiter; the actor retains this operation.
 //! Store owns transactions; Supervisor alone owns private child exchanges.
-#![allow(dead_code)]
 use crate::catalog_admission::{FenceKey, FenceTicket, NativeCatalogAdmission};
 use airk_core::{
     catalog_management::CatalogRequest, identity::Sha256Digest, service::WorkerIdentity,
@@ -108,6 +107,7 @@ impl KnownUnprepared {
             && self.absence.catalog_state().namespace == key.key.namespace
             && self.absence.catalog_state().revision == key.expected_revision
     }
+    #[cfg(test)]
     fn observe(registry: &ServiceRegistry, request: &CatalogRequest) -> Result<Self> {
         // This native-only snapshot proves exact saved absence even after the
         // accepted key's epoch rotates. It never relaxes new-write admission.
@@ -236,79 +236,6 @@ impl CatalogApplyOutcomeUnknown {
     }
 }
 
-/// Called by the authenticated metadata actor. Context defaults remain
-/// preferences; the persisted reviewed grant is the evidence authority.
-pub fn native_scoped_selection(
-    registry: &mut ServiceRegistry,
-    request: &airk_core::service::ScopedConnectRequest,
-) -> Result<crate::catalog_authority::NativeCatalogAuthoritySelection> {
-    use airk_core::{
-        catalog_management::{CatalogEntity, CatalogItem},
-        scoped_reads::ScopeReadRefused,
-    };
-    request.validate()?;
-    let context = crate::catalog_host_context::NativeHostContext::load(
-        registry,
-        request.context_key,
-        Some(request.expected_catalog_revision),
-    )?;
-    let descriptor = context.descriptor();
-    ensure!(
-        descriptor.namespace == request.namespace
-            && descriptor.catalog_revision == request.expected_catalog_revision
-            && descriptor.key == request.context_key,
-        ScopeReadRefused
-    );
-    let grant = registry.catalog_detail(
-        &CatalogEntity::Grant {
-            id: request.grant_id,
-        },
-        Some(request.expected_catalog_revision),
-    )?;
-    ensure!(
-        grant.namespace == descriptor.namespace && grant.revision == descriptor.catalog_revision,
-        ScopeReadRefused
-    );
-    let Some(CatalogItem::Grant(persisted)) = grant.item else {
-        anyhow::bail!(ScopeReadRefused)
-    };
-    persisted.validate()?;
-    ensure!(
-        persisted.grant.id == request.grant_id
-            && persisted.grant.host == descriptor.host
-            && !persisted.grant.revoked
-            && persisted.grant.revision == request.expected_grant_revision,
-        ScopeReadRefused
-    );
-    let detail = registry.catalog_detail(
-        &CatalogEntity::Index {
-            id: request.index_id,
-        },
-        Some(request.expected_catalog_revision),
-    )?;
-    ensure!(
-        detail.namespace == descriptor.namespace && detail.revision == descriptor.catalog_revision,
-        ScopeReadRefused
-    );
-    let Some(CatalogItem::Index(index)) = detail.item else {
-        anyhow::bail!(ScopeReadRefused)
-    };
-    index.validate()?;
-    ensure!(
-        !index.tombstone && index.id == request.index_id,
-        ScopeReadRefused
-    );
-    Ok(crate::catalog_authority::NativeCatalogAuthoritySelection {
-        namespace: descriptor.namespace,
-        host: descriptor.host,
-        catalog_revision: descriptor.catalog_revision,
-        grant_id: request.grant_id,
-        grant_revision: request.expected_grant_revision,
-        index_id: request.index_id,
-        project_ids: request.project_ids.clone(),
-        backing: index.backing.binding,
-    })
-}
 impl<C: CatalogControl> CatalogCoordinator<C> {
     pub fn new(gate: NativeCatalogAdmission, control: C) -> Result<Self> {
         ensure!(
@@ -426,6 +353,7 @@ impl<C: CatalogControl> CatalogCoordinator<C> {
             }
         }
     }
+    #[cfg(test)]
     fn apply_with_hook(
         &mut self,
         registry: &mut ServiceRegistry,

@@ -151,18 +151,8 @@ pub async fn render(
     format: airk_mcp::local::ReportFormat,
     price: Option<airk_core::usage::PriceScenario>,
 ) -> Result<Value> {
-    render_selected(control, project, days, format, price, None).await
-}
-pub async fn render_selected(
-    control: &Path,
-    project: ProjectBinding,
-    days: u16,
-    format: airk_mcp::local::ReportFormat,
-    price: Option<airk_core::usage::PriceScenario>,
-    selection: Option<&airk_core::service::ScopedConnectRequest>,
-) -> Result<Value> {
     ensure!((1..=30).contains(&days), "usage report days must be 1..30");
-    collect_selected(control, project, selection, move |cursor| {
+    collect(control, project, move |cursor| {
         airk_mcp::local::NativeRead::UsageReport {
             days,
             cursor,
@@ -179,15 +169,7 @@ pub async fn settings(
     project: ProjectBinding,
     view: airk_mcp::local::SettingsView,
 ) -> Result<Value> {
-    settings_selected(control, project, view, None).await
-}
-pub async fn settings_selected(
-    control: &Path,
-    project: ProjectBinding,
-    view: airk_mcp::local::SettingsView,
-    selection: Option<&airk_core::service::ScopedConnectRequest>,
-) -> Result<Value> {
-    collect_selected(control, project, selection, move |cursor| {
+    collect(control, project, move |cursor| {
         airk_mcp::local::NativeRead::Settings {
             view,
             cursor,
@@ -202,16 +184,7 @@ pub async fn validate_settings(
     view: airk_mcp::local::SettingsView,
     input: airk_core::service_configuration::InputFile,
 ) -> Result<Value> {
-    validate_settings_selected(control, project, view, input, None).await
-}
-pub async fn validate_settings_selected(
-    control: &Path,
-    project: ProjectBinding,
-    view: airk_mcp::local::SettingsView,
-    input: airk_core::service_configuration::InputFile,
-    selection: Option<&airk_core::service::ScopedConnectRequest>,
-) -> Result<Value> {
-    collect_selected(control, project, selection, move |cursor| {
+    collect(control, project, move |cursor| {
         airk_mcp::local::NativeRead::ValidateSettings {
             view,
             input: input.clone(),
@@ -223,19 +196,18 @@ pub async fn validate_settings_selected(
 }
 
 /// Send a file selector to the native owner before any client filesystem access.
-pub async fn validate_settings_file_selected(
+pub async fn validate_settings_file(
     control: &Path,
     project: ProjectBinding,
     view: airk_mcp::local::SettingsView,
     path: &Path,
-    selection: Option<&airk_core::service::ScopedConnectRequest>,
 ) -> Result<Value> {
     let path = std::path::absolute(path)?;
     let path = path
         .to_str()
         .context("settings input path must be UTF-8")?
         .to_owned();
-    collect_selected(control, project, selection, move |cursor| {
+    collect(control, project, move |cursor| {
         airk_mcp::local::NativeRead::ValidateSettingsFile {
             view,
             path: path.clone(),
@@ -246,20 +218,19 @@ pub async fn validate_settings_file_selected(
     .await
 }
 
-pub async fn render_file_selected(
+pub async fn render_file(
     control: &Path,
     project: ProjectBinding,
     days: u16,
     format: airk_mcp::local::ReportFormat,
     path: &Path,
-    selection: Option<&airk_core::service::ScopedConnectRequest>,
 ) -> Result<Value> {
     let path = std::path::absolute(path)?;
     let path = path
         .to_str()
         .context("price scenario path must be UTF-8")?
         .to_owned();
-    collect_selected(control, project, selection, move |cursor| {
+    collect(control, project, move |cursor| {
         airk_mcp::local::NativeRead::UsageReportFile {
             days,
             price_scenario_path: path.clone(),
@@ -271,16 +242,15 @@ pub async fn render_file_selected(
     .await
 }
 
-async fn collect_selected(
+async fn collect(
     control: &Path,
     project: ProjectBinding,
-    selection: Option<&airk_core::service::ScopedConnectRequest>,
     mut request: impl FnMut(Option<String>) -> airk_mcp::local::NativeRead,
 ) -> Result<Value> {
     let mut attempts = 0;
     loop {
         attempts += 1;
-        match collect_selected_once(control, project, selection, &mut request).await {
+        match collect_once(control, project, &mut request).await {
             Err(error) if error.is::<PaginationPublicationMoved>() => {
                 if attempts < PAGINATION_ATTEMPTS {
                     continue;
@@ -292,25 +262,11 @@ async fn collect_selected(
         }
     }
 }
-async fn collect_selected_once(
+async fn collect_once(
     control: &Path,
     project: ProjectBinding,
-    selection: Option<&airk_core::service::ScopedConnectRequest>,
     mut request: impl FnMut(Option<String>) -> airk_mcp::local::NativeRead,
 ) -> Result<Value> {
-    let mut connection = if let Some(selection) = selection {
-        Some(
-            crate::project_client::Connection::connect_scoped(
-                control,
-                project,
-                selection,
-                airk_core::usage::ClientFamily::Cli,
-            )
-            .await?,
-        )
-    } else {
-        None
-    };
     let mut cursor = None;
     let mut document = Value::Null;
     let mut expected_digest = None;
@@ -319,40 +275,13 @@ async fn collect_selected_once(
     let mut bytes = 0usize;
     let mut scope_headers = None;
     for _ in 0..256 {
-        // Usage document pages are not Answer; they keep the ordinary 125 s.
-        let context = airk_mcp::read_attempt::ReadAttemptContext::new(
-            std::time::Instant::now() + airk_core::read_attempt::MAX_READ_BUDGET,
-            Default::default(),
-        );
-        let value = if let Some(selection) = selection {
-            if connection
-                .as_ref()
-                .is_none_or(|connection| !connection.reusable(std::time::Instant::now()))
-            {
-                connection = Some(
-                    crate::project_client::Connection::connect_scoped(
-                        control,
-                        project,
-                        selection,
-                        airk_core::usage::ClientFamily::Cli,
-                    )
-                    .await?,
-                );
-            }
-            connection
-                .as_mut()
-                .context("selected native connection missing")?
-                .read_native_with_context(request(cursor), context)
-                .await?
-        } else {
-            administrative_read(
-                control,
-                project,
-                request(cursor),
-                airk_core::usage::ClientFamily::Cli,
-            )
-            .await?
-        };
+        let value = administrative_read(
+            control,
+            project,
+            request(cursor),
+            airk_core::usage::ClientFamily::Cli,
+        )
+        .await?;
         let value = require_native_success(value)?;
         let page: airk_kernel::usage_page::Page = serde_json::from_value(value)?;
         observe_scope_headers(&page, &mut scope_headers)?;
@@ -423,14 +352,11 @@ mod tests {
                 schema: 1,
                 qualifier: ScopeQualifier::SelectedSubset,
                 fingerprint: Sha256Digest::from_bytes([1; 32]),
-                provenance: Some(
-                    airk_core::grant_provenance::GrantProvenanceKind::UserReviewedProjectGrant,
-                ),
-                grant: Some(ScopeGrantObservation {
-                    id: GrantId::from_identity(Incarnation::from_bytes([2; 16])),
-                    revision: CatalogRevision::INITIAL,
-                }),
-                selection: None,
+                selection: ScopeSelectionObservation {
+                    owner: SelectionOwnerKind::Window,
+                    scope_identity: Sha256Digest::from_bytes([2; 32]),
+                    catalog_revision: CatalogRevision::INITIAL,
+                },
                 members: vec![ScopeMemberObservation {
                     index_id: IndexId::from_identity(Incarnation::from_bytes([3; 16])),
                     memberships: vec![ScopeMembershipObservation {

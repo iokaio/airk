@@ -6,7 +6,6 @@ use super::*;
 use airk_core::{
     DocumentLocation,
     evidence::RevisionEnvelope,
-    grant_provenance::GrantProvenance,
     identity::{Incarnation, RevisionToken},
     index_catalog::*,
     read_attempt::{ReadAttemptBudget, ReadClock},
@@ -303,7 +302,7 @@ pub(crate) fn fixture_with<T: NativeController + 'static>(
     let project = QueryProjectId::from_identity(Incarnation::from_bytes([1; 16]));
     let index = IndexId::from_identity(Incarnation::from_bytes([2; 16]));
     let source_id = SourceRootId::from_identity(Incarnation::from_bytes([3; 16]));
-    let authority = crate::scoped_reads::ScopedReadAuthority {
+    let authority = crate::scoped_reads::SelectionReadAuthority {
         schema: 1,
         backing: airk_core::service::ProjectRegistration::new(
             kernel.root().to_str().unwrap().into(),
@@ -313,41 +312,42 @@ pub(crate) fn fixture_with<T: NativeController + 'static>(
         .binding,
         index_id: index,
         project_ids: vec![project],
-        provenance: GrantProvenance::UserReviewedProjectGrant,
-        grant: ReviewedGrant {
-            id: GrantId::from_identity(Incarnation::from_bytes([4; 16])),
-            host: digest(5),
-            revision: CatalogRevision::INITIAL,
-            revoked: false,
-            memberships: vec![GrantedMembership {
-                membership: Membership {
-                    project_id: project,
-                    index_id: index,
-                    revision: CatalogRevision::INITIAL,
-                    scope: vec![ScopeAtom {
-                        source_root_id: source_id,
-                        kind: PathScope::Subtree,
-                        path: "public".into(),
-                    }],
-                },
-                source_revision: CatalogRevision::INITIAL,
-                policy_epoch: 0,
-                policy_digest: None,
-            }],
+        selection: airk_core::scoped_reads::SelectionScopeRef {
+            owner: airk_core::scoped_reads::SelectionOwnerKind::Window,
+            grant_nonce: airk_core::identity::Incarnation::from_bytes([10; 16]),
+            service_instance: airk_core::identity::Incarnation::from_bytes([11; 16]),
+            scope_identity: airk_core::identity::Sha256Digest::from_bytes([12; 32]),
+            catalog_revision: airk_core::index_catalog::CatalogRevision::try_from(5_u64).unwrap(),
         },
+        atoms: vec![ScopeAtom {
+            source_root_id: source_id,
+            kind: PathScope::Subtree,
+            path: "public".into(),
+        }]
+        .into_iter()
+        .map(|atom| (project, atom))
+        .collect(),
         sources: vec![SourceDescriptor {
             source_root_id: source_id,
             original_root: kernel.root().to_str().unwrap().into(),
         }],
+        membership_revisions: vec![(project, airk_core::index_catalog::CatalogRevision::INITIAL)],
+        source_revision: airk_core::index_catalog::CatalogRevision::INITIAL,
+        policy_epoch: 0,
+        policy_digest: None,
     };
-    let scoped = kernel.with_scoped_reads(authority.clone())?;
+    let scoped = kernel.with_selection_reads(authority.clone())?;
     let reference = ScopedReadRef {
         schema: 1,
         lease_generation: 1,
         index_id: index,
-        grant_id: Some(authority.grant.id),
-        grant_revision: Some(authority.grant.revision),
-        selection: None,
+        selection: airk_core::scoped_reads::SelectionScopeRef {
+            owner: airk_core::scoped_reads::SelectionOwnerKind::Window,
+            grant_nonce: airk_core::identity::Incarnation::from_bytes([10; 16]),
+            service_instance: airk_core::identity::Incarnation::from_bytes([11; 16]),
+            scope_identity: airk_core::identity::Sha256Digest::from_bytes([12; 32]),
+            catalog_revision: airk_core::index_catalog::CatalogRevision::try_from(5_u64).unwrap(),
+        },
         fingerprint: scoped.scoped_read_fingerprint()?.unwrap(),
     };
     let worker = WorkerIdentity {
@@ -1275,7 +1275,11 @@ fn assert_focus_figures(outcome: &AnswerOutcome, focused: &Focused) -> (usize, u
         (summary.focus_calls, summary.focus_pairs)
     );
     let sizes = focused.sizes.lock().unwrap().clone();
-    assert_eq!(sizes.len(), receipts.len(), "one receipt per dispatched batch");
+    assert_eq!(
+        sizes.len(),
+        receipts.len(),
+        "one receipt per dispatched batch"
+    );
     assert_eq!(sizes.iter().sum::<usize>(), dispatched);
     (summary.focus_calls, summary.focus_pairs)
 }
@@ -1387,15 +1391,16 @@ fn only_a_repeat_same_request_failure_is_repeated() {
     let busy = json!({"action":"repeat_same_request","code":"publication_busy",
         "retry_after_ms":25,"retryable":true});
     let envelope = json!({"content":[{"type":"text","text":busy.to_string()}],"isError":true});
-    let failed = |value: Value| -> Result<Value> {
-        Err(crate::workbench::ReadFailure(value).into())
-    };
+    let failed =
+        |value: Value| -> Result<Value> { Err(crate::workbench::ReadFailure(value).into()) };
     assert_eq!(
         busy_retry(&failed(envelope)),
         Some(Duration::from_millis(25))
     );
     assert_eq!(
-        busy_retry(&failed(json!({"structuredContent":busy.clone(),"isError":true}))),
+        busy_retry(&failed(
+            json!({"structuredContent":busy.clone(),"isError":true})
+        )),
         Some(Duration::from_millis(25))
     );
     let mut final_failure = busy.clone();
@@ -1424,7 +1429,10 @@ fn runs_differing_only_in_read_status_give_byte_equal_replies() -> Result<()> {
                 json!({"state":"idle","observed_unix_ms":1_000 + run}),
             );
             if run == 2 && matches!(tool, "context" | "outline") {
-                object.insert("discovery_observation".into(), json!("unavailable_after_read"));
+                object.insert(
+                    "discovery_observation".into(),
+                    json!("unavailable_after_read"),
+                );
             } else {
                 object.insert(
                     "discovery_readiness".into(),
@@ -1479,7 +1487,10 @@ fn runs_differing_only_in_read_status_give_byte_equal_replies() -> Result<()> {
     for (one, two) in first.custody.records.iter().zip(&second.custody.records) {
         assert_eq!(one.id, two.id);
         assert!(one.canonical_result.get("request_id").is_some());
-        assert_ne!(one.canonical_result["request_id"], two.canonical_result["request_id"]);
+        assert_ne!(
+            one.canonical_result["request_id"],
+            two.canonical_result["request_id"]
+        );
     }
     Ok(())
 }

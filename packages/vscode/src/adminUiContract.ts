@@ -32,7 +32,6 @@ export const OPS = {
   catalogPolicyResume: 'catalog.policy_resume',
   catalogPolicyResumeReceipt: 'catalog.policy_resume_receipt',
   catalogRetirementEvidence: 'catalog.retirement_evidence',
-  catalogGrantDraft: 'catalog.grant_draft',
   usageDocument: 'usage.document',
   eventsPage: 'events.page',
   jobsGet: 'jobs.get',

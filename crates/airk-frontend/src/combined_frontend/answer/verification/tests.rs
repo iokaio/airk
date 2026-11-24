@@ -83,13 +83,11 @@ fn two_members_share_one_exact_source_raw_byte_and_deadline_allocation() -> Resu
     };
     let selected = ResolvedSelection {
         project_ids: Vec::new(),
-        grant_id: None,
-        grant_revision: None,
-        selection: Some(ScopeSelectionObservation {
+        selection: ScopeSelectionObservation {
             owner: SelectionOwnerKind::Agent,
             scope_identity: Sha256Digest::from_bytes([8; 32]),
             catalog_revision: CatalogRevision::INITIAL,
-        }),
+        },
         member_availability: MemberAvailability::Report,
         members: (1..=2)
             .map(|n| ResolvedMember {

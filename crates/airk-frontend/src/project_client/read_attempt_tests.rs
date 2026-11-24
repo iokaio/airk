@@ -132,7 +132,9 @@ async fn exchange_fixture(proof: &str, supported: bool, twice_busy: bool) -> Res
                 "scope" => {
                     witness.scope = Some(serde_json::from_value(serde_json::json!({
                         "schema":1,"lease_generation":1,"index_id":format!("idx_{}","a".repeat(32)),
-                        "grant_id":format!("grt_{}","b".repeat(32)),"grant_revision":1,
+                        "selection":{"owner":"window","grant_nonce":"b".repeat(32),
+                            "service_instance":"d".repeat(32),"scope_identity":"e".repeat(64),
+                            "catalog_revision":1},
                         "fingerprint":"c".repeat(64),
                     }))?)
                 }

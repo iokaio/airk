@@ -147,11 +147,13 @@ async fn singleton_focus_actual_outer_write_refuses_original_grant_revocation_wi
                         nonce: Incarnation::from_bytes([39; 16]),
                     },
                     expected_catalog_revision: CatalogRevision::INITIAL,
-                    operation: airk_core::catalog_management::CatalogOperation::RevokeGrant {
-                        id: airk_core::index_catalog::GrantId::from_identity(
+                    operation: airk_core::catalog_management::CatalogOperation::DeleteProject {
+                        id: airk_core::index_catalog::QueryProjectId::from_identity(
                             Incarnation::from_bytes([40; 16]),
                         ),
-                        expected_revision: CatalogRevision::INITIAL,
+                        expected_definition_revision: CatalogRevision::INITIAL,
+                        expected_scope_revision: CatalogRevision::INITIAL,
+                        expected_defaults_revision: CatalogRevision::INITIAL,
                     },
                 };
                 gate.close_request_admission(&request)?;

@@ -7,7 +7,6 @@
 mod common;
 use airk_core::{
     service::{ControlMethod, ControlResponse, ToolResponseMode, ToolSelection},
-    service_http::HttpSelection,
     usage::ClientFamily,
 };
 use anyhow::{Context, Result, ensure};
@@ -513,9 +512,7 @@ fn admin_sign_in_reads_and_cross_plane_refusals() -> Result<()> {
 
     // A2: the admin read grant over the reviewed fixture's index at the
     // current catalog revision, bound to this session.
-    let HttpSelection::Scoped { selection } = service.http_selection() else {
-        anyhow::bail!("the reviewed fixture's selection is scoped");
-    };
+    let selection = service.reviewed_scope();
     let ControlResponse::Health { observation } = service.request(ControlMethod::Health) else {
         anyhow::bail!("health unavailable");
     };
@@ -524,7 +521,7 @@ fn admin_sign_in_reads_and_cross_plane_refusals() -> Result<()> {
         "namespace": clock.namespace,
         "expected_catalog_revision": clock.revision,
         "index_ids": [selection.index_id],
-        "project_ids": selection.project_ids,
+        "project_ids": [selection.project_id],
     }}})
     .to_string();
     let granted = api(

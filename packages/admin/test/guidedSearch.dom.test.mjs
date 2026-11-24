@@ -69,8 +69,7 @@ function adminAnswerFixture(nativeCase){
  const source={owner:'admin',scope_identity:authority,catalog_revision:7};
  const observation=members=>({selection:structuredClone(source),members:members.map(index_id=>({index_id}))});
  if(output.schema==='airk.combined-read/1'){
-  const {grant_id,grant_revision,...selection}=output.selection;
-  output.selection={...selection,selection:structuredClone(source),project_ids:[project]};
+  output.selection={...output.selection,selection:structuredClone(source),project_ids:[project]};
   for(const member of output.members)if(member.outcome==='complete'&&!member.is_error)member.result={...member.result,scope_observation:observation([member.index_id])};
  }else output.scope_observation=observation(ids);
  const pages={indexes:ids.map((id,i)=>({kind:'index',value:{id,name:`Native fixture index ${i+1}`,source_import:'complete',tombstone:false}})),projects:[{kind:'project',value:{id:project,name:'Native fixture sources'}}],memberships:ids.map((id,i)=>({kind:'membership',value:{project_id:project,index_id:id,scope:[{source_root_id:'src_'+String(i+1).padStart(32,'0')}]}}))};

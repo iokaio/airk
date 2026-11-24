@@ -4,7 +4,6 @@ import {test} from 'node:test';
 import type {ConsoleIntent,SavedIntent} from '../serviceIntents';
 import {validatePolicyResumeIntent,validateSourceResolveIntent} from '../indexingCatalog';
 import {validateSplitApply,validateSplitRecover} from '../indexingSplit';
-import {validateRefreshIntent,refreshDigest,refreshJobId,refreshSelectionIdentity} from '../referenceRefresh';
 import {splitFixture,splitAtStage,splitFrozenFixture} from './fixtures/split';
 import {acceptedIntentSlots,selectAcceptedIntentEvidence,mergeAcceptedIntentEvidence,withoutAcceptedIntentEvidence,
     acceptedIntentEvidenceDominates,MAX_ACCEPTED_INTENT_SLOTS,MAX_UNRESERVED_ACCEPTED_INTENT_SLOTS} from '../intentAcceptedEvidence';
@@ -44,19 +43,6 @@ function sources(){
     const complete={status:'catalog_source_change_resolved',observation:{...observation,completion:{schema:1,operation_id:'aa'.repeat(16),caller,key:{...key,nonce:'bb'.repeat(16)},request_digest:digest,catalog_revision:3,authority_fence_required:false}}};
     return {intent,pending,complete};
 }
-function refresh(){
-    const f=splitFixture(),before=`airk-r1:${ns}:1:${digest}`,after=`airk-r1:${ns}:2:${digest}`;
-    const query={tool:'airk_search',arguments:{query:'reviewed',max_bytes:8192,reply_detail:'full',verification:'required',semantic:'off'}};
-    const result={publication_vector:[{index_id:f.index,publication:before}],hits:[]};
-    const members=[{index_id:f.index,original_publication:before,sources:[{source_root_id:f.source,source_relative_path:'one.txt',canonical_root:'/source',indexed_hash:digest}]}];
-    const selection={schema:1,caller,key,original_result_digest:refreshDigest(result),original_query_digest:refreshDigest(query),original_evidence_selection_digest:refreshDigest(members),mode:'selected_only',selection:{schema:1,context_key:digest,namespace:ns,expected_catalog_revision:1,grant_id:'grt_'+'cc'.repeat(16),expected_grant_revision:1,project_ids:['prj_'+'dd'.repeat(16)],index_ids:[f.index]},members};
-    const intent=validateRefreshIntent({reference_refresh:{configure_project:{project:digest,caller,key,request:{incarnation:ns,settings:digest,configuration:{operation:'refresh_references',selection}}},original_query:query,original_result:result,evidence_retention:'memory_only'}});
-    const job={id:refreshJobId(intent),project:digest,kind:'configure',state:'running',fencing_generation:1,attempts:1};
-    const configured={status:'reference_refresh_receipt',expired:false,job,configuration:{engine:digest,request:intent.reference_refresh.configure_project.request},result:null as Row|null,future_native:'retained'};
-    const completed={...configured,job:{...job,state:'succeeded',outcome:{state:'succeeded',revision:after}},result:{schema:'airk.reference-refresh-result/1',selection_digest:refreshSelectionIdentity(selection),original_query_digest:selection.original_query_digest,effective_mode:'selected_only',effective_scope:'selected_sources',before_publication:before,after_publication:after,report:{generation:2},status:{publication:{token:after}},requery_executed:false}};
-    return {intent,configured,completed,terminal:{status:'job',job:completed.job}};
-}
-
 test('finite slot catalogs cover each native family without a dynamic history',()=>{
     const f=splitFrozenFixture();
     assert.equal(acceptedIntentSlots(validateSplitRecover(f.intent)).length,MAX_ACCEPTED_INTENT_SLOTS);
@@ -65,7 +51,7 @@ test('finite slot catalogs cover each native family without a dynamic history',(
     assert.deepEqual(acceptedIntentSlots({enqueue:{project:digest,caller,key,kind:'index'}}),[]);
 });
 test('elision preserves unselected legacy diagnostics and refuses corrupt same-family history',()=>{
-    const original=saved({enqueue:{project:digest,caller,key,kind:'index'}},{nativeSourceObservation:{diagnostic:'unrelated legacy bytes'},nativeRefreshReceipt:{diagnostic:'not refresh authority'}});
+    const original=saved({enqueue:{project:digest,caller,key,kind:'index'}},{nativeSourceObservation:{diagnostic:'unrelated legacy bytes'},nativeRefreshReceipt:{diagnostic:'not refresh authority'}} as Partial<SavedIntent>);
     assert.deepEqual(withoutAcceptedIntentEvidence(original),original);
     assert.deepEqual(mergeAcceptedIntentEvidence(original,[]),original);
     const f=setup();assert.throws(()=>withoutAcceptedIntentEvidence(saved(f.intent,{nativeSetupObservation:{diagnostic:'invalid claimed setup proof'}})));
@@ -133,27 +119,6 @@ test('native-size source begin progresses to an original completed DTO within un
     const retained=mergeAcceptedIntentEvidence(saved(f.intent,{nativeObservation:unknown}),after);
     assert.deepEqual(retained.nativeObservation,unknown);assert.deepEqual(retained.nativeSourceObservation,complete);
     assert.ok(Buffer.byteLength(JSON.stringify(retained))>65536,'caller must reject this projected record before publication without dropping the full current reply');
-});
-test('historical refresh pre-admission refusal is weaker than subsequent accepted authority',()=>{
-    const f=refresh(),request=f.intent.reference_refresh.configure_project;
-    const refusal={status:'reference_refresh_review_required',project:request.project,caller:request.caller,key:request.key,request:request.request,review:{reasons:['no_current_index']},future_native:'kept'};
-    const weak=selectAcceptedIntentEvidence(saved(f.intent,{nativeRefreshReceipt:refusal})),strong=selectAcceptedIntentEvidence(saved(f.intent,{nativeRefreshReceipt:f.configured}));
-    for(const evidence of [[...weak,...strong],[...strong,...weak]])assert.deepEqual(mergeAcceptedIntentEvidence(saved(f.intent),evidence).nativeRefreshReceipt,f.configured);
-});
-test('refresh result/configuration preference is deterministic with terminal job-only proof',()=>{
-    const f=refresh(),configured=selectAcceptedIntentEvidence(saved(f.intent,{nativeRefreshReceipt:f.configured})),terminal=selectAcceptedIntentEvidence(saved(f.intent,{nativeRefreshReceipt:f.terminal}));
-    for(const anchors of [[...terminal,...configured],[...configured,...terminal]]){
-        const current=saved(f.intent,{nativeRefreshLookup:{status:'reference_refresh_receipt',job:null,configuration:null,result:null,expired:true}});
-        const merged=mergeAcceptedIntentEvidence(current,anchors);assert.deepEqual(merged.nativeRefreshReceipt,f.configured);assert.deepEqual(merged.nativeRefreshLookup,current.nativeRefreshLookup);
-        assert.deepEqual(merged.nativeRefreshTerminalReceipt,f.terminal,'terminal admission proof stays separately visible without inventing a fused native DTO');
-    }
-    const full=selectAcceptedIntentEvidence(saved(f.intent,{nativeRefreshReceipt:f.completed}));
-    assert.deepEqual(mergeAcceptedIntentEvidence(saved(f.intent),[...terminal,...full]).nativeRefreshReceipt,f.completed);
-    assert.equal(mergeAcceptedIntentEvidence(saved(f.intent),[...terminal,...full]).nativeRefreshTerminalReceipt,undefined);
-    const latestTerminal=mergeAcceptedIntentEvidence(saved(f.intent,{nativeRefreshLookup:f.terminal}),[...configured,...terminal]);
-    assert.equal(latestTerminal.nativeRefreshTerminalReceipt,undefined,'current validated terminal reply already supplies the original full proof');
-    const changed=structuredClone(f.terminal);changed.job={...changed.job,state:'failed',outcome:{state:'succeeded',revision:`airk-r1:${ns}:2:${digest}`}};
-    assert.throws(()=>mergeAcceptedIntentEvidence(saved(f.intent,{nativeRefreshReceipt:changed}),terminal));
 });
 test('split anchors keep the stronger complete snapshot independent of order or stale same-stage progress',()=>{
     const f=splitFixture(),intent=validateSplitApply({catalog_split_apply:{draft:f.draft}}),old=saved(intent,{nativeSplitSnapshot:f.snapshot});

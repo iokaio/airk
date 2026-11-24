@@ -22,21 +22,17 @@ fn native_focus_preserves_context_snapshot_identity_and_checks_singleton_selecti
                 scope_identity: partition.selection,
                 catalog_revision: CatalogRevision::INITIAL,
             };
-            validate_partition_selection(Some(&partition), Some(selected))?;
+            validate_partition_selection(Some(&partition), selected)?;
             selected.scope_identity = Sha256Digest::from_bytes([33; 32]);
             assert_ne!(partition.selection, selected.scope_identity);
             assert_eq!(
-                validate_partition_selection(Some(&partition), Some(selected)).is_err(),
-                partition.is_ordinary_focus()
-            );
-            assert_eq!(
-                validate_partition_selection(Some(&partition), None).is_err(),
+                validate_partition_selection(Some(&partition), selected).is_err(),
                 partition.is_ordinary_focus()
             );
             let mut malformed = partition.clone();
             malformed.resources.calls = malformed.parent_budget.calls + 1;
-            assert!(validate_partition_selection(Some(&malformed), Some(selected)).is_err());
-            validate_partition_selection(None, Some(selected))?;
+            assert!(validate_partition_selection(Some(&malformed), selected).is_err());
+            validate_partition_selection(None, selected)?;
         }
     }
     Ok(())

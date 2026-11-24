@@ -353,7 +353,7 @@ fn open_agent_arguments_are_checked_before_the_service() {
         (code, stderr.as_str()),
         (
             2,
-            "airkctl: --index, --set and --workspace cannot be combined with a project or session selection\n"
+            "airkctl: --index, --set and --workspace cannot be combined with a project selection\n"
         )
     );
     let mut too_many = vec!["--service-runtime-dir", missing, "tools", "call", "search"];
@@ -449,9 +449,6 @@ fn u110_connect_and_scope_default_arguments_parse() {
             "--project",
             "/work/app",
         ][..],
-        &[
-            "airkctl", "agents", "connect", "--client", "vscode", "--open",
-        ],
         &[
             "airkctl",
             "scope",
@@ -581,7 +578,8 @@ fn set_create_valid_indexes_keep_the_original_online_admission() {
 }
 
 #[test]
-fn agents_connect_selection_file_alone_refuses_before_installation_or_service_admission() {
+fn agents_connect_removed_selection_file_is_a_usage_error_before_installation_or_service_admission()
+{
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
     let mut io = Io {
@@ -616,14 +614,11 @@ fn agents_connect_selection_file_alone_refuses_before_installation_or_service_ad
             )
         },
     );
-    assert_eq!(code, ExitClass::Refused.code());
+    // `--selection-file` was removed with reviewed grants (change-log entry
+    // 68 part 3): an unknown argument, refused before any installation or
+    // service is touched.
+    assert_eq!(code, ExitClass::Usage.code());
     assert!(stdout.is_empty());
     let refusal: Value = serde_json::from_slice(&stderr).unwrap();
-    assert_eq!(refusal["class"], "refused");
-    assert_eq!(refusal["code"], "operation_failed");
-    assert_eq!(refusal["retryable"], false);
-    assert_eq!(
-        refusal["message"],
-        "AIRK agent connections no longer exist; agents connect writes the endpoint URL only (U110); --selection-file missing-selection.json was not used."
-    );
+    assert_eq!(refusal["class"], "usage");
 }

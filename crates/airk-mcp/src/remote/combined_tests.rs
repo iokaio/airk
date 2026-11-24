@@ -3,16 +3,15 @@
 use super::*;
 use airk_core::{
     combined_reads::{MemberAvailability, QuerySelection, SharedBudgets},
-    grant_provenance::GrantProvenance,
     identity::{Incarnation, Sha256Digest},
     index_catalog::*,
     scoped_reads::SourceDescriptor,
-    service::{CombinedConnectRequest, ProjectRegistration},
+    service::ProjectRegistration,
 };
 use airk_kernel::{
     Kernel,
     combined_reads::{CompositionRequest, MemberInput, MemberSource, compose},
-    scoped_reads::ScopedReadAuthority,
+    scoped_reads::SelectionReadAuthority,
 };
 use rmcp::{ServiceExt, model::CallToolRequestParams};
 use serde_json::{Map, Value, json};
@@ -22,7 +21,7 @@ use std::sync::{
 };
 
 struct Retained {
-    selection: CombinedConnectRequest,
+    selection: CombinedScope,
     result: Value,
     calls: AtomicUsize,
     failed: AtomicBool,
@@ -30,13 +29,13 @@ struct Retained {
     arguments: Mutex<Vec<(String, Map<String, Value>)>>,
 }
 struct Finalized {
-    selection: CombinedConnectRequest,
+    selection: CombinedScope,
     member_body: Value,
     observed_capacity: AtomicUsize,
 }
 impl RemoteTools for Finalized {
-    fn combined_selection(&self) -> Option<&CombinedConnectRequest> {
-        Some(&self.selection)
+    fn combined_scope(&self) -> Option<CombinedScope> {
+        Some(self.selection.clone())
     }
     fn query_concurrency(&self) -> usize {
         32
@@ -72,7 +71,7 @@ impl RemoteTools for Finalized {
                 &[&serde_json::to_vec(&body)?],
             );
             body["delivery_observation"] = json!({"digest_basis":"canonical_body_without_delivery_observation","receipt":airk_core::service::CombinedDeliveryReceipt {
-                schema:1,service_instance:id(41),namespace:self.selection.namespace,catalog_revision:CatalogRevision::INITIAL,
+                schema:1,service_instance:id(41),namespace:id(10),catalog_revision:CatalogRevision::INITIAL,
                 scope_identity:Sha256Digest::from_bytes([42;32]),result_digest:digest,
             }});
             Ok(crate::unified::success(body))
@@ -99,8 +98,8 @@ impl crate::unified::ExplorerTools for Drafts {
     }
 }
 impl RemoteTools for Retained {
-    fn combined_selection(&self) -> Option<&CombinedConnectRequest> {
-        Some(&self.selection)
+    fn combined_scope(&self) -> Option<CombinedScope> {
+        Some(self.selection.clone())
     }
     fn catalog(&self) -> Vec<Tool> {
         crate::combined::catalog()
@@ -133,7 +132,6 @@ async fn native_composition() -> anyhow::Result<(tempfile::TempDir, Arc<Retained
         SourceRootId::from_identity(id(5)),
         SourceRootId::from_identity(id(6)),
     ];
-    let grant_id = GrantId::from_identity(id(7));
     let member = |project_id, index_id, source_root_id, path: &str| GrantedMembership {
         membership: Membership {
             project_id,
@@ -149,33 +147,27 @@ async fn native_composition() -> anyhow::Result<(tempfile::TempDir, Arc<Retained
         policy_epoch: 0,
         policy_digest: None,
     };
-    let grant = ReviewedGrant {
-        id: grant_id,
-        host: Sha256Digest::from_bytes([8; 32]),
-        revision: CatalogRevision::INITIAL,
-        revoked: false,
-        memberships: vec![
-            member(project, indexes[0], roots[0], "public/api"),
-            member(shared_project, indexes[0], roots[0], "public/impl"),
-            member(project, indexes[1], roots[1], ""),
-        ],
+    let memberships = vec![
+        member(project, indexes[0], roots[0], "public/api"),
+        member(shared_project, indexes[0], roots[0], "public/impl"),
+        member(project, indexes[1], roots[1], ""),
+    ];
+    let observed = airk_core::scoped_reads::ScopeSelectionObservation {
+        owner: airk_core::scoped_reads::SelectionOwnerKind::Window,
+        scope_identity: Sha256Digest::from_bytes([9; 32]),
+        catalog_revision: CatalogRevision::INITIAL,
     };
-    let selection = CombinedConnectRequest {
-        schema: 1,
-        context_key: Sha256Digest::from_bytes([9; 32]),
-        namespace: id(10),
-        expected_catalog_revision: CatalogRevision::INITIAL,
-        grant_id,
-        expected_grant_revision: CatalogRevision::INITIAL,
+    let selection = CombinedScope {
         project_ids: vec![project, shared_project],
         index_ids: None,
+        requested: json!({"project_ids":[project, shared_project]}),
     };
     let resolved = QuerySelection {
         project_ids: selection.project_ids.clone(),
         index_ids: None,
         member_availability: MemberAvailability::Report,
     }
-    .resolve(&grant)?;
+    .resolve_selection(&memberships, observed)?;
     let mut inputs = Vec::new();
     let mut first_binding = None;
     for n in 0..2 {
@@ -204,13 +196,39 @@ async fn native_composition() -> anyhow::Result<(tempfile::TempDir, Arc<Retained
         )?
         .binding;
         first_binding.get_or_insert_with(|| backing.to_string());
-        let kernel = kernel.with_scoped_reads(ScopedReadAuthority {
+        let granted = memberships
+            .iter()
+            .filter(|granted| granted.membership.index_id == indexes[n])
+            .collect::<Vec<_>>();
+        let kernel = kernel.with_selection_reads(SelectionReadAuthority {
             schema: 1,
             backing,
             index_id: indexes[n],
             project_ids: resolved.members[n].project_ids(),
-            grant: grant.clone(),
-            provenance: GrantProvenance::UserReviewedProjectGrant,
+            selection: airk_core::scoped_reads::SelectionScopeRef {
+                owner: observed.owner,
+                grant_nonce: id(12),
+                service_instance: id(13),
+                scope_identity: observed.scope_identity,
+                catalog_revision: observed.catalog_revision,
+            },
+            atoms: granted
+                .iter()
+                .flat_map(|granted| {
+                    granted
+                        .membership
+                        .scope
+                        .iter()
+                        .map(|atom| (granted.membership.project_id, atom.clone()))
+                })
+                .collect(),
+            membership_revisions: granted
+                .iter()
+                .map(|granted| (granted.membership.project_id, granted.membership.revision))
+                .collect(),
+            source_revision: CatalogRevision::INITIAL,
+            policy_epoch: 0,
+            policy_digest: None,
             sources: vec![SourceDescriptor {
                 source_root_id: roots[n],
                 original_root: kernel.root().to_str().unwrap().into(),

@@ -136,7 +136,7 @@ pub fn schema() -> Value {
     }})
 }
 
-/// The legacy configured-binding catalog cannot infer a reviewed Project grant.
+/// The legacy configured-binding connection cannot discover catalog scope.
 pub fn legacy_body(args: &QueryScopeArgs) -> Result<Value> {
     args.validate()?;
     ensure!(
@@ -145,15 +145,15 @@ pub fn legacy_body(args: &QueryScopeArgs) -> Result<Value> {
     );
     let body = json!({"schema":"airk.query-scope/1","mode":"legacy","status":"configuration_required",
         "projects":[],"indexes":[],"sources":[],"truncated":false,"continuation":null,
-        "grant":null,"scope_revision":null,
-        "reason":"Connect using an explicitly reviewed Project/index grant to discover new query scope."});
+        "scope_revision":null,
+        "reason":"This project connection cannot discover query scope. Read through the local agent session and name indexes, index sets or a workspace."});
     crate::index_catalog::encoded_size(&body, args.max_bytes())?;
     Ok(body)
 }
 
 /// An installed single-index authority is a frozen observation, not current
-/// catalog discovery. Expose its real identity without inventing a fresh grant,
-/// Project names, source paths, or permission to widen the selection.
+/// catalog discovery. Expose its real identity without inventing Project
+/// names, source paths, or permission to widen the selection.
 pub fn installed_body(
     args: &QueryScopeArgs,
     observation: &crate::scoped_reads::ScopeObservation,
@@ -222,43 +222,24 @@ pub fn installed_body(
             );
         }
     }
-    use crate::{grant_provenance::GrantProvenanceKind, scoped_reads::SelectionOwnerKind};
-    let reason = match (&observation.provenance, &observation.selection) {
-        (
-            Some(
-                GrantProvenanceKind::ImportedLegacySnapshot
-                | GrantProvenanceKind::ImportedStandaloneAdoption,
-            ),
-            None,
-        ) => {
-            "This imported legacy grant authorizes only the frozen selection shown here. Current catalog discovery and widening require an explicitly reviewed Project/index session."
+    use crate::scoped_reads::SelectionOwnerKind;
+    let reason = match observation.selection.owner {
+        SelectionOwnerKind::Window => {
+            "This window's selected search scope authorizes only the selection shown here. Changing it requires selecting the search scope again."
         }
-        (Some(GrantProvenanceKind::UserReviewedProjectGrant), None) => {
-            "This installed single-index grant authorizes only the frozen selection shown here. Current catalog discovery and widening require a reviewed Project/index discovery session."
+        SelectionOwnerKind::Admin => {
+            "This admin session's selected search scope authorizes only the selection shown here. Changing it requires selecting the search scope again."
         }
-        (None, Some(selection)) => match selection.owner {
-            SelectionOwnerKind::Window => {
-                "This window's selected search scope authorizes only the selection shown here. Changing it requires selecting the search scope again."
-            }
-            SelectionOwnerKind::Admin => {
-                "This admin session's selected search scope authorizes only the selection shown here. Changing it requires selecting the search scope again."
-            }
-            SelectionOwnerKind::Agent => {
-                "This agent connection's scope authorizes only the selection shown here. Changing it requires changing the connection's default scope or naming indexes when agent choice is on."
-            }
-        },
-        _ => return Err(ScopeReadRefused.into()),
+        SelectionOwnerKind::Agent => {
+            "This agent connection's scope authorizes only the selection shown here. Changing it requires changing the connection's default scope or naming indexes when agent choice is on."
+        }
     };
-    let mut body = json!({"schema":"airk.query-scope/1","mode":"frozen_single_index","status":"configuration_required",
+    let body = json!({"schema":"airk.query-scope/1","mode":"frozen_single_index","status":"configuration_required",
         "projects":[],"indexes":[],"sources":[],"truncated":false,"continuation":null,
-        "grant":observation.grant,"scope_revision":null,"scope_observation":observation,
+        "scope_revision":null,"scope_observation":observation,
         "observed_selection":{"project_ids":projects,"index_ids":indexes},
-        "catalog_discovery":"unavailable_on_this_connection","reason":reason});
-    // Selection bodies carry `"grant": null` and a `selection` key; the
-    // catalog-grant body keeps exactly its former keys.
-    if let Some(selection) = &observation.selection {
-        body["selection"] = json!(selection);
-    }
+        "catalog_discovery":"unavailable_on_this_connection","reason":reason,
+        "selection":observation.selection});
     crate::index_catalog::encoded_size(&body, args.max_bytes())?;
     Ok(body)
 }
@@ -276,12 +257,11 @@ mod installed_tests {
             schema: 1,
             qualifier: ScopeQualifier::SelectedSubset,
             fingerprint: Sha256Digest::from_bytes([1; 32]),
-            provenance: Some(crate::grant_provenance::GrantProvenanceKind::ImportedLegacySnapshot),
-            grant: Some(ScopeGrantObservation {
-                id: GrantId::from_identity(Incarnation::from_bytes([0x84; 16])),
-                revision: CatalogRevision::INITIAL,
-            }),
-            selection: None,
+            selection: ScopeSelectionObservation {
+                owner: SelectionOwnerKind::Window,
+                scope_identity: Sha256Digest::from_bytes([0x0c; 32]),
+                catalog_revision: CatalogRevision::try_from(5_u64).unwrap(),
+            },
             members: vec![ScopeMemberObservation {
                 index_id: IndexId::from_identity(Incarnation::from_bytes([2; 16])),
                 memberships: vec![ScopeMembershipObservation {
@@ -298,7 +278,8 @@ mod installed_tests {
         }
     }
     #[test]
-    fn installed_discovery_preserves_frozen_grant_without_inventing_catalog_rows() -> Result<()> {
+    fn installed_discovery_preserves_frozen_selection_without_inventing_catalog_rows() -> Result<()>
+    {
         let observed = observation();
         let member = &observed.members[0];
         let project = member.memberships[0].project_id;
@@ -310,7 +291,7 @@ mod installed_tests {
         ] {
             let args: QueryScopeArgs = serde_json::from_value(value)?;
             let body = installed_body(&args, &observed)?;
-            assert_eq!(body["grant"], json!(observed.grant));
+            assert!(body.get("grant").is_none());
             assert_eq!(body["scope_observation"], json!(observed));
             assert_eq!(
                 body["observed_selection"],
@@ -324,23 +305,13 @@ mod installed_tests {
         Ok(())
     }
     #[test]
-    fn selection_discovery_body_has_null_grant_and_the_public_selection() -> Result<()> {
-        let catalog = observation();
+    fn selection_discovery_body_names_the_public_selection_and_no_grant() -> Result<()> {
         let args: QueryScopeArgs = serde_json::from_value(json!({"view":"projects"}))?;
-        let catalog_body = installed_body(&args, &catalog)?;
-        assert!(catalog_body.get("selection").is_none());
-        let mut selected = catalog.clone();
-        selected.provenance = None;
-        selected.grant = None;
-        selected.selection = Some(ScopeSelectionObservation {
-            owner: SelectionOwnerKind::Window,
-            scope_identity: Sha256Digest::from_bytes([0x0c; 32]),
-            catalog_revision: CatalogRevision::try_from(5_u64)?,
-        });
+        let selected = observation();
         selected.validate()?;
         let body = installed_body(&args, &selected)?;
         assert_eq!(body["mode"], "frozen_single_index");
-        assert_eq!(body["grant"], Value::Null);
+        assert!(body.get("grant").is_none());
         assert_eq!(
             body["selection"],
             json!({"owner":"window","scope_identity":"0c".repeat(32),"catalog_revision":5})
@@ -354,7 +325,7 @@ mod installed_tests {
                 .starts_with("This window's")
         );
         let mut admin = selected.clone();
-        admin.selection.as_mut().unwrap().owner = SelectionOwnerKind::Admin;
+        admin.selection.owner = SelectionOwnerKind::Admin;
         let body = installed_body(&args, &admin)?;
         assert!(
             body["reason"]
@@ -368,21 +339,26 @@ mod installed_tests {
             .keys()
             .cloned()
             .collect::<Vec<_>>();
-        let mut catalog_keys = catalog_body
-            .as_object()
-            .unwrap()
-            .keys()
-            .cloned()
-            .collect::<Vec<_>>();
-        catalog_keys.push("selection".into());
         keys.sort();
-        catalog_keys.sort();
-        assert_eq!(keys, catalog_keys);
-        let mut both = selected.clone();
-        both.grant = catalog.grant.clone();
-        both.provenance = catalog.provenance;
-        assert!(both.validate().is_err());
-        assert!(installed_body(&args, &both).is_err());
+        assert_eq!(
+            keys,
+            [
+                "catalog_discovery",
+                "continuation",
+                "indexes",
+                "mode",
+                "observed_selection",
+                "projects",
+                "reason",
+                "schema",
+                "scope_observation",
+                "scope_revision",
+                "selection",
+                "sources",
+                "status",
+                "truncated"
+            ]
+        );
         Ok(())
     }
     #[test]

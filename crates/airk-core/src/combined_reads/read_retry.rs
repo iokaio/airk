@@ -78,23 +78,9 @@ fn framing_agrees(
         let observation: crate::scoped_reads::ScopeObservation =
             serde_json::from_value(observation.clone()).ok()?;
         observation.validate().ok()?;
-        // Hand-written source agreement: a catalog observation matches only the
-        // same grant and revision; a selection observation matches only the
-        // same selection. A catalog observation never agrees with a selection.
-        let same_source = match (
-            &observation.grant,
-            &observation.selection,
-            selection.grant_id,
-            selection.grant_revision,
-            &selection.selection,
-        ) {
-            (Some(grant), None, Some(id), Some(revision), None) => {
-                grant.id == id && grant.revision == revision
-            }
-            (None, Some(observed), None, None, Some(selected)) => observed == selected,
-            _ => false,
-        };
-        if !same_source
+        // Hand-written source agreement: an observation matches only the same
+        // selection.
+        if observation.selection != selection.selection
             || observation.members.len() != 1
             || observation.members[0].index_id != index_id
             || observation.members[0]
@@ -125,7 +111,6 @@ pub fn proposed_retry(combined: &Value) -> Option<SingleRequiredMemberRetry> {
     let selection: SelectedScopeObservation =
         serde_json::from_value(combined.get("selection")?.clone()).ok()?;
     if selection.member_availability != MemberAvailability::Require
-        || !selection.has_one_source()
         || selection.index_ids.len() != 1
         || selection.project_ids.is_empty()
     {
@@ -356,9 +341,7 @@ pub fn validated_retry_for_selection(
     let selected: SelectedScopeObservation =
         serde_json::from_value(combined.get("selection")?.clone()).ok()?;
     if source.catalog_revision != expected.expected_catalog_revision
-        || selected.selection.as_ref() != Some(source)
-        || selected.grant_id.is_some()
-        || selected.grant_revision.is_some()
+        || selected.selection != *source
     {
         return None;
     }
@@ -366,60 +349,6 @@ pub fn validated_retry_for_selection(
         &selected,
         &expected.project_ids,
         &expected.index_ids,
-        arguments,
-    )?;
-    Some(retry)
-}
-
-/// A single-index catalog caller knows the exact grant, index and permitted
-/// projects. The response has no metadata clock to advance; grant revision is
-/// always exact. The separate setup-envelope clock-forward rule is unchanged.
-pub fn validated_retry_for_catalog(
-    combined: &Value,
-    expected: &crate::service::ScopedConnectRequest,
-    arguments: &serde_json::Map<String, Value>,
-) -> Option<SingleRequiredMemberRetry> {
-    expected.validate().ok()?;
-    let retry = validated_retry(combined)?;
-    let selected: SelectedScopeObservation =
-        serde_json::from_value(combined.get("selection")?.clone()).ok()?;
-    if selected.selection.is_some()
-        || selected.grant_id != Some(expected.grant_id)
-        || selected.grant_revision != Some(expected.expected_grant_revision)
-    {
-        return None;
-    }
-    query_binding(
-        &selected,
-        &expected.project_ids,
-        &[expected.index_id],
-        arguments,
-    )?;
-    Some(retry)
-}
-
-/// A catalog union can bind only indexes already known to its caller. An
-/// unexpanded grant with absent index IDs conservatively retains the refusal;
-/// this helper does not resolve a catalog or infer memberships from a receipt.
-pub fn validated_retry_for_combined_catalog(
-    combined: &Value,
-    expected: &crate::service::CombinedConnectRequest,
-    arguments: &serde_json::Map<String, Value>,
-) -> Option<SingleRequiredMemberRetry> {
-    expected.validate().ok()?;
-    let retry = validated_retry(combined)?;
-    let selected: SelectedScopeObservation =
-        serde_json::from_value(combined.get("selection")?.clone()).ok()?;
-    if selected.selection.is_some()
-        || selected.grant_id != Some(expected.grant_id)
-        || selected.grant_revision != Some(expected.expected_grant_revision)
-    {
-        return None;
-    }
-    query_binding(
-        &selected,
-        &expected.project_ids,
-        expected.index_ids.as_deref()?,
         arguments,
     )?;
     Some(retry)
@@ -433,7 +362,7 @@ mod tests {
     fn combined(hint: Value) -> Value {
         let index = format!("idx_{}", "01".repeat(16));
         json!({"schema":COMBINED_READ_SCHEMA,"selection":{"project_ids":[format!("prj_{}","02".repeat(16))],
-            "index_ids":[index],"grant_id":format!("grt_{}","03".repeat(16)),"grant_revision":1,
+            "index_ids":[index],"selection":source(),
             "member_availability":"require","identity":"04".repeat(32)},
             "publication_vector":{"authority":"05".repeat(32),"observed_from_unix_ms":1,"observed_to_unix_ms":2,
                 "members":[{"index_id":index,"publication":null}]},
@@ -443,6 +372,9 @@ mod tests {
                 "result":{"isError":true,"content":[{"type":"text","text":hint.to_string()}],"structuredContent":hint}}],
             "ranking":[],"partial":true,"truncated":false,
             "error":{"code":"member_unavailable","retryable":false,"failed_members":[index]}})
+    }
+    fn source() -> Value {
+        json!({"owner":"window","scope_identity":"0c".repeat(32),"catalog_revision":5})
     }
     fn hint() -> Value {
         json!({"status":"retry","code":"selection_busy","retryable":true,"action":"repeat_same_request","retry_after_ms":25})
@@ -542,14 +474,14 @@ mod tests {
         let mut framed = hint();
         framed["request_id"] = json!("original-request");
         framed["scope_observation"] = json!({"schema":1,"qualifier":"selected_subset","fingerprint":"07".repeat(32),
-            "provenance":"user_reviewed_project_grant","grant":{"id":format!("grt_{}","03".repeat(16)),"revision":1},
+            "selection":source(),
             "members":[{"index_id":format!("idx_{}","01".repeat(16)),
                 "memberships":[{"project_id":format!("prj_{}","02".repeat(16)),"membership_revision":1}],
                 "source_root_ids":[format!("src_{}","06".repeat(16))],"source_revision":1,"policy_epoch":0,"policy_digest":null}]});
         assert!(proposed_retry(&combined(framed.clone())).is_some());
-        framed["scope_observation"]["grant"]["revision"] = json!(2);
+        framed["scope_observation"]["selection"]["catalog_revision"] = json!(6);
         assert!(proposed_retry(&combined(framed.clone())).is_none());
-        framed["scope_observation"]["grant"]["revision"] = json!(1);
+        framed["scope_observation"]["selection"]["catalog_revision"] = json!(5);
         framed["scope_observation"]["future_evidence"] = json!({"symbols":[]});
         assert!(proposed_retry(&combined(framed)).is_none());
         for (field, value) in [
@@ -595,20 +527,16 @@ mod tests {
     }
 
     /// Hand-reviewed selection-source cases (selection authority spec §5,
-    /// F10). The catalog-grant cases above are unchanged.
+    /// F10). A selection is the one authority source of a combined read.
     #[test]
     fn selection_sourced_retry_agrees_only_with_the_same_selection() {
-        let selected_source =
-            json!({"owner":"window","scope_identity":"0c".repeat(32),"catalog_revision":5});
+        let selected_source = source();
         let catalog_grant = json!({"id":format!("grt_{}","03".repeat(16)),"revision":1});
         let observed = |source: (&str, Value)| {
             let mut value = json!({"schema":1,"qualifier":"selected_subset","fingerprint":"07".repeat(32),
                 "members":[{"index_id":format!("idx_{}","01".repeat(16)),
                     "memberships":[{"project_id":format!("prj_{}","02".repeat(16)),"membership_revision":1}],
                     "source_root_ids":[format!("src_{}","06".repeat(16))],"source_revision":1,"policy_epoch":0,"policy_digest":null}]});
-            if source.0 == "grant" {
-                value["provenance"] = json!("user_reviewed_project_grant");
-            }
             value[source.0] = source.1;
             value
         };
@@ -619,14 +547,7 @@ mod tests {
             }
             framed
         };
-        let selection_sourced = |framed: Value| {
-            let mut value = combined(framed);
-            let selection = value["selection"].as_object_mut().unwrap();
-            selection.remove("grant_id");
-            selection.remove("grant_revision");
-            selection.insert("selection".into(), selected_source.clone());
-            value
-        };
+        let selection_sourced = combined;
         assert!(proposed_retry(&selection_sourced(with_observation(None))).is_some());
         let same = observed(("selection", selected_source.clone()));
         let proposed =
@@ -648,41 +569,20 @@ mod tests {
                 "{field}"
             );
         }
-        let catalog_observation = observed(("grant", catalog_grant.clone()));
-        assert!(
-            proposed_retry(&selection_sourced(with_observation(Some(
-                catalog_observation.clone()
-            ))))
-            .is_none(),
-            "a catalog observation never agrees with a selection"
-        );
-        assert!(proposed_retry(&combined(with_observation(Some(catalog_observation)))).is_some());
-        assert!(
-            proposed_retry(&combined(with_observation(Some(observed((
-                "selection",
-                selected_source.clone()
-            ))))))
-            .is_none(),
-            "a selection observation never agrees with a catalog grant"
-        );
-        let mut both = observed(("selection", selected_source.clone()));
-        both["grant"] = catalog_grant;
-        both["provenance"] = json!("user_reviewed_project_grant");
-        assert!(proposed_retry(&combined(with_observation(Some(both)))).is_none());
-        let mut both_sources = combined(with_observation(None));
-        both_sources["selection"]["selection"] = selected_source.clone();
-        assert!(proposed_retry(&both_sources).is_none());
+        // A removed catalog-grant observation or selection field never decodes.
+        let mut grant_observation = observed(("selection", selected_source.clone()));
+        grant_observation["grant"] = catalog_grant.clone();
+        assert!(proposed_retry(&combined(with_observation(Some(grant_observation)))).is_none());
+        let mut grant_selection = combined(with_observation(None));
+        grant_selection["selection"]["grant_id"] = catalog_grant["id"].clone();
+        grant_selection["selection"]["grant_revision"] = json!(1);
+        assert!(proposed_retry(&grant_selection).is_none());
         let mut neither = combined(with_observation(None));
-        let selection = neither["selection"].as_object_mut().unwrap();
-        selection.remove("grant_id");
-        selection.remove("grant_revision");
-        assert!(proposed_retry(&neither).is_none());
-        let mut half = combined(with_observation(None));
-        half["selection"]
+        neither["selection"]
             .as_object_mut()
             .unwrap()
-            .remove("grant_revision");
-        assert!(proposed_retry(&half).is_none());
+            .remove("selection");
+        assert!(proposed_retry(&neither).is_none());
         let mut nonce = selection_sourced(with_observation(None));
         nonce["selection"]["selection"]["grant_nonce"] = json!("0a".repeat(16));
         assert!(
@@ -734,16 +634,6 @@ mod tests {
                     input,
                     &serde_json::from_value(case["expected_scope"].clone()).unwrap(),
                     &serde_json::from_value(case["expected_selection"].clone()).unwrap(),
-                    arguments,
-                ),
-                "catalog_single" => validated_retry_for_catalog(
-                    input,
-                    &serde_json::from_value(case["expected_scope"].clone()).unwrap(),
-                    arguments,
-                ),
-                "catalog_combined" => validated_retry_for_combined_catalog(
-                    input,
-                    &serde_json::from_value(case["expected_scope"].clone()).unwrap(),
                     arguments,
                 ),
                 kind => panic!("unreviewed caller scope kind {kind}"),

@@ -49,13 +49,13 @@ const sameIds=(left:unknown,right:readonly string[],prefix:'idx_'|'prj_')=>nativ
 export function returnedSearchScopeMatches(original: unknown, expected: ReturnedScopeBinding, restored=false): boolean {
   if (!isDigest(expected.scopeIdentity)||!Number.isSafeInteger(expected.catalogRevision)||!nativeIds([...expected.indexIds],'idx_')||!nativeIds([...expected.projectIds],'prj_')) return false;
   const sourceMatches=(value:unknown)=>{const source=rec(value);return source.owner==='admin'&&source.scope_identity===expected.scopeIdentity&&source.catalog_revision===expected.catalogRevision;};
-  const observationMatches=(value:unknown,ids:readonly string[])=>{const observation=rec(value);return observation.grant==null&&observation.provenance==null&&sourceMatches(observation.selection)&&Array.isArray(observation.members)&&sameIds(observation.members.map(member=>rec(member).index_id),ids,'idx_');};
+  const observationMatches=(value:unknown,ids:readonly string[])=>{const observation=rec(value);return sourceMatches(observation.selection)&&Array.isArray(observation.members)&&sameIds(observation.members.map(member=>rec(member).index_id),ids,'idx_');};
   const value=searchBody(original);
   if(value.schema!=='airk.combined-read/1')return observationMatches(value.scope_observation,expected.indexIds);
   const selected=rec(value.selection),vector=rec(value.publication_vector);
   // SelectedScopeObservation.selection is the A2 source; vector.authority is
-  // the distinct native combined-selection-authority digest, never that grant.
-  if(selected.grant_id!=null||selected.grant_revision!=null||!sourceMatches(selected.selection)
+  // the distinct native combined-selection-authority digest, never that selection.
+  if(!sourceMatches(selected.selection)
     ||!sameIds(selected.index_ids,expected.indexIds,'idx_')||!sameIds(selected.project_ids,expected.projectIds,'prj_')
     ||!Array.isArray(value.members)||!sameIds(value.members.map(member=>rec(member).index_id),expected.indexIds,'idx_')
     ||!isDigest(label(vector.authority))||!Array.isArray(vector.members)||!sameIds(vector.members.map(member=>rec(member).index_id),expected.indexIds,'idx_'))return false;
@@ -291,7 +291,7 @@ export function Search(props:{guidedRoute?:BrowserEvidenceRoute;onGuidedRoute?:(
   const scopeNote = concurrencyNote({ indexes: view.indexes.length || new Set(allowed).size, concurrency, subject: 'scope' });
   const selectedTool = custom ? tool : kind, definition = manifest.tools.find(item => item.name === selectedTool.replace(/^airk_/, ''));
   return <>
-    <Panel title="Search your indexed sources"><p><strong>Management search scope.</strong> Sources selected here apply to this management session; editor-window search and agent grants are separate.</p>
+    <Panel title="Search your indexed sources"><p><strong>Management search scope.</strong> Sources selected here apply to this management session; editor-window and agent searches use their own scopes.</p>
       <p role="status">{view.applied ? <>Applied scope: <Text value={view.applied.title} /></> : 'Choose named sources and apply the scope before reading.'}</p>
       <details open={!view.applied}><summary>Choose sources</summary><div class="row"><Field label="Filter named index sets" value={filter} onInput={setFilter} /><button type="button" disabled={view.loading || view.applying} onClick={() => void owner.reload()}>Reload sources</button></div>
         {view.loading && <p>Loading the native catalog…</p>}{view.problem && <p role="alert"><Text value={view.problem} /></p>}
