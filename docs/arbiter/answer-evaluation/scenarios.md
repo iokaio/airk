@@ -1,5 +1,17 @@
 # Answer evaluation scenarios
 
+## Current Windows CUDA development inventory
+
+Windows L7 uses ten development scenarios each from munarium at
+`9948345d1d148525f644bc4b8bc5e6da9cf73ca0` and bookbuilder-v2 at
+`238b22a722ceb78447d72e39585fd6a7d4d3dd0c`. The maintained harness reads
+their individual hashes from the private development freeze. The current
+freeze also lists the bookbuilder sealed set. The munarium sealed set is
+due before the first L7 change set is fitted. See the
+[Answer loop plan](../final-plan-fp16.md#128-work-order) for the work order.
+
+## Original one-turn inventory, 21 November 2026
+
 These are the 20 development scenarios of the Answer evaluation: ten for the
 airk repository and ten for the bookbuilder repository (WritingForge Pro, a
 C#/.NET application with a Vue front end). Each is an instruction written the

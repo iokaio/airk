@@ -698,6 +698,12 @@ to do.
    pwsh -NoProfile -File scripts\arbiter-answer-eval\stage_fixture_image.ps1 -Prefix lg-gate -ImageLog $L5C\logs\lg-image.log -CliLog $L5C\logs\lg-cli.log -Target $R\answer-loop\target-cuda -GitHead (git -C $WT rev-parse HEAD) -Note 'LG gate image'
    ```
 
+   To stage a new image on D: from the provisioned CUDA runtime on C:,
+   pass `-Base <approved image output root on D:>` and
+   `-ProviderStage <approved cu15/gpu-provider-stage on C:>`.
+   Prepare the `answer-eval-gpu-r1` subdirectory under that output root
+   using the checked Windows execution procedure.
+
    Must show: both builds `exit=0` in `$L5C\logs\cargo-commands.log`, and
    `staged <folder> service=<sha> cli=<sha>`. The folder is the image. Build
    from a clean tree: the image records the commit, and the preflight

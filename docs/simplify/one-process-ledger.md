@@ -17453,3 +17453,57 @@ The freeze has the bookbuilder sealed files and has no munarium sealed
 entries. The munarium set is due before fitting the first change set. No
 sealed tasks were opened. Next, bind the matching CUDA image and profiles
 and build a fresh two-repository base for the live shakedown.
+
+### 24 November 2026 — Matched Windows CUDA fixture prepared
+
+Built from `cc825245` as the verified `TYAI\tdotn` Windows user and
+default owner. The warm `answer-loop/target-cuda` had one Cargo owner.
+The pinned Rust 1.98.0 and MSVC 14.44.35207 build used the existing offline
+cache, incremental setting `1`, 12 jobs, the approved static CUDA core
+build `fd10bcc2115e681c827162362b90f3133abf5714bd58984921f0b7e38df6b890`,
+and provider manifest
+`9433753580c8a370bbea42119aa67ac81306229bcf6876514213f3e2979083b5`.
+
+- `cargo test -p airk-service -p airk-kernel --lib --all-features --locked --offline --timings --no-run --message-format=json-render-diagnostics`
+  exited 0 in 402.274 s. This built test binaries.
+- `cargo build -p airkctl --bin airkctl --locked --offline --timings`
+  exited 0 in 123.324 s. No compiler remained at handoff and 11,737 written
+  outputs were owner-audited. D: was 650,821,337,088 bytes free at admission
+  and 643,607,674,880 bytes at handoff. The 120 GiB build reservation closed.
+  The exact commands, logs and cache paths are in
+  `answer-loop/L5C/CARGO-OWNER-CUDA.completion-cc825245.at-release.json`.
+
+The staging tool now accepts `-ProviderStage` separately from `-Base`,
+so it reads the provisioned provider under the verified user's AppData and
+writes the new image to D:. Its output directories and files were checked
+before staging and audited afterward. The real staging run verified all
+13 provider file digests and its producer receipt. The matched image
+`artifacts/eval-cuda/answer-eval-gpu-r1/win-shake-r1-0874afaf` has service
+SHA-256 `0874afafcb687274f581ade88a4ca8364ee111f5d6f9d9c4fed2745d0d22d28e`,
+CLI SHA-256 `9d39f57d00acdf081febd7f4f205306f9e7f77603af857df2a4ab90d23615045`,
+and image receipt SHA-256
+`83e3d52c34ccc04202cbfb1a4a77486130ae98e408bc96bacbcc8aeb6f0f9388`.
+The staged CLI reports 1.8.209. This establishes the matched fixture image
+and its provider files. Model placement and switch behavior still need
+live evidence.
+
+The retained Arbiter and Focus pair, roster, compiler, task-policy and
+review receipts were checked. Both profiles and all 16 listed model asset
+files matched their pins. Focus uses the intended static 1,024-token W8
+export with FP32 arithmetic. Arbiter is the FP16 control. Native admission
+still needs to prove those identities on the current pair.
+
+One new two-repository base was admitted under `fixture-win-shake-r1` after
+reserving 35 GiB for it and 4 GiB for the staged image. The original base
+lifetime started at 19:39:13 UTC using `build_base.py`, with the helper's
+7,200-second lifetime bound. Both indexes are present and indexing. The
+Bookbuilder alias matched the retained versioned mapping. The prior
+two-repository bases took over three hours to reach semantic readiness.
+Keep the original deadline and retain the actual closure and any verified
+successor state. The next check is semantic readiness and settlement, then
+publication and leak probes on the restarted CUDA lifetime.
+
+The installed Claude Code executable exists outside the old VS Code
+extension path. Its file version is 2.1.330.0 and its SHA-256 is
+`fa797c1bc7d4a3511da42622bae53a2b7f1276ae328c668f2bfef44635301caa`.
+Pin its actual path in the generated Windows L7 spec before scoring.
