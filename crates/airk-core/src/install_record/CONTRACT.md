@@ -279,4 +279,3 @@ to run an operation that names it (`setup_operation_refused:
 install_file_malformed`). Test:
 `install_record::tests::an_https_builds_trust_option_is_read_from_persisted_records_with_exact_bytes`;
 end to end, `airk-cli` `trust_upgrade`.
-

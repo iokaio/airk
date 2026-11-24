@@ -4038,3 +4038,154 @@ arbiter `CONTRACT.md` ("Answer job kernel"), supervisor
   supervisor level only, as entry 69 recorded for grants).
 - **Identities:** none moved; no wire shape, digest input or persisted format
   changed.
+
+### 71. Local trust plan C: loopback over plain HTTP
+
+- **Where (24 November 2026):** branch `loop/trust-c` from
+  `feat/arbiter-final` (`0d8aef9e`), in the `trust-b4` worktree. Decided by
+  the user in the [local trust plan](../simplify/local-trust-plan.md)
+  (decisions 1, 2 and 5, section C) and the phase C brief; map
+  [local-trust-phase-c-map.md](../simplify/local-trust-phase-c-map.md).
+  Commits:
+  1. `19b15522` the remove-only legacy trust retirer
+     (`http_endpoint::legacy_trust`, `cert_trust::retire_exact`) and the
+     tolerant legacy readers (`LegacyEndpoint`, `SavedEndpoint`,
+     `LoopbackMcpUrl::legacy_https_port`);
+  2. `b4c2ccbc` the consumers removed: `airkctl service trust` and
+     `issuer-rotation`, `runtime http-trust` and `http-issuer-rotation`,
+     M18, the installer rotation journal and its guards, the
+     `https.trust_status`/`https.rotation_status` Admin rows, setup's
+     `ApplyTrust`/`RemoveTrust`, `TrustChoice`, `SetupOptions.trust` and the
+     `trust_*` phases (one `RetireLegacyTrust` step, phase
+     `legacy_trust_retired`), Inno `/TRUST` and the shell wrappers' trust
+     option; I1/I3/I4 fixtures, CLI reference, help and pilots regenerated;
+  3. `1683c9b2` the switch: gateway on plain TCP with
+     `FlushTrackedIo<FencedIo<TcpStream>>`, `tls.rs` gone, descriptor without
+     `ca_sha256`/`certificate_sha256`, `http://` URL and origins, cookie
+     `airk_admin` (`HttpOnly; SameSite=Strict; Path=/`), `rcgen` and
+     `x509-parser` out of the workspace, `rustls`/`tokio-rustls` only in
+     `airk-service`; the four rustls-buffer fence tests rewritten over a
+     counting duplex writer, the TLS-only test deleted;
+  4. `e5c4b58d` clients: `airkctl` recognition (an `https://` entry is a
+     legacy `https_endpoint_mismatch`, repaired to `http://`;
+     `https_trust_missing` removed), VS Code, the Admin UI and its rebuilt
+     bundle, the I2 TypeScript;
+  5. `90f03d40` scripts, examples (`local_http_client.*`), installer
+     READMEs, `docs/local-http-api.md` (replacing `local-https-api.md`) and
+     the other docs, and the owning CONTRACTs;
+  6. `af21ea1d` the persisted-record fix below and the end-to-end upgrade
+     test.
+- **Migration as built.**
+  - **Endpoint record.** `http_endpoint::load_saved` decodes the current
+    descriptor, else an HTTPS build's record as `SavedEndpoint::Legacy`
+    (port, generation, binding, executable, and the framed digest of its
+    exact bytes); `load_descriptor` never returns a legacy record as current.
+    The service binds the legacy port, publishes generation + 1 over
+    `http://` and chains `predecessor_digest` to the legacy digest;
+    `publish_descriptor` accepts a legacy predecessor only with a higher
+    generation.
+  - **OS trust.** Setup's `retire_legacy_trust` step (before the start for
+    placing kinds, where trust removal ran for removals, in the user's
+    session) calls `legacy_trust::retire`. Only a receipt
+    `http-1/user-trust-1.json` in phase `installed` whose binding names the
+    current user acts: the exact certificate is removed by DER SHA-256 from
+    the store the receipt names (Windows CurrentUser\Root through PowerShell,
+    which selects by `ComputeHash(RawData)` and proves absence afterwards;
+    macOS login keychain through `security find-certificate -a -Z` and
+    `delete-certificate -t -Z`). Another store is refused. `prepared`,
+    `remove_prepared`, another user's or an unreadable receipt is residue:
+    it and `ca.pem` are kept and reported as a setup leftover. Linux has no
+    store: files only. Then `ca.pem`, `tls-identity.json`,
+    `retired-private-key.json`, `user-trust-1.json`, `user-trust-1.lock`,
+    `issuer-rotation.json`, `issuer-rotation.lock` and
+    `rotation-user-trust-preimage.json` are deleted by exact name, never
+    following links (a pending rotation journal is discarded; the
+    `issuer-rotations/` history is reported, not deleted). A failed removal
+    is recorded `left` and keeps the CA and receipt; it never fails setup.
+    Predecessor retirement and uninstall of an old runtime layout use the
+    same retirer.
+  - **Agent configs.** `airkctl` recognises `https://127.0.0.1:<port>/mcp`
+    entries as AIRK's, always `https_endpoint_mismatch` after stale
+    credential fields; `repair` writes the live `http://` URL and strips
+    `headersHelper` and bearer fields. VS Code's recognizer and health check
+    follow (`legacyHttpsUrl`).
+- **Gap found and closed: the setup records of an HTTPS build.** Dropping
+  `SetupOptions.trust` outright broke every service start on this machine:
+  `setup_role::start_gate` reads the settled
+  `%LOCALAPPDATA%\AIRK\install-pointer\active-setup.json`, which embeds the
+  user's HTTPS-build operation with `"trust":"ask"` and binds those bytes by
+  digest (`unknown field trust`, then `setup_owner_refused`; every
+  `airk-cli` reviewed fixture failed). The same file blocks the user's own
+  upgrade. `SetupOptions.trust` is now `Option<LegacyTrustChoice>`: decoded
+  and re-encoded only when present, so old records verify byte for byte,
+  never written, never read for a decision; the setup role refuses to run an
+  operation naming it. This keeps a read-only legacy field the brief said to
+  drop; it is the narrowest form the required automatic migration allows and
+  is flagged for the user. Recorded in `install_record/CONTRACT.md`.
+- **Tests.** Legacy retirer: four `legacy_trust::tests` (installed removes
+  by digest then the files; interrupted receipts are residue; another user,
+  a failed removal and another store keep the trust files; no store or no
+  folder), `cert_trust::tests::exact_retirement_selects_by_digest_and_proves_absence`,
+  `service_http::tests::an_old_https_endpoint_record_decodes_as_legacy`,
+  `http_endpoint::tests::a_legacy_https_record_is_carried_forward_by_the_next_http_generation`,
+  `install_record::tests::an_https_builds_trust_option_is_read_from_persisted_records_with_exact_bytes`.
+  Fence tests (`http_gateway::tests`):
+  `request_deadline_and_cancellation_fence_actual_bytes_until_close`,
+  `real_http_scope_refusal_preserves_fresh_403_and_fences_old_unsent_evidence`,
+  `native_policy_fences_unsent_bytes_at_actual_write_poll` and
+  `a_live_http_connection_keeps_an_answer_open_past_120_seconds_to_its_result`
+  assert that no byte reaches the socket after a fence, a deadline, a
+  cancellation or a policy change (with a positive control where the old
+  test had one); `tls_read_driven_alert_cannot_flush_ciphertext_after_native_fence`
+  and the `read_driven` branches are deleted as TLS-only. End to end:
+  `airk-cli` `trust_upgrade` (an HTTPS install shape on a real reviewed
+  service: CA removed by digest through an injected runner, TLS files gone,
+  the same port serving `http://` as the next generation, an `https://`
+  agent entry repaired, a `prepared` receipt reported and not acted on) and
+  the live `airkctl` agents test's new legacy round trip.
+- **Validated** (Windows, target `target-l2b-cli`, the CPU environment of
+  `trust-b4/build-env.json`, incremental on, `--locked`, offline; logs in the
+  private `answer-loop/trust-c/logs`):
+  - Clippy `-D warnings --workspace --all-targets`: all features clean
+    (`final-clippy-all`, and 45 s after the last source change in
+    `s6c-clippy`), default features clean in 1 min 9 s
+    (`final-clippy-default`).
+  - `cargo tree -i`: `rcgen` and `x509-parser` match no package; `rustls`
+    and `tokio-rustls` are reached only through `airk-service`.
+  - Nextest `--workspace --lib --bins --all-features --profile ci`: 4,743 of
+    4,743 passed, 202 skipped, 15 min 54 s (`final-ws-lib`).
+  - `airk-cli --tests --all-features --profile ci`: 487 of 487, 6 skipped,
+    13 min 31 s (`final-cli`), including `trust_upgrade`, `admin_plane`,
+    the gateway-backed `combined_reads` and the live `tools` agents test.
+  - Stress `--stress-count 20 -E '(binary(combined_reads) & test(/answer/))
+    | binary(admin_plane)'`: 20 of 20, 11 min 53 s (`final-stress`).
+  - `packages/vscode` `npm test` 1,024 of 1,026, 2 skipped; `packages/admin`
+    302 of 304, 2 skipped, `npm run check` up to date; shared UI 215 of 216,
+    the one failure the shared-editor Service test entry 70 already
+    reported; `contract_types.py i2|i3|arbiter --check` clean; harness
+    `unittest discover -s scripts/arbiter-answer-eval` 252 OK; touched
+    Python tests 249 run with two failures and one import error that the base
+    run already had (`test_runtime_upgrade` preflight,
+    `test_package_standalone_linux` CUDA layout; `test_local_test_setup`
+    passes 33 of 33 under `discover`); the whole `scripts/tests` suite has no
+    new failure against the base (2,354 then 2,346 run, failures 10 and 10,
+    errors 29 then 27); `check-repo.ps1` and `git diff --check` clean.
+- **Not verified:** macOS keychain removal (`security` output parsing,
+  whether it prompts under `--silent`) and Safari's cookie handling, Linux,
+  an installed service upgrade on this machine (the user's installation was
+  not touched; the end-to-end test uses a reviewed fixture and an injected
+  trust runner), and Edge or Chrome opening Admin without a certificate step.
+- **Left:** the `fixtures/cli-golden/windows/airk.json` capture of the old
+  `airk` binary still lists `runtime http-trust` and `http-issuer-rotation`
+  (a dated capture that needs a rebuild to recapture); the release-manifest
+  field `certificate_trust: "skip"` (`release.ts`, publication receipts) is
+  unchanged release wire shape; `scripts/dev/split_u90b_cert_trust.py` is a
+  completed one-off migration kept because CONTRACTs cite it; several
+  benchmark/harness receipt tokens still say `https`; README's "Service
+  lifecycle" paragraph still names the `airkctl agents credential` helper
+  that plan B removed.
+- **Identities:** the endpoint descriptor, `LoopbackMcpUrl`, the Admin
+  cookie and origin, `SetupOptions`/`SetupPhase` and the I1/I2/I3/I4
+  fixtures changed under the plan's recorded decision; `SetupOptions.trust`
+  stays as a read-only legacy field (see the gap above).
+
