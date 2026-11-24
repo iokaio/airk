@@ -880,3 +880,40 @@ fn moved_member_publication_is_classified_by_its_typed_native_receipt() -> Resul
     assert!(result_failed(&publication_busy_failure(&search)));
     Ok(())
 }
+
+/// Change-log entry 68 part 5: a delivered body crosses the service pipe as
+/// JSON text and is parsed again by every client that checks its delivery
+/// receipt. Reciprocal-rank scores such as 1/65 must parse back to the same
+/// `f64`, or the re-serialised body (and so its digest) moves by one ULP.
+/// This needs the workspace `serde_json` `float_roundtrip` feature.
+#[test]
+fn delivery_digest_survives_the_text_round_trip_of_rank_scores() -> Result<()> {
+    let scores: Vec<f64> = (60..=70).map(|rank| 1.0 / f64::from(rank)).collect();
+    let body = with_typed_delivery(json!({"hits":scores.iter().map(|score| json!({"score":score})).collect::<Vec<_>>()}))?;
+    let text = serde_json::to_string(&body)?;
+    let parsed: Value = serde_json::from_str(&text)?;
+    for (index, score) in scores.iter().enumerate() {
+        assert_eq!(
+            parsed["hits"][index]["score"].as_f64().map(f64::to_bits),
+            Some(score.to_bits()),
+            "1/{} changed across the text round trip",
+            index + 60
+        );
+    }
+    assert_eq!(serde_json::to_string(&parsed)?, text);
+    let receipt: airk_core::service::CombinedDeliveryReceipt =
+        serde_json::from_value(parsed["delivery_observation"]["receipt"].clone())?;
+    let mut canonical = parsed.clone();
+    canonical
+        .as_object_mut()
+        .context("object body")?
+        .remove("delivery_observation");
+    assert_eq!(
+        receipt.result_digest,
+        framed_digest(
+            b"airk/combined-delivery-result/1",
+            &[&serde_json::to_vec(&canonical)?]
+        )
+    );
+    Ok(())
+}

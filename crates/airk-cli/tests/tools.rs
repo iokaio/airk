@@ -1774,6 +1774,36 @@ fn airkctl_registration_matches_airk() -> anyhow::Result<()> {
     parity.service(&service);
     parity.mask_json_fields(CLOCK_FIELDS);
 
+    // The reviewed service admits the project's first worker (fencing
+    // generation 1) asynchronously after it starts, and `init` answers the
+    // registered project with that generation. The recorded old output was
+    // captured after the admission. Compare both sides in that settled state
+    // (change-log entry 68 part 5): wait for it under a deadline, once.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        let airk_core::service::ControlResponse::Projects { page } =
+            service.request(airk_core::service::ControlMethod::Projects {
+                after: None,
+                revision: None,
+                limit: 32,
+            })
+        else {
+            anyhow::bail!("the service did not list its projects");
+        };
+        let generation = page
+            .projects
+            .iter()
+            .find(|project| project.registration.binding == service.project.binding)
+            .map(|project| project.fencing_generation);
+        if generation.is_some_and(|generation| generation >= 1) {
+            break;
+        }
+        anyhow::ensure!(
+            std::time::Instant::now() < deadline,
+            "the reviewed project's first worker was never admitted: {generation:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
     // init on the reviewed mapping: the same acknowledged project.
     let initialized = parity.old("init reviewed", || {
         service

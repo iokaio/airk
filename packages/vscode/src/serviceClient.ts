@@ -552,8 +552,15 @@ export class ServiceClient {
     private validateFenceTarget(input:unknown,service:string):void{
         const target=record(input),worker=record(target.worker),scope=record(target.scope);
         if(identifier(worker.service,16)!==service||count(worker.fencing_generation)<1||scope.schema!==1||count(scope.lease_generation)<1)throw new ServiceError('invalid_catalog_fence_target',true);
-        identifier(worker.worker,16);identifier(worker.project,32);catalogHex(scope.fingerprint,64);catalogRevision(scope.grant_revision);
-        if(typeof scope.index_id!=='string'||!/^idx_[0-9a-f]{32}$/.test(scope.index_id)||typeof scope.grant_id!=='string'||!/^grt_[0-9a-f]{32}$/.test(scope.grant_id))throw new ServiceError('invalid_catalog_fence_target',true);
+        identifier(worker.worker,16);identifier(worker.project,32);catalogHex(scope.fingerprint,64);
+        // Native `ScopedReadRef`: reviewed grants and their `grant_id` and
+        // `grant_revision` were removed (change-log entry 68 parts 3 and 5);
+        // a read is authorized by its in-memory selection.
+        if(!scope.selection||typeof scope.selection!=='object'||Array.isArray(scope.selection)||Object.hasOwn(scope,'grant_id')||Object.hasOwn(scope,'grant_revision'))throw new ServiceError('invalid_catalog_fence_target',true);
+        const selection=record(scope.selection);
+        if(!['window','admin','agent'].includes(String(selection.owner)))throw new ServiceError('invalid_catalog_fence_target',true);
+        identifier(selection.grant_nonce,16);identifier(selection.service_instance,16);catalogHex(selection.scope_identity,64);catalogRevision(selection.catalog_revision);
+        if(typeof scope.index_id!=='string'||!/^idx_[0-9a-f]{32}$/.test(scope.index_id))throw new ServiceError('invalid_catalog_fence_target',true);
     }
     private validateFenceConfirmations(input:unknown,service:string,targets?:unknown[]):void{
         if(!Array.isArray(input)||input.length>128||targets&&input.length>targets.length)throw new ServiceError('invalid_catalog_fence_confirmations',true);

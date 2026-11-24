@@ -134,59 +134,15 @@ export function validateNativeLegacyBinding(input:unknown,project:string,expecte
     if(value.schema!==1||value.project!==project||value.catalog_revision!==null&&catalogRevision(value.catalog_revision)<1||expectedRevision!==null&&value.catalog_revision!==expectedRevision)throw new Error('crossed_native_legacy_binding');
     const eligibility=catalogObject(value.eligibility);
     if(eligibility.kind==='unavailable')return response;
-    if(!['authority_zero','imported_snapshot'].includes(String(eligibility.kind)))throw new Error('invalid_native_legacy_binding_eligibility');
+    // Native eligibility is authority_zero or unavailable; the imported_snapshot kind had no producer after reviewed grants were removed (change-log entry 68 part 5).
+    if(eligibility.kind!=='authority_zero')throw new Error('invalid_native_legacy_binding_eligibility');
     const registration=catalogObject(eligibility.registration);catalogHex(registration.binding,64);setupPath(registration.root);setupPath(registration.data_root);
     if(registration.binding!==project||typeof registration.collection!=='string'||!/^[a-zA-Z0-9._-]{1,128}$/.test(registration.collection)||['.','..'].includes(registration.collection))throw new Error('crossed_native_legacy_registration');
-    if(eligibility.kind==='imported_snapshot'){
-        if(value.catalog_revision===null)throw new Error('invalid_native_legacy_revision');validatePersistedGrant(eligibility.grant);
-        const persisted=catalogObject(eligibility.grant),grant=catalogObject(persisted.grant),provenance=catalogObject(persisted.provenance);
-        if(grant.revoked!==false)throw new Error('crossed_native_legacy_grant');
-        if(provenance.kind==='imported_legacy_snapshot'){
-            if(provenance.legacy_binding!==project)throw new Error('crossed_native_legacy_grant');
-        }else if(provenance.kind==='imported_standalone_adoption'){
-            const setup=catalogObject(catalogObject(catalogObject(provenance.adoption).plan).setup),adopted=setup.registration;
-            if(catalogObject(setup.key).namespace!==value.namespace)throw new Error('crossed_native_standalone_namespace');
-            if(!adopted||typeof adopted!=='object'||['binding','root','data_root','collection'].some(key=>catalogObject(adopted)[key]!==registration[key]))throw new Error('crossed_native_standalone_registration');
-        }else throw new Error('crossed_native_legacy_grant');
-    }
     return response;
 }
 export function catalogWindowAssociation(view: CatalogView): CatalogObject | undefined {
     if(view.hostContext)return validateNativeHostContext(view.hostContext.descriptor).context??undefined;
     return catalogItems(view.context,'detail')[0]?.value;
-}
-function validatePersistedGrant(input: unknown): void {
-    const value=catalogObject(input),grant=catalogObject(value.grant),provenance=catalogObject(value.provenance);
-    catalogId(grant.id,'grt_');catalogRevision(grant.revision);catalogHex(grant.host,64);
-    if(typeof grant.revoked!=='boolean'||!Array.isArray(grant.memberships)||grant.memberships.length>1024)throw new Error('invalid_persisted_grant');
-    if(provenance.kind==='imported_legacy_snapshot'){
-        catalogHex(provenance.upgrade_id);catalogHex(provenance.plan_digest,64);catalogHex(provenance.legacy_binding,64);catalogHex(provenance.configuration_digest,64);
-    }else if(provenance.kind==='imported_standalone_adoption')validateStandaloneAdoption(provenance.adoption);
-    else if(provenance.kind!=='user_reviewed_project_grant')throw new Error('invalid_grant_provenance');
-}
-/** Descriptive native provenance only. Its hashes never confer a capability;
- * native publication/authority validation remains the owner of that proof. */
-function validateStandaloneAdoption(input:unknown):void{
-    const value=catalogObject(input);catalogBound(value,CATALOG_RECEIPT_BYTES);catalogHex(value.operation_id);
-    if(value.schema!==1||typeof value.no_default_project!=='boolean'||typeof value.original_server!=='string'||!value.original_server||new TextEncoder().encode(value.original_server).length>256||/[\u0000-\u001f\u007f-\u009f]/.test(value.original_server))throw new Error('invalid_standalone_adoption');
-    const plan=catalogObject(value.plan),setup=validateIndexSetupRequest(plan.setup),original=catalogObject(plan.original_registration),adopted=catalogObject(setup.registration);
-    catalogHex(original.binding,64);setupPath(original.root);setupPath(original.data_root);
-    if(plan.schema!==1||setup.setup_watch!==false||typeof original.collection!=='string'||!/^[a-zA-Z0-9._-]{1,128}$/.test(original.collection)||['.','..'].includes(original.collection)||original.root!==adopted.root||original.collection!==adopted.collection||original.data_root===adopted.data_root)throw new Error('crossed_standalone_adoption_plan');
-    for(const key of ['origin_sha256','config_sha256','executable_sha256','quiescence_sha256','archive_inventory_sha256','original_publication_sha256','source_inventory_sha256'])catalogHex(plan[key],64);
-    const claims=value.configuration_claims;
-    if(!Array.isArray(claims)||!claims.length||claims.length>32)throw new Error('invalid_standalone_configuration_claims');
-    let prior='';let primary:CatalogObject|undefined;
-    for(const input of claims){
-        const claim=catalogObject(input);for(const field of ['origin_sha256','config_sha256','executable_sha256','selected_entry_sha256'])catalogHex(claim[field],64);
-        if(claim.schema!==1||String(claim.origin_sha256)<=prior||claim.no_default_project!==value.no_default_project||typeof claim.original_server!=='string'||!claim.original_server||new TextEncoder().encode(claim.original_server).length>256||/[\u0000-\u001f\u007f-\u009f]/.test(claim.original_server)||!Array.isArray(claim.container_path)||claim.container_path.length>16)throw new Error('invalid_standalone_configuration_claim');
-        claim.container_path.forEach(part=>setupPath(part));prior=String(claim.origin_sha256);
-        if(claim.origin_sha256===plan.origin_sha256)primary=claim;
-    }
-    if(!primary||primary.config_sha256!==plan.config_sha256||primary.executable_sha256!==plan.executable_sha256||primary.original_server!==value.original_server)throw new Error('crossed_standalone_primary_claim');
-    const publication=catalogObject(value.publication);
-    for(const key of ['plan_digest','archive_inventory_sha256','original_publication_sha256','resource_sha256','compatibility_sha256'])catalogHex(publication[key],64);
-    const token=typeof publication.current==='string'?/^airk-r1:([a-f0-9]{32}):([1-9][0-9]{0,19}):([a-f0-9]{64})$/.exec(publication.current):null;
-    if(publication.schema!==1||!token||BigInt(token[2])>18446744073709551615n||publication.archive_inventory_sha256!==plan.archive_inventory_sha256||publication.original_publication_sha256!==plan.original_publication_sha256)throw new Error('crossed_standalone_adoption_publication');
 }
 export function catalogReviewPreview(review: CatalogReview): CatalogObject {
     return catalogObject(review.response.status==='catalog_source_mutation_draft'?catalogObject(review.response.draft).preview:review.response.preview);

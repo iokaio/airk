@@ -13,7 +13,6 @@ import { parseRoute } from '../explorerRoutes';
 import { validateIndexSetupSelection, validateIndexSetupApply, validateNativeIndexSetupDraft, validateIndexSetupReceipt, validateNativeLegacyBinding } from '../indexingCatalog';
 import { validateNativeSourceDraft, validateSourceMutationSelection } from '../indexingCatalog';
 import { catalogObject } from '../indexingCatalog';
-import {validateHttpSelection} from '../serviceHttp';
 
 const namespace='ab'.repeat(16), caller='cd'.repeat(16), nonce='ef'.repeat(16), digest='12'.repeat(32), project='prj_'+'34'.repeat(16), index='idx_'+'56'.repeat(16), source='src_'+'78'.repeat(16);
 const requestDigest='13'.repeat(32);
@@ -118,49 +117,18 @@ test('setup selectors carry choices only; native canonical locations and complet
     const exported=catalogExport({generation:1,busy:false,setupReview:reviewed});assert.match(exported,/future_native_review/);assert.match(exported,/native\/storage/);
 });
 
-test('native legacy eligibility preserves complete positive snapshots and refuses crossed identities',async()=>{
+test('native legacy eligibility preserves complete authority-zero observations and refuses crossed or removed kinds',async()=>{
     const binding='66'.repeat(32),registration={binding,root:'/native/source',data_root:'/native/storage',collection:'legacy'};
     const value={status:'catalog_legacy_binding',observation:{schema:1,namespace,catalog_revision:null,project:binding,eligibility:{kind:'authority_zero',registration},future_native_field:{retained:true}},future_response:'retained'};
     assert.equal(validateNativeLegacyBinding(value,binding),value);
     assert.throws(()=>validateNativeLegacyBinding(value,digest),/crossed/);assert.throws(()=>validateNativeLegacyBinding(value,binding,2),/crossed/);
-    const grant={...nativeGrantOperation().grant,id:'grt_'+'91'.repeat(16)},wrapped={grant,provenance:{kind:'imported_legacy_snapshot',upgrade_id:nonce,plan_digest:digest,legacy_binding:binding,configuration_digest:requestDigest},future_provenance:'retained'};
-    const imported={...value,observation:{...value.observation,catalog_revision:2,eligibility:{kind:'imported_snapshot',registration,grant:wrapped}}};
-    assert.equal(validateNativeLegacyBinding(imported,binding,2),imported);
-    assert.throws(()=>validateNativeLegacyBinding({...imported,observation:{...imported.observation,eligibility:{...imported.observation.eligibility,grant:{...wrapped,grant:{...grant,revoked:true}}}}},binding,2),/crossed/);
-    const client=new ServiceClient({dispose(){},async request(method){assert.deepEqual(method,{catalog_legacy_binding:{project:binding,expected_catalog_revision:2}});return imported;}});
-    assert.equal(await client.catalogLegacyBinding(binding,2),imported);
+    const unavailable={...value,observation:{...value.observation,eligibility:{kind:'unavailable'}}};assert.equal(validateNativeLegacyBinding(unavailable,binding),unavailable);
+    // Change-log entry 68 part 5: the imported_snapshot kind (a reviewed grant's copy) has no native producer.
+    const imported={...value,observation:{...value.observation,catalog_revision:2,eligibility:{kind:'imported_snapshot',registration,grant:{}}}};
+    assert.throws(()=>validateNativeLegacyBinding(imported,binding,2),/invalid_native_legacy_binding_eligibility/);
+    const client=new ServiceClient({dispose(){},async request(method){assert.deepEqual(method,{catalog_legacy_binding:{project:binding,expected_catalog_revision:null}});return value;}});
+    assert.equal(await client.catalogLegacyBinding(binding,null),value);
 });
-
-test('standalone adopted native authority retains original provenance and rejects crossed registration, config or publication',()=>{
-    const setup:any=structuredClone(setupFixture().draft.request),adopted=setup.registration;
-    setup.sources.push({canonical_path:'/native/additional',aliases:['saved_alias'],owner:false});
-    const original={...adopted,binding:'77'.repeat(32),data_root:'/original/standalone-index'};
-    const plan={schema:1,setup,original_registration:original,origin_sha256:digest,config_sha256:requestDigest,executable_sha256:digest,quiescence_sha256:digest,archive_inventory_sha256:digest,original_publication_sha256:digest,source_inventory_sha256:digest};
-    const adoption={schema:1,operation_id:nonce,plan,publication:{schema:1,plan_digest:digest,archive_inventory_sha256:digest,original_publication_sha256:digest,current:`airk-r1:${namespace}:5:${digest}`,resource_sha256:digest,compatibility_sha256:digest},original_server:'airk-original-alias',no_default_project:true,configuration_claims:[{schema:1,origin_sha256:plan.origin_sha256,config_sha256:plan.config_sha256,executable_sha256:plan.executable_sha256,selected_entry_sha256:digest,container_path:['mcpServers'],original_server:'airk-original-alias',no_default_project:true}]};
-    const wrapped={grant:{...nativeGrantOperation().grant,id:'grt_'+'91'.repeat(16)},provenance:{kind:'imported_standalone_adoption',adoption},future_native_field:{retained:true}};
-    const response={status:'catalog_legacy_binding',observation:{schema:1,namespace,catalog_revision:2,project:adopted.binding,eligibility:{kind:'imported_snapshot',registration:adopted,grant:wrapped}}};
-    assert.equal(validateNativeLegacyBinding(response,adopted.binding,2),response);
-    const selection={kind:'imported_legacy',selection:{namespace,expected_catalog_revision:2,registration:adopted,grant:wrapped,configuration_receipt:requestDigest}};
-    assert.deepEqual(validateHttpSelection(selection),selection);
-    const json=catalogExport({generation:1,busy:false,detail:response}),markdown=catalogExport({generation:1,busy:false,detail:response},true);
-    for(const text of [json,markdown])for(const expected of ['imported_standalone_adoption','/original/standalone-index','saved_alias','future_native_field','original_publication_sha256'])assert.ok(text.includes(expected));
-    const mutations=[
-        (v:any)=>v.observation.eligibility.registration={...v.observation.eligibility.registration,data_root:'/crossed'},
-        (v:any)=>v.observation.eligibility.grant.grant.revoked=true,
-        (v:any)=>v.observation.eligibility.grant.provenance.adoption.plan.setup.key.namespace='11'.repeat(16),
-        (v:any)=>v.observation.eligibility.grant.provenance.adoption.plan.original_registration.root='/crossed',
-        (v:any)=>v.observation.eligibility.grant.provenance.adoption.plan.original_registration.data_root=adopted.data_root,
-        (v:any)=>v.observation.eligibility.grant.provenance.adoption.plan.setup.setup_watch=true,
-        (v:any)=>v.observation.eligibility.grant.provenance.adoption.publication.archive_inventory_sha256=requestDigest,
-        (v:any)=>v.observation.eligibility.grant.provenance.adoption.publication.original_publication_sha256=requestDigest,
-        (v:any)=>v.observation.eligibility.grant.provenance.adoption.publication.current=`airk-r1:${namespace}:0:${digest}`,
-        (v:any)=>v.observation.eligibility.grant.provenance.adoption.publication.current=`airk-r1:${namespace}:18446744073709551616:${digest}`,
-        (v:any)=>v.observation.eligibility.grant.provenance.adoption.original_server='invalid\nserver',
-    ];
-    for(const mutate of mutations){const invalid=structuredClone(response);mutate(invalid);assert.throws(()=>validateNativeLegacyBinding(invalid,adopted.binding,2));}
-    assert.throws(()=>validateHttpSelection({...selection,selection:{...selection.selection,configuration_receipt:digest}}),/crossed_http_standalone_configuration/);
-});
-
 test('setup full receipt validation fences identity, stage transitions and immutable native preparation',()=>{
     const f=setupFixture();assert.equal(validateIndexSetupReceipt(f.reserved,f.draft),f.reserved);validateIndexSetupReceipt(f.prepared,f.draft,f.reserved);validateIndexSetupReceipt(f.ready,f.draft,f.prepared);
     for(const bad of [{...f.ready,request:{...f.ready.request,caller}},{...f.ready,source_ids:[]},{...f.ready,completion:null},{...f.ready,catalog_revision:2},{...f.ready,source_revision:1}])assert.throws(()=>validateIndexSetupReceipt(bad,f.draft));
@@ -210,11 +178,6 @@ test('native setup reviews require an established window owner and keep all late
     await assert.rejects(value.setupApply(established.generation),/stale_setup_review/);assert.equal(applies,1);assert.equal(drafts,2);
 });
 
-function nativeGrantOperation(host='22'.repeat(32)){
-    return {operation:'create_grant',grant:{id:'grt_'+'11'.repeat(16),host,revision:1,revoked:false,memberships:[{
-        membership:{project_id:project,index_id:index,revision:1,scope:[{source_root_id:source,kind:'subtree',path:''}]},source_revision:1,policy_epoch:0,policy_digest:null,
-    }]}};
-}
 function nativeSourceOperation(){
     return {operation:'begin_index_source_change',id:index,expected_source_revision:1,plan:{registration:{binding:digest,root:'/source',data_root:'/data',collection:'fixture'},engine_identity:'21'.repeat(32),job:'22'.repeat(32),
         configuration:{incarnation:'da'.repeat(16),settings:'db'.repeat(32),configuration:{operation:'add_root',alias:'extra',path:'/extra'}},before:{primary_root:'/source',aliases:{}},after:{primary_root:'/source',aliases:{extra:'/extra'}},
@@ -707,7 +670,13 @@ test('Indexing adopts the exact host observation without a second RPC and review
 test('catalog fence wrappers bind exact requests and preserve complete native proof through journal restore',async()=>{
     const fencedRequest:CatalogRequest={...request,operation:{operation:'remove_membership',project_id:project,index_id:index,expected_scope_revision:1,expected_membership_revision:1}};
     const metadata={schema:1,operation_id:'21'.repeat(16),caller,key:request.key,request_digest:requestDigest,catalog_revision:2,authority_fence_required:true};
-    const target={worker:{service:'22'.repeat(16),worker:'23'.repeat(16),project:'24'.repeat(32),fencing_generation:2},scope:{schema:1,lease_generation:3,index_id:index,grant_id:'grt_'+'11'.repeat(16),grant_revision:1,fingerprint:'25'.repeat(32)},future_target_field:{retained:true}};
+    const target={worker:{service:'22'.repeat(16),worker:'23'.repeat(16),project:'24'.repeat(32),fencing_generation:2},scope:{schema:1,lease_generation:3,index_id:index,selection:{owner:'window',grant_nonce:'11'.repeat(16),service_instance:'22'.repeat(16),scope_identity:'12'.repeat(32),catalog_revision:2},fingerprint:'25'.repeat(32)},future_target_field:{retained:true}};
+    // Change-log entry 68 part 5: a target in the removed reviewed-grant shape is no native target.
+    const grantShaped={...target,scope:{schema:1,lease_generation:3,index_id:index,grant_id:'grt_'+'11'.repeat(16),grant_revision:1,fingerprint:'25'.repeat(32)}};
+    const grantReply={status:'catalog_applied',receipt:metadata,fenced_receipt:{request:fencedRequest,metadata,preview_digest:digest,prepared_digest:'27'.repeat(32),proof:{plan_digest:'26'.repeat(32),service:target.worker.service,gate_generation:7,confirmations:[{target:grantShaped,method:'native_scope_ack'}]}}};
+    await assert.rejects(new ServiceClient({dispose(){},async request(){return grantReply;}}).submitCatalog({catalog_apply:{request:fencedRequest,preview_digest:digest},request_digest:requestDigest}),(error:unknown)=>{
+        assert.ok(error instanceof ServiceError);assert.equal(isNativeReplyValidationFailure(error),true);
+        assert.match(String((error.cause as Error|undefined)?.message),/invalid_catalog_fence_target/);return true;});
     const full={request:fencedRequest,metadata,preview_digest:digest,prepared_digest:'27'.repeat(32),proof:{plan_digest:'26'.repeat(32),service:target.worker.service,gate_generation:7,confirmations:[{target,method:'native_scope_ack'}],future_proof_field:{retained:true}},future_fenced_field:{retained:true}};
     const applied={status:'catalog_applied',receipt:metadata,fenced_receipt:full,future_response_field:{retained:true}};
     const client=new ServiceClient({dispose(){},async request(){return applied;}});

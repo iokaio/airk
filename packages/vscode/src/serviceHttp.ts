@@ -2,8 +2,6 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { X509Certificate, createHash, randomBytes } from 'node:crypto';
-import { isDeepStrictEqual } from 'node:util';
-import { validateNativeLegacyBinding } from './indexingCatalog';
 
 type InputStamp={dev:number;ino:number;birthtimeMs:number;mode:number;uid:number};
 type InputOwner={control:string;directory:string;parent:InputStamp;directoryStamp:InputStamp;file:InputStamp};
@@ -62,8 +60,8 @@ export async function publishNativeInput(control:string,content:string,check:()=
     check();return file;
 }
 
-export interface ImportedHttpSelection {namespace:string;expected_catalog_revision:number;registration:{binding:string;root:string;data_root:string;collection:string};grant:Record<string,any>;configuration_receipt:string}
-export type HttpSelection={kind:'imported_legacy';selection:ImportedHttpSelection}|{kind:'imported_legacy_union';selection:{namespace:string;selections:ImportedHttpSelection[];no_default_project:true}}|{kind:'open';selection:{namespace:string}};
+/** Only the U105 open selection remains: the imported legacy kinds had no native producer after reviewed grants were removed (change-log entry 68 parts 3 and 5). */
+export type HttpSelection={kind:'open';selection:{namespace:string}};
 export interface EndpointDescriptor {
     schema:1;installation:string;user:string;namespace:string;generation:number;service_instance:string;
     executable_sha256:string;url:string;ca_sha256:string;certificate_sha256:string;
@@ -84,67 +82,16 @@ export function httpUrl(value:unknown):string{
 }
 export function validateHttpSelection(input:unknown):HttpSelection{
     const value=object(input);keys(value,['kind','selection']);
-    if(value.kind==='imported_legacy'){
-        const selection=object(value.selection);keys(selection,['namespace','expected_catalog_revision','registration','grant','configuration_receipt']);hex(selection.configuration_receipt);
-        const registration=object(selection.registration);keys(registration,['binding','root','data_root','collection']);
-        validateNativeLegacyBinding({status:'catalog_legacy_binding',observation:{schema:1,namespace:selection.namespace,project:registration.binding,catalog_revision:selection.expected_catalog_revision,eligibility:{kind:'imported_snapshot',registration,grant:selection.grant}}},registration.binding,selection.expected_catalog_revision);
-        const provenance=object(object(selection.grant).provenance);
-        if(provenance.kind==='imported_standalone_adoption'&&!object(provenance.adoption).configuration_claims.some((claim:unknown)=>object(claim).config_sha256===selection.configuration_receipt))throw Error('crossed_http_standalone_configuration');
-        return {kind:'imported_legacy',selection:structuredClone(selection) as unknown as ImportedHttpSelection};
-    }
-    if(value.kind==='imported_legacy_union'){
-        const selection=object(value.selection);keys(selection,['namespace','selections','no_default_project']);hex(selection.namespace,32);
-        if(selection.no_default_project!==true||!Array.isArray(selection.selections)||selection.selections.length<2||selection.selections.length>32)throw Error('invalid_http_legacy_union');
-        const seen=new Set<string>();
-        const members=selection.selections.map((member:unknown)=>{const result=validateHttpSelection({kind:'imported_legacy',selection:member}) as Extract<HttpSelection,{kind:'imported_legacy'}>;if(result.selection.namespace!==selection.namespace||seen.has(result.selection.registration.binding))throw Error('crossed_http_legacy_union');seen.add(result.selection.registration.binding);return result.selection;});
-        return {kind:'imported_legacy_union',selection:{namespace:selection.namespace,selections:members,no_default_project:true}};
-    }
     if(value.kind==='open'){const selection=object(value.selection);keys(selection,['namespace']);hex(selection.namespace,32);return {kind:'open',selection:{namespace:selection.namespace}};}
     throw Error('invalid_http_selection');
 }
-/** Relates a validated native retarget to the original saved declaration.
- * Only standalone adoption may change data storage; its complete immutable
- * provenance retains the original registration and exact configuration bytes. */
-export function matchesImportedHttpOrigin(member:ImportedHttpSelection,registration:ImportedHttpSelection['registration'],configurationReceipt?:string):boolean{
-    const validated=validateHttpSelection({kind:'imported_legacy',selection:member}) as Extract<HttpSelection,{kind:'imported_legacy'}>;
-    const selection=validated.selection,provenance=object(object(selection.grant).provenance);
-    const original=provenance.kind==='imported_standalone_adoption'?object(object(provenance.adoption).plan).original_registration:selection.registration;
-    return (configurationReceipt===undefined||selection.configuration_receipt===configurationReceipt)&&isDeepStrictEqual(original,registration);
-}
-export function standaloneHttpServerKey(connection:HttpConnectionInfo,candidate?:string,container?:readonly string[]):string|undefined{
-    const info=validateHttpConnection(connection);if(info.selection.kind!=='imported_legacy')return;
-    const selected=info.selection.selection,provenance=object(object(selected.grant).provenance);
-    if(provenance.kind==='imported_standalone_adoption'){
-        const claims=object(provenance.adoption).configuration_claims as Array<Record<string,any>>;
-        const matching=claims.filter(claim=>claim.config_sha256===selected.configuration_receipt&&(candidate===undefined||claim.original_server===candidate)&&(container===undefined||isDeepStrictEqual(claim.container_path,container)));
-        const names=new Set(matching.map(claim=>String(claim.original_server)));if(names.size===1)return [...names][0];
-    }
-}
-/** Generated service-era aliases are bound to the native imported collection;
- * arbitrary aliases still require a standalone original-configuration claim. */
-export function preservedImportedHttpServerKey(connection:HttpConnectionInfo,candidate:string,container?:readonly string[]):string|undefined{
-    const info=validateHttpConnection(connection);if(info.selection.kind!=='imported_legacy')return;
-    if(object(object(info.selection.selection.grant).provenance).kind==='imported_legacy_snapshot'&&candidate==='airk-'+info.selection.selection.registration.collection)return candidate;
-    return standaloneHttpServerKey(info,candidate,container);
-}
 export function sameHttpAuthority(actual:HttpSelection,expected:HttpSelection):boolean{
-    if(actual.kind!==expected.kind)return false;
-    if(actual.kind==='imported_legacy_union'&&expected.kind==='imported_legacy_union'){
-        return actual.selection.namespace===expected.selection.namespace&&actual.selection.no_default_project===true&&actual.selection.selections.length===expected.selection.selections.length&&actual.selection.selections.every((member,index)=>sameHttpAuthority({kind:'imported_legacy',selection:member},{kind:'imported_legacy',selection:expected.selection.selections[index]}));
-    }
-    if(actual.kind==='imported_legacy_union'||expected.kind==='imported_legacy_union')return false;
-    if(actual.kind==='open'||expected.kind==='open')return actual.selection.namespace===expected.selection.namespace;
-    const left={...actual.selection},right={...expected.selection};
-    if(left.expected_catalog_revision<right.expected_catalog_revision)return false;
-    delete (left as any).expected_catalog_revision;delete (right as any).expected_catalog_revision;
-    return isDeepStrictEqual(left,right);
+    return actual.kind===expected.kind&&actual.selection.namespace===expected.selection.namespace;
 }
-/** Matches native authority_digest: preserve complete reviewed authority while
- * normalizing only saved minimum catalog clocks. Arrays retain their order. */
+/** Matches native authority_digest over the complete selection. Arrays
+ * retain their order. */
 export function httpAuthorityDigest(input:HttpSelection):string{
     const selection=validateHttpSelection(structuredClone(input));
-    if(selection.kind==='imported_legacy_union')for(const member of selection.selection.selections)member.expected_catalog_revision=1;
-    else if(selection.kind!=='open')selection.selection.expected_catalog_revision=1;
     const canonical=(value:unknown):string=>{
         if(value===null||typeof value==='boolean'||typeof value==='string')return JSON.stringify(value);
         if(typeof value==='number'){if(!Number.isSafeInteger(value))throw Error('unsupported_http_authority_number');return JSON.stringify(value);}
@@ -193,49 +140,6 @@ export function validateHttpConnection(input:unknown,expected?:HttpSelection,dir
     return structuredClone({...value,selection}) as HttpConnectionInfo;
 }
 
-export interface PredecessorHttpScope {predecessor:string;controlDir:string;namespace?:string;operationId?:string}
-export interface PredecessorHttpSnapshot {schema:1;purpose:'predecessor_cleanup';predecessor:string;control_dir:string;namespace:string|null;endpoint:EndpointDescriptor|null;ca_certificate_file_sha256:string|null;complete:boolean;owners:{connection_id:string;ownership:'active'|'expired'|'revoked';credential_sha256:string|null}[];failure:{code:string;message:string}|null;[key:string]:unknown}
-export interface PredecessorHttpProof {schema:1;purpose:'predecessor_cleanup';active:string;predecessor:string;operation_id:string|null;control_dir:string;namespace:string|null;connection_id:string;status:'owned'|'not_owned'|'unavailable';ownership:'active'|'expired'|'revoked'|null;endpoint:EndpointDescriptor|null;ca_certificate_file:string|null;credential_file:string|null;credential_sha256:string|null;ca_certificate_file_sha256:string|null;qualification:{live_authority:false;source:'current_predecessor_metadata'|'saved_predecessor_snapshot';snapshot_complete:boolean;credential_digest_algorithm:'sha256_full_airk1_token';current_namespace:string|null;current_namespace_ownership:'same_predecessor'|'not_owned'|'owned'|'unavailable';current_namespace_failure:{code:string;message:string}|null;[key:string]:unknown};[key:string]:unknown}
-export type PredecessorHttpLookup=PredecessorHttpProof&{snapshot:PredecessorHttpSnapshot};
-export type OwnedPredecessorHttpProof=PredecessorHttpProof&{status:'owned';namespace:string;endpoint:EndpointDescriptor;ca_certificate_file:string;credential_file:string;ownership:'active'|'expired'|'revoked'};
-function cleanupFailure(value:unknown):void{if(value===null)return;const failure=object(value);if(typeof failure.code!=='string'||!failure.code.length||failure.code.length>128||typeof failure.message!=='string'||failure.message.length>2048)throw Error('invalid_predecessor_http_failure');}
-export function validatePredecessorHttpSnapshot(input:unknown,scope?:PredecessorHttpScope):PredecessorHttpSnapshot{
-    const value=object(input);if(Buffer.byteLength(JSON.stringify(value))>65536||value.schema!==1||value.purpose!=='predecessor_cleanup'||typeof value.control_dir!=='string'||!path.isAbsolute(value.control_dir)||value.control_dir.length>4096||/[\x00-\x1f]/.test(value.control_dir)||typeof value.complete!=='boolean'||!Array.isArray(value.owners)||value.owners.length>128)throw Error('invalid_predecessor_http_snapshot');
-    hex(value.predecessor);if(value.namespace!==null)hex(value.namespace,32);if(value.ca_certificate_file_sha256!==null)hex(value.ca_certificate_file_sha256);
-    if(value.endpoint!==null){validateEndpoint(value.endpoint);if(value.endpoint.namespace!==value.namespace)throw Error('crossed_predecessor_http_namespace');}
-    cleanupFailure(value.failure);if(value.complete?(value.failure!==null||value.namespace===null||value.endpoint===null):(value.failure===null||value.owners.length!==0))throw Error('incomplete_predecessor_http_snapshot');
-    const ids=new Set<string>();for(const raw of value.owners){const owner=object(raw);hex(owner.connection_id,32);if(ids.has(owner.connection_id)||!['active','expired','revoked'].includes(owner.ownership))throw Error('invalid_predecessor_http_owner');ids.add(owner.connection_id);if(owner.credential_sha256!==null)hex(owner.credential_sha256);}
-    if(scope&&(value.predecessor!==scope.predecessor||!sameFile(value.control_dir,scope.controlDir)||scope.namespace!==undefined&&value.namespace!==scope.namespace))throw Error('crossed_predecessor_http_scope');
-    return structuredClone(value) as PredecessorHttpSnapshot;
-}
-export function validateOwnedPredecessorHttpProof(input:unknown):OwnedPredecessorHttpProof{
-    const value=object(input),q=object(value.qualification);
-    if(Buffer.byteLength(JSON.stringify(value))>131072||value.schema!==1||value.purpose!=='predecessor_cleanup'||value.status!=='owned'||!['active','expired','revoked'].includes(value.ownership)||q.live_authority!==false||q.snapshot_complete!==true||q.credential_digest_algorithm!=='sha256_full_airk1_token'||!['same_predecessor','not_owned'].includes(q.current_namespace_ownership))throw Error('invalid_predecessor_http_disposal_proof');
-    hex(value.active);hex(value.predecessor);hex(value.connection_id,32);hex(value.namespace,32);if(value.operation_id!==null)hex(value.operation_id,32);if(value.credential_sha256!==null)hex(value.credential_sha256);if(value.ca_certificate_file_sha256!==null)hex(value.ca_certificate_file_sha256);
-    const endpoint=validateEndpoint(value.endpoint);if(endpoint.namespace!==value.namespace||typeof value.control_dir!=='string'||!path.isAbsolute(value.control_dir)||!sameFile(value.ca_certificate_file,path.join(value.control_dir,'http-1','ca.pem'))||!sameFile(value.credential_file,path.join(value.control_dir,'http-1',`credential-${value.connection_id}.token`)))throw Error('crossed_predecessor_http_disposal_proof');
-    if(q.source==='current_predecessor_metadata'){if(value.operation_id!==null||value.active!==value.predecessor||q.current_namespace_ownership!=='same_predecessor'||q.current_namespace!==value.namespace)throw Error('crossed_predecessor_http_lineage');}
-    else if(q.source!=='saved_predecessor_snapshot'||value.operation_id===null)throw Error('crossed_predecessor_http_lineage');
-    if(q.current_namespace!==null)hex(q.current_namespace,32);cleanupFailure(q.current_namespace_failure);if(q.current_namespace_failure!==null||q.current_namespace_ownership==='same_predecessor'&&q.current_namespace!==value.namespace||q.current_namespace_ownership==='not_owned'&&(q.current_namespace===null||q.current_namespace===value.namespace))throw Error('unconfirmed_current_http_namespace');
-    return structuredClone(value) as OwnedPredecessorHttpProof;
-}
-export function validatePredecessorHttpLookup(input:unknown,active:string,id:string,scope:PredecessorHttpScope):PredecessorHttpLookup{
-    const value=object(input),snapshot=validatePredecessorHttpSnapshot(value.snapshot,scope),q=object(value.qualification);
-    if(Buffer.byteLength(JSON.stringify(value))>131072||value.schema!==1||value.purpose!=='predecessor_cleanup'||value.active!==active||value.connection_id!==id||value.predecessor!==snapshot.predecessor||!sameFile(value.control_dir,snapshot.control_dir)||value.namespace!==snapshot.namespace||!isDeepStrictEqual(value.endpoint,snapshot.endpoint)||value.ca_certificate_file_sha256!==snapshot.ca_certificate_file_sha256||q.live_authority!==false||q.snapshot_complete!==snapshot.complete||q.credential_digest_algorithm!=='sha256_full_airk1_token'||!['same_predecessor','not_owned','owned','unavailable'].includes(q.current_namespace_ownership))throw Error('crossed_predecessor_http_lookup');
-    hex(active);hex(id,32);if(value.operation_id!==null)hex(value.operation_id,32);if(scope.operationId!==undefined&&value.operation_id!==scope.operationId)throw Error('crossed_predecessor_http_operation');
-    if(q.source==='current_predecessor_metadata'){if(value.operation_id!==null||active!==scope.predecessor||q.current_namespace_ownership!=='same_predecessor')throw Error('crossed_predecessor_http_lineage');}else if(q.source!=='saved_predecessor_snapshot'||value.operation_id===null)throw Error('crossed_predecessor_http_lineage');
-    if(q.current_namespace!==null)hex(q.current_namespace,32);cleanupFailure(q.current_namespace_failure);
-    const owner=snapshot.owners.find(row=>row.connection_id===id),eligible=['same_predecessor','not_owned'].includes(q.current_namespace_ownership);
-    if(q.current_namespace_ownership==='same_predecessor'&&q.current_namespace!==snapshot.namespace||['not_owned','owned'].includes(q.current_namespace_ownership)&&(q.current_namespace===null||q.current_namespace===snapshot.namespace)||q.current_namespace_ownership==='unavailable'&&q.current_namespace_failure===null||q.current_namespace_ownership!=='unavailable'&&q.current_namespace_failure!==null)throw Error('crossed_current_http_namespace');
-    if(value.status==='owned'){
-        if(!owner||!eligible||value.ownership!==owner.ownership||value.credential_sha256!==owner.credential_sha256)throw Error('unconfirmed_predecessor_http_owner');validateOwnedPredecessorHttpProof(value);
-    }else{
-        if(value.ownership!==null||value.credential_sha256!==null||value.ca_certificate_file!==null||value.credential_file!==null||value.status==='not_owned'&&(!snapshot.complete||owner||!eligible)||value.status==='unavailable'&&snapshot.complete&&eligible||!['not_owned','unavailable'].includes(value.status))throw Error('unconfirmed_predecessor_http_absence');
-    }
-    return structuredClone(value) as PredecessorHttpLookup;
-}
-export function predecessorHttpProof(lookup:PredecessorHttpLookup):OwnedPredecessorHttpProof|undefined{
-    if(lookup.status!=='owned')return;const {snapshot,...proof}=lookup;return validateOwnedPredecessorHttpProof(proof);
-}
 function sameFile(left:string,right:string):boolean{
     const normalize=(value:string)=>process.platform==='win32'?path.toNamespacedPath(path.resolve(value)).toLowerCase():value;
     return normalize(left)===normalize(right);

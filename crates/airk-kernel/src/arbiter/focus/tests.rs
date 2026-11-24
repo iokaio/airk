@@ -283,8 +283,27 @@ impl NativeController for Controller {
     }
 }
 
-fn fixture(
+type Fixture = (
+    tempfile::TempDir,
+    crate::Kernel,
+    Arc<Controller>,
+    SearchResponse,
+);
+/// An installed read with no Host partition: an Answer parent or the loop
+/// binds its own budget.
+fn fixture(mode: Mode) -> Result<Fixture> {
+    fixture_with(mode, false)
+}
+/// An ordinary one-index search as production admits it since reviewed
+/// grants were removed (change-log entry 68 parts 3 and 5): every installed
+/// read is a selection or open read, and a one-index search Focuses only
+/// through its singleton Focus-only partition.
+fn singleton(mode: Mode) -> Result<Fixture> {
+    fixture_with(mode, true)
+}
+fn fixture_with(
     mode: Mode,
+    singleton: bool,
 ) -> Result<(
     tempfile::TempDir,
     crate::Kernel,
@@ -365,20 +384,51 @@ fn fixture(
         requests: Mutex::new(vec![]),
         batches: Mutex::new(vec![]),
     });
-    let native = scoped
-        .with_native_arbiter(worker, reference, controller.clone())?
-        .with_optional_read_attempt(
-            ReadAttemptBudget {
-                schema: 1,
-                request_id: Incarnation::from_bytes([10; 16]),
-                clock: ReadClock::UnixMonotonic,
-                expires_monotonic_ns: 30_000_001_000,
-                remaining_ns: 30_000_000_000,
-                native_retry_expires_monotonic_ns: None,
+    let attempt = ReadAttemptBudget {
+        schema: 1,
+        request_id: Incarnation::from_bytes([10; 16]),
+        clock: ReadClock::UnixMonotonic,
+        expires_monotonic_ns: 30_000_001_000,
+        remaining_ns: 30_000_000_000,
+        native_retry_expires_monotonic_ns: None,
+    };
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let native = scoped.with_native_arbiter(worker, reference, controller.clone())?;
+    let native = if singleton {
+        // As the service's `tools_call::singleton_focus::capture` admits an
+        // ordinary one-index selection or open search, and as the MCP local
+        // owner installs it (`with_context_partition_for`, then the deadline).
+        let parent_budget = airk_core::arbiter::focus::ordinary_search_allocation(
+            attempt,
+            ReadClock::UnixMonotonic,
+            1000,
+            query().limit,
+            query().limit,
+            &FocusProfileLimits {
+                max_candidates: 3,
+                pair_input_tokens: 32,
+                max_input_tokens: 96,
             },
-            Instant::now() + Duration::from_secs(30),
+            airk_core::service::MAX_FRAME_BYTES,
         )?
-        .with_focus_reply_budget(Arc::new(|response| {
+        .context("singleton Focus allocation")?;
+        let allowance = airk_core::combined_context::PartitionAllowance {
+            schema: airk_core::combined_context::ALLOWANCE_SCHEMA.into(),
+            attempt: attempt.request_id,
+            selection: reference.selection.scope_identity,
+            index_id: index,
+            resources: airk_core::combined_context::Resources::budget(&parent_budget),
+            parent_budget,
+            assessment_ordinals: vec![],
+        };
+        ensure!(allowance.is_ordinary_focus());
+        native
+            .with_context_partition(allowance, attempt)?
+            .with_optional_deadline(deadline)?
+    } else {
+        native.with_optional_read_attempt(attempt, deadline)?
+    };
+    let native = native.with_focus_reply_budget(Arc::new(|response| {
             Ok(airk_core::MAX_RESPONSE_BYTES
                 .saturating_sub(serde_json::to_vec(response)?.len().saturating_add(4096))
                 / 2)
@@ -494,7 +544,7 @@ fn direct_answer_entry_binds_actual_parent_before_its_focus_search() -> Result<(
 
 #[test]
 fn focus_reorders_only_complete_prefix_with_context_disabled_and_keeps_every_hit() -> Result<()> {
-    let (_temp, kernel, owner, original) = fixture(Mode::Ranked)?;
+    let (_temp, kernel, owner, original) = singleton(Mode::Ranked)?;
     let result = kernel.focus_search(&query(), original.clone())?;
     assert_eq!(
         serde_json::to_value(&result.hits)?,
@@ -525,6 +575,25 @@ fn focus_reorders_only_complete_prefix_with_context_disabled_and_keeps_every_hit
     );
     assert_eq!(requests[0].score_count, 3);
     assert_eq!(requests[0].ordinal, 1);
+    Ok(())
+}
+
+/// Change-log entry 68 part 5: the only unpartitioned ordinary search left is
+/// a combined member read, which never creates its own Focus allowance. The
+/// same request admitted through the singleton partition is Focused above.
+#[test]
+fn unpartitioned_ordinary_search_keeps_canonical_order_without_native_work() -> Result<()> {
+    let (_temp, kernel, owner, original) = fixture(Mode::Ranked)?;
+    let result = kernel.focus_search(&query(), original.clone())?;
+    assert_eq!(
+        serde_json::to_vec(&result.hits)?,
+        serde_json::to_vec(&original.hits)?
+    );
+    assert!(matches!(
+        result.focus,
+        Some(FocusObservation::NotApplied { .. })
+    ));
+    assert!(owner.requests.lock().unwrap().is_empty());
     Ok(())
 }
 
@@ -568,13 +637,13 @@ fn ready_context_retains_capacity_after_focus_reaches_its_cumulative_ceiling() -
 }
 #[test]
 fn focus_off_and_lexical_search_preserve_exact_original_serialization() -> Result<()> {
-    let (_temp, kernel, owner, original) = fixture(Mode::Off)?;
+    let (_temp, kernel, owner, original) = singleton(Mode::Off)?;
     assert_eq!(
         serde_json::to_vec(&kernel.focus_search(&query(), original.clone())?)?,
         serde_json::to_vec(&original)?
     );
     assert!(owner.requests.lock().unwrap().is_empty());
-    let (_temp, kernel, owner, mut original) = fixture(Mode::Ranked)?;
+    let (_temp, kernel, owner, mut original) = singleton(Mode::Ranked)?;
     original.execution = Some(SearchExecution::new(
         RequestedMode::Lexical,
         ServedMode::Lexical,
@@ -589,7 +658,7 @@ fn focus_off_and_lexical_search_preserve_exact_original_serialization() -> Resul
 }
 #[test]
 fn focus_exact_ties_keep_original_order_and_unscored_tail() -> Result<()> {
-    let (_temp, kernel, _owner, original) = fixture(Mode::Tied)?;
+    let (_temp, kernel, _owner, original) = singleton(Mode::Tied)?;
     let result = kernel.focus_search(&query(), original.clone())?;
     assert_eq!(
         serde_json::to_vec(&result.hits)?,
@@ -599,7 +668,7 @@ fn focus_exact_ties_keep_original_order_and_unscored_tail() -> Result<()> {
 }
 #[test]
 fn focus_unknown_native_work_retains_original_order_and_blocks_another_dispatch() -> Result<()> {
-    let (_temp, kernel, owner, original) = fixture(Mode::Unknown)?;
+    let (_temp, kernel, owner, original) = singleton(Mode::Unknown)?;
     let result = kernel.focus_search(&query(), original.clone())?;
     let receipt = result.focus.as_ref().unwrap().receipt().unwrap();
     assert!(!receipt.applied);
@@ -619,7 +688,7 @@ fn focus_unknown_native_work_retains_original_order_and_blocks_another_dispatch(
 }
 #[test]
 fn malformed_optional_permutation_is_not_delivered_or_replayed() -> Result<()> {
-    let (_temp, kernel, owner, original) = fixture(Mode::Foreign)?;
+    let (_temp, kernel, owner, original) = singleton(Mode::Foreign)?;
     let result = kernel.focus_search(&query(), original.clone())?;
     assert_eq!(
         serde_json::to_vec(&result.hits)?,
@@ -632,7 +701,7 @@ fn malformed_optional_permutation_is_not_delivered_or_replayed() -> Result<()> {
 }
 #[test]
 fn focus_configuration_change_after_native_work_refuses_stale_delivery() -> Result<()> {
-    let (_temp, kernel, owner, original) = fixture(Mode::Stale)?;
+    let (_temp, kernel, owner, original) = singleton(Mode::Stale)?;
     let error = kernel.focus_search(&query(), original).unwrap_err();
     assert!(error.is::<FocusPostExecutionStale>());
     assert!(!error.to_string().contains("original source"));
@@ -707,7 +776,7 @@ fn v1_delivery_after_a_publication_landed_is_publication_advanced() -> Result<()
 /// refusal and not a scope refusal.
 #[test]
 fn focus_publication_moved_after_native_work_is_publication_advanced() -> Result<()> {
-    let (_temp, kernel, owner, original) = fixture(Mode::Republish)?;
+    let (_temp, kernel, owner, original) = singleton(Mode::Republish)?;
     let error = kernel.focus_search(&query(), original).unwrap_err();
     let advanced = error
         .downcast_ref::<airk_core::scoped_reads::PublicationAdvanced>()
@@ -721,7 +790,7 @@ fn focus_publication_moved_after_native_work_is_publication_advanced() -> Result
 }
 #[test]
 fn focus_source_authority_refusal_is_not_hidden_by_ordinary_fallback() -> Result<()> {
-    let (_temp, kernel, _owner, original) = fixture(Mode::Refused)?;
+    let (_temp, kernel, _owner, original) = singleton(Mode::Refused)?;
     assert!(
         kernel
             .focus_search(&query(), original)
@@ -732,7 +801,7 @@ fn focus_source_authority_refusal_is_not_hidden_by_ordinary_fallback() -> Result
 }
 #[test]
 fn focus_reserves_actual_receipt_space_before_any_native_scoring() -> Result<()> {
-    let (_temp, kernel, owner, mut original) = fixture(Mode::Ranked)?;
+    let (_temp, kernel, owner, mut original) = singleton(Mode::Ranked)?;
     for hit in &mut original.hits {
         hit.text = "x".repeat(14_000);
     }
@@ -746,7 +815,7 @@ fn focus_reserves_actual_receipt_space_before_any_native_scoring() -> Result<()>
         Some(FocusObservation::NotApplied { .. })
     ));
     assert!(owner.requests.lock().unwrap().is_empty());
-    let (_temp, kernel, owner, mut original) = fixture(Mode::Ranked)?;
+    let (_temp, kernel, owner, mut original) = singleton(Mode::Ranked)?;
     for hit in &mut original.hits {
         hit.text = "x".repeat(17_000);
     }

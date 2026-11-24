@@ -3367,3 +3367,158 @@ Numbered 65 because the unmerged `loop/lh` already holds entries 57 to 64.
       receipt pruning), 2 (finished split pruning), 3 (tombstoned index
       definitions) and 5 (`index-catalog-upgrade.json`, `rebuild.json`,
       clean-break journal). Item 4 (dead tables) is done above.
+- **Part 5: phase B leftovers (branch `loop/trust-b4` from `7dfc5fcc`).**
+  The failures part 3 left, and its TypeScript leftovers. Base: `7dfc5fcc`.
+  - **Focus on one-index reads (eight tests).** Checked from source first:
+    every production one-index read with Focus on is a selection read
+    (`tools_call::selection_read`, W4 and A2) or an open read
+    (`open_reads`), and both call `tools_call::singleton_focus::admit`
+    before the worker, which captures the Focus-only singleton
+    `PartitionAllowance`; the MCP local owner installs it with
+    `with_context_partition_for` and the original deadline. So Focus still
+    applies wherever it applied before grant removal; the unpartitioned
+    branch is reached only by a combined member read, which never Focused.
+    No code change. The six kernel `arbiter::focus::tests` that exercise an
+    ordinary search now build that partition the way `capture` does
+    (`ordinary_search_allocation`, selection identity, empty assessment
+    ordinals; fixture `singleton`), as do `ties`, `off_and_lexical` and
+    `reserves_actual_receipt_space`, which had passed vacuously on the
+    Constrained notice. Each keeps its assertions. New
+    `unpartitioned_ordinary_search_keeps_canonical_order_without_native_work`
+    pins the combined-member rule. The two `airk-mcp` `focus_handler_tests`
+    use `singleton_attempt`, built the same way.
+  - **Pipe float defect: `float_roundtrip` enabled** in the workspace
+    `serde_json`. A real product defect: every read crosses the service pipe
+    as JSON text (worker to service, service to client), and without the
+    feature `serde_json` parses some `f64` one ULP off. The reciprocal-rank
+    score 1/65 written as `0.015384615384615385` came back as
+    `0.015384615384615384`, so a client re-serialising the body (the
+    `combined-delivery-result/1` digest that `airk-mcp` `remote.rs`
+    rechecks for parse, status and diagnostics, and the integration tests)
+    saw a different body, and every hop could move the value. Identities:
+    the feature changes parsing only; serialisation (`ryu`, shortest
+    round-trip) is unchanged. A stored digest over a Rust-written value is
+    over `ryu` text, which correct parsing reproduces exactly, so no
+    persisted digest, `airk-state/1` record or pinned fixture moves; the full
+    workspace and `airk-cli` suites (below) pass with every pinned fixture
+    unchanged. The evaluation identities are computed by the Python
+    harness over file bytes and are not affected; no identity-feeding file
+    changed. `Cargo.lock` is unchanged. Test:
+    `combined_frontend::tests::delivery_digest_survives_the_text_round_trip_of_rank_scores`
+    fails without the feature (`1/65 changed across the text round trip`,
+    `logs/t1-prefix.log`) and passes with it; the integration test
+    `permanent_trim_keeps_allowed_occurrences_of_a_shared_native_vector`
+    passes.
+  - **`deleted_source_recovery` (three tests): restart backoff.** Cause,
+    from a diagnostic of the setup error chains: the first read of a
+    missing-storage member starts its worker, which fails (`project
+    startup failed or timed out`), refused `retryable: false`; the
+    supervisor then holds a restart backoff, and every later read during it
+    got `ConnectionSetupPending::RestartBackoff`, which entry 67 had made a
+    retryable transient (`retryable: true`, `fresh_brokerage_required`).
+    Decision from the contracts: a backoff exists only after the project's
+    last start failed; the trust plan's transients are a worker busy,
+    starting, draining or restarting and a catalog exchange pending, not a
+    failed start (decision 4); `service-protocol.md` gives the retry hint
+    only to recognised transient setup failures; and the missing-storage
+    contract of `deleted_source_recovery` is `scoped_connection_unavailable`,
+    `retryable: false`. So the final answer is right, and `setup_retryable`
+    no longer treats `RestartBackoff` as retryable; `Queue`, `Draining` and
+    `ResidentCapacity` still are. The supervisor's three-attempt restart
+    budget and the pipe code `project_restart_backoff` are unchanged.
+    Recorded in `project_client/CONTRACT.md`. Test:
+    `a_restart_backoff_after_a_failed_start_is_final_like_the_failed_start`;
+    the three integration tests pass.
+  - **`airkctl_registration_matches_airk`: `fencing_generation`.** It is
+    the project's worker admission count in the registry
+    (`admit_worker`), not a documented transport or timing identity, so the
+    comparison is unchanged. Cause: the old side is a recorded fixture
+    (`fixtures/split/parity/airkctl_registration_matches_airk.json`,
+    captured after the reviewed service had admitted the project's first
+    worker, generation 1); the live `airkctl init` raced that asynchronous
+    admission and answered 0. The test now waits, under a 60 s deadline,
+    until the service lists the project at generation 1 or more, then runs
+    both sides once.
+  - **`admin_plane` stress race.** Confirmed by elimination: the two pages
+    differed only in `revision` (2 against 3), with the same projects and
+    `fencing_generation`, so the bump came from a registry writer that does
+    not change the page's rows: the source watcher's roots and configuration
+    observations in `airk-store` `service/registry/watch.rs` (worker
+    admission would also have changed the generation). Not a parity bug. The
+    test now reads the pipe page at the revision Admin answered
+    (`Projects { revision: Some(r) }`); a moved revision refuses that cursor
+    and both are read again under a 60 s deadline; the pages are then
+    compared once, in full. The revision is not normalised.
+  - **`context_8192_selector_requires_all_live_original_eight_option_row`:**
+    fails with `Option::unwrap()` on `None` at `tests.rs:139` (no catalog
+    profile for `ContextQwenLarge`, which LH dropped). Not caused by grant
+    removal: this part and part 3 do not touch `airk-inference` or the model
+    catalog; the check on `feat/arbiter-final` at `1a657010` follows below.
+  - **The two `http_gateway` tests:** `catalog_close_stops_actual_partial_socket_writes_and_buffered_flush` and
+    `tls_read_driven_alert_cannot_flush_ciphertext_after_native_fence` pass in
+    the workspace run below (`logs/nt-ws-1.log`); no change.
+  - **TypeScript leftovers:**
+    - VS Code journals: a saved `reference_refresh` intent made
+      `IntentJournal.list()` throw (`invalid_mutation_intent`). It is now
+      skipped on load and discarded by `ready()` (`retiredIntentRecord`).
+      Test: `a journal saved before reference refresh was removed loads,
+      skips and discards its refresh intents` (fails before the fix with
+      `invalid_mutation_intent`).
+    - Fence validation (`serviceClient.validateFenceTarget`) no longer reads
+      `grant_id` or `grant_revision`; it validates the native `ScopedReadRef`
+      (`selection` with its owner, nonce, service instance, scope identity
+      and catalog revision) and refuses a grant-shaped target. Test: the
+      catalog fence wrapper test uses the native shape and refuses the old
+      one.
+    - The `imported_legacy` and `imported_legacy_union` HTTP selections, the
+      `imported_snapshot` legacy-binding eligibility and its grant
+      provenance validators had no producer (native
+      `NativeLegacyBindingEligibility` is `authority_zero` or `unavailable`;
+      `HttpSelection::ImportedLegacy*` went in part 2). Removed:
+      `ImportedHttpSelection`, `matchesImportedHttpOrigin`,
+      `standaloneHttpServerKey`, `preservedImportedHttpServerKey`,
+      `validatePersistedGrant`, `validateStandaloneAdoption`, the
+      standalone reattachment branch of `refreshHttpAgentConfig` (its
+      `previous` parameter had no caller) and the preserved-alias arm of the
+      VS Code manual-configuration checks. Tests rewritten onto the open
+      kind; both removed kinds are refused.
+    - `packages/ui/generated/help-manifest.json` was stale after part 3 (it
+      still listed `--catalog-session`); regenerated by `build-explorer.cjs
+      --write-help-manifest`.
+    - `contract_types.py i2|i3|arbiter --check`: no drift; no contract
+      changed, so nothing was regenerated.
+  - **Validated** (Windows, target `target-l2b-cli`, CPU integration
+    environment of part 2, incremental):
+    - Clippy `-D warnings`, `--workspace --all-targets`: `--all-features`
+      clean in 2 min 3 s (`logs/cl-all-1.log`), default features clean in
+      1 min 25 s (`logs/cl-default-1.log`).
+    - Nextest `--workspace --lib --bins --all-features --profile ci`: 4,728
+      run, 4,727 passed, 202 skipped, 1 failed, the `airk-inference` selector
+      test above; 19 min 5 s (`logs/nt-ws-1.log`).
+    - `airk-cli` `--tests --all-features --profile ci`: 476 of 476 passed, 6
+      skipped; 20 min 14 s (`logs/nt-cli-full-1.log`).
+    - Stress `-p airk-cli --stress-count 20 -E '(binary(combined_reads) &
+      test(/answer/)) | binary(admin_plane)'`: 20 of 20 iterations, 17 tests
+      each; 5 min 34 s (`logs/stress-1.log`).
+    - `packages/vscode` `npm test`: 1,023 of 1,025, 2 skipped
+      (`logs/npm-vscode-5.log`); `packages/admin` `npm test`: 303 of 305, 2
+      skipped (`logs/npm-admin-1.log`); shared UI `node --test
+      ../ui/test/*.test.mjs`: 215 of 216, the one failure being the
+      shared-editor Service test part 3 already reported (`logs/ui-1.log`).
+    - `contract_types.py i2|i3|arbiter --check`, `check-repo.ps1`,
+      `git diff --check`: clean.
+  - **Predecessor lookup in VS Code (coordinator addition).** Phase B part 4
+    (`loop/trust-b3`, `b0482b9b`) cut the predecessor lookup to `owned` or
+    `unavailable` with no ledger fields. The extension's validators of that
+    output (`validatePredecessorHttpSnapshot`, `validatePredecessorHttpLookup`,
+    `validateOwnedPredecessorHttpProof`, `predecessorHttpProof`) and the
+    clean-break client cleanup that consumed them (`captureCleanBreakClientCleanup`,
+    `applyCleanBreakClientCleanup`, `validateCleanBreakClientPlan` and their
+    helpers in `agentMigration.ts`) had no production caller: `git grep`
+    finds only their definitions, no test imported them, and the fixture
+    `test/fixtures/predecessorHttpFixture.ts` was imported by nothing. They
+    are removed rather than updated. The installer's native predecessor
+    cleanup (`airk-installer` `http_cleanup.rs`) owns that duty. Not touched:
+    `agentConfigHealth.ts` `HttpOwnership` (`owned`, `not_owned`,
+    `unavailable`), an injected health-check interface with no production
+    implementation, which is not the lookup output.

@@ -170,6 +170,45 @@ fn attempt() -> crate::read_attempt::ReadAttemptContext {
     })
     .unwrap()
 }
+/// The attempt of an ordinary one-index search as the service admits it
+/// (`tools_call::singleton_focus::capture`): every installed read is a
+/// selection or open read since reviewed grants were removed (change-log
+/// entry 68 parts 3 and 5), and Focus applies to it only through this
+/// Focus-only singleton partition.
+fn singleton_attempt(
+    index_id: airk_core::index_catalog::IndexId,
+    selection: Sha256Digest,
+) -> Result<crate::read_attempt::ReadAttemptContext> {
+    let context = attempt();
+    let wire = context
+        .captured_transport_attempt()
+        .expect("fixture wire attempt");
+    let parent_budget = airk_core::arbiter::focus::ordinary_search_allocation(
+        wire,
+        clock(),
+        1000,
+        2,
+        2,
+        &FocusProfileLimits {
+            max_candidates: 2,
+            pair_input_tokens: 32,
+            max_input_tokens: 64,
+        },
+        airk_core::service::MAX_FRAME_BYTES,
+    )?
+    .expect("singleton Focus allocation");
+    let allowance = airk_core::combined_context::PartitionAllowance {
+        schema: airk_core::combined_context::ALLOWANCE_SCHEMA.into(),
+        attempt: wire.request_id,
+        selection,
+        index_id,
+        resources: airk_core::combined_context::Resources::budget(&parent_budget),
+        parent_budget,
+        assessment_ordinals: vec![],
+    };
+    ensure!(allowance.is_ordinary_focus());
+    context.with_context_partition(allowance)
+}
 fn payload(reply: CallToolResult) -> Result<Value> {
     ensure!(reply.is_error != Some(true), "{reply:?}");
     Ok(serde_json::from_str(
@@ -270,7 +309,7 @@ async fn focus_actual_search_handler_preserves_full_scoped_results_with_context_
             .call_with_read_context(
                 "airk_search".into(),
                 args.as_object().unwrap().clone(),
-                attempt(),
+                singleton_attempt(authority.index_id, reference.selection.scope_identity)?,
             )
             .await?,
     )?;
@@ -279,7 +318,7 @@ async fn focus_actual_search_handler_preserves_full_scoped_results_with_context_
             .call_with_read_context(
                 "airk_search".into(),
                 args.as_object().unwrap().clone(),
-                attempt(),
+                singleton_attempt(authority.index_id, reference.selection.scope_identity)?,
             )
             .await?,
     )?;
@@ -424,7 +463,7 @@ async fn focus_policy_change_after_native_work_renders_typed_stale_refusal() -> 
         .call_with_read_context(
             "airk_search".into(),
             args.as_object().unwrap().clone(),
-            attempt(),
+            singleton_attempt(authority.index_id, reference.selection.scope_identity)?,
         )
         .await?;
     assert_eq!(reply.is_error, Some(true), "{reply:?}");

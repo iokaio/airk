@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import * as fs from 'node:fs/promises';
-import {HttpConnectionInfo,vscodeCredentialInput,vscodeCredentialInputId,vscodeCredentialInputForId,httpUrl,preservedImportedHttpServerKey} from './serviceHttp';
+import {HttpConnectionInfo,vscodeCredentialInput,vscodeCredentialInputId,vscodeCredentialInputForId,httpUrl} from './serviceHttp';
 import * as path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { applyEdits, findNodeAtLocation, getNodeValue, modify, Node, ParseError, parseTree } from 'jsonc-parser';
@@ -89,12 +89,12 @@ export function vscodeCredentialConnectionId(source:string):string|undefined{
 export function vscodeManualConnectionIds(source:string):string[]{return [...new Set(vscodeCredentialReferences(source,false).map(value=>value.id))];}
 export function vscodeManualConfiguration(source:string,info:HttpConnectionInfo):boolean{
     return vscodeCredentialReferences(source,false).some(value=>value.id===info.connection_id&&value.url===info.endpoint.url
-        &&(value.server==='airk'||preservedImportedHttpServerKey(info,value.server,['servers'])===value.server));
+        &&value.server==='airk');
 }
 export function vscodeCredentialConfiguration(source:string,info:HttpConnectionInfo):boolean{
     const references=vscodeCredentialReferences(source).filter(value=>value.id===info.connection_id);
     return references.length===1&&references[0].url===info.endpoint.url
-        &&(references[0].server==='airk'||preservedImportedHttpServerKey(info,references[0].server,['servers'])===references[0].server);
+        &&references[0].server==='airk';
 }
 /** Insert only missing servers; retain comments, other settings and client approval policy. */
 export function mergeJsonConfig(client: JsonClient, spec: LaunchSpec, source: string, entries: readonly ServerEntry[] = [unifiedEntry(spec)]): string {

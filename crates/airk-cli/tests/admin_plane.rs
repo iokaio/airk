@@ -427,21 +427,46 @@ fn admin_sign_in_reads_and_cross_plane_refusals() -> Result<()> {
     );
     assert_eq!(health["result"]["status"], "health");
 
-    // indexes.list answers exactly what the pipe answers.
+    // indexes.list answers exactly what the pipe answers at the same registry
+    // revision. The service's own registry writers (the source watcher's
+    // roots and configuration observations, worker admission) may advance the
+    // revision between the two reads (change-log entry 68 part 5), so the
+    // pipe reads the page at the revision Admin answered; a moved revision
+    // refuses that cursor and both are read again, under a deadline. The
+    // pages are compared once, in full.
     let projects = json!({"projects": {"after": null, "revision": null, "limit": 32}}).to_string();
-    let listed = api("/admin/api/v1/call/indexes.list", &authenticated, &projects)?;
-    assert_eq!(
-        listed.status,
-        200,
-        "{}",
-        String::from_utf8_lossy(&listed.body)
-    );
-    let pipe = service.request(ControlMethod::Projects {
-        after: None,
-        revision: None,
-        limit: 32,
-    });
-    assert_eq!(listed.json()["result"], serde_json::to_value(pipe)?);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let (listed, pipe) = loop {
+        let listed = api("/admin/api/v1/call/indexes.list", &authenticated, &projects)?;
+        assert_eq!(
+            listed.status,
+            200,
+            "{}",
+            String::from_utf8_lossy(&listed.body)
+        );
+        let listed = listed.json();
+        let revision = listed["result"]["page"]["revision"]
+            .as_u64()
+            .with_context(|| format!("Admin page revision: {listed}"))?;
+        let pipe = service.request(ControlMethod::Projects {
+            after: None,
+            revision: Some(revision),
+            limit: 32,
+        });
+        if matches!(pipe, airk_core::service::ControlResponse::Projects { .. }) {
+            break (listed, pipe);
+        }
+        anyhow::ensure!(
+            std::time::Instant::now() < deadline,
+            "the registry revision never held still across two reads: {}",
+            serde_json::to_string(&pipe)?
+        );
+        eprintln!(
+            "registry revision {revision} moved before the pipe read: {}",
+            serde_json::to_string(&pipe)?
+        );
+    };
+    assert_eq!(listed["result"], serde_json::to_value(pipe)?);
 
     // The cookie alone is not a session: the anti-forgery token is required.
     let missing = api(

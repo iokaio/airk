@@ -55,6 +55,15 @@ function splitIntent(value:unknown):boolean {const intent=record(value);return '
 function reservedBytes(intent:unknown):number|undefined {const value=record(intent);return splitIntent(value)?SPLIT_JOURNAL_BYTES:undefined;}
 export function maximumRecordBytes(intent:unknown):number{return reservedBytes(intent)??MAX_BYTES;}
 export function chargedRecordBytes(value:unknown):number {const saved=record(value),bytes=Buffer.byteLength(JSON.stringify(saved));return Number(saved.reservedObservationBytes)===SPLIT_JOURNAL_BYTES?Math.max(bytes,Number(saved.reservedObservationBytes)):bytes;}
+/** Reference refresh was removed with reviewed grants (change-log entry 68
+ * parts 3 and 5). A journal saved by an earlier build may still hold its
+ * intents; nothing can settle or replay them, so they are skipped on load and
+ * discarded, never thrown. */
+export function retiredIntentRecord(input:unknown):boolean {
+    if(input===null||typeof input!=='object'||Array.isArray(input))return false;
+    const intent=(input as Record<string,unknown>).intent;
+    return intent!==null&&typeof intent==='object'&&!Array.isArray(intent)&&Object.hasOwn(intent,'reference_refresh');
+}
 export function validateStoredIntent(key:string,input:unknown,namespace?:string):SavedIntent {
     const match=/^airk\.service\.intent\.1\.([0-9a-f]{64})\.([0-9a-f]{32})$/.exec(key),value=record(input);
     if(!match||Buffer.byteLength(JSON.stringify(value))>maximumRecordBytes(value.intent)||value.schema!==1||value.scope!==match[1]
@@ -77,14 +86,18 @@ export class IntentJournal {
         this.scope=createHash('sha256').update(JSON.stringify([control,namespace])).digest('hex');
     }
     private key(id:string):string { return `${PREFIX}${this.scope}.${identifier(id,16)}`; }
-    async ready():Promise<void>{await this.storage.initialize?.(this.scope);}
+    async ready():Promise<void>{
+        await this.storage.initialize?.(this.scope);
+        for(const key of this.storage.keys().filter(key=>key.startsWith(`${PREFIX}${this.scope}.`)))
+            if(retiredIntentRecord(this.storage.get(key)))await this.retire(key);
+    }
     list(): {id:string;value:SavedIntent}[] {
         const keys=this.storage.keys().filter(key=>key.startsWith(PREFIX));
         // Admission does not provide a cross-window count transaction. Racing
         // windows can exceed the admission count; page those records instead
         // of poisoning the journal or discarding an unknown outcome.
         return keys.filter(key=>key.startsWith(`${PREFIX}${this.scope}.`)).sort().slice(0,LIMIT).flatMap(key=>{
-            const stored=this.storage.get(key);if(stored===undefined)return [];
+            const stored=this.storage.get(key);if(stored===undefined||retiredIntentRecord(stored))return [];
             const value=validateStoredIntent(key,stored,this.namespace);
             const id=identifier(key.slice(key.lastIndexOf('.')+1),16);
             return [{id,value}];

@@ -67,7 +67,18 @@ fn setup_retryable(error: &anyhow::Error) -> bool {
     error.is::<RetrySetup>()
         // The in-process selection and open admissions return these typed
         // pre-query transients (change-log entry 67); a refusal stays final.
-        || error.is::<airk_supervisor::project_supervisor::ConnectionSetupPending>()
+        // A restart backoff exists only after this project's last start
+        // failed (change-log entry 68 part 5). The read that met that failure
+        // was refused as final; a read during the backoff reports the same
+        // failed start, so the answer does not depend on which read came first.
+        || error
+            .downcast_ref::<airk_supervisor::project_supervisor::ConnectionSetupPending>()
+            .is_some_and(|pending| {
+                !matches!(
+                    pending,
+                    airk_supervisor::project_supervisor::ConnectionSetupPending::RestartBackoff
+                )
+            })
         || error.is::<airk_catalog_control::catalog_coordinator::CatalogRevisionChanged>()
         || error.is::<airk_catalog_control::catalog_coordinator::CatalogClockPending>()
         || error.is::<airk_catalog_control::catalog_admission::CatalogAdmissionPending>()
@@ -1471,6 +1482,26 @@ mod tests {
         ] {
             assert!(!setup_retryable(&error), "{error:#}");
         }
+    }
+
+    /// Change-log entry 68 part 5: a restart backoff follows a failed start,
+    /// whose own read was refused as final (`deleted_source_recovery`: the
+    /// first read of a missing-storage member). A read during the backoff
+    /// gets the same final answer, whichever read comes first.
+    #[test]
+    fn a_restart_backoff_after_a_failed_start_is_final_like_the_failed_start() {
+        use airk_supervisor::project_supervisor::ConnectionSetupPending;
+        let failed_start = anyhow::anyhow!("channel is empty and sending half is closed")
+            .context("project startup failed or timed out");
+        let backoff =
+            anyhow::Error::new(ConnectionSetupPending::RestartBackoff).context("selection admission");
+        assert!(!setup_retryable(&failed_start));
+        assert!(!setup_retryable(&backoff));
+        assert_eq!(setup_retryable(&failed_start), setup_retryable(&backoff));
+        assert!(setup_rejection(&backoff).is_none());
+        assert!(setup_retryable(
+            &anyhow::Error::new(ConnectionSetupPending::ResidentCapacity).context("selection admission")
+        ));
     }
 
     #[test]

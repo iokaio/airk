@@ -186,3 +186,19 @@ test('authoritative project removal clears only matching saved requests without 
     assert.equal(journal.list().length,0);assert.equal(receipts,0);
     assert.ok(sent.every(value=>!!(value as any).request_receipt),'removal never resubmits the old indexing request');
 });
+
+test('a journal saved before reference refresh was removed loads, skips and discards its refresh intents',async()=>{
+    const storage=new Memory(),journal=new IntentJournal(storage,'/control',namespace),kept=await journal.prepare('Index',intent(1));
+    // The record shape an earlier build saved for `reference_refresh` (change-log entry 68 parts 3 and 5).
+    const nonce='7'.repeat(32),retired=`airk.service.intent.1.${journal.scope}.${nonce}`;
+    storage.values.set(retired,{schema:1,scope:journal.scope,title:'Refresh references',localDispatchState:'submitted',reservedObservationBytes:256*1024,
+        intent:{reference_refresh:{configure_project:{project,caller,key:{namespace,epoch:7,nonce},request:{configuration:{operation:'refresh_references'},incarnation:'01'.repeat(16),settings:'02'.repeat(32)}},
+            original_query:null,original_result:null,evidence_retention:'memory_only'}},
+        nativeRefreshReceipt:{status:'reference_refresh_receipt'}});
+    assert.deepEqual(journal.list().map(saved=>saved.id),[kept],'skipped on load, never thrown');
+    await journal.ready();
+    assert.equal(storage.values.has(retired),false,'discarded');
+    assert.deepEqual(journal.list().map(saved=>saved.id),[kept]);
+    const next=await journal.prepare('Index',intent(2));
+    assert.deepEqual(journal.list().map(saved=>saved.id).sort(),[kept,next].sort());
+});

@@ -5,7 +5,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import {X509Certificate,createHash} from 'node:crypto';
-import {validateHttpConnection,httpUrl,httpMaterial,HttpConnectionInfo,HttpSelection,ImportedHttpSelection,credentialEnvironment,validateHttpSelection,sameHttpAuthority,httpAuthorityDigest,validateAttachmentRetirement,publishNativeInput,removeNativeInput} from '../serviceHttp';
+import {validateHttpConnection,httpUrl,httpMaterial,HttpConnectionInfo,HttpSelection,credentialEnvironment,validateHttpSelection,httpAuthorityDigest,validateAttachmentRetirement,publishNativeInput,removeNativeInput} from '../serviceHttp';
 import {serializeServers,LaunchSpec} from '../model';
 import {migrateAgentConfig} from '../agentMigration';
 import {ca} from './fixtures/httpTlsFixture';
@@ -48,11 +48,8 @@ test('native setup input refuses a redirected HTTP directory without changing it
         await assert.rejects(publishNativeInput(control,'{}'),/unsafe_native_input_directory/);assert.deepEqual(await fs.readdir(target),[]);
     }finally{await fs.rm(owner,{recursive:true,force:true});}
 });
-function legacyMember(index:number):ImportedHttpSelection{
-        const binding=index.toString(16).padStart(64,'0');return {namespace:'b'.repeat(32),expected_catalog_revision:7,registration:{binding,root:path.resolve('source-'+index),data_root:path.resolve('data-'+index),collection:'source-'+index},grant:{grant:{id:'grt_'+'91'.repeat(16),host:'a'.repeat(64),revision:1,revoked:false,memberships:[{membership:{project_id:'prj_'+'11'.repeat(16),index_id:'idx_'+'22'.repeat(16),revision:1,scope:[{source_root_id:'src_'+'33'.repeat(16),kind:'subtree',path:''}]},source_revision:1,policy_epoch:0,policy_digest:null}]},provenance:{kind:'imported_legacy_snapshot',upgrade_id:'c'.repeat(32),plan_digest:'d'.repeat(64),legacy_binding:binding,configuration_digest:'e'.repeat(64)}},configuration_receipt:'f'.repeat(64)};
-}
-function selection():HttpSelection{return {kind:'imported_legacy',selection:legacyMember(0)};}
-function info(directory:string):HttpConnectionInfo{return {schema:1,connection_id:'f'.repeat(32),endpoint:{schema:1,installation:'1'.repeat(64),user:'fixture',namespace:'b'.repeat(32),generation:1,service_instance:'2'.repeat(32),executable_sha256:'3'.repeat(64),url:'https://127.0.0.1:57421/mcp',ca_sha256:digest(new X509Certificate(ca).raw),certificate_sha256:'4'.repeat(64),state:'ready',predecessor_digest:null},selection:selection(),ca_certificate_file:path.join(directory,'ca.pem'),credential_file:path.join(directory,'credential-'+ 'f'.repeat(32)+'.token')};}
+function selection():HttpSelection{return {kind:'open',selection:{namespace:'b'.repeat(32)}};}
+function info(directory:string):HttpConnectionInfo{return {schema:1,connection_id:'f'.repeat(32),endpoint:{schema:1,installation:'1'.repeat(64),user:'fixture',namespace:'b'.repeat(32),generation:1,service_instance:'2'.repeat(32),executable_sha256:'3'.repeat(64),url:'https://127.0.0.1:57421/mcp',ca_sha256:digest(new X509Certificate(ca).raw),certificate_sha256:'4'.repeat(64),state:'ready',predecessor_digest:null},selection:selection(),open:{defaults_revision:1,default_index_ids:[],default_index_set_ids:[],agent_choice:'off'},ca_certificate_file:path.join(directory,'ca.pem'),credential_file:path.join(directory,'credential-'+ 'f'.repeat(32)+'.token')};}
 
 test('native authority digest uses shared frozen vectors and normalizes only the catalog minimum',async()=>{
     const fixture=JSON.parse(await fs.readFile(path.resolve(__dirname,'../../src/test/fixtures/httpAuthorityDigest.json'),'utf8'));assert.equal(fixture.schema,1);
@@ -70,18 +67,16 @@ test('attachment retirement proof binds exact native connection, installation, c
     assert.throws(()=>validateAttachmentRetirement(proof,connection,'unknown',100));
 });
 test('(U105) an open connection carries exactly its open state; other connections never do',()=>{
-    const scoped=info(path.resolve('fixture'));
-    const open:any={...structuredClone(scoped),selection:{kind:'open',selection:{namespace:scoped.endpoint.namespace}},
-        open:{defaults_revision:3,default_index_ids:['idx_'+'1'.repeat(32)],default_index_set_ids:['prj_'+'2'.repeat(32)],agent_choice:'off'}};
+    const open:any=info(path.resolve('fixture'));open.open={defaults_revision:3,default_index_ids:['idx_'+'1'.repeat(32)],default_index_set_ids:['prj_'+'2'.repeat(32)],agent_choice:'off'};
     assert.deepEqual(validateHttpConnection(open),open);
     for(const change of [(v:any)=>{delete v.open;},(v:any)=>v.open.agent_choice='all',(v:any)=>v.open.defaults_revision=0,(v:any)=>v.open.default_index_ids=['prj_'+'2'.repeat(32)],
         (v:any)=>v.open.default_index_set_ids=['prj_'+'2'.repeat(32),'prj_'+'2'.repeat(32)],(v:any)=>v.open.extra=1]){const candidate=structuredClone(open);change(candidate);assert.throws(()=>validateHttpConnection(candidate));}
-    assert.throws(()=>validateHttpConnection({...structuredClone(scoped),open:open.open}));
 });
-test('HTTP DTO preserves exact authority and permits only a monotonic catalog clock refresh',()=>{
+test('HTTP DTO keeps the exact open authority and refuses the removed imported legacy kinds',()=>{
     const value=info(path.resolve('fixture'));assert.deepEqual(validateHttpConnection(value,selection()),value);
-    const next=structuredClone(value);(next.selection.selection as any).expected_catalog_revision++;assert.equal((validateHttpConnection(next,selection()).selection.selection as any).expected_catalog_revision,8);
-    for(const change of [(v:any)=>v.selection.selection.grant.grant.id='grt_'+'0'.repeat(32),(v:any)=>v.selection.selection.grant.grant.revision++,(v:any)=>v.endpoint.namespace='0'.repeat(32),(v:any)=>v.selection.selection.expected_catalog_revision--,(v:any)=>v.credential_file=path.join(path.dirname(v.credential_file),'foreign.token'),(v:any)=>v.endpoint.extra='hidden']){const candidate=structuredClone(value);change(candidate);assert.throws(()=>validateHttpConnection(candidate,selection()));}
+    assert.throws(()=>validateHttpConnection(value,{kind:'open',selection:{namespace:'c'.repeat(32)}}),/crossed_http_selection/);
+    // Change-log entry 68 part 5: the imported legacy selections had no native producer and are no HTTP selection.
+    for(const kind of ['imported_legacy','imported_legacy_union'])assert.throws(()=>validateHttpSelection({kind,selection:{namespace:'b'.repeat(32)}}),/invalid_http_selection/);
     for(const url of ['http://127.0.0.1:57421/mcp','https://localhost:57421/mcp','https://127.0.0.1:057421/mcp','https://127.0.0.1:65536/mcp','https://127.0.0.1:57421/mcp?token=x','https://user@127.0.0.1:57421/mcp'])assert.throws(()=>httpUrl(url));
 });
 test('owner-private HTTP material binds DER issuer and exact native credential identity',async()=>{
@@ -103,21 +98,4 @@ test('HTTP serializers use references, preserve policies and never emit executab
     const output=migrateAgentConfig('claude',spec,path.resolve('extension'),source);const parsed=JSON.parse(output);assert.equal(parsed.policy,'keep');assert.equal(parsed.mcpServers.airk.disabled,true);assert.equal(parsed.mcpServers.airk.headers['X-AIRK-Response-Mode'],'full');assert.equal(parsed.mcpServers.other.command,'preserve');assert.deepEqual(JSON.parse(migrateAgentConfig('claude',spec,path.resolve('extension'),output)),parsed);
     const foreign=JSON.parse(source);foreign.mcpServers.airk.url='https://127.0.0.1:60000/mcp';assert.throws(()=>migrateAgentConfig('claude',spec,path.resolve('extension'),JSON.stringify(foreign)),/Unrecognized/);
     assert.throws(()=>serializeServers('amazon-q',[{key:'airk',command:spec.command,args:[],label:'AIRK',http:value}]),/compatibility_unverified/);
-});
-
-test('imported legacy unions retain every original authority through the native frame budgets',()=>{
-    const members=Array.from({length:32},(_,index)=>legacyMember(index));
-    const value=info(path.resolve('fixture'));value.selection={kind:'imported_legacy_union',selection:{namespace:'b'.repeat(32),selections:members,no_default_project:true}};
-    assert.ok(Buffer.byteLength(JSON.stringify(value))>16384);assert.deepEqual(validateHttpConnection(value),value);
-    const digest=httpAuthorityDigest(value.selection),single:HttpSelection={kind:'imported_legacy',selection:structuredClone(members[0])},singleDigest=httpAuthorityDigest(single);
-    const advancedSingle=structuredClone(single);advancedSingle.selection.expected_catalog_revision++;assert.equal(httpAuthorityDigest(advancedSingle),singleDigest);
-    const changedSingle=structuredClone(single);changedSingle.selection.grant.provenance.configuration_digest='0'.repeat(64);assert.notEqual(httpAuthorityDigest(changedSingle),singleDigest,'Imported original configuration provenance is part of exact authority');
-    const refreshed=structuredClone(value.selection);if(refreshed.kind==='imported_legacy_union')for(const member of refreshed.selection.selections)member.expected_catalog_revision++;assert.equal(sameHttpAuthority(refreshed,value.selection),true);
-    assert.equal(httpAuthorityDigest(refreshed),digest,'Every union member minimum clock is normalized');
-    const reordered=structuredClone(value.selection);if(reordered.kind==='imported_legacy_union')reordered.selection.selections.reverse();assert.notEqual(httpAuthorityDigest(reordered),digest,'Original union member order is retained');
-    const crossed=structuredClone(refreshed);if(crossed.kind==='imported_legacy_union')crossed.selection.selections[1].grant.grant.revision++;assert.equal(sameHttpAuthority(crossed,value.selection),false);
-    assert.notEqual(httpAuthorityDigest(crossed),digest,'A changed member grant is never normalized away');
-    const duplicate=structuredClone(value.selection);if(duplicate.kind==='imported_legacy_union')duplicate.selection.selections[1]=duplicate.selection.selections[0];assert.throws(()=>validateHttpSelection(duplicate),/union/);
-    const defaulted=structuredClone(value.selection) as any;defaulted.selection.no_default_project=false;assert.throws(()=>validateHttpSelection(defaulted),/union/);
-    const tooLarge=structuredClone(value);if(tooLarge.selection.kind==='imported_legacy_union')tooLarge.selection.selection.selections[0].grant.future='x'.repeat(61440);assert.throws(()=>validateHttpConnection(tooLarge),/bound/);
 });

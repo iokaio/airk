@@ -60,6 +60,16 @@ the existing setup budget and, when it runs out, reported with
 `retryable: true`. A `ScopeReadRefused` and any untyped text stay final.
 Test: `typed_in_process_setup_transients_are_retryable`.
 
+Change-log entry 68 part 5: `ConnectionSetupPending::RestartBackoff` is the
+exception. The supervisor holds a restart backoff only after the project's
+last start failed, and the read that met that failure is refused with
+`retryable: false` (`project startup failed or timed out`). A read during the
+backoff reports the same failed start, so it is final too; the answer no
+longer depends on which read came first. The supervisor's three-attempt
+automatic restart budget is unchanged. Test:
+`a_restart_backoff_after_a_failed_start_is_final_like_the_failed_start`;
+integration: `combined_reads` `deleted_source_recovery`.
+
 The usage, settings and validation document collector (`usage_client.rs`)
 collects a read-only document again from its first page when a newer
 publication lands under the same scope during pagination, at most three
