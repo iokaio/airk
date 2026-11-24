@@ -1,8 +1,8 @@
 {
   "schema": "airk.help.manifest/1",
   "catalogVersion": 1,
-  "productVersion": "1.8.207",
-  "extensionVersion": "1.8.207",
+  "productVersion": "1.8.208",
+  "extensionVersion": "1.8.208",
   "channel": null,
   "topics": [
     {
@@ -10200,6 +10200,6 @@
         "title": "Focus, Arbiter and model requirements"
       }
     ],
-    "version": "1.8.207"
+    "version": "1.8.208"
   }
 }

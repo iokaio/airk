@@ -1,23 +1,23 @@
 # Versioning from local installation to publication
 
-**Current source candidate: 1.8.207 (15 November 2026).** Native and extension
+**Current source candidate: 1.8.208 (24 November 2026).** Native and extension
 manifests and lockfiles agree. The
-[1.8.207 record](releases/release-1.8.207.md) distinguishes implemented changes
+[1.8.208 record](releases/release-1.8.208.md) distinguishes implemented changes
 from pending artifact, installed, platform and model qualification. The
-[Arbiter final plan](arbiter/final-plan.md) governs current execution, and the
+[local trust plan](simplify/local-trust-plan.md) phase D governs this candidate, and the
 [execution ledger](simplify/one-process-ledger.md) retains exact outcomes.
 Version 1.9.0 is reserved for final delivery after its applicable gates pass.
 
 Use one numeric `major.minor.patch` version for the Rust workspace, every local
 AIRK crate in `Cargo.lock`, `packages/vscode/package.json` and both root package
 entries in `packages/vscode/package-lock.json`. Compiled images, runtime metadata,
-native packages and VSIX must match that source version. The unused 1.8.207
+native packages and VSIX must match that source version. The unused 1.8.208
 increment has already been applied for this milestone; do not repeat it for the
 same candidate or rewrite an earlier binary, package or receipt to match it.
 A later changed installable candidate needs its own reviewed unused version.
 
 ```console
-python scripts/release-version.py check --expected 1.8.207
+python scripts/release-version.py check --expected 1.8.208
 ```
 
 After a version or interface change, regenerate native Help, the native-emitted
@@ -28,8 +28,8 @@ is in [CI and builds](ci-and-builds.md); a source-version check alone proves
 neither runtime behavior nor release readiness.
 
 AIRK Service and the optional universal VSIX are separate products. Current
-agents use the verified loopback HTTPS endpoint with no MCP token; TLS issuer
-trust and Host/Origin protections remain. Each read names indexes, index sets or
+agents use the loopback HTTP endpoint with no MCP token, credential or AIRK
+certificate; Host/Origin checks remain. Each read names indexes, index sets or
 a workspace default. Use `airkctl agents manual` or **Set up manually** for the
 Rust-owned target file and complete entry when automatic editing cannot protect
 the entire file and recovery copy. Regenerate that entry after a service port

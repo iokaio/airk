@@ -1,7 +1,8 @@
 # Release records
 
-**Current source version: 1.8.207.** The [Arbiter final plan](../arbiter/final-plan.md) is in progress; the [execution ledger](../simplify/one-process-ledger.md) identifies local candidate artifacts and their actual qualification limits. Version 1.9.0 is reserved for final delivery after its gates pass.
+**Current source version: 1.8.208.** The [Arbiter final plan](../arbiter/final-plan.md) is in progress; the [execution ledger](../simplify/one-process-ledger.md) identifies local candidate artifacts and their actual qualification limits. Version 1.9.0 is reserved for final delivery after its gates pass.
 
+- [1.8.208 local source candidate](release-1.8.208.md): local trust simplification (plain HTTP on loopback, no credentials or grants, fences as consistency checks, automatic migration of https installs with CA removal), operation-record pruning and service-owned Answer jobs. Installed and platform qualification remain separately recorded.
 - [1.8.207 local source candidate](release-1.8.207.md): canonical manual agent setup, open-read and Workbench repairs, shared 8192-token/120-second defaults, Service/Agents navigation and additive qualification contracts. Artifact, installed and model qualification remain separately recorded.
 
 - [Historical 1.9.0 source candidate and planned promotion](release-1.9.0.md): retained development checkpoints for shared Help/UI, native Admin custody, portable setup/recovery and optional default-off Arbiter controls. This is neither the current manifest version nor a qualified or published release.
