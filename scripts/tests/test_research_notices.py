@@ -36,10 +36,10 @@ EXPECTED = {
     'research/CodeSearchNet-MIT-LICENSE.txt': '5ba1fd8a344040f2698ed3234aeb8f4b3e85211aa54a37048021f3eb0043be22',
     'research/ContextBench-Apache-2.0-LICENSE.txt': 'c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4',
     'research/TechQA-CDLA-Permissive-1.0.pdf': 'e12775d6b5bfdba0bb33fd691dab386f0c7573853fdc4785c40b39739f120d5f',
-    'research/provenance.json': 'c01b711abf5d647ced19b516ace19ed83a53a0897d8c215963b9368ea8e7b56c',
+    'research/provenance.json': '5c6d7df67d86310cfc008b5054cd335903e9856bbb09b93d8fe7d218a8a6c12c',
     'models/minilm-v2-TRAINING-NOTICES.md': '2daba18214e777ecb68e1154c26eb9d50c9f8ef25895e4dcc8af3d9d1275e4be',
     'models/minilm-v2-LICENSE.txt': '9cc7fbd69f78ff19a188025976df20d5c17b0cec5ed79ad5d7e16d2094e46abd',
-    'models/minilm-v2-provenance.json': '6f6a29bff30ef64212b0c6fc56095d94df3184856e488023820d995fbb68da81',
+    'models/minilm-v2-provenance.json': '47d48230ca4e7160674b8329ba080b57ff1e4d15b540d597ac4919c45a7fa856',
     'models/CC-BY-4.0.txt': '9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411',
 }
 

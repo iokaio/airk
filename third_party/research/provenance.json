@@ -54,7 +54,7 @@
     },
     {
       "source": "third_party/models/minilm-v2-provenance.json",
-      "sha256": "6f6a29bff30ef64212b0c6fc56095d94df3184856e488023820d995fbb68da81"
+      "sha256": "47d48230ca4e7160674b8329ba080b57ff1e4d15b540d597ac4919c45a7fa856"
     },
     {
       "source": "third_party/models/CC-BY-4.0.txt",
