@@ -17417,3 +17417,39 @@ prints 1.8.209; both files owned by `TYAI\tdotn`. An orphaned `VCTIP.EXE`
 installation; macOS, Linux. **Next:** fresh fixture bases and the live
 switch-sequence check on a CUDA lifetime, then Focus and Arbiter
 qualification (L7). D: free 292,588,412,928 bytes. Nothing running.
+
+### 24 November 2026 — Reclaim D: space before the Answer completion plan
+
+On the user's direction, removed only the `debug/incremental` subdirectories
+of the settled Windows CPU Cargo targets beneath
+`answer-eval-r1/answer-loop`. The same-user PowerShell session verified
+`TYAI\tdotn` against the active desktop (SID ending `-1002`, default owner
+equal). The checked Windows guard verified scoped paths and inherited access
+policy. A complete walk checked all descendant owners and rejected reparse
+points. Git confirmed all three paths were ignored and had zero tracked
+files. No compiler or cache consumer was found before each removal.
+
+| Target | Files audited | Logical bytes | D: free bytes gained |
+| --- | ---: | ---: | ---: |
+| `target-l2b` | 237,725 | 173,162,084,333 | 162,481,205,248 |
+| `target-l2c` | 73,490 | 39,390,586,870 | 39,116,734,464 |
+| `target-l2b-cli` | 288,904 | 168,184,500,931 | 156,636,831,744 |
+
+Native PowerShell `Remove-Item -LiteralPath <audited path> -Recurse -Force`
+removed each cache. All three paths were confirmed absent and their separate
+Cargo timing directories present. Physical free space rose from
+292,587,503,616 to 650,822,275,072 bytes, a gain of 358,234,771,456 bytes
+(333.6 GiB). The checkout target, warm CUDA target, release artifacts,
+model originals and private evaluation inputs were left in place.
+
+The read-only starting-point checks matched the installer, VSIX and packaged
+service/CLI SHA-256 values to the 1.8.209 receipts. Only ledger prose
+differs at the starting HEAD from the package source `16aa576d`. The package
+pair demonstrates the static CPU runtime and embedded MiniLM. A distinct
+CUDA fixture pair is required for the live shakedown. The two source commit
+IDs and all 20 development scenario files authenticated against freeze
+`26338d09a2d7a7a76d59444e2baf279bd43d5b361fdc81ba6cea04a50639190e`.
+The freeze has the bookbuilder sealed files and has no munarium sealed
+entries. The munarium set is due before fitting the first change set. No
+sealed tasks were opened. Next, bind the matching CUDA image and profiles
+and build a fresh two-repository base for the live shakedown.
