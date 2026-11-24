@@ -9,16 +9,47 @@ use std::{collections::BTreeMap, time::Instant};
 
 pub const MAX_BATCH_CHUNKS: usize = 32;
 
+/// Inference workers (ONNX sessions) one batch can use. A batch holds at most
+/// `MAX_BATCH_CHUNKS` texts and each session runs one text per forward, so
+/// more workers than texts can never run at once.
+pub const MAX_INFERENCE_WORKERS: usize =
+    airk_core::service_resources::MAX_INFERENCE_THREADS as usize;
+const _: () = assert!(MAX_INFERENCE_WORKERS == MAX_BATCH_CHUNKS);
+
+/// Conservative admission reservation for one one-thread ONNX session running
+/// the pinned B1/<=256 graphs. Not a measurement or a hard RSS limit.
+pub const SESSION_MEMORY_BYTES: usize = 192 << 20;
+
+/// Caller-side tokenizer/input/output state reserved beside each worker.
+const WORKER_STATE_BYTES: usize = 8 << 20;
+
+/// The shared model charge with `workers` sessions: the single-session charge
+/// the service has always reserved (512 MiB) plus one session reservation and
+/// its worker state for each further session.
+pub fn pooled_model_bytes(workers: usize) -> u64 {
+    let extra = workers.clamp(1, MAX_INFERENCE_WORKERS) as u64 - 1;
+    (512 << 20) + extra * (SESSION_MEMORY_BYTES + WORKER_STATE_BYTES) as u64
+}
+
+/// The default worker count for `available` logical processors: the share of
+/// one of the four storage-root execution slots, leaving one processor free.
+pub fn default_workers(available: usize) -> usize {
+    available
+        .saturating_sub(1)
+        .div_ceil(4)
+        .clamp(1, MAX_INFERENCE_WORKERS)
+}
+
 /// An execution-only override: it never changes model/cache/revision identity.
 pub fn worker_limit(value: Option<&str>, available: usize) -> Result<usize> {
     let requested = value
         .map(str::parse::<usize>)
         .transpose()
-        .context("AIRK_INDEX_WORKERS must be an integer from 1 through 8")?
-        .unwrap_or(4);
+        .context("AIRK_INDEX_WORKERS must be an integer from 1 through 32")?
+        .unwrap_or_else(|| default_workers(available));
     ensure!(
-        (1..=8).contains(&requested),
-        "AIRK_INDEX_WORKERS must be from 1 through 8"
+        (1..=MAX_INFERENCE_WORKERS).contains(&requested),
+        "AIRK_INDEX_WORKERS must be from 1 through 32"
     );
     Ok(requested.min(available.max(1)))
 }
@@ -31,8 +62,23 @@ fn memory_limited_workers(requested: usize, workspace: usize, budget: usize) -> 
     // Includes a reserve for tokenizer/input/output state. One worker retains the
     // already validated single-inference limit, even on a small machine.
     requested
-        .clamp(1, 8)
-        .min((budget / workspace.saturating_add(8 << 20).max(1)).max(1))
+        .clamp(1, MAX_INFERENCE_WORKERS)
+        .min((budget / workspace.saturating_add(WORKER_STATE_BYTES).max(1)).max(1))
+}
+
+/// Sessions one ONNX batch uses: the caller's worker count, never more than
+/// the texts to embed, and never more sessions than the memory budget admits
+/// at `SESSION_MEMORY_BYTES` plus worker state each.
+#[cfg_attr(not(feature = "local-inference"), allow(dead_code))]
+pub(crate) fn session_count(requested: usize, texts: usize, budget: usize) -> usize {
+    memory_limited_workers(requested, SESSION_MEMORY_BYTES, budget).min(texts.max(1))
+}
+
+/// Idle sessions an ONNX model may keep under `budget`: what the budget admits,
+/// so a smaller later budget releases sessions an earlier one created.
+#[cfg_attr(not(feature = "local-inference"), allow(dead_code))]
+pub(crate) fn retained_sessions(budget: usize) -> usize {
+    memory_limited_workers(MAX_INFERENCE_WORKERS, SESSION_MEMORY_BYTES, budget)
 }
 
 type Embedded = Option<Vec<f32>>;
@@ -470,7 +516,10 @@ mod tests {
         assert_eq!(cold.actual_forwards, 5);
         assert_eq!(cache.lookups.load(Ordering::Relaxed), 5);
         assert_eq!(cache.stores.load(Ordering::Relaxed), 5);
-        assert_eq!(cold.workers, 1, "INT8 uses one bounded session");
+        assert_eq!(
+            cold.workers, 4,
+            "five pending texts use the four requested pooled sessions"
+        );
         let mut warm = EmbeddingCacheStats::default();
         assert_eq!(
             embed(
@@ -596,14 +645,49 @@ mod tests {
     #[test]
     fn worker_limits_respect_cpu_memory_and_invalid_overrides() -> Result<()> {
         assert_eq!(worker_limit(None, 16)?, 4);
+        assert_eq!(worker_limit(None, 1)?, 1);
+        assert_eq!(worker_limit(None, 2)?, 1);
+        assert_eq!(worker_limit(None, 64)?, 16);
+        assert_eq!(worker_limit(None, 256)?, 32);
         assert_eq!(worker_limit(Some("8"), 2)?, 2);
         assert_eq!(worker_limit(Some("1"), 16)?, 1);
-        for value in ["0", "9", "-1", "many", ""] {
-            assert!(worker_limit(Some(value), 16).is_err());
+        assert_eq!(worker_limit(Some("32"), 64)?, 32);
+        for value in ["0", "33", "-1", "many", ""] {
+            assert!(worker_limit(Some(value), 64).is_err());
         }
         assert_eq!(memory_limited_workers(8, 120 << 20, 256 << 20), 2);
         assert_eq!(memory_limited_workers(8, 1 << 30, 128 << 20), 1);
+        assert_eq!(memory_limited_workers(64, 0, 1 << 30), 32);
         Ok(())
+    }
+
+    #[test]
+    fn session_pool_is_bounded_by_workers_texts_and_memory() {
+        const MIB: usize = 1 << 20;
+        // Each session admits 192 MiB plus 8 MiB of worker state.
+        assert_eq!(session_count(16, 32, 16 * 200 * MIB), 16);
+        assert_eq!(session_count(16, 32, 16 * 200 * MIB - 1), 15);
+        assert_eq!(session_count(16, 3, 1 << 32), 3, "never more than texts");
+        assert_eq!(session_count(4, 32, 1 << 30), 4, "never more than asked");
+        assert_eq!(session_count(16, 32, 1 << 30), 5, "1 GiB admits five");
+        assert_eq!(session_count(1, 32, 1 << 34), 1);
+        assert_eq!(session_count(0, 32, 1 << 34), 1, "one session at least");
+        assert_eq!(session_count(64, 32, 1 << 34), 32, "bounded by the cap");
+        // Below one reservation the model still refuses execution itself.
+        assert_eq!(session_count(8, 8, 64 * MIB), 1);
+        assert_eq!(retained_sessions(1 << 30), 5);
+        assert_eq!(retained_sessions(1 << 40), MAX_INFERENCE_WORKERS);
+        assert_eq!(retained_sessions(0), 1);
+        // The shared model charge always admits the session count it is for.
+        assert_eq!(pooled_model_bytes(1), 512 << 20);
+        assert_eq!(pooled_model_bytes(0), 512 << 20);
+        assert_eq!(pooled_model_bytes(2), (512 + 200) << 20);
+        assert_eq!(pooled_model_bytes(64), pooled_model_bytes(32));
+        for workers in 1..=MAX_INFERENCE_WORKERS {
+            let budget = pooled_model_bytes(workers) as usize;
+            assert_eq!(session_count(workers, 32, budget), workers);
+            assert!(retained_sessions(budget) >= workers);
+        }
     }
 
     #[test]

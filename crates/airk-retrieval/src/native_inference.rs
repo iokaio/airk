@@ -39,6 +39,51 @@ pub(crate) fn require_service_compute() -> Result<()> {
     Ok(())
 }
 
+/// Runs `work` once for each entry of `workers` on helper threads scoped inside
+/// the calling compute thread's synchronous call. A helper holds the compute
+/// role only while its closure runs, and every helper is joined before this
+/// returns, including on failure, so the caller's lease covers each native
+/// call a helper makes. Results keep the order of `workers`; the first failure
+/// in that order is returned after all helpers have finished.
+pub(crate) fn scoped_compute<W: Send, R: Send>(
+    workers: Vec<W>,
+    work: impl Fn(W) -> Result<R> + Sync,
+) -> Result<Vec<R>> {
+    require_service_compute()?;
+    struct Role;
+    impl Drop for Role {
+        fn drop(&mut self) {
+            OWNER.with(|owner| owner.set(false));
+        }
+    }
+    let results = std::thread::scope(|scope| {
+        let handles = workers
+            .into_iter()
+            .map(|worker| {
+                let work = &work;
+                std::thread::Builder::new()
+                    .name("airk-inference-session".into())
+                    .stack_size(8 << 20)
+                    .spawn_scoped(scope, move || {
+                        OWNER.with(|owner| owner.set(true));
+                        let _role = Role;
+                        work(worker)
+                    })
+            })
+            .collect::<Vec<_>>();
+        handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .map_err(anyhow::Error::from)?
+                    .join()
+                    .map_err(|_| anyhow::anyhow!("inference session worker panicked"))?
+            })
+            .collect::<Vec<_>>()
+    });
+    results.into_iter().collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -55,6 +100,54 @@ mod tests {
                 .join()
                 .unwrap()
         );
+        drop(scope);
+        assert!(require_service_compute().is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn scoped_helpers_hold_the_role_only_inside_the_owner_call() -> Result<()> {
+        assert!(scoped_compute(vec![0], |_| require_service_compute()).is_err());
+        // SAFETY: this private fixture performs no native call and joins every
+        // helper (inside scoped_compute) before releasing the capability.
+        let scope = unsafe { ServiceComputeScope::enter()? };
+        let threads = scoped_compute(vec![3, 1, 2], |value| {
+            require_service_compute()?;
+            Ok((value, std::thread::current().id()))
+        })?;
+        assert_eq!(
+            threads.iter().map(|(value, _)| *value).collect::<Vec<_>>(),
+            [3, 1, 2]
+        );
+        assert!(
+            threads
+                .iter()
+                .all(|(_, id)| *id != std::thread::current().id())
+        );
+        let finished = std::sync::atomic::AtomicUsize::new(0);
+        let failed = scoped_compute(vec![0, 1, 2, 3], |value| {
+            if value == 1 {
+                anyhow::bail!("original session failure");
+            }
+            finished.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(value)
+        });
+        assert!(
+            failed
+                .unwrap_err()
+                .to_string()
+                .contains("original session failure")
+        );
+        assert_eq!(finished.load(std::sync::atomic::Ordering::SeqCst), 3);
+        assert!(
+            scoped_compute(vec![0], |value| -> Result<usize> {
+                assert_ne!(value, 0, "fictional session panic");
+                Ok(value)
+            })
+            .is_err()
+        );
+        // The owner keeps its own role after its helpers have ended.
+        require_service_compute()?;
         drop(scope);
         assert!(require_service_compute().is_err());
         Ok(())

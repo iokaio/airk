@@ -3,6 +3,7 @@
 use super::*;
 use airk_core::inference_provider::{CompletionObservation, CompletionState, ProviderIdentity};
 use airk_core::service::WorkerIdentity;
+use airk_core::service_resources::MAX_INFERENCE_THREADS;
 use tokio::{sync::Semaphore, task::JoinSet};
 
 /// Native capability: construction is private and requires the actual owner
@@ -50,7 +51,7 @@ impl InferenceOwner {
         inference_threads: u16,
     ) -> Result<Self> {
         ensure!(
-            (1..=4).contains(&inference_threads),
+            (1..=MAX_INFERENCE_THREADS).contains(&inference_threads),
             "invalid inference allowance"
         );
         let runtime = lease.root().to_path_buf();
@@ -342,7 +343,10 @@ impl InferenceOwner {
         })
     }
     pub(crate) fn configure_threads(&self, threads: u16) -> Result<()> {
-        ensure!((1..=4).contains(&threads), "invalid inference allowance");
+        ensure!(
+            (1..=MAX_INFERENCE_THREADS).contains(&threads),
+            "invalid inference allowance"
+        );
         self.threads.store(usize::from(threads), Ordering::Release);
         Ok(())
     }
