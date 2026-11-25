@@ -138,6 +138,37 @@ elapsed CLI time. Carry Step 2 forward. The paired receipt SHA-256 is
 `c6669edc4fe4abc4474aa27480fa4847bebe94a82679d6f9b10cba0da3603016`. Both publications were reused and shutdown recorded zero
 new indexing or vector jobs.
 
+### Step 3 result — Hybrid fusion and file diversity
+
+All three trials kept the Step 2 candidate sources and budgets. The
+selected file-diversity run retained the same ten native semantic
+branch traces as Step 2, including passage identities and ranks.
+
+| Policy | Essentials off / on | Top 3 off / on | Median CLI ms off / on | p95 CLI ms off / on |
+| --- | ---: | ---: | ---: | ---: |
+| Original | 14 / 14 | 6 / 8 | 1,066.5 / 1,556 | 1,718 / 2,477 |
+| Step 2 | 15 / 15 | 6 / 6 | 1,197.5 / 1,733 | 2,311 / 3,179 |
+| Keyword weight 0.9 | 15 / 15 | 6 / 6 | 1,117.5 / 1,730 | 2,245 / 3,054 |
+| Defer a file's hits after the first two | 16 / 16 | 6 / 6 | 1,139.5 / 1,727.5 | 2,316 / 3,261 |
+| Both changes | 16 / 16 | 6 / 6 | 1,367.5 / 1,958 | 2,840 / 3,879 |
+
+Carry forward file diversity with equal branch weights. Relative to
+Step 2, it gained one essential in both settings and lost zero.
+Relative to the original, it gained five and lost three in each.
+In Munarium C1, deferral reduced the most-represented file from three
+hits to two, opened space for a seventh distinct file, and recovered
+one essential at rank ten. Three other Munarium notes rose within
+the unscored tail. Focus ran on all 20 enabled requests and scored
+four hits per request. It moved two essentials higher, one lower
+and left thirteen at the same rank. The recovered passage stayed
+tenth with Focus on. Weighting alone changed some ranks and kept
+both coverage counts flat.
+
+The selected pair SHA-256 is `745e4a7a37327bfcc1ce28be12cef31e34eebd313289ca5633331e6cf4e12a8c`.
+Its incremental and cumulative report SHA-256 is `a201464d3d1a0a3bafbaec68f30f0c0660cdad566db587f8974b179cc2a0f2d8`.
+The fixtures shut down idle on the same publications with zero new
+indexing jobs. Timings represent this fixed-order Windows CUDA run.
+
 ## Evidence and implementation references
 
 - [Matched Focus comparison and first-Search miss attribution](../simplify/one-process-ledger.md#25-november-2026--matched-ordinary-search-with-and-without-cuda-focus)

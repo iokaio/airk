@@ -215,7 +215,7 @@ def selector_extras(selector, restart, inputs=None, inputs_sha256=None, layers=N
     return extras
 
 
-SEARCH_SWITCHES = ("none", "search_v2", "ranked_keywords", "ranked_identifiers", "ranked_terms", "semantic_subqueries")
+SEARCH_SWITCHES = ("none", "search_v2", "ranked_keywords", "ranked_identifiers", "ranked_terms", "semantic_subqueries", "fusion_weights", "fusion_diversity", "fusion_combined")
 
 
 def search_extras(search):

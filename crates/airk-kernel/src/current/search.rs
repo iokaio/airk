@@ -369,8 +369,7 @@ fn search_with_switch(
             &selection,
             scoped_paths.as_ref(),
             branch_limit,
-            profile == v2::SearchProfile::SemanticSubqueries
-                && matches!(mode, CurrentSearchMode::Hybrid),
+            profile.uses_semantic_subqueries() && matches!(mode, CurrentSearchMode::Hybrid),
         ) {
             Ok(branch) => branches.push(branch),
             Err(error)
@@ -454,7 +453,7 @@ fn search_with_switch(
             let score = if legacy {
                 v2::Plan::weight(kind) / (61.0 + rank as f64)
             } else {
-                1.0 / (61.0 + rank as f64)
+                profile.branch_weight(kind) / (61.0 + rank as f64)
             };
             match merged.entry(identity) {
                 std::collections::btree_map::Entry::Vacant(entry) => {
@@ -476,7 +475,8 @@ fn search_with_switch(
         }
     }
     ranked.sort_by(|a, b| b.1.0.total_cmp(&a.1.0).then(a.0.cmp(&b.0)));
-    let ranked = if legacy {
+    let diversify = plan.is_some() && (legacy || matches!(mode, CurrentSearchMode::Hybrid));
+    let ranked = if let Some(limit) = profile.file_limit().filter(|_| diversify) {
         // Drop repeated passages first, as the loop below would, so they do
         // not count against their file's place in the order.
         let mut passages = BTreeSet::new();
@@ -484,7 +484,9 @@ fn search_with_switch(
             Candidate::Vector(pointer) => passages.insert(pointer.occurrence_id),
             _ => true,
         });
-        v2::diversify(ranked, |(_, (_, candidate))| candidate.path().to_owned())
+        v2::diversify(ranked, limit, |(_, (_, candidate))| {
+            candidate.path().to_owned()
+        })
     } else {
         ranked
     };
@@ -837,7 +839,9 @@ fn trace_semantic_queries(
     results: &[(Vec<OccurrencePointer>, bool)],
 ) -> Result<()> {
     use sha2::{Digest, Sha256};
-    if std::env::var("AIRK_ARBITER_EVALUATION_SEARCH").as_deref() != Ok("semantic_subqueries") {
+    if !std::env::var("AIRK_ARBITER_EVALUATION_SEARCH")
+        .is_ok_and(|profile| profile == "semantic_subqueries" || profile.starts_with("fusion_"))
+    {
         return Ok(());
     }
     let ranks: Vec<_> = results

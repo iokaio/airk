@@ -61,6 +61,18 @@ has no confident split, or an auxiliary embedding is unavailable, use the
 original semantic ranking with its full budget. Scope and integrity failures
 still propagate. The test-support profile is semantic_subqueries.
 
+## Fusion comparison
+
+Prose hybrid Search keeps the same candidate branches and passage
+budgets while ranking. The comparison profiles can reduce the keyword
+stream's reciprocal-rank weight to 0.9, defer a file's hits after its
+first two, or apply both. File deferral runs after duplicate semantic
+occurrences are removed and preserves order in each group. Deferred
+hits remain available after other files' leading hits.
+Product Search applies file deferral with equal branch votes. The baseline
+profile keeps equal votes and its original file order. Short queries
+and lexical fallback, lexical-only or vector-only searches keep their order.
+
 ## Private evaluation switch `search_v2` (22 November 2026)
 
 The historical Search v2 profile is selectable only in test-support builds. It is read once per process from

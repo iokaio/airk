@@ -110,7 +110,10 @@ fn product_search_uses_the_expected_profile() -> Result<()> {
         v2::SearchProfile::Baseline
     };
     #[cfg(not(feature = "test-support"))]
-    let expected = v2::SearchProfile::SemanticSubqueries;
+    let expected = v2::SearchProfile::Fusion {
+        weighted: false,
+        diverse: true,
+    };
     let (_owner, kernel) = fixture()?;
     for text in [PROSE, "provider", "class code"] {
         let product = kernel.hybrid_search(&query(text))?;
@@ -230,6 +233,31 @@ fn semantic_subqueries_keep_short_search_and_the_pinned_publication() -> Result<
     assert!(!result.hits.is_empty() && result.hits.len() <= 10);
     assert!(crate::arbiter::independent_parts("Find the class and provider code").is_empty());
     Ok(())
+}
+
+#[test]
+fn fusion_trials_separate_keyword_weight_and_file_order() {
+    use v2::{BranchKind, SearchProfile};
+    let weighted = SearchProfile::Fusion {
+        weighted: true,
+        diverse: false,
+    };
+    let diverse = SearchProfile::Fusion {
+        weighted: false,
+        diverse: true,
+    };
+    assert_eq!(weighted.branch_weight(BranchKind::Key), 0.9);
+    assert_eq!(weighted.branch_weight(BranchKind::Vector), 1.0);
+    assert_eq!(weighted.file_limit(), None);
+    assert_eq!(diverse.branch_weight(BranchKind::Key), 1.0);
+    let files = vec!["a", "a", "a", "b", "b", "c", "a"];
+    assert_eq!(
+        v2::diversify(files, diverse.file_limit().expect("file limit"), |path| {
+            (*path).to_owned()
+        }),
+        vec!["a", "a", "b", "b", "c", "a", "a"],
+    );
+    assert!(weighted.uses_semantic_subqueries() && diverse.uses_semantic_subqueries());
 }
 
 fn groups(words: &[&str]) -> Vec<TermGroup> {

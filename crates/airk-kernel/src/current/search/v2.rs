@@ -32,6 +32,10 @@ pub(crate) enum SearchProfile {
     #[cfg(any(test, feature = "test-support"))]
     Keywords,
     SemanticSubqueries,
+    Fusion {
+        weighted: bool,
+        diverse: bool,
+    },
     #[cfg(any(test, feature = "test-support"))]
     Identifiers,
     #[cfg(any(test, feature = "test-support"))]
@@ -46,12 +50,31 @@ impl SearchProfile {
             Self::Baseline => (false, false),
             #[cfg(any(test, feature = "test-support"))]
             Self::Keywords => (true, false),
-            Self::SemanticSubqueries => (true, false),
+            Self::SemanticSubqueries | Self::Fusion { .. } => (true, false),
             #[cfg(any(test, feature = "test-support"))]
             Self::Identifiers => (false, true),
             #[cfg(any(test, feature = "test-support"))]
             Self::RankedTerms => (true, true),
             Self::LegacyV2 => (true, true),
+        }
+    }
+
+    pub(crate) fn uses_semantic_subqueries(self) -> bool {
+        self == Self::SemanticSubqueries || matches!(self, Self::Fusion { .. })
+    }
+
+    pub(crate) fn branch_weight(self, branch: BranchKind) -> f64 {
+        match (self, branch) {
+            (Self::Fusion { weighted: true, .. }, BranchKind::Key) => 0.9,
+            _ => 1.0,
+        }
+    }
+
+    pub(crate) fn file_limit(self) -> Option<usize> {
+        match self {
+            Self::LegacyV2 => Some(PER_FILE),
+            Self::Fusion { diverse: true, .. } => Some(2),
+            _ => None,
         }
     }
 }
@@ -67,6 +90,18 @@ fn parse(value: Result<String, std::env::VarError>) -> Option<SearchProfile> {
             "none" => Some(SearchProfile::Baseline),
             "ranked_keywords" => Some(SearchProfile::Keywords),
             "semantic_subqueries" => Some(SearchProfile::SemanticSubqueries),
+            "fusion_weights" => Some(SearchProfile::Fusion {
+                weighted: true,
+                diverse: false,
+            }),
+            "fusion_diversity" => Some(SearchProfile::Fusion {
+                weighted: false,
+                diverse: true,
+            }),
+            "fusion_combined" => Some(SearchProfile::Fusion {
+                weighted: true,
+                diverse: true,
+            }),
             "ranked_identifiers" => Some(SearchProfile::Identifiers),
             "ranked_terms" => Some(SearchProfile::RankedTerms),
             "search_v2" => Some(SearchProfile::LegacyV2),
@@ -110,7 +145,10 @@ pub(crate) fn active() -> anyhow::Result<SearchProfile> {
     }
     #[cfg(not(feature = "test-support"))]
     {
-        Ok(SearchProfile::SemanticSubqueries)
+        Ok(SearchProfile::Fusion {
+            weighted: false,
+            diverse: true,
+        })
     }
 }
 
@@ -336,16 +374,16 @@ pub(crate) fn prior(path: &str) -> f64 {
     1.0
 }
 
-/// Stable order with every file's first [`PER_FILE`] entries ahead of any
+/// Stable order with every file's first entries under the threshold ahead of any
 /// file's later entries; within each part the given order is kept.
-pub(crate) fn diversify<T>(ranked: Vec<T>, path: impl Fn(&T) -> String) -> Vec<T> {
+pub(crate) fn diversify<T>(ranked: Vec<T>, per_file: usize, path: impl Fn(&T) -> String) -> Vec<T> {
     let mut counts = BTreeMap::<String, usize>::new();
     let mut first = Vec::with_capacity(ranked.len());
     let mut deferred = Vec::new();
     for entry in ranked {
         let count = counts.entry(path(&entry)).or_default();
         *count += 1;
-        if *count <= PER_FILE {
+        if *count <= per_file {
             first.push(entry);
         } else {
             deferred.push(entry);
@@ -523,7 +561,7 @@ mod tests {
     fn diversify_defers_a_files_fourth_hit_behind_other_files() {
         let ranked = vec!["a", "a", "a", "a", "b", "a", "c"];
         assert_eq!(
-            diversify(ranked, |path| (*path).to_owned()),
+            diversify(ranked, PER_FILE, |path| (*path).to_owned()),
             vec!["a", "a", "a", "b", "c", "a", "a"]
         );
     }

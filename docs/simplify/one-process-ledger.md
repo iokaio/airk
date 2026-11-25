@@ -18929,3 +18929,37 @@ The original and incremental comparison SHA-256 is
 `c6669edc4fe4abc4474aa27480fa4847bebe94a82679d6f9b10cba0da3603016`.
 The next action is to isolate fusion and file diversity on the same
 cohort, preserving both retained reference pairs.
+
+### 25 November 2026 — Search step 3 file diversity
+
+The Step 2 off arm included nine of 20 requests with more than two
+hits from one file. The highest count was five. Three matched
+trials tested a keyword reciprocal-rank weight of 0.9, deferring a
+file's hits after two, and both changes. The Windows Cargo build
+receipt `e639836bf0c3ed604fbd341e6956de7aaed9779b190a15e96b6edd415ca7d761`
+includes passing Clippy, 16 Search tests (551 filtered), four CUDA
+restart tests (471 filtered), and the matched fixture pair. Service
+image SHA-256:
+`2becf62c7fe06bbade1c6aed8bcc77bc95e7616634152edb7b0efba2398ee66d`.
+Each Focus-on arm applied the pinned CUDA profile on all 20 calls.
+
+Weighting alone held Step 2 coverage at 15/113 in both settings and
+kept the top-three count at six. File diversity and the combined
+policy each reached 16/113, with top-three count six. Keep file
+diversity and equal branch weights. Its ten native semantic rank
+traces match Step 2 byte for byte. In Munarium C1, seven distinct
+files replaced six and added an essential at rank ten. Focus scored
+only the first four, keeping the newly found passage at ten. It
+promoted two essentials and demoted one. The selected result gained
+one and lost zero versus Step 2, and gained five and lost three
+versus the original in both Focus settings.
+
+Selected pair:
+`745e4a7a37327bfcc1ce28be12cef31e34eebd313289ca5633331e6cf4e12a8c`.
+Incremental and cumulative report:
+`a201464d3d1a0a3bafbaec68f30f0c0660cdad566db587f8974b179cc2a0f2d8`.
+All three native closures kept the original publications and the
+same historical job set, with zero new Index or Vectors jobs.
+D: retained 366,852,390,912 bytes after the third closure. Continue
+with exact structural evidence and verify whether the settled
+publications can support a provider-asserted reference hop.
