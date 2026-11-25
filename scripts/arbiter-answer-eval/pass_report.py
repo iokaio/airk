@@ -2,7 +2,8 @@
 """Per-session and per-path figures of a graded pass, for reports and cost projections.
 
 Reads ``<R>/passes/<series>/pass-index.json`` (and the session, coverage and
-verdict records it points at) and ``results.csv``. Writes
+verdict records it points at) and optional adjudications after ``results.csv``
+has been written. Writes
 ``pass-report.json`` and prints two tables:
 
 * every result: turns, refused calls, bytes, tool time, session wall time,
@@ -18,7 +19,6 @@ verdict records it points at) and ``results.csv``. Writes
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import sys
 from pathlib import Path
@@ -29,6 +29,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import common  # noqa: E402
+import grade  # noqa: E402
 
 
 def session_figures(row: dict) -> dict:
@@ -91,9 +92,11 @@ def main(argv: list[str] | None = None) -> int:
     grades = {}
     csv_path = args.pass_dir / "results.csv"
     if csv_path.is_file():
-        for row in csv.DictReader(csv_path.open(encoding="utf-8")):
-            grades[f"{row['repo']}-{row['slot']}/{row['configuration']}" + (
-                "" if row["device"] in ("", "none") else f"-{row['device']}")] = row
+        path = args.pass_dir / "adjudications.json"
+        adjudications = common.read_json(path) if path.is_file() else {}
+        for row in grade.build_rows(index, adjudications):
+            # Preserve existing CSV-style values while using the full sample key.
+            grades[row["key"]] = {name: "" if row[name] is None else str(row[name]) for name in grade.COLUMNS}
     figures = []
     for row in index["results"]:
         if row.get("sample", 1) != 1 and not Path(row["session_dir"]).is_dir():

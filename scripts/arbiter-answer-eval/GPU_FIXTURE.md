@@ -709,6 +709,24 @@ to do.
    from a clean tree: the image records the commit, and the preflight
    compares it with the tree.
 
+   For a Windows comparison against CUDA-derived MiniLM indexes, bind the
+   verified FP16 development admission to the private service build with
+   `AIRK_APPROVED_MINILM_CUDA_DEVELOPMENT`. Retain the encoded admission
+   checksum and the native placement receipt alongside the Cargo result.
+
+   After the first batch completes, query the exact fixture control root
+   with the staged CLI. Check again when both semantic publications settle.
+   This confirms the runtime path that the comparison receives.
+
+   ```powershell
+   '"embedding_status"' | & $airkctl --output json service rpc --runtime-dir $control --stdin
+   ```
+
+   The comparison uses a completed `last_embedding` with `route` equal to
+   `cuda` and an empty `fallback`. A completed `admission_refused` CPU
+   fallback identifies a different index build, even when the optional
+   Focus and Arbiter profiles are CUDA profiles.
+
 3. **Refreeze the prompts**, last, from the final tree. The freeze pins the
    harness files, the scenario freeze (`26338d09…190e`) and the default
    budget with the cases file's SHA-256:

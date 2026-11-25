@@ -221,6 +221,31 @@ python -I -B scripts/arbiter-answer-eval/leak_check.py --handle R/fixture-<serie
     --out R/fixture-<series>-<arm>/leak-check.json
 ```
 
+### Initial Search depth for Answer change set 1
+
+Use a retained L7 pass and a settled, pinned live Search control with Focus
+and Arbiter off. The control must serve the same index and publication token
+as the first Answer reply.
+
+```powershell
+python -I -B scripts/arbiter-answer-eval/initial_search_depth.py --pass-dir $passDir --source canonical --handle $handle --handle-sha256 $handleSha --catalog $catalog --catalog-sha256 $catalogSha --repo bookbuilder --slot C1 --arm F --out $freshCheckedPrivateDir
+```
+
+Repeat `--repo`, `--slot` and `--arm` to select other retained rows. Use
+`--source actual` for the verified first session tool turn. The diagnostic
+sends only public Search reads. It preserves the retained request's query,
+chunk mode and narrow limits while requesting a full transport response
+and disabling saved-source verification. The widened replay changes only
+the hit and byte limits, with a bounded step-down on the typed reply cap.
+
+`initial-search-depth.json` lists note ranks and placements for the Answer
+projection and the two Search observations. `queries.private.json` retains
+exact request arguments and attempt hashes. Keep both in the checked
+private output directory. The diagnostic covers only first-round Search
+arguments still present in the Answer reply. Widening is a separate Search
+request and cannot recover the internal pre-fusion pool or establish an
+original Answer rank.
+
 ## The loop: gates (LG) and the new baseline (L7)
 
 For a graded L7 pass, print the supplementary sample-one table with the

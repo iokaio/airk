@@ -304,6 +304,16 @@ pub(crate) fn verdict(
     }
 }
 
+/// Structural needs can close only after the corresponding native reads
+/// establish the definition, caller, or governing contract.
+pub(crate) fn may_offer_covered(kind: NeedKind, verdict: v3::Coverage) -> bool {
+    verdict == v3::Coverage::Covered
+        || !matches!(
+            kind,
+            NeedKind::Definition | NeedKind::Callers | NeedKind::Contract
+        )
+}
+
 /// A model's coverage choice: Covered only with evidence; otherwise partial
 /// when the top Focus score reaches the keep threshold (or, without Focus,
 /// when any evidence exists), else missing.

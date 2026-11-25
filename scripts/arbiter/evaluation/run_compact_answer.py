@@ -114,8 +114,10 @@ def fixture_command(service, backend):
     return [service, "--ignored", "--exact", SELECTORS[backend], "--test-threads", "1"]
 
 
-def wait_observed(parent, observe, child, deadline, phase, *, file_changes=0x1 | 0x2):
-    """Wake on a directory change, actual process exit, or the single deadline."""
+def wait_observed(parent, observe, child, deadline, phase, *, file_changes=0x1 | 0x2, reobserve_ms=None):
+    """Wake on a directory change, process exit, or the deadline, with optional timed observations."""
+    if reobserve_ms is not None:
+        require(0 < reobserve_ms <= 2000, "invalid Windows re-observation interval")
     api = ctypes.WinDLL("kernel32", use_last_error=True)
     api.FindFirstChangeNotificationW.argtypes = [wintypes.LPCWSTR, wintypes.BOOL, wintypes.DWORD]
     api.FindFirstChangeNotificationW.restype = wintypes.HANDLE
@@ -133,14 +135,24 @@ def wait_observed(parent, observe, child, deadline, phase, *, file_changes=0x1 |
     try:
         events = (wintypes.HANDLE * 2)(int(child._handle), change)
         while True:
+            if reobserve_ms is not None and time.monotonic() >= deadline:
+                raise TimeoutError(f"original {phase} deadline expired")
             result = observe()
             if result is not None:
+                if reobserve_ms is not None:
+                    if (code := child.poll()) is not None:
+                        raise ValueError(f"private service exited before {phase} ({code})")
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(f"original {phase} deadline expired")
                 return result
             left = max(0, math.ceil((deadline - time.monotonic()) * 1000))
-            observed = api.WaitForMultipleObjects(2, events, False, left)
+            wait_ms = min(left, reobserve_ms) if reobserve_ms is not None else left
+            observed = api.WaitForMultipleObjects(2, events, False, wait_ms)
             if observed == 0:
                 raise ValueError(f"private service exited before {phase} ({child.wait()})")
             if observed == 258:
+                if wait_ms < left:
+                    continue
                 raise TimeoutError(f"original {phase} deadline expired")
             if observed != 1 or not api.FindNextChangeNotification(change):
                 raise ctypes.WinError(ctypes.get_last_error())

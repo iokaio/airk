@@ -18420,3 +18420,273 @@ settled in all eight guard observations per repository. The complete
 first judging launcher passed both ownership audits and had unchanged
 global config metadata and native dispatch census. D: retained
 405,990,252,544 free bytes at grading postflight.
+
+#### Windows L7 change set 1 — initial evidence and structural coverage
+
+Baseline `ed039529` is signed and verified on `origin/feat/arbiter-final`.
+CS1 retains the same prompts, judge rubric and schema, model and effort
+choices, turn cap, scenario freeze and Rust-emitted default Answer
+budget. Its new freeze SHA-256 is
+`530aba75274263b351ca67cbb6b8ef831a99929ba1732ad61ace5424c2923ef2`.
+Only the frozen report helper changed. It joins samples by full result
+key, so a second trial cannot overwrite the first trial's figures.
+
+With both optional stages off, the retained-argument depth pilot
+completed 29 requests in 29.609 seconds, SHA-256
+`9d19833599c918daa138a420cf1d3b94add24d7b3caa9591412ec47a69cdbdab`.
+The other 18 scenarios took 224 requests in 200.937 seconds, SHA-256
+`107b81486fdf3bbcf198c3743646252926e04ac8d14aa8b63b3de67c880434b5`.
+These roots observed the exact baseline publications. No optional
+model dispatched. There were 78 retained first-round combined-arm
+Search records across the 20 scenarios.
+
+Nine Bookbuilder and 14 Munarium essential notes missing from first
+Answer replies appeared under the wider public Search limits. All
+first covering ranks exceeded the original limit of their exact
+queries. Nine missed notes appeared within the top 32 of part-level
+queries, three on Bookbuilder and six on Munarium. Another four
+appeared within the top 32 only for a sub-need query. Seventy-one
+misses had no covering span in the observed widened results, including
+35 for which a hit reached the same path. Query roles, limits and
+receipt hashes are retained privately. These are ranks from bounded
+public Search on retained arguments, with no measurement of the
+internal pre-fusion pool. Matched bounds exposed no extra missing
+essential spans in this test.
+
+The covered-stop analysis found model-approved callers and contract
+needs whose cited records contained Search hits alone. A narrow
+Answer-only structural guard now keeps definitions, callers and
+contracts open for bounded follow-up until the appropriate native
+reads establish them. The scoped Clippy command succeeded. Nextest
+selected 23 coverage/follow-up cases, all passed, with 541 skipped.
+The first Cargo admission refused before compiling because its
+version check treated Nextest's multi-line output as a scalar. The
+checked executable is the pinned 0.9.148. The combined Python suites
+passed all 94 cases in 4.401 seconds, log SHA-256
+`cee0d7b64f507eaca556f2811b2518f33ed6f3d222508e84ef307debd51f80f7`.
+
+The next measurements compare structural-only Answer with a wider
+part-level Answer lookup. Ordinary Search behavior was exercised as
+documented and the wider calls belong to Answer's internal retrieval.
+
+The R3 baseline lifetime shut down via its owner with service and
+launcher exit zero, final stages idle and zero surviving members.
+Observer drops were zero. Owner receipt SHA-256
+`b5ca3c3ebd0abf720ce6ec569cc268e54602305ef7eac641c2a6bcc1d312e696`;
+observer closure SHA-256
+`7d576c554bcb0c2e4a6043824e6e379e6616cf42ec3a012de048c2e1a0b936f6`.
+The Windows watcher fix passed 12 focused tests. It is limited to
+the Ready receipt and retains original event, process and timeout checks.
+
+The first structural image build hit a superseded offline model
+directory from the earlier environment file. An authenticated build
+using the existing FP16 bundle finished and audited 650 outputs.
+The service SHA-256 is
+`d2bdc0e1d37d4ee4af188f9e55e2979081bb7106541c65fad90130b26af65076`.
+The fresh structural-only fixture admitted 40 GiB with a 200 GiB floor
+and bound both exact source snapshots. Its Ready file proceeded to
+indexing without a manual notification. No final semantic readiness
+is claimed yet.
+
+The wide variant changes the initial Answer part read to 32 hits and
+24,576 text bytes inside the original work budget. Scoped Clippy passed.
+A test type mismatch from comparing a JSON map to a JSON value was fixed
+before native execution. The corrected selection passed 26 tests with
+538 skipped. The combined image and matched CLI passed build and 345
+outputs were audited. The combined service SHA-256 is
+`7029901edc0e42dd32dbe46bb7eb45de404cd2b9c2f1f3e92c5dc6f9e0f70471`.
+Both private staged pairs use the same approved CUDA provider and CLI.
+D: retained 397,595,951,104 bytes after the combined image was staged.
+The next action is the matched structural-only replay after both
+semantic publications settle. The combined lifetime waits for that
+one-GPU ownership handoff.
+
+The native `service rpc` embedding observation on the first structural
+fixture showed `cpu/admission_refused`. The private build-environment
+snapshot lacked `AIRK_APPROVED_MINILM_CUDA_DEVELOPMENT`; without this
+compiled record the GPU-capable image admits the certified CPU
+fallback. The exact observation receipt SHA-256 is
+`f49c27a33292c314ef4771f475ca206dea62933466aa80f64fa983821404659e`.
+This fixture ran no canonical Answer comparison and no scored session.
+Managed stop retired four owned vector/verification jobs in 134.540
+seconds. The service exited zero with idle stages and the harness
+returned exit one for the stop during indexing. All descendants
+settled with no forced termination, owner receipt SHA-256
+`d2dac1eabeaef5c5231332916c5d7cd876f84143bb522588629b6f5e8e201d41`.
+The two completed input snapshots matched their baseline archive
+hashes and passed 10,107 owner checks, audit SHA-256
+`be7df4e8706f28fa411b50d8a87d3433add9ae0985e4bb163a329b6b5501b691`.
+The read-only settlement watcher also stopped.
+
+The rebuild binds the exact prior qualification record, compact
+encoded SHA-256
+`b1ffa363a5c494af1c08545cf30701ce1985728ca40404720833df81f569c494`,
+against the retained native FP16 placement receipt. A mechanical
+variant reuses identical maintained source bytes except for the
+wider first-read change. Restore the full candidate source after
+the structural build. Validate the completed embedding route via
+the live native status before consuming either new publication.
+D: retains 397,560,143,872 free bytes. The superseded CPU images,
+partial indexes and unused scoring draft remain private.
+
+The corrected private structural image is `win-l7-cs1-structural-cuda-f3a1f443`,
+service SHA-256
+`f3a1f4439205b2c58f56b1e5441165fc2dfbbe6096c3f1c0e2e0a818fbeb0f1f`.
+Its Cargo admission and audited outputs receipt is
+`e1e8f6f3f565b4a605a2b43cbd1b795b38afcc9d204bfdc8d274e0eb42ec84ce`.
+Fresh scope `fixture-win-minilm-cuda-l7-cs1-structural-cuda-r2`
+is building both pinned publications. The native provider reported a
+completed `cuda` embedding with no fallback at 10:48:36 UTC, receipt
+`0cfdf90868245f57e9a25d526f9771053529f70fa3aded6a2f22eee7e315c4b6`.
+Only this corrected lifetime can supply the structural replay.
+
+The combined image is `win-l7-cs1-bundle-cuda-aa1a8481`,
+service SHA-256
+`aa1a8481e8755318ad56b5b153823ee8000ccdddab0c85d718c84e5440700f60`,
+Cargo receipt SHA-256
+`45533ca37f389973c7202241e562751b21963ae5be5bd1c9fa868e78bd86abce`.
+Its five-arm draft `08-windows-cuda-cs1-r2` binds the same prompts,
+profiles and request budgets with specification SHA-256
+`2e75b0e847b22d71836a5007f1e540b08500bb871d04d867abf8e75bfdf03fb9`.
+Its fresh publication needs a separate live CUDA observation before
+its model-free controls or Answer trials are admitted.
+
+The runner’s span digest alone cannot establish full cross-publication
+control equivalence. In particular, all baseline Parse controls
+returned `needs_input` with structured input requirements but no
+evidence spans. The configuration does not reuse grades in this fresh
+scope. It will acquire both stage-off controls alongside the three
+Answer arms. No scored CS1 run has started. After the structural
+source-owner and semantic readiness checks, run the combined-arm
+structural replay, settle its native owner and then open the
+combined candidate lifetime.
+
+At 11:10:07 UTC both corrected structural indexes settled. The
+settlement receipt SHA-256 is
+`b16a94f333e4bd864d8e4fc387d23229dc8d764f3d5c29e96866dc276fb6696d`.
+Both source archives matched the baseline and passed 10,107 owner
+checks, receipt `6078f233ebb767e0765fccba977d5449f17594ff86d30db8915eeb423c65470e`.
+The fresh leak check and 60-tool catalogue passed. Focus and Arbiter
+warmed on the exact profiles. Both live smoke replies qualified, in
+12,389 ms on Bookbuilder and 5,681 ms on Munarium. Twenty serial canonical
+combined-arm replays completed in 136.1 s. Both publication tokens
+stayed unchanged. Replay receipt SHA-256
+`483366baae8dcec4c1841bb31e7badfdc38645c6e34797baeaba1fb8a9fee7c3`.
+The structural guard reduced all-covered stops with essential misses
+from 14 to 10 and increased internal follow-ups from four to eleven.
+First essential coverage remained six of 61 and thirteen of 52.
+No scored series has been committed. Release both stages and use
+managed teardown before starting the combined fixture on the GPU.
+
+The qualified structural scope closed with both stages off, service
+exit zero and the lease returned. GPU owner receipt
+`4a895d0e1fc8f98d988849dc929add07e6a13341390ee01d43cde34855f0289f`
+was verified before the bundle launch. The bundle’s source audit
+verified the same archive bytes and 10,107 newly owned entries.
+Its publications settled at 11:43:50 UTC. Final settled inputs SHA-256
+`c2b22e940adb889a86a608625e8bed2f76b6935791807ed56101b75e9eb283ed`;
+final native CUDA/no-fallback route receipt
+`9d794d357c71401f4cc0e68f56eb9e46f0fb818d7970a97ef8b05e278259b54e`.
+The bundle ran a fresh leak check and emitted the same native tools
+catalogue. Repository check passed for 10,717 paths.
+
+Twenty bundle C replays completed in 130.0 seconds with qualified
+placement and unchanged publications, receipt
+`eebd01d3d53af6106f25c68b7bf3daee016c8572725b2292e8f20c56839102c2`.
+The constituent wide read recovered the nine predicted essential
+spans. One other Munarium span was lost, giving a net gain of eight
+and first evidence coverage of 27/113. The structural stop effect
+stayed at 10 all-covered misses and 11 internal follow-ups.
+Median source verification intervals were 502.5 and 104.5 ms,
+against 525 and 105 ms for the structural-only replay. Both original
+publications had zero frame-record omissions or deadline partials.
+The F arm replay then began on the combined artifact.
+
+Twenty bundle F replays completed in 158.5 seconds on the unchanged
+publications with qualified placement. Replay receipt SHA-256
+`49d51698b2a8c58b54c4b3ee7b8a5291a339db778f70105ada7bc12bcb7c033f`.
+Two ordinary hybrid Search calls then verified the same CUDA Focus
+profile with Arbiter off. Each returned ten hits and preserved native
+order for the six hits Focus did not score. Publication identities
+remained stable. The first smoke attempt reached the Bookbuilder
+checks and stopped in receipt formatting because the retry count
+was an integer. The corrected receipt completed both repositories,
+with zero service retries and SHA-256
+`3fca1aacc7d14d2c61b4e604c1765987fee64240bd9a94c78d106e55ebbd5649`.
+The ordinary Search implementation is unchanged. The A replay is
+next on the same combined candidate.
+
+Twenty bundle A replays completed in 78.8 seconds with qualified
+placement and unchanged publications, receipt
+`67cc372dfaedff14012e7f50f3a0d57b682d2b1852a1046a108f2e4c28df40d3`.
+All 60 canonical Answer replays across C, F and A qualified. D: retained
+390,601,412,608 free bytes. The guarded first judged cohort acquired the
+two fresh stage-off controls on the combined publications. Both
+optional stages are disabled for Search and Parse, and the MiniLM route
+remains CUDA. The approved ordinary Search Focus behavior is covered
+separately by the live receipt above.
+
+At 12:06:50 UTC the fresh stage-off Search and Parse cohort completed
+20 sessions and 20 canonical digests per control without reuse. The
+native optional-model dispatch count remained 689 throughout. The
+guarded run took 361.3 seconds through the child exit. The guarded
+Claude configuration metadata remained unchanged. The driver
+SHA-256 is `1146db90c8fcef1ec73585be0704ba421cf084c46a0a03891824442497332435`.
+D: retained 390,567,899,136 bytes. Start the Focus-only scored cohort.
+
+At 12:14:02 UTC all 20 Focus-only sessions and canonical digests had
+completed with no missing digest. The verified runner took 320.4
+seconds through child exit. Native optional dispatches advanced from
+689 to 1,061. The guarded configuration metadata remained unchanged.
+The driver SHA-256 is
+`dbb1e64c58a07972e6d3f9fb7c59237364ed5d6f3ef287d0bc82a40ff0f6b1c4`.
+D: retained 390,543,667,200 bytes. Start the combined scored cohort.
+
+At 12:20:47 UTC all 20 combined sessions and canonical digests had
+completed with zero missing digests. Both exact CUDA profiles were
+live. The verified runner took 310.6 seconds through child exit.
+Native optional dispatches advanced from 1,061 to 1,409. The
+guarded configuration metadata remained unchanged. The driver
+SHA-256 is `820212ec50f0bb9f596f85bb24d70fa47501b6f2f589ed5748151325e1f9a9b1`.
+D: retained 390,520,246,272 bytes. Start the Arbiter-only scored cohort.
+
+At 12:27:48 UTC all 20 Arbiter-only sessions and canonical digests
+completed. The verified runner took 298.0 seconds through child exit.
+Native optional dispatches advanced from 1,409 to 1,531. The guarded
+configuration metadata remained unchanged. The driver SHA-256 is
+`e399eba16f61a61cad11ef468ca66ea293c9102888dd68f0feaf3d0dd3c7cad2`.
+All 100 first samples completed in the five prescribed configurations.
+D: retained 390,496,149,504 bytes. The independent first-grade cohort
+is next. Its strict results determine whether any second samples run.
+
+The strict first grade completed at 12:39:31 UTC with 200 valid
+verdicts. The guarded child ran 565.0 seconds and the optional
+dispatch count remained 1,531. Its driver SHA-256 is
+`5d936ddf78309a0cb36f91c2e7c8cb85962939330bd078e5b804111ffa550af2`.
+The approved second-sample roster was empty, receipt
+`4c77cd2af0832460f9ab2d834bd5e7d878ad591f58fec7ec00181523cfd86154`.
+Final reconciliation used the original verdicts in 5.67 seconds.
+The final summary SHA-256 is
+`27ace7f317efde98796379fa68d63909937bd9e7e3fe5e1e1cfd0ad7c76a75aa`.
+All 100 sessions completed, with 98 matching grade pairs and 92.99%
+agreement across 756 judged fact pairs. No manual adjudication remained.
+The judged window has 842 successful native score returns and matching
+settlements. It contains zero optional dispatches in Search and Parse.
+
+Each Answer arm increased first-call essential yield and reduced
+mean tool time against baseline. Arbiter-only session essentials
+rose 41 to 44 of 113. Focus lost one and the combined arm gained one.
+All five paths had zero correct finishes and each Answer arm had
+zero substantial wins. Commit the exact source, report and 100-row
+results together. All clips, sessions, sealed scenarios and model
+payloads stay in private roots.
+
+The fixture stopped with both optional stages disabled. Native shutdown
+completed, the service lease was reacquired, no process survived and
+the recorder closed with no losses or writer failure. Owner receipt
+`4572d6fcd6f3a3a18cbd9fc6c8726326e6b30c1b13e20684a6dcd6271446b383`,
+observer close receipt
+`5acddcb11bcca7f0c26948ef352c2837b15c017d4a9252036e3db1f9c23ea299`.
+D: retained 390,341,746,688 free bytes. The next work measures
+the actual Focus ranking and Arbiter decision losses on the
+development scenarios.

@@ -1052,14 +1052,18 @@ impl Loop<'_> {
                 &state.tried,
             )?;
             let need = state.need.id;
-            let roster = coverage::cards(
-                need,
-                &assessed.spans,
-                &Self::alternatives(need, &candidates),
-            );
             let covered = assessed.coverage == v3::Coverage::Covered;
-            let logged = roster.len() >= 2 || covered;
-            if logged {
+            let roster = coverage::may_offer_covered(state.need.kind, assessed.coverage)
+                .then(|| {
+                    coverage::cards(
+                        need,
+                        &assessed.spans,
+                        &Self::alternatives(need, &candidates),
+                    )
+                })
+                .filter(|roster| roster.len() >= 2 || covered);
+            let logged = roster.is_some();
+            if let Some(roster) = roster {
                 segs.push(model::Seg {
                     at: decide::At::need(v3::LoopStage::Coverage, id, need, round),
                     cards: roster,

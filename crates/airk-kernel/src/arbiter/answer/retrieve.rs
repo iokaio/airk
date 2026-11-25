@@ -96,16 +96,20 @@ pub(crate) struct Reaction {
 }
 
 const SHAPE: Shape = Shape::PRODUCT;
+/// The broad first-round read for each question part.
+const PART_SEARCH_LIMIT: usize = 32;
+const SEARCH_HIT_BYTES: usize = 768;
 
 fn search_args(query: &str, limit: usize, full: bool) -> Value {
-    json!({"query":query,"limit":limit,"max_bytes":(limit * 768).clamp(4096, 12_288),"full_chunks":full})
+    let max_bytes = (limit * SEARCH_HIT_BYTES).clamp(4096, PART_SEARCH_LIMIT * SEARCH_HIT_BYTES);
+    json!({"query":query,"limit":limit,"max_bytes":max_bytes,"full_chunks":full})
 }
 
 /// A part's own search over its text, the first read of round one.
 pub(crate) fn part_search(gather: &mut Gathering, part: u8, text: &str) -> Result<Dispatch> {
     gather.dispatch(
         ("search", v3::LoopRead::Search),
-        search_args(text, SHAPE.pool, false),
+        search_args(text, PART_SEARCH_LIMIT, false),
         (part, None, 1),
         Cause::PartSearch,
         FollowUp::Initial,

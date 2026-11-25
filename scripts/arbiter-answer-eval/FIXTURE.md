@@ -18,6 +18,10 @@ historical runs use their original MiniLM inputs.
   `actual_private_arbiter_fixture_software_v2` selector inside an owned
   Windows Job, with the reviewed resource consent (Throughput, 64 GiB,
   4 inference threads, GPU use off).
+  During startup the Windows watcher also rechecks the same native Ready file
+  every 1.5 seconds in case its write notification is lost. Startup still
+  observes the original deadline, the stop request, and child exit, and
+  verifies Ready against the launched service, image, inputs, and control root.
 - Make sure the named indexes exist with MiniLM vectors and watching off. The
   default is the loop series' pair, `bookbuilder-v2` and `munarium` (user
   direction, 22 November 2026: the index under test holds nothing about the

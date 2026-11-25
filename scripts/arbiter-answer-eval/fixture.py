@@ -268,13 +268,15 @@ def read_json(path):
 # The service writes ready.json in place, so a reader that opens it as soon as it exists can meet it half
 # written or still held by the writer: ``PermissionError`` (errno 13, a sharing violation) or a JSON parse
 # error (23 November 2026: that spent a whole gate root). Such a file is not ready yet. The worker waits for a
-# complete, parseable file, bounded by the readiness deadline and, at each directory change once the file is seen
+# complete, parseable file, bounded by the readiness deadline and, once the file is seen
 # but unreadable, by READY_WRITE_SECONDS; a file still unreadable past that is a real fault and is raised with
 # its last error.
 READY_WRITE_SECONDS = 60
 # Directory-change classes the readiness wait wakes on: file and directory names (the file appears) and size and
 # last write (the writer finishes).
 READY_CHANGES = 0x1 | 0x2 | 0x8 | 0x10
+# A Windows notification can miss completion of an in-place write. Recheck only readiness on a timer.
+READY_REOBSERVE_MS = 1500
 
 
 def read_complete_json(path, read=lambda path: Path(path).read_bytes()):
@@ -291,13 +293,14 @@ def read_complete_json(path, read=lambda path: Path(path).read_bytes()):
         return None, error
 
 
-def complete_json_observer(path, *, clock=time.monotonic, grace=READY_WRITE_SECONDS,
+def complete_json_observer(path, *, stop_file=None, clock=time.monotonic, grace=READY_WRITE_SECONDS,
                            read=lambda path: Path(path).read_bytes()):
     """An observer for the native ``wait_observed``: ``None`` until ``path`` holds a complete JSON document, then
     the parsed value. ``clock`` and ``read`` are injected so a test needs no real time or file locks."""
     first_seen = []
 
     def observe():
+        require(stop_file is None or not stop_file.is_file(), "stop file written while waiting for fixture readiness")
         value, error = read_complete_json(path, read)
         if error is None:
             return value
@@ -1444,9 +1447,10 @@ def worker(args):
         process = subprocess.Popen(command, cwd=ROOT, env=env, stdout=log, stderr=log, stdin=subprocess.DEVNULL,
                                    creationflags=subprocess.CREATE_NO_WINDOW)
         try:
-            ready = nat["wait_observed"](life, complete_json_observer(work / "ready.json"), process,
+            observe_ready = complete_json_observer(work / "ready.json", stop_file=commands.stop_file)
+            ready = nat["wait_observed"](life, observe_ready, process,
                                          min(deadline, time.monotonic() + 1800), "fixture readiness",
-                                         file_changes=READY_CHANGES)
+                                         file_changes=READY_CHANGES, reobserve_ms=READY_REOBSERVE_MS)
             require(ready["health"]["process_id"] == process.pid
                     and ready["health"]["executable_sha256"] == images["service"]["sha256"]
                     and ready["inputs_sha256"] == inputs["sha256"] and control.samefile(ready["control_root"]),

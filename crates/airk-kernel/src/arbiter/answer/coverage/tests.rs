@@ -48,6 +48,26 @@ fn located(scope: &ScopeBinding, path: &str) -> Value {
 }
 
 #[test]
+fn covered_card_cannot_replace_structural_evidence() {
+    for kind in [NeedKind::Definition, NeedKind::Callers, NeedKind::Contract] {
+        assert!(!may_offer_covered(kind, v3::Coverage::Missing));
+        assert!(!may_offer_covered(kind, v3::Coverage::Partial));
+        assert!(may_offer_covered(kind, v3::Coverage::Covered));
+    }
+    for kind in [
+        NeedKind::Tests,
+        NeedKind::Documentation,
+        NeedKind::Configuration,
+        NeedKind::Implementation,
+        NeedKind::Interfaces,
+        NeedKind::Errors,
+        NeedKind::Overview,
+    ] {
+        assert!(may_offer_covered(kind, v3::Coverage::Partial));
+    }
+}
+
+#[test]
 fn structural_verdict_rules_per_kind() -> Result<()> {
     let scope = scope();
     let mut gather = Gathering::new(v3::BudgetV3::default(), scope.clone())?;

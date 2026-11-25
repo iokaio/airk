@@ -366,6 +366,10 @@ callers are listed here.
 
 What holds:
 
+- **Initial part retrieval.** The first broad canonical Search for each
+  Answer part requests up to 32 hits and 24,576 hit-text bytes. Each sub-need
+  keeps its own narrower read recipe. Existing request limits still govern
+  retention, verification and the reply frame.
 - **Concurrent reads, deterministic reply.** A wave's reads run on at most
   four scoped threads (`answer/wave.rs`). Claims follow dispatch order, every
   claimed read runs, and the reads that ran are a prefix of the wave; the
@@ -502,6 +506,10 @@ What holds:
     `need callers: restart_guard`). A definition and a callers sub-need of
     one identifier have the same query, so the bare query did not say what
     evidence to look for.
+  - **Structural coverage:** a definition, callers or contract sub-need
+    receives a Coverage roster only after native reads establish its structural
+    coverage. Until then its deterministic assessment feeds the usual bounded
+    Follow-up choice. A lexical or semantic hit alone cannot close these needs.
   - **Follow-up verdict:** a Follow-up roster states its sub-need's coverage
     (`partial` or `missing`) and whether a model's Coverage choice or the
     deterministic order set it (`NeedState::coverage_by_model`).

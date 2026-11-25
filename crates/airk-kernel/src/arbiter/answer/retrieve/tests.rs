@@ -404,13 +404,24 @@ fn structural_empty_result_falls_back_to_search() -> Result<()> {
 }
 
 #[test]
-fn a_part_search_uses_the_promoted_pool() -> Result<()> {
+fn part_search_expands_the_pool_within_its_own_byte_bound() -> Result<()> {
     let mut gather = Gathering::new(v3::BudgetV3::default(), scope())?;
     let search = part_search(&mut gather, 2, "explain the restart guard")?;
     assert_eq!(
         (search.part, search.need, search.cause),
         (2, None, Cause::PartSearch)
     );
-    assert_eq!(search.arguments["limit"], 16);
+    assert_eq!(
+        Value::Object(search.arguments),
+        json!({"query": "explain the restart guard", "limit": 32, "max_bytes": 24_576, "full_chunks": false})
+    );
+    let focused = need(
+        NeedKind::Implementation,
+        None,
+        "restart guard implementation",
+    );
+    let reads = initial(&mut gather, 2, &focused)?;
+    assert_eq!(reads[0].arguments["limit"], 8);
+    assert_eq!(reads[0].arguments["max_bytes"], 6144);
     Ok(())
 }

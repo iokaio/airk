@@ -10,7 +10,9 @@ import subprocess
 import sys
 import tempfile
 import threading
+from types import SimpleNamespace
 import unittest
+from unittest.mock import Mock, call, patch
 
 HERE = Path(__file__).resolve().parent
 SPEC = importlib.util.spec_from_file_location("answer_eval_fixture", HERE / "fixture.py")
@@ -118,13 +120,86 @@ class ReadyReceipt(unittest.TestCase):
         with self.assertRaises(OSError):
             fixture.complete_json_observer(Path("ready.json"), clock=Clock(), read=read)()
 
+    def test_stop_request_prevents_ready_observation(self):
+        stop = Mock()
+        stop.is_file.return_value = True
+        read = Mock()
+        observe = fixture.complete_json_observer(Path("ready.json"), stop_file=stop, read=read)
+        with self.assertRaisesRegex(ValueError, "stop file written"):
+            observe()
+        read.assert_not_called()
+
+    def waiter(self):
+        wait = fixture.native()["wait_observed"]
+        clock = Clock()
+        api = Mock()
+        api.FindFirstChangeNotificationW.return_value = 8
+        child = Mock(_handle=7)
+        child.poll.return_value = None
+        child.wait.return_value = 3
+        return wait, clock, api, child
+
+    def test_missed_notification_rechecks_only_the_exact_ready_file(self):
+        wait, clock, api, child = self.waiter()
+        ready = Path("fixture") / "ready.json"
+        whole = json.dumps(self.COMPLETE).encode()
+        read = Mock(side_effect=[FileNotFoundError(), whole[:20], whole])
+        observe = fixture.complete_json_observer(ready, clock=clock, read=read)
+
+        def silent_timeout(_count, _handles, _all, delay):
+            clock.now += delay / 1000
+            return 258
+
+        api.WaitForMultipleObjects.side_effect = silent_timeout
+        with patch.dict(wait.__globals__, time=SimpleNamespace(monotonic=clock)), \
+                patch.object(wait.__globals__["ctypes"], "WinDLL", return_value=api, create=True):
+            result = wait(Path("."), observe, child, clock.now + 10, "fixture readiness",
+                          file_changes=fixture.READY_CHANGES, reobserve_ms=fixture.READY_REOBSERVE_MS)
+        self.assertEqual(result, self.COMPLETE)
+        self.assertEqual(read.call_args_list, [call(ready), call(ready), call(ready)])
+        self.assertEqual([event.args[-1] for event in api.WaitForMultipleObjects.call_args_list], [1500, 1500])
+        api.FindNextChangeNotification.assert_not_called()
+        api.FindCloseChangeNotification.assert_called_once_with(8)
+
+    def test_timed_reobservation_keeps_the_original_deadline(self):
+        wait, clock, api, child = self.waiter()
+        observe = Mock(return_value=None)
+
+        def silent_timeout(_count, _handles, _all, delay):
+            clock.now += delay / 1000
+            return 258
+
+        api.WaitForMultipleObjects.side_effect = silent_timeout
+        with patch.dict(wait.__globals__, time=SimpleNamespace(monotonic=clock)), \
+                patch.object(wait.__globals__["ctypes"], "WinDLL", return_value=api, create=True):
+            with self.assertRaisesRegex(TimeoutError, "original fixture readiness deadline expired"):
+                wait(Path("."), observe, child, clock.now + 1.75, "fixture readiness",
+                     reobserve_ms=fixture.READY_REOBSERVE_MS)
+        self.assertEqual(observe.call_count, 2)
+        self.assertEqual([event.args[-1] for event in api.WaitForMultipleObjects.call_args_list], [1500, 250])
+        api.FindCloseChangeNotification.assert_called_once_with(8)
+
+    def test_timed_reobservation_rejects_ready_after_child_exit(self):
+        wait, clock, api, child = self.waiter()
+        child.poll.return_value = 3
+        observe = Mock(side_effect=[None, self.COMPLETE])
+        api.WaitForMultipleObjects.return_value = 258
+        with patch.dict(wait.__globals__, time=SimpleNamespace(monotonic=clock)), \
+                patch.object(wait.__globals__["ctypes"], "WinDLL", return_value=api, create=True):
+            with self.assertRaisesRegex(ValueError, r"private service exited before fixture readiness \(3\)"):
+                wait(Path("."), observe, child, clock.now + 10, "fixture readiness",
+                     reobserve_ms=fixture.READY_REOBSERVE_MS)
+        self.assertEqual(api.WaitForMultipleObjects.call_count, 1)
+        api.FindCloseChangeNotification.assert_called_once_with(8)
+
+
     def test_worker_waits_through_the_observer_and_keeps_its_validations(self):
         # The worker takes the parsed receipt from the wait (no second read) and checks it as before.
         source = (HERE / "fixture.py").read_text(encoding="utf-8")
         start = source.index("def worker(args):")
         worker = source[start:source.index("\ndef ", start + 1)]
-        self.assertIn('complete_json_observer(work / "ready.json")', worker)
-        self.assertIn("file_changes=READY_CHANGES", worker)
+        self.assertIn('complete_json_observer(work / "ready.json", stop_file=commands.stop_file)', worker)
+        self.assertIn("file_changes=READY_CHANGES, reobserve_ms=READY_REOBSERVE_MS", worker)
         self.assertNotIn('ready = read_json(work / "ready.json")', worker)
         for check in ('ready["health"]["process_id"] == process.pid', 'ready["health"]["executable_sha256"]',
                       'ready["inputs_sha256"] == inputs["sha256"]', 'control.samefile(ready["control_root"])',
@@ -161,7 +236,7 @@ class ReadyReceipt(unittest.TestCase):
             try:
                 thread.start()
                 result = nat["wait_observed"](work, observe, child, fixture.time.monotonic() + 60, "fixture readiness",
-                                              file_changes=fixture.READY_CHANGES)
+                                              file_changes=fixture.READY_CHANGES, reobserve_ms=fixture.READY_REOBSERVE_MS)
             finally:
                 thread.join(60)
                 child.kill()
