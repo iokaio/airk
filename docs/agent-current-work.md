@@ -167,6 +167,18 @@ The user resumed the Windows and Linux FP16 campaign after D: cleanup. Keep new 
   842,404,241,408 bytes. It is a limit to stay above, not space to use up:
   per-job reservations, cleanup owners and monitoring of actual free space
   still apply.
+- **Evaluation agent and judge models, 25 November 2026 (user).** "The test
+  agent is named as Haiku. In spite of the cost, let's make it Sonnet for
+  some and Opus for some." The user then confirmed the recommended mix. For
+  the fresh series Sonnet (`claude-sonnet-5-5`) is the gate agent on all 20
+  scenarios and five paths in every series. Opus (`claude-opus-5-5`) runs
+  Search, Parse and Answer with both models at the baseline and the last
+  change set. Two Opus judges grade every judged session. All run at medium
+  effort. This replaces the Haiku agents and Sonnet judges of 21 November.
+  Earlier series keep their own models as history. The harness defaults
+  change with the baseline harness and its new prompt freeze. The plan's
+  other open decisions, and the word to start, are still the user's.
+  [Models table and reasons](arbiter/completion-plan.md#agent-and-judge-models)
 - Previous task: implement all steps of docs/arbiter/final-plan.md, authorized
   by the user on 15 November 2026. Execution T0 is recorded in the ledger.
   The user authorized continuing past the earlier 72-hour checkpoint.

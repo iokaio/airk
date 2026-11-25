@@ -1,42 +1,211 @@
 # Answer loop and FP16 completion plan
 
-**Review draft, revised 25 November 2026.** This plan sequences the remaining work
-on `feat/arbiter-final`. It records the latest Windows-first staging decision.
-Use the [current assignment](../agent-current-work.md) for execution
-authority and the [Answer plan](final-plan-fp16.md#128-work-order) for the
-underlying contracts and acceptance criteria. Where older instructions
-describe Large, one-turn Answer, or a different platform order, use the
-current model selection and the sequence below. Review of this document
-does not start execution.
+**Review draft, second revision of 25 November 2026.** This plan sequences
+the remaining work on `feat/arbiter-final`. It records the latest
+Windows-first staging decision. Use the [current assignment](../agent-current-work.md)
+for execution authority and the [Answer plan](final-plan-fp16.md#128-work-order)
+for the underlying contracts and acceptance criteria. Where older
+instructions describe Large, one-turn Answer, or a different platform order,
+use the current model selection and the sequence below. Review of this
+document does not start execution.
+
+**Reconcile the authority documents before execution.** The lead paragraph
+of the current assignment still directs the Windows baseline and three
+judged changes with no stop. The standing rules still name
+`feat/index-plain-store` and the indexing performance plan as the active
+work, and that branch is merged into this one. When the user approves this
+plan for execution, update the current assignment and both rule files to
+name this plan, its first milestone and its stop points. The agent and
+judge models were updated there on 25 November, when the user confirmed
+them.
+[Current assignment](../agent-current-work.md) · [Standing rules](../../AGENTS.md)
+
+Work runs in this order: section 1, the first milestone, then sections 2
+to 5. The [agent-facing tool surface](#agent-facing-tool-surface) stage
+starts after the Windows review and is frozen before the sealed run.
+
+## Goals and how progress is measured
 
 The Windows research question is whether an agent can make a correct change,
 write a grounded requirement or finish a review after giving Answer the task
 once. Answer should do the searching, following of leads and reading that
-would otherwise consume the agent's next several turns. First research indexing itself. Check source fidelity, test alternative
-representations through individual and combined retrieval routes, and choose
-the indexes that best support an agent using the defaults. Close consequential
-upstream defects before baselining Answer. The earlier Answer series and eight-step Search study supply leads.
+would otherwise consume the agent's next several turns. The index goal and
+the acceptance rule below serve that question.
 [Windows experiment and acceptance](#3-stage-l7-with-a-windows-first-review) · [Search findings](search-improvement-plan.md#what-we-achieved-and-where-it-falls-short)
+
+### Where the evidence stands
+
+| Measure on the 20 development scenarios | Result |
+| --- | --- |
+| Essential notes covered by an agent's tool results by the end of a session | Search 55 of 113 in 8.65 turns on average. The three Answer arms 37 to 44 of 113 in 9.70 to 10.15 turns. |
+| Essential notes in the first reply | Search 14 of 113 originally and 20 of 113 with the selected Step 8 policy. Answer 19 of 113 at the loop baseline and 24 to 28 of 113 in the change set 1 replays. |
+| Scenarios whose first Search reply covered every essential | 0 of 20 |
+| Correct finishes | Two in the six judged reports, both by Search on airk in the one-turn series. The loop gate, the loop baseline and loop change set 1 had none. |
+
+In the last judged comparison Answer covered fewer notes than Search and
+took more turns. These are historical results on their own inputs. The fresh
+baseline in Stage A measures today's stack.
+[One-turn baseline](answer-evaluation/01-baseline.md) · [Loop gate](answer-evaluation/04-gate-lg.md) · [Loop baseline](answer-evaluation/05-loop-baseline.md) · [Change set 1](answer-evaluation/06-loop-change-set-1.md#first-sample-results)
+
+### What the gate needs and how to steer toward it
+
+The approved substantial-win rule is unchanged and remains the gate. A
+correct finish needs every essential note of the scenario in the agent's
+tool results, decided by script, and every one judged correct in the brief.
+The 20 scenarios carry 113 essentials, between five and six each on average.
+As a rough guide only, if notes were covered independently, full coverage on
+12 of 20 scenarios would need about nine notes in ten covered. The best
+session arm covers about half. The gate can therefore read zero through a
+large real improvement, and it cannot express fewer turns while no arm
+finishes.
+[Rubric and rule](answer-evaluation/rubrics.md)
+
+**Steering measures.** The coverage half of a correct finish is decided by
+script from the turn log, so native replays can compute it with no agent and
+no judge. Report these for every replay and every judged arm:
+
+- scenarios whose first delivery covers every essential, and scenarios one
+  essential short;
+- the turn at which each essential is first covered, and the external
+  searches and reads still made after the first delivery;
+- essentials covered per repository and task kind.
+
+They steer the change sets. They do not replace the gate.
+
+**Evidence-ceiling arm.** Before the Stage A baseline, return every essential
+span of a scenario as the reply to the agent's first call, in the Answer
+reply format, and leave the rest of the session unchanged. Run it once on
+each agent tier (Haiku, Sonnet and Opus), about 60 sessions, and have the
+judges grade the briefs. It measures how often each agent finishes correctly
+when retrieval is perfect, and it ties the new series to the historical
+Haiku results. If the gate agent finishes few scenarios, no retrieval change
+can meet the rule with it, and the user decides what to change before three
+change sets are spent. This arm is an instrument check. Nothing is tuned on
+it.
+
+### Agent and judge models
+
+On 25 November 2026 the user directed that judged agents move from Haiku to
+a mix of Sonnet and Opus, accepting the cost, and then confirmed the mix and
+the judge model below. They replace the earlier rule of Haiku agents and
+Sonnet judges for the fresh series. The evidence-ceiling row applies if the
+user approves that arm.
+
+| Role | Model and effort | Where it runs |
+| --- | --- | --- |
+| Gate agent | `claude-sonnet-5-5`, medium | All 20 scenarios on all five paths, in the baseline and in each change set. The substantial-win rule is applied to these results. |
+| Capable-agent panel | `claude-opus-5-5`, medium | All 20 scenarios on Search, Parse and Answer with both models, at the baseline and at the last change set. Reported beside the gate. |
+| Evidence-ceiling arm | Haiku, Sonnet and Opus, medium | 20 scenarios each, once |
+| Judges | Two independent `claude-opus-5-5` sessions, medium, no tools | Every judged session |
+
+- The rule compares paths within a scenario, so one agent model has to run
+  all 20 scenarios on every path. Splitting scenarios between models would
+  confound the agent with the scenario and leave neither model a full rule.
+- Sonnet is the gate agent because it is the tier a typical coding agent
+  runs on, and it leaves more room for turn savings to show. The Opus panel
+  shows whether a gain survives a stronger agent, which is the user's stated
+  priority.
+- A judge should be at least as capable as the strongest agent it grades.
+  Under the adjudication rule a one-grade disagreement takes the lower
+  grade, so a weaker second judge that misreads a correct brief lowers the
+  result. Both judges are therefore Opus.
+- Opus then grades Opus briefs. The verdicts are per note against written
+  reference facts. Keep the agent model and the path out of the judging
+  packet. On the evidence-ceiling arm, add one Sonnet judge and report its
+  agreement with the Opus judges by agent model, as a check on same-model
+  preference.
+- By list price per token on 3 November 2026, Sonnet is 20 times Haiku and
+  Opus is twice Sonnet. Most of the added cost is the step off Haiku.
+
+Before the first Opus session, confirm that the headless client version
+accepts `claude-opus-5-5`. The 21 November install refused it. The new
+models need a new prompt freeze, and no session is reused across agent
+models. The harness defaults, its README and the rubric's judge paragraph
+still name the earlier models. They change with the baseline harness and
+its freeze, in that series' commit.
+[Harness model settings](../../scripts/arbiter-answer-eval/README.md) · [Judge and adjudication](answer-evaluation/rubrics.md#the-judge)
+
+### Task kinds the gate judges
+
+The frozen scenarios cover coding, writing, testing and architecture. They
+contain no patch review and no debugging task, and a judged session grades a
+work brief, not an applied change. Review and debugging stay in this plan as
+unjudged diagnostics. A claim about them needs frozen scenarios of that kind.
+[Scenario inventory](answer-evaluation/scenarios.md) · [Agent task reviews](#what-an-agent-must-be-able-to-do-with-the-reply)
+
+### The index goal and its cost envelope
+
+Show that the settled indexes do not cap Answer. Change an index only for a
+measured class of misses that query-time work on the settled publications
+cannot recover. A change must stay inside what the plain store and the
+delivery priorities already fixed: build time and index size near the
+current figures, one bundled FP16 MiniLM file for both routes, every
+platform, and a working processor route. A candidate that needs another
+embedding model or a late-interaction index is a new model to ship and
+qualify on every route. It needs the user's decision before any pilot.
+[Plain-store results](../indexing/performance-plan.md#10-status-report-and-handoff-24-november-2026) · [Delivery priorities](../agent-current-work.md)
+
+### Decisions for the user at this review
+
+The proposed values are the primary agent's. Each is the user's to set.
+
+1. **Selection bar for an index change.** Proposed: a candidate recovers at
+   least six more essentials than the control in the top 40 for task-derived
+   queries, loses none in either repository's top ten, and moves the
+   held-out probes the same way.
+2. **Held-out retrieval probes.** Proposed: 30 per repository, each a query
+   and its accepted locations, written from the pinned source by a session
+   that has seen neither the development notes nor any tuning result, and
+   frozen with hashes before the first pilot.
+3. **Bound on the first milestone.** Proposed: the census and audits, then
+   at most two representation pilots, then the selection comes to the user.
+   The default is to reuse the settled publications.
+4. **Agent and judge models:** confirmed by the user on 25 November 2026.
+5. **The evidence-ceiling arm:** about 60 judged sessions before the
+   baseline.
+6. **Stage A contract decisions:** the added loop reads, the follow-up read
+   allowance, need-based read budgets and handle-only continuations.
+7. **Index candidates that change the model:** allowed as pilots or excluded.
+8. **A third outcome at the Windows review:** ship the retrieval gains
+   without the turn-saving claim.
+9. **Review and debugging:** unjudged diagnostics as written, or new frozen
+   scenarios.
+10. **Answer's public call shape:** a question alone with service defaults,
+    or the full request, and whether its argument is named `task`. Needed
+    before the Stage A baseline.
+11. **Default MCP tool profile and leaner default schemas:** decided on the
+    free-choice comparison, after the Windows review. The CLI stays full
+    featured either way.
+12. **Public tool names:** the proposed renames, tested in the free-choice
+    arm, and whether an old name stays callable for a release or the rename
+    is clean at 1.9.
+
+## Milestones
 
 | Milestone | Exit evidence or decision |
 | --- | --- |
-| Index and Search quality | Complete source-fidelity checks and matched indexing experiments across individual and combined retrieval routes. Select and freeze the configuration for both repositories. [Research and selection](#how-to-test-indexing-for-agent-tasks) |
-| Windows CUDA | Account for shakedown and L6 evidence on the admitted stack. Judge a current-stack baseline and three cumulative retrieval changes, then stop for your review. |
-| Windows review | You choose another Windows round or approve Linux. Each additional Windows round returns to the same review. |
+| Index and Search quality | Complete the rank census, the label and corpus audit, the source-fidelity checks and the two query-time checks. Run at most two matched representation pilots chosen from the census. Select and freeze the configuration for both repositories against the agreed bar. [Research and selection](#how-to-test-indexing-for-agent-tasks) |
+| Windows CUDA | Account for shakedown and L6 evidence on the admitted stack. Run the evidence-ceiling arm. Judge a current-stack baseline and three cumulative retrieval changes, then stop for your review. |
+| Windows review | You choose another Windows round, Linux, or shipping the retrieval gains without the turn-saving claim. Each additional Windows round returns to the same review. |
 | Linux CUDA | LX, Linux L6, and the agreed L7 comparisons against the Windows-reviewed candidate. Bring both hosts' results to review. |
-| E8 and E9 | Run sealed confirmation once on your word. Record the evaluation report and route decisions. |
+| Agent-facing tool surface | Starts when the Windows review accepts the retrieval and Answer behavior, and can run alongside Linux CUDA. Record the candidate's catalog, run the free-choice arm, test the description rewrite, the proposed names and the narrowed default profile against it, and freeze the surface. [Stage and rules](#agent-facing-tool-surface) |
+| E8 and E9 | Run sealed confirmation once on your word, on the frozen tool surface. Record the evaluation report and route decisions. |
 | Local platform preparation | Build and unit-test all three WebGPU targets. Capture the Windows A6000 integration, Linux A6000 integration or the WSL2 limitation, and Mac Neo Focus-only smoke or its measured admission limit. |
 | Rental and delivery | Request booking after platform preparation. Qualify the selected routes on each rented target, prove CPU fallback, and verify the final deliverables. |
 
 ## First milestone — Research and test indexing for agent retrieval
 
-Start here on resumption, before Windows Answer changes, model tuning, or
-a judged Answer baseline. Use the identity, disk and source checks in
-section 1 for diagnostic work. This milestone asks two separate questions.
-Did indexing lose or distort evidence? Could an accurate index be organized
-better for agents using ordinary retrieval tools? A clean fidelity audit
-answers only the first. Test the representations and retrieval routes below
-even when the integrity checks pass.
+Start here on resumption, after the identity, disk and input-freeze steps of
+section 1 and before Windows Answer changes, model tuning, or a judged
+Answer baseline. This milestone asks two separate questions. Did indexing
+lose or distort evidence? Could an accurate index be organized better for
+agents using ordinary retrieval tools? A clean fidelity audit answers only
+the first. The milestone is bounded. It ends with a selection against the
+agreed bar, and the default is to reuse the settled publications.
+
+Every measurement here is deterministic and runs on native replays,
+read-only probes and scripts. Agent sessions are used once, at the end, on
+the control and the selected configuration.
 
 ### Index and Search quality before Answer
 
@@ -72,139 +241,203 @@ Bookbuilder's CRLF checkout representation. These results justify reusing
 the settled indexes while investigating retrieval.
 [Comparison scope and receipts](../simplify/one-process-ledger.md#25-november-2026--answer-planning-and-index-quality-review)
 
-Run the remaining diagnostic before investing in the Answer changes. Start with
-retained receipts and read-only probes on the two settled publications.
-Use an independently enumerated source manifest, a scoped literal scan and
-reads of the pinned Git exports as the reference. Keep reference answers,
-probe design and diagnostic-only source access out of product inputs and
-judged agent sessions. Report Bookbuilder and Munarium separately.
+**What the index stores today.** Three properties of the current
+representation bear on the candidates below. They are read from source.
+Their effect on ranking is not yet measured.
+
+- Each chunk's lexical row is the deduplicated set of terms from its path
+  and text, in one column. BM25 therefore sees every term once per chunk. It
+  has no term frequency and cannot weight a path, heading or symbol match
+  apart from body text. This is a candidate cause of the Bookbuilder loss
+  when ranked keywords were introduced.
+- Terms are whole identifiers plus their underscore and camel-case parts,
+  lowercased, with no stemming or plural folding. A run of capitals such as
+  `APIKey` stays one term. Prose task wording can miss identifiers for that
+  reason. The base lexical branch requires every query term to match.
+- A vector unit targets 256 tokens, already carries up to 32 tokens of
+  written heading or definition context, and has no overlap.
+
+[Lexical terms](../../crates/airk-core/src/lexical.rs) · [Chunk rows](../../crates/airk-store/src/current/lexical.rs) · [Index schema](../../crates/airk-store/src/index/schema.rs) · [Vector units](../../crates/airk-retrieval/src/vector_units.rs)
+
+**Step 1. Rank census.** For all 113 development notes on the two settled
+publications, record the exact rank of the best qualifying unit:
+
+- in the full vector scan, in the ranked lexical list, and after fusion;
+- for three query forms: the instruction as sent, a focused query derived
+  from the task text alone with the Step 2 subquery derivation, and a query
+  built from the note's own fact sentence.
+
+Hold publication, model state and budgets fixed. The vector scan is exact,
+so the full rank is available without a wider public reply. Only five of the
+20 requests retained pre-fusion traces, and 16 of the 22 misses traced there
+have a qualifying unit of unknown rank. The census replaces that sample and
+sorts every miss into one of three classes.
+
+| Class | Evidence | Owner |
+| --- | --- | --- |
+| Representation | The qualifying unit ranks poorly even for the query built from its own fact | An index pilot from the table below |
+| Query wording | It ranks well for a focused or fact-built query and poorly for the instruction | Answer's planning and follow-up queries in Stage A |
+| Search policy | It is inside a branch list and is lost at fusion, selection or byte packing | Ordinary Search, repaired where the control regresses |
+
+The fact-built query uses the labels. It is a diagnostic, and nothing is
+tuned on it. Trace the two lost Bookbuilder essentials through the same
+stages.
+[Vector coverage and limits](search-improvement-plan.md#step-6-result--committed-vector-coverage) · [Subquery derivation](search-improvement-plan.md#step-2-result--focused-semantic-queries)
+
+**Step 2. Label and corpus audit.** Bookbuilder holds 48 of the 66 original
+misses with no hit from an accepted path. Before those count against the
+index, have an independent grader check a sample of the returned hits for
+missed notes. Does a hit establish the note's fact from a location the note
+does not list? Report accepted alternatives beside the frozen counts.
+Changing a frozen note stays under the freeze rule and is the user's
+decision. Then classify both corpora by path class (source, tests,
+generated, vendored, documentation and bundled payloads) and report each
+class's share of files, units and top-40 candidates. If a class crowds the
+shortlist, source selection or a path-class weight is the first index
+candidate.
+[First-Search miss attribution](../simplify/one-process-ledger.md#25-november-2026--first-search-miss-attribution) · [Freeze rule](answer-evaluation/scenarios.md#how-the-instructions-are-used)
+
+**Step 3. Source-fidelity checks.** Start with retained receipts and
+read-only probes on the two settled publications. Use an independently
+enumerated source manifest, a scoped literal scan and reads of the pinned
+Git exports as the reference. Keep reference answers, probe design and
+diagnostic-only source access out of product inputs and judged agent
+sessions. Report Bookbuilder and Munarium separately.
 
 | Question | Discriminating check | What the finding changes |
 | --- | --- | --- |
 | Did indexing admit the intended evidence? | Reconcile eligible paths, file hashes and declared skips against the selected, pinned export. Check former hits, current misses and a stratified sample of independent files, including code, tests, documentation, long files, duplicate names and excluded controls. Track intentional exclusions separately from unexplained omissions. | A missing eligible file, an incorrect revision or out-of-scope inclusion belongs to selection, ingest or publication. Fix that path before judging downstream changes. |
 | Did it preserve useful content and locations? | Open known paths through the native reader. Compare exact lines and boundaries to independent source bytes. For extracted formats use independent page, sheet or section anchors and the original location mapping. Check clipped sections, duplicate content at different locations, update/delete and unchanged-file reuse in a small disposable fixture. | A reproducible missing or mislocated passage in a known file is an index or materialization defect. Isolate the writer from the reader, correct it, and rerun the affected probe. |
 | Does lexical and structural lookup find what was stored? | Compare known unique literals, punctuation-bearing identifiers and scoped whole-name matches with the direct scan. Check postings or candidate membership before ranking, then source range after ranking. For symbols, facts and edges record provider support and ambiguity. | Distinguish an absent posting or misbound symbol from tokenization policy, a bounded query or a later ranking loss. Missing optional provider data becomes an explicit coverage gap. |
-| Are the right vectors attached to the right passages, and do relevant passages score well? | Reconcile committed rows to eligible occurrences and member spans. On a stratified sample reproduce the exact model inputs, tokenizer, truncation, pooling, normalization and route. Compare stored embeddings and independent exact scores within the admitted numeric tolerance. Inspect scoped ranks for literal, paraphrase and short focused queries, including near ties and hard negatives. | A wrong input, row binding or scoring mismatch warrants an indexing/reader fix. Correct vectors with consistently poor passage ranks justify a representation experiment. Raw vector counts cannot distinguish these outcomes. |
-| At what step does usable evidence disappear? | Hold the publication, request and model state fixed. Compare available lexical and vector candidates, fusion order, Focus input, selected excerpt and final bytes. Trace lost as well as gained notes, including the original Bookbuilder losses. | If a correct passage is available and drops only at fusion, selection or byte packing, repair Search there. If it is accessible through a native structural or range read, record a viable route for Answer. |
+| Are the right vectors attached to the right passages? | Reconcile committed rows to eligible occurrences and member spans. On a stratified sample reproduce the exact model inputs, tokenizer, truncation, pooling, normalization and route. Compare stored embeddings and independent exact scores within the admitted numeric tolerance. Include one cross-route case: a query embedded on the processor route against vectors built on the graphics card, compared by rank agreement. | A wrong input, row binding or scoring mismatch warrants an indexing or reader fix. A rank disagreement between routes is a product finding, because the processor is the default route. Whether correct vectors rank relevant passages well is the census's question. |
 
 The existing vector audit established that 111/113 development notes have
 one qualifying committed unit and the other two need a union of passages.
-Only five requests retained pre-fusion traces. Of 22 misses in those traces,
-six qualifying passages entered the capped lists. This narrows the suspected
-failure without establishing global rank, vector quality, lexical coverage,
-or end-to-end index fidelity. Reuse that audit where it already answers the
-question. [Vector coverage and limits](search-improvement-plan.md#step-6-result--committed-vector-coverage)
+This narrows the suspected failure without establishing global rank, vector
+quality, lexical coverage, or end-to-end index fidelity. Reuse that audit
+where it already answers the question.
+[Cross-route decision D5](../indexing/performance-plan.md#4-decisions)
 
-**Distinguish regression from a longstanding weakness.** Build a lineage
-table for any usable older and current receipts. Pin source/export, scope,
-indexer and extractor, publication, unit recipe, embedding weights and
-tokenizer, reader/Search revision and request. Where compatible authenticated
-artifacts survive, hold the reader and request fixed and vary the index,
-then hold the index fixed and vary the reader. Record incompatible cells as
-unavailable. If only the new index fails under a matched reader and source,
-classify a producer regression after reproducing the first difference. If
-both fail in the same way, record a shared limitation. If no matched older
-cell is available, report a current defect or limitation with origin unknown.
-A small matched old/new build on identical representative
-files can test a specific suspected writer change after the existing evidence
-is exhausted. Historical partial indexes and full-corpus rebuilds are
-unnecessary for this diagnostic.
+**Step 4. Two query-time checks on the settled publications.**
 
-The retained pre-refactor Bookbuilder depth probe used the same source pin
-but different query strings, limits and embedding pipeline. It can supply
-a candidate historical comparison, provided the inputs and budgets can be
-matched. A fixed-reader comparison across incompatible store formats needs
-a common observable boundary such as independently verified postings, cited
-ranges or exact query results from each compatible reader.
+- *Follow-up queries.* Steps 1 to 8 of the Search study were selected on the
+  first query of each scenario, a 40 to 68 word instruction. Of the 41 notes
+  the historical Search sessions recovered later, further searches first
+  found 19 and targeted reads first found 22. Replay those recorded searches
+  and ranges verbatim under the original policy and the Step 8 policy, with
+  equivalent scope, budgets and source revision, naming any incompatible
+  call. Freeze Step 8 as the control only if it does not lose on these
+  queries.
+- *A wider Focus set.* The 40-candidate shortlist held 28 essentials and the
+  first ten held 18. Focus scores four hits and has not added an essential
+  to a reply in any step. Score 16 and then 40 shortlist candidates once and
+  report essentials in the first ten, latency and device memory. This is the
+  direct test of whether a reranker converts the shortlist into the reply.
 
-**Exit decision.** Produce a per-repository report of recovered and lost
-paths, verified ranges, lexical matches and semantic ranks. Show denominators,
-coverage of the sample, first failing stage, reproducer, confidence and
-unexplained cases. Hold Answer changes for any demonstrated upstream defect
-that prevents a required fact from being recovered, or for an unexplained
-material source-fidelity mismatch. Repair and recheck the affected layer on
-the small fixture first. If a correctly represented passage is lost by
-ordinary Search, repair a repeatable Search regression where it affects the
-control and remeasure, or demonstrate an alternative canonical read that
-reaches it from the task or a previously observed clue within Answer's actual
-scope and budget. Opening the grader's known target only establishes storage.
-A bounded limitation can proceed with its affected tasks
-explicit in the report. Reconcile the frozen publications or take a documented
-index proposal to the user before a full build. Carry this fidelity disposition
-into the indexing experiments below. It qualifies the tested paths and records
-what remains unknown about historical causation.
+[Step 7 shortlist](search-improvement-plan.md#step-7-result--wider-shortlist-and-cutoff-selection) · [Later Search calls](../simplify/one-process-ledger.md#25-november-2026--first-search-miss-attribution)
+
+**Historical cause.** Old-format indexes are abandoned at 1.9 and the
+earlier producer is retired. Whether a weakness predates the plain store
+does not change the next action, so no lineage study runs. Report a current
+defect or limitation with origin unknown. If the census points at a specific
+writer change, a small matched old and new build on identical representative
+files can test it. The retained pre-refactor Bookbuilder depth probe used
+different queries, limits and embedding pipeline. It is not a matched
+comparison.
+
+**Exit decision.** Produce one report per repository with the census table,
+the audit results, the fidelity findings and the two query-time checks. Show
+denominators, the first failing stage, a reproducer, confidence and
+unexplained cases. The primary measure is essentials whose qualifying span
+is in the top ten and in the top 40 for task-derived queries. Hold Answer
+changes for any demonstrated upstream defect that prevents a required fact
+from being recovered, or for an unexplained material source-fidelity
+mismatch. Repair and recheck the affected layer on a small fixture first.
+If a correctly represented passage is lost by ordinary Search, repair a
+repeatable Search regression where it affects the control and remeasure, or
+demonstrate an alternative canonical read that reaches it from the task or a
+previously observed clue within Answer's actual scope and budget. Opening
+the grader's known target only establishes storage. A bounded limitation
+can proceed with its affected tasks explicit in the report. Reconcile the
+frozen publications or take a documented index proposal to the user before
+a full build. Carry this disposition into the experiments below.
 
 ### How to test indexing for agent tasks
 
-1. **Freeze the default behavior as the control.** On both pinned exports
-   use code, documentation, architecture and test tasks plus a small independent
-   development sample for debugging, review and negative or ambiguous lookups.
-   Include natural-language tasks that omit the exact identifier. Sample known
-   successes and misses. Establish expected facts and source locations
-   independently. Keep labels and known target paths out of queries, indexed
-   metadata and training. Keep the sealed set closed.
-2. **Exercise the individual readers and their combinations.** Compare lexical,
-   semantic and hybrid Search, symbol/definition and reference lookup, code
-   and document facts, relationships/imports, and outline plus range reads.
-   Record which share underlying representations and where provider coverage
-   is absent. Then test realistic sequences such as hybrid discovery → symbol
-   → callers → source, heading or fact → governing section → exception, and
-   diagnostic string → references → test assertion. Start with the task alone.
-   Follow only anchors available in the preceding replies. Measure out-of-box
-   behavior and an equal-work comparison with fixed calls, candidate counts
-   and bytes. Pair Focus off/on wherever supported. Hold the Answer planner
-   and Arbiter out of this experiment.
-3. **Build and test small matched representations.** Choose candidates from
-   the table below based on observed misses and direct-tool advantages. State
-   what each change should recover. Index identical representative sources
-   with the control and candidate writers. Hold query policy, model and
-   budgets fixed wherever compatible. Run each new representation alone and
-   in a useful combination, then remove one contribution at a time from a
-   winning combination. If a change needs a new reader, report a writer/reader
-   result until their contributions can be separated.
-4. **Measure usefulness to an agent.** Report eligible-path recall, decisive
-   spans at common depths and byte limits, wrong citations, and which next
-   read each returned anchor enabled. Give a fresh agent the default result
-   or the same bounded sequence on each candidate. Compare correct work
-   briefs, remaining direct-file reads, turns, bytes and elapsed time.
-   Show gains and displaced facts separately for each repo and task alongside
-   storage, full-build and incremental-update costs.
-5. **Choose the indexes before answering the first scored task.** Record the
-   tested candidates, limitations and selection in the research report and
-   ledger. An index with no demonstrated improvement can be rejected on that
-   evidence. If a candidate warrants a full rebuild, present its measured
-   gain, cost, migration and recovery plan to the user first. Qualify and
-   freeze the selected publications, or reuse the existing ones when they
-   win the comparison. Only then establish the current-stack Answer baseline.
-   A later L7 trace can reopen a specific indexing question.
+1. **Freeze the control and the held-out probes.** The control is the two
+   settled publications with the Search policy that passed the follow-up
+   check. On both pinned exports keep the 20 development scenarios and add
+   the held-out retrieval probes agreed at this review. Include
+   natural-language probes that omit the exact identifier, negative and
+   ambiguous lookups, and known successes as well as misses. Establish
+   expected facts and source locations independently. Keep labels and known
+   target paths out of queries, indexed metadata and training. Keep the
+   sealed set closed.
+2. **Measure each reader alone.** Extend the census to the structural
+   readers. For each note, can Symbols, References, Document Facts or
+   Outline reach its location from an anchor in the task text, and from an
+   anchor in the first Search reply? Record which readers share an
+   underlying representation and where provider coverage is absent. Reader
+   sequences are measured once, in change set 1 with both models off, as
+   fixed recipes. Driving them here would need a script written with
+   knowledge of the labels, or an agent, and an agent run is the Search arm
+   of the baseline.
+3. **Build and test small matched representations.** Choose at most two
+   candidates from the table below, each from a census class or an audit
+   finding, and state what each should recover. Test a query-time candidate
+   on the settled publications first. For an index-time candidate, index
+   identical representative sources with the control and candidate writers.
+   Hold query policy, model and budgets fixed. If a change needs a new
+   reader, report a writer and reader result until their contributions can
+   be separated.
+4. **Select on deterministic measures.** For control and candidate, report
+   the primary measure on the development notes and on the held-out probes,
+   gains and displaced notes per repository, wrong citations, storage, full
+   and incremental build time and query latency. Select with Focus off.
+   Confirm the selected configuration once with Focus on. Adopt a candidate
+   only if it meets the agreed bar on the development notes, loses nothing
+   in either repository's top ten and moves the held-out probes the same
+   way. A single-run change of one or two notes is not evidence.
+5. **Confirm with agents once, then choose.** Give a fresh agent the control
+   and the selected configuration on the same bounded task and compare
+   correct work briefs, remaining direct-file reads, turns and bytes. Skip
+   this when the control is selected. Record the tested candidates,
+   limitations and selection in the research report and ledger. Reject an
+   index with no demonstrated improvement on that evidence. If a candidate
+   warrants a full rebuild, present its measured gain, cost, migration and
+   recovery plan to the user first. Qualify and freeze the selected
+   publications, or reuse the existing ones when they win the comparison.
+   Only then establish the current-stack Answer baseline. A later L7 trace
+   can reopen a specific indexing question.
 
 ### When to change an index
 
-These candidates target ways an agent can lose time even when every source
-was indexed correctly. Choose from measured failure classes and exercise
-the resulting evidence through the native readers.
+The candidates are ordered by what the measurements so far point to. Each
+names its trigger from the census or the audit, and whether it can be tested
+on the settled publications or needs a pilot build.
 
-| Repeated failure on known source truth | Candidate to test on a small matched sample |
-| --- | --- |
-| Scoped scans recover exact strings or identifier fragments that lexical lookup misses, or scans are too costly | Positional literal/trigram postings with final retained-byte verification. For path, title, symbol or heading losses, try fielded lexical scoring separately. |
-| Impact work stalls on aliases, implementations, config consumers or test discovery | A language/provider-backed definitions and references index, with typed edges and coverage. Test explicit document links, heading IDs and supersession metadata for governance questions. Keep inferred associations distinguishable from verified edges. |
-| Correct file ranks but useful context crosses a unit boundary | Try query-time parent expansion first, then file/section-to-passage links or definition-aware chunks. Keep the corpus-wide passage route for isolated facts. |
-| A qualifying passage exists but consistently scores poorly under independent focused queries | Compare body-only embeddings with heading, path or enclosing symbol context using the same MiniLM. If the loss persists, compare a code-aware model or late interaction on the same sample. Verify citations against original source spans. |
+| Trigger | Candidate | Tested on |
+| --- | --- | --- |
+| A path class crowds the top 40, or accepted paths never enter it | Source selection, or a path-class weight | Settled publications for the weight. A pilot build for selection. |
+| Prose queries miss chunks whose identifiers hold the word in another form | Query-side singular, plural and split-capital variants. If that recovers notes, fold the same normalization into indexed terms. | Settled publications first |
+| Ranked lexical order is flat, or favors the wrong chunks of the right file | Lexical rows that keep term frequency, with path, heading, declared symbol and body as separately weighted columns | Pilot build |
+| Scoped scans recover exact strings or identifier fragments that lexical lookup misses | The retained-text scan of change set 1 is the control. Add positional literal or trigram postings, with final retained-byte verification, only if the scan is too slow at corpus size. | Settled publications for the scan. A pilot build for postings. |
+| The correct file ranks but useful context crosses a unit boundary | Query-time parent expansion first. Then unit overlap, or file and section links to passages. Keep the corpus-wide passage route for isolated facts. | Settled publications first |
+| A qualifying unit ranks poorly even for the query built from its own fact | Add path or enclosing-symbol text to the context a unit already carries, with the same MiniLM. Another embedding model or late interaction only on the user's decision. Verify citations against original source spans. | Pilot build |
+| Impact work stalls on aliases, implementations, config consumers or test discovery | A provider-backed definitions and references index with typed edges and coverage, and explicit document links, heading IDs and supersession metadata for governance questions. Keep inferred associations distinguishable from verified edges. Neither publication has provider data today, and none of the 83 symbol-annotated essentials names its symbol in the query, so this pays only on follow-up hops. Last in order. | Pilot build and a provider |
 
 Pin identical source revisions, selection and query policy in control and
 treatment. Change one representation at a time and compare its own searchable
-publication with the control. Test previously missed and previously successful
-requests across both repositories, including independent examples outside the
-development labels. Measure gains and losses both in candidate rank and in
-evidence delivered through the fixed reader sequence. Reserve a matched
-Answer replay for L7 after selection. Repeat the ordinary Search comparison
-with Focus off/on. Measure full and incremental build time, query latency,
-index bytes, memory, peak temporary disk and migration or rollback needs.
-Propose a full build only with repeatable recoveries on distinct tasks, a
-measured cost and a plan for affected existing publications. Discuss the
-specific representation and evidence with the user first. Keep accepted
-originals available and record contracts for any persisted format or digest
-change. [Index alternatives and prior audit](search-improvement-plan.md#alternatives-to-test)
+publication with the control. Measure gains and losses in candidate rank on
+the development notes and the held-out probes, with full and incremental
+build time, query latency, index bytes, memory, peak temporary disk and
+migration or rollback needs. Reserve a matched Answer replay for L7 after
+selection. Propose a full build only with repeatable recoveries on distinct
+tasks, a measured cost inside the envelope above and a plan for affected
+existing publications. Discuss the specific representation and evidence with
+the user first. Keep accepted originals available and record contracts for
+any persisted format or digest change.
+[Index alternatives and prior audit](search-improvement-plan.md#alternatives-to-test) · [Step 4 structural result](search-improvement-plan.md#step-4-result--exact-structural-evidence)
 
 ## 1. Reconcile the starting point
 
@@ -297,6 +530,19 @@ change. [Index alternatives and prior audit](search-improvement-plan.md#alternat
 
 ### Stage A — Run the Windows CUDA baseline and three change sets
 
+**Before the run starts.** Stage A runs back to back only if its contract
+decisions are already recorded. The change sets below propose new loop
+reads (Code Facts, Document Facts, Relationships and the retained-text
+scan), a higher follow-up read allowance, need-based read budgets and
+handle-only continuations. Each changes a wire shape or a Core limit.
+Record the user's decision on each in the loop change log and the owning
+contract first, or leave that item out of the series. Settle
+[Answer's public call shape](#agent-facing-tool-surface) as well, so the
+judged call is the call that ships. Run the
+[evidence-ceiling arm](#what-the-gate-needs-and-how-to-steer-toward-it)
+before the baseline and report it with the baseline.
+[Decisions for this review](#decisions-for-the-user-at-this-review) · [Core loop limits](../../crates/airk-core/src/arbiter/answer_loop.rs)
+
 1. **Measure the current stack before changing Answer.** The earlier Windows
    baseline and Change Set 1 were judged. In that first change set, Search
    gathered 55/113 essentials across agents' sessions, Answer gathered
@@ -309,12 +555,13 @@ change. [Index alternatives and prior audit](search-improvement-plan.md#alternat
    quality. In particular, the 55 consisted of 14 essentials in the first
    replies, 19 first recovered by later Search calls and 22 first recovered by
    targeted file reads. Report today's corresponding three counts, their union
-   and the old-versus-current per-note differences. Additionally replay the
-   historical Search arm's recorded arguments and targeted ranges verbatim on
-   today's stack, under equivalent scope, budgets and source revision, naming
-   any incompatible call. That diagnostic isolates what the same follow-up
-   probes now return. The fresh blind sessions measure whether an agent can
-   still *discover* those probes from today's earlier replies. If the total
+   and the old-versus-current per-note differences. The first milestone
+   already replays the historical Search arm's recorded follow-up searches
+   and targeted ranges on today's stack. Carry that result here. It isolates
+   what the same follow-up probes now return. The fresh blind sessions
+   measure whether an agent can still *discover* those probes from today's
+   earlier replies. The historical sessions used Haiku agents, so compare
+   them with the fresh sessions as history and not as a matched pair. If the total
    falls, identify the first lost lead, unavailable source, changed excerpt or
    agent choice that accounts for it. Preserve the historical reports and
    the unjudged model experiments under their original identities. Give the new retrieval series a distinct
@@ -329,25 +576,39 @@ change. [Index alternatives and prior audit](search-improvement-plan.md#alternat
    Search with Focus off/on is a separate diagnostic. Answer's explicit
    internal Search limits can select different results from ordinary Search
    with an omitted limit. Freeze the same 20 scenarios, prompts, notes,
-   harness, job policy, Haiku agents and two independent Sonnet judges at
-   medium effort. Record baseline headroom against the stronger control per
+   harness, job policy, and the confirmed
+   [agent and judge models](#agent-and-judge-models) at medium effort.
+   Record baseline headroom against the stronger control per
    scenario. Use both-models-off Answer in matched replays and label any
    separately judged no-model control. Keep this baseline throughout the
    three changes and show each candidate against it and its predecessor.
+   For every arm report the
+   [steering measures](#what-the-gate-needs-and-how-to-steer-toward-it):
+   scenarios whose first delivery covers every essential, scenarios one
+   essential short, and the turn at which each note is first covered.
    [L7 work order](final-plan-fp16.md#128-work-order) · [Rubrics](answer-evaluation/rubrics.md) · [Report layout](answer-evaluation/README.md)
 2. **Change set 1 — let Answer gather the evidence.** Compare the current
    Search-led loop with evidence needs routed to native readers, then add
    targeted range expansion and the bounded retained-text scan. Use both
-   models off for attribution. Replay fixed and need-based read allocations
+   models off for attribution. This is where reader sequences are measured.
+   Run one fixed recipe per task kind from the table below, starting from
+   the task alone and following only anchors found in earlier reads. Vary
+   the follow-up reads allowed per sub-need in each round before the round
+   ceiling. Today that allowance is one, which leaves a sub-need two reads
+   after its first round. A chain from discovery to symbol to caller to
+   source needs three. Replay fixed and need-based read allocations
    on the same routes. Determine where each essential first becomes available
    and where it is lost. Carry the best supported combination into the judged
-   arms. Pilot saved working-tree reads separately on controlled changes and
-   an explicit source grant. The pinned comparison always sees the same bytes.
+   arms. Saved working-tree reads are deferred until after the Windows
+   review, as described below. The pinned comparison always sees the same
+   bytes.
    [Retrieval rounds](#retrieval-rounds-inside-one-answer) · [Evidence budgets](#read-and-delivery-budgets)
 3. **Change set 2 — let the models choose consequential work.** Hold gathering
    and allocation fixed. Compare deterministic choices with Arbiter choices
    over the same eligible actions, with Focus held fixed. Separately compare
-   Focus off/on for the same candidates and Arbiter setting. Then test the
+   Focus off/on for the same candidates and Arbiter setting, at the
+   candidate count the first milestone's wider-Focus check selected. Then
+   test the
    interaction on the real loop where a changed choice affects later reads.
    Capture offered candidates, scored windows/cards, decision source,
    abstentions, next read and newly delivered evidence. Train or recalibrate
@@ -426,12 +687,18 @@ and uses the result in the next round. Keep deterministic selection for
 disabled, abstaining or unavailable models. Cache by source identity and
 range. Skip a repeated action that adds no evidence. Stop on sufficient
 cited coverage, exhausted admissible actions, cancellation, budget or
-deadline. If the current three-round ceiling regularly stops a productive
-chain, replay those cases with more funded rounds and compare external work
-saved. Increase a ceiling only on that evidence and through its contract.
+deadline. Two limits bound a chain today: three rounds, and one follow-up
+read per sub-need in each later round. The second is the tighter one. If
+either regularly stops a productive chain, replay those cases with more
+funded reads or rounds and compare external work saved. Increase a limit
+only on that evidence and through its contract.
 [Loop model roles](final-plan-fp16.md#122-how-the-models-take-part) · [Native limits](../../crates/airk-core/src/arbiter/answer_loop.rs)
 
-**Use current files when the question requires current files.** For a task
+**Use current files when the question requires current files.** This
+capability is deferred until after the Windows review. It needs a new
+source-authority contract and its security review, the pinned comparison
+cannot use it, and no measured class of misses yet depends on current
+bytes. Start it earlier only if Stage A traces show such a class. For a task
 about a saved change, use a caller-supplied or otherwise explicitly authorized
 base/head or changed-path selection. Verify its identity before following
 the diff into surrounding definitions, callers and tests. A read-only,
@@ -482,6 +749,11 @@ request or previous results. Count it as an external round trip.
 | Design or select a test | Can it trace the real entry point through fixture setup to an assertion with an independent expected outcome, locate the command, selector and platform flags, and tell whether that test ran on this revision? Only a matching execution receipt establishes a pass. |
 | Make an architecture or impact decision | Can it trace a complete path across an interface, including a boundary, variant or failure path that could change the decision? For “all callers” or “no remaining uses,” identify traversed roots, exclusions and completeness. A bounded or text-only search leaves that claim open. |
 
+The frozen scenarios cover coding, writing, testing and architecture. They
+contain no patch review and no debugging task, so those two rows are
+unjudged diagnostics on synthetic or development cases. A claim about review
+or debugging needs frozen scenarios of that kind first.
+
 Preselect a small development sample spanning the task kinds above and both
 repositories. Give a fresh agent only the task and the initial Answer delivery,
 including a partial if that is what arrived. Block follow-up reads in this
@@ -514,7 +786,9 @@ fewer round trips and less repeated context.
 
 ### Stage B — Stop for manual review of Windows results
 
-Present the Windows baseline and series comparisons, what each model added,
+Present the Windows baseline and series comparisons, the evidence-ceiling
+result, the steering measures, the Opus panel beside the Sonnet gate, what
+each model added,
 where the acceptance criteria were missed, and the exact candidate and
 receipts. Include both index-quality dispositions, unresolved retrieval
 failures, and examples of external work displaced or still required.
@@ -527,6 +801,17 @@ Wait for the user's decision before starting Linux LX or L7.
 - **Proceed to Linux.** Freeze the Windows-reviewed candidate, model and
   calibration identities, scenarios, rubrics, harness configuration, and
   comparison set. Carry forward the agreed evaluation scope for Linux.
+- **Ship the retrieval gains without the turn-saving claim.** If the rule is
+  missed again and the evidence-ceiling arm or the steering measures show
+  the remaining gap is outside Answer's reach, the user can stop the Answer
+  series. The Search changes, the selected indexes, and the Focus and
+  Arbiter routes then go forward on their own evidence. Decide at this
+  review which later milestones still apply: Linux CUDA for the model
+  routes, the sealed run, WebGPU preparation and the rentals.
+
+Once the retrieval and Answer behavior is accepted at this review, the
+[agent-facing tool surface](#agent-facing-tool-surface) stage starts. It
+applies under each of the three outcomes above.
 
 ### Stage C — Prove and evaluate Linux CUDA after approval
 
@@ -558,6 +843,142 @@ Wait for the user's decision before starting Linux LX or L7.
    results and ledger. Identify the accepted candidate and any remaining
    device-specific gaps at the cross-platform review before E8 and the
    later WebGPU and CPU work.
+
+## Agent-facing tool surface
+
+Start this stage when the Windows review accepts the retrieval and Answer
+behavior. It can run alongside Stage C, because it changes what an agent is
+shown and not how a route computes. Freeze its result before the sealed
+run, so that E8 confirms the surface that ships. One decision comes
+earlier, before the Stage A baseline.
+
+**What the evaluation tests and what the product advertises.** The harness
+wrapper offers an agent six tools on the Answer and Search paths and one on
+Parse. It prescribes the first call, and it supplies Answer's `schema` and
+`budget` itself, so the judged agent calls Answer with a question alone.
+The product advertises more and asks more:
+
+- The installed service read for this review listed 30 tools to its MCP
+  client. The branch builds its public catalog from the native tool router
+  plus the Explorer drafting, template and help tools.
+- The Core Answer request requires `schema`, `question` and a `budget` that
+  carries every loop limit. The advertised `schema` is a string with no
+  description.
+- The server guidance routes identifiers to Symbols, References and reads,
+  and concepts to Search. It does not mention Answer. Answer's description
+  says what it does and not when to prefer it.
+- Four tool definitions read on the installed service ran to roughly 3 to
+  5 KB each. Most of that is ten shared scope, response and verification
+  parameters that the evidence tools repeat.
+
+A passing gate therefore shows what Answer does when it is called the
+wrapper's way. It does not show that an agent holding the product's tools
+chooses Answer, or can call it. The installed service may be older than
+the candidate, so the first step below records the candidate's own catalog.
+[Wrapper tool lists](../../scripts/arbiter-answer-eval/README.md) · [Server guidance](../../crates/airk-mcp/src/unified.rs) · [Public catalog](../../crates/airk-mcp/src/combined.rs) · [Answer request](../../crates/airk-core/src/arbiter/answer_loop.rs)
+
+**Before the Stage A baseline: one call shape.** Decide whether the public
+Answer tool accepts a question alone, with the service applying the request
+schema and the whole default budget. That is the call the wrapper already
+makes. It changes a wire shape, so it needs the user's recorded decision
+and the owning contract's update. If the decision is no, the judged agent
+builds the full request itself and the wrapper stops supplying it. Either
+way the judged call and the shipped call are the same.
+[Answer contract](../../crates/airk-core/src/arbiter/CONTRACT.md)
+
+**Step 1. Record the candidate's catalog.** From the accepted build, save
+the public tool list as an MCP client receives it. Report the tool count,
+the bytes of definitions and guidance, the parameters the tools share, and
+each statement in a description that the accepted behavior made untrue.
+
+**Step 2. Free-choice arm.** Give a fresh agent the task and that catalog
+unchanged: every advertised tool, its description and schema, the server
+guidance, no prescribed first call and no supplied arguments. Use the gate
+agent on the 20 development scenarios with the same turn cap, audit and
+judges. Record:
+
+- the first tool called, and the order of tools through the session;
+- whether the first Answer call is accepted, and each refusal with its
+  reason;
+- calls to tools that could not serve the task, and repeated or abandoned
+  calls;
+- the steering measures, turns and bytes, beside the prescribed-first-call
+  results for the same candidate.
+
+This arm is the control for each change below.
+
+**Step 3. Test changes against that control.**
+
+| Change | What it is | Needs |
+| --- | --- | --- |
+| Guidance and descriptions | Rewrite the server guidance and each description to say when to use the tool, what it returns and what to call next. State when Answer is the first call and when a direct lookup is. Remove statements the accepted behavior made untrue. | Regenerated catalog fixtures and help text |
+| Tool and parameter names | Rename the public names that mislead or that collide with an agent's own tools, as proposed below. | The user's recorded decision, a ruling on old names, and an update to everything that names a public operation |
+| Default tool profile | Advertise a small evidence set by default. Proposed start: Answer, Search, Symbols, References, Read File, Context, Outline, List Files, File Info and Status. The drafting, template, proposal, handoff and diagnostic tools move to a full profile that a user or client opts into. | The user's recorded decision and a contract for the profile setting |
+| Leaner default schemas | Leave shared verification, response and scope parameters out of the default schemas where their defaults serve an agent. The handler and its defaults do not change. | The user's recorded decision |
+
+Test the description rewrite first, because it needs no decision. Test the
+names next, and compare the full catalog with the narrowed profile last, so
+the three effects stay separate.
+
+**Proposed names.** A name can decide the choice before a description is
+read. One MCP client observed in this review listed the AIRK tools by name
+alone until their definitions were loaded, and several current names are
+generic enough to lose to an agent's own file reader and search. This is a
+hypothesis until the free-choice arm measures it. Rename only where the
+current name misleads or collides.
+
+| Current public name | Proposed | Reason |
+| --- | --- | --- |
+| `answer` | `gather_context` | The tool returns cited evidence for a whole task and does not answer. |
+| `search` | `search_passages` | Says what comes back, and separates one ranked query from the multi-round tool. |
+| `symbols` | `find_definition` | The tool defaults to exact written definitions. |
+| `references` | `find_references` | Joins the verb family. Its description must open with "textual occurrences", because the name suggests resolved references. |
+| `read_file` | `read_indexed_range` | Collides with an agent's own reader. Says the read is bounded and comes from the indexed revision that citations point to. |
+| `context` | `read_around` | Vague today, and it would collide with `gather_context`. |
+| `outline` | `outline_file` | Says it takes one file. |
+| `list_files` | `list_indexed_files` | Collides with directory listing. |
+| `file_info` | unchanged | Clear enough. |
+| `status` | `index_status` | "Status" alone could mean Git or the service. |
+
+- Answer's argument is named `question`, which invites a short question.
+  The evaluation sends the whole task. Naming it `task` belongs with the
+  call-shape decision.
+- The catalog already separates public names from native ones, `answer`
+  from `airk_answer`. The rename changes the public layer only. Native names
+  and CLI commands stay.
+- The feature keeps the name Answer in documents, Admin and Workbench. Only
+  the public tool name changes.
+- Prepared Parse plans, the extension, Workbench and the harness catalog
+  name public operations. Update each with the rename.
+- Whether an old public name stays callable for a release, or the rename is
+  clean at 1.9, is the user's decision.
+
+**Rules for narrowing.**
+
+- Narrow what MCP advertises. Remove no capability. The CLI keeps every
+  operation, and Admin and Workbench keep theirs.
+- Each operation keeps one canonical handler. Whether MCP advertises it is
+  a per-operation applicability entry, as it already is for management
+  operations. Add no MCP-only implementation, and no alias that makes
+  surfaces look equivalent. The old public name of a renamed tool is a
+  separate ruling, listed with the proposed names.
+- The full profile restores the present catalog. A parameter left out of a
+  default schema keeps its default and stays in the full profile.
+- Prepared Parse plans, the extension, Workbench and the harness catalog
+  name public operations. Check each before a tool leaves the default list.
+- An advertised tool keeps full read parity for the inputs and fields it
+  advertises.
+- Decide each cut on the free-choice comparison. A tool leaves the default
+  profile when agents finish at least as well without it.
+
+**Acceptance.** Adopt a surface change when, in the free-choice arm, it
+raises the scenarios whose first delivery covers every essential or lowers
+the turns to coverage, lowers neither repository, and every first Answer
+call an agent makes is accepted. Report the Opus panel beside the gate
+agent on the final surface. Then freeze the catalog, names, guidance and
+profile with the candidate, regenerate the harness catalog from that build, and run
+the sealed confirmation on it.
+[Read parity](../read-interface-parity.md) · [Steering measures](#what-the-gate-needs-and-how-to-steer-toward-it) · [Agent and judge models](#agent-and-judge-models)
 
 ## 4. Close the parallel Section 12 work
 
@@ -593,7 +1014,8 @@ Wait for the user's decision before starting Linux LX or L7.
 
 1. **Freeze the CUDA-reviewed candidate and complete E8/E9.** Record the
    selected Focus and Arbiter weights, graphs, compiler and task policies,
-   calibration, provider options, and Windows/Linux CUDA receipts. On the
+   calibration, provider options, Windows/Linux CUDA receipts, and the
+   frozen [agent-facing tool surface](#agent-facing-tool-surface). On the
    user's word, freeze the criteria and run E8 sealed confirmation once.
    Keep sealed judgments out of fitting. Complete the E9 report and obtain
    the route decisions before opening WebGPU qualification, as required by

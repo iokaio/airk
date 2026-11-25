@@ -19456,3 +19456,198 @@ qualification is claimed. Isolated Python unittest discovery passed 2 replay,
 under their respective source directories with Python 3.13 `-I -B`.
 The next campaign action after the user's review is the first indexing
 experiment on verified pinned sources and settled publications.
+
+### 25 November 2026 — Completion plan revised after goals and indexing review
+
+The user asked for a review of the completion plan and of its goals, then
+directed: "Yes, revise plan". This entry records a document revision. No
+build, index, replay, agent session or judged session ran. Implementation
+still awaits the user's review of the revised plan.
+[Goals and measures](../arbiter/completion-plan.md#goals-and-how-progress-is-measured) · [First milestone](../arbiter/completion-plan.md#index-and-search-quality-before-answer)
+
+**Identity and writes.** The effective Windows account and token default
+owner were TYAI\tdotn, SID ending in 1002, matched to interactive Explorer
+in session 1. The direct edit tool's identity was observed separately, on a
+probe file in the session's temporary folder, before it wrote to the
+repository. The guard checked both output parents before the writes and the
+plan's owner afterward. Another process held the plan open with a mapped
+section, so the rewritten opening was written in place without truncation
+and its bytes were verified by SHA-256 against the intended content.
+
+**Read-only observations.** These are readings of source and reports. None
+is a new measurement.
+
+- A chunk's lexical row is the deduplicated term set of its path and text
+  in one FTS5 column. BM25 has no term frequency and no field weights there.
+  Terms have no stemming or plural folding, and a run of capitals stays one
+  term. The effect on ranking is unmeasured.
+- A vector unit targets 256 tokens, carries up to 32 tokens of written
+  context and has no overlap.
+- The loop allows three rounds and one follow-up read per sub-need in each
+  later round.
+- The six judged reports record two correct finishes, both by Search on
+  airk in the one-turn series. The gate needs every essential covered and
+  judged correct.
+
+**What the revision adds.**
+
+- A goals section: where the evidence stands, deterministic steering
+  measures beside the unchanged gate, an evidence-ceiling arm, the task
+  kinds the gate judges, a bounded index goal with a cost envelope, and
+  nine decisions for the user.
+- First milestone: a rank census of all 113 notes as the first step, a
+  label and corpus audit, one primary measure, a selection bar, held-out
+  retrieval probes, a limit of two pilots and a default of reusing the
+  settled publications.
+- The index candidate table reordered by trigger, with source selection,
+  query-side term variants and lexical rows that keep term frequency added.
+- Stage A: contract decisions recorded before the run, the follow-up read
+  allowance varied before the round ceiling, steering measures per arm.
+- Stage B: a third outcome, shipping the retrieval gains without the
+  turn-saving claim.
+
+**What it removes or moves.** Nothing is dropped without a record here.
+
+- The lineage study of historical regression is replaced by one paragraph.
+  A matched old and new build stays available if the census points at a
+  writer change.
+- Reader sequences move from the first milestone to change set 1, as fixed
+  recipes with both models off. The first milestone measures each reader
+  alone.
+- The replay of historical follow-up searches and ranges moves from Stage A
+  into the first milestone, where it decides whether Step 8 is the control.
+- Focus off/on pairing on every index pilot becomes one confirmation of the
+  selected configuration. A wider Focus candidate set is tested once.
+- Agent sessions for each index candidate become one confirmation on the
+  control and the selected configuration.
+- Saved working-tree reads are deferred until after the Windows review.
+- Embedding-model and late-interaction candidates need the user's decision
+  before a pilot.
+
+**Agent and judge models.** During the revision the user wrote: "The test
+agent is named as Haiku. In spite of the cost, let's make it Sonnet for some
+and Opus for some." The user asked for a recommended mix and judge model.
+The plan records the primary agent's recommendation: Sonnet as the gate
+agent on all 20 scenarios and five paths in every series, Opus on Search,
+Parse and Answer with both models at the baseline and the last change set,
+all three tiers once on the evidence-ceiling arm, and two Opus judges. All
+run at medium effort. It awaits the user's confirmation. The standing rule
+of Haiku agents and Sonnet judges is unchanged until then.
+[Recommendation and reasons](../arbiter/completion-plan.md#agent-and-judge-models)
+
+**Open.** The nine decisions listed in the plan. The current assignment and
+both rule files still name different next actions and the earlier models.
+They change when the user approves execution.
+
+**Validation.** `pwsh -NoProfile -File scripts/check-repo.ps1` passed for
+10,740 public files in about 20 seconds, and `git diff --check` reported
+nothing. A scripted pass over the plan resolved all 113 relative links and
+anchors, and the nine anchors that the Search plan and this ledger link to
+are still present. These checks cover documentation consistency only.
+
+### 25 November 2026 — Evaluation agent and judge models confirmed
+
+The user confirmed the recommended mix: "Yes, confirm mix". For the fresh
+series Sonnet (`claude-sonnet-5-5`) is the gate agent on all 20 scenarios
+and five paths in every series. Opus (`claude-opus-5-5`) runs Search, Parse
+and Answer with both models at the baseline and the last change set. Two
+Opus judges grade every judged session. All run at medium effort. The
+substantial-win rule is applied to the Sonnet results, and the Opus panel
+is reported beside it. This replaces the Haiku agents and Sonnet judges of
+21 November. Earlier series keep their own models as history.
+[Models table and reasons](../arbiter/completion-plan.md#agent-and-judge-models)
+
+The rule text changed in the same way in `AGENTS.md` and `CLAUDE.md`, and
+the current assignment has a dated entry. The plan marks decision 4 as
+made. Eight decisions stay open. One is the evidence-ceiling arm, whose
+models apply only if the user approves it. The assignment and rule files
+still name the earlier next action. That changes when the user approves
+execution.
+
+Not changed: the harness defaults in `common.py`, the harness README and
+the rubric's judge paragraph still name Haiku and Sonnet. They change with
+the baseline harness and its new prompt freeze, in that series' commit. No
+session ran. Before the first Opus session, check that the headless client
+accepts `claude-opus-5-5`.
+
+**Validation.** The repository check, which enforces that `AGENTS.md` and
+`CLAUDE.md` are identical, and `git diff --check` both passed after these
+edits. The relative links and anchors of the plan, both rule files and the
+current assignment resolved. All five edited files are owned by the
+verified human account. These checks cover documentation consistency only.
+
+### 25 November 2026 — Agent-facing tool surface stage added to the completion plan
+
+The user asked whether the plan needs a section, once the retrieval and
+Answer changes are accepted, for improving the MCP tool descriptions so an
+agent uses the right tools, and whether that means narrowing the MCP tools
+while the CLI stays full featured. The user then directed: "Yes, add it".
+This is a document revision. No build or session ran.
+[Tool surface stage](../arbiter/completion-plan.md#agent-facing-tool-surface)
+
+**Read-only observations.** They come from the installed service's
+advertised catalog as this session's MCP client received it, and from branch
+source. The installed service may be older than the candidate.
+
+- The harness wrapper offers six tools on the Answer and Search paths and
+  one on Parse, prescribes the first call, and supplies Answer's `schema`
+  and `budget`.
+- The installed service listed 30 tools. Its Answer tool required `schema`,
+  `question` and a seven-field `budget`, and its `schema` had no description.
+  On the branch the Core request type also requires all three.
+- The server guidance routes identifiers to Symbols, References and reads,
+  and concepts to Search. It does not mention Answer.
+- Four tool definitions were read and ran to roughly 3 to 5 KB each by
+  inspection. That size is an estimate and not a measurement.
+
+**What the plan now says.** A stage that starts when the Windows review
+accepts the retrieval and Answer behavior, can run alongside Linux CUDA and
+is frozen before the sealed run. It records the candidate's catalog, runs a
+free-choice arm on the unchanged catalog as the control, tests a rewrite of
+the guidance and descriptions, and then a narrowed default profile and
+leaner default schemas. Its rules narrow what MCP advertises and remove no
+capability. Each operation keeps one canonical handler, the full profile
+restores the present catalog, and the CLI keeps every operation. The
+milestone table, the order of work, Stage A, Stage B and the E8 freeze link
+to it.
+
+**Open.** Two decisions join the list, for ten open in all: Answer's public
+call shape, needed before the Stage A baseline, and the default tool profile
+with leaner schemas, decided on the free-choice comparison.
+
+**Validation.** The repository check and `git diff --check` passed after
+this edit, the plan's relative links and anchors resolved, and both edited
+files are owned by the verified human account. These checks cover
+documentation consistency only.
+
+### 25 November 2026 — Proposed public tool names added to the tool surface stage
+
+The user asked whether an agent is more likely to choose a tool by its name
+than by its description, and which names to change in the default set. The
+user then directed: "Yes, add them". This is a document revision. No build
+or session ran.
+[Proposed names](../arbiter/completion-plan.md#agent-facing-tool-surface)
+
+The plan now lists names as a tested change in the free-choice arm, after
+the description rewrite and before the narrowed profile. It proposes nine
+renames in the public-name layer: `answer` to `gather_context`, `search` to
+`search_passages`, `symbols` to `find_definition`, `references` to
+`find_references`, `read_file` to `read_indexed_range`, `context` to
+`read_around`, `outline` to `outline_file`, `list_files` to
+`list_indexed_files` and `status` to `index_status`. `file_info` stays.
+Native names and CLI commands do not change, and the feature keeps the name
+Answer elsewhere.
+
+The effect of names is a hypothesis. Its one observation here is that this
+session's MCP client listed the AIRK tools by name alone until their
+definitions were loaded. The free-choice arm measures it.
+
+**Open.** Decision 12 joins the list, for eleven open in all: the renames,
+and whether an old public name stays callable for a release or the rename
+is clean at 1.9. Decision 10 now also covers naming Answer's argument
+`task`. The narrowing rule against aliases now excludes that ruling.
+
+**Validation.** The repository check and `git diff --check` passed after
+this edit, the plan's relative links and anchors resolved, and both edited
+files are owned by the verified human account. These checks cover
+documentation consistency only.
