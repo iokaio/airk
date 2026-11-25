@@ -13,7 +13,7 @@ use super::{
 use crate::FileStore;
 use crate::index::{Handle, HandleKind, IndexReader};
 use airk_core::graph_storage::{GraphCounts, GraphRecord, GraphRecordReader, GraphScope};
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use rusqlite::Connection;
 use std::sync::{Arc, Mutex};
 
@@ -166,14 +166,108 @@ impl CurrentRead {
         self.deadline = Some(self.clock.now());
     }
 
-    /// Vector evidence is not read from the plain index yet.
+    /// Resolve a ranked vector unit against the pinned extraction.
     pub fn occurrence_hit(
         &self,
         _store: &FileStore,
         pointer: &OccurrencePointer,
     ) -> Result<airk_core::Hit> {
-        self.require_path(&pointer.path)?;
-        anyhow::bail!("vector occurrences are not available in this index")
+        let compact = self
+            .artifact(&pointer.path)?
+            .context("ranked vector artifact is absent from the pinned snapshot")?;
+        self.vector_unit_hit(&compact, pointer)
+    }
+
+    /// Rank committed vector rows from this snapshot, then resolve their
+    /// authorized units in rank, path and ordinal order.
+    pub fn ranked_vector_units(
+        &self,
+        pipeline: airk_core::identity::Sha256Digest,
+        query: &[f32],
+        paths: Option<&[String]>,
+        prefix: Option<&str>,
+        row_limit: usize,
+        unit_limit: usize,
+    ) -> Result<(Vec<OccurrencePointer>, bool)> {
+        ensure!(
+            (1..=1000).contains(&row_limit) && (1..=1000).contains(&unit_limit),
+            "plain vector search limit out of range"
+        );
+        let paths = paths.map(serde_json::to_string).transpose()?;
+        self.with_index(|index| {
+            let (setup, _, committed) = index
+                .vector_setup()?
+                .context("semantic retrieval not ready: vector store is unconfigured")?;
+            ensure!(
+                setup.pipeline == pipeline && setup.dimensions as usize == query.len(),
+                "indexed vector pipeline differs from query model"
+            );
+            let live = index.live_rows_for_paths(paths.as_deref(), prefix, committed)?;
+            if live.is_empty() {
+                return Ok((Vec::new(), false));
+            }
+            self.live()?;
+            let matrix = index.load_vectors()?.context("indexed vectors disappeared")?;
+            self.live()?;
+            let ranked = matrix.search(query, row_limit, Some(&live))?;
+            #[cfg(feature = "test-support")]
+            let pointer_timing = (paths.is_none()
+                && prefix.is_none_or(str::is_empty)
+                && std::env::var_os("AIRK_PRIVATE_VECTOR_POINTER_TIMING").as_deref()
+                    == Some(std::ffi::OsStr::new("1")))
+            .then(|| (std::time::Instant::now(), ranked.len()));
+            let mut incomplete = ranked.len() < live.len();
+            let mut pointers = Vec::new();
+            for hit in ranked {
+                self.live()?;
+                let remaining = unit_limit - pointers.len();
+                let units = index.scoped_units_for_row(
+                    hit.row,
+                    paths.as_deref(),
+                    prefix,
+                    remaining + 1,
+                )?;
+                incomplete |= units.len() > remaining;
+                for unit in units.into_iter().take(remaining) {
+                    if !self.accepts_path(&unit.path) {
+                        incomplete = true;
+                        continue;
+                    }
+                    let occurrence = PathOccurrences {
+                        version: 1,
+                        path: unit.path,
+                        source_hash: unit.source_hash,
+                        count: unit.ordinal.checked_add(1).context("unit ordinal overflow")?,
+                    };
+                    let occurrence_id = occurrence.occurrence_id(&self.head.scope, unit.ordinal)?;
+                    let pointer = OccurrencePointer {
+                        version: 1,
+                        embedding_key: unit.embedding_key,
+                        occurrence_id,
+                        path: occurrence.path,
+                        path_ordinal: unit.ordinal,
+                        source_hash: unit.source_hash,
+                        payload_digest: unit.payload,
+                        object: unit.payload,
+                        members: serde_json::from_slice(&unit.members)?,
+                    };
+                    pointer.validate()?;
+                    pointers.push(pointer);
+                }
+                if incomplete && pointers.len() == unit_limit {
+                    break;
+                }
+            }
+            #[cfg(feature = "test-support")]
+            if let Some((start, ranked_count)) = pointer_timing {
+                eprintln!(
+                    "AIRK_VECTOR_POINTER_TIMING wanted={row_limit} ranked={ranked_count} pointer_count={} elapsed_ns={}",
+                    pointers.len(),
+                    start.elapsed().as_nanos()
+                );
+            }
+            Ok((pointers, incomplete))
+        })
     }
 
     /// No path occurrence index exists in the plain index.

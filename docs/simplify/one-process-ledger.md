@@ -17670,3 +17670,38 @@ copies were only read. D: had 511.5 GB free.
 
 Next action: plan section 10, item 1 (vectors on the plain store). The user
 is switching to Codex.
+
+### 24 November 2026 — Plain store adopted and semantic smoke passed
+
+The user reauthorized Answer completion after adopting Claude`s
+plain-store implementation. `feat/arbiter-final` fast-forwarded from
+`bc501771` to `2856835730ba47b4401f897b7ea1053978d4f615` and that
+fast-forward reached `origin`. The user requested GPU-first embedding
+and a fresh smoke before the full Bookbuilder and Munarium rebuilds.
+Comparison benchmarks were skipped.
+
+The untouched merged service and CLI compiled. The lexical cold-index
+test passed, but the isolated three-file semantic smoke remained Pending
+with no vectors or semantic hits. The plain-store enrichment and search
+changes restore bounded batch publication and exact scoped retrieval.
+The rebuilt image passed scoped Store/Kernel all-feature Clippy,
+Service/Kernel all-feature test binary compilation and the CLI build.
+The cold-index test selected one and passed it (five filtered). The
+three-file smoke published three vectors, reached Ready, and returned
+three semantic hits with the local U8 MiniLM. This is component evidence
+on Windows and does not establish the GPU route or installed transport.
+
+The checked desktop identity and file owner were `TYAI\tdotn` (Windows
+SID ending `-1002`). The warm target was `answer-loop/target-cuda` under
+`answer-eval-r1`, incremental enabled, with one Cargo owner. Clippy took
+7.912 s, service/test compilation took 228.114 s and CLI build took
+0.384 s. `L5C/CARGO-OWNER-CUDA.semantic-28568357-r2.at-release.json`
+retains the exact argument vectors, environment and timing reports.
+The native source diff digest was
+`f72e26160585bf6f54496593461fc5f357a89a6ea793510c02d40b7e9d5d55c5`.
+The private `arbiter-semantic-28568357-r2-smoke/receipts/outcome.json`
+digest was `568fba82c15e15a9be5d87bb8b2f71287f1d2c72b4ff06e5d97c79f10f1a3bb`.
+D: free space was 500,995,579,904 bytes when the build settled.
+
+Next is the shared-weight MiniLM embedding route and its CUDA/fallback
+smoke. The full indexes have no active writers.

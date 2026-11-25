@@ -302,6 +302,38 @@ impl CurrentRead {
         })
     }
 
+    /// Materialize a ranked unit against the same snapshot's verified extraction.
+    pub fn vector_unit_hit(
+        &self,
+        compact: &Artifact,
+        pointer: &super::vector_map::OccurrencePointer,
+    ) -> Result<airk_core::Hit> {
+        ensure!(
+            compact.path == pointer.path && compact.content_hash == pointer.source_hash.to_string(),
+            "vector unit source differs from retained artifact"
+        );
+        self.require_path(&pointer.path)?;
+        let unit = self
+            .with_index(|index| index.unit_at(&pointer.path, pointer.path_ordinal))?
+            .context("ranked vector unit is absent from the pinned snapshot")?;
+        ensure!(
+            unit.source_hash == pointer.source_hash
+                && unit.payload == pointer.payload_digest
+                && unit.embedding_key == pointer.embedding_key
+                && unit.members == serde_json::to_vec(&pointer.members)?,
+            "ranked vector unit differs from the pinned snapshot"
+        );
+        let retained = self.load_retrieval_artifact(compact)?;
+        ensure!(
+            retained.payload_digest == pointer.payload_digest,
+            "vector unit payload differs from retained artifact"
+        );
+        let hit = airk_core::vector_evidence::materialize(&retained, &pointer.members)?;
+        self.require_path(&hit.citation.path)?;
+        self.live()?;
+        Ok(hit)
+    }
+
     pub fn load_extraction_payload(
         &self,
         compact: &Artifact,

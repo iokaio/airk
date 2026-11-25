@@ -293,7 +293,7 @@ impl CurrentUpdater<'_> {
     }
     /// Resource bodies for the batch. The source-control witness is bound to
     /// the publication it describes, as before.
-    fn plain_resources(
+    pub(super) fn plain_resources(
         &self,
         read: &PlainRead,
         resources: &[airk_store::current::resources::ResourceChange],

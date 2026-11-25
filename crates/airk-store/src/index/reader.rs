@@ -530,13 +530,18 @@ impl IndexReader {
         let mut rows = statement.query(parameters)?;
         let mut units = Vec::new();
         while let Some(row) = rows.next()? {
+            let members = row.get_ref(5)?.as_blob()?;
+            ensure!(
+                members.len() <= super::MAX_RECORD_BYTES,
+                "semantic unit members exceed byte limit"
+            );
             units.push(UnitRow {
                 path: row.get(0)?,
                 source_hash: digest(row.get(1)?)?,
                 payload: digest(row.get(2)?)?,
                 ordinal: u32::try_from(row.get::<_, i64>(3)?)?,
                 embedding_key: digest(row.get(4)?)?,
-                members: row.get(5)?,
+                members: members.to_vec(),
             });
         }
         Ok(units)
@@ -565,6 +570,60 @@ impl IndexReader {
         )?;
         let rows = statement.query_map([paths], |row| row.get::<_, i64>(0))?;
         rows.map(|row| Ok(u64::try_from(row?)?)).collect()
+    }
+
+    /// Committed rows with at least one matching, current unit.
+    pub(crate) fn live_rows_for_paths(
+        &self,
+        paths: Option<&str>,
+        prefix: Option<&str>,
+        committed: u64,
+    ) -> Result<Vec<u64>> {
+        let mut statement = self.connection.prepare_cached(
+            "SELECT DISTINCT v.row FROM vector_rows v
+             JOIN units u ON u.embedding_key=v.embedding_key
+             JOIN files f ON f.id=u.file_id
+             WHERE v.row<?1 AND (?2 IS NULL OR substr(f.path,1,length(?2))=?2)
+             AND (?3 IS NULL OR f.path IN (SELECT value FROM json_each(?3))) ORDER BY v.row",
+        )?;
+        let rows = statement
+            .query_map(params![i64::try_from(committed)?, prefix, paths], |row| {
+                row.get::<_, i64>(0)
+            })?;
+        rows.map(|row| Ok(u64::try_from(row?)?)).collect()
+    }
+
+    /// A bounded slice of occurrences; filter before applying the limit.
+    pub(crate) fn scoped_units_for_row(
+        &self,
+        row: u64,
+        paths: Option<&str>,
+        prefix: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<UnitRow>> {
+        ensure!(
+            (1..=MAX_PAGE).contains(&limit),
+            "unit page limit out of range"
+        );
+        self.unit_rows(
+            "SELECT f.path,f.source_hash,f.payload,u.ordinal,u.embedding_key,u.members
+             FROM vector_rows v JOIN units u ON u.embedding_key=v.embedding_key
+             JOIN files f ON f.id=u.file_id
+             WHERE v.row=?1 AND (?2 IS NULL OR substr(f.path,1,length(?2))=?2)
+             AND (?3 IS NULL OR f.path IN (SELECT value FROM json_each(?3)))
+             ORDER BY f.path,u.ordinal LIMIT ?4",
+            params![i64::try_from(row)?, prefix, paths, i64::try_from(limit)?],
+        )
+    }
+
+    pub(crate) fn unit_at(&self, path: &str, ordinal: u32) -> Result<Option<UnitRow>> {
+        Ok(self
+            .unit_rows(
+                "SELECT f.path,f.source_hash,f.payload,u.ordinal,u.embedding_key,u.members
+                 FROM units u JOIN files f ON f.id=u.file_id WHERE f.path=?1 AND u.ordinal=?2",
+                params![path, i64::from(ordinal)],
+            )?
+            .pop())
     }
 
     /// The embedding pipeline, generation and committed row count.

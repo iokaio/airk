@@ -24,6 +24,16 @@ independently retained specification1 recipe and a malformed record width.
 It checks existing Unavailable fields and a disabled-model control. It does not
 forge an authenticated old store or establish transport/platform qualification.
 
+## Plain-store semantic publication (24 November 2026)
+
+The current index drains bounded work through the collection writer. It
+plans semantic units from retained extraction payloads and checks each
+artifact, model and selection against the current collection snapshot.
+Identical embedding keys share a vector row. New rows are synced before
+publishing units, semantic progress and carried source-control bindings in
+one transaction. A reader can see partial coverage between committed batches.
+A yielded, paused or failed batch leaves its uncommitted work pending.
+
 ## Active-model replacement at the same runtime
 
 The current original MiniLM catalog restores exact publisher graph bytes under

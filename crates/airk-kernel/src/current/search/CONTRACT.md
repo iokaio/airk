@@ -4,6 +4,15 @@ Owner: Kernel (`current/search.rs`, `search/v2.rs`). Store owns the lexical
 readers it calls. No wire field, persisted format, chunking or stored vector
 is changed by either entry below.
 
+## Plain-store vector search (24 November 2026)
+
+The vector branch ranks the selected pipeline's committed rows by exact
+dot product. Path scope and prefix apply before ranking. Deleted and
+unreferenced rows are excluded. Each accepted occurrence binds to its
+retained artifact and extraction before materializing a citation.
+The branch reports incomplete results when its candidate or evidence
+budget truncates the selected scope.
+
 ## Permanent denies and the scoped path roster (22 November 2026)
 
 Before this fix, `filtered_paths` built a bounded path roster whenever the

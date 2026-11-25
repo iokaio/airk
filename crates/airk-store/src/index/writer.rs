@@ -102,6 +102,26 @@ pub struct IndexWriter {
     connection: Connection,
 }
 
+fn apply_resource(transaction: &Transaction<'_>, resource: &ResourceChange) -> Result<()> {
+    ensure!(
+        !resource.key.is_empty()
+            && resource.key.len() <= 256
+            && resource
+                .body
+                .as_ref()
+                .is_none_or(|body| body.len() <= MAX_RESOURCE_BYTES),
+        "invalid index resource"
+    );
+    match &resource.body {
+        Some(body) => transaction.execute(
+            "INSERT INTO resources(key,body) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET body=excluded.body",
+            params![resource.key, body],
+        )?,
+        None => transaction.execute("DELETE FROM resources WHERE key=?1", [&resource.key])?,
+    };
+    Ok(())
+}
+
 fn digest_bytes(digest: &Sha256Digest) -> &[u8] {
     digest.as_bytes().as_slice()
 }
@@ -234,13 +254,7 @@ impl IndexWriter {
             )?;
         }
         for resource in &batch.resources {
-            match &resource.body {
-                Some(body) => transaction.execute(
-                    "INSERT INTO resources(key,body) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET body=excluded.body",
-                    params![resource.key, body],
-                )?,
-                None => transaction.execute("DELETE FROM resources WHERE key=?1", [&resource.key])?,
-            };
+            apply_resource(&transaction, resource)?;
         }
         if let Some(body) = &batch.change {
             transaction.execute(
@@ -322,6 +336,14 @@ impl IndexWriter {
     /// Store one embedded batch. New vectors reach the file and its disk
     /// before the transaction that makes them reachable commits.
     pub fn commit_vectors(&mut self, batch: VectorBatch) -> Result<VectorCommit> {
+        self.commit_vectors_with_resources(batch, &[])
+    }
+
+    pub(crate) fn commit_vectors_with_resources(
+        &mut self,
+        batch: VectorBatch,
+        resources: &[ResourceChange],
+    ) -> Result<VectorCommit> {
         let (setup, generation, committed) =
             vector_setup(&self.connection)?.context("vectors are not configured")?;
         ensure!(
@@ -408,6 +430,13 @@ impl IndexWriter {
                 ],
             )?;
             result.files_done += 1;
+        }
+        ensure!(
+            resources.is_empty() || result.files_stale == 0,
+            "semantic work changed before its vector publication"
+        );
+        for resource in resources {
+            apply_resource(&transaction, resource)?;
         }
         schema::set_meta(
             &transaction,

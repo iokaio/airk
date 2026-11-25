@@ -2,8 +2,7 @@
 
 Owner: Store, `crates/airk-store/src/index/`. Decided by the user on
 24 November 2026: [indexing performance plan](../../../../docs/indexing/performance-plan.md),
-decisions D1 to D8 and section 5. This module is the engine. Kernel does not
-use it yet; plan steps P4 to P6 connect it.
+decisions D1 to D8 and section 5. Kernel uses this engine through the current index reader and writer.
 
 ## Guarantees
 
@@ -50,7 +49,10 @@ use it yet; plan steps P4 to P6 connect it.
   committed count, syncs the file, then commits units, row keys, file states
   and the new row count in one transaction. Rows past the committed count are
   ignored and overwritten. A file whose source hash changed or that is no
-  longer pending is skipped as stale. Identical inputs share one row.
+  longer pending is skipped as stale. Identical inputs share one row. The
+  current collection writer can include semantic progress and carried resource
+  bindings in the transaction. If any planned file is stale, that combined
+  publication fails and no progress or units become visible.
 - Search is exact: one dot product per row (vectors are unit length),
   best first, ties to the lower row; an optional row subset filters it.
 - Retired generation files are removed when a writer opens or reconfigures;

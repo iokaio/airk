@@ -1,17 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
-//! One request gate for lexical selection, current DiskANN and exact citations.
+//! One request gate for lexical selection, exact vector ranking and citations.
 use super::{MAX_LEXICAL_VALIDATION_BYTES, open_selected_lexical};
 use airk_core::search_execution::{
     IncompleteReason, RequestedMode, SearchExecution, SearchUnavailable, ServedMode,
 };
 use airk_core::{Hit, SearchFilters, SearchQuery, SearchResponse, identity::Sha256Digest};
-use airk_retrieval::{bounded::Charge, terms, truncate_utf8, vector::mutable::MutableDiskIndex};
+use airk_retrieval::{bounded::Charge, terms, truncate_utf8};
 use airk_store::current::lexical::{CurrentLexicalCandidate, TermGroup, stable_id};
 use airk_store::{
     FileStore,
     current::{
-        CurrentRead, CurrentScope, CurrentToken, map::MapDomain, postings::Lookup,
-        vector_map::OccurrencePointer,
+        CurrentRead, CurrentScope, CurrentToken, postings::Lookup, vector_map::OccurrencePointer,
     },
 };
 use anyhow::{Context, Result, ensure};
@@ -27,7 +26,6 @@ mod v2_tests;
 
 const BRANCH_CANDIDATES: usize = 100;
 const MAX_SCOPED_PATHS: usize = 4096;
-const MAX_SCOPED_NODES: usize = 4096;
 const MAX_POINTERS: usize = 16_384;
 const MAX_MEMBERS: usize = 65_536;
 const MAX_POINTER_BYTES: usize = 64 << 20;
@@ -716,29 +714,10 @@ pub(crate) fn definition_hints(
     Ok(hints)
 }
 
-/// The plain index does not serve vectors yet (indexing plan step P5): the
-/// semantic branch has no candidates and is incomplete, so hybrid search
-/// degrades to lexical evidence.
+/// Exact dot products over the pinned plain vector generation.
 fn vector_candidates(
-    _store: &FileStore,
-    read: &Arc<CurrentRead>,
-    _query: &SearchQuery,
-    _filtered_paths: Option<&ScopedPaths>,
-    _branch_limit: usize,
-) -> Result<Branch> {
-    read.token()?;
-    Ok(Branch {
-        values: Vec::new(),
-        incomplete: true,
-        kind: v2::BranchKind::Vector,
-    })
-}
-
-/// The old graph-backed branch, kept until the plain vector reader replaces it.
-#[allow(dead_code)]
-fn graph_vector_candidates(
     store: &FileStore,
-    read: &Arc<CurrentRead>,
+    read: &CurrentRead,
     query: &SearchQuery,
     filtered_paths: Option<&ScopedPaths>,
     branch_limit: usize,
@@ -754,115 +733,33 @@ fn graph_vector_candidates(
     let vector = model
         .embed_text(&query.text)?
         .context("semantic retrieval not ready: no recognized model tokens")?;
-    let graph = MutableDiskIndex::open(read.clone(), model.dimensions(), objects.pipeline_digest)?;
-    // Only the evaluation switch passes a different branch limit.
+
+    // Preserve the product and private evaluation branch bounds.
     let wanted = if branch_limit == BRANCH_CANDIDATES {
         (query.limit * 4).clamp(64, 1000)
     } else {
         (branch_limit * 4).clamp(64, 1000)
     };
+    let paths = filtered_paths.map(|scope| scope.paths.iter().cloned().collect::<Vec<_>>());
+    let (selected, mut incomplete) = read.ranked_vector_units(
+        objects.pipeline_digest,
+        &vector,
+        paths.as_deref(),
+        query.path_prefix.as_deref(),
+        wanted,
+        branch_limit,
+    )?;
+    incomplete |= filtered_paths.is_some_and(|scope| scope.incomplete);
+
     let mut budget = PointerBudget::default();
-    let mut incomplete = false;
-    let mut selected = Vec::<Arc<OccurrencePointer>>::new();
-    let scoped_paths = if let Some(scope) = filtered_paths {
-        incomplete |= scope.incomplete;
-        Some(scope.paths.iter().cloned().collect::<Vec<_>>())
-    } else if let Some(prefix) = query
-        .path_prefix
-        .as_deref()
-        .filter(|prefix| !prefix.is_empty())
-    {
-        let roster = read.lookup_paths(Lookup::Files, prefix, None, MAX_SCOPED_PATHS)?;
-        incomplete |= roster.next_after.is_some();
-        Some(roster.paths)
-    } else {
-        None
-    };
-    if let Some(paths) = scoped_paths {
-        let mut scoped = BTreeMap::<u32, Vec<Arc<OccurrencePointer>>>::new();
-        'paths: for path in paths {
-            let Some(index) = read.path_occurrences(&path)? else {
-                continue;
-            };
-            for ordinal in 0..index.count {
-                let id = index.occurrence_id(&read.head().scope, ordinal)?;
-                let bytes = read
-                    .map_get(MapDomain::Occurrence, id.as_bytes())?
-                    .context("current scoped occurrence missing")?;
-                let pointer = OccurrencePointer::decode(&bytes, id)?;
-                ensure!(
-                    pointer.path == path
-                        && pointer.path_ordinal == ordinal
-                        && pointer.source_hash == index.source_hash,
-                    "current scoped occurrence identity mismatch"
-                );
-                let binding = read
-                    .vector_binding(pointer.embedding_key)?
-                    .context("current scoped binding missing")?;
-                ensure!(
-                    binding.occurrence_ids.binary_search(&id).is_ok(),
-                    "current scoped binding omits occurrence"
-                );
-                if (!scoped.contains_key(&binding.graph_id) && scoped.len() == MAX_SCOPED_NODES)
-                    || !budget.admit(&pointer)?
-                {
-                    incomplete = true;
-                    break 'paths;
-                }
-                scoped
-                    .entry(binding.graph_id)
-                    .or_default()
-                    .push(Arc::new(pointer));
-            }
-        }
-        let ids = scoped.keys().copied().collect::<Vec<_>>();
-        let ranked = graph.search_subset(&vector, &ids, wanted)?;
-        incomplete |= ranked.hits.len() < scoped.len();
-        for (id, _) in ranked.hits {
-            selected.extend(
-                scoped
-                    .remove(&id)
-                    .context("current scoped ranking mismatch")?,
-            );
-        }
-    } else {
-        let ranked = graph.search(&vector, wanted)?;
-        #[cfg(feature = "test-support")]
-        let pointer_timing = (std::env::var_os("AIRK_PRIVATE_VECTOR_POINTER_TIMING").as_deref()
-            == Some(std::ffi::OsStr::new("1")))
-        .then(|| (std::time::Instant::now(), ranked.hits.len()));
-        incomplete |= ranked.partial || (ranked.hits.len() as u64) < graph.counts()?.live_nodes;
-        'nodes: for (id, _) in ranked.hits {
-            let mut pointers = read.graph_candidate_pointers(id)?;
-            pointers.sort_by(|a, b| {
-                a.path
-                    .cmp(&b.path)
-                    .then(a.path_ordinal.cmp(&b.path_ordinal))
-            });
-            for pointer in pointers {
-                if !budget.admit(&pointer)? {
-                    incomplete = true;
-                    break 'nodes;
-                }
-                selected.push(Arc::new(pointer));
-            }
-        }
-        #[cfg(feature = "test-support")]
-        if let Some((start, ranked_count)) = pointer_timing {
-            eprintln!(
-                "AIRK_VECTOR_POINTER_TIMING wanted={wanted} ranked={ranked_count} pointer_count={} elapsed_ns={}",
-                selected.len(),
-                start.elapsed().as_nanos()
-            );
-        }
-    }
     let mut seen = BTreeSet::new();
     let mut values = Vec::new();
     for (rank, pointer) in selected.into_iter().enumerate() {
-        if rank == branch_limit {
+        if !budget.admit(&pointer)? {
             incomplete = true;
             break;
         }
+        let pointer = Arc::new(pointer);
         for member in &pointer.members {
             let identity = stable_id(&pointer.path, u64::from(member.chunk_index))?;
             if seen.insert(identity) {
@@ -910,7 +807,7 @@ fn materialize(
         "current search evidence read budget exceeded"
     );
     match candidate {
-        Candidate::Vector(pointer) => read.occurrence_hit(store, &pointer),
+        Candidate::Vector(pointer) => read.vector_unit_hit(&compact, &pointer),
         Candidate::Lexical(candidate) => {
             let wanted = terms(&query.text);
             lexical_hit(store, read, &compact, candidate, |found| {

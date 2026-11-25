@@ -1077,37 +1077,331 @@ impl Kernel {
         Ok(report)
     }
 
-    /// Vectors are out of scope for this step of the plain store: the queue
-    /// stays pending (readiness "pending"/"partial") and nothing is published.
-    /// The embedding step writes vectors through `PlainWriter` instead.
+    /// Publish canonical semantic units from retained extractions under the
+    /// same collection lock as the source and policy writers.
     pub(super) fn drain_current_enrichment(
         &self,
-        _model: &EmbeddingModel,
-        _selection: &VectorSelectionPolicy,
-        _stats: &mut EmbeddingCacheStats,
-        _max_batches: usize,
-        _current_work: Option<&mut airk_ingest::CurrentIndexWork>,
+        model: &EmbeddingModel,
+        selection: &VectorSelectionPolicy,
+        stats: &mut EmbeddingCacheStats,
+        max_batches: usize,
+        mut current_work: Option<&mut airk_ingest::CurrentIndexWork>,
         admission: DrainAdmission<'_>,
     ) -> Result<DrainOutcome> {
-        let _ = (admission.execution, admission.deadline);
-        // A paused service turn still returns admission at its boundary.
-        if crate::service_execution::pause_released()
-            && self.service_collection.is_some()
-            && crate::service_execution::paused_at_boundary()
-        {
-            crate::service_execution::release_pause_wait();
-        }
-        let generation = if self.store.plain_index_present()? {
-            Some(self.store.plain_read()?.sequence())
-        } else {
-            None
+        use airk_store::index::{VectorBatch, VectorSetup};
+        let scope = self.current_scope()?.context("workspace is not indexed")?;
+        let lock = self.store.lock()?;
+        let quota = self.collection_quota()?;
+        let mut writer = self.store.plain_writer(&lock)?;
+        let descriptor = model.cache_descriptor()?;
+        let setup = VectorSetup {
+            dimensions: u32::try_from(model.dimensions())?,
+            pipeline: descriptor.identity()?,
         };
+        let selection_digest = selection.digest()?;
+        let mut generation = None;
+        let mut yield_to_source = false;
+        for batch in 0..max_batches {
+            if (batch > 0 || crate::service_execution::pause_released())
+                && self.service_collection.is_some()
+                && crate::service_execution::paused_at_boundary()
+            {
+                crate::service_execution::release_pause_wait();
+                break;
+            }
+            crate::service_execution::checkpoint()?;
+            if self.service_collection.is_some()
+                && crate::service_execution::source_yield_requested()
+            {
+                yield_to_source = true;
+                break;
+            }
+            if batch > 0
+                && admission
+                    .deadline
+                    .is_some_and(|end| std::time::Instant::now() >= end)
+            {
+                break;
+            }
+            let job = if self.service_collection.is_some() {
+                None
+            } else {
+                airk_store::scheduler::Queue::new(&self.data_root)
+                    .status(&self.collection, &self.root_id())?
+            };
+            if max_batches <= 8
+                && job.as_ref().is_some_and(|job| {
+                    job.paused || job.blocked || job.requested_revision > job.completed_revision
+                })
+            {
+                break;
+            }
+            let read = self.store.plain_read()?;
+            ensure!(read.scope() == &scope, "semantic index scope changed");
+            let Some(mut work) = read_plain_work(&read)? else {
+                break;
+            };
+            generation = Some(read.sequence());
+            if work.pending.is_empty() {
+                break;
+            }
+            let state = read
+                .collection_state()?
+                .context("current configuration missing")?;
+            ensure!(
+                work.pipeline_digest == setup.pipeline
+                    && work.selection_digest == selection_digest
+                    && state
+                        .configuration
+                        .model
+                        .as_ref()
+                        .map(|model| model.pipeline_digest)
+                        == Some(setup.pipeline)
+                    && state.configuration.vector_selection.digest()? == selection_digest
+                    && read
+                        .reader()
+                        .vector_setup()?
+                        .is_some_and(|(configured, _, _)| configured == setup),
+                "pending semantic work differs from current configuration"
+            );
+            let recent: std::collections::BTreeSet<_> = job
+                .iter()
+                .flat_map(|job| &job.recent_paths)
+                .map(String::as_str)
+                .collect();
+            let mut selected: Vec<_> = work
+                .pending
+                .iter()
+                .map(|pending| {
+                    (
+                        !recent.contains(pending.path.as_str()),
+                        airk_ingest::priority::agent_path_priority(&pending.path),
+                        pending,
+                    )
+                })
+                .collect();
+            let priority = |left: &(bool, u8, &PendingArtifact),
+                            right: &(bool, u8, &PendingArtifact)| {
+                (left.0, &left.1, &left.2.path).cmp(&(right.0, &right.1, &right.2.path))
+            };
+            if selected.len() > 32 {
+                selected.select_nth_unstable_by(32, priority);
+                selected.truncate(32);
+            }
+            selected.sort_unstable_by(priority);
+            let before_units = stats.vector_units;
+            let mut cache = EmbeddingCacheContext {
+                cache: None,
+                bypass: false,
+                stats,
+                max_workers: admission.execution.plan.inference_workers,
+                working_memory_bytes: admission.execution.plan.working_memory_bytes,
+            };
+            crate::service_execution::progress_phase(
+                airk_core::service_progress::WorkPhase::Preparing,
+            );
+            let PreparedPlainVectors { mut files, vectors } = prepare_plain_vectors(
+                &read,
+                &writer,
+                model,
+                &descriptor,
+                selected.into_iter().map(|(_, _, item)| item),
+                &mut cache,
+            )?;
+            files.sort_unstable_by(|left, right| left.path.cmp(&right.path));
+            let published: std::collections::BTreeSet<_> =
+                files.iter().map(|file| file.path.as_str()).collect();
+            work.pending
+                .retain(|pending| !published.contains(pending.path.as_str()));
+            work.completed_artifacts += files.len() as u64;
+            work.completed_units = work
+                .completed_units
+                .checked_add(stats.vector_units - before_units)
+                .context("semantic unit count overflow")?;
+            work.failure = None;
+            if work.pending.is_empty() {
+                if work.all_units_countable {
+                    work.selected_units = Some(work.completed_units);
+                }
+                work.fully_ready_unix_ms = Some(now_unix_ms()?);
+            }
+            let reservation = self.publication_reservation()?;
+            let updater = CurrentUpdater {
+                store: &self.store,
+                quota: &quota,
+                scope: &scope,
+                writer: &lock,
+                reservation: &reservation,
+                configuration: None,
+            };
+            let next = read
+                .sequence()
+                .checked_add(1)
+                .context("semantic publication sequence overflow")?;
+            let resources = updater.plain_resources(
+                &read,
+                &[work.resource_change(&self.store, &lock, &reservation)?],
+                &[],
+                next,
+            )?;
+            drop(read);
+            crate::service_execution::progress_phase(
+                airk_core::service_progress::WorkPhase::Publishing,
+            );
+            let committed = writer.commit_vectors(
+                VectorBatch {
+                    setup: setup.clone(),
+                    files,
+                    vectors,
+                },
+                resources,
+            )?;
+            stats.vector_graph_nodes += committed.rows_added;
+            if let Some(current) = current_work.as_deref_mut() {
+                current.graph_records += committed.rows_added;
+            }
+            generation = Some(committed.sequence);
+            self.emit_progress(airk_core::readiness::IndexProgress {
+                collection: String::new(),
+                phase: "enrichment_committed",
+                revision: Some(
+                    super::runtime::revision(airk_store::current::plain_writer::plain_token(
+                        &scope,
+                        committed.sequence,
+                    ))
+                    .to_string(),
+                ),
+                processed_artifacts: 0,
+                committed_artifacts: 0,
+                selected_artifacts: Some(work.selected_artifacts),
+                total_artifacts: None,
+                completed_artifacts: Some(work.completed_artifacts),
+                completed_units: Some(work.completed_units),
+            });
+        }
         Ok(DrainOutcome {
             generation,
             maintenance_error: None,
-            yield_to_source: false,
+            yield_to_source,
         })
     }
+}
+
+struct PreparedPlainVectors {
+    files: Vec<airk_store::index::FileVectors>,
+    vectors: Vec<(Sha256Digest, Vec<f32>)>,
+}
+
+fn prepare_plain_vectors<'a>(
+    read: &PlainRead,
+    writer: &airk_store::current::plain_writer::PlainWriter,
+    model: &EmbeddingModel,
+    descriptor: &airk_core::embedding::EmbeddingDescriptor,
+    selected: impl Iterator<Item = &'a PendingArtifact>,
+    cache: &mut EmbeddingCacheContext<'_>,
+) -> Result<PreparedPlainVectors> {
+    use airk_store::index::{FileVectors, UnitEntry};
+    let mut queued = BTreeMap::new();
+    let mut embedded = BTreeMap::new();
+    let mut existing = std::collections::BTreeSet::new();
+    let mut files = Vec::new();
+    let mut planned_bytes = 0u64;
+    for item in selected {
+        let artifact = read
+            .input(&item.path)?
+            .context("pending semantic artifact missing")?
+            .artifact;
+        ensure!(
+            artifact.content_hash.parse::<Sha256Digest>()? == item.source_hash
+                && artifact
+                    .retained
+                    .as_ref()
+                    .context("pending extraction missing")?
+                    .object
+                    .parse::<Sha256Digest>()?
+                    == item.extraction_object,
+            "pending semantic input binding expired"
+        );
+        let captured = read.captured(&artifact)?;
+        let mut units = Vec::new();
+        let planned =
+            airk_retrieval::vector_units::visit_vector_units(&captured.payload, model, |unit| {
+                let key = airk_core::embedding::embedding_key(descriptor, unit.input.as_bytes())?;
+                let members = serde_json::to_vec(&unit.members)?;
+                planned_bytes = planned_bytes
+                    .saturating_add(members.len() as u64 + 4 * model.dimensions() as u64 + 128);
+                ensure!(
+                    planned_bytes <= (cache.working_memory_bytes / 4) as u64,
+                    "semantic vector batch exceeds working memory allowance"
+                );
+                if !existing.contains(&key)
+                    && !embedded.contains_key(&key)
+                    && !queued.contains_key(&key)
+                {
+                    if writer.vector_row(&key)?.is_some() {
+                        existing.insert(key);
+                        cache.stats.vector_reused_inputs += 1;
+                    } else {
+                        queued.insert(key, unit.input);
+                    }
+                }
+                units.push(UnitEntry {
+                    ordinal: u32::try_from(units.len())?,
+                    embedding_key: key,
+                    members,
+                });
+                crate::service_execution::progress_semantic_prepared();
+                if queued.len() == airk_retrieval::embedding_batch::MAX_BATCH_CHUNKS {
+                    embed_plain_inputs(model, cache, &mut queued, &mut embedded)?;
+                }
+                Ok(())
+            })?;
+        cache.stats.vector_units += planned.units;
+        cache.stats.vector_body_bytes += planned.body_bytes;
+        cache.stats.vector_planning_us += planned.planning_us;
+        files.push(FileVectors {
+            path: item.path.clone(),
+            source_hash: item.source_hash,
+            units,
+            failed: false,
+        });
+    }
+    embed_plain_inputs(model, cache, &mut queued, &mut embedded)?;
+    for file in &mut files {
+        file.units.retain(|unit| {
+            existing.contains(&unit.embedding_key)
+                || embedded
+                    .get(&unit.embedding_key)
+                    .is_some_and(Option::is_some)
+        });
+    }
+    Ok(PreparedPlainVectors {
+        files,
+        vectors: embedded
+            .into_iter()
+            .filter_map(|(key, vector)| vector.map(|vector| (key, vector)))
+            .collect(),
+    })
+}
+
+fn embed_plain_inputs(
+    model: &EmbeddingModel,
+    cache: &mut EmbeddingCacheContext<'_>,
+    queued: &mut BTreeMap<Sha256Digest, String>,
+    embedded: &mut BTreeMap<Sha256Digest, Option<Vec<f32>>>,
+) -> Result<()> {
+    if queued.is_empty() {
+        return Ok(());
+    }
+    let batch = std::mem::take(queued);
+    let texts = batch.values().map(String::as_str).collect::<Vec<_>>();
+    let vectors = model.embed_batch(&texts, cache)?;
+    ensure!(
+        vectors.len() == batch.len(),
+        "embedding batch returned the wrong number of vectors"
+    );
+    embedded.extend(batch.into_keys().zip(vectors));
+    Ok(())
 }
 
 #[cfg(test)]

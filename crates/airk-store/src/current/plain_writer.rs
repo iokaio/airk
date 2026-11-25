@@ -15,7 +15,8 @@ use crate::{
     FileStore, WriterLock,
     index::{
         self, Batch, ChunkEntry, EncodedPayload, FileChange, FileEntry, Handle, HandleKind,
-        IndexReader, IndexWriter, PathLookup, ResourceChange, VectorSetup,
+        IndexReader, IndexWriter, PathLookup, ResourceChange, VectorBatch, VectorCommit,
+        VectorSetup,
     },
 };
 use airk_core::{
@@ -466,6 +467,43 @@ impl PlainWriter {
     /// Select the embedding pipeline, or turn vectors off with `None`.
     pub fn configure_vectors(&mut self, setup: Option<&VectorSetup>) -> Result<bool> {
         self.index.configure_vectors(setup)
+    }
+
+    pub fn vector_row(&self, key: &Sha256Digest) -> Result<Option<u64>> {
+        self.index.vector_row(key)
+    }
+
+    /// Publish vector rows and the caller's semantic progress together.
+    pub fn commit_vectors(
+        &mut self,
+        batch: VectorBatch,
+        resources: Vec<PlainResource>,
+    ) -> Result<VectorCommit> {
+        let growth = batch
+            .files
+            .iter()
+            .flat_map(|file| &file.units)
+            .map(|unit| unit.members.len() as u64 + 128)
+            .chain(
+                batch
+                    .vectors
+                    .iter()
+                    .map(|(_, row)| 4 * row.len() as u64 + 128),
+            )
+            .chain(resources.iter().map(|resource| {
+                resource.key.len() as u64
+                    + resource.body.as_ref().map_or(0, |body| body.len() as u64)
+            }))
+            .fold(0u64, u64::saturating_add);
+        self.check_space(growth)?;
+        let resources = resources
+            .into_iter()
+            .map(|resource| ResourceChange {
+                key: resource.key,
+                body: resource.body,
+            })
+            .collect::<Vec<_>>();
+        self.index.commit_vectors_with_resources(batch, &resources)
     }
 
     /// Free space on the volume and the index size cap (D8), before a batch.
