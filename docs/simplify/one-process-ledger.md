@@ -19651,3 +19651,40 @@ is clean at 1.9. Decision 10 now also covers naming Answer's argument
 this edit, the plan's relative links and anchors resolved, and both edited
 files are owned by the verified human account. These checks cover
 documentation consistency only.
+
+### 25 November 2026 — OpenAI-only completion plan under review
+
+The user assigned implementation to GPT-6.2 Sol after plan approval and
+required OpenAI for implementation and testing. The revised plan proposes
+Sol for the five-path gate, Astra for the stronger-agent panel and both
+scoring judges, and Terra as the third model in the optional evidence
+ceiling. A Sol judge measures agreement on that arm. All evaluation roles
+use medium effort. Earlier results retain their original provider and
+freeze. The local Codex catalog for client 0.171.0 lists all three IDs and
+medium effort. Live model access and headless isolation await implementation.
+
+Review reproduced the model collision with one in-memory scenario. Sol's
+one-turn Answer beat its five-turn Search control. Astra's seven-turn
+Answer lost to its two-turn Search control. Mixed rows yielded one result,
+and reversing the input order reversed the verdict. The plan now specifies
+separate passes, rejection of mixed identities and an order-independent
+regression for the Sol implementation. The current grader still has the
+collision. Defining the evidence-ceiling review trigger and confirming one
+finalist on untouched retrieval probes are recommendations for review.
+
+The rubric now matches the 22 November comparator in the grader and
+baseline report. The existing synthetic regression passed, one test selected
+with `python -I -B scripts/arbiter-answer-eval/test_harness.py CaseTable.test_better_of_parse_and_search -v`.
+It covers a higher-coverage control with a lower grade, the turn tiebreaker
+and the final preference for Search. Neither check used a model client.
+
+The verified Windows account and default owner were TYAI\tdotn,
+SID S-1-5-21-3678370870-3858642417-826968105-1002. The deliverable is
+the revised plan and its standing provider directions. The next action
+is the user's plan review before the Sol implementation handoff.
+[OpenAI roles and runner requirements](../arbiter/completion-plan.md#agent-and-judge-models)
+
+The documentation check (`pwsh -NoProfile -File scripts/check-repo.ps1`)
+passed for 10,740 public files. `git diff --check` passed. The standing
+rule files have identical hashes. The model IDs and medium effort match
+the local catalog. No evaluation session or product build ran.

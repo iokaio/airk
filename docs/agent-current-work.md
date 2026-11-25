@@ -4,7 +4,15 @@ These instructions are mandatory for the active assignment. Standing rules remai
 
 All unlinked filesystem paths below are repository-relative unless absolute or prefixed with `~/`.
 
-**25 November 2026. Replace the unjudged Windows L7 attempt and run the baseline.**
+**25 November 2026 — OpenAI-only implementation and testing.** The user
+will hand implementation to GPT-6.2 Sol after approving the completion
+plan. All model-assisted work for it uses OpenAI Codex and OpenAI models,
+including delegated agents, harness tests and judges. Earlier provider
+directions below describe prior work. The proposed role matrix and runner
+requirements are in the [completion plan](arbiter/completion-plan.md#agent-and-judge-models).
+The plan is under review.
+
+**25 November 2026. Replace the unjudged Windows L7 attempt and run the baseline (earlier direction).**
 The same-install Windows CUDA shakedown passed all four switches and
 the leak check, captured Answer progress while Arbiter warmed, and
 settled its lease. Bookbuilder and Munarium both used Focus and
@@ -57,7 +65,7 @@ The user resumed the Windows and Linux FP16 campaign after D: cleanup. Keep new 
   execution started on the user's word on 21 November 2026. For this campaign it
   replaces the qualification gates below (the raw-score ceilings, the 98%
   paired evidence gate and held-out confirmation) as acceptance evidence;
-  their receipts stay as history. Agent sessions run in headless Claude Code
+  their receipts stay as history. At that time agent sessions ran in headless Claude Code
   on Haiku and judge sessions on Sonnet, both at medium effort (changed by
   the user on 21 November from Sonnet and Opus; the first round runs on
   airk alone); each series is one commit; three
@@ -158,7 +166,7 @@ The user resumed the Windows and Linux FP16 campaign after D: cleanup. Keep new 
   was met: Large won 0 and lost 1 against Compact; Compact won 1 and lost 1
   against Focus only; no session finished correctly in any arm. Large is
   dropped. Work continues with plan step LH; the next stop is after L7.
-- **New agents run on Opus at medium reasoning** (user, 23 November 2026,
+- **Earlier agent assignment, since superseded. New agents used Opus at medium reasoning** (user, 23 November 2026,
   about 01:25 UTC: "We're nearing our Fable limit").
 - **D: floor lowered to 200 GiB free, 23 November 2026 at about 00:20 UTC.**
   The user wrote: "You can take the D drive down to 200GB free if needed."
@@ -167,7 +175,7 @@ The user resumed the Windows and Linux FP16 campaign after D: cleanup. Keep new 
   842,404,241,408 bytes. It is a limit to stay above, not space to use up:
   per-job reservations, cleanup owners and monitoring of actual free space
   still apply.
-- **Evaluation agent and judge models, 25 November 2026 (user).** "The test
+- **Earlier evaluation model selection, superseded by the OpenAI direction above.** "The test
   agent is named as Haiku. In spite of the cost, let's make it Sonnet for
   some and Opus for some." The user then confirmed the recommended mix. For
   the fresh series Sonnet (`claude-sonnet-5-5`) is the gate agent on all 20

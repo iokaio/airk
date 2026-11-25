@@ -1,6 +1,6 @@
 # Answer loop and FP16 completion plan
 
-**Review draft, second revision of 25 November 2026.** This plan sequences
+**Review draft, OpenAI revision of 25 November 2026.** This plan sequences
 the remaining work on `feat/arbiter-final`. It records the latest
 Windows-first staging decision. Use the [current assignment](../agent-current-work.md)
 for execution authority and the [Answer plan](final-plan-fp16.md#128-work-order)
@@ -9,15 +9,14 @@ instructions describe Large, one-turn Answer, or a different platform order,
 use the current model selection and the sequence below. Review of this
 document does not start execution.
 
-**Reconcile the authority documents before execution.** The lead paragraph
-of the current assignment still directs the Windows baseline and three
-judged changes with no stop. The standing rules still name
+**Reconcile the authority documents before execution.** An earlier entry in
+the current assignment directs the Windows baseline and three judged
+changes with no stop. The standing rules still name
 `feat/index-plain-store` and the indexing performance plan as the active
 work, and that branch is merged into this one. When the user approves this
 plan for execution, update the current assignment and both rule files to
-name this plan, its first milestone and its stop points. The agent and
-judge models were updated there on 25 November, when the user confirmed
-them.
+name this plan, its first milestone and its stop points. The user's
+OpenAI-only direction already applies to implementation and testing.
 [Current assignment](../agent-current-work.md) · [Standing rules](../../AGENTS.md)
 
 Work runs in this order: section 1, the first milestone, then sections 2
@@ -72,58 +71,70 @@ no judge. Report these for every replay and every judged arm:
 
 They steer the change sets. They do not replace the gate.
 
-**Evidence-ceiling arm.** Before the Stage A baseline, return every essential
-span of a scenario as the reply to the agent's first call, in the Answer
-reply format, and leave the rest of the session unchanged. Run it once on
-each agent tier (Haiku, Sonnet and Opus), about 60 sessions, and have the
-judges grade the briefs. It measures how often each agent finishes correctly
-when retrieval is perfect, and it ties the new series to the historical
-Haiku results. If the gate agent finishes few scenarios, no retrieval change
-can meet the rule with it, and the user decides what to change before three
-change sets are spent. This arm is an instrument check. Nothing is tuned on
-it.
+**Evidence-ceiling arm (proposed).** Give each agent the cited source spans
+for every essential in the first Answer reply. Use the ordinary brief,
+follow-up tools, turn cap and rubric. Verify that the delivered bytes cover
+all essentials before interpreting the grades. Run each of the three OpenAI
+models below once per scenario, for 60 agent sessions. Report how often
+each model writes a correct brief under these conditions, by repository.
+If Sol struggles even with this evidence, inspect the delivered spans,
+briefs and judge disagreements with the user before spending three change
+sets on retrieval. Keep these cases out of tuning.
 
 ### Agent and judge models
 
-On 25 November 2026 the user directed that judged agents move from Haiku to
-a mix of Sonnet and Opus, accepting the cost, and then confirmed the mix and
-the judge model below. They replace the earlier rule of Haiku agents and
-Sonnet judges for the fresh series. The evidence-ceiling row applies if the
-user approves that arm.
+The user chose OpenAI for all model-assisted implementation and testing and
+named GPT-6.2 Sol to implement the plan after approval. Use Codex for that
+work, including delegated reviews, probe preparation, smoke tests and
+judging. The proposed evaluation roles below preserve the five-path gate,
+the stronger-agent comparison and the two independent judges. AIRK runs
+its local MiniLM, Focus and Arbiter models inside the service under test.
 
-| Role | Model and effort | Where it runs |
+| Role | OpenAI model ID | Coverage |
 | --- | --- | --- |
-| Gate agent | `claude-sonnet-5-5`, medium | All 20 scenarios on all five paths, in the baseline and in each change set. The substantial-win rule is applied to these results. |
-| Capable-agent panel | `claude-opus-5-5`, medium | All 20 scenarios on Search, Parse and Answer with both models, at the baseline and at the last change set. Reported beside the gate. |
-| Evidence-ceiling arm | Haiku, Sonnet and Opus, medium | 20 scenarios each, once |
-| Judges | Two independent `claude-opus-5-5` sessions, medium, no tools | Every judged session |
+| Gate agent | `gpt-6.2-sol` | All 20 scenarios on Search, Parse, Focus-only Answer, Arbiter-only Answer and Answer with both. Apply the substantial-win rule within this model at the baseline and each of the three change sets. |
+| Capable-agent panel | `gpt-6.2-astra` | All 20 scenarios on Search, Parse and Answer with both local models at the baseline and the last change set. Compare Answer with Astra's own controls. |
+| Evidence-ceiling agents, if approved | `gpt-6.1-terra`, `gpt-6.2-sol`, `gpt-6.2-astra` | Each gets the same 20 complete-evidence replies. Terra supplies the third, lighter comparison. |
+| Scoring judges | `gpt-6.2-astra` | Two fresh, tool-free sessions per judged brief. Give each the same blinded packet and apply the existing adjudication rule. |
+| Diagnostic judge, ceiling only | `gpt-6.2-sol` | One extra tool-free verdict per ceiling brief. Report agreement with each Astra judge by agent model. Only the two Astra verdicts enter adjudication. |
 
-- The rule compares paths within a scenario, so one agent model has to run
-  all 20 scenarios on every path. Splitting scenarios between models would
-  confound the agent with the scenario and leave neither model a full rule.
-- Sonnet is the gate agent because it is the tier a typical coding agent
-  runs on, and it leaves more room for turn savings to show. The Opus panel
-  shows whether a gain survives a stronger agent, which is the user's stated
-  priority.
-- A judge should be at least as capable as the strongest agent it grades.
-  Under the adjudication rule a one-grade disagreement takes the lower
-  grade, so a weaker second judge that misreads a correct brief lowers the
-  result. Both judges are therefore Opus.
-- Opus then grades Opus briefs. The verdicts are per note against written
-  reference facts. Keep the agent model and the path out of the judging
-  packet. On the evidence-ceiling arm, add one Sonnet judge and report its
-  agreement with the Opus judges by agent model, as a check on same-model
-  preference.
-- By list price per token on 3 November 2026, Sonnet is 20 times Haiku and
-  Opus is twice Sonnet. Most of the added cost is the step off Haiku.
+Use medium reasoning effort throughout the evaluation. Give each agent a
+fresh session, including when the implementer and gate agent share a model.
+Keep model and path labels out of the judge packet. Record the limits of
+blinding where the reply format reveals a path. Historical Anthropic
+sessions retain their original identities. Establish a fresh OpenAI baseline.
 
-Before the first Opus session, confirm that the headless client version
-accepts `claude-opus-5-5`. The 21 November install refused it. The new
-models need a new prompt freeze, and no session is reused across agent
-models. The harness defaults, its README and the rubric's judge paragraph
-still name the earlier models. They change with the baseline harness and
-its freeze, in that series' commit.
-[Harness model settings](../../scripts/arbiter-answer-eval/README.md) · [Judge and adjudication](answer-evaluation/rubrics.md#the-judge)
+**Headless runner.** Port the existing agent and judge launchers, pass
+specifications and probes to OpenAI Codex before the first model-assisted
+test. The implementation and tests must run with Claude Code absent and
+without Anthropic credentials. Use a synthetic task to check the selected
+model and effort, each distinct agent tool catalog, the 12-call cap and a
+tool-free judge's schema-valid verdict. An agent sees only the tools for its
+path. Exclude built-in shell, direct file and web access, other MCP servers
+and inherited repository instructions. Reconcile the offered tools and
+attempted calls, including refusals, with the wrapper log. Preserve failure,
+timeout and discard outcomes. If the runner cannot establish isolation or
+serve a selected model, record the blocker before collecting benchmark data.
+[Agent launcher](../../scripts/arbiter-answer-eval/run_session.py) · [Judge launcher](../../scripts/arbiter-answer-eval/judge.py) · [Codex non-interactive mode](https://developers.openai.com/codex/noninteractive/)
+
+**Freeze and reporting.** Pin the runner version and executable hash,
+provider, model IDs, effort, prompts, tools and verdict schema for every role
+before its first measured session. Give each agent model a separate pass
+identity. Check that both scoring verdicts belong to the frozen judge model
+and to distinct sessions. Reuse a control only when its model, effort,
+freeze, publication and other comparison inputs match. Report usage by
+role, with measured or estimated cost identified and missing cost shown as
+unavailable. Update the harness defaults, its README and the current rubric
+directions with the baseline harness, retaining the historical freezes.
+
+The current grader groups by scenario, configuration and device. Two models
+on the same path can overwrite each other's first sample. Before the
+baseline, have the grader reject a model or effort outside the pass freeze
+before grouping rows, including resumed sessions, reused controls and
+close-call samples. Test one synthetic scenario where Sol wins and Astra
+loses against their respective controls. Each pass must report its own
+outcome in either processing order. A mixed pass must fail explicitly.
+[Grader](../../scripts/arbiter-answer-eval/grade.py) · [Pass and reuse checks](../../scripts/arbiter-answer-eval/run_pass.py) · [Prompt freeze](../../scripts/arbiter-answer-eval/prompts_freeze.py) · [Judge and adjudication](answer-evaluation/rubrics.md#the-judge)
 
 ### Task kinds the gate judges
 
@@ -160,9 +171,11 @@ The proposed values are the primary agent's. Each is the user's to set.
 3. **Bound on the first milestone.** Proposed: the census and audits, then
    at most two representation pilots, then the selection comes to the user.
    The default is to reuse the settled publications.
-4. **Agent and judge models:** confirmed by the user on 25 November 2026.
-5. **The evidence-ceiling arm:** about 60 judged sessions before the
-   baseline.
+4. **Implementation and evaluation models.** The user requires OpenAI
+   throughout and named GPT-6.2 Sol for implementation after approval.
+   The proposed evaluation roles and model IDs are in the table above.
+5. **The evidence-ceiling arm.** Approve or decline the 60 agent sessions
+   and their judge calls before the baseline.
 6. **Stage A contract decisions:** the added loop reads, the follow-up read
    allowance, need-based read budgets and handle-only continuations.
 7. **Index candidates that change the model:** allowed as pilots or excluded.
@@ -185,7 +198,7 @@ The proposed values are the primary agent's. Each is the user's to set.
 | Milestone | Exit evidence or decision |
 | --- | --- |
 | Index and Search quality | Complete the rank census, the label and corpus audit, the source-fidelity checks and the two query-time checks. Run at most two matched representation pilots chosen from the census. Select and freeze the configuration for both repositories against the agreed bar. [Research and selection](#how-to-test-indexing-for-agent-tasks) |
-| Windows CUDA | Account for shakedown and L6 evidence on the admitted stack. Run the evidence-ceiling arm. Judge a current-stack baseline and three cumulative retrieval changes, then stop for your review. |
+| Windows CUDA | Account for shakedown and L6 evidence on the admitted stack. Run the evidence-ceiling arm if approved. Judge a current-stack baseline and three cumulative retrieval changes, then stop for your review. |
 | Windows review | You choose another Windows round, Linux, or shipping the retrieval gains without the turn-saving claim. Each additional Windows round returns to the same review. |
 | Linux CUDA | LX, Linux L6, and the agreed L7 comparisons against the Windows-reviewed candidate. Bring both hosts' results to review. |
 | Agent-facing tool surface | Starts when the Windows review accepts the retrieval and Answer behavior, and can run alongside Linux CUDA. Record the candidate's catalog, run the free-choice arm, test the description rewrite, the proposed names and the narrowed default profile against it, and freeze the surface. [Stage and rules](#agent-facing-tool-surface) |
@@ -538,9 +551,9 @@ handle-only continuations. Each changes a wire shape or a Core limit.
 Record the user's decision on each in the loop change log and the owning
 contract first, or leave that item out of the series. Settle
 [Answer's public call shape](#agent-facing-tool-surface) as well, so the
-judged call is the call that ships. Run the
+judged call is the call that ships. If approved, run the
 [evidence-ceiling arm](#what-the-gate-needs-and-how-to-steer-toward-it)
-before the baseline and report it with the baseline.
+before the baseline and report it alongside the baseline.
 [Decisions for this review](#decisions-for-the-user-at-this-review) · [Core loop limits](../../crates/airk-core/src/arbiter/answer_loop.rs)
 
 1. **Measure the current stack before changing Answer.** The earlier Windows
@@ -576,7 +589,7 @@ before the baseline and report it with the baseline.
    Search with Focus off/on is a separate diagnostic. Answer's explicit
    internal Search limits can select different results from ordinary Search
    with an omitted limit. Freeze the same 20 scenarios, prompts, notes,
-   harness, job policy, and the confirmed
+   harness, job policy, and the approved OpenAI
    [agent and judge models](#agent-and-judge-models) at medium effort.
    Record baseline headroom against the stronger control per
    scenario. Use both-models-off Answer in matched replays and label any
@@ -787,10 +800,9 @@ fewer round trips and less repeated context.
 ### Stage B — Stop for manual review of Windows results
 
 Present the Windows baseline and series comparisons, the evidence-ceiling
-result, the steering measures, the Opus panel beside the Sonnet gate, what
-each model added,
-where the acceptance criteria were missed, and the exact candidate and
-receipts. Include both index-quality dispositions, unresolved retrieval
+result if collected, the steering measures and the Astra panel alongside the
+Sol gate. Report what Focus and Arbiter each added, which acceptance criteria
+were missed, and which candidate and receipts support the comparison. Include both index-quality dispositions, unresolved retrieval
 failures, and examples of external work displaced or still required.
 Wait for the user's decision before starting Linux LX or L7.
 
@@ -974,7 +986,7 @@ current name misleads or collides.
 **Acceptance.** Adopt a surface change when, in the free-choice arm, it
 raises the scenarios whose first delivery covers every essential or lowers
 the turns to coverage, lowers neither repository, and every first Answer
-call an agent makes is accepted. Report the Opus panel beside the gate
+call an agent makes is accepted. Report the Astra panel beside the Sol gate
 agent on the final surface. Then freeze the catalog, names, guidance and
 profile with the candidate, regenerate the harness catalog from that build, and run
 the sealed confirmation on it.

@@ -143,9 +143,12 @@ def covers(spans: list[Span], note: dict, count_fact_rows: bool = False, rule: i
 
 ### The judge
 
-Each result is judged by two independent judge sessions. Each is a fresh
-headless Claude Code session on `claude-sonnet-5-5` at medium effort, with
-no tools, that reads one packet: the instruction, the reference notes, the
+Fresh series use the OpenAI judges and runner specified in the
+[completion plan](../completion-plan.md#agent-and-judge-models).
+The following model IDs, client settings and prompt freezes document the
+earlier series. Each historical result was judged by two independent
+headless Claude Code sessions on `claude-sonnet-5-5` at medium effort, with
+no tools. Each judge reads one packet: the instruction, the reference notes, the
 agent's brief, the calls the agent made and the text of the first reply. Path
 names are hidden where possible; Answer's reply has a recognizable shape, so
 the blinding is partial. The judge returns JSON that a schema checks:
@@ -167,9 +170,14 @@ the blinding is partial. The judge returns JSON that a schema checks:
 
 ## Cases that are not clear-cut
 
-This table was fixed before the first run. "The better of Parse and Search"
-is, per scenario, the one with a correct finish in fewer turns, or failing
-that the higher grade.
+Choose the stronger of Parse and Search per scenario within the same agent
+model and effort. A correct finish wins. When both finish correctly, choose
+the one that took fewer turns, then Search on an exact tie. When neither
+finishes correctly, choose the one that covered more essential notes across
+the session, then the one that took fewer session turns, then Search. Use
+the selected control's adjudicated grade in the task-kind average. The
+22 November baseline report records this rule and the grader implements it.
+[Baseline comparison](01-baseline.md) · [Comparator](../../../scripts/arbiter-answer-eval/grade.py) · [Comparator test](../../../scripts/arbiter-answer-eval/test_harness.py)
 
 | Case | How it counts |
 | --- | --- |
