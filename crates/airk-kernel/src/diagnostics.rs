@@ -216,14 +216,21 @@ impl Kernel {
             report.checked_files += 1;
             visited += 1;
             report.next_after = Some(path.clone());
-            match self.store.verify_retained_source(&artifact) {
+            // A utf8 file's stored source is hashed; other files keep no
+            // source (Q5), so only the record's source hash is checked.
+            let source = if read.retained_source_available(&artifact) {
+                read.read_retained_source(&artifact).map(|_| ())
+            } else {
+                read.verify_retained_source(&artifact)
+            };
+            match source {
                 Ok(()) => {
                     report.verified_sources += 1;
                     report.checked_source_bytes += artifact.bytes as u64;
                 }
                 Err(error) => report.failure(path, "source", &error),
             }
-            match self.store.load_retained_bounded(&artifact, max_bytes) {
+            match read.load_retained_bounded(&artifact, max_bytes) {
                 Ok(_) => {
                     report.verified_extractions += 1;
                     report.checked_extraction_bytes += reference.object_bytes as u64;

@@ -396,15 +396,17 @@ impl Kernel {
         source_lines: bool,
     ) -> Result<Artifact> {
         let compact = read.artifact(path)?.context("indexed file not found")?;
-        let mut artifact = self.store.load_retained(&compact)?;
+        let mut artifact = read.load_retained(&compact)?;
         let retained = compact
             .retained
             .as_ref()
             .context("current retained extraction missing")?;
-        let bytes = if retained.legacy_origin.is_some() && !retained.raw_source {
-            None
+        // Only utf8 files keep their source (Q5); others serve extracted text.
+        let bytes = if read.retained_source_available(&compact) {
+            Some(read.read_retained_source(&compact)?)
         } else {
-            Some(self.store.read_retained_source(&compact)?)
+            read.verify_retained_source(&compact)?;
+            None
         };
         if source_lines
             && retained.legacy_origin.is_none()
@@ -505,11 +507,13 @@ impl Kernel {
                 });
             }
         }
-        let artifact = self.store.load_retained(&compact)?;
-        let bytes = if retained.legacy_origin.is_some() && !retained.raw_source {
-            None
+        let artifact = read.load_retained(&compact)?;
+        // Only utf8 files keep their source (Q5); others serve extracted text.
+        let bytes = if read.retained_source_available(&compact) {
+            Some(read.read_retained_source(&compact)?)
         } else {
-            Some(self.store.read_retained_source(&compact)?)
+            read.verify_retained_source(&compact)?;
+            None
         };
         let mut metadata = self.empty_snapshot();
         metadata.generation = read.head().sequence;

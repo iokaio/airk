@@ -38,14 +38,14 @@ pub(crate) fn current_observation(
     store: &airk_store::FileStore,
     read: &airk_store::current::CurrentRead,
 ) -> Result<Option<CurrentLegacyAdoption>> {
-    let Some(reference) = read.resource_reference("legacy-adoption")? else {
+    // A plain index is always built fresh, so this resource is normally absent.
+    let Some(bytes) = read.resource(store, "legacy-adoption")? else {
         return Ok(None);
     };
     ensure!(
-        reference.bytes <= 2 << 20,
+        bytes.len() <= 2 << 20,
         "legacy adoption observation exceeds bound"
     );
-    let bytes = store.read_current_resource(&reference)?;
     let resource: AdoptionResource = serde_json::from_slice(&bytes)?;
     let state = read
         .collection_state()?

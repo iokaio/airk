@@ -85,7 +85,7 @@ impl crate::Kernel {
             let entry = read
                 .artifact(&path)?
                 .ok_or_else(|| anyhow::anyhow!("current unit artifact missing"))?;
-            let payload = self.store.load_extraction_payload(&entry)?;
+            let payload = read.load_extraction_payload(&entry)?;
             // Existing native descriptors are host-local. Future composite
             // units require an original-coordinate binding before this read.
             anyhow::ensure!(
