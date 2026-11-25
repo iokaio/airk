@@ -17,6 +17,7 @@ pub use reader::{
     MAX_PAGE, PathLookup, PathPage, UnitRow, VectorState,
 };
 pub use schema::IncompatibleIndex;
+pub(crate) use schema::is_legacy_database;
 pub use vectors::{LiveRows, VectorFile, VectorHit, VectorMatrix};
 pub use writer::{
     Batch, Commit, FileVectors, IndexWriter, UnitEntry, VectorBatch, VectorCommit, VectorSetup,

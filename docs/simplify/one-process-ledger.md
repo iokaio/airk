@@ -18104,3 +18104,83 @@ audited 4,606 outputs and settled with 438,159,224,832 bytes free
 on D:. Rerun the full corrected workspace on the short owned
 fixture path and check the applicable installed transport and
 doctest evidence before starting the Windows judged baseline.
+
+### 24 November 2026 — Corrected Windows workspace sweep
+
+On `39231d51`, all-feature workspace Clippy passed in 32.453 s.
+Nextest selected 5,643 tests across 89 binaries with 225 skipped.
+It passed 5,382 and failed 261 in 945.787 s of test execution. The
+entire sweep including compilation took 1,202.376 s in the owner
+shell. The initial set of 428 failing identities contained all
+261 corrected-sweep failures. There were 167 fewer failing
+identities and zero newly failing identities, with one additional
+test selected in the corrected sweep.
+
+The checked short fixture base and ordinary process-local Git
+environment were used. D: held 428,912,795,648 free bytes when the
+owner settled, and the owner audited 5,086 outputs. The commands,
+JUnit and timing reports are in `L5C/windows-l6-closure-r4`.
+The workspace doctest command exited zero and selected zero tests.
+The receipt runner returned its no-selection disposition, so this
+provides no executed doctest coverage.
+
+Both actual Answer pipe and HTTPS transport selectors passed.
+The plain writer, ordinary native Verify restart and drain, FP16
+bundle, and corrected supervisor split selectors passed. In five
+separate installed split journeys the terminal disposition passed,
+then the shared checkpoint reader sent plain `index.sqlite3` to
+the legacy revision reader. Fix that dispatch under the existing
+locks and rerun those five scenarios. Two other positive worker
+fixtures still requested 4 GiB and could not admit their required
+two workers. The selected fixture corrections use 10 GiB.
+
+The raw remaining-failure inventory is retained with the sweep.
+It includes 150 explicit D6 predecessor-format refusals, 10 earlier
+history baseline refusals, 5 split checkpoint failures, 2 worker
+admission failures, 26 missing-file or missing-path errors, 4
+queries against predecessor tables and 64 other diagnostics. Some
+missing paths are retired grant or source-object paths. Keep the
+other missing-path diagnoses open until traced. Store and Kernel
+own the retired-mechanic test reviews and the active history and
+semantic reporting gaps. Fresh semantic readiness and retrieval
+have independent live receipts. The optional native integrity
+observer still needs to recognize ordinary Plain Verify at first
+admission. The HTTPS component's held-compute failure retains
+its raw test evidence. No whole-workspace pass is claimed.
+
+#### Checkpoint and worker follow-up
+
+Narrow all-feature Clippy passed in 58.258 s. All 12 selected Store
+checkpoint, adoption, FTS and retained-owner checks passed, with
+907 skipped. The CLI group passed eight of ten with 118 skipped.
+All three ordinary Verify restart and drain cases passed. The
+live Verify case also observed no spurious native integrity error.
+Both previously blocked two-worker fixtures reached and passed their
+behavior assertions with the 10 GiB grant.
+
+The actual split cancel, provider cutover, and semantic-ready
+destination journeys passed their native checkpoint and transport
+assertions. Two shared-root disposal journeys still end with Win32
+error 2 after reaching their later cleanup setup. Their shared test
+helper reads retired ordinary Current grant files. The exact failed
+file operation has not been captured. Keep those two cases open with
+the Store and CLI owners. The corrected checkpoint dispatch selects
+the authenticated Plain or Legacy owner by the database format and
+preserves corruption refusals.
+
+The live current Answer surface and worker behavior required for
+the Windows evaluation have fresh checks. Remaining predecessor
+and history cases, semantic counters, the held-compute HTTPS
+component case, and shared-root disposal remain named follow-ups.
+The stored results retain the complete failure inventory. Readiness
+telemetry and the flat-vector contribution to the D8 size cap need
+separate owner work. For this controlled evaluation the primary
+owner continues to monitor actual physical free space.
+
+The exact focused receipts are under `L5C/windows-l6-checkpoint-r5`.
+The owner audited 3,921 outputs and settled with 423,165,865,984
+free bytes on D:. Build the reviewed CUDA test image, provision a
+fresh lifetime from the pinned source inputs, and verify its live
+catalog and leak checks. Also run the matching normal Windows
+service-client preflight before scoring. The baseline and three
+judged iterations retain their one-commit-per-series requirement.

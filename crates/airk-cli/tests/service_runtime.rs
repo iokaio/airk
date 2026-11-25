@@ -4178,11 +4178,12 @@ fn identity_bound_project_restart_preserves_other_workers_and_unavailable_source
     wait_ready(&runtime)?;
     tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(async {
         let request = |method| airk_cli::service_runtime::request(&runtime,method);
-        // This scenario requires two simultaneous resident workers. A small
-        // host's default Balanced policy intentionally admits only one.
+        // Cover startup inference, query headroom and two concurrent residents
+        // under the same fixture budget that admits three native readers.
+        const TWO_WORKER_MEMORY_BYTES: u64 = 10 << 30;
         let configured = request(Method::ConfigureResources {
             configuration: airk_core::service_resources::ResourceConfiguration {
-                memory_bytes: Some(4 << 30),
+                memory_bytes: Some(TWO_WORKER_MEMORY_BYTES),
                 extraction_threads: Some(1),
                 ..Default::default()
             },

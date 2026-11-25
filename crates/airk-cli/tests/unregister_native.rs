@@ -21,11 +21,12 @@ fn paused_removal_drains_clients_deletes_project_state_preserves_other_projects_
     fs::write(a.path().join("original.rs"), original_a)?;
     fs::write(b.path().join("other.rs"), original_b)?;
     let service = common::Service::start(a.path(), data.path(), "unregister-a");
-    // This scenario keeps direct clients for two projects alive together.
-    // Small hosts intentionally admit only one resident under default policy.
+    // Cover startup inference, query headroom and two concurrent residents
+    // under the same fixture budget that admits three native readers.
+    const TWO_WORKER_MEMORY_BYTES: u64 = 10 << 30;
     let configured = service.request(Method::ConfigureResources {
         configuration: airk_core::service_resources::ResourceConfiguration {
-            memory_bytes: Some(4 << 30),
+            memory_bytes: Some(TWO_WORKER_MEMORY_BYTES),
             extraction_threads: Some(1),
             ..Default::default()
         },

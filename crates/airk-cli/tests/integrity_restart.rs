@@ -542,6 +542,11 @@ fn native_project_worker_runjob_consumes_real_audit_completion() -> Result<()> {
             "native Verify reported a work failure: {}",
             wire["failure"]
         );
+        ensure!(
+            observation.integrity_observation_failure.is_none(),
+            "healthy plain publication reported a native integrity observation failure: {:?}",
+            observation.integrity_observation_failure
+        );
         if observation.finished == Some(grant_id) {
             let progress = observation
                 .progress

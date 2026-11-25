@@ -487,17 +487,20 @@ fn capture_publications(
             // a writable index and no model/source provisioning is permitted.
             let selected = collection.select_existing_locked()?;
             let store = &selected.store;
-            if store.directory().join("index.sqlite3").try_exists()? {
+            let database = store.directory().join(crate::index::DATABASE_FILE);
+            let has_database = database.try_exists()?;
+            if has_database {
                 ensure!(
                     !store.directory().join("current.sqlite3").try_exists()?,
                     "mixed checkpoint publication formats"
                 );
                 store.ensure_index_ready()?;
-                let database = store.directory().join("index.sqlite3");
                 crate::managed_collection::reject_file_aliases(
                     &database,
                     &std::fs::symlink_metadata(&database)?,
                 )?;
+            }
+            if has_database && crate::index::is_legacy_database(&database)? {
                 let revision = crate::sqlite::persistent_revision(store.directory())?
                     .ok_or_else(|| anyhow::anyhow!("legacy checkpoint publication missing"))?;
                 ensure!(

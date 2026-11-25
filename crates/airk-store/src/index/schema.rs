@@ -108,9 +108,12 @@ pub(super) fn create(path: &Path) -> Result<Connection> {
     Ok(connection)
 }
 
+fn application_id(connection: &Connection) -> Result<i64> {
+    Ok(connection.pragma_query_value(None, "application_id", |row| row.get(0))?)
+}
+
 fn check_format(connection: &Connection) -> Result<()> {
-    let application: i64 =
-        connection.pragma_query_value(None, "application_id", |row| row.get(0))?;
+    let application = application_id(connection)?;
     let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
     if application != APPLICATION_ID || version != USER_VERSION {
         return Err(anyhow::Error::new(IncompatibleIndex));
@@ -130,12 +133,25 @@ pub(super) fn open_writer(path: &Path) -> Result<Connection> {
     Ok(connection)
 }
 
-pub(super) fn open_reader(path: &Path) -> Result<Connection> {
-    let connection = Connection::open_with_flags(
+fn open_read_only(path: &Path) -> Result<Connection> {
+    Connection::open_with_flags(
         path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
-    .context("open index database for reading")?;
+    .context("open index database for reading")
+}
+
+/// Select the reader family. Each reader still validates its own schema and owner.
+pub(crate) fn is_legacy_database(path: &Path) -> Result<bool> {
+    match application_id(&open_read_only(path)?)? {
+        0 => Ok(true),
+        APPLICATION_ID => Ok(false),
+        _ => Err(IncompatibleIndex.into()),
+    }
+}
+
+pub(super) fn open_reader(path: &Path) -> Result<Connection> {
+    let connection = open_read_only(path)?;
     check_format(&connection)?;
     configure(&connection)?;
     Ok(connection)

@@ -141,6 +141,9 @@ here first.
   contentless FTS5 integrity, the file and index row relationships, and the
   configured vector file header and committed extent. Retired projections
   still report missing coverage. The flat vector format has no data checksum.
+  A fresh native worker observes a checked plain publication in strict mode.
+  It uses ordinary Verify and creates no private owner session. Existing
+  private owner receipts retain their original custody and recovery checks.
 
 ## Not yet
 

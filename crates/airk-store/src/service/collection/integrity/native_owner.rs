@@ -127,11 +127,17 @@ impl LockedPublication {
         self.selected.require_under(root)
     }
 }
+enum NativeObservation {
+    FirstAdmission,
+    ExistingOwner,
+    Recovery,
+}
+
 impl IntegrityOwner<'_> {
     fn locked_native(&self) -> Result<LockedPublication> {
-        self.locked_native_inner(false)
+        self.locked_native_inner(NativeObservation::ExistingOwner)
     }
-    fn locked_native_inner(&self, recovery: bool) -> Result<LockedPublication> {
+    fn locked_native_inner(&self, observation: NativeObservation) -> Result<LockedPublication> {
         self.check()?;
         let preliminary = self.collection.select_existing_locked()?;
         let directory = preliminary.store.directory().canonicalize()?;
@@ -154,16 +160,43 @@ impl IntegrityOwner<'_> {
             root_id[0] == selected_id[0],
             "native selected directory crosses volume boundary"
         );
-        let head = selection.store.existing_settled_head(&writer)?;
+        let plain = matches!(observation, NativeObservation::FirstAdmission)
+            && selection.store.plain_index_present()?;
+        let head = if plain {
+            ensure!(
+                !directory.join("current.sqlite3").try_exists()?,
+                "plain and legacy native databases both exist"
+            );
+            let scope = selection
+                .store
+                .current_owned_scope_under_gate(&selection._gate)?
+                .context("plain native selected owner missing")?;
+            let path = directory.join(crate::index::DATABASE_FILE);
+            crate::managed_collection::reject_file_aliases(&path, &fs::symlink_metadata(&path)?)?;
+            let read = selection.store.current_read(&scope)?;
+            ensure!(
+                read.with_index(|index| {
+                    Ok(index.meta("format")?.as_deref() == Some(crate::index::FORMAT.as_bytes()))
+                })? && read.collection_state()?.is_some()
+                    && !read.private_query_eligible()?,
+                "incomplete plain native selected publication"
+            );
+            read.head().clone()
+        } else {
+            selection.store.existing_settled_head(&writer)?
+        };
         ensure!(
             head.scope.root == self.collection.owner.root
                 && head.scope.collection == self.collection.owner.collection,
             "foreign native selected scope"
         );
-        self.native_no_damage(&head, recovery)?;
+        self.native_no_damage(&head, matches!(observation, NativeObservation::Recovery))?;
         root.id()?;
         selected.id()?;
         selected.require_under(root_id)?;
+        if plain {
+            return Err(anyhow::Error::new(NativeBoundaryUnavailable));
+        }
         Ok(LockedPublication {
             _selection: selection,
             _writer: writer,
@@ -250,7 +283,11 @@ impl Collection {
         {
             return Err(anyhow::Error::new(NativeOwnerRecoveryRequired));
         }
-        let locked = owner.locked_native()?;
+        let locked = owner.locked_native_inner(if previous.is_some() {
+            NativeObservation::ExistingOwner
+        } else {
+            NativeObservation::FirstAdmission
+        })?;
         let root = digest(b"native-root/1", &locked.root.id()?)?;
         let selected = digest(b"native-selected/1", &locked.selected.id()?)?;
         let token = locked.head.token()?;
@@ -329,7 +366,7 @@ impl Collection {
                 && identity.fencing_generation == fence.1,
             "foreign native recovery owner"
         );
-        let locked = owner.locked_native_inner(true)?;
+        let locked = owner.locked_native_inner(NativeObservation::Recovery)?;
         ensure!(
             proof.epoch().worker == identity.worker
                 && proof.epoch().worker_epoch == fence.1
@@ -436,7 +473,7 @@ impl Collection {
                 && identity.fencing_generation == fence.1,
             "foreign native recovery owner"
         );
-        let locked = owner.locked_native_inner(true)?;
+        let locked = owner.locked_native_inner(NativeObservation::Recovery)?;
         let previous = registry
             .load_owner_session(lease)?
             .context("exceptional owner session missing")?;
