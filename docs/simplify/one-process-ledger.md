@@ -17645,3 +17645,28 @@ builds the embedding session pool (plan P2) in its own worktree and Cargo
 target; one read-only agent maps the old store's callers. The user switched
 the session to Opus. Next action: review the two agents' reports, then
 finish and test the engine.
+
+### 24 November 2026 — Plain index store integrated; both repositories indexed; handoff
+
+Primary agent: Claude Code (Opus after the user's switch), with four
+delegated agents on Opus: an embedding-pool implementer, a read-only caller
+survey, and read-side and write-side implementers, each in its own worktree
+and Cargo target under `artifacts/indexing-plan/targets/`. Every agent
+verified `TYAI\tdotn` and its default owner first. The primary agent reviewed
+each result and brought it onto `feat/index-plain-store` (cherry-pick and
+fast-forward), head `227a8086`, pushed.
+
+Results, failure classes and the ordered open work are in
+[plan section 10](../indexing/performance-plan.md#10-status-report-and-handoff-24-november-2026).
+In short: cold lexical index 22.3 s for munarium (was 263.4 s) and 129.2 s
+for bookbuilder-v2 (was 1,048.3 s); index size 114 MB and 498 MB (was 420
+MB and 1.6 GB); full suites airk-store 837/996, airk-kernel 671/774,
+airk-mcp + airk-cli 593/696 passed, with every Store failure and all but one
+Kernel failure classified as retired internals, unimplemented vectors or
+change history, or deliberate design changes. Failure lists:
+`artifacts/indexing-plan/integration-r1/`. The indexes were written under
+the writer agent's temp folder and deleted afterwards; the private source
+copies were only read. D: had 511.5 GB free.
+
+Next action: plan section 10, item 1 (vectors on the plain store). The user
+is switching to Codex.

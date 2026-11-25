@@ -21,8 +21,12 @@ steps P0 to P7. Read it before any indexing work.
 - Branch: `feat/index-plain-store`, created from the head of
   `feat/arbiter-final`. The user authorized pushing this branch to `origin`
   on 24 November 2026. No PR, merge, publication or deployment is authorized.
-- Implementation starts at step P0.2 on the user's word. Nothing is
-  implemented yet.
+- **Resume point, 24 November 2026 (handoff to Codex).** Read section 10
+  of the plan first: what is built (head `227a8086`), the measured results,
+  the classified test failures, and the open work in order (vectors on the
+  plain store first). The user said to "get the new implementation working
+  and tested" and not to spend time on exact performance measurement.
+  Implementation is authorized; work through section 10's list.
 - The plan changes a persisted index format, the embedding model (one FP16
   MiniLM file in place of the two INT8 files) and lexical result order, and
   adds one service setting. Its section 5.13 lists every contract change and

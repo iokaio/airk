@@ -4,7 +4,9 @@
 sketched, and all ten questions of section 6 answered by the user. The user
 said "Start P0.2" the same day. Step P0 is closed (section 2.6). The user
 then directed: "Just move on and get the new implementation working and
-tested." The new store is not implemented yet; work continues at P1 and P3.
+tested." The new store now serves the base pass and every lexical, symbol
+and file read; vectors, change history and cleanup remain. Section 10 is the
+status report and the handoff.
 
 This plan replaces the way AIRK stores and builds an index. It was written by
 the primary agent (Claude Code) on the user's direction of 24 November 2026:
@@ -1075,10 +1077,117 @@ paging over `fts`; (5) object reads through the reader; (6) the base-pass
 writer; (7) status. Then vectors, relationships and imported analysis,
 changes, and Verify.
 
-## 10. Document history
+## 10. Status report and handoff (24 November 2026)
+
+### What is built (branch `feat/index-plain-store`, head `227a8086`, pushed)
+
+| Commit | What |
+|---|---|
+| `2ff8580d` | Step P0: stage timers (feature `airk-core/stage-timing`), measurement scripts, baseline |
+| `d6fd72a7`, `c075c80a` | The plain-store engine `airk_store::index` (`airk-index/1`) and its contract, with the mapping of the current index types |
+| `0b01d398` | Step P2 (part): pool of one-thread embedding sessions; thread limits raised to 32 |
+| `7b01d841`, `5dc90a44` | Read side: `CurrentRead` and the Kernel read handlers serve from the plain index |
+| `3f3baa75` … `227a8086` | Write side: the base pass writes the plain index; merge and unification of both sides; fixes from the full suites; service lifecycle paths |
+
+Old indexes are not read: a collection with an old index is discarded and
+rebuilt (no backward compatibility; the user, 24 November 2026: "When we
+release AIRK in 1.9, all old indexes will be abandoned and replaced with
+new").
+
+### Measured, lexical only, in-process `Kernel::index()` (same private source copies as section 2.6)
+
+| | munarium | bookbuilder-v2 |
+|---|---|---|
+| Cold index, new store | 22.3 s | 129.2 s |
+| Cold index, old store (section 2.6) | 263.4 s | 1,048.3 s |
+| Files indexed / skipped | 1,023 / 14 | 8,116 / 130 |
+| Chunks | 5,380 | 65,236 |
+| Index size, new / old | 113.7 MB / 420 MB | 497.9 MB / 1.6 GB |
+| Rescan, nothing changed | 0.98 s | 8.54 s |
+| Lexical search | 33.7 ms | 26.3 ms |
+| Exact symbol lookup | 12.7 ms | 5.6 ms |
+
+The new-store timings come from the writer agent's gated test, not from the
+P0 harness; another `airk` process was loading the machine. An earlier
+pre-merge run indexed munarium in 14.2 s. The difference was not explained.
+
+Embedding pool (one process, INT8 model, 512 texts of about 226 tokens):
+21.1 texts/s with 1 session, 79.9 with 4, 148.8 with 8, 251.6 with 16;
+vectors bit-identical to the single session.
+
+### Checks on the final tree
+
+- Clippy `-D warnings`: airk-store, airk-kernel (all targets), and the four
+  crates of the embedding pool.
+- Engine tests 15, reader tests 11 + 1, writer end-to-end tests 6: all pass.
+- Full suites: airk-store 996 run, 837 passed, 159 failed; airk-kernel 774
+  run, 671 passed, 103 failed; airk-mcp + airk-cli 696 run, 593 passed, 103
+  failed. Classified lists are in the private folder
+  `artifacts/indexing-plan/integration-r1/`.
+  - airk-store 159: tests of retired old-store internals (fixtures built with
+    the old writer or journal, Merkle map, grants). Expected.
+  - airk-kernel 103: 47 retired internals; 40 vectors not implemented; 9
+    change history not written; 7 deliberate design changes (readers no
+    longer block the writer; no reservations or grants); 1 real issue:
+    `semantic_search` with no model returns Ok instead of an error.
+  - airk-mcp + airk-cli 103: 55 "native runtime self-test failed" (the debug
+    `airk.exe` reports "single executable runtime requires embedded
+    inference": probably build configuration, not verified against an
+    unmerged baseline); 32 fixture capacity admission failures; about 16 not
+    investigated (native Verify and integrity audits, 3 MCP focus-handler
+    tests, change history and recovery, job and drain fixtures).
+- Not done: Linux and macOS builds; a crash test of the writer; the D8
+  refusal with an injected volume observer; any installed-service run.
+
+### Open work, in order (for the next session)
+
+1. **Vectors on the plain store (P4.4).** The drain is a no-op today, so
+   semantic readiness stays pending and the vector branch of search returns
+   nothing. Implement: plan units from the stored payload, embed with the
+   session pool, `IndexWriter::commit_vectors`, and replace
+   `vector_candidates` and the vector arm of `materialize` in Kernel
+   `current/search.rs` with `IndexReader::load_vectors` plus
+   `VectorMatrix::search` and `units_for_row`. Rebuild `occurrence_hit` as
+   load payload plus `airk_core::vector_evidence::materialize`. Fixes about
+   40 Kernel tests.
+2. **Change history (section 6 of the caller map).** Port
+   `recent_events::observe` and `recent::prepare` into the writer and write
+   the change record in `Batch.change`; serve `RecentChanges` from it.
+   Fixes about 9 Kernel tests.
+3. **Triage airk-mcp and airk-cli.** First run the 55 self-test failures on
+   `c075c80a` (before integration) to see whether they are configuration;
+   then the 16 others.
+4. **Decide on partial batches.** A direct scan that fails after its first
+   batch leaves the earlier batches published (every unscoped scan now
+   publishes in batches). Either accept and fix the tests, or restore an
+   all-or-nothing boundary for direct calls.
+5. **Fix** `semantic_search` with no model (should be an error).
+6. **Retire old-store tests and code (P7.4):** the 159 + 47 tests of retired
+   internals, `crates/airk-kernel/src/current/indexing/tests.rs` (unmounted),
+   then the old modules listed in section 5.12, each with a clean compile
+   and Clippy as evidence.
+7. **Remaining P2 parts:** the FP16 MiniLM file for processor and graphics
+   card (Q9), the CUDA route and its separate setting, allowed by default
+   (Q10), and the INT8-versus-FP16 retrieval comparison.
+8. **Then** P5.6 surface parity, P6 service integration, P7.
+
+### Decisions taken by the primary agent, for the user to confirm or change
+
+- The embedding pool's defaults: service inference threads default to a
+  quarter of the logical CPUs (Balanced) or half (Throughput) instead of 1;
+  the model memory charge grows by 200 MiB per extra thread (about 3.4 GiB
+  for 16 sessions on the development machine) and keeps its peak until the
+  service restarts. 192 MiB per session is the existing estimate, not a
+  measurement.
+- Full rebuilds and configuration changes now replace files batch by batch
+  in the same index instead of publishing atomically at the end; readers
+  stay served and artifact ids survive.
+
+## 11. Document history
 
 | Date | Change |
 |---|---|
 | 24 November 2026 | First version: analysis, decisions D1 to D8, design sketch, open questions Q1 to Q8, implementation plan |
+| 24 November 2026 | Section 10: status report and handoff after the engine, the embedding pool, and the read and write sides were integrated and both repositories indexed |
 | 24 November 2026 | Step P0: baseline of the base pass measured and section 2.3's ranking corrected (section 2.6); the vectors measurement stopped on the user's word; targets made guides; seam inventory (section 9) and notes for P2.1 added |
 | 24 November 2026 | The user's answers to Q1 to Q10 recorded. Q2, Q4 and Q10 differ from my recommendations: embedding on the graphics card, BM25 ranking and a separate embedding setting join the plan. Steps P2.5 to P2.9 added; targets, risks and section 5.13 revised |
