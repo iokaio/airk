@@ -4,23 +4,25 @@ These instructions are mandatory for the active assignment. Standing rules remai
 
 All unlinked filesystem paths below are repository-relative unless absolute or prefixed with `~/`.
 
-**24 November 2026. Windows rebuild complete. Prepare the live shakedown.**
-Claude’s plain-store refactor is on `feat/arbiter-final`. The Windows live
-smoke verified default CUDA embedding and CPU opt-out. Fresh Bookbuilder
-and Munarium indexes reached Ready on their pinned source exports, served
-hybrid retrieval, and settled on `win-minilm-cuda-base` with no restart
-blockers. The refreshed Arbiter CUDA profile passed native scoring and
-was paired with the retained Focus profile.
-[Resume inputs and exact launch shape](simplify/one-process-ledger.md#24-november-2026--prepared-return-to-the-windows-completion-plan).
+**24 November 2026. Windows shakedown settled. Repair the Windows L6 candidate.**
+Claude's plain-store refactor is on `feat/arbiter-final`. The Windows smoke
+verified default CUDA embedding and CPU opt-out. The pinned Bookbuilder and
+Munarium indexes reached Ready and served hybrid retrieval. The A6000
+shakedown passed all four switches and the leak check, captured Answer
+progress while Arbiter warmed, and settled the exact service lease.
+[Shakedown measurements and receipts](simplify/one-process-ledger.md#24-november-2026--windows-cuda-switches-and-leak-check).
 
-The user directed us to commit, push and prepare to return to the local
-`docs/arbiter/completion-plan.md`. Its next step is the same-install Windows
-four-switch shakedown and full leak check on the settled base. Calculate
-its native dispatch census from the plan before launching. Continue
-through Windows L6 and the L7 baseline plus three judged changes, then
-stop for the requested review. Keep the outstanding L7 harness edits
-with their judged series. The [indexing performance plan](indexing/performance-plan.md)
-records the plain-store and embedding decisions.
+The user directed us to continue the local `docs/arbiter/completion-plan.md`
+and to use measured larger deadlines and budgets where necessary. The first
+Windows L6 sweep has settled. Repair the reproduced bundled model verifier,
+plain Verify completion and transport fixture capacity failures. Use the
+short checked native test scratch base for Windows path-bound fixtures.
+Revalidate focused cases and account for the remaining L6 failures.
+Resume the Windows L7 baseline on a verified live successor, then run three
+judged changes and stop for the requested review. Keep the outstanding
+harness edits with their judged series. The
+[indexing performance plan](indexing/performance-plan.md) records the
+plain-store and embedding decisions.
 
 The user resumed the Windows and Linux FP16 campaign after D: cleanup. Keep new Windows work on D:, reuse the existing checkout target with one Cargo owner, and apply the standing disk budget and fixture disposal rules. Retained receipts remain evidence under their original identities. Removed fixture installations must be restored or replaced by a verified compatible installation before reuse.
 

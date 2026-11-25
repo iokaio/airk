@@ -17914,3 +17914,118 @@ The cleanup reclaimed 24,090,091,520 bytes, leaving D: with
 459,842,703,360 free bytes. The private disposal receipt SHA-256 is
 `d32d9168068a5731e0dd7f55b798923e2b252498422ba165d90b40951a5ca2e9`.
 The closed evaluation base and its staged CUDA runtime remain available.
+
+### 24 November 2026 — Windows CUDA switches and leak check
+
+On the checked Windows desktop, the A6000 service reopened the existing
+Bookbuilder-v2 and Munarium installation from `win-minilm-cuda-base`.
+The image was `minilm-live-r2-e818a1f2` and the pair was
+`c34d8c6ecb7fa405d89617b377d0325a730dc6597cd901cd08323b586630ece5`.
+The private fixture uses the recorded Bookbuilder logical alias.
+`win-minilm-cuda-shakedown` started with a 65,536-event dispatch census
+and a 21,000-second lifetime. Owner and default owner both matched the
+interactive `TYAI\tdotn` SID ending in `1002`. The 40 GiB fixture
+reservation and 120 GiB warm Cargo reservation fit above the 200 GiB
+D: free-space floor.
+
+All eight ordinary /3 Answers passed the native search and arm checks
+on the two pinned development scenarios.
+
+| Switches | Bookbuilder elapsed | Munarium elapsed |
+| --- | ---: | ---: |
+| Neither | 7.850 s | 1.099 s |
+| Focus | 6.684 s | 1.882 s |
+| Focus and Arbiter | 10.024 s | 3.719 s |
+| Arbiter | 7.111 s | 2.318 s |
+| Focus and Arbiter, warm after re-enable | 10.916 s | 3.700 s |
+
+Legacy status recorded the selected CUDA profiles. Device status read
+before any switch and reported the typed private-profile migration
+refusal during legacy configuration. The canonical index-specific
+status read succeeded before release, after release, and after
+re-enable. Both index publication tokens stayed unchanged and Ready.
+The complete leak check passed 20 Bookbuilder probes and 10 Munarium
+probes with complete listings, unchanged tokens, and zero forbidden
+indexes or findings.
+
+Cold requests to enable Focus and Arbiter settled in 4.293 s and
+7.814 s. Arbiter re-enable settled in 9.580 s. The Answer issued while
+the re-enabled Arbiter was still warming returned seven records in
+2.802 s and disclosed its missing model advice. The device-wide
+A6000 memory sample peaked at 5,737 MiB during this overlap, with
+90 samples at 200 ms. Native work observations include 169
+Focus returns and 29 Arbiter returns. Inference p50/p95 were
+109.87/289.00 ms for Focus and 96.14/421.31 ms for Arbiter. The
+private consolidated live evidence under `L5C/win-minilm-cuda-shakedown-r1`
+has SHA-256
+`a88cf0215125f08a35b33bc2d38b05158f9b2a50d6202e5e6e00535704cdb513`.
+
+The explicit 1,800 ms development probe on Munarium returned a deadline
+partial in 1.709 s with seven gathered records. Bookbuilder at the same
+budget returned a ticket and then an unknown or expired continuation.
+The focused replay retained its initial ticket at 1,786 ms, advertised
+2,186 ms as the retry delay, and reproduced the refusal on attachment.
+The saved observations do not establish why that job disappeared. The
+user directed us to measure the original behavior and use larger
+deadlines and budgets where needed. The next same-scenario Bookbuilder
+run uses the measured warm time to set a 30-second work budget.
+
+Windows all-feature workspace Clippy passed in 74.156 s on `aa40b64b`
+with the pinned offline CUDA environment and warm `target-cuda`. Its
+owner receipt is `L5C/CARGO-OWNER-CUDA.windows-l6-clippy-r1.at-release.json`
+and the Cargo timing report is
+`cargo-timing-20261125T044308624Z-c40827fc20672f35.html`.
+The full Windows Nextest command is running with the `ci` profile
+and its default filter disabled. Both model stages were disabled
+and verified idle before that sweep. The live fixture lease remains
+available for its next measured probe. Natural fixture closure,
+doctests, client transport preflight, and Windows L7 are still open.
+
+The 20-scenario, five-arm Windows L7 spec is frozen at
+`f12d0e45ebb3930b82aa985ebf45b7236af006fdc6ab040b19184bb5f64a10cf`.
+The prompt freeze is
+`a4a10a66a08bfef0b443a01d8eda8d2431b186419f9a62dd2230a2f5b07df25d`.
+The live tools catalog captured 60 schemas. The first-pass plan is
+split by arm for census and time admission. The eligible second jobs
+are to be frozen after grading. No judged session has begun. The
+pending harness changes belong with the judged baseline.
+
+#### Expanded work budget and settled shakedown
+
+The continued probe used the same questions, indexes, profiles and
+other work limits. At 30 seconds, Bookbuilder returned seven records
+in 9.868 s and Munarium returned seven in 2.234 s. Both disclosed
+model-share degradation and made zero Arbiter calls. At 120 seconds,
+both retained Focus and five Arbiter calls with no arm-check problems.
+Bookbuilder returned nine records in 12.378 s and Munarium returned
+twelve in 4.296 s. The 120-second receipt SHA-256 is
+`6a3d09b7bc92d957f7cce699e51a70a06a8fbaf4a4ecbf963db0a45ee379ea8a`.
+The 1.8-second Bookbuilder continuation failure remains a measured
+tight-deadline case. The scheduled L7 default work budget is 300 seconds.
+
+The fixture stopped naturally with its native lease reacquired and no
+remaining owned Job members. Native close receipt SHA-256 is
+`56901177dc9354c5963ba12a4b257f2749f8c85e52a7c04076ccc5b11eb2268a`.
+Outer owner receipt SHA-256 is
+`aa698bfd97a6312251aec34850d19349a01bf2590d670bfe4018e1ccc577ac88`.
+Generate the judged baseline against the next verified live handle.
+
+The first Windows L6 sweep on unchanged inputs ran 5,642 tests across
+89 binaries. It passed 5,214, failed 428, and skipped 225. Nextest took
+699.626 s for tests and 1,978.955 s for compilation plus tests, with
+exit 100. The shared owner audited 42,499 outputs and settled. D: had
+403,456,233,472 free bytes at that checkpoint.
+
+The same executable's bundled inventory command reproduced the
+stale two-INT8-profile check against the single FP16 bundle. In a
+separate failure, a 4 GiB test grant could not fit the measured
+startup inference reservation and three readers. Plain Verify reached
+the file walk but required retired projections for completion.
+Two unchanged binaries passed their exact original selectors with
+the short checked native fixture base. Fix the reproduced faults,
+rerun focused cases, then reassess the remaining L6 groups.
+
+D: recovered 47,696,621,568 bytes of measured free space from the three
+obsolete indexing incremental caches. Free space rose to 451,152,453,632
+bytes. The retained binary, model, index and report inputs stayed intact.
+Private cleanup receipt SHA-256 is dc48b4e5cb1e6eb713b09706071c3a9366e805127f2fc76225a418176f057d98.
