@@ -17754,3 +17754,49 @@ served routes, and settle the service before launching the full Bookbuilder
 and Munarium indexes. The authenticated scientific CUDA closure supports
 this development fixture. Product and cross-platform CUDA qualification
 remain separate. Full index writers were idle at this checkpoint.
+
+### 24 November 2026 — Live GPU-default index smoke passed and full rebuild restarted
+
+The first live fixture refused startup after comparing the legacy omitted
+embedding preference to the effective value in the native service observation.
+The fixture now applies that default to the expected value and still refuses
+an explicitly disabled request answered as enabled. The affected native
+resource selection passed two tests (465 filtered).
+
+The corrected matched Windows service image SHA-256 was
+`e818a1f2d60bbcd2646425276993497ad1a5c7241ac812c3a20300c65e5758e2`.
+It reused the unchanged matched CLI
+`8f237f848d5a3fa44649e63dd052ecbc6a444e8069073368b23a6457b9d5dcdf`.
+The source was `b219cb7f` plus the fixture-only source diff
+`2c8addeb93ae8b4c880fcd846dbd24d0df4c3629e968a7482c314f17c0f61345`.
+The one verified Windows Cargo owner used the same warm CUDA target,
+incremental enabled. The main matched compile took 298.754 s and CLI
+109.580 s. Recompiling the corrected fixture took 105.680 s.
+The exact command lines, option pins and timings are in the
+`L5C/CARGO-OWNER-CUDA.embedding-fp16-6210412f-live-r1.at-release.json`
+and `-live-r2.at-release.json` receipts.
+
+Through the native service, one three-file synthetic index reached Ready
+with three vectors, three vector hits and an observed CUDA batch under
+the default embedding policy. After setting only embedding GPU use to
+false, a separate three-file index reached Ready, published three vectors
+and served three vector hits with CPU and fallback `disabled`. The
+service shut down, returned the same lease and left no Job members.
+The owner-audited `minilm-live-smoke-r2/receipts/outcome.json` digest was
+`c5e45176c30ed1e638e28a61a6e41148671ec0163e2b1e7abd49dec1cd57144c`;
+native `closed.json` was
+`9bb86f20a9a541a0a4e8c58740b35ac87fafd51c2a2a20cda1f54ede10c3b9ba`.
+The first fixture`s disposable weight copies were verified against
+their authenticated retained originals and reclaimed 24,090,091,520 D:
+bytes. No model comparisons or full-index performance benchmarks ran.
+
+The fresh full lifetime started under `fixture-win-minilm-cuda-base-r1`
+on the same exact staged pair after the smoke settled. It uses the pinned
+Bookbuilder and Munarium commits and no AIRK collection. D: admission saw
+462,645,465,088 free bytes with a 40 GiB reservation and 200 GiB floor.
+The launch reserved a 21,000-second native window, beyond the earlier
+two-hour default. The private admission receipt
+`fixture-win-minilm-cuda-base-r1.admission.json` (SHA-256
+`c2c78e840a977b23a543219d046b22b1ed8615c6e1b26434d51102da441fd0b0`)
+records exact commands and outputs. Semantic readiness and the full leak
+check remain pending on the new lifetime.

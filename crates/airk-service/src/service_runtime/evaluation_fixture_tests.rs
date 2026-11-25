@@ -539,7 +539,8 @@ fn cuda_answer_fixture_resources_state_the_gpu_choice_in_the_reviewed_request() 
         &ControlResponse::Resources {
             observation: Box::new(
                 airk_kernel::service_resources::Resources::new(stored, 32, Some(128 << 30))?
-                    .snapshot(),
+                    .snapshot()
+                    .with_effective_embedding_gpu(),
             ),
             age_ms: 0,
             configuration_error: false,
@@ -561,8 +562,12 @@ fn require_software_v2_resource_observation(
     else {
         bail!("current fixture native resource configuration refused or unknown")
     };
+    // The native reply materializes the effective default for this field.
+    // Omission in a legacy request is still tested separately from opt-out.
+    let mut expected = expected.clone();
+    expected.allow_embedding_gpu = Some(expected.embedding_gpu_allowed());
     ensure!(
-        serde_json::to_value(&observation.configuration)? == serde_json::to_value(expected)?,
+        serde_json::to_value(&observation.configuration)? == serde_json::to_value(&expected)?,
         "current fixture actual resource configuration differs"
     );
     // Pressure/available memory/reservations are retained facts, not proof of
@@ -608,7 +613,7 @@ fn current_private_fixture_resources_require_explicit_consent_and_exact_native_c
     );
     let requested =
         airk_kernel::service_resources::Resources::new(configuration.clone(), 32, Some(128 << 30))?;
-    let mut observed = requested.snapshot();
+    let mut observed = requested.snapshot().with_effective_embedding_gpu();
     // A configured ceiling is deliberately not a claim that pressure is absent.
     observed.pressure = true;
     let actual = ControlResponse::Resources {
@@ -617,6 +622,9 @@ fn current_private_fixture_resources_require_explicit_consent_and_exact_native_c
         configuration_error: false,
     };
     require_software_v2_resource_observation(&actual, &configuration)?;
+    let mut explicitly_disabled = configuration;
+    explicitly_disabled.allow_embedding_gpu = Some(false);
+    assert!(require_software_v2_resource_observation(&actual, &explicitly_disabled).is_err());
     Ok(())
 }
 
