@@ -236,45 +236,50 @@ pub fn default_plan() -> Result<airk_core::model_objects::ModelObjectSet> {
     .map_err(|_| anyhow::anyhow!("default model metadata is unavailable"))
 }
 
-/// Packaging checks actual embedded bytes, not just the main executable's metadata.
+/// Packaging verifies the embedded bytes against the selected native model's authenticated catalog.
 #[cfg(feature = "bundled-model")]
 pub fn verify_inventory() -> Result<serde_json::Value> {
-    let catalog = airk_retrieval::model_catalog::inspect_catalog()?.catalog;
+    let profile = airk_retrieval::model_catalog::selected_profile()?;
     ensure!(
-        PROFILES.len() == 2,
-        "exactly two INT8 profiles must be embedded"
+        PROFILES.len() == 1,
+        "exactly one shared FP16 MiniLM profile must be embedded"
     );
-    let mut inventory = Vec::new();
-    for profile in catalog.profiles {
-        let embedded = PROFILES
+    let embedded = assets()?;
+    ensure!(
+        embedded.len() == profile.assets.len() + 1,
+        "unexpected embedded model inventory"
+    );
+    for asset in &profile.assets {
+        let bytes = embedded
             .iter()
-            .find(|(id, _)| *id == profile.id)
-            .ok_or_else(|| anyhow::anyhow!("embedded INT8 profile absent"))?
-            .1;
-        ensure!(embedded.len() == 4, "unexpected embedded model inventory");
-        for asset in &profile.assets {
-            let bytes = embedded
-                .iter()
-                .find(|(name, _)| *name == asset.name)
-                .ok_or_else(|| anyhow::anyhow!("embedded INT8 asset absent"))?
-                .1;
-            ensure!(
-                bytes.len() as u64 == asset.bytes
-                    && format!("{:x}", Sha256::digest(bytes)) == asset.sha256,
-                "embedded INT8 asset failed verification"
-            );
-        }
-        let manifest = embedded
-            .iter()
-            .find(|(name, _)| *name == "model.json")
-            .ok_or_else(|| anyhow::anyhow!("embedded manifest absent"))?
+            .find(|(name, _)| *name == asset.name)
+            .ok_or_else(|| anyhow::anyhow!("embedded model asset absent: {}", asset.name))?
             .1;
         ensure!(
-            serde_json::from_slice::<serde_json::Value>(manifest)?
-                == serde_json::to_value(&profile.manifest)?,
-            "embedded manifest differs"
+            bytes.len() as u64 == asset.bytes
+                && format!("{:x}", Sha256::digest(bytes)) == asset.sha256,
+            "embedded model asset failed verification: {}",
+            asset.name
         );
-        inventory.push(serde_json::json!({"id":profile.id,"precision":profile.precision,"manifest":profile.manifest,"assets":profile.assets}));
     }
-    Ok(serde_json::json!({"schema":1,"fp32_included":false,"profiles":inventory}))
+    let manifest = embedded
+        .iter()
+        .find(|(name, _)| *name == "model.json")
+        .ok_or_else(|| anyhow::anyhow!("embedded manifest absent"))?
+        .1;
+    ensure!(
+        serde_json::from_slice::<serde_json::Value>(manifest)?
+            == serde_json::to_value(&profile.manifest)?,
+        "embedded manifest differs"
+    );
+    Ok(serde_json::json!({
+        "schema": 1,
+        "fp32_included": false,
+        "profiles": [{
+            "id": profile.id,
+            "precision": profile.precision,
+            "manifest": profile.manifest,
+            "assets": profile.assets,
+        }],
+    }))
 }

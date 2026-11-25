@@ -423,13 +423,8 @@ fn clearing_rejects_late_writers_and_preserves_index() -> anyhow::Result<()> {
 
 #[test]
 fn deletion_and_recreation_cannot_receive_an_old_workers_history() -> anyhow::Result<()> {
-    use airk_core::{
-        graph_storage::{GraphHead, GraphScope},
-        identity::{Incarnation, Sha256Digest, framed_digest},
-    };
-    use airk_store::current::{
-        CurrentHead, CurrentScope, collection::CollectionConfiguration, map,
-    };
+    use airk_core::identity::{Incarnation, Sha256Digest};
+    use airk_store::current::{CurrentScope, collection::CollectionConfiguration};
     let root = tempfile::tempdir()?;
     let directory = root.path().join("collections-1.2/project");
     let scope = UsageScope {
@@ -442,33 +437,11 @@ fn deletion_and_recreation_cannot_receive_an_old_workers_history() -> anyhow::Re
             collection: "project".into(),
             incarnation: Incarnation::from_bytes([incarnation; 16]),
         };
-        let graph_scope = GraphScope {
-            root: current_scope.root.clone(),
-            collection: current_scope.collection.clone(),
-            incarnation: current_scope.incarnation,
-            graph_instance: Incarnation::from_bytes([incarnation; 16]),
-            specification: Sha256Digest::from_bytes([3; 32]),
-            record_bytes: 16,
-        };
-        let manifest = br#"{"fixture":"empty"}"#;
-        let head = CurrentHead {
-            version: 2,
-            scope: current_scope.clone(),
-            sequence: 0,
-            artifact_root: map::empty_root(&current_scope)?,
-            lexical_sequence: 0,
-            lexical_commit: framed_digest(b"current-lexical-manifest/1", &[manifest]),
-            graph_head: GraphHead::empty(graph_scope)?,
-        };
         let file = FileStore::new(&directory);
         let writer = file.lock()?;
-        let quota = airk_store::quota::Quota::open(root.path())?;
-        let mut current = file.current_write(&writer, &quota, &current_scope, 8 << 20)?;
-        let token = head.token()?;
-        current.initialize(head)?;
-        current.install_initial_lexical_manifest(&token, manifest)?;
-        current.initialize_collection(
-            &token,
+        file.plain_create(
+            &writer,
+            &current_scope,
             &CollectionConfiguration {
                 retained_profile: None,
                 source_policy_digest: None,
@@ -479,8 +452,7 @@ fn deletion_and_recreation_cannot_receive_an_old_workers_history() -> anyhow::Re
                 vector_selection: Default::default(),
                 model: None,
             },
-        )?;
-        Ok(())
+        )
     };
     initialize(1)?;
     let store = UsageStore::open(&directory, &scope, &UsagePolicy::default())?.unwrap();

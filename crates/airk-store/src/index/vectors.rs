@@ -47,6 +47,34 @@ fn row_bytes(setup: &VectorSetup) -> u64 {
     u64::from(setup.dimensions) * 4
 }
 
+pub(super) fn verify_committed_extent(
+    directory: &Path,
+    generation: u64,
+    setup: &VectorSetup,
+    rows: u64,
+) -> Result<()> {
+    let path = directory.join(file_name(generation));
+    let mut file = match File::open(&path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(crate::current::PrivateIntegrityFailure)
+                .context("plain index committed vector file is missing");
+        }
+        other => other.with_context(|| format!("open vector file {}", path.display()))?,
+    };
+    let expected_length = rows
+        .checked_mul(row_bytes(setup))
+        .and_then(|length| length.checked_add(HEADER_BYTES));
+    let available = file.metadata()?.len();
+    if !(1..=MAX_DIMENSIONS).contains(&setup.dimensions)
+        || expected_length.is_none_or(|length| length > available)
+    {
+        return Err(crate::current::PrivateIntegrityFailure)
+            .context("plain index committed vector extent is invalid or truncated");
+    }
+    VectorFile::check_header(&mut file, setup)?;
+    Ok(())
+}
+
 /// One generation's file, opened for appending rows.
 pub struct VectorFile {
     file: File,
@@ -76,10 +104,10 @@ impl VectorFile {
         file.seek(SeekFrom::Start(0))?;
         file.read_exact(&mut bytes)
             .context("vector file header is truncated")?;
-        ensure!(
-            bytes == header(setup),
-            "vector file belongs to another embedding pipeline"
-        );
+        if bytes != header(setup) {
+            return Err(crate::current::PrivateIntegrityFailure)
+                .context("vector file belongs to another embedding pipeline");
+        }
         Ok(())
     }
 

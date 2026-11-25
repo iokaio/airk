@@ -18029,3 +18029,46 @@ D: recovered 47,696,621,568 bytes of measured free space from the three
 obsolete indexing incremental caches. Free space rose to 451,152,453,632
 bytes. The retained binary, model, index and report inputs stayed intact.
 Private cleanup receipt SHA-256 is dc48b4e5cb1e6eb713b09706071c3a9366e805127f2fc76225a418176f057d98.
+
+### 24 November 2026 — First Windows L6 repairs verified
+
+The installer now verifies its single authenticated FP16 MiniLM
+profile and all three exact asset hashes as well as the embedded
+manifest. Before the repair, the same inventory command refused the
+bundle because it expected two INT8 profiles. The rebuilt executable
+verified the single profile under its original report schema. Receipt
+SHA-256 is `a5463844ac386c4e575d7e35efb456b6c82a9498786a822aff91f49c070921a1`.
+Both native installed semantic setup journeys passed.
+
+Plain Verify now physically checks the selected publication under the
+writer lock and produces its revision-bound completion proof. The
+checks include the SQLite database, contentless FTS and row relationships,
+plus the configured vector header and committed extent. Legacy projection
+coverage remains separate and truthful. The new deleted-FTS-row test,
+all three owned Verify restart and drain tests, and the stale-worker
+history isolation test passed.
+
+The three-reader fixture now requests 10 GiB to cover the startup
+inference reserve and three readers on high-core hosts. Its exact
+configuration and capacity assertions remain. The initially failing
+one-index transport selector passed. The full combined-read target is
+running against the same binaries and the short checked fixture base.
+An unchanged retained-writer test also passed with a clean process-local
+Git environment. The invoking shell's Git overrides were absent from
+the logged-in user's persisted configuration. No native safety policy
+needed changing.
+
+All-feature workspace Clippy passed in 52.446 s. Focused Nextest ran
+6 store and retrieval tests and 7 CLI tests, all passed. The two runs
+selected exactly those tests and skipped 1,322 and 85 respectively.
+The shared Cargo owner retained timings and audited 11,121 outputs.
+Exact commands and receipts are under `L5C/windows-l6-targeted-r2`.
+D: held 442,051,809,280 free bytes at its handoff.
+
+L6 remains open. An independent seven-test split cluster reached the
+old journal's 88,097,568,784,384-byte reservation because a plain owner
+was sent through a legacy checkpoint. Correct the checkpoint route and
+check actual paid work and takeover. D6 still requires rebuilding old
+indexes. Distinguish retired-mechanic assertions from current behavior
+tests with predecessor-only fixture setup before counting qualification.
+The Windows L7 baseline and judged changes remain ahead.

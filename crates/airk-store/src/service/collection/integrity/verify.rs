@@ -1589,14 +1589,14 @@ impl IntegrityOwner<'_> {
             }
         };
         let mut used = 0u64;
+        let mut plain_verified = false;
         let work = (|| -> Result<()> {
             let mut leaf_pages = 0usize;
             (|| -> Result<()> {
                 if progress.lexical_observed_unix_ms.is_none() {
                     check()?;
-                    // Existing v2 auxiliary SHA streams are indivisible; this can
-                    // take longer than a turn. Never called once per object page.
-                    read.verify_lexical_integrity()?;
+                    read.verify_plain_snapshot(&selected.store, writer)?;
+                    plain_verified = true;
                     progress.lexical_observed_unix_ms = Some(now);
                 }
                 check()?;
@@ -2077,6 +2077,21 @@ impl IntegrityOwner<'_> {
                     }
                 }
             }
+            if !plain_verified
+                && !blocked_large
+                && progress.objects_complete
+                && (!audit_projections
+                    || progress
+                        .projections
+                        .as_ref()
+                        .is_some_and(ProjectionAuditProgress::declared_complete))
+            {
+                // A persisted observation can predate physical verification.
+                check()?;
+                read.verify_plain_snapshot(&selected.store, writer)?;
+                plain_verified = true;
+                check()?;
+            }
             Ok(())
         })();
         // Partial successes precede the failing object; retain them, but never
@@ -2231,12 +2246,15 @@ impl IntegrityOwner<'_> {
             job,
         )
         .ok();
-        let complete_projection = audit_projections
+        // CurrentRead opens the AIRX plain layout exclusively. The legacy
+        // projection counters remain available with their original meaning.
+        let physical_complete = plain_verified
+            && audit_projections
             && progress
                 .projections
                 .as_ref()
-                .is_some_and(ProjectionAuditProgress::complete_coverage);
-        let completed = if progress.complete() && complete_projection && !blocked_large {
+                .is_some_and(ProjectionAuditProgress::declared_complete);
+        let completed = if progress.complete() && physical_complete && !blocked_large {
             Some(AuditCompletionProof {
                 drained: crate::service::registry::AuditDrainProof::new(
                     self.registry,

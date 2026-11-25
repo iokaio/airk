@@ -464,19 +464,76 @@ impl IndexWriter {
 
     /// Run SQLite's own checks: the database and the lexical index.
     pub fn verify(&self) -> Result<()> {
-        let result: String = self
-            .connection
-            .query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
+        verify_database(&self.connection)
+    }
+
+    /// Check the selected publication under the caller's writer lock.
+    pub(crate) fn verify_snapshot(directory: &Path, expected_sequence: u64) -> Result<()> {
+        // Do not open IndexWriter: it may reclaim retired vector generations.
+        let mut connection = schema::open_writer(&directory.join(DATABASE_FILE))?;
+        let transaction = connection.transaction()?;
         ensure!(
-            result == "ok",
-            "index database integrity check failed: {result}"
+            sequence(&transaction)? == expected_sequence,
+            "index publication changed during Verify"
         );
-        self.connection
-            .execute(
-                "INSERT INTO fts(fts, rank) VALUES('integrity-check', 0)",
+        let format: Option<String> = transaction
+            .query_row(
+                "SELECT CAST(value AS TEXT) FROM meta WHERE key='format'",
                 [],
+                |row| row.get(0),
             )
-            .context("lexical index integrity check failed")?;
+            .optional()?;
+        if format.as_deref() != Some(FORMAT) {
+            return Err(crate::current::PrivateIntegrityFailure)
+                .context("plain index format marker is missing or invalid");
+        }
+        verify_database(&transaction)?;
+        let consistent: bool = transaction.query_row(
+            "SELECT NOT EXISTS (
+                SELECT 1 FROM files f WHERE NOT EXISTS (
+                    SELECT 1 FROM payloads p WHERE p.digest=f.payload)
+                UNION ALL
+                SELECT 1 FROM chunks c WHERE NOT EXISTS (
+                    SELECT 1 FROM files f WHERE f.id=c.file_id)
+                UNION ALL
+                SELECT 1 FROM selectors s WHERE NOT EXISTS (
+                    SELECT 1 FROM files f WHERE f.id=s.file_id)
+                UNION ALL
+                SELECT 1 FROM handles h WHERE NOT EXISTS (
+                    SELECT 1 FROM files f WHERE f.id=h.file_id)
+                UNION ALL
+                SELECT 1 FROM units u WHERE NOT EXISTS (
+                    SELECT 1 FROM files f WHERE f.id=u.file_id)
+                    OR NOT EXISTS (SELECT 1 FROM vector_rows v WHERE v.embedding_key=u.embedding_key)
+            )
+            AND (SELECT count(*) FROM fts)=(SELECT count(*) FROM chunks)
+            AND (SELECT count(*) FROM fts JOIN chunks c ON c.id=fts.rowid)
+                =(SELECT count(*) FROM chunks)",
+            [],
+            |row| row.get(0),
+        )?;
+        if !consistent {
+            return Err(crate::current::PrivateIntegrityFailure)
+                .context("plain index contains missing or unbound rows");
+        }
+
+        let setup = vector_setup(&transaction)?;
+        let committed = setup.as_ref().map_or(0, |(_, _, rows)| *rows);
+        // Unique row positions and these bounds imply a dense committed extent.
+        let consistent: bool = transaction.query_row(
+            "SELECT count(*)=?1 AND coalesce(min(row), 0)>=0
+                AND coalesce(max(row), -1)<?1 FROM vector_rows",
+            [i64::try_from(committed)?],
+            |row| row.get(0),
+        )?;
+        if !consistent {
+            return Err(crate::current::PrivateIntegrityFailure)
+                .context("plain index vector row positions disagree with the committed extent");
+        }
+        if let Some((setup, generation, rows)) = setup {
+            vectors::verify_committed_extent(directory, generation, &setup, rows)?;
+        }
+        transaction.rollback()?;
         Ok(())
     }
 
@@ -498,6 +555,21 @@ impl IndexWriter {
             }
         }
     }
+}
+
+fn verify_database(connection: &Connection) -> Result<()> {
+    let result: String = connection.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
+    if result != "ok" {
+        return Err(crate::current::PrivateIntegrityFailure)
+            .context(format!("index database integrity check failed: {result}"));
+    }
+    connection
+        .execute(
+            "INSERT INTO fts(fts, rank) VALUES('integrity-check', 0)",
+            [],
+        )
+        .context("lexical index integrity check failed")?;
+    Ok(())
 }
 
 pub(super) fn vector_setup(connection: &Connection) -> Result<Option<(VectorSetup, u64, u64)>> {

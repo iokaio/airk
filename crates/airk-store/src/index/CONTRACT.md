@@ -136,13 +136,16 @@ here first.
   absent-history view.
 - **Accelerators and integrity.** `private_query_eligible` is false; every
   projection is `None`; lexical seals, Merkle proofs, grants, the journal and
-  object reclamation have no counterpart.
+  object reclamation have no counterpart. Verify completes for the selected
+  revision after auditing retained inputs and checking SQLite integrity,
+  contentless FTS5 integrity, the file and index row relationships, and the
+  configured vector file header and committed extent. Retired projections
+  still report missing coverage. The flat vector format has no data checksum.
 
 ## Not yet
 
 Compaction of dead vector rows; the free-space and size-cap check (D8) is
-the caller's; Verify runs `integrity_check` and the FTS5 integrity check
-only. Tests: `index::tests` (15), including rollback of a failed batch,
+the caller's. Tests: `index::tests`, including rollback of a failed batch,
 snapshot isolation, payload reclamation, stale vector planning, leftover
 rows, format refusal and caller meta. The current types' writer is
 `current::plain_writer`; its end-to-end tests are

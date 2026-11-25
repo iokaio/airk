@@ -4,7 +4,7 @@
 //! The mapping is fixed by `crate::index` CONTRACT.md, "Mapping of the current
 //! index".
 use super::{CurrentHead, CurrentRead, CurrentScope, collection::CollectionState, gate::Gate};
-use crate::index::{DATABASE_FILE, FORMAT, IncompatibleIndex, IndexReader};
+use crate::index::{DATABASE_FILE, FORMAT, IncompatibleIndex, IndexReader, IndexWriter};
 use airk_core::{
     Artifact,
     graph_storage::{GraphHead, GraphScope, MAX_GRAPH_RECORD_BYTES},
@@ -52,6 +52,40 @@ pub fn head_digest(scope: &CurrentScope, sequence: u64) -> Sha256Digest {
             FORMAT.as_bytes(),
         ],
     )
+}
+
+impl CurrentRead {
+    pub(crate) fn verify_plain_snapshot(
+        &self,
+        store: &crate::FileStore,
+        writer: &crate::WriterLock,
+    ) -> Result<()> {
+        let directory = super::gate::check_writer(store, writer)?;
+        ensure!(
+            directory == self.native_directory().canonicalize()?,
+            "plain Verify reader and writer select different stores"
+        );
+        self.live()?;
+        IndexWriter::verify_snapshot(&directory, self.head().sequence).map_err(|error| {
+            if error
+                .downcast_ref::<rusqlite::Error>()
+                .is_some_and(|sqlite| {
+                    matches!(
+                        sqlite.sqlite_error_code(),
+                        Some(
+                            rusqlite::ErrorCode::DatabaseCorrupt
+                                | rusqlite::ErrorCode::NotADatabase
+                        )
+                    )
+                })
+            {
+                error.context(super::PrivateIntegrityFailure)
+            } else {
+                error
+            }
+        })?;
+        self.live()
+    }
 }
 
 fn old_index_present(directory: &Path) -> Result<bool> {

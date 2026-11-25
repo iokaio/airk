@@ -532,14 +532,14 @@ impl Fixture {
                     .await;
             if matches!(response, Ok(ControlResponse::RequestEpoch { .. })) {
                 if self.registrations.len() == 3 {
-                    // These positive fixtures retain three tiny readers. An
-                    // 8GiB host's balanced default admits only one resident;
-                    // request capacity explicitly through the native contract.
+                    // Cover the startup inference reservation, query working
+                    // space, and three resident readers through the native contract.
+                    const THREE_READER_MEMORY_BYTES: u64 = 10 << 30;
                     let response = airk_cli::service_runtime::request(
                         &self.control,
                         ControlMethod::ConfigureResources {
                             configuration: airk_core::service_resources::ResourceConfiguration {
-                                memory_bytes: Some(4 << 30),
+                                memory_bytes: Some(THREE_READER_MEMORY_BYTES),
                                 ..Default::default()
                             },
                         },
@@ -558,7 +558,7 @@ impl Fixture {
                     };
                     ensure!(
                         !configuration_error
-                            && observation.configuration.memory_bytes == Some(4 << 30)
+                            && observation.configuration.memory_bytes == Some(THREE_READER_MEMORY_BYTES)
                             && observation.resident_limit >= 3,
                         "fixture lacks explicit three-reader capacity: {}",
                         serde_json::to_string(&observation)?

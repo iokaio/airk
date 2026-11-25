@@ -318,30 +318,33 @@ fn retained_v1_onnx_metadata_preserves_original_runtime_pipeline_without_relabel
 }
 
 #[test]
-fn both_current_trained_precisions_preserve_runtime_compatibility_independent_of_cpu_default()
--> Result<()> {
+fn shared_fp16_profile_preserves_current_runtime_compatibility() -> Result<()> {
     let catalog: crate::model_catalog::ModelCatalog =
         serde_json::from_str(include_str!("../model_catalog.json"))?;
-    assert_eq!(catalog.profiles.len(), 2);
+    let [profile] = catalog.profiles.as_slice() else {
+        anyhow::bail!("expected exactly one shared FP16 profile");
+    };
+    assert_eq!(profile.id, "minilm-l6-v2-fp16-v1");
+    let descriptor = descriptor_from_manifest(DescriptorManifest::Onnx(&profile.manifest))?;
+    assert!(onnx_descriptor_uses_current_runtime(&descriptor));
     assert_eq!(
-        catalog
-            .profiles
-            .iter()
-            .map(|p| p.id.as_str())
-            .collect::<std::collections::BTreeSet<_>>(),
-        std::collections::BTreeSet::from(["minilm-l6-v2-u8-v3", "minilm-l6-v2-s8-v3"])
+        descriptor.inference,
+        framed_digest(
+            b"airk-inference/1",
+            &[
+                b"onnxruntime/1.30.0/airk-minilm-fp16-shared/1",
+                std::env::consts::ARCH.as_bytes(),
+                std::env::consts::OS.as_bytes(),
+            ],
+        )
     );
-    for profile in &catalog.profiles {
-        let descriptor = descriptor_from_manifest(DescriptorManifest::Onnx(&profile.manifest))?;
-        assert!(onnx_descriptor_uses_current_runtime(&descriptor));
-        let foreign = descriptor_for_platform(
-            DescriptorManifest::Onnx(&profile.manifest),
-            RETAINED_ONNX_RUNTIME_V1,
-            std::env::consts::ARCH,
-            std::env::consts::OS,
-        )?;
-        assert!(!onnx_descriptor_uses_current_runtime(&foreign));
-    }
+    let foreign = descriptor_for_platform(
+        DescriptorManifest::Onnx(&profile.manifest),
+        RETAINED_ONNX_RUNTIME_V1,
+        std::env::consts::ARCH,
+        std::env::consts::OS,
+    )?;
+    assert!(!onnx_descriptor_uses_current_runtime(&foreign));
     let word = Fixture::new(false)?;
     assert_eq!(
         descriptor_from_objects_metadata(word.collection.path(), &word.set)?,
@@ -405,27 +408,26 @@ fn unowned_model_setup_preserves_product_cpu_selection_with_or_without_native_in
     // neither the native module nor an evaluation authority exists.
     let catalog: crate::model_catalog::ModelCatalog =
         serde_json::from_str(include_str!("../model_catalog.json"))?;
-    let selected = crate::model_catalog::selected_profile()?;
-    assert_eq!(catalog.profiles.len(), 2);
-    let mut accepted = 0;
-    for profile in catalog.profiles {
-        let bytes = serde_json::to_vec(&profile.manifest)?;
-        let result = require_selected_model_manifest(&bytes);
-        assert_eq!(
-            result.is_ok(),
-            profile.id == selected.id,
-            "test-support alone must not admit a foreign CPU profile"
-        );
-        accepted += usize::from(result.is_ok());
-        let mut foreign: serde_json::Value = serde_json::from_slice(&bytes)?;
-        foreign["model_sha256"] =
-            "0000000000000000000000000000000000000000000000000000000000000000".into();
+    let [profile] = catalog.profiles.as_slice() else {
+        anyhow::bail!("expected exactly one shared FP16 profile");
+    };
+    assert_eq!(profile.id, "minilm-l6-v2-fp16-v1");
+    require_selected_model_manifest(&serde_json::to_vec(&profile.manifest)?)?;
+
+    let retired: crate::model_catalog::ModelCatalog =
+        serde_json::from_str(include_str!("../model_catalog_v1.json"))?;
+    for profile in retired.profiles {
         assert!(
-            require_selected_model_manifest(&serde_json::to_vec(&foreign)?).is_err(),
-            "an unlisted graph must not acquire evaluation authority"
+            require_selected_model_manifest(&serde_json::to_vec(&profile.manifest)?).is_err(),
+            "a retired INT8 graph must not acquire evaluation authority"
         );
     }
-    assert_eq!(accepted, 1);
+    let mut foreign = serde_json::to_value(&profile.manifest)?;
+    foreign["model_sha256"] = "00".repeat(32).into();
+    assert!(
+        require_selected_model_manifest(&serde_json::to_vec(&foreign)?).is_err(),
+        "an unlisted graph must not acquire evaluation authority"
+    );
     Ok(())
 }
 
@@ -524,7 +526,16 @@ fn active_manifest_metadata_is_lazy_and_same_runtime_weight_change_cannot_mix_ca
     );
     let mut other = profile.manifest;
     other.model_sha256 = "01".repeat(32);
-    let (old_source, old) = build(&other)?;
+    let (old_source, mut old) = build(&other)?;
+    // Exercise cache separation even when different weights use the same runtime.
+    let same_runtime = descriptor_for_platform(
+        DescriptorManifest::Onnx(&other),
+        ONNX_FP16_RUNTIME,
+        std::env::consts::ARCH,
+        std::env::consts::OS,
+    )?;
+    old.pipeline_digest = same_runtime.identity()?;
+    old.legacy_identity = onnx_identity(&other, ONNX_FP16_RUNTIME)?;
     assert!(!onnx_asset_metadata_uses_active_catalog(&old_source, &old)?);
     assert_ne!(current.pipeline_digest, old.pipeline_digest);
     let a = descriptor_from_asset_metadata(&source, &current)?;

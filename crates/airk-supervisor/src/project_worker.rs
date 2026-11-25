@@ -1431,8 +1431,7 @@ pub(crate) async fn serve(
                                 }
                                 if turn.blocked_large
                                     || (turn.progress.requires_repair() && turn.work_complete())
-                                    || (turn.work_complete()
-                                        && !turn.projection_coverage_complete())
+                                    || (turn.work_complete() && turn.completed.is_none())
                                 {
                                     query_completion = turn.query_completed;
                                     audit_drain = turn.drained;

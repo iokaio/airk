@@ -3,10 +3,43 @@
 use super::*;
 #[test]
 fn emitted_model_policy_retains_approved_trained_catalog_and_refusals() -> Result<()> {
-    // Retained test identity; active policy now explicitly selects original
-    // weights. Its capture still carries no platform or task qualification.
+    // Retained test identity; the capture carries no platform or task qualification.
     let catalog = inspect_catalog()?.catalog;
-    catalog.validate()?;
+    catalog.validate_fp16()?;
+    assert_eq!(catalog.default_profile, "minilm-l6-v2-fp16-v1");
+    let [profile] = catalog.profiles.as_slice() else {
+        anyhow::bail!("expected exactly one shared FP16 profile");
+    };
+    assert_eq!(profile.id, "minilm-l6-v2-fp16-v1");
+    assert_eq!(profile.precision, "float16");
+    assert_eq!(
+        profile.runtime,
+        "onnxruntime/1.30.0/airk-minilm-fp16-shared/1"
+    );
+    assert_eq!(
+        profile
+            .assets
+            .iter()
+            .map(|asset| (asset.name.as_str(), asset.bytes, asset.sha256.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            (
+                "model.onnx",
+                45_469_884,
+                "f3c3a4eed373650ba1e2f4d3d53437f1ecf92d4c50e5994e07e163751923ee4a",
+            ),
+            (
+                "tokenizer.json",
+                466_247,
+                "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037",
+            ),
+            (
+                "LICENSE",
+                11_358,
+                "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+            ),
+        ]
+    );
     let value = serde_json::to_value(&catalog)?;
     for (pointer, replacement) in [
         (
@@ -19,7 +52,7 @@ fn emitted_model_policy_retains_approved_trained_catalog_and_refusals() -> Resul
         ),
         ("/profiles/0/id", serde_json::json!("minilm-l6-v2-u8-v2")),
         (
-            "/profiles/1/manifest/license_sha256",
+            "/profiles/0/manifest/license_sha256",
             serde_json::json!("02".repeat(32)),
         ),
         ("/profiles/0/precision", serde_json::json!("mixed-u8")),
@@ -30,7 +63,7 @@ fn emitted_model_policy_retains_approved_trained_catalog_and_refusals() -> Resul
             .context("independent policy mutation missing")? = replacement;
         assert!(
             serde_json::from_value::<ModelCatalog>(changed)?
-                .validate()
+                .validate_fp16()
                 .is_err()
         );
     }
@@ -38,11 +71,11 @@ fn emitted_model_policy_retains_approved_trained_catalog_and_refusals() -> Resul
     fake_url["profiles"][0]["assets"][0]["url"] = "https://example.invalid/model".into();
     assert!(
         serde_json::from_value::<ModelCatalog>(fake_url)?
-            .validate()
+            .validate_fp16()
             .is_err()
     );
     // The previous mixed policy is independently well-formed but cannot be
-    // attached to original graphs. Keep its historical math checker exercised.
+    // attached to the shared FP16 profile. Keep its historical math checker exercised.
     let previous = QuantizationPolicy {
         schema: "airk.minilm.quantization/2".into(),
         activation_precision: "unsigned asymmetric INT8".into(),
@@ -61,17 +94,14 @@ fn emitted_model_policy_retains_approved_trained_catalog_and_refusals() -> Resul
     false_training["profiles"][0]["quantization"] = serde_json::to_value(previous)?;
     assert!(
         serde_json::from_value::<ModelCatalog>(false_training)?
-            .validate()
+            .validate_fp16()
             .is_err()
     );
     let old = legacy_catalog()?;
     assert!(old.validate().is_err());
-    // Original graph manifests are restored, but old runtime/profile records
-    // remain inactive metadata. Their manifest bytes are intentionally equal.
-    for profile in &catalog.profiles {
-        approved_manifest(&profile.manifest)?;
-        assert!(profile.quantization.is_none());
-    }
+    assert!(old.validate_fp16().is_err());
+    approved_manifest(&profile.manifest)?;
+    assert!(profile.quantization.is_none());
     let capture = serde_json::json!({"schema":"airk.minilm.native-policy/2","catalog":catalog,"scope":"candidate build policy; human quality and installed platform qualification are not inferred"});
     let path = std::env::var_os("AIRK_EMIT_MODEL_POLICY")
         .map(std::path::PathBuf::from)

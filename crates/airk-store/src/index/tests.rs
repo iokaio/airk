@@ -276,6 +276,29 @@ fn replacing_a_file_removes_its_old_rows_and_unshared_payload() -> Result<()> {
 }
 
 #[test]
+fn snapshot_verify_rejects_missing_fts_rows() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let writer = two_files(directory.path())?;
+    let sequence = writer.sequence()?;
+    let reader = IndexReader::open(directory.path())?;
+    IndexWriter::verify_snapshot(directory.path(), sequence)?;
+
+    let connection = schema::open_writer(&directory.path().join(DATABASE_FILE))?;
+    assert_eq!(
+        connection.execute(
+            "DELETE FROM fts WHERE rowid=(SELECT min(id) FROM chunks)",
+            []
+        )?,
+        1
+    );
+    let error = IndexWriter::verify_snapshot(directory.path(), sequence).unwrap_err();
+    assert!(error.is::<crate::current::PrivateIntegrityFailure>());
+    assert_eq!(writer.sequence()?, sequence);
+    assert!(!reader.lexical(&query(&["xalpha"], true))?.0.is_empty());
+    Ok(())
+}
+
+#[test]
 fn a_failed_batch_leaves_the_previous_publication_untouched() -> Result<()> {
     let directory = tempfile::tempdir()?;
     let mut writer = two_files(directory.path())?;
