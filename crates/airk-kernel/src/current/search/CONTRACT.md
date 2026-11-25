@@ -122,3 +122,37 @@ When the historical profile is selected and the hybrid query is prose:
 
 Materialization re-checks that a ranked chunk's own terms satisfy one of its
 groups. The cross-index rank fusion of combined reads is unchanged.
+
+## Wider shortlist evaluation
+
+The private `wide_shortlist` profile starts with the contextual passage
+policy and the same scoped branches. For prose hybrid snippet requests
+with a limit of ten it materializes up to 40 distinct passages from the
+fused order. It drops identical citations and native line passages
+sharing at least four fifths of the shorter range on the same source
+revision. Mapped locations require exact citation equality.
+
+Keep the first six passages by fused rank. Up to two deeper semantic
+passages from distinct new files can enter the remaining four slots.
+Fill open slots with new files first and retain fused order among
+selected hits. Use the final ten for per-hit byte allocation. Stop
+gathering extra passages when the evidence read budget is exhausted.
+Scope and source-integrity failures propagate. Focus continues to
+receive the selected response through its normal Search path. The
+test-support trace records shortlist citations and selected indexes.
+
+The private `wide_cutoff` profile evaluates a second selection from that
+same shortlist. It holds the first eight hits and selects a band of
+four from the rest using query terms underrepresented in the held
+excerpts. The first two candidates in that band are the deterministic
+choices. On the scoped Focus path, score the four candidates with the
+ordinary Host grant and native Focus validator. Substitute the two
+highest scores only when all four were successfully scored. Otherwise
+keep the deterministic choices. The candidate score frame includes a
+reservation for the eight held results and navigation metadata.
+
+A complete Focus receipt describes all four candidates, including the
+two omitted from the response. Keep that receipt in the private
+`AIRK_SEARCH_CUTOFF` trace and verify its exact projection against the
+returned response. The experiment does not change the public Focus
+receipt contract.

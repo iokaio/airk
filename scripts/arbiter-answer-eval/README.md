@@ -741,3 +741,25 @@ input with their hashes to `summarize`. An optional pinned service trace
 can show where the same qualifying occurrence ranked inside a recorded
 candidate list. Its rank does not establish position in the full vector
 matrix. Keep inputs, logs and reports under the private campaign root.
+
+### Wider Search shortlist coverage
+
+Run the paired Search collector with a fixture launched under the private
+`wide_shortlist` profile. After the lifetime closes, authenticate the
+retained service log and pass its `AIRK_SEARCH_SHORTLIST` events to
+`search_shortlist_audit.py` using `--trace` and `--trace-sha256`.
+Pass the frozen cohort, off arm and focus arm with their pins and name
+a fresh private `--output` JSON file. The audit matches every query to
+its publication and verifies the selected citations against both
+actual responses and the ordinary Focus permutation. It reports
+coverage and ranks in the full shortlist, the semantic part and each
+returned arm. Keep the trace and reports under the private run root.
+
+The private `wide_cutoff` profile uses the same paired collector with
+the `AIRK_SEARCH_CUTOFF` service trace. It requires one new event from
+each frozen query and exact publication, eight unchanged held hits,
+and four candidate hashes. The collector validates the full native
+Focus receipt on those four and checks the final two returned positions
+against the permitted projection. The comparison reports accepted
+CUDA applications and cutoff replacements. A failed or partial score
+keeps the deterministic picks and cannot count as an accepted trial.

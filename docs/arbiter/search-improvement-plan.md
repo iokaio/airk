@@ -295,6 +295,42 @@ before testing a new representation.
 Private report SHA-256
 `c5f294a58b5635c45c43ce21bdefe0d5ecaf349f42bcdf7cb675f9517658dded`.
 
+### Step 7 result — Wider shortlist and cutoff selection
+
+| Selection | Essentials off / on | Top three off / on | Median off / on | p95 off / on |
+| --- | ---: | ---: | ---: | ---: |
+| Original | 14 / 14 | 6 / 8 | 1,066.5 / 1,556 ms | 1,718 / 2,477 ms |
+| Step 5, retained | 18 / 18 | 9 / 10 | 1,155.5 / 1,662 ms | 2,197 / 3,491 ms |
+| Wider shortlist, ordinary Focus | 17 / 17 | 9 / 10 | 1,267 / 1,740.5 ms | 2,473 / 3,291 ms |
+| Complementary choices, Focus at cutoff | 17 / 17 | 9 / 9 | 1,209.5 / 1,701 ms | 2,351 / 3,289 ms |
+
+The 40-candidate shortlist held 28 of 113 essentials (27 in semantic
+passages), compared with 18 in the first ten. The first ten citations
+exactly matched Step 5 on all 20 requests. None of the ten additional
+notes first appears at rank 11 or 12. The first 20 candidates held 24
+essentials before packing into the response byte budget.
+
+The first attempt held six results and favored deeper semantic files.
+It displaced Munarium T1/N1 from rank eight and improved C1/N6 from
+ten to nine. No new essential entered the results. Ordinary CUDA Focus
+moved six essentials higher without changing membership.
+
+The revised attempt held eight and chose four candidates using query
+terms underrepresented among the held passages. It restored T1/N1 and
+displaced C1/N6. Cutoff CUDA Focus scored all four candidates on each
+of 20 requests and replaced 18 hits in the final two positions across
+the cohort. None of those swaps changed an essential's coverage or
+rank. Moving Focus work from the first four to the cutoff also lost
+the six early promotions that ordinary Focus produced on Step 5.
+
+Keep Step 5 as the production policy and Step 8's comparison baseline.
+Both tested ten-slot policies lost a note, and the fixed cutoff had no
+new essential to admit at ranks 11 or 12. Use the deeper candidates to
+test adaptive result counts as a separate change. Both trials reused
+the original publications with zero indexing jobs. The true cutoff
+receipt stayed private because it includes candidates omitted from
+the public response.
+
 ## Evidence and implementation references
 
 - [Matched Focus comparison and first-Search miss attribution](../simplify/one-process-ledger.md#25-november-2026--matched-ordinary-search-with-and-without-cuda-focus)

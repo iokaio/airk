@@ -2,6 +2,7 @@
 """Synthetic checks for the matched public Search Focus diagnostic."""
 
 import copy
+import json
 import sys
 from pathlib import Path
 import unittest
@@ -10,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import common
 import search_focus_ab as ab
+import search_shortlist_audit as audit
 
 
 PROFILE = "f" * 64
@@ -196,6 +198,22 @@ class CumulativeSearch(unittest.TestCase):
         with self.assertRaisesRegex(common.HarnessError, "different publication"):
             ab.cumulative(6, reports, pins, True)
 
+    def test_shortlist_and_count_steps_keep_all_comparison_publications_pinned(self):
+        for step in (7, 8):
+            with self.subTest(step=step):
+                reports, pins = self.first()
+                pins["prior"] = "c" * 64
+                result = ab.cumulative(step, reports, pins, False)
+                self.assertEqual(result["index_changes"], {"original": {}, "prior": {}, "current": {}})
+
+                repo = common.REPOS[0]
+                for name in ("prior", "current"):
+                    reports[name]["identity"]["indexes"][repo]["publication_token"] = "different"
+                with self.assertRaisesRegex(common.HarnessError, "prior: .*publication differs"):
+                    ab.cumulative(step, reports, pins, False)
+                with self.assertRaisesRegex(common.HarnessError, "only at step 6"):
+                    ab.cumulative(step, reports, pins, True)
+
     def test_refuses_request_settings_cohort_and_focus_profile_drift(self):
         for field, value in (("max_bytes", 7), ("limit", 9), ("response_mode", "full"), ("request_sha256", "q")):
             with self.subTest(field=field):
@@ -235,6 +253,125 @@ class CumulativeSearch(unittest.TestCase):
         reports["current"]["rows"][0]["notes"][0]["off_rank"] = 11
         with self.assertRaisesRegex(common.HarnessError, "invalid matched rank"):
             ab.cumulative(1, reports, pins, False)
+
+
+class PrivateCutoff(unittest.TestCase):
+    def event(self, applied):
+        held = [f"{i:064x}" for i in range(8)]
+        original = [f"{i:064x}" for i in range(8, 12)]
+        order = (2, 1, 3, 0) if applied else (0, 1, 2, 3)
+        ranked = [original[i] for i in order]
+        native = observation()
+        candidates = [c * 64 for c in "abcd"]
+        native["receipt"].update(original_order=candidates, ranked_order=[candidates[i] for i in order],
+                                 candidate_count=4, scored_count=4, presented_count=4)
+        native["receipt"]["scores"] = [{"candidate": candidate, "relevance": score}
+                                        for candidate, score in zip(candidates, (.1, .6, .9, .3), strict=True)]
+        return {"query_sha256": common.sha256_bytes(b"test"), "publication": {"token": TOKEN},
+                "held_hit_sha256s": held, "original_hit_sha256s": original, "ranked_hit_sha256s": ranked,
+                "accepted": applied, "observation": native if applied else None}
+
+    def row(self, event, profile):
+        hits = event["held_hit_sha256s"] + (
+            event["ranked_hit_sha256s"] if event["accepted"] else event["original_hit_sha256s"])[:2]
+        receipt, proof = ab.cutoff_receipt(event, profile, TOKEN, INDEX, REVISION, hits)
+        return {"focus": receipt, "cutoff": proof, "hit_sha256s": hits}
+
+    def test_cutoff_event_binds_one_append_scope_query_and_tail(self):
+        event = self.event(True)
+        before = [b"previous event"]
+        encoded = json.dumps(event).encode("utf-8")
+        self.assertEqual(ab.cutoff_event(before, [*before, encoded], "test", TOKEN), event)
+        with self.assertRaisesRegex(common.HarnessError, "query or publication"):
+            ab.cutoff_event(before, [*before, encoded], "wrong", TOKEN)
+        with self.assertRaisesRegex(common.HarnessError, "exactly one new"):
+            ab.cutoff_event(before, [*before, encoded, encoded], "test", TOKEN)
+        with self.assertRaisesRegex(common.HarnessError, "exactly one new"):
+            ab.cutoff_event(before, [b"changed", encoded], "test", TOKEN)
+
+    def test_focus_receipt_rejects_drift_and_preserves_fallback(self):
+        raw = self.event(True)
+        off, focus = self.row(self.event(False), None), self.row(raw, PROFILE)
+        self.assertEqual(focus["focus"]["state"], "cuda_cutoff_applied")
+        self.assertNotIn("tail_preserved", focus["focus"])
+        self.assertEqual(ab.compare_cutoff(off, focus), 1)
+
+        with self.assertRaisesRegex(common.HarnessError, "public Search differs"):
+            ab.cutoff_receipt(raw, PROFILE, TOKEN, INDEX, REVISION, off["hit_sha256s"])
+        with self.assertRaisesRegex(common.HarnessError, "off Search returned"):
+            ab.cutoff_receipt(raw, None, TOKEN, INDEX, REVISION, focus["hit_sha256s"])
+
+        partial = copy.deepcopy(raw)
+        receipt = partial["observation"]["receipt"]
+        receipt.update(scored_count=2, presented_count=2, scores=receipt["scores"][:2],
+                       ranked_order=[receipt["original_order"][i] for i in (1, 0, 2, 3)])
+        partial["ranked_hit_sha256s"] = [partial["original_hit_sha256s"][i] for i in (1, 0, 2, 3)]
+        with self.assertRaisesRegex(common.HarnessError, "acceptance.*differs"):
+            self.row(partial, PROFILE)
+        fallback = self.row(partial | {"accepted": False}, PROFILE)
+        self.assertEqual(fallback["focus"]["state"], "not_applied")
+        self.assertEqual(ab.compare_cutoff(off, fallback), 0)
+
+        altered = self.event(False)
+        altered["original_hit_sha256s"][-1] = altered["ranked_hit_sha256s"][-1] = "f" * 64
+        with self.assertRaisesRegex(common.HarnessError, "private cutoff custody"):
+            ab.compare_cutoff(self.row(altered, None), focus)
+
+    def test_paired_comparison_counts_only_complete_cutoff(self):
+        off, focus = SearchFocusAB().arms()
+        off["identity"]["search_profile"] = ab.CUTOFF_PROFILE
+        for arm, accepted, profile in ((off, False, None), (focus, True, PROFILE)):
+            for row in arm["rows"]:
+                row.update(self.row(self.event(accepted), profile), hits_returned=10)
+        comparison = ab.compare(off, focus)
+        self.assertTrue(comparison["complete"])
+        self.assertEqual(comparison["counts"]["cutoff_applied"], 20)
+        self.assertEqual(comparison["counts"]["cutoff_replacements"], 20)
+        self.assertEqual(comparison["counts"]["applied_with_nonempty_tail"], 0)
+        focus["rows"][0].update(self.row(self.event(False), PROFILE))
+        comparison = ab.compare(off, focus)
+        self.assertFalse(comparison["complete"])
+        self.assertEqual(comparison["counts"]["cutoff_applied"], 19)
+
+
+
+class ShortlistAudit(unittest.TestCase):
+    def test_deterministic_projection_binds_focus_and_rule2(self):
+        candidates = [[{**hit(path, 1)["citation"], "location": {"Lines": {"start": 1, "end": 6}}}, semantic]
+                      for path, semantic in (("first.md", False), ("second.md", False), ("needed.md", True))]
+        note = {"id": "n", "path": "needed.md", "lines": [1, 6]}
+        request = {"limit": 2, "essential": [note]}
+        trace = {"candidates": candidates, "selected": [0, 2]}
+        off = {"hit_citations": [candidates[i][0] for i in (0, 2)], "hit_sha256s": ["a", "c"],
+               "notes": [{"id": "n", "rule2": 2}]}
+        focus = {"hit_citations": [candidates[i][0] for i in (2, 0)], "hit_sha256s": ["c", "a"],
+                 "focus": {"state": "cuda_applied", "original_hit_sha256s": ["a", "c"]},
+                 "notes": [{"id": "n", "rule2": 1}]}
+        projected = audit.validated_projection(trace, request, off, focus)
+        self.assertEqual(audit.note_ranks(request, *projected, off, focus),
+                         [{"id": "n", "shortlist_rank": 3, "semantic_shortlist_rank": 3, "off_rank": 2,
+                           "focus_rank": 1, "from_below_cutoff": True}])
+        with self.assertRaisesRegex(common.HarnessError, "differ from the native selection"):
+            audit.validated_projection(trace | {"selected": [0, 1]}, request, off, focus)
+        with self.assertRaisesRegex(common.HarnessError, "differ from the native permutation"):
+            audit.validated_projection(trace, request, off, focus | {"hit_citations": off["hit_citations"]})
+
+    def test_trace_requires_two_identical_observations_from_pinned_publication(self):
+        requests = [{"repo": "bookbuilder", "slot": "C1", "arguments": {"query": "what is Search?"}}]
+        indexes = {"bookbuilder": {"publication_token": "airk-r1:abc:7:xyz"}}
+        row = {"query_sha256": common.sha256_bytes(b"what is Search?"),
+               "publication": {"incarnation": "abc", "sequence": 7, "digest": "xyz"},
+               "candidates": [], "selected": []}
+
+        def log(*rows):
+            return "".join(audit.MARKER + json.dumps(r) + "\n" for r in rows).encode()
+
+        self.assertEqual(audit.trace_pairs(log(row, row), requests, indexes), {("bookbuilder", "C1"): row})
+        with self.assertRaisesRegex(common.HarnessError, "identical pre-Focus"):
+            audit.trace_pairs(log(row, row | {"selected": [0]}), requests, indexes)
+        with self.assertRaisesRegex(common.HarnessError, "unexpected shortlist query or publication"):
+            audit.trace_pairs(log(row | {"publication": row["publication"] | {"sequence": 8}}), requests, indexes)
+
 
 
 if __name__ == "__main__":

@@ -20,6 +20,7 @@ use std::{
     sync::Arc,
 };
 
+mod shortlist;
 pub(crate) mod v2;
 #[cfg(test)]
 mod v2_tests;
@@ -89,6 +90,8 @@ pub struct CurrentSearchEvidence {
     pub discovery_readiness: airk_core::readiness::DiscoveryReadiness,
     pub hits: Vec<Hit>,
     pub truncated: bool,
+    #[serde(skip)]
+    pub(super) focus_cutoff: Vec<Hit>,
 }
 
 #[derive(Clone)]
@@ -523,8 +526,14 @@ fn search_with_switch(
         .as_ref()
         .filter(|_| legacy || contextual_passages)
         .map_or(query.text.as_str(), |plan| &plan.focus);
+    let wide = profile.wide_shortlist()
+        && contextual_passages
+        && query.limit == 10
+        && query.max_bytes >= query.limit;
+    let gather_limit = if wide { query.limit * 4 } else { query.limit };
     let mut emitted = BTreeSet::new();
     let mut hits = Vec::new();
+    let mut shortlist: Vec<(Hit, bool)> = Vec::new();
     let mut remaining = query.max_bytes;
     let mut read_bytes = 0u64;
     for (_, (_, candidate)) in ranked {
@@ -533,13 +542,24 @@ fn search_with_switch(
         {
             continue;
         }
-        if hits.len() == query.limit || remaining == 0 {
+        if hits.len() + shortlist.len() == gather_limit || remaining == 0 {
             incomplete = true;
             break;
         }
         let semantic = matches!(candidate, Candidate::Vector(_));
         let structural = matches!(candidate, Candidate::Structure(_));
-        let mut hit = materialize(store, &read, query, candidate, &mut read_bytes)?;
+        let Some(mut hit) = materialize(
+            store,
+            &read,
+            query,
+            candidate,
+            &mut read_bytes,
+            shortlist.len() >= query.limit,
+        )?
+        else {
+            incomplete = true;
+            break;
+        };
         let contextual_hit = contextual_passages
             && matches!(
                 hit.citation.location,
@@ -551,6 +571,11 @@ fn search_with_switch(
             query.limit - hits.len(),
             contextual_hit,
         );
+        let allowance = if wide {
+            allowance.min(query.max_bytes / query.limit)
+        } else {
+            allowance
+        };
         if structural && hit.text.len() > allowance {
             incomplete = true;
             continue;
@@ -578,6 +603,16 @@ fn search_with_switch(
         {
             continue;
         }
+        if wide {
+            if shortlist
+                .iter()
+                .any(|(seen, _)| shortlist::duplicate(&seen.citation, &hit.citation))
+            {
+                continue;
+            }
+            shortlist.push((hit, semantic));
+            continue;
+        }
         let (text, cut) = truncate_utf8(&hit.text, remaining);
         remaining -= text.len();
         hit.text = text;
@@ -585,8 +620,33 @@ fn search_with_switch(
         incomplete |= hit.truncated;
         hits.push(hit);
     }
+    let token = read.token()?;
+    let mut focus_cutoff = Vec::new();
+    if wide {
+        let selected = if let Some(plan) = plan.as_ref().filter(|_| profile.scores_cutoff()) {
+            let band = shortlist::complementary_band(&shortlist, query.limit, &plan.key);
+            if band.len() == 4 {
+                focus_cutoff = band.iter().map(|&i| shortlist[i].0.clone()).collect();
+                (0..query.limit - 2)
+                    .chain(band.into_iter().take(2))
+                    .collect()
+            } else {
+                (0..query.limit.min(shortlist.len())).collect()
+            }
+        } else {
+            shortlist::select(&shortlist, query.limit)
+        };
+        #[cfg(feature = "test-support")]
+        trace_shortlist(query, &token, &shortlist, &selected);
+        incomplete |= shortlist.len() > selected.len();
+        hits = selected
+            .into_iter()
+            .map(|index| shortlist[index].0.clone())
+            .collect();
+        incomplete |= hits.iter().any(|hit| hit.truncated);
+    }
     Ok(CurrentSearchEvidence {
-        token: read.token()?,
+        token,
         collection: read.head().scope.collection.clone(),
         mode,
         execution: SearchExecution::new(
@@ -603,6 +663,7 @@ fn search_with_switch(
         discovery_readiness,
         hits,
         truncated: incomplete,
+        focus_cutoff,
     })
 }
 
@@ -951,7 +1012,8 @@ fn materialize(
     query: &SearchQuery,
     candidate: Candidate,
     read_bytes: &mut u64,
-) -> Result<Hit> {
+    optional: bool,
+) -> Result<Option<Hit>> {
     let path = candidate.path();
     ensure!(
         query
@@ -970,13 +1032,17 @@ fn materialize(
     let cost = u64::try_from(compact.bytes)?
         .checked_add(u64::try_from(retained.object_bytes)?)
         .context("current search read cost overflow")?;
-    *read_bytes = read_bytes
+    let charged = read_bytes
         .checked_add(cost)
         .context("current search read budget overflow")?;
+    if optional && charged > MAX_LEXICAL_VALIDATION_BYTES {
+        return Ok(None);
+    }
     ensure!(
-        *read_bytes <= MAX_LEXICAL_VALIDATION_BYTES,
+        charged <= MAX_LEXICAL_VALIDATION_BYTES,
         "current search evidence read budget exceeded"
     );
+    *read_bytes = charged;
     match candidate {
         Candidate::Structure(hit) => {
             ensure!(
@@ -998,6 +1064,30 @@ fn materialize(
             })
         }
     }
+    .map(Some)
+}
+
+#[cfg(feature = "test-support")]
+fn trace_shortlist(
+    query: &SearchQuery,
+    publication: &CurrentToken,
+    candidates: &[(Hit, bool)],
+    selected: &[usize],
+) {
+    use sha2::{Digest, Sha256};
+    let citations: Vec<_> = candidates
+        .iter()
+        .map(|(hit, semantic)| (&hit.citation, semantic))
+        .collect();
+    eprintln!(
+        "AIRK_SEARCH_SHORTLIST {}",
+        serde_json::json!({
+            "query_sha256": format!("{:x}", Sha256::digest(query.text.as_bytes())),
+            "publication": publication,
+            "candidates": citations,
+            "selected": selected,
+        })
+    );
 }
 
 /// One lexical chunk, verified against its retained extraction; `matches`

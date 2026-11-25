@@ -19085,3 +19085,54 @@ from this audit. Removed only the verified detached database copies
 (665,665,536 bytes). D had 361,212,780,544 free bytes after cleanup.
 Receipt SHA-256
 `382fcc45cfcb36cee676398469b801e426438b4a072cf0b032fa1f44cf776e85`.
+
+### 25 November 2026 — Search step 7 wider shortlist and cutoff selection
+
+Two matched Windows CUDA development trials used the frozen 20 requests,
+113 essential notes, original publications and 8,192-byte response
+budget. The 40-passage shortlist held 28 essentials, ten more than its
+first ten. Its first ten citations matched Step 5 for all 20 requests.
+The new essentials started at ranks 13–36. The first 20 contained 24
+essentials before response packing. The six-held diversity trial and
+eight-held complementary cutoff trial each returned 17/113 with Focus
+off and on, one fewer than Step 5. Neither gained an essential over
+Step 5. Each displaced a different Munarium note. In the cutoff trial,
+20/20 native CUDA receipts scored all four candidates and 18 hit slots
+changed. None changed an essential's rank. Ordinary Focus advanced
+six essentials with the first trial, while cutoff-only Focus could not
+provide those early promotions. The private recorded projection preserves
+all native scores and the public Focus contract. Both variants remain
+test-support profiles. Step 8 uses the accepted Step 5 baseline and
+the same indexes.
+
+Private receipts under `answer-loop/L5C`:
+
+- `win-search-step7-wide-r1`: pair
+  `b964a2cbef8a8648bc0225098c5ec225a7670a1f5aae9272f833159f05e18eef`,
+  cumulative `958a89c87ba6c093c236c4a026f7a58a46fa80131e8ae2d0b51a2f0e9c7eea50`,
+  shortlist audit `4fea6acb9aa7800325982cd2d237dd549bd906644fc62c3af46654dc94c8cb59`,
+  closed service log `0c9be8900d64d39b9dcfcab32312fbaa87c7d121a23b3852b4be95d6f439317d`.
+- `win-search-step7-cutoff-r1`: pair
+  `c4880746b99a740fd2a8babd3fca8763d40d8d68209505f41bc1c60e32a97609`,
+  cumulative `b9d4a90339bb4e7ef7cd58310e4be60e05fc3ebef459d789b659f79ba1922018`,
+  closed service log with 40 cutoff and 40 shortlist events
+  `370159da447e8f3b62e9e5cdf006de0d741fd64bb1adcf8c28f62733c5774b02`.
+  The closed handle hash was
+  `663ff98b9da2a9689cc6b47031684663828c59f8982f79a42a83c29fbff01baa`.
+  Both fixtures preserved 41 historical jobs and started zero Index or
+  Vectors jobs. Both settled with zero remaining owned processes.
+  D had 356,773,625,856 free bytes after cutoff closure.
+
+The checked Windows build used Cargo 1.98.0 and Nextest 0.9.148,
+`answer-loop/target-cuda`, incremental 1, locked offline dependencies and
+timings. The initial wide build receipt
+`e3d2ca9799d0e3672b7c0bea5873bbfd007f5ea20d2b34f6986966b93e522bc3`
+records 47.49 s scoped Service Clippy, 14.00 s no-default Kernel Clippy,
+94.70 s compiling and running 22 Search tests, 242.11 s fixture build,
+then four CUDA restart tests (471 skipped). The first cutoff compile
+caught a private profile variant in the no-default build. The corrected
+cutoff build passed the same Clippy scopes in 19.74 s and 3.88 s, 23 Search
+tests (551 skipped, 55.67 s including compile), 52.92 s fixture build and
+four restart tests (471 skipped). Its exact receipt is
+`ee8c488747bcfcf4e72c8b4f0a368021862c654b2fb266dc2d94c597d8768ff4`.
+Nineteen Search-comparison and five vector-audit Python controls passed.

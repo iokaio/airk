@@ -58,6 +58,17 @@ pub(crate) fn envelope(read: &CurrentRead) -> Result<RevisionEnvelope> {
     ))
 }
 
+#[cfg(feature = "test-support")]
+fn search_hit_hashes(hits: &[airk_core::Hit]) -> Result<Vec<String>> {
+    use sha2::{Digest, Sha256};
+    hits.iter()
+        .map(|hit| {
+            let serialized = serde_json::to_vec(&serde_json::to_value(hit)?)?;
+            Ok(format!("{:x}", Sha256::digest(serialized)))
+        })
+        .collect()
+}
+
 impl Kernel {
     /// A readiness check reads the published scalar metadata, never imported fact
     /// payloads, model files, source files, or the vector graph itself.
@@ -297,7 +308,7 @@ impl Kernel {
         snippet_bytes: Option<usize>,
         filters: &airk_core::SearchFilters,
     ) -> Result<SearchResponse> {
-        let response = self.search_response_on_read(
+        let (response, cutoff) = self.search_response_on_read(
             query,
             mode,
             snippet_bytes,
@@ -305,7 +316,11 @@ impl Kernel {
             self.current_reader()?,
             false,
         )?;
-        self.focus_search(query, response.evidence)
+        if cutoff.is_empty() {
+            self.focus_search(query, response.evidence)
+        } else {
+            self.focus_at_search_cutoff(query, response.evidence, cutoff, 0)
+        }
     }
 
     /// Search and automatic definition pointers retain the same sealed reader.
@@ -316,7 +331,7 @@ impl Kernel {
         snippet_bytes: Option<usize>,
         filters: &airk_core::SearchFilters,
     ) -> Result<super::SearchWithDefinitionsResponse> {
-        let mut result = self.search_response_on_read(
+        let (mut result, cutoff) = self.search_response_on_read(
             query,
             mode,
             snippet_bytes,
@@ -331,9 +346,68 @@ impl Kernel {
                 .len()
                 .saturating_add(16)
         };
-        result.evidence =
-            self.focus_search_with_metadata(query, result.evidence, metadata_bytes)?;
+        result.evidence = if cutoff.is_empty() {
+            self.focus_search_with_metadata(query, result.evidence, metadata_bytes)?
+        } else {
+            self.focus_at_search_cutoff(query, result.evidence, cutoff, metadata_bytes)?
+        };
         Ok(result)
+    }
+
+    fn focus_at_search_cutoff(
+        &self,
+        query: &SearchQuery,
+        mut response: SearchResponse,
+        cutoff: Vec<airk_core::Hit>,
+        metadata_bytes: usize,
+    ) -> Result<SearchResponse> {
+        let held = response
+            .hits
+            .len()
+            .checked_sub(2)
+            .context("Search cutoff is missing its deterministic winners")?;
+        ensure!(
+            cutoff.len() == 4,
+            "Search cutoff requires four bound candidates"
+        );
+        let held_bytes = serde_json::to_vec(&response.hits[..held])?.len();
+        let scoring = SearchResponse {
+            hits: cutoff,
+            ..response.clone()
+        };
+        #[cfg(feature = "test-support")]
+        let original = search_hit_hashes(&scoring.hits)?;
+        let scored = self.focus_search_with_metadata(
+            query,
+            scoring,
+            metadata_bytes.saturating_add(held_bytes),
+        )?;
+        let accepted = scored
+            .focus
+            .as_ref()
+            .and_then(|item| item.receipt())
+            .is_some_and(|receipt| receipt.applied && receipt.scored_count == 4);
+        #[cfg(feature = "test-support")]
+        {
+            use sha2::{Digest, Sha256};
+            eprintln!(
+                "AIRK_SEARCH_CUTOFF {}",
+                serde_json::json!({
+                    "query_sha256": format!("{:x}", Sha256::digest(query.text.as_bytes())),
+                    "publication": response.publication,
+                    "original_hit_sha256s": original,
+                    "ranked_hit_sha256s": search_hit_hashes(&scored.hits)?,
+                    "held_hit_sha256s": search_hit_hashes(&response.hits[..held])?,
+                    "observation": scored.focus,
+                    "accepted": accepted,
+                })
+            );
+        }
+        if accepted {
+            response.hits.truncate(held);
+            response.hits.extend(scored.hits.into_iter().take(2));
+        }
+        Ok(response)
     }
 
     fn search_response_on_read(
@@ -344,7 +418,7 @@ impl Kernel {
         filters: &airk_core::SearchFilters,
         read: Arc<CurrentRead>,
         navigation: bool,
-    ) -> Result<super::SearchWithDefinitionsResponse> {
+    ) -> Result<(super::SearchWithDefinitionsResponse, Vec<airk_core::Hit>)> {
         let disclose_readiness = !read.selected_scope_restricts_paths();
         if matches!(
             mode,
@@ -441,10 +515,13 @@ impl Kernel {
         } else {
             Vec::new()
         };
-        Ok(super::SearchWithDefinitionsResponse {
-            evidence: response,
-            definitions,
-        })
+        Ok((
+            super::SearchWithDefinitionsResponse {
+                evidence: response,
+                definitions,
+            },
+            evidence.focus_cutoff,
+        ))
     }
 
     pub(super) fn structural_search_hits(

@@ -30,6 +30,9 @@ CUDA = "onnxruntime-cuda/1.30.0/device-execution/"
 SHA = re.compile(r"[a-f0-9]{64}")
 DEFAULT_LIMIT = 10
 DEFAULT_MAX_BYTES = 8192
+CUTOFF_PROFILE = "wide_cutoff"
+CUTOFF_MARKER = b"AIRK_SEARCH_CUTOFF "
+CUTOFF_LOG_LIMIT = 32 * 2**20
 EXPECTED = {(repo, slot) for repo in common.REPOS for slot in common.SLOTS}
 
 
@@ -183,7 +186,63 @@ def focus_receipt(observation, profile, publication, index_id, revision, hits) -
                             for score in scores]}
 
 
-def measure(request: dict, outcome, profile, publication, index_id, revision) -> dict:
+def cutoff_log(path: Path) -> list[bytes]:
+    with path.open("rb") as stream:
+        raw = stream.read(CUTOFF_LOG_LIMIT + 1)
+    common.require(len(raw) <= CUTOFF_LOG_LIMIT, "private Search cutoff log exceeds its audit bound")
+    return [line.partition(CUTOFF_MARKER)[2] for line in raw.splitlines() if CUTOFF_MARKER in line]
+
+
+def cutoff_event(before, after, query, publication):
+    common.require(len(after) == len(before) + 1 and after[:-1] == before,
+                   "expected exactly one new Search cutoff event")
+    event = json.loads(after[-1])
+    common.require(event["query_sha256"] == common.sha256_bytes(query.encode("utf-8"))
+                   and event["publication"]["token"] == publication,
+                   "Search cutoff event query or publication differs")
+    return event
+
+
+def cutoff_receipt(event, profile, publication, index_id, revision, hits):
+    held = event["held_hit_sha256s"]
+    original, ranked = event["original_hit_sha256s"], event["ranked_hit_sha256s"]
+    accepted, observation = event["accepted"], event["observation"]
+    common.require(all(isinstance(values, list) and len(values) == count
+                       and all(isinstance(value, str) and SHA.fullmatch(value) for value in values)
+                       for values, count in ((held, 8), (original, 4), (ranked, 4)))
+                   and len(set(held + original)) == 12 and sorted(original) == sorted(ranked)
+                   and type(accepted) is bool, "invalid private cutoff candidate band")
+    receipt = focus_receipt(observation, profile, publication, index_id, revision, ranked)
+    applied = receipt["state"] == "cuda_applied"
+    common.require((receipt["original_hit_sha256s"] == original if applied else ranked == original)
+                   and accepted == (applied and receipt["scored_count"] == 4),
+                   "private cutoff acceptance or ranked custody differs from native Focus")
+    common.require(hits == held + (ranked if accepted else original)[:2],
+                   "public Search differs from the private cutoff projection")
+
+    state = "cuda_cutoff_applied" if accepted else ("absent" if profile is None else "not_applied")
+    result = {key: receipt[key] for key in ("identity", "input_digest", "work", "scored_hits", "scored_count",
+                                             "availability", "reason", "observation_sha256") if key in receipt}
+    result.update(state=state, mode="private_cutoff")
+    proof = {"held_hit_sha256s": held, "original_hit_sha256s": original, "ranked_hit_sha256s": ranked,
+             "accepted": accepted, "event_sha256": digest(event)}
+    return result, proof
+
+
+def compare_cutoff(left, right):
+    a, b = left["cutoff"], right["cutoff"]
+    held, original, ranked = b["held_hit_sha256s"], b["original_hit_sha256s"], b["ranked_hit_sha256s"]
+    common.require(left["focus"]["mode"] == right["focus"]["mode"] == "private_cutoff"
+                   and not a["accepted"] and a["held_hit_sha256s"] == held
+                   and a["original_hit_sha256s"] == a["ranked_hit_sha256s"] == original
+                   and ((right["focus"]["state"] == "cuda_cutoff_applied") == b["accepted"])
+                   and left["hit_sha256s"] == held + original[:2]
+                   and right["hit_sha256s"] == held + (ranked if b["accepted"] else original)[:2],
+                   "Focus arms differ in private cutoff custody or final projection")
+    return len(set(right["hit_sha256s"]) - set(left["hit_sha256s"]))
+
+
+def measure(request: dict, outcome, profile, publication, index_id, revision, cutoff=None) -> dict:
     row = {k: request[k] for k in ("repo", "slot", "key", "request_sha256", "limit", "max_bytes", "response_mode")}
     row.update(ok=outcome.ok, elapsed_ms=outcome.elapsed_ms, stdout_bytes=len(outcome.stdout),
                stdout_sha256=common.sha256_bytes(outcome.stdout), stderr_sha256=common.sha256_bytes(outcome.stderr))
@@ -197,7 +256,11 @@ def measure(request: dict, outcome, profile, publication, index_id, revision) ->
     hits = [hit_identity(hit) for hit in body["hits"]]
     common.require(len(hits) <= request["limit"], "Search returned more than its original limit")
     spans = [evidence.extract(hit) for hit in body["hits"]]
-    receipt = focus_receipt(body.get("focus"), profile, publication, index_id, revision, hits)
+    if cutoff is None:
+        receipt = focus_receipt(body.get("focus"), profile, publication, index_id, revision, hits)
+    else:
+        common.require("focus" not in body and request["limit"] == 10, "private cutoff escaped into public Focus")
+        receipt, row["cutoff"] = cutoff_receipt(cutoff, profile, publication, index_id, revision, hits)
     return {**row, "incomplete": body["execution"]["incomplete"], "truncated": body["truncated"],
             "hits_returned": len(hits), "hit_sha256s": hits, "focus": receipt,
             "served_mode": body["execution"]["served_mode"],
@@ -244,14 +307,18 @@ def collect(args) -> dict:
     common.require(all(start[repo]["settled"] and start[repo]["publication_token"] == tokens[repo]
                        for repo in repos), "Search starting publication or readiness differs")
     rows = []
+    cutoff_path = handle.path.parent / "service.log" if identity["search_profile"] == CUTOFF_PROFILE else None
     for request in cohort["rows"]:
         repo = request["repo"]
         common.require(request["request_sha256"] == digest([repo, request["arguments"], list(common.AGENT_STRIPPED_ENV)])
                        and request["response_mode"] == common.effective_response_mode(
                            handle, request["arguments"], common.AGENT_STRIPPED_ENV), "Search request or response mode differs")
+        before = cutoff_log(cutoff_path) if cutoff_path else None
         result = common.call_tool(handle, "airk_search", repo, request["arguments"], args.timeout,
                                   strip_env=common.AGENT_STRIPPED_ENV)
-        rows.append(measure(request, result, profile, tokens[repo], handle.index_id(repo), pre["revision"]))
+        event = cutoff_event(before, cutoff_log(cutoff_path), request["arguments"]["query"], tokens[repo]) \
+            if cutoff_path else None
+        rows.append(measure(request, result, profile, tokens[repo], handle.index_id(repo), pre["revision"], event))
     end = {repo: settled.snapshot(handle, repo, args.timeout) for repo in repos}
     post = stage(handle, profile, args.timeout)
     common.require(pre["revision"] == post["revision"] and common.sha256_file(handle.path) == handle.sha256
@@ -266,6 +333,7 @@ def compare(off: dict, focus: dict) -> dict:
                    and off["cohort_sha256"] == focus["cohort_sha256"] and off["identity"] == focus["identity"]
                    and roster(off["rows"]) == roster(focus["rows"]), "arms differ in cohort, fixture, publication or order")
     rows = []
+    cutoff = off["identity"].get("search_profile") == CUTOFF_PROFILE
     for left, right in zip(off["rows"], focus["rows"], strict=True):
         common.require(all(left[k] == right[k] for k in ("key", "request_sha256", "limit", "max_bytes", "response_mode")),
                        "arm request identity differs")
@@ -281,6 +349,8 @@ def compare(off: dict, focus: dict) -> dict:
                        same_hit_multiset=sorted(left["hit_sha256s"]) == sorted(right["hit_sha256s"]),
                        unranked_order_matches_off=None if "original_hit_sha256s" not in receipt
                        else receipt["original_hit_sha256s"] == left["hit_sha256s"])
+            if cutoff:
+                row.update(cutoff_replacements=compare_cutoff(left, right), unranked_order_matches_off=True)
             common.require(left["focus"]["state"] == "absent" and [x["id"] for x in left["notes"]] ==
                            [x["id"] for x in right["notes"]], "off Focus or compared note identity differs")
             row["notes"] = [{"id": a["id"], "off_rank": a["rule2"], "focus_rank": b["rule2"]}
@@ -288,7 +358,8 @@ def compare(off: dict, focus: dict) -> dict:
         rows.append(row)
     matched = [row for row in rows if row["matched"]]
     eligible = [row for row in matched if row["off_hits"] or row["focus_hits"]]
-    applied = [row for row in eligible if row["focus_state"] == "cuda_applied"]
+    applied_state = "cuda_cutoff_applied" if cutoff else "cuda_applied"
+    applied = [row for row in eligible if row["focus_state"] == applied_state]
     notes = [note for row in matched for note in row["notes"]]
     shared = [n for n in notes if n["off_rank"] is not None and n["focus_rank"] is not None]
     focus_profile = (focus.get("stage_before") or {}).get("focus")
@@ -296,7 +367,10 @@ def compare(off: dict, focus: dict) -> dict:
             **({"focus_profile": focus_profile} if focus_profile else {}),
             "complete": len(matched) == len(rows) and len(applied) == len(eligible) and bool(applied),
             "counts": {"planned": len(rows), "matched": len(matched), "focus_eligible": len(eligible),
-                       "cuda_applied": len(applied), "applied_with_nonempty_tail": sum(r["unscored_tail_count"] > 0 for r in applied),
+                       "cuda_applied": len(applied),
+                       **({"cutoff_applied": len(applied),
+                           "cutoff_replacements": sum(r["cutoff_replacements"] for r in matched)} if cutoff else {}),
+                       "applied_with_nonempty_tail": sum((r["unscored_tail_count"] or 0) > 0 for r in applied),
                        "applied_original_order_matches_off": sum(r["unranked_order_matches_off"] for r in applied),
                        "essential_matched_pool": len(notes), "essential_off_covered": sum(n["off_rank"] is not None for n in notes),
                        "essential_focus_covered": sum(n["focus_rank"] is not None for n in notes),
@@ -387,7 +461,7 @@ def changed_notes(reference: list[dict], current: list[dict]) -> list[dict]:
 
 
 def cumulative(step: int, reports: dict, pins: dict, experimental_index: bool, original_focus=None) -> dict:
-    common.require(1 <= step <= 6 and (not experimental_index or step == 6), "experimental indexes are allowed only at step 6")
+    common.require(1 <= step <= 8 and (not experimental_index or step == 6), "experimental indexes are allowed only at step 6")
     common.require((step == 1) == (pins["prior"] == pins["original"]) and pins["current"] not in (pins["prior"], pins["original"]),
                    "step 1 reuses the original as its prior; later steps require a distinct prior and current")
     rows = {name: report_rows(report) for name, report in reports.items()}

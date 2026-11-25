@@ -36,6 +36,10 @@ pub(crate) enum SearchProfile {
     StructuralDefinitions,
     KeywordPassages,
     #[cfg(any(test, feature = "test-support"))]
+    WideShortlist,
+    #[cfg(any(test, feature = "test-support"))]
+    WideCutoff,
+    #[cfg(any(test, feature = "test-support"))]
     Fusion {
         weighted: bool,
         diverse: bool,
@@ -57,6 +61,8 @@ impl SearchProfile {
             Self::StructuralDefinitions => (true, false),
             Self::KeywordPassages => (true, false),
             #[cfg(any(test, feature = "test-support"))]
+            Self::WideShortlist | Self::WideCutoff => (true, false),
+            #[cfg(any(test, feature = "test-support"))]
             Self::SemanticSubqueries => (true, false),
             #[cfg(any(test, feature = "test-support"))]
             Self::Fusion { .. } => (true, false),
@@ -73,6 +79,8 @@ impl SearchProfile {
             Self::StructuralDefinitions => true,
             Self::KeywordPassages => true,
             #[cfg(any(test, feature = "test-support"))]
+            Self::WideShortlist | Self::WideCutoff => true,
+            #[cfg(any(test, feature = "test-support"))]
             Self::SemanticSubqueries => true,
             #[cfg(any(test, feature = "test-support"))]
             Self::Fusion { .. } => true,
@@ -81,7 +89,29 @@ impl SearchProfile {
     }
 
     pub(crate) fn keyword_passages(self) -> bool {
-        self == Self::KeywordPassages
+        self == Self::KeywordPassages || self.wide_shortlist()
+    }
+
+    pub(crate) fn wide_shortlist(self) -> bool {
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            matches!(self, Self::WideShortlist | Self::WideCutoff)
+        }
+        #[cfg(not(any(test, feature = "test-support")))]
+        {
+            false
+        }
+    }
+
+    pub(crate) fn scores_cutoff(self) -> bool {
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            self == Self::WideCutoff
+        }
+        #[cfg(not(any(test, feature = "test-support")))]
+        {
+            false
+        }
     }
 
     pub(crate) fn branch_weight(self, branch: BranchKind) -> f64 {
@@ -97,6 +127,8 @@ impl SearchProfile {
             Self::LegacyV2 => Some(PER_FILE),
             Self::StructuralDefinitions => Some(2),
             Self::KeywordPassages => Some(2),
+            #[cfg(any(test, feature = "test-support"))]
+            Self::WideShortlist | Self::WideCutoff => Some(2),
             #[cfg(any(test, feature = "test-support"))]
             Self::Fusion { diverse: true, .. } => Some(2),
             #[cfg(any(test, feature = "test-support"))]
@@ -118,6 +150,8 @@ fn parse(value: Result<String, std::env::VarError>) -> Option<SearchProfile> {
             "semantic_subqueries" => Some(SearchProfile::SemanticSubqueries),
             "structural_definitions" => Some(SearchProfile::StructuralDefinitions),
             "keyword_passages" => Some(SearchProfile::KeywordPassages),
+            "wide_shortlist" => Some(SearchProfile::WideShortlist),
+            "wide_cutoff" => Some(SearchProfile::WideCutoff),
             "fusion_weights" => Some(SearchProfile::Fusion {
                 weighted: true,
                 diverse: false,
