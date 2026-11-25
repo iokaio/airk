@@ -66,9 +66,11 @@ Use the same MiniLM weights and the same source sample for both builds. Compare 
 Collect a wider internal shortlist from the retained lexical, vector and
 structural branches. Deduplicate identical or substantially overlapping
 passages and reduce repeated files before scoring. Measure a deterministic
-selection and a selection that uses the same deterministic shortlist plus
-Focus on a bounded prefix. Select the final ten only after the second stage,
-under the same 8,192-byte budget. Keep each candidate bound to the same
+selection and a selection that uses the same deterministic shortlist with
+Focus scoring up to four candidates around the cutoff. This gives Focus a
+chance to move a candidate from outside the top ten into the response
+within its existing scoring budget. Select the final ten after the second
+stage, under the same 8,192-byte budget. Keep each candidate bound to the same
 publication, source span and read scope throughout the request.
 
 Test against Step 6 and the original with Focus off and on. Compare
@@ -102,7 +104,7 @@ of result count from Step 7's reranking change.
 
 1. Pin both existing publications and freeze the original 20 queries and 113 note locations. Use the same ten-hit target and 8,192-byte limit through Step 7. Step 8 varies the automatic hit count and also reports coverage at the original ten-hit cutoff. Keep the note labels out of query construction and ranking.
 2. Keep one original baseline pair. Add each proposal to the preceding implementation and collect one Focus-off and one Focus-on result. Retain that pair as the baseline for the next step. Compare each step with both the preceding pair and the original. Keep the Focus profile, device and scoring limits fixed. For the two isolated indexes in step 6, pin each publication and use identical source revisions.
-s’s effect with Focus off, its effect with Focus on, the on/off difference within each version, and whether Focus changes the size or direction of the proposal’s benefit. For each run, report top-three and top-ten essential coverage, gains and losses by repository and scenario, elapsed median and p95, and response bytes. Record differences in publications or served modes. Alternate measurement order when assessing latency.
+3. Measure each proposal’s effect with Focus off, its effect with Focus on, the on/off difference within each version, and whether Focus changes the size or direction of the proposal’s benefit. For each run, report top-three and top-ten essential coverage, gains and losses by repository and scenario, elapsed median and p95, and response bytes. Record differences in publications or served modes. Alternate measurement order when assessing latency.
 4. Trace each note from branch candidates through fused rank, the candidates presented to Focus, and the returned source lines. Use the existing overlap rule consistently. Retain Focus receipts with the active profile and runtime, original and final order, scored candidates and scores when available, and any reason Focus did not apply. Explain each material on/off difference using the trace, and label explanations that remain hypotheses. Keep each measured result and its receipt with the corresponding implementation milestone.
 5. Advance a change when it improves final essential coverage or materially improves early rank with a measured latency cost and understood losses. If the first measured attempt yields no useful gain, try up to two revisions supported by the trace. Stop sooner if the evidence rules out the mechanism. Keep the preceding baseline when a step yields no useful gain and record why. Keep source scope and citation integrity as acceptance requirements.
 
