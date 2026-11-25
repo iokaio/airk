@@ -17800,3 +17800,53 @@ two-hour default. The private admission receipt
 `c2c78e840a977b23a543219d046b22b1ed8615c6e1b26434d51102da441fd0b0`)
 records exact commands and outputs. Semantic readiness and the full leak
 check remain pending on the new lifetime.
+
+### 24 November 2026 — Windows CUDA evaluation base rebuilt and closed
+
+Both fresh indexes reached Ready and served hybrid evidence from the
+same publication tokens returned by status. The native service reported
+a completed CUDA embedding during this build. No AIRK index was present.
+Repository originals stayed read-only. The fixture`s natural automatic
+integrity verification completed before shutdown and returned the lease.
+The base closed with no restart blockers. All 14,371 retained base files
+were audited under the verified desktop owner.
+
+| Repository and code pin | Lexical job | Semantic interval | Completed vector jobs | Published vectors | Settled index bytes |
+|---|---:|---:|---:|---:|---:|
+| Bookbuilder-v2 `238b22a7` | 114.924 s | 1,259.465 s | 32 | 156,255 | 780,224,441 |
+| Munarium `9948345d` | 16.482 s | 628.913 s | 5 | 40,536 | 186,877,869 |
+
+The lexical passes ran sequentially with a 0.657 s gap. Semantic intervals
+run from the first native vector job start to the last native vector job
+success. They overlapped. Munarium finished at 20:47:11.262 Denver time.
+The launcher observed that Ready state after finishing its Bookbuilder
+poll. Bookbuilder`s last vectors job succeeded at 20:57:25.046 and the
+paired Ready marker appeared at 20:57:29.540. The first lexical job to
+paired Ready took about 23 min. The service closed at 21:06:36.708 after
+the bounded background verification turns.
+
+The earlier same-install run `fixture-win-shake-r1` recorded old lexical
+jobs of 1,529.254 s and 310.887 s on the same respective source pins. Its
+vector work was stopped. Completed historical Windows CPU references
+`fixture-06-gate-lg-{C,C32,F,L32,S1}` took about 3 h 27 min to 3 h 42 min
+from lexical start to paired Ready. This build took about one tenth of
+that wall time. Existing records are being compared across the old CPU
+pipeline and new store/CUDA pipeline under different concurrent load.
+No additional comparison benchmark was run.
+
+Native close digest:
+`da94b2931ecf32f313a99b4b6d9ccf726b6029ee330c678a558bf0074dd563e1`.
+The owner-audited `fixture-win-minilm-cuda-base-r1.settled-indexes.json`
+digest is `bef373f11379c0dfe348b85e809e6f371f522323d97cd2fa861b12f4ba988268`.
+It records both publication tokens, ready outcomes and exact disk counts.
+D: free space at observation was 435,753,693,184 bytes.
+
+The indexing merge changes the native protected-MHA Arbiter math policy
+fingerprint because the existing recipe hashes the changed `onnx.rs`.
+The old Arbiter profile is ineligible on this source. A scoped native
+diagnostic compiled from `b940c33d` (152.595 s, same incremental CUDA
+target) and produced a CPU-only first-pass profile binding
+`3b7cea0e5b4c73294fb6ba26cfc43b06459359be5dcbf62bd392ab12ddbba789`.
+Finish the native graph and strict scorer check, then pair it with the
+unchanged Focus profile. The same-install shakedown and full leak check
+remain ahead. Neither requires rebuilding these bases.
