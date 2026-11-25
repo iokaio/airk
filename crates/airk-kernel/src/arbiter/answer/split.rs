@@ -213,6 +213,37 @@ pub(crate) fn part_span(question: &str, (start, end): (usize, usize)) -> (usize,
     (from, to.max(from))
 }
 
+/// Focused, independent clauses for a second lexical or vector lookup.
+/// Require substantial text on either side of a confident boundary.
+pub(crate) fn independent_parts(question: &str) -> Vec<&str> {
+    let cuts: Vec<_> = breaks(question)
+        .into_iter()
+        .filter(|cut| {
+            matches!(
+                cut.kind,
+                BreakKind::Enum | BreakKind::Question | BreakKind::Verbs
+            )
+        })
+        .map(|cut| cut.at)
+        .take(2)
+        .collect();
+    if cuts.is_empty() {
+        return Vec::new();
+    }
+    let mut parts: Vec<&str> = Vec::with_capacity(cuts.len() + 1);
+    let mut start = 0;
+    for end in cuts.into_iter().chain(std::iter::once(question.len())) {
+        let (from, to) = part_span(question, (start, end));
+        let part = &question[from..to];
+        if words(part) < 3 || parts.iter().any(|prior| prior.eq_ignore_ascii_case(part)) {
+            return Vec::new();
+        }
+        parts.push(part);
+        start = end;
+    }
+    parts
+}
+
 fn partition(question: &str, cuts: &[usize], max_parts: usize) -> Partition {
     let mut ranges = Vec::new();
     let mut start = 0;

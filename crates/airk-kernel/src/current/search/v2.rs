@@ -29,7 +29,9 @@ const MAX_KEY_WORDS: usize = 20;
 pub(crate) enum SearchProfile {
     #[cfg(any(test, feature = "test-support"))]
     Baseline,
+    #[cfg(any(test, feature = "test-support"))]
     Keywords,
+    SemanticSubqueries,
     #[cfg(any(test, feature = "test-support"))]
     Identifiers,
     #[cfg(any(test, feature = "test-support"))]
@@ -42,7 +44,9 @@ impl SearchProfile {
         match self {
             #[cfg(any(test, feature = "test-support"))]
             Self::Baseline => (false, false),
+            #[cfg(any(test, feature = "test-support"))]
             Self::Keywords => (true, false),
+            Self::SemanticSubqueries => (true, false),
             #[cfg(any(test, feature = "test-support"))]
             Self::Identifiers => (false, true),
             #[cfg(any(test, feature = "test-support"))]
@@ -62,6 +66,7 @@ fn parse(value: Result<String, std::env::VarError>) -> Option<SearchProfile> {
         Ok(value) => match value.as_str() {
             "none" => Some(SearchProfile::Baseline),
             "ranked_keywords" => Some(SearchProfile::Keywords),
+            "semantic_subqueries" => Some(SearchProfile::SemanticSubqueries),
             "ranked_identifiers" => Some(SearchProfile::Identifiers),
             "ranked_terms" => Some(SearchProfile::RankedTerms),
             "search_v2" => Some(SearchProfile::LegacyV2),
@@ -105,7 +110,7 @@ pub(crate) fn active() -> anyhow::Result<SearchProfile> {
     }
     #[cfg(not(feature = "test-support"))]
     {
-        Ok(SearchProfile::Keywords)
+        Ok(SearchProfile::SemanticSubqueries)
     }
 }
 

@@ -23,6 +23,12 @@ decisions D1 to D8 and section 5. Kernel uses this engine through the current in
 - **Opaque records.** The file record, metadata, citations, member spans,
   resources and change records are the caller's bytes, returned unchanged.
 
+- **Scoped vector query batch.** A current read can rank up to four query
+  vectors from the same pipeline against one checked committed matrix and
+  one authorized row mask. The queries divide the same total ranked-row
+  and resolved-unit limits. The original query receives half the budget
+  rounded up. Each rank and occurrence still belongs to the pinned reader.
+
 ## Files
 
 | File | Holds |

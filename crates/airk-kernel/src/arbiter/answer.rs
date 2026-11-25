@@ -31,6 +31,7 @@ mod repeats;
 mod retrieve;
 mod shares;
 mod split;
+pub(crate) use split::independent_parts;
 mod state;
 mod union;
 mod volatile;
@@ -102,8 +103,15 @@ const BUSY_REPEATS: usize = 3;
 /// The owner's delay before a canonical read may be repeated unchanged, if
 /// its failure is a retryable `repeat_same_request`.
 fn busy_retry(result: &Result<Value>) -> Option<Duration> {
-    let failure = result.as_ref().err()?.downcast_ref::<crate::workbench::ReadFailure>()?;
-    let body = match failure.0.get("structuredContent").filter(|body| body.is_object()) {
+    let failure = result
+        .as_ref()
+        .err()?
+        .downcast_ref::<crate::workbench::ReadFailure>()?;
+    let body = match failure
+        .0
+        .get("structuredContent")
+        .filter(|body| body.is_object())
+    {
         Some(body) => body.clone(),
         None => failure
             .0
@@ -112,7 +120,10 @@ fn busy_retry(result: &Result<Value>) -> Option<Duration> {
             .and_then(|text| serde_json::from_str(text).ok())
             .unwrap_or_else(|| failure.0.clone()),
     };
-    let hint = body.get("error").filter(|error| error.is_object()).unwrap_or(&body);
+    let hint = body
+        .get("error")
+        .filter(|error| error.is_object())
+        .unwrap_or(&body);
     (hint["action"] == "repeat_same_request" && hint["retryable"] == true)
         .then(|| hint["retry_after_ms"].as_u64())
         .flatten()
@@ -784,7 +795,9 @@ impl Loop<'_> {
                 // busy) is repeated a few times within the reserve, so a
                 // transient owner state never becomes the read's evidence.
                 for _ in 0..BUSY_REPEATS {
-                    let Some(wait) = busy_retry(&result) else { break };
+                    let Some(wait) = busy_retry(&result) else {
+                        break;
+                    };
                     if clock() + wait + reserve >= deadline {
                         break;
                     }

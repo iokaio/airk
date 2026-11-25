@@ -67,7 +67,7 @@ Use the same MiniLM weights and the same source sample for both builds. Compare 
 2. Keep one original baseline pair. Add each proposal to the preceding implementation and collect one Focus-off and one Focus-on result. Retain that pair as the baseline for the next step. Compare each step with both the preceding pair and the original. Keep the Focus profile, device and scoring limits fixed. For the two isolated indexes in step 6, pin each publication and use identical source revisions.
 s’s effect with Focus off, its effect with Focus on, the on/off difference within each version, and whether Focus changes the size or direction of the proposal’s benefit. For each run, report top-three and top-ten essential coverage, gains and losses by repository and scenario, elapsed median and p95, and response bytes. Record differences in publications or served modes. Alternate measurement order when assessing latency.
 4. Trace each note from branch candidates through fused rank, the candidates presented to Focus, and the returned source lines. Use the existing overlap rule consistently. Retain Focus receipts with the active profile and runtime, original and final order, scored candidates and scores when available, and any reason Focus did not apply. Explain each material on/off difference using the trace, and label explanations that remain hypotheses. Keep each measured result and its receipt with the corresponding implementation milestone.
-5. Advance a change when it improves final essential coverage or materially improves early rank with a measured latency cost and understood losses. If candidate recall rises but returned coverage stays flat, use the trace to choose the next change. Keep source scope and citation integrity as acceptance requirements.
+5. Advance a change when it improves final essential coverage or materially improves early rank with a measured latency cost and understood losses. If the first measured attempt yields no useful gain, try up to two revisions supported by the trace. Stop sooner if the evidence rules out the mechanism. Keep the preceding baseline when a step yields no useful gain and record why. Keep source scope and citation integrity as acceptance requirements.
 
 ## Milestone results
 
@@ -106,6 +106,37 @@ Its comparison to the original and prior pair is
 `32c533734ee1635b9a5f726df776c23e2e38fd1c77e60a202780d06eadc8863b`.
 All three fixtures closed cleanly with zero new Index or Vectors jobs.
 Latency uses off then on and includes elapsed CLI time.
+
+### Step 2 result — Focused semantic queries
+
+The five requests with a confident split each used the original query
+and two focused queries. The original received 50 passage slots. Each
+focused query received 25. The auxiliary branches surfaced four to 16
+additional distinct paths per split request, measured against the
+original query's 50-slot list in the same request.
+
+| Reference or candidate | Essentials off / on | Top 3 off / on | Median CLI ms off / on | p95 CLI ms off / on |
+| --- | ---: | ---: | ---: | ---: |
+| Original | 14 / 14 | 6 / 8 | 1,066.5 / 1,556 | 1,718 / 2,477 |
+| Step 1 | 14 / 14 | 7 / 7 | 1,129 / 1,701 | 2,254 / 3,152 |
+| Step 2 | 15 / 15 | 6 / 6 | 1,197.5 / 1,733 | 2,311 / 3,179 |
+
+Step 2 gained one Munarium essential and kept every Step 1 essential in
+both settings. Relative to the original, it gained five and lost four.
+Two essential ranks slipped in Munarium A2, one out of the top three.
+The new note was in Munarium C2. Its accepted path appeared at rank 11
+in the second auxiliary list and was absent from the original query's
+allotted list. The matching passage reached final rank eight and was
+outside Focus's four scored candidates. Focus promoted two other
+essentials, demoted one and left twelve unchanged. Neither coverage
+nor the count in the top three changed when Focus was enabled.
+
+The median paired latency rose by 42 ms with Focus off and 26 ms with
+Focus on versus Step 1. The measurements use off then on and include
+elapsed CLI time. Carry Step 2 forward. The paired receipt SHA-256 is
+`067221bd9efe69ed655bdf75d7fe8f6bc3380b6d22b48b5e5dab0f7bb9c22123`. The comparison to Step 1 and the original is
+`c6669edc4fe4abc4474aa27480fa4847bebe94a82679d6f9b10cba0da3603016`. Both publications were reused and shutdown recorded zero
+new indexing or vector jobs.
 
 ## Evidence and implementation references
 

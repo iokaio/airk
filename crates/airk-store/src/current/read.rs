@@ -189,6 +189,46 @@ impl CurrentRead {
         row_limit: usize,
         unit_limit: usize,
     ) -> Result<(Vec<OccurrencePointer>, bool)> {
+        self.ranked_vector_units_for_queries(
+            pipeline,
+            &[query],
+            paths,
+            prefix,
+            row_limit,
+            unit_limit,
+        )?
+        .pop()
+        .context("missing vector query result")
+    }
+
+    /// Rank up to four query vectors against one authenticated matrix and scope.
+    /// The original query gets half of a shared budget when auxiliary queries exist.
+    pub fn ranked_vector_units_for_queries(
+        &self,
+        pipeline: airk_core::identity::Sha256Digest,
+        queries: &[&[f32]],
+        paths: Option<&[String]>,
+        prefix: Option<&str>,
+        row_limit: usize,
+        unit_limit: usize,
+    ) -> Result<Vec<(Vec<OccurrencePointer>, bool)>> {
+        ensure!(
+            (1..=4).contains(&queries.len())
+                && row_limit / 2 >= queries.len() - 1
+                && unit_limit / 2 >= queries.len() - 1,
+            "plain vector query count exceeds its shared budget"
+        );
+        let quota = |limit: usize, position| {
+            if queries.len() == 1 {
+                limit
+            } else if position == 0 {
+                limit.div_ceil(2)
+            } else {
+                let others = queries.len() - 1;
+                let remaining = limit / 2;
+                remaining / others + usize::from(position - 1 < remaining % others)
+            }
+        };
         ensure!(
             (1..=1000).contains(&row_limit) && (1..=1000).contains(&unit_limit),
             "plain vector search limit out of range"
@@ -199,74 +239,82 @@ impl CurrentRead {
                 .vector_setup()?
                 .context("semantic retrieval not ready: vector store is unconfigured")?;
             ensure!(
-                setup.pipeline == pipeline && setup.dimensions as usize == query.len(),
+                setup.pipeline == pipeline
+                    && queries.iter().all(|query| setup.dimensions as usize == query.len()),
                 "indexed vector pipeline differs from query model"
             );
             let live = index.live_rows_for_paths(paths.as_deref(), prefix, committed)?;
             if live.is_empty() {
-                return Ok((Vec::new(), false));
+                return Ok(queries.iter().map(|_| (Vec::new(), false)).collect());
             }
             self.live()?;
             let matrix = index.load_vectors()?.context("indexed vectors disappeared")?;
             self.live()?;
-            let ranked = matrix.search(query, row_limit, Some(&live))?;
-            #[cfg(feature = "test-support")]
-            let pointer_timing = (paths.is_none()
-                && prefix.is_none_or(str::is_empty)
-                && std::env::var_os("AIRK_PRIVATE_VECTOR_POINTER_TIMING").as_deref()
-                    == Some(std::ffi::OsStr::new("1")))
-            .then(|| (std::time::Instant::now(), ranked.len()));
-            let mut incomplete = ranked.len() < live.len();
-            let mut pointers = Vec::new();
-            for hit in ranked {
+            let mut results = Vec::with_capacity(queries.len());
+            for (position, query) in queries.iter().enumerate() {
                 self.live()?;
-                let remaining = unit_limit - pointers.len();
-                let units = index.scoped_units_for_row(
-                    hit.row,
-                    paths.as_deref(),
-                    prefix,
-                    remaining + 1,
-                )?;
-                incomplete |= units.len() > remaining;
-                for unit in units.into_iter().take(remaining) {
-                    if !self.accepts_path(&unit.path) {
-                        incomplete = true;
-                        continue;
+                let row_limit = quota(row_limit, position);
+                let unit_limit = quota(unit_limit, position);
+                let ranked = matrix.search(query, row_limit, Some(&live))?;
+                #[cfg(feature = "test-support")]
+                let pointer_timing = (paths.is_none()
+                    && prefix.is_none_or(str::is_empty)
+                    && std::env::var_os("AIRK_PRIVATE_VECTOR_POINTER_TIMING").as_deref()
+                        == Some(std::ffi::OsStr::new("1")))
+                .then(|| (std::time::Instant::now(), ranked.len()));
+                let mut incomplete = ranked.len() < live.len();
+                let mut pointers = Vec::new();
+                for hit in ranked {
+                    self.live()?;
+                    let remaining = unit_limit - pointers.len();
+                    let units = index.scoped_units_for_row(
+                        hit.row,
+                        paths.as_deref(),
+                        prefix,
+                        remaining + 1,
+                    )?;
+                    incomplete |= units.len() > remaining;
+                    for unit in units.into_iter().take(remaining) {
+                        if !self.accepts_path(&unit.path) {
+                            incomplete = true;
+                            continue;
+                        }
+                        let occurrence = PathOccurrences {
+                            version: 1,
+                            path: unit.path,
+                            source_hash: unit.source_hash,
+                            count: unit.ordinal.checked_add(1).context("unit ordinal overflow")?,
+                        };
+                        let occurrence_id = occurrence.occurrence_id(&self.head.scope, unit.ordinal)?;
+                        let pointer = OccurrencePointer {
+                            version: 1,
+                            embedding_key: unit.embedding_key,
+                            occurrence_id,
+                            path: occurrence.path,
+                            path_ordinal: unit.ordinal,
+                            source_hash: unit.source_hash,
+                            payload_digest: unit.payload,
+                            object: unit.payload,
+                            members: serde_json::from_slice(&unit.members)?,
+                        };
+                        pointer.validate()?;
+                        pointers.push(pointer);
                     }
-                    let occurrence = PathOccurrences {
-                        version: 1,
-                        path: unit.path,
-                        source_hash: unit.source_hash,
-                        count: unit.ordinal.checked_add(1).context("unit ordinal overflow")?,
-                    };
-                    let occurrence_id = occurrence.occurrence_id(&self.head.scope, unit.ordinal)?;
-                    let pointer = OccurrencePointer {
-                        version: 1,
-                        embedding_key: unit.embedding_key,
-                        occurrence_id,
-                        path: occurrence.path,
-                        path_ordinal: unit.ordinal,
-                        source_hash: unit.source_hash,
-                        payload_digest: unit.payload,
-                        object: unit.payload,
-                        members: serde_json::from_slice(&unit.members)?,
-                    };
-                    pointer.validate()?;
-                    pointers.push(pointer);
+                    if incomplete && pointers.len() == unit_limit {
+                        break;
+                    }
                 }
-                if incomplete && pointers.len() == unit_limit {
-                    break;
+                #[cfg(feature = "test-support")]
+                if let Some((start, ranked_count)) = pointer_timing {
+                    eprintln!(
+                        "AIRK_VECTOR_POINTER_TIMING wanted={row_limit} ranked={ranked_count} pointer_count={} elapsed_ns={}",
+                        pointers.len(),
+                        start.elapsed().as_nanos()
+                    );
                 }
+                results.push((pointers, incomplete));
             }
-            #[cfg(feature = "test-support")]
-            if let Some((start, ranked_count)) = pointer_timing {
-                eprintln!(
-                    "AIRK_VECTOR_POINTER_TIMING wanted={row_limit} ranked={ranked_count} pointer_count={} elapsed_ns={}",
-                    pointers.len(),
-                    start.elapsed().as_nanos()
-                );
-            }
-            Ok((pointers, incomplete))
+            Ok(results)
         })
     }
 

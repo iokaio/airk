@@ -369,6 +369,8 @@ fn search_with_switch(
             &selection,
             scoped_paths.as_ref(),
             branch_limit,
+            profile == v2::SearchProfile::SemanticSubqueries
+                && matches!(mode, CurrentSearchMode::Hybrid),
         ) {
             Ok(branch) => branches.push(branch),
             Err(error)
@@ -723,6 +725,7 @@ fn vector_candidates(
     query: &SearchQuery,
     filtered_paths: Option<&ScopedPaths>,
     branch_limit: usize,
+    decompose: bool,
 ) -> Result<Branch> {
     let state = read
         .collection_state()?
@@ -735,6 +738,24 @@ fn vector_candidates(
     let vector = model
         .embed_text(&query.text)?
         .context("semantic retrieval not ready: no recognized model tokens")?;
+    let mut embeddings = vec![vector];
+    if decompose {
+        for part in crate::arbiter::independent_parts(&query.text) {
+            read.token()?;
+            match model.embed_text(part) {
+                Ok(Some(embedding)) => embeddings.push(embedding),
+                Ok(None) => {
+                    embeddings.truncate(1);
+                    break;
+                }
+                Err(error) if error.is::<airk_retrieval::embedding_worker::HelperUnavailable>() => {
+                    embeddings.truncate(1);
+                    break;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
 
     // Preserve the product and private evaluation branch bounds.
     let wanted = if branch_limit == BRANCH_CANDIDATES {
@@ -743,14 +764,47 @@ fn vector_candidates(
         (branch_limit * 4).clamp(64, 1000)
     };
     let paths = filtered_paths.map(|scope| scope.paths.iter().cloned().collect::<Vec<_>>());
-    let (selected, mut incomplete) = read.ranked_vector_units(
-        objects.pipeline_digest,
-        &vector,
-        paths.as_deref(),
-        query.path_prefix.as_deref(),
-        wanted,
-        branch_limit,
-    )?;
+    let (selected, mut incomplete) = if embeddings.len() == 1 {
+        read.ranked_vector_units(
+            objects.pipeline_digest,
+            &embeddings[0],
+            paths.as_deref(),
+            query.path_prefix.as_deref(),
+            wanted,
+            branch_limit,
+        )?
+    } else {
+        let vectors: Vec<_> = embeddings.iter().map(Vec::as_slice).collect();
+        let results = read.ranked_vector_units_for_queries(
+            objects.pipeline_digest,
+            &vectors,
+            paths.as_deref(),
+            query.path_prefix.as_deref(),
+            wanted,
+            branch_limit,
+        )?;
+        #[cfg(feature = "test-support")]
+        trace_semantic_queries(query, read, &results)?;
+        let incomplete = results.iter().any(|(_, incomplete)| *incomplete);
+        let mut queues: Vec<_> = results
+            .into_iter()
+            .map(|(units, _)| units.into_iter())
+            .collect();
+        let mut seen = BTreeSet::new();
+        let mut selected = Vec::new();
+        // Take the strongest remaining passage from each query in turn.
+        // The original query wins equal positions and repeated passages get one vote.
+        for _ in 0..branch_limit {
+            for queue in &mut queues {
+                if let Some(pointer) = queue.next()
+                    && seen.insert(pointer.occurrence_id)
+                {
+                    selected.push(pointer);
+                }
+            }
+        }
+        (selected, incomplete)
+    };
     incomplete |= filtered_paths.is_some_and(|scope| scope.incomplete);
 
     let mut budget = PointerBudget::default();
@@ -774,6 +828,42 @@ fn vector_candidates(
         incomplete,
         kind: v2::BranchKind::Vector,
     })
+}
+
+#[cfg(feature = "test-support")]
+fn trace_semantic_queries(
+    query: &SearchQuery,
+    read: &CurrentRead,
+    results: &[(Vec<OccurrencePointer>, bool)],
+) -> Result<()> {
+    use sha2::{Digest, Sha256};
+    if std::env::var("AIRK_ARBITER_EVALUATION_SEARCH").as_deref() != Ok("semantic_subqueries") {
+        return Ok(());
+    }
+    let ranks: Vec<_> = results
+        .iter()
+        .map(|(pointers, _)| {
+            pointers
+                .iter()
+                .map(|pointer| {
+                    serde_json::json!({
+                        "occurrence": pointer.occurrence_id,
+                        "path": pointer.path,
+                        "members": pointer.members,
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    eprintln!(
+        "AIRK_SEARCH_SEMANTIC_RANKS {}",
+        serde_json::json!({
+            "query_sha256": format!("{:x}", Sha256::digest(query.text.as_bytes())),
+            "publication": read.token()?,
+            "ranked": ranks,
+        })
+    );
+    Ok(())
 }
 
 fn materialize(

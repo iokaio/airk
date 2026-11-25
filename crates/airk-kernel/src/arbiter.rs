@@ -1248,6 +1248,7 @@ impl Gathering {
 }
 
 mod answer;
+pub(crate) use answer::independent_parts;
 mod focus;
 mod joint;
 pub mod software;

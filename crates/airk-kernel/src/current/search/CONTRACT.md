@@ -48,6 +48,19 @@ keyword branch alone (ranked_keywords), the identifier branch alone
 (ranked_identifiers), or both streams (ranked_terms). These profiles
 use the same query and publication scope and require no index changes.
 
+## Focused semantic queries
+
+For hybrid Search, clear independent questions, enumerations and imperative
+clauses can contribute up to three focused queries in addition to the original.
+All use the saved index's embedding pipeline and share the same scoped vector
+matrix. The original query keeps at least half of the existing ranked row and
+passage budgets. Merge by interleaved rank, with the original first, and
+deduplicate occurrences before submitting one semantic branch to fusion.
+The original request still drives snippet selection and Focus. If the query
+has no confident split, or an auxiliary embedding is unavailable, use the
+original semantic ranking with its full budget. Scope and integrity failures
+still propagate. The test-support profile is semantic_subqueries.
+
 ## Private evaluation switch `search_v2` (22 November 2026)
 
 The historical Search v2 profile is selectable only in test-support builds. It is read once per process from

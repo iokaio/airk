@@ -110,7 +110,7 @@ fn product_search_uses_the_expected_profile() -> Result<()> {
         v2::SearchProfile::Baseline
     };
     #[cfg(not(feature = "test-support"))]
-    let expected = v2::SearchProfile::Keywords;
+    let expected = v2::SearchProfile::SemanticSubqueries;
     let (_owner, kernel) = fixture()?;
     for text in [PROSE, "provider", "class code"] {
         let product = kernel.hybrid_search(&query(text))?;
@@ -203,6 +203,33 @@ fn scoped_fixture() -> Result<(tempfile::TempDir, Kernel)> {
     let kernel = Kernel::open(&root, Some(directory.path().join("data")))?;
     kernel.index()?;
     Ok((directory, kernel))
+}
+
+#[test]
+fn semantic_subqueries_keep_short_search_and_the_pinned_publication() -> Result<()> {
+    use v2::SearchProfile::{Keywords, SemanticSubqueries};
+
+    let (_owner, kernel) = fixture()?;
+    let short = with_profile(&kernel, "provider guide", Keywords)?;
+    let unchanged = with_profile(&kernel, "provider guide", SemanticSubqueries)?;
+    assert_eq!(
+        serde_json::to_vec(&short.hits)?,
+        serde_json::to_vec(&unchanged.hits)?
+    );
+
+    let split = "How does the provider guide work? Where does the class use code?";
+    assert_eq!(
+        crate::arbiter::independent_parts(split),
+        vec![
+            "How does the provider guide work?",
+            "Where does the class use code?"
+        ],
+    );
+    let result = with_profile(&kernel, split, SemanticSubqueries)?;
+    assert_eq!(result.token, unchanged.token);
+    assert!(!result.hits.is_empty() && result.hits.len() <= 10);
+    assert!(crate::arbiter::independent_parts("Find the class and provider code").is_empty());
+    Ok(())
 }
 
 fn groups(words: &[&str]) -> Vec<TermGroup> {

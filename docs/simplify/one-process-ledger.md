@@ -18894,3 +18894,38 @@ or Vectors jobs and zero new ones. D: retained 373,221,990,400 bytes.
 The working-tree repository check found a missing SPDX header in the
 untracked paused Answer capture verifier. That file is outside this
 milestone's commit scope.
+
+### 25 November 2026 — Search step 2 focused semantic queries
+
+Step 2 loaded the same published vector matrix once and ranked the
+original plus two short request clauses under the existing cap for five
+of the 20 queries. The original and auxiliary passage quotas were
+50/25/25. The private native trace SHA-256 is
+`6be019118b6e6f64cfb6e5480d54b8657e4487ffc77cae9271364959ce6b9e98`.
+It shows four to 16 additional distinct paths over the 50-slot original
+list in those calls. Of these, the new Munarium C2 essential came from
+a path present at rank 11 of the second auxiliary list. It was absent
+from the allotted original list and reached rank eight in the response.
+Focus could not promote it because the profile scored the first four.
+All 20 enabled requests applied Focus on CUDA. Two notes rose, one fell,
+and twelve tied. Both settings found 15/113, one more than Step 1 and
+the original. The top-three count was six in each setting, one fewer
+than Step 1. No essential covered by Step 1 was lost.
+
+The Windows Build and Clippy receipt is
+`6f95941af6da273813aa7368f764f53a1fcf8fdb3b8554fa1f5144c8e4476ac1`.
+It records the warm CUDA target and six completed build/check commands
+plus the CLI build. Search tests selected 15 and passed 15 (551
+filtered). Native CUDA restart tests selected four and passed four
+(471 filtered). The stage-2 fixture service image SHA-256 is
+`090cc127b55204a2e5d413b716ed6ff38a114be92fbf6f01c24ea99c710fcdcf`.
+The service reopened in 14.160 seconds and shut down cleanly, preserving
+the original publications and all 41 historical source jobs with zero
+new Index or Vectors jobs. D: retained 368,934,285,312 bytes.
+
+Carry the matched Step 2 comparison into Step 3, SHA-256
+`067221bd9efe69ed655bdf75d7fe8f6bc3380b6d22b48b5e5dab0f7bb9c22123`.
+The original and incremental comparison SHA-256 is
+`c6669edc4fe4abc4474aa27480fa4847bebe94a82679d6f9b10cba0da3603016`.
+The next action is to isolate fusion and file diversity on the same
+cohort, preserving both retained reference pairs.
