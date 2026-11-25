@@ -19,8 +19,9 @@ name this plan, its first milestone and its stop points. The user's
 OpenAI-only direction already applies to implementation and testing.
 [Current assignment](../agent-current-work.md) · [Standing rules](../../AGENTS.md)
 
-Work runs in this order: section 1, the first milestone, then sections 2
-to 5. The [agent-facing tool surface](#agent-facing-tool-surface) stage
+Complete section 1, the index research and the [autonomous repair milestone](#autonomous-index-repair)
+in that order, then continue with sections 2 to 5. The
+[agent-facing tool surface](#agent-facing-tool-surface) stage
 starts after the Windows review and is frozen before the sealed run.
 
 ## Goals and how progress is measured
@@ -217,12 +218,18 @@ Dated entries record the user's choices. The remaining proposals are open.
 12. **Public tool names:** the proposed renames, tested in the free-choice
     arm, and whether an old name stays callable for a release or the rename
     is clean at 1.9.
+13. **Autonomous index repair (decided 25 November 2026).** Add post-index
+    and idle checks plus retrieval-triggered tickets. A proven, bounded
+    repair can improve the triggering reply within twice the
+    ordinary time allowance and all applicable hard deadlines.
+    [Repair rules and acceptance](#autonomous-index-repair)
 
 ## Milestones
 
 | Milestone | Exit evidence or decision |
 | --- | --- |
 | Index and Search quality | Complete the rank census, the label and corpus audit, the source-fidelity checks and the two query-time checks. Run at most two matched representation pilots chosen from the census. Select and freeze the configuration for both repositories against the agreed bar. [Research and selection](#how-to-test-indexing-for-agent-tasks) |
+| Autonomous index repair | Prove post-publication and idle discovery, same-request recovery within budget and autonomous background completion on isolated fixtures. [Repair rules and acceptance](#autonomous-index-repair) |
 | Windows CUDA | Account for shakedown and L6 evidence on the admitted stack. Run the Sol complete-evidence experiment and apply its review trigger. Judge a current-stack baseline and three cumulative retrieval changes, then stop for your review. |
 | Windows review | You choose another Windows round, Linux, or shipping the retrieval gains without the turn-saving claim. Each additional Windows round returns to the same review. |
 | Linux CUDA | LX, Linux L6, and the agreed L7 comparisons against the Windows-reviewed candidate. Bring both hosts' results to review. |
@@ -486,6 +493,87 @@ existing publications. Discuss the specific representation and evidence with
 the user first. Keep accepted originals available and record contracts for
 any persisted format or digest change.
 [Index alternatives and prior audit](search-improvement-plan.md#alternatives-to-test) · [Step 4 structural result](search-improvement-plan.md#step-4-result--exact-structural-evidence)
+
+### Autonomous index repair
+
+Build and qualify these two mechanisms on isolated fixtures after the index
+research and before the Windows baseline. Use the service's existing scheduler,
+maintenance guards and canonical retrieval path. Keep measured publications
+and budgets frozen during the pilot, judged and sealed comparisons. Exercise
+repairs in their own tests. The loop runs locally without a human judge,
+ticket triage or per-repair approval.
+
+1. **Check each published index and revisit it during idle periods.** After a
+   successful indexing run publishes changes, coalesce changed artifacts by
+   collection, root and publication. Check that expected identifiers resolve to
+   retained passages, citations reproduce the indexed bytes, and sampled
+   semantic units bind to the expected inputs once vectors are ready. Rotate
+   through older artifacts on idle sweeps, including when no files change.
+   Reuse physical Verify where applicable. Yield to foreground work and bound
+   the queue, disk, CPU and I/O per sweep. Repair-generated events cannot
+   schedule another sweep of the same work.
+2. **Let retrievals nominate defects and verify them automatically.** A
+   broken citation or a missing posting for a known indexed term can trigger
+   a check on the first occurrence. Repeated empty or truncated results can
+   trigger sampled diagnosis. Use pinned, independently checkable evidence
+   to distinguish storage or indexing faults from ranking, legitimate
+   no-match, readiness and capacity outcomes. Merge reports of the same
+   defect into one local ticket. Respect usage-recording settings. Retain
+   only a bounded diagnostic recipe with opaque scoped identifiers, defect
+   class and outcome. The original query stays in memory for its call.
+
+**Repair on the triggering retrieval.** Keep the ordinary result available.
+For example, retained bytes and the active tokenizer can establish that an
+eligible identifier is missing from a lexical posting. If a bounded repair
+is available, replay the original request once through ordinary retrieval
+after repairing that posting. Return the corrected result **on this call**
+when the replay recovers the expected cited span and passes the original
+filters, scope, revision and response limits. Only include verified evidence
+in a fallback reply and report any resulting coverage loss.
+
+Let `B` be the ordinary time allotted to this retrieval operation at
+admission. Allow at most **2 × B total from request arrival**, capped by
+the earliest caller, parent-operation, service or transport hard deadline.
+For example, a 100 ms allowance gives the entire call 200 ms, or 150 ms
+if the caller's deadline is 150 ms from arrival. The first lookup, diagnosis,
+lease acquisition, repair, verification, replay and response all share that
+clock. Admit one attempt only when a measured bound for that repair class
+fits the time remaining, with time reserved to deliver the fallback. If
+either allowance or repair bound is unknown, time is short or capacity is busy, return
+promptly and leave the ticket to the background worker. Honor cancellation
+immediately. Nested reads share the outer deadline and work budgets.
+
+**Repair authority and ticket closure.** Both paths use the same bounded
+set of repairs that regenerate derived data from retained, authorized inputs.
+Test the proposed repair against its independent probe and nearby known
+success and no-match controls before publication. If a check fails, retain
+the previous state. The maintenance owner rechecks the captured incarnation,
+publication and settings under its lease and publishes atomically. Concurrent
+reports share one repair. A request with an explicit publication pin keeps it. A request
+that permits the repaired publication may replay wholly against it and cite
+its revision. On a race, discard stale work and recheck in the background.
+Close a ticket as repaired only after its probe succeeds through normal
+retrieval on the committed state. Verification replays cannot open tickets.
+A nonreproducing signal expires. A failed or ineligible repair records the
+reason and goes dormant after bounded retries until relevant inputs change.
+Source edits, full rebuilds, destructive fallback and ranking or model changes
+fall outside the loop's authority.
+[Maintenance guards](../service-maintenance.md#preview-and-approval) · [Index verification](../../crates/airk-store/src/index/CONTRACT.md) · [Local usage](../usage-reporting.md)
+
+**Acceptance.** Seed an omitted posting with a known cited answer and show
+that the very first external request returns that answer within the cap.
+Use an injected clock to exercise a tighter caller deadline, a slow repair
+and cancellation. For the slow repair, show a timely fallback and a later
+ordinary retrieval that succeeds after background verification. Exercise
+a post-publication defect with no user traffic, an older defect found by
+an idle sweep, a legitimate empty result, a pinned reader during a
+publication race, and concurrent readers producing one repair. Compare
+against a healthy control per repository. Record the fraction of confirmed
+defects fixed on the triggering call, background recoveries, incorrect
+repairs and p95 latency for ordinary and repair-triggering calls separately.
+Require zero incorrect repairs, scope violations and hard-deadline overruns
+in these cases. Apply the existing 1.10× p95 cost limit to the matched
+ordinary workload, including its observed mix of repair attempts.
 
 ## 1. Reconcile the starting point
 

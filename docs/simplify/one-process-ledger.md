@@ -19781,3 +19781,22 @@ checked 10,740 public files and enforced matching standing rule files.
 The read-only content check verified the five choices and 136 local
 references, including anchors into the completion plan. `git diff --check`
 passed. No product build, model session or campaign evaluation ran.
+
+### 25 November 2026 — Autonomous checks and repair on the triggering retrieval
+
+The user selected post-index and periodic checks, plus autonomous tickets
+from retrieval. A fast, verified repair should improve the request that
+found the defect. The plan interprets twice the ordinary allowance as a
+total from request arrival, capped by every tighter hard deadline. It
+defines the background fallback, pinned-revision behavior and independent
+replay evidence, with an isolated acceptance case for the first caller.
+The frozen evaluation indexes keep their existing comparison rules.
+[Repair rules and acceptance](../arbiter/completion-plan.md#autonomous-index-repair)
+
+This is a planning change. Implementation by GPT-6.2 Sol awaits approval
+of the completion plan. The verified Windows user and default owner were
+TYAI\tdotn, SID S-1-5-21-3678370870-3858642417-826968105-1002.
+
+The documentation check passed for 10,740 public files. All eight added
+links resolved, the repair requirements were present and the whitespace
+check passed. These checks exercised the plan only.
